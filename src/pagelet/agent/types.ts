@@ -14,7 +14,7 @@ import type {
     ChatToolRegistryDefinition,
     SearchMemoryInput,
 } from "../../ai-services/chat-tools";
-import type { MemorySearchResult, SourceRecord } from "../../ai-services/chat-types";
+import type { MemorySearchResult, PaAgentMessage, SourceRecord } from "../../ai-services/chat-types";
 import type { CapabilityRegistry } from "../../ai-services/capability-registry";
 import type { AiServiceHost } from "../../ai-services/AiServiceHost";
 
@@ -141,6 +141,8 @@ export interface PageletAgentToolProvenance {
     sourceRecords: SourceRecord[];
     isError: boolean;
     promptText: string;
+    /** Paths whose non-empty body partition actually occurred in this successful observation. */
+    bodyEvidencePaths?: readonly string[];
 }
 
 export interface PageletAgentRunResult {
@@ -211,6 +213,11 @@ export interface PageletAgentModelContext {
     signal?: AbortSignal;
     /** Shared by every Provider request in this Pagelet run. */
     providerRequestScope: ProviderRequestScope;
+    bindVaultObservationProjection(transcript: readonly PaAgentMessage[]): {
+        prepare(signal?: AbortSignal | null): Promise<void>;
+        assertCurrent(): void;
+    };
+    recordPromptProjection(transcript: readonly PaAgentMessage[], turnIndex?: number): void;
 }
 
 export interface PageletAgentRuntimeDependencies {

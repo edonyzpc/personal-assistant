@@ -16,7 +16,7 @@ export type MemoryAdmissionDecision =
     | "require_prior_review"
     | "reject";
 
-export type MemoryAdmissionOrigin = "type_a" | "memory_candidate";
+export type MemoryAdmissionOrigin = "type_a" | "memory_candidate" | "explicit_user_instruction";
 
 export type MemoryAdmissionScope =
     | "task_ephemeral"
@@ -59,7 +59,7 @@ export interface MemoryAdmissionPolicyInput {
     ephemeralContextEligibility: "eligible" | "ineligible" | "unknown";
 }
 
-const ORIGINS = ["type_a", "memory_candidate"] as const;
+const ORIGINS = ["type_a", "memory_candidate", "explicit_user_instruction"] as const;
 const AUTHORITIES = [
     "source_observation",
     "pa_inference",

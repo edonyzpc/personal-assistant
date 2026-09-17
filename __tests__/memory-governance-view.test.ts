@@ -39,12 +39,28 @@ describe("buildGovernedMemoryViewSnapshot", () => {
 
         expect(result.records.map((entry) => entry.claimId)).toEqual(["claim-1", "device-claim"]);
         expect(result.records[1]).toMatchObject({
+            revisionId: "device-revision",
             authority: "explicit_user",
             effect: "collaboration_default",
             useStatus: "active",
             record: { sourceRefs: [] },
         });
         expect(result.records.some((entry) => entry.claimId === "other-vault")).toBe(false);
+    });
+
+    it("omits revision identity for content-free forgotten tombstones", () => {
+        const state = fixture();
+        state.claims[0].lifecycle = "forgotten_tombstone";
+
+        const result = buildGovernedMemoryViewSnapshot(state, VAULT, { now: NOW });
+
+        expect(result.records[0].record).toMatchObject({
+            lifecycle: "forgotten_tombstone",
+            summary: "",
+        });
+        expect(Object.prototype.hasOwnProperty.call(result.records[0], "revisionId"))
+            .toBe(false);
+        expect(JSON.stringify(result.records[0])).not.toContain("revision-1");
     });
 
     it("maps pause to a real use status while preserving the stored record", () => {

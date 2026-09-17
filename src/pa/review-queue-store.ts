@@ -198,7 +198,7 @@ export class ReviewQueueStore {
             .map(cloneItem);
     }
 
-    async create(input: ReviewQueueCreateInput): Promise<ReviewQueueResult<ReviewQueueItem>> {
+    async create(input: ReviewQueueCreateInput, isCurrent?: () => boolean): Promise<ReviewQueueResult<ReviewQueueItem>> {
         const validation = validateCreateInput(input);
         if (!validation.ok) return validation;
 
@@ -226,6 +226,24 @@ export class ReviewQueueStore {
         if (!itemValidation.ok) return itemValidation;
 
         return this.serializeMutation(async () => {
+            if (isCurrent?.() === false) return { ok: false, reason: "source_changed" };
+            if (item.type === "evidence_insight" && item.replayRef) {
+                const existingReplay = this.items.find(existing => existing.type === "evidence_insight"
+                    && existing.replayRef === item.replayRef);
+                if (existingReplay) {
+                    const same = existingReplay.title === item.title && existingReplay.claim === item.claim
+                        && JSON.stringify(existingReplay.scope) === JSON.stringify(item.scope)
+                        && JSON.stringify(existingReplay.sourceRefs) === JSON.stringify(item.sourceRefs)
+                        && existingReplay.originSurface === item.originSurface
+                        && existingReplay.dataBoundarySnapshotId === item.dataBoundarySnapshotId
+                        && existingReplay.admissionReason === item.admissionReason
+                        && existingReplay.priority === item.priority
+                        && JSON.stringify(existingReplay.whyShown) === JSON.stringify(item.whyShown)
+                        && JSON.stringify(existingReplay.metadata ?? {}) === JSON.stringify(item.metadata ?? {});
+                    return same ? { ok: true, value: cloneItem(existingReplay) }
+                        : { ok: false, reason: "replay_conflict" };
+                }
+            }
             const duplicate = this.items.find((existing) => isDuplicateItem(existing, item));
             if (duplicate && shouldPreserveDuplicateStatus(duplicate.status)) {
                 return { ok: true, value: cloneItem(duplicate) };

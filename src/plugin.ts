@@ -209,6 +209,7 @@ import {
     type UserProfileStore,
 } from './ai-services/memory-extraction';
 import type { AiServiceHost } from './ai-services/AiServiceHost';
+import { revalidateVaultObservationFromApp } from './ai-services/vault-observation-evidence';
 import {
     RetrievalDiagnosticsController,
     type RetrievalCancellationProbeAck,
@@ -313,6 +314,11 @@ import {
     type MaintenanceProposal,
 } from './pa';
 import { classifyLegacyTypeAAdoption } from './pa/legacy-type-a-adoption';
+import { createMemoryActionPort } from './pa/memory-action-port';
+import {
+    memoryActionFingerprint,
+    memoryActionIdentity,
+} from './ai-services/memory-action-types';
 import {
     MemoryAdmissionCoordinator,
     readTypeATargetGeneration,
@@ -320,6 +326,7 @@ import {
     type ChatSemanticAdmissionEvidence,
     type TypeAAdmissionBaseline,
 } from './pa/memory-admission-coordinator';
+import type { MemoryGovernanceActionIdentity } from './pa/memory-governance-coordinator';
 import { LegacyMemoryCompatibilityBarrier } from './pa/memory-governance-compatibility';
 import { MemoryGovernanceUpgradeCoordinator } from './pa/memory-governance-upgrade';
 import {
@@ -394,6 +401,10 @@ import {
     type MemoryControlCenterVaultInsightsInput,
     type VaultInsightsReadSnapshot,
 } from './pa/memory-control-center';
+import { createMemoryManagementReadPort } from './pa/memory-management-read';
+import { createInsightReadPort } from './pa/insight-read-port';
+import { createInsightActionPort } from './pa/insight-action-port';
+import { computeContentHash } from './vss-helpers';
 import {
     selectGovernedMemoryUse,
     type MemorySuppressionFingerprintRef,
@@ -1365,6 +1376,7 @@ export class PluginManager extends Plugin {
     private quietRecallEvaluationPolicyIdentitySnapshot: string | null = null;
     private reviewQueueStore: ReviewQueueStore | null = null;
     private savedInsightStore: SavedInsightStore | null = null;
+    private insightActionPort: ReturnType<typeof createInsightActionPort> | null = null;
     private memoryGovernanceStore: MemoryGovernanceStore | null = null;
     private legacyMemoryCompatibilityBarrier: LegacyMemoryCompatibilityBarrier | null = null;
     private legacyMemoryPayload: LegacyMemoryPayload | null = null;
@@ -5440,6 +5452,7 @@ export class PluginManager extends Plugin {
                     () => this.settings.savedInsights.items,
                     (items) => { this.settings.savedInsights.items = items; },
                     state.items,
+                    true,
                 ),
             });
         }
@@ -5448,6 +5461,36 @@ export class PluginManager extends Plugin {
 
     private listSavedInsights(): SavedInsight[] {
         return this.getSavedInsightStore().list();
+    }
+
+    private getInsightActionPort(): ReturnType<typeof createInsightActionPort> {
+        if (!this.insightActionPort) {
+            this.insightActionPort = createInsightActionPort({
+                getSavedStore: () => this.getSavedInsightStore(),
+                getReviewStore: () => this.settings.reviewQueue.enabled ? this.getReviewQueueStore() : null,
+                getBoundary: () => this.getMemoryDataBoundaryFingerprint(),
+                isRuntimeCurrent: () => !this.unloading,
+                isItemAllowed: item => [...(item.scope.paths ?? []), ...item.sourceRefs.map(ref => ref.path)]
+                    .every(path => {
+                        const file = this.app.vault.getAbstractFileByPath(path);
+                        return file instanceof TFile && this.isDataBoundaryAllowedFile(file);
+                    }),
+                validateSource: async (path, sourceVersion) => {
+                    const file = this.app.vault.getAbstractFileByPath(path);
+                    if (!(file instanceof TFile) || file.extension !== 'md' || !this.isDataBoundaryAllowedFile(file)) return null;
+                    const boundary = this.getMemoryDataBoundaryFingerprint();
+                    const { mtime, ctime, size } = file.stat;
+                    const isCurrent = () => !this.unloading && this.getMemoryDataBoundaryFingerprint() === boundary
+                        && this.app.vault.getAbstractFileByPath(path) === file && file.path === path
+                        && file.stat.mtime === mtime && file.stat.ctime === ctime && file.stat.size === size
+                        && this.isDataBoundaryAllowedFile(file);
+                    const content = await this.app.vault.cachedRead(file);
+                    if (!isCurrent() || await computeContentHash(content) !== sourceVersion || !isCurrent()) return null;
+                    return { ref: { path, contentHash: sourceVersion }, isCurrent };
+                },
+            });
+        }
+        return this.insightActionPort;
     }
 
     private async collectPageletProviderAllowedSavedInsights(): Promise<QuietRecallSavedInsightCollection> {
@@ -5557,6 +5600,7 @@ export class PluginManager extends Plugin {
             );
             return {
                 ...cloneSerializable(entry.record),
+                ...(entry.revisionId ? { revisionId: entry.revisionId } : {}),
                 effect: projection.effect,
                 useStatus: projection.useStatus,
                 durableUseStatus: projection.durableUseStatus,
@@ -5604,7 +5648,10 @@ export class PluginManager extends Plugin {
         if (!current || current.actionPolicy?.[action] !== true) {
             return Promise.resolve(this.governedMemoryActionFailure(action, "action_unavailable"));
         }
-        if (action === "correct") return this.correctGovernedMemory(current, summary ?? "");
+        if (action === "correct") {
+            const submittedRecord = record as PanelMemoryGovernanceRecord;
+            return this.correctGovernedMemory(record, summary ?? "", submittedRecord.revisionId);
+        }
         if (action === "pause") return this.pauseGovernedMemory(current);
         return this.resumeGovernedMemory(current);
     }
@@ -5655,7 +5702,15 @@ export class PluginManager extends Plugin {
     private correctGovernedMemory(
         record: ConfirmedMemoryRecord,
         summary: string,
+        expectedRevisionId?: string,
+        action?: MemoryGovernanceActionIdentity,
+        isCurrent?: () => boolean,
     ): Promise<MemoryRecordActionResult> {
+        const displayedRevisionId = expectedRevisionId
+            ?? (record as PanelMemoryGovernanceRecord).revisionId;
+        if (!displayedRevisionId) {
+            return Promise.resolve(this.governedMemoryActionFailure("correct", "revision_unavailable"));
+        }
         return this.runGovernedMemoryLifecycleAction(
             record.id,
             "correct",
@@ -5664,7 +5719,11 @@ export class PluginManager extends Plugin {
                 summary,
                 scopeAllowed: true,
                 dataBoundaryAllowed,
+                expectedRevisionId: displayedRevisionId,
+                action,
+                isCurrent,
             }),
+            ...(action !== undefined ? [true] as const : []),
         );
     }
 
@@ -5686,15 +5745,24 @@ export class PluginManager extends Plugin {
         });
     }
 
-    private pauseGovernedMemory(record: ConfirmedMemoryRecord): Promise<MemoryRecordActionResult> {
+    private pauseGovernedMemory(
+        record: ConfirmedMemoryRecord,
+        action?: MemoryGovernanceActionIdentity,
+        isCurrent?: () => boolean,
+    ): Promise<MemoryRecordActionResult> {
         return this.runGovernedMemoryLifecycleAction(
             record.id,
             "pause",
-            (coordinator) => coordinator.pauseUse({ claimId: record.id }),
+            (coordinator) => coordinator.pauseUse({ claimId: record.id, action, isCurrent }),
+            ...(action !== undefined ? [true] as const : []),
         );
     }
 
-    private resumeGovernedMemory(record: ConfirmedMemoryRecord): Promise<MemoryRecordActionResult> {
+    private resumeGovernedMemory(
+        record: ConfirmedMemoryRecord,
+        action?: MemoryGovernanceActionIdentity,
+        isCurrent?: () => boolean,
+    ): Promise<MemoryRecordActionResult> {
         return this.runGovernedMemoryLifecycleAction(
             record.id,
             "resume",
@@ -5702,12 +5770,17 @@ export class PluginManager extends Plugin {
                 claimId: record.id,
                 scopeAllowed: true,
                 dataBoundaryAllowed,
+                action,
+                isCurrent,
             }),
+            ...(action !== undefined ? [true] as const : []),
         );
     }
 
     private async applyGovernedMemoryDeviceWide(
         record: ConfirmedMemoryRecord,
+        action?: MemoryGovernanceActionIdentity,
+        isCurrent?: () => boolean,
     ): Promise<MemoryRecordActionResult> {
         if (this.getGovernedMemoryScopeAction(record.id) !== "apply_device_wide") {
             return this.governedMemoryActionFailure("apply_device_wide", "scope_action_unavailable");
@@ -5718,10 +5791,13 @@ export class PluginManager extends Plugin {
             confirmText: this.t("plugin.settings.memoryControlCenter.action.apply_device_wide"),
         });
         if (!confirmed) {
-            return {
+            const result: MemoryRecordActionResult = {
                 ok: false,
                 message: this.t("plugin.settings.memoryControlCenter.scope.cancelled"),
+                actionStatus: "cancelled",
+                reason: "cancelled",
             };
+            return action ? result : this.withoutMemoryActionReceipt(result);
         }
         return this.runGovernedMemoryLifecycleAction(
             record.id,
@@ -5733,12 +5809,17 @@ export class PluginManager extends Plugin {
                 explicitDeviceScope: true,
                 scopeAllowed: true,
                 dataBoundaryAllowed,
+                action,
+                isCurrent,
             }),
+            ...(action !== undefined ? [true] as const : []),
         );
     }
 
     private limitGovernedMemoryToCurrentVault(
         record: ConfirmedMemoryRecord,
+        action?: MemoryGovernanceActionIdentity,
+        isCurrent?: () => boolean,
     ): Promise<MemoryRecordActionResult> {
         if (this.getGovernedMemoryScopeAction(record.id) !== "limit_to_current_vault") {
             return Promise.resolve(this.governedMemoryActionFailure(
@@ -5762,39 +5843,61 @@ export class PluginManager extends Plugin {
                 partition: { kind: "vault", key: opaqueVaultKey },
                 scopeAllowed: true,
                 dataBoundaryAllowed,
+                action,
+                isCurrent,
             }),
+            ...(action !== undefined ? [true] as const : []),
         );
     }
 
-    private async forgetGovernedMemory(record: ConfirmedMemoryRecord): Promise<MemoryRecordActionResult> {
+    private async forgetGovernedMemory(
+        record: ConfirmedMemoryRecord,
+        action?: MemoryGovernanceActionIdentity,
+        isCurrent?: () => boolean,
+    ): Promise<MemoryRecordActionResult> {
         const confirmed = await confirmUserAction(this.app, {
             title: pageletT("pagelet.tab.memory.forgetConfirmTitle", this.getPageletLocale()),
             message: pageletT("pagelet.tab.memory.forgetConfirmMessage", this.getPageletLocale()),
             confirmText: pageletT("pagelet.tab.memory.forgetConfirm", this.getPageletLocale()),
         });
         if (!confirmed) {
-            return {
+            const result: MemoryRecordActionResult = {
                 ok: false,
                 message: pageletT("pagelet.tab.memory.forgetCancelled", this.getPageletLocale()),
+                actionStatus: "cancelled",
+                reason: "cancelled",
             };
+            return action ? result : this.withoutMemoryActionReceipt(result);
         }
         return this.runGovernedMemoryLifecycleAction(
             record.id,
             "forget",
-            (coordinator) => coordinator.forget({ claimId: record.id }),
+            (coordinator) => coordinator.forget({ claimId: record.id, action, isCurrent }),
+            ...(action !== undefined ? [true] as const : []),
         );
     }
 
-    private undoGovernedMemoryChange(change: PanelMemoryRecentChange): Promise<MemoryRecordActionResult> {
+    private undoGovernedMemoryChange(
+        change: PanelMemoryRecentChange,
+        action?: MemoryGovernanceActionIdentity,
+        isCurrent?: () => boolean,
+    ): Promise<MemoryRecordActionResult> {
         return this.runGovernedMemoryLifecycleAction(
             change.claimId,
             "undo",
-            (coordinator) => coordinator.undoRecentChange({ eventId: change.id }),
+            (coordinator) => coordinator.undoRecentChange({ eventId: change.id, action, isCurrent }),
+            ...(action !== undefined ? [true] as const : []),
         );
     }
 
-    private retryPendingForget(claimId: string): Promise<MemoryRecordActionResult> {
+    private retryPendingForget(
+        claimId: string,
+        isCurrent?: () => boolean,
+    ): Promise<MemoryRecordActionResult> {
         return this.serializeGovernedMemoryLifecycle(async () => {
+            if (isCurrent && !isCurrent()) {
+                return this.governedMemoryActionFailure("forget", "action_request_not_current");
+            }
             const coordinator = this.memoryGovernanceCoordinator;
             const repository = this.deviceMemoryGovernanceRepository;
             const vaultKey = this.memoryGovernanceOpaqueVaultKey;
@@ -5802,6 +5905,8 @@ export class PluginManager extends Plugin {
                 return {
                     ok: false,
                     message: this.t("plugin.settings.memoryControlCenter.pendingForget.retryUnavailable"),
+                    actionStatus: "failed",
+                    reason: "retry_unavailable",
                 };
             }
             const before = await repository.initialize();
@@ -5815,6 +5920,8 @@ export class PluginManager extends Plugin {
                 return {
                     ok: false,
                     message: this.t("plugin.settings.memoryControlCenter.pendingForget.retryUnavailable"),
+                    actionStatus: "failed",
+                    reason: "retry_unavailable",
                 };
             }
             const result = await coordinator.resumePendingForgets();
@@ -5829,11 +5936,17 @@ export class PluginManager extends Plugin {
                 return {
                     ok: false,
                     message: this.t("plugin.settings.memoryControlCenter.pendingForget.retryPending"),
+                    actionStatus: "pending",
+                    reason: "forget_retry_pending",
+                    retryScheduled: true,
+                    claimId,
                 };
             }
             return {
                 ok: true,
                 message: this.t("plugin.settings.memoryControlCenter.pendingForget.retryComplete"),
+                actionStatus: "applied",
+                claimId,
             };
         });
     }
@@ -5843,13 +5956,31 @@ export class PluginManager extends Plugin {
             | "limit_to_current_vault" | "forget" | "retry_forget" | "undo_recent_change",
         targetId: string,
         summary?: string,
+        options?: { expectedRevisionId?: string; eventId?: string },
     ): Promise<MemoryRecordActionResult> {
-        if (action === "retry_forget") return this.retryPendingForget(targetId);
+        return this.runMemoryControlCenterActionInternal(action, targetId, summary, options)
+            .then((result) => this.withoutMemoryActionReceipt(result));
+    }
+
+    private runMemoryControlCenterActionInternal(
+        action: "correct" | "pause_use" | "resume_use" | "apply_device_wide"
+            | "limit_to_current_vault" | "forget" | "retry_forget" | "undo_recent_change",
+        targetId: string,
+        summary?: string,
+        options?: { expectedRevisionId?: string; eventId?: string },
+        domainAction?: MemoryGovernanceActionIdentity,
+        isCurrent?: () => boolean,
+    ): Promise<MemoryRecordActionResult> {
+        if (action === "retry_forget") return this.retryPendingForget(targetId, isCurrent);
         if (action === "undo_recent_change") {
             const change = this.getMemoryGovernancePanelState().recentChanges
-                ?.find((candidate) => candidate.id === targetId);
+                ?.find((candidate) => options?.eventId
+                    ? candidate.id === options.eventId && candidate.claimId === targetId
+                    : candidate.id === targetId);
             return change
-                ? this.undoGovernedMemoryChange(change)
+                ? domainAction
+                    ? this.undoGovernedMemoryChange(change, domainAction, isCurrent)
+                    : this.undoGovernedMemoryChange(change)
                 : Promise.resolve(this.governedMemoryActionFailure("undo", "change_unavailable"));
         }
         const record = this.getMemoryGovernancePanelState().records
@@ -5860,12 +5991,86 @@ export class PluginManager extends Plugin {
                 : action === "resume_use" ? "resume" : action;
             return Promise.resolve(this.governedMemoryActionFailure(lifecycleAction, "claim_unavailable"));
         }
-        if (action === "correct") return this.correctGovernedMemory(record, summary ?? "");
-        if (action === "pause_use") return this.pauseGovernedMemory(record);
-        if (action === "resume_use") return this.resumeGovernedMemory(record);
-        if (action === "apply_device_wide") return this.applyGovernedMemoryDeviceWide(record);
-        if (action === "limit_to_current_vault") return this.limitGovernedMemoryToCurrentVault(record);
-        return this.forgetGovernedMemory(record);
+        if (action === "correct") {
+            if (!options?.expectedRevisionId) {
+                return Promise.resolve(this.governedMemoryActionFailure(
+                    "correct",
+                    "revision_unavailable",
+                ));
+            }
+            return domainAction
+                ? this.correctGovernedMemory(
+                    record,
+                    summary ?? "",
+                    options.expectedRevisionId,
+                    domainAction,
+                    isCurrent,
+                )
+                : this.correctGovernedMemory(record, summary ?? "", options.expectedRevisionId);
+        }
+        if (action === "pause_use") {
+            return domainAction
+                ? this.pauseGovernedMemory(record, domainAction, isCurrent)
+                : this.pauseGovernedMemory(record);
+        }
+        if (action === "resume_use") {
+            return domainAction
+                ? this.resumeGovernedMemory(record, domainAction, isCurrent)
+                : this.resumeGovernedMemory(record);
+        }
+        if (action === "apply_device_wide") {
+            return domainAction
+                ? this.applyGovernedMemoryDeviceWide(record, domainAction, isCurrent)
+                : this.applyGovernedMemoryDeviceWide(record);
+        }
+        if (action === "limit_to_current_vault") {
+            return domainAction
+                ? this.limitGovernedMemoryToCurrentVault(record, domainAction, isCurrent)
+                : this.limitGovernedMemoryToCurrentVault(record);
+        }
+        return domainAction
+            ? this.forgetGovernedMemory(record, domainAction, isCurrent)
+            : this.forgetGovernedMemory(record);
+    }
+
+    private withoutMemoryActionReceipt(result: MemoryRecordActionResult): MemoryRecordActionResult {
+        return {
+            ok: result.ok,
+            message: result.message,
+            ...(result.record ? { record: result.record } : {}),
+        };
+    }
+
+    private async executeMemoryGovernanceActionForPort(
+        input: import("./ai-services/memory-action-types").MemoryActionPortInput,
+    ): Promise<import("./pa/memory-action-port").MemoryActionGovernanceResult> {
+        if (input.action === "remember") {
+            return { status: "failed", reason: "action_not_routable" };
+        }
+        const actionIdentity = memoryActionIdentity(input);
+        const actionFingerprint = memoryActionFingerprint(input);
+        const result = await this.runMemoryControlCenterActionInternal(
+            input.action,
+            input.targetId!,
+            input.content,
+            input.expectedRevisionId || input.eventId ? {
+                ...(input.expectedRevisionId ? { expectedRevisionId: input.expectedRevisionId } : {}),
+                ...(input.eventId ? { eventId: input.eventId } : {}),
+            } : undefined,
+            { actionIdentity, actionFingerprint },
+            input.binding.isCurrent,
+        );
+        const status = result.actionStatus ?? (result.ok ? "applied" : "failed");
+        return {
+            status,
+            ...(result.reason ? { reason: result.reason } : {}),
+            ...(result.claimId ? { claimId: result.claimId } : {}),
+            ...(result.revisionId ? { revisionId: result.revisionId } : {}),
+            ...(result.eventId ? { eventId: result.eventId } : {}),
+            ...(result.queueItemId ? { queueItemId: result.queueItemId } : {}),
+            ...(result.undoExpiresAt ? { undoExpiresAt: result.undoExpiresAt } : {}),
+            ...(result.retryScheduled ? { retryScheduled: true } : {}),
+        };
     }
 
     getMemorySuppressionMarkerCount(): number {
@@ -6435,9 +6640,20 @@ export class PluginManager extends Plugin {
         operation: (
             coordinator: MemoryGovernanceCoordinator,
             dataBoundaryAllowed: boolean,
-        ) => Promise<{ ok: boolean; reason?: string; pending?: boolean }>,
+        ) => Promise<{
+            ok: boolean;
+            reason?: string;
+            pending?: boolean;
+            value?: {
+                claimId: string;
+                eventId: string;
+                undoExpiresAt?: string;
+                superseded?: boolean;
+            };
+        }>,
+        includeActionReceipt = false,
     ): Promise<MemoryRecordActionResult> {
-        return this.serializeGovernedMemoryLifecycle(async () => {
+        const result: Promise<MemoryRecordActionResult> = this.serializeGovernedMemoryLifecycle(async () => {
             const coordinator = this.memoryGovernanceCoordinator;
             if (!coordinator) return this.governedMemoryActionFailure(action, "coordinator_unavailable");
             const boundary = await this.readGovernedMemoryActionBoundary(claimId);
@@ -6465,38 +6681,96 @@ export class PluginManager extends Plugin {
                 );
             }
 
-            if (action === "correct" || action === "undo"
-                || action === "apply_device_wide" || action === "limit_to_current_vault") {
-                const recovery = await this.memoryProfileProjectionWorker?.resumePending();
-                if (recovery && recovery.pending.length > 0) {
+            const projectsProfile = action === "correct" || action === "undo"
+                || action === "apply_device_wide" || action === "limit_to_current_vault";
+            let projectionPending = false;
+            let committedState: DeviceMemoryGovernanceStateV1 | undefined;
+            if (projectsProfile) {
+                try {
+                    const recovery = await this.memoryProfileProjectionWorker?.resumePending();
+                    projectionPending = recovery?.pending.includes(claimId) === true;
+                } catch (error) {
+                    projectionPending = true;
+                    this.log("Memory Profile projection failed after lifecycle commit", {
+                        action,
+                        claimId,
+                        error,
+                    });
+                }
+                try {
+                    committedState = await this.deviceMemoryGovernanceRepository?.initialize();
+                    projectionPending = projectionPending || committedState?.pendingOperations.some((operation) => (
+                        operation.kind === "profile_projection"
+                        && operation.claimId === claimId
+                        && operation.state === "pending"
+                    )) === true;
+                } catch (error) {
+                    this.log("Memory Profile projection state is unavailable after lifecycle commit", {
+                        action,
+                        claimId,
+                        error,
+                    });
+                }
+                if (projectionPending) {
                     this.log("Memory Profile projection remains pending after lifecycle action", {
                         action,
                         claimId,
-                        count: recovery.pending.length,
                     });
                     this.scheduleMemoryProfileProjectionRetry();
-                    if (action === "undo" && recovery.pending.includes(claimId)) {
-                        await this.refreshGovernedMemoryActionState();
-                        await this.notifySettingsChanged();
-                        return this.governedMemoryActionFailure(action, "undo_cleanup_pending", true);
-                    }
-                    if (action === "apply_device_wide" && recovery.pending.includes(claimId)) {
-                        await this.refreshGovernedMemoryActionState();
-                        await this.notifySettingsChanged();
-                        return this.governedMemoryActionFailure(action, "scope_cleanup_pending", true);
-                    }
                 }
             }
-            await this.refreshGovernedMemoryActionState();
-            await this.notifySettingsChanged();
-            const nextRecord = this.getMemoryGovernancePanelState().records
-                .find((record) => record.id === claimId);
+            try {
+                await this.refreshGovernedMemoryActionState();
+                await this.notifySettingsChanged();
+            } catch (error) {
+                this.log("Governed Memory lifecycle action committed before UI state refresh", {
+                    action,
+                    claimId,
+                    error,
+                });
+            }
+            let nextRecord: PanelMemoryGovernanceRecord | undefined;
+            try {
+                nextRecord = this.getMemoryGovernancePanelState().records
+                    .find((record) => record.id === claimId) as PanelMemoryGovernanceRecord | undefined;
+            } catch {
+                nextRecord = undefined;
+            }
+            const committedRevisionId = committedState?.claims
+                .find((claim) => claim.id === claimId)
+                ?.activeRevisionId;
+            const receiptDetails = result.value ? {
+                claimId: result.value.claimId,
+                eventId: result.value.eventId,
+                ...(result.value.undoExpiresAt ? { undoExpiresAt: result.value.undoExpiresAt } : {}),
+                ...(committedRevisionId || nextRecord?.revisionId
+                    ? { revisionId: committedRevisionId ?? nextRecord?.revisionId }
+                    : {}),
+            } : nextRecord?.revisionId ? { revisionId: nextRecord.revisionId } : {};
+            if (projectionPending) {
+                const reason = action === "undo"
+                    ? "undo_cleanup_pending"
+                    : action === "apply_device_wide" || action === "limit_to_current_vault"
+                        ? "scope_cleanup_pending"
+                        : "profile_projection_pending";
+                return {
+                    ...this.governedMemoryActionFailure(action, reason, true),
+                    ...receiptDetails,
+                    ...(nextRecord ? { record: cloneSerializable(nextRecord) } : {}),
+                };
+            }
             return {
                 ok: true,
                 message: this.governedMemoryActionSuccessMessage(action),
+                actionStatus: result.value?.superseded === true ? "failed" : "applied",
+                ...(result.value?.superseded === true ? { reason: "action_superseded" } : {}),
+                ...receiptDetails,
                 ...(nextRecord ? { record: cloneSerializable(nextRecord) } : {}),
             };
         });
+        return includeActionReceipt
+            ? result
+            : result.then((value) => this.withoutMemoryActionReceipt(value));
     }
 
     private serializeGovernedMemoryLifecycle<T>(operation: () => Promise<T>): Promise<T> {
@@ -6724,6 +6998,9 @@ export class PluginManager extends Plugin {
                             ? this.t("plugin.settings.memoryControlCenter.scope.cleanupPending")
                         : pageletT("pagelet.tab.memory.actionUnavailable", this.getPageletLocale())
                 : pageletT("pagelet.tab.memory.actionUnavailable", this.getPageletLocale()),
+            actionStatus: pending ? "pending" : "failed",
+            reason,
+            retryScheduled: pending,
         };
     }
 
@@ -7231,7 +7508,7 @@ export class PluginManager extends Plugin {
     private createAiServiceHost(surface: RetrievalDiagnosticSurface): AiServiceHost {
         const getOperationsAgentEnabled = () => this.isOperationsAgentEnabled;
         const retrievalDiagnostics = this.retrievalDiagnostics.bindSurface(surface);
-        return {
+        const host: AiServiceHost = {
             app: this.app,
             settings: this.settings,
             log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
@@ -7273,6 +7550,69 @@ export class PluginManager extends Plugin {
                     return this.vss.getPathEvidenceGenerations(paths, opts);
                 },
             },
+            insightRead: createInsightReadPort({
+                isRuntimeCurrent: () => !this.unloading,
+                getVaultInsights: () => {
+                    const enabled = this.canRunMemoryExtractionRuntime()
+                        && this.settings.memoryExtractionIncludeVaultInsights === true;
+                    const scheduler = this.memoryExtractionScheduler;
+                    const isSourceCurrent = this.captureVaultInsightsSourceValidity();
+                    return {
+                        status: enabled ? (scheduler?.getVaultInsightsStatus() ?? "not_loaded") : "disabled",
+                        snapshot: enabled ? (scheduler?.getVaultInsightsSnapshot()?.snapshot ?? null) : null,
+                        boundary: this.getMemoryDataBoundaryFingerprint(),
+                        sourceIdentity: this.vaultInsightsSource ?? undefined,
+                        isSourceCurrent,
+                    };
+                },
+                listSavedInsights: () => this.listSavedInsights(),
+                getBoundary: () => this.getMemoryDataBoundaryFingerprint(),
+                isPathAllowed: path => this.isDataBoundaryAllowedPath(path),
+                getSourceRevision: path => {
+                    const file = this.app.vault.getAbstractFileByPath(path);
+                    return file instanceof TFile && this.isDataBoundaryAllowedFile(file)
+                        ? { identity: file, mtime: file.stat.mtime, ctime: file.stat.ctime, size: file.stat.size }
+                        : null;
+                },
+            }),
+            insightActions: this.getInsightActionPort(),
+            memoryManagement: createMemoryManagementReadPort({
+                isRuntimeCurrent: () => !this.unloading,
+                captureLegacySourceValidity: () => this.captureMemoryManagementLegacySourceValidity(),
+                getSettings: () => ({
+                    memoryEnabled: this.settings.memoryEnabled === true,
+                    learningEnabled: this.canRunMemoryExtractionRuntime(),
+                    learningStatus: this.canRunMemoryExtractionRuntime() ? "enabled" : "paused",
+                    existingUnderstandingAvailable: this.settings.memoryEnabled === true,
+                }),
+                getControlCenterSnapshot: () => this.getMemoryControlCenterSnapshot(),
+                getGovernedState: () => this.getGovernedMemoryProjectionSnapshot()?.state ?? null,
+                getCacheTarget: () => this.deviceMemoryCacheRefreshTargetSequence,
+                getVaultKey: () => this.memoryGovernanceOpaqueVaultKey,
+                getDataBoundaryFingerprint: () => this.getMemoryDataBoundaryFingerprint(),
+                isDataBoundaryAllowedPath: path => this.isMemoryProviderPathAllowed(path),
+                getHistoryManager: () => this.chatHistoryManager,
+                getWritingVersions: () => this.writingVersions,
+            }),
+            memoryActions: createMemoryActionPort({
+                isRuntimeCurrent: () => !this.unloading,
+                getSettings: () => ({
+                    memoryEnabled: this.settings.memoryEnabled === true,
+                    learningEnabled: this.canRunMemoryExtractionRuntime(),
+                }),
+                getAdmissionCoordinator: () => this.memoryAdmissionCoordinator,
+                getRepository: () => this.deviceMemoryGovernanceRepository,
+                getProfileProjectionWorker: () => this.memoryProfileProjectionWorker,
+                captureTypeABaseline: () => this.captureGovernedTypeAAdmissionBaseline(),
+                getDataBoundaryFingerprint: () => this.getMemoryDataBoundaryFingerprint(),
+                executeGovernedAction: input => this.executeMemoryGovernanceActionForPort(input),
+                refreshState: async () => {
+                    await this.refreshGovernedMemoryActionState();
+                    await this.notifySettingsChanged();
+                },
+                scheduleProfileProjectionRetry: () => this.scheduleMemoryProfileProjectionRetry(),
+                log: (message, metadata) => this.log(message, metadata),
+            }),
             getMemoryEvidenceEpoch: () => this.getMemoryGraphTopologyEpoch("chat"),
             getGraphBoundarySnapshotSource: () => this.createMemoryGraphBoundarySnapshotSource("chat"),
             isDataBoundaryAllowedPath: (path) => this.isMemoryProviderPathAllowed(path),
@@ -7284,6 +7624,12 @@ export class PluginManager extends Plugin {
             ),
             agentRunCoordinator: this.agentRunCoordinator,
         };
+        host.revalidateVaultObservation = (evidence, options) => revalidateVaultObservationFromApp(
+            host,
+            evidence,
+            options,
+        );
+        return host;
     }
 
     private ensureMemoryReadyForChat(
@@ -8352,6 +8698,8 @@ export class PluginManager extends Plugin {
                 schemas: context.schemas,
                 toolDefinitions: context.toolDefinitions,
                 providerRequestScope: context.providerRequestScope,
+                bindVaultObservationProjection: context.bindVaultObservationProjection,
+                recordPromptProjection: context.recordPromptProjection,
                 createChatModel: (temperature, requestOptions) => (
                     this.createPageletDeepDiscoverChatModel(
                         aiUtils,
@@ -9945,6 +10293,37 @@ export class PluginManager extends Plugin {
             this.manifest?.id ?? 'personal-assistant');
     }
 
+    private captureMemoryManagementLegacySourceValidity(): (() => boolean) | null {
+        // Governed records use commitSequence admission. Only a legacy Control
+        // Center source needs the host's non-serializable legacy source receipt.
+        if (this.getGovernedMemoryProjectionSnapshot()
+            || this.getMemoryGovernanceUiMode() !== "legacy_threshold") return null;
+        const sourceIdentity = this.legacyProfileSourceIdentity;
+        const mutationCount = this.legacyProfileMutationCount;
+        const scope = this.getLegacyProfileScope();
+        const boundary = this.getMemoryDataBoundaryFingerprint();
+        const originalSnapshot = this.memoryExtractionScheduler?.getUserProfileSnapshot?.()
+            ?? this.legacyProfileContext?.snapshot;
+        const originalProfileIdentity = originalSnapshot
+            ? JSON.stringify(originalSnapshot.records) : undefined;
+        return () => {
+            if (this.unloading
+                || this.legacyProfileSourceIdentity !== sourceIdentity
+                || this.legacyProfileMutationCount !== mutationCount
+                || this.getLegacyProfileScope() !== scope
+                || this.getMemoryDataBoundaryFingerprint() !== boundary
+                || this.getGovernedMemoryProjectionSnapshot()) return false;
+            if (originalProfileIdentity === undefined) return true;
+            const latestSnapshot = this.memoryExtractionScheduler?.getUserProfileSnapshot?.()
+                ?? this.legacyProfileContext?.snapshot;
+            if (latestSnapshot === undefined) {
+                return this.legacyProfileRead?.scope === scope;
+            }
+            return (latestSnapshot ? JSON.stringify(latestSnapshot.records) : undefined)
+                === originalProfileIdentity;
+        };
+    }
+
     private withMemoryContextSourceGuard(context: PaAgentInjectedContext, guard: () => boolean): PaAgentInjectedContext {
         // Keep a callable host receipt without copying it into ordinary metadata
         // spreads or serializable prompt/history objects.
@@ -10241,6 +10620,7 @@ export class PluginManager extends Plugin {
                         );
                 case "conversation":
                 case "explicit_setting":
+                case "host_user_request":
                     return true;
                 default:
                     return false;
@@ -10475,6 +10855,7 @@ export class PluginManager extends Plugin {
         return {
             id: entry.claimId,
             claimId: entry.claimId,
+            ...(entry.revisionId ? { revisionId: entry.revisionId } : {}),
             ...(profileLink?.target.kind === "type_a_profile"
                 ? { profileRecordId: profileLink.target.profileRecordId }
                 : {}),
@@ -10505,6 +10886,7 @@ export class PluginManager extends Plugin {
                     }));
                 }
                 if (provenance.kind === "explicit_setting") return [{ ...provenance }];
+                if (provenance.kind === "host_user_request") return [{ ...provenance }];
                 return [{
                     ...provenance,
                     representativeSourceRefs: provenance.representativeSourceRefs.map(
@@ -11395,6 +11777,7 @@ export class PluginManager extends Plugin {
                 () => this.settings.reviewQueue.items,
                 (items) => { this.settings.reviewQueue.items = items; },
                 state.items,
+                true,
             ),
         );
         this.memoryGovernanceStore = null;
@@ -11414,6 +11797,7 @@ export class PluginManager extends Plugin {
                     () => this.settings.reviewQueue.items,
                     (items) => { this.settings.reviewQueue.items = items; },
                     state.items,
+                    true,
                 ),
             );
         }
@@ -11778,9 +12162,13 @@ export class PluginManager extends Plugin {
         read: () => T,
         write: (value: T) => void,
         next: T,
+        requireCommit = false,
     ): Promise<void> {
         const saved = await this.enqueueSettingsWrite(async () => {
-            if (this.unloading) return false;
+            if (this.unloading) {
+                if (requireCommit) throw new Error("Plugin is unloading");
+                return false;
+            }
             const previous = read();
             write(next);
             try {
@@ -11791,6 +12179,7 @@ export class PluginManager extends Plugin {
                 throw error;
             }
         });
+        if (!saved && requireCommit) throw new Error("Settings write was not committed");
         if (saved) await this.notifySettingsChanged();
     }
 
@@ -11844,6 +12233,7 @@ export class PluginManager extends Plugin {
                 () => this.settings.reviewQueue.items,
                 (next) => { this.settings.reviewQueue.items = next; },
                 state.items,
+                true,
             ),
         );
         const repository = this.deviceMemoryGovernanceRepository;
@@ -12278,11 +12668,11 @@ export class PluginManager extends Plugin {
     }
 
     /**
-     * Effective Operations availability: build gate plus persisted user opt-in.
-     * Eligible Chat turns may stage the four bounded actions for inline review.
+     * Effective Operations host availability. The persisted legacy field remains
+     * private compatibility data and no longer gates action admission.
      */
     get isOperationsAgentEnabled(): boolean {
-        return this.settings.operationsAgentEnabled === true;
+        return !this.unloading;
     }
 
     /**

@@ -598,6 +598,7 @@ function createWritableChatHistoryManager(options: {
         initialize: jest.fn(async () => undefined),
         isAvailable: jest.fn(() => true),
         getActiveConversationId: jest.fn(async () => activeConversationId),
+        reserveConversationId: jest.fn(() => createdConversation.id),
         startConversation: jest.fn(async () => {
             activeConversationId = createdConversation.id;
             return createdConversation;

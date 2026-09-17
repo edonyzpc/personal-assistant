@@ -57,6 +57,8 @@ interface RequiredCapabilityRuntimeState {
     answerCompletionLedger: AnswerCompletionLedger;
     allowWritingContextSchemaRepair: boolean;
     writingContextSchemaRepairAttempted: boolean;
+    allowManagedActionAfterDuplicateNoteRead: boolean;
+    managedActionDuplicateRecoveryAttempted: boolean;
 }
 
 export interface RequiredCapabilityClassifier {
@@ -83,6 +85,8 @@ export function createRequiredCapabilityHostPolicy(
         classification?: RequiredCapabilityClassification;
         /** The native host exports this preparation tool; one schema correction is allowed. */
         allowWritingContextSchemaRepair?: boolean;
+        /** One bounded chance to use an already-bound managed action after duplicate note reads. */
+        allowManagedActionAfterDuplicateNoteRead?: boolean;
     },
 ): {
     hostPolicy: PaAgentHostPolicy;
@@ -104,6 +108,8 @@ export function createRequiredCapabilityHostPolicy(
         answerCompletionLedger: createAnswerCompletionLedger(),
         allowWritingContextSchemaRepair: options.allowWritingContextSchemaRepair === true,
         writingContextSchemaRepairAttempted: false,
+        allowManagedActionAfterDuplicateNoteRead: options.allowManagedActionAfterDuplicateNoteRead === true,
+        managedActionDuplicateRecoveryAttempted: false,
     };
 
     const hostPolicy: PaAgentHostPolicy = {
@@ -274,11 +280,20 @@ function decideAfterTurn(
 
     const facts = deriveAnswerCompletionTurnFacts(summary);
     recordUsedCapabilities(summary, state);
+    const priorAppliedInsightActions = state.answerCompletionLedger.appliedInsightActionReceipts.length;
     recordAnswerCompletionTurn(state.answerCompletionLedger, summary, facts);
 
     const failedRequiredCapabilities = getFailedRequiredCapabilityNames(summary, state);
     if (failedRequiredCapabilities.length > 0) {
         return handleFailedRequired(summary, state, facts, failedRequiredCapabilities);
+    }
+
+    if (!facts.hasFinalText
+        && state.answerCompletionLedger.appliedInsightActionReceipts.length > priorAppliedInsightActions) {
+        return {
+            action: "continue", reason: "needs_follow_up",
+            runtimeInstruction: `The host has already applied this Saved Insight action: ${state.answerCompletionLedger.appliedInsightActionReceipts[state.answerCompletionLedger.appliedInsightActionReceipts.length - 1]}. Report the actual result now. Do not repeat the same action or source reads; a later turn having no new tools does not undo this completed action.`,
+        };
     }
 
     const observations = summary.toolResults.filter(result => !(result.toolName === 'declare_source_scope'
@@ -291,6 +306,19 @@ function decideAfterTurn(
         state.writingContextSchemaRepairAttempted = true;
         return { action: 'continue', reason: 'tool_results_ready', runtimeInstruction:
             'The writing context was not prepared because its arguments failed schema validation. You may correct the arguments once using the existing allowed tools and source scope. When known, scene must be an object with writingTask, purpose, audience and domain; omit scene when unknown, never use a JSON-encoded string. Wait for a successful context result before presenting a work.' };
+    }
+
+    if (state.allowManagedActionAfterDuplicateNoteRead
+        && !state.managedActionDuplicateRecoveryAttempted
+        && facts.hasOnlyDuplicateOrNoopResults
+        && facts.duplicateOrNoopToolNames.length > 0
+        && facts.duplicateOrNoopToolNames.every(name => name === "read_note")
+        && state.answerCompletionLedger.successfulEvidenceTools.has("read_note")) {
+        state.managedActionDuplicateRecoveryAttempted = true;
+        return {
+            action: "continue", reason: "needs_follow_up",
+            runtimeInstruction: "The requested note content and source versions were already gathered in this run. Do not reread those notes. If the current user explicitly requested a bound managed action, call that action now using the existing source observations; otherwise answer from the evidence. Do not claim an action succeeded without its actual result.",
+        };
     }
 
     const completionDecision = decideAnswerCompletion({

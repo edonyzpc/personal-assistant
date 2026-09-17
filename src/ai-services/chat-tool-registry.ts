@@ -73,6 +73,18 @@ export function enforceToolOutputBudget(
     definition: ChatToolRegistryDefinition,
     result: ChatToolResult<unknown>,
 ): ChatToolResult<unknown> {
+    // Snippet search packs complete pages itself and fails closed when metadata
+    // or its first match cannot fit. Generic array trimming could remove a match
+    // while leaving a cursor that claims the page made progress.
+    if (definition.name === "search_vault_snippets") {
+        const serialized = JSON.stringify(result.content);
+        if (serialized !== undefined && serialized.length > definition.outputBudgetChars) {
+            throw new Error(
+                `search_vault_snippets result exceeds its output budget: ${serialized.length} > ${definition.outputBudgetChars}.`,
+            );
+        }
+        return result;
+    }
     if (!result.ok || !result.content || !isObsidianOperationsV1AToolName(definition.name)) {
         return result;
     }
@@ -228,7 +240,25 @@ function createMinimalBudgetedV1AContent(tool: ObsidianOperationsV1AToolName, co
             kind: "vault-snippets",
             query: typeof record.query === "string" ? record.query : "",
             scope: typeof record.scope === "string" ? record.scope : undefined,
+            part: "all",
+            caseSensitive: false,
             matches: [],
+            matchCount: typeof record.matchCount === "number" ? record.matchCount : 0,
+            matchCountKind: "lower-bound",
+            page: {
+                startIndex: 0,
+                returnedCount: 0,
+                requestedLimit: 0,
+                hasMore: false,
+            },
+            coverage: {
+                state: "partial",
+                scannedPermittedNotes: 0,
+                evaluatedCandidates: 0,
+                readNotes: 0,
+                readBytes: 0,
+                evaluatedBytes: 0,
+            },
             unsupportedScope: record.unsupportedScope === true ? true : undefined,
             missingScope: record.missingScope === true ? true : undefined,
             scannedFiles: typeof record.scannedFiles === "number" ? record.scannedFiles : undefined,

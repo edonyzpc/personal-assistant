@@ -3,15 +3,16 @@ import {
     type CurrentNoteContextInput,
     type CurrentNoteContextOutput,
     createInspectObsidianNoteTool,
+    createReadNoteTool,
     type InspectObsidianNoteInput,
     type InspectObsidianNoteOutput,
+    type ReadNoteInput,
+    type ReadNoteOutput,
 } from "../../ai-services/chat-tools";
+import type { TFile } from "obsidian";
+import type { AiServiceHost } from "../../ai-services/AiServiceHost";
 import { validateCurrentNoteContextInput } from "../../ai-services/chat-tool-guards";
 import { throwIfAborted } from "../../ai-services/chat-utils";
-import {
-    parseMarkdownStructure,
-    truncate,
-} from "../../ai-services/chat-tool-execution-helpers";
 import { noteTitleFromPath } from "../../pa/helpers";
 import { normalizeSnapshotPath } from "./anchor-snapshot";
 import type { PageletAnchorSnapshot } from "./types";
@@ -127,36 +128,104 @@ export function createAnchorBoundInspectNoteTool(
                         error: "Requested Markdown note was not available in the permitted vault scope.",
                     };
                 }
-                const parsed = parseMarkdownStructure(anchor.content);
-                const fullText = truncate(anchor.content, 8_000);
-                const content = {
-                    kind: "note-structure" as const,
-                    path: anchor.path,
-                    title: noteTitleFromPath(anchor.path),
-                    headings: parsed.headings,
-                    tasks: parsed.tasks,
-                    callouts: parsed.callouts,
-                    wikilinks: parsed.wikilinks,
-                    embeds: parsed.embeds,
-                    wikilinkTargets: parsed.wikilinkTargets,
-                    embedTargets: parsed.embedTargets,
-                    outgoingLinks: [...new Set([...parsed.wikilinks, ...parsed.embeds])],
-                    fullText,
-                    fullTextTruncated: fullText.length < anchor.content.length,
-                    contentHash: anchor.contentHash,
-                    mtime: anchor.mtime,
-                } as InspectObsidianNoteOutput;
-                return {
-                    ok: true,
-                    tool: "inspect_obsidian_note",
-                    inputSummary: anchor.path,
-                    content,
-                    sources: [{ path: anchor.path }],
-                };
+                return await base.execute(
+                    { ...input, path: anchor.path },
+                    { ...context, host: createFrozenAnchorHost(anchor, context.host) },
+                );
             }
             return await base.execute(input, context);
         },
     };
+}
+
+export function createAnchorBoundReadNoteTool(
+    anchor: PageletAnchorSnapshot,
+    isPathAllowed: (path: string) => boolean,
+): ChatToolDefinition<ReadNoteInput, ReadNoteOutput> {
+    const base = createReadNoteTool({ isPathAllowed });
+    const frozenFile = {
+        path: anchor.path,
+        name: anchor.path.split("/").pop(),
+        basename: anchor.path.split("/").pop()?.replace(/\.md$/, ""),
+        extension: "md",
+        stat: { ctime: anchor.capturedAt, mtime: anchor.mtime, size: anchor.size },
+    };
+    return {
+        ...base,
+        description: "Read the frozen anchor or an explicit permitted Markdown note path with bounded paging.",
+        plannerGuidance: [
+            "The anchor path always reads the immutable version captured for this Pagelet run.",
+            "Use an explicit vault-relative .md path for non-anchor notes; active workspace focus never selects the target.",
+            "Continue with nextCursor and respect part/range budgets instead of guessing offsets.",
+        ],
+        statusMessage: input => `Reading note: ${input.path}`,
+        execute: async (input, context) => {
+            throwIfAborted(context.signal);
+            const requestedPath = normalizeSnapshotPath(input.path);
+            if (requestedPath !== anchor.path) {
+                return await base.execute(input, context);
+            }
+            if (!safePathAllowed(isPathAllowed, anchor.path)) {
+                return {
+                    ok: false,
+                    tool: "read_note",
+                    inputSummary: "excluded path",
+                    content: null,
+                    sources: [],
+                    error: "Requested Markdown note was not available in the permitted vault scope.",
+                };
+            }
+            return await base.execute(input, {
+                ...context,
+                host: createFrozenAnchorHost(anchor, context.host, frozenFile),
+            });
+        },
+    };
+}
+
+function createFrozenAnchorHost(
+    anchor: PageletAnchorSnapshot,
+    host: AiServiceHost,
+    frozenFile?: { path: string; name?: string; basename?: string; extension: string; stat?: unknown },
+): AiServiceHost {
+    const boundFile = frozenFile ?? {
+        path: anchor.path,
+        name: anchor.path.split("/").pop(),
+        basename: anchor.path.split("/").pop()?.replace(/\.md$/, ""),
+        extension: "md",
+        stat: { ctime: anchor.capturedAt, mtime: anchor.mtime, size: anchor.size },
+    };
+    const vault = host.app.vault as {
+        getAbstractFileByPath?: (path: string) => unknown;
+        cachedRead?: (file: unknown) => Promise<string>;
+    };
+    return {
+        ...host,
+        app: {
+            ...host.app,
+            vault: {
+                ...vault,
+                getAbstractFileByPath: (path: string) => (
+                    path === anchor.path ? boundFile : vault.getAbstractFileByPath?.(path) ?? null
+                ),
+                cachedRead: (file: unknown) => {
+                    if ((file as { path?: unknown }).path === anchor.path) {
+                        return Promise.resolve(anchor.content);
+                    }
+                    if (!vault.cachedRead) return Promise.reject(new Error("Vault cachedRead is unavailable."));
+                    return vault.cachedRead(file);
+                },
+            },
+            metadataCache: {
+                ...host.app.metadataCache,
+                getFileCache: (file: unknown) => (
+                    (file as TFile).path === anchor.path
+                        ? null
+                        : host.app.metadataCache.getFileCache?.(file as TFile) ?? null
+                ),
+            },
+        },
+    } as AiServiceHost;
 }
 
 function normalizeAnchorToolInput(raw: unknown): CurrentNoteContextInput {

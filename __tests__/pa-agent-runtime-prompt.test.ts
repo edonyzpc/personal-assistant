@@ -63,6 +63,15 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(guidance).not.toContain("replace_selection");
     });
 
+    it("does not deny guarded Saved Insight actions when note-writing tools are absent", () => {
+        const guidance = createOperationsPromptGuidance([{ name: "manage_saved_insight" }]);
+
+        expect(guidance).toContain("No vault-note writing capabilities are bound");
+        expect(guidance).toContain("manage_saved_insight");
+        expect(guidance).toContain("reuse source observations already gathered");
+        expect(guidance).not.toContain("No writable capabilities are bound");
+    });
+
     it("instructs the model to respond in the user's input language by default (#1.1)", () => {
         // #1.1 motivation: Chinese users were getting English replies because the prompt had
         // no language-match rule. The "most recent input" wording covers the case where the

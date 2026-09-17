@@ -594,6 +594,46 @@ describe("PA Agent required capability HostPolicy", () => {
         });
     });
 
+    it("allows one managed-action continuation after duplicate note reads", async () => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Save the source-backed insight.",
+            availableCapabilities: new Set(),
+            classification: { items: [] },
+            allowManagedActionAfterDuplicateNoteRead: true,
+        });
+        await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready", toolResults: [createToolResult("read_note")],
+        }));
+
+        expect(await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready", toolResults: [createDuplicateToolResult("read_note")],
+        }))).toMatchObject({
+            action: "continue", reason: "needs_follow_up",
+            runtimeInstruction: expect.stringContaining("call that action now"),
+        });
+        expect(await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready", toolResults: [createDuplicateToolResult("read_note")],
+        }))).toMatchObject({ action: "continue", toolMode: "final_answer_only" });
+    });
+
+    it("instructs the answer to report a host-applied Saved Insight action", async () => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Save this insight.", availableCapabilities: new Set(), classification: { items: [] },
+        });
+        const actionResult = createToolResult("manage_saved_insight", {
+            promptText: JSON.stringify({ tool: "manage_saved_insight", observation: {
+                kind: "insight-action", action: "save", status: "applied", insightId: "ins-test",
+            } }),
+        });
+
+        expect(await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready", toolResults: [actionResult],
+        }))).toMatchObject({
+            action: "continue", reason: "needs_follow_up",
+            runtimeInstruction: expect.stringContaining('"insightId":"ins-test"'),
+        });
+    });
+
     it("treats successful note inspection as satisfying current-note requirements", async () => {
         const policy = createRequiredCapabilityHostPolicy({
             userInput: "Inspect the current note structure.",
@@ -1132,7 +1172,7 @@ describe("PA Agent required capability HostPolicy", () => {
         }
     });
 
-    it.each(["absent", "allowed", "blocked"])("preserves only an already allowed scope control in Memory follow-up: %s", async state => {
+    it.each(["absent", "allowed", "blocked"])("does not expand the allowed set in Memory follow-up: %s", async state => {
         const policy = createRequiredCapabilityHostPolicy({
             userInput: "Check notes, then narrow the source.",
             availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
@@ -1148,14 +1188,42 @@ describe("PA Agent required capability HostPolicy", () => {
         }));
         expect(decision.action).toBe("continue");
         if (decision.action !== "continue") throw new Error("Expected follow-up");
-        expect([...decision.controlSnapshot!.allowedToolNames!]).toEqual([
-            "search_vault_snippets", ...(state === "allowed" ? ["declare_source_scope"] : []),
-        ]);
+        expect([...decision.controlSnapshot!.allowedToolNames!].sort()).toEqual([
+            "load_skill",
+            "search_memory",
+            "webSearch",
+            ...(state === "allowed" ? ["declare_source_scope"] : []),
+        ].sort());
         expect(decision.controlSnapshot!.budgetState.followUpRoundCount).toBe(1);
         expect(decision.controlSnapshot!.blockedToolNames?.has("declare_source_scope")).toBe(state === "blocked");
     });
 
-    it("opens notes follow-up tools only when Memory explicitly requests snippet follow-up", async () => {
+    it("keeps Memory follow-up unconstrained when the previous snapshot had no allowlist", async () => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Check my notes for Zhou Zhi.",
+            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
+        });
+        const decision = await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready",
+            toolResults: [createToolResult("search_memory", {
+                metadata: { needsSnippetFollowup: true },
+            })],
+        }));
+
+        expect(decision).toMatchObject({
+            action: "continue",
+            reason: "needs_follow_up",
+            controlSnapshot: {
+                exposureMode: "follow-up",
+                sourceScope: "notes",
+            },
+        });
+        if (decision.action === "continue") {
+            expect(decision.controlSnapshot!.allowedToolNames).toBeUndefined();
+        }
+    });
+
+    it("keeps an explicit empty allowlist empty in Memory follow-up", async () => {
         const policy = createRequiredCapabilityHostPolicy({
             userInput: "Check my notes for Zhou Zhi.",
             availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
@@ -1166,9 +1234,57 @@ describe("PA Agent required capability HostPolicy", () => {
                 metadata: { needsSnippetFollowup: true },
             })],
             controlSnapshot: createAgentControlSnapshot({
-                exposureMode: "narrowed-required",
+                exposureMode: "source-scoped",
+                sourceScope: "notes",
+                allowedToolNames: new Set<string>(),
+            }),
+        }));
+
+        expect(decision.action).toBe("continue");
+        if (decision.action !== "continue") throw new Error("Expected follow-up");
+        expect(decision.controlSnapshot!.allowedToolNames).toBeDefined();
+        expect(decision.controlSnapshot!.allowedToolNames!.size).toBe(0);
+    });
+
+    it("removes a blocked follow-up tool from the effective Memory follow-up allowlist", async () => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Check my notes for Zhou Zhi.",
+            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
+        });
+        const decision = await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready",
+            toolResults: [createToolResult("search_memory", {
+                metadata: { needsSnippetFollowup: true },
+            })],
+            controlSnapshot: createAgentControlSnapshot({
+                exposureMode: "source-scoped",
+                sourceScope: "notes",
+                allowedToolNames: new Set(["search_memory", "search_vault_snippets"]),
+                blockedToolNames: new Set(["search_vault_snippets"]),
+            }),
+        }));
+
+        expect(decision.action).toBe("continue");
+        if (decision.action !== "continue") throw new Error("Expected follow-up");
+        expect([...decision.controlSnapshot!.allowedToolNames!]).toEqual(["search_memory"]);
+        expect(decision.controlSnapshot!.blockedToolNames?.has("search_vault_snippets")).toBe(true);
+    });
+
+    it("keeps a final-only Memory follow-up constrained to the final answer", async () => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Check my notes for Zhou Zhi.",
+            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
+        });
+        const decision = await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready",
+            toolResults: [createToolResult("search_memory", {
+                metadata: { needsSnippetFollowup: true },
+            })],
+            controlSnapshot: createAgentControlSnapshot({
+                exposureMode: "final-only",
                 sourceScope: "notes",
                 allowedToolNames: new Set(["search_memory"]),
+                toolMode: "final_answer_only",
             }),
         }));
 
@@ -1177,12 +1293,14 @@ describe("PA Agent required capability HostPolicy", () => {
             reason: "needs_follow_up",
             runtimeInstruction: expect.stringContaining("targeted note follow-up"),
             controlSnapshot: {
-                exposureMode: "follow-up",
-                sourceScope: "notes",
+                exposureMode: "final-only",
+                sourceScope: "none",
+                toolMode: "final_answer_only",
             },
         });
         if (decision.action === "continue") {
-            expect([...decision.controlSnapshot!.allowedToolNames!]).toEqual(["search_vault_snippets"]);
+            expect(decision.controlSnapshot!.allowedToolNames).toBeDefined();
+            expect(decision.controlSnapshot!.allowedToolNames!.size).toBe(0);
         }
     });
 });
@@ -1219,7 +1337,7 @@ function createSummary(overrides: Partial<PaAgentTurnSummary> = {}): PaAgentTurn
 
 function createToolResult(
     toolName: string,
-    options: { isError?: boolean; outcome?: string; metadata?: Record<string, unknown> } = {},
+    options: { isError?: boolean; outcome?: string; promptText?: string; metadata?: Record<string, unknown> } = {},
 ): PaAgentTurnSummary["toolResults"][number] {
     return {
         role: "toolResult",
@@ -1227,7 +1345,7 @@ function createToolResult(
         toolCallId: `${toolName}-call`,
         toolName,
         content: {
-            promptText: `${toolName} observation`,
+            promptText: options.promptText ?? `${toolName} observation`,
             includeInNextPrompt: true,
             metadata: {
                 outcome: options.outcome ?? "success",
@@ -1239,7 +1357,7 @@ function createToolResult(
     };
 }
 
-function createDuplicateToolResult(toolName: RequiredCapability): PaAgentTurnSummary["toolResults"][number] {
+function createDuplicateToolResult(toolName: string): PaAgentTurnSummary["toolResults"][number] {
     return {
         role: "toolResult",
         id: `${toolName}-duplicate-result`,

@@ -59,6 +59,8 @@ export interface StreamLLMOptions {
     memoryMode?: MemoryMode;
     /** Optional per-turn history cap; the runtime only permits lowering its normal limit. */
     historyBudgetChars?: number;
+    /** Current or reserved conversation identity for host-bound Memory actions. */
+    conversationId?: string;
     /** Visible Pagelet evidence to inject into this explicit user turn only. */
     pageletHandoff?: PageletChatHandoffContext;
     onLifecycleEvent?: (event: AgentEvent) => void;
@@ -233,6 +235,7 @@ export class ChatService {
             });
             await runtime.streamTurn({
                 prompt,
+                conversationId: options.conversationId,
                 chatHistory,
                 images: options.images,
                 imageAssetService: options.imageAssetService,

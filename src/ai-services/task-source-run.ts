@@ -1,6 +1,7 @@
 import type { Workspace } from 'obsidian';
 import type { NoteSearchScope } from '../vss/types';
 import type { VaultFileLike } from './chat-tool-execution-helpers';
+import type { AiServiceHost } from './AiServiceHost';
 import type { ParsedBufferedToolCall } from './pa-agent-types';
 import { TaskSourceConstraintState, type TaskSourceConstraint } from './task-source-constraint';
 import { DECLARE_SOURCE_SCOPE, type TaskSourceReadPlan } from './task-source-executor';
@@ -8,6 +9,10 @@ import { TaskSourceNoteIdentities, type TaskSourceNoteIdentity } from './task-so
 import { resolveTaskSourceReadPlans } from './task-source-read-plans';
 import type { ChatMessage, PaAgentMessage, SourceRecord } from './chat-types';
 import { readChatHistoryTurnMetadata } from './pa-agent-history';
+import {
+    prepareVaultObservationProjection,
+    type VaultObservationProjection,
+} from './vault-observation-evidence';
 import type { GenerationInputTaskSource, GenerationInputIdentityState } from './generation-input-snapshot';
 
 export const MAX_TASK_SOURCE_NOTE_HANDLES = 32;
@@ -23,6 +28,9 @@ export interface TaskSourceRunHost {
     /** Source/session lifetime without treating user cancellation as revocation. */
     areSourcesCurrent?(): boolean;
     isMemoryAllowed?(): boolean;
+    revalidateVaultObservation?: AiServiceHost['revalidateVaultObservation'];
+    isPathAllowed?: (path: string) => boolean;
+    getMemoryEvidenceEpoch?: () => string;
 }
 
 /** One run's host facts and read planning; no note contents or permissions live here. */
@@ -34,6 +42,9 @@ export class TaskSourceRun {
     private readonly getFileByPath: (path: string) => unknown;
     private readonly hostIsCurrent: () => boolean;
     private readonly isMemoryAllowed: () => boolean;
+    private readonly revalidateVaultObservation: AiServiceHost['revalidateVaultObservation'];
+    private readonly isPathAllowed: ((path: string) => boolean) | undefined;
+    private readonly getMemoryEvidenceEpoch: (() => string) | undefined;
     private readonly hostSourcesAreCurrent: () => boolean;
 
     constructor(host: TaskSourceRunHost) {
@@ -42,6 +53,9 @@ export class TaskSourceRun {
         this.hostIsCurrent = host.isCurrent.bind(host);
         this.hostSourcesAreCurrent = host.areSourcesCurrent?.bind(host) ?? this.hostIsCurrent;
         this.isMemoryAllowed = host.isMemoryAllowed?.bind(host) ?? (() => true);
+        this.revalidateVaultObservation = host.revalidateVaultObservation?.bind(host);
+        this.isPathAllowed = host.isPathAllowed?.bind(host);
+        this.getMemoryEvidenceEpoch = host.getMemoryEvidenceEpoch?.bind(host);
         this.identities = new TaskSourceNoteIdentities({
             runId,
             workspace,
@@ -99,6 +113,30 @@ export class TaskSourceRun {
                 ? this.identities.currentNote?.path : undefined,
         });
         return result.ok && this.isCurrent() ? result.plans : undefined;
+    };
+
+    readonly prepareVaultObservationProjection = async (
+        transcript: readonly PaAgentMessage[],
+        history: readonly ChatMessage[],
+        signal?: AbortSignal,
+    ): Promise<VaultObservationProjection> => {
+        if (!this.isCurrent()) throw new Error('Cannot prepare vault observations from an inactive source run');
+        if (!this.revalidateVaultObservation) {
+            const hasContract = transcript.some(message => message.role === 'toolResult'
+                && message.content.metadata?.vaultObservationContractVersion === 1)
+                || history.some(message => readChatHistoryTurnMetadata(message)?.vaultObservationContractVersion === 1);
+            if (hasContract) throw new Error('Vault observation revalidation is unavailable');
+        }
+        return await prepareVaultObservationProjection({
+            transcript,
+            history,
+            revalidate: this.revalidateVaultObservation ?? (async () => {
+                throw new Error('Vault observation revalidation is unavailable');
+            }),
+            getEpoch: this.getMemoryEvidenceEpoch,
+            isPathAllowed: path => this.isPathAllowed?.(path) ?? true,
+            signal,
+        });
     };
 
     /** Missing allowed identities reject the search, never turn into an unscoped query. */
@@ -284,16 +322,21 @@ export class TaskSourceRun {
                 noteIds.add(noteId);
             }
             this.assertCurrentConstraint(constraint);
-            for (const noteId of noteIds) {
-                // Set insertion order tracks only real published sources, not
-                // lookup frequency while testing a vault-wide read guard.
-                this.visibleNoteIds.delete(noteId);
-                this.visibleNoteIds.add(noteId);
+            // A provider projection owns this directory. Replacing the set prevents
+            // an earlier model input from keeping a path visible after selective
+            // source revocation or budget removal; it never widens the scope.
+            const current = this.identities.currentNote;
+            if (current && this.state.allows({ kind: 'note', noteId: current.noteId }, constraint)) {
+                noteIds.add(current.noteId);
             }
-            for (const noteId of this.visibleNoteIds) {
-                if (this.visibleNoteIds.size <= MAX_TASK_SOURCE_NOTE_HANDLES) break;
-                if (noteId !== this.identities.currentNote?.noteId) this.visibleNoteIds.delete(noteId);
+            const retainedIds = [...noteIds]
+                .filter(noteId => noteId !== current?.noteId)
+                .slice(-(MAX_TASK_SOURCE_NOTE_HANDLES - 1));
+            if (current && this.state.allows({ kind: 'note', noteId: current.noteId }, constraint)) {
+                retainedIds.push(current.noteId);
             }
+            this.visibleNoteIds.clear();
+            for (const noteId of retainedIds) this.visibleNoteIds.add(noteId);
             return true;
         } catch {
             return false;
@@ -385,6 +428,8 @@ function isMaterialSourceRecord(record: SourceRecord): boolean {
 
 function isTaskSourceProducingTool(toolName: string): boolean {
     return toolName === 'get_current_note_context'
+        || toolName === 'read_note'
+        || toolName === 'query_notes'
         || toolName === 'read_note_outline'
         || toolName === 'inspect_obsidian_note'
         || toolName === 'read_canvas_summary'

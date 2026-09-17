@@ -168,7 +168,7 @@ export class SavedInsightStore {
             .map(cloneInsight);
     }
 
-    async create(input: SavedInsightCreateInput): Promise<SavedInsightResult<SavedInsight>> {
+    async create(input: SavedInsightCreateInput, isCurrent?: () => boolean): Promise<SavedInsightResult<SavedInsight>> {
         const now = this.now().toISOString();
         const insight: SavedInsight = {
             id: this.idFactory(),
@@ -188,6 +188,20 @@ export class SavedInsightStore {
         const validation = validateSavedInsight(insight);
         if (!validation.ok) return validation;
         return this.serializeMutation(async () => {
+            if (isCurrent?.() === false) return { ok: false, reason: "source_changed" };
+            if (insight.replayRef) {
+                const existing = this.items.find(item => item.replayRef === insight.replayRef);
+                if (existing) {
+                    const same = existing.type === insight.type && existing.text === insight.text
+                        && existing.origin === insight.origin
+                        && JSON.stringify(existing.sourceRefs) === JSON.stringify(insight.sourceRefs)
+                        && JSON.stringify(existing.whyShown) === JSON.stringify(insight.whyShown)
+                        && JSON.stringify(existing.scope) === JSON.stringify(insight.scope)
+                        && existing.dataBoundarySnapshotId === insight.dataBoundarySnapshotId;
+                    return same ? { ok: true, value: cloneInsight(existing) }
+                        : { ok: false, reason: "replay_conflict" };
+                }
+            }
             const nextItems = [insight, ...this.items];
             await this.flush(nextItems);
             this.items = nextItems;
@@ -195,12 +209,12 @@ export class SavedInsightStore {
         });
     }
 
-    async archive(id: string): Promise<SavedInsightResult<SavedInsight>> {
-        return this.updateStatus(id, "archived");
+    async archive(id: string, expectedUpdatedAt?: string, isCurrent?: () => boolean): Promise<SavedInsightResult<SavedInsight>> {
+        return this.updateStatus(id, "archived", expectedUpdatedAt, isCurrent);
     }
 
-    async restore(id: string): Promise<SavedInsightResult<SavedInsight>> {
-        return this.updateStatus(id, "active");
+    async restore(id: string, expectedUpdatedAt?: string, isCurrent?: () => boolean): Promise<SavedInsightResult<SavedInsight>> {
+        return this.updateStatus(id, "active", expectedUpdatedAt, isCurrent);
     }
 
     async promote(id: string, promotedTo: string): Promise<SavedInsightResult<SavedInsight>> {
@@ -210,7 +224,7 @@ export class SavedInsightStore {
             const item = cloneInsight(this.items[index]);
             item.status = "promoted";
             item.promotedTo = promotedTo;
-            item.updatedAt = this.now().toISOString();
+            item.updatedAt = this.nextUpdatedAt(item.updatedAt);
             const nextItems = [...this.items];
             nextItems[index] = item;
             await this.flush(nextItems);
@@ -219,19 +233,31 @@ export class SavedInsightStore {
         });
     }
 
-    private async updateStatus(id: string, status: SavedInsightStatus): Promise<SavedInsightResult<SavedInsight>> {
+    private async updateStatus(id: string, status: SavedInsightStatus, expectedUpdatedAt?: string, isCurrent?: () => boolean): Promise<SavedInsightResult<SavedInsight>> {
         return this.serializeMutation(async () => {
+            if (isCurrent?.() === false) return { ok: false, reason: "source_changed" };
             const index = this.items.findIndex((item) => item.id === id);
             if (index < 0) return { ok: false, reason: "not_found" };
             const item = cloneInsight(this.items[index]);
+            if (expectedUpdatedAt !== undefined && item.updatedAt !== expectedUpdatedAt) {
+                return { ok: false, reason: "stale_target" };
+            }
+            if (item.status === "promoted") return { ok: false, reason: "already_promoted" };
+            if (item.status === status) return { ok: true, value: item };
             item.status = status;
-            item.updatedAt = this.now().toISOString();
+            item.updatedAt = this.nextUpdatedAt(item.updatedAt);
             const nextItems = [...this.items];
             nextItems[index] = item;
             await this.flush(nextItems);
             this.items = nextItems;
             return { ok: true, value: cloneInsight(item) };
         });
+    }
+
+    private nextUpdatedAt(previous: string): string {
+        const now = this.now().getTime();
+        const prior = Date.parse(previous);
+        return new Date(Math.max(now, Number.isFinite(prior) ? prior + 1 : now)).toISOString();
     }
 
     private serializeMutation<T>(operation: () => Promise<T>): Promise<T> {

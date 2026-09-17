@@ -352,8 +352,8 @@ describe('vault tool path boundaries', () => {
 
         expect(inspect.ok).toBe(true);
         expect(inspect.content?.path).toBe('allowed/anchor.md');
-        expect(cachedRead).toHaveBeenCalledTimes(1);
-        expect(cachedRead).toHaveBeenCalledWith(expect.objectContaining({ path: 'allowed/anchor.md' }));
+        expect(cachedRead).not.toHaveBeenCalled();
+        expect(inspect.content?.headings).toEqual([{ level: 1, text: 'Anchor' }]);
     });
 
     it('filters snippet candidates before any excluded note is read', async () => {

@@ -13,14 +13,20 @@ import type {
     ChatToolDefinition,
     CurrentNoteContextInput,
     CurrentNoteContextOutput,
+    ChatToolRegistryDefinition,
+    ChatToolResult,
     InspectObsidianNoteInput,
     InspectObsidianNoteOutput,
     ListRecentNotesInput,
     ListRecentNotesOutput,
     ListVaultTagsInput,
     PrepareToolArgumentsContext,
+    QueryNotesInput,
+    QueryNotesOutput,
     ReadCanvasSummaryInput,
     ReadCanvasSummaryOutput,
+    ReadNoteInput,
+    ReadNoteOutput,
     ReadNoteOutlineInput,
     ReadNoteOutlineOutput,
     SearchMemoryInput,
@@ -34,13 +40,20 @@ import type {
 import { OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS } from "./chat-tool-types";
 import type { SourceRecord } from "./chat-types";
 import { createSourceDedupKey } from "./source-store";
+import { getPlatformCrypto } from "../platform-dom";
 import { assertTaskSourceReadCurrent, isTaskSourcePathAllowed, type TaskSourceReadGuard } from "./task-source-read-guard";
 import {
     CANVAS_MAX_READ_BYTES,
     CURRENT_NOTE_CONTENT_BUDGET_CHARS,
     CURRENT_NOTE_FULL_CONTENT_BUDGET_CHARS,
     INSPECT_NOTE_MAX_READ_BYTES,
+    NOTE_STRUCTURE_BODY_UNAVAILABLE_SOURCE,
     NOTE_OUTLINE_MAX_HEADINGS,
+    QUERY_NOTES_MAX_LIMIT,
+    QUERY_NOTES_RESULT_JSON_BUDGET_CHARS,
+    READ_NOTE_MAX_CHARS,
+    READ_NOTE_MAX_READ_BYTES,
+    READ_NOTE_RESULT_JSON_BUDGET_CHARS,
     RECENT_NOTES_MAX_LIMIT,
     SNIPPET_MAX_LIMIT,
     TAGS_MAX_LIMIT,
@@ -72,11 +85,12 @@ import {
     getMarkdownFiles,
     getMetadataCache,
     getOptionalMetadataCache,
-    getUnavailableNoteStructureSources,
+    NoteStructureCacheMismatchError,
     listVaultTags,
+    getUtf8ByteLength,
+    readVaultFile,
     readVaultFileWithBudget,
     scoreMetadataMatch,
-    searchVaultSnippets,
     truncate,
 } from "./chat-tool-execution-helpers";
 import {
@@ -84,7 +98,9 @@ import {
     validateInspectObsidianNoteInput,
     validateListRecentNotesInput,
     validateListVaultTagsInput,
+    validateQueryNotesInput,
     validateReadCanvasSummaryInput,
+    validateReadNoteInput,
     validateReadNoteOutlineInput,
     validateSearchMemoryInput,
     validateSearchVaultMetadataInput,
@@ -94,15 +110,53 @@ import {
     extractInputPath,
     readFirstPositiveNumber,
     readFirstString,
-    shouldUseFullCurrentNoteContext,
     toInputRecord,
 } from "./chat-tool-prepare-helpers";
 import {
     buildObsidianOperationsPlannerGuidance,
     type ObsidianOperationsCatalogSectionId,
 } from "./obsidian-operations-capability-catalog";
+import { enforceToolOutputBudget } from "./chat-tool-registry";
 import { throwIfAborted } from "./chat-utils";
 import type { MemorySearchResult } from "./chat-types";
+import { computeContentHash } from "../vss-helpers";
+import {
+    buildInspectObservationEvidence,
+    buildQueryObservationEvidence,
+    buildReadObservationEvidence,
+    buildSnippetObservationEvidence,
+    createVaultObservationId,
+    projectInspectCache,
+    projectInspectLinkFactsFromBacklinkEvaluation,
+    type InspectBacklinkEvidenceFacts,
+    type VaultObservationScope,
+} from "./vault-observation-evidence";
+import {
+    ReadNoteFileIdentityRegistry,
+    ReadNoteRangeUnavailableError,
+    ReadNoteResultBudgetUnavailableError,
+    buildReadNoteLineSpans,
+    buildReadNoteSegment,
+    decodeReadNoteCursor,
+    getReadNotePartView,
+    isReadNoteCodePointBoundary,
+    resolveReadNoteSelection,
+    type ReadNoteFileStatSnapshot,
+} from "./read-note-tool-helpers";
+import {
+    QueryNotesCursorExpiredError,
+    QueryNotesFileIdentityRegistry,
+    QueryNotesResultBudgetUnavailableError,
+    QueryNotesUnavailableError,
+    executeQueryNotes,
+} from "./query-notes-tool-helpers";
+import {
+    SequentialVaultSnippetIdentityRegistry,
+    VaultSnippetCursorExpiredError,
+    VaultSnippetResultBudgetUnavailableError,
+    VaultSnippetSearchUnavailableError,
+    executeVaultSnippetSearch,
+} from "./vault-snippet-search-tool-helpers";
 
 export interface VaultToolPathFilterOptions {
     /**
@@ -110,6 +164,25 @@ export interface VaultToolPathFilterOptions {
      * apply it before enumerating metadata or reading note content.
      */
     isPathAllowed?: (path: string) => boolean;
+}
+
+export interface QueryNotesToolOptions extends VaultToolPathFilterOptions {
+    /** Query enumeration must fail closed when the public Vault API is absent. */
+    failClosedMarkdownEnumeration?: boolean;
+}
+
+export type ReadNoteToolOptions = VaultToolPathFilterOptions;
+
+let nextReadNoteToolInstance = 0;
+let nextVaultSnippetSearchToolInstance = 0;
+let nextVaultObservationInstance = 0;
+
+function observationScope(context: ChatToolContext): VaultObservationScope {
+    const scope = context.taskSourceReadGuard?.getNoteSearchScope?.();
+    return {
+        allowedPaths: scope?.allowedPaths == null ? null : [...scope.allowedPaths],
+        excludedPaths: [...scope?.excludedPaths ?? []],
+    };
 }
 
 export interface InspectObsidianNoteToolOptions extends VaultToolPathFilterOptions {
@@ -208,10 +281,7 @@ function prepareSearchMemoryArguments(raw: unknown, _ctx: PrepareToolArgumentsCo
     return query ? { query } : raw;
 }
 
-function prepareCurrentNoteContextArguments(raw: unknown, ctx: PrepareToolArgumentsContext): unknown {
-    if (shouldUseFullCurrentNoteContext(ctx.userInput)) {
-        return { mode: "full" };
-    }
+function prepareCurrentNoteContextArguments(raw: unknown, _ctx: PrepareToolArgumentsContext): unknown {
     const rawMode = raw && typeof raw === "object" && !Array.isArray(raw)
         ? (raw as Record<string, unknown>).mode
         : raw;
@@ -302,13 +372,34 @@ const VAULT_SNIPPETS_QUERY_ALIASES = [
 const VAULT_SNIPPETS_SCOPE_ALIASES = ["scope", "path", "folder", "file"] as const;
 
 function prepareSearchVaultSnippetsArguments(raw: unknown, _ctx: PrepareToolArgumentsContext): unknown {
-    const normalized = normalizeQueryWithOptionalLimit(raw, VAULT_SNIPPETS_QUERY_ALIASES, { includeLimit: true });
-    const record = toInputRecord(raw);
-    const scope = record ? readFirstString(record, VAULT_SNIPPETS_SCOPE_ALIASES) : undefined;
-    if (scope && normalized && typeof normalized === "object" && !Array.isArray(normalized)) {
-        return { ...(normalized as Record<string, unknown>), scope };
+    if (typeof raw === "string") {
+        return raw.trim() ? { query: raw } : raw;
     }
+    const record = toInputRecord(raw);
+    if (!record) return raw;
+    const query = readFirstPreservedString(record, VAULT_SNIPPETS_QUERY_ALIASES);
+    if (!query) return raw;
+    const normalized: Record<string, unknown> = { query };
+    const limit = readFirstPositiveNumber(record, QUERY_LIMIT_ALIASES);
+    if (limit !== undefined) normalized.limit = limit;
+    const scope = readFirstString(record, VAULT_SNIPPETS_SCOPE_ALIASES);
+    if (scope) normalized.scope = scope;
+    if (record.part !== undefined) normalized.part = record.part;
+    if (record.caseSensitive !== undefined) normalized.caseSensitive = record.caseSensitive;
+    if (record.cursor !== undefined) normalized.cursor = record.cursor;
     return normalized;
+}
+
+function readFirstPreservedString(value: Record<string, unknown>, keys: readonly string[]): string | undefined {
+    for (const key of keys) {
+        const candidate = value[key];
+        if (typeof candidate === "string" && candidate.trim()) return candidate;
+    }
+    const nestedInput = value.input;
+    if (nestedInput && typeof nestedInput === "object" && !Array.isArray(nestedInput)) {
+        return readFirstPreservedString(nestedInput as Record<string, unknown>, keys.filter(key => key !== "input"));
+    }
+    return undefined;
 }
 
 const NOTE_OUTLINE_MAX_HEADINGS_ALIASES = [
@@ -376,9 +467,7 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
         statusMessageText: "Reading current note",
         sourceBoundary: "current-note",
         statusMessage: () => "Reading current note",
-        // host-context shim: shouldUseFullCurrentNoteContext OVERRIDES any model-picked
-        // mode when user phrasing matches "current note only + find/exact/搜索/全文" etc.
-        // This is host-policy behavior; candidate to move into runtime instruction in Phase B/C.
+        // Preserve legal model-selected modes while repairing common aliases.
         prepareArguments: prepareCurrentNoteContextArguments,
         validateInput: validateCurrentNoteContextInput,
         execute: async (input, context) => {
@@ -663,11 +752,408 @@ export function createReadNoteOutlineTool(
     }, options);
 }
 
+const READ_NOTE_PATH_ALIASES = ["path", "notePath", "note_path", "file_path", "file"] as const;
+
+function prepareReadNoteArguments(raw: unknown, _ctx: PrepareToolArgumentsContext): unknown {
+    const extracted = extractInputPath(raw, [".md"]);
+    if (extracted) return typeof raw === "string" ? { path: extracted } : { ...toInputRecord(raw)!, path: extracted };
+    const record = toInputRecord(raw);
+    if (!record) return raw;
+    const path = readFirstString(record, READ_NOTE_PATH_ALIASES);
+    return path ? { ...record, path } : raw;
+}
+
+export function createReadNoteTool(
+    options: ReadNoteToolOptions = {},
+): ChatToolDefinition<ReadNoteInput, ReadNoteOutput> {
+    const identities = new ReadNoteFileIdentityRegistry(`read-note-instance-${++nextReadNoteToolInstance}`);
+    return withTaskSourceReadBoundary({
+        name: "read_note",
+        description: "Read saved Markdown note body text or raw frontmatter properties with bounded paging.",
+        plannerGuidance: [
+            "Use when an exact Markdown note path is known and the answer needs saved note content.",
+            "Use properties for raw YAML evidence and body for Markdown content; a date in properties is not body evidence.",
+            "Continue with nextCursor instead of guessing offsets. A completed requested range is not necessarily the end of the whole note.",
+        ],
+        inputSchema: {
+            type: "object",
+            properties: {
+                path: { type: "string", description: "Vault-relative Markdown note path." },
+                part: { type: "string", enum: ["body", "properties"], description: "Note part to read; defaults to body on first read and inherits cursor.part on continuation." },
+                startLine: { type: "integer", minimum: 1, description: "Inclusive original-file start line for body reads; supply with endLine." },
+                endLine: { type: "integer", minimum: 1, description: "Inclusive original-file end line for body reads; supply with startLine." },
+                maxChars: { type: "integer", minimum: 1, maximum: READ_NOTE_MAX_CHARS, description: "Maximum returned text characters." },
+                cursor: { type: "string", description: "Opaque continuation cursor returned by this tool instance." },
+            },
+            required: ["path"],
+            additionalProperties: false,
+        },
+        permission: "read-only",
+        cost: "free",
+        outputBudgetChars: READ_NOTE_RESULT_JSON_BUDGET_CHARS,
+        requiresConfirmation: false,
+        failureBehavior: "recoverable",
+        statusMessageText: "Reading note",
+        sourceBoundary: "read-only-tool",
+        statusMessage: input => `Reading note: ${input.path}`,
+        prepareArguments: prepareReadNoteArguments,
+        validateInput: validateReadNoteInput,
+        execute: async (input, context) => {
+            throwIfAborted(context.signal);
+            const normalizedPath = normalizeBoundaryPath(input.path);
+            if (!normalizedPath) {
+                return createToolFailureResult(
+                    "read_note",
+                    "excluded path",
+                    "Requested Markdown note was not available in the permitted vault scope.",
+                );
+            }
+            const sourcePath = normalizedPath;
+            const isReadablePath = () => isAllowedPath(sourcePath, options.isPathAllowed)
+                && isTaskSourcePathAllowed(context.taskSourceReadGuard, sourcePath);
+            if (!isReadablePath()) {
+                return createToolFailureResult(
+                    "read_note",
+                    "excluded path",
+                    "Requested Markdown note was not available in the permitted vault scope.",
+                );
+            }
+
+            const file = findMarkdownFileByPath(context.host, sourcePath);
+            if (!file || file.path !== sourcePath) {
+                return createToolFailureResult(
+                    "read_note",
+                    sourcePath,
+                    "Requested Markdown note was not found.",
+                );
+            }
+            const stat = captureReadNoteStat(file);
+            if (!stat) {
+                return createToolFailureResult(
+                    "read_note",
+                    sourcePath,
+                    "Requested Markdown note has no valid mtime and size.",
+                );
+            }
+            if (stat.size > READ_NOTE_MAX_READ_BYTES) {
+                return createToolFailureResult(
+                    "read_note",
+                    sourcePath,
+                    `Requested Markdown note exceeds the ${READ_NOTE_MAX_READ_BYTES}-byte read limit.`,
+                );
+            }
+            if (!canReadVaultFiles(context.host)) {
+                return createToolFailureResult(
+                    "read_note",
+                    sourcePath,
+                    "Vault note reading is unavailable.",
+                );
+            }
+
+            const content = await readVaultFile(context.host, file);
+            throwIfAborted(context.signal);
+            assertReadNoteSourceCurrent(context, sourcePath, file, stat, options);
+            if (getUtf8ByteLength(content) > READ_NOTE_MAX_READ_BYTES) {
+                throw new Error("Requested Markdown note grew beyond the read limit while it was being read.");
+            }
+
+            let sourceVersion: string;
+            try {
+                sourceVersion = await computeContentHash(content);
+            } catch (error) {
+                void error;
+                return createToolFailureResult(
+                    "read_note",
+                    sourcePath,
+                    "Note content hash is unavailable.",
+                );
+            }
+            throwIfAborted(context.signal);
+            assertReadNoteSourceCurrent(context, sourcePath, file, stat, options);
+
+            const cursor = input.cursor ? decodeReadNoteCursor(input.cursor) : null;
+            if (input.cursor && !cursor) {
+                return createToolFailureResult("read_note", sourcePath, "read_note cursor is invalid or expired.");
+            }
+            const part = input.part ?? cursor?.part ?? "body";
+            if (cursor && input.part !== undefined && cursor.part !== input.part) {
+                return createToolFailureResult("read_note", sourcePath, "read_note cursor targets a different note part.");
+            }
+            if (cursor && cursor.path !== sourcePath) {
+                return createToolFailureResult("read_note", sourcePath, "read_note cursor targets a different note part.");
+            }
+            if (cursor && cursor.sourceVersion !== sourceVersion) {
+                return createToolFailureResult("read_note", sourcePath, "read_note cursor content version is no longer current.");
+            }
+            if (cursor && cursor.part === "properties" && (cursor.startLine !== undefined || cursor.endLine !== undefined)) {
+                return createToolFailureResult("read_note", sourcePath, "read_note cursor has an invalid properties range.");
+            }
+            const view = getReadNotePartView(content, part);
+            const lineSpans = buildReadNoteLineSpans(view);
+
+            try {
+                const selection = resolveReadNoteSelection(
+                    view,
+                    cursor ? cursor.startLine : input.startLine,
+                    cursor ? cursor.endLine : input.endLine,
+                    lineSpans,
+                );
+                const startOffset = cursor ? cursor.offset : selection.startOffset;
+                if (startOffset < selection.startOffset || startOffset > selection.endOffset) {
+                    return createToolFailureResult("read_note", sourcePath, "read_note cursor offset is outside its original range.");
+                }
+                if (cursor && !isReadNoteCodePointBoundary(view.text, startOffset)) {
+                    return createToolFailureResult("read_note", sourcePath, "read_note cursor offset splits a Unicode character.");
+                }
+                const identity = cursor
+                    ? identities.isValid(file, cursor.identity, stat)
+                        ? cursor.identity
+                        : null
+                    : identities.register(file, stat);
+                if (!identity) {
+                    return createToolFailureResult("read_note", sourcePath, "read_note cursor file identity is no longer current.");
+                }
+
+                const segment = buildReadNoteSegment({
+                    path: file.path,
+                    part,
+                    view,
+                    selection,
+                    startOffset,
+                    maxChars: input.maxChars,
+                    sourceVersion,
+                    identity,
+                    lineSpans,
+                });
+                assertReadNoteSourceCurrent(context, sourcePath, file, stat, options);
+                const evidence = await buildReadObservationEvidence({
+                    observationId: createVaultObservationId(`read-note-${++nextVaultObservationInstance}`),
+                    scope: observationScope(context),
+                    output: segment.content,
+                    partitionContent: view.text,
+                });
+                return {
+                    ok: true,
+                    tool: "read_note",
+                    inputSummary: file.path,
+                    content: segment.content,
+                    sources: [{ path: file.path }],
+                    vaultObservationEvidence: evidence,
+                    vaultObservationContractVersion: 1,
+                };
+            } catch (error) {
+                if (error instanceof ReadNoteRangeUnavailableError) {
+                    return createToolFailureResult("read_note", sourcePath, error.message);
+                }
+                if (error instanceof ReadNoteResultBudgetUnavailableError) {
+                    return createToolFailureResult("read_note", sourcePath, error.message);
+                }
+                throw error;
+            }
+        },
+    }, options);
+}
+
+export function createQueryNotesTool(
+    options: QueryNotesToolOptions = {},
+): ChatToolDefinition<QueryNotesInput, QueryNotesOutput> {
+    const randomUUID = getPlatformCrypto()?.randomUUID?.();
+    if (!randomUUID) throw new Error("Query notes tool instance identity is unavailable.");
+    const instancePrefix = randomUUID.replace(/-/g, "");
+    const identities = new QueryNotesFileIdentityRegistry(instancePrefix);
+    return withTaskSourceReadBoundary({
+        name: "query_notes",
+        description: "Query permitted Markdown notes by explicit path, folder, tags, properties, and date metadata.",
+        plannerGuidance: [
+            "Use for precise note-list questions with explicit conditions; choose the date field and timezone from context, explain the interpretation, and ask when genuinely ambiguous.",
+            "Date intervals are half-open; ctime/mtime require timestamp boundaries with an explicit UTC offset, and calendar-date is only for property dates in YYYY-MM-DD form.",
+            "Path is exact, folder is recursive, tags are all-of exact matches, and property conditions combine with AND.",
+            "Check coverage and matchCountKind before calling a partial result complete; continue only with nextCursor.",
+        ],
+        inputSchema: {
+            type: "object",
+            properties: {
+                path: { type: "string", description: "Exact vault-relative Markdown path." },
+                folder: { type: "string", description: "Recursive vault-relative folder; empty string means the vault root." },
+                tags: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "All-of tag conditions; each entry may omit one leading #.",
+                },
+                properties: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            key: { type: "string" },
+                            operator: { type: "string", enum: ["exists", "equals", "contains"] },
+                            value: {
+                                description: "JSON scalar for equals or contains; omitted for exists.",
+                                anyOf: [
+                                    { type: "string" },
+                                    { type: "number" },
+                                    { type: "boolean" },
+                                    { type: "null" },
+                                ],
+                            },
+                        },
+                        required: ["key", "operator"],
+                        additionalProperties: false,
+                    },
+                },
+                date: {
+                    type: "object",
+                    description: "Half-open date interval; from is inclusive and to is exclusive.",
+                    properties: {
+                        field: {
+                            type: "string",
+                            enum: ["ctime", "mtime", "property"],
+                            description: "ctime/mtime require timestamp semantics; property requires property.",
+                        },
+                        property: { type: "string", description: "Required only when field is property." },
+                        kind: {
+                            type: "string",
+                            enum: ["timestamp", "calendar-date"],
+                            description: "timestamp uses ISO boundaries with an explicit UTC offset; calendar-date is only valid for property.",
+                        },
+                        from: {
+                            type: "string",
+                            description: "Inclusive start: timestamp uses an ISO timestamp with a UTC offset; property calendar-date uses YYYY-MM-DD.",
+                        },
+                        to: {
+                            type: "string",
+                            description: "Exclusive end: timestamp uses an ISO timestamp with a UTC offset; property calendar-date uses YYYY-MM-DD.",
+                        },
+                    },
+                    required: ["field", "kind", "from", "to"],
+                    additionalProperties: false,
+                },
+                sort: {
+                    type: "object",
+                    properties: {
+                        field: { type: "string", enum: ["path", "ctime", "mtime"] },
+                        direction: { type: "string", enum: ["asc", "desc"] },
+                    },
+                    required: ["field", "direction"],
+                    additionalProperties: false,
+                },
+                limit: { type: "integer", minimum: 1, maximum: QUERY_NOTES_MAX_LIMIT },
+                cursor: { type: "string", description: "Opaque continuation cursor from this tool instance." },
+            },
+            additionalProperties: false,
+        },
+        permission: "read-only",
+        cost: "free",
+        outputBudgetChars: QUERY_NOTES_RESULT_JSON_BUDGET_CHARS,
+        requiresConfirmation: false,
+        failureBehavior: "recoverable",
+        statusMessageText: "Querying notes",
+        sourceBoundary: "read-only-tool",
+        statusMessage: () => "Querying permitted note metadata",
+        validateInput: validateQueryNotesInput,
+        execute: async (input, context) => {
+            throwIfAborted(context.signal);
+            const dependencyPaths = new Set<string>();
+            try {
+                const result = await executeQueryNotes({
+                    input,
+                    host: context.host,
+                    instancePrefix,
+                    identities,
+                    signal: context.signal,
+                    dependencyPaths,
+                    isPathReadable: path => isAllowedPath(path, options.isPathAllowed)
+                        && isTaskSourcePathAllowed(context.taskSourceReadGuard, path),
+                    assertCurrent: () => {
+                        throwIfAborted(context.signal);
+                        assertTaskSourceReadCurrent(context.taskSourceReadGuard);
+                    },
+                    onMetadataDependency: path => dependencyPaths.add(path),
+                });
+                const evidence = await buildQueryObservationEvidence({
+                    observationId: createVaultObservationId(`query-notes-${++nextVaultObservationInstance}`),
+                    scope: observationScope(context),
+                    output: result.content,
+                    candidatePaths: result.evidence.candidatePaths,
+                    metadataSnapshots: result.evidence.metadataSnapshots,
+                    matchMetadataSnapshots: result.evidence.matchMetadataSnapshots,
+                });
+                return {
+                    ok: true,
+                    tool: "query_notes",
+                    inputSummary: `limit:${input.limit}`,
+                    content: result.content,
+                    sources: result.matches.map(match => ({ path: match.path })),
+                    sourceRecords: createMetadataDependencyRecords("query_notes", dependencyPaths),
+                    vaultObservationEvidence: evidence,
+                    vaultObservationContractVersion: 1,
+                };
+            } catch (error) {
+                if (error instanceof QueryNotesUnavailableError
+                    || error instanceof QueryNotesCursorExpiredError
+                    || error instanceof QueryNotesResultBudgetUnavailableError) {
+                    return createToolFailureResult("query_notes", "metadata query", error.message);
+                }
+                throw error;
+            }
+        },
+    }, { ...options, failClosedMarkdownEnumeration: true });
+}
+
+function captureReadNoteStat(file: { stat?: { mtime?: unknown; size?: unknown } }): ReadNoteFileStatSnapshot | null {
+    const { mtime, size } = file.stat ?? {};
+    if (typeof mtime !== "number" || !Number.isFinite(mtime)
+        || typeof size !== "number" || !Number.isFinite(size) || size < 0) {
+        return null;
+    }
+    return { mtime, size };
+}
+
+function assertReadNoteSourceCurrent(
+    context: ChatToolContext,
+    path: string,
+    file: NonNullable<ReturnType<typeof findMarkdownFileByPath>>,
+    stat: ReadNoteFileStatSnapshot,
+    options: VaultToolPathFilterOptions,
+): void {
+    throwIfAborted(context.signal);
+    assertTaskSourceReadCurrent(context.taskSourceReadGuard);
+    if (!isAllowedPath(path, options.isPathAllowed)
+        || !isTaskSourcePathAllowed(context.taskSourceReadGuard, path)) {
+        throw new Error("Task source path is no longer permitted.");
+    }
+    const currentFile = findMarkdownFileByPath(context.host, path);
+    if (currentFile !== file || currentFile?.path !== path) {
+        throw new Error("Note source changed while it was being read.");
+    }
+    const currentStat = captureReadNoteStat(currentFile);
+    if (!currentStat || currentStat.mtime !== stat.mtime || currentStat.size !== stat.size) {
+        throw new Error("Note source stat changed while it was being read.");
+    }
+}
+
 export function createInspectObsidianNoteTool(
     options: InspectObsidianNoteToolOptions = {},
 ): ChatToolDefinition<InspectObsidianNoteInput, InspectObsidianNoteOutput> {
     const allowActiveNoteFallback = options.allowActiveNoteFallback ?? true;
     const hasHostFallback = Boolean(options.fallbackPath);
+    const budgetDefinition: ChatToolRegistryDefinition = {
+        name: "inspect_obsidian_note",
+        description: "Read a bounded Obsidian Markdown note structure summary.",
+        inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+        },
+        plannerGuidance: [],
+        permission: "read-only",
+        cost: "free",
+        outputBudgetChars: OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
+        requiresConfirmation: false,
+        failureBehavior: "recoverable",
+        statusMessage: "Reading note structure",
+        sourceBoundary: "read-only-tool",
+    };
     return withTaskSourceReadBoundary({
         name: "inspect_obsidian_note",
         description: "Read a bounded Obsidian Markdown note structure summary.",
@@ -702,6 +1188,9 @@ export function createInspectObsidianNoteTool(
         validateInput: validateInspectObsidianNoteInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
+            const host = options.isPathAllowed
+                ? createPathFilteredHost(context.host, options.isPathAllowed)
+                : context.host;
             const requestedPath = input.path ?? options.fallbackPath;
             const normalizedPath = requestedPath ? normalizeBoundaryPath(requestedPath) : undefined;
             if (
@@ -715,7 +1204,7 @@ export function createInspectObsidianNoteTool(
                 );
             }
             const activeFile = !requestedPath && allowActiveNoteFallback
-                ? findCurrentMarkdownView(context.host.app.workspace)?.file ?? null
+                ? findCurrentMarkdownView(host.app.workspace)?.file ?? null
                 : null;
             if (activeFile && (!isAllowedPath(activeFile.path, options.isPathAllowed)
                 || !isTaskSourcePathAllowed(context.taskSourceReadGuard, activeFile.path))) {
@@ -726,7 +1215,7 @@ export function createInspectObsidianNoteTool(
                 );
             }
             const file = normalizedPath
-                ? findMarkdownFileByPath(context.host, normalizedPath)
+                ? findMarkdownFileByPath(host, normalizedPath)
                 : activeFile;
             if (!file) {
                 return createToolFailureResult(
@@ -740,33 +1229,117 @@ export function createInspectObsidianNoteTool(
                 );
             }
 
-            const metadataCache = getOptionalMetadataCache(context.host);
+            const fileStat = captureReadNoteStat(file);
+            const primaryPath = file.path;
+
+            const metadataCache = getOptionalMetadataCache(host);
             const cache = metadataCache?.getFileCache?.(file);
-            const readResult = await readVaultFileWithBudget(context.host, file, INSPECT_NOTE_MAX_READ_BYTES);
-            throwIfAborted(context.signal);
-            const unavailableSources = getUnavailableNoteStructureSources(context.host, metadataCache);
-            const dependencyPaths = new Set<string>();
-            const structure = buildNoteStructureSummary(file, cache, readResult.content, metadataCache, unavailableSources, {
-                truncated: readResult.truncated,
-                skippedSources: readResult.skippedForSize ? [VAULT_FILE_READ_SKIPPED_SIZE_SOURCE] : [],
-                omittedCount: readResult.truncated ? 1 : 0,
-                onSourceRead: path => dependencyPaths.add(path),
-            });
+            const canReadNoteBody = canReadVaultFiles(host);
+            const cacheKnown = cache !== null && cache !== undefined;
+            const hasCachedTasks = Array.isArray(cache?.listItems)
+                && cache.listItems.some(item => typeof item.task === "string");
+            const hasCalloutCandidates = Array.isArray(cache?.sections)
+                && cache.sections.some(section =>
+                    section.type === "callout" || section.type === "blockquote" || section.type === "list",
+                );
             const includeContentChars = normalizeContentCharLimit(options.includeContentChars);
-            const content = includeContentChars > 0
+            const bodyRequired = !cacheKnown || hasCachedTasks || hasCalloutCandidates || includeContentChars > 0;
+            if (bodyRequired && canReadNoteBody && !fileStat) {
+                return createToolFailureResult(
+                    "inspect_obsidian_note",
+                    file.path,
+                    "Requested Markdown note has no valid mtime and size.",
+                );
+            }
+            const readResult = bodyRequired && canReadNoteBody
+                ? await readVaultFileWithBudget(host, file, INSPECT_NOTE_MAX_READ_BYTES)
+                : { content: "", truncated: false, skippedForSize: false };
+            if (bodyRequired && canReadNoteBody) {
+                assertReadNoteSourceCurrent(context, primaryPath, file, fileStat!, options);
+            }
+            const bodyRead = bodyRequired && canReadNoteBody && !readResult.skippedForSize && !readResult.truncated;
+            throwIfAborted(context.signal);
+            const unavailableSources = !metadataCache || typeof metadataCache.getFileCache !== "function"
+                ? ["metadata cache"]
+                : [];
+            const dependencyPaths = new Set<string>();
+            let backlinkEvaluation: InspectBacklinkEvidenceFacts | undefined;
+            let structure: InspectObsidianNoteOutput;
+            try {
+                structure = buildNoteStructureSummary(file, cache, bodyRead ? readResult.content : "", metadataCache, unavailableSources, {
+                    truncated: bodyRequired && (readResult.truncated || readResult.skippedForSize),
+                    skippedSources: bodyRequired && (!canReadNoteBody || readResult.skippedForSize || readResult.truncated)
+                        ? [!canReadNoteBody
+                            ? NOTE_STRUCTURE_BODY_UNAVAILABLE_SOURCE
+                            : VAULT_FILE_READ_SKIPPED_SIZE_SOURCE]
+                        : [],
+                    omittedCount: bodyRequired && (readResult.truncated || readResult.skippedForSize) ? 1 : 0,
+                    onSourceRead: path => dependencyPaths.add(path),
+                    bodyRead,
+                    bodyRequired,
+                    captureBacklinkEvaluation: facts => {
+                        backlinkEvaluation = {
+                            scannedSources: [...facts.scannedSources],
+                            evaluatedSources: facts.evaluatedSources,
+                            capExceeded: facts.capExceeded,
+                            backlinks: [...facts.backlinks],
+                        };
+                    },
+                });
+            } catch (error) {
+                if (error instanceof NoteStructureCacheMismatchError) {
+                    return createToolFailureResult(
+                        "inspect_obsidian_note",
+                        file.path,
+                        "Note structure cache is not synchronized with the current note text; retry after the cache updates.",
+                    );
+                }
+                throw error;
+            }
+            const content = includeContentChars > 0 && bodyRead
                 ? {
                     ...structure,
                     fullText: truncate(readResult.content, includeContentChars),
                     fullTextTruncated: readResult.truncated || readResult.content.length > includeContentChars,
                 } as InspectObsidianNoteOutput
                 : structure;
-            return {
+            const initialResult: ChatToolResult<InspectObsidianNoteOutput> = {
                 ok: true,
                 tool: "inspect_obsidian_note",
                 inputSummary: file.path,
                 content,
                 sources: [{ path: file.path }],
                 sourceRecords: createMetadataDependencyRecords("inspect_obsidian_note", dependencyPaths),
+            };
+            const budgetedResult = enforceToolOutputBudget(budgetDefinition, initialResult) as ChatToolResult<InspectObsidianNoteOutput>;
+            const coverageRestoredResult = budgetedResult.content?.coverage
+                ? budgetedResult
+                : enforceToolOutputBudget(budgetDefinition, {
+                    ...budgetedResult,
+                    content: { ...budgetedResult.content, coverage: structure.coverage },
+                }) as ChatToolResult<InspectObsidianNoteOutput>;
+            if (!coverageRestoredResult.ok || !coverageRestoredResult.content) {
+                throw new Error("inspect_obsidian_note budget enforcement removed its successful result.");
+            }
+            const frozenCacheProjection = projectInspectCache(cache);
+            if (!backlinkEvaluation) throw new Error("inspect_obsidian_note did not capture its backlink scan domain.");
+            const frozenLinkFacts = projectInspectLinkFactsFromBacklinkEvaluation(
+                file.path,
+                backlinkEvaluation,
+                metadataCache,
+            );
+            const evidence = await buildInspectObservationEvidence({
+                observationId: createVaultObservationId(`inspect-note-${++nextVaultObservationInstance}`),
+                scope: observationScope(context),
+                output: coverageRestoredResult.content,
+                cacheProjection: frozenCacheProjection,
+                linkFacts: frozenLinkFacts,
+                ...(bodyRead ? { bodyContent: readResult.content } : {}),
+            });
+            return {
+                ...coverageRestoredResult,
+                vaultObservationEvidence: evidence,
+                vaultObservationContractVersion: 1,
             };
         },
     }, options);
@@ -851,6 +1424,8 @@ export function createReadCanvasSummaryTool(): ChatToolDefinition<ReadCanvasSumm
 export function createSearchVaultSnippetsTool(
     options: VaultToolPathFilterOptions = {},
 ): ChatToolDefinition<SearchVaultSnippetsInput, VaultSnippetSearchOutput> {
+    const instancePrefix = `vault-snippets-instance-${++nextVaultSnippetSearchToolInstance}`;
+    const identities = new SequentialVaultSnippetIdentityRegistry(instancePrefix);
     return withTaskSourceReadBoundary({
         name: "search_vault_snippets",
         description: "Search bounded Markdown snippets in the vault.",
@@ -875,6 +1450,19 @@ export function createSearchVaultSnippetsTool(
                 scope: {
                     type: "string",
                     description: "Optional vault-relative Markdown file or folder scope.",
+                },
+                part: {
+                    type: "string",
+                    enum: ["body", "properties", "all"],
+                    description: "Note part to search; defaults to all saved Markdown text.",
+                },
+                caseSensitive: {
+                    type: "boolean",
+                    description: "Use a literal case-sensitive match; defaults to Unicode case-insensitive matching.",
+                },
+                cursor: {
+                    type: "string",
+                    description: "Opaque continuation cursor from this tool instance.",
                 },
             },
             required: ["query"],
@@ -912,22 +1500,55 @@ export function createSearchVaultSnippetsTool(
             const filteredHost = options.isPathAllowed
                 ? createPathFilteredHost(context.host, options.isPathAllowed)
                 : context.host;
-            const result = await searchVaultSnippets(filteredHost, scopedInput, context.signal);
-            return {
-                ok: true,
-                tool: "search_vault_snippets",
-                inputSummary: scopedInput.scope ? `${input.query} in ${scopedInput.scope}` : input.query,
-                content: result,
-                sources: result.matches.map((match) => ({ path: match.path })),
-            };
+            const dependencyPaths = new Set<string>();
+            try {
+                const result = await executeVaultSnippetSearch({
+                    input: scopedInput,
+                    host: filteredHost,
+                    instancePrefix,
+                    identities,
+                    signal: context.signal,
+                    dependencyPaths,
+                    isPathReadable: path => isAllowedPath(path, options.isPathAllowed)
+                        && isTaskSourcePathAllowed(context.taskSourceReadGuard, path),
+                    assertCurrent: () => {
+                        throwIfAborted(context.signal);
+                        assertTaskSourceReadCurrent(context.taskSourceReadGuard);
+                    },
+                });
+                const evidence = await buildSnippetObservationEvidence({
+                    observationId: createVaultObservationId(`vault-snippets-${++nextVaultObservationInstance}`),
+                    scope: observationScope(context),
+                    output: result.content,
+                    candidatePaths: result.evidence.candidatePaths,
+                    scannedVersions: result.evidence.scannedVersions,
+                });
+                return {
+                    ok: true,
+                    tool: "search_vault_snippets",
+                    inputSummary: scopedInput.scope ? `${input.query} in ${scopedInput.scope}` : input.query,
+                    content: result.content,
+                    sources: result.matchPaths.map(path => ({ path })),
+                    sourceRecords: createMetadataDependencyRecords("search_vault_snippets", dependencyPaths),
+                    vaultObservationEvidence: evidence,
+                    vaultObservationContractVersion: 1,
+                };
+            } catch (error) {
+                if (error instanceof VaultSnippetSearchUnavailableError
+                    || error instanceof VaultSnippetCursorExpiredError
+                    || error instanceof VaultSnippetResultBudgetUnavailableError) {
+                    return createToolFailureResult("search_vault_snippets", input.query, error.message);
+                }
+                throw error;
+            }
         },
-    }, options);
+    }, { ...options, failClosedMarkdownEnumeration: true });
 }
 
 /** Bind the tool's real read methods to this call's Host-owned source lifetime. */
 function withTaskSourceReadBoundary<Input, Output>(
     definition: ChatToolDefinition<Input, Output>,
-    options: VaultToolPathFilterOptions = {},
+    options: VaultToolPathFilterOptions & { failClosedMarkdownEnumeration?: boolean } = {},
 ): ChatToolDefinition<Input, Output> {
     const execute = definition.execute;
     return {
@@ -942,7 +1563,7 @@ function withTaskSourceReadBoundary<Input, Output>(
                     const allowed = isAllowedPath(path, options.isPathAllowed) && isTaskSourcePathAllowed(guard, path);
                     if (allowed) admittedPaths.add(path);
                     return allowed;
-                }, guard);
+                }, guard, options.failClosedMarkdownEnumeration);
             const result = await execute(input, { ...context, host });
             assertTaskSourceReadCurrent(guard);
             for (const path of admittedPaths) {
@@ -994,6 +1615,7 @@ function createPathFilteredHost(
     host: ChatToolContext["host"],
     isPathAllowed: (path: string) => boolean,
     guard?: TaskSourceReadGuard,
+    failClosedMarkdownEnumeration = false,
 ): ChatToolContext["host"] {
     const assertAllowed = (path: string) => {
         assertTaskSourceReadCurrent(guard);
@@ -1011,6 +1633,9 @@ function createPathFilteredHost(
     } = {
         getMarkdownFiles: () => {
             assertTaskSourceReadCurrent(guard);
+            if (typeof sourceVault.getMarkdownFiles !== "function" && failClosedMarkdownEnumeration) {
+                throw new QueryNotesUnavailableError("Vault getMarkdownFiles is unavailable.");
+            }
             const files = (sourceVault.getMarkdownFiles?.() ?? [])
                 .filter((file) => isAllowedPath(file.path, isPathAllowed));
             assertTaskSourceReadCurrent(guard);
@@ -1029,10 +1654,23 @@ function createPathFilteredHost(
     };
     if (typeof sourceVault.cachedRead === "function") {
         filteredVault.cachedRead = async (file: { path: string }) => {
-            assertAllowed(file.path);
-            const content = await sourceVault.cachedRead?.(file) ?? "";
-            assertAllowed(file.path);
-            return content;
+            try {
+                assertAllowed(file.path);
+                const cachedRead = sourceVault.cachedRead;
+                if (typeof cachedRead !== "function") {
+                    throw new Error("Vault cachedRead is unavailable.");
+                }
+                const content = await cachedRead.call(sourceVault, file);
+                if (typeof content !== "string") {
+                    throw new Error("Vault cachedRead did not return a string.");
+                }
+                assertAllowed(file.path);
+                return content;
+            } catch (error) {
+                throw new VaultSnippetSearchUnavailableError(
+                    error instanceof Error ? error.message : "Vault cachedRead failed.",
+                );
+            }
         };
     }
     const filteredApp = Object.create(host.app) as ChatToolContext["host"]["app"];
@@ -1041,36 +1679,40 @@ function createPathFilteredHost(
         enumerable: true,
         value: filteredVault,
     });
-    if (guard) {
-        const metadata = getOptionalMetadataCache(host);
-        if (metadata) {
-            const filteredMetadata = Object.create(metadata) as typeof metadata;
-            if (typeof metadata.getFileCache === "function") {
-                Object.defineProperty(filteredMetadata, "getFileCache", { value: (file: Parameters<NonNullable<typeof metadata.getFileCache>>[0]) => {
-                    assertAllowed(file.path);
-                    const cache = metadata.getFileCache!(file);
-                    assertAllowed(file.path);
-                    return cache;
-                } });
-            }
-            for (const name of ["resolvedLinks", "unresolvedLinks"] as const) {
-                Object.defineProperty(filteredMetadata, name, { get: () => {
-                    assertTaskSourceReadCurrent(guard);
-                    const source = metadata[name];
-                    if (!source) return source;
-                    const links: Record<string, Record<string, number>> = Object.create(null);
-                    // Enumerate paths, but never inspect the link facts of an excluded source.
-                    for (const path of Object.keys(source)) {
-                        if (!isAllowedPath(path, isPathAllowed)) continue;
-                        assertAllowed(path);
-                        links[path] = source[path];
-                    }
-                    assertTaskSourceReadCurrent(guard);
-                    return links;
-                } });
-            }
-            Object.defineProperty(filteredApp, "metadataCache", { value: filteredMetadata });
+    const metadata = getOptionalMetadataCache(host);
+    if (metadata) {
+        const filteredMetadata = Object.create(metadata) as typeof metadata;
+        if (typeof metadata.getFileCache === "function") {
+            Object.defineProperty(filteredMetadata, "getFileCache", { value: (file: Parameters<NonNullable<typeof metadata.getFileCache>>[0]) => {
+                assertAllowed(file.path);
+                const cache = metadata.getFileCache!(file);
+                assertAllowed(file.path);
+                return cache;
+            } });
         }
+        for (const name of ["resolvedLinks", "unresolvedLinks"] as const) {
+            Object.defineProperty(filteredMetadata, name, { get: () => {
+                assertTaskSourceReadCurrent(guard);
+                const source = metadata[name];
+                if (!source) return source;
+                const links: Record<string, Record<string, number>> = Object.create(null);
+                // Enumerate paths, but never inspect the link facts of an excluded source.
+                for (const path of Object.keys(source)) {
+                    if (!isAllowedPath(path, isPathAllowed)) continue;
+                    assertAllowed(path);
+                    Object.defineProperty(links, path, {
+                        enumerable: true,
+                        get: () => {
+                            assertAllowed(path);
+                            return source[path];
+                        },
+                    });
+                }
+                assertTaskSourceReadCurrent(guard);
+                return links;
+            } });
+        }
+        Object.defineProperty(filteredApp, "metadataCache", { value: filteredMetadata });
     }
     const filteredHost = Object.create(host) as ChatToolContext["host"];
     Object.defineProperty(filteredHost, "app", {

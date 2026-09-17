@@ -18,6 +18,9 @@ import type {
 } from "./chat-tools";
 import type { ChatAgentSource } from "./chat-types";
 import type { ProviderRequestScope } from "./obsidian-fetch";
+import type { VaultObservationEvidence } from "./vault-observation-evidence";
+import type { MemoryManagementEvidence } from "./memory-management-evidence";
+import type { MemoryManagementCurrentUsageInput } from "./memory-management-types";
 
 // "tool" is the only active kind today.
 // "context" reserved (0 use) / "action" guarded by policy-engine until action mode lands.
@@ -94,6 +97,8 @@ export interface AgentCapabilityContext {
     platform?: AgentRuntimePlatform;
     onBeforeVssSearch?: () => void;
     onToolRunning?: (tool: string, message: string) => void;
+    currentMemoryUsage?: () => MemoryManagementCurrentUsageInput | undefined;
+    memoryActionRequest?: import("./memory-action-types").MemoryActionHostBinding;
 }
 
 export interface AgentCapabilityResult {
@@ -102,6 +107,10 @@ export interface AgentCapabilityResult {
     sourceRecords: SourceRecord[];
     inputSummary: string;
     sources: ChatAgentSource[];
+    vaultObservationEvidence?: VaultObservationEvidence;
+    vaultObservationContractVersion?: 1;
+    memoryManagementEvidence?: MemoryManagementEvidence;
+    memoryManagementContractVersion?: 1;
     error?: string;
     truncated?: boolean;
     omittedCount?: number;
@@ -227,6 +236,10 @@ export function agentResultToChatToolResult(
         content: result.status === "ok" ? result.observation : null,
         sources: result.sources,
         sourceRecords: result.sourceRecords,
+        vaultObservationEvidence: result.vaultObservationEvidence,
+        vaultObservationContractVersion: result.vaultObservationContractVersion,
+        memoryManagementEvidence: result.memoryManagementEvidence,
+        memoryManagementContractVersion: result.memoryManagementContractVersion,
         ...(result.userSafeMessage ?? result.error ? { error: result.userSafeMessage ?? result.error } : {}),
         ...(unavailableReason ? { unavailableReason } : {}),
     };

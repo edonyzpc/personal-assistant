@@ -884,6 +884,7 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
                 | 'limit_to_current_vault' | 'forget' | 'retry_forget' | 'undo_recent_change',
             targetId: string,
             summary?: string,
+            options?: { expectedRevisionId?: string },
         ) => Promise<{ ok: boolean; message: string }>>(async () => ({
             ok: true,
             message: 'Memory updated.',
@@ -1215,8 +1216,8 @@ describe('PA Agent telemetry settings', () => {
     });
 });
 
-describe('Operations Agent opt-in rollout', () => {
-    it('keeps the build available while preserving explicit user opt-in', () => {
+describe('Operations Agent settings compatibility', () => {
+    it('preserves the raw legacy field without changing its persisted value', () => {
         expect(DEFAULT_SETTINGS.operationsAgentEnabled).toBe(false);
         expect(mergeLoadedSettings({ operationsAgentEnabled: true }).operationsAgentEnabled).toBe(true);
         expect(mergeLoadedSettings({ operationsAgentEnabled: false }).operationsAgentEnabled).toBe(false);
@@ -1224,7 +1225,7 @@ describe('Operations Agent opt-in rollout', () => {
         expect(mergeLoadedSettings({ operationsAuditRetentionDays: 31 }).operationsAuditRetentionDays).toBe(30);
     });
 
-    it('renders the opt-in, suggestion, and audit controls', () => {
+    it('renders suggestion and audit controls without the retired legacy opt-in switch', () => {
         const plugin = makePlugin({ operationsAgentEnabled: true });
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
@@ -1232,8 +1233,8 @@ describe('Operations Agent opt-in rollout', () => {
         tab.display();
 
         const names = getMockSettingRecords().map((record) => record.name);
+        expect(names).not.toContain('Save Chat and Pagelet suggestions to notes (Beta)');
         expect(names).toEqual(expect.arrayContaining([
-            'Save Chat and Pagelet suggestions to notes (Beta)',
             'Suggest saving useful conclusions',
             'Include note content in write audit',
             'Write audit retention',
@@ -2716,7 +2717,20 @@ describe('Phase 3 IA reorder + provider UX', () => {
             ok: false,
             message: 'Correction was not saved.',
         });
-        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+        const displayedItem = {
+            id: 'claim-correction',
+            claimId: 'claim-correction',
+            revisionId: 'revision-displayed',
+            label: 'Keep answers concise.',
+            origin: 'user_profile',
+            authority: 'explicit_user',
+            scopeLabel: 'Test vault',
+            effect: 'future_answers',
+            lifecycle: 'active',
+            provenance: [{ kind: 'conversation', conversationId: 'conversation-correction' }],
+            supportedActions: ['correct'],
+        };
+        const displayedSnapshot = {
             generatedAt: '2026-07-10T08:00:00.000Z',
             noteMemory: { enabled: false, status: 'disabled' },
             vaultInsights: { enabled: false, status: 'disabled' },
@@ -2728,21 +2742,11 @@ describe('Phase 3 IA reorder + provider UX', () => {
                 explanationKey: 'plugin.settings.memoryControlCenter.boundary.deviceLocal',
             },
             governanceMode: 'effect_based',
-            items: [{
-                id: 'claim-correction',
-                claimId: 'claim-correction',
-                label: 'Keep answers concise.',
-                origin: 'user_profile',
-                authority: 'explicit_user',
-                scopeLabel: 'Test vault',
-                effect: 'future_answers',
-                lifecycle: 'active',
-                provenance: [{ kind: 'conversation', conversationId: 'conversation-correction' }],
-                supportedActions: ['correct'],
-            }],
+            items: [displayedItem],
             recentChanges: [],
             degradedSources: [],
-        } as never);
+        };
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue(displayedSnapshot as never);
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         const containerEl = new MockContainerEl('div');
         tab.containerEl = containerEl as never;
@@ -2761,6 +2765,14 @@ describe('Phase 3 IA reorder + provider UX', () => {
             .find((button) => button.textContent === 'Save correction');
         expect(save?.disabled).toBe(true);
 
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            ...displayedSnapshot,
+            items: [{
+                ...displayedItem,
+                revisionId: 'revision-current-after-editing',
+            }],
+        } as never);
+
         input.value = 'Keep answers concise.';
         input.dispatchEvent('input');
         expect(save?.disabled).toBe(true);
@@ -2778,6 +2790,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'correct',
             'claim-correction',
             'Keep answers concise and source-backed.',
+            { expectedRevisionId: 'revision-displayed' },
         );
         expect(displaySpy).not.toHaveBeenCalled();
         expect(containerEl.findAll('.pa-memory-control-center__correction')).toContain(editor);

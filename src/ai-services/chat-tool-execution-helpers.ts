@@ -13,7 +13,12 @@
  * here avoids promoting vault-adapter shapes to the public type surface.
  */
 
-import { MarkdownView, type Workspace } from "obsidian";
+import {
+    MarkdownView,
+    getFrontMatterInfo,
+    parseYaml,
+    type Workspace,
+} from "obsidian";
 
 import type { AiServiceHost } from "./AiServiceHost";
 import type { ChatAgentSource } from "./chat-types";
@@ -30,6 +35,7 @@ import {
     INSPECT_NOTE_MAX_CALLOUTS,
     INSPECT_NOTE_MAX_HEADINGS,
     INSPECT_NOTE_MAX_LINKS,
+    INSPECT_NOTE_MAX_BACKLINK_SOURCES,
     INSPECT_NOTE_MAX_PROPERTIES,
     INSPECT_NOTE_MAX_TAGS,
     INSPECT_NOTE_MAX_TASKS,
@@ -37,14 +43,6 @@ import {
     METADATA_CACHE_UNAVAILABLE_SOURCE,
     NOTE_OUTLINE_SCAN_LINES,
     OBSIDIAN_TARGET_PATH_MAX_CHARS,
-    SNIPPET_CONTEXT_CHARS,
-    SNIPPET_MAX_BYTES,
-    SNIPPET_MAX_CANDIDATE_FILES,
-    SNIPPET_MAX_CHARS,
-    SNIPPET_MAX_FILE_BYTES,
-    SNIPPET_MAX_FILES,
-    SNIPPET_SCOPE_UNAVAILABLE_SOURCE,
-    SNIPPET_SCOPE_UNSUPPORTED_SOURCE,
     CURRENT_NOTE_CONTENT_BUDGET_CHARS,
     CURRENT_NOTE_HEADING_SCAN_LINES,
     CURRENT_NOTE_MAX_HEADINGS,
@@ -53,9 +51,9 @@ import {
     TAG_REPRESENTATIVE_PATHS,
     TAGS_SCAN_MAX_FILES,
     TAGS_SCAN_YIELD_INTERVAL,
-    VAULT_FILE_READ_SKIPPED_SIZE_SOURCE,
     VAULT_FILE_READ_UNAVAILABLE_SOURCE,
 } from "./chat-tool-constants";
+
 import type {
     CanvasTextSnippet,
     ChatToolResult,
@@ -65,10 +63,7 @@ import type {
     ObsidianLinkTarget,
     ReadCanvasSummaryOutput,
     RecentNoteItem,
-    SearchVaultSnippetsInput,
     VaultMetadataMatch,
-    VaultSnippetMatch,
-    VaultSnippetSearchOutput,
     VaultTagsOutput,
 } from "./chat-tool-types";
 
@@ -112,19 +107,23 @@ export interface MetadataCacheLike {
     unresolvedLinks?: Record<string, Record<string, number>>;
 }
 
+export interface CachePositionLike {
+    start?: { line?: number; col?: number; offset?: number };
+    end?: { line?: number; col?: number; offset?: number };
+}
+
 export interface FileCacheLike {
-    tags?: Array<{ tag?: string }>;
+    tags?: Array<{ tag?: string; position?: CachePositionLike }>;
     frontmatter?: Record<string, unknown>;
-    headings?: Array<{ heading?: string; level?: number }>;
-    links?: Array<{ link?: string; original?: string; displayText?: string }>;
-    embeds?: Array<{ link?: string; original?: string; displayText?: string }>;
+    headings?: Array<{ heading?: string; level?: number; position?: CachePositionLike }>;
+    links?: Array<{ link?: string; original?: string; displayText?: string; position?: CachePositionLike }>;
+    embeds?: Array<{ link?: string; original?: string; displayText?: string; position?: CachePositionLike }>;
     listItems?: Array<{
         task?: string;
-        position?: {
-            start?: { line?: number };
-            end?: { line?: number };
-        };
+        position?: CachePositionLike;
     }>;
+    sections?: Array<{ type?: string; position?: CachePositionLike }>;
+    blocks?: Record<string, { position?: CachePositionLike }>;
 }
 
 export function findCurrentMarkdownView(workspace: Workspace): MarkdownViewLike | null {
@@ -209,7 +208,16 @@ export function getMarkdownFiles(host: AiServiceHost): MarkdownFileLike[] {
 }
 
 export async function readVaultFile(host: AiServiceHost, file: VaultFileLike): Promise<string> {
-    return await getVault(host).cachedRead?.(file) ?? "";
+    const vault = getVault(host);
+    const cachedRead = vault.cachedRead;
+    if (typeof cachedRead !== "function") {
+        throw new Error("Vault cachedRead is unavailable.");
+    }
+    const content = await cachedRead.call(vault, file);
+    if (typeof content !== "string") {
+        throw new Error("Vault cachedRead did not return a string.");
+    }
+    return content;
 }
 
 interface BudgetedVaultRead {
@@ -485,13 +493,17 @@ function normalizeTagName(value: string): string {
 export function previewFrontmatter(
     frontmatter: Record<string, unknown> | undefined,
     maxKeys = FRONTMATTER_PREVIEW_MAX_KEYS,
+    maxValueChars = FRONTMATTER_VALUE_MAX_CHARS,
 ): Record<string, string> {
     if (!frontmatter || typeof frontmatter !== "object") return {};
     const preview: Record<string, string> = {};
-    for (const [key, value] of Object.entries(frontmatter).slice(0, maxKeys)) {
+    // Select keys before reading values. Frontmatter can be a proxy whose later
+    // entries have side effects; those values must not be touched at all.
+    for (const key of Object.keys(frontmatter).slice(0, maxKeys)) {
+        const value = frontmatter[key];
         const rendered = renderFrontmatterValue(value);
         if (rendered) {
-            preview[key] = truncate(rendered, FRONTMATTER_VALUE_MAX_CHARS);
+            preview[key] = truncate(rendered, maxValueChars);
         }
     }
     return preview;
@@ -536,46 +548,110 @@ export function fileToRecentNote(file: MarkdownFileLike): RecentNoteItem {
     };
 }
 
+export class NoteStructureCacheMismatchError extends Error { }
+
+const CALLOUT_LINE_PATTERN = /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(?:>[ \t]*)+\[!([^\]\s]+)\](?:[+-])?[ \t]*(.*)$/;
+
 export function buildNoteStructureSummary(
     file: MarkdownFileLike,
     cache: FileCacheLike | null | undefined,
     content: string,
     metadataCache: MetadataCacheLike | undefined,
     unavailableSources: string[] = [],
-    options: { truncated?: boolean; skippedSources?: string[]; omittedCount?: number; onSourceRead?: (path: string) => void } = {},
+    options: {
+        truncated?: boolean;
+        skippedSources?: string[];
+        omittedCount?: number;
+        onSourceRead?: (path: string) => void;
+        bodyRead?: boolean;
+        bodyRequired?: boolean;
+        captureBacklinkEvaluation?: (facts: {
+            scannedSources: string[];
+            evaluatedSources: number;
+            capExceeded: boolean;
+            backlinks: string[];
+        }) => void;
+    } = {},
 ): InspectObsidianNoteOutput {
     let omittedCount = options.omittedCount ?? 0;
+    let cacheCoverage: "existing-items-only" | undefined;
     const countOmitted = (count: number) => {
         omittedCount += count;
     };
-    const parsed = parseMarkdownStructure(content);
-    const headingCandidates = extractNoteHeadings(cache, parsed.headings);
-    const tags = takeWithOmitted(mergeUnique([...collectCacheTags(cache), ...parsed.tags]), INSPECT_NOTE_MAX_TAGS, countOmitted);
+    const cacheKnown = cache !== null && cache !== undefined;
+    const parsed = cacheKnown ? emptyParsedMarkdownStructure() : parseMarkdownStructure(content);
+    const frontmatter = cacheKnown && options.bodyRead
+        ? resolveCurrentFrontmatter(cache, content)
+        : cache?.frontmatter;
+    if (cacheKnown && options.bodyRead) {
+        validateCachePositionsAgainstContent(cache, content);
+        cacheCoverage = "existing-items-only";
+    }
+    const headingCandidates = cacheKnown
+        ? extractNoteHeadings(cache, [])
+        : parsed.headings;
+    const tags = cacheKnown
+        ? takeWithOmitted(collectCacheTags(cache), INSPECT_NOTE_MAX_TAGS, countOmitted)
+        : takeWithOmitted(parsed.tags, INSPECT_NOTE_MAX_TAGS, countOmitted);
     const headings = takeWithOmitted(headingCandidates, INSPECT_NOTE_MAX_HEADINGS, countOmitted);
-    const tasks = takeWithOmitted(parsed.tasks, INSPECT_NOTE_MAX_TASKS, countOmitted);
-    const callouts = takeWithOmitted(parsed.callouts, INSPECT_NOTE_MAX_CALLOUTS, countOmitted);
-    const wikilinks = takeWithOmitted(mergeUnique([...extractCacheLinks(cache?.links), ...parsed.wikilinks]), INSPECT_NOTE_MAX_LINKS, countOmitted);
-    const embeds = takeWithOmitted(mergeUnique([...extractCacheLinks(cache?.embeds), ...parsed.embeds]), INSPECT_NOTE_MAX_LINKS, countOmitted);
-    const wikilinkTargets = takeWithOmitted(mergeUniqueLinkTargets([
-        ...extractCacheLinkTargets(cache?.links),
-        ...parsed.wikilinkTargets,
-    ]), INSPECT_NOTE_MAX_LINKS, countOmitted);
-    const embedTargets = takeWithOmitted(mergeUniqueLinkTargets([
-        ...extractCacheLinkTargets(cache?.embeds, true),
-        ...parsed.embedTargets,
-    ]), INSPECT_NOTE_MAX_LINKS, countOmitted);
+    const tasks = takeWithOmitted(
+        cacheKnown ? projectCacheTasks(cache, content, options.bodyRead === true) : parsed.tasks,
+        INSPECT_NOTE_MAX_TASKS,
+        countOmitted,
+    );
+    const callouts = takeWithOmitted(
+        cacheKnown ? projectCacheCallouts(cache, content, options.bodyRead === true) : parsed.callouts,
+        INSPECT_NOTE_MAX_CALLOUTS,
+        countOmitted,
+    );
+    const wikilinks = takeWithOmitted(
+        cacheKnown ? extractCacheLinks(cache.links) : parsed.wikilinks,
+        INSPECT_NOTE_MAX_LINKS,
+        countOmitted,
+    );
+    const embeds = takeWithOmitted(
+        cacheKnown ? extractCacheLinks(cache.embeds) : parsed.embeds,
+        INSPECT_NOTE_MAX_LINKS,
+        countOmitted,
+    );
+    const wikilinkTargets = takeWithOmitted(
+        cacheKnown ? extractCacheLinkTargets(cache.links) : parsed.wikilinkTargets,
+        INSPECT_NOTE_MAX_LINKS,
+        countOmitted,
+    );
+    const embedTargets = takeWithOmitted(
+        cacheKnown ? extractCacheLinkTargets(cache.embeds, true) : parsed.embedTargets,
+        INSPECT_NOTE_MAX_LINKS,
+        countOmitted,
+    );
     const outgoingLinks = takeWithOmitted(mergeUnique([
         ...wikilinks,
         ...embeds,
         ...Object.keys(metadataCache?.resolvedLinks?.[file.path] ?? {}),
     ]), INSPECT_NOTE_MAX_LINKS, countOmitted);
-    const backlinks = takeWithOmitted(findBacklinksForPath(file.path, metadataCache?.resolvedLinks, options.onSourceRead), INSPECT_NOTE_MAX_LINKS, countOmitted);
+    const backlinkEvaluation = evaluateBacklinksForPath(
+        file.path,
+        metadataCache?.resolvedLinks,
+        options.onSourceRead,
+        INSPECT_NOTE_MAX_BACKLINK_SOURCES,
+    );
+    const backlinks = takeWithOmitted(backlinkEvaluation.paths, INSPECT_NOTE_MAX_LINKS, countOmitted);
+    options.captureBacklinkEvaluation?.({
+        scannedSources: backlinkEvaluation.scannedSources,
+        evaluatedSources: backlinkEvaluation.evaluatedSources,
+        capExceeded: backlinkEvaluation.capExceeded,
+        backlinks,
+    });
     const unresolvedLinks = takeWithOmitted(Object.keys(metadataCache?.unresolvedLinks?.[file.path] ?? {}), INSPECT_NOTE_MAX_LINKS, countOmitted);
+    const partialStructure = !cacheKnown
+        || options.bodyRequired === true && (options.skippedSources?.length ?? 0) > 0
+        || backlinkEvaluation.capExceeded
+        || cacheCoverage === "existing-items-only";
     const output: InspectObsidianNoteOutput = {
         kind: "note-structure",
         path: file.path,
         title: getFileTitle(file),
-        properties: previewFrontmatter(cache?.frontmatter, INSPECT_NOTE_MAX_PROPERTIES),
+            properties: previewFrontmatter(frontmatter, INSPECT_NOTE_MAX_PROPERTIES, FRONTMATTER_VALUE_MAX_CHARS),
         tags,
         headings,
         tasks,
@@ -592,6 +668,18 @@ export function buildNoteStructureSummary(
             backlinks,
             unresolved: unresolvedLinks,
         },
+        coverage: {
+            state: partialStructure || (unavailableSources.length > 0 && options.bodyRequired === true)
+                ? "partial"
+                : "complete",
+            cacheState: cacheKnown ? "known" : "unknown",
+            bodyRead: options.bodyRead === true,
+            bodyRequired: options.bodyRequired === true,
+            evaluatedBacklinkSources: backlinkEvaluation.evaluatedSources,
+            ...(cacheCoverage ? { cacheCoverage } : {}),
+            ...(backlinkEvaluation.capExceeded ? { backlinkScanCapExceeded: true } : {}),
+            ...(omittedCount > 0 ? { outputTruncated: true } : {}),
+        },
     };
     if (unavailableSources.length > 0) {
         output.unavailableSources = unavailableSources;
@@ -606,6 +694,277 @@ export function buildNoteStructureSummary(
         }
     }
     return output;
+}
+
+function emptyParsedMarkdownStructure(): ReturnType<typeof parseMarkdownStructure> {
+    return {
+        headings: [],
+        tasks: [],
+        callouts: [],
+        wikilinks: [],
+        embeds: [],
+        wikilinkTargets: [],
+        embedTargets: [],
+        tags: [],
+    };
+}
+
+function projectCacheTasks(
+    cache: FileCacheLike,
+    content: string,
+    bodyRead: boolean,
+): ParsedMarkdownStructure["tasks"] {
+    if (!Array.isArray(cache.listItems)) return [];
+    const tasks = cache.listItems
+        .filter(item => typeof item.task === "string");
+    if (!bodyRead) {
+        return tasks.map(item => ({
+            line: normalizeCacheLine(item.position?.start?.line),
+            text: "",
+            status: item.task!,
+            checked: item.task !== " ",
+        }));
+    }
+
+    const lines = content.split(/\r?\n/);
+    const lineSpans = buildCacheLineSpans(content);
+    return tasks.map(item => {
+        const location = locateCacheStructure(item.position, lineSpans, content);
+        const lineIndex = location?.lineIndex ?? 0;
+        if (!location || lineIndex < 1 || lineIndex > lines.length) {
+            throw new NoteStructureCacheMismatchError("Cached task position is outside the current note text.");
+        }
+        const match = location.text
+            .match(/^\s*(?:>\s*)*(?:[-*+]|\d{1,9}[.)])\s+\[([^\]\r\n])]\s*(.*)$/);
+        if (!match || match[1] !== item.task) {
+            throw new NoteStructureCacheMismatchError("Cached task position does not match the current note text.");
+        }
+        return {
+            line: lineIndex,
+            text: truncate(match[2].trim(), FRONTMATTER_VALUE_MAX_CHARS),
+            status: match[1],
+            checked: match[1] !== " ",
+        };
+    });
+}
+
+function projectCacheCallouts(
+    cache: FileCacheLike,
+    content: string,
+    bodyRead: boolean,
+): ParsedMarkdownStructure["callouts"] {
+    if (!Array.isArray(cache.sections)) return [];
+    const candidates = cache.sections.filter(section =>
+        section.type === "callout" || section.type === "blockquote" || section.type === "list",
+    );
+    if (!bodyRead) return [];
+    const lines = content.split(/\r?\n/);
+    const fencedLines = collectFencedLineIndexes(lines);
+    const callouts: ParsedMarkdownStructure["callouts"] = [];
+    const seenLines = new Set<number>();
+    for (const section of candidates) {
+        const startLine = normalizeCacheLine(section.position?.start?.line);
+        const endLine = normalizeCacheLine(section.position?.end?.line);
+        if (startLine < 1 || endLine < startLine || endLine > lines.length) {
+            throw new NoteStructureCacheMismatchError("Cached callout candidate is outside the current note text.");
+        }
+        if (section.type === "callout" && !CALLOUT_LINE_PATTERN.test(lines[startLine - 1]!)) {
+            throw new NoteStructureCacheMismatchError("Cached callout position does not match the current note text.");
+        }
+        for (let lineIndex = startLine; lineIndex <= endLine; lineIndex++) {
+            if (fencedLines.has(lineIndex - 1)) continue;
+            const match = lines[lineIndex - 1]!.match(CALLOUT_LINE_PATTERN);
+            if (!match || seenLines.has(lineIndex)) continue;
+            seenLines.add(lineIndex);
+            const title = match[2].trim();
+            callouts.push({
+                line: lineIndex,
+                type: match[1],
+                ...(title ? { title: truncate(title, FRONTMATTER_VALUE_MAX_CHARS) } : {}),
+            });
+        }
+    }
+    return callouts;
+}
+
+function collectFencedLineIndexes(lines: readonly string[]): Set<number> {
+    const fencedLines = new Set<number>();
+    let fence: { marker: "`" | "~"; length: number } | null = null;
+    lines.forEach((line, index) => {
+        const marker = line.match(/^\s{0,3}(?:>\s*)*(`{3,}|~{3,})/);
+        if (marker) {
+            const currentMarker = marker[1]![0] as "`" | "~";
+            const length = marker[1]!.length;
+            fencedLines.add(index);
+            if (!fence) {
+                fence = { marker: currentMarker, length };
+            } else if (currentMarker === fence.marker && length >= fence.length) {
+                fence = null;
+            }
+            return;
+        }
+        if (fence) fencedLines.add(index);
+    });
+    return fencedLines;
+}
+
+interface CacheLineSpan {
+    start: number;
+    end: number;
+    endIncludingBreak: number;
+}
+
+interface CacheStructureLocation {
+    lineIndex: number;
+    text: string;
+}
+
+function buildCacheLineSpans(content: string): CacheLineSpan[] {
+    const spans: CacheLineSpan[] = [];
+    const lineBreak = /\r\n|\r|\n/g;
+    let start = 0;
+    let match: RegExpExecArray | null;
+    while ((match = lineBreak.exec(content)) !== null) {
+        spans.push({
+            start,
+            end: match.index,
+            endIncludingBreak: match.index + match[0].length,
+        });
+        start = spans[spans.length - 1]!.endIncludingBreak;
+    }
+    spans.push({ start, end: content.length, endIncludingBreak: content.length });
+    return spans;
+}
+
+function locateCacheStructure(
+    position: CachePositionLike | undefined,
+    spans: readonly CacheLineSpan[],
+    content: string,
+): CacheStructureLocation | null {
+    const start = position?.start;
+    let lineIndex = normalizeCacheLine(start?.line);
+    if (lineIndex === 0 && typeof start?.offset === "number") {
+        lineIndex = spans.findIndex(span =>
+            start.offset! >= span.start && start.offset! < span.endIncludingBreak) + 1;
+    }
+    if (lineIndex < 1 || lineIndex > spans.length) return null;
+
+    const span = spans[lineIndex - 1]!;
+    const line = content.slice(span.start, span.end);
+    if (typeof start?.offset === "number") {
+        if (!Number.isInteger(start.offset) || start.offset < span.start || start.offset > span.end) {
+            return null;
+        }
+        return { lineIndex, text: content.slice(start.offset, span.end) };
+    }
+    if (typeof start?.col === "number") {
+        if (!Number.isInteger(start.col) || start.col < 0 || start.col > line.length) {
+            return null;
+        }
+        return { lineIndex, text: line.slice(start.col) };
+    }
+    return { lineIndex, text: line };
+}
+
+function resolveCurrentFrontmatter(cache: FileCacheLike, content: string): Record<string, unknown> | undefined {
+    const info = getFrontMatterInfo(content);
+    let current: Record<string, unknown> | undefined;
+    try {
+        const parsed = info.exists ? parseYaml(info.frontmatter) as Record<string, unknown> | null : null;
+        current = info.exists && parsed && typeof parsed === "object" ? parsed : undefined;
+    } catch {
+        throw new NoteStructureCacheMismatchError("Cached frontmatter cannot be verified against the current note text.");
+    }
+    const cacheHasFrontmatter = Object.prototype.hasOwnProperty.call(cache, "frontmatter");
+    if (
+        cacheHasFrontmatter
+            ? !stableJsonEqual(cache.frontmatter, current ?? {})
+            : current !== undefined
+    ) {
+        throw new NoteStructureCacheMismatchError("Cached frontmatter does not match the current note text.");
+    }
+    return current;
+}
+
+function stableJsonEqual(left: unknown, right: unknown): boolean {
+    return JSON.stringify(stableJsonValue(left)) === JSON.stringify(stableJsonValue(right));
+}
+
+function stableJsonValue(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(stableJsonValue);
+    if (value && typeof value === "object") {
+        return Object.fromEntries(Object.keys(value as Record<string, unknown>)
+            .sort()
+            .map(key => [key, stableJsonValue((value as Record<string, unknown>)[key])]));
+    }
+    return value;
+}
+
+function validateCachePositionsAgainstContent(cache: FileCacheLike, content: string): void {
+    const lines = content.split(/\r?\n/);
+    const lineSpans = buildCacheLineSpans(content);
+    if (Array.isArray(cache.headings)) {
+        for (const heading of cache.headings) {
+            const lineIndex = normalizeCacheLine(heading.position?.start?.line);
+            if (lineIndex === 0) continue;
+            const location = lineIndex >= 1 && lineIndex <= lines.length
+                ? locateCacheStructure(heading.position, lineSpans, content)
+                : null;
+            if (!location || !cachedHeadingMatches(lines, location.lineIndex, heading, location.text)) {
+                throw new NoteStructureCacheMismatchError("Cached heading position does not match the current note text.");
+            }
+        }
+    }
+    if (Array.isArray(cache.tags)) {
+        for (const tag of cache.tags) {
+            const lineIndex = normalizeCacheLine(tag.position?.start?.line);
+            if (lineIndex === 0) continue;
+            const line = lines[lineIndex - 1];
+            if (!line || !tag.tag || !line.includes(tag.tag)) {
+                throw new NoteStructureCacheMismatchError("Cached tag position does not match the current note text.");
+            }
+        }
+    }
+    for (const links of [cache.links, cache.embeds]) {
+        if (!Array.isArray(links)) continue;
+        for (const link of links) {
+            const lineIndex = normalizeCacheLine(link.position?.start?.line);
+            if (lineIndex === 0 || typeof link.original !== "string") continue;
+            const line = lines[lineIndex - 1];
+            if (!line || !line.includes(link.original)) {
+                throw new NoteStructureCacheMismatchError("Cached link position does not match the current note text.");
+            }
+        }
+    }
+}
+
+function normalizeCacheLine(value: unknown): number {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0
+        ? value + 1
+        : 0;
+}
+
+function cachedHeadingMatches(
+    lines: readonly string[],
+    lineIndex: number,
+    heading: { heading?: string; level?: number },
+    locatedText?: string,
+): boolean {
+    const line = locatedText ?? lines[lineIndex - 1];
+    if (!line || typeof heading.level !== "number") return false;
+    const atx = line.match(/^\s{0,3}(#{1,6})(?:[ \t]+(.*))?$/);
+    if (atx) {
+        let text = atx[2] ?? "";
+        const closing = text.match(/[ \t]+#+[ \t]*$/);
+        if (closing) text = text.slice(0, text.length - closing[0].length);
+        return atx[1]!.length === heading.level && text.trim() === heading.heading?.trim();
+    }
+    const underline = lines[lineIndex]?.match(/^\s{0,3}(=+|-+)[ \t]*$/);
+    if (underline) {
+        return (underline[1]![0] === "=" ? 1 : 2) === heading.level
+            && line.trim() === heading.heading?.trim();
+    }
+    return false;
 }
 
 export function extractNoteHeadings(
@@ -643,8 +1002,14 @@ export function parseMarkdownStructure(content: string): ParsedMarkdownStructure
     const embedTargets: ObsidianLinkTarget[] = [];
     const tags: string[] = [];
     let fence: { marker: "`" | "~"; length: number } | null = null;
+    let frontmatterEnd = 0;
+    if (/^---(?:\r?\n|$)/.test(lines[0] ?? "")) {
+        const closing = lines.findIndex((line, index) => index > 0 && /^---(?:\r?\n|$)/.test(line));
+        frontmatterEnd = closing > 0 ? closing + 1 : lines.length;
+    }
 
     lines.forEach((line, index) => {
+        if (index < frontmatterEnd) return;
         const fenceMatch = line.match(/^\s{0,3}(`{3,}|~{3,})/);
         if (fenceMatch) {
             const marker = fenceMatch[1][0] as "`" | "~";
@@ -668,10 +1033,10 @@ export function parseMarkdownStructure(content: string): ParsedMarkdownStructure
                 line: index + 1,
                 text: truncate(task[2].trim(), FRONTMATTER_VALUE_MAX_CHARS),
                 status: task[1],
-                checked: task[1].toLowerCase() === "x",
+                checked: task[1] !== " ",
             });
         }
-        const callout = line.match(/^\s*>\s*\[!([^\]\s+-]+)[^\]]*\]\s*(.*)$/);
+        const callout = line.match(CALLOUT_LINE_PATTERN);
         if (callout) {
             const title = callout[2].trim();
             callouts.push({
@@ -763,15 +1128,43 @@ export function findBacklinksForPath(
     resolvedLinks: Record<string, Record<string, number>> | undefined,
     onSourceRead?: (path: string) => void,
 ): string[] {
-    if (!resolvedLinks) return [];
-    return Object.entries(resolvedLinks)
-        .filter(([sourcePath, targets]) => {
-            // Even a negative link fact contributes to the aggregate answer.
-            onSourceRead?.(sourcePath);
-            return targets && typeof targets === "object" && targetPath in targets;
-        })
-        .map(([sourcePath]) => sourcePath)
-        .sort((a, b) => a.localeCompare(b));
+    return evaluateBacklinksForPath(targetPath, resolvedLinks, onSourceRead).paths;
+}
+
+interface BacklinkEvaluation {
+    paths: string[];
+    scannedSources: string[];
+    evaluatedSources: number;
+    capExceeded: boolean;
+}
+
+function evaluateBacklinksForPath(
+    targetPath: string,
+    resolvedLinks: Record<string, Record<string, number>> | undefined,
+    onSourceRead?: (path: string) => void,
+    maxSources?: number,
+): BacklinkEvaluation {
+    if (!resolvedLinks) return { paths: [], scannedSources: [], evaluatedSources: 0, capExceeded: false };
+    const paths: string[] = [];
+    const scannedSources: string[] = [];
+    let evaluatedSources = 0;
+    let capExceeded = false;
+    for (const sourcePath of Object.keys(resolvedLinks)) {
+        if (maxSources !== undefined && evaluatedSources >= maxSources) {
+            capExceeded = true;
+            break;
+        }
+        // Even a negative link fact contributes to the aggregate answer.
+        onSourceRead?.(sourcePath);
+        scannedSources.push(sourcePath);
+        evaluatedSources++;
+        const targets = resolvedLinks[sourcePath];
+        if (targets && typeof targets === "object" && targetPath in targets) {
+            paths.push(sourcePath);
+        }
+    }
+    paths.sort((left, right) => left.localeCompare(right));
+    return { paths, scannedSources, evaluatedSources, capExceeded };
 }
 
 export function buildCanvasStructureSummary(file: VaultFileLike, content: string): ReadCanvasSummaryOutput | null {
@@ -922,163 +1315,6 @@ function findDuplicateValues(values: string[]): string[] {
         seen.add(value);
     }
     return [...duplicates].sort((a, b) => a.localeCompare(b));
-}
-
-export async function searchVaultSnippets(
-    host: AiServiceHost,
-    input: SearchVaultSnippetsInput,
-    signal: AbortSignal | undefined,
-): Promise<VaultSnippetSearchOutput> {
-    if (!canReadVaultFiles(host)) {
-        return {
-            kind: "vault-snippets",
-            query: input.query,
-            scope: input.scope,
-            matches: [],
-            scannedFiles: 0,
-            scannedBytes: 0,
-            unavailableSources: [VAULT_FILE_READ_UNAVAILABLE_SOURCE],
-        };
-    }
-
-    if (input.scope && !snippetScopeHasReadableMarkdown(host, input.scope)) {
-        const unsupportedScope = isUnsupportedSnippetFileScope(host, input.scope);
-        return {
-            kind: "vault-snippets",
-            query: input.query,
-            scope: input.scope,
-            matches: [],
-            scannedFiles: 0,
-            scannedBytes: 0,
-            consideredFiles: 0,
-            missingScope: unsupportedScope ? undefined : true,
-            unsupportedScope: unsupportedScope || undefined,
-            unavailableSources: [unsupportedScope ? SNIPPET_SCOPE_UNSUPPORTED_SOURCE : SNIPPET_SCOPE_UNAVAILABLE_SOURCE],
-        };
-    }
-
-    const normalizedQuery = normalizeSearchText(input.query);
-    const matches: VaultSnippetMatch[] = [];
-    let consideredFiles = 0;
-    let scannedFiles = 0;
-    let scannedBytes = 0;
-    let skippedFiles = 0;
-    let omittedCount = 0;
-    let truncated = false;
-
-    for (const file of getMarkdownFiles(host)) {
-        if (!isFileWithinSnippetScope(file.path, input.scope)) continue;
-        throwIfAborted(signal);
-        if (consideredFiles >= SNIPPET_MAX_CANDIDATE_FILES) {
-            truncated = true;
-            omittedCount++;
-            break;
-        }
-        consideredFiles++;
-        if (scannedFiles >= SNIPPET_MAX_FILES || scannedBytes >= SNIPPET_MAX_BYTES) {
-            truncated = true;
-            omittedCount++;
-            break;
-        }
-        const remainingByteBudget = SNIPPET_MAX_BYTES - scannedBytes;
-        const knownSize = getKnownFileSize(file);
-        if (
-            knownSize !== undefined
-            && (knownSize > SNIPPET_MAX_FILE_BYTES || knownSize > remainingByteBudget)
-        ) {
-            skippedFiles++;
-            truncated = true;
-            omittedCount++;
-            continue;
-        }
-
-        const contentBudget = Math.min(SNIPPET_MAX_FILE_BYTES, remainingByteBudget);
-        const readResult = await readVaultFileWithBudget(host, file, contentBudget);
-        if (readResult.skippedForSize) {
-            skippedFiles++;
-            truncated = true;
-            omittedCount++;
-            continue;
-        }
-        const content = readResult.content;
-        scannedFiles++;
-        scannedBytes += getUtf8ByteLength(content);
-        if (readResult.truncated || scannedBytes > SNIPPET_MAX_BYTES) {
-            truncated = true;
-            omittedCount++;
-        }
-        const match = findSnippetMatch(file, content, normalizedQuery);
-        if (!match) continue;
-        if (matches.length >= input.limit) {
-            truncated = true;
-            omittedCount++;
-            continue;
-        }
-        matches.push(match);
-    }
-
-    return {
-        kind: "vault-snippets",
-        query: input.query,
-        scope: input.scope,
-        matches,
-        scannedFiles,
-        scannedBytes,
-        consideredFiles,
-        skippedFiles: skippedFiles || undefined,
-        skippedSources: skippedFiles > 0 ? [VAULT_FILE_READ_SKIPPED_SIZE_SOURCE] : undefined,
-        truncated: truncated || undefined,
-        omittedCount: omittedCount || undefined,
-    };
-}
-
-function snippetScopeHasReadableMarkdown(host: AiServiceHost, scope: string): boolean {
-    if (scope.toLowerCase().endsWith(".md")) {
-        return Boolean(findMarkdownFileByPath(host, scope));
-    }
-    return getMarkdownFiles(host).some((file) => isFileWithinSnippetScope(file.path, scope));
-}
-
-function isUnsupportedSnippetFileScope(host: AiServiceHost, scope: string): boolean {
-    if (scope.toLowerCase().endsWith(".md")) return false;
-    const abstractFile = getVault(host).getAbstractFileByPath?.(scope);
-    if (!isVaultFileLike(abstractFile)) return false;
-    const extension = typeof abstractFile.extension === "string" ? abstractFile.extension.toLowerCase() : "";
-    if (extension) return extension !== "md";
-    return hasKnownUnsupportedFileExtension(abstractFile.path);
-}
-
-function hasKnownUnsupportedFileExtension(path: string): boolean {
-    return /\.(?:canvas|txt|pdf|png|jpe?g|gif|webp|json|ya?ml|csv|tsv|js|ts|css|html?|docx?|xlsx?|pptx?|zip)$/i.test(path);
-}
-
-function isFileWithinSnippetScope(path: string, scope: string | undefined): boolean {
-    if (!scope) return true;
-    if (scope.toLowerCase().endsWith(".md")) {
-        return path === scope;
-    }
-    const prefix = scope.endsWith("/") ? scope : `${scope}/`;
-    return path.startsWith(prefix);
-}
-
-function findSnippetMatch(
-    file: MarkdownFileLike,
-    content: string,
-    normalizedQuery: string,
-): VaultSnippetMatch | null {
-    const normalizedContent = normalizeSearchText(content);
-    const index = normalizedContent.indexOf(normalizedQuery);
-    if (index < 0) return null;
-    const start = Math.max(0, index - SNIPPET_CONTEXT_CHARS);
-    const end = Math.min(content.length, index + normalizedQuery.length + SNIPPET_CONTEXT_CHARS);
-    const line = content.slice(0, index).split(/\r?\n/).length;
-    const snippet = content.slice(start, end).replace(/\s+/g, " ").trim();
-    return {
-        path: file.path,
-        title: getFileTitle(file),
-        line,
-        snippet: truncate(snippet, SNIPPET_MAX_CHARS),
-    };
 }
 
 export async function listVaultTags(

@@ -20,6 +20,7 @@ import {
 import { formatToolObservations } from "../../ai-services/pa-agent-prompts";
 import { streamWithInvokeFallback } from "../../ai-services/pa-agent-runtime";
 import type { ProviderRequestScope } from "../../ai-services/obsidian-fetch";
+import type { VaultObservationPhysicalBinding } from "../../ai-services/vault-observation-evidence";
 import { PAGELET_DEEP_DISCOVER_MAX_OBSERVATION_CHARS } from "./types";
 
 interface NativeModelRunnable {
@@ -37,6 +38,7 @@ const PAGELET_CONTENT_EVIDENCE_TOOLS = new Set([
     "search_vault_snippets",
     "inspect_obsidian_note",
     "read_note_outline",
+    "read_note",
 ]);
 
 export interface PageletNativePrompt {
@@ -66,6 +68,8 @@ export interface CreatePageletNativeModelOptions {
     signal?: AbortSignal;
     /** Shared by model and Memory Provider calls in the enclosing Pagelet run. */
     providerRequestScope: ProviderRequestScope;
+    bindVaultObservationProjection?: (transcript: readonly PaAgentMessage[]) => VaultObservationPhysicalBinding;
+    recordPromptProjection?: (transcript: readonly PaAgentMessage[], turnIndex?: number) => void;
 }
 
 export function createPageletNativeModel(
@@ -90,71 +94,119 @@ export function createPageletNativeModel(
                 : [...(options.toolDefinitions ?? options.registry.listDefinitions(filter))]
                     .filter((definition) => allowedToolNames.has(definition.name)))
                 .map(snapshotSerializable);
-            const llm = await options.createChatModel(
+            interface PageletAttempt {
+                binding?: VaultObservationPhysicalBinding;
+                requiresVaultObservationBinding?: boolean;
+                providerSignal?: AbortSignal;
+                superseded?: boolean;
+                promptTranscript?: PaAgentMessage[];
+                turnIndex?: number;
+            }
+            const streamAttempt: PageletAttempt = {};
+            const invokeAttempt: PageletAttempt = {};
+            const createAttemptModel = async (attempt: PageletAttempt) => await options.createChatModel(
                 options.temperature ?? 0.4,
                 {
                     transport: "native",
                     ...(options.chatModelOptions ?? {}),
                     providerRequestScope: options.providerRequestScope,
-                    onProviderRequestStart: input.notifyProviderRequestStarted,
+                    prepareProviderRequest: async (physicalSignal?: AbortSignal | null) => {
+                        if (attempt.superseded) throw new Error("Pagelet vault observation binding is no longer current");
+                        if (attempt.requiresVaultObservationBinding && !attempt.binding) {
+                            throw new Error("Pagelet vault observation projection is not bound");
+                        }
+                        const binding = attempt.binding;
+                        if (binding) {
+                            await prepareWithAllSignals(
+                                binding.prepare.bind(binding),
+                                [physicalSignal, attempt.providerSignal, options.signal],
+                            );
+                            binding.assertCurrent();
+                        }
+                    },
+                    onProviderRequestStart: () => {
+                        if (attempt.superseded) throw new Error("Pagelet vault observation binding is no longer current");
+                        if (attempt.requiresVaultObservationBinding && !attempt.binding) {
+                            throw new Error("Pagelet vault observation projection is not bound");
+                        }
+                        attempt.binding?.assertCurrent();
+                        if (attempt === invokeAttempt) streamAttempt.superseded = true;
+                        input.notifyProviderRequestStarted?.();
+                        if (attempt.promptTranscript) {
+                            options.recordPromptProjection?.(attempt.promptTranscript, attempt.turnIndex);
+                        }
+                    },
                 },
             );
-            // Model construction may suspend after the Loop preflight. Once
-            // the real chain is ready, revalidate and rebuild the compacted
-            // prompt immediately before the first provider request.
-            const providerInput = input.prepareForProviderRetry
-                ? await input.prepareForProviderRetry()
-                : input;
-            assertToolSchemaSnapshotCurrent(liveSchemas, schemas);
-            const runnable = bindNativeTools(llm, schemas);
+            const llm = await createAttemptModel(streamAttempt);
             const prompt = (options.createPrompt ?? createDefaultPageletPrompt)();
-            const chain = prompt.pipe(runnable);
-            const projectedInput: PaAgentModelInput = {
-                ...providerInput,
-                transcript: projectPageletTranscriptForPrompt(
-                    providerInput.transcript,
-                    options.maxObservationChars
-                        ?? PAGELET_DEEP_DISCOVER_MAX_OBSERVATION_CHARS,
-                ),
+            const prepareAttemptInput = async (
+                attempt: PageletAttempt,
+                sourceInput: PaAgentModelInput,
+            ): Promise<Record<string, unknown>> => {
+                // Model construction may suspend after the Loop preflight. Once
+                // the real chain is ready, revalidate and rebuild the compacted
+                // prompt immediately before the first provider request.
+                const providerInput = sourceInput.prepareForProviderRetry
+                    ? await sourceInput.prepareForProviderRetry()
+                    : sourceInput;
+                attempt.providerSignal = providerInput.signal;
+                assertToolSchemaSnapshotCurrent(liveSchemas, schemas);
+                const projectedInput: PaAgentModelInput = {
+                    ...providerInput,
+                    transcript: projectPageletTranscriptForPrompt(
+                        providerInput.transcript,
+                        options.maxObservationChars
+                            ?? PAGELET_DEEP_DISCOVER_MAX_OBSERVATION_CHARS,
+                    ),
+                };
+                projectedInput.transcript = projectedInput.transcript.filter(message => !(
+                    message.role === "toolResult"
+                    && (
+                        message.content.metadata?.pageletPromptProjectionHidden === true
+                        || !message.content.includeInNextPrompt
+                        || message.content.promptText.length === 0
+                    )
+                ));
+                const hasContractMaterial = projectedInput.transcript.some(message => (
+                    message.role === "toolResult"
+                    && message.content.metadata?.vaultObservationContractVersion === 1
+                ));
+                if (hasContractMaterial && !options.bindVaultObservationProjection) {
+                    throw new Error("Pagelet vault observation projection host is unavailable");
+                }
+                attempt.requiresVaultObservationBinding = hasContractMaterial;
+                attempt.binding = options.bindVaultObservationProjection?.(projectedInput.transcript);
+                attempt.promptTranscript = projectedInput.transcript;
+                attempt.turnIndex = projectedInput.turnIndex;
+                const toolObservations = formatToolObservations(
+                    projectedInput.transcript,
+                    projectedInput.turnIndex,
+                );
+                return options.buildPromptInput
+                    ? options.buildPromptInput(projectedInput, { toolDefinitions: definitions, toolObservations })
+                    : buildDefaultPromptInput(projectedInput, definitions, toolObservations);
             };
-            const toolObservations = formatToolObservations(
-                projectedInput.transcript,
-                projectedInput.turnIndex,
-            );
-            const promptInput = options.buildPromptInput
-                ? options.buildPromptInput(projectedInput, { toolDefinitions: definitions, toolObservations })
-                : buildDefaultPromptInput(projectedInput, definitions, toolObservations);
+            const streamPromptInput = await prepareAttemptInput(streamAttempt, input);
+            const streamChain = prompt.pipe(bindNativeTools(llm, schemas));
+            let invokeChain: NativeModelRunnable | undefined;
+            const chain: { stream: NativeModelRunnable["stream"]; invoke: NativeModelRunnable["invoke"] } = {
+                stream: (request, config) => streamChain.stream(request, config),
+                invoke: async (request, config) => {
+                    if (!invokeChain) {
+                        const invokeModel = await createAttemptModel(invokeAttempt);
+                        const invokeRunnable = bindNativeTools(invokeModel, schemas);
+                        invokeChain = prompt.pipe(invokeRunnable);
+                    }
+                    return invokeChain.invoke(request, config);
+                },
+            };
             yield* streamWithInvokeFallback({
                 chain,
-                input: promptInput,
-                signal: providerInput.signal ?? options.signal,
+                input: streamPromptInput,
+                signal: streamAttempt.providerSignal ?? options.signal,
                 prepareInvokeInput: async () => {
-                    const retryInput = input.prepareForProviderRetry
-                        ? await input.prepareForProviderRetry()
-                        : input;
-                    assertToolSchemaSnapshotCurrent(liveSchemas, schemas);
-                    const retryProjectedInput: PaAgentModelInput = {
-                        ...retryInput,
-                        transcript: projectPageletTranscriptForPrompt(
-                            retryInput.transcript,
-                            options.maxObservationChars
-                                ?? PAGELET_DEEP_DISCOVER_MAX_OBSERVATION_CHARS,
-                        ),
-                    };
-                    const retryToolObservations = formatToolObservations(
-                        retryProjectedInput.transcript,
-                        retryProjectedInput.turnIndex,
-                    );
-                    return options.buildPromptInput
-                        ? options.buildPromptInput(retryProjectedInput, {
-                            toolDefinitions: definitions,
-                            toolObservations: retryToolObservations,
-                        })
-                        : buildDefaultPromptInput(
-                            retryProjectedInput,
-                            definitions,
-                            retryToolObservations,
-                        );
+                    return await prepareAttemptInput(invokeAttempt, input);
                 },
             });
         },
@@ -171,6 +223,30 @@ function snapshotSerializable<T>(value: T): T {
         snapshot[key] = snapshotSerializable((value as Record<string, unknown>)[key]);
     }
     return snapshot as T;
+}
+
+async function prepareWithAllSignals(
+    prepare: (signal?: AbortSignal | null) => Promise<void>,
+    signals: ReadonlyArray<AbortSignal | null | undefined>,
+): Promise<void> {
+    const active = signals.filter((signal): signal is AbortSignal => Boolean(signal));
+    if (active.some(signal => signal.aborted)) {
+        const error = new Error("Aborted");
+        error.name = "AbortError";
+        throw error;
+    }
+    if (active.length === 0) return await prepare(undefined);
+    const combined = new AbortController();
+    const cleanup = () => {
+        for (const signal of active) signal.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => combined.abort();
+    for (const signal of active) signal.addEventListener("abort", onAbort, { once: true });
+    try {
+        await prepare(combined.signal);
+    } finally {
+        cleanup();
+    }
 }
 
 function assertToolSchemaSnapshotCurrent(
@@ -295,6 +371,7 @@ interface PageletPromptObservation {
     message: Extract<PaAgentMessage, { role: "toolResult" }>;
     originalText: string;
     summaryText: string;
+    atomic: boolean;
     priority: number;
 }
 
@@ -342,12 +419,14 @@ function projectPageletTranscriptForPrompt(
         ))?.index;
     const observations: PageletPromptObservation[] = toolResults.map(({ index, message }) => {
         const originalText = message.content.promptText;
-        const summary = compactPageletObservation(message);
+        const atomic = message.content.metadata?.vaultObservationContractVersion === 1;
+        const summary = atomic ? originalText : compactPageletObservation(message);
         return {
             index,
             message,
             originalText,
             summaryText: originalText.length <= summary.length ? originalText : summary,
+            atomic,
             priority: pageletObservationPriority(
                 message,
                 index,
@@ -378,6 +457,7 @@ function projectPageletTranscriptForPrompt(
     );
     for (const observation of observations) {
         if (remainingChars <= 0) break;
+        if (observation.atomic && observation.summaryText.length > remainingChars) continue;
         const summaryText = observation.summaryText.slice(0, remainingChars);
         observation.message.content = {
             ...observation.message.content,
@@ -395,6 +475,7 @@ function projectPageletTranscriptForPrompt(
     for (const observation of observations) {
         if (remainingChars <= 0) break;
         const currentText = observation.message.content.promptText;
+        if (observation.atomic) continue;
         if (!currentText || currentText === observation.originalText) continue;
         const targetLength = Math.min(
             observation.originalText.length,

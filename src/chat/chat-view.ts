@@ -3829,6 +3829,8 @@ export class LLMView extends ItemView {
                             && this.conversationPersistence.activeConversationId === candidates.conversationId,
                     };
                 }
+                const conversationIdForMemoryActions = this.conversationPersistence.activeConversationId
+                    ?? await this.conversationPersistence.reserveConversationId(prompt);
                 await this.chatService.streamLLM(
                     prompt,
                     (chunk) => {
@@ -3840,6 +3842,7 @@ export class LLMView extends ItemView {
                     modelHistory,
                     {
                         memoryMode: "auto",
+                        conversationId: conversationIdForMemoryActions ?? undefined,
                         images: turnImages,
                         imageAssetService: this.host.imageAssetService,
                         writingRequest,

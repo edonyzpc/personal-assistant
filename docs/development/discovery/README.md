@@ -1,7 +1,7 @@
 # Discovery Registry
 
 Document status: Current
-Updated: 2026-09-12
+Updated: 2026-09-14
 Authority: 需要跨会话讨论、研究或产品决策的活跃 Discovery Brief 索引。
 
 `Delivery status (derived)` 是 Brief 状态的索引镜像，Brief 是唯一权威，`docs:check` 强制一致。

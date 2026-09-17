@@ -181,4 +181,37 @@ describe("SavedInsightStore", () => {
         expect(store.snapshot()).toEqual(beforeArchive);
         expect(store.list()[0].status).toBe("active");
     });
+
+    it("reuses an exact action replay and rejects changed payload under the same identity", async () => {
+        let nextId = 0;
+        const persist = jest.fn(async (_state: unknown) => undefined);
+        const store = new SavedInsightStore({ idFactory: () => `ins-${++nextId}`, persist });
+        const input = {
+            type: "question" as const, text: "A saved question", origin: "user-authored" as const,
+            replayRef: "host-action-1",
+        };
+        const first = await store.create(input);
+        const replay = await store.create(input);
+        const conflict = await store.create({ ...input, text: "A different question" });
+        expect(first).toMatchObject({ ok: true, value: { id: "ins-1" } });
+        expect(replay).toMatchObject({ ok: true, value: { id: "ins-1" } });
+        expect(conflict).toEqual({ ok: false, reason: "replay_conflict" });
+        expect(store.list()).toHaveLength(1);
+        expect(persist).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects an archive based on an older displayed version", async () => {
+        const store = new SavedInsightStore({
+            now: () => new Date("2026-06-28T12:00:00.000Z"),
+            idFactory: () => "ins-one",
+        });
+        const created = await store.create({ type: "question", text: "A", origin: "user-authored" });
+        expect(created.ok).toBe(true);
+        if (!created.ok) return;
+        const firstVersion = created.value.updatedAt;
+        const archived = await store.archive("ins-one", firstVersion);
+        expect(archived).toMatchObject({ ok: true, value: { status: "archived" } });
+        expect(await store.restore("ins-one", firstVersion)).toEqual({ ok: false, reason: "stale_target" });
+        expect(store.list()[0].status).toBe("archived");
+    });
 });

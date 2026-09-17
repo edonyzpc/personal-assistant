@@ -7,7 +7,12 @@ import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import { MemoryUserProfileStore } from '../src/ai-services/memory-extraction/profile-store';
 import { MemoryExtractionScheduler } from '../src/ai-services/memory-extraction/extraction-scheduler';
+import { computeContentHash } from '../src/vss-helpers';
 import { deriveSemanticProfileKey } from '../src/ai-services/memory-extraction/type-a-extractor';
+import {
+    buildMemoryManagementEvidence,
+    prepareMemoryManagementProjection,
+} from '../src/ai-services/memory-management-evidence';
 
 const mockNoticeMessages: string[] = [];
 const mockOpenedModals: Array<{ contentEl: MockModalContentRecord; onOpen?: () => void; onClose?: () => void }> = [];
@@ -1978,6 +1983,64 @@ describe('Memory governance plugin bootstrap', () => {
         ]);
     });
 
+    it('exposes a read-only Memory management host port without maintenance work', async () => {
+        const harness = createBootstrapHarness();
+        const { plugin } = harness;
+        plugin.t = jest.fn((key: string) => key);
+        await plugin.initializeMemoryGovernanceBootstrap();
+        const vaultKey = plugin.memoryGovernanceOpaqueVaultKey as string;
+        const preview = previewMemoryGovernanceFinalization(
+            await harness.repository.initialize(),
+            vaultKey,
+        );
+        plugin.retrievalDiagnostics = {
+            clear: jest.fn(),
+            bindSurface: jest.fn(() => ({
+                record: jest.fn(),
+                createRecorder: jest.fn(() => undefined),
+                scheduleArmedGraphWorkerCancellation: jest.fn(() => false),
+            })),
+        };
+        const compatibilityHost = (plugin as unknown as {
+            createAiServiceHost(surface: 'chat'): import('../src/ai-services/AiServiceHost').AiServiceHost;
+        }).createAiServiceHost('chat');
+        await expect(compatibilityHost.memoryManagement!.queryMemories({ text: 'legacy' }))
+            .resolves.toMatchObject({ kind: 'memory-query' });
+        expect(JSON.stringify(await compatibilityHost.memoryManagement!.queryMemories({ text: 'legacy' })))
+            .not.toContain(preview.confirmationToken!);
+        expect(JSON.stringify(await compatibilityHost.memoryManagement!.queryMemories({ text: 'legacy' })))
+            .not.toContain('confirmationToken');
+        await expect(plugin.finalizeMemoryGovernance(preview.confirmationToken))
+            .resolves.toMatchObject({ ok: true });
+
+        const ensureMemoryReadyForChat = jest.spyOn(plugin, 'ensureMemoryReadyForChat');
+        const syncMemoryExtractionRuntime = jest.spyOn(plugin, 'syncMemoryExtractionRuntime');
+        const host = (plugin as unknown as {
+            createAiServiceHost(surface: 'chat'): import('../src/ai-services/AiServiceHost').AiServiceHost;
+        }).createAiServiceHost('chat');
+        expect(host.memoryManagement).toBeDefined();
+
+        await expect(host.memoryManagement!.getStatus()).resolves.toMatchObject({
+            kind: 'memory-status',
+            available: true,
+            memoryEnabled: true,
+            learning: { governance: 'ready' },
+            managementTargetId: 'memory-personalization',
+        });
+        const governed = plugin.getGovernedMemoryProjectionSnapshot();
+        expect(governed).not.toBeNull();
+        plugin.deviceMemoryCacheRefreshTargetSequence = governed!.state.commitSequence + 1;
+        await expect(host.memoryManagement!.prepareObservation({ operation: 'query' }))
+            .resolves.toMatchObject({
+                purpose: 'memory_management',
+                ready: false,
+                reason: 'cache_refresh_pending',
+            });
+
+        expect(ensureMemoryReadyForChat).not.toHaveBeenCalled();
+        expect(syncMemoryExtractionRuntime).not.toHaveBeenCalled();
+    });
+
     it('keeps the compatibility barrier active until the rollback terminal commit succeeds', async () => {
         const harness = createBootstrapHarness();
         const { plugin, repository } = harness;
@@ -2340,14 +2403,20 @@ describe('Memory governance plugin bootstrap', () => {
         });
         await plugin.refreshDeviceMemoryCaches();
 
+        expect(plugin.getMemoryGovernancePanelState().records.find(
+            (record: { id: string }) => record.id === 'conversation-preference',
+        )).toMatchObject({ revisionId: 'revision-conversation-preference' });
         const items = plugin.getGovernedMemoryViewSnapshot().records.map(
             (entry: unknown) => plugin.toMemoryControlCenterItem(entry, {
                 runtimeUseEnabled: true,
                 sourceEligible: true,
             }),
         );
-        expect(items.find((item: { id: string }) => item.id === 'conversation-preference')
-            ?.supportedActions).toContain('apply_device_wide');
+        expect(items.find((item: { id: string }) => item.id === 'conversation-preference'))
+            .toMatchObject({
+                revisionId: 'revision-conversation-preference',
+                supportedActions: expect.arrayContaining(['apply_device_wide']),
+            });
         expect(items.find((item: { id: string }) => item.id === 'note-preference')
             ?.supportedActions).not.toContain('apply_device_wide');
         expect(items.find((item: { id: string }) => item.id === 'device-preference')).toMatchObject({
@@ -4598,6 +4667,7 @@ describe('Memory governance plugin bootstrap', () => {
         plugin.memoryGovernanceOpaqueVaultKey = 'vault-current';
         plugin.deviceMemoryGovernanceRepository = {
             initialize: jest.fn(async () => ({
+                claims: [{ id: 'claim-a', activeRevisionId: 'revision-a' }],
                 pendingOperations: [{
                     kind: 'forget',
                     claimId: 'claim-pending',
@@ -4624,6 +4694,112 @@ describe('Memory governance plugin bootstrap', () => {
         });
         expect(plugin.memoryGovernanceCoordinator.resumePendingForgets).toHaveBeenCalledTimes(1);
         expect(plugin.refreshGovernedMemoryActionState).toHaveBeenCalledTimes(1);
+    });
+
+    it('binds a Chat Undo to the exact claim and event identities', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const change = { id: 'event-a', claimId: 'claim-a', undoAvailable: true };
+        const isCurrent = jest.fn(() => true);
+        const action = {
+            actionIdentity: 'undo-action-a',
+            actionFingerprint: 'undo-fingerprint-a',
+        };
+        plugin.getMemoryGovernancePanelState = jest.fn(() => ({ recentChanges: [change] }));
+        plugin.undoGovernedMemoryChange = jest.fn(async () => ({ ok: true, message: 'undone' }));
+        plugin.governedMemoryActionFailure = jest.fn(() => ({ ok: false, message: 'unavailable' }));
+
+        await expect(plugin.runMemoryControlCenterActionInternal(
+            'undo_recent_change',
+            'claim-b',
+            undefined,
+            { eventId: 'event-a' },
+            action,
+            isCurrent,
+        )).resolves.toEqual({ ok: false, message: 'unavailable' });
+        expect(plugin.undoGovernedMemoryChange).not.toHaveBeenCalled();
+
+        await expect(plugin.runMemoryControlCenterActionInternal(
+            'undo_recent_change',
+            'claim-a',
+            undefined,
+            { eventId: 'event-a' },
+            action,
+            isCurrent,
+        )).resolves.toEqual({ ok: true, message: 'undone' });
+        expect(plugin.undoGovernedMemoryChange).toHaveBeenCalledWith(change, action, isCurrent);
+    });
+
+    it('keeps a valid standalone host request eligible without a fabricated conversation ID', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        expect(plugin.isGovernedMemoryRevisionAllowed({
+            id: 'revision-host-request',
+            claimId: 'claim-host-request',
+            summary: 'Use concise replies.',
+            authority: 'explicit_user',
+            createdAt: '2026-09-16T00:00:00.000Z',
+            provenance: [{
+                kind: 'host_user_request',
+                runId: 'run-host-request',
+                userMessageId: 'run-host-request:source-user',
+                observedAt: '2026-09-16T00:00:00.000Z',
+                userPromptHash: 'prompt-hash',
+            }],
+        }, 'boundary-current')).toBe(true);
+    });
+
+    it('reports a committed governed action as pending when its Profile projection fails', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.memoryLifecycleMutationTail = Promise.resolve();
+        plugin.memoryGovernanceCoordinator = {};
+        plugin.readGovernedMemoryActionBoundary = jest.fn(async () => true);
+        plugin.memoryProfileProjectionWorker = {
+            resumePending: jest.fn(async () => { throw new Error('projection unavailable'); }),
+        };
+        plugin.deviceMemoryGovernanceRepository = {
+            initialize: jest.fn(async () => ({
+                claims: [{ id: 'claim-a', activeRevisionId: 'revision-a' }],
+                pendingOperations: [{
+                    kind: 'profile_projection',
+                    claimId: 'claim-a',
+                    state: 'pending',
+                }],
+            })),
+        };
+        plugin.scheduleMemoryProfileProjectionRetry = jest.fn();
+        plugin.refreshGovernedMemoryActionState = jest.fn(async () => {
+            throw new Error('refresh unavailable');
+        });
+        plugin.notifySettingsChanged = jest.fn(async () => undefined);
+        plugin.getMemoryGovernancePanelState = jest.fn(() => ({ records: [] }));
+        plugin.governedMemoryActionFailure = jest.fn((_action, reason) => ({
+            ok: false,
+            message: 'pending',
+            actionStatus: 'pending',
+            reason,
+            retryScheduled: true,
+        }));
+        plugin.log = jest.fn();
+
+        await expect(plugin.runGovernedMemoryLifecycleAction(
+            'claim-a',
+            'correct',
+            async () => ({
+                ok: true,
+                value: {
+                    claimId: 'claim-a',
+                    eventId: 'event-a',
+                },
+            }),
+            true,
+        )).resolves.toMatchObject({
+            actionStatus: 'pending',
+            reason: 'profile_projection_pending',
+            claimId: 'claim-a',
+            revisionId: 'revision-a',
+            eventId: 'event-a',
+        });
+        expect(plugin.scheduleMemoryProfileProjectionRetry).toHaveBeenCalled();
     });
 
     it('keeps a manual Forget retry scheduled when exact cleanup is still pending', async () => {
@@ -5794,6 +5970,8 @@ describe('Memory governance plugin bootstrap', () => {
         const staleBaseline = await plugin.captureGovernedTypeAAdmissionBaseline();
         const staleCurrent = JSON.parse(JSON.stringify(profile)) as UserProfileSnapshot;
         const governedRecord = plugin.getMemoryGovernancePanelState().records[0];
+        const displayedClaim = state.claims.find((claim) => claim.id === governedRecord.id);
+        expect(governedRecord.revisionId).toBe(displayedClaim?.activeRevisionId);
         await expect(plugin.correctGovernedMemory(
             governedRecord,
             'Always answer with a short conclusion first.',
@@ -5839,6 +6017,55 @@ describe('Memory governance plugin bootstrap', () => {
         expect(JSON.stringify(afterStale.revisions)).not.toContain('Old in-flight extraction must not win.');
         expect((profile as UserProfileSnapshot | null)?.records[0].text)
             .toBe('Always answer with a short conclusion first.');
+
+        const beforeStaleSubmission = await repository.initialize();
+        const staleSubmission = await plugin.runPageletGovernedMemoryAction(
+            'correct',
+            governedRecord,
+            'Correction submitted from the outdated displayed record.',
+        );
+        const afterStaleSubmission = await repository.initialize();
+        const submittedClaim = afterStaleSubmission.claims.find(
+            (claim) => claim.id === governedClaimId,
+        );
+        const submittedRevision = afterStaleSubmission.revisions.find(
+            (revision) => revision.id === submittedClaim?.activeRevisionId,
+        );
+        const projectionOutbox = (state: typeof afterStaleSubmission) => state.pendingOperations
+            .flatMap((operation) => {
+                if (operation.claimId !== governedClaimId
+                    || operation.kind !== 'profile_projection'
+                    || operation.action === 'remove') return [];
+                return [{
+                    id: operation.id,
+                    targetRevisionId: operation.targetRevisionId,
+                    state: operation.state,
+                    attemptCount: operation.attemptCount,
+                }];
+            });
+        expect({
+            resultOk: staleSubmission.ok,
+            activeRevisionId: submittedClaim?.activeRevisionId,
+            activeSummary: submittedRevision?.summary,
+            commitSequence: afterStaleSubmission.commitSequence,
+            outbox: projectionOutbox(afterStaleSubmission),
+        }).toEqual({
+            resultOk: false,
+            activeRevisionId: governedClaim?.activeRevisionId,
+            activeSummary: 'Always answer with a short conclusion first.',
+            commitSequence: beforeStaleSubmission.commitSequence,
+            outbox: projectionOutbox(beforeStaleSubmission),
+        });
+
+        const missingRevisionRecord = { ...governedRecord } as Partial<typeof governedRecord>;
+        delete missingRevisionRecord.revisionId;
+        await expect(plugin.runPageletGovernedMemoryAction(
+            'correct',
+            missingRevisionRecord as typeof governedRecord,
+            'Correction without a displayed revision.',
+        )).resolves.toMatchObject({ ok: false });
+        expect((await repository.initialize()).commitSequence)
+            .toBe(afterStaleSubmission.commitSequence);
     });
 
     it('garbage-collects seven-day undo and rollback recovery data without a restart', async () => {
@@ -10090,6 +10317,83 @@ describe('B-135 legacy Personal without extraction', () => {
         expect(plugin.createChatModel).not.toHaveBeenCalled();
     });
 
+    it('binds the real Plugin legacy profile source to final management dispatch', async () => {
+        const { plugin, snapshot } = createReaderHarness();
+        Object.assign(plugin.settings, {
+            dataBoundary: {
+                excludedFolders: ['.obsidian'],
+                excludedTags: [],
+                generatedNotePolicy: 'exclude-generated',
+                providerDisclosureReasons: [],
+                cleanupGroups: [],
+            },
+            reviewQueue: { enabled: true, items: [] },
+            memoryGovernance: { records: [] },
+        });
+        plugin.manifest = { id: 'personal-assistant' };
+        plugin.retrievalDiagnostics = {
+            clear: jest.fn(),
+            bindSurface: jest.fn(() => ({
+                record: jest.fn(),
+                createRecorder: jest.fn(() => undefined),
+                scheduleArmedGraphWorkerCancellation: jest.fn(() => false),
+            })),
+        };
+        let schedulerSnapshot = snapshot;
+        plugin.memoryExtractionScheduler = {
+            getUserProfileSnapshot: () => schedulerSnapshot,
+        };
+        const host = (plugin as unknown as {
+            createAiServiceHost(surface: 'chat'): import('../src/ai-services/AiServiceHost').AiServiceHost;
+        }).createAiServiceHost('chat');
+
+        plugin.settings.memoryEnabled = false;
+        await expect(host.memoryManagement!.getStatus()).resolves.toMatchObject({
+            kind: 'memory-status',
+            available: true,
+            memoryEnabled: false,
+        });
+        plugin.settings.memoryEnabled = true;
+
+        const content = await host.memoryManagement!.queryMemories({
+            itemId: 'user-profile:profile-existing',
+            limit: 1,
+        });
+        expect(JSON.stringify(content)).toContain('Prefer concise Chinese replies.');
+        const evidence = buildMemoryManagementEvidence({
+            tool: 'query_memories',
+            operation: 'query',
+            stateFingerprint: 'initial',
+            request: { itemId: 'user-profile:profile-existing', limit: '1' },
+            content,
+        });
+        const projection = await prepareMemoryManagementProjection({
+            transcript: [{
+                role: 'toolResult',
+                id: 'legacy-profile-query',
+                toolCallId: 'legacy-profile-query',
+                toolName: 'query_memories',
+                timestamp: 1,
+                isError: false,
+                content: {
+                    promptText: JSON.stringify({ tool: 'query_memories', status: 'ok', observation: content }),
+                    includeInNextPrompt: true,
+                    metadata: {
+                        memoryManagementContractVersion: 1,
+                        memoryManagementEvidence: evidence,
+                    },
+                },
+            } as any],
+            prepareObservation: expected => host.memoryManagement!.prepareObservation(expected),
+        });
+        await projection.binding.prepare();
+        expect(() => projection.binding.assertCurrent()).not.toThrow();
+
+        schedulerSnapshot = { ...schedulerSnapshot, records: [] };
+        expect(() => projection.binding.assertCurrent())
+            .toThrow('Memory management state changed before dispatch.');
+    });
+
     it('loads retained Personal during cold onload before later startup work', async () => {
         const { plugin, read } = createReaderHarness();
         const order: string[] = [];
@@ -10783,7 +11087,7 @@ describe('Pagelet detail workspace leaf', () => {
 });
 
 describe('Pagelet Operations direct action adapter', () => {
-    function createHarness(initialBodies: string[]) {
+    function createHarness(initialBodies: string[], rawOperationsEnabled = true) {
         const TestTFile = TFile as unknown as new (path: string) => TFile;
         const anchorFile = new TestTFile('Notes/Anchor.md');
         const sourceFile = new TestTFile('Notes/Source.md');
@@ -10810,7 +11114,7 @@ describe('Pagelet Operations direct action adapter', () => {
         }));
         const cancel = jest.fn();
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        plugin.settings = { operationsAgentEnabled: true };
+        plugin.settings = { operationsAgentEnabled: rawOperationsEnabled };
         plugin.app = {
             vault: {
                 getAbstractFileByPath: jest.fn((path: string) => {
@@ -10828,6 +11132,32 @@ describe('Pagelet Operations direct action adapter', () => {
         plugin.pageletOperationsSelfWrites = new Map();
         return { plugin, read, stageIntent, cancel };
     }
+
+    it('keeps the dedicated Pagelet write action available with the raw legacy switch false', async () => {
+        const { plugin, stageIntent } = createHarness(['Body'], false);
+
+        expect(plugin.isOperationsAgentEnabled).toBe(true);
+        await plugin.stagePageletInsightLink({
+            candidateId: 'candidate-1',
+            anchorPath: 'Notes/Anchor.md',
+            sourcePath: 'Notes/Source.md',
+        });
+
+        expect(stageIntent).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails closed when the host lifecycle is unavailable even though the raw switch is ignored', async () => {
+        const { plugin, stageIntent } = createHarness(['Body'], false);
+        plugin.unloading = true;
+
+        expect(plugin.isOperationsAgentEnabled).toBe(false);
+        await expect(plugin.stagePageletInsightLink({
+            candidateId: 'candidate-1',
+            anchorPath: 'Notes/Anchor.md',
+            sourcePath: 'Notes/Source.md',
+        })).rejects.toThrow('Operations is not enabled. Nothing was written.');
+        expect(stageIntent).not.toHaveBeenCalled();
+    });
 
     it.each([
         {
@@ -11671,6 +12001,75 @@ describe('Pagelet Memory auto-confirm pipeline', () => {
         expect(plugin.settings.memoryAutoAcceptPaused).toBe(false);
         expect(plugin.settings.reviewQueue.items).toEqual([]);
         expect(plugin.settings.savedInsights.items).toHaveLength(1);
+    });
+
+    it('does not report queued insight or Later writes as saved after unload skips persistence', async () => {
+        const plugin = createMemoryPlugin(0);
+        plugin.settings.savedInsights = { items: [] };
+        let release!: () => void;
+        let started!: () => void;
+        const blocked = new Promise<void>((resolve) => { release = resolve; });
+        const firstStarted = new Promise<void>((resolve) => { started = resolve; });
+        let writes = 0;
+        plugin.saveData = jest.fn(async () => {
+            writes += 1;
+            if (writes === 1) { started(); await blocked; }
+        });
+        const first = plugin.getSavedInsightStore().create({
+            type: 'question', text: 'First', origin: 'user-authored',
+        });
+        await firstStarted;
+        const queuedInsight = plugin.getSavedInsightStore().create({
+            type: 'question', text: 'Queued', origin: 'user-authored',
+        });
+        const queuedLater = plugin.getReviewQueueStore().create({
+            type: 'evidence_insight', title: 'Later', claim: 'Later',
+            scope: { kind: 'current_note', paths: ['notes/current.md'] },
+            sourceRefs: [{ path: 'notes/current.md' }], originSurface: 'chat',
+            dataBoundarySnapshotId: 'test', admissionReason: 'user_kept_for_later',
+        });
+        plugin.unloading = true;
+        release();
+        await first;
+        await expect(queuedInsight).rejects.toThrow('Plugin is unloading');
+        await expect(queuedLater).rejects.toThrow('Plugin is unloading');
+        expect(writes).toBe(1);
+        expect(plugin.getSavedInsightStore().list().map((item: { text: string }) => item.text)).toEqual(['First']);
+        expect(plugin.getReviewQueueStore().list()).toEqual([]);
+    });
+
+    it('binds a PA-generated Saved Insight to the actual current note hash', async () => {
+        const plugin = createMemoryPlugin(0);
+        plugin.settings.savedInsights = { items: [] };
+        const file = new (TFile as unknown as new (path: string) => TFile)('notes/source.md');
+        (file as unknown as { stat: { mtime: number; ctime: number; size: number } }).stat = { mtime: 1, ctime: 1, size: 8 };
+        let content = '# Source';
+        const version = await computeContentHash(content);
+        plugin.app = { vault: {
+            getAbstractFileByPath: jest.fn(() => file),
+            cachedRead: jest.fn(async () => content),
+        } };
+        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'boundary-1');
+        plugin.isDataBoundaryAllowedFile = jest.fn(() => true);
+        const binding = {
+            runId: 'run-1', userMessageId: 'user-1', userPrompt: '请保存这个洞察',
+            userPromptHash: 'host-hash', isCurrent: () => true,
+        };
+        const input = {
+            action: 'save' as const, userExpression: '请保存这个洞察', binding,
+            text: 'A source-backed theme', type: 'theme' as const, origin: 'pa-generated' as const,
+            sources: [{ path: file.path, sourceVersion: version }],
+        };
+        expect(await plugin.getInsightActionPort().execute(input))
+            .toMatchObject({ status: 'applied', insightId: expect.any(String) });
+        expect(plugin.getSavedInsightStore().list()[0].sourceRefs)
+            .toMatchObject([{ path: file.path, contentHash: version }]);
+        (file as unknown as { stat: { mtime: number } }).stat.mtime = 2;
+        content = '# Changed';
+        expect(await plugin.getInsightActionPort().execute({
+            ...input, binding: { ...binding, runId: 'run-2', userMessageId: 'user-2' },
+        })).toMatchObject({ status: 'failed', reason: 'source_changed_or_forbidden' });
+        expect(plugin.getSavedInsightStore().list()).toHaveLength(1);
     });
 });
 

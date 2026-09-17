@@ -15,11 +15,11 @@ import type {
     ParsedBufferedToolCall,
 } from "../src/ai-services/pa-agent-types";
 import {
+    type PaAgentRuntimeOptions,
     createOperationsAcknowledgementControlSnapshot,
     isOperationsStagedAcknowledgement,
     OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
     PaAgentRuntime,
-    preserveOperationsActionsInControlSnapshot,
 } from "../src/ai-services/pa-agent-runtime";
 import { OperationsIntentController } from "../src/ai-services/operations/operations-intent-controller";
 import {
@@ -42,22 +42,32 @@ import {
     type OperationsVaultFile,
     type StageOperationsIntentInput,
 } from "../src/ai-services/operations/types";
+import {
+    type BuiltinWebSearchRequest,
+    BuiltinWebSearchProvider,
+    createBailianWebSearchNetworkPolicy,
+} from "../src/ai-services/builtin-web-search-provider";
+import { revalidateVaultObservationFromApp } from "../src/ai-services/vault-observation-evidence";
 import { createAiServiceHost } from "../src/tests/factories/host-factory";
 
 jest.mock("obsidian");
 
 describe("Operations Agent runtime discovery and staging", () => {
-    it("loads exactly the four approved action capabilities behind persisted opt-in", async () => {
+    it("loads exactly the four approved action capabilities without the legacy persisted opt-in", async () => {
         const provider = new OperationsToolProvider();
 
         await expect(provider.load(providerContext(false))).resolves.toMatchObject({
-            status: "unavailable",
-            capabilities: [],
+            status: "available",
+            capabilities: CORE_WRITE_TOOL_NAMES.map(() => expect.anything()),
         });
         const loaded = await provider.load(providerContext(true));
 
         expect(loaded.status).toBe("available");
         expect(loaded.capabilities.map((capability) => capability.name)).toEqual(CORE_WRITE_TOOL_NAMES);
+        await expect(provider.load(providerContext(false))).resolves.toMatchObject({
+            status: "available",
+            capabilities: CORE_WRITE_TOOL_NAMES.map(() => expect.anything()),
+        });
         expect(loaded.capabilities.every((capability) => (
             capability.kind === "action"
             && capability.permission === "local-filesystem-write"
@@ -202,26 +212,113 @@ describe("Operations Agent runtime discovery and staging", () => {
             .toEqual([true, true]);
     });
 
-    it("keeps only the four Operations actions when a non-final control snapshot narrows tools", () => {
-        const narrowed = createAgentControlSnapshot({
-            exposureMode: "follow-up",
-            sourceScope: "notes",
-            allowedToolNames: new Set(["search_vault_snippets"]),
+    it.each([
+        ["default Chat staging", {}],
+        ["explicit chat-with-actions", { runKind: "chat-with-actions" as const }],
+    ])("proposes the four writes with a live controller even when raw legacy Operations is false (%s)", async (_label, policyOptions) => {
+        const fixture = operationsRuntimeFixture("Create notes/new.md with # Result", [
+            toolCall("create", "vault_create", { path: "notes/new.md", content: "# Result" }, 0),
+        ], {
+            operationsAgentEnabled: false,
+            policyOptions,
         });
+        try {
+            await fixture.run();
 
-        const preserved = preserveOperationsActionsInControlSnapshot(narrowed, true);
+            expect(fixture.boundToolNames[0]).toEqual(expect.arrayContaining([...CORE_WRITE_TOOL_NAMES]));
+            expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
+            expect(fixture.executeIntent).not.toHaveBeenCalled();
+            expect(fixture.vault.create).not.toHaveBeenCalled();
+        } finally {
+            fixture.dispose();
+        }
+    });
 
-        expect([...preserved.allowedToolNames!].sort()).toEqual([
-            ...CORE_WRITE_TOOL_NAMES,
-            "search_vault_snippets",
-        ].sort());
-        expect(preserved.allowedToolNames).not.toContain("list_recent_notes");
-
-        const finalOnly = createAgentControlSnapshot({
-            toolMode: "final_answer_only",
-            allowedToolNames: new Set(["search_vault_snippets"]),
+    it("keeps default Chat Operations actions available on a later turn", async () => {
+        const fixture = operationsRuntimeFixture("Read notes/other.md, then create notes/result.md with the conclusion.", [
+            sourceDeclaration("Read notes/other.md", "vault"),
+            toolCall("read", "read_note", { path: "notes/other.md" }, 2),
+        ], {
+            nextToolCalls: (_input, modelTurn) => modelTurn === 2
+                ? [toolCall("create", "vault_create", { path: "notes/result.md", content: "Conclusion" }, 0)]
+                : undefined,
         });
-        expect(preserveOperationsActionsInControlSnapshot(finalOnly, true)).toBe(finalOnly);
+        try {
+            await fixture.run();
+
+            expect(fixture.boundToolNames[1]).toEqual(expect.arrayContaining([...CORE_WRITE_TOOL_NAMES]));
+            expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
+            expect(fixture.executeIntent).not.toHaveBeenCalled();
+            expect(fixture.vault.create).not.toHaveBeenCalled();
+        } finally {
+            fixture.dispose();
+        }
+    });
+
+    it.each([
+        ["explicit read-only chat", { runKind: "chat" as const }],
+        ["explicit review runtime", { runKind: "review" as const }],
+        ["explicit allowWrite=false", { allowWrite: false }],
+        ["write permission excluded", {
+            runKind: "chat-with-actions" as const,
+            allowWrite: true,
+            allowedActionPermissions: [],
+        }],
+    ])("does not grant Chat writes through a stricter caller policy (%s)", async (_label, policyOptions) => {
+        const fixture = operationsRuntimeFixture("Create notes/new.md with # Result", [
+            toolCall("create", "vault_create", { path: "notes/new.md", content: "# Result" }, 0),
+        ], {
+            operationsAgentEnabled: false,
+            policyOptions,
+        });
+        try {
+            await fixture.run();
+
+            expect(fixture.boundToolNames[0]).not.toContain("vault_create");
+            expect(fixture.boundToolNames[0]).not.toContain("vault_append");
+            expect(fixture.stageIntent).not.toHaveBeenCalled();
+            expect(fixture.vault.create).not.toHaveBeenCalled();
+        } finally {
+            fixture.dispose();
+        }
+    });
+
+    it("keeps writes unavailable when the staging controller is absent", async () => {
+        const fixture = operationsRuntimeFixture("Create notes/new.md with # Result", [
+            toolCall("create", "vault_create", { path: "notes/new.md", content: "# Result" }, 0),
+        ], {
+            operationsAgentEnabled: false,
+            operationsController: false,
+        });
+        try {
+            await fixture.run();
+
+            expect(fixture.boundToolNames[0]).not.toContain("vault_create");
+            expect(fixture.boundToolNames[0]).not.toContain("vault_append");
+            expect(fixture.stageIntent).not.toHaveBeenCalled();
+            expect(fixture.vault.create).not.toHaveBeenCalled();
+        } finally {
+            fixture.dispose();
+        }
+    });
+
+    it("keeps writes unavailable when the Operations host lifecycle is unavailable", async () => {
+        const fixture = operationsRuntimeFixture("Create notes/new.md with # Result", [
+            toolCall("create", "vault_create", { path: "notes/new.md", content: "# Result" }, 0),
+        ], {
+            operationsAgentEnabled: false,
+            operationsHostUnavailable: true,
+        });
+        try {
+            await fixture.run();
+
+            expect(fixture.boundToolNames[0]).not.toContain("vault_create");
+            expect(fixture.boundToolNames[0]).not.toContain("vault_append");
+            expect(fixture.stageIntent).not.toHaveBeenCalled();
+            expect(fixture.vault.create).not.toHaveBeenCalled();
+        } finally {
+            fixture.dispose();
+        }
     });
 
     it("uses a tool-free normal acknowledgement after staging and omits stale chat history", () => {
@@ -358,6 +455,104 @@ describe("Operations Agent runtime discovery and staging", () => {
         expect(result.turns[0].diagnostics).toEqual(expect.arrayContaining([
             expect.objectContaining({ type: "tool_batch_prepare_aborted" }),
         ]));
+    });
+});
+
+describe("Operations-independent first-turn read capabilities", () => {
+    it("exposes the fixed Memory action when the host action port is present", async () => {
+        const prompt = "Remember that I prefer blue cards.";
+        const fixture = operationsRuntimeFixture(prompt, [
+            sourceDeclaration(prompt, "none"),
+        ], {
+            operationsAgentEnabled: false,
+            operationsController: false,
+            memoryActions: true,
+        });
+        try {
+            await fixture.run();
+            expect(fixture.boundToolNames[0]).toContain("manage_memory");
+            expect(String(fixture.providerInputs[0])).toContain('"manage_memory"');
+        } finally {
+            fixture.dispose();
+        }
+    });
+
+    it("exposes and executes the approved first-turn read set without Memory-first or Operations gates", async () => {
+        const fixture = operationsRuntimeFixture("Query notes/other.md, then read its saved body.", [
+            sourceDeclaration("Query notes/other.md, then read its saved body.", "vault"),
+            toolCall("query", "query_notes", { path: "notes/other.md", limit: 1 }, 1),
+            toolCall("read", "read_note", { path: "notes/other.md" }, 2),
+        ], {
+            operationsAgentEnabled: false,
+            operationsController: false,
+            additionalCapabilityProviders: [availableWebSearchProvider()],
+        });
+        try {
+            await fixture.run();
+
+            const expectedNames = [
+                "search_memory",
+                "get_current_note_context",
+                "query_notes",
+                "read_note",
+                "search_vault_metadata",
+                "list_recent_notes",
+                "read_note_outline",
+                "inspect_obsidian_note",
+                "read_canvas_summary",
+                "search_vault_snippets",
+                "list_vault_tags",
+                "webSearch",
+            ];
+            expect(fixture.boundToolNames[0]).toEqual(expect.arrayContaining(expectedNames));
+            const firstProviderInput = String(fixture.providerInputs[0]);
+            for (const toolName of expectedNames) {
+                expect(firstProviderInput).toContain(`"${toolName}"`);
+            }
+            expect(fixture.boundToolNames[0]).not.toContain("vault_create");
+            expect(fixture.lifecycle).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    type: "tool_execution_end", toolCallId: "query", outcome: "success",
+                }),
+                expect.objectContaining({
+                    type: "tool_execution_end", toolCallId: "read", outcome: "success",
+                }),
+            ]));
+            expect(fixture.vault.getMarkdownFiles).toHaveBeenCalled();
+            expect(fixture.vault.cachedRead).toHaveBeenCalledWith(expect.objectContaining({
+                path: "notes/other.md",
+            }));
+        } finally {
+            fixture.dispose();
+        }
+    });
+
+    it("does not advertise an additional provider capability when its real preload is unavailable", async () => {
+        const fixture = operationsRuntimeFixture("Read notes/other.md.", [
+            sourceDeclaration("Read notes/other.md.", "vault"),
+            toolCall("read", "read_note", { path: "notes/other.md" }, 1),
+        ], {
+            operationsAgentEnabled: false,
+            operationsController: false,
+            additionalCapabilityProviders: [new BuiltinWebSearchProvider({
+                policy: createBailianWebSearchNetworkPolicy(),
+                apiKey: undefined,
+                request: webSearchRequest(),
+            })],
+        });
+        try {
+            await fixture.run();
+
+            expect(fixture.boundToolNames[0]).not.toContain("webSearch");
+            expect(String(fixture.providerInputs[0])).not.toContain('"webSearch"');
+            expect(fixture.lifecycle).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    type: "tool_execution_end", toolCallId: "read", outcome: "success",
+                }),
+            ]));
+        } finally {
+            fixture.dispose();
+        }
     });
 });
 
@@ -514,6 +709,12 @@ interface OperationsRuntimeFixtureOptions {
     outlineHeadings?: Array<{ level: number; heading: string }>;
     nextToolCalls?: (input: unknown, modelTurn: number) => readonly ParsedBufferedToolCall[] | undefined;
     finalText?: string;
+    operationsAgentEnabled?: boolean;
+    operationsHostUnavailable?: boolean;
+    operationsController?: boolean;
+    memoryActions?: boolean;
+    additionalCapabilityProviders?: PaAgentRuntimeOptions["additionalCapabilityProviders"];
+    policyOptions?: PaAgentRuntimeOptions["policyOptions"];
 }
 
 function operationsRuntimeFixture(
@@ -521,8 +722,16 @@ function operationsRuntimeFixture(
     calls: readonly ParsedBufferedToolCall[],
     fixtureOptions: OperationsRuntimeFixtureOptions = {},
 ) {
-    const currentFile = { path: "notes/current.md", extension: "md" };
-    const otherFile = { path: "notes/other.md", extension: "md" };
+    const currentFile = {
+        path: "notes/current.md",
+        extension: "md",
+        stat: { ctime: 1, mtime: 2, size: 25 },
+    };
+    const otherFile = {
+        path: "notes/other.md",
+        extension: "md",
+        stat: { ctime: 3, mtime: 4, size: 23 },
+    };
     const fileObjects = new Map<string, OperationsVaultFile>([
         [currentFile.path, currentFile], [otherFile.path, otherFile],
         ["notes", { path: "notes", children: [] }],
@@ -546,9 +755,9 @@ function operationsRuntimeFixture(
     const executeIntent = jest.spyOn(controller, "executeIntent");
     const getFileCache = jest.fn((_file: OperationsVaultFile) => fixtureOptions.outlineHeadings
         ? { headings: fixtureOptions.outlineHeadings }
-        : null);
+        : { frontmatter: { status: "active" } });
     const host = createAiServiceHost({
-        settings: { memoryEnabled: false, operationsAgentEnabled: true },
+        settings: { memoryEnabled: false, operationsAgentEnabled: fixtureOptions.operationsAgentEnabled ?? true },
         app: {
             vault,
             workspace: {
@@ -559,7 +768,17 @@ function operationsRuntimeFixture(
             metadataCache: { getFileCache },
         } as unknown as App,
         isDataBoundaryAllowedPath: () => true,
+        isOperationsAgentEnabled: fixtureOptions.operationsHostUnavailable !== true,
     });
+    Object.assign(host, {
+        revalidateVaultObservation: (
+            evidence: Parameters<typeof revalidateVaultObservationFromApp>[1],
+            options?: Parameters<typeof revalidateVaultObservationFromApp>[2],
+        ) => revalidateVaultObservationFromApp(host, evidence, options),
+    });
+    if (fixtureOptions.memoryActions) {
+        Object.assign(host, { memoryActions: { execute: jest.fn(async () => ({ status: "applied" })) } });
+    }
     const aiUtils = new AIUtils(host);
     const boundToolNames: string[][] = [];
     const providerInputs: unknown[] = [];
@@ -590,7 +809,13 @@ function operationsRuntimeFixture(
     });
     const lifecycle: AgentEvent[] = [];
     const runtime = new PaAgentRuntime(host, aiUtils, {
-        skillContextProvider: null, operationsIntentController: controller, maxModelTurns: 3,
+        skillContextProvider: null,
+        operationsIntentController: fixtureOptions.operationsController === false ? undefined : controller,
+        maxModelTurns: 3,
+        ...(fixtureOptions.additionalCapabilityProviders
+            ? { additionalCapabilityProviders: fixtureOptions.additionalCapabilityProviders }
+            : {}),
+        ...(fixtureOptions.policyOptions ? { policyOptions: fixtureOptions.policyOptions } : {}),
     });
     return {
         vault, trashFile, controller, stageIntent, executeIntent, getFileCache,
@@ -637,6 +862,21 @@ function providerContext(enabled: boolean) {
     };
 }
 
+function webSearchRequest(): BuiltinWebSearchRequest {
+    return async () => ({
+        status: 200,
+        body: { results: [] },
+    });
+}
+
+function availableWebSearchProvider(): BuiltinWebSearchProvider {
+    return new BuiltinWebSearchProvider({
+        policy: createBailianWebSearchNetworkPolicy(),
+        apiKey: "test-web-search-key",
+        request: webSearchRequest(),
+    });
+}
+
 async function operationsRegistry(): Promise<CapabilityRegistry> {
     const registry = new CapabilityRegistry({
         policyEngine: new PolicyEngine({
@@ -653,7 +893,7 @@ async function operationsRegistry(): Promise<CapabilityRegistry> {
 
 function toolCall(
     id: string,
-    name: "vault_create" | "vault_append" | "frontmatter_update" | "read_note_outline",
+    name: string,
     input: unknown,
     index: number,
 ): ParsedBufferedToolCall {

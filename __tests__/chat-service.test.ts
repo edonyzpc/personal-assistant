@@ -327,6 +327,29 @@ function createPlugin(overrides: {
     };
 }
 
+const approvedFirstTurnToolNames = [
+    'declare_source_scope',
+    'get_current_note_context',
+    'get_memory_status',
+    'get_memory_usage',
+    'inspect_obsidian_note',
+    'list_recent_notes',
+    'list_vault_tags',
+    'load_skill',
+    'query_notes',
+    'query_memories',
+    'read_canvas_summary',
+    'read_note',
+    'read_note_outline',
+    'search_memory',
+    'search_vault_metadata',
+    'search_vault_snippets',
+].sort();
+
+function expectedFirstTurnToolNames(...additionalToolNames: string[]) {
+    return [...approvedFirstTurnToolNames, ...additionalToolNames].sort();
+}
+
 function createRuntime(
     host: ReturnType<typeof createPlugin>,
     nativeToolPlanningInternalGate = false,
@@ -2028,7 +2051,7 @@ describe('ChatService.streamLLM integration', () => {
         const boundToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(boundToolNames).toEqual(['declare_source_scope', 'get_current_note_context', 'load_skill', 'search_memory']);
+        expect(boundToolNames).toEqual(expectedFirstTurnToolNames());
     });
 
     it('injects complete Pagelet evidence as context-only while Operations availability follows opt-in', async () => {
@@ -2188,7 +2211,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['declare_source_scope', 'get_current_note_context', 'load_skill', 'search_memory', 'webSearch']);
+        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames('webSearch'));
         expect(events).toEqual(expect.arrayContaining([expect.objectContaining({
             type: 'tool_execution_end', toolName: 'webSearch', outcome: 'policy_rejected',
         })]));
@@ -2276,22 +2299,12 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual([
-            'declare_source_scope',
+        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames(
             'frontmatter_update',
-            'get_current_note_context',
-            'inspect_obsidian_note',
-            'list_recent_notes',
-            'list_vault_tags',
-            'load_skill',
-            'read_note_outline',
-            'search_memory',
-            'search_vault_metadata',
-            'search_vault_snippets',
             'vault_append',
             'vault_create',
             'vault_process',
-        ]);
+        ));
     });
 
     it.each(['Save this conclusion as a new note in my vault.', '就按刚才讨论的方案来。'])(
@@ -2498,7 +2511,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['declare_source_scope', 'get_current_note_context', 'load_skill', 'search_memory', 'webSearch']);
+        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames('webSearch'));
         expect(modelInputs[0]?.tool_definitions).toContain('webSearch');
         expect(modelInputs[0]?.input).toContain('Recent chat history');
         expect(modelInputs[0]?.input).toContain('我目前只有 webSearch');
@@ -2538,7 +2551,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['declare_source_scope', 'get_current_note_context', 'load_skill', 'search_memory', 'webSearch']);
+        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames('webSearch'));
         expect(modelInputs[0]?.tool_definitions).toContain('webSearch');
         expect(modelInputs[0]?.input).not.toContain('不要联网');
         expect(modelInputs[0]?.input).not.toContain('杭州今天的天气。');
@@ -2571,7 +2584,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['declare_source_scope', 'get_current_note_context', 'load_skill', 'search_memory', 'webSearch']);
+        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames('webSearch'));
         expect(modelInputs[0]?.tool_definitions).toContain('webSearch');
         expect(events).toEqual(expect.arrayContaining([expect.objectContaining({
             type: 'tool_execution_end', toolName: 'webSearch', outcome: 'policy_rejected',
@@ -2599,7 +2612,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['declare_source_scope', 'get_current_note_context', 'load_skill', 'search_memory', 'webSearch']);
+        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames('webSearch'));
         expect(inputs[0].available_skills).toContain('obsidian-markdown');
         expect(inputs[0].available_skills).toContain('obsidian-bases');
         expect(inputs[0].available_skills).toContain('json-canvas');

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "@jest/globals";
 
-import { formatCanonicalChatHistory } from "../src/ai-services/pa-agent-runtime";
+import {
+    formatCanonicalChatHistory,
+    getReadOnlyToolObservationMessage,
+} from "../src/ai-services/pa-agent-runtime";
+import { buildMemoryManagementEvidence } from "../src/ai-services/memory-management-evidence";
+import { createPaAgentPersistedTurn } from "../src/ai-services/pa-agent-history";
+import { ChatHistoryManager } from "../src/chat/chat-history-manager";
+import { MemoryChatHistoryStore } from "../src/chat/chat-history-store";
 
 describe("formatCanonicalChatHistory (#2.2)", () => {
     it("returns empty string for empty input", () => {
@@ -72,5 +79,143 @@ describe("formatCanonicalChatHistory (#2.2)", () => {
         expect(body).not.toContain("</chat_history>");
         expect(body.toLowerCase()).not.toContain("</chat_history>");
         expect(body).toContain("<\\/chat_history>");
+    });
+    it("describes snippet paging without misreporting ordinary continuation as skipped files", () => {
+        expect(getReadOnlyToolObservationMessage("search_vault_snippets", {
+            kind: "vault-snippets",
+            query: "needle",
+            matches: [{ path: "a.md" }],
+            matchCount: 2,
+            page: { startIndex: 0, returnedCount: 1, requestedLimit: 1, hasMore: true },
+            coverage: { state: "complete" },
+        })).toBe("Found 1 of 2 bounded snippet match(es); more are available.");
+
+        expect(getReadOnlyToolObservationMessage("search_vault_snippets", {
+            kind: "vault-snippets",
+            query: "needle",
+            matches: [],
+            truncated: true,
+        })).toBe("Found 0 bounded snippet match(es).");
+    });
+
+    it("preserves management evidence across canonical history serialization and reopen", async () => {
+        const evidence = buildMemoryManagementEvidence({
+            tool: "get_memory_status",
+            operation: "status",
+            stateFingerprint: "state-open",
+            content: { kind: "memory-status", recordCount: 1 },
+        });
+        const persisted = createPaAgentPersistedTurn({
+            runId: "run-management",
+            turnId: "turn-management",
+            messages: [{
+                role: "toolResult",
+                id: "tool-management",
+                toolCallId: "call-management",
+                toolName: "get_memory_status",
+                isError: false,
+                timestamp: 1,
+                content: {
+                    promptText: "Memory status is available.",
+                    includeInNextPrompt: true,
+                    metadata: {
+                        memoryManagementEvidence: evidence,
+                        memoryManagementContractVersion: 1,
+                    },
+                },
+            }],
+        });
+        expect(persisted.memoryManagementEvidence).toEqual([evidence]);
+
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store });
+        await manager.initialize();
+        const conversation = await manager.startConversation("Memory status");
+        const turn = {
+            conversationId: conversation.id,
+            turnIndex: 0,
+            user: { role: "user" as const, content: "Memory status" },
+            assistant: { role: "assistant" as const, content: "Memory is ready." },
+            memoryManagementEvidence: persisted.memoryManagementEvidence,
+            memoryManagementContractVersion: 1 as const,
+        };
+        await store.appendTurn(turn);
+        const reopened = await manager.getTurns(conversation.id);
+        expect(reopened[0]?.memoryManagementEvidence).toEqual([evidence]);
+        const rehydrated = manager.deserializeTurn(reopened[0]!);
+        expect(rehydrated.assistantMessage.canonicalTurn?.memoryManagementEvidence).toEqual([evidence]);
+    });
+
+    it("fail-closes malformed management evidence without making Chat history unusable", async () => {
+        const malformed = {
+            schemaVersion: 1,
+            purpose: "memory_management",
+            observationId: "malformed",
+            tool: "get_memory_status",
+            operation: "status",
+            stateFingerprint: "state-old",
+            contentFingerprint: "content-old",
+            request: { status: "request" },
+            invalidShape: true,
+        };
+        const persisted = createPaAgentPersistedTurn({
+            runId: "run-invalid",
+            turnId: "turn-invalid",
+            messages: [{
+                role: "toolResult",
+                id: "tool-invalid",
+                toolCallId: "call-invalid",
+                toolName: "get_memory_status",
+                isError: false,
+                timestamp: 1,
+                content: {
+                    promptText: "Malformed management evidence.",
+                    includeInNextPrompt: true,
+                    metadata: {
+                        memoryManagementContractVersion: 1,
+                        memoryManagementEvidence: malformed,
+                    },
+                },
+            }],
+        });
+        expect(persisted.memoryManagementEvidenceInvalid).toBe(true);
+
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store });
+        await manager.initialize();
+        const conversation = await manager.startConversation("Invalid management evidence");
+        await store.appendTurn({
+            conversationId: conversation.id,
+            turnIndex: 0,
+            user: { role: "user", content: "Status" },
+            assistant: { role: "assistant", content: "Old status answer." },
+            memoryManagementEvidence: [malformed as never],
+            memoryManagementContractVersion: 1,
+        });
+        const reopened = await manager.getTurns(conversation.id);
+        expect(reopened[0]).toMatchObject({
+            memoryManagementEvidence: [],
+            memoryManagementEvidenceInvalid: true,
+        });
+        expect(() => manager.deserializeTurn(reopened[0]!)).not.toThrow();
+        expect(manager.deserializeTurn(reopened[0]!).assistantMessage.canonicalTurn)
+            .toMatchObject({ memoryManagementEvidence: [], memoryManagementEvidenceInvalid: true });
+    });
+
+    it("keeps partial scan and partial note-structure facts separate from whole-tool unavailability", () => {
+        expect(getReadOnlyToolObservationMessage("search_vault_snippets", {
+            kind: "vault-snippets",
+            query: "needle",
+            matches: [{ path: "a.md" }],
+            coverage: { state: "partial" },
+        })).toBe("Found 1 bounded snippet match(es) from a partial scan.");
+
+        expect(getReadOnlyToolObservationMessage("inspect_obsidian_note", {
+            kind: "note-structure",
+            path: "a.md",
+            headings: [{ level: 1, text: "Kept" }],
+            unavailableSources: ["metadata cache"],
+            coverage: { state: "partial", cacheCoverage: "existing-items-only" },
+        })).toBe("Read partial note structure: 1 heading(s).");
     });
 });

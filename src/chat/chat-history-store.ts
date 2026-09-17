@@ -7,6 +7,15 @@ import { cloneWritingVersion, hashWritingText, writingSceneSchema, type WritingV
 import { cloneGenerationInputSnapshot } from "../ai-services/generation-input-snapshot";
 import { cloneSaveReceipt, assertSaveReceiptUpdate, type SaveReceipt } from "./save-receipt-types";
 import { cloneSourceRecord } from "../ai-services/source-store";
+import {
+    assertVaultObservationHistory,
+    cloneVaultObservationEvidence,
+    parseVaultObservationEvidence,
+} from "../ai-services/vault-observation-evidence";
+import {
+    cloneMemoryManagementEvidence,
+    parseMemoryManagementEvidence,
+} from "../ai-services/memory-management-evidence";
 import { hasForbiddenPersistedTextFields, validateSourceRefPathShape, type PersistedSourceRef } from '../pa/contracts/source-ref';
 import { cloneImageAsset, cloneImageRef, cloneImageVariant, cloneMessageImages, imageTurnOwnerId, validateImagePath,
     type ImageAsset, type ImageAssetOwner, type ImageRef, type ImageVariantRecord,
@@ -78,6 +87,12 @@ export interface PersistedTurn {
     user: PersistedChatMessage;
     assistant: PersistedChatMessage;
     memoryMetadata?: ChatTurnMemoryMetadata;
+    vaultObservationEvidence?: ChatTurnMemoryMetadata["vaultObservationEvidence"];
+    vaultObservationContractVersion?: 1;
+    vaultObservationEvidenceInvalid?: boolean;
+    memoryManagementEvidence?: ChatTurnMemoryMetadata["memoryManagementEvidence"];
+    memoryManagementContractVersion?: 1;
+    memoryManagementEvidenceInvalid?: boolean;
     contextUsed?: ChatContextUsedItem[];
     activityDetails?: string[];
     providerReasoningObserved?: boolean;
@@ -946,6 +961,8 @@ function cloneTurn(turn: PersistedTurn): PersistedTurn {
         user: cloneMessage(turn.user),
         assistant: cloneMessage(turn.assistant),
         ...(turn.memoryMetadata ? { memoryMetadata: cloneMemoryMetadata(turn.memoryMetadata) } : {}),
+        ...(turn.vaultObservationContractVersion === 1 ? cloneVaultEvidenceState(turn) : {}),
+        ...(turn.memoryManagementContractVersion === 1 ? cloneManagementEvidenceState(turn) : {}),
         ...(turn.contextUsed ? { contextUsed: turn.contextUsed.map(cloneContextUsedItem) } : {}),
         ...(turn.activityDetails ? { activityDetails: [...turn.activityDetails] } : {}),
         ...(turn.providerReasoningObserved !== undefined
@@ -1102,7 +1119,61 @@ function cloneMemoryMetadata(metadata: ChatTurnMemoryMetadata): ChatTurnMemoryMe
         ...(metadata.contextUsed ? { contextUsed: metadata.contextUsed.map(cloneContextUsedItem) } : {}),
         ...(metadata.sourceRecords ? { sourceRecords: metadata.sourceRecords.map(cloneSourceRecord) } : {}),
         ...(metadata.contextTrace ? { contextTrace: cloneContextTrace(metadata.contextTrace) } : {}),
+        ...(metadata.vaultObservationContractVersion === 1 ? cloneVaultEvidenceState(metadata) : {}),
+        ...(metadata.memoryManagementContractVersion === 1 ? cloneManagementEvidenceState(metadata) : {}),
     };
+}
+
+function cloneManagementEvidenceState(metadata: Pick<
+    ChatTurnMemoryMetadata,
+    "memoryManagementEvidence" | "memoryManagementContractVersion" | "memoryManagementEvidenceInvalid"
+>): Pick<ChatTurnMemoryMetadata, "memoryManagementEvidence" | "memoryManagementContractVersion" | "memoryManagementEvidenceInvalid"> {
+    const invalidState = {
+        memoryManagementEvidence: [] as ChatTurnMemoryMetadata["memoryManagementEvidence"],
+        memoryManagementContractVersion: 1 as const,
+        memoryManagementEvidenceInvalid: true,
+    };
+    if (metadata.memoryManagementEvidenceInvalid === true || !Array.isArray(metadata.memoryManagementEvidence)) {
+        return invalidState;
+    }
+    if (metadata.memoryManagementEvidence.some(value => !parseMemoryManagementEvidence(value).ok)) return invalidState;
+    try {
+        return {
+            memoryManagementEvidence: metadata.memoryManagementEvidence.map(cloneMemoryManagementEvidence),
+            memoryManagementContractVersion: 1 as const,
+        };
+    } catch {
+        return invalidState;
+    }
+}
+
+function cloneVaultEvidenceState(metadata: Pick<
+    ChatTurnMemoryMetadata,
+    "vaultObservationEvidence" | "vaultObservationContractVersion" | "vaultObservationEvidenceInvalid"
+>): Pick<ChatTurnMemoryMetadata, "vaultObservationEvidence" | "vaultObservationContractVersion" | "vaultObservationEvidenceInvalid"> {
+    const invalidState = {
+        vaultObservationEvidence: [] as ChatTurnMemoryMetadata["vaultObservationEvidence"],
+        vaultObservationContractVersion: 1 as const,
+        vaultObservationEvidenceInvalid: true,
+    };
+    try {
+        if (!Array.isArray(metadata.vaultObservationEvidence)) {
+            throw new Error("Vault observation evidence array is missing.");
+        }
+        assertVaultObservationHistory(metadata.vaultObservationEvidence);
+        if (metadata.vaultObservationEvidenceInvalid === true) {
+            return invalidState;
+        }
+        if (metadata.vaultObservationEvidence.some(value => !parseVaultObservationEvidence(value).ok)) {
+            throw new Error("invalid evidence");
+        }
+        return {
+            vaultObservationEvidence: metadata.vaultObservationEvidence.map(cloneVaultObservationEvidence),
+            vaultObservationContractVersion: 1,
+        };
+    } catch {
+        return invalidState;
+    }
 }
 
 function cloneContextTrace(trace: NonNullable<ChatTurnMemoryMetadata["contextTrace"]>): NonNullable<ChatTurnMemoryMetadata["contextTrace"]> {

@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-09-13
+Updated: 2026-09-17
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-037 | PA Agent essential capabilities | Accepted | 基础工具自主规划；日期口径由主 Agent 按上下文选择；官方 API 优先 | [Record](./dec-037-pa-agent-essential-capabilities.md) |
 | DEC-036 | Share Card per-export print styles | Accepted | 每次 Modal 默认原纸且不记忆；轻印/复印分层处理标题与正文，保护代码、视觉、品牌和宿主主题，并保持 preview/Copy/Save 一致 | [Record](./dec-036-share-card-print-styles.md) |
 | DEC-035 | Bounded cleanup and Pagelet scope retirement | Accepted | 删除旧 Panel 范围控件；保留当前 Deep Discover、旧命令、来源边界及已确认外围功能；其余清理保持有效行为 | [Record](./dec-035-bounded-cleanup-and-pagelet-scope-retirement.md) |
 | DEC-034 | Unified Agent task execution | Accepted | B-135 已交付的主 Agent 语义、个性化取材、来源准入、作品交付、恢复与兼容边界；历史验证已归档 | [Record](./dec-034-unified-agent-task-execution.md) |

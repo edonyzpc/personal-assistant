@@ -364,4 +364,113 @@ describe('obsidianFetch', () => {
         await expect(waiting).resolves.toBeInstanceOf(Response);
         expect(mockedRequestUrl).toHaveBeenCalledTimes(3);
     });
+
+    it.each([false, true])('waits for physical dispatch preparation before admission (scoped=%s)', async (scoped) => {
+        const gate = deferred<void>();
+        const onProviderRequestStart = jest.fn();
+        const onProviderRequestDiagnostic = jest.fn();
+        const control: Parameters<typeof obsidianFetch>[2] = {
+            ...(scoped ? { providerRequestScope: createProviderRequestScope() } : {}),
+            onProviderRequestStart,
+            onProviderRequestDiagnostic,
+        };
+        (control as { prepareProviderRequest?: () => Promise<void> }).prepareProviderRequest = () => gate.promise;
+        mockedRequestUrl.mockResolvedValueOnce(successfulResponse());
+
+        const pending = obsidianFetch('https://example.test/prepared', { method: 'POST', body: '{}' }, control);
+        await flushMicrotasks();
+        expect(onProviderRequestStart).not.toHaveBeenCalled();
+        expect(onProviderRequestDiagnostic).not.toHaveBeenCalled();
+        expect(mockedRequestUrl).not.toHaveBeenCalled();
+
+        gate.resolve();
+        await expect(pending).resolves.toBeInstanceOf(Response);
+        expect(mockedRequestUrl).toHaveBeenCalledTimes(1);
+        expect(onProviderRequestStart).toHaveBeenCalledTimes(1);
+        expect(onProviderRequestDiagnostic).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a failed physical dispatch preparation without dispatch or diagnostics', async () => {
+        mockedRequestUrl.mockResolvedValue(successfulResponse());
+        const onProviderRequestStart = jest.fn();
+        const onProviderRequestDiagnostic = jest.fn();
+        const control: Parameters<typeof obsidianFetch>[2] = {
+            onProviderRequestStart,
+            onProviderRequestDiagnostic,
+        };
+        (control as { prepareProviderRequest?: () => Promise<void> }).prepareProviderRequest = () => (
+            Promise.reject(new Error('serialized projection is stale'))
+        );
+
+        await expect(obsidianFetch('https://example.test/rejected', { method: 'POST', body: '{}' }, control))
+            .rejects.toThrow('serialized projection is stale');
+        expect(onProviderRequestStart).not.toHaveBeenCalled();
+        expect(onProviderRequestDiagnostic).not.toHaveBeenCalled();
+        expect(mockedRequestUrl).not.toHaveBeenCalled();
+    });
+
+    it('cancels while physical dispatch preparation is pending and never restores the late result', async () => {
+        mockedRequestUrl.mockResolvedValue(successfulResponse());
+        const gate = deferred<void>();
+        const controller = new AbortController();
+        const onProviderRequestStart = jest.fn();
+        const onProviderRequestDiagnostic = jest.fn();
+        const control: Parameters<typeof obsidianFetch>[2] = {
+            providerRequestScope: createProviderRequestScope(),
+            onProviderRequestStart,
+            onProviderRequestDiagnostic,
+        };
+        (control as { prepareProviderRequest?: (signal?: AbortSignal | null) => Promise<void> })
+            .prepareProviderRequest = signal => {
+                expect(signal).toBe(controller.signal);
+                return gate.promise;
+            };
+
+        const pending = obsidianFetch('https://example.test/cancelled', {
+            method: 'POST',
+            body: '{}',
+            signal: controller.signal,
+        }, control);
+        await flushMicrotasks();
+        controller.abort();
+        await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        gate.resolve();
+        await Promise.resolve();
+        expect(onProviderRequestStart).not.toHaveBeenCalled();
+        expect(onProviderRequestDiagnostic).not.toHaveBeenCalled();
+        expect(mockedRequestUrl).not.toHaveBeenCalled();
+    });
+
+    it('re-drains and re-prepares when a request detaches while preparation is pending', async () => {
+        const activeRaw = deferred<unknown>();
+        const activeController = new AbortController();
+        const prepareGate = deferred<void>();
+        const prepare = jest.fn(() => prepareGate.promise);
+        const scope = createProviderRequestScope();
+        mockedRequestUrl
+            .mockImplementationOnce(() => activeRaw.promise)
+            .mockResolvedValueOnce(successfulResponse());
+
+        const active = createScopedObsidianFetch({ providerRequestScope: scope })(
+            'https://example.test/active',
+            { signal: activeController.signal },
+        );
+        await flushMicrotasks();
+        const control: Parameters<typeof obsidianFetch>[2] = { providerRequestScope: scope };
+        (control as { prepareProviderRequest?: () => Promise<void> }).prepareProviderRequest = prepare;
+        const waiting = obsidianFetch('https://example.test/waiting', { method: 'POST', body: '{}' }, control);
+        await flushMicrotasks();
+        expect(mockedRequestUrl).toHaveBeenCalledTimes(1);
+
+        prepareGate.resolve();
+        activeController.abort();
+        await expect(active).rejects.toMatchObject({ name: 'AbortError' });
+        await flushMicrotasks();
+        expect(mockedRequestUrl).toHaveBeenCalledTimes(1);
+
+        activeRaw.resolve(successfulResponse());
+        await expect(waiting).resolves.toBeInstanceOf(Response);
+        expect(mockedRequestUrl).toHaveBeenCalledTimes(2);
+        expect(prepare).toHaveBeenCalledTimes(2);
+    });
 });

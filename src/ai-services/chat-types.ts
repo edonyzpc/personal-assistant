@@ -3,6 +3,7 @@ import type { MessageImage } from "../chat/image-types";
 import type { ChatHostProvenance } from "./chat-provenance";
 import type { PersistedSourceRef } from "../pa/contracts/source-ref";
 import type { GenerationInputSnapshot } from "./generation-input-snapshot";
+import type { VaultObservationEvidence } from "./vault-observation-evidence";
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
@@ -225,6 +226,16 @@ export interface ChatTurnMemoryMetadata {
     contextUsed?: ChatContextUsedItem[];
     sourceRecords?: SourceRecord[];
     contextTrace?: PersistedContextTrace;
+    /** Trusted host observation envelopes retained for later revalidation. */
+    vaultObservationEvidence?: VaultObservationEvidence[];
+    vaultObservationContractVersion?: 1;
+    /** Fail-closed marker for a persisted new-contract envelope that could not be parsed. */
+    vaultObservationEvidenceInvalid?: boolean;
+    /** Trusted host observation envelopes for read-only Memory management. */
+    memoryManagementEvidence?: import("./memory-management-evidence").MemoryManagementEvidence[];
+    memoryManagementContractVersion?: 1;
+    /** Fail-closed marker for persisted management evidence that could not be parsed. */
+    memoryManagementEvidenceInvalid?: boolean;
 }
 
 export type ChatContextUsedCategory =
@@ -391,6 +402,10 @@ export type PaAgentMessage =
         providerCompletion?: ProviderCompletion;
         /** Host-only request marker, used to keep raw envelopes out of ordinary history. */
         writingRequestId?: string;
+        /** Trusted host evidence used only by provider projection; never model input. */
+        memoryManagementEvidence?: import("./memory-management-evidence").MemoryManagementEvidence[];
+        memoryManagementContractVersion?: 1;
+        memoryManagementEvidenceInvalid?: boolean;
         timestamp: number;
     }
     | {
@@ -411,6 +426,12 @@ export interface PaAgentPersistedTurn {
     committedFinalText?: string;
     sourceRecords?: SourceRecord[];
     contextUsed?: ChatContextUsedItem[];
+    vaultObservationEvidence?: VaultObservationEvidence[];
+    vaultObservationContractVersion?: 1;
+    vaultObservationEvidenceInvalid?: boolean;
+    memoryManagementEvidence?: import("./memory-management-evidence").MemoryManagementEvidence[];
+    memoryManagementContractVersion?: 1;
+    memoryManagementEvidenceInvalid?: boolean;
     messages: PaAgentMessage[];
 }
 
@@ -633,10 +654,19 @@ export type ChatToolName =
     | "get_writing_context"
     | "resolve_chat_images"
     | "search_memory"
+    | "get_memory_status"
+    | "query_memories"
+    | "get_memory_usage"
+    | "get_vault_insights"
+    | "query_saved_insights"
+    | "manage_saved_insight"
+    | "manage_memory"
     | "get_current_note_context"
     | "search_vault_metadata"
     | "list_recent_notes"
     | "read_note_outline"
+    | "read_note"
+    | "query_notes"
     | "inspect_obsidian_note"
     | "read_canvas_summary"
     | "search_vault_snippets"
@@ -662,6 +692,10 @@ export interface ChatToolResult<Output> {
     content: Output | null;
     sources: ChatAgentSource[];
     sourceRecords?: SourceRecord[];
+    vaultObservationEvidence?: VaultObservationEvidence;
+    vaultObservationContractVersion?: 1;
+    memoryManagementEvidence?: import("./memory-management-evidence").MemoryManagementEvidence;
+    memoryManagementContractVersion?: 1;
     error?: string;
     unavailableReason?: ChatToolUnavailableReason;
 }

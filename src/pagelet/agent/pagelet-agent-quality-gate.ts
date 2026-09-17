@@ -2,6 +2,7 @@ import {
     normalizeSnapshotPath,
     sameSourceSnapshot,
 } from "./anchor-snapshot";
+import type { SourceRecord } from "../../ai-services/chat-types";
 import { normalizePageletInsightBody } from "./pagelet-agent-cache";
 import {
     isPageletNoInsightTerminal,
@@ -16,7 +17,66 @@ const CONTENT_EVIDENCE_TOOLS = new Set([
     "search_vault_snippets",
     "inspect_obsidian_note",
     "read_note_outline",
+    "read_note",
 ]);
+
+export function pageletObservationBodyEvidencePaths(
+    toolName: string,
+    promptText: string,
+    sourceRecords: readonly SourceRecord[],
+): string[] {
+    const visiblePaths = new Set(sourceRecords
+        .filter(record => record.path && !record.redacted && !record.statusOnly)
+        .map(record => record.path as string));
+    const evidencePaths = new Set<string>();
+    const addPath = (path: unknown): void => {
+        if (typeof path === "string" && visiblePaths.has(path)) evidencePaths.add(path);
+    };
+    try {
+        const envelope = JSON.parse(promptText) as {
+            status?: unknown;
+            observation?: {
+                path?: unknown;
+                part?: unknown;
+                text?: unknown;
+                fullText?: unknown;
+                headings?: unknown[];
+                matches?: ReadonlyArray<{ path?: unknown; part?: unknown; snippet?: unknown }>;
+            };
+        };
+        if (envelope.status !== "ok" || !envelope.observation) return [];
+        const observation = envelope.observation;
+        if (toolName === "get_current_note_context" || toolName === "inspect_obsidian_note") {
+            if (typeof observation.fullText === "string" && observation.fullText.length > 0) {
+                addPath(observation.path);
+            }
+        } else if (toolName === "read_note_outline") {
+            if (Array.isArray(observation.headings) && observation.headings.length > 0) {
+                addPath(observation.path);
+            }
+        } else if (toolName === "read_note") {
+            if (
+                observation.part === "body"
+                && typeof observation.text === "string"
+                && observation.text.length > 0
+            ) {
+                addPath(observation.path);
+            }
+        } else if (toolName === "search_vault_snippets") {
+            for (const match of observation.matches ?? []) {
+                if (
+                    match
+                    && match.part !== "properties"
+                    && typeof match.snippet === "string"
+                    && match.snippet.length > 0
+                ) addPath(match.path);
+            }
+        }
+        return [...evidencePaths];
+    } catch {
+        return [];
+    }
+}
 
 const DEEP_FINDING_LANGUAGE = /(?:(?:根因|原因)\s*(?:是|为|在于)|矛盾|冲突|变化|演进|转变|缺口|遗漏|风险|因为|导致|意味着|因此|假设|行动|需要|应当|趋势|反例|contradict|conflict|changed?|evolv|shift|gap|missing|risk|because|caus|impl(?:y|ies)|therefore|assumption|should|action|trade[- ]?off|counterexample)/iu;
 
@@ -250,14 +310,13 @@ export function arePageletAgentInsightsDistinct(
 }
 
 function anchorWasRead(
-    run: Pick<PageletAgentRunResult, "toolProvenance">,
+    run: Pick<PageletAgentRunResult, "sourceTools">,
     anchorPath: string,
 ): boolean {
-    return run.toolProvenance.some((entry) => (
-        !entry.isError
-        && entry.toolName === "get_current_note_context"
-        && entry.sourceRecords.some((record) => record.path === anchorPath)
-    ));
+    return hasPageletContentEvidenceTool(
+        run.sourceTools,
+        anchorPath,
+    );
 }
 
 export function hasPageletContentEvidenceTool(

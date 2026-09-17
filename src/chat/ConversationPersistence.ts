@@ -32,6 +32,7 @@ export interface ConversationPersistenceOptions {
 export class ConversationPersistence {
     private activeConversation: PersistedConversation | null = null;
     private activeId: string | null = null;
+    private reservedConversationId: string | null = null;
     private nextTurnIndex = 0;
     private initialImageAnchor?: PersistedConversation['imageAnchor'];
     private persistedTurnIndexByEntry = new WeakMap<TimelineEntry, number>();
@@ -139,6 +140,22 @@ export class ConversationPersistence {
         this.initialImageAnchor = undefined;
         this.persistedTurnIndexByEntry = new WeakMap<TimelineEntry, number>();
         this.unpersistedFinalizedEntries.clear();
+        this.reservedConversationId = null;
+    }
+
+    /**
+     * Reserve the first turn's final conversation identity without creating an
+     * empty persisted conversation. A new reservation replaces an unused one.
+     */
+    async reserveConversationId(_firstUserMessage: string): Promise<string | null> {
+        this.reservedConversationId = null;
+        if (this.activeId) return this.activeId;
+        const manager = await this.getReadyManager();
+        if (!manager) return null;
+        const reserved = manager.reserveConversationId();
+        if (!reserved.trim()) return null;
+        this.reservedConversationId = reserved;
+        return reserved;
     }
 
     async getReadyManager(): Promise<ChatHistoryManager | null> {
@@ -355,13 +372,15 @@ export class ConversationPersistence {
             let conversationId = this.activeId;
             if (!conversation || !conversationId) {
                 const created = this.initialImageAnchor
-                    ? await manager.startConversation(prompt, this.initialImageAnchor) : await manager.startConversation(prompt);
+                    ? await manager.startConversation(prompt, this.initialImageAnchor, this.reservedConversationId ?? undefined)
+                    : await manager.startConversation(prompt, undefined, this.reservedConversationId ?? undefined);
                 if (!isCurrent()) return false;
                 conversation = created;
                 conversationId = created.id;
                 this.activeConversation = conversation;
                 this.activeId = conversationId;
                 this.nextTurnIndex = 0;
+                this.reservedConversationId = null;
             }
             const turnIndex = this.nextTurnIndex;
             if (beforeRecord) await beforeRecord({ conversationId, turnIndex }, isCurrent);

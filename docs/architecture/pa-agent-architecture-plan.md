@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-09-13
+Updated: 2026-09-17
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -16,7 +16,7 @@ Default runtime boundary:
 - Memory and Context Used remain source-visible.
 - No provider built-in web-search fallback.
 - No arbitrary MCP endpoint, shell, script, local executable, or hidden note mutation.
-- Operations Agent Step 2 is build-available, but its persisted per-vault opt-in defaults off; when enabled, the same main Agent may propose only the four approved tools, and every write still requires the existing policy and explicit confirmation.
+- When the live Operations controller and policy are available, the same main Agent may propose only the four approved vault writes; every write still requires its existing preview and explicit confirmation. The old persisted Operations setting is retained for compatibility but is no longer a planning gate.
 
 ## Runtime Map
 
@@ -220,7 +220,7 @@ available for existing records.
 
 ### Operations Agent providers
 
-`OPERATIONS_AGENT_RUNTIME_ENABLED=true` is a build-availability gate, not user consent. Operations becomes effective only when the persisted per-vault `operationsAgentEnabled` setting is also `true`. The same main Agent may then propose exactly `vault_create`, `vault_append`, `vault_process`, and `frontmatter_update` according to the user's goal; there is no separate local write-intent classifier. No old append/selection action or fifth write tool is registered.
+`OPERATIONS_AGENT_RUNTIME_ENABLED=true` is a build-availability gate, not user consent. With a live controller and eligible policy, the same main Agent may propose exactly `vault_create`, `vault_append`, `vault_process`, and `frontmatter_update` according to the user's goal; the old persisted `operationsAgentEnabled` value no longer gates planning or admission. There is no separate local write-intent classifier, old append/selection action, or fifth write tool.
 
 Calls from one assistant tool phase stage one immutable intent and show one inline Chat preview; no write occurs until explicit confirmation. Existing-note changes revalidate their frozen baseline inside `vault.process()`, create rechecks collisions, Undo fails closed after drift, and audit is content-free by default.
 
@@ -234,6 +234,14 @@ remain closed. See [DEC-014](../product/decisions/dec-014-defer-operations-agent
 [Step 2 SDD](../development/proposals/operations-agent/operations-agent-step2-sdd.md),
 [Step 3 SDD](../development/proposals/operations-agent/operations-agent-step3-sdd.md),
 and [Write Action Framework](./write-action-framework-sdd.md).
+
+### B-140 note, Memory, and insight capabilities
+
+The main Agent receives the approved read tools at the first turn, subject to the live Host and policy. `query_notes` uses the public Vault file list and MetadataCache for exact bounded filters; date field and timezone are explicit, with the Agent explaining its contextual choice when the user leaves them open. `read_note` uses public Vault/Editor reads with a versioned, bounded range and continuation. `search_vault_snippets` supplies literal multi-match offsets and bounded continuation because the public API has no equivalent snippet paging. `inspect_obsidian_note` uses public cached metadata first and reads/parses Markdown only for missing or requested details. These tools share the task-source permission, coverage, and physical provider-dispatch revalidation path; none creates a second persistent vault index.
+
+`get_memory_status`, `query_memories`, and `get_memory_usage` project existing Control Center, governance, and usage records. `manage_memory` binds an explicit current-user request to the existing admission and governance coordinator; pending, review, cancellation, and committed effects stay distinct. The new `get_vault_insights` and `query_saved_insights` only read the existing Type-C snapshot and Saved Insight ledger, preserving generation time, coverage, source strength, status, and weak-only effect. Current factual claims still require the note read tools. `manage_saved_insight` applies an explicit save, Later, archive, or restore through the existing ledger or Review queue with request/source/target version checks; it never promotes a saved item to Memory or edits a note. Pagelet's ordinary discovery remains a separate read-only run bound to its frozen anchor and existing Review delivery flow.
+
+The general vault tools use Obsidian public APIs at the existing minimum App version `1.11.4`; the installed `obsidian@1.12.3` declarations provide API availability evidence, not a real-device test of 1.11.4. `Vault.cachedRead/read` (@since 0.9.7) return full text, so PA bounds file size and output ranges; `getFrontMatterInfo` (@since 1.5.7) partitions the text read in this call. `getMarkdownFiles` (@since 0.9.7), `getFileCache` (@since 0.9.21), and public `getAllTags` support bounded metadata filters; the installed declaration does not mark a first-supported version for `getAllTags`. `getFileByPath` (@since 1.5.7) remains behind the existing path-filtered host, with `getAbstractFileByPath` as the current compatible lookup. `CachedMetadata`, `getFirstLinkpathDest`, and `resolvedLinks` supply structure and links when cached; Markdown fallback only fills missing/requested details. `MarkdownView/Editor` identify the current editor separately from saved Vault text. No new parser, persistent file index, private backlinks API, or segmented disk-read guarantee is implied. [B-140 validation](../archive/2026/b140-pa-agent-essential-capabilities-validation.md) records the observed app boundary.
 
 ## Context Management
 

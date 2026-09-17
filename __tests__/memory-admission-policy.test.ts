@@ -54,6 +54,17 @@ describe("decideMemoryAdmission", () => {
         }))).toBe("require_prior_review");
     });
 
+    it("routes explicit user instructions through the same risk policy", () => {
+        expect(decideMemoryAdmission(createExplicitInstructionInput()))
+            .toBe("silent_durable");
+        expect(decideMemoryAdmission(createExplicitInstructionInput({
+            sensitivity: "high",
+        }))).toBe("require_prior_review");
+        expect(decideMemoryAdmission(createExplicitInstructionInput({
+            dataBoundary: "denied",
+        }))).toBe("reject");
+    });
+
     it("never silently admits a durable task constraint based on type alone", () => {
         expect(decideMemoryAdmission(createSilentInput({
             memoryType: "task_constraint",
@@ -220,6 +231,19 @@ function createEphemeralInput(
         persistenceIntent: "ephemeral",
         effect: "retrieval_only",
         scope: "task_ephemeral",
+        ...overrides,
+    });
+}
+
+function createExplicitInstructionInput(
+    overrides: Partial<MemoryAdmissionPolicyInput> = {},
+): MemoryAdmissionPolicyInput {
+    return createSilentInput({
+        origin: "explicit_user_instruction" as unknown as MemoryAdmissionPolicyInput["origin"],
+        authority: "explicit_user",
+        persistenceIntent: "durable",
+        sensitivity: "low",
+        scope: "current_vault",
         ...overrides,
     });
 }

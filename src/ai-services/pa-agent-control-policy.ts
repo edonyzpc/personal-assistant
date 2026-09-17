@@ -85,9 +85,7 @@ const DEFAULT_BUDGET_STATE: PaAgentControlBudgetState = {
     wallClockExceeded: false,
 };
 
-const NOTES_FOLLOW_UP_TOOL_NAMES = new Set([
-    "search_vault_snippets",
-]);
+const HOST_SOURCE_CONTROL_TOOL_NAME = "declare_source_scope";
 
 /** Builds a control snapshot from explicit option overrides, inferring exposure and scope when omitted. */
 export function createAgentControlSnapshot(
@@ -143,10 +141,18 @@ export function createInitialAgentControlSnapshot(
     const blockedToolNames = new Set(options.constraints?.blockedToolNames ?? []);
     const availableSemanticToolNames = subtractTools(options.availableSemanticToolNames, blockedToolNames);
     const availableMetaToolNames = subtractTools(options.availableMetaToolNames ?? new Set(), blockedToolNames);
+    const availableHostSourceControl = availableMetaToolNames.has(HOST_SOURCE_CONTROL_TOOL_NAME)
+        ? new Set([HOST_SOURCE_CONTROL_TOOL_NAME])
+        : new Set<string>();
+    const availableOptionalMetaToolNames = subtractTools(
+        availableMetaToolNames,
+        availableHostSourceControl,
+    );
     if (options.constraints?.allowedToolNames) {
         const allowedToolNames = unionTools(
             intersectTools(options.constraints.allowedToolNames, availableSemanticToolNames),
-            availableMetaToolNames,
+            intersectTools(options.constraints.allowedToolNames, availableOptionalMetaToolNames),
+            availableHostSourceControl,
         );
         return createAgentControlSnapshot({
             exposureMode: "source-scoped",
@@ -233,13 +239,17 @@ export function deriveAnswerReadyAgentControlSnapshot(
     },
 ): AgentControlSnapshot {
     const base = previous ?? createAgentControlSnapshot();
+    const isFinalOnly = base.exposureMode === "final-only"
+        || base.toolMode === "final_answer_only";
+    const allowedToolNames = isFinalOnly ? new Set<string>() : base.allowedToolNames;
     return createAgentControlSnapshot({
-        exposureMode: "answer-ready",
-        sourceScope: base.sourceScope,
-        ...(base.allowedToolNames ? { allowedToolNames: base.allowedToolNames } : {}),
+        exposureMode: isFinalOnly ? "final-only" : "answer-ready",
+        sourceScope: isFinalOnly ? "none" : base.sourceScope,
+        ...(allowedToolNames ? { allowedToolNames } : {}),
         ...(base.blockedToolNames ? { blockedToolNames: base.blockedToolNames } : {}),
         blockedReasons: base.blockedReasons,
         runtimeInstruction: options.runtimeInstruction,
+        ...(base.toolMode ? { toolMode: base.toolMode } : {}),
         budgetState: {
             ...base.budgetState,
             semanticRoundCount: base.budgetState.semanticRoundCount + 1,
@@ -265,24 +275,21 @@ export function deriveSameSourceFollowUpAgentControlSnapshot(
     },
 ): AgentControlSnapshot {
     const base = previous ?? createAgentControlSnapshot();
-    const allowedToolNames = options.sourceScope === "notes"
-        ? new Set(NOTES_FOLLOW_UP_TOOL_NAMES)
-        : new Set<string>();
-    // A targeted follow-up can still narrow an already granted task scope.
-    // Preserve this control only; do not reopen other material or meta tools.
-    if (options.sourceScope === "notes"
-        && base.exposureMode !== "final-only" && base.toolMode !== "final_answer_only"
-        && base.allowedToolNames?.has("declare_source_scope")
-        && !base.blockedToolNames?.has("declare_source_scope")) {
-        allowedToolNames.add("declare_source_scope");
-    }
+    const isFinalOnly = base.exposureMode === "final-only"
+        || base.toolMode === "final_answer_only";
+    const previousAllowedToolNames = isFinalOnly
+        ? new Set<string>()
+        : base.allowedToolNames
+        ? subtractTools(base.allowedToolNames, base.blockedToolNames ?? new Set())
+        : undefined;
     return createAgentControlSnapshot({
-        exposureMode: "follow-up",
-        sourceScope: options.sourceScope,
-        allowedToolNames,
+        exposureMode: isFinalOnly ? "final-only" : "follow-up",
+        sourceScope: isFinalOnly ? "none" : options.sourceScope,
+        ...(previousAllowedToolNames ? { allowedToolNames: previousAllowedToolNames } : {}),
         ...(base.blockedToolNames ? { blockedToolNames: base.blockedToolNames } : {}),
         blockedReasons: base.blockedReasons,
         runtimeInstruction: options.runtimeInstruction,
+        ...(base.toolMode ? { toolMode: base.toolMode } : {}),
         budgetState: {
             ...base.budgetState,
             followUpRoundCount: base.budgetState.followUpRoundCount + 1,
@@ -291,7 +298,7 @@ export function deriveSameSourceFollowUpAgentControlSnapshot(
             ...base.diagnostics,
             {
                 type: "same_source_follow_up",
-                message: "A tool result requested same-source follow-up, so targeted lower-level tools are available for the next turn.",
+                message: "A tool result requested same-source follow-up; already allowed tools remain after blocked tools are removed.",
             },
             ...(options.diagnostics ?? []),
         ],

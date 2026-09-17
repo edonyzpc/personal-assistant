@@ -2,6 +2,7 @@ import type { Workspace } from 'obsidian';
 import {
     createInspectObsidianNoteTool,
     createReadCanvasSummaryTool,
+    createReadNoteTool,
     createReadNoteOutlineTool,
 } from '../src/ai-services/chat-tool-factories';
 import { OperationsIntentController } from '../src/ai-services/operations/operations-intent-controller';
@@ -55,6 +56,7 @@ describe('Task source raw batch read plans', () => {
             call('inspect', 'inspect_obsidian_note', {}),
             call('canvas', 'read_canvas_summary', { canvasPath: 'notes/board.canvas' }),
             call('metadata', 'search_vault_metadata', { path: 'notes/b.md' }),
+            call('query', 'query_notes', { path: 'notes/missing.md' }),
             call('recent', 'list_recent_notes'),
             call('snippets', 'search_vault_snippets', { q: 'exact token', folder: 'notes' }),
             call('tags', 'list_vault_tags'),
@@ -71,7 +73,7 @@ describe('Task source raw batch read plans', () => {
             expect(plans.get(id)).toEqual({ reads: [{ kind: 'note', noteId: 'note-a' }] });
         }
         expect(plans.get('canvas')).toEqual({ reads: [{ kind: 'note', noteId: 'canvas-board' }] });
-        for (const id of ['metadata', 'recent', 'snippets', 'tags', 'memory']) {
+        for (const id of ['metadata', 'query', 'recent', 'snippets', 'tags', 'memory']) {
             expect(plans.get(id)).toEqual({ reads: [{ kind: 'scoped_vault_search' }] });
         }
         expect(plans.get('web')).toEqual({ reads: [{ kind: 'web' }] });
@@ -85,6 +87,7 @@ describe('Task source raw batch read plans', () => {
         ['read_note_outline', createReadNoteOutlineTool, 'notes/a.md', 'note-a'],
         ['inspect_obsidian_note', createInspectObsidianNoteTool, 'notes/a.md', 'note-a'],
         ['read_canvas_summary', createReadCanvasSummaryTool, 'notes/board.canvas', 'canvas-board'],
+        ['read_note', createReadNoteTool, 'notes/a.md', 'note-a'],
     ] as const)('matches %s actual argument preparation for aliases and nested inputs', (name, makeTool, path, noteId) => {
         const { host } = fixture();
         const tool = makeTool();
@@ -106,6 +109,45 @@ describe('Task source raw batch read plans', () => {
             expect(host.resolveNoteId).toHaveBeenCalledWith('notes/a.md');
         },
     );
+
+    it('plans read_note for an allowed real path without reading its body or the current note', () => {
+        const { host } = fixture();
+        const { state, candidate } = currentState();
+        const forbiddenRead = jest.fn(() => { throw new Error('No body read during source planning'); });
+        for (const key of ['read', 'cachedRead']) {
+            Object.defineProperty(host, key, { get: forbiddenRead });
+        }
+        const result = resolveTaskSourceReadPlans([call('read-note', 'read_note', { path: 'notes/a.md' })], host);
+        expect(result).toMatchObject({ ok: true });
+        if (!result.ok) return;
+        const plan = result.plans.get('read-note');
+        expect(plan).toEqual({ reads: [{ kind: 'note', noteId: 'note-a' }] });
+        expect(plan!.reads.every(read => state.allows(read, candidate))).toBe(true);
+        expect([...result.plans.values()]).toEqual([plan]);
+        expect(host.resolveNoteId).toHaveBeenCalledTimes(1);
+        expect(host.resolveNoteId).toHaveBeenCalledWith('notes/a.md');
+        expect(host.currentNoteId).not.toHaveBeenCalled();
+        expect(host.actualCurrentNotePath).not.toHaveBeenCalled();
+        expect(forbiddenRead).not.toHaveBeenCalled();
+    });
+
+    it.each(['/notes/a.md', '../notes/a.md', 'C:\\notes\\a.md', 'notes/../a.md'])(
+        'rejects an invalid read_note source path before identity lookup: %s', path => {
+            const { host } = fixture();
+            expect(resolveTaskSourceReadPlans([call('read-note', 'read_note', { path })], host))
+                .toEqual({ ok: false, toolCallId: 'read-note', reason: 'invalid_call' });
+            expect(host.resolveNoteId).not.toHaveBeenCalled();
+            expect(host.currentNoteId).not.toHaveBeenCalled();
+        },
+    );
+
+    it('rejects read_note when the real path has no registered note identity', () => {
+        const { host } = fixture();
+        expect(resolveTaskSourceReadPlans([call('read-note', 'read_note', { path: 'missing.md' })], host))
+            .toEqual({ ok: false, toolCallId: 'read-note', reason: 'source_identity_unavailable' });
+        expect(host.resolveNoteId).toHaveBeenCalledWith('missing.md');
+        expect(host.currentNoteId).not.toHaveBeenCalled();
+    });
 
     it.each([{}, null, [], 'not-a-note-path', { path: ' ' }, { notePath: 'notes/board.canvas' }])(
         'preserves the actual inspect current-note fallback for %j', raw => {
@@ -194,6 +236,25 @@ describe('Task source raw batch read plans', () => {
         expect(result).toMatchObject({ ok: false, reason: 'invalid_call' });
         expect(result).not.toHaveProperty('plans');
         expect(host.currentNoteId).not.toHaveBeenCalled();
+    });
+});
+
+describe('query_notes source read plans', () => {
+    it('uses one scoped vault plan even for a nonexistent exact path', () => {
+        const { host } = fixture();
+        const plans = plansFor([
+            call('query', 'query_notes', { path: 'notes/missing.md', folder: 'notes' }),
+        ], host);
+        expect(plans.get('query')).toEqual({ reads: [{ kind: 'scoped_vault_search' }] });
+        expect(host.resolveNoteId).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid query before a source plan is admitted', () => {
+        const { host } = fixture();
+        const result = resolveTaskSourceReadPlans([
+            call('query', 'query_notes', { date: { field: 'ctime', kind: 'timestamp', from: '2026-01-01', to: '2026-01-02' } }),
+        ], host);
+        expect(result).toEqual({ ok: false, toolCallId: 'query', reason: 'invalid_call' });
     });
 });
 

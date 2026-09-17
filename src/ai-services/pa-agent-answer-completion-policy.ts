@@ -30,6 +30,7 @@ export interface AnswerCompletionLedger {
     noNewInformationTools: Set<string>;
     finalizationAttempted: boolean;
     emptyFinalizationRetryAttempted: boolean;
+    appliedInsightActionReceipts: string[];
 }
 
 export type AnswerCompletionDecision =
@@ -57,6 +58,7 @@ export function createAnswerCompletionLedger(): AnswerCompletionLedger {
         noNewInformationTools: new Set(),
         finalizationAttempted: false,
         emptyFinalizationRetryAttempted: false,
+        appliedInsightActionReceipts: [],
     };
 }
 
@@ -95,6 +97,10 @@ export function recordAnswerCompletionTurn(
 ): void {
     for (const result of summary.toolResults) {
         if (isAppliedSourceControl(result)) continue;
+        const appliedInsightReceipt = parseAppliedInsightActionReceipt(result);
+        if (appliedInsightReceipt && !ledger.appliedInsightActionReceipts.includes(appliedInsightReceipt)) {
+            ledger.appliedInsightActionReceipts.push(appliedInsightReceipt);
+        }
         if (hasSuccessfulEvidence(result)) {
             ledger.successfulEvidenceTools.add(result.toolName);
         }
@@ -211,7 +217,12 @@ function forceFinalizeOnce(
         return {
             action: "force_finalize",
             reason,
-            runtimeInstruction: buildAnswerFinalizationInstruction(reason, toolNames),
+            runtimeInstruction: [
+                buildAnswerFinalizationInstruction(reason, toolNames),
+                ...(ledger.appliedInsightActionReceipts.length > 0 ? [
+                    `The host already applied these Saved Insight actions: ${ledger.appliedInsightActionReceipts.join("; ")}. No new tools are available in this finalization turn, but those actions have completed. Report their actual applied results; do not say they were unavailable or unsaved.`,
+                ] : []),
+            ].join(" "),
             toolMode: "final_answer_only",
         };
     }
@@ -227,6 +238,32 @@ function forceFinalizeOnce(
             tools: [...new Set(toolNames)],
         }],
     };
+}
+
+function parseAppliedInsightActionReceipt(result: PaAgentTurnSummary["toolResults"][number]): string | null {
+    if (result.toolName !== "manage_saved_insight" || result.isError || !result.content.promptText) return null;
+    let payload: unknown;
+    try {
+        payload = JSON.parse(result.content.promptText);
+    } catch {
+        return null;
+    }
+    if (!payload || typeof payload !== "object") return null;
+    const envelope = payload as Record<string, unknown>;
+    const observation = envelope.observation;
+    if (envelope.tool !== "manage_saved_insight" || !observation || typeof observation !== "object") return null;
+    const action = observation as Record<string, unknown>;
+    if (action.kind !== "insight-action" || action.status !== "applied"
+        || !["save", "later", "archive", "restore"].includes(String(action.action))) return null;
+    return JSON.stringify({
+        action: action.action,
+        status: "applied",
+        ...(typeof action.insightId === "string" ? { insightId: action.insightId } : {}),
+        ...(typeof action.reviewItemId === "string" ? { reviewItemId: action.reviewItemId } : {}),
+        ...(typeof action.insightStatus === "string" ? { insightStatus: action.insightStatus } : {}),
+        ...(typeof action.updatedAt === "string" ? { updatedAt: action.updatedAt } : {}),
+        ...(action.influencePolicy === "weak-only" ? { influencePolicy: "weak-only" } : {}),
+    });
 }
 
 function isAppliedSourceControl(result: PaAgentTurnSummary["toolResults"][number]): boolean {

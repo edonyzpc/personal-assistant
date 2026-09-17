@@ -84,6 +84,35 @@ describe("ConversationPersistence", () => {
         expect(manager.setActiveConversationId).not.toHaveBeenCalled();
     });
 
+    it("reuses a first-turn reserved conversation ID only for that turn's final persistence", async () => {
+        const manager = {
+            initialize: jest.fn(async () => undefined),
+            isAvailable: jest.fn(() => true),
+            reserveConversationId: jest.fn()
+                .mockReturnValueOnce("reserved-conversation")
+                .mockReturnValue("next-conversation"),
+            findConversation: jest.fn(async () => null),
+            startConversation: jest.fn(async (_prompt: string, _imageAnchor?: unknown, reservedId?: string) => ({
+                ...conversation,
+                id: reservedId ?? "new-conversation",
+                turnCount: 0,
+            })),
+            recordTurn: jest.fn(async () => ({ ...conversation, id: "reserved-conversation" })),
+            maybePrune: jest.fn(async () => []),
+        } as unknown as ChatHistoryManager;
+        const persistence = makePersistence(manager);
+
+        await expect(persistence.reserveConversationId("hello")).resolves.toBe("reserved-conversation");
+        await expect(persistence.persistFinalizedTurn("hello", historyEntry)).resolves.toBe(true);
+
+        expect(manager.startConversation).toHaveBeenCalledWith("hello", undefined, "reserved-conversation");
+        expect(manager.reserveConversationId).toHaveBeenCalledTimes(1);
+        expect(persistence.activeConversationId).toBe("reserved-conversation");
+        persistence.resetActiveConversationState();
+        await expect(persistence.reserveConversationId("next")).resolves.toBe("next-conversation");
+        expect(manager.reserveConversationId).toHaveBeenCalledTimes(2);
+    });
+
     it("does not commit a stale active conversation pointer", async () => {
         const manager = makeManager();
         const persistence = makePersistence(manager);

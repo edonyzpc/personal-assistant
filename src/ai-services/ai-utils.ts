@@ -230,6 +230,8 @@ export interface ProviderRequestOptions {
     providerRequestScope?: ProviderRequestScope;
     /** Runs synchronously immediately before each physical HTTP dispatch, including SDK retries. */
     onProviderRequestStart?: () => void;
+    /** Validate already-serialized input before each physical HTTP dispatch, including SDK retries. */
+    prepareProviderRequest?: (signal?: AbortSignal | null) => void | Promise<void>;
     onProviderRequestDiagnostic?: (evidence: ProviderRequestDiagnostic) => void;
 }
 
@@ -263,6 +265,31 @@ export interface AIUtilsHost {
     };
     getAPIToken(): Promise<string>;
     log(message: string, ...args: unknown[]): void;
+}
+
+async function withAbortSignal<T>(
+    promise: Promise<T>,
+    signal?: AbortSignal | null,
+): Promise<T> {
+    if (!signal) return await promise;
+    if (signal.aborted) {
+        void promise.catch(() => undefined);
+        throwIfAborted(signal);
+    }
+    return await new Promise<T>((resolve, reject) => {
+        const onAbort = () => reject(signal.reason ?? new Error('The operation was aborted.'));
+        signal.addEventListener('abort', onAbort, { once: true });
+        promise.then(
+            value => {
+                signal.removeEventListener('abort', onAbort);
+                resolve(value);
+            },
+            error => {
+                signal.removeEventListener('abort', onAbort);
+                reject(error);
+            },
+        );
+    });
 }
 
 /**
@@ -346,15 +373,35 @@ export class AIUtils {
         if (resolution.effective === 'obsidian') {
             options.fetch = providerRequestOptions.providerRequestScope
                 || providerRequestOptions.onProviderRequestStart
+                || providerRequestOptions.prepareProviderRequest
                 || providerRequestOptions.onProviderRequestDiagnostic
                 ? createScopedObsidianFetch(providerRequestOptions)
                 : obsidianFetch;
-        } else if (providerRequestOptions.onProviderRequestStart || providerRequestOptions.onProviderRequestDiagnostic) {
+        } else if (
+            providerRequestOptions.onProviderRequestStart
+            || providerRequestOptions.prepareProviderRequest
+            || providerRequestOptions.onProviderRequestDiagnostic
+        ) {
             // Keep native fetch and its propagating AbortSignal. The SDK may
             // await serialization/retry backoff after prompt preparation.
             options.fetch = (input, init) => {
                 const signal = init?.signal ?? (typeof Request !== 'undefined' && input instanceof Request ? input.signal : undefined);
                 throwIfAborted(signal ?? undefined);
+                if (providerRequestOptions.prepareProviderRequest) {
+                    return (async () => {
+                        await withAbortSignal(
+                            Promise.resolve(providerRequestOptions.prepareProviderRequest!(signal)),
+                            signal,
+                        );
+                        throwIfAborted(signal ?? undefined);
+                        providerRequestOptions.onProviderRequestStart?.();
+                        throwIfAborted(signal ?? undefined);
+                        // Request objects / non-string bodies stay unknown; do not read
+                        // or consume their streams just to obtain optional diagnostics.
+                        try { return await globalThis.fetch(input, init); }
+                        finally { reportProviderRequestDiagnostic(init?.body, 'native', providerRequestOptions.onProviderRequestDiagnostic); }
+                    })();
+                }
                 providerRequestOptions.onProviderRequestStart?.();
                 throwIfAborted(signal ?? undefined);
                 // Request objects / non-string bodies stay unknown; do not read

@@ -2,6 +2,8 @@ import { describe, expect, it, jest } from '@jest/globals';
 import {
     createCurrentNoteContextTool, createInspectObsidianNoteTool, createListRecentNotesTool,
     createListVaultTagsTool, createReadCanvasSummaryTool, createReadNoteOutlineTool,
+    createReadNoteTool,
+    createQueryNotesTool,
     createSearchVaultMetadataTool, createSearchVaultSnippetsTool,
 } from '../src/ai-services/chat-tool-factories';
 import type { ChatToolContext, ChatToolResult } from '../src/ai-services/chat-tool-types';
@@ -37,6 +39,8 @@ const tools: Array<{ name: string; invoke: (context: ChatToolContext, path: stri
     { name: 'recent', invoke: (context) => createListRecentNotesTool().execute({ order: 'modified', limit: 10 }, context) },
     { name: 'metadata', invoke: (context) => createSearchVaultMetadataTool().execute({ query: 'needle', limit: 10 }, context) },
     { name: 'outline', invoke: (context, path) => createReadNoteOutlineTool().execute({ path, maxHeadings: 10 }, context) },
+    { name: 'read_note', invoke: (context, path) => createReadNoteTool().execute(createReadNoteTool().validateInput({ path }), context) },
+    { name: 'query', invoke: (context) => createQueryNotesTool().execute(createQueryNotesTool().validateInput({ limit: 10 }), context) },
     { name: 'inspect', invoke: (context, path) => createInspectObsidianNoteTool().execute({ path }, context) },
     { name: 'canvas', invoke: (context, path) => createReadCanvasSummaryTool().execute({ path: path.replace('.md', '.canvas') }, context) },
     { name: 'snippets', invoke: (context) => createSearchVaultSnippetsTool().execute({ query: 'needle', limit: 5 }, context) },
@@ -60,7 +64,7 @@ describe('Vault tool task-source read boundaries', () => {
         expect(f.lookup).not.toHaveBeenCalledWith('denied.md');
         expect(f.lookup).not.toHaveBeenCalledWith('denied.canvas');
         for (const spy of Object.values(f.editor)) expect(spy).not.toHaveBeenCalled();
-        if (['current', 'outline', 'inspect', 'canvas'].includes(name)) {
+        if (['current', 'outline', 'read_note', 'inspect', 'canvas'].includes(name)) {
             expect(result.ok).toBe(false);
             expect(f.read).not.toHaveBeenCalled();
             expect(f.cache).not.toHaveBeenCalled();
@@ -73,6 +77,7 @@ describe('Vault tool task-source read boundaries', () => {
     it.each(['outline', 'inspect', 'canvas', 'snippets'])('%s discards an in-flight read after source revocation', async (name) => {
         const f = setup();
         f.cache.mockReturnValue({ tags: [], headings: undefined } as unknown as ReturnType<typeof f.cache>);
+        if (name === 'inspect') f.cache.mockReturnValue(null as unknown as ReturnType<typeof f.cache>);
         let release!: (content: string) => void;
         let entered!: () => void;
         const started = new Promise<void>((resolve) => { entered = resolve; });
@@ -151,5 +156,21 @@ describe('Vault tool task-source read boundaries', () => {
         const result = await createSearchVaultMetadataTool().execute({ query: 'needle', limit: 10 }, context);
         expect(result.content?.matches.map((entry) => entry.path)).toEqual(['allowed.md', 'denied.md']);
         expect(f.cache).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('query_notes task-source dependencies', () => {
+    it('keeps host-only nonmatch dependencies separate from visible matches', async () => {
+        const f = setup();
+        const tool = createQueryNotesTool();
+        const result = await tool.execute(tool.validateInput({
+            properties: [{ key: 'missing', operator: 'exists' }],
+            limit: 10,
+        }), f.context);
+        expect(result.ok).toBe(true);
+        expect(result.sources).toEqual([]);
+        expect(result.sourceRecords?.map(record => record.path)).toEqual(['allowed.md']);
+        expect(f.cache).toHaveBeenCalledTimes(2);
+        expect(f.read).not.toHaveBeenCalled();
     });
 });

@@ -208,6 +208,30 @@ describe('Task source run host', () => {
         expect(run.captureGenerationInputTaskSources([], [{ role: 'user', content: 'Only this instruction.' }]))
             .toEqual({ state: 'none', sources: [] });
     });
+
+    it.each(['read_note', 'query_notes'] as const)(
+        'treats an unrepresented %s material observation as unknown rather than an empty source set',
+        toolName => {
+            const run = fixture().create();
+            const observation: PaAgentMessage = {
+                role: 'toolResult',
+                id: `${toolName}-result`,
+                toolCallId: `${toolName}-call`,
+                toolName,
+                timestamp: 1,
+                isError: false,
+                content: {
+                    promptText: 'A represented vault observation without source records.',
+                    includeInNextPrompt: true,
+                },
+            };
+
+            expect(run.captureGenerationInputTaskSources([observation], [])).toEqual({
+                state: 'unknown',
+                sources: [],
+            });
+        },
+    );
     it('projects known historical sources, retains legacy choices, and restores reauthorized history in a later run', () => {
         const h = fixture();
         const fromNote = (path: string): ChatMessage => ({ role: 'assistant', content: path === h.a.path ? 'A_FACT_AND_PROPOSAL' : 'B_FACT',
@@ -625,7 +649,7 @@ describe('Task source run host', () => {
         expect(run.publishAdmittedNotePaths([h.a.path], none)).toBe(false);
     });
 
-    it('keeps the current note and recent visible sources within the handle limit without deleting old bindings', () => {
+    it('keeps the current note and the exact published projection within the handle limit', () => {
         const h = fixture();
         const run = h.create();
         const scope = commit(run, { notes: 'vault' });
@@ -634,12 +658,12 @@ describe('Task source run host', () => {
         const firstId = run.resolveNoteId(paths[0]);
         expect(run.publishAdmittedNotePaths(paths, scope)).toBe(true);
         let visiblePaths = contextNotes(run).notes.map(note => note.path);
-        expect(visiblePaths).toEqual([h.a.path, ...paths.slice(-(MAX_TASK_SOURCE_NOTE_HANDLES - 1)).reverse()]);
+        expect(visiblePaths).toEqual([h.a.path, ...paths.slice(21).reverse()]);
         expect(run.resolveNoteId(paths[0])).toBe(firstId);
         expect(contextNotes(run).notes.map(note => note.path)).toEqual(visiblePaths);
         expect(run.publishAdmittedNotePaths([paths[0]], scope)).toBe(true);
         visiblePaths = contextNotes(run).notes.map(note => note.path);
-        expect(visiblePaths).toHaveLength(MAX_TASK_SOURCE_NOTE_HANDLES);
+        expect(visiblePaths).toHaveLength(2);
         expect(visiblePaths.slice(0, 2)).toEqual([h.a.path, paths[0]]);
         expect(run.state.snapshot()).toBe(scope);
     });

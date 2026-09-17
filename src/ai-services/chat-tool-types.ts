@@ -27,9 +27,12 @@ export interface ChatToolContext {
     outerToolDeadlineAt?: number;
     onBeforeVssSearch?: () => void;
     onToolRunning?: (tool: string, message: string) => void;
+    currentMemoryUsage?: () => import("./memory-management-types").MemoryManagementCurrentUsageInput | undefined;
+    /** Host-only authority for the one live PA Agent request issuing a Memory action. */
+    memoryActionRequest?: import("./memory-action-types").MemoryActionHostBinding;
 }
 
-export type ChatToolPermission = "read-only" | "network-read";
+export type ChatToolPermission = "read-only" | "network-read" | "memory-management" | "insight-management";
 export type ChatToolCost = "free" | "ai-calls" | "network-calls";
 export type ChatToolFailureBehavior = "recoverable";
 export type ChatToolSourceBoundary = "memory" | "current-note" | "read-only-tool" | "web" | "skill-context";
@@ -217,6 +220,17 @@ export interface ReadNoteOutlineInput {
     maxHeadings: number;
 }
 
+export type ReadNotePart = "body" | "properties";
+
+export interface ReadNoteInput {
+    path: string;
+    part?: ReadNotePart;
+    startLine?: number;
+    endLine?: number;
+    maxChars: number;
+    cursor?: string;
+}
+
 export interface InspectObsidianNoteInput {
     path?: string;
 }
@@ -229,6 +243,9 @@ export interface SearchVaultSnippetsInput {
     query: string;
     limit: number;
     scope?: string;
+    part?: SearchVaultSnippetPart;
+    caseSensitive?: boolean;
+    cursor?: string;
 }
 
 export interface ListVaultTagsInput {
@@ -249,6 +266,91 @@ export interface ReadNoteOutlineOutput {
     maxHeadings: number;
 }
 
+export interface ReadNoteRange {
+    startLine: number;
+    endLine: number;
+    /** Code-unit offsets within the selected body or raw-properties part. */
+    startOffset: number;
+    endOffset: number;
+    partialLine: boolean;
+}
+
+export interface ReadNoteOutput {
+    path: string;
+    part: ReadNotePart;
+    contentKind: "markdown-body" | "raw-frontmatter";
+    text: string;
+    sourceVersion: string;
+    range: ReadNoteRange;
+    truncated: boolean;
+    complete: boolean;
+    endOfPart: boolean;
+    nextCursor?: string;
+}
+
+export type QueryNotesSortField = "path" | "ctime" | "mtime";
+export type QueryNotesSortDirection = "asc" | "desc";
+
+export interface QueryNotesSort {
+    field: QueryNotesSortField;
+    direction: QueryNotesSortDirection;
+}
+
+export type QueryNotesPropertyOperator = "exists" | "equals" | "contains";
+export type QueryNotesPropertyValue = string | number | boolean | null;
+
+export interface QueryNotesPropertyCondition {
+    key: string;
+    operator: QueryNotesPropertyOperator;
+    value?: QueryNotesPropertyValue;
+}
+
+export interface QueryNotesDateFilter {
+    field: "ctime" | "mtime" | "property";
+    property?: string;
+    kind: "timestamp" | "calendar-date";
+    from: string;
+    to: string;
+}
+
+export interface QueryNotesInput {
+    path?: string;
+    folder?: string;
+    tags?: string[];
+    properties?: QueryNotesPropertyCondition[];
+    date?: QueryNotesDateFilter;
+    sort: QueryNotesSort;
+    limit: number;
+    cursor?: string;
+}
+
+export interface QueryNotesMatch {
+    path: string;
+    title: string;
+    ctime?: number;
+    mtime?: number;
+}
+
+export interface QueryNotesCoverage {
+    state: "complete" | "partial";
+    scannedPermittedNotes: number;
+    evaluatedCandidates: number;
+    candidateCapExceeded?: boolean;
+    projectionBudgetExceeded?: boolean;
+    cacheUnknown?: boolean;
+}
+
+export interface QueryNotesOutput {
+    query: Omit<QueryNotesInput, "limit" | "cursor">;
+    matches: QueryNotesMatch[];
+    matchCount: number;
+    matchCountKind: "exact" | "lower-bound";
+    sort: QueryNotesSort;
+    coverage: QueryNotesCoverage;
+    partialResultGuidance?: string;
+    nextCursor?: string;
+}
+
 export interface InspectObsidianNoteOutput {
     kind: "note-structure";
     path: string;
@@ -266,10 +368,22 @@ export interface InspectObsidianNoteOutput {
     backlinks?: string[];
     unresolvedLinks?: string[];
     links?: Record<string, unknown>;
+    coverage?: InspectNoteCoverage;
     unavailableSources?: string[];
     skippedSources?: string[];
     truncated?: boolean;
     omittedCount?: number;
+}
+
+export interface InspectNoteCoverage {
+    state: "complete" | "partial";
+    cacheState: "known" | "unknown";
+    bodyRead: boolean;
+    bodyRequired: boolean;
+    evaluatedBacklinkSources: number;
+    cacheCoverage?: "existing-items-only";
+    backlinkScanCapExceeded?: boolean;
+    outputTruncated?: boolean;
 }
 
 export interface ObsidianLinkTarget {
@@ -319,13 +433,24 @@ export interface VaultSnippetMatch {
     title: string;
     line: number;
     snippet: string;
+    part: SearchVaultSnippetPart;
+    sourceVersion: string;
+    range: VaultSnippetRange;
 }
 
 export interface VaultSnippetSearchOutput {
     kind: "vault-snippets";
     query: string;
     scope?: string;
+    part: SearchVaultSnippetPart;
+    caseSensitive: boolean;
     matches: VaultSnippetMatch[];
+    matchCount: number;
+    matchCountKind: "exact" | "lower-bound";
+    page: VaultSnippetPage;
+    coverage: VaultSnippetCoverage;
+    partialResultGuidance?: string;
+    nextCursor?: string;
     scannedFiles?: number;
     scannedBytes?: number;
     consideredFiles?: number;
@@ -336,6 +461,39 @@ export interface VaultSnippetSearchOutput {
     skippedSources?: string[];
     truncated?: boolean;
     omittedCount?: number;
+}
+
+export type SearchVaultSnippetPart = "body" | "properties" | "all";
+
+export interface VaultSnippetRange {
+    startOffset: number;
+    endOffset: number;
+    startLine: number;
+    endLine: number;
+    startColumn: number;
+    endColumn: number;
+}
+
+export interface VaultSnippetPage {
+    startIndex: number;
+    returnedCount: number;
+    requestedLimit: number;
+    hasMore: boolean;
+    outputBudgetExceeded?: boolean;
+}
+
+export interface VaultSnippetCoverage {
+    state: "complete" | "partial";
+    scannedPermittedNotes: number;
+    evaluatedCandidates: number;
+    readNotes: number;
+    readBytes: number;
+    evaluatedBytes: number;
+    skippedFiles?: number;
+    candidateCapExceeded?: boolean;
+    fileCapExceeded?: boolean;
+    byteCapExceeded?: boolean;
+    unknownFileSize?: boolean;
 }
 
 export interface VaultTagsOutput {

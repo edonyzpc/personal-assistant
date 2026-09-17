@@ -17,6 +17,7 @@ import type {
 import type { MemorySearchResult, PaAgentMessage } from '../src/ai-services/chat-types';
 import { createAgentControlSnapshot } from '../src/ai-services/pa-agent-control-policy';
 import { createProviderRequestScope } from '../src/ai-services/obsidian-fetch';
+import { revalidateVaultObservationFromApp } from '../src/ai-services/vault-observation-evidence';
 import {
     RetrievalDiagnosticsController,
     type RetrievalDiagnosticSurface,
@@ -28,7 +29,10 @@ import type {
     PaAgentTurnSummary,
 } from '../src/ai-services/pa-agent-loop';
 import { hashPageletContent } from '../src/pagelet/agent/anchor-snapshot';
-import { createAnchorBoundCurrentNoteTool } from '../src/pagelet/agent/anchor-note-tool';
+import {
+    createAnchorBoundCurrentNoteTool,
+    createAnchorBoundReadNoteTool,
+} from '../src/pagelet/agent/anchor-note-tool';
 import { PageletDeepDiscoverController } from '../src/pagelet/agent/pagelet-deep-discover-controller';
 import {
     PageletLeadDrivenPolicy,
@@ -36,11 +40,12 @@ import {
 } from '../src/pagelet/agent/lead-driven-policy';
 import {
     PAGELET_AGENT_READ_ONLY_TOOL_ALLOWLIST,
-    createPageletAgentRuntime,
+    createPageletAgentRuntime as createPageletAgentRuntimeBase,
 } from '../src/pagelet/agent/pagelet-agent-runtime';
 import {
     createDefaultPageletPrompt,
     createPageletNativeModel,
+    type CreatePageletNativeModelOptions,
     type PageletNativePrompt,
 } from '../src/pagelet/agent/pagelet-native-model';
 import type {
@@ -51,6 +56,23 @@ import type {
 } from '../src/pagelet/agent/types';
 
 jest.mock('obsidian');
+
+const vaultReadEvidence = (observationId: string, path: string, outputDigest: string, contentHash: string) => ({
+    schemaVersion: 1,
+    observationId,
+    tool: 'read_note',
+    fingerprint: { algorithm: 'sha1', canonicalizationVersion: 1 },
+    scope: { allowedPaths: [path], excludedPaths: [] },
+    coverage: { complete: true, truncated: false, endOfPart: true },
+    items: [{
+        kind: 'read-result',
+        outputDigest,
+        path,
+        contentHash,
+        part: 'body',
+        range: { startLine: 1, endLine: 1, startOffset: 0, endOffset: 20, partialLine: false },
+    }],
+});
 
 const anchor: PageletAnchorSnapshot = {
     path: 'notes/anchor.md',
@@ -189,7 +211,7 @@ const pageletPolicyIdentity: PageletAgentPolicyIdentity = {
 };
 
 function leadMemoryResult(query: string): MemorySearchResult {
-    return {
+    const host: MemorySearchResult = {
         usedMemory: true,
         query,
         documents: [{
@@ -204,6 +226,7 @@ function leadMemoryResult(query: string): MemorySearchResult {
         rerankVerdict: 'relevant',
         needsMoreEvidence: false,
     };
+    return host;
 }
 
 function createFakeWebCapability() {
@@ -299,7 +322,7 @@ function createHost(extraContents: Record<string, string> = {}): AiServiceHost {
         basename: path.split('/').pop()?.replace(/\.md$/, ''),
         stat: { mtime: 10 + index, ctime: 1, size: content.length },
     }));
-    return {
+    const host: AiServiceHost = {
         app: {
             vault: {
                 getMarkdownFiles: () => files,
@@ -341,10 +364,50 @@ function createHost(extraContents: Record<string, string> = {}): AiServiceHost {
         },
         log: jest.fn(),
         getAPIToken: async () => '',
+        getMemoryEvidenceEpoch: () => 'pagelet-test-vault-epoch',
         isOperationsAgentEnabled: false,
         getMemoryExtractionPromptContext: () => undefined,
         memorySearch: {} as AiServiceHost['memorySearch'],
     } as unknown as AiServiceHost;
+    host.revalidateVaultObservation = (evidence, options) => revalidateVaultObservationFromApp(
+        host,
+        evidence,
+        options,
+    );
+    return host;
+}
+
+function createPageletAgentRuntime(
+    options: Parameters<typeof createPageletAgentRuntimeBase>[0],
+): ReturnType<typeof createPageletAgentRuntimeBase> {
+    return createPageletAgentRuntimeBase({
+        ...options,
+        createModel: context => {
+            const model = options.createModel(context);
+            return {
+                stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
+                    let observedProviderOutput = false;
+                    let modelRecordedProjection = false;
+                    const originalRecordPromptProjection = context.recordPromptProjection;
+                    context.recordPromptProjection = (transcript, turnIndex) => {
+                        modelRecordedProjection = true;
+                        originalRecordPromptProjection(transcript, turnIndex);
+                    };
+                    for await (const chunk of model.stream(input)) {
+                        if (!observedProviderOutput) {
+                            observedProviderOutput = true;
+                            if (!modelRecordedProjection) {
+                                // Scripted fixtures model their provider boundary: only
+                                // actual model output turns prepared text into seen body.
+                                context.recordPromptProjection(input.transcript, input.turnIndex);
+                            }
+                        }
+                        yield chunk;
+                    }
+                },
+            };
+        },
+    });
 }
 
 function scriptedModel(onInput?: (input: PaAgentModelInput) => void): PaAgentModel {
@@ -854,6 +917,59 @@ function providerPromptText(input: unknown): string {
     return JSON.stringify(input);
 }
 
+describe('Pagelet frozen-anchor read paging', () => {
+    it('keeps one frozen file identity across pages while retaining permission and cross-instance checks', async () => {
+        const pageBody = 'PAGE_A_PAGE_B_PAGE_C_PAGE_D';
+        const pagedAnchor: PageletAnchorSnapshot = {
+            ...anchor,
+            content: pageBody,
+            size: pageBody.length,
+        };
+        const host = createHost({ [pagedAnchor.path]: 'changed live content must not be read' });
+        let anchorAllowed = true;
+        const tool = createAnchorBoundReadNoteTool(pagedAnchor, () => anchorAllowed);
+        const context = { host };
+        const firstResult = await tool.execute(
+            tool.validateInput({ path: pagedAnchor.path, part: 'body', maxChars: 5 }),
+            context,
+        );
+        if (!firstResult.ok || !firstResult.content?.nextCursor) throw new Error('first frozen page failed');
+        expect(firstResult.content.text).toBe(pageBody.slice(0, 5));
+
+        const secondResult = await tool.execute(
+            tool.validateInput({
+                path: pagedAnchor.path,
+                part: 'body',
+                maxChars: 5,
+                cursor: firstResult.content.nextCursor,
+            }),
+            context,
+        );
+        if (!secondResult.ok || !secondResult.content) throw new Error('second frozen page failed');
+        expect(secondResult.content.text).toBe(pageBody.slice(5, 10));
+        expect(firstResult.content.text + secondResult.content.text).toBe(pageBody.slice(0, 10));
+
+        const anotherTool = createAnchorBoundReadNoteTool(pagedAnchor, () => true);
+        const crossInstance = await anotherTool.execute(
+            anotherTool.validateInput({
+                path: pagedAnchor.path,
+                part: 'body',
+                maxChars: 5,
+                cursor: firstResult.content.nextCursor,
+            }),
+            context,
+        );
+        expect(crossInstance.ok).toBe(false);
+
+        anchorAllowed = false;
+        const denied = await tool.execute(
+            tool.validateInput({ path: pagedAnchor.path, part: 'body', maxChars: 5 }),
+            context,
+        );
+        expect(denied.ok).toBe(false);
+    });
+});
+
 describe('Pagelet exact-lead identifier extraction', () => {
     it('extracts the unresolved identifier from the Pagelet 51 live anchor wording', () => {
         expect(extractPageletExactIdentifiers(exactLeadAnchorContent)).toEqual([
@@ -955,6 +1071,7 @@ describe('Pagelet agent runtime', () => {
 
     it('uses the fixed read-only registry, loop fuses, provenance, and optional turn leases', async () => {
         const host = createHost();
+        expect(typeof host.revalidateVaultObservation).toBe('function');
         const registeredNames: string[][] = [];
         const modelInputs: PaAgentModelInput[] = [];
         const releases: Array<jest.Mock> = [];
@@ -990,7 +1107,6 @@ describe('Pagelet agent runtime', () => {
             triggerReason: 'explicit',
             runId: 'pagelet-test',
         });
-
         expect(result.loopResult.status).toBe('completed');
         expect(result.metrics).toMatchObject({ modelTurns: 2, toolCalls: 2 });
         expect(result.sourceSnapshots.map((source) => source.path)).toEqual([
@@ -1002,6 +1118,8 @@ describe('Pagelet agent runtime', () => {
         expect(registeredNames[0]).toEqual(expect.arrayContaining([
             'search_memory',
             'get_current_note_context',
+            'query_notes',
+            'read_note',
             'search_vault_snippets',
             'inspect_obsidian_note',
             'search_vault_metadata',
@@ -1019,11 +1137,249 @@ describe('Pagelet agent runtime', () => {
         expect(releases.every((release) => release.mock.calls.length === 1)).toBe(true);
         expect(modelInputs[0]?.runtimeInstruction).toContain('3–5 model turns');
         expect(modelInputs[0]?.runtimeInstruction).toContain('inline code');
-        expect(modelInputs[1]?.runtimeInstruction).toContain(
+        expect(modelInputs[1]?.runtimeInstruction).not.toContain(
             'The anchor and at least one non-anchor content source are already observed.',
         );
         expect(modelInputs[1]?.runtimeInstruction).toContain('never mention an unverified .md path');
     });
+
+    it('exposes query/read in the Pagelet registry and keeps reads bound to the frozen anchor', async () => {
+        const contexts: PageletAgentModelContext[] = [];
+        const captureSourceMaterial = jest.fn(async (
+            path: string,
+        ) => (path === relatedMaterial.path ? { ...relatedMaterial } : null));
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial,
+            createModel: (context) => {
+                contexts.push(context);
+                return {
+                    stream: async function* (input: PaAgentModelInput) {
+                        if (input.turnIndex === 0) {
+                            yield {
+                                type: 'toolcall_delta' as const,
+                                id: 'pagelet-query',
+                                name: 'query_notes',
+                                input: {
+                                    sort: { field: 'path', direction: 'asc' },
+                                    limit: 20,
+                                },
+                                index: 0,
+                            };
+                            yield {
+                                type: 'toolcall_delta' as const,
+                                id: 'pagelet-read-anchor',
+                                name: 'read_note',
+                                input: { path: anchor.path },
+                                index: 1,
+                            };
+                            return;
+                        }
+                        yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                    },
+                };
+            },
+        });
+
+        const result = await runtime.run({
+            anchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-query-read-test',
+        });
+        const toolResults = result.loopResult.turns[0]?.toolResults ?? [];
+        const query = toolResults.find(toolResult => toolResult.toolName === 'query_notes');
+        const read = toolResults.find(toolResult => toolResult.toolName === 'read_note');
+        expect(query?.isError).toBe(false);
+        expect(query?.content.promptText).toContain(anchor.path);
+        expect(read?.isError).toBe(false);
+        expect(JSON.parse(read?.content.promptText ?? '{}').observation).toMatchObject({
+            path: anchor.path,
+            part: 'body',
+            text: anchor.content,
+        });
+        expect(read?.content.promptText).not.toContain(relatedContent);
+        expect(captureSourceMaterial).not.toHaveBeenCalled();
+        expect(typeof (contexts[0] as {
+            bindVaultObservationProjection?: unknown;
+        }).bindVaultObservationProjection).toBe('function');
+    });
+
+    it.each(['body', 'properties'] as const)(
+        'derives native Pagelet quality support only from an actual non-empty %s read',
+        async (part) => {
+            let providerTurn = 0;
+            const runtime = createPageletAgentRuntimeBase({
+                host: createHost(),
+                isPathAllowed: path => path.startsWith('notes/'),
+                executeMemorySearch: async input => ({
+                    usedMemory: false,
+                    query: input.query,
+                    documents: [],
+                    sources: [],
+                }),
+                captureSourceMaterial: async path => (
+                    path === relatedMaterial.path ? { ...relatedMaterial } : null
+                ),
+                createModel: context => createPageletNativeModel({
+                    registry: context.registry,
+                    allowedToolNames: context.allowedToolNames,
+                    schemas: context.schemas,
+                    toolDefinitions: context.toolDefinitions,
+                    providerRequestScope: context.providerRequestScope,
+                    bindVaultObservationProjection: context.bindVaultObservationProjection,
+                    recordPromptProjection: context.recordPromptProjection,
+                    createPrompt: createDefaultPageletPrompt,
+                    createChatModel: async (_temperature, modelOptions) => {
+                        const providerStart = async (signal?: AbortSignal) => {
+                            await (modelOptions.prepareProviderRequest as (
+                                signal?: AbortSignal,
+                            ) => Promise<void>)(signal);
+                            (modelOptions.onProviderRequestStart as () => void)();
+                        };
+                        const runnable = new RunnableLambda({
+                            func: async (_input: unknown, config?: { signal?: AbortSignal }) => {
+                                await providerStart(config?.signal);
+                                const turn = providerTurn++;
+                                if (turn === 0) {
+                                    return {
+                                        content: '',
+                                        tool_calls: [
+                                            {
+                                                id: 'native-anchor-body-call',
+                                                name: 'get_current_note_context',
+                                                args: { mode: 'full' },
+                                                index: 0,
+                                            },
+                                            {
+                                                id: 'native-related-part-call',
+                                                name: 'read_note',
+                                                args: {
+                                                    path: relatedMaterial.path,
+                                                    part,
+                                                    maxChars: 4_000,
+                                                },
+                                                index: 1,
+                                            },
+                                        ],
+                                    };
+                                }
+                                return { content: compatibleNonAnchorTerminal };
+                            },
+                        });
+                        return Object.assign(runnable, {
+                            bindTools: () => runnable,
+                        });
+                    },
+                }),
+            });
+
+            const result = await runtime.run({
+                anchor,
+                triggerReason: 'explicit',
+                runId: `pagelet-native-${part}-quality`,
+            });
+            expect(result.sourceTools.get(anchor.path)).toContain('get_current_note_context');
+            if (part === 'body') {
+                expect(result.sourceTools.get(relatedMaterial.path)).toEqual(new Set(['read_note']));
+                expect(result.finalText).toBe(compatibleNonAnchorTerminal);
+            } else {
+                expect(result.sourceTools.get(relatedMaterial.path)).toBeUndefined();
+                expect(result.finalText).toBe('');
+            }
+        },
+    );
+
+    it.each(['unsent', 'hidden'] as const)(
+        'does not promote an executed but %s Pagelet body read to lead evidence',
+        async mode => {
+            let providerTurn = 0;
+            let providerStarts = 0;
+            const runtime = createPageletAgentRuntimeBase({
+                host: createHost(),
+                isPathAllowed: path => path.startsWith('notes/'),
+                executeMemorySearch: async input => ({
+                    usedMemory: false,
+                    query: input.query,
+                    documents: [],
+                    sources: [],
+                }),
+                captureSourceMaterial: async path => (
+                    path === relatedMaterial.path ? { ...relatedMaterial } : null
+                ),
+                createModel: context => createPageletNativeModel({
+                    registry: context.registry,
+                    allowedToolNames: context.allowedToolNames,
+                    schemas: context.schemas,
+                    toolDefinitions: context.toolDefinitions,
+                    providerRequestScope: context.providerRequestScope,
+                    bindVaultObservationProjection: context.bindVaultObservationProjection,
+                    recordPromptProjection: context.recordPromptProjection,
+                    maxObservationChars: mode === 'hidden' ? 1 : undefined,
+                    createPrompt: createDefaultPageletPrompt,
+                    createChatModel: async (_temperature, modelOptions) => {
+                        const providerStart = async (signal?: AbortSignal) => {
+                            providerStarts += 1;
+                            await (modelOptions.prepareProviderRequest as (
+                                signal?: AbortSignal,
+                            ) => Promise<void>)(signal);
+                            (modelOptions.onProviderRequestStart as () => void)();
+                        };
+                        const runnable = new RunnableLambda({
+                            func: async (_input: unknown, config?: { signal?: AbortSignal }) => {
+                                const turn = providerTurn++;
+                                if (turn === 0) {
+                                    await providerStart(config?.signal);
+                                    return {
+                                        content: '',
+                                        tool_calls: [
+                                            {
+                                                id: `native-${mode}-anchor-call`,
+                                                name: 'get_current_note_context',
+                                                args: { mode: 'full' },
+                                                index: 0,
+                                            },
+                                            {
+                                                id: `native-${mode}-related-call`,
+                                                name: 'read_note',
+                                                args: {
+                                                    path: relatedMaterial.path,
+                                                    part: 'body',
+                                                    maxChars: 4_000,
+                                                },
+                                                index: 1,
+                                            },
+                                        ],
+                                    };
+                                }
+                                if (mode === 'hidden') await providerStart(config?.signal);
+                                return { content: compatibleNonAnchorTerminal };
+                            },
+                        });
+                        return Object.assign(runnable, { bindTools: () => runnable });
+                    },
+                }),
+            });
+
+            const result = await runtime.run({
+                anchor,
+                triggerReason: 'explicit',
+                runId: `pagelet-native-${mode}-body`,
+            });
+
+            if (mode === 'hidden') expect(providerStarts).toBeGreaterThanOrEqual(2);
+            else expect(providerStarts).toBe(1);
+            expect(result.sourceTools.get(anchor.path)).toBeUndefined();
+            expect(result.sourceTools.get(relatedMaterial.path)).toBeUndefined();
+            expect(result.finalText).toBe('');
+        },
+    );
 
     it('corrects short inline-code basenames once and delivers the full-path finding', async () => {
         const modelInputs: PaAgentModelInput[] = [];
@@ -1834,10 +2190,10 @@ describe('Pagelet agent runtime', () => {
                 declaredSourceIds: [],
             },
         ]);
-        expect(modelInputs[1]?.runtimeInstruction).toContain(
+        expect(modelInputs[1]?.runtimeInstruction).not.toContain(
             'content sources for at least two concrete anchor leads are already observed',
         );
-        expect(modelInputs[1]?.runtimeInstruction).toContain(
+        expect(modelInputs[1]?.runtimeInstruction).not.toContain(
             'if both independently clear',
         );
         expect(modelInputs.slice(0, 2).every((input) => (
@@ -2231,7 +2587,7 @@ describe('Pagelet agent runtime', () => {
         expect(result.insight.body).toBe(coralInsight);
         expect(modelInputs).toHaveLength(expectedTurns);
         if (!readSecond) {
-            expect(modelInputs[1]?.runtimeInstruction).toContain(
+            expect(modelInputs[1]?.runtimeInstruction).not.toContain(
                 'Normally finalize one worthwhile',
             );
             expect(modelInputs[1]?.runtimeInstruction).not.toContain(
@@ -5272,6 +5628,8 @@ describe('Pagelet agent runtime', () => {
                 schemas: context.schemas,
                 toolDefinitions: context.toolDefinitions,
                 providerRequestScope: context.providerRequestScope,
+                bindVaultObservationProjection: context.bindVaultObservationProjection,
+                recordPromptProjection: context.recordPromptProjection,
                 createChatModel: async () => runnable,
                 createPrompt: () => ({
                     pipe: (model) => model as typeof runnable,
@@ -5347,6 +5705,7 @@ describe('Pagelet agent runtime', () => {
         ]));
         const turnController = new AbortController();
         const streamSignals: Array<AbortSignal | undefined> = [];
+        const providerOptions: Array<Record<string, unknown>> = [];
         const bindTools = jest.fn((_schemas: unknown[]) => runnable);
         const runnable = {
             bindTools,
@@ -5354,6 +5713,10 @@ describe('Pagelet agent runtime', () => {
                 _input: unknown,
                 options?: { signal?: AbortSignal },
             ) {
+                await (providerOptions[0]?.prepareProviderRequest as (
+                    signal?: AbortSignal,
+                ) => Promise<void>)(options?.signal);
+                (providerOptions[0]?.onProviderRequestStart as () => void)();
                 streamSignals.push(options?.signal);
                 yield { content: 'native answer' };
             },
@@ -5366,7 +5729,10 @@ describe('Pagelet agent runtime', () => {
             registry,
             allowedToolNames: new Set(['get_current_note_context']),
             providerRequestScope: createProviderRequestScope(),
-            createChatModel: async () => runnable,
+            createChatModel: async (_temperature: number, modelOptions: Record<string, unknown>) => {
+                providerOptions.push(modelOptions);
+                return runnable;
+            },
             createPrompt: () => prompt,
         });
 
@@ -5387,8 +5753,502 @@ describe('Pagelet agent runtime', () => {
                 function: expect.objectContaining({ name: 'get_current_note_context' }),
             }),
         ]);
+        expect(typeof providerOptions[0]?.prepareProviderRequest).toBe('function');
+        expect(typeof providerOptions[0]?.onProviderRequestStart).toBe('function');
         expect(chunks).toContainEqual({ type: 'text_delta', text: 'native answer' });
         expect(streamSignals).toEqual([turnController.signal]);
+    });
+
+    it('fails closed before dispatch when contract Pagelet material has no host binder', async () => {
+        const registry = new CapabilityRegistry();
+        const providerOptions: Array<Record<string, unknown>> = [];
+        const dispatched: string[] = [];
+        const transcript: PaAgentMessage[] = [{
+            role: 'toolResult',
+            id: 'contract-without-host-binder',
+            toolCallId: 'call-contract-without-host-binder',
+            toolName: 'read_note',
+            isError: false,
+            timestamp: 1,
+            content: {
+                promptText: JSON.stringify({
+                    status: 'ok',
+                    observation: { path: 'notes/a.md', part: 'body', text: 'CONTRACT_BODY' },
+                }),
+                includeInNextPrompt: true,
+                sourceRecords: [{ kind: 'context-used', dedupKey: 'notes/a.md', path: 'notes/a.md' }],
+                metadata: {
+                    vaultObservationContractVersion: 1,
+                    vaultObservationEvidence: vaultReadEvidence(
+                        'contract-without-host-binder',
+                        'notes/a.md',
+                        '1'.repeat(40),
+                        '2'.repeat(40),
+                    ),
+                },
+            },
+        }];
+        const model = createPageletNativeModel({
+            registry,
+            allowedToolNames: new Set(['get_current_note_context']),
+            providerRequestScope: createProviderRequestScope(),
+            createPrompt: createDefaultPageletPrompt,
+            createChatModel: async (_temperature, modelOptions) => {
+                providerOptions.push(modelOptions);
+                return {
+                    stream: async function* (input: unknown) {
+                        dispatched.push(JSON.stringify(input));
+                        yield { content: 'must not dispatch' };
+                    },
+                    invoke: async () => ({ content: 'must not dispatch' }),
+                };
+            },
+        });
+
+        await expect((async () => {
+            for await (const chunk of model.stream({
+                runId: 'pagelet-missing-host-binder',
+                turnId: 'turn',
+                turnIndex: 1,
+                userInput: 'discover',
+                transcript,
+            })) {
+                void chunk;
+            }
+        })()).rejects.toThrow('Pagelet vault observation projection host is unavailable');
+        expect(dispatched).toEqual([]);
+        expect(providerOptions).toHaveLength(1);
+    });
+
+    it('binds Pagelet physical projection before atomically budgeting structured observations', async () => {
+        const registry = new CapabilityRegistry();
+        registry.registerMany(createCoreToolCapabilities([
+            createAnchorBoundCurrentNoteTool(anchor),
+        ]));
+        const bodyRead = 'notes/read.md records CURRENT_WHOLE_READ_BODY for the independent finding.';
+        const propertiesOnly = JSON.stringify({
+            tool: 'inspect_obsidian_note',
+            status: 'ok',
+            observation: {
+                path: 'notes/properties.md',
+                properties: { status: 'PROPERTIES_ONLY_A ' + 'metadata '.repeat(250) },
+                coverage: {
+                    state: 'complete',
+                    cacheState: 'known',
+                    bodyRead: false,
+                    bodyRequired: false,
+                    evaluatedBacklinkSources: 0,
+                },
+            },
+        });
+        const toolResult = (
+            id: string,
+            toolName: string,
+            promptText: string,
+            path: string,
+            evidence: unknown,
+        ) => ({
+            role: 'toolResult' as const,
+            id,
+            toolCallId: `call-${id}`,
+            toolName,
+            isError: false,
+            timestamp: 1,
+            content: {
+                promptText,
+                includeInNextPrompt: true,
+                sourceRecords: [{
+                    kind: 'context-used' as const,
+                    dedupKey: path,
+                    path,
+                }],
+                metadata: {
+                    vaultObservationContractVersion: 1,
+                    vaultObservationEvidence: evidence,
+                },
+            },
+        });
+        const propertiesEvidence = {
+            schemaVersion: 1,
+            observationId: 'properties-only',
+            tool: 'inspect_obsidian_note',
+            fingerprint: { algorithm: 'sha1', canonicalizationVersion: 1 },
+            scope: { allowedPaths: ['notes/properties.md'], excludedPaths: [] },
+            coverage: {
+                state: 'complete' as const,
+                cacheState: 'known' as const,
+                bodyRead: false,
+                bodyRequired: false,
+                evaluatedBacklinkSources: 0,
+            },
+            items: [{
+                kind: 'inspect-result',
+                outputDigest: '3'.repeat(40),
+                path: 'notes/properties.md',
+                cacheProjectionDigest: '4'.repeat(40),
+                linkFactsDigest: '5'.repeat(40),
+                bodyRead: false,
+            }],
+        };
+        const readEvidence = vaultReadEvidence('whole-read', 'notes/read.md', '6'.repeat(40), '7'.repeat(40));
+        const disabledRead = toolResult(
+            'disabled-read',
+            'read_note',
+            JSON.stringify({
+                status: 'ok',
+                observation: {
+                    path: 'notes/disabled.md',
+                    part: 'body',
+                    text: 'DISABLED_INCLUDE_FALSE_BODY',
+                },
+            }),
+            'notes/disabled.md',
+            vaultReadEvidence('disabled-read', 'notes/disabled.md', 'c'.repeat(40), 'd'.repeat(40)),
+        );
+        disabledRead.content.includeInNextPrompt = false;
+        const transcript: PaAgentMessage[] = [
+            toolResult('properties-only', 'inspect_obsidian_note', propertiesOnly, 'notes/properties.md', propertiesEvidence),
+            toolResult('whole-read', 'read_note', bodyRead, 'notes/read.md', readEvidence),
+            disabledRead,
+        ];
+        const bindings: Array<{ prepare: jest.Mock; assertCurrent: jest.Mock }> = [];
+        const boundTranscripts: PaAgentMessage[][] = [];
+        const recordedPromptTranscripts: PaAgentMessage[][] = [];
+        const bindVaultObservationProjection = jest.fn((boundTranscript: PaAgentMessage[]) => {
+            boundTranscripts.push(boundTranscript);
+            const binding = { prepare: jest.fn(async () => undefined), assertCurrent: jest.fn(() => undefined) };
+            bindings.push(binding);
+            return binding;
+        });
+        const providerOptions: Array<Record<string, unknown>> = [];
+        const actualInputs: unknown[] = [];
+        const runnable = {
+            stream: async function* (
+                input: unknown,
+                config?: { signal?: AbortSignal },
+            ) {
+                await (providerOptions[0]?.prepareProviderRequest as (
+                    signal?: AbortSignal,
+                ) => Promise<void>)(config?.signal);
+                expect(recordedPromptTranscripts).toHaveLength(0);
+                (providerOptions[0]?.onProviderRequestStart as () => void)();
+                expect(recordedPromptTranscripts).toHaveLength(1);
+                actualInputs.push(input);
+                yield { content: 'safe pagelet answer' };
+            },
+            invoke: async () => ({ content: 'fallback must not run' }),
+        };
+        const options: CreatePageletNativeModelOptions = {
+            registry,
+            allowedToolNames: new Set(['get_current_note_context']),
+            providerRequestScope: createProviderRequestScope(),
+            createChatModel: async (_temperature: number, modelOptions: Record<string, unknown>) => {
+                providerOptions.push(modelOptions);
+                return runnable;
+            },
+            createPrompt: createDefaultPageletPrompt,
+            maxObservationChars: JSON.stringify(transcript[1]).length,
+        };
+        (options as { bindVaultObservationProjection?: unknown }).bindVaultObservationProjection =
+            bindVaultObservationProjection;
+        (options as { recordPromptProjection?: unknown }).recordPromptProjection =
+            (transcriptForPrompt: PaAgentMessage[]) => {
+                recordedPromptTranscripts.push([...transcriptForPrompt]);
+            };
+        const model = createPageletNativeModel(options);
+
+        for await (const chunk of model.stream({
+            runId: 'pagelet-physical-projection',
+            turnId: 'turn',
+            turnIndex: 1,
+            userInput: 'discover',
+            transcript,
+        })) {
+            void chunk;
+        }
+
+        expect(bindVaultObservationProjection).toHaveBeenCalledTimes(1);
+        expect(boundTranscripts).toHaveLength(1);
+        expect(boundTranscripts[0]?.map(message => message.id)).toEqual(['whole-read']);
+        expect(boundTranscripts[0]?.[0]).toMatchObject({
+            toolName: 'read_note',
+            content: {
+                promptText: bodyRead,
+                includeInNextPrompt: true,
+                metadata: {
+                    vaultObservationContractVersion: 1,
+                    pageletPromptProjectionHidden: false,
+                },
+            },
+        });
+        expect(JSON.stringify(boundTranscripts[0])).not.toContain('properties-only');
+        expect(JSON.stringify(boundTranscripts[0])).not.toContain('DISABLED_INCLUDE_FALSE_BODY');
+        expect(recordedPromptTranscripts).toEqual(boundTranscripts);
+        expect(bindings[0]?.prepare).toHaveBeenCalledTimes(1);
+        expect(bindings[0]?.assertCurrent).toHaveBeenCalledTimes(2);
+        expect(typeof providerOptions[0]?.prepareProviderRequest).toBe('function');
+        expect(JSON.stringify(actualInputs[0])).not.toContain('PROPERTIES_ONLY_A');
+        expect(JSON.stringify(actualInputs[0])).not.toContain('DISABLED_INCLUDE_FALSE_BODY');
+        expect(JSON.stringify(actualInputs[0])).toContain('CURRENT_WHOLE_READ_BODY');
+    });
+
+    it('gives stream and invoke fallback independent Pagelet physical bindings', async () => {
+        const registry = new CapabilityRegistry();
+        registry.registerMany(createCoreToolCapabilities([
+            createAnchorBoundCurrentNoteTool(anchor),
+        ]));
+        const transcriptA: PaAgentMessage[] = [{
+            role: 'toolResult',
+            id: 'stream-a',
+            toolCallId: 'call-stream-a',
+            toolName: 'read_note',
+            isError: false,
+            timestamp: 1,
+            content: {
+                promptText: 'STREAM_A_SENTINEL must not borrow fallback admission',
+                includeInNextPrompt: true,
+                sourceRecords: [{ kind: 'context-used', dedupKey: 'notes/a.md', path: 'notes/a.md' }],
+                metadata: {
+                    vaultObservationContractVersion: 1,
+                    vaultObservationEvidence: vaultReadEvidence('stream-a', 'notes/a.md', '8'.repeat(40), '9'.repeat(40)),
+                },
+            },
+        }];
+        const transcriptB: PaAgentMessage[] = [{
+            role: 'toolResult',
+            id: 'fallback-b',
+            toolCallId: 'call-fallback-b',
+            toolName: 'read_note',
+            isError: false,
+            timestamp: 1,
+            content: {
+                promptText: 'FALLBACK_B_COMPLETE_SENTINEL',
+                includeInNextPrompt: true,
+                sourceRecords: [{ kind: 'context-used', dedupKey: 'notes/b.md', path: 'notes/b.md' }],
+                metadata: {
+                    vaultObservationContractVersion: 1,
+                    vaultObservationEvidence: vaultReadEvidence('fallback-b', 'notes/b.md', 'a'.repeat(40), 'b'.repeat(40)),
+                },
+            },
+        }];
+        const bindings: Array<{ prepare: jest.Mock; assertCurrent: jest.Mock }> = [];
+        const boundTranscripts: PaAgentMessage[][] = [];
+        const bindVaultObservationProjection = jest.fn((boundTranscript: PaAgentMessage[]) => {
+            boundTranscripts.push(boundTranscript);
+            const binding = { prepare: jest.fn(async () => undefined), assertCurrent: jest.fn(() => undefined) };
+            bindings.push(binding);
+            return binding;
+        });
+        const providerOptions: Array<Record<string, unknown>> = [];
+        const dispatched: string[] = [];
+        const createAttemptRunnable = jest.fn((modelOptions: Record<string, unknown>) => {
+            const attempt = providerOptions.length;
+            const runnable = attempt === 1
+                ? new RunnableLambda({
+                    func: async (): Promise<never> => {
+                        throw new Error('stream transport unavailable');
+                    },
+                })
+                : new RunnableLambda({
+                    func: async (input: unknown, config?: { signal?: AbortSignal }) => {
+                        await (modelOptions.prepareProviderRequest as (
+                            signal?: AbortSignal,
+                        ) => Promise<void>)(config?.signal);
+                        (modelOptions.onProviderRequestStart as () => void)();
+                        dispatched.push(JSON.stringify(input));
+                        return { content: 'fallback binding B' };
+                    },
+                });
+            return runnable;
+        });
+        const notifyProviderRequestStarted = jest.fn();
+        const createModel = jest.fn(async (_temperature: number, modelOptions: Record<string, unknown>) => {
+            providerOptions.push(modelOptions);
+            return createAttemptRunnable(modelOptions);
+        });
+        const options: CreatePageletNativeModelOptions = {
+            registry,
+            allowedToolNames: new Set(['get_current_note_context']),
+            providerRequestScope: createProviderRequestScope(),
+            createChatModel: createModel,
+            createPrompt: createDefaultPageletPrompt,
+        };
+        (options as { bindVaultObservationProjection?: unknown }).bindVaultObservationProjection =
+            bindVaultObservationProjection;
+        const model = createPageletNativeModel(options);
+        let retryAttempt = 0;
+        const modelInput: PaAgentModelInput = {
+            runId: 'pagelet-fallback-binding',
+            turnId: 'turn',
+            turnIndex: 1,
+            userInput: 'discover',
+            transcript: transcriptA,
+            notifyProviderRequestStarted,
+            prepareForProviderRetry: async () => {
+                retryAttempt += 1;
+                return { ...modelInput, transcript: retryAttempt === 1 ? transcriptA : transcriptB };
+            },
+        };
+
+        const chunks: PaAgentModelStreamChunk[] = [];
+        for await (const chunk of model.stream(modelInput)) {
+            chunks.push(chunk);
+        }
+
+        expect(createModel).toHaveBeenCalledTimes(2);
+        expect(bindVaultObservationProjection).toHaveBeenCalledTimes(2);
+        expect(boundTranscripts).toEqual([transcriptA, transcriptB]);
+        expect(bindings).toHaveLength(2);
+        expect(bindings[0]?.prepare).toHaveBeenCalledTimes(0);
+        expect(bindings[1]?.prepare).toHaveBeenCalledTimes(1);
+        expect(providerOptions).toHaveLength(2);
+        expect(providerOptions[0]?.prepareProviderRequest)
+            .not.toBe(providerOptions[1]?.prepareProviderRequest);
+        expect(bindings[1]?.assertCurrent).toHaveBeenCalledTimes(2);
+        expect(dispatched).toHaveLength(1);
+        expect(dispatched[0]).toContain('FALLBACK_B_COMPLETE_SENTINEL');
+        expect(dispatched[0]).not.toContain('STREAM_A_SENTINEL');
+        expect(notifyProviderRequestStarted).toHaveBeenCalledTimes(1);
+        await expect((providerOptions[0]?.prepareProviderRequest as (
+            signal?: AbortSignal,
+        ) => Promise<void>)()).rejects.toThrow('Pagelet vault observation binding is no longer current');
+        expect(() => (providerOptions[0]?.onProviderRequestStart as () => void)()).toThrow(
+            'Pagelet vault observation binding is no longer current',
+        );
+        expect(dispatched).toHaveLength(1);
+        expect(chunks).toContainEqual({ type: 'text_delta', text: 'fallback binding B' });
+    });
+
+    it('fails closed before Provider dispatch when Pagelet physical preparation fails', async () => {
+        const registry = new CapabilityRegistry();
+        registry.registerMany(createCoreToolCapabilities([
+            createAnchorBoundCurrentNoteTool(anchor),
+        ]));
+        const transcript: PaAgentMessage[] = [{
+            role: 'toolResult',
+            id: 'prepare-failure',
+            toolCallId: 'call-prepare-failure',
+            toolName: 'read_note',
+            isError: false,
+            timestamp: 1,
+            content: {
+                promptText: 'PREPARE_FAILURE_SENTINEL',
+                includeInNextPrompt: true,
+                sourceRecords: [{ kind: 'context-used', dedupKey: 'notes/a.md', path: 'notes/a.md' }],
+                metadata: {
+                    vaultObservationContractVersion: 1,
+                    vaultObservationEvidence: vaultReadEvidence(
+                        'prepare-failure',
+                        'notes/a.md',
+                        '1'.repeat(40),
+                        '2'.repeat(40),
+                    ),
+                },
+            },
+        }];
+        const binding = {
+            prepare: jest.fn(async () => {
+                throw new Error('Pagelet vault preparation failed');
+            }),
+            assertCurrent: jest.fn(() => undefined),
+        };
+        const providerOptions: Array<Record<string, unknown>> = [];
+        const dispatches: string[] = [];
+        const notifyProviderRequestStarted = jest.fn();
+        const runnable = {
+            stream: async function* (input: unknown, config?: { signal?: AbortSignal }) {
+                for (let attempt = 0; attempt < 2; attempt += 1) {
+                    await (providerOptions[0]?.prepareProviderRequest as (
+                        signal?: AbortSignal,
+                    ) => Promise<void>)(config?.signal);
+                    (providerOptions[0]?.onProviderRequestStart as () => void)();
+                    dispatches.push(`${attempt}:${JSON.stringify(input)}`);
+                }
+                yield { content: 'must not dispatch' };
+            },
+            invoke: async (input: unknown, config?: { signal?: AbortSignal }) => {
+                await (providerOptions[1]?.prepareProviderRequest as (
+                    signal?: AbortSignal,
+                ) => Promise<void>)(config?.signal);
+                (providerOptions[1]?.onProviderRequestStart as () => void)();
+                dispatches.push(`invoke:${JSON.stringify(input)}`);
+                return { content: 'must not dispatch' };
+            },
+        };
+        const model = createPageletNativeModel({
+            registry,
+            allowedToolNames: new Set(['get_current_note_context']),
+            providerRequestScope: createProviderRequestScope(),
+            bindVaultObservationProjection: () => binding,
+            createPrompt: () => ({ pipe: candidate => candidate }) as PageletNativePrompt,
+            buildPromptInput: input => ({ input: input.userInput }),
+            createChatModel: async (_temperature: number, modelOptions: Record<string, unknown>) => {
+                providerOptions.push(modelOptions);
+                return runnable;
+            },
+        });
+        await expect((async () => {
+            for await (const chunk of model.stream({
+                runId: 'pagelet-prepare-failure',
+                turnId: 'turn',
+                turnIndex: 1,
+                userInput: 'discover',
+                transcript,
+                notifyProviderRequestStarted,
+            })) {
+                void chunk;
+            }
+        })()).rejects.toThrow('Pagelet vault preparation failed');
+        expect(providerOptions).toHaveLength(2);
+        expect(binding.prepare).toHaveBeenCalledTimes(2);
+        expect(binding.assertCurrent).toHaveBeenCalledTimes(0);
+        expect(notifyProviderRequestStarted).toHaveBeenCalledTimes(0);
+        expect(dispatches).toEqual([]);
+    });
+
+    it('notifies the Loop for every real Pagelet Provider start without local de-duplication', async () => {
+        const registry = new CapabilityRegistry();
+        const providerOptions: Array<Record<string, unknown>> = [];
+        const notifyProviderRequestStarted = jest.fn();
+        const model = createPageletNativeModel({
+            registry,
+            allowedToolNames: new Set(),
+            providerRequestScope: createProviderRequestScope(),
+            bindVaultObservationProjection: () => ({
+                prepare: async () => undefined,
+                assertCurrent: () => undefined,
+            }),
+            createPrompt: () => ({ pipe: candidate => candidate }) as PageletNativePrompt,
+            buildPromptInput: input => ({ input: input.userInput }),
+            createChatModel: async (_temperature: number, modelOptions: Record<string, unknown>) => {
+                providerOptions.push(modelOptions);
+                return {
+                    stream: async function* () {
+                        for (let attempt = 0; attempt < 2; attempt += 1) {
+                            await (providerOptions[0]?.prepareProviderRequest as (
+                                signal?: AbortSignal,
+                            ) => Promise<void>)();
+                            (providerOptions[0]?.onProviderRequestStart as () => void)();
+                        }
+                        yield { content: 'two physical attempts' };
+                    },
+                    invoke: async () => ({ content: 'unused' }),
+                };
+            },
+        });
+        const chunks: PaAgentModelStreamChunk[] = [];
+        for await (const chunk of model.stream({
+            runId: 'pagelet-provider-start',
+            turnId: 'turn',
+            turnIndex: 1,
+            userInput: 'discover',
+            transcript: [],
+            notifyProviderRequestStarted,
+        })) {
+            chunks.push(chunk);
+        }
+        expect(notifyProviderRequestStarted).toHaveBeenCalledTimes(2);
+        expect(chunks).toContainEqual({ type: 'text_delta', text: 'two physical attempts' });
     });
 
     it('does not bind or call the Provider when a deferred stage schema loses pending-first authority', async () => {
