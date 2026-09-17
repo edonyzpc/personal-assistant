@@ -1720,6 +1720,57 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             5000,
         );
     });
+
+    it("explains a provider-confirmed Function Calling rejection on explicit Review", async () => {
+        jest.mocked(Notice).mockClear();
+        const orchestrator = new PageletOrchestrator(makeHost({
+            runDeepDiscover: async () => ({ status: "error", reason: "function-calling-unsupported" }),
+        }));
+
+        await Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+
+        expect(Notice).toHaveBeenCalledWith(
+            "The current model does not support Function Calling, so Deep Discover could not finish. Choose a model that supports it.",
+            5000,
+        );
+    });
+
+    it("warns about missing tool use only after an incomplete explicit run", async () => {
+        jest.mocked(Notice).mockClear();
+        const orchestrator = new PageletOrchestrator(makeHost({
+            runDeepDiscover: async () => ({
+                status: "quiet", reason: "runtime-incomplete",
+                metrics: { modelTurns: 2, toolCalls: 0, wallTimeMs: 100 },
+            }),
+        }));
+
+        await Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+
+        expect(Notice).toHaveBeenCalledWith(
+            "The model did not use any tools in this attempt, so Deep Discover could not finish. A model that follows tool calls may work better.",
+            5000,
+        );
+    });
+
+    it("uses catalog evidence only after an incomplete run with no tool calls", async () => {
+        jest.mocked(Notice).mockClear();
+        const getDeepDiscoverFunctionCallingCapability = jest.fn(async () => "unsupported" as const);
+        const orchestrator = new PageletOrchestrator(makeHost({
+            runDeepDiscover: async () => ({
+                status: "quiet", reason: "runtime-incomplete",
+                metrics: { modelTurns: 2, toolCalls: 0, wallTimeMs: 100 },
+            }),
+            getDeepDiscoverFunctionCallingCapability,
+        }));
+
+        await Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+
+        expect(getDeepDiscoverFunctionCallingCapability).toHaveBeenCalledTimes(1);
+        expect(Notice).toHaveBeenCalledWith(
+            "The current model does not support Function Calling, so Deep Discover could not finish. Choose a model that supports it.",
+            5000,
+        );
+    });
 });
 
 describe("PageletOrchestrator review save concurrency", () => {

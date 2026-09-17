@@ -9,6 +9,7 @@ import { MemoryUserProfileStore } from '../src/ai-services/memory-extraction/pro
 import { MemoryExtractionScheduler } from '../src/ai-services/memory-extraction/extraction-scheduler';
 import { computeContentHash } from '../src/vss-helpers';
 import { deriveSemanticProfileKey } from '../src/ai-services/memory-extraction/type-a-extractor';
+import * as dashScopeModelCapability from '../src/pagelet/agent/dashscope-model-capability';
 import {
     buildMemoryManagementEvidence,
     prepareMemoryManagementProjection,
@@ -8263,6 +8264,30 @@ describe('Pagelet Deep Discover scheduler identity lifecycle', () => {
         expect(clear).toHaveBeenCalledTimes(1);
     });
 
+    it('queries the configured DashScope model without exposing the API key to Pagelet', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            aiProvider: 'qwen',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            chatModelName: 'deepseek-v4.1-flash',
+        };
+        plugin.getAPIToken = jest.fn(async () => 'test-key');
+        const probe = jest.spyOn(dashScopeModelCapability, 'probeDashScopeFunctionCalling')
+            .mockResolvedValue('supported');
+
+        try {
+            await expect(plugin.getPageletDeepDiscoverFunctionCallingCapability())
+                .resolves.toBe('supported');
+            expect(probe).toHaveBeenCalledWith({
+                baseURL: plugin.settings.baseURL,
+                model: plugin.settings.chatModelName,
+                apiKey: 'test-key',
+            });
+        } finally {
+            probe.mockRestore();
+        }
+    });
+
     it('clears the latest production smoke evidence when the controller resets', () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         const clear = jest.fn();
@@ -8381,6 +8406,25 @@ describe('Pagelet production rate-limit storage', () => {
         plugin.deepDiscoverRateLimiterInstance = null;
         return plugin;
     }
+
+    it('admits an explicitly requested discovery for a model absent from the static list', () => {
+        const plugin = createRateLimitHarness();
+        plugin.settings = {
+            aiProvider: 'qwen',
+            chatModelName: 'deepseek-v4.1-flash',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            pagelet: { enabled: true },
+        };
+        plugin.unloading = false;
+        plugin.getAISetupIssue = jest.fn(() => null);
+        plugin.pageletDeepDiscoverPolicyIdentityKey = jest.fn(() => 'policy:v1');
+        plugin.isPageletProviderPathAllowed = jest.fn(() => true);
+
+        expect(plugin.pageletDeepDiscoverAdmissionIsCurrent('policy:v1', {
+            path: 'notes/current.md',
+            triggerReason: 'explicit',
+        })).toBe(true);
+    });
 
     it('keeps forced Deep Discover runs behind quota before provider admission', async () => {
         const plugin = createRateLimitHarness();

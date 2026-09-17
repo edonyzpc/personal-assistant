@@ -96,6 +96,8 @@
     "pagelet.settings.deepDiscover.usage.value": "今日发现：{runs} / {dailyCap} 次。",
     "pagelet.deepDiscover.limitReached": "深度发现已达到今日 36 次上限，明日恢复。",
     "pagelet.deepDiscover.unavailable": "深度发现暂不可用，请在设置中检查聊天服务商与模型。",
+    "pagelet.deepDiscover.functionCallingUnsupported": "当前模型不支持 Function Calling，深度发现未能完成。请换用支持该能力的模型。",
+    "pagelet.deepDiscover.noToolCalls": "本次模型没有调用工具，深度发现未能完成。换用能按要求调用工具的模型可能会改善结果。",
     "pagelet.deepDiscover.boundaryDenied": "这篇笔记不在 PA 当前允许的数据范围内。",
     "pagelet.deepDiscover.usageUnavailable": "深度发现用量暂时无法读取。",
     "pagelet.bubble.agentInsight.view": "查看洞察",

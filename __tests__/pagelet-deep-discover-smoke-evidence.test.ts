@@ -2,9 +2,27 @@ import { describe, expect, it } from "@jest/globals";
 
 import {
     PageletDeepDiscoverController,
+    isFunctionCallingUnsupportedError,
     type PageletDeepDiscoverControllerRunCompletion,
     type PageletDeepDiscoverControllerRunIdentity,
 } from "../src/pagelet/agent/pagelet-deep-discover-controller";
+
+describe("Function Calling rejection evidence", () => {
+    it("recognizes only an explicit provider rejection of tools", () => {
+        expect(isFunctionCallingUnsupportedError({
+            status: 400,
+            message: "This model does not support function calling",
+        })).toBe(true);
+        expect(isFunctionCallingUnsupportedError({
+            status: 400,
+            message: "Invalid tools schema",
+        })).toBe(false);
+        expect(isFunctionCallingUnsupportedError({
+            status: 500,
+            message: "Function calling is unsupported",
+        })).toBe(false);
+    });
+});
 import {
     PageletDeepDiscoverSmokeEvidenceStore,
 } from "../src/pagelet/agent/pagelet-deep-discover-smoke-evidence";

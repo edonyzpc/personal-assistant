@@ -23,6 +23,7 @@ import {
     getBailianWebSearchEndpointForBaseURL,
 } from "./ai-services/chat-service";
 import { AgentRunCoordinator } from "./ai-services/agent-run-coordinator";
+import { probeDashScopeFunctionCalling } from "./pagelet/agent/dashscope-model-capability";
 import {
     BuiltinWebSearchProvider,
     createBailianWebSearchNetworkPolicy,
@@ -2858,6 +2859,9 @@ export class PluginManager extends Plugin {
             saveSettings: () => this.saveSettings(),
             createPageletAttentionStorage: () => this.createPageletAttentionStorage(),
             runDeepDiscover: (input) => this.runPageletDeepDiscover(input),
+            getDeepDiscoverFunctionCallingCapability: () => (
+                this.getPageletDeepDiscoverFunctionCallingCapability()
+            ),
             acknowledgeDeepDiscoverResult: (result, acceptedCandidates) => {
                 this.getDeepDiscoverSmokeEvidence().acknowledgeOrchestratorResult(
                     result,
@@ -8663,16 +8667,6 @@ export class PluginManager extends Plugin {
             ),
         };
         const aiUtils = new AIUtils(runtimeHost);
-        const nativeCapability = aiUtils.getNativeToolCallingCapability({
-            internalGate: true,
-        });
-        if (!nativeCapability.supported) {
-            this.log("Pagelet Deep Discover native model unavailable", {
-                status: nativeCapability.status,
-            });
-            return null;
-        }
-
         const runtimePlatform: AgentRuntimePlatform = Platform.isMobile
             ? "mobile"
             : "desktop";
@@ -8873,6 +8867,24 @@ export class PluginManager extends Plugin {
             return undefined;
         }
         return { enableThinking: true };
+    }
+
+    private async getPageletDeepDiscoverFunctionCallingCapability(): Promise<
+        "supported" | "unsupported" | "unknown"
+    > {
+        const { aiProvider, baseURL, chatModelName } = this.settings;
+        if (aiProvider !== "qwen" || !isDashScopeCompatibleBaseURL(baseURL)) {
+            return "unknown";
+        }
+        try {
+            return await probeDashScopeFunctionCalling({
+                baseURL,
+                model: chatModelName,
+                apiKey: await this.getAPIToken(),
+            });
+        } catch {
+            return "unknown";
+        }
     }
 
     private createPageletDeepDiscoverChatModel(
@@ -9088,9 +9100,7 @@ export class PluginManager extends Plugin {
         ) {
             return false;
         }
-        return new AIUtils(this).getNativeToolCallingCapability({
-            internalGate: true,
-        }).supported;
+        return true;
     }
 
     private getPageletDeepDiscoverAnchorRelations(path: string): {

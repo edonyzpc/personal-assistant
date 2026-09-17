@@ -201,7 +201,12 @@ export class PageletDeepDiscoverController {
                 if (isAbortError(error, combined.signal)) {
                     return { status: "quiet", reason: "aborted" };
                 }
-                return { status: "error", reason: "deep-discover-failed" };
+                return {
+                    status: "error",
+                    reason: isFunctionCallingUnsupportedError(error)
+                        ? "function-calling-unsupported"
+                        : "deep-discover-failed",
+                };
             })
             .then((result) => {
                 if (!automaticRequestIsCurrent(normalizedRequest)) {
@@ -811,6 +816,19 @@ export class PageletDeepDiscoverController {
             return { ok: false };
         }
     }
+}
+
+/** Only an explicit provider rejection proves that the configured model cannot accept tools. */
+export function isFunctionCallingUnsupportedError(error: unknown): boolean {
+    if (!error || typeof error !== "object") return false;
+    const candidate = error as { status?: unknown; message?: unknown; error?: unknown };
+    if (candidate.status !== 400 && candidate.status !== 422) return false;
+    const detail = [candidate.message, candidate.error]
+        .filter((value): value is string => typeof value === "string")
+        .join(" ")
+        .toLowerCase();
+    return /(?:function[ _-]?calling|tool[ _-]?calls?|tools)/.test(detail)
+        && /(?:not supported|unsupported|does not support|doesn't support)/.test(detail);
 }
 
 function samePolicyIdentity(

@@ -168,6 +168,9 @@ export interface PageletHost {
         signal?: AbortSignal;
     }): Promise<PageletDeepDiscoverControllerResult>;
 
+    /** Diagnostic catalog lookup after an explicit run fails without tool use. */
+    getDeepDiscoverFunctionCallingCapability?(): Promise<"supported" | "unsupported" | "unknown">;
+
     /** Commit content-free smoke evidence only after current-route acceptance. */
     acknowledgeDeepDiscoverResult?(
         result: PageletDeepDiscoverControllerResult,

@@ -1067,6 +1067,7 @@ export class PageletOrchestrator {
             return;
         }
         const routeToken = ++this.foregroundRouteToken;
+        const modelPolicyIdentity = this.host.getDeepDiscoverPolicyIdentity?.();
         this.transitionPet("analysis-start", "connection");
         let result: PageletDeepDiscoverControllerResult | undefined;
         try {
@@ -1107,7 +1108,25 @@ export class PageletOrchestrator {
             } else if (result.status === "denied") {
                 new Notice(this.t("pagelet.deepDiscover.boundaryDenied"), 5000);
             } else if (result.status === "error") {
-                new Notice(this.t("pagelet.panel.status.error"), 5000);
+                new Notice(this.t(result.reason === "function-calling-unsupported"
+                    ? "pagelet.deepDiscover.functionCallingUnsupported"
+                    : "pagelet.panel.status.error"), 5000);
+            } else if (
+                result.status === "quiet"
+                && result.reason === "runtime-incomplete"
+                && (result.metrics?.modelTurns ?? 0) > 0
+                && result.metrics?.toolCalls === 0
+            ) {
+                if (this.host.getDeepDiscoverPolicyIdentity?.() !== modelPolicyIdentity) return;
+                const capability = await this.host.getDeepDiscoverFunctionCallingCapability?.()
+                    .catch(() => "unknown") ?? "unknown";
+                if (
+                    !this.isCurrentForegroundRoute(routeToken)
+                    || this.host.getDeepDiscoverPolicyIdentity?.() !== modelPolicyIdentity
+                ) return;
+                new Notice(this.t(capability === "unsupported"
+                    ? "pagelet.deepDiscover.functionCallingUnsupported"
+                    : "pagelet.deepDiscover.noToolCalls"), 5000);
             }
         } catch (error) {
             if (result) this.host.discardDeepDiscoverResult?.(result);

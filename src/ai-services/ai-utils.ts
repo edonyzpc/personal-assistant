@@ -143,8 +143,9 @@ export interface NativeToolCallingCapabilityOptions {
 //                      Obsidian's buffered response bridge because WKWebView global fetch can receive the response
 //                      while leaving both SSE and JSON body consumption unresolved.
 //                      Provider tool-call ids may be empty; PA reassembles by index/order and generates local ids.
-//                      Only validated DashScope-compatible model/baseURL combinations (see
-//                      DASHSCOPE_NATIVE_TOOL_CALLING_MODELS below) enter PA streamed tool-call mode.
+//                      Pagelet now checks the configured model through its real tool-bearing
+//                      provider request; the static model list below is historical validation
+//                      metadata and must not gate Pagelet discovery.
 //   Unsupported providers (e.g. Ollama) must error out rather than fall back — the legacy json-planning-loop /
 //   non-streaming-transport paths were removed with v2.0.0 (see PaAgentRuntime path; no rollback flag remains).
 //   Historical record: this matrix used to live in `src/ai-services/tool-calling-protocol.ts` (deleted v2.0.0

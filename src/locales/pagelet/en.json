@@ -96,6 +96,8 @@
     "pagelet.settings.deepDiscover.usage.value": "Discoveries today: {runs} of {dailyCap}.",
     "pagelet.deepDiscover.limitReached": "Deep Discover has reached today's 36-run limit. It will resume tomorrow.",
     "pagelet.deepDiscover.unavailable": "Deep Discover is unavailable. Check the Chat provider and model in Settings.",
+    "pagelet.deepDiscover.functionCallingUnsupported": "The current model does not support Function Calling, so Deep Discover could not finish. Choose a model that supports it.",
+    "pagelet.deepDiscover.noToolCalls": "The model did not use any tools in this attempt, so Deep Discover could not finish. A model that follows tool calls may work better.",
     "pagelet.deepDiscover.boundaryDenied": "This note is outside PA's current data boundary.",
     "pagelet.deepDiscover.usageUnavailable": "Deep Discover usage is temporarily unavailable.",
     "pagelet.bubble.agentInsight.view": "View insight",
