@@ -41,6 +41,7 @@ async function runPageletStartedText(
             stream: async function* (input) {
                 modelInputs.push(input);
                 input.notifyProviderRequestStarted?.();
+                policy.recordPromptContentEvidence(input.transcript, input.turnIndex);
                 if (input.turnIndex === 0) {
                     yield { type: "toolcall_delta", id: "anchor", name: "get_current_note_context", input: {}, index: 0 } as const;
                     yield { type: "toolcall_delta", id: "related", name: "inspect_obsidian_note", input: { path: relatedPath }, index: 1 } as const;
@@ -57,9 +58,15 @@ async function runPageletStartedText(
             execute: async ({ toolCall }) => {
                 const isAnchor = toolCall.name === "get_current_note_context";
                 const path = isAnchor ? anchorPath : relatedPath;
+                const fullText = isAnchor
+                    ? "Validate before release."
+                    : "Direct release creates risk.";
                 return {
                     outcome: "success",
-                    promptText: isAnchor ? "Validate before release." : "Direct release creates risk.",
+                    promptText: JSON.stringify({
+                        status: "ok",
+                        observation: { path, fullText },
+                    }),
                     sourceRecords: [{ kind: "context-used", dedupKey: path, path, citationEligible: true }],
                 };
             },

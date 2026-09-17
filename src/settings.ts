@@ -3594,7 +3594,15 @@ export class SettingTab extends PluginSettingTab {
             }
             const summary = input.value.trim();
             if (!summary || summary === item.label.trim()) return;
-            void this.runMemoryControlCenterAction(save, "correct", item.claimId!, summary, input);
+            void this.runMemoryControlCenterAction(
+                save,
+                "correct",
+                item.claimId!,
+                summary,
+                input,
+                undefined,
+                { expectedRevisionId: item.revisionId },
+            );
         });
         cancel.addEventListener("click", () => editor.remove());
         actions.querySelectorAll("button").forEach((button) => { (button as HTMLButtonElement).disabled = true; });
@@ -3696,13 +3704,30 @@ export class SettingTab extends PluginSettingTab {
         summary?: string,
         failureFocusEl?: HTMLElement,
         writingStyleScene?: WritingStyleScene,
+        options?: { expectedRevisionId?: string },
     ): Promise<void> {
         const generation = this.memoryControlCenterGeneration;
         button.disabled = true;
         try {
-            const result = writingStyleScene && action === 'correct'
-                ? await this.plugin.correctWritingStyleMemory(targetId, summary ?? '', writingStyleScene)
-                : await this.plugin.runMemoryControlCenterAction(action, targetId, summary);
+            const runAction = async () => {
+                if (writingStyleScene && action === 'correct') {
+                    return this.plugin.correctWritingStyleMemory(
+                        targetId,
+                        summary ?? '',
+                        writingStyleScene,
+                    );
+                }
+                if (action === "correct") {
+                    return this.plugin.runMemoryControlCenterAction(
+                        action,
+                        targetId,
+                        summary,
+                        options,
+                    );
+                }
+                return this.plugin.runMemoryControlCenterAction(action, targetId, summary);
+            };
+            const result = await runAction();
             new Notice(result.message, result.ok ? 3000 : 5000);
             if (!result.ok) {
                 if (generation === this.memoryControlCenterGeneration) {
@@ -4141,12 +4166,6 @@ export class SettingTab extends PluginSettingTab {
 
     private renderOperationsAgentSection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
-        new Setting(parentEl)
-            .setName(this.t("plugin.settings.operationsAgent.name"))
-            .setDesc(this.t("plugin.settings.operationsAgent.desc"))
-            .addToggle((toggle) => this.configurePermissionToggle("operationsAgentEnabled", toggle,
-                () => plugin.settings.operationsAgentEnabled,
-                (value) => plugin.saveSettingsPermissions({ operationsAgentEnabled: value })));
         const audit = this.createSettingsDetail(parentEl, "plugin.settings.operationsAgent.auditContent.name");
         new Setting(audit)
             .setName(this.t("plugin.settings.operationsAgent.auditContent.name"))

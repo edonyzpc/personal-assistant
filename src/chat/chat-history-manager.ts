@@ -23,6 +23,17 @@ import { cloneChatHostProvenance } from "../ai-services/chat-provenance";
 import { cloneGenerationInputSnapshot } from "../ai-services/generation-input-snapshot";
 import { cloneSourceRecord } from "../ai-services/source-store";
 import { cloneMessageImages } from "./image-types";
+import {
+    assertVaultObservationHistory,
+    cloneVaultObservationEvidence,
+    parseVaultObservationEvidence,
+    type VaultObservationEvidence,
+} from "../ai-services/vault-observation-evidence";
+import {
+    cloneMemoryManagementEvidence,
+    parseMemoryManagementEvidence,
+    type MemoryManagementEvidence,
+} from "../ai-services/memory-management-evidence";
 
 const TITLE_MAX_LENGTH = 60;
 const PREVIEW_MAX_LENGTH = 200;
@@ -166,8 +177,28 @@ export class ChatHistoryManager {
         });
     }
 
-    async startConversation(firstUserMessage: string, imageAnchor?: PersistedConversation['imageAnchor']): Promise<PersistedConversation> {
-        const id = this.generateId();
+    async startConversation(
+        firstUserMessage: string,
+        imageAnchor?: PersistedConversation['imageAnchor'],
+        reservedId?: string,
+    ): Promise<PersistedConversation> {
+        return this.startConversationWithReservedId(firstUserMessage, reservedId, imageAnchor);
+    }
+
+    /** Reserve without writing; only this in-memory caller may later persist that ID. */
+    reserveConversationId(): string {
+        return this.generateId();
+    }
+
+    private async startConversationWithReservedId(
+        firstUserMessage: string,
+        reservedId?: string,
+        imageAnchor?: PersistedConversation['imageAnchor'],
+    ): Promise<PersistedConversation> {
+        const id = reservedId?.trim() || this.generateId();
+        if (reservedId !== undefined && (id !== reservedId || await this.store.getConversation(id))) {
+            throw new Error('Reserved conversation identity is unavailable');
+        }
         const timestamp = this.toIso(this.now());
         const conversation: PersistedConversation = {
             id,
@@ -331,12 +362,43 @@ export class ChatHistoryManager {
             ...(assistantTurnStatus ? { turnStatus: assistantTurnStatus } : {}),
         };
         const memoryMetadata = entry.assistant.memoryMetadata ?? entry.memoryMetadata;
+        const canonicalEvidence = assistantCanonical?.vaultObservationEvidence
+            ?? memoryMetadata?.vaultObservationEvidence;
+        const canonicalEvidenceInvalid = assistantCanonical?.vaultObservationEvidenceInvalid
+            ?? memoryMetadata?.vaultObservationEvidenceInvalid
+            ?? false;
+        const managementEvidence = assistantCanonical?.memoryManagementEvidence
+            ?? memoryMetadata?.memoryManagementEvidence;
+        const managementEvidenceInvalid = assistantCanonical?.memoryManagementEvidenceInvalid
+            ?? memoryMetadata?.memoryManagementEvidenceInvalid
+            ?? false;
+        const evidenceState = canonicalEvidence || canonicalEvidenceInvalid
+            ? cloneEvidenceState({
+                hasMemoryContent: false,
+                allowedMemorySourcePaths: [],
+                vaultObservationEvidence: canonicalEvidence ?? [],
+                vaultObservationContractVersion: 1,
+                ...(canonicalEvidenceInvalid ? { vaultObservationEvidenceInvalid: true } : {}),
+            })
+            : undefined;
         return {
             conversationId,
             turnIndex,
             user: userMessage,
             assistant: assistantMessage,
             ...(memoryMetadata ? { memoryMetadata: cloneMemoryMetadata(memoryMetadata) } : {}),
+            ...(canonicalEvidence || canonicalEvidenceInvalid ? {
+                vaultObservationEvidence: evidenceState?.vaultObservationEvidence as VaultObservationEvidence[],
+                vaultObservationContractVersion: 1 as const,
+                ...(evidenceState?.vaultObservationEvidenceInvalid ? { vaultObservationEvidenceInvalid: true } : {}),
+            } : {}),
+            ...(managementEvidenceInvalid || (managementEvidence && managementEvidence.length > 0) ? {
+                memoryManagementEvidence: managementEvidenceInvalid
+                    ? []
+                    : managementEvidence!.map(cloneMemoryManagementEvidence),
+                memoryManagementContractVersion: 1 as const,
+                ...(managementEvidenceInvalid ? { memoryManagementEvidenceInvalid: true } : {}),
+            } : {}),
             ...(entry.contextUsedItems && entry.contextUsedItems.length > 0
                 ? { contextUsed: entry.contextUsedItems.map(cloneContextUsedItem) }
                 : {}),
@@ -370,6 +432,12 @@ export class ChatHistoryManager {
             sourceRecords: turn.assistant.sourceRecords,
             contextUsed: turn.contextUsed?.map(cloneContextUsedItem),
             status,
+            vaultObservationEvidence: turn.vaultObservationEvidence ?? memoryMetadata?.vaultObservationEvidence,
+            vaultObservationEvidenceInvalid: turn.vaultObservationEvidenceInvalid
+                ?? memoryMetadata?.vaultObservationEvidenceInvalid,
+            memoryManagementEvidence: turn.memoryManagementEvidence ?? memoryMetadata?.memoryManagementEvidence,
+            memoryManagementEvidenceInvalid: turn.memoryManagementEvidenceInvalid
+                ?? memoryMetadata?.memoryManagementEvidenceInvalid,
         });
         const assistantMessage: ChatMessage = {
             role: "assistant",
@@ -438,6 +506,10 @@ function rebuildCanonicalTurn(input: {
     sourceRecords?: SourceRecord[];
     contextUsed?: PersistedTurn["contextUsed"];
     status: TurnEndStatus;
+    vaultObservationEvidence?: VaultObservationEvidence[];
+    vaultObservationEvidenceInvalid?: boolean;
+        memoryManagementEvidence?: MemoryManagementEvidence[];
+        memoryManagementEvidenceInvalid?: boolean;
 }): PaAgentPersistedTurn {
     const turnId = `rehydrated:${input.conversationId}:${input.turnIndex}`;
     return {
@@ -451,6 +523,22 @@ function rebuildCanonicalTurn(input: {
         ...(input.contextUsed && input.contextUsed.length > 0
             ? { contextUsed: input.contextUsed.map(cloneContextUsedItem) }
             : {}),
+        ...(input.vaultObservationEvidenceInvalid || input.vaultObservationEvidence ? {
+            vaultObservationEvidence: input.vaultObservationEvidenceInvalid
+                ? []
+                : (input.vaultObservationEvidence ?? []).map(cloneEvidence),
+            vaultObservationContractVersion: 1 as const,
+        } : {}),
+        ...(input.vaultObservationEvidenceInvalid ? { vaultObservationEvidenceInvalid: true } : {}),
+        ...(input.memoryManagementEvidence && input.memoryManagementEvidence.length > 0 ? {
+            memoryManagementEvidence: input.memoryManagementEvidence.map(cloneMemoryManagementEvidence),
+            memoryManagementContractVersion: 1 as const,
+        } : {}),
+        ...(input.memoryManagementEvidenceInvalid || (input.memoryManagementEvidence?.length === 0) ? {
+            memoryManagementEvidence: [],
+            memoryManagementContractVersion: 1 as const,
+            memoryManagementEvidenceInvalid: true,
+        } : {}),
         messages: [],
     };
 }
@@ -466,7 +554,67 @@ function cloneMemoryMetadata(metadata: ChatTurnMemoryMetadata): ChatTurnMemoryMe
             ? { sourceRecords: metadata.sourceRecords.map(cloneSourceRecord) }
             : {}),
         ...(metadata.contextTrace ? { contextTrace: cloneContextTrace(metadata.contextTrace) } : {}),
+        ...(metadata.vaultObservationContractVersion === 1 ? cloneEvidenceState(metadata) : {}),
+        ...(metadata.memoryManagementContractVersion === 1 ? cloneManagementEvidenceState(metadata) : {}),
     };
+}
+
+function cloneManagementEvidenceState(metadata: Pick<
+    ChatTurnMemoryMetadata,
+    "memoryManagementEvidence" | "memoryManagementContractVersion" | "memoryManagementEvidenceInvalid"
+>): Pick<ChatTurnMemoryMetadata, "memoryManagementEvidence" | "memoryManagementContractVersion" | "memoryManagementEvidenceInvalid"> {
+    const invalidState = {
+        memoryManagementEvidence: [] as MemoryManagementEvidence[],
+        memoryManagementContractVersion: 1 as const,
+        memoryManagementEvidenceInvalid: true,
+    };
+    if (metadata.memoryManagementEvidenceInvalid === true || !Array.isArray(metadata.memoryManagementEvidence)) {
+        return invalidState;
+    }
+    if (metadata.memoryManagementEvidence.some(value => !parseMemoryManagementEvidence(value).ok)) return invalidState;
+    try {
+        return {
+            memoryManagementEvidence: metadata.memoryManagementEvidence.map(cloneMemoryManagementEvidence),
+            memoryManagementContractVersion: 1 as const,
+        };
+    } catch {
+        return invalidState;
+    }
+}
+
+function cloneEvidenceState(metadata: ChatTurnMemoryMetadata): Pick<
+    ChatTurnMemoryMetadata,
+    "vaultObservationEvidence" | "vaultObservationContractVersion" | "vaultObservationEvidenceInvalid"
+> {
+    const invalidState = {
+        vaultObservationEvidence: [] as VaultObservationEvidence[],
+        vaultObservationContractVersion: 1 as const,
+        vaultObservationEvidenceInvalid: true,
+    };
+    try {
+        if (!Array.isArray(metadata.vaultObservationEvidence)) {
+            throw new Error("Vault observation evidence array is missing.");
+        }
+        assertVaultObservationHistory(metadata.vaultObservationEvidence);
+        if (metadata.vaultObservationEvidenceInvalid === true) {
+            return invalidState;
+        }
+        if (metadata.vaultObservationEvidence.some(value => !parseVaultObservationEvidence(value).ok)) {
+            throw new Error("invalid vault observation evidence");
+        }
+        return {
+            vaultObservationEvidence: metadata.vaultObservationEvidence.map(cloneVaultObservationEvidence),
+            vaultObservationContractVersion: 1,
+        };
+    } catch {
+        return invalidState;
+    }
+}
+
+function cloneEvidence(value: VaultObservationEvidence): VaultObservationEvidence {
+    const parsed = parseVaultObservationEvidence(value);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    return cloneVaultObservationEvidence(parsed.evidence);
 }
 
 function cloneContextUsedItem(item: ChatContextUsedItem): ChatContextUsedItem {

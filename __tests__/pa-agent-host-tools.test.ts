@@ -2053,7 +2053,7 @@ describe("PA Agent canonical host tool executor", () => {
         ]));
     });
 
-    it("promotes exact current-note-only lookups to full current-note context", async () => {
+    it("preserves the model's legal current-note outline mode instead of forcing full context", async () => {
         const plugin = createPlugin({
             activeMarkdownView: createMarkdownView({
                 path: "notes/current.md",
@@ -2066,7 +2066,7 @@ describe("PA Agent canonical host tool executor", () => {
             runId: "run-current-note-full-lookup",
             userInput: "Use the current note only. Reply with the exact token whose prefix is pa-positive-snippet-token.",
             model: createModel([
-                [toolCallChunk("call_current_1", "get_current_note_context", { mode: "selection-or-nearby" })],
+                [toolCallChunk("call_current_1", "get_current_note_context", { mode: "outline" })],
                 [{ type: "text_delta", text: "pa-positive-snippet-token-1701" }],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
@@ -2079,11 +2079,11 @@ describe("PA Agent canonical host tool executor", () => {
 
         expect(result.status).toBe("completed");
         expect(toolResult?.isError).toBe(false);
-        expect(toolResult?.content.promptText).toContain("\"mode\": \"full\"");
-        expect(toolResult?.content.promptText).toContain("pa-positive-snippet-token-1701");
+        expect(toolResult?.content.promptText).toContain("\"mode\": \"outline\"");
+        expect(toolResult?.content.promptText).not.toContain("pa-positive-snippet-token-1701");
         expect(toolResult?.content.contextUsed).toEqual([expect.objectContaining({
             category: "current-note",
-            detail: "Read-only current note context (full)",
+            detail: "Read-only current note context (outline)",
         })]);
     });
 
@@ -2644,7 +2644,7 @@ describe("registry.prepareAndValidate (Phase A pi-style per-tool prepareArgument
         }
     });
 
-    it("get_current_note_context: override — user phrasing 'current note only ... exact token' → mode=full", () => {
+    it("get_current_note_context: preserves legal model mode despite exact-token wording", () => {
         const registry = makeCoreRegistryWithStubMemory();
         const result = registry.prepareAndValidate(
             "get_current_note_context",
@@ -2653,7 +2653,7 @@ describe("registry.prepareAndValidate (Phase A pi-style per-tool prepareArgument
         );
         expect(result.ok).toBe(true);
         if (result.ok) {
-            expect((result.input as { mode: string }).mode).toBe("full");
+            expect((result.input as { mode: string }).mode).toBe("outline");
         }
     });
 
@@ -2768,7 +2768,7 @@ describe("registry.prepareAndValidate (Phase A pi-style per-tool prepareArgument
         }
     });
 
-    it("Phase 4: get_current_note_context override (full mode promotion) → repaired metadata", () => {
+    it("Phase 4: legal get_current_note_context mode needs no repaired metadata", () => {
         const registry = makeCoreRegistryWithStubMemory();
         const result = registry.prepareAndValidate(
             "get_current_note_context",
@@ -2776,11 +2776,8 @@ describe("registry.prepareAndValidate (Phase A pi-style per-tool prepareArgument
             { userInput: "in the current note only find the exact token PA-123" },
         );
         expect(result.ok).toBe(true);
-        if (result.ok && result.repaired) {
-            // shouldUseFullCurrentNoteContext override changed `outline` → `full`
-            expect(result.repaired.originalKeys).toBe("mode");
-        } else {
-            throw new Error("Expected repaired metadata for mode override");
+        if (result.ok) {
+            expect(result.repaired).toBeUndefined();
         }
     });
 

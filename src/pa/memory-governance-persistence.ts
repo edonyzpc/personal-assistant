@@ -170,6 +170,13 @@ export type PersistedMemoryProvenance =
         conversationIds: string[];
         observedAt: string;
     }
+    | {
+        kind: "host_user_request";
+        runId: string;
+        userMessageId: string;
+        observedAt: string;
+        userPromptHash: string;
+    }
     | { kind: "explicit_setting"; settingKey: string }
     | {
         kind: "vault_aggregate";
@@ -188,6 +195,10 @@ export interface MemoryClaimRevision {
     authority: MemoryControlCenterAuthority;
     supersedesRevisionId?: string;
     createdAt: string;
+    /** Body-free identity of an explicit host action; absent for legacy/automatic producers. */
+    actionIdentity?: string;
+    /** Canonical hash of that action's parameters; never retains prompt/content text. */
+    actionFingerprint?: string;
     chatSemanticReceipt?: ChatMemorySemanticReceipt;
     writingStyle?: WritingStylePayload;
     writingStyleAuthorization?: WritingStyleAuthorization;
@@ -196,7 +207,7 @@ export interface MemoryClaimRevision {
 export interface MemoryQueueAdmissionEnvelope {
     chatSemanticReceipt?: ChatMemorySemanticReceipt;
     version: 1;
-    origin: "type_a" | "memory_candidate";
+    origin: "type_a" | "memory_candidate" | "explicit_user_instruction";
     memoryType: MemoryType;
     sensitivity: MemorySensitivity;
     authority: MemoryControlCenterAuthority;
@@ -206,6 +217,8 @@ export interface MemoryQueueAdmissionEnvelope {
     sourceFingerprintId: string;
     ruleFingerprint: string;
     admissionKey: string;
+    actionIdentity?: string;
+    actionFingerprint?: string;
     profileRecordId?: string;
     /** Host-owned extraction identity for the isolated governed Profile copy. */
     profileKey?: string;
@@ -245,6 +258,8 @@ export interface MemoryChangeEvent {
     effect: MemoryControlCenterEffect;
     occurredAt: string;
     undoSnapshotId?: string;
+    actionIdentity?: string;
+    actionFingerprint?: string;
     /** Exact original event for an idempotent Undo receipt. */
     undoesEventId?: string;
 }
@@ -305,6 +320,8 @@ export interface MemoryForgetOperation {
     attemptCount: number;
     createdAt: string;
     updatedAt: string;
+    actionIdentity?: string;
+    actionFingerprint?: string;
     lastErrorCode?: string;
     legacyCompatibility?: LegacyMemoryCompatibilityIdentity & {
         state: "pending" | "prepared" | "done";
@@ -810,6 +827,10 @@ function parseRevision(value: unknown): MemoryClaimRevision | null {
     const writingStyle = value.writingStyle === undefined ? undefined : parseWritingStyle(value.writingStyle);
     const writingStyleAuthorization = value.writingStyleAuthorization === undefined ? undefined : parseWritingStyleAuthorization(value.writingStyleAuthorization);
     if (writingStyle === null || writingStyleAuthorization === null || Boolean(writingStyle) !== Boolean(writingStyleAuthorization)) return null;
+    const actionIdentity = optionalString(value.actionIdentity);
+    const actionFingerprint = optionalString(value.actionFingerprint);
+    if ((value.actionIdentity !== undefined && !actionIdentity)
+        || (value.actionFingerprint !== undefined && !actionFingerprint)) return null;
     return {
         id,
         claimId,
@@ -818,6 +839,8 @@ function parseRevision(value: unknown): MemoryClaimRevision | null {
         authority: value.authority,
         ...(supersedesRevisionId ? { supersedesRevisionId } : {}),
         createdAt,
+        ...(actionIdentity ? { actionIdentity } : {}),
+        ...(actionFingerprint ? { actionFingerprint } : {}),
         ...(chatSemanticReceipt ? { chatSemanticReceipt } : {}),
         ...(writingStyle && writingStyleAuthorization ? { writingStyle, writingStyleAuthorization } : {}),
     };
@@ -834,6 +857,15 @@ function parseProvenance(value: unknown): PersistedMemoryProvenance | null {
         const observedAt = requiredString(value.observedAt);
         return conversationIds && observedAt
             ? { kind: "conversation", conversationIds, observedAt }
+            : null;
+    }
+    if (value.kind === "host_user_request") {
+        const runId = requiredString(value.runId);
+        const userMessageId = requiredString(value.userMessageId);
+        const observedAt = requiredString(value.observedAt);
+        const userPromptHash = requiredString(value.userPromptHash);
+        return runId && userMessageId && observedAt && userPromptHash
+            ? { kind: "host_user_request", runId, userMessageId, observedAt, userPromptHash }
             : null;
     }
     if (value.kind === "explicit_setting") {
@@ -911,7 +943,8 @@ function parseMemoryQueueAdmission(value: unknown, claim: string): MemoryQueueAd
     if (!isRecord(value) || value.version !== 1) return null;
     const chatSemanticReceipt = parseBoundChatSemanticReceipt(value, claim);
     if (chatSemanticReceipt === null) return null;
-    if (value.origin !== "type_a" && value.origin !== "memory_candidate") return null;
+    if (value.origin !== "type_a" && value.origin !== "memory_candidate"
+        && value.origin !== "explicit_user_instruction") return null;
     if (!includesString(MEMORY_TYPES, value.memoryType)
         || !includesString(MEMORY_SENSITIVITIES, value.sensitivity)
         || !includesString(AUTHORITIES, value.authority)
@@ -928,11 +961,15 @@ function parseMemoryQueueAdmission(value: unknown, claim: string): MemoryQueueAd
     } else if (ruleFingerprint === CHAT_MEMORY_SEMANTIC_RULE) return null;
     const profileRecordId = optionalString(value.profileRecordId);
     const profileKey = optionalString(value.profileKey);
+    const actionIdentity = optionalString(value.actionIdentity);
+    const actionFingerprint = optionalString(value.actionFingerprint);
     if (!applicability || !provenance.ok || provenance.value.length === 0
         || !sourceFingerprintId || !ruleFingerprint || !admissionKey
         || (value.profileRecordId !== undefined && !profileRecordId)
         || (value.profileKey !== undefined && (!isGovernedProfileKey(profileKey) || !profileRecordId))
         || (chatSemanticReceipt && profileRecordId && !profileKey)) return null;
+    if ((value.actionIdentity !== undefined && !actionIdentity)
+        || (value.actionFingerprint !== undefined && !actionFingerprint)) return null;
     return {
         version: 1,
         origin: value.origin,
@@ -946,6 +983,8 @@ function parseMemoryQueueAdmission(value: unknown, claim: string): MemoryQueueAd
         sourceFingerprintId,
         ruleFingerprint,
         admissionKey,
+        ...(actionIdentity ? { actionIdentity } : {}),
+        ...(actionFingerprint ? { actionFingerprint } : {}),
         ...(profileRecordId ? { profileRecordId } : {}),
         ...(profileKey ? { profileKey } : {}),
     };
@@ -1026,6 +1065,10 @@ function parseChangeEvent(value: unknown): MemoryChangeEvent | null {
     if (value.undoSnapshotId !== undefined && !undoSnapshotId) return null;
     const undoesEventId = optionalString(value.undoesEventId);
     if (value.undoesEventId !== undefined && !undoesEventId) return null;
+    const actionIdentity = optionalString(value.actionIdentity);
+    const actionFingerprint = optionalString(value.actionFingerprint);
+    if ((value.actionIdentity !== undefined && !actionIdentity)
+        || (value.actionFingerprint !== undefined && !actionFingerprint)) return null;
     return {
         id,
         claimId,
@@ -1033,6 +1076,8 @@ function parseChangeEvent(value: unknown): MemoryChangeEvent | null {
         scopeKey,
         effect: value.effect,
         occurredAt,
+        ...(actionIdentity ? { actionIdentity } : {}),
+        ...(actionFingerprint ? { actionFingerprint } : {}),
         ...(undoSnapshotId ? { undoSnapshotId } : {}),
         ...(undoesEventId ? { undoesEventId } : {}),
     };
@@ -1166,6 +1211,10 @@ function parsePendingOperation(value: unknown): MemoryPendingOperation | null {
             ? undefined
             : parseForgetLegacyCompatibility(value.legacyCompatibility);
         if (value.legacyCompatibility !== undefined && !legacyCompatibility) return null;
+        const actionIdentity = optionalString(value.actionIdentity);
+        const actionFingerprint = optionalString(value.actionFingerprint);
+        if ((value.actionIdentity !== undefined && !actionIdentity)
+            || (value.actionFingerprint !== undefined && !actionFingerprint)) return null;
         return {
             id,
             kind: "forget",
@@ -1177,6 +1226,8 @@ function parsePendingOperation(value: unknown): MemoryPendingOperation | null {
             attemptCount: value.attemptCount,
             createdAt,
             updatedAt,
+            ...(actionIdentity ? { actionIdentity } : {}),
+            ...(actionFingerprint ? { actionFingerprint } : {}),
             ...(lastErrorCode ? { lastErrorCode } : {}),
             ...(legacyCompatibility ? { legacyCompatibility } : {}),
         };

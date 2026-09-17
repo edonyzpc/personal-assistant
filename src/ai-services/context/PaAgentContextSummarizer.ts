@@ -7,6 +7,7 @@ import { encodeAdjacentRepeats, type RepeatedSourceContent } from "./PaAgentCont
 import {
     isCurrentHistorySummary,
     isCurrentToolSummary,
+    type PaAgentSummaryBindingSource,
     type PaAgentHistorySummary,
     type PaAgentToolSummary,
     type PaAgentToolSummarySource,
@@ -15,6 +16,11 @@ import {
 export interface PaAgentSummaryRequest {
     messages: Array<{ role: "system" | "user"; content: string }>;
     maxOutputTokens: number;
+    /** Non-enumerable host binding metadata; never serialized into the model payload. */
+    readonly bindingSources?: ReadonlyArray<PaAgentSummaryBindingSource>;
+    /** Exact host messages represented by bindingSources; history observations only. */
+    readonly bindingSourceMessages?: readonly ChatMessage[];
+    readonly bindingPreviousSummary?: string;
 }
 
 export type PaAgentSummaryInvoke = (payload: PaAgentSummaryRequest, signal: AbortSignal) => Promise<unknown>;
@@ -23,7 +29,12 @@ const FIELDS = ["goals", "constraints", "decisions", "completed", "open_question
 type SummaryField = typeof FIELDS[number];
 interface SummaryItem { text: string; sourceMessages: number[] }
 type StructuredSummary = Record<SummaryField, SummaryItem[]>;
-interface SourceMessage { index: number; role: "user" | "assistant" | "tool"; content: string }
+interface SourceMessage {
+    index: number;
+    role: "user" | "assistant" | "tool";
+    content: string;
+    hostMessage?: ChatMessage;
+}
 interface PreparedSourceMessage extends SourceMessage { encodedContent?: RepeatedSourceContent }
 interface SourcePart extends PreparedSourceMessage { start: number; end: number }
 interface Cursor { message: number; offset: number }
@@ -120,12 +131,23 @@ export class PaAgentContextSummarizer {
 
         return this.runBounded(input.signal, this.options.historyTimeoutMs ?? 30_000, async (deadline, generation) => {
             const start = reusable?.summary.sourceMessages.length ?? 0;
+            const hostDependencyIndexes = new Set<number>(
+                covered.slice(0, start).map((_message, index) => index + 1),
+            );
             const sources = covered.slice(start).map((message, index): SourceMessage => ({
-                index: start + index + 1, role: message.role, content: message.images?.length
-                    ? JSON.stringify({ text: message.content, ...chatHistoryImageMetadata(message), imageAvailability: "reference_only_not_pixels" })
-                    : message.content,
+                index: start + index + 1, role: message.role, content: providerHistoryContent(message),
+                hostMessage: message,
             }));
-            const structured = await summarizeSources(sources, reusable?.structured, maxChars, "chat_history", input.invoke, deadline);
+            const structured = await summarizeSources(
+                sources,
+                reusable?.structured,
+                maxChars,
+                "chat_history",
+                input.invoke,
+                deadline,
+                covered,
+                hostDependencyIndexes,
+            );
             if (!structured || generation !== this.generation || !sameHistory(snapshot, input.history)) return undefined;
             const summary: PaAgentHistorySummary = { text: JSON.stringify(structured), sourceMessages: covered };
             this.historyCache = { summary, structured };
@@ -209,6 +231,8 @@ async function invokeBounded(request: PaAgentSummaryRequest, invoke: PaAgentSumm
 async function summarizeSources(
     sources: readonly SourceMessage[], previous: StructuredSummary | undefined,
     maxChars: number, sourceKind: string, invoke: PaAgentSummaryInvoke, deadline: TurnExecutionDeadline,
+    bindingSourceMessages: readonly ChatMessage[] = [],
+    hostDependencyIndexes: ReadonlySet<number> = new Set(),
 ): Promise<StructuredSummary | undefined> {
     // Encode each complete source once. Oversize sources retain raw slices below.
     const preparedSources = sources.map((source): PreparedSourceMessage => ({
@@ -216,14 +240,24 @@ async function summarizeSources(
     }));
     const cursor: Cursor = { message: 0, offset: 0 };
     let summary = previous;
+    const hostProcessedIndexes = new Set(hostDependencyIndexes);
     while (cursor.message < preparedSources.length) {
         deadline.throwIfAborted();
         const parts = nextSourceParts(preparedSources, cursor, summary, maxChars, sourceKind);
         if (parts.length === 0) return undefined;
-        const payload = makeRequest(parts, summary, maxChars, sourceKind);
+        const payload = makeRequest(
+            parts,
+            summary,
+            maxChars,
+            sourceKind,
+            sources,
+            bindingSourceMessages,
+            hostProcessedIndexes,
+        );
         if (!requestFits(payload)) return undefined;
         const response = await invokeBounded(payload, invoke, deadline);
-        const allowedIndices = new Set(parts.map((part) => part.index));
+        const allowedIndices = new Set<number>(hostProcessedIndexes);
+        for (const part of parts) allowedIndices.add(part.index);
         for (const field of FIELDS) for (const item of summary?.[field] ?? []) {
             for (const index of item.sourceMessages) allowedIndices.add(index);
         }
@@ -232,12 +266,50 @@ async function summarizeSources(
         // Continue reading, but never let an empty update erase established context.
         if (!next || (hasSummaryItems(summary) && !hasSummaryItems(next))) return undefined;
         summary = next;
+        for (const part of parts) hostProcessedIndexes.add(part.index);
     }
     return hasSummaryItems(summary) ? summary : undefined;
 }
 
-function makeRequest(parts: SourcePart[], previous: StructuredSummary | undefined, maxChars: number, sourceKind: string): PaAgentSummaryRequest {
-    return {
+function makeRequest(
+    parts: SourcePart[],
+    previous: StructuredSummary | undefined,
+    maxChars: number,
+    sourceKind: string,
+    sources: readonly SourceMessage[],
+    providedBindingSourceMessages: readonly ChatMessage[],
+    hostDependencyIndexes: ReadonlySet<number> = new Set(),
+): PaAgentSummaryRequest {
+    const bindingSourceMessages = providedBindingSourceMessages;
+    const hasBindingSourceMessages = bindingSourceMessages.length > 0;
+    const dependencyIndexes = new Set<number>(parts.map(part => part.index));
+    if (hasBindingSourceMessages) {
+        for (const index of hostDependencyIndexes) dependencyIndexes.add(index);
+        for (const field of FIELDS) {
+            for (const item of previous?.[field] ?? []) {
+                for (const index of item.sourceMessages) dependencyIndexes.add(index);
+            }
+        }
+    }
+    const bindingMessagesByIndex = new Map(bindingSourceMessages.map((message, index) => [index + 1, message]));
+    const bindingSources: PaAgentSummaryBindingSource[] = [...dependencyIndexes]
+        .sort((left, right) => left - right)
+        .map(index => {
+            const message = bindingMessagesByIndex.get(index);
+            const source = sources.find(candidate => candidate.index === index);
+            if (hasBindingSourceMessages ? !message : !source) {
+                throw new Error("Context summary binding source is unavailable");
+            }
+            return {
+                index,
+                role: source?.role ?? message!.role,
+                content: source?.content ?? providerHistoryContent(message!),
+            };
+        });
+    const boundSourceMessages = hasBindingSourceMessages
+        ? bindingSources.map(source => bindingMessagesByIndex.get(source.index)!)
+        : [];
+    const request: PaAgentSummaryRequest = {
         messages: [
             { role: "system", content: `${SYSTEM_PROMPT}\nThe entire compact JSON output must be at most ${maxChars} characters.` },
             { role: "user", content: JSON.stringify({
@@ -249,6 +321,35 @@ function makeRequest(parts: SourcePart[], previous: StructuredSummary | undefine
         ],
         maxOutputTokens: outputTokenLimit(maxChars),
     };
+    Object.defineProperties(request, {
+        bindingSources: {
+            value: Object.freeze(bindingSources),
+            enumerable: false,
+        },
+        ...(hasBindingSourceMessages ? {
+            bindingSourceMessages: {
+                value: Object.freeze(boundSourceMessages),
+                enumerable: false,
+            },
+        } : {}),
+        ...(previous ? {
+            bindingPreviousSummary: {
+                value: JSON.stringify(previous),
+                enumerable: false,
+            },
+        } : {}),
+    });
+    return request;
+}
+
+function providerHistoryContent(message: ChatMessage): string {
+    return message.images?.length
+        ? JSON.stringify({
+            text: message.content,
+            ...chatHistoryImageMetadata(message),
+            imageAvailability: "reference_only_not_pixels",
+        })
+        : message.content;
 }
 
 function outputTokenLimit(maxChars: number): number { return Math.min(8_192, Math.max(256, Math.ceil(maxChars * 1.5))); }
@@ -260,13 +361,13 @@ function requestFits(request: PaAgentSummaryRequest): boolean {
 /** Prefer whole exchanges. Split a single oversize exchange only when it cannot fit alone. */
 function nextSourceParts(sources: readonly PreparedSourceMessage[], cursor: Cursor, previous: StructuredSummary | undefined, maxChars: number, sourceKind: string): SourcePart[] {
     const parts: SourcePart[] = [];
-    const fits = (candidate: SourcePart[]) => requestFits(makeRequest(candidate, previous, maxChars, sourceKind));
+    const fits = (candidate: SourcePart[]) => requestFits(makeRequest(candidate, previous, maxChars, sourceKind, sources, []));
     while (cursor.message < sources.length) {
         if (cursor.offset === 0) {
             let end = cursor.message + 1;
             while (end < sources.length && sources[end].role === "assistant") end++;
             const exchange = sources.slice(cursor.message, end).map((message) => ({ ...message, start: 0, end: message.content.length }));
-            if (fits([...parts, ...exchange])) {
+        if (fits([...parts, ...exchange])) {
                 parts.push(...exchange);
                 cursor.message = end;
                 continue;
@@ -343,7 +444,14 @@ function emptySummary(): StructuredSummary {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
-function snapshotHistory(history: readonly ChatMessage[]): ChatMessage[] { return history.map((message) => ({ role: message.role, content: message.content, ...chatHistoryImageMetadata(message) })); }
+function snapshotHistory(history: readonly ChatMessage[]): ChatMessage[] {
+    return history.map((message) => ({
+        role: message.role,
+        content: message.content,
+        ...chatHistoryImageMetadata(message),
+        ...(message.memoryMetadata ? { memoryMetadata: message.memoryMetadata } : {}),
+    }));
+}
 function isPrefix(prefix: readonly ChatMessage[], history: readonly ChatMessage[]): boolean {
     return prefix.length <= history.length && prefix.every((message, index) => message.role === history[index].role && message.content === history[index].content
         && chatImageIdentity(message.images) === chatImageIdentity(history[index].images));

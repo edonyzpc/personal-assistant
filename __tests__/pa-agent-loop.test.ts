@@ -2074,7 +2074,7 @@ describe("PaAgentLoop", () => {
             exposureMode: "source-scoped",
             sourceScope: "notes",
         });
-        expect([...notesOnly.allowedToolNames!].sort()).toEqual(["load_skill", "search_memory"]);
+        expect([...notesOnly.allowedToolNames!].sort()).toEqual(["search_memory"]);
         expect([...notesOnly.blockedToolNames!].sort()).toEqual(["get_current_note_context", "webSearch"]);
 
         const requiredSourceBlocked = createInitialAgentControlSnapshot({

@@ -475,7 +475,8 @@ describe("PaAgentContextProjector history budgets", () => {
     it("reports all omissions when no complete history wrapper fits", () => {
         const history: ChatMessage[] = [{ role: "user", content: "before" }, { role: "assistant", content: "after" }];
         expect(project(history, 0)).toEqual({
-            text: "", compactedCount: 0, summaryChars: 0, omittedCount: 2, historyCompressed: true,
+            text: "", compactedCount: 0, summaryChars: 0, semanticSummaryChars: 0,
+            omittedCount: 2, historyCompressed: true,
         });
         expect(project(history, 0).sourceMessages).toEqual([]);
     });

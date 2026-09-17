@@ -12,6 +12,17 @@ import { PA_AGENT_CANONICAL_TURN_SCHEMA_VERSION } from "./chat-types";
 import { cloneSourceRecord } from "./source-store";
 import { cloneContextReductionReceipt, createContextPagerStateFromChatContextUsed } from "../pa";
 import { cloneMessageImages } from "../chat/image-types";
+import {
+    assertVaultObservationHistory,
+    cloneVaultObservationEvidence,
+    parseVaultObservationEvidence,
+    type VaultObservationEvidence,
+} from "./vault-observation-evidence";
+import {
+    cloneMemoryManagementEvidence,
+    parseMemoryManagementEvidence,
+    type MemoryManagementEvidence,
+} from "./memory-management-evidence";
 
 export interface CreatePaAgentPersistedTurnInput {
     runId: string;
@@ -25,6 +36,40 @@ export interface CreatePaAgentPersistedTurnInput {
 
 export function createPaAgentPersistedTurn(input: CreatePaAgentPersistedTurnInput): PaAgentPersistedTurn {
     const finalWritingMessage = [...input.messages].reverse().find((message) => message.role === "assistant" && message.writingRequestId);
+    const observationEvidence: VaultObservationEvidence[] = [];
+    let observationEvidenceInvalid = false;
+    const managementEvidence: MemoryManagementEvidence[] = [];
+    let managementEvidenceInvalid = false;
+    for (const message of input.messages) {
+        if (message.role !== "toolResult" || message.content.metadata?.vaultObservationContractVersion !== 1) continue;
+        const evidence = message.content.metadata.vaultObservationEvidence;
+        const parsed = parseVaultObservationEvidence(evidence);
+        if (!parsed.ok || parsed.evidence.tool !== message.toolName) {
+            observationEvidenceInvalid = true;
+            continue;
+        }
+        if (!observationEvidence.some(existing => existing.observationId === parsed.evidence.observationId)) {
+            observationEvidence.push(parsed.evidence);
+        }
+    }
+    for (const message of input.messages) {
+        if (message.role !== "toolResult" || message.content.metadata?.memoryManagementContractVersion !== 1) continue;
+        const parsed = parseMemoryManagementEvidence(message.content.metadata.memoryManagementEvidence);
+        if (!parsed.ok || parsed.evidence.tool !== message.toolName) {
+            managementEvidenceInvalid = true;
+            continue;
+        }
+        if (!managementEvidence.some(existing => existing.observationId === parsed.evidence.observationId)) {
+            managementEvidence.push(parsed.evidence);
+        }
+    }
+    if (observationEvidenceInvalid) observationEvidence.length = 0;
+    try {
+        assertVaultObservationHistory(observationEvidence);
+    } catch {
+        observationEvidenceInvalid = true;
+        observationEvidence.length = 0;
+    }
     return {
         schemaVersion: PA_AGENT_CANONICAL_TURN_SCHEMA_VERSION,
         runId: input.runId,
@@ -37,6 +82,23 @@ export function createPaAgentPersistedTurn(input: CreatePaAgentPersistedTurnInpu
         ...(input.contextUsed && input.contextUsed.length > 0
             ? { contextUsed: input.contextUsed.map(cloneContextUsedItem) }
             : {}),
+        ...(observationEvidenceInvalid ? {
+            vaultObservationEvidence: [],
+            vaultObservationContractVersion: 1 as const,
+        } : observationEvidence.length > 0 ? {
+            vaultObservationEvidence: observationEvidence.map(cloneVaultObservationEvidence),
+            vaultObservationContractVersion: 1 as const,
+        } : {}),
+        ...(observationEvidenceInvalid ? { vaultObservationEvidenceInvalid: true } : {}),
+        ...(managementEvidence.length > 0 ? {
+            memoryManagementEvidence: managementEvidence.map(cloneMemoryManagementEvidence),
+            memoryManagementContractVersion: 1 as const,
+        } : {}),
+        ...(managementEvidenceInvalid ? {
+            memoryManagementEvidence: [],
+            memoryManagementContractVersion: 1 as const,
+            memoryManagementEvidenceInvalid: true,
+        } : {}),
         messages: input.messages.map((message) => {
             const copy = clonePaAgentMessage(message);
             if (copy.role === "assistant" && copy.writingRequestId) {
@@ -77,7 +139,7 @@ export function readChatHistoryTurnMetadata(
 }
 
 export function extractCanonicalTurnMetadata(
-    turn: Pick<PaAgentPersistedTurn, "messages"> & Partial<Pick<PaAgentPersistedTurn, "runId" | "turnId" | "sourceRecords" | "contextUsed">>,
+    turn: Pick<PaAgentPersistedTurn, "messages"> & Partial<Pick<PaAgentPersistedTurn, "runId" | "turnId" | "sourceRecords" | "contextUsed" | "vaultObservationEvidence" | "vaultObservationContractVersion" | "vaultObservationEvidenceInvalid" | "memoryManagementEvidence" | "memoryManagementContractVersion" | "memoryManagementEvidenceInvalid">>,
 ): ChatTurnMemoryMetadata {
     const sourceRecords = dedupeSourceRecords([
         ...(turn.sourceRecords ?? []).map(cloneSourceRecord),
@@ -98,6 +160,20 @@ export function extractCanonicalTurnMetadata(
         allowedMemorySourcePaths,
         ...(contextUsed.length > 0 ? { contextUsed } : {}),
         ...(sourceRecords.length > 0 ? { sourceRecords } : {}),
+        ...(turn.vaultObservationEvidenceInvalid || turn.vaultObservationEvidence ? {
+            vaultObservationEvidence: turn.vaultObservationEvidenceInvalid
+                ? []
+                : (turn.vaultObservationEvidence ?? []).map(cloneVaultObservationEvidence),
+            vaultObservationContractVersion: 1,
+        } : {}),
+        ...(turn.vaultObservationEvidenceInvalid ? { vaultObservationEvidenceInvalid: true } : {}),
+        ...(turn.memoryManagementEvidenceInvalid || turn.memoryManagementEvidence ? {
+            memoryManagementEvidence: turn.memoryManagementEvidenceInvalid
+                ? []
+                : (turn.memoryManagementEvidence ?? []).map(cloneMemoryManagementEvidence),
+            memoryManagementContractVersion: 1,
+        } : {}),
+        ...(turn.memoryManagementEvidenceInvalid ? { memoryManagementEvidenceInvalid: true } : {}),
         ...(contextUsed.length > 0
             ? {
                 contextTrace: createContextPagerStateFromChatContextUsed(
@@ -183,7 +259,48 @@ function cloneTurnMetadata(metadata: ChatTurnMemoryMetadata): ChatTurnMemoryMeta
         ...(metadata.contextUsed ? { contextUsed: metadata.contextUsed.map(cloneContextUsedItem) } : {}),
         ...(metadata.sourceRecords ? { sourceRecords: metadata.sourceRecords.map(cloneSourceRecord) } : {}),
         ...(metadata.contextTrace ? { contextTrace: cloneContextTrace(metadata.contextTrace) } : {}),
+        ...(metadata.vaultObservationContractVersion === 1 ? {
+            ...(metadata.vaultObservationEvidenceInvalid ? {
+                vaultObservationEvidence: [],
+            } : {
+                vaultObservationEvidence: (metadata.vaultObservationEvidence ?? []).map(cloneVaultObservationEvidence),
+            }),
+            vaultObservationContractVersion: 1,
+            ...(metadata.vaultObservationEvidenceInvalid ? { vaultObservationEvidenceInvalid: true } : {}),
+        } : {}),
+        ...(metadata.memoryManagementContractVersion === 1 ? {
+            ...(metadata.memoryManagementEvidenceInvalid ? {
+                memoryManagementEvidence: [],
+            } : {
+                memoryManagementEvidence: (metadata.memoryManagementEvidence ?? []).map(cloneMemoryManagementEvidence),
+            }),
+            memoryManagementContractVersion: 1,
+            ...(metadata.memoryManagementEvidenceInvalid ? { memoryManagementEvidenceInvalid: true } : {}),
+        } : {}),
     };
+}
+
+function cloneToolMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+    const copy: Record<string, unknown> = { ...metadata };
+    if (metadata.vaultObservationContractVersion === 1) {
+        const parsed = parseVaultObservationEvidence(metadata.vaultObservationEvidence);
+        if (parsed.ok) {
+            copy.vaultObservationEvidence = cloneVaultObservationEvidence(parsed.evidence);
+        } else {
+            delete copy.vaultObservationEvidence;
+            copy.vaultObservationEvidenceInvalid = true;
+        }
+    }
+    if (metadata.memoryManagementContractVersion === 1) {
+        const parsed = parseMemoryManagementEvidence(metadata.memoryManagementEvidence);
+        if (parsed.ok) {
+            copy.memoryManagementEvidence = cloneMemoryManagementEvidence(parsed.evidence);
+        } else {
+            delete copy.memoryManagementEvidence;
+            copy.memoryManagementEvidenceInvalid = true;
+        }
+    }
+    return copy;
 }
 
 function cloneContextTrace(trace: NonNullable<ChatTurnMemoryMetadata["contextTrace"]>): NonNullable<ChatTurnMemoryMetadata["contextTrace"]> {
@@ -217,6 +334,9 @@ function clonePaAgentMessage(message: PaAgentMessage): PaAgentMessage {
         return {
             ...message,
             content: message.content.map((part) => ({ ...part })),
+            ...(message.memoryManagementEvidence ? {
+                memoryManagementEvidence: message.memoryManagementEvidence.map(cloneMemoryManagementEvidence),
+            } : {}),
         };
     }
     if (message.role === "toolResult") {
@@ -226,7 +346,7 @@ function clonePaAgentMessage(message: PaAgentMessage): PaAgentMessage {
                 ...message.content,
                 sourceRecords: message.content.sourceRecords?.map(cloneSourceRecord),
                 contextUsed: message.content.contextUsed?.map(cloneContextUsedItem),
-                metadata: message.content.metadata ? { ...message.content.metadata } : undefined,
+                metadata: message.content.metadata ? cloneToolMetadata(message.content.metadata) : undefined,
             },
         };
     }

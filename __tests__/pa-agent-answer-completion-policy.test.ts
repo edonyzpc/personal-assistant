@@ -159,6 +159,27 @@ describe("PA Agent answer completion policy", () => {
         });
     });
 
+    it("carries an applied Saved Insight receipt into duplicate-read finalization", () => {
+        const ledger = createAnswerCompletionLedger();
+        recordAnswerCompletionTurn(ledger, createSummary({ status: "tool_results_ready", toolResults: [
+            createToolResult("manage_saved_insight", { promptText: JSON.stringify({
+                tool: "manage_saved_insight", observation: {
+                    kind: "insight-action", action: "save", status: "applied",
+                    insightId: "ins-test", insightStatus: "active", influencePolicy: "weak-only",
+                },
+            }) }),
+        ] }));
+        const duplicate = createSummary({ status: "tool_results_ready", toolResults: [
+            createDuplicateToolResult("read_note"),
+        ] });
+        recordAnswerCompletionTurn(ledger, duplicate);
+
+        expect(decideAnswerCompletion({ summary: duplicate, ledger })).toMatchObject({
+            action: "force_finalize", toolMode: "final_answer_only",
+            runtimeInstruction: expect.stringContaining('"insightId":"ins-test"'),
+        });
+    });
+
     it("retries an empty assistant once after observations were provided", () => {
         const ledger = createAnswerCompletionLedger();
         const observationSummary = createSummary({

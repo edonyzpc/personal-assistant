@@ -19,6 +19,8 @@ export type GovernedMemoryUseStatus = "active" | "paused" | "stored_not_in_use";
 export interface GovernedMemoryRecordView {
     writingStyle?: Pick<WritingStylePayload, 'exactText' | 'scene' | 'writingVersionId'>;
     claimId: string;
+    /** Identity of the revision that produced this displayed record; absent for content-free views. */
+    revisionId?: string;
     record: ConfirmedMemoryRecord;
     authority: MemoryClaimRevision["authority"];
     effect: GovernedMemoryClaim["effect"];
@@ -173,6 +175,7 @@ function buildRecordView(
     };
     return {
         claimId: claim.id,
+        revisionId: revision.id,
         record,
         authority: revision.authority,
         ...(isGovernableWritingStyle(claim, revision, claim.partition.key) ? {
@@ -325,6 +328,7 @@ function clonePersistedProvenance(provenance: PersistedMemoryProvenance): Persis
         };
     }
     if (provenance.kind === "explicit_setting") return { ...provenance };
+    if (provenance.kind === "host_user_request") return { ...provenance };
     return {
         ...provenance,
         representativeSourceRefs: provenance.representativeSourceRefs.map(cloneSourceRef),

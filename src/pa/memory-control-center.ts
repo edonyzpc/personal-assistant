@@ -50,6 +50,13 @@ export type MemoryControlCenterProvenance =
     | { kind: "conversation"; conversationId: string; observedAt?: string }
     | { kind: "explicit_setting"; settingKey: string }
     | {
+        kind: "host_user_request";
+        runId: string;
+        userMessageId: string;
+        observedAt: string;
+        userPromptHash: string;
+    }
+    | {
         kind: "vault_aggregate";
         generatedAt: string;
         dataBoundaryFingerprint: string;
@@ -72,6 +79,8 @@ export interface MemoryControlCenterItem {
     writingStyle?: import('./memory-governance-view').GovernedMemoryRecordView['writingStyle'];
     id: string;
     claimId?: string;
+    /** Read-only revision identity captured when the item was displayed. */
+    revisionId?: string;
     profileRecordId?: string;
     label: string;
     origin: MemoryControlCenterOrigin;

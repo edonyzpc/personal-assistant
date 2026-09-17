@@ -4,6 +4,7 @@ import { describe, expect, it } from "@jest/globals";
 
 import {
     createAgentControlSnapshot,
+    createInitialAgentControlSnapshot,
     deriveContinuedAgentControlSnapshot,
     deriveAnswerReadyAgentControlSnapshot,
     deriveSameSourceFollowUpAgentControlSnapshot,
@@ -26,6 +27,63 @@ describe("createAgentControlSnapshot", () => {
         });
         meta.key = "mutated";
         expect((snapshot.diagnostics[0].metadata as { key: string }).key).toBe("original");
+    });
+});
+
+describe("createInitialAgentControlSnapshot", () => {
+    it("intersects explicit material tools with actual availability and admits only the host source control", () => {
+        const snapshot = createInitialAgentControlSnapshot({
+            constraints: {
+                allowedToolNames: new Set(["query_notes", "webSearch"]),
+            },
+            availableSemanticToolNames: new Set([
+                "search_memory",
+                "query_notes",
+                "read_note",
+                "webSearch",
+            ]),
+            availableMetaToolNames: new Set([
+                "declare_source_scope",
+                "load_skill",
+                "get_writing_context",
+                "resolve_chat_images",
+            ]),
+        });
+
+        expect([...snapshot.allowedToolNames!].sort()).toEqual([
+            "declare_source_scope",
+            "query_notes",
+            "webSearch",
+        ]);
+    });
+
+    it("lets explicit blocked tools win over every normal and host-only capability", () => {
+        const snapshot = createInitialAgentControlSnapshot({
+            constraints: {
+                allowedToolNames: new Set(["query_notes"]),
+                blockedToolNames: new Set([
+                    "declare_source_scope",
+                    "load_skill",
+                    "get_writing_context",
+                    "resolve_chat_images",
+                ]),
+            },
+            availableSemanticToolNames: new Set(["query_notes", "read_note", "webSearch"]),
+            availableMetaToolNames: new Set([
+                "declare_source_scope",
+                "load_skill",
+                "get_writing_context",
+                "resolve_chat_images",
+            ]),
+        });
+
+        expect([...snapshot.allowedToolNames!]).toEqual(["query_notes"]);
+        expect([...snapshot.blockedToolNames!].sort()).toEqual([
+            "declare_source_scope",
+            "get_writing_context",
+            "load_skill",
+            "resolve_chat_images",
+        ]);
     });
 });
 
@@ -89,24 +147,78 @@ describe("deriveAnswerReadyAgentControlSnapshot", () => {
         expect(result.exposureMode).toBe("answer-ready");
         expect(result.budgetState.semanticRoundCount).toBe(1);
     });
+
+    it("preserves an explicit final-only exposure as a final-answer constraint", () => {
+        const base = createAgentControlSnapshot({
+            exposureMode: "final-only",
+            sourceScope: "notes",
+            allowedToolNames: new Set(["search_vault_snippets"]),
+            blockedToolNames: new Set(["webSearch"]),
+        });
+
+        const result = deriveAnswerReadyAgentControlSnapshot(base, {
+            runtimeInstruction: "answer",
+        });
+
+        expect(result.exposureMode).toBe("final-only");
+        expect(result.sourceScope).toBe("none");
+        expect(result.toolMode).toBeUndefined();
+        const constraints = toolConstraintsFromAgentControlSnapshot(result);
+        expect([...constraints!.allowedToolNames!]).toEqual([]);
+        expect(constraints!.blockedToolNames?.has("webSearch")).toBe(true);
+    });
+
+    it("preserves final_answer_only mode instead of reopening follow-up tools", () => {
+        const base = createAgentControlSnapshot({
+            sourceScope: "notes",
+            allowedToolNames: new Set(["search_vault_snippets"]),
+            toolMode: "final_answer_only",
+        });
+
+        const result = deriveAnswerReadyAgentControlSnapshot(base, {
+            runtimeInstruction: "answer",
+        });
+
+        expect(result.exposureMode).toBe("final-only");
+        expect(result.toolMode).toBe("final_answer_only");
+        expect([...toolConstraintsFromAgentControlSnapshot(result)!.allowedToolNames!]).toEqual([]);
+    });
+
+    it("keeps a normal empty allowlist answer-ready rather than converting it to generic final-only", () => {
+        const base = createAgentControlSnapshot({
+            exposureMode: "answer-ready",
+            sourceScope: "notes",
+            allowedToolNames: new Set<string>(),
+            toolMode: "normal",
+        });
+
+        const result = deriveAnswerReadyAgentControlSnapshot(base, {
+            runtimeInstruction: "acknowledge",
+        });
+
+        expect(result.exposureMode).toBe("answer-ready");
+        expect(result.toolMode).toBe("normal");
+        expect([...result.allowedToolNames!]).toEqual([]);
+    });
 });
 
 describe("deriveSameSourceFollowUpAgentControlSnapshot", () => {
-    it("allows search_vault_snippets for notes source scope", () => {
+    it("keeps an absent allowlist unconstrained for notes source scope", () => {
         const base = createAgentControlSnapshot();
         const result = deriveSameSourceFollowUpAgentControlSnapshot(base, {
             sourceScope: "notes",
             runtimeInstruction: "follow up",
         });
         expect(result.exposureMode).toBe("follow-up");
-        expect(result.allowedToolNames).toBeDefined();
-        expect(result.allowedToolNames!.has("search_vault_snippets")).toBe(true);
+        expect(result.allowedToolNames).toBeUndefined();
     });
 
-    it("allows no tools for non-notes source scope", () => {
-        const base = createAgentControlSnapshot();
+    it.each(["notes", "web"] as const)("keeps an explicit empty allowlist empty: %s", sourceScope => {
+        const base = createAgentControlSnapshot({
+            allowedToolNames: new Set<string>(),
+        });
         const result = deriveSameSourceFollowUpAgentControlSnapshot(base, {
-            sourceScope: "web",
+            sourceScope,
             runtimeInstruction: "follow up",
         });
         expect(result.allowedToolNames).toBeDefined();
@@ -120,6 +232,69 @@ describe("deriveSameSourceFollowUpAgentControlSnapshot", () => {
             runtimeInstruction: "follow up",
         });
         expect(result.budgetState.followUpRoundCount).toBe(1);
+    });
+
+    it("keeps only allowed tools after blocked tools are removed", () => {
+        const base = createAgentControlSnapshot({
+            exposureMode: "source-scoped",
+            sourceScope: "notes",
+            allowedToolNames: new Set([
+                "search_memory",
+                "query_notes",
+                "read_note",
+                "declare_source_scope",
+            ]),
+            blockedToolNames: new Set(["webSearch", "load_skill", "search_vault_snippets"]),
+        });
+
+        const result = deriveSameSourceFollowUpAgentControlSnapshot(base, {
+            sourceScope: "notes",
+            runtimeInstruction: "follow up",
+        });
+
+        expect([...result.allowedToolNames!].sort()).toEqual([
+            "declare_source_scope",
+            "query_notes",
+            "read_note",
+            "search_memory",
+        ]);
+        expect(result.allowedToolNames!.has("webSearch")).toBe(false);
+        expect(result.allowedToolNames!.has("load_skill")).toBe(false);
+        expect(result.allowedToolNames!.has("search_vault_snippets")).toBe(false);
+    });
+
+    it("preserves final-only exposure without opening a follow-up allowlist", () => {
+        const base = createAgentControlSnapshot({
+            exposureMode: "final-only",
+            sourceScope: "notes",
+            allowedToolNames: new Set(["search_vault_snippets"]),
+        });
+
+        const result = deriveSameSourceFollowUpAgentControlSnapshot(base, {
+            sourceScope: "notes",
+            runtimeInstruction: "follow up",
+        });
+
+        expect(result.exposureMode).toBe("final-only");
+        expect(result.sourceScope).toBe("none");
+        expect([...toolConstraintsFromAgentControlSnapshot(result)!.allowedToolNames!]).toEqual([]);
+    });
+
+    it("preserves final_answer_only mode without opening a follow-up allowlist", () => {
+        const base = createAgentControlSnapshot({
+            sourceScope: "notes",
+            allowedToolNames: new Set(["search_vault_snippets"]),
+            toolMode: "final_answer_only",
+        });
+
+        const result = deriveSameSourceFollowUpAgentControlSnapshot(base, {
+            sourceScope: "notes",
+            runtimeInstruction: "follow up",
+        });
+
+        expect(result.exposureMode).toBe("final-only");
+        expect(result.toolMode).toBe("final_answer_only");
+        expect([...toolConstraintsFromAgentControlSnapshot(result)!.allowedToolNames!]).toEqual([]);
     });
 });
 

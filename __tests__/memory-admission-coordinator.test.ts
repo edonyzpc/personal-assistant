@@ -60,6 +60,20 @@ describe("MemoryAdmissionCoordinator", () => {
         await expect(createCoordinator(repository).admit(input, { isCurrent: () => true })).resolves.toMatchObject({ ok: true });
     });
 
+    it('preserves legacy material when an explicit profile action needs the governed reader', async () => {
+        const repository = repositoryForCompatibilityState();
+        const before = await repository.initialize();
+        await expect(createCoordinator(repository).admit(explicitInstructionInput(), { isCurrent: () => true }))
+            .resolves.toMatchObject({ ok: true, value: { decision: 'silent_durable' } });
+        const after = await repository.initialize();
+        expect(after.migrationStates['vault-a']).toEqual({
+            ...before.migrationStates['vault-a'], phase: 'governed_preserving_legacy',
+        });
+        expect(after.rollbackPayloadEntries).toEqual(before.rollbackPayloadEntries);
+        expect(after.migrationDeltas).toEqual(before.migrationDeltas);
+        expect(after.revisions).toHaveLength(1);
+    });
+
     it('rolls back the compatibility phase transition when final source admission fails', async () => {
         const repository = repositoryForCompatibilityState();
         const before = await repository.initialize();
@@ -387,8 +401,8 @@ describe("MemoryAdmissionCoordinator", () => {
         expect(state.claims).toHaveLength(1);
         expect(state.revisions[0].authority).toBe("explicit_user");
         expect(state.changeEvents[0].kind).toBe("add");
-        expect(state.changeEvents[0].undoSnapshotId).toBeUndefined();
-        expect(state.undoSnapshots).toHaveLength(0);
+        expect(state.changeEvents[0].undoSnapshotId).toEqual(state.undoSnapshots[0].id);
+        expect(state.undoSnapshots).toHaveLength(1);
         expect(state.projectionLinks).toEqual(expect.arrayContaining([
             expect.objectContaining({ target: { kind: "review_queue", itemId: queueItemId } }),
             expect.objectContaining({ target: expect.objectContaining({ kind: "prompt_projection" }) }),
@@ -1136,6 +1150,84 @@ describe("MemoryAdmissionCoordinator", () => {
         });
     });
 
+    it("binds explicit user instructions to one live action identity with stable replay and explicit Undo", async () => {
+        const repository = repositoryForReadyState();
+        const admission = createCoordinator(repository);
+        const input = explicitInstructionInput();
+
+        await expect(admission.admit(input, { isCurrent: () => true }))
+            .resolves.toMatchObject({ ok: true, value: { decision: "silent_durable" } });
+        const first = await repository.initialize();
+        expect(first.revisions).toHaveLength(1);
+        expect(first.changeEvents).toHaveLength(1);
+        expect(first.undoSnapshots).toHaveLength(1);
+
+        input.expectedTargetState = readTypeATargetGeneration(
+            first,
+            input.profileRecordId!,
+            VAULT_A_PARTITION,
+        );
+        await expect(admission.admit(input, { isCurrent: () => true })).resolves.toMatchObject({
+            ok: true,
+            value: {
+                decision: "silent_durable",
+                claimId: first.claims[0].id,
+                revisionId: first.revisions[0].id,
+                eventId: first.changeEvents[0].id,
+            },
+        });
+        const replayState = await repository.initialize();
+        expect(replayState.claims).toEqual(first.claims);
+        expect(replayState.revisions).toEqual(first.revisions);
+        expect(replayState.changeEvents).toEqual(first.changeEvents);
+        expect(replayState.undoSnapshots).toEqual(first.undoSnapshots);
+
+        const changed = explicitInstructionInput("I prefer very detailed replies.");
+        changed.expectedTargetState = readTypeATargetGeneration(
+            await repository.initialize(),
+            changed.profileRecordId!,
+            VAULT_A_PARTITION,
+        );
+        await expect(admission.admit(changed, { isCurrent: () => true })).resolves.toMatchObject({
+            ok: false,
+            reason: "explicit_action_conflict",
+        });
+        expect((await repository.initialize()).revisions).toHaveLength(1);
+    });
+
+    it("requires a live lifetime for explicit instructions and never replays a superseded action", async () => {
+        const repository = repositoryForReadyState();
+        const admission = createCoordinator(repository);
+        const input = explicitInstructionInput();
+
+        await expect(admission.admit(input)).resolves.toMatchObject({
+            ok: false,
+            reason: "explicit_lifetime_required",
+        });
+
+        await expect(admission.admit(input, { isCurrent: () => true })).resolves.toMatchObject({ ok: true });
+        const created = await repository.initialize();
+        await markProfileProjectionApplied(repository);
+        await expect(createLifecycleCoordinator(repository, new Date(NOW.getTime() + 1)).correct({
+            claimId: created.claims[0].id,
+            summary: "Prefer detailed replies.",
+            scopeAllowed: true,
+            dataBoundaryAllowed: true,
+            expectedRevisionId: created.revisions[0].id,
+        })).resolves.toMatchObject({ ok: true });
+
+        const replay = explicitInstructionInput();
+        replay.expectedTargetState = readTypeATargetGeneration(
+            await repository.initialize(),
+            replay.profileRecordId!,
+            VAULT_A_PARTITION,
+        );
+        await expect(admission.admit(replay, { isCurrent: () => true })).resolves.toMatchObject({
+            ok: false,
+            reason: "explicit_action_superseded",
+        });
+    });
+
     it("removes only the exact automatic Memory Candidate queue row on Add Undo", async () => {
         const repository = repositoryForReadyState();
         const admission = createCoordinator(repository);
@@ -1350,8 +1442,43 @@ function memoryCandidateInput(
     };
 }
 
+function explicitInstructionInput(summary = "I prefer concise replies."): GovernedMemoryAdmissionInput {
+    return {
+        policy: silentPolicy("explicit_user_instruction", { authority: "explicit_user" }),
+        summary,
+        memoryType: "preference",
+        sensitivity: "low",
+        authority: "explicit_user",
+        effect: "future_answers",
+        applicability: { kind: "whole_vault" },
+        provenance: [{
+            kind: "conversation",
+            conversationIds: ["conversation-a"],
+            observedAt: NOW.toISOString(),
+        }],
+        sourceFingerprintId: "explicit-source-a",
+        ruleFingerprint: "explicit-user-instruction-v1",
+        admissionKey: "explicit-action-a",
+        actionIdentity: "explicit-identity-a",
+        actionFingerprint: `explicit-fingerprint:${summary}`,
+        profileRecordId: "profile-a",
+        profileKey: "semantic-1234abcd",
+        expectedTargetState: { state: "absent", profileRecordId: "profile-a" },
+        queueInput: {
+            type: "memory_candidate",
+            title: "Explicit Memory action",
+            claim: summary,
+            scope: { kind: "whole_vault" },
+            sourceRefs: [],
+            originSurface: "chat",
+            admissionReason: "memory_confirmation_required",
+            dataBoundarySnapshotId: "boundary-a",
+        },
+    };
+}
+
 function silentPolicy(
-    origin: "type_a" | "memory_candidate",
+    origin: "type_a" | "memory_candidate" | "explicit_user_instruction",
     overrides: Partial<GovernedMemoryAdmissionInput["policy"]> = {},
 ): GovernedMemoryAdmissionInput["policy"] {
     return {

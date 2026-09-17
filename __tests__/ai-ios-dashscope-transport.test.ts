@@ -63,6 +63,16 @@ const flushMicrotasks = async (times = 20): Promise<void> => {
     for (let index = 0; index < times; index++) await Promise.resolve();
 };
 
+const deferred = <T>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+};
+
 const makeRuntimeHost = (overrides: {
     policyModelName?: string;
     searchResults?: unknown[];
@@ -970,6 +980,77 @@ describe("iOS DashScope chat transport", () => {
             runtime.dispose();
         } finally {
             jest.useRealTimers();
+        }
+    });
+
+    it.each([false, true])('selects the physical transport from prepare-only options (iOS=%s)', async (ios) => {
+        Platform.isDesktop = !ios;
+        Platform.isMobile = ios;
+        Platform.isIosApp = ios;
+        const gate = deferred<void>();
+        const prepare = jest.fn(() => gate.promise);
+        const response = JSON.stringify({
+            id: "chatcmpl-prepare-only",
+            object: "chat.completion",
+            created: 1,
+            model: "deepseek-v4-pro",
+            choices: [{ index: 0, message: { role: "assistant", content: "READY" }, finish_reason: "stop" }],
+        });
+        const nativeFetch = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(response, {
+            status: 200,
+            headers: { "content-type": "application/json" },
+        }));
+        mockedRequestUrl.mockResolvedValue(responseFixture(response, "application/json"));
+        const options: Parameters<AIUtils["createChatModel"]>[1] = { transport: "native" };
+        (options as { prepareProviderRequest?: () => Promise<void> }).prepareProviderRequest = prepare;
+
+        try {
+            const model = await new AIUtils(makeHost()).createChatModel(0, options);
+            const pending = model.invoke([new HumanMessage("PRIVATE prepare-only fixture")]);
+            try {
+                await flushMicrotasks();
+                expect(prepare).toHaveBeenCalledTimes(1);
+                expect(ios ? mockedRequestUrl : nativeFetch).toHaveBeenCalledTimes(0);
+            } finally {
+                gate.resolve();
+            }
+            await expect(pending).resolves.toMatchObject({ content: "READY" });
+            expect(ios ? mockedRequestUrl : nativeFetch).toHaveBeenCalledTimes(1);
+        } finally {
+            nativeFetch.mockRestore();
+        }
+    });
+
+    it("runs native physical dispatch preparation for every SDK 429 retry attempt", async () => {
+        const prepare = jest.fn(async () => undefined);
+        const success = JSON.stringify({
+            id: "chatcmpl-prepare-retry",
+            object: "chat.completion",
+            created: 1,
+            model: "deepseek-v4-pro",
+            choices: [{ index: 0, message: { role: "assistant", content: "READY" }, finish_reason: "stop" }],
+        });
+        const failure = JSON.stringify({ error: { message: "temporary fixture failure", type: "server_error" } });
+        const nativeFetch = jest.spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(new Response(failure, {
+                status: 429,
+                headers: { "content-type": "application/json", "retry-after-ms": "1" },
+            }))
+            .mockResolvedValueOnce(new Response(success, {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            }));
+        const options: Parameters<AIUtils["createChatModel"]>[1] = { transport: "native" };
+        (options as { prepareProviderRequest?: () => Promise<void> }).prepareProviderRequest = prepare;
+
+        try {
+            const model = await new AIUtils(makeHost()).createChatModel(0, options);
+            await expect(model.invoke([new HumanMessage("Retry preparation")]))
+                .resolves.toMatchObject({ content: "READY" });
+            expect(nativeFetch).toHaveBeenCalledTimes(2);
+            expect(prepare).toHaveBeenCalledTimes(2);
+        } finally {
+            nativeFetch.mockRestore();
         }
     });
 });

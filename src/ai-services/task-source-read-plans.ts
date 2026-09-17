@@ -3,7 +3,9 @@ import { validateVaultRelativeTargetPath } from './chat-tool-execution-helpers';
 import {
     validateInspectObsidianNoteInput,
     validateReadCanvasSummaryInput,
+    validateReadNoteInput,
     validateReadNoteOutlineInput,
+    validateQueryNotesInput,
 } from './chat-tool-guards';
 import { extractInputPath, readFirstString, toInputRecord } from './chat-tool-prepare-helpers';
 import { isCoreWriteToolName, validateCoreWriteInput } from './operations/input-validation';
@@ -67,6 +69,20 @@ export function resolveTaskSourceReadPlans(
                         const path = extractInputPath(call.input, ['.md']);
                         const input = validateReadNoteOutlineInput(path ? { path } : call.input);
                         plan = planNote(normalizeReadPath(input.path), host);
+                        break;
+                    }
+                    case 'read_note': {
+                        const path = extractInputPath(call.input, ['.md']);
+                        const input = validateReadNoteInput(path ? { path } : call.input);
+                        plan = planNote(normalizeReadPath(input.path), host);
+                        break;
+                    }
+                    case 'query_notes': {
+                        // The reader intersects the full query with the live
+                        // guard; a fixed path is not pre-admission and may be
+                        // an exact permitted zero.
+                        validateQueryNotesInput(call.input);
+                        plan = scopedVaultPlan();
                         break;
                     }
                     case 'inspect_obsidian_note': {

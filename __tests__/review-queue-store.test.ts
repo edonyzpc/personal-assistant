@@ -35,6 +35,23 @@ function makeStore() {
 }
 
 describe("ReviewQueueStore", () => {
+    it("keeps a user-kept insight Later replay exact and rejects a changed claim", async () => {
+        let nextId = 0;
+        const persist = jest.fn(async (_state: unknown) => undefined);
+        const store = new ReviewQueueStore({ idFactory: () => `rq-${++nextId}`, persist });
+        const input: ReviewQueueCreateInput = {
+            type: "evidence_insight", title: "A finding", claim: "A finding",
+            scope: { kind: "current_note", paths: ["notes/source.md"] }, sourceRefs: [sourceRef],
+            originSurface: "chat", dataBoundarySnapshotId: "b1", admissionReason: "user_kept_for_later",
+            replayRef: "host-later-1",
+        };
+        expect(await store.create(input)).toMatchObject({ ok: true, value: { id: "rq-1" } });
+        expect(await store.create(input)).toMatchObject({ ok: true, value: { id: "rq-1" } });
+        expect(await store.create({ ...input, claim: "Changed finding" }))
+            .toEqual({ ok: false, reason: "replay_conflict" });
+        expect(store.list()).toHaveLength(1);
+        expect(persist).toHaveBeenCalledTimes(1);
+    });
     it("activates Pagelet evidence and maintenance preview producer types", () => {
         expect(ACTIVE_REVIEW_QUEUE_PRODUCER_TYPES).toContain("evidence_insight");
         expect(ACTIVE_REVIEW_QUEUE_PRODUCER_TYPES).toContain("maintenance_proposal");

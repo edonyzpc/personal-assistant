@@ -85,6 +85,9 @@ export interface GovernedMemoryAdmissionInput {
     queueInput: ReviewQueueCreateInput;
     profileRecordId?: string;
     profileKey?: string;
+    /** Required body-free identity for explicit_user_instruction origin. */
+    actionIdentity?: string;
+    actionFingerprint?: string;
     chatSemanticReceipt?: ChatMemorySemanticReceipt;
     /** Host-owned extraction snapshot. Never read from model output or Queue metadata. */
     chatSemanticEvidence?: ChatSemanticAdmissionEvidence;
@@ -120,7 +123,11 @@ export interface TypeAAdmissionBaseline {
 export interface GovernedMemoryAdmissionReceipt {
     decision: MemoryAdmissionDecision;
     claimId?: string;
+    revisionId?: string;
+    eventId?: string;
+    undoExpiresAt?: string;
     queueItem?: ReviewQueueItem;
+    superseded?: boolean;
 }
 
 export interface GovernedMemoryConfirmationReceipt {
@@ -177,6 +184,10 @@ export class MemoryAdmissionCoordinator {
         input: GovernedMemoryAdmissionInput,
         lifetime?: { isCurrent: () => boolean; signal?: AbortSignal },
     ): Promise<MemoryAdmissionCoordinatorResult<GovernedMemoryAdmissionReceipt>> {
+        if (input.policy.origin === "explicit_user_instruction"
+            && (!lifetime || !lifetime.isCurrent() || lifetime.signal?.aborted)) {
+            return Promise.resolve(failure("explicit_lifetime_required"));
+        }
         const prepared = prepareAdmission(input, this.opaqueVaultKey, this.now(), this.idFactory);
         if (!prepared.ok) return Promise.resolve(prepared);
         const summary = input.summary.trim();
@@ -194,7 +205,7 @@ export class MemoryAdmissionCoordinator {
             return this.repository.transact((draft) => {
                 assertCurrent();
                 let journal = requireAdmissionEnvelope(draft, this.opaqueVaultKey, this.now());
-                if (input.policy.origin === "type_a") {
+                if (input.policy.origin === "type_a" || input.policy.origin === "explicit_user_instruction") {
                     if (!input.profileRecordId || !input.expectedTargetState) {
                         throw new AdmissionError("type_a_precondition_missing");
                     }
@@ -205,6 +216,42 @@ export class MemoryAdmissionCoordinator {
                     );
                     if (!typeATargetGenerationsEqual(actual, input.expectedTargetState)) {
                         throw new AdmissionError("stale_type_a_batch");
+                    }
+                }
+                if (input.policy.origin === "explicit_user_instruction") {
+                    const prior = findExplicitActionRevision(
+                        draft,
+                        prepared.value.envelope.actionIdentity!,
+                        prepared.value.partition,
+                    );
+                    if (prior) {
+                        if (prior.revision.actionFingerprint
+                            !== prepared.value.envelope.actionFingerprint) {
+                            throw new AdmissionError("explicit_action_conflict");
+                        }
+                        const claim = draft.claims.find((candidate) => candidate.id === prior.revision.claimId);
+                        if (!claim || claim.activeRevisionId !== prior.revision.id
+                            || claim.lifecycle === "forget_pending"
+                            || claim.lifecycle === "forgotten_tombstone"
+                            || claim.lifecycle === "undone_add_tombstone") {
+                            throw new AdmissionError("explicit_action_superseded");
+                        }
+                        const event = draft.changeEvents.find((candidate) => (
+                            candidate.claimId === claim.id
+                            && candidate.actionIdentity === prepared.value.envelope.actionIdentity
+                        ));
+                        if (!event) throw new AdmissionError("explicit_action_event_missing");
+                        return {
+                            decision: "silent_durable",
+                            claimId: claim.id,
+                            revisionId: prior.revision.id,
+                            eventId: event.id,
+                            ...(event.undoSnapshotId ? {
+                                undoExpiresAt: draft.undoSnapshots
+                                    .find((snapshot) => snapshot.id === event.undoSnapshotId)
+                                    ?.expiresAt,
+                            } : {}),
+                        };
                     }
                 }
                 const suppressionMatched = hasSuppressionMatch(
@@ -228,7 +275,8 @@ export class MemoryAdmissionCoordinator {
                 if (decision === "reject" || decision === "ephemeral_only") {
                     return { decision };
                 }
-                if (prepared.value.envelope.chatSemanticReceipt) {
+                if (prepared.value.envelope.chatSemanticReceipt
+                    || input.policy.origin === "explicit_user_instruction") {
                     journal = requireAdmissionEnvelope(draft, this.opaqueVaultKey, this.now(), true);
                 }
 
@@ -248,6 +296,11 @@ export class MemoryAdmissionCoordinator {
                         if (!existingEnvelope
                             || existingEnvelope.admissionKey !== prepared.value.envelope.admissionKey) {
                             throw new AdmissionError("queue_id_collision");
+                        }
+                        if (input.policy.origin === "explicit_user_instruction"
+                            && existingEnvelope.actionFingerprint
+                                !== prepared.value.envelope.actionFingerprint) {
+                            throw new AdmissionError("explicit_action_conflict");
                         }
                         if (queueItemContentFingerprint(existingQueue) !== queueItemContentFingerprint(queueItem)) {
                             if (existingQueue.status !== "suggested") {
@@ -285,7 +338,9 @@ export class MemoryAdmissionCoordinator {
                     envelope: prepared.value.envelope,
                     summary: input.summary.trim(),
                     queueItemId: input.policy.origin === "memory_candidate" ? queueItem.id : undefined,
-                    confirmationStrength: "auto",
+                    confirmationStrength: input.policy.origin === "explicit_user_instruction"
+                        ? "explicit"
+                        : "auto",
                     now: this.now(),
                     idFactory: this.idFactory,
                 });
@@ -490,7 +545,8 @@ function prepareAdmission(
 }> {
     if (!opaqueVaultKey) return failure("invalid_vault_key");
     if (!input.summary.trim()) return failure("empty_summary");
-    if (input.policy.origin !== "type_a" && input.policy.origin !== "memory_candidate") {
+    if (input.policy.origin !== "type_a" && input.policy.origin !== "memory_candidate"
+        && input.policy.origin !== "explicit_user_instruction") {
         return failure("invalid_origin");
     }
     if (input.policy.memoryType !== input.memoryType
@@ -514,13 +570,21 @@ function prepareAdmission(
             || semanticReceipt.candidateTextHash !== stableHash(input.summary.trim())))) {
         return failure("invalid_chat_semantic_receipt");
     }
-    if (input.policy.origin === "type_a") {
+    if (input.policy.origin === "type_a" || input.policy.origin === "explicit_user_instruction") {
         const profileRecordId = input.profileRecordId?.trim();
         if (!profileRecordId || !input.expectedTargetState
             || input.expectedTargetState.profileRecordId !== profileRecordId) {
-            return failure("type_a_precondition_missing");
+            return failure(input.policy.origin === "type_a"
+                ? "type_a_precondition_missing"
+                : "explicit_target_precondition_missing");
         }
     }
+    const actionIdentity = input.actionIdentity?.trim();
+    const actionFingerprint = input.actionFingerprint?.trim();
+    if (input.policy.origin === "explicit_user_instruction" && (!actionIdentity || !actionFingerprint)) {
+        return failure("explicit_action_identity_required");
+    }
+    if (actionIdentity !== undefined && !actionFingerprint) return failure("explicit_action_identity_required");
     const profileKey = input.profileKey?.trim();
     if ((input.profileKey !== undefined && (!isGovernedProfileKey(profileKey) || !input.profileRecordId?.trim()))
         || (semanticReceipt && input.profileRecordId && !profileKey)) {
@@ -538,6 +602,8 @@ function prepareAdmission(
         sourceFingerprintId,
         ruleFingerprint,
         admissionKey,
+        ...(actionIdentity ? { actionIdentity } : {}),
+        ...(actionFingerprint ? { actionFingerprint } : {}),
         ...(input.profileRecordId?.trim() ? { profileRecordId: input.profileRecordId.trim() } : {}),
         ...(profileKey ? { profileKey } : {}),
         ...(semanticReceipt ? { chatSemanticReceipt: semanticReceipt } : {}),
@@ -677,6 +743,8 @@ function upsertGovernedClaim(input: {
         authority: input.envelope.authority,
         ...(currentRevision ? { supersedesRevisionId: currentRevision.id } : {}),
         createdAt: occurredAt,
+        ...(input.envelope.actionIdentity ? { actionIdentity: input.envelope.actionIdentity } : {}),
+        ...(input.envelope.actionFingerprint ? { actionFingerprint: input.envelope.actionFingerprint } : {}),
         ...(input.envelope.chatSemanticReceipt ? { chatSemanticReceipt: cloneJson(input.envelope.chatSemanticReceipt) } : {}),
     };
     input.draft.revisions.push(revision);
@@ -698,6 +766,8 @@ function upsertGovernedClaim(input: {
             scopeKey: partitionScopeKey(existingClaim.partition),
             effect: input.envelope.effect,
             occurredAt,
+            ...(input.envelope.actionIdentity ? { actionIdentity: input.envelope.actionIdentity } : {}),
+            ...(input.envelope.actionFingerprint ? { actionFingerprint: input.envelope.actionFingerprint } : {}),
             undoSnapshotId: snapshotId,
         };
         const snapshot: MemoryUndoSnapshot = {
@@ -768,9 +838,7 @@ function upsertGovernedClaim(input: {
             input.draft.claims.push(claim);
         }
         const eventId = input.idFactory();
-        const undoSnapshotId = input.confirmationStrength === "auto"
-            ? input.idFactory()
-            : undefined;
+    const undoSnapshotId = input.idFactory();
         invalidatePriorUndoSnapshots(input.draft, claimId);
         input.draft.changeEvents.push({
             id: eventId,
@@ -779,6 +847,8 @@ function upsertGovernedClaim(input: {
             scopeKey: partitionScopeKey(partition),
             effect: claim.effect,
             occurredAt,
+            ...(input.envelope.actionIdentity ? { actionIdentity: input.envelope.actionIdentity } : {}),
+            ...(input.envelope.actionFingerprint ? { actionFingerprint: input.envelope.actionFingerprint } : {}),
             ...(undoSnapshotId ? { undoSnapshotId } : {}),
         });
         if (undoSnapshotId) {
@@ -971,6 +1041,20 @@ function findExistingAdmissionClaim(
         : undefined;
 }
 
+function findExplicitActionRevision(
+    state: DeviceMemoryGovernanceStateV1,
+    actionIdentity: string,
+    partition: MemoryPartitionKey,
+): { revision: MemoryClaimRevision } | undefined {
+    const revision = state.revisions.find((candidate) => (
+        candidate.actionIdentity === actionIdentity
+        && state.claims.some((claim) => (
+            claim.id === candidate.claimId && partitionsEqual(claim.partition, partition)
+        ))
+    ));
+    return revision ? { revision } : undefined;
+}
+
 export function readTypeATargetGeneration(
     state: DeviceMemoryGovernanceStateV1,
     profileRecordId: string,
@@ -1149,7 +1233,8 @@ function assertChatSemanticEvidence(receipt: ChatMemorySemanticReceipt, summary:
 
 function validateAdmissionEnvelope(value: unknown): value is PersistedAdmissionEnvelope {
     if (!isRecord(value) || value.version !== 1) return false;
-    if (value.origin !== "type_a" && value.origin !== "memory_candidate") return false;
+    if (value.origin !== "type_a" && value.origin !== "memory_candidate"
+        && value.origin !== "explicit_user_instruction") return false;
     if (!includesString(MEMORY_TYPES, value.memoryType)
         || !includesString(MEMORY_SENSITIVITIES, value.sensitivity)
         || !includesString(AUTHORITIES, value.authority)
@@ -1161,6 +1246,15 @@ function validateAdmissionEnvelope(value: unknown): value is PersistedAdmissionE
     if (typeof value.sourceFingerprintId !== "string" || !value.sourceFingerprintId.trim()
         || typeof value.ruleFingerprint !== "string" || !value.ruleFingerprint.trim()
         || typeof value.admissionKey !== "string" || !value.admissionKey.trim()) return false;
+    if ((value.actionIdentity !== undefined && (
+            typeof value.actionIdentity !== "string" || !value.actionIdentity.trim()
+        ))
+        || (value.actionFingerprint !== undefined && (
+            typeof value.actionFingerprint !== "string" || !value.actionFingerprint.trim()
+        ))) return false;
+    if (value.origin === "explicit_user_instruction" && (
+        !value.actionIdentity || !value.actionFingerprint || !value.profileRecordId || !value.profileKey
+    )) return false;
     if (value.profileRecordId !== undefined && (
         typeof value.profileRecordId !== "string" || !value.profileRecordId.trim()
     )) return false;
@@ -1187,6 +1281,12 @@ function isValidProvenance(value: unknown): value is PersistedMemoryProvenance {
     }
     if (value.kind === "explicit_setting") {
         return typeof value.settingKey === "string" && Boolean(value.settingKey.trim());
+    }
+    if (value.kind === "host_user_request") {
+        return typeof value.runId === "string" && Boolean(value.runId.trim())
+            && typeof value.userMessageId === "string" && Boolean(value.userMessageId.trim())
+            && typeof value.observedAt === "string" && Boolean(value.observedAt.trim())
+            && typeof value.userPromptHash === "string" && Boolean(value.userPromptHash.trim());
     }
     if (value.kind === "vault_aggregate") {
         return typeof value.generatedAt === "string"
@@ -1267,6 +1367,15 @@ function cloneProvenance(provenance: PersistedMemoryProvenance): PersistedMemory
     }
     if (provenance.kind === "explicit_setting") {
         return { kind: "explicit_setting", settingKey: provenance.settingKey };
+    }
+    if (provenance.kind === "host_user_request") {
+        return {
+            kind: "host_user_request",
+            runId: provenance.runId,
+            userMessageId: provenance.userMessageId,
+            observedAt: provenance.observedAt,
+            userPromptHash: provenance.userPromptHash,
+        };
     }
     return {
         kind: "vault_aggregate",

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import { BaseMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
 import { AIUtils } from "../src/ai-services/ai-utils";
+import { createReadNoteTool } from "../src/ai-services/chat-tool-factories";
+import { revalidateVaultObservationFromApp } from "../src/ai-services/vault-observation-evidence";
 import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
 import type { MemorySearchPort } from "../src/memory/MemorySearchPort";
 import { PaAgentRuntime, type PaAgentRuntimeOptions, type PaAgentStreamOptions } from "../src/ai-services/pa-agent-runtime";
@@ -45,6 +47,7 @@ const response = (body: RequestBody, reply: Reply): Response => {
 function fixture(replies: Reply[] | ((body: RequestBody, index: number) => Reply), runtimeOptions: PaAgentRuntimeOptions = {}, sdkRetries = 0) {
     const requests: RequestBody[] = [], observed: BaseMessage[][] = [], events: LegacyAgentEvent[] = [], lifecycle: AgentEvent[] = [];
     const sdkAttempts: Array<{ stream: boolean; retryCount: string | null }> = [];
+    const modelSpecifications: Array<{ isSummary: boolean; options: { prepareProviderRequest?: unknown } }> = [];
     let beforeSdkDispatch: (() => void) | undefined;
     let afterModelCreated: ((isSummary: boolean) => void | Promise<void>) | undefined;
     const host = {
@@ -75,6 +78,10 @@ function fixture(replies: Reply[] | ((body: RequestBody, index: number) => Reply
         }) as typeof fetch };
         const model = new ChatOpenAI({ model: configured.model, apiKey: "synthetic-fixture-token", configuration,
             temperature: configured.temperature, maxRetries: 0, ...(args[1]?.maxTokens ? { maxTokens: args[1].maxTokens } : {}) });
+        modelSpecifications.push({
+            isSummary: args[1]?.maxTokens !== undefined,
+            options: (args[1] ?? {}) as { prepareProviderRequest?: unknown },
+        });
         const callbacks = [{ name: "b129-real-bound-observer", handleChatModelStart: (_serialized: unknown, batches: BaseMessage[][]) => { observed.push(...batches); beforeSdkDispatch?.(); } }];
         model.callbacks = callbacks;
         const originalBind = model.bindTools.bind(model);
@@ -103,7 +110,7 @@ function fixture(replies: Reply[] | ((body: RequestBody, index: number) => Reply
             onEvent: (event) => events.push(event), onLifecycleEvent: (event) => lifecycle.push(event), ...options }); }
         finally { runtime.dispose(); }
     };
-    return { host, requests, observed, sdkAttempts, events, lifecycle, service, release, run, invalidate: () => { sourceCurrent = false; },
+    return { host, requests, observed, sdkAttempts, modelSpecifications, events, lifecycle, service, release, run, invalidate: () => { sourceCurrent = false; },
         beforeSdkDispatch: (callback: () => void) => { beforeSdkDispatch = callback; },
         afterModelCreated: (callback: (isSummary: boolean) => void | Promise<void>) => { afterModelCreated = callback; } };
 }
@@ -192,6 +199,14 @@ describe('B-135 production source declaration', () => {
             headings: [{ level: 1, heading: 'B_ALLOWED_OUTLINE' }],
         }) as never);
         Object.assign(f.host.app.metadataCache, { resolvedLinks: { 'HIDDEN_SOURCE_A.md': { 'B.md': 1 }, 'B.md': {} }, unresolvedLinks: {} });
+        Object.assign(f.host, {
+            revalidateVaultObservation: (evidence: never, options?: never) => revalidateVaultObservationFromApp(
+                f.host as unknown as AiServiceHost,
+                evidence,
+                options,
+            ),
+            getMemoryEvidenceEpoch: () => 'vault-epoch-stable',
+        });
         await f.run({ images: undefined, prompt });
         expect(f.requests).toHaveLength(3);
         expect(requestText(f.requests[1])).toContain('HIDDEN_SOURCE_A');
@@ -904,5 +919,361 @@ describe("B-129 strict writing protocol and intent", () => {
     });
     it.each(["换个话题，写一封工作邮件", "new topic: write a caption", "帮我写一篇文章", "draft an email"])("recognizes a new writing task without inheriting old material: %s", (text) => {
         expect(isWritingRequestPrompt(text)).toBe(true); expect(isWritingContinuationPrompt(text)).toBe(false);
+    });
+});
+
+describe("B-140 T-07 vault observation physical integration", () => {
+    const installReadHistory = async (
+        f: ReturnType<typeof fixture>,
+        firstBody: string,
+        secondBody: string,
+    ): Promise<{ history: ChatMessage[]; contents: Map<string, string> }> => {
+        const contents = new Map([
+            ["notes/a.md", `A_SOURCE_BODY ${firstBody}`],
+            ["notes/b.md", `B_SOURCE_BODY ${secondBody}`],
+        ]);
+        const files = ["notes/a.md", "notes/b.md"].map(path => ({
+            path,
+            name: path.split("/").pop(),
+            basename: path.split("/").pop()?.replace(/\.md$/, ""),
+            extension: "md",
+            stat: { ctime: 1, mtime: 2, size: contents.get(path)?.length ?? 0 },
+        }));
+        const vault = f.host.app.vault as unknown as {
+            getAbstractFileByPath: (path: string) => unknown;
+            cachedRead: (file: unknown) => Promise<string>;
+        };
+        vault.getAbstractFileByPath = (path: string) => files.find(file => file.path === path) ?? null;
+        vault.cachedRead = (file: unknown) => Promise.resolve(contents.get((file as { path: string }).path) ?? "");
+        Object.assign(f.host, {
+            getMemoryEvidenceEpoch: () => "vault-epoch-stable",
+            revalidateVaultObservation: (evidence: never, options?: never) =>
+                revalidateVaultObservationFromApp(f.host as unknown as AiServiceHost, evidence, options),
+        });
+        const evidence = await Promise.all(files.map(async file => {
+            const tool = createReadNoteTool();
+            const result = await tool.execute(
+                tool.validateInput({ path: file.path, part: "body" }),
+                {
+                    host: f.host as unknown as AiServiceHost,
+                    taskSourceReadGuard: {
+                        isCurrent: () => true,
+                        isPathAllowed: path => path === file.path,
+                        getNoteSearchScope: () => ({ allowedPaths: [file.path], excludedPaths: [] }),
+                    },
+                },
+            );
+            if (!result.ok || !result.vaultObservationEvidence) throw new Error("read_note evidence fixture failed");
+            return result.vaultObservationEvidence;
+        }));
+        return {
+            contents,
+            history: [
+                { role: "user", content: "Earlier request" },
+                {
+                    role: "assistant",
+                    content: firstBody,
+                    memoryMetadata: {
+                        hasMemoryContent: false,
+                        allowedMemorySourcePaths: [],
+                        vaultObservationEvidence: [evidence[0]],
+                        vaultObservationContractVersion: 1,
+                    } as never,
+                },
+                {
+                    role: "assistant",
+                    content: secondBody,
+                    memoryMetadata: {
+                        hasMemoryContent: false,
+                        allowedMemorySourcePaths: [],
+                        vaultObservationEvidence: [evidence[1]],
+                        vaultObservationContractVersion: 1,
+                    } as never,
+                },
+                { role: "user", content: "Continue from current material" },
+            ],
+        };
+    };
+
+    it("forwards asynchronous vault preparation independently to answer and summary models", async () => {
+        const summaryText = JSON.stringify({
+            goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
+            facts: [{ text: "Keep the independent current choice.", sourceMessages: [1] }],
+        });
+        let contents: Map<string, string> | undefined;
+        const f = fixture((body, index) => {
+            if (!body.stream && index === 0) {
+                contents?.set("notes/a.md", "A_SOURCE_BODY CHANGED_BEFORE_SUMMARY_RETRY");
+                return { httpError: { status: 429, code: "rate_limit_exceeded", retryAfter: "0.001" } };
+            }
+            return body.stream ? { text: "Current answer" } : { text: summaryText };
+        }, {}, 1);
+        const installed = await installReadHistory(
+            f,
+            "A_LONG_HISTORY_SUMMARY_SOURCE " + "detail ".repeat(400),
+            "B_INDEPENDENT_HISTORY_CHOICE " + "detail ".repeat(400),
+        );
+        contents = installed.contents;
+
+        await f.run({ images: undefined, prompt: "Continue", historyBudgetChars: 1200, chatHistory: installed.history });
+        const summary = f.modelSpecifications.find(specification => specification.isSummary);
+        const answer = f.modelSpecifications.find(specification => !specification.isSummary);
+        expect(summary).toBeDefined();
+        expect(answer).toBeDefined();
+        expect(typeof summary!.options.prepareProviderRequest).toBe("function");
+        expect(typeof answer!.options.prepareProviderRequest).toBe("function");
+        expect(summary!.options.prepareProviderRequest).not.toBe(answer!.options.prepareProviderRequest);
+        expect(f.requests[0].stream).toBe(false);
+        expect(requestText(f.requests[0])).toContain("A_LONG_HISTORY_SUMMARY_SOURCE");
+        expect(f.sdkAttempts.filter(attempt => attempt.retryCount === "1")).toEqual([
+            { stream: false, retryCount: "1" },
+        ]);
+        for (const request of f.requests.slice(1)) {
+            expect(requestText(request)).not.toContain("A_LONG_HISTORY_SUMMARY_SOURCE");
+        }
+        expect(f.requests.at(-1)?.stream).toBe(true);
+        expect(requestText(f.requests.at(-1)!)).toContain("B_INDEPENDENT_HISTORY_CHOICE");
+    });
+
+    it("does not reread a budget-hidden source in the final answer binding while B still dispatches", async () => {
+        const summaryText = JSON.stringify({
+            goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
+            facts: [{ text: "Keep only the first summary dependency.", sourceMessages: [2] }],
+        });
+        const f = fixture((body, index) => {
+            if (!body.stream && index === 0) {
+                sourceChanged = true;
+                installed.contents.set("notes/a.md", "A_HIDDEN_AFTER_CHANGE CHANGED");
+                return { httpError: { status: 429, code: "rate_limit_exceeded", retryAfter: "0.001" } };
+            }
+            return body.stream ? { text: "Current answer" } : { text: summaryText };
+        }, {}, 1);
+        const installed = await installReadHistory(
+            f,
+            "A_HIDDEN_AFTER_CHANGE " + "detail ".repeat(400),
+            "B_INDEPENDENT_HISTORY_CHOICE " + "detail ".repeat(400),
+        );
+        const reads = { a: 0, b: 0 };
+        let sourceChanged = false;
+        const vault = f.host.app.vault as { cachedRead: (file: unknown) => Promise<string> };
+        const originalCachedRead = vault.cachedRead.bind(vault);
+        vault.cachedRead = async file => {
+            const path = (file as { path: string }).path;
+            if (path === "notes/a.md" && sourceChanged) reads.a += 1;
+            if (path === "notes/b.md") reads.b += 1;
+            return await originalCachedRead(file);
+        };
+
+        await f.run({ images: undefined, prompt: "Continue", historyBudgetChars: 1200, chatHistory: installed.history });
+
+        expect(f.requests[0]?.stream).toBe(false);
+        expect(requestText(f.requests[0]!)).toContain("A_HIDDEN_AFTER_CHANGE");
+        for (const request of f.requests.slice(1)) {
+            expect(requestText(request)).not.toContain("A_HIDDEN_AFTER_CHANGE");
+        }
+        const answer = f.requests.at(-1);
+        expect(answer?.stream).toBe(true);
+        expect(requestText(answer!)).toContain("B_INDEPENDENT_HISTORY_CHOICE");
+        const summary = f.modelSpecifications.find(specification => specification.isSummary);
+        const answerModel = f.modelSpecifications.find(specification => !specification.isSummary);
+        await expect((summary!.options.prepareProviderRequest as () => Promise<void>)())
+            .rejects.toThrow("Vault observation evidence changed before dispatch");
+        const readsBeforeAnswerHook = reads.a;
+        await expect((answerModel!.options.prepareProviderRequest as () => Promise<void>)())
+            .resolves.toBeUndefined();
+        expect(reads.a).toBe(readsBeforeAnswerHook);
+    });
+
+    it("rejects the answer when its independent current source changes before physical preparation", async () => {
+        const summaryText = JSON.stringify({
+            goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
+            facts: [{ text: "Keep the earlier dependency.", sourceMessages: [2] }],
+        });
+        let answerPrepareWrapped = false;
+        const f = fixture(body => (body.stream
+            ? { text: "must not dispatch" }
+            : { text: summaryText }));
+        const installed = await installReadHistory(f, "A_STABLE_HISTORY", "B_CHANGED_BEFORE_ANSWER");
+        f.afterModelCreated(isSummary => {
+            if (isSummary) return;
+            const options = f.modelSpecifications[f.modelSpecifications.length - 1]?.options as {
+                prepareProviderRequest?: (signal?: AbortSignal | null) => Promise<void>;
+            };
+            const originalPrepare = options.prepareProviderRequest;
+            if (!originalPrepare) throw new Error("answer model did not expose physical preparation");
+            answerPrepareWrapped = true;
+            options.prepareProviderRequest = async signal => {
+                installed.contents.set("notes/b.md", "B_CHANGED_BEFORE_ANSWER CHANGED");
+                await originalPrepare(signal);
+            };
+        });
+
+        await f.run({
+            images: undefined,
+            prompt: "Continue",
+            historyBudgetChars: 1200,
+            chatHistory: installed.history,
+        });
+        expect(answerPrepareWrapped).toBe(true);
+        expect(f.requests.some(request => (
+            request.stream
+            && requestText(request).includes("B_CHANGED_BEFORE_ANSWER")
+        ))).toBe(false);
+    });
+
+    it("revokes a derived free-text history item as a whole while retaining independent evidence", async () => {
+        const f = fixture([{ text: "Current answer" }]);
+        const installed = await installReadHistory(f, "A_DERIVED_ANSWER_SENTINEL", "B_INDEPENDENT_HISTORY_SENTINEL");
+        f.afterModelCreated(() => {
+            installed.contents.set("notes/a.md", "A_SOURCE_BODY CHANGED");
+        });
+
+        await f.run({ images: undefined, prompt: "Continue", chatHistory: installed.history });
+        const answer = f.requests.find(request => request.stream);
+        expect(answer).toBeDefined();
+        expect(requestText(answer!)).not.toContain("A_DERIVED_ANSWER_SENTINEL");
+        expect(requestText(answer!)).toContain("B_INDEPENDENT_HISTORY_SENTINEL");
+    });
+
+    it("selectively removes an invalid structured query item and its aggregate promises before dispatch", async () => {
+        let aStillActive = true;
+        const f = fixture((_body, index) => {
+            if (index === 0) {
+                return { tools: [
+                    {
+                        name: "declare_source_scope",
+                        input: {
+                            instructionQuote: "Query my active notes",
+                            notes: "vault",
+                            webAllowed: false,
+                        },
+                    },
+                    {
+                        name: "query_notes",
+                        input: {
+                            properties: [{ key: "status", operator: "equals", value: "active" }],
+                            sort: { field: "path", direction: "asc" },
+                            limit: 2,
+                        },
+                    },
+                ] };
+            }
+            return { text: "Current answer" };
+        });
+        let answerModelCreations = 0;
+        f.afterModelCreated(() => {
+            answerModelCreations += 1;
+            if (answerModelCreations > 1) aStillActive = false;
+        });
+        (f.host as { getMemoryEvidenceEpoch?: unknown }).getMemoryEvidenceEpoch = () => "vault-epoch-stable";
+        const files = ["notes/a.md", "notes/b.md", "notes/c.md"].map((path, index) => ({
+            path,
+            basename: path.split("/").pop()?.replace(/\.md$/, ""),
+            extension: "md",
+            stat: { ctime: 1, mtime: index + 1, size: 20 },
+        }));
+        const vault = f.host.app.vault as unknown as {
+            getMarkdownFiles: () => typeof files;
+            getAbstractFileByPath: (path: string) => unknown;
+        };
+        const metadataCache = f.host.app.metadataCache as unknown as {
+            getFileCache: (file: { path: string }) => unknown;
+        };
+        vault.getMarkdownFiles = () => files;
+        vault.getAbstractFileByPath = (path: string) => (
+            files.find(file => file.path === path) ?? null
+        );
+        metadataCache.getFileCache = (file: { path: string }) => (
+            { frontmatter: { status: file.path === "notes/a.md" && !aStillActive ? "inactive" : "active" } }
+        );
+        Object.assign(f.host, {
+            revalidateVaultObservation: (evidence: never, options?: never) => revalidateVaultObservationFromApp(
+                f.host as unknown as AiServiceHost,
+                evidence,
+                options,
+            ),
+        });
+
+        await f.run({ images: undefined, prompt: "Query my active notes" });
+        const answer = f.requests[f.requests.length - 1];
+        expect(answer).toBeDefined();
+        expect(requestText(answer!)).not.toContain("notes/a.md");
+        const queryObservation = JSON.parse(requestText(answer!).match(
+            /<untrusted source="tool:query_notes"[^>]*>\s*([\s\S]*?)\s*<\/untrusted>/,
+        )![1]).observation;
+        expect(queryObservation.nextCursor).toBeUndefined();
+        expect(queryObservation.sort).toBeUndefined();
+        expect(queryObservation.matchCountKind).toBe("lower-bound");
+        expect(queryObservation.coverage).toEqual({ state: "partial" });
+        expect(queryObservation.matches).toEqual([expect.objectContaining({ path: "notes/b.md" })]);
+    });
+
+    it("fails closed when the vault evidence epoch changes in the final synchronous admission window", async () => {
+        let epoch = "vault-epoch-1";
+        let epochChanged = false;
+        const f = fixture(() => {
+            if (!epochChanged) return { error: new Error("old serialized payload dispatched") };
+            return { text: "safe reprepared answer" };
+        });
+        const installed = await installReadHistory(f, "A_CURRENT_HISTORY", "B_INDEPENDENT_HISTORY");
+        (f.host as { getMemoryEvidenceEpoch?: unknown }).getMemoryEvidenceEpoch = () => epoch;
+        let wrapperReached = false;
+        f.afterModelCreated(() => {
+            const options = f.modelSpecifications[f.modelSpecifications.length - 1]?.options as {
+                prepareProviderRequest?: (signal?: AbortSignal | null) => Promise<void>;
+            };
+            const originalPrepare = options.prepareProviderRequest;
+            if (!originalPrepare) throw new Error("answer model did not expose physical preparation");
+            let preparedOnce = false;
+            options.prepareProviderRequest = async signal => {
+                wrapperReached = true;
+                await originalPrepare(signal);
+                if (!preparedOnce) {
+                    preparedOnce = true;
+                    epoch = "vault-epoch-2";
+                    epochChanged = true;
+                }
+            };
+        });
+
+        const outcome = await f.run({
+            images: undefined,
+            prompt: "Continue",
+            chatHistory: installed.history,
+        }).then(() => ({ ok: true }), () => ({ ok: false }));
+        expect(wrapperReached).toBe(true);
+        expect(outcome.ok).toBe(true);
+        expect(f.requests.length).toBeGreaterThan(0);
+    });
+
+    it("does not resend stale serialized history on an SDK 429 physical retry", async () => {
+        let contents: Map<string, string> | undefined;
+        const f = fixture((_body, index) => {
+            if (index === 0) {
+                contents?.set("notes/a.md", "A_SOURCE_BODY CHANGED_ON_FIRST_DISPATCH");
+                return {
+                    httpError: { status: 429, code: "rate_limit_exceeded", retryAfter: "0.001" },
+                };
+            }
+            return { text: "safe independent history answer" };
+        }, {}, 1);
+        const installed = await installReadHistory(f, "A_STALE_RETRY_SENTINEL", "B_INDEPENDENT_HISTORY");
+        contents = installed.contents;
+
+        const outcome = await f.run({
+            images: undefined,
+            prompt: "Continue",
+            chatHistory: installed.history,
+        }).then(() => ({ ok: true }), () => ({ ok: false }));
+        expect(f.requests.length).toBeGreaterThan(1);
+        expect(requestText(f.requests[0])).toContain("A_STALE_RETRY_SENTINEL");
+        expect(f.sdkAttempts.filter(attempt => attempt.retryCount === "1")).toEqual([
+            { stream: true, retryCount: "1" },
+        ]);
+        for (const request of f.requests.slice(1)) {
+            expect(requestText(request)).not.toContain("A_STALE_RETRY_SENTINEL");
+            expect(requestText(request)).toContain("B_INDEPENDENT_HISTORY");
+        }
+        expect(outcome.ok).toBe(true);
     });
 });

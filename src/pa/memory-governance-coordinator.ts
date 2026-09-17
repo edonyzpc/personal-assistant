@@ -26,6 +26,7 @@ import {
     type MemoryChangeEvent,
     type MemoryClaimRevision,
     type MemoryForgetOperation,
+    type MemoryGovernanceCommitGuard,
     type MemoryGovernanceRepository,
     type MemoryMigrationState,
     type MemoryPartitionKey,
@@ -100,6 +101,12 @@ export interface MemoryGovernanceActionReceipt {
     claimId: string;
     eventId: string;
     undoExpiresAt?: string;
+    superseded?: boolean;
+}
+
+export interface MemoryGovernanceActionIdentity {
+    actionIdentity: string;
+    actionFingerprint: string;
 }
 
 export interface MemoryForgetReceipt {
@@ -126,6 +133,10 @@ class CoordinatorError extends Error {
         this.name = "CoordinatorError";
     }
 }
+
+type MemoryForgetStart =
+    | { completed: MemoryGovernanceActionReceipt }
+    | { operationId: string };
 
 /**
  * Serialized lifecycle boundary for governed Memory. All authoritative local
@@ -211,6 +222,7 @@ export class MemoryGovernanceCoordinator {
         dataBoundaryAllowed: boolean;
         writingStyle?: WritingStylePayload;
         expectedRevisionId?: string;
+        action?: MemoryGovernanceActionIdentity;
         isCurrent?: () => boolean;
     }): Promise<MemoryGovernanceCoordinatorResult<MemoryGovernanceActionReceipt>> {
         return this.serialize(async () => {
@@ -223,10 +235,16 @@ export class MemoryGovernanceCoordinator {
             if (!summary) return failure("empty_correction");
             if (!input.scopeAllowed) return failure("scope_not_allowed");
             if (!input.dataBoundaryAllowed) return failure("data_boundary_denied");
+            const isCurrent = input.isCurrent;
+            const assertSourceCurrent = isCurrent ? () => {
+                if (!isCurrent()) throw new CoordinatorError("writing_style_source_changed");
+            } : undefined;
 
             return this.runDomainMutation(async () => {
                 return this.repository.transact((draft) => {
                     const migration = this.assertMutationEnvelope(draft, occurredAt);
+                    const replay = this.replayExplicitAction(draft, input.action);
+                    if (replay) return replay.value;
                     const claim = this.requireClaimInScope(draft, input.claimId);
                     if (claim.lifecycle !== "active" && claim.lifecycle !== "paused") {
                         throw new CoordinatorError("claim_not_correctable");
@@ -235,7 +253,7 @@ export class MemoryGovernanceCoordinator {
                     const previousRevision = this.requireActiveRevision(draft, claim);
                     this.assertGovernableClaim(claim, previousRevision);
                     if (input.expectedRevisionId && input.expectedRevisionId !== previousRevision.id) throw new CoordinatorError("writing_style_revision_changed");
-                    if (input.isCurrent && !input.isCurrent()) throw new CoordinatorError("writing_style_source_changed");
+                    if (isCurrent && !isCurrent()) throw new CoordinatorError("writing_style_source_changed");
                     const writingStyle = input.writingStyle ? parseWritingStyle(input.writingStyle) : undefined;
                     if (Boolean(previousRevision.writingStyle) !== Boolean(writingStyle)) throw new CoordinatorError("writing_style_correction_required");
                     if (previousRevision.summary.trim() === summary && JSON.stringify(previousRevision.writingStyle) === JSON.stringify(writingStyle)) {
@@ -248,6 +266,7 @@ export class MemoryGovernanceCoordinator {
                         eventId,
                         snapshotId,
                         occurredAt,
+                        input.action,
                     );
                     addSuppressionMarkers(
                         draft,
@@ -294,22 +313,27 @@ export class MemoryGovernanceCoordinator {
                         occurredAt,
                     );
                     return receipt(claim.id, event);
-                });
+                }, assertSourceCurrent);
             });
         });
     }
 
     pauseUse(input: {
         claimId: string;
+        action?: MemoryGovernanceActionIdentity;
+        isCurrent?: () => boolean;
     }): Promise<MemoryGovernanceCoordinatorResult<MemoryGovernanceActionReceipt>> {
         return this.serialize(async () => {
             const eventId = this.idFactory();
             const snapshotId = this.idFactory();
             const payloadEntryId = this.idFactory();
             const occurredAt = this.nowIso();
+            const assertCurrent = this.memoryActionCommitGuard(input.isCurrent);
             return this.runDomainMutation(async () => {
                 return this.repository.transact((draft) => {
                     const migration = this.assertMutationEnvelope(draft, occurredAt);
+                    const replay = this.replayExplicitAction(draft, input.action);
+                    if (replay) return replay.value;
                     const claim = this.requireClaimInScope(draft, input.claimId);
                     if (claim.lifecycle !== "active") throw new CoordinatorError("no_effect");
                     this.assertNoPendingOperation(draft, claim.id);
@@ -322,6 +346,7 @@ export class MemoryGovernanceCoordinator {
                         eventId,
                         snapshotId,
                         occurredAt,
+                        input.action,
                     );
                     claim.lifecycle = "paused";
                     claim.updatedAt = occurredAt;
@@ -334,7 +359,7 @@ export class MemoryGovernanceCoordinator {
                         occurredAt,
                     );
                     return receipt(claim.id, event);
-                });
+                }, assertCurrent);
             });
         });
     }
@@ -386,8 +411,10 @@ export class MemoryGovernanceCoordinator {
 
     resumeUse(input: {
         claimId: string;
+        action?: MemoryGovernanceActionIdentity;
         scopeAllowed: boolean;
         dataBoundaryAllowed: boolean;
+        isCurrent?: () => boolean;
     }): Promise<MemoryGovernanceCoordinatorResult<MemoryGovernanceActionReceipt>> {
         return this.serialize(async () => {
             if (!input.scopeAllowed) return failure("scope_not_allowed");
@@ -396,9 +423,12 @@ export class MemoryGovernanceCoordinator {
             const snapshotId = this.idFactory();
             const payloadEntryId = this.idFactory();
             const occurredAt = this.nowIso();
+            const assertCurrent = this.memoryActionCommitGuard(input.isCurrent);
             return this.runDomainMutation(async () => {
                 return this.repository.transact((draft) => {
                     const migration = this.assertMutationEnvelope(draft, occurredAt);
+                    const replay = this.replayExplicitAction(draft, input.action);
+                    if (replay) return replay.value;
                     const claim = this.requireClaimInScope(draft, input.claimId);
                     if (claim.lifecycle !== "paused") throw new CoordinatorError("no_effect");
                     this.assertNoPendingOperation(draft, claim.id);
@@ -411,6 +441,7 @@ export class MemoryGovernanceCoordinator {
                         eventId,
                         snapshotId,
                         occurredAt,
+                        input.action,
                     );
                     claim.lifecycle = "active";
                     claim.updatedAt = occurredAt;
@@ -423,7 +454,7 @@ export class MemoryGovernanceCoordinator {
                         occurredAt,
                     );
                     return receipt(claim.id, event);
-                });
+                }, assertCurrent);
             });
         });
     }
@@ -433,8 +464,10 @@ export class MemoryGovernanceCoordinator {
         applicability: ReviewQueueScope;
         partition?: MemoryPartitionKey;
         explicitDeviceScope?: boolean;
+        action?: MemoryGovernanceActionIdentity;
         scopeAllowed: boolean;
         dataBoundaryAllowed: boolean;
+        isCurrent?: () => boolean;
     }): Promise<MemoryGovernanceCoordinatorResult<MemoryGovernanceActionReceipt>> {
         return this.serialize(async () => {
             if (!input.scopeAllowed) return failure("scope_not_allowed");
@@ -445,9 +478,12 @@ export class MemoryGovernanceCoordinator {
             const revisionId = this.idFactory();
             const payloadEntryId = this.idFactory();
             const occurredAt = this.nowIso();
+            const assertCurrent = this.memoryActionCommitGuard(input.isCurrent);
             return this.runDomainMutation(async () => {
                 return this.repository.transact((draft) => {
                     const migration = this.assertMutationEnvelope(draft, occurredAt);
+                    const replay = this.replayExplicitAction(draft, input.action);
+                    if (replay) return replay.value;
                     const claim = this.requireClaimInScope(draft, input.claimId);
                     if (claim.lifecycle !== "active" && claim.lifecycle !== "paused") {
                         throw new CoordinatorError("claim_not_scope_changeable");
@@ -482,6 +518,7 @@ export class MemoryGovernanceCoordinator {
                         eventId,
                         snapshotId,
                         occurredAt,
+                        input.action,
                     );
                     const revision: MemoryClaimRevision = {
                         id: revisionId,
@@ -530,21 +567,26 @@ export class MemoryGovernanceCoordinator {
                         occurredAt,
                     );
                     return receipt(claim.id, event);
-                });
+                }, assertCurrent);
             });
         });
     }
 
     undoRecentChange(input: {
         eventId: string;
+        action?: MemoryGovernanceActionIdentity;
+        isCurrent?: () => boolean;
     }): Promise<MemoryGovernanceCoordinatorResult<MemoryGovernanceActionReceipt>> {
         return this.serialize(async () => {
             const undoEventId = this.idFactory();
             const payloadEntryId = this.idFactory();
             const occurredAt = this.nowIso();
+            const assertCurrent = this.memoryActionCommitGuard(input.isCurrent);
             return this.runDomainMutation(async () => {
                 return this.repository.transact((draft) => {
                     const migration = this.assertMutationEnvelope(draft, occurredAt);
+                    const replay = this.replayExplicitAction(draft, input.action);
+                    if (replay) return replay.value;
                     const event = draft.changeEvents.find((candidate) => candidate.id === input.eventId);
                     if (!event) throw new CoordinatorError("undo_not_available");
                     if (!event.undoSnapshotId) {
@@ -584,11 +626,12 @@ export class MemoryGovernanceCoordinator {
                             draft,
                             migration,
                             claim,
-                            event,
-                            snapshot,
-                            undoEventId,
-                            occurredAt,
-                        );
+                        event,
+                        snapshot,
+                        undoEventId,
+                        occurredAt,
+                        input.action,
+                    );
                     }
 
                     if (event.kind === "correct") {
@@ -637,6 +680,7 @@ export class MemoryGovernanceCoordinator {
                         scopeKey: partitionScopeKey(restoredClaim.partition),
                         effect: restoredClaim.effect,
                         occurredAt,
+                        ...(input.action ? { ...input.action } : {}),
                         undoesEventId: event.id,
                     };
                     draft.changeEvents.push(undoEvent);
@@ -649,7 +693,7 @@ export class MemoryGovernanceCoordinator {
                         occurredAt,
                     );
                     return receipt(restoredClaim.id, undoEvent);
-                });
+                }, assertCurrent);
             });
         });
     }
@@ -662,6 +706,7 @@ export class MemoryGovernanceCoordinator {
         snapshot: Extract<MemoryUndoSnapshot, { restoreMode: "remove_added_claim" }>,
         undoEventId: string,
         occurredAt: string,
+        action?: MemoryGovernanceActionIdentity,
     ): MemoryGovernanceActionReceipt {
         if (event.kind !== "add") throw new CoordinatorError("undo_snapshot_invalid");
         const links = snapshot.projectionLinks.map((snapshotLink) => {
@@ -751,6 +796,7 @@ export class MemoryGovernanceCoordinator {
             scopeKey: partitionScopeKey(claim.partition),
             effect: "none",
             occurredAt,
+            ...(action ? { ...action } : {}),
             undoesEventId: event.id,
         };
         draft.changeEvents.push(undoEvent);
@@ -859,14 +905,19 @@ export class MemoryGovernanceCoordinator {
 
     forget(input: {
         claimId: string;
+        action?: MemoryGovernanceActionIdentity;
+        isCurrent?: () => boolean;
     }): Promise<MemoryGovernanceCoordinatorResult<MemoryForgetReceipt>> {
         return this.serialize(async () => {
             const operationId = this.idFactory();
             const payloadEntryId = this.idFactory();
             const startedAt = this.nowIso();
-            const started = await this.runDomainMutation(async () => {
+            const assertCurrent = this.memoryActionCommitGuard(input.isCurrent);
+            const started = await this.runDomainMutation<MemoryForgetStart>(async () => {
                 return this.repository.transact((draft) => {
                     const migration = this.assertMutationEnvelope(draft, startedAt);
+                    const replay = this.replayExplicitAction(draft, input.action);
+                    if (replay) return { completed: replay.value };
                     const claim = this.requireClaimInScope(draft, input.claimId);
                     if (claim.lifecycle === "forgotten_tombstone") {
                         throw new CoordinatorError("no_effect");
@@ -1003,6 +1054,7 @@ export class MemoryGovernanceCoordinator {
                         attemptCount: 0,
                         createdAt: startedAt,
                         updatedAt: startedAt,
+                        ...(input.action ? { ...input.action } : {}),
                         ...(legacyCompatibility ? { legacyCompatibility } : {}),
                     };
                     draft.pendingOperations.push(pending);
@@ -1012,9 +1064,18 @@ export class MemoryGovernanceCoordinator {
                     pending.phase = "claim_redacted";
                     if (migration) this.assertDeltaJournalConsistent(draft, migration);
                     return { operationId };
-                });
+                }, assertCurrent);
             });
             if (!started.ok) return started;
+            if ("completed" in started.value) {
+                return {
+                    ok: true,
+                    value: {
+                        claimId: started.value.completed.claimId,
+                        eventId: started.value.completed.eventId,
+                    },
+                };
+            }
             return this.runForgetOperation(started.value.operationId);
         });
     }
@@ -1417,6 +1478,10 @@ export class MemoryGovernanceCoordinator {
                         scopeKey: partitionScopeKey(pending.partition),
                         effect: claim.effect,
                         occurredAt: timestamp,
+                        ...(pending.actionIdentity ? {
+                            actionIdentity: pending.actionIdentity,
+                            actionFingerprint: pending.actionFingerprint,
+                        } : {}),
                     };
                     if (draft.changeEvents.some((candidate) => candidate.id === event.id)) {
                         throw new CoordinatorError("forget_event_collision");
@@ -1552,6 +1617,7 @@ export class MemoryGovernanceCoordinator {
         eventId: string,
         snapshotId: string,
         occurredAt: string,
+        action?: MemoryGovernanceActionIdentity,
     ): MemoryChangeEvent {
         const expiresAt = new Date(Date.parse(occurredAt) + UNDO_RETENTION_MS).toISOString();
         invalidatePriorUndoSnapshots(draft, claim.id);
@@ -1562,6 +1628,7 @@ export class MemoryGovernanceCoordinator {
             scopeKey: partitionScopeKey(claim.partition),
             effect: claim.effect,
             occurredAt,
+            ...(action ? { ...action } : {}),
             undoSnapshotId: snapshotId,
         };
         const snapshot: MemoryUndoSnapshot = {
@@ -1886,6 +1953,15 @@ export class MemoryGovernanceCoordinator {
         );
     }
 
+    private memoryActionCommitGuard(
+        isCurrent: (() => boolean) | undefined,
+    ): MemoryGovernanceCommitGuard | undefined {
+        if (!isCurrent) return undefined;
+        return () => {
+            if (!isCurrent()) throw new CoordinatorError("action_request_not_current");
+        };
+    }
+
     private serialize<T>(operation: () => Promise<T>): Promise<T> {
         const result = this.mutationTail.then(operation, operation);
         this.mutationTail = result.then(() => undefined, () => undefined);
@@ -1896,6 +1972,32 @@ export class MemoryGovernanceCoordinator {
         const now = this.now();
         if (!Number.isFinite(now.getTime())) throw new CoordinatorError("invalid_clock");
         return now.toISOString();
+    }
+
+    private replayExplicitAction(
+        draft: DeviceMemoryGovernanceStateV1,
+        identity: MemoryGovernanceActionIdentity | undefined,
+    ): { value: MemoryGovernanceActionReceipt; superseded: boolean } | undefined {
+        if (!identity) return undefined;
+        const event = draft.changeEvents.find((candidate) => (
+            candidate.actionIdentity === identity.actionIdentity
+        ));
+        if (!event) return undefined;
+        if (event.actionFingerprint !== identity.actionFingerprint) {
+            throw new CoordinatorError("explicit_action_conflict");
+        }
+        const claim = this.requireClaimInScope(draft, event.claimId);
+        const latest = draft.changeEvents
+            .filter((candidate) => candidate.claimId === claim.id)
+            .at(-1);
+        const superseded = latest?.id !== event.id;
+        return {
+            value: {
+                ...receipt(claim.id, event),
+                ...(superseded ? { superseded: true } : {}),
+            },
+            superseded,
+        };
     }
 }
 
@@ -2102,6 +2204,7 @@ function cloneProvenance(
             };
         }
         if (entry.kind === "explicit_setting") return { ...entry };
+        if (entry.kind === "host_user_request") return { ...entry };
         return {
             ...entry,
             representativeSourceRefs: entry.representativeSourceRefs.map(cloneSourceRef),

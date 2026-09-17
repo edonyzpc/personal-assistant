@@ -3,6 +3,7 @@ import type { ChatMessage, PaAgentMessage } from "../src/ai-services/chat-types"
 import { PaAgentContextCompactor } from "../src/ai-services/context/PaAgentContextCompactor";
 import { PaAgentContextManager } from "../src/ai-services/context/PaAgentContextManager";
 import { PaAgentContextProjector } from "../src/ai-services/context/PaAgentContextProjector";
+import { PaAgentContextSummarizer } from "../src/ai-services/context/PaAgentContextSummarizer";
 import {
     fitFullHistory,
     formatHistoryMessages,
@@ -14,6 +15,11 @@ import type {
     PaAgentHistorySummary,
     PaAgentToolSummarySource,
 } from "../src/ai-services/context/PaAgentContextSummaryTypes";
+import {
+    isCurrentHistorySummary,
+    isCurrentToolSummary,
+} from "../src/ai-services/context/PaAgentContextSummaryTypes";
+import { buildMemoryManagementEvidence } from "../src/ai-services/memory-management-evidence";
 import type { RepeatedSourceContent } from "../src/ai-services/context/PaAgentContextTextEncoding";
 
 function history(turns = 12, bodyChars = 250): ChatMessage[] {
@@ -24,7 +30,12 @@ function history(turns = 12, bodyChars = 250): ChatMessage[] {
 }
 
 function summaryFor(messages: ChatMessage[], covered: number, text = JSON.stringify({ decisions: ["Keep SQLite."] })): PaAgentHistorySummary {
-    return { text, sourceMessages: messages.slice(0, covered).map((message) => ({ ...message })) };
+    return {
+        text,
+        sourceMessages: messages.slice(0, covered).map((message) => (
+            JSON.parse(JSON.stringify(message)) as ChatMessage
+        )),
+    };
 }
 
 function result(id: string, body = "raw evidence ".repeat(1000)): PaAgentToolSummarySource {
@@ -248,6 +259,42 @@ describe("semantic prefix projection", () => {
         );
     });
 
+    it('invalidates a cached history summary when host observation evidence changes without text changes', () => {
+        const messages = history(12, 400);
+        const evidence = {
+            schemaVersion: 1,
+            observationId: 'history-observation',
+            tool: 'read_note',
+            fingerprint: { algorithm: 'sha1', canonicalizationVersion: 1 },
+            scope: { allowedPaths: ['notes/evidence.md'], excludedPaths: [] },
+            coverage: { complete: true, truncated: false, endOfPart: true },
+            items: [{ path: 'notes/evidence.md', contentHash: 'a'.repeat(40) }],
+        };
+        messages[1].memoryMetadata = {
+            hasMemoryContent: false,
+            allowedMemorySourcePaths: [],
+            vaultObservationEvidence: [evidence],
+            vaultObservationContractVersion: 1,
+        } as never;
+        const plan = planHistoryContext(messages, 2200);
+        const semantic = summaryFor(messages, plan.coveredMessages, JSON.stringify({
+            decisions: ['STALE_EVIDENCE_SUMMARY_SENTINEL'],
+        }));
+        expect(isCurrentHistorySummary(semantic, messages)).toBe(true);
+
+        evidence.items[0].contentHash = 'b'.repeat(40);
+        expect(isCurrentHistorySummary(semantic, messages)).toBe(false);
+        const projected = projector.projectUserInput({
+            prompt: 'continue',
+            chatHistory: messages,
+            maxHistoryChars: 2200,
+            maxHistorySummaryChars: 0,
+            summaries: { history: semantic },
+        });
+        expect(projected.history.semanticSummaryChars).toBe(0);
+        expect(projected.history.text).not.toContain('STALE_EVIDENCE_SUMMARY_SENTINEL');
+    });
+
     it.each(["edit", "delete"])("rejects a cached summary after prefix %s", (change) => {
         const messages = history(12, 400);
         const semantic = summaryFor(messages, 12, JSON.stringify({ decisions: ["stale unique decision"] }));
@@ -376,6 +423,70 @@ describe("semantic tool projection", () => {
         expect(findResult(repeated.transcript, tool.id).content.metadata?.originalPromptTextLength).toBe(tool.content.promptText.length);
     });
 
+    it("invalidates only the tool summary whose observation evidence changed", () => {
+        const stale = result('stale-vault', 'STALE_VAULT_BODY '.repeat(100));
+        stale.toolName = 'read_note';
+        const current = result('current-vault', 'CURRENT_VAULT_BODY '.repeat(100));
+        current.toolName = 'read_note';
+        const transcript = transcriptFor(stale, current);
+        const staleEvidence = {
+            schemaVersion: 1,
+            observationId: 'stale-observation',
+            tool: 'read_note',
+            fingerprint: { algorithm: 'sha1', canonicalizationVersion: 1 },
+            scope: { allowedPaths: ['notes/stale.md'], excludedPaths: [] },
+            coverage: { complete: true, truncated: false, endOfPart: true },
+            items: [{
+                kind: 'read-result',
+                outputDigest: '1'.repeat(40),
+                path: 'notes/stale.md',
+                contentHash: 'a'.repeat(40),
+                part: 'body',
+                range: { startLine: 1, endLine: 1, startOffset: 0, endOffset: 20, partialLine: false },
+            }],
+        };
+        const currentEvidence = {
+            schemaVersion: 1,
+            observationId: 'current-observation',
+            tool: 'read_note',
+            fingerprint: { algorithm: 'sha1', canonicalizationVersion: 1 },
+            scope: { allowedPaths: ['notes/current.md'], excludedPaths: [] },
+            coverage: { complete: true, truncated: false, endOfPart: true },
+            items: [{
+                kind: 'read-result',
+                outputDigest: '2'.repeat(40),
+                path: 'notes/current.md',
+                contentHash: 'c'.repeat(40),
+                part: 'body',
+                range: { startLine: 1, endLine: 1, startOffset: 0, endOffset: 20, partialLine: false },
+            }],
+        };
+        stale.content.metadata = { vaultObservationEvidence: staleEvidence, vaultObservationContractVersion: 1 };
+        current.content.metadata = { vaultObservationEvidence: currentEvidence, vaultObservationContractVersion: 1 };
+        const summaries = new Map([
+            [stale.id, { text: 'STALE_TOOL_SUMMARY_SENTINEL', source: JSON.parse(JSON.stringify(stale)) as typeof stale }],
+            [current.id, { text: 'CURRENT_TOOL_SUMMARY_SENTINEL', source: JSON.parse(JSON.stringify(current)) as typeof current }],
+        ]);
+
+        staleEvidence.items[0].contentHash = 'b'.repeat(40);
+        expect(isCurrentToolSummary(summaries.get(stale.id)!, stale)).toBe(false);
+        expect(isCurrentToolSummary(summaries.get(current.id)!, current)).toBe(true);
+
+        const projected = compactor.microCompact(transcript, {
+            maxObservationChars: 500,
+            protectedRecentTurns: 0,
+            summaries: { tools: summaries },
+        });
+        expect(findResult(projected.transcript, stale.id).content.metadata?.contextSemanticSummaryUsed)
+            .not.toBe(true);
+        expect(findResult(projected.transcript, stale.id).content.promptText)
+            .not.toContain('STALE_TOOL_SUMMARY_SENTINEL');
+        expect(findResult(projected.transcript, current.id).content.metadata?.contextSemanticSummaryUsed)
+            .toBe(true);
+        expect(findResult(projected.transcript, current.id).content.promptText)
+            .toContain('CURRENT_TOOL_SUMMARY_SENTINEL');
+    });
+
     it("drops an indivisible semantic block as a whole if hard pressure cannot fit it", () => {
         const tool = result("latest");
         const transcript = transcriptFor(tool);
@@ -430,5 +541,138 @@ describe("semantic Manager integration", () => {
         expect(projected.outcome.admission).toBe("local_overflow");
         expect(projected.input).toContain(formatSemanticHistorySummary(semantic.text));
         expect(projected.input).toContain(`User input:\n${"x".repeat(1000)}`);
+    });
+});
+
+describe("PaAgentContextSummarizer physical source bindings", () => {
+    it("binds only current parts plus carried summary dependencies, never unvisited future messages", async () => {
+        const messages: ChatMessage[] = [
+            { role: "user", content: `A_DEPENDENCY ${"a".repeat(5_000)}` },
+            { role: "assistant", content: "A acknowledged." },
+            { role: "user", content: `B_FUTURE ${"b".repeat(5_000)}` },
+            { role: "assistant", content: "B acknowledged." },
+        ];
+        const payloads: Array<{
+            bindingSources?: ReadonlyArray<{ index: number; role: "user" | "assistant" | "tool"; content: string }>;
+            bindingSourceMessages?: readonly ChatMessage[];
+            messages: Array<{ role: string; content: string }>;
+        }> = [];
+        const summarizer = new PaAgentContextSummarizer();
+        const summary = await summarizer.prepareHistory({
+            history: messages,
+            historyBudgetChars: 5_000,
+            invoke: async payload => {
+                payloads.push(payload);
+                return JSON.stringify({
+                    goals: [],
+                    constraints: [],
+                    decisions: [],
+                    completed: [],
+                    open_questions: [],
+                    facts: [{ text: "Keep the first source dependency.", sourceMessages: [1] }],
+                });
+            },
+        });
+
+        expect(summary).toBeDefined();
+        expect(payloads.length).toBeGreaterThan(1);
+        const hostProcessedIndexes = new Set<number>();
+        for (const payload of payloads) {
+            const request = JSON.parse(payload.messages[1]!.content) as {
+                sourceMessages: Array<{ index: number }>;
+                previousSummary: { facts?: Array<{ sourceMessages?: number[] }> } | null;
+            };
+            const expectedIndexes = new Set<number>(hostProcessedIndexes);
+            for (const part of request.sourceMessages) expectedIndexes.add(part.index);
+            const boundIndexes = payload.bindingSources?.map(source => source.index) ?? [];
+            expect([...expectedIndexes].sort((left, right) => left - right)).toEqual(boundIndexes);
+            expect(payload.bindingSourceMessages).toEqual(boundIndexes.map(index => messages[index - 1]!));
+            if (payload === payloads[0]) {
+                expect(boundIndexes).toEqual([1, 2]);
+            }
+            for (const part of request.sourceMessages) hostProcessedIndexes.add(part.index);
+        }
+        expect([...hostProcessedIndexes].sort((left, right) => left - right)).toEqual([1, 2, 3, 4]);
+    });
+
+    it("keeps cached prefix host dependencies when extending the same summarizer", async () => {
+        const prefix: ChatMessage[] = [
+            { role: "user", content: `CACHED_A_DEPENDENCY ${"a".repeat(20_000)}` },
+            { role: "assistant", content: "A acknowledged." },
+        ];
+        const messages: ChatMessage[] = [
+            ...prefix,
+            { role: "user", content: `CACHED_B_DEPENDENCY ${"b".repeat(20_000)}` },
+            { role: "assistant", content: "B acknowledged." },
+        ];
+        const payloads: Array<{
+            bindingSources?: ReadonlyArray<{ index: number; content: string }>;
+            bindingSourceMessages?: readonly ChatMessage[];
+        }> = [];
+        const summarizer = new PaAgentContextSummarizer();
+        const respond = (index: number) => JSON.stringify({
+            goals: [],
+            constraints: [],
+            decisions: [],
+            completed: [],
+            open_questions: [],
+            facts: [{ text: `Keep source ${index}.`, sourceMessages: [index] }],
+        });
+        await summarizer.prepareHistory({
+            history: prefix,
+            historyBudgetChars: 5_000,
+            invoke: async payload => {
+                payloads.push(payload);
+                return respond(1);
+            },
+        });
+        const payloadCountAfterPrefix = payloads.length;
+        expect(payloadCountAfterPrefix).toBeGreaterThan(0);
+        const summary = await summarizer.prepareHistory({
+            history: messages,
+            historyBudgetChars: 5_000,
+            invoke: async payload => {
+                payloads.push(payload);
+                return respond(3);
+            },
+        });
+
+        expect(summary).toBeDefined();
+        expect(payloads.length).toBeGreaterThan(payloadCountAfterPrefix);
+        const extension = payloads.at(-1)!;
+        expect(extension.bindingSources?.map(source => source.index)).toEqual([1, 2, 3, 4]);
+        expect(extension.bindingSourceMessages).toEqual(messages);
+    });
+});
+
+describe("Memory management summary evidence identity", () => {
+    it("keeps a summary current only while its management evidence identity is unchanged", () => {
+        const content = { promptText: "Memory status is available.", includeInNextPrompt: true };
+        const evidence = buildMemoryManagementEvidence({
+            tool: "get_memory_status",
+            operation: "status",
+            stateFingerprint: "state-summary",
+            content,
+        });
+        const source = {
+            id: "management", role: "toolResult" as const, timestamp: 1,
+            toolCallId: "call-management", toolName: "get_memory_status", isError: false,
+            content: { ...content, metadata: { memoryManagementEvidence: evidence } },
+        };
+        expect(isCurrentToolSummary({ text: "summary", source }, source)).toBe(true);
+
+        const changed = buildMemoryManagementEvidence({
+            tool: "get_memory_status",
+            operation: "status",
+            stateFingerprint: "state-summary-next",
+            content,
+        });
+        expect(isCurrentToolSummary({
+            text: "summary",
+            source,
+        }, {
+            ...source,
+            content: { ...content, metadata: { memoryManagementEvidence: changed } },
+        })).toBe(false);
     });
 });

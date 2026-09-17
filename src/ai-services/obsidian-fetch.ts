@@ -11,6 +11,7 @@ export type ProviderRequestCancellationCapability = 'signal-propagating' | 'loca
  */
 export class ProviderRequestScope {
     private readonly detachedRequests = new Set<Promise<void>>();
+    private detachedEpoch = 0;
 
     async waitForDetachedRequests(signal?: AbortSignal | null): Promise<void> {
         throwIfAborted(signal);
@@ -27,10 +28,25 @@ export class ProviderRequestScope {
         task: () => Promise<T>,
         signal?: AbortSignal | null,
         beforeDispatch?: () => void,
+        prepareProviderRequest?: (signal?: AbortSignal | null) => void | Promise<void>,
     ): Promise<T> {
         while (true) {
             await this.waitForDetachedRequests(signal);
             throwIfAborted(signal);
+            const detachedEpoch = this.detachedEpoch;
+            if (prepareProviderRequest) {
+                await withAbort(Promise.resolve(prepareProviderRequest(signal)), signal);
+                throwIfAborted(signal);
+                // Cancellation and detachment listeners are promise callbacks.
+                // Yield once so a change observed during preparation cannot win
+                // a race against the final synchronous admission segment.
+                await Promise.resolve();
+                await Promise.resolve();
+                if (this.detachedEpoch !== detachedEpoch) continue;
+            }
+            await this.waitForDetachedRequests(signal);
+            throwIfAborted(signal);
+            if (prepareProviderRequest && this.detachedEpoch !== detachedEpoch) continue;
             // Keep the final barrier check, admission hook, and raw request
             // construction in one synchronous segment. A detached request
             // observed after the prior snapshot therefore cannot be skipped.
@@ -46,6 +62,7 @@ export class ProviderRequestScope {
 
     private trackDetachedRequest(request: Promise<unknown>): void {
         const barrier = request.then(() => undefined, () => undefined);
+        this.detachedEpoch += 1;
         this.detachedRequests.add(barrier);
         void barrier.then(() => {
             this.detachedRequests.delete(barrier);
@@ -60,6 +77,8 @@ export interface ObsidianFetchControl {
     providerRequestScope?: ProviderRequestScope;
     /** Synchronous admission check immediately before each physical HTTP dispatch. */
     onProviderRequestStart?: () => void;
+    /** Validate the already-serialized request immediately before each physical dispatch. */
+    prepareProviderRequest?: (signal?: AbortSignal | null) => void | Promise<void>;
     onProviderRequestDiagnostic?: (evidence: ProviderRequestDiagnostic) => void;
 }
 
@@ -272,8 +291,16 @@ export const obsidianFetch = async (
             dispatch,
             init.signal,
             control.onProviderRequestStart,
+            control.prepareProviderRequest,
         )
         : await (async () => {
+            throwIfAborted(init.signal);
+            if (control.prepareProviderRequest) {
+                await withAbort(
+                    Promise.resolve(control.prepareProviderRequest(init.signal)),
+                    init.signal,
+                );
+            }
             throwIfAborted(init.signal);
             control.onProviderRequestStart?.();
             throwIfAborted(init.signal);

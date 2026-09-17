@@ -33,6 +33,8 @@ import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 import { getErrorType } from "./agent-utils";
 import type { ChatAgentSource } from "./chat-types";
 import { createSourceDedupKey } from "./source-store";
+import { parseMemoryManagementEvidence } from "./memory-management-evidence";
+import { parseVaultObservationEvidence, stableJson } from "./vault-observation-evidence";
 
 export interface ChatToolCapabilityAdapterOptions {
     providerId: string;
@@ -73,12 +75,52 @@ export function chatToolResultToAgentCapabilityResult(
         && record.statusOnly === true && record.redacted === true
         && record.citationEligible === false && record.sourceBoundary === "read-only-tool"
     ).map(record => ({ ...record, capabilityName: definition.name, providerId }));
+    const evidence = result.vaultObservationContractVersion === 1
+        ? parseVaultObservationEvidence(result.vaultObservationEvidence)
+        : { ok: false as const, reason: "missing evidence" };
+    const managementEvidence = result.memoryManagementContractVersion === 1
+        ? parseMemoryManagementEvidence(result.memoryManagementEvidence)
+        : { ok: false as const, reason: "missing evidence" };
+    if (result.ok && result.vaultObservationContractVersion === 1
+        && (!evidence.ok || evidence.evidence.tool !== definition.name)) {
+        return {
+            status: "unavailable",
+            observation: null,
+            inputSummary: result.inputSummary,
+            sources: [],
+            sourceRecords: [],
+            error: "Vault observation evidence is missing or invalid.",
+            unavailableReason: "Vault observation evidence is missing or invalid.",
+            userSafeMessage: "Vault observation evidence is missing or invalid.",
+        };
+    }
+    if (result.ok && result.memoryManagementContractVersion === 1
+        && (!managementEvidence.ok || managementEvidence.evidence.tool !== definition.name)) {
+        return {
+            status: "unavailable",
+            observation: null,
+            inputSummary: result.inputSummary,
+            sources: [],
+            sourceRecords: [],
+            error: "Memory management evidence is missing or invalid.",
+            unavailableReason: "Memory management evidence is missing or invalid.",
+            userSafeMessage: "Memory management evidence is missing or invalid.",
+        };
+    }
     return {
         status: result.ok ? "ok" : "unavailable",
         observation: result.content,
         inputSummary: result.inputSummary,
         sources: result.sources,
         sourceRecords: [...visibleRecords, ...dependencyRecords],
+        ...(evidence.ok && evidence.evidence.tool === definition.name ? {
+            vaultObservationEvidence: evidence.evidence,
+            vaultObservationContractVersion: 1 as const,
+        } : {}),
+        ...(managementEvidence.ok && managementEvidence.evidence.tool === definition.name ? {
+            memoryManagementEvidence: managementEvidence.evidence,
+            memoryManagementContractVersion: 1 as const,
+        } : {}),
         ...(result.error ? {
             error: result.error,
             unavailableReason: result.error,
@@ -299,11 +341,20 @@ export function createChatToolCapability<Input, Output>(
                 outerToolDeadlineAt: context.outerToolDeadlineAt,
                 onBeforeVssSearch: context.onBeforeVssSearch,
                 onToolRunning: context.onToolRunning,
+                currentMemoryUsage: context.currentMemoryUsage,
+                memoryActionRequest: context.memoryActionRequest,
             };
             try {
                 const result = await definition.execute(validatedInput, chatContext);
                 throwIfAborted(context.signal);
-                return enforceToolOutputBudget(registryDef, result);
+                const outputIdentity = result.vaultObservationContractVersion === 1
+                    ? stableJson(result.content)
+                    : undefined;
+                const budgeted = enforceToolOutputBudget(registryDef, result);
+                if (outputIdentity !== undefined && stableJson(budgeted.content) !== outputIdentity) {
+                    throw new Error(`${definition.name} output changed after vault observation evidence was bound.`);
+                }
+                return budgeted;
             } catch (error) {
                 if (isAbortError(error, context.signal)) {
                     throw context.signal?.aborted ? createAbortError() : error;

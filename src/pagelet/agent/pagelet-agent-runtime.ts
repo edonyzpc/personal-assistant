@@ -8,6 +8,9 @@ import {
     createSearchVaultMetadataTool,
     createSearchVaultSnippetsTool,
 } from "../../ai-services/chat-tools";
+import {
+    createQueryNotesTool,
+} from "../../ai-services/chat-tool-factories";
 import { BUILTIN_WEB_SEARCH_TOOL_NAME } from "../../ai-services/builtin-web-search-provider";
 import {
     createPaAgentCapabilityToolExecutor,
@@ -21,6 +24,10 @@ import { createAgentControlSnapshot } from "../../ai-services/pa-agent-control-p
 import { PolicyEngine } from "../../ai-services/policy-engine";
 import type { RetrievalDiagnosticEventInput } from "../../ai-services/retrieval-diagnostics";
 import { createProviderRequestScope } from "../../ai-services/obsidian-fetch";
+import {
+    prepareVaultObservationProjection,
+    type VaultObservationPhysicalBinding,
+} from "../../ai-services/vault-observation-evidence";
 import { resolveB125RetrievalOptimizationFlags } from "../../retrieval-optimization-platform-policy";
 import type { PaAgentMessage, SourceRecord } from "../../ai-services/chat-types";
 import {
@@ -32,12 +39,14 @@ import {
 import {
     createAnchorBoundCurrentNoteTool,
     createAnchorBoundInspectNoteTool,
+    createAnchorBoundReadNoteTool,
 } from "./anchor-note-tool";
 import { PageletLeadDrivenPolicy } from "./lead-driven-policy";
 import {
     classifyPageletInsightSourceSupport,
     evaluatePageletAgentQuality,
     hasPageletContentEvidenceTool,
+    pageletObservationBodyEvidencePaths,
     resolvePageletInsightSourcePaths,
     type PageletInsightSourceSupportFailure,
 } from "./pagelet-agent-quality-gate";
@@ -71,6 +80,8 @@ export const PAGELET_AGENT_READ_ONLY_TOOL_ALLOWLIST: ReadonlySet<string> = new S
     "get_current_note_context",
     "search_vault_snippets",
     "inspect_obsidian_note",
+    "read_note",
+    "query_notes",
     "search_vault_metadata",
     "list_recent_notes",
     "read_note_outline",
@@ -85,6 +96,8 @@ const PAGELET_VAULT_EVIDENCE_TOOL_NAMES = new Set([
     "get_current_note_context",
     "search_vault_snippets",
     "inspect_obsidian_note",
+    "read_note",
+    "query_notes",
     "read_note_outline",
     "search_vault_metadata",
     "list_recent_notes",
@@ -96,6 +109,86 @@ export function createPageletAgentRuntime(
     return {
         run: (request) => runPageletAgent(dependencies, request),
     };
+}
+
+function bindVaultObservationProjection(
+    transcript: readonly PaAgentMessage[],
+    dependencies: PageletAgentRuntimeDependencies,
+): VaultObservationPhysicalBinding {
+    const fixedTranscriptJson = JSON.stringify(transcript);
+    let current: VaultObservationPhysicalBinding | undefined;
+    return {
+        prepare: async signal => {
+            const projection = await preparePageletVaultProjection(transcript, dependencies, signal ?? undefined);
+            if (JSON.stringify(projection.transcript) !== fixedTranscriptJson) {
+                throw new Error("Pagelet vault observation projection changed before dispatch");
+            }
+            await projection.binding.prepare(signal ?? undefined);
+            current = projection.binding;
+        },
+        assertCurrent() {
+            if (!current) throw new Error("Pagelet vault observation projection is not bound");
+            current.assertCurrent();
+        },
+    };
+}
+
+function preparePageletVaultProjection(
+    transcript: readonly PaAgentMessage[],
+    dependencies: PageletAgentRuntimeDependencies,
+    signal?: AbortSignal,
+) {
+    return prepareVaultObservationProjection({
+        transcript,
+        history: [],
+        revalidate: (evidence, options) => {
+            const revalidate = dependencies.host.revalidateVaultObservation;
+            if (!revalidate) throw new Error("Vault observation revalidation is unavailable.");
+            return revalidate.call(dependencies.host, evidence, {
+                ...options,
+                isPathAllowed: options?.isPathAllowed ?? dependencies.isPathAllowed,
+            });
+        },
+        getEpoch: dependencies.host.getMemoryEvidenceEpoch?.bind(dependencies.host),
+        isPathAllowed: dependencies.isPathAllowed,
+        signal,
+    });
+}
+
+function recordPromptBodyEvidence(
+    transcript: readonly PaAgentMessage[],
+    promptSourceTools: Map<string, Set<string>>,
+): void {
+    promptSourceTools.clear();
+    for (const message of transcript) {
+        if (
+            message.role !== "toolResult"
+            || message.isError
+            || !message.content.includeInNextPrompt
+            || !message.content.promptText
+        ) continue;
+        const paths = pageletObservationBodyEvidencePaths(
+            message.toolName,
+            message.content.promptText,
+            message.content.sourceRecords ?? [],
+        );
+        for (const path of paths) addSourceTool(promptSourceTools, path, message.toolName);
+    }
+}
+
+function memorySourcePathsFromObservation(promptText: string): string[] {
+    try {
+        const envelope = JSON.parse(promptText) as {
+            status?: unknown;
+            observation?: { sources?: ReadonlyArray<{ path?: unknown }> };
+        };
+        if (envelope.status !== "ok" || !Array.isArray(envelope.observation?.sources)) return [];
+        return envelope.observation.sources
+            .map(source => source.path)
+            .filter((path): path is string => typeof path === "string" && path.length > 0);
+    } catch {
+        return [];
+    }
 }
 
 async function runPageletAgent(
@@ -136,6 +229,7 @@ async function runPageletAgent(
     const sourceSnapshots = new Map<string, PageletAgentSourceSnapshot>();
     const sourceMaterials = new Map<string, PageletAgentSourceMaterial>();
     const sourceTools = new Map<string, Set<string>>();
+    const promptSourceTools = new Map<string, Set<string>>();
     const toolProvenance: PageletAgentToolProvenance[] = [];
     const webObservations: PageletAgentWebObservation[] = [];
     const recovery = new PageletRecoveryCoordinator({
@@ -176,14 +270,14 @@ async function runPageletAgent(
             request,
             input,
             sourceSnapshots,
-            sourceTools,
+            sourceTools: promptSourceTools,
         }),
         validateStaged: (input, signal, _control) => validateStagedPageletInsight({
             dependencies,
             request,
             input,
             sourceSnapshots,
-            sourceTools,
+            sourceTools: promptSourceTools,
             toolProvenance,
             signal,
         }),
@@ -194,6 +288,28 @@ async function runPageletAgent(
     if (!schemaResult.ok) {
         throw new Error("Pagelet read-only tool schema export failed.");
     }
+    const leadDrivenPolicy = new PageletLeadDrivenPolicy({
+        anchorPath: request.anchor.path,
+        anchorContent: request.anchor.content,
+        maxTurns: PAGELET_DEEP_DISCOVER_MAX_TURNS,
+        maxToolCalls: PAGELET_DEEP_DISCOVER_MAX_TOOL_CALLS,
+        maxWallClockMs: PAGELET_DEEP_DISCOVER_MAX_WALL_CLOCK_MS,
+        now,
+        startedAt,
+        finalizationReserveMs: PAGELET_DEEP_DISCOVER_FINALIZATION_RESERVE_MS,
+        hasStagedInsight: () => recovery.hasStagedInsight(),
+        hasPendingFirstInsight: () => recovery.hasPendingFirstInsight(),
+        bindPendingFirstInsight: (candidate) => recovery.bindPendingFirstInsight(candidate),
+        clearPendingFirstInsight: () => recovery.clearPendingFirstInsight(),
+        canStageInsight: recoveryEnabled,
+        validateTerminalSourceSupport: (body) => validateTerminalSourceSupport({
+            body,
+            request,
+            sourceSnapshots,
+            sourceMaterials,
+            sourceTools: promptSourceTools,
+        }),
+    });
     const model = dependencies.createModel({
         registry,
         allowedToolNames,
@@ -203,6 +319,14 @@ async function runPageletAgent(
         triggerReason: request.triggerReason,
         signal: request.signal,
         providerRequestScope,
+        bindVaultObservationProjection: transcript => bindVaultObservationProjection(
+            transcript,
+            dependencies,
+        ),
+        recordPromptProjection: (transcript, turnIndex) => {
+            recordPromptBodyEvidence(transcript, promptSourceTools);
+            leadDrivenPolicy.recordPromptContentEvidence(transcript, turnIndex);
+        },
     });
 
     const memoryEvidenceRegistry = new MemoryEvidenceRegistry(async (result, signal) => {
@@ -230,28 +354,6 @@ async function runPageletAgent(
         toolProvenance,
         webObservations,
     });
-    const leadDrivenPolicy = new PageletLeadDrivenPolicy({
-        anchorPath: request.anchor.path,
-        anchorContent: request.anchor.content,
-        maxTurns: PAGELET_DEEP_DISCOVER_MAX_TURNS,
-        maxToolCalls: PAGELET_DEEP_DISCOVER_MAX_TOOL_CALLS,
-        maxWallClockMs: PAGELET_DEEP_DISCOVER_MAX_WALL_CLOCK_MS,
-        now,
-        startedAt,
-        finalizationReserveMs: PAGELET_DEEP_DISCOVER_FINALIZATION_RESERVE_MS,
-        hasStagedInsight: () => recovery.hasStagedInsight(),
-        hasPendingFirstInsight: () => recovery.hasPendingFirstInsight(),
-        bindPendingFirstInsight: (candidate) => recovery.bindPendingFirstInsight(candidate),
-        clearPendingFirstInsight: () => recovery.clearPendingFirstInsight(),
-        canStageInsight: recoveryEnabled,
-        validateTerminalSourceSupport: (body) => validateTerminalSourceSupport({
-            body,
-            request,
-            sourceSnapshots,
-            sourceMaterials,
-            sourceTools,
-        }),
-    });
     const initialBlockedToolNames = new Set<string>();
     const initialBlockedReasons: Record<string, string> = {};
     if (allowedToolNames.has(BUILTIN_WEB_SEARCH_TOOL_NAME)) {
@@ -278,9 +380,15 @@ async function runPageletAgent(
                     input.signal,
                 );
                 leadDrivenPolicy.reconcileMemoryCurrentness(memoryCurrent);
+                const recoveredTranscript = await recovery.prepareTranscript(memoryCurrent, input.signal);
+                const vaultProjection = await preparePageletVaultProjection(
+                    recoveredTranscript,
+                    dependencies,
+                    input.signal,
+                );
                 return {
                     ...input,
-                    transcript: await recovery.prepareTranscript(memoryCurrent, input.signal),
+                    transcript: vaultProjection.transcript,
                 };
             } finally {
                 input.signal?.removeEventListener("abort", failClosedOnAbort);
@@ -406,6 +514,16 @@ async function runPageletAgent(
                 : loopResult.status === "error" ? "failed" : "completed";
         const recoverySnapshot = recovery.snapshot(finalText);
         const metrics = summarizeMetrics(loopResult, Math.max(0, now() - startedAt));
+        const resultSourceTools = new Map([...promptSourceTools.entries()].map(([path, tools]) => [
+            path,
+            new Set(tools) as ReadonlySet<string>,
+        ]));
+        for (const [path, tools] of sourceTools) {
+            if (!tools.has("search_memory")) continue;
+            const merged = new Set(resultSourceTools.get(path) ?? []);
+            merged.add("search_memory");
+            resultSourceTools.set(path, merged);
+        }
         const insightDrafts = terminalResolution.protocolFailure
             ? recoverySnapshot.drafts.filter((draft) => draft.origin === "staged")
             : recoveryEnabled
@@ -428,10 +546,7 @@ async function runPageletAgent(
             finalText,
             anchor: request.anchor,
             sourceSnapshots: [...sourceSnapshots.values()].sort(compareSources),
-            sourceTools: new Map([...sourceTools.entries()].map(([path, tools]) => [
-                path,
-                new Set(tools) as ReadonlySet<string>,
-            ])),
+            sourceTools: resultSourceTools,
             toolProvenance,
             webObservations: dedupeWebObservations(webObservations),
             metrics,
@@ -738,7 +853,9 @@ function createPageletRegistry(
         createSearchVaultMetadataTool(pathFilter),
         createListRecentNotesTool(pathFilter),
         createReadNoteOutlineTool(pathFilter),
+        createQueryNotesTool(pathFilter),
         createAnchorBoundInspectNoteTool(request.anchor, dependencies.isPathAllowed),
+        createAnchorBoundReadNoteTool(request.anchor, dependencies.isPathAllowed),
         createSearchVaultSnippetsTool(pathFilter),
     ], { providerId: "pagelet-deep-discover-core" }));
     if (recoveryEnabled) registry.register(recovery.getStageCapability());
@@ -776,12 +893,36 @@ function createProvenanceCapturingExecutor(options: {
                 ? await options.recovery.withMemorySearchToolCall(input.toolCall.id, executeBase)
                 : await executeBase();
             const sourceRecords = cloneSourceRecords(result.sourceRecords ?? []);
+            if (input.toolCall.name === "search_memory") {
+                for (const path of memorySourcePathsFromObservation(result.promptText)) {
+                    if (!sourceRecords.some(record => record.path === path)) {
+                        sourceRecords.push({
+                            kind: "memory-reference",
+                            dedupKey: path,
+                            sourceBoundary: "memory",
+                            path,
+                            citationEligible: true,
+                        });
+                    }
+                }
+            }
+            const visibleSourceRecords = sourceRecords.filter(record => (
+                record.path
+                && !record.redacted
+                && !record.statusOnly
+                && (record.kind === "context-used"
+                    || record.kind === "memory-reference")
+            ));
+            const bodyEvidencePaths = result.outcome === "success"
+                ? pageletObservationBodyEvidencePaths(input.toolCall.name, result.promptText, visibleSourceRecords)
+                : [];
             if (result.outcome !== "success") {
                 options.toolProvenance.push({
                     toolName: input.toolCall.name,
                     sourceRecords,
                     isError: true,
                     promptText: result.promptText,
+                    bodyEvidencePaths,
                 });
                 return result;
             }
@@ -795,8 +936,11 @@ function createProvenanceCapturingExecutor(options: {
                 }
             }
 
-            if (PAGELET_VAULT_EVIDENCE_TOOL_NAMES.has(input.toolCall.name)) {
-                const capturedSources = await Promise.all(sourceRecords.map(async (record) => {
+            if (
+                PAGELET_VAULT_EVIDENCE_TOOL_NAMES.has(input.toolCall.name)
+                && input.toolCall.name !== "query_notes"
+            ) {
+                const capturedSources = await Promise.all(visibleSourceRecords.map(async (record) => {
                     const path = record.path;
                     if (!path) return { ok: true as const };
                     if (!isAllowed(options.dependencies.isPathAllowed, path)) {
@@ -806,6 +950,7 @@ function createProvenanceCapturingExecutor(options: {
                         (
                             input.toolCall.name === "get_current_note_context"
                             || input.toolCall.name === "inspect_obsidian_note"
+                            || input.toolCall.name === "read_note"
                         )
                         && path === options.request.anchor.path
                     ) {
@@ -880,12 +1025,13 @@ function createProvenanceCapturingExecutor(options: {
                             tool: input.toolCall.name,
                         },
                     };
-                    options.toolProvenance.push({
-                        toolName: input.toolCall.name,
-                        sourceRecords: [],
-                        isError: true,
-                        promptText: discardedResult.promptText,
-                    });
+                options.toolProvenance.push({
+                    toolName: input.toolCall.name,
+                    sourceRecords: [],
+                    isError: true,
+                    promptText: discardedResult.promptText,
+                    bodyEvidencePaths: [],
+                });
                     return discardedResult;
                 }
                 for (const captured of capturedSources) {
@@ -909,6 +1055,7 @@ function createProvenanceCapturingExecutor(options: {
                             sourceRecords: [],
                             isError: true,
                             promptText: discardedResult.promptText,
+                            bodyEvidencePaths: [],
                         });
                         return discardedResult;
                     }
@@ -921,9 +1068,10 @@ function createProvenanceCapturingExecutor(options: {
             }
             options.toolProvenance.push({
                 toolName: input.toolCall.name,
-                sourceRecords,
+                sourceRecords: visibleSourceRecords,
                 isError: false,
                 promptText: result.promptText,
+                bodyEvidencePaths,
             });
             return result;
         },

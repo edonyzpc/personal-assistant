@@ -173,6 +173,7 @@ export class PaAgentContextProjector {
             text,
             compactedCount: compacted.compactedCount,
             summaryChars: compacted.summary.length,
+            semanticSummaryChars: 0,
             omittedCount: history.length - recentHistory.length - compacted.compactedCount,
             historyCompressed: true,
         }, [

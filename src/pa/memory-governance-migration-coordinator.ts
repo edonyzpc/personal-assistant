@@ -1222,6 +1222,7 @@ function cloneProvenance(
             };
         }
         if (entry.kind === "explicit_setting") return { ...entry };
+        if (entry.kind === "host_user_request") return { ...entry };
         return {
             ...entry,
             representativeSourceRefs: entry.representativeSourceRefs.map(cloneSourceRef),

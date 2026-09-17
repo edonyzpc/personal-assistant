@@ -1,4 +1,16 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import type { AiServiceHost } from '../src/ai-services/AiServiceHost';
+import { chatToolResultToPaAgentToolExecutionResult } from '../src/ai-services/pa-agent-host-tools';
+import { createReadNoteTool } from '../src/ai-services/chat-tool-factories';
+import type { PaAgentMessage } from '../src/ai-services/chat-types';
+import { CapabilityRegistry } from '../src/ai-services/capability-registry';
+import { createProviderRequestScope } from '../src/ai-services/obsidian-fetch';
+import { createAnchorBoundCurrentNoteTool } from '../src/pagelet/agent/anchor-note-tool';
+import { hashPageletContent } from '../src/pagelet/agent/anchor-snapshot';
+import {
+    createPageletNativeModel,
+    type PageletNativePrompt,
+} from '../src/pagelet/agent/pagelet-native-model';
 
 import {
     PageletAgentCache,
@@ -821,6 +833,312 @@ describe('Pagelet agent quality gate', () => {
             })).toBe('anchor-overlap-missing');
         }
     });
+
+    it('does not let a properties-only structure read satisfy non-anchor body evidence', async () => {
+        const englishAnchor: PageletAnchorSnapshot = {
+            ...anchor,
+            content: '# Anchor\nvalidation must precede release',
+            size: 40,
+            contentHash: 'e'.repeat(64),
+        };
+        const englishRelated: PageletAgentSourceMaterial = {
+            ...relatedMaterial,
+            content: '# Related\ndirect release amplifies risk',
+            size: 39,
+            contentHash: 'f'.repeat(64),
+        };
+        const body = [
+            '`notes/anchor.md` records that validation must precede release, while',
+            '`notes/related.md` records that a direct release amplifies risk.',
+        ].join('\n');
+        const run: PageletAgentRunResult = {
+            ...makeRun(body),
+            anchor: englishAnchor,
+            sourceSnapshots: [englishAnchor, englishRelated],
+            sourceTools: new Map([
+                [englishAnchor.path, new Set(['get_current_note_context'])],
+            ]),
+            toolProvenance: [
+                {
+                    toolName: 'get_current_note_context',
+                    sourceRecords: [{ kind: 'context-used', dedupKey: englishAnchor.path, path: englishAnchor.path }],
+                    isError: false,
+                    promptText: englishAnchor.content,
+                },
+                {
+                    toolName: 'inspect_obsidian_note',
+                    sourceRecords: [{ kind: 'context-used', dedupKey: englishRelated.path, path: englishRelated.path }],
+                    isError: false,
+                    promptText: JSON.stringify({ properties: { release: 'direct' } }),
+                    bodyEvidencePaths: [],
+                },
+            ],
+        };
+        const result = await evaluatePageletAgentQuality({
+            run,
+            sourceMaterials: new Map([[englishAnchor.path, englishAnchor], [englishRelated.path, englishRelated]]),
+            readCurrentSourceSnapshot: async (path) => (
+                [englishAnchor, englishRelated].find(source => source.path === path) ?? null
+            ),
+            isPathAllowed: () => true,
+        });
+
+        expect(result).toEqual({ accepted: false, reason: 'unsupported-source' });
+    });
+
+    it('accepts an actually dispatched non-empty body observation but not one hidden by the native budget', async () => {
+        const englishAnchor: PageletAnchorSnapshot = {
+            ...anchor,
+            content: '# Anchor\nvalidation must precede release',
+            size: 40,
+            contentHash: 'e'.repeat(64),
+        };
+        const englishRelated: PageletAgentSourceMaterial = {
+            ...relatedMaterial,
+            content: '# Related\ndirect release amplifies risk',
+            size: 39,
+            contentHash: 'f'.repeat(64),
+        };
+        const body = [
+            '`notes/anchor.md` records that validation must precede release, while',
+            '`notes/related.md` records that a direct release amplifies risk.',
+        ].join('\n');
+        const makeVerifiedRun = (hiddenByBudget: boolean): PageletAgentRunResult => ({
+            ...makeRun(body),
+            anchor: englishAnchor,
+            sourceSnapshots: [englishAnchor, englishRelated],
+            sourceTools: new Map([
+                [englishAnchor.path, new Set(['get_current_note_context'])],
+                ...(hiddenByBudget ? [] : [[englishRelated.path, new Set(['read_note'])]] as const),
+            ]),
+            toolProvenance: [
+                {
+                    toolName: 'get_current_note_context',
+                    sourceRecords: [{ kind: 'context-used', dedupKey: englishAnchor.path, path: englishAnchor.path }],
+                    isError: false,
+                    promptText: englishAnchor.content,
+                },
+                {
+                    toolName: 'read_note',
+                    sourceRecords: [{ kind: 'context-used', dedupKey: englishRelated.path, path: englishRelated.path }],
+                    isError: false,
+                    promptText: englishRelated.content,
+                    bodyEvidencePaths: hiddenByBudget ? [] : [englishRelated.path],
+                },
+            ],
+        });
+
+        const evaluate = (hiddenByBudget: boolean) => evaluatePageletAgentQuality({
+            run: makeVerifiedRun(hiddenByBudget),
+            sourceMaterials: new Map([[englishAnchor.path, englishAnchor], [englishRelated.path, englishRelated]]),
+            readCurrentSourceSnapshot: async (path) => (
+                [englishAnchor, englishRelated].find(source => source.path === path) ?? null
+            ),
+            isPathAllowed: () => true,
+        });
+
+        await expect(evaluate(false)).resolves.toMatchObject({ accepted: true });
+        await expect(evaluate(true)).resolves.toEqual({ accepted: false, reason: 'unsupported-source' });
+    });
+
+    it('derives body support from a real read factory through native prompt budget and final quality', async () => {
+        const qualityAnchor: PageletAnchorSnapshot = {
+            ...anchor,
+            content: '# Anchor\nvalidation must precede release',
+            size: 40,
+            contentHash: 'e'.repeat(64),
+        };
+        const qualityAnchorMaterial: PageletAgentSourceMaterial = { ...qualityAnchor };
+        const relatedContent = [
+            '# Related',
+            'direct release amplifies risk',
+            ' unrelated filler '.repeat(600),
+        ].join('\n');
+        const relatedFile = {
+            path: relatedMaterial.path,
+            name: 'related.md',
+            basename: 'related',
+            extension: 'md',
+            stat: { ctime: 1, mtime: relatedMaterial.mtime, size: relatedContent.length },
+        };
+        const host = {
+            app: {
+                vault: {
+                    getAbstractFileByPath: (path: string) => path === relatedFile.path ? relatedFile : null,
+                    cachedRead: async () => relatedContent,
+                },
+            },
+        } as unknown as AiServiceHost;
+        const readTool = createReadNoteTool();
+        const anchorTool = createAnchorBoundCurrentNoteTool(qualityAnchor);
+        const makeMessage = async (
+            id: string,
+            toolName: 'get_current_note_context' | 'read_note',
+            result: Awaited<ReturnType<typeof anchorTool.execute>> | Awaited<ReturnType<typeof readTool.execute>>,
+        ): Promise<Extract<PaAgentMessage, { role: 'toolResult' }>> => {
+            const execution = chatToolResultToPaAgentToolExecutionResult(
+                { type: 'toolCall', id, name: toolName, input: {}, index: 0 },
+                result,
+            );
+            if (execution.outcome !== 'success') throw new Error(execution.promptText);
+            return {
+                role: 'toolResult',
+                id,
+                toolCallId: id,
+                toolName,
+                isError: false,
+                timestamp: 1,
+                content: {
+                    promptText: execution.promptText,
+                    includeInNextPrompt: true,
+                    sourceRecords: execution.sourceRecords ?? [],
+                    metadata: execution.metadata,
+                },
+            };
+        };
+        const anchorMessage = await makeMessage(
+            'real-anchor',
+            'get_current_note_context',
+            await anchorTool.execute({ mode: 'full' }, { host }),
+        );
+        const readMessage = await makeMessage(
+            'real-related',
+            'read_note',
+            await readTool.execute(
+                { path: relatedFile.path, part: 'body', maxChars: 4_000 },
+                {
+                    host,
+                    taskSourceReadGuard: {
+                        isCurrent: () => true,
+                        isPathAllowed: path => path === relatedFile.path,
+                        getNoteSearchScope: () => ({ allowedPaths: [relatedFile.path], excludedPaths: [] }),
+                    },
+                },
+            ),
+        );
+        const actualPayloads: string[] = [];
+        const boundTranscripts: PaAgentMessage[][] = [];
+        const model = createPageletNativeModel({
+            registry: new CapabilityRegistry(),
+            allowedToolNames: new Set(['get_current_note_context']),
+            providerRequestScope: createProviderRequestScope(),
+            maxObservationChars: 100_000,
+            bindVaultObservationProjection: transcript => {
+                boundTranscripts.push([...transcript]);
+                return { prepare: async () => undefined, assertCurrent: () => undefined };
+            },
+            createPrompt: () => ({ pipe: runnable => runnable }) as PageletNativePrompt,
+            buildPromptInput: (_input, context) => {
+                actualPayloads.push(context.toolObservations);
+                return { input: 'discover', toolObservations: context.toolObservations };
+            },
+            createChatModel: async () => ({
+                stream: async function* (input: unknown) {
+                    yield { content: JSON.stringify(input) };
+                },
+                invoke: async (input: unknown) => ({ content: JSON.stringify(input) }),
+            }),
+        });
+        const runNative = async () => {
+            boundTranscripts.length = 0;
+            actualPayloads.length = 0;
+            for await (const chunk of model.stream({
+                runId: 'quality-native',
+                turnId: 'turn',
+                turnIndex: 1,
+                userInput: 'discover',
+                transcript: [anchorMessage, readMessage],
+            })) {
+                void chunk;
+            }
+        };
+        await runNative();
+        const retainedFull = boundTranscripts[0] ?? [];
+        expect(actualPayloads[0]).toContain('direct release amplifies risk');
+        expect(retainedFull.map(message => message.id)).toEqual(['real-anchor', 'real-related']);
+
+        const relatedSnapshot: PageletAgentSourceMaterial = {
+            path: relatedFile.path,
+            content: relatedContent,
+            mtime: relatedFile.stat.mtime,
+            size: relatedFile.stat.size,
+            contentHash: await hashPageletContent(relatedContent),
+            capturedAt: 101,
+        };
+        const sourceMaterials = new Map([[qualityAnchor.path, qualityAnchorMaterial], [relatedSnapshot.path, relatedSnapshot]]);
+        const body = [
+            '`notes/anchor.md` records that validation must precede release, while',
+            '`notes/related.md` records that a direct release amplifies risk.',
+        ].join('\n');
+        const provenance = retainedFull.flatMap(message => {
+            if (message.role !== 'toolResult') return [];
+            return [{
+                toolName: message.toolName,
+                sourceRecords: message.content.sourceRecords ?? [],
+                isError: false,
+                promptText: message.content.promptText,
+                bodyEvidencePaths: message.id === 'real-anchor' ? [anchor.path] : [relatedSnapshot.path],
+            }];
+        });
+        const evaluateRetained = async (sourceTools: Map<string, Set<string>>) => evaluatePageletAgentQuality({
+            run: {
+                ...makeRun(body),
+                anchor: qualityAnchor,
+                sourceSnapshots: [qualityAnchor, relatedSnapshot],
+                sourceTools,
+                toolProvenance: provenance,
+            },
+            sourceMaterials,
+            readCurrentSourceSnapshot: async path => (
+                path === qualityAnchor.path ? qualityAnchor : path === relatedSnapshot.path ? relatedSnapshot : null
+            ),
+            isPathAllowed: () => true,
+        });
+        await expect(evaluateRetained(new Map([
+            [qualityAnchor.path, new Set(['get_current_note_context'])],
+            [relatedSnapshot.path, new Set(['read_note'])],
+        ]))).resolves.toMatchObject({ accepted: true });
+
+        const anchorPromptLength = anchorMessage.content.promptText.length;
+        const hiddenModel = createPageletNativeModel({
+            registry: new CapabilityRegistry(),
+            allowedToolNames: new Set(['get_current_note_context']),
+            providerRequestScope: createProviderRequestScope(),
+            bindVaultObservationProjection: transcript => {
+                boundTranscripts.push([...transcript]);
+                return { prepare: async () => undefined, assertCurrent: () => undefined };
+            },
+            createPrompt: () => ({ pipe: runnable => runnable }) as PageletNativePrompt,
+            buildPromptInput: (_input, context) => {
+                actualPayloads.push(context.toolObservations);
+                return { input: 'discover', toolObservations: context.toolObservations };
+            },
+            maxObservationChars: Math.ceil(anchorPromptLength / 0.5),
+            createChatModel: async () => ({
+                stream: async function* (input: unknown) {
+                    yield { content: JSON.stringify(input) };
+                },
+                invoke: async (input: unknown) => ({ content: JSON.stringify(input) }),
+            }),
+        });
+        boundTranscripts.length = 0;
+        actualPayloads.length = 0;
+        for await (const chunk of hiddenModel.stream({
+            runId: 'quality-native-hidden',
+            turnId: 'turn',
+            turnIndex: 1,
+            userInput: 'discover',
+            transcript: [anchorMessage, readMessage],
+        })) {
+            void chunk;
+        }
+        expect(boundTranscripts[0]?.map(message => message.id)).toEqual(['real-anchor']);
+        expect(actualPayloads[0]).not.toContain('direct release amplifies risk');
+        await expect(evaluateRetained(new Map([
+            [anchor.path, new Set(['get_current_note_context'])],
+        ]))).resolves.toEqual({ accepted: false, reason: 'unsupported-source' });
+    });
+
 });
 
 describe('Pagelet agent cache and controller', () => {

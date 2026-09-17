@@ -6,6 +6,17 @@ import type { GraphBoundarySnapshotSource } from "../graph/graph-boundary-snapsh
 import type { MemorySearchPort } from "../memory/MemorySearchPort";
 import type { AgentRunCoordinatorPort } from "./agent-run-coordinator";
 import type { AgentCapabilityTier } from "./capability-types";
+import type { MemoryManagementReadPort } from "./memory-management-types";
+import type { MemoryActionPort } from "./memory-action-types";
+import type { InsightReadPort } from "../pa/insight-read-port";
+import type { InsightActionPort } from "../pa/insight-action-port";
+
+export type { MemoryManagementReadPort };
+import type {
+    VaultObservationEvidence,
+    VaultObservationRevalidation,
+    VaultObservationRevalidationOptions,
+} from "./vault-observation-evidence";
 import type {
     RetrievalDiagnosticEventInput,
     RetrievalDiagnosticRecorder,
@@ -102,6 +113,18 @@ export interface AiServiceHost {
     /** Search/read Memory through a narrow port. */
     readonly memorySearch: MemorySearchPort;
 
+    /** Read-only Memory Control Center/governance/history projections; absent means unavailable. */
+    readonly memoryManagement?: MemoryManagementReadPort;
+
+    /** Existing Type-C and Saved Insight read models; no refresh or write capability. */
+    readonly insightRead?: InsightReadPort;
+
+    /** Explicit Saved Insight and Review actions through existing durable stores. */
+    readonly insightActions?: InsightActionPort;
+
+    /** Narrow governed Memory action port; absent disables the fixed action tool. */
+    readonly memoryActions?: MemoryActionPort;
+
     /**
      * Return one invocation-local, epoch-checked graph source. The classifier
      * is Host-owned so excluded Markdown can remain opaque without exposing it
@@ -121,6 +144,12 @@ export interface AiServiceHost {
 
     /** Stable latest Markdown read after the current consumer's full Data Boundary policy. */
     readLatestMemorySource?(path: string, signal?: AbortSignal): Promise<LatestMemorySourceMaterial | null>;
+
+    /** Revalidate a trusted, body-free vault observation without executing a tool. */
+    revalidateVaultObservation?(
+        evidence: VaultObservationEvidence,
+        options?: VaultObservationRevalidationOptions,
+    ): Promise<VaultObservationRevalidation>;
 
     /** Optional capacity-one coordinator shared by Chat and Pagelet Agent runs. */
     readonly agentRunCoordinator?: AgentRunCoordinatorPort;

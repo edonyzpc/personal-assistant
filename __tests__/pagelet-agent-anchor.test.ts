@@ -9,6 +9,7 @@ import {
     createAnchorBoundInspectNoteTool,
 } from '../src/pagelet/agent/anchor-note-tool';
 import type { AiServiceHost } from '../src/ai-services/AiServiceHost';
+import { computeContentHash } from '../src/vss-helpers';
 
 jest.mock('obsidian');
 
@@ -92,7 +93,15 @@ describe('Pagelet frozen anchor', () => {
         expect(omitted.content).toMatchObject({
             path: 'notes/anchor.md',
             fullText: '# Anchor\nfrozen evidence',
-            contentHash: snapshot?.contentHash,
+            coverage: expect.objectContaining({ bodyRead: true }),
+        });
+        expect(omitted.vaultObservationEvidence).toMatchObject({
+            tool: 'inspect_obsidian_note',
+            items: [{
+                path: 'notes/anchor.md',
+                bodyRead: true,
+                bodyHash: await computeContentHash('# Anchor\nfrozen evidence'),
+            }],
         });
         expect(explicit.content).toMatchObject({
             path: 'notes/anchor.md',

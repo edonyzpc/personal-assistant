@@ -195,6 +195,23 @@ function repository(state: DeviceMemoryGovernanceStateV1): InMemoryMemoryGoverna
     return new InMemoryMemoryGovernanceRepository(new InMemoryMemoryGovernanceBackend(state));
 }
 
+function repositoryWithPostDraftBoundary(
+    state: DeviceMemoryGovernanceStateV1,
+    afterDraft: () => void,
+): MemoryGovernanceRepository {
+    const realRepository = repository(state);
+    return {
+        initialize: () => realRepository.initialize(),
+        transact: (operation, assertCurrent) => realRepository.transact(async (draft) => {
+            const result = await operation(draft);
+            afterDraft();
+            return result;
+        }, assertCurrent),
+        subscribe: (listener) => realRepository.subscribe(listener),
+        dispose: () => realRepository.dispose(),
+    };
+}
+
 function ids(prefix = "id"): () => string {
     let index = 0;
     return () => `${prefix}-${++index}`;
@@ -451,6 +468,88 @@ describe("MemoryGovernanceCoordinator", () => {
             sourceFingerprintId: "source-before-correction",
             ruleFingerprint: "rule-before-correction",
         });
+    });
+
+    it("rejects a correction whose source becomes stale between draft construction and repository commit", async () => {
+        const positiveRepository = repository(createState());
+        const positiveCoordinator = new MemoryGovernanceCoordinator({
+            repository: positiveRepository,
+            opaqueVaultKey: "vault-a",
+            now: () => NOW,
+            idFactory: ids("correct-current"),
+        });
+        await expect(positiveCoordinator.correct({
+            claimId: "claim-a",
+            summary: "Current source correction",
+            scopeAllowed: true,
+            dataBoundaryAllowed: true,
+            isCurrent: () => true,
+        })).resolves.toMatchObject({ ok: true });
+
+        const initial = createState();
+        initial.projectionLinks.push({
+            id: "profile-link-a",
+            claimId: "claim-a",
+            target: { kind: "type_a_profile", profileRecordId: "profile-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+            relation: "origin",
+            state: "active",
+            sourceFingerprintId: "source-profile-a",
+            ruleFingerprint: "type-a-v1",
+            createdAt: NOW.toISOString(),
+        });
+        let sourceIsCurrent = true;
+        const repo = repositoryWithPostDraftBoundary(initial, () => {
+            sourceIsCurrent = false;
+        });
+        const coordinator = new MemoryGovernanceCoordinator({
+            repository: repo,
+            opaqueVaultKey: "vault-a",
+            now: () => NOW,
+            idFactory: ids("correct-stale"),
+        });
+        const before = await repo.initialize();
+
+        const result = await coordinator.correct({
+            claimId: "claim-a",
+            summary: "Correction from stale source",
+            scopeAllowed: true,
+            dataBoundaryAllowed: true,
+            isCurrent: () => sourceIsCurrent,
+        });
+
+        const after = await repo.initialize();
+        expect(after.commitSequence).toBe(before.commitSequence);
+        expect(after.claims[0].activeRevisionId).toBe(before.claims[0].activeRevisionId);
+        expect(after.revisions).toEqual(before.revisions);
+        expect(after.pendingOperations).toEqual(before.pendingOperations);
+        expect(result).toMatchObject({ ok: false, reason: "writing_style_source_changed" });
+    });
+
+    it("rejects an explicit Pause whose request expires at the final commit boundary", async () => {
+        let requestIsCurrent = true;
+        const repo = repositoryWithPostDraftBoundary(createState(), () => {
+            requestIsCurrent = false;
+        });
+        const coordinator = new MemoryGovernanceCoordinator({
+            repository: repo,
+            opaqueVaultKey: "vault-a",
+            now: () => NOW,
+            idFactory: ids("pause-stale"),
+        });
+        const before = await repo.initialize();
+
+        await expect(coordinator.pauseUse({
+            claimId: "claim-a",
+            action: {
+                actionIdentity: "pause-request-a",
+                actionFingerprint: "pause-fingerprint-a",
+            },
+            isCurrent: () => requestIsCurrent,
+        })).resolves.toMatchObject({
+            ok: false,
+            reason: "action_request_not_current",
+        });
+        expect(await repo.initialize()).toEqual(before);
     });
 
     it("excludes Pause from the actual governed prompt path and restores it on Resume", async () => {
@@ -881,6 +980,61 @@ describe("MemoryGovernanceCoordinator", () => {
         expect(final.changeEvents.find((entry) => entry.id === secondEventId)?.undoSnapshotId)
             .toBeUndefined();
         expect(final.suppressionMarkers).toEqual([expect.objectContaining({ id: "durable-marker" })]);
+    });
+
+    it("replays the same explicit Undo after an added claim becomes a tombstone", async () => {
+        const state = createState();
+        const link: MemoryProjectionLink = {
+            id: "prompt-link-add",
+            claimId: "claim-a",
+            target: { kind: "prompt_projection", projectionId: "prompt-add" },
+            relation: "origin",
+            state: "active",
+            sourceFingerprintId: "source-add",
+            ruleFingerprint: "rule-add",
+            createdAt: NOW.toISOString(),
+        };
+        state.projectionLinks.push(link);
+        state.changeEvents.push({
+            id: "event-add",
+            claimId: "claim-a",
+            kind: "add",
+            scopeKey: "vault-a",
+            effect: "future_answers",
+            occurredAt: NOW.toISOString(),
+            undoSnapshotId: "snapshot-add",
+        });
+        state.undoSnapshots.push({
+            id: "snapshot-add",
+            claimId: "claim-a",
+            eventId: "event-add",
+            partition: VAULT_A,
+            restoreMode: "remove_added_claim",
+            revisions: [],
+            projectionLinks: [link],
+            createdAt: NOW.toISOString(),
+            expiresAt: ROLLBACK_EXPIRES,
+        });
+        const repo = repository(state);
+        const coordinator = new MemoryGovernanceCoordinator({
+            repository: repo,
+            opaqueVaultKey: "vault-a",
+            now: () => NOW,
+            idFactory: ids("undo-add"),
+        });
+        const action = {
+            actionIdentity: "undo-request-a",
+            actionFingerprint: "undo-fingerprint-a",
+        };
+
+        const first = await coordinator.undoRecentChange({ eventId: "event-add", action });
+        const replay = await coordinator.undoRecentChange({ eventId: "event-add", action });
+
+        expect(first).toMatchObject({ ok: true, value: { eventId: expect.any(String) } });
+        expect(replay).toEqual(first);
+        const final = await repo.initialize();
+        expect(final.claims[0].lifecycle).toBe("undone_add_tombstone");
+        expect(final.changeEvents.filter((event) => event.kind === "undo")).toHaveLength(1);
     });
 
     it("bounds completed change history and applied Profile outbox rows", async () => {

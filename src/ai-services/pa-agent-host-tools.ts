@@ -44,6 +44,12 @@ import type { ChatMemoryRecoveryCoordinator } from "./retrieval-recovery-coordin
 import type { ProviderRequestScope } from "./obsidian-fetch";
 import { stableStringify } from "./agent-utils";
 import { assertTaskSourceReadCurrent, type TaskSourceReadGuard } from "./task-source-read-guard";
+import {
+    parseMemoryManagementEvidence,
+} from "./memory-management-evidence";
+import type { MemoryManagementCurrentUsageInput } from "./memory-management-types";
+import type { MemoryActionHostBinding } from "./memory-action-types";
+import { parseVaultObservationEvidence } from "./vault-observation-evidence";
 
 const MAX_PREVIEW_CHARS = 1200;
 
@@ -63,6 +69,8 @@ export interface PaAgentCapabilityToolExecutorOptions {
     getMemoryRequestDiagnostic?: (turnId: string) => import("./memory-search-tool").MemorySearchRequestDiagnostic;
     /** Run-owned lifetime for detached DEC-028 Memory preparation. */
     memoryPreparationOwnerSignal?: AbortSignal;
+    currentMemoryUsage?: () => MemoryManagementCurrentUsageInput | undefined;
+    memoryActionRequest?: MemoryActionHostBinding;
     revalidateMemorySearch?: (
         result: MemorySearchResult,
         signal?: AbortSignal,
@@ -545,6 +553,8 @@ export function createPaAgentCapabilityToolExecutor(
                         outerToolDeadlineAt: input.outerToolDeadlineAt,
                         providerRequestScope: options.providerRequestScope,
                         platform: options.platform ?? "desktop",
+                        currentMemoryUsage: options.currentMemoryUsage,
+                        memoryActionRequest: options.memoryActionRequest,
                         ...(!hidden && options.onBeforeVssSearch
                             ? { onBeforeVssSearch: options.onBeforeVssSearch }
                             : {}),
@@ -739,6 +749,30 @@ export function chatToolResultToPaAgentToolExecutionResult(
             // projection serialized for the Provider. The helper may retain
             // only safe raw candidate aggregates for valid same-source follow-up.
             ...getToolResultControlMetadata(providerResult, result),
+            ...(result.vaultObservationContractVersion === 1 ? (() => {
+                const parsed = parseVaultObservationEvidence(result.vaultObservationEvidence);
+                return parsed.ok && parsed.evidence.tool === result.tool
+                    ? {
+                        vaultObservationEvidence: parsed.evidence,
+                        vaultObservationContractVersion: 1 as const,
+                    }
+                    : {
+                        vaultObservationEvidenceInvalid: true,
+                        vaultObservationContractVersion: 1 as const,
+                    };
+            })() : {}),
+            ...(result.memoryManagementContractVersion === 1 ? (() => {
+                const parsed = parseMemoryManagementEvidence(result.memoryManagementEvidence);
+                return parsed.ok && parsed.evidence.tool === result.tool
+                    ? {
+                        memoryManagementEvidence: parsed.evidence,
+                        memoryManagementContractVersion: 1 as const,
+                    }
+                    : {
+                        memoryManagementEvidenceInvalid: true,
+                        memoryManagementContractVersion: 1 as const,
+                    };
+            })() : {}),
         },
     };
 }
@@ -1085,6 +1119,7 @@ function createReadOnlyToolContextUsed(result: ChatToolResult<unknown>): ChatCon
         ...info,
         sources: dedupeSources(result.sources),
         citationEligible: false,
+        ...(isMemoryManagementToolName(result.tool) ? { statusOnly: true } : {}),
     };
 }
 
@@ -1097,6 +1132,10 @@ function createUnavailableContextUsed(result: ChatToolResult<unknown>): ChatCont
         citationEligible: false,
         statusOnly: true,
     };
+}
+
+function isMemoryManagementToolName(tool: string): boolean {
+    return tool === "get_memory_status" || tool === "query_memories" || tool === "get_memory_usage";
 }
 
 const READ_ONLY_TOOL_CONTEXT_INFO: Record<string, Pick<ChatContextUsedItem, "category" | "label" | "detail">> = {
@@ -1149,6 +1188,36 @@ const READ_ONLY_TOOL_CONTEXT_INFO: Record<string, Pick<ChatContextUsedItem, "cat
         category: "read-only-tool",
         label: "Vault tags",
         detail: "Read-only vault tag counts",
+    },
+    get_memory_status: {
+        category: "memory",
+        label: "Memory status",
+        detail: "Read-only Memory status",
+    },
+    query_memories: {
+        category: "memory",
+        label: "Long-term Memory records",
+        detail: "Read-only permitted Memory management records",
+    },
+    get_memory_usage: {
+        category: "memory",
+        label: "Memory usage evidence",
+        detail: "Read-only Memory selection or dispatch evidence",
+    },
+    get_vault_insights: {
+        category: "read-only-tool",
+        label: "Existing vault observations",
+        detail: "Saved aggregate observations with generation time and coverage",
+    },
+    query_saved_insights: {
+        category: "read-only-tool",
+        label: "Saved Insights",
+        detail: "Read-only Saved Insight records and source references",
+    },
+    manage_saved_insight: {
+        category: "read-only-tool",
+        label: "Saved Insight action",
+        detail: "Explicit save, Later, archive, or restore result",
     },
 };
 

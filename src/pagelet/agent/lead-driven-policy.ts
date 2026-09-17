@@ -12,6 +12,7 @@ import type {
     PaAgentMessage,
 } from "../../ai-services/chat-types";
 import {
+    pageletObservationBodyEvidencePaths,
     resolvePageletInsightSourcePaths,
     type PageletInsightSourceSupportFailure,
 } from "./pagelet-agent-quality-gate";
@@ -36,6 +37,7 @@ const CONTENT_EVIDENCE_TOOL_NAMES = new Set([
     "search_vault_snippets",
     "inspect_obsidian_note",
     "read_note_outline",
+    "read_note",
 ]);
 
 const MAX_EXACT_LEAD_IDENTIFIERS = 4;
@@ -99,6 +101,13 @@ interface PageletLeadDrivenPolicyOptions {
     >;
 }
 
+interface PageletContentEvidenceState {
+    anchorRead: { value: boolean };
+    nonAnchorContentPaths: Set<string>;
+    nonAnchorContentTurnByPath: Map<string, number>;
+    contentPathsByAnchorIdentifier: Map<string, Set<string>>;
+}
+
 type PageletTerminalProtocolFailure =
     | "stage-shape"
     | "exact-lead"
@@ -113,6 +122,9 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
     private anchorRead = false;
     private readonly nonAnchorContentPaths = new Set<string>();
     private readonly nonAnchorContentTurnByPath = new Map<string, number>();
+    private executedAnchorRead = false;
+    private readonly executedNonAnchorContentPaths = new Set<string>();
+    private readonly executedNonAnchorContentTurnByPath = new Map<string, number>();
     private exactSearchCompleted = false;
     private exactSearchReturnedCandidates = false;
     private readonly exactCandidateTurnByPath = new Map<string, number>();
@@ -135,6 +147,7 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
     private readonly processedTurnIds = new Set<string>();
     private readonly anchorExactIdentifiers: readonly string[];
     private readonly contentPathsByAnchorIdentifier = new Map<string, Set<string>>();
+    private readonly executedContentPathsByAnchorIdentifier = new Map<string, Set<string>>();
     private readonly requiredExactIdentifier: string | undefined;
     private executedToolCalls = 0;
 
@@ -157,7 +170,7 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
     async afterTurn(summary: PaAgentTurnSummary) {
         this.processedTurnIds.add(summary.turnId);
         this.executedToolCalls += summary.timing.executorInvokedToolNames?.length ?? 0;
-        this.recordContentEvidence(summary);
+        this.recordExecutedContentEvidence(summary);
         this.recordExactSearchEvidence(summary);
         const stageValidationFailure = getStageValidationFailureReason(summary);
         if (stageValidationFailure === "pagelet_stage_control_unavailable") {
@@ -166,7 +179,7 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
         }
         if (
             this.terminalEvidenceCorrectionRequested
-            && this.terminalEvidenceFailure() !== undefined
+            && this.executedTerminalEvidenceFailure() !== undefined
         ) {
             return terminalEvidenceProtocolIncompleteDecision();
         }
@@ -429,12 +442,12 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
 
     isExactLeadProtocolSatisfied(): boolean {
         if (!this.requiredExactIdentifier) return true;
-        if (this.hasContentReadForAnchorIdentifier(this.requiredExactIdentifier)) return true;
+        if ((this.executedContentPathsByAnchorIdentifier.get(this.requiredExactIdentifier)?.size ?? 0) > 0) return true;
         if (!this.exactSearchCompleted) return false;
         if (!this.exactSearchReturnedCandidates) return true;
         if (this.exactCandidateTurnByPath.size === 0) return false;
         return [...this.exactCandidateTurnByPath].some(([path, searchTurnIndex]) => (
-            (this.nonAnchorContentTurnByPath.get(path) ?? -1) > searchTurnIndex
+            (this.executedNonAnchorContentTurnByPath.get(path) ?? -1) > searchTurnIndex
         ));
     }
 
@@ -553,6 +566,12 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
     private terminalEvidenceFailure(): "anchor-not-read" | "missing-non-anchor" | undefined {
         if (!this.anchorRead) return "anchor-not-read";
         if (this.nonAnchorContentPaths.size === 0) return "missing-non-anchor";
+        return undefined;
+    }
+
+    private executedTerminalEvidenceFailure(): "anchor-not-read" | "missing-non-anchor" | undefined {
+        if (!this.executedAnchorRead) return "anchor-not-read";
+        if (this.executedNonAnchorContentPaths.size === 0) return "missing-non-anchor";
         return undefined;
     }
 
@@ -684,32 +703,67 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
         this.options.clearPendingFirstInsight?.();
     }
 
-    private recordContentEvidence(summary: PaAgentTurnSummary): void {
-        for (const result of summary.toolResults) {
+    recordPromptContentEvidence(
+        transcript: readonly PaAgentMessage[],
+        turnIndex = 0,
+    ): void {
+        const state: PageletContentEvidenceState = {
+            anchorRead: { value: this.anchorRead },
+            nonAnchorContentPaths: this.nonAnchorContentPaths,
+            nonAnchorContentTurnByPath: this.nonAnchorContentTurnByPath,
+            contentPathsByAnchorIdentifier: this.contentPathsByAnchorIdentifier,
+        };
+        this.recordContentEvidence(state, transcript, turnIndex);
+        this.anchorRead = state.anchorRead.value;
+    }
+
+    private recordExecutedContentEvidence(summary: PaAgentTurnSummary): void {
+        const state: PageletContentEvidenceState = {
+            anchorRead: { value: this.executedAnchorRead },
+            nonAnchorContentPaths: this.executedNonAnchorContentPaths,
+            nonAnchorContentTurnByPath: this.executedNonAnchorContentTurnByPath,
+            contentPathsByAnchorIdentifier: this.executedContentPathsByAnchorIdentifier,
+        };
+        this.recordContentEvidence(state, summary.toolResults, summary.turnIndex);
+        this.executedAnchorRead = state.anchorRead.value;
+    }
+
+    private recordContentEvidence(
+        state: PageletContentEvidenceState,
+        transcript: readonly PaAgentMessage[],
+        turnIndex: number,
+    ): void {
+        for (const message of transcript) {
             if (
-                result.isError
-                || !result.content.includeInNextPrompt
-                || !CONTENT_EVIDENCE_TOOL_NAMES.has(result.toolName)
+                message.role !== "toolResult"
+                || message.isError
+                || !message.content.includeInNextPrompt
+                || !message.content.promptText
+                || !CONTENT_EVIDENCE_TOOL_NAMES.has(message.toolName)
             ) {
                 continue;
             }
+            const result = {
+                toolName: message.toolName,
+                content: message.content,
+            };
+            const bodyPaths = pageletObservationBodyEvidencePaths(
+                result.toolName,
+                result.content.promptText,
+                result.content.sourceRecords ?? [],
+            );
             const nonAnchorPaths = new Set<string>();
-            for (const record of result.content.sourceRecords ?? []) {
-                const path = record.path;
-                if (!path) continue;
-                if (
-                    result.toolName === "get_current_note_context"
-                    && path === this.options.anchorPath
-                ) {
-                    this.anchorRead = true;
+            for (const path of bodyPaths) {
+                if (path === this.options.anchorPath) {
+                    state.anchorRead.value = true;
                 } else if (path !== this.options.anchorPath) {
                     nonAnchorPaths.add(path);
-                    this.nonAnchorContentPaths.add(path);
-                    this.nonAnchorContentTurnByPath.set(
+                    state.nonAnchorContentPaths.add(path);
+                    state.nonAnchorContentTurnByPath.set(
                         path,
                         Math.max(
-                            this.nonAnchorContentTurnByPath.get(path) ?? -1,
-                            summary.turnIndex,
+                            state.nonAnchorContentTurnByPath.get(path) ?? -1,
+                            turnIndex,
                         ),
                     );
                 }
@@ -719,10 +773,10 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
                 if (!nonAnchorPath) continue;
                 for (const identifier of this.anchorExactIdentifiers) {
                     if (!result.content.promptText.includes(identifier)) continue;
-                    const paths = this.contentPathsByAnchorIdentifier.get(identifier)
+                    const paths = state.contentPathsByAnchorIdentifier.get(identifier)
                         ?? new Set<string>();
                     paths.add(nonAnchorPath);
-                    this.contentPathsByAnchorIdentifier.set(identifier, paths);
+                    state.contentPathsByAnchorIdentifier.set(identifier, paths);
                 }
             }
         }
@@ -740,10 +794,12 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
     }
 
     private shouldFinalizeEvidenceCompleteSingleLead(): boolean {
+        const evidenceComplete = this.anchorExactIdentifiers.length < 2
+            ? this.executedAnchorRead && this.executedNonAnchorContentPaths.size > 0
+            : this.anchorRead && this.nonAnchorContentPaths.size > 0;
         return Boolean(this.requiredExactIdentifier)
             && this.options.hasStagedInsight?.() !== true
-            && this.anchorRead
-            && this.nonAnchorContentPaths.size > 0
+            && evidenceComplete
             && this.isExactLeadProtocolSatisfied()
             && !this.hasDistinctSourceCompleteAnchorLeads();
     }
@@ -773,7 +829,7 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
     }
 
     private hasContentReadForAnchorIdentifier(identifier: string): boolean {
-        return (this.contentPathsByAnchorIdentifier.get(identifier)?.size ?? 0) > 0;
+        return (this.executedContentPathsByAnchorIdentifier.get(identifier)?.size ?? 0) > 0;
     }
 
     private shouldCorrectExactLeadAfterDuplicate(summary: PaAgentTurnSummary): boolean {
@@ -787,12 +843,12 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
             && this.exactSearchCompleted
             && this.exactCandidateTurnByPath.size > 0
             && !this.hasVerifiedExactCandidateContent()
-            && this.nonAnchorContentPaths.size === 0;
+            && this.executedNonAnchorContentPaths.size === 0;
     }
 
     private hasVerifiedExactCandidateContent(): boolean {
         return [...this.exactCandidateTurnByPath].some(([path, searchTurnIndex]) => (
-            (this.nonAnchorContentTurnByPath.get(path) ?? -1) > searchTurnIndex
+            (this.executedNonAnchorContentTurnByPath.get(path) ?? -1) > searchTurnIndex
         ));
     }
 

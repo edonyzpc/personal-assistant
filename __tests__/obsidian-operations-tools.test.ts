@@ -32,19 +32,29 @@ type FileCache = {
     headings?: Array<{ heading?: string; level?: number }>;
     links?: Array<{ link?: string; original?: string; displayText?: string }>;
     embeds?: Array<{ link?: string; original?: string; displayText?: string }>;
+    listItems?: unknown[];
+    sections?: unknown[];
 };
 
 function createPlugin(overrides: {
     markdownFiles?: VaultFile[];
     abstractFiles?: VaultFile[];
     fileContents?: Record<string, string>;
-    metadataByPath?: Record<string, FileCache>;
-    resolvedLinks?: Record<string, Record<string, number>>;
-    unresolvedLinks?: Record<string, Record<string, number>>;
-    metadataCacheUnavailable?: boolean;
-    vaultReadUnavailable?: boolean;
-} = {}) {
-    const markdownFiles = overrides.markdownFiles ?? [];
+        metadataByPath?: Record<string, FileCache>;
+        resolvedLinks?: Record<string, Record<string, number>>;
+        unresolvedLinks?: Record<string, Record<string, number>>;
+        metadataCacheUnavailable?: boolean;
+        vaultReadUnavailable?: boolean;
+        preserveMissingFileStat?: boolean;
+    } = {}) {
+        const markdownFiles = (overrides.markdownFiles ?? []).map(file => ({
+            ...file,
+            stat: overrides.preserveMissingFileStat ? file.stat : file.stat ?? {
+                mtime: 1,
+                ctime: 1,
+                size: Buffer.byteLength(overrides.fileContents?.[file.path] ?? '', 'utf8'),
+        },
+    }));
     const abstractFiles = [...markdownFiles, ...(overrides.abstractFiles ?? [])];
     const vault: {
         getMarkdownFiles: jest.Mock<() => VaultFile[]>;
@@ -177,6 +187,10 @@ describe('Obsidian Operations v1A App API read tools', () => {
             markdownFiles: [{ path: 'notes/project.md', basename: 'project' }],
             fileContents: {
                 'notes/project.md': [
+                    '---',
+                    'owner: Eddie',
+                    `detail: ${'x'.repeat(200)}`,
+                    '---',
                     '# Overview',
                     '- [ ] Draft migration plan',
                     '- [/] Continue migration plan',
@@ -191,6 +205,12 @@ describe('Obsidian Operations v1A App API read tools', () => {
                     tags: [{ tag: '#project' }],
                     frontmatter: { owner: 'Eddie', detail: 'x'.repeat(200) },
                     headings: [{ heading: 'Overview', level: 1 }],
+                    listItems: [
+                        { task: ' ', position: { start: { line: 5 }, end: { line: 5 } } },
+                        { task: '/', position: { start: { line: 6 }, end: { line: 6 } } },
+                        { task: '?', position: { start: { line: 7 }, end: { line: 7 } } },
+                    ],
+                    sections: [{ type: 'callout', position: { start: { line: 8 }, end: { line: 8 } } }],
                     links: [{ link: 'notes/related.md#Follow up', original: '[[notes/related.md#Follow up|related follow-up]]' }],
                     embeds: [{ link: 'assets/diagram.png#frame', original: '![[assets/diagram.png#frame]]' }],
                 },
@@ -218,8 +238,8 @@ describe('Obsidian Operations v1A App API read tools', () => {
         expect(content.headings).toEqual([{ level: 1, text: 'Overview' }]);
         expect(content.tasks).toEqual([
             expect.objectContaining({ text: 'Draft migration plan', status: ' ', checked: false }),
-            expect.objectContaining({ text: 'Continue migration plan', status: '/', checked: false }),
-            expect.objectContaining({ text: 'Clarify blocker', status: '?', checked: false }),
+            expect.objectContaining({ text: 'Continue migration plan', status: '/', checked: true }),
+            expect.objectContaining({ text: 'Clarify blocker', status: '?', checked: true }),
         ]);
         expect(content.callouts).toEqual([expect.objectContaining({ type: 'todo', title: 'Review later' })]);
         expect(content.wikilinks).toContain('notes/related.md');
@@ -332,7 +352,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
     it('searches bounded Markdown snippets with dotted folder scope and no full-body output', async () => {
         const plugin = createPlugin({
             markdownFiles: [
-                { path: 'notes/2026.05/a.md', basename: 'a' },
+                { path: 'notes/2026.05/a.md', basename: 'a', stat: { mtime: 1, size: 650 } },
                 { path: 'archive/b.md', basename: 'b' },
             ],
             fileContents: {
@@ -584,7 +604,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
             tags: ['metadata'],
             headings: [{ level: 2, text: 'From cache' }],
             outgoingLinks: ['notes/linked.md'],
-            unavailableSources: ['vault file read'],
+            coverage: { state: 'complete', cacheState: 'known', bodyRead: false, bodyRequired: false },
         });
         expect(vaultReadUnavailableSnippets.ok).toBe(true);
         expect(vaultReadUnavailableSnippets.content as VaultSnippetSearchOutput).toMatchObject({
@@ -623,8 +643,6 @@ describe('Obsidian Operations v1A App API read tools', () => {
             tags: ['huge'],
             wikilinks: ['notes/linked.md'],
             tasks: [],
-            truncated: true,
-            skippedSources: ['vault file read skipped for size'],
         });
 
         const oversizedCanvas = { path: 'maps/huge.canvas', basename: 'huge', stat: { size: 300_001 } };
@@ -649,7 +667,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
         });
 
         const oversizedSnippet = { path: 'notes/too-large.md', basename: 'too-large', stat: { size: 100_001 } };
-        const smallSnippet = { path: 'notes/small.md', basename: 'small', stat: { size: 80 } };
+        const smallSnippet = { path: 'notes/small.md', basename: 'small', stat: { mtime: 1, size: 80 } };
         const snippetPlugin = createPlugin({
             markdownFiles: [oversizedSnippet, smallSnippet],
             fileContents: {
@@ -711,6 +729,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
         const registry = createRegistry();
         const plugin = createPlugin({
             markdownFiles: [{ path: 'notes/multibyte.md', basename: 'multibyte' }],
+            preserveMissingFileStat: true,
             fileContents: {
                 'notes/multibyte.md': `${'汉'.repeat(40_000)} pa-positive-snippet-token-1701`,
             },
@@ -726,7 +745,9 @@ describe('Obsidian Operations v1A App API read tools', () => {
         expect(result.ok).toBe(true);
         expect(result.content as VaultSnippetSearchOutput).toMatchObject({
             matches: [],
-            scannedFiles: 1,
+            scannedFiles: 0,
+            skippedFiles: 1,
+            skippedSources: ['vault file stat unavailable'],
             truncated: true,
         });
         expect((result.content as VaultSnippetSearchOutput).scannedBytes).toBeLessThanOrEqual(100_000);

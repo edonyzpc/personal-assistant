@@ -74,13 +74,6 @@ export class OperationsToolProvider implements CapabilityProvider {
     );
 
     async load(context: ProviderLoadContext): Promise<ProviderLoadResult> {
-        if (context.settings.operationsAgentEnabled !== true) {
-            return {
-                status: "unavailable",
-                capabilities: [],
-                unavailableReason: "Operations is not enabled.",
-            };
-        }
         return {
             status: "available",
             // Capability identity is stable across Chat/Pagelet runtime loads so

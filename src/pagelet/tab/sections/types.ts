@@ -58,6 +58,14 @@ export interface MemoryRecordActionState {
 
 export interface MemoryRecordActionResult extends MemoryCandidateActionResult {
     record?: import("../../../pa").ConfirmedMemoryRecord;
+    actionStatus?: "applied" | "pending" | "needs_confirmation" | "cancelled" | "failed";
+    reason?: string;
+    retryScheduled?: boolean;
+    claimId?: string;
+    revisionId?: string;
+    eventId?: string;
+    queueItemId?: string;
+    undoExpiresAt?: string;
 }
 
 // ---------------------------------------------------------------------------
