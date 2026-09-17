@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.8](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.7...2.10.0-beta.8) (2026-09-17)
+
+### Features
+- share-card: add editor context menu entry
+- share-card: add per-export print styles
+- pa-agent: deliver essential note, memory, and insight capabilities
+
+### Fix
+- share-card: remove fixed inline code typography
+
+### Improvements
+- pagelet: retire legacy scope controls and dead code
+- integrate B-140 PA Agent essential capabilities
+
+### Docs
+- development: add GPT-6 GLM delivery workflow
+- pagelet: record bounded cleanup decisions and validation
+- pagelet: close out B-136 bounded cleanup
+- pa-agent: plan essential tools and GLM delivery
+- share-card: close out B-137 print styles
+- pa-agent: record B-140 contracts and validation
+- pa-agent: close out B-140 and track Pagelet follow-up
+
+### Tests
+- share-card: add light print export prototype
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
