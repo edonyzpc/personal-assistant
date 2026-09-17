@@ -1,7 +1,7 @@
 # PA Agent Essential Capabilities Product Spec
 
-Document status: Approved
-Updated: 2026-09-14
+Document status: Current
+Updated: 2026-09-17
 Work item: B-140
 Decision: [DEC-036](../decisions/dec-036-pa-agent-essential-capabilities.md)
 Authority: B-140 的用户行为、范围与验收标准；用户本轮开发授权与日期决定接续原完整方案。
@@ -67,8 +67,6 @@ Memory 查询复用 Control Center；使用解释只证明实际提供给模型�
 
 日期 D1 已在 DEC-036 解决。若源码证明必须改变产品/数据/权限边界，实施该偏差前另行决定；不将技术细化标为新增产品批准。
 
-## Delivery Handoff
+## Delivered Scope And Limits
 
-- [Active Package](../../development/active/pa-agent-essential-capabilities/README.md)
-- [原始源码证据与 API 映射](../../development/active/pa-agent-essential-capabilities/source-evidence.md)
-- 交付停在验证后的实现；commit、merge、push、closeout、发版各自需要授权。
+B-140/AC-01～14 已按当前开发分支的源码、测试与实际 Obsidian 1.14.1 test vault 验收；具体门禁、部署身份与交互边界见[历史验证](../../archive/2026/b140-pa-agent-essential-capabilities-validation.md)。最低 App `1.11.4` 的公开 API 兼容性依据来自安装声明和类型定义，未做该版本实机测试。临时 Pagelet Detail 页的 Discuss in Chat 交接问题留给 [B-141](../../backlog.md#已延期的产品与工程工作)；live Panel 的交接与 Keep 已验证。当前技术映射见[架构合同](../../architecture/pa-agent-architecture-plan.md#b-140-note-memory-and-insight-capabilities)。

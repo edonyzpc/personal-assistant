@@ -2,13 +2,13 @@
 
 Decision ID: DEC-036
 Status: Accepted
-Updated: 2026-09-16
+Updated: 2026-09-17
 Authority: 用户于 2026-09-14 明确要求在 B-140 分支推进开发，并选择日期口径由主 Agent 根据上下文判断；2026-09-16 明确选择记住/纠正指令直接保存，仅歧义或风险时确认。
 Work item: B-140
 
 ## Context
 
-[Discovery](../../development/active/pa-agent-essential-capabilities/source-evidence.md) 已确认工具注册与实际开放不一致、Chat 缺少通用正文读取，以及既有 Memory 治理和洞察服务可供适配。以[产品北极星](../pa-product-north-star.md)约束交付：让笔记自然返回，结果有依据，持久动作可信。
+[B-140 原始调查与验证](../../archive/2026/b140-pa-agent-essential-capabilities-validation.md) 已确认工具注册与实际开放不一致、Chat 缺少通用正文读取，以及既有 Memory 治理和洞察服务可供适配。以[产品北极星](../pa-product-north-star.md)约束交付：让笔记自然返回，结果有依据，持久动作可信。
 
 ## Options Considered
 
@@ -35,5 +35,5 @@ Work item: B-140
 ## Traceability
 
 - [Product Spec](../specs/pa-agent-essential-capabilities-product-spec.md)
-- [Active Package](../../development/active/pa-agent-essential-capabilities/README.md)
-- [任务设计](../../development/active/pa-agent-essential-capabilities/task-cards.md)
+- [当前架构](../../architecture/pa-agent-architecture-plan.md#b-140-note-memory-and-insight-capabilities)
+- [历史验收与限制](../../archive/2026/b140-pa-agent-essential-capabilities-validation.md)

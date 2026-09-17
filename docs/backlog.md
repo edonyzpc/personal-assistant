@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-09-14
+Updated: 2026-09-17
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -19,6 +19,7 @@ Updated: 2026-09-14
 
 | ID | 事项 | 重新启动条件 / 决策边界 | 依据 |
 | --- | --- | --- | --- |
+| B-141 | Pagelet 临时 Detail 页的 Discuss in Chat 交接 | B-140/T13-UX1：展开到临时 Detail tab 后，旧结果的 Discuss in Chat 按钮未完成交接；live Panel 同入口已实测可交接并 Keep。用户选择修复此入口时，以同一候选从 Detail 打开 Chat、携带来源并完成交接为最小验收；不重开 B-140 的洞察/Memory 范围 | User request 2026-09-17 closeout；[B-140 验收与限制](./archive/2026/b140-pa-agent-essential-capabilities-validation.md#deferred-and-retained-items) |
 | B-132 | 多模态媒体扩展：动画理解与外部资源 SVG | 承接 B-129/T-16、REQ-15 的明确延期范围；用户选择启动后先定义完整理解/渲染的验收、解码依赖、帧与资源预算及外部网络边界。现有静态图恢复继续有效，不因收尾自动抽帧或联网补齐；不预定二期优先级或工期 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md), [Product Spec](./product/specs/pa-multimodal-chat-product-spec.md), [历史媒体与资源证据](./archive/2026/b129-multimodal-chat-validation.md) |
 | B-133 | Chat 图片生成 | 承接 DEC-030 明确后续方向；用户选择为下一阶段后，先明确使用场景、provider/模型、费用、图片版本/来源与显式保存边界，再形成独立产品与技术方案。不从现有 Featured Image 或看图聊天能力推导已交付通用生图 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md) |
 | B-134 | 跨设备图片聊天续接 | 承接 DEC-030 后续方向；用户选择启动后先设计聊天历史、图片引用/原件可用性、冲突恢复及同步隐私边界。首期仍仅承诺同设备续聊；图片进入 vault 或正式附件同步不等于聊天同步，也不自动扩大到风格同步 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md), [当前存储契约](./architecture/multimodal-chat-architecture.md) |
