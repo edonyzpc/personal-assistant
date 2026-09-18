@@ -1,6 +1,6 @@
 # Share Card Architecture
 
-Updated: 2026-09-17
+Updated: 2026-09-18
 
 | Field | Value |
 | --- | --- |
@@ -58,7 +58,7 @@ flowchart LR
 | `share-card-export.ts` | 自包含审计、SnapDOM adapter、clipboard、Vault 串行写入和唯一命名 |
 | `share-card-modal.ts` | 编排资源、字体、分页、预览、Copy/Save、目录选择、状态与取消生命周期 |
 | `plugin.ts`、Chat 与 Pagelet integration | eligibility、来源投影和四个显式入口 |
-| `pagelet/pet/PetView.ts` | 四项 Ring 的逻辑顺序、可见标签、内向布局与整组 fallback |
+| `pagelet/pet/PetView.ts` | 四项 Ring 的逻辑顺序、完整本地化名称、内向布局与整组 fallback |
 
 这些职责不得被新的平行 renderer、capture engine 或持久化目录设置绕开。
 
@@ -196,12 +196,14 @@ batch name、确定性 page suffix 和整批 collision avoidance 防止覆盖。
 
 ## Action Ring Layout Contract
 
-Ring 的逻辑、DOM 与 focus 顺序固定为 `Capture / Review / Discover / Share`，可见标签随
+Ring 的逻辑、DOM 与 focus 顺序固定为 `Capture / Review / Discover / Share`，完整名称随
 当前 locale 切换；所有按钮至少 `44×44px`。几何只改变视觉位置，不改变 callback 或
 键盘顺序。
 
 - 非 phone 布局根据 Pet corner、visual viewport、Markdown surface、safe-area 和实际按钮
-  尺寸，优先尝试朝内容区展开的内向 quarter arc。
+  尺寸，优先尝试朝内容区展开的紧凑 quarter arc。支持 fine pointer hover 时按钮默认
+  为仅图标的 44px 目标，hover 或 focus-visible 显示完整文字提示；无 hover 的触控
+  设备直接显示完整文字。完整名称始终保留为 button 的 `aria-label`。
 - Arc 经 viewport clamp 后发生重叠时，整组切换为紧凑横排；横排仍不适合时整组切换为
   紧凑竖排。禁止部分换行或逐项采用不同策略。
 - Phone mobile-toolbar 优先在 Pet 下方或远离边缘的一侧放置完整四标签横排；完整标签发生

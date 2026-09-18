@@ -21,10 +21,14 @@ foreground Review / generic background preload 风险分类选择 DEC-023 方案
 > [!note] Successor amendment 2026-08-06
 > B-118 的三项长按菜单与对应 smoke 保持历史事实，不改写为已验证四项。当前 Ring 由
 > [DEC-025](../decisions/dec-025-consumption-aware-pagelet-delivery.md) 修订为
-> `Capture / Review / Discover / Share`，四项显示中英本地化文字标签；Share 的 selection-first/current-note 行为与验证
+> `Capture / Review / Discover / Share`，四项保留中英本地化完整名称；Share 的 selection-first/current-note 行为与验证
 > 归 [DEC-026/B-124](./pa-share-card-product-spec.md)。Desktop/iPad 优先使用内向弧，
-> 完整标签无法无重叠容纳时整组 compact fallback；iPhone 可容纳完整四项时横排、
+> 按钮无法无重叠容纳时整组 compact fallback；iPhone 可容纳完整四项时横排、
 > 否则整组竖排。旧 portrait/landscape 证据不覆盖该修订。
+
+> [!note] Successor amendment 2026-09-18
+> 当前 DEC-026/B-124 允许可悬停非 phone-toolbar Ring 默认只显示图标，hover 或键盘
+> focus-visible 显示完整名称；无悬停触控设备与 iPhone toolbar 继续直接显示标签。
 
 ## Problem And Product Outcome
 
@@ -158,9 +162,9 @@ foreground Review / generic background preload 风险分类选择 DEC-023 方案
 target downstream 不能呈现结果。
 
 当前几何由 successor contract 覆盖：Desktop/iPad 优先从 Pet 朝内容区形成内向弧，
-完整标签无法无重叠容纳时整组降级为紧凑横排或竖排；iPhone 可容纳完整四项时横向
-排列、否则整组纵向排列。四项至少 44×44px，显示当前 locale 的
-EN/ZH 文字标签且不改变逻辑/焦点顺序。Share 优先当前
+按钮无法无重叠容纳时整组降级为紧凑横排或竖排；iPhone 可容纳完整四项时横向
+排列、否则整组纵向排列。四项至少 44×44px，当前 locale 的 EN/ZH 完整名称在
+可悬停端 hover/focus-visible 时显示，在无悬停触控端直接显示；逻辑/焦点顺序不变。Share 优先当前
 editor 的原始非空 selection，否则使用 current Markdown note，并进入 B-124 Share Card
 preview；前三项 route 与 provider/data/write 边界不变。
 

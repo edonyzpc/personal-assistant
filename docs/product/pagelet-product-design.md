@@ -338,10 +338,10 @@ Decision: **D039** — Proactive hints control placement: Settings (full config)
 Panel header (quick toggle) + Command Palette + keyboard shortcut. The Pet
 Action Ring remains a separate Capture / Review / Discover / Share command surface.
 
-### Action Ring Share — [UPDATED 2026-08-07]
+### Action Ring Share — [UPDATED 2026-09-18]
 
-The Ring logical and focus order is `Capture / Review / Discover / Share`. Every icon has a visible
-current-locale label: EN `Capture / Review / Discover / Share as card`; ZH `随手记下 / 审阅 /
+The Ring logical and focus order is `Capture / Review / Discover / Share`. Every action retains a
+full current-locale label: EN `Capture / Review / Discover / Share as card`; ZH `随手记下 / 审阅 /
 发现关联 / 分享为卡片`. The first three actions keep
 their current callbacks, routes and provider/data/write boundaries. Share resolves one snapshot at click:
 
@@ -352,8 +352,10 @@ their current callbacks, routes and provider/data/write boundaries. Share resolv
 - no active Markdown note or empty projected body opens no Share Card Modal and yields a local recoverable
   notice. Ring Share itself makes no provider call、upload or automatic Vault write.
 
-Desktop/iPad prefer an inward arc toward content; if all complete labels cannot fit without overlap, the
-whole group falls back to a compact row or column. iPhone uses one horizontal row when all four complete
+Desktop/iPad prefer a compact inward arc toward content. On a non-phone-toolbar surface with a fine
+hover pointer, the buttons show icons by default and reveal the complete label on hover and keyboard
+focus; no-hover touch surfaces keep visible labels. If the complete button targets cannot fit without
+overlap, the whole group falls back to a compact row or column. iPhone uses one horizontal row when all four complete
 labels fit the available safe width, otherwise the whole group becomes one vertical column with no partial
 wrap. All actions remain at least `44×44px`, inside safe-area/visual viewport bounds;
 visual direction never changes the logical, keyboard or callback order.
@@ -1474,7 +1476,7 @@ Pagelet considered successful if:
 | **D037** | Progressive disclosure layers | Four-layer content model: Pet -> Bubble -> Panel -> Tab. DEC-025's Action Ring is a peer command surface, not a fifth content layer. Bubble and Ring are mutually exclusive and close on their documented outside/Escape/Pet paths. |
 | **D038** | Generic proactive hints (主动提示) design | Quiet Recall, Pattern, and generic review hints remain opt-in and OFF by default. When ON, Pet enters `nudge` only after their own quality gates. Cooldown, no sound, no modal, no focus steal. |
 | **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. The separate Pet Action Ring is reserved for Capture / Review / Discover / Share. |
-| **D040** | Action Ring Share and geometry | Fourth action Share uses exact nonblank selection first, otherwise current Markdown note under DEC-026/B-124. All four icons show localized EN/ZH text labels. Desktop/iPad prefer an inward arc and use a whole-group compact row/column fallback when complete labels cannot fit without overlap; iPhone uses a complete four-label row when it fits and a whole-column fallback when it does not. The first three actions and all 44px/logical/focus boundaries remain unchanged. |
+| **D040** | Action Ring Share and geometry | Fourth action Share uses exact nonblank selection first, otherwise current Markdown note under DEC-026/B-124. On fine-hover non-phone-toolbar surfaces, four icons reveal complete localized labels on hover/focus; no-hover touch surfaces show labels directly. Desktop/iPad prefer a compact inward arc and use a whole-group compact row/column fallback when targets cannot fit without overlap; iPhone uses a complete four-label row when it fits and a whole-column fallback when it does not. The first three actions and all 44px/logical/focus boundaries remain unchanged. |
 | **D041** | Bounded retrieval recovery and Pagelet insight depth | Under DEC-027/B-125, one Pagelet run returns 0–2 independently validated insights and owns at most one relaxed retrieval retry. Zero may retry for the first insight; one may retry for a second only with a concrete unresolved lead. Explicit time constraints remain binding; without one, discovery may cross time. B-123's single-result implementation evidence does not validate this successor behavior. |
 
 [DEC-018](./decisions/dec-018-quality-gated-scope-recap-hints.md) is the accepted

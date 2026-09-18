@@ -2,8 +2,8 @@
 
 Decision ID: DEC-026
 Status: Accepted
-Updated: 2026-09-17
-Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外），于 2026-08-06 修订 Action Ring 入口、来源优先级、品牌、字体、标签、布局与分页字号，并于 2026-08-07 明确以当前 `master` 行为作为最终规则；2026-09-17 确认预览与操作的可见性边界及点击放大查看
+Updated: 2026-09-18
+Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外），于 2026-08-06 修订 Action Ring 入口、来源优先级、品牌、字体、标签、布局与分页字号，并于 2026-08-07 明确以当前 `master` 行为作为最终规则；2026-09-17 确认预览与操作的可见性边界及点击放大查看；2026-09-18 允许可悬停端 Ring 默认只显示图标，悬停时显示文字
 Work item: B-124
 
 > [!note] Owner decision 2026-08-05
@@ -31,6 +31,12 @@ Work item: B-124
 > 常见窗口中，Share Card Modal 应同时呈现完整卡片缩略图、保存路径和主要操作，
 > 不要求先滚动发现按钮。极小窗口优先保证操作可见，预览可以滚动；点击预览可只读
 > 放大查看细节。此变更只影响 Modal 展示，不改变固定卡片、分页或 PNG 导出尺寸。
+
+> [!note] Owner amendment 2026-09-18
+> 为缩小过大的 Action Ring，用户允许可悬停设备的按钮默认只显示图标，悬停时显示
+> 完整名称。键盘聚焦显示同一名称并保留 `aria-label`；无悬停能力的触控界面继续
+> 显示完整标签，iPhone 保持整行或整列布局。此修订取代先前“所有设备始终显示文字”
+> 的要求，不改变四个动作、顺序、触控目标或分享数据边界。
 
 ## Context
 
@@ -118,9 +124,11 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
    community/release gate。
 9. Action Ring 保持独立瞬时命令面。顺序固定为 `Capture / Review / Discover / Share`，
    前三项 callback、route 与 provider/data/write 边界不变。Desktop 与 iPad 优先从 Pet
-   朝内容区形成内向弧；完整标签无法在可用空间内无重叠容纳时，整组降级为紧凑横排或
+   朝内容区形成内向弧；按钮无法在可用空间内无重叠容纳时，整组降级为紧凑横排或
    竖排，不允许部分混排。iPhone 在可用宽度能完整容纳四项时横向排列，否则整组切换为
-   纵向排列。四项均为至少 `44×44px` 的真实 button，并在当前 UI locale 显示文字标签：
+   纵向排列。四项均为至少 `44×44px` 的真实 button。在非 phone-toolbar 的可悬停设备
+   上，默认仅显示图标，hover 和键盘 focus-visible 显示当前 locale 的完整标签；
+   无悬停能力的触控界面及 iPhone toolbar 直接显示完整标签：
    英文 `Capture / Review / Discover / Share as card`，中文 `随手记下 / 审阅 / 发现关联 /
    分享为卡片`。视觉方向不得改变逻辑、键盘或焦点顺序。
 

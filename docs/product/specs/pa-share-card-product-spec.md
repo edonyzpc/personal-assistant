@@ -1,7 +1,7 @@
 # PA Share Card Product Spec
 
 Document status: Approved
-Updated: 2026-09-17
+Updated: 2026-09-18
 Work item: B-124
 Decision: [DEC-026 — Share Card 采用本地、显式导出的完整渲染卡片](../decisions/dec-026-local-share-card.md)
 Authority: Share Card 的入口、可分享内容、视觉、分页、导出、失败、数据与兼容性边界。
@@ -21,6 +21,11 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 > 最大字号，多页保持 `16 → 15 → 14px` 的减页规则且整批字号一致；保存目录可在每次
 > Modal 内选择、不持久化，默认有效 attachment folder、否则 `PA-Cards`；Desktop/iPad
 > Ring 优先内向弧，空间不足时整组降级为紧凑横排或竖排。
+
+> [!note] Owner amendment 2026-09-18
+> Ring 在可悬停的非 phone-toolbar 设备上默认只显示图标，完整名称在 hover 或键盘
+> focus-visible 时显示；无悬停能力的触控设备与 iPhone toolbar 保留可见文字。
+> 这替代 2026-08-06 的全端常显标签规则，用于缩小弧线而不改变动作语义。
 
 ## Problem And Product Outcome
 
@@ -115,9 +120,11 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   Modal window 运行时检测。Modal lifecycle 使用 Obsidian `Component` owner 和 owner
   document/window；plugin unload/Modal close 清理 render owner、离屏 DOM 与 pending token。
   Action Ring 顺序固定为 `Capture / Review / Discover / Share`，前三项行为不变；Desktop
-  与 iPad 优先朝内容区形成内向弧，完整标签无法无重叠容纳时整组降级为紧凑横排或
+  与 iPad 优先朝内容区形成内向弧，按钮无法无重叠容纳时整组降级为紧凑横排或
   竖排；iPhone 在可用宽度能完整容纳四项时横向排列，否则整组纵向排列，不混排。
-  四项均保持至少 `44×44px` 并在当前 UI locale 显示文字标签：英文
+  四项均保持至少 `44×44px`。非 phone-toolbar 且支持精确指针 hover 时默认仅显示图标，
+  hover 或键盘 focus-visible 显示当前 UI locale 的完整文字；无 hover 能力的触控设备
+  与 iPhone toolbar 保持直接可见的文字标签：英文
   `Capture / Review / Discover / Share as card`，中文 `随手记下 / 审阅 / 发现关联 /
   分享为卡片`；视觉方向不改变逻辑、键盘或焦点顺序。
 
