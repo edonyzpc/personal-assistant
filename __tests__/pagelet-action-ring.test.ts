@@ -813,7 +813,10 @@ describe("Pet Action Ring localization and layout contracts", () => {
         expect(css).toContain("env(safe-area-inset-left,0px)");
         expect(css).toContain("min-width: 44px;");
         expect(css).toContain("min-height: 44px;");
-        expect(css).not.toMatch(/\.pa-pagelet-action-ring-label\s*\{/);
+        expect(css).toContain("@media (hover: hover) and (pointer: fine)");
+        expect(css).toContain(".pa-pagelet-pet:not(.pa-pagelet-pet--mobile-toolbar) .pa-pagelet-action-ring-item");
+        expect(css).toContain(".pa-pagelet-action-ring-item:hover .pa-pagelet-action-ring-label");
+        expect(css).toContain(".pa-pagelet-action-ring-item:focus-visible .pa-pagelet-action-ring-label");
         expect(css).not.toMatch(/\.pa-pagelet-action-ring-item\s*\{[\s\S]*?max-width:\s*min\(112px/);
         expect(css).toContain(".pa-pagelet-action-ring-item:nth-child(4)");
         expect(css).toContain(".pa-pagelet-action-ring-item:focus-visible");
@@ -1031,7 +1034,66 @@ describe("Pet Action Ring localization and layout contracts", () => {
         });
         const uniqueLefts = new Set(positions.map((position) => position.left)).size;
         const uniqueTops = new Set(positions.map((position) => position.top)).size;
-        expect(Math.max(uniqueLefts, uniqueTops)).toBeGreaterThan(2);
+        // A row or column still fits the viewport, but loses the inward arc.
+        expect(uniqueLefts).toBeGreaterThan(2);
+        expect(uniqueTops).toBeGreaterThan(2);
+    });
+
+    it("uses available inward space for enlarged desktop labels", () => {
+        const items = [
+            { width: 190, height: 72 },
+            { width: 180, height: 72 },
+            { width: 200, height: 72 },
+            { width: 250, height: 72 },
+        ];
+        const viewport = { left: 0, top: 0, width: 1400, height: 1000 };
+        const positions = computeActionRingLayout({
+            viewport,
+            anchor: { left: 1300, top: 900, width: 56, height: 56 },
+            items,
+            corner: "bottom-right",
+            mobileToolbar: false,
+        });
+
+        expectActionRingInsideViewport(positions, items, viewport);
+        expect(new Set(positions.map((position) => position.left)).size).toBeGreaterThan(2);
+        expect(new Set(positions.map((position) => position.top)).size).toBeGreaterThan(2);
+    });
+
+    it.each([
+        "top-left",
+        "top-right",
+        "bottom-right",
+        "bottom-left",
+    ] as const)("keeps icon-sized actions in a compact inward %s arc", (corner) => {
+        const viewport = { left: 0, top: 0, width: 1024, height: 768 };
+        const anchor = {
+            left: corner.endsWith("right") ? 944 : 24,
+            top: corner.startsWith("bottom") ? 688 : 24,
+            width: 56,
+            height: 56,
+        };
+        const items = Array.from({ length: 4 }, () => ({ width: 44, height: 44 }));
+        const positions = computeActionRingLayout({
+            viewport,
+            anchor,
+            items,
+            corner,
+            mobileToolbar: false,
+        });
+
+        expectActionRingInsideViewport(positions, items, viewport);
+        expect(new Set(positions.map((position) => position.left)).size).toBeGreaterThan(2);
+        expect(new Set(positions.map((position) => position.top)).size).toBeGreaterThan(2);
+        const anchorCenterX = anchor.left + anchor.width / 2;
+        const anchorCenterY = anchor.top + anchor.height / 2;
+        positions.forEach((position) => {
+            // Four 44px targets on a 90° arc need about 128px to clear the middle pair.
+            expect(Math.hypot(
+                position.left + 22 - anchorCenterX,
+                position.top + 22 - anchorCenterY,
+            )).toBeLessThanOrEqual(136);
+        });
     });
 
     it("keeps four full phone labels in one row when they fit", () => {

@@ -256,10 +256,16 @@ export function computeActionRingLayout(input: {
         });
     }
 
-    const maxRadius = Math.min(
-        108,
-        Math.max(88, Math.hypot(maxRight - minLeft, maxBottom - minTop)),
-    );
+    // Four full labels need a wider arc than the old icon-sized 108px cap.
+    // Search only the space that opens inward from the Pet's current corner;
+    // the overlap check below still falls back as a whole on narrow surfaces.
+    const inwardWidth = input.corner.endsWith("left")
+        ? maxRight - anchorCenterX
+        : anchorCenterX - minLeft;
+    const inwardHeight = input.corner.startsWith("top")
+        ? maxBottom - anchorCenterY
+        : anchorCenterY - minTop;
+    const maxRadius = Math.max(64, Math.min(inwardWidth, inwardHeight));
     for (let radius = 64; radius <= maxRadius; radius += 4) {
         const preferredOffsets = computeArcPositions(input.corner, sizes.length, radius);
         const preferred = sizes.map((size, index) => {
@@ -1384,7 +1390,6 @@ export class PetView implements PetRenderer {
             btn.setAttribute("type", "button");
             btn.setAttribute("data-action", item.action);
             btn.setAttribute("aria-label", item.label);
-            btn.title = item.label;
             setIcon(btn, item.icon);
             const visibleLabel = doc.createElement("span");
             visibleLabel.className = "pa-pagelet-action-ring-label";
