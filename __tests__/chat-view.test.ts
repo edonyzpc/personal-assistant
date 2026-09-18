@@ -6708,6 +6708,7 @@ describe('LLMView turn lifecycle', () => {
         const mobileDrawerInnerBlock = getCssRuleBlock(css, 'body.is-mobile .workspace-drawer-inner.pa-chat-drawer-host');
         const mobileViewBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view');
         const mobileInputBlock = getCssRuleBlock(css, 'body.is-mobile .llm-input');
+        const baseTextareaBlock = getCssRuleBlock(css, '.llm-input textarea');
         const mobileTextareaBlock = getCssRuleBlock(css, 'body.is-mobile .llm-input textarea');
         const mobileButtonsBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons');
         const iconButtonBlock = getCssRuleBlock(css, '.pa-chat-icon-button,\n.llm-buttons button.pa-chat-icon-button');
@@ -6753,15 +6754,14 @@ describe('LLMView turn lifecycle', () => {
         expect(css).toMatch(/\.llm-view\.is-keyboard-open\s+\.llm-input\s*{[\s\S]*?position:\s*absolute;[\s\S]*?bottom:\s*0;[\s\S]*?transform:\s*translate3d\(0,\s*var\(--pa-chat-keyboard-offset,\s*0px\),\s*0\);[\s\S]*?will-change:\s*transform;[\s\S]*?z-index:\s*30;/);
         expect(mobileInputBlock).toContain('padding: 8px 8px calc(8px + var(--pa-chat-status-bar-clearance, 0px));');
         expect(mobileInputBlock).toContain('transition: none;');
-        expect(mobileTextareaBlock).toContain('box-sizing: border-box;');
+        expect(baseTextareaBlock).toContain('box-sizing: border-box;');
         expect(mobileTextareaBlock).toContain('height: 72px;');
         expect(mobileTextareaBlock).toContain('min-height: 72px;');
         expect(mobileTextareaBlock).toContain('max-height: min(26vh, 124px);');
         expect(mobileTextareaBlock).toContain('overflow-y: auto;');
-        expect(mobileTextareaBlock).toContain('padding: 8px 10px 42px;');
+        expect(mobileTextareaBlock).toContain('padding: 8px 10px;');
         expect(mobileButtonsBlock).toContain('gap: 4px;');
-        expect(mobileButtonsBlock).toContain('right: 7px;');
-        expect(mobileButtonsBlock).toContain('bottom: 7px;');
+        expect(mobileButtonsBlock).toContain('padding: 8px 7px 7px;');
         expect(iconButtonBlock).toContain('width: 30px;');
         expect(iconButtonBlock).toContain('height: 30px;');
         expect(iconButtonBlock).toContain('flex: 0 0 30px;');
@@ -6788,7 +6788,7 @@ describe('LLMView turn lifecycle', () => {
         expect(mobileCompactTextareaBlock).toContain('height: 66px;');
         expect(mobileCompactTextareaBlock).toContain('min-height: 66px;');
         expect(mobileCompactTextareaBlock).toContain('max-height: min(26vh, 116px);');
-        expect(mobileCompactTextareaBlock).toContain('padding-bottom: 40px;');
+        expect(mobileCompactTextareaBlock).not.toContain('padding-bottom:');
         expect(mobileKeyboardInputBlock).toContain('position: relative;');
         expect(mobileKeyboardInputBlock).toContain('bottom: auto;');
         expect(mobileKeyboardInputBlock).toContain('transform: translate3d(0, 0, 0);');
@@ -6980,6 +6980,24 @@ describe('LLMView turn lifecycle', () => {
         expect(memoryChip.classList.contains('personal-assistant-ai-statusbar')).toBe(true);
         expect(memoryChip.classList.contains('personal-assistant-ai-statusbar-ready')).toBe(true);
         expect(memoryChip.getAttribute('aria-label')).toBe('Memory ready');
+    });
+
+    it('keeps composer controls in a separate bottom row instead of overlaying draft text', () => {
+        const css = readFileSync('src/custom.pcss', 'utf8');
+        const composer = getCssRuleBlock(css, '.pa-chat-composer-row');
+        const textarea = getCssRuleBlock(css, '.llm-input textarea');
+        const actions = css.match(/(?:^|\n)\.llm-buttons\s*{([^}]*)}/)?.[1] ?? '';
+        const compactMemory = getCssRuleBlock(
+            css,
+            '.llm-view.is-compact .pa-chat-memory-control,\n.llm-view:not(.is-compact) .pa-chat-compact-memory-action',
+        );
+
+        expect(composer).toContain('display: flex;');
+        expect(composer).toContain('flex-direction: column;');
+        expect(textarea).toContain('padding: 12px;');
+        expect(actions).toContain('width: 100%;');
+        expect(actions).not.toContain('position: absolute;');
+        expect(compactMemory).toContain('display: none;');
     });
 
     it('shows bundled guide typeahead candidates from the composer trigger', async () => {
@@ -8297,6 +8315,38 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
 
         expect(plugin.memoryStatus.updateFromCommand).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps Memory state and update reachable through More in a compact sidebar', async () => {
+        const { view, containerEl, plugin } = createView({ panelWidth: 340 });
+        plugin.memoryStatus.getMaintenancePlan.mockResolvedValue({
+            reason: 'changed-notes',
+            action: 'refresh',
+            notesToCheck: 4,
+            notesLikelyToUpdate: 2,
+            requiresApproval: true,
+            canAnswerNow: true,
+        });
+        await view.onOpen();
+        await flushPromises();
+
+        const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');
+        moreButton.click();
+        const moreMenu = getElementByClass(containerEl, 'pa-chat-composer-menu');
+        const compactMemoryButton = getButtonByClass(moreMenu, 'pa-chat-compact-memory-action');
+        expect(allText(compactMemoryButton)).toContain('Memory needs update');
+        compactMemoryButton.click();
+        await flushPromises();
+
+        const memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
+        expect(moreMenu.hidden).toBe(true);
+        expect(memoryMenu.parentElement).toBe(getElementByClass(containerEl, 'pa-chat-more-control'));
+        expect(memoryMenu.hidden).toBe(false);
+        expect(allText(memoryMenu)).toContain('Memory needs update');
+        getButtonByText(memoryMenu, 'Update memory').click();
+        await flushPromises();
+        expect(plugin.memoryStatus.updateFromCommand).toHaveBeenCalledTimes(1);
+        expect(memoryMenu.hidden).toBe(true);
     });
 
     it.each([false, true])('keeps lexical preparation actionable and refreshes its result (completed: %s)', async (completed) => {

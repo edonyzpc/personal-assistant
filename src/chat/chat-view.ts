@@ -650,6 +650,16 @@ export class LLMView extends ItemView {
             else new Notice(t('plugin.chat.writing.unavailable'));
         };
         createChatMenuDivider(composerMenu);
+        const compactMemoryButton = createChatMenuItem(composerMenu, {
+            text: t("plugin.chat.memory"),
+            icon: 'brain',
+            cls: 'pa-chat-compact-memory-action',
+        });
+        const compactMemoryLabel = Array.from(compactMemoryButton.children).find(
+            (child) => child.classList.contains('pa-chat-menu-item-text'),
+        ) as HTMLElement | undefined;
+        compactMemoryButton.setAttribute('aria-controls', memoryMenuId);
+        compactMemoryButton.setAttribute('aria-expanded', 'false');
         const technicalMemoryButton = createChatMenuItem(composerMenu, {
             text: t("plugin.chat.action.showMemoryStatus"),
             icon: 'activity',
@@ -1399,6 +1409,7 @@ export class LLMView extends ItemView {
         };
         const setMemoryChipState = (state: MemoryChipState) => {
             memoryChipLabel.setText(state.label);
+            compactMemoryLabel?.setText(state.label);
             memoryChip.setAttribute('aria-label', state.label);
             memoryChip.setAttribute('title', state.label);
             memoryChip.classList.remove(...MEMORY_CHIP_STATE_CLASSES);
@@ -1420,6 +1431,8 @@ export class LLMView extends ItemView {
             memoryMenuRequestId += 1;
             memoryMenu.hidden = true;
             memoryChip.setAttribute('aria-expanded', 'false');
+            compactMemoryButton.setAttribute('aria-expanded', 'false');
+            if (composerMenu.hidden) moreButton.setAttribute('aria-expanded', 'false');
         };
         const renderMemoryMenu = async () => {
             memoryMenu.empty();
@@ -4420,22 +4433,29 @@ export class LLMView extends ItemView {
             appWithSettings.setting?.openTabById('personal-assistant');
         };
 
-        memoryChip.onclick = () => {
+        const toggleMemoryMenu = (anchor: HTMLElement, trigger: HTMLButtonElement) => {
             const willOpen = memoryMenu.hidden;
             composerMenuAutoClose.close();
             if (!willOpen) {
                 memoryMenuAutoClose.close();
                 return;
             }
+            anchor.appendChild(memoryMenu);
             const requestId = ++memoryMenuRequestId;
             void renderMemoryMenu().then(() => {
                 if (!isCurrentSession() || requestId !== memoryMenuRequestId) return;
                 memoryMenu.hidden = false;
                 updateChatMenuAvailableWidth(memoryMenu);
-                memoryChip.setAttribute('aria-expanded', 'true');
+                trigger.setAttribute('aria-expanded', 'true');
+                if (trigger === compactMemoryButton) {
+                    moreButton.setAttribute('aria-expanded', 'true');
+                    moreButton.focus();
+                }
                 memoryMenuAutoClose.schedule();
             });
         };
+        memoryChip.onclick = () => toggleMemoryMenu(memoryControl, memoryChip);
+        compactMemoryButton.onclick = () => toggleMemoryMenu(moreControl, compactMemoryButton);
 
         syncComposerControls();
         renderEmptyState();
