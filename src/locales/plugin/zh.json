@@ -230,7 +230,7 @@
     "plugin.chat.createImage.noNotes": "没有找到笔记。",
     "plugin.chat.createImage.savedToNote": "图片已插入 {note}。",
     "plugin.chat.createImage.saveToNoteFailed": "无法保存到笔记。请检查笔记和图片后重试。",
-    "plugin.chat.createImage.editThis": "编辑这张图片",
+    "plugin.chat.createImage.editThis": "编辑",
     "plugin.chat.createImage.finishDraft": "请先发送或清空当前草稿，再重新生成。",
     "plugin.chat.createImage.finishDraftEdit": "请先发送或清空当前草稿，再编辑图片。",
     "plugin.chat.createImage.stopFailed": "无法停止图片任务。",

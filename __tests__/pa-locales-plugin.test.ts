@@ -46,6 +46,11 @@ describe("plugin locale resources", () => {
         expect(t("plugin.chat.history.minAgo", { count: 3 })).toBe("3 分钟前");
     });
 
+    it("keeps the generated-image edit action concise in EN and ZH", () => {
+        expect(pluginT("plugin.chat.createImage.editThis", "en")).toBe("Edit");
+        expect(pluginT("plugin.chat.createImage.editThis", "zh")).toBe("编辑");
+    });
+
     it("localizes provider-save failure feedback in EN and ZH", () => {
         expect(pluginT("plugin.settings.ai.provider.saveFailed", "en"))
             .toBe("Could not save the AI provider settings. Review the current configuration and try again.");

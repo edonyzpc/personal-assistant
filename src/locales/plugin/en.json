@@ -230,7 +230,7 @@
     "plugin.chat.createImage.noNotes": "No notes found.",
     "plugin.chat.createImage.savedToNote": "Image inserted into {note}.",
     "plugin.chat.createImage.saveToNoteFailed": "Could not save to note. Check the note and image, then try again.",
-    "plugin.chat.createImage.editThis": "Edit this image",
+    "plugin.chat.createImage.editThis": "Edit",
     "plugin.chat.createImage.finishDraft": "Finish or clear the current draft before regenerating.",
     "plugin.chat.createImage.finishDraftEdit": "Finish or clear the current draft before editing.",
     "plugin.chat.createImage.stopFailed": "Could not stop image task.",
