@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.11](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.10...2.10.0-beta.11) (2026-09-19)
+
+### Fix
+- chat: align image results and anchor CreateImage suggestions
+- chat: shorten image edit action label
+
+### Docs
+- chat: record image UI behavior in current contracts
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
