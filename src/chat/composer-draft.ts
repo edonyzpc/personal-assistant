@@ -1,4 +1,20 @@
 /** View-local ownership for text, images and asynchronous imports. No draft bytes are persisted. */
+import { cloneImageRef, type ImageRef } from './image-types';
+
+export interface ComposerImageIntent {
+    operation: 'generate' | 'reference' | 'edit';
+    referenceImageRefs: ImageRef[];
+    parentVersionId?: string;
+}
+
+function cloneImageIntent(intent: ComposerImageIntent): ComposerImageIntent {
+    return {
+        operation: intent.operation,
+        referenceImageRefs: intent.referenceImageRefs.map(cloneImageRef),
+        ...(intent.parentVersionId ? { parentVersionId: intent.parentVersionId } : {}),
+    };
+}
+
 export interface ComposerImageEntry<T> {
     id: number;
     label: string;
@@ -15,6 +31,7 @@ export interface ComposerImportHandle {
 
 export interface ComposerSnapshot<T> {
     text: string;
+    imageIntent?: ComposerImageIntent;
     images: ComposerImageEntry<T>[];
     draftId: number;
     revision: number;
@@ -31,6 +48,7 @@ export class ComposerDraft<T> {
     private nextEntryId = 0;
     private readonly entries = new Map<number, ComposerImageEntry<T>>();
     private readonly imports = new Map<number, AbortController>();
+    private imageIntent: ComposerImageIntent | undefined;
     private disposed = false;
 
     constructor(private readonly maxImages = 8) {}
@@ -41,8 +59,22 @@ export class ComposerDraft<T> {
     snapshot(text: string): ComposerSnapshot<T> {
         return {
             text, draftId: this.draftId, revision: this.revision,
+            ...(this.imageIntent ? { imageIntent: cloneImageIntent(this.imageIntent) } : {}),
             images: [...this.entries.values()].map((entry) => ({ ...entry })),
         };
+    }
+
+    setImageIntent(intent: ComposerImageIntent): void {
+        if (this.disposed) throw new Error('Composer is closed');
+        this.imageIntent = cloneImageIntent(intent);
+        this.revision += 1;
+    }
+
+    clearImageIntent(): void {
+        if (this.imageIntent) {
+            this.imageIntent = undefined;
+            this.revision += 1;
+        }
     }
 
     hasDraft(text: string): boolean {
@@ -51,6 +83,7 @@ export class ComposerDraft<T> {
 
     canSend(text: string): boolean {
         return !this.disposed && this.hasDraft(text)
+            && (!this.imageIntent || text.trim().length > 0)
             && [...this.entries.values()].every((entry) => entry.status === "ready");
     }
 
@@ -103,6 +136,7 @@ export class ComposerDraft<T> {
             || this.draftId !== sent.restoreInto.draftId
             || this.revision !== sent.restoreInto.revision) return null;
         for (const entry of sent.snapshot.images) this.entries.set(entry.id, { ...entry });
+        this.imageIntent = sent.snapshot.imageIntent ? cloneImageIntent(sent.snapshot.imageIntent) : undefined;
         this.revision += 1;
         return sent.snapshot.text;
     }
@@ -115,6 +149,7 @@ export class ComposerDraft<T> {
         for (const controller of this.imports.values()) controller.abort();
         this.imports.clear();
         this.entries.clear();
+        this.imageIntent = undefined;
         this.draftId += 1;
         this.revision += 1;
     }

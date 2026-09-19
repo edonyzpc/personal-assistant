@@ -113,6 +113,25 @@ describe("ConversationPersistence", () => {
         expect(manager.reserveConversationId).toHaveBeenCalledTimes(2);
     });
 
+    it("durably anchors a paid image request before the turn and reuses that conversation on finalization", async () => {
+        const manager = {
+            initialize: jest.fn(async () => undefined), isAvailable: () => true,
+            reserveConversationId: jest.fn(() => "image-conversation"),
+            startConversation: jest.fn(async (_prompt: string, _anchor?: unknown, id?: string) => ({
+                ...conversation, id: id ?? "unexpected", turnCount: 0,
+            })),
+            recordTurn: jest.fn(async () => ({ ...conversation, id: "image-conversation" })),
+            maybePrune: jest.fn(async () => []),
+        } as unknown as ChatHistoryManager;
+        const persistence = makePersistence(manager);
+        expect(await persistence.reserveConversationId("A watercolor bookstore")).toBe("image-conversation");
+        expect(await persistence.ensureConversationForImageRequest("A watercolor bookstore")).toBe("image-conversation");
+        expect(await persistence.persistFinalizedTurn("A watercolor bookstore", historyEntry)).toBe(true);
+        expect(manager.startConversation).toHaveBeenCalledTimes(1);
+        expect(manager.recordTurn).toHaveBeenCalledTimes(1);
+        expect(persistence.activeConversationId).toBe("image-conversation");
+    });
+
     it("does not commit a stale active conversation pointer", async () => {
         const manager = makeManager();
         const persistence = makePersistence(manager);

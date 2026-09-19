@@ -5,7 +5,7 @@ import { EditorView } from '@codemirror/view'
 import { nanoid } from 'nanoid'
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 
-import { AIUtils, getDashScopeImageGenerationEndpoint } from './ai-utils';
+import { AIUtils } from './ai-utils';
 import { getFeaturedImageSavePath, normalizeFeaturedImageFolderPath } from './featured-image-path';
 import {
     assertFeaturedImageRunCurrent,
@@ -299,7 +299,7 @@ export class AIService {
      */
     async generateFeaturedImage(editor: Editor, view: MarkdownView, runOptions: FeaturedImageRunOptions): Promise<void> {
         const options = freezeFeaturedImageRunOptions(runOptions);
-        if (options.connection.aiProvider !== 'qwen' || !getDashScopeImageGenerationEndpoint(options.connection.baseURL)) {
+        if (!options.imageEndpoint) {
             new Notice(this.t("plugin.ai.notice.featuredUnsupported"), 3000);
             return;
         }
@@ -599,7 +599,7 @@ export class AIService {
      * 生成特色图片 URL
      */
     private async generateFeaturedImageUrls(genMsg: string, options: FeaturedImageRunOptions): Promise<FeaturedImageUrl[] | null> {
-        const endpoint = getDashScopeImageGenerationEndpoint(options.connection.baseURL);
+        const endpoint = options.imageEndpoint;
         const model = normalizeFeaturedImageModel(options.featuredImageModel);
         const imageCount = normalizeFeaturedImageCount(options.numFeaturedImages);
 
@@ -613,7 +613,7 @@ export class AIService {
         let resp: RequestUrlResponse;
         try {
             assertFeaturedImageRunCurrent(options);
-            const token = (await this.plugin.getAPIToken()).trim();
+            const token = (await (options.getImageAPIToken?.() ?? this.plugin.getAPIToken())).trim();
             assertFeaturedImageRunCurrent(options);
             if (!token) throw new Error('API token not configured');
             resp = await withFeaturedImageTimeout(requestUrl({

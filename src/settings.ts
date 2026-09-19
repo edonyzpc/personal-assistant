@@ -303,6 +303,11 @@ export interface PluginManagerSettings {
     featuredImagePath: string;
     featuredImageModel: FeaturedImageModel;
     numFeaturedImages: number;
+    /** Shared by Chat image creation and Featured Image. Legacy settings inherit Chat. */
+    imageGenerationConnectionMode: "inherit-chat" | "dedicated-wan";
+    imageGenerationBaseURL: string;
+    imageGenerationConnectionRevision: number;
+    imageGenerationFirstUseNoticeShown: boolean;
     memoryExtractionEnabled: boolean;
     learningPreferences?: LearningPreferences;
     memoryExtractionNoticeDismissed: boolean;
@@ -425,6 +430,10 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     featuredImagePath: "",
     featuredImageModel: "wan2.7-image",
     numFeaturedImages: 1,
+    imageGenerationConnectionMode: "inherit-chat",
+    imageGenerationBaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    imageGenerationConnectionRevision: 0,
+    imageGenerationFirstUseNoticeShown: false,
     memoryExtractionEnabled: true,
     learningPreferences: { version: LEARNING_DEFAULTS_VERSION, memoryExtraction: "default", habitLearning: "default" },
     memoryExtractionNoticeDismissed: false,
@@ -606,6 +615,14 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
         : DEFAULT_SETTINGS.memoryAutoAcceptPaused;
     merged.featuredImageModel = normalizeFeaturedImageModel(loadedObject.featuredImageModel);
     merged.numFeaturedImages = normalizeFeaturedImageCount(loadedObject.numFeaturedImages);
+    merged.imageGenerationConnectionMode = loadedObject.imageGenerationConnectionMode === "dedicated-wan"
+        ? "dedicated-wan" : "inherit-chat";
+    merged.imageGenerationBaseURL = typeof loadedObject.imageGenerationBaseURL === "string"
+        ? loadedObject.imageGenerationBaseURL.trim().slice(0, 512) : DEFAULT_SETTINGS.imageGenerationBaseURL;
+    merged.imageGenerationConnectionRevision = Number.isSafeInteger(loadedObject.imageGenerationConnectionRevision)
+        && Number(loadedObject.imageGenerationConnectionRevision) >= 0
+        ? Number(loadedObject.imageGenerationConnectionRevision) : 0;
+    merged.imageGenerationFirstUseNoticeShown = loadedObject.imageGenerationFirstUseNoticeShown === true;
     // Current builds use a mock paid entitlement so all paid-capability
     // architecture stays enabled until a real authorization source is wired in.
     // Do not trust persisted data.json for this field.
@@ -1942,16 +1959,17 @@ export class SettingTab extends PluginSettingTab {
         });
     }
 
-    private openApiTokenSecretEditor(): void {
+    private openApiTokenSecretEditor(kind: 'chat' | 'image' = 'chat'): void {
         if (this.apiTokenSecretModal) {
             return;
         }
         const plugin = this.plugin;
         const app = this.app;
-        const secretId = plugin.getAPITokenSecretId();
+        const secretId = kind === 'image' ? plugin.getImageAPITokenSecretId() : plugin.getAPITokenSecretId();
         let existing = "";
         try {
-            existing = plugin.getConfiguredAPITokenSecret() ?? "";
+            existing = (kind === 'image'
+                ? plugin.getConfiguredImageAPITokenSecret() : plugin.getConfiguredAPITokenSecret()) ?? "";
         } catch {
             plugin.clearTokenCache();
             plugin.log("Failed to read API token");
@@ -1959,7 +1977,7 @@ export class SettingTab extends PluginSettingTab {
             return;
         }
         const translate = this.t.bind(this);
-        const rebuildProviderConfig = () => this.rebuildProviderConfig();
+        const rebuildProviderConfig = () => kind === 'image' ? this.rebuildFeaturedImage() : this.rebuildProviderConfig();
         const releaseModal = (modal: Modal) => {
             if (this.apiTokenSecretModal === modal) {
                 this.apiTokenSecretModal = null;
@@ -2065,7 +2083,8 @@ export class SettingTab extends PluginSettingTab {
                                     }
 
                                     try {
-                                        plugin.setAPITokenSecret(value);
+                                        if (kind === 'image') await plugin.setImageAPITokenSecret(value);
+                                        else plugin.setAPITokenSecret(value);
                                     } catch {
                                         plugin.log("Failed to save API token");
                                         try {
@@ -4219,8 +4238,57 @@ export class SettingTab extends PluginSettingTab {
         const container = this.featuredImageContainer;
         if (!container) return;
         container.empty();
-        if (this.getEffectiveAIProviderConfiguration().aiProvider !== "qwen"
-            || !getDashScopeImageGenerationEndpoint(baseURL)) return;
+        const plugin = this.plugin;
+        new Setting(container)
+            .setName(this.t('plugin.settings.imageGeneration.connection.name'))
+            .setDesc(this.t('plugin.settings.imageGeneration.connection.desc'))
+            .addDropdown((dropdown) => dropdown
+                .addOption('inherit-chat', this.t('plugin.settings.imageGeneration.connection.inherit'))
+                .addOption('dedicated-wan', this.t('plugin.settings.imageGeneration.connection.dedicated'))
+                .setValue(plugin.settings.imageGenerationConnectionMode)
+                .onChange(async (value) => {
+                    try {
+                        await plugin.saveImageGenerationConnectionSettings({
+                            imageGenerationConnectionMode: value as 'inherit-chat' | 'dedicated-wan',
+                        });
+                    } catch {
+                        new Notice(this.t('plugin.settings.imageGeneration.connection.saveFailed'), 5000);
+                    }
+                    this.rebuildFeaturedImage();
+                }));
+        if (plugin.settings.imageGenerationConnectionMode === 'dedicated-wan') {
+            let pendingBaseURL = plugin.settings.imageGenerationBaseURL;
+            new Setting(container)
+                .setName(this.t('plugin.settings.imageGeneration.baseUrl.name'))
+                .setDesc(this.t('plugin.settings.imageGeneration.baseUrl.desc'))
+                .addText((input) => input
+                    .setValue(pendingBaseURL)
+                    .onChange((value) => { pendingBaseURL = value; }))
+                .addButton((button) => button
+                    .setButtonText(this.t('plugin.settings.imageGeneration.baseUrl.save'))
+                    .onClick(async () => {
+                        try {
+                            await plugin.saveImageGenerationConnectionSettings({ imageGenerationBaseURL: pendingBaseURL });
+                            this.rebuildFeaturedImage();
+                        } catch {
+                            new Notice(this.t('plugin.settings.imageGeneration.connection.saveFailed'), 5000);
+                        }
+                    }));
+            new Setting(container)
+                .setName(this.t('plugin.settings.imageGeneration.token.name'))
+                .setDesc(this.t('plugin.settings.imageGeneration.token.desc'))
+                .addButton((button) => button
+                    .setButtonText(this.t('plugin.settings.legal.open'))
+                    .onClick(() => this.openApiTokenSecretEditor('image')));
+        }
+        const imageConnectionAvailable = plugin.settings.imageGenerationConnectionMode === 'dedicated-wan'
+            ? plugin.getImageGenerationConnection() !== null
+            : this.getEffectiveAIProviderConfiguration().aiProvider === 'qwen'
+                && Boolean(getDashScopeImageGenerationEndpoint(baseURL));
+        if (!imageConnectionAvailable) {
+            container.createEl('p', { text: this.t('plugin.settings.imageGeneration.connection.unavailable') });
+            return;
+        }
         new Setting(container)
             .setName(this.t("plugin.settings.featuredImage.options.title"))
             .setDesc(this.t("plugin.settings.featuredImage.path.desc"))

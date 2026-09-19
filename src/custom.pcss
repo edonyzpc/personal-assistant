@@ -8870,3 +8870,100 @@ body.is-mobile .pa-share-card-print-style-option {
     box-sizing: border-box;
     resize: vertical;
 }
+
+.pa-chat-view .pa-chat-create-image-intent:not([hidden]) {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 10px 0;
+    color: var(--text-accent);
+    font-size: var(--font-ui-small);
+}
+.pa-chat-view .pa-chat-create-image-intent button {
+    min-width: 32px;
+    min-height: 32px;
+}
+.pa-chat-view .pa-chat-image-task-card {
+    margin-block: 12px;
+    padding: 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 12px;
+    background: var(--background-secondary);
+    overflow-wrap: anywhere;
+}
+.pa-chat-view .pa-chat-image-task-card__header,
+.pa-chat-view .pa-chat-image-task-card__actions,
+.pa-chat-view .pa-chat-image-task-card__output-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.pa-chat-view .pa-chat-image-task-card__header {
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+.pa-chat-view .pa-chat-image-task-card__title {
+    font-weight: var(--font-semibold);
+}
+.pa-chat-view .pa-chat-image-task-card__state,
+.pa-chat-view .pa-chat-image-task-card__recovery {
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+}
+.pa-chat-view .pa-chat-image-task-card__actions button,
+.pa-chat-view .pa-chat-image-task-card__output-actions button {
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+.pa-chat-view .pa-chat-image-task-card__details {
+    margin-block: 10px;
+    font-size: var(--font-ui-small);
+}
+.pa-chat-view .pa-chat-image-task-card__details summary {
+    cursor: pointer;
+    min-height: 36px;
+    padding-block: 8px;
+}
+.pa-chat-view .pa-chat-image-task-card__outputs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    gap: 12px;
+}
+.pa-chat-view .pa-chat-image-task-card__output {
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+}
+.pa-chat-view .pa-chat-image-task-card__preview {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: auto;
+    min-height: 44px;
+    margin-block: 8px;
+    padding: 4px;
+}
+.pa-chat-view .pa-chat-image-task-card__preview img {
+    display: block;
+    max-width: 100%;
+    max-height: 228px;
+    object-fit: contain;
+}
+.pa-chat-image-task-preview img {
+    display: block;
+    max-width: min(100%, 90vw);
+    max-height: 80vh;
+    margin: auto;
+    object-fit: contain;
+}
+body.is-mobile .pa-chat-view .pa-chat-image-task-card__actions button,
+body.is-mobile .pa-chat-view .pa-chat-image-task-card__output-actions button {
+    min-height: 44px;
+}

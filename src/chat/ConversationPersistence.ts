@@ -158,6 +158,20 @@ export class ConversationPersistence {
         return reserved;
     }
 
+    /** A paid image task needs a durable conversation anchor before provider submission. */
+    async ensureConversationForImageRequest(prompt: string): Promise<string | null> {
+        if (this.activeId) return this.activeId;
+        const manager = await this.getReadyManager();
+        if (!manager || !this.reservedConversationId) return null;
+        const reservedId = this.reservedConversationId;
+        const created = await manager.startConversation(prompt, this.initialImageAnchor, reservedId);
+        this.activeConversation = created;
+        this.activeId = created.id;
+        this.nextTurnIndex = 0;
+        this.reservedConversationId = null;
+        return created.id;
+    }
+
     async getReadyManager(): Promise<ChatHistoryManager | null> {
         const manager = this.options.getManager();
         if (!manager) return null;

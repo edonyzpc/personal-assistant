@@ -773,6 +773,56 @@ describe('native tool call fixtures', () => {
 });
 
 describe('ChatService.streamLLM integration', () => {
+    it('runs host-bound create_image without a vault source declaration and keeps completion asynchronous', async () => {
+        let turn = 0;
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: jest.fn(async function* () {
+                if (turn++ === 0) {
+                    yield { tool_call_chunks: [{
+                        index: 0, id: 'create-image-1', name: 'create_image',
+                        args: JSON.stringify({ prompt: 'Watercolor bookstore', operation: 'generate' }),
+                    }] };
+                } else {
+                    yield { content: 'The image request was accepted.' };
+                }
+            }),
+        };
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin();
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const submit = jest.fn(async (_input: unknown) => ({ taskId: 'image-task-1' }));
+        const events: CanonicalAgentEvent[] = [];
+
+        await service.streamLLM('@CreateImage Watercolor bookstore', jest.fn(), undefined, [], {
+            conversationId: 'conversation-1',
+            createImage: {
+                conversationId: 'conversation-1', stableMessageId: 'message-1', operationId: 'operation-1', submit,
+            },
+            onLifecycleEvent: event => events.push(event),
+        });
+
+        const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+            .map(tool => tool.function?.name);
+        expect(exportedToolNames).toContain('create_image');
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(submit).toHaveBeenCalledWith({
+            prompt: 'Watercolor bookstore', operation: 'generate', count: 1, referenceImageRefs: [],
+        });
+        expect(events).toEqual(expect.arrayContaining([expect.objectContaining({
+            type: 'tool_execution_end', toolName: 'create_image', outcome: 'success',
+        })]));
+
+        const ordinaryModel = createStreamChunksModel([{ content: 'A normal answer.' }]);
+        mockCreateChatModel.mockResolvedValue(ordinaryModel);
+        await service.streamLLM('Explain the image style.', jest.fn(), undefined, [], {
+            conversationId: 'conversation-1',
+        });
+        const ordinaryToolNames = ((ordinaryModel.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+            .map(tool => tool.function?.name);
+        expect(ordinaryToolNames).not.toContain('create_image');
+    });
+
     it('shares one conversation summarizer across runtime turns and resets it for model identity changes', async () => {
         const plugin = createPlugin();
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);

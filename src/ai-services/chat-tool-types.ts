@@ -32,7 +32,7 @@ export interface ChatToolContext {
     memoryActionRequest?: import("./memory-action-types").MemoryActionHostBinding;
 }
 
-export type ChatToolPermission = "read-only" | "network-read" | "memory-management" | "insight-management";
+export type ChatToolPermission = "read-only" | "network-read" | "memory-management" | "insight-management" | "image-generation";
 export type ChatToolCost = "free" | "ai-calls" | "network-calls";
 export type ChatToolFailureBehavior = "recoverable";
 export type ChatToolSourceBoundary = "memory" | "current-note" | "read-only-tool" | "web" | "skill-context";
@@ -129,6 +129,26 @@ export interface ChatToolDefinition<Input, Output> {
     prepareArguments?: (raw: unknown, ctx: PrepareToolArgumentsContext) => unknown;
     validateInput(input: unknown): Input;
     execute(input: Input, context: ChatToolContext): Promise<ChatToolResult<Output>>;
+}
+
+/** Only semantic choices are model-visible. Identity and source/cost admission belong to the host. */
+export interface CreateImageToolInput {
+    prompt: string;
+    operation: "generate" | "reference" | "edit";
+    count: number;
+    /** One-based selector only for clearly separate image requests in the same user message. */
+    subrequestIndex?: number;
+    /** Stable opaque refs from this request's authorized images or conversation versions. */
+    referenceImageRefs: string[];
+    parentVersionId?: string;
+}
+
+export interface CreateImageHostBinding {
+    conversationId: string;
+    stableMessageId: string;
+    operationId: string;
+    /** Revalidates refs, user cost budget and the durable operation before paid dispatch. */
+    submit(input: CreateImageToolInput): Promise<{ taskId: string }>;
 }
 
 /**

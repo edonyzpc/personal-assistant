@@ -61,6 +61,8 @@ export interface StreamLLMOptions {
     historyBudgetChars?: number;
     /** Current or reserved conversation identity for host-bound Memory actions. */
     conversationId?: string;
+    /** Per-user-request image authority; omitted when the image service is unavailable. */
+    createImage?: import('./chat-tool-types').CreateImageHostBinding;
     /** Visible Pagelet evidence to inject into this explicit user turn only. */
     pageletHandoff?: PageletChatHandoffContext;
     onLifecycleEvent?: (event: AgentEvent) => void;
@@ -236,6 +238,7 @@ export class ChatService {
             await runtime.streamTurn({
                 prompt,
                 conversationId: options.conversationId,
+                createImage: options.createImage,
                 chatHistory,
                 images: options.images,
                 imageAssetService: options.imageAssetService,

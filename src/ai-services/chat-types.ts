@@ -653,6 +653,7 @@ export type ChatAgentIntent = "content-seeking" | "agent-control";
 export type ChatToolName =
     | "get_writing_context"
     | "resolve_chat_images"
+    | "create_image"
     | "search_memory"
     | "get_memory_status"
     | "query_memories"

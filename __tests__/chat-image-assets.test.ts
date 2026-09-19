@@ -7,6 +7,7 @@ import { IMAGE_POLICY, imagePolicyFingerprint, imageSourceHash, PROCESSOR_VERSIO
 import type { ProcessImageOptions } from '../src/chat/image-processor';
 import type { ImageAsset, ImageVariantRecord } from '../src/chat/image-types';
 import { WritingSaveAction } from '../src/chat/writing-save-action';
+import { saveGeneratedImageToNote } from '../src/chat/image-save-to-note';
 import { hashWritingText, type WritingVersion } from '../src/chat/writing-types';
 import { ChatImageRequestScope } from '../src/ai-services/image-request';
 jest.mock('../src/platform-dom', () => ({ ...jest.requireActual('../src/platform-dom'), getPlatformCrypto: () => jest.requireActual('node:crypto').webcrypto }));
@@ -218,6 +219,38 @@ describe('B-135 queued provider image verification', () => {
 describe('chat-only images become shared note attachments', () => {
     const jpeg = () => bytes(255, 216, 255, 192, 0, 8, 8, 0, 3, 0, 4, 1, 255, 217);
     const importJpeg = (h: ReturnType<typeof setup>) => h.service.importFile(fileInput(jpeg()), { acquisition: 'unverified_import' });
+
+    it('inserts the chosen generated image once, preserves the note, and retries after an interrupted note write', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        const filename = imported.asset.originalPath.split('/').pop();
+        const originalText = `Existing text mentions ![[attachments/${filename}]] in prose.`;
+        const note = await h.vault.create('My note.md', originalText);
+        Object.assign(note, { extension: 'md' });
+        h.vault.process.mockRejectedValueOnce(new Error('note write interrupted'));
+        await expect(saveGeneratedImageToNote(h.app, h.service, imported.ref, note, 'generated_task_output_0'))
+            .rejects.toThrow('note write interrupted');
+        expect(h.app.fileManager.renameFile).toHaveBeenCalledTimes(1);
+        expect(await h.vault.read(note)).toBe(originalText);
+        await saveGeneratedImageToNote(h.app, h.service, imported.ref, note, 'generated_task_output_0');
+        const saved = (await h.service.readOriginal(imported.ref)).asset;
+        expect(saved).toMatchObject({ source: 'vault_reference', originalPath: expect.stringContaining('attachments/') });
+        expect(await h.vault.read(note)).toBe(`${originalText}\n\n![[${saved.originalPath}]]\n`);
+        await saveGeneratedImageToNote(h.app, h.service, imported.ref, note, 'generated_task_output_0');
+        expect(await h.vault.read(note)).toBe(`${originalText}\n\n![[${saved.originalPath}]]\n`);
+        expect(h.app.fileManager.renameFile).toHaveBeenCalledTimes(1);
+        expect(h.data.get(saved.originalPath)).toEqual(jpeg());
+    });
+
+    it('does not move a generated image when the selected note has disappeared', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        const note = await h.vault.create('Vanished.md', '');
+        Object.assign(note, { extension: 'md' });
+        h.entries.delete(note.path);
+        await expect(saveGeneratedImageToNote(h.app, h.service, imported.ref, note, 'generated_task_output_0'))
+            .rejects.toThrow('Selected note');
+        expect(h.app.fileManager.renameFile).not.toHaveBeenCalled();
+        expect(h.data.get(imported.asset.originalPath)).toEqual(jpeg());
+    });
 
     it('rejects actual HEIC before registration or writes regardless of filename, including vault references', async () => {
         const h = setup();

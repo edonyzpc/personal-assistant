@@ -48,6 +48,8 @@ import {
     createSearchVaultMetadataTool,
     createSearchVaultSnippetsTool,
     createQueryNotesTool,
+    createCreateImageTool,
+    type CreateImageHostBinding,
     type ChatToolRegistryDefinition,
 } from "./chat-tools";
 import {
@@ -190,6 +192,8 @@ export interface PaAgentRunOptions {
     isCurrent?: () => boolean;
     /** Existing or reserved Chat conversation identity; never fabricated for standalone runs. */
     conversationId?: string;
+    /** Stable host-only identity and durable dispatch port for one user image request. */
+    createImage?: CreateImageHostBinding;
     imageCapability?: { get: () => ChatImageCapability; onSuccess: () => void; onError: (error: unknown) => void };
     memoryMode: MemoryMode;
     /** Visible Pagelet evidence. It is context-only and never grants tool authority. */
@@ -232,7 +236,7 @@ export interface PaAgentRuntimeOptions {
      * Write Action Framework v1 PolicyEngine parameters (SDD §4 + §5.1).
      *
      * Omit (chat runtime default) → PolicyEngine stays in strict chat mode
-     * (kind="action" rejected, only read-only/network-read non-action allowed).
+     * (kind="action" rejected; fixed domain tools retain narrow host ports).
      *
      * Provide `runKind: "review"` + `allowWrite: true` + an
      * `allowedActionPermissions` allowlist (e.g., `["local-filesystem-write"]`)
@@ -1112,11 +1116,21 @@ export class PaAgentRuntime {
             },
         } : undefined);
         let imageCapability: AgentCapability | undefined;
+        let imageGenerationCapability: AgentCapability | undefined;
         if (imageScope?.hasImages) {
             const capability = createChatToolCapability(createResolveChatImagesTool(imageScope), { providerId: "chat-images" });
             capability.executionMode = "sequential";
             this.toolRegistry.register(capability);
             imageCapability = capability;
+        }
+        if (options.createImage) {
+            if (!options.conversationId || options.createImage.conversationId !== options.conversationId
+                || !options.createImage.stableMessageId || !options.createImage.operationId) {
+                throw new Error("Image generation host identity is unavailable.");
+            }
+            imageGenerationCapability = createChatToolCapability(createCreateImageTool(options.createImage), { providerId: "chat-image-generation" });
+            imageGenerationCapability.executionMode = "sequential";
+            if (!this.toolRegistry.register(imageGenerationCapability)) throw new Error("Image generation capability unavailable");
         }
         if (writingContextHost) {
             writingContextRun = new WritingContextRun({
@@ -1178,6 +1192,7 @@ export class PaAgentRuntime {
         availableMetaToolNames.add(DECLARE_SOURCE_SCOPE);
         if (writingContextCapability) availableMetaToolNames.add(GET_WRITING_CONTEXT);
         if (imageScope?.hasImages) availableMetaToolNames.add(RESOLVE_CHAT_IMAGES);
+        if (options.createImage && exportableToolNames.has("create_image")) availableSemanticToolNames.add("create_image");
         if (this.toolRegistry.getDefinition(LOAD_SKILL_TOOL_NAME)) {
             availableMetaToolNames.add(LOAD_SKILL_TOOL_NAME);
         }
@@ -1992,9 +2007,9 @@ export class PaAgentRuntime {
             isHostCurrent: sourceRun.isCurrent,
             resolveNoteSearchScope: sourceRun.resolveNoteSearchScope,
             resolveReadPlans: calls => {
-                // These exact host readers have independent permissions. Images
-                // still verify registered refs and read bytes; this is not a
-                // generic meta/action exemption or a claim of zero I/O.
+                // These fixed capabilities use their own admission ports.
+                // create_image rechecks registered image refs and cost in the
+                // host callback; it grants no generic vault source read.
                 const independent = calls.filter(call => {
                     const capability = this.toolRegistry.get(call.name);
                     const memoryManagement = this.host.memoryManagement !== undefined
@@ -2007,6 +2022,7 @@ export class PaAgentRuntime {
                     const insightAction = this.host.insightActions !== undefined
                         && call.name === "manage_saved_insight";
                     return capability !== undefined && (capability === imageCapability
+                        || capability === imageGenerationCapability
                         || insightRead
                         || insightAction
                         || capability === writingContextCapability

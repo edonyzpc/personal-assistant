@@ -61,4 +61,19 @@ describe("image composer ownership", () => {
         expect(() => draft.beginImport("three.jpg")).toThrow("Image count limit");
         expect(draft.snapshot("").images).toHaveLength(2);
     });
+
+    test("image intent is single-use and a failed send restores it only into an untouched draft", () => {
+        const draft = new ComposerDraft<string>();
+        const intent = { operation: "edit" as const, parentVersionId: "version-1", referenceImageRefs: [
+            { assetId: "asset-1", contentHash: "a".repeat(64) },
+        ] };
+        draft.setImageIntent(intent);
+        expect(draft.canSend("")).toBe(false);
+        const sent = draft.take("Make the sky darker")!;
+        expect(draft.snapshot("").imageIntent).toBeUndefined();
+        expect(draft.restore(sent, "")).toBe("Make the sky darker");
+        expect(draft.snapshot("Make the sky darker").imageIntent).toEqual(intent);
+        draft.clearImageIntent();
+        expect(draft.snapshot("Make the sky darker").imageIntent).toBeUndefined();
+    });
 });

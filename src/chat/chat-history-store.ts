@@ -5,6 +5,10 @@ import { cloneContextReductionReceipt } from "../pa/contracts/context-trace";
 import { cloneChatHostProvenance, type ChatHostProvenance } from "../ai-services/chat-provenance";
 import { cloneWritingVersion, hashWritingText, writingSceneSchema, type WritingVersion } from "./writing-types";
 import { cloneGenerationInputSnapshot } from "../ai-services/generation-input-snapshot";
+import {
+    cloneGeneratedImageVersion, cloneImageGenerationTask,
+    type GeneratedImageVersion, type ImageGenerationTask,
+} from "./image-generation-types";
 import { cloneSaveReceipt, assertSaveReceiptUpdate, type SaveReceipt } from "./save-receipt-types";
 import { cloneSourceRecord } from "../ai-services/source-store";
 import {
@@ -30,7 +34,7 @@ import type {
 } from "../ai-services/chat-types";
 
 export const CHAT_HISTORY_SCHEMA_VERSION = 2;
-export const CHAT_HISTORY_IDB_VERSION = 2;
+export const CHAT_HISTORY_IDB_VERSION = 3;
 export const MAX_CONVERSATIONS = 50;
 
 const CONVERSATIONS_STORE = "conversations";
@@ -40,6 +44,9 @@ const ASSETS_STORE = "assets";
 const VARIANTS_STORE = "variants";
 const WRITING_VERSIONS_STORE = "writingVersions";
 const SAVE_RECEIPTS_STORE = "saveReceipts";
+const IMAGE_GENERATION_TASKS_STORE = "imageGenerationTasks";
+const GENERATED_IMAGE_VERSIONS_STORE = "generatedImageVersions";
+const IMAGE_OPERATION_PREFIX = "image-operation:";
 const ACTIVE_CONVERSATION_KEY = "active-conversation";
 const SCHEMA_VERSION_KEY = "schema-version";
 const PLUGIN_STORAGE_SCOPE = "personal-assistant-chat-history-v1";
@@ -142,6 +149,19 @@ export interface ChatHistoryStore {
     putSaveReceipt(receipt: SaveReceipt): Promise<void>;
     listSaveReceipts(writingVersionId?: string): Promise<SaveReceipt[]>;
 
+    getImageGenerationTask(taskId: string): Promise<ImageGenerationTask | null>;
+    getImageGenerationTaskByOperationId(operationId: string): Promise<ImageGenerationTask | null>;
+    listImageGenerationTasks(conversationId?: string): Promise<ImageGenerationTask[]>;
+    /** Forget private generation metadata for removed chat content; vault originals remain. */
+    deleteImageGenerationTasks(conversationId: string, stableMessageId?: string): Promise<void>;
+    /** New records reserve operationId; existing records require an exact revision. */
+    putImageGenerationTask(task: ImageGenerationTask, expectedRevision?: number): Promise<void>;
+    /** Only a successful durable prepared -> submitting claim authorizes a provider POST. */
+    claimImageGenerationSubmission(taskId: string, expectedRevision: number, updatedAt: string): Promise<ImageGenerationTask | null>;
+    getGeneratedImageVersion(versionId: string): Promise<GeneratedImageVersion | null>;
+    listGeneratedImageVersions(taskId: string): Promise<GeneratedImageVersion[]>;
+    putGeneratedImageVersion(version: GeneratedImageVersion): Promise<void>;
+
     dispose(): Promise<void>;
 }
 
@@ -171,6 +191,9 @@ export class MemoryChatHistoryStore implements ChatHistoryStore {
     private readonly imageSettings = new Map<string, unknown>();
     private readonly writingVersions = new Map<string, WritingVersion>();
     private readonly saveReceipts = new Map<string, SaveReceipt>();
+    private readonly imageGenerationTasks = new Map<string, ImageGenerationTask>();
+    private readonly imageOperations = new Map<string, string>();
+    private readonly generatedImageVersions = new Map<string, GeneratedImageVersion>();
     private readonly prunableWritingVersions = new Set<string>();
 
     async initialize(): Promise<void> {
@@ -238,12 +261,16 @@ export class MemoryChatHistoryStore implements ChatHistoryStore {
     }
 
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
+        const turn = this.turns.get(buildTurnRecordKey(conversationId, turnIndex));
+        const messageId = turn?.user.hostProvenance?.messageId;
+        if (messageId) this.removeImageTasks(conversationId, messageId);
         this.turns.delete(buildTurnRecordKey(conversationId, turnIndex));
         this.releaseTurnOwners(new Set([imageTurnOwnerId(conversationId, turnIndex)]));
         this.pruneWriting(conversationId, turnIndex);
     }
 
     async deleteTurnsForConversation(conversationId: string): Promise<void> {
+        this.removeImageTasks(conversationId);
         const lower = turnPrefix(conversationId);
         const upper = turnUpperBound(conversationId);
         const owners = new Set<string>();
@@ -266,11 +293,7 @@ export class MemoryChatHistoryStore implements ChatHistoryStore {
         const removed: string[] = [];
         for (let i = 0; i < removeCount; i++) {
             const id = sorted[i].id;
-            await this.deleteTurnsForConversation(id);
-            this.conversations.delete(id);
-            if (this.activeConversationId === id) {
-                this.activeConversationId = null;
-            }
+            await this.deleteConversation(id);
             removed.push(id);
         }
         return removed;
@@ -373,6 +396,68 @@ export class MemoryChatHistoryStore implements ChatHistoryStore {
         }
     }
 
+    async getImageGenerationTask(taskId: string): Promise<ImageGenerationTask | null> {
+        const value = this.imageGenerationTasks.get(taskId);
+        return value ? cloneImageGenerationTask(value) : null;
+    }
+    async getImageGenerationTaskByOperationId(operationId: string): Promise<ImageGenerationTask | null> {
+        const taskId = this.imageOperations.get(operationId);
+        const task = taskId ? await this.getImageGenerationTask(taskId) : null;
+        if (taskId && task?.operationId !== operationId) throw new Error('Image operation binding is inconsistent.');
+        return task;
+    }
+    async listImageGenerationTasks(conversationId?: string): Promise<ImageGenerationTask[]> {
+        return [...this.imageGenerationTasks.values()].filter((task) => !conversationId || task.conversationId === conversationId)
+            .map(cloneImageGenerationTask);
+    }
+    async putImageGenerationTask(task: ImageGenerationTask, expectedRevision?: number): Promise<void> {
+        const copy = cloneImageGenerationTask(task), previous = this.imageGenerationTasks.get(copy.taskId);
+        if (!this.conversations.has(copy.conversationId)) throw new Error('Image generation conversation is unavailable.');
+        assertImageGenerationTaskUpdate(previous, copy, expectedRevision);
+        const occupied = this.imageOperations.get(copy.operationId);
+        if (occupied && occupied !== copy.taskId) throw new Error('Image operation is already registered.');
+        if (occupied && !previous) throw new Error('Image operation binding has no task.');
+        this.imageGenerationTasks.set(copy.taskId, copy);
+        this.imageOperations.set(copy.operationId, copy.taskId);
+    }
+    async claimImageGenerationSubmission(taskId: string, expectedRevision: number, updatedAt: string): Promise<ImageGenerationTask | null> {
+        const previous = this.imageGenerationTasks.get(taskId);
+        if (!previous || previous.revision !== expectedRevision || previous.state !== 'prepared') return null;
+        const next = cloneImageGenerationTask({ ...previous, revision: previous.revision + 1, state: 'submitting', updatedAt });
+        assertImageGenerationTaskUpdate(previous, next, expectedRevision, true);
+        this.imageGenerationTasks.set(taskId, next);
+        return cloneImageGenerationTask(next);
+    }
+    async getGeneratedImageVersion(versionId: string): Promise<GeneratedImageVersion | null> {
+        const value = this.generatedImageVersions.get(versionId);
+        return value ? cloneGeneratedImageVersion(value) : null;
+    }
+    async listGeneratedImageVersions(taskId: string): Promise<GeneratedImageVersion[]> {
+        return [...this.generatedImageVersions.values()].filter((version) => version.taskId === taskId).map(cloneGeneratedImageVersion);
+    }
+    async putGeneratedImageVersion(version: GeneratedImageVersion): Promise<void> {
+        const copy = cloneGeneratedImageVersion(version), previous = this.generatedImageVersions.get(copy.versionId);
+        assertGeneratedImageVersion(copy, this.imageGenerationTasks.get(copy.taskId), previous,
+            [...this.generatedImageVersions.values()]);
+        this.generatedImageVersions.set(copy.versionId, copy);
+    }
+
+    async deleteImageGenerationTasks(conversationId: string, stableMessageId?: string): Promise<void> {
+        this.removeImageTasks(conversationId, stableMessageId);
+    }
+
+    private removeImageTasks(conversationId: string, stableMessageId?: string): void {
+        for (const [taskId, task] of this.imageGenerationTasks) {
+            if (task.conversationId !== conversationId
+                || (stableMessageId && task.stableMessageId !== stableMessageId)) continue;
+            this.imageGenerationTasks.delete(taskId);
+            this.imageOperations.delete(task.operationId);
+            for (const [versionId, version] of this.generatedImageVersions) {
+                if (version.taskId === taskId) this.generatedImageVersions.delete(versionId);
+            }
+        }
+    }
+
     private releaseTurnOwners(ids: Set<string>): void {
         for (const [id, asset] of this.assets) {
             this.assets.set(id, { ...asset, owners: asset.owners.filter((owner) => owner.kind !== "turn" || !ids.has(owner.id)) });
@@ -442,7 +527,9 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
     }
 
     async deleteConversation(id: string): Promise<void> {
-        await this.writeTransaction([CONVERSATIONS_STORE, METADATA_STORE, TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE, SAVE_RECEIPTS_STORE], async (transaction) => {
+        await this.writeTransaction([CONVERSATIONS_STORE, METADATA_STORE, TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE,
+            SAVE_RECEIPTS_STORE, IMAGE_GENERATION_TASKS_STORE, GENERATED_IMAGE_VERSIONS_STORE], async (transaction) => {
+            await this.removeImageTasks(transaction, id);
             await this.removeTurns(transaction, id);
             transaction.objectStore(CONVERSATIONS_STORE).delete(id);
             const metadataStore = transaction.objectStore(METADATA_STORE);
@@ -491,15 +578,24 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
     }
 
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
-        await this.writeTransaction([TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE, SAVE_RECEIPTS_STORE, METADATA_STORE], async (transaction) => {
+        await this.writeTransaction([TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE, SAVE_RECEIPTS_STORE, METADATA_STORE,
+            IMAGE_GENERATION_TASKS_STORE, GENERATED_IMAGE_VERSIONS_STORE], async (transaction) => {
+            const key = buildTurnRecordKey(conversationId, turnIndex);
+            const record = await requestToPromise<TurnRecord | undefined>(transaction.objectStore(TURNS_STORE).get(key));
+            const messageId = record?.turn.user.hostProvenance?.messageId;
+            if (messageId) await this.removeImageTasks(transaction, conversationId, messageId);
             await this.removeTurnOwners(transaction, new Set([imageTurnOwnerId(conversationId, turnIndex)]));
-            transaction.objectStore(TURNS_STORE).delete(buildTurnRecordKey(conversationId, turnIndex));
+            transaction.objectStore(TURNS_STORE).delete(key);
             await this.pruneWriting(transaction, conversationId, turnIndex);
         });
     }
 
     async deleteTurnsForConversation(conversationId: string): Promise<void> {
-        await this.writeTransaction([TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE, SAVE_RECEIPTS_STORE, METADATA_STORE], (transaction) => this.removeTurns(transaction, conversationId));
+        await this.writeTransaction([TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE, SAVE_RECEIPTS_STORE,
+            METADATA_STORE, IMAGE_GENERATION_TASKS_STORE, GENERATED_IMAGE_VERSIONS_STORE], async (transaction) => {
+            await this.removeImageTasks(transaction, conversationId);
+            await this.removeTurns(transaction, conversationId);
+        });
     }
 
     async pruneOldConversations(maxConversations: number): Promise<string[]> {
@@ -509,7 +605,6 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
         const toRemove = sorted.slice(0, sorted.length - maxConversations);
         const removed: string[] = [];
         for (const conversation of toRemove) {
-            await this.deleteTurnsForConversation(conversation.id);
             await this.deleteConversation(conversation.id);
             removed.push(conversation.id);
         }
@@ -652,6 +747,138 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
         });
     }
 
+    async getImageGenerationTask(taskId: string): Promise<ImageGenerationTask | null> {
+        const value = await requestToPromise<unknown>(this.getStore(IMAGE_GENERATION_TASKS_STORE, 'readonly').get(taskId));
+        return value === undefined ? null : cloneImageGenerationTask(value);
+    }
+    async getImageGenerationTaskByOperationId(operationId: string): Promise<ImageGenerationTask | null> {
+        const taskId = await this.getMetadataEntry<string>(`${IMAGE_OPERATION_PREFIX}${operationId}`);
+        const task = taskId ? await this.getImageGenerationTask(taskId) : null;
+        if (taskId && task?.operationId !== operationId) throw new Error('Image operation binding is inconsistent.');
+        return task;
+    }
+    async listImageGenerationTasks(conversationId?: string): Promise<ImageGenerationTask[]> {
+        const tasks: ImageGenerationTask[] = [];
+        for (const value of await requestToPromise<unknown[]>(this.getStore(IMAGE_GENERATION_TASKS_STORE, 'readonly').getAll())) {
+            try {
+                const task = cloneImageGenerationTask(value);
+                if (!conversationId || task.conversationId === conversationId) tasks.push(task);
+            } catch { /* Keep a damaged record in IDB without blocking other tasks. */ }
+        }
+        return tasks;
+    }
+    async putImageGenerationTask(task: ImageGenerationTask, expectedRevision?: number): Promise<void> {
+        const copy = cloneImageGenerationTask(task);
+        await this.writeTransaction([IMAGE_GENERATION_TASKS_STORE, METADATA_STORE, CONVERSATIONS_STORE], async (tx) => {
+            if (!await requestToPromise(tx.objectStore(CONVERSATIONS_STORE).get(copy.conversationId))) {
+                throw new Error('Image generation conversation is unavailable.');
+            }
+            const tasks = tx.objectStore(IMAGE_GENERATION_TASKS_STORE), metadata = tx.objectStore(METADATA_STORE);
+            const prior = await requestToPromise<unknown>(tasks.get(copy.taskId));
+            const previous = prior === undefined ? undefined : cloneImageGenerationTask(prior);
+            assertImageGenerationTaskUpdate(previous, copy, expectedRevision);
+            const key = `${IMAGE_OPERATION_PREFIX}${copy.operationId}`;
+            const entry = await requestToPromise<{ key: string; value: string } | undefined>(metadata.get(key));
+            if (entry && entry.value !== copy.taskId) throw new Error('Image operation is already registered.');
+            if (entry && !previous) throw new Error('Image operation binding has no task.');
+            if (!entry && !previous) {
+                const others = await requestToPromise<unknown[]>(tasks.getAll());
+                if (others.some((candidate) => candidate && typeof candidate === 'object'
+                    && (candidate as Partial<ImageGenerationTask>).operationId === copy.operationId)) {
+                    throw new Error('Image operation is already registered.');
+                }
+            }
+            if (!entry) metadata.put({ key, value: copy.taskId });
+            tasks.put(copy);
+        });
+    }
+    async claimImageGenerationSubmission(taskId: string, expectedRevision: number, updatedAt: string): Promise<ImageGenerationTask | null> {
+        let claimed: ImageGenerationTask | null = null;
+        await this.writeTransaction([IMAGE_GENERATION_TASKS_STORE], async (tx) => {
+            const tasks = tx.objectStore(IMAGE_GENERATION_TASKS_STORE);
+            const value = await requestToPromise<unknown>(tasks.get(taskId));
+            if (value === undefined) return;
+            const previous = cloneImageGenerationTask(value);
+            if (previous.revision !== expectedRevision || previous.state !== 'prepared') return;
+            const next = cloneImageGenerationTask({ ...previous, revision: previous.revision + 1, state: 'submitting', updatedAt });
+            assertImageGenerationTaskUpdate(previous, next, expectedRevision, true);
+            tasks.put(next);
+            claimed = next;
+        });
+        return claimed;
+    }
+    async getGeneratedImageVersion(versionId: string): Promise<GeneratedImageVersion | null> {
+        const value = await requestToPromise<unknown>(this.getStore(GENERATED_IMAGE_VERSIONS_STORE, 'readonly').get(versionId));
+        return value === undefined ? null : cloneGeneratedImageVersion(value);
+    }
+    async listGeneratedImageVersions(taskId: string): Promise<GeneratedImageVersion[]> {
+        const versions: GeneratedImageVersion[] = [];
+        for (const value of await requestToPromise<unknown[]>(this.getStore(GENERATED_IMAGE_VERSIONS_STORE, 'readonly').getAll())) {
+            try {
+                const version = cloneGeneratedImageVersion(value);
+                if (version.taskId === taskId) versions.push(version);
+            } catch { /* Keep a damaged record in IDB without hiding other versions. */ }
+        }
+        return versions;
+    }
+    async putGeneratedImageVersion(version: GeneratedImageVersion): Promise<void> {
+        const copy = cloneGeneratedImageVersion(version);
+        await this.writeTransaction([IMAGE_GENERATION_TASKS_STORE, GENERATED_IMAGE_VERSIONS_STORE], async (tx) => {
+            const versions = tx.objectStore(GENERATED_IMAGE_VERSIONS_STORE);
+            const taskValue = await requestToPromise<unknown>(tx.objectStore(IMAGE_GENERATION_TASKS_STORE).get(copy.taskId));
+            const task = taskValue === undefined ? undefined : cloneImageGenerationTask(taskValue);
+            const oldValue = await requestToPromise<unknown>(versions.get(copy.versionId));
+            const previous = oldValue === undefined ? undefined : cloneGeneratedImageVersion(oldValue);
+            const allVersions: GeneratedImageVersion[] = [];
+            for (const value of await requestToPromise<unknown[]>(versions.getAll())) {
+                try { allVersions.push(cloneGeneratedImageVersion(value)); }
+                catch {
+                    const record = value && typeof value === 'object' ? value as Partial<GeneratedImageVersion> : null;
+                    if (record?.taskId === copy.taskId && record.outputId === copy.outputId) {
+                        throw new Error('Damaged generated image version already owns this output.');
+                    }
+                }
+            }
+            assertGeneratedImageVersion(copy, task, previous, allVersions);
+            versions.put(copy);
+        });
+    }
+
+    async deleteImageGenerationTasks(conversationId: string, stableMessageId?: string): Promise<void> {
+        await this.writeTransaction([IMAGE_GENERATION_TASKS_STORE, GENERATED_IMAGE_VERSIONS_STORE, METADATA_STORE],
+            (tx) => this.removeImageTasks(tx, conversationId, stableMessageId));
+    }
+
+    private async removeImageTasks(tx: IDBTransaction, conversationId: string, stableMessageId?: string): Promise<void> {
+        const tasks = tx.objectStore(IMAGE_GENERATION_TASKS_STORE);
+        const values = await requestToPromise<unknown[]>(tasks.getAll());
+        const keys = await requestToPromise<IDBValidKey[]>(tasks.getAllKeys());
+        const removedIds = new Set<string>();
+        for (let index = 0; index < values.length; index++) {
+            const value = values[index];
+            if (!value || typeof value !== 'object') continue;
+            const task = value as Partial<ImageGenerationTask>;
+            if (task.conversationId !== conversationId
+                || (stableMessageId && task.stableMessageId !== stableMessageId)) continue;
+            tasks.delete(keys[index]);
+            removedIds.add(String(keys[index]));
+        }
+        if (!removedIds.size) return;
+        const versions = tx.objectStore(GENERATED_IMAGE_VERSIONS_STORE);
+        const versionValues = await requestToPromise<unknown[]>(versions.getAll());
+        const versionKeys = await requestToPromise<IDBValidKey[]>(versions.getAllKeys());
+        versionValues.forEach((value, index) => {
+            if (value && typeof value === 'object'
+                && removedIds.has((value as Partial<GeneratedImageVersion>).taskId ?? '')) versions.delete(versionKeys[index]);
+        });
+        const metadata = tx.objectStore(METADATA_STORE);
+        const bindings = await requestToPromise<Array<{ key: string; value: unknown }>>(metadata.getAll());
+        for (const binding of bindings) {
+            if (binding.key.startsWith(IMAGE_OPERATION_PREFIX) && typeof binding.value === 'string'
+                && removedIds.has(binding.value)) metadata.delete(binding.key);
+        }
+    }
+
     async dispose(): Promise<void> {
         this.generation += 1;
         if (this.db) {
@@ -686,6 +913,12 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
                 }
                 for (const name of [ASSETS_STORE, VARIANTS_STORE, WRITING_VERSIONS_STORE, SAVE_RECEIPTS_STORE]) {
                     if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: "id" });
+                }
+                if (!db.objectStoreNames.contains(IMAGE_GENERATION_TASKS_STORE)) {
+                    db.createObjectStore(IMAGE_GENERATION_TASKS_STORE, { keyPath: 'taskId' });
+                }
+                if (!db.objectStoreNames.contains(GENERATED_IMAGE_VERSIONS_STORE)) {
+                    db.createObjectStore(GENERATED_IMAGE_VERSIONS_STORE, { keyPath: 'versionId' });
                 }
             };
             request.onsuccess = () => {
@@ -876,6 +1109,15 @@ export class UnavailableChatHistoryStore implements ChatHistoryStore {
     async getSaveReceipt(_id: string): Promise<SaveReceipt | null> { throw this.error; }
     async listSaveReceipts(_writingVersionId?: string): Promise<SaveReceipt[]> { throw this.error; }
     async putSaveReceipt(_receipt: SaveReceipt): Promise<void> { throw this.error; }
+    async getImageGenerationTask(_taskId: string): Promise<ImageGenerationTask | null> { throw this.error; }
+    async getImageGenerationTaskByOperationId(_operationId: string): Promise<ImageGenerationTask | null> { throw this.error; }
+    async listImageGenerationTasks(_conversationId?: string): Promise<ImageGenerationTask[]> { throw this.error; }
+    async deleteImageGenerationTasks(_conversationId: string, _stableMessageId?: string): Promise<void> { throw this.error; }
+    async putImageGenerationTask(_task: ImageGenerationTask, _expectedRevision?: number): Promise<void> { throw this.error; }
+    async claimImageGenerationSubmission(_taskId: string, _expectedRevision: number, _updatedAt: string): Promise<ImageGenerationTask | null> { throw this.error; }
+    async getGeneratedImageVersion(_versionId: string): Promise<GeneratedImageVersion | null> { throw this.error; }
+    async listGeneratedImageVersions(_taskId: string): Promise<GeneratedImageVersion[]> { throw this.error; }
+    async putGeneratedImageVersion(_version: GeneratedImageVersion): Promise<void> { throw this.error; }
 
     async dispose(): Promise<void> {
         // Nothing to close.
@@ -885,6 +1127,103 @@ export class UnavailableChatHistoryStore implements ChatHistoryStore {
 interface TurnRecord {
     key: string;
     turn: PersistedTurn;
+}
+
+const IMAGE_STATE_TRANSITIONS: Record<ImageGenerationTask['state'], readonly ImageGenerationTask['state'][]> = {
+    prepared: ['not_submitted', 'stopped'],
+    not_submitted: ['prepared', 'stopped'],
+    submitting: ['running', 'saving', 'submission_unknown', 'failed', 'stopped'],
+    submission_unknown: ['stopped'],
+    running: ['saving', 'partial', 'failed', 'stopped', 'expired'],
+    saving: ['completed', 'partial', 'failed', 'stopped'],
+    partial: ['saving', 'stopped'],
+    failed: [],
+    stopped: [],
+    expired: [],
+    completed: [],
+};
+
+function assertImageGenerationTaskUpdate(
+    previous: ImageGenerationTask | undefined,
+    next: ImageGenerationTask,
+    expectedRevision: number | undefined,
+    submissionClaim = false,
+): void {
+    if (!previous) {
+        if (expectedRevision !== undefined || next.revision !== 0 || next.state !== 'prepared') {
+            throw new Error('New image generation tasks must start prepared.');
+        }
+        return;
+    }
+    if (expectedRevision !== previous.revision || next.revision !== previous.revision + 1) {
+        throw new Error('Image generation task revision changed.');
+    }
+    if (next.taskId !== previous.taskId || next.operationId !== previous.operationId
+        || next.conversationId !== previous.conversationId || next.stableMessageId !== previous.stableMessageId
+        || next.createdAt !== previous.createdAt
+        || JSON.stringify(next.request) !== JSON.stringify(previous.request)
+        || JSON.stringify(next.connection) !== JSON.stringify(previous.connection)) {
+        throw new Error('Image generation request identity cannot change.');
+    }
+    if (Date.parse(next.updatedAt) < Date.parse(previous.updatedAt)
+        || (previous.stopIntent && !next.stopIntent)
+        || (previous.deliverySuppressed && !next.deliverySuppressed)
+        || (previous.inputWhiteBackgroundApproved && !next.inputWhiteBackgroundApproved)
+        || (previous.inputWhiteBackgroundApplied && !next.inputWhiteBackgroundApplied)
+        || (previous.providerTaskId && next.providerTaskId !== previous.providerTaskId)
+        || (previous.providerRequestId && next.providerRequestId !== previous.providerRequestId)) {
+        throw new Error('Image generation task cannot move backward.');
+    }
+    if (next.state === 'submitting' && previous.state !== 'submitting' && !submissionClaim) {
+        throw new Error('Image generation submission requires an atomic claim.');
+    }
+    if (submissionClaim) {
+        if (previous.state !== 'prepared' || next.state !== 'submitting') {
+            throw new Error('Image generation submission claim requires a prepared task.');
+        }
+    } else if (next.state !== previous.state && !IMAGE_STATE_TRANSITIONS[previous.state].includes(next.state)) {
+        throw new Error('Invalid image generation task transition.');
+    }
+    for (const output of previous.outputs) {
+        const current = next.outputs.find((candidate) => candidate.outputId === output.outputId);
+        if (!current || current.providerOrdinal !== output.providerOrdinal
+            || (output.expectedContentHash && current.expectedContentHash !== output.expectedContentHash)
+            || (output.assetRef && JSON.stringify(current.assetRef) !== JSON.stringify(output.assetRef))) {
+            throw new Error('Image generation output identity cannot change.');
+        }
+        if (current.assetRef && current.expectedContentHash
+            && current.assetRef.contentHash !== current.expectedContentHash) {
+            throw new Error('Image generation output hash does not match its asset.');
+        }
+        const saved = output.saveState === 'saved';
+        if (saved && current.saveState !== 'saved') throw new Error('Saved image output cannot move backward.');
+    }
+}
+
+function assertGeneratedImageVersion(
+    version: GeneratedImageVersion,
+    task: ImageGenerationTask | undefined,
+    previous: GeneratedImageVersion | undefined,
+    versions: GeneratedImageVersion[],
+): void {
+    const output = task?.outputs.find((candidate) => candidate.outputId === version.outputId);
+    if (!task || !output || output.saveState !== 'saved'
+        || JSON.stringify(output.assetRef) !== JSON.stringify(version.assetRef)
+        || task.request.model !== version.model || task.request.submittedPrompt !== version.submittedPrompt
+        || JSON.stringify(task.request.inputRefs) !== JSON.stringify(version.inputRefs)
+        || task.request.parentVersionId !== version.parentVersionId) {
+        throw new Error('Generated image version does not match a saved task output.');
+    }
+    if (previous && JSON.stringify(previous) !== JSON.stringify(version)) {
+        throw new Error('Generated image version cannot be replaced.');
+    }
+    if (versions.some((candidate) => candidate.versionId !== version.versionId
+        && candidate.taskId === version.taskId && candidate.outputId === version.outputId)) {
+        throw new Error('Generated image output already has a version.');
+    }
+    if (version.parentVersionId && !versions.some((candidate) => candidate.versionId === version.parentVersionId)) {
+        throw new Error('Generated image parent version is missing.');
+    }
 }
 
 export function createChatHistoryStore(

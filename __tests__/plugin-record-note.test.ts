@@ -271,7 +271,7 @@ jest.mock('../src/settings', () => {
 jest.mock('../src/local-graph', () => ({ LocalGraph: class { } }));
 jest.mock('../src/utils', () => ({
     KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
-    getVaultApiTokenId: (vaultId?: string) => vaultId ? `pa-api-token-${vaultId}` : 'pa-api-token',
+    getVaultApiTokenId: jest.requireActual<typeof import('../src/utils')>('../src/utils').getVaultApiTokenId,
     hasSecretValue: (value: string | null) => value !== null && value !== '',
     icons: {},
 }));
@@ -12281,6 +12281,31 @@ describe('API token secret compatibility', () => {
 
         expect(plugin.getConfiguredAPITokenSecret()).toBeNull();
         expect(plugin.app.secretStorage.setSecret).not.toHaveBeenCalled();
+    });
+
+    it.each(['vault-id', 'very-long-vault-id-'.repeat(8)])('stores a dedicated image token using an Obsidian-valid id for %s', async (vaultId) => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = { statisticsVaultId: vaultId };
+        const secrets = new Map<string, string>();
+        plugin.app = {
+            secretStorage: {
+                getSecret: jest.fn((id: string) => secrets.get(id) ?? null),
+                setSecret: jest.fn((id: string, value: string) => {
+                    if (!/^[a-z0-9-]{1,64}$/.test(id)) throw new Error('Invalid Obsidian secret ID');
+                    secrets.set(id, value);
+                }),
+            },
+        };
+        plugin.saveImageGenerationConnectionSettings = jest.fn(async () => undefined);
+        const chatId = plugin.getAPITokenSecretId();
+        secrets.set(chatId, 'synthetic-chat-token');
+
+        await plugin.setImageAPITokenSecret('synthetic-image-token');
+
+        expect(plugin.getImageAPITokenSecretId()).not.toBe(chatId);
+        expect(plugin.getConfiguredImageAPITokenSecret()).toBe('synthetic-image-token');
+        expect(secrets.get(chatId)).toBe('synthetic-chat-token');
+        expect(plugin.saveImageGenerationConnectionSettings).toHaveBeenCalledWith({});
     });
 
     it('writes only the current scoped id when setting a non-empty token', () => {

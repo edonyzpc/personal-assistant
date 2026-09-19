@@ -18,6 +18,8 @@ import type { WritingSaveAction, PreparedWritingSave } from '../src/chat/writing
 import { ImageManagementModal, ImageSourcePickerModal, VaultImagePickerModal } from '../src/chat/image-management-modal';
 import { ImageAttachmentDetailModal } from '../src/chat/image-attachment-view';
 import { ImageAssetService } from '../src/chat/image-assets';
+import type { ImageGenerationSubmitInput } from '../src/chat/image-generation-service';
+import type { ImageGenerationTask } from '../src/chat/image-generation-types';
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
 import { ChatImageRequestError } from '../src/ai-services/image-capability';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
@@ -2725,6 +2727,409 @@ describe('LLMView turn lifecycle', () => {
         expect(getTextArea(containerEl).value).toBe('next draft');
         expect(draft.snapshot('next draft').images).toEqual([]);
         expect(getButtonsByClass(containerEl, 'retry-message-button')).toHaveLength(1);
+    });
+
+    it.each([['两张', 2], ['5张', 5]] as const)(
+        'handles explicit @CreateImage %s with the requested count and a durable host-bound operation', async (quantity, count) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'image-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async (input: ImageGenerationSubmitInput) => {
+            expect(await store.getConversation(input.conversationId)).not.toBeNull();
+            if (input.count > 4) throw new Error('image_generation:count_exceeds_provider_limit');
+            return { taskId: 'task_1' };
+        });
+        const confirmFirstUse = jest.fn(async () => true);
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: confirmFirstUse });
+        await view.onOpen();
+
+        view.prefillComposer(`@CreateImage 请给我${quantity}蓝色猫`);
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 5; i++) await flushPromises();
+
+        if (count > 4) {
+            expect(confirmFirstUse).not.toHaveBeenCalled();
+            expect(submit).not.toHaveBeenCalled();
+            expect(streamCalls).toHaveLength(0);
+            expect(allText(containerEl)).toContain('up to 4 images');
+            expect(getTextArea(containerEl).value).toBe(`@CreateImage 请给我${quantity}蓝色猫`);
+        } else {
+            expect(confirmFirstUse).toHaveBeenCalledTimes(1);
+            expect(submit).toHaveBeenCalledTimes(1);
+            expect(submit.mock.calls[0][0]).toMatchObject({ conversationId: 'image-conversation',
+                count, userPrompt: `请给我${quantity}蓝色猫`, submittedPrompt: `请给我${quantity}蓝色猫`, operation: 'generate' });
+            expect(streamCalls).toHaveLength(1);
+            expect(streamCalls[0].prompt.startsWith(`请给我${quantity}蓝色猫`)).toBe(true);
+            expect(streamCalls[0].options.createImage).toMatchObject({ conversationId: 'image-conversation',
+                stableMessageId: submit.mock.calls[0][0].stableMessageId,
+                operationId: submit.mock.calls[0][0].operationId });
+            streamCalls[0].resolve();
+            await flushPromises();
+        }
+    });
+
+    it.each(['', '@CreateImage '])('keeps the native reply current when %simage creation persists a new conversation', async (prefix) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'native-image-conversation' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async (_input: ImageGenerationSubmitInput) => ({ taskId: 'native-image-task' }));
+        Object.assign(plugin, {
+            writingVersions: versions, writingOutputProtocol: 'native',
+            prepareWritingStyleForScene: async () => ({ context: '', revisionIds: [], isCurrent: () => true }),
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true,
+        });
+        await view.onOpen();
+        view.prefillComposer(`${prefix}生成一张蓝色纸鹤`);
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 5; i++) await flushPromises();
+        const call = streamCalls[0];
+        const context = call.options.writingContextHost!;
+        expect(context.conversationId).toBe('native-image-conversation');
+        expect(context.isCurrent()).toBe(true);
+        if (!prefix) {
+            expect(await store.getConversation('native-image-conversation')).toBeNull();
+            await call.options.createImage!.submit({ prompt: '蓝色纸鹤', operation: 'generate', count: 1, referenceImageRefs: [] });
+        }
+        expect(await store.getConversation('native-image-conversation')).not.toBeNull();
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(context.isCurrent()).toBe(true);
+        call.options.onEvent?.({ version: 1, turnId: 'turn', seq: 1, timestamp: 1, kind: 'writing-preview',
+            runId: 'run', requestId: call.options.writingRequest!.requestId, messageId: 'native-reply', text: '图片请求已提交。' });
+        await flushPromises();
+        expect(allText(containerEl)).toContain('图片请求已提交。');
+        await view.onClose();
+        expect(context.isCurrent()).toBe(false);
+        call.resolve();
+        await flushPromises();
+    });
+
+    it('does not offer a removed image task as a new generation reference', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'image-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const ref = { assetId: 'removed-image', contentHash: 'a'.repeat(64) };
+        const suppressed = { taskId: 'removed-task', operationId: 'old-operation',
+            conversationId: 'image-conversation', stableMessageId: 'removed-message',
+            deliverySuppressed: true, outputs: [{ outputId: 'output_0', providerOrdinal: 0,
+                saveState: 'saved', assetRef: ref }] } as ImageGenerationTask;
+        const getVersionForOutput = jest.fn(async () => null);
+        const submit = jest.fn(async () => ({ taskId: 'unexpected' }));
+        Object.assign(plugin, { imageGenerationService: { list: async () => [suppressed],
+            subscribe: () => () => undefined, getVersionForOutput, submit } });
+        await view.onOpen();
+        view.prefillComposer('请把这张图片改成蓝色');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 5; i++) await flushPromises();
+        const binding = streamCalls[0].options.createImage!;
+        expect(streamCalls[0].prompt).toContain('Available image ref tokens: none');
+        expect(getVersionForOutput).not.toHaveBeenCalled();
+        await expect(binding.submit({ prompt: 'blue image', operation: 'edit', count: 1,
+            referenceImageRefs: [`${ref.assetId}:${ref.contentHash}`] })).rejects.toThrow(/outside the current conversation/);
+        expect(submit).not.toHaveBeenCalled();
+        streamCalls[0].resolve();
+        await flushPromises();
+        await view.onClose();
+    });
+
+    it('explains an incompatible Wan connection at the explicit Chat entry', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'image-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined,
+            submit: async () => { throw new Error('image_generation:connection_unavailable'); } },
+        confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        view.prefillComposer('@CreateImage 一只蓝色纸鹤');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 5; i++) await flushPromises();
+        expect(allText(containerEl)).toContain('compatible Wan image connection');
+        expect(streamCalls).toHaveLength(0);
+        await view.onClose();
+    });
+
+    it('routes an explicit @CreateImage message to one image submission after reserving its conversation', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'explicit-image-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async (_request?: unknown) => ({ taskId: 'image_task_one' }));
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        view.prefillComposer('@CreateImage 蓝色纸鹤，白色背景');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 5; i++) await flushPromises();
+
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+            conversationId: 'explicit-image-conversation', operation: 'generate', count: 1,
+            userPrompt: '蓝色纸鹤，白色背景', submittedPrompt: '蓝色纸鹤，白色背景', inputRefs: [],
+        }));
+        expect(await store.getConversation('explicit-image-conversation')).not.toBeNull();
+        expect(streamCalls).toHaveLength(1);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await view.onClose();
+    });
+
+    it('passes only the explicitly selected reference image to @CreateImage', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'reference-image-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async (_request?: ImageGenerationSubmitInput) => ({ taskId: 'reference_task' }));
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        const selected = { ref: { assetId: 'selected_image', contentHash: 'a'.repeat(64) }, label: 'selected.png', ordinal: 1 };
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        const handle = draft.beginImport(selected.label);
+        draft.completeImport(handle, selected);
+        draft.setImageIntent({ operation: 'reference', referenceImageRefs: [selected.ref] });
+        const editor = getTextArea(containerEl);
+        editor.value = '@CreateImage 参考这张图的配色，画一只纸鹤';
+        editor.dispatchEvent('input');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 5; i++) await flushPromises();
+
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(submit).toHaveBeenCalledWith(expect.objectContaining({ operation: 'reference', count: 1,
+            inputRefs: [selected.ref], submittedPrompt: '参考这张图的配色，画一只纸鹤' }));
+        expect(streamCalls[0].options.images).toEqual([selected]);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await view.onClose();
+    });
+
+    it('lets Agent submit separately requested @CreateImage subjects under one stated image budget', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'separate-images-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async (_request?: unknown) => ({ taskId: 'local_image_task' }));
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        view.prefillComposer('@CreateImage 一张蓝色猫，一张红色狗');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 5; i++) await flushPromises();
+
+        expect(submit).not.toHaveBeenCalled();
+        const binding = streamCalls[0].options.createImage!;
+        await expect(binding.submit({ prompt: '蓝色猫和红色狗', operation: 'generate', count: 2,
+            referenceImageRefs: [], subrequestIndex: 1 })).rejects.toThrow('one-image request');
+        await binding.submit({ prompt: '蓝色猫', operation: 'generate', count: 1,
+            referenceImageRefs: [], subrequestIndex: 1 });
+        await binding.submit({ prompt: '红色狗', operation: 'generate', count: 1,
+            referenceImageRefs: [], subrequestIndex: 2 });
+        expect(submit).toHaveBeenCalledTimes(2);
+        expect(submit).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            submittedPrompt: '蓝色猫', count: 1, operation: 'generate',
+        }));
+        expect(submit).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            submittedPrompt: '红色狗', count: 1, operationId: expect.stringContaining('-sub2'),
+        }));
+        await expect(binding.submit({ prompt: '绿色鸟', operation: 'generate', count: 1,
+            referenceImageRefs: [], subrequestIndex: 3 })).rejects.toThrow('not authorized');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await view.onClose();
+    });
+
+    it('does not report a separate-image request complete when Agent submits none', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'incomplete-images-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async () => ({ taskId: 'unexpected' }));
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        const editor = getTextArea(containerEl);
+        // Programmatic textarea.value assignments do not emit input in Obsidian.
+        Object.defineProperty(editor, 'value', { configurable: true, writable: true, value: '' });
+        view.prefillComposer('@CreateImage 一张蓝色猫，一张红色狗');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 5; i++) await flushPromises();
+        streamCalls[0].resolve();
+        for (let i = 0; i < 5; i++) await flushPromises();
+        expect(submit).not.toHaveBeenCalled();
+        expect(allText(containerEl)).toContain('Only 0 of 2 separately described images were accepted');
+        expect(editor.value).toBe('一张蓝色猫，一张红色狗');
+        expect((view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft.snapshot(editor.value).imageIntent)
+            .toEqual({ operation: 'generate', referenceImageRefs: [] });
+        await view.onClose();
+    });
+
+    it('keeps a later text turn and draft intact when an earlier image task completes', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'background-image-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        let task: ImageGenerationTask | undefined;
+        let notifyTask: ((updated: ImageGenerationTask) => void) | undefined;
+        const submit = jest.fn(async (request: ImageGenerationSubmitInput) => {
+            task = {
+                schemaVersion: 1, taskId: 'background_task', operationId: request.operationId,
+                conversationId: request.conversationId, stableMessageId: request.stableMessageId,
+                createdAt: '2026-09-18T00:00:00.000Z', updatedAt: '2026-09-18T00:00:00.000Z', revision: 1,
+                request: { userPrompt: request.userPrompt, submittedPrompt: request.submittedPrompt,
+                    operation: request.operation, model: 'wan2.7-image', count: request.count, inputRefs: [] },
+                connection: { mode: 'inherit-chat', endpointIdentity: 'https://dashscope.aliyuncs.com',
+                    credentialSlot: 'chat', revision: 0 },
+                state: 'running', outputs: [],
+            };
+            notifyTask?.(task);
+            return { taskId: task.taskId };
+        });
+        Object.assign(plugin, { imageGenerationService: {
+            list: async (conversationId: string) => task?.conversationId === conversationId ? [task] : [],
+            subscribe: (listener: (updated: ImageGenerationTask) => void) => {
+                notifyTask = listener; return () => { notifyTask = undefined; };
+            },
+            submit,
+        }, confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        const editor = getTextArea(containerEl);
+        Object.defineProperty(editor, 'value', { configurable: true, writable: true, value: '' });
+        view.prefillComposer('@CreateImage 蓝色纸鹤');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 5; i++) await flushPromises();
+        expect(submit).toHaveBeenCalledTimes(1);
+        streamCalls[0].onChunk('Image request is running.');
+        streamCalls[0].resolve();
+        for (let i = 0; i < 5; i++) await flushPromises();
+
+        view.prefillComposer('Tell me about watercolor paper');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 5; i++) await flushPromises();
+        expect(streamCalls).toHaveLength(2);
+        expect(streamCalls[1].prompt).toContain('Tell me about watercolor paper');
+        expect(submit).toHaveBeenCalledTimes(1);
+        streamCalls[1].onChunk('Watercolor paper is textured.');
+        view.prefillComposer('My next unsent message');
+        const draftBeforeCompletion = editor.value;
+
+        task = { ...task!, state: 'completed', revision: 2, outputs: [{ outputId: 'output_1', providerOrdinal: 0,
+            saveState: 'saved', assetRef: { assetId: 'image_1', contentHash: 'a'.repeat(64) } }] };
+        notifyTask?.(task);
+        const card = getElementByClass(containerEl, 'pa-chat-image-task-card');
+        expect(card.getAttribute('data-state')).toBe('completed');
+        expect(allText(card.parentElement!)).toContain('Image request is running.');
+        expect(allText(card.parentElement!)).not.toContain('Watercolor paper is textured.');
+        expect(editor.value).toBe(draftBeforeCompletion);
+        expect(streamCalls[1].prompt).toContain('Tell me about watercolor paper');
+        streamCalls[1].resolve();
+        for (let i = 0; i < 5; i++) await flushPromises();
+        expect(editor.value).toBe(draftBeforeCompletion);
+        await view.onClose();
+    });
+
+    it('recovers an accepted image task when its Chat reply failed before turn persistence', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'accepted-before-reply' });
+        let task: ImageGenerationTask | undefined;
+        let storedTask: Promise<void> | undefined;
+        const imageGenerationService = {
+            list: (conversationId: string) => store.listImageGenerationTasks(conversationId),
+            subscribe: () => () => undefined,
+            submit: async (request: ImageGenerationSubmitInput) => {
+                const prepared: ImageGenerationTask = {
+                    schemaVersion: 1, taskId: 'accepted_task', operationId: request.operationId,
+                    conversationId: request.conversationId, stableMessageId: request.stableMessageId,
+                    createdAt: '2026-09-18T00:00:00.000Z', updatedAt: '2026-09-18T00:00:00.000Z', revision: 0,
+                    request: { userPrompt: request.userPrompt, submittedPrompt: request.submittedPrompt,
+                        operation: request.operation, model: 'wan2.7-image', count: request.count, inputRefs: [] },
+                    connection: { mode: 'inherit-chat', endpointIdentity: 'https://dashscope.aliyuncs.com',
+                        credentialSlot: 'chat', revision: 0 },
+                    state: 'prepared', outputs: [],
+                };
+                storedTask = (async () => {
+                    await store.putImageGenerationTask(prepared);
+                    const claimed = await store.claimImageGenerationSubmission(prepared.taskId, 0, prepared.updatedAt);
+                    task = { ...claimed!, state: 'running', revision: 2, providerTaskId: 'wan_synthetic' };
+                    await store.putImageGenerationTask(task, 1);
+                })();
+                await storedTask;
+                return { taskId: prepared.taskId };
+            },
+        };
+        const first = createView({ chatHistoryManager: manager });
+        Object.assign(first.plugin, { imageGenerationService, confirmImageGenerationFirstUse: async () => true });
+        await first.view.onOpen();
+        first.view.prefillComposer('@CreateImage 蓝色纸鹤');
+        getElementByClass(first.containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 10 && !storedTask; i++) await flushPromises();
+        expect(storedTask).toBeDefined();
+        await storedTask;
+        for (let i = 0; i < 5; i++) await flushPromises();
+        expect(task).toBeDefined();
+        streamCalls[0].reject(new Error('Chat transport failed'));
+        for (let i = 0; i < 5; i++) await flushPromises();
+        expect(getElementByClass(first.containerEl, 'pa-chat-image-task-card').getAttribute('data-task-id'))
+            .toBe('accepted_task');
+        expect(await store.getConversation('accepted-before-reply')).not.toBeNull();
+        expect(await store.getTurns('accepted-before-reply')).toHaveLength(0);
+        await first.view.onClose();
+
+        const restored = createView({ chatHistoryManager: manager });
+        Object.assign(restored.plugin, { imageGenerationService, confirmImageGenerationFirstUse: async () => true });
+        await restored.view.onOpen();
+        for (let i = 0; i < 5; i++) await flushPromises();
+        expect(getElementByClass(restored.containerEl, 'pa-chat-image-task-card').getAttribute('data-task-id'))
+            .toBe('accepted_task');
+        expect(allText(restored.containerEl)).toContain('蓝色纸鹤');
+        await restored.view.onClose();
+    });
+
+    it('keeps @CreateImage selection separate from IME confirmation and #skill completion', async () => {
+        const { view, plugin, containerEl } = createView();
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined } });
+        await view.onOpen();
+        const area = getTextArea(containerEl);
+        area.value = '@Cre';
+        Object.assign(area, { selectionStart: 4, selectionEnd: 4,
+            setRangeText: (replacement: string, start: number, end: number) => {
+                area.value = `${area.value.slice(0, start)}${replacement}${area.value.slice(end)}`;
+                Object.assign(area, { selectionStart: start + replacement.length, selectionEnd: start + replacement.length });
+            } });
+        area.dispatchEvent('input');
+        const imageCandidates = getElementByClass(containerEl, 'pa-chat-create-image-typeahead');
+        expect(imageCandidates.hidden).toBe(false);
+        area.dispatchEvent('compositionstart');
+        expect(imageCandidates.hidden).toBe(true);
+        area.dispatchEvent('keydown', { key: 'Enter', isComposing: true, keyCode: 229, preventDefault: jest.fn() });
+        expect(streamCalls).toHaveLength(0);
+        area.dispatchEvent('compositionend');
+        getButtonByClass(imageCandidates, 'pa-chat-create-image-typeahead-item').click();
+        expect(area.value).toBe('');
+        expect(getElementByClass(containerEl, 'pa-chat-create-image-intent').hidden).toBe(false);
+        area.value = '#';
+        Object.assign(area, { selectionStart: 1, selectionEnd: 1 });
+        area.dispatchEvent('input');
+        expect(imageCandidates.hidden).toBe(true);
+        expect(getElementByClass(containerEl, 'pa-chat-skill-typeahead').hidden).toBe(false);
+    });
+
+    it('keeps natural-language image creation available to Agent without submitting before its tool choice', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'natural-image-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async () => ({ taskId: 'task_2' }));
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: jest.fn(async () => true) });
+        await view.onOpen();
+
+        view.prefillComposer('画一张蓝色猫');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 5; i++) await flushPromises();
+
+        expect(submit).not.toHaveBeenCalled();
+        expect(streamCalls[0].options.createImage).toBeDefined();
+        await streamCalls[0].options.createImage!.submit({ prompt: '蓝色猫', operation: 'generate', count: 1,
+            referenceImageRefs: [] });
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(await store.getConversation('natural-image-conversation')).not.toBeNull();
+        streamCalls[0].resolve();
+        await flushPromises();
     });
 
     it('prepares a complete removable Pagelet attachment without sending and consumes it after one successful Ask', async () => {
@@ -6963,7 +7368,9 @@ describe('LLMView turn lifecycle', () => {
         const composerMenu = getElementByClass(containerEl, 'pa-chat-composer-menu');
 
         expect(composerRow.children).toEqual([
-            getElementByClass(containerEl, 'pa-chat-image-draft'), getTextArea(containerEl), actions,
+            getElementByClass(containerEl, 'pa-chat-image-draft'),
+            getElementByClass(containerEl, 'pa-chat-create-image-intent'),
+            getTextArea(containerEl), actions,
         ]);
         expect(actions.parentElement).toBe(composerRow);
         expect(actions.children.filter((child) => child.tagName !== 'input')).toEqual([

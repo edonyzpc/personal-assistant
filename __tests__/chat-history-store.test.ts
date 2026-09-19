@@ -311,8 +311,8 @@ describe("IndexedDbChatHistoryStore", () => {
         const store = new IndexedDbChatHistoryStore("chat-history-test", factory as unknown as IDBFactory);
         await store.initialize();
         expect(factory.openCalls).toBe(1);
-        // Original stores plus additive multimodal metadata and Blob cache.
-        expect(factory.db.createObjectStoreCalls).toBe(7);
+        // Original stores plus multimodal metadata, Blob cache and image generation records.
+        expect(factory.db.createObjectStoreCalls).toBe(9);
 
         await store.upsertConversation(makeConversation({ id: "c1", title: "Topic A" }));
         await store.upsertConversation(makeConversation({ id: "c2", title: "Topic B", updatedAt: "2026-05-29T11:00:00.000Z" }));
@@ -531,6 +531,11 @@ class FakeObjectStore {
             }
         }
         return this.trackOperation(results);
+    }
+
+    getAllKeys(range?: IDBKeyRange): IDBRequest<IDBValidKey[]> {
+        return this.trackOperation<IDBValidKey[]>([...this.records.keys()]
+            .filter((key) => !range || keyInRange(range, key)));
     }
 
     put(record: { key?: string; id?: string }): IDBRequest<IDBValidKey> {
@@ -797,13 +802,13 @@ describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s
     });
 });
 
-it('adds v2 stores without removing v1 text history or metadata', async () => {
+it('adds v3 stores without removing v1 text history or metadata', async () => {
     const factory = new FakeIndexedDbFactory({ hasStores: true });
     factory.db.getStore('turns').set(buildTurnRecordKey('conv-1', 0), { key: buildTurnRecordKey('conv-1', 0), turn: makeTurn() });
     factory.db.getStore('metadata').set('schema-version', { key: 'schema-version', value: 1 });
     const store = new IndexedDbChatHistoryStore('existing', factory as unknown as IDBFactory);
     await store.initialize();
-    expect(factory.db.createObjectStoreCalls).toBe(4);
+    expect(factory.db.createObjectStoreCalls).toBe(6);
     expect((await store.getTurns('conv-1'))[0]).toEqual(makeTurn());
     expect(await store.getSchemaVersion()).toBe(1);
 });

@@ -8,6 +8,7 @@ import type { ChatService } from "../ai-services/chat-service";
 import type { MemoryStatusPort } from "../memory/MemoryStatusPort";
 import type { ChatHistoryManager } from "./chat-history-manager";
 import type { ImageAssetService } from "./image-assets";
+import type { ImageGenerationService } from "./image-generation-service";
 import type { WritingVersionService } from "./writing-versions";
 import type { WritingSaveAction } from "./writing-save-action";
 import type { WritingScene } from "./writing-types";
@@ -52,6 +53,8 @@ export interface ChatHost {
     refreshAPITokenPresence?(): APITokenCacheState;
     readonly chatHistoryManager: ChatHistoryManager | undefined;
     readonly imageAssetService?: ImageAssetService;
+    readonly imageGenerationService?: ImageGenerationService;
+    confirmImageGenerationFirstUse?(): Promise<boolean>;
     readonly writingVersions?: WritingVersionService;
     /** Host compatibility candidate; set only for the validated native rollout. */
     readonly writingOutputProtocol?: 'native';

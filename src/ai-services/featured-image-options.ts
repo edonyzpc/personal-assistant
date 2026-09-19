@@ -1,5 +1,6 @@
 import type { AIUtilsHost } from './ai-utils';
 import { getDashScopeImageGenerationEndpoint } from './ai-utils';
+import { resolveWanSynchronousEndpoint } from './image-generation-connection';
 import type { FeaturedImageModel } from '../settings';
 
 export interface FeaturedImageDefaults {
@@ -12,6 +13,8 @@ export interface FeaturedImageDefaults {
 export interface FeaturedImageRunAdmission {
     readonly connection: Readonly<AIUtilsHost['settings']>;
     readonly imageEndpoint: string;
+    readonly imageBaseURL?: string;
+    readonly getImageAPIToken?: () => Promise<string>;
     readonly isCurrent: () => boolean;
 }
 
@@ -29,9 +32,15 @@ export class FeaturedImageRunInvalidatedError extends Error {
 }
 
 export function assertFeaturedImageRunCurrent(options: FeaturedImageRunOptions): void {
-    if (!options.isCurrent()
-        || options.connection.aiProvider !== 'qwen'
-        || getDashScopeImageGenerationEndpoint(options.connection.baseURL) !== options.imageEndpoint) {
+    let endpoint: string | null = null;
+    try {
+        endpoint = resolveWanSynchronousEndpoint(options.imageBaseURL ?? options.connection.baseURL);
+    } catch {
+        endpoint = null;
+    }
+    if (!options.isCurrent() || endpoint !== options.imageEndpoint
+        || (!options.imageBaseURL && (options.connection.aiProvider !== 'qwen'
+            || getDashScopeImageGenerationEndpoint(options.connection.baseURL) !== options.imageEndpoint))) {
         throw new FeaturedImageRunInvalidatedError();
     }
 }

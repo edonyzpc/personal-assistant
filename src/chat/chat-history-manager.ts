@@ -172,7 +172,6 @@ export class ChatHistoryManager {
     async deleteConversation(id: string): Promise<void> {
         if (!this.isAvailable()) return;
         await this.mutateSources(id, async () => {
-            await this.store.deleteTurnsForConversation(id);
             await this.store.deleteConversation(id);
         });
     }
@@ -287,9 +286,8 @@ export class ChatHistoryManager {
         await this.mutateSources(conversationId, async () => {
             const turns = await this.store.getTurns(conversationId);
             const surviving = turns.filter((turn) => turn.turnIndex < fromIndex);
-            await this.store.deleteTurnsForConversation(conversationId);
-            for (const turn of surviving) {
-                await this.store.appendTurn(turn);
+            for (const turn of turns) {
+                if (turn.turnIndex >= fromIndex) await this.store.deleteTurn(conversationId, turn.turnIndex);
             }
             const conversation = await this.store.getConversation(conversationId);
             if (conversation) {

@@ -222,6 +222,7 @@ export function isChatToolName(name: string): name is ChatToolName {
         || name === "query_saved_insights"
         || name === "manage_saved_insight"
         || name === "resolve_chat_images"
+        || name === "create_image"
         || name === "get_current_note_context"
         || name === "search_vault_metadata"
         || name === "list_recent_notes"

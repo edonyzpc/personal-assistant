@@ -25,7 +25,8 @@ export interface PolicyEngineOptions {
      * When omitted, licenseTier defaults to the temporary mock paid entitlement
      * while the rest of the chat runtime policy stays read-only by default:
      * - kind="action" rejected (defaults: runKind="chat", allowWrite=false)
-     * - non-action permission must be "read-only" | "network-read"
+     * - non-action permission must be "read-only" | "network-read", except
+     *   fixed domain tools with their own host admission ports
      * - non-action requiresConfirmation must be false
      * - failureBehavior must be "recoverable"
      *
@@ -93,19 +94,20 @@ export class PolicyEngine {
             // PolicyEngine does not re-validate that flag here; framework gates enforce it
             // at execution time via the Preview-Confirmation Lifecycle.
         } else {
-            // Non-action capability: retain PA v1 chat constraints. The only
-            // mutation-capable exception is the fixed Memory governance tool;
-            // it remains a normal tool because its narrow domain port supplies
-            // admission, risk review, cancellation, and transaction guards.
+            // Non-action capability: retain PA v1 chat constraints. Fixed
+            // domain tools may use narrow host ports for governed mutations.
             const fixedMemoryManagement = capability.permission === "memory-management"
                 && capability.name === "manage_memory"
                 && capability.sourceBoundary === "memory";
             const fixedInsightManagement = capability.permission === "insight-management"
                 && capability.name === "manage_saved_insight"
                 && capability.sourceBoundary === "read-only-tool";
+            const fixedImageGeneration = capability.permission === "image-generation"
+                && capability.name === "create_image"
+                && capability.sourceBoundary === "read-only-tool";
             const ordinaryPermissionAllowed = capability.permission === "read-only"
                 || capability.permission === "network-read";
-            if (!ordinaryPermissionAllowed && !fixedMemoryManagement && !fixedInsightManagement) {
+            if (!ordinaryPermissionAllowed && !fixedMemoryManagement && !fixedInsightManagement && !fixedImageGeneration) {
                 return {
                     allowed: false,
                     reason: `permission ${capability.permission} is not allowed for non-action capabilities`,

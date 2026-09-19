@@ -8,7 +8,6 @@ import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import {
     AIUtils,
     assessAIReadiness,
-    getDashScopeImageGenerationEndpoint,
     isDashScopeCompatibleBaseURL,
     supportsDashScopeThinkingControl,
     type AIReadinessScope,
@@ -56,6 +55,7 @@ import { LEARNING_DEFAULTS_VERSION, mergeLearningPreferences } from './settings'
 import { GraphOptionsModal, type GraphOptions } from './settings/graph-options-modal';
 import { FeaturedImageOptionsModal } from './settings/featured-image-options-modal';
 import type { FeaturedImageDefaults, FeaturedImageRunAdmission } from './ai-services/featured-image-options';
+import { resolveImageGenerationConnection, type ImageGenerationConnection } from './ai-services/image-generation-connection';
 import { openSettings, openSettingsTab } from './obsidian-internals';
 import { KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId, icons } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
@@ -79,6 +79,7 @@ import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-s
 import { createChatHistoryStore, type ChatHistoryStore } from './chat/chat-history-store';
 import { ChatHistoryManager } from './chat/chat-history-manager';
 import { ImageAssetService } from './chat/image-assets';
+import { ImageGenerationService } from './chat/image-generation-service';
 import { hasWritingNoteProvenance } from './chat/writing-note-provenance';
 import { WritingVersionService } from './chat/writing-versions';
 import {
@@ -1338,6 +1339,7 @@ export class PluginManager extends Plugin {
     chatHistoryStore: ChatHistoryStore | undefined;
     chatHistoryManager: ChatHistoryManager | undefined;
     imageAssetService: ImageAssetService | undefined;
+    imageGenerationService: ImageGenerationService | undefined;
     writingVersions: WritingVersionService | undefined;
     writingSave: WritingSaveAction | undefined;
     private writingStyleService: WritingStyleService | undefined;
@@ -1650,6 +1652,17 @@ export class PluginManager extends Plugin {
                 return file instanceof TFile ? this.isDataBoundaryAllowedFile(file) : this.isDataBoundaryAllowedPath(path);
             },
         });
+        this.imageGenerationService = new ImageGenerationService({
+            store: this.chatHistoryStore,
+            assets: this.imageAssetService,
+            resolveConnection: () => this.getImageGenerationConnection(),
+            getToken: async (mode) => mode === 'dedicated-wan'
+                ? this.getConfiguredImageAPITokenSecret() : await this.getAPIToken(),
+            log: (message, error) => this.log(message, error),
+            onSyncNotice: (receipt) => new Notice(this.t('plugin.chat.images.sync', {
+                directory: receipt.directory,
+            }), 12000),
+        });
         this.writingVersions = new WritingVersionService(this.chatHistoryStore);
         this.writingSave = new WritingSaveAction(this.app, this.chatHistoryStore, this.imageAssetService, {
             // Generated-note eligibility controls reading into Memory, not
@@ -1883,7 +1896,7 @@ export class PluginManager extends Plugin {
             id: 'ai-assistant-featured-images',
             name: this.t("plugin.command.aiFeaturedImages"),
             editorCheckCallback: (checking, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
-                if (this.settings.aiProvider !== 'qwen' || !getDashScopeImageGenerationEndpoint(this.settings.baseURL)) return false;
+                if (!this.getImageGenerationConnection()) return false;
                 if (checking) return true;
                 if (view instanceof MarkdownView) {
                     this.openFeaturedImageOptions(editor, view);
@@ -1996,6 +2009,7 @@ export class PluginManager extends Plugin {
         void this.chatHistoryManager?.initialize().then(async () => {
             if (this.unloading || !this.chatHistoryManager?.isAvailable()) return;
             await this.imageAssetService?.recoverPending();
+            await this.imageGenerationService?.recover();
         }).catch((error) => this.log("Failed to recover registered image imports", error));
         this.initializeStatsSubsystem();
         void this.initializeCalloutManager();
@@ -8369,6 +8383,8 @@ export class PluginManager extends Plugin {
             },
             createChatService: () => this.createChatService(),
             imageAssetService: this.imageAssetService,
+            imageGenerationService: this.imageGenerationService,
+            confirmImageGenerationFirstUse: () => this.confirmImageGenerationFirstUse(),
             writingVersions: this.writingVersions,
             writingOutputProtocol: 'native',
             writingSave: this.writingSave,
@@ -10047,6 +10063,8 @@ export class PluginManager extends Plugin {
         this.writingStyleCoordinator = undefined;
         await this.writingVersions?.dispose();
         this.writingVersions = undefined;
+        this.imageGenerationService?.dispose();
+        this.imageGenerationService = undefined;
         await this.imageAssetService?.dispose().catch((error) => this.log("Failed to dispose image resources", error));
         this.imageAssetService = undefined;
         const chatHistoryStore = this.chatHistoryStore;
@@ -12000,7 +12018,7 @@ export class PluginManager extends Plugin {
     }
 
     openFeaturedImageOptions(editor?: Editor, view?: MarkdownView): Modal | null {
-        if (this.settings.aiProvider !== "qwen" || !getDashScopeImageGenerationEndpoint(this.settings.baseURL)) return null;
+        if (!this.getImageGenerationConnection()) return null;
         if ((editor || view) && (!editor || !view?.file)) return null;
         this.activeFeatureOptionsModal?.close();
         const defaults: FeaturedImageDefaults = {
@@ -12017,20 +12035,33 @@ export class PluginManager extends Plugin {
             && this.app.vault.getAbstractFileByPath(path) === file);
         const prepareRun = (): FeaturedImageRunAdmission | null => {
             if (!targetIsCurrent() || !this.ensureAIConfigured()) return null;
+            const imageConnection = this.getImageGenerationConnection();
+            if (!imageConnection) return null;
             const connection = Object.freeze({ aiProvider: this.settings.aiProvider,
                 baseURL: this.settings.baseURL, chatModelName: this.settings.chatModelName,
                 embeddingModelName: this.settings.embeddingModelName });
-            const imageEndpoint = getDashScopeImageGenerationEndpoint(connection.baseURL);
-            if (connection.aiProvider !== "qwen" || !imageEndpoint) return null;
+            const imageEndpoint = imageConnection.synchronousEndpoint;
+            const imageBaseURL = imageConnection.baseURL;
+            const getImageAPIToken = async () => {
+                const current = this.getImageGenerationConnection();
+                if (!current || current.mode !== imageConnection.mode
+                    || current.baseURL !== imageConnection.baseURL
+                    || current.revision !== imageConnection.revision) return '';
+                return current.mode === 'dedicated-wan'
+                    ? this.getConfiguredImageAPITokenSecret() ?? '' : await this.getAPIToken();
+            };
             const providerRevision = this.aiProviderConfigurationRevision;
             const tokenRevision = this.aiTokenRevision;
-            return { connection, imageEndpoint, isCurrent: () => !this.unloading
+            return { connection, imageEndpoint, imageBaseURL, getImageAPIToken, isCurrent: () => !this.unloading
                 && !this.hasActiveAIProviderCredentialTransition()
                 && this.aiProviderConfigurationRevision === providerRevision
                 && this.aiTokenRevision === tokenRevision && targetIsCurrent()
                 && this.settings.aiProvider === connection.aiProvider
                 && this.settings.baseURL === connection.baseURL
-                && this.settings.chatModelName === connection.chatModelName };
+                && this.settings.chatModelName === connection.chatModelName
+                && this.getImageGenerationConnection()?.mode === imageConnection.mode
+                && this.getImageGenerationConnection()?.baseURL === imageConnection.baseURL
+                && this.getImageGenerationConnection()?.revision === imageConnection.revision };
         };
         const modal = new FeaturedImageOptionsModal(this.app, editor && view && file ? {
             defaults, saveDefaults, mode: "generate", sourceName: file.basename,
@@ -13852,6 +13883,70 @@ export class PluginManager extends Plugin {
 
     getAPITokenSecretId(): string {
         return getVaultApiTokenId(this.settings.statisticsVaultId || "default-vault");
+    }
+
+    getImageAPITokenSecretId(): string {
+        return getVaultApiTokenId(`${this.settings.statisticsVaultId || "default-vault"}-image`);
+    }
+
+    getImageGenerationConnection(): ImageGenerationConnection | null {
+        try {
+            return resolveImageGenerationConnection(this.settings, {
+                chat: this.getAPITokenSecretId(), dedicated: this.getImageAPITokenSecretId(),
+            });
+        } catch {
+            return null;
+        }
+    }
+
+    getConfiguredImageAPITokenSecret(): string | null {
+        return normalizeAPIToken(this.app.secretStorage.getSecret(this.getImageAPITokenSecretId()));
+    }
+
+    private async confirmImageGenerationFirstUse(): Promise<boolean> {
+        if (this.settings.imageGenerationFirstUseNoticeShown) return true;
+        const approved = await confirmUserAction(this.app, {
+            title: this.t('plugin.imageGeneration.firstUseTitle'),
+            message: this.t('plugin.imageGeneration.firstUseMessage'),
+            confirmText: this.t('plugin.imageGeneration.firstUseConfirm'),
+        });
+        if (!approved) return false;
+        await this.enqueueSettingsWrite(async () => {
+            if (this.unloading) throw new Error('Plugin is unloading');
+            await this.saveSettingsData({ ...this.settings, imageGenerationFirstUseNoticeShown: true });
+            this.settings.imageGenerationFirstUseNoticeShown = true;
+        });
+        return true;
+    }
+
+    async setImageAPITokenSecret(value: string): Promise<void> {
+        const normalized = normalizeAPIToken(value) ?? "";
+        const secretId = this.getImageAPITokenSecretId();
+        const previous = this.app.secretStorage.getSecret(secretId);
+        this.app.secretStorage.setSecret(secretId, normalized);
+        try {
+            await this.saveImageGenerationConnectionSettings({});
+        } catch (error) {
+            this.app.secretStorage.setSecret(secretId, previous ?? '');
+            throw error;
+        }
+    }
+
+    async saveImageGenerationConnectionSettings(patch: Partial<Pick<PluginManagerSettings,
+        'imageGenerationConnectionMode' | 'imageGenerationBaseURL'>>): Promise<void> {
+        await this.enqueueSettingsWrite(async () => {
+            if (this.unloading) throw new Error('Plugin is unloading');
+            const next = { ...this.settings, ...patch,
+                imageGenerationConnectionRevision: this.settings.imageGenerationConnectionRevision + 1 };
+            if (next.imageGenerationConnectionMode === 'dedicated-wan') {
+                resolveImageGenerationConnection(next, {
+                    chat: this.getAPITokenSecretId(), dedicated: this.getImageAPITokenSecretId(),
+                });
+            }
+            await this.saveSettingsData(next);
+            Object.assign(this.settings, next);
+        });
+        await this.notifySettingsChanged();
     }
 
     private getAPITokenSecretCandidateIds(): string[] {

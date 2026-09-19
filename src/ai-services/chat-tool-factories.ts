@@ -11,6 +11,8 @@
 import type {
     ChatToolContext,
     ChatToolDefinition,
+    CreateImageHostBinding,
+    CreateImageToolInput,
     CurrentNoteContextInput,
     CurrentNoteContextOutput,
     ChatToolRegistryDefinition,
@@ -1781,4 +1783,112 @@ function createMetadataDependencyRecords(capabilityName: string, paths: Readonly
         citationEligible: false,
         metadata: { sourceDependency: true },
     }));
+}
+
+/** Each host-admitted subrequest can submit at most once, even if the model calls the tool again. */
+export function createCreateImageTool(binding: CreateImageHostBinding): ChatToolDefinition<
+    CreateImageToolInput,
+    { status: "accepted" | "already_accepted"; taskId: string; message?: string }
+> {
+    const submitted = new Map<number, { receipt: Promise<{ taskId: string }>; input: CreateImageToolInput }>();
+    return {
+        name: "create_image",
+        description: "Start an image creation or edit requested by the user. Returns an accepted background task, not a completed image.",
+        plannerGuidance: [
+            "Use for an explicit image creation or edit request, including @CreateImage. Merely discussing images or attaching an image is not a generation request.",
+            "Choose generate for text-only creation, reference for inspiration from authorized images, or edit for changing a specific image. Preserve the user's requested subject and constraints.",
+            "Use only exact registered image ref tokens and version IDs visible in this conversation. The host rechecks access and costs; never invent a path, URL, credential or provider endpoint.",
+            "Default to one image. Do not call again to silently retry or choose the best paid result. An accepted task continues in the background; do not claim its pixels are ready or viewed.",
+            "Only when the user explicitly asks for separately described images in one message, use distinct one-based subrequestIndex values. The host enforces their shared image budget.",
+        ],
+        inputSchema: {
+            type: "object",
+            properties: {
+                prompt: { type: "string", description: "Description of the requested image or change, retaining the user's constraints.", minLength: 1, maxLength: 10000 },
+                operation: { type: "string", enum: ["generate", "reference", "edit"], description: "Creation from text, reference-based creation, or modification of a specific image." },
+                count: { type: "integer", minimum: 1, maximum: 8, description: "Number of images explicitly requested by the user; omit for one." },
+                subrequestIndex: { type: "integer", minimum: 1, maximum: 4, description: "Distinct requested image part, only for explicit separate descriptions; omit for one request." },
+                referenceImageRefs: { type: "array", description: "Exact opaque refs for authorized chat images; no paths or URLs.", items: { type: "string", maxLength: 256 } },
+                parentVersionId: { type: "string", description: "Exact generated version ID when editing a previous result.", maxLength: 256 },
+            },
+            required: ["prompt", "operation"],
+            additionalProperties: false,
+        },
+        permission: "image-generation",
+        cost: "ai-calls",
+        outputBudgetChars: 400,
+        requiresConfirmation: false,
+        failureBehavior: "recoverable",
+        statusMessageText: "Starting image creation",
+        sourceBoundary: "read-only-tool",
+        statusMessage: () => "Starting image creation",
+        validateInput: (raw) => {
+            if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("create_image input must be an object.");
+            const value = raw as Record<string, unknown>;
+            const allowed = new Set(["prompt", "operation", "count", "subrequestIndex", "referenceImageRefs", "parentVersionId"]);
+            if (Object.keys(value).some(key => !allowed.has(key))) throw new Error("create_image has unsupported arguments.");
+            const prompt = typeof value.prompt === "string" ? value.prompt.trim() : "";
+            if (!prompt || prompt.length > 10000) throw new Error("create_image requires a valid prompt.");
+            const operation = value.operation;
+            if (operation !== "generate" && operation !== "reference" && operation !== "edit") {
+                throw new Error("create_image requires a valid operation.");
+            }
+            const count = value.count === undefined ? 1 : value.count;
+            if (!Number.isInteger(count) || (count as number) < 1 || (count as number) > 8) {
+                throw new Error("create_image count is out of range.");
+            }
+            const subrequestIndex = value.subrequestIndex;
+            if (subrequestIndex !== undefined && (!Number.isInteger(subrequestIndex)
+                || (subrequestIndex as number) < 1 || (subrequestIndex as number) > 4)) {
+                throw new Error("create_image subrequest index is out of range.");
+            }
+            const refs = value.referenceImageRefs === undefined ? [] : value.referenceImageRefs;
+            if (!Array.isArray(refs) || refs.length > 8
+                || refs.some(ref => typeof ref !== "string" || !/^[A-Za-z0-9:_-]{1,256}$/.test(ref))
+                || new Set(refs).size !== refs.length) {
+                throw new Error("create_image image refs are invalid.");
+            }
+            const parentVersionId = value.parentVersionId;
+            if (parentVersionId !== undefined
+                && (typeof parentVersionId !== "string" || !/^[A-Za-z0-9:_-]{1,256}$/.test(parentVersionId))) {
+                throw new Error("create_image parent version is invalid.");
+            }
+            return { prompt, operation, count: count as number, referenceImageRefs: refs,
+                ...(subrequestIndex === undefined ? {} : { subrequestIndex: subrequestIndex as number }),
+                ...(parentVersionId ? { parentVersionId } : {}) };
+        },
+        execute: async (input) => {
+            const index = input.subrequestIndex ?? 1;
+            const prior = submitted.get(index);
+            const alreadySubmitted = prior !== undefined;
+            const entry = prior ?? { input, receipt: Promise.resolve().then(() => binding.submit(input)) };
+            if (!prior) submitted.set(index, entry);
+            const inputSummary = `${entry.input.operation}; count:${entry.input.count}`;
+            try {
+                const accepted = await entry.receipt;
+                if (!accepted || typeof accepted.taskId !== "string" || !accepted.taskId) {
+                    throw new Error("Image task receipt missing.");
+                }
+                return { ok: true, tool: "create_image", inputSummary,
+                    content: alreadySubmitted
+                        ? { status: "already_accepted", taskId: accepted.taskId,
+                            message: "This user request already has an image task. Changes require a new user request." }
+                        : { status: "accepted", taskId: accepted.taskId },
+                    sources: [] };
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : '';
+                const message = reason.includes('image_generation:connection_unavailable')
+                    ? 'Image generation needs a compatible Wan connection in Settings.'
+                    : reason.includes('image_generation:credential_unavailable')
+                        ? 'The image service key is unavailable. Check the image connection settings.'
+                        : reason.includes('image_generation:count_exceeds_provider_limit')
+                            ? 'Wan supports up to 4 images in one request. Ask the user to choose 1–4 images.'
+                        : reason.includes('image_generation:count_needs_confirmation')
+                            ? 'The image count is not explicit. Ask the user before creating more than one image.'
+                            : 'Could not confirm the image request. Check its card before trying again.';
+                return { ok: false, tool: "create_image", inputSummary,
+                    content: null, sources: [], error: message };
+            }
+        },
+    };
 }
