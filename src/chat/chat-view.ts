@@ -81,6 +81,7 @@ import {
     generationInputNeedsRecoveryConfirmation,
     type GenerationInputSnapshot,
 } from '../ai-services/generation-input-snapshot';
+import { positionTypeaheadNearCaret } from './typeahead-position';
 
 export { VIEW_TYPE_LLM };
 export { formatOperationsPreview };
@@ -632,7 +633,7 @@ export class LLMView extends ItemView {
         imageTypeahead.hidden = true;
         let chooseImageTypeahead: (() => void) | undefined;
         let composing = false;
-        textArea.addEventListener('compositionstart', () => { composing = true; imageTypeahead.hidden = true; });
+        textArea.addEventListener('compositionstart', () => { composing = true; hideImageTypeahead(); });
         textArea.addEventListener('compositionend', () => { composing = false; renderSkillTypeahead(); });
 
         textArea.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -641,7 +642,7 @@ export class LLMView extends ItemView {
             if (e.key === 'Escape' && (!skillTypeahead.hidden || !imageTypeahead.hidden)) {
                 e.preventDefault();
                 hideSkillTypeahead();
-                imageTypeahead.hidden = true;
+                hideImageTypeahead();
                 return;
             }
             if (e.key !== 'Enter' || e.shiftKey) return;
@@ -1013,6 +1014,11 @@ export class LLMView extends ItemView {
             skillTypeahead.empty();
             skillTypeahead.hidden = true;
         };
+        const hideImageTypeahead = () => {
+            imageTypeahead.empty();
+            imageTypeahead.hidden = true;
+            chooseImageTypeahead = undefined;
+        };
         const getImageTriggerMatch = () => {
             if (!this.host.imageGenerationService) return null;
             if (composing || textArea.selectionStart !== textArea.selectionEnd) return null;
@@ -1033,7 +1039,7 @@ export class LLMView extends ItemView {
                 textArea.setRangeText('', current.start, current.end, 'end');
                 composerDraft.touchText();
                 composerDraft.setImageIntent({ operation: 'generate', referenceImageRefs: [] });
-                imageTypeahead.hidden = true;
+                hideImageTypeahead();
                 hideSkillTypeahead();
                 renderImageDraft();
                 syncComposerControls();
@@ -1046,8 +1052,85 @@ export class LLMView extends ItemView {
             });
             button.createSpan({ cls: 'pa-chat-skill-typeahead-name', text: 'CreateImage' });
             button.onclick = choose;
+            imageTypeahead.hidden = false;
+            const placement = positionTypeaheadNearCaret(textArea, imageTypeahead, containerEl);
+            if (placement === 'hidden') hideImageTypeahead();
             return true;
         };
+        const syncVisibleImageTypeahead = () => {
+            if (imageTypeahead.hidden) return;
+            renderImageTypeahead();
+        };
+        const imageTypeaheadEvents = ['scroll', 'select', 'keyup'] as const;
+        for (const eventName of imageTypeaheadEvents) {
+            textArea.addEventListener(eventName, syncVisibleImageTypeahead);
+        }
+        const imageTypeaheadDocument = getOptionalPlatformDocument();
+        if (
+            imageTypeaheadDocument
+            && typeof imageTypeaheadDocument.addEventListener === 'function'
+            && typeof imageTypeaheadDocument.removeEventListener === 'function'
+        ) {
+            imageTypeaheadDocument.addEventListener('selectionchange', syncVisibleImageTypeahead);
+        }
+        const imageTypeaheadWindow = getOptionalPlatformWindow();
+        if (
+            imageTypeaheadWindow
+            && typeof imageTypeaheadWindow.addEventListener === 'function'
+            && typeof imageTypeaheadWindow.removeEventListener === 'function'
+        ) {
+            for (const eventName of ['resize', 'orientationchange'] as const) {
+                imageTypeaheadWindow.addEventListener(eventName, syncVisibleImageTypeahead);
+            }
+        }
+        const imageTypeaheadResizeObserverConstructor = (imageTypeaheadWindow as (Window & {
+            ResizeObserver?: new (callback: ResizeObserverCallback) => ResizeObserver;
+        }) | undefined)?.ResizeObserver;
+        const imageTypeaheadResizeObserver = typeof imageTypeaheadResizeObserverConstructor === 'function'
+            ? new imageTypeaheadResizeObserverConstructor(syncVisibleImageTypeahead)
+            : undefined;
+        imageTypeaheadResizeObserver?.observe(containerEl);
+        let imageTypeaheadBlurTimer: PlatformTimeoutHandle | null = null;
+        const hideImageTypeaheadAfterBlur = (event: FocusEvent) => {
+            if (event.relatedTarget && imageTypeahead.contains(event.relatedTarget as Node)) return;
+            if (imageTypeaheadBlurTimer !== null) clearPlatformTimeout(imageTypeaheadBlurTimer);
+            imageTypeaheadBlurTimer = setPlatformTimeout(() => {
+                imageTypeaheadBlurTimer = null;
+                const activeDocument = imageTypeahead.ownerDocument ?? imageTypeaheadDocument;
+                const activeElement = activeDocument?.activeElement;
+                if (activeElement === textArea) return;
+                if (activeElement && imageTypeahead.contains(activeElement as Node)) return;
+                hideImageTypeahead();
+            }, 0);
+            (imageTypeaheadBlurTimer as unknown as { unref?: () => void }).unref?.();
+        };
+        inputDiv.addEventListener('focusout', hideImageTypeaheadAfterBlur);
+        this.registerViewTeardown(() => {
+            for (const eventName of imageTypeaheadEvents) {
+                textArea.removeEventListener(eventName, syncVisibleImageTypeahead);
+            }
+            if (
+                imageTypeaheadDocument
+                && typeof imageTypeaheadDocument.removeEventListener === 'function'
+            ) {
+                imageTypeaheadDocument.removeEventListener('selectionchange', syncVisibleImageTypeahead);
+            }
+            if (
+                imageTypeaheadWindow
+                && typeof imageTypeaheadWindow.removeEventListener === 'function'
+            ) {
+                for (const eventName of ['resize', 'orientationchange'] as const) {
+                    imageTypeaheadWindow.removeEventListener(eventName, syncVisibleImageTypeahead);
+                }
+            }
+            inputDiv.removeEventListener('focusout', hideImageTypeaheadAfterBlur);
+            imageTypeaheadResizeObserver?.disconnect();
+            if (imageTypeaheadBlurTimer !== null) {
+                clearPlatformTimeout(imageTypeaheadBlurTimer);
+                imageTypeaheadBlurTimer = null;
+            }
+            hideImageTypeahead();
+        });
         const getSkillTriggerMatch = () => {
             const value = textArea.value;
             return /(?:^|\s)#([a-z0-9-]*)$/i.exec(value);
@@ -1516,8 +1599,11 @@ export class LLMView extends ItemView {
         };
         const isCurrentSession = () => this.viewSessionId === sessionId;
         const imageGeneration = this.host.imageGenerationService;
+        type ImageTaskCardTarget = { parent: HTMLElement; before?: HTMLElement };
         const imageTaskCards = new Map<string, HTMLElement>();
-        const imageTaskMessageTargets = new Map<string, HTMLElement>();
+        const imageTaskMessageTargets = new Map<string, ImageTaskCardTarget>();
+        const imageTaskCardTargets = new Map<string, ImageTaskCardTarget>();
+        const imageTaskFallbackTarget: ImageTaskCardTarget = { parent: this.responseDiv };
         const imageCardCleanups = new Map<string, Array<() => void>>();
         const imageOperationByTurn = new Map<number, { stableMessageId: string; operationId: string; intent?: ComposerImageIntent; taskIds?: string[] }>();
         let imageTasksConversationId: string | null = null;
@@ -1526,12 +1612,14 @@ export class LLMView extends ItemView {
             imageCardCleanups.clear();
             imageTaskCards.clear();
             imageTaskMessageTargets.clear();
+            imageTaskCardTargets.clear();
         };
         const dropImageTaskCard = (taskId: string) => {
             for (const cleanup of imageCardCleanups.get(taskId) ?? []) cleanup();
             imageCardCleanups.delete(taskId);
             imageTaskCards.get(taskId)?.remove();
             imageTaskCards.delete(taskId);
+            imageTaskCardTargets.delete(taskId);
         };
         this.registerViewTeardown(clearImageTaskCards);
         const taskStateLabel = (task: ImageGenerationTask): string => t(`plugin.chat.createImage.state.${task.state}`);
@@ -1557,8 +1645,16 @@ export class LLMView extends ItemView {
                 card = this.responseDiv.createDiv({ cls: 'pa-chat-image-task-card' });
                 imageTaskCards.set(task.taskId, card);
             }
-            const target = imageTaskMessageTargets.get(task.stableMessageId) ?? this.responseDiv;
-            if (card.parentElement !== target) target.appendChild(card);
+            const target = imageTaskMessageTargets.get(task.stableMessageId) ?? imageTaskFallbackTarget;
+            if (
+                !card.isConnected
+                || card.parentElement !== target.parent
+                || imageTaskCardTargets.get(task.taskId) !== target
+            ) {
+                if (target.before) target.parent.insertBefore(card, target.before);
+                else target.parent.appendChild(card);
+                imageTaskCardTargets.set(task.taskId, target);
+            }
             for (const cleanup of imageCardCleanups.get(task.taskId) ?? []) cleanup();
             const cleanups: Array<() => void> = [];
             imageCardCleanups.set(task.taskId, cleanups);
@@ -1572,10 +1668,116 @@ export class LLMView extends ItemView {
             if (task.recoveryReason) card.createDiv({ cls: 'pa-chat-image-task-card__recovery', text: imageRecoveryText(task.recoveryReason) });
             if (task.inputWhiteBackgroundApplied) card.createDiv({ cls: 'pa-chat-image-task-card__recovery',
                 text: t('plugin.chat.createImage.whiteBackgroundApplied') });
+            const outputs = card.createDiv({ cls: 'pa-chat-image-task-card__outputs' });
+            outputs.hidden = task.outputs.length === 0;
+            for (const output of task.outputs) {
+                const outputRow = outputs.createDiv({ cls: 'pa-chat-image-task-card__output' });
+                if (output.saveState !== 'saved' || !output.assetRef) {
+                    outputRow.createDiv({ cls: 'pa-chat-image-task-card__output-state',
+                        text: t('plugin.chat.createImage.output', { number: output.providerOrdinal + 1,
+                            state: t(`plugin.chat.createImage.outputState.${output.saveState}`) }) });
+                    if (output.recoveryReason) outputRow.createDiv({ text: imageRecoveryText(output.recoveryReason) });
+                    continue;
+                }
+                const assetRef = cloneImageRef(output.assetRef);
+                const imageFrame = outputRow.createDiv({ cls: 'pa-chat-image-task-card__image-frame' });
+                const previewButton = imageFrame.createEl('button', {
+                    cls: 'message-action-button pa-chat-image-task-card__preview',
+                    attr: { type: 'button', title: t('plugin.chat.createImage.view'),
+                        'aria-label': t('plugin.chat.createImage.viewNumber', { number: output.providerOrdinal + 1 }) },
+                });
+                const preview = previewButton.createEl('img', { attr: { alt: t('plugin.chat.createImage.viewNumber',
+                    { number: output.providerOrdinal + 1 }) } });
+                preview.hidden = true;
+                if (this.host.imageAssetService) {
+                    let release: (() => void) | undefined;
+                    cleanups.push(() => { release?.(); preview.removeAttribute('src'); });
+                    void this.host.imageAssetService.resolveVariant(assetRef, 'preview').then(lease => {
+                        if (!isCurrentSession() || imageTaskCards.get(task.taskId) !== card || !preview.isConnected) {
+                            lease.release(); return;
+                        }
+                        const urlApi = URL;
+                        const url = urlApi.createObjectURL(lease.blob);
+                        release = () => { urlApi.revokeObjectURL(url); lease.release(); };
+                        preview.src = url;
+                        preview.hidden = false;
+                    }).catch(error => this.host.log('Could not preview generated image', error));
+                }
+                const read = () => imageGeneration.readOutput(task.taskId, output.outputId);
+                previewButton.onclick = () => { void read().then(file => {
+                    if (isCurrentSession()) new GeneratedImagePreviewModal(this.app, file.bytes, file.mime).open();
+                }).catch(error => { this.host.log('Could not open generated image', error); new Notice(t('plugin.chat.createImage.imageUnavailable')); }); };
+
+                const editButton = createMessageActionButton(imageFrame, {
+                    cls: 'pa-chat-image-task-card__image-action pa-chat-image-task-card__image-action--edit',
+                    icon: 'pencil',
+                    label: t('plugin.chat.createImage.editThis'),
+                });
+                editButton.createSpan({ cls: 'pa-chat-image-task-card__image-action-text',
+                    text: t('plugin.chat.createImage.editThis') });
+                editButton.onclick = () => { void imageGeneration.getVersionForOutput(task.taskId, output.outputId).then(version => {
+                    if (!version || !isCurrentSession()) { new Notice(t('plugin.chat.createImage.versionUnavailable')); return; }
+                    if (composerDraft.hasDraft(textArea.value) || isGenerating()) {
+                        showComposerHint(t('plugin.chat.createImage.finishDraftEdit')); return;
+                    }
+                    composerDraft.setImageIntent({ operation: 'edit', parentVersionId: version.versionId,
+                        referenceImageRefs: [cloneImageRef(version.assetRef)] });
+                    renderImageDraft(); syncComposerControls(); textArea.focus();
+                }).catch(error => { this.host.log('Could not prepare image edit', error); new Notice(t('plugin.chat.createImage.versionUnavailable')); }); };
+
+                const downloadButton = createMessageActionButton(imageFrame, {
+                    cls: 'pa-chat-image-task-card__image-action pa-chat-image-task-card__image-action--download',
+                    icon: 'download',
+                    label: t('plugin.chat.createImage.download'),
+                });
+                downloadButton.onclick = () => { void read().then(file =>
+                    downloadGeneratedImage(outputRow.ownerDocument, file.bytes, file.mime, file.filename)).catch(error => {
+                    if ((error as { name?: string })?.name === 'AbortError') return;
+                    this.host.log('Could not export generated image', error); new Notice(t('plugin.chat.createImage.downloadFailed'));
+                }); };
+
+                const outputActions = outputRow.createDiv({ cls: 'pa-chat-image-task-card__output-actions' });
+                const copyButton = createMessageActionButton(outputActions, {
+                    cls: 'pa-chat-image-task-card__output-action',
+                    icon: 'copy',
+                    label: t('plugin.chat.createImage.copy'),
+                });
+                copyButton.onclick = () => { void read().then(file =>
+                    copyGeneratedImage(outputRow.ownerDocument, file.bytes, file.mime)).then(() =>
+                    new Notice(t('plugin.chat.createImage.copied'))).catch(error => {
+                    this.host.log('Could not copy generated image', error); new Notice(t('plugin.chat.createImage.copyFailed'));
+                }); };
+                if (this.host.imageAssetService) {
+                    const images = this.host.imageAssetService;
+                    let savingToNote = false;
+                    const saveButton = createMessageActionButton(outputActions, {
+                        cls: 'pa-chat-image-task-card__output-action',
+                        icon: 'file-plus',
+                        label: t('plugin.chat.createImage.saveToNote'),
+                    });
+                    saveButton.onclick = () => {
+                        if (savingToNote) return;
+                        new GeneratedImageNotePickerModal(this.app, note => {
+                            savingToNote = true;
+                            void saveGeneratedImageToNote(this.app, images, assetRef, note,
+                                `generated_${task.taskId}_${output.providerOrdinal}`).then(() => {
+                                new Notice(t('plugin.chat.createImage.savedToNote', { note: note.path }));
+                            }).catch(error => {
+                                this.host.log('Could not save generated image to note', error);
+                                new Notice(t('plugin.chat.createImage.saveToNoteFailed'));
+                            }).finally(() => { savingToNote = false; });
+                        }).open();
+                    };
+                }
+            }
+
             const actions = card.createDiv({ cls: 'pa-chat-image-task-card__actions' });
             const button = (label: string, icon: string, action: () => void) => {
-                const result = actions.createEl('button', { attr: { type: 'button', title: label, 'aria-label': label } });
-                setIcon(result, icon);
+                const result = createMessageActionButton(actions, {
+                    cls: 'pa-chat-image-task-card__action',
+                    icon,
+                    label,
+                });
                 result.createSpan({ text: label });
                 result.onclick = action;
                 return result;
@@ -1627,85 +1829,6 @@ export class LLMView extends ItemView {
                 { count: task.request.inputRefs.length }) });
             if (task.request.parentVersionId) details.createDiv({ text: t('plugin.chat.createImage.parentVersion',
                 { version: task.request.parentVersionId }) });
-            const outputs = card.createDiv({ cls: 'pa-chat-image-task-card__outputs' });
-            for (const output of task.outputs) {
-                const outputRow = outputs.createDiv({ cls: 'pa-chat-image-task-card__output' });
-                outputRow.createDiv({ text: t('plugin.chat.createImage.output', { number: output.providerOrdinal + 1,
-                    state: t(`plugin.chat.createImage.outputState.${output.saveState}`) }) });
-                if (output.saveState !== 'saved' || !output.assetRef) {
-                    if (output.recoveryReason) outputRow.createDiv({ text: imageRecoveryText(output.recoveryReason) });
-                    continue;
-                }
-                const assetRef = cloneImageRef(output.assetRef);
-                const previewButton = outputRow.createEl('button', {
-                    cls: 'pa-chat-image-task-card__preview',
-                    attr: { type: 'button', title: t('plugin.chat.createImage.view'),
-                        'aria-label': t('plugin.chat.createImage.viewNumber', { number: output.providerOrdinal + 1 }) },
-                });
-                previewButton.createSpan({ text: t('plugin.chat.createImage.view') });
-                const preview = previewButton.createEl('img', { attr: { alt: t('plugin.chat.createImage.viewNumber',
-                    { number: output.providerOrdinal + 1 }) } });
-                preview.hidden = true;
-                if (this.host.imageAssetService) {
-                    let release: (() => void) | undefined;
-                    cleanups.push(() => { release?.(); preview.removeAttribute('src'); });
-                    void this.host.imageAssetService.resolveVariant(assetRef, 'preview').then(lease => {
-                        if (!isCurrentSession() || imageTaskCards.get(task.taskId) !== card || !preview.isConnected) {
-                            lease.release(); return;
-                        }
-                        const urlApi = URL;
-                        const url = urlApi.createObjectURL(lease.blob);
-                        release = () => { urlApi.revokeObjectURL(url); lease.release(); };
-                        preview.src = url;
-                        preview.hidden = false;
-                    }).catch(error => this.host.log('Could not preview generated image', error));
-                }
-                const read = () => imageGeneration.readOutput(task.taskId, output.outputId);
-                previewButton.onclick = () => { void read().then(file => {
-                    if (isCurrentSession()) new GeneratedImagePreviewModal(this.app, file.bytes, file.mime).open();
-                }).catch(error => { this.host.log('Could not open generated image', error); new Notice(t('plugin.chat.createImage.imageUnavailable')); }); };
-                const outputActions = outputRow.createDiv({ cls: 'pa-chat-image-task-card__output-actions' });
-                const outputButton = (label: string, icon: string, action: () => void) => {
-                    const result = outputActions.createEl('button', { attr: { type: 'button', title: label, 'aria-label': label } });
-                    setIcon(result, icon); result.createSpan({ text: label }); result.onclick = action;
-                };
-                outputButton(t('plugin.chat.createImage.copy'), 'copy', () => { void read().then(file =>
-                    copyGeneratedImage(outputRow.ownerDocument, file.bytes, file.mime)).then(() =>
-                    new Notice(t('plugin.chat.createImage.copied'))).catch(error => {
-                    this.host.log('Could not copy generated image', error); new Notice(t('plugin.chat.createImage.copyFailed'));
-                }); });
-                outputButton(t('plugin.chat.createImage.download'), 'download', () => { void read().then(file =>
-                    downloadGeneratedImage(outputRow.ownerDocument, file.bytes, file.mime, file.filename)).catch(error => {
-                    if ((error as { name?: string })?.name === 'AbortError') return;
-                    this.host.log('Could not export generated image', error); new Notice(t('plugin.chat.createImage.downloadFailed'));
-                }); });
-                if (this.host.imageAssetService) {
-                    const images = this.host.imageAssetService;
-                    let savingToNote = false;
-                    outputButton(t('plugin.chat.createImage.saveToNote'), 'file-plus', () => {
-                        if (savingToNote) return;
-                        new GeneratedImageNotePickerModal(this.app, note => {
-                            savingToNote = true;
-                            void saveGeneratedImageToNote(this.app, images, assetRef, note,
-                                `generated_${task.taskId}_${output.providerOrdinal}`).then(() => {
-                                new Notice(t('plugin.chat.createImage.savedToNote', { note: note.path }));
-                            }).catch(error => {
-                                this.host.log('Could not save generated image to note', error);
-                                new Notice(t('plugin.chat.createImage.saveToNoteFailed'));
-                            }).finally(() => { savingToNote = false; });
-                        }).open();
-                    });
-                }
-                outputButton(t('plugin.chat.createImage.editThis'), 'pencil', () => { void imageGeneration.getVersionForOutput(task.taskId, output.outputId).then(version => {
-                    if (!version || !isCurrentSession()) { new Notice(t('plugin.chat.createImage.versionUnavailable')); return; }
-                    if (composerDraft.hasDraft(textArea.value) || isGenerating()) {
-                        showComposerHint(t('plugin.chat.createImage.finishDraftEdit')); return;
-                    }
-                    composerDraft.setImageIntent({ operation: 'edit', parentVersionId: version.versionId,
-                        referenceImageRefs: [cloneImageRef(version.assetRef)] });
-                    renderImageDraft(); syncComposerControls(); textArea.focus();
-                }).catch(error => { this.host.log('Could not prepare image edit', error); new Notice(t('plugin.chat.createImage.versionUnavailable')); }); });
-            }
         };
         const loadImageTaskCards = async () => {
             const conversationId = imageTasksConversationId;
@@ -3145,7 +3268,10 @@ export class LLMView extends ItemView {
                         memoryMetadata: metadata,
                     });
                     const stableMessageId = entry.user.hostProvenance?.messageId;
-                    if (stableMessageId) imageTaskMessageTargets.set(stableMessageId, assistantRendered.messageDiv);
+                    if (stableMessageId) imageTaskMessageTargets.set(stableMessageId, {
+                        parent: assistantRendered.messageDiv,
+                        before: assistantRendered.actionDiv,
+                    });
                     return;
                 }
 
@@ -3156,7 +3282,7 @@ export class LLMView extends ItemView {
                 createTerminalRow(entry);
                 const terminalOperation = imageOperationByTurn.get(entry.id);
                 if (terminalOperation && entry.terminalRow) {
-                    imageTaskMessageTargets.set(terminalOperation.stableMessageId, entry.terminalRow);
+                    imageTaskMessageTargets.set(terminalOperation.stableMessageId, { parent: entry.terminalRow });
                 }
             });
             const lastAssistant = [...this.chatHistory].reverse().find((message) => message.role === 'assistant' && !isInterruptedAssistant(message));
@@ -3278,7 +3404,7 @@ export class LLMView extends ItemView {
             createTerminalRow(entry);
             const imageOperation = imageOperationByTurn.get(turn.id);
             if (imageOperation && entry.terminalRow) {
-                imageTaskMessageTargets.set(imageOperation.stableMessageId, entry.terminalRow);
+                imageTaskMessageTargets.set(imageOperation.stableMessageId, { parent: entry.terminalRow });
                 void loadImageTaskCards();
             }
         };
@@ -4225,7 +4351,10 @@ export class LLMView extends ItemView {
                     },
                 );
                 if (turn.userProvenance?.messageId) {
-                    imageTaskMessageTargets.set(turn.userProvenance.messageId, turn.assistantMessage.messageDiv);
+                    imageTaskMessageTargets.set(turn.userProvenance.messageId, {
+                        parent: turn.assistantMessage.messageDiv,
+                        before: turn.assistantMessage.actionDiv,
+                    });
                     void loadImageTaskCards();
                 }
 
