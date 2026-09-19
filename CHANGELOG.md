@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.10](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.9...2.10.0-beta.10) (2026-09-19)
+
+### Features
+- chat: add built-in Wan image generation and editing
+
+### Fix
+- pagelet: remove static model gate from deep discovery
+- pagelet: restore compact corner action ring
+- chat: keep composer actions below draft text
+
+### Docs
+- pagelet: explain discovery model capability checks
+- pagelet: record compact ring label behavior
+- b133: record design, validation, and mobile acceptance steps
+- b133: close out image generation after iPhone acceptance
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
