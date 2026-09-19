@@ -47,6 +47,11 @@ flowchart TD
 明确自然语言交给主 Agent 决定是否使用 `create_image`，写 prompt、配图讨论、普通
 看图和仅添加图片不构成生成请求；歧义先澄清，不增加关键词分类器来规划任务。
 
+候选菜单由 [textarea 光标定位](../../src/chat/typeahead-position.ts) 按实际字体、换行和
+滚动位置测量，浮在当前输入位置附近，不占输入框下方的文档流；空间不足时向上展开，
+并限制在 Chat 与可见视口的交集内。窗格调整后重新定位，失焦/关闭视图时清理监听；
+保留 Enter 选择、Escape 关闭、IME 与 `#skill` 的原有语义。
+
 工具只接受 prompt、`generate | reference | edit`、count、subrequestIndex、已登记
 referenceImageRefs、parentVersionId。conversationId、stableMessageId、operationId、
 连接与来源准入由宿主绑定，不能由模型指定路径、URL、凭据或 endpoint。
@@ -167,6 +172,12 @@ Chat 每张图提供放大、复制、下载、编辑和详情，成功项不被
 Markdown link API 与 `Vault.process` 插入图片；同目标重试不重复插入，正文只是提及
 同名链接不算已有嵌入。文件位置改变不破坏原 Chat 稳定引用。删除 Chat 不删正式附件，
 生成元数据删除后不再承诺编辑版本链；同步说明依据实际状态，不以目录名保证不外传。
+
+图片结果位于所属助手消息的正文之后、消息工具栏之前。任务更新保持已有顺序；
+成功图去掉双层卡片边框和重复状态文字，保留完整比例。独立图片容器内左下为编辑、
+右下为下载，二者与预览按钮互为兄弟节点；图下复制/保存到笔记及任务级重新生成
+复用 Chat 的消息按钮样式，详情折叠展示，移动图内操作保持 44px 目标。异常、部分成功、
+停止与恢复入口继续可见；此次布局不改变版本身份、导出、草稿或请求费用语义。
 
 ## Validation And Change Discipline
 
