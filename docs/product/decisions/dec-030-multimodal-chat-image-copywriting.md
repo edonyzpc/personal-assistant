@@ -2,16 +2,17 @@
 
 Decision ID: DEC-030
 Status: Accepted
-Updated: 2026-09-18
+Updated: 2026-09-19
 Authority: B-129 设计讨论中的用户明确选择；2026-09-06 原始范围确认；2026-09-08 用户确认实际交付文件定义、PA 保存触发附件移动和不支持 HEIC，并明确要求落盘供后续开发。Accepted 仅指产品边界，不表示技术方案已验证或获得实施授权。
 Work item: B-129
 
 ## B-133 Successor
 
 2026-09-18 Owner 已通过 [DEC-038](./dec-038-chat-image-generation.md) 确认 Chat 图片
-生成与编辑的独立产品范围，详细方案见 [B-133 Feature Home](../../development/active/chat-image-generation/README.md)。
+生成与编辑的独立产品范围，详细方案见 [B-133 Architecture](../../architecture/chat-image-generation-architecture.md)。
 下文“首版不含图片生成”保留为 B-129 的范围记录；B-133 不再是未定产品方向，但
-其设计文档不等于运行时已交付。其余原件、静态媒体、保存与跨设备边界继续有效。
+开发与限定验收结果见 [B-133 验收记录](../../archive/2026/b133-chat-image-generation-validation.md)，
+不代表已发布。其余原件、静态媒体、保存与跨设备边界继续有效。
 
 ## Context
 

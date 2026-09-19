@@ -1,11 +1,20 @@
 # Multimodal Chat Architecture
 
 Document status: Current
-Updated: 2026-09-13
+Updated: 2026-09-19
 Work item: B-129
 Authority: 当前图片聊天、作品输出、文案版本、图文保存及显式风格参考的技术契约。
 Product contract: [DEC-030](../product/decisions/dec-030-multimodal-chat-image-copywriting.md) / [B-129 Product Spec](../product/specs/pa-multimodal-chat-product-spec.md) / [B-135 Product Spec](../product/specs/pa-unified-task-execution-product-spec.md)
 Validation evidence: [首版限定验证与构建身份](../archive/2026/b129-multimodal-chat-validation.md) / [图片输入与保存体验](../archive/2026/chat-image-experience-validation.md) / [图片管理修订验证](../archive/2026/chat-image-management-validation.md) / [B-135统一Agent验证](../archive/2026/b135-unified-task-execution-validation.md)
+
+## B-133 图片生成接点
+
+Chat 的 `@CreateImage`、自然语言生成、Wan 持久任务、图片版本与统一连接由
+[Chat Image Generation Architecture](./chat-image-generation-architecture.md) 定义，
+产品边界见 [DEC-038](../product/decisions/dec-038-chat-image-generation.md)。它复用本页
+ImageAssetService 原件与正式附件迁移；Chat IDB v3 增加图片任务/版本 store。
+删除对应聊天清除生成元数据但保留文件，生成内容不自动成为用户事实或长期风格。
+图片任务与文字作品的版本、回复和保存权限分别保持；后续图片编辑不覆盖已有原件。
 
 ## 图片管理与保存恢复
 

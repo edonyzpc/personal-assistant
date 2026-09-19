@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-09-17
+Updated: 2026-09-19
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -106,6 +106,13 @@ permission.
 The runtime registers Memory search and bounded Obsidian/vault read tools, including current-note context, metadata search, recent notes, outline/note/canvas inspection, snippet search, and vault tags.
 
 Core tools remain behind the same `CapabilityRegistry` and Data Boundary checks as optional providers.
+
+Chat also exposes the host-bound `create_image` capability under its fixed
+`image-generation` permission. The Agent selects creation/reference/edit semantics;
+the host binds current images, conversation/message identity and the explicit image
+budget. Its accepted result starts a durable image task, not a completed image or
+an arbitrary vault write. Shared connection, version, recovery and export contracts
+are defined in [Chat Image Generation Architecture](./chat-image-generation-architecture.md).
 
 ### Memory retrieval and projection
 

@@ -1,10 +1,10 @@
 # PA Chat Image Generation Product Spec
 
 Document status: Approved
-Updated: 2026-09-18
+Updated: 2026-09-19
 Work item: B-133
 Decision: [DEC-038](../decisions/dec-038-chat-image-generation.md)
-Authority: Owner 已确认的 Chat 图片生成与编辑行为、数据边界和验收要求。Approved 指产品范围已确认；当前实施与验证状态见 Tracker，不表示功能已验收或获得 Git/发布授权。
+Authority: Owner 已确认的 Chat 图片生成与编辑行为、数据边界和验收要求；开发及适用验收已完成，产品契约持续有效。验收收尾不表示已集成 master 或发布。
 
 ## Problem And Product Outcome
 
@@ -122,25 +122,78 @@ Authority: Owner 已确认的 Chat 图片生成与编辑行为、数据边界和
 source → Obsidian Desktop（CLI 准备状态、真实操作验证）→ CLI mobile simulator；
 仅具体平台依赖/风险触发真机补测。必要共享 gate 仍按 AGENTS 执行并复用结果。
 
-[讨论细节验收映射](../../development/active/chat-image-generation/sdd.md#13-discussion-detail-traceability)
+下方[讨论细节验收映射](#discussion-detail-traceability)
 补充逐项场景与负例，供后续核对；它不新增重复测试门或第二份进度表。
 
-## Open Decisions
+## Confirmed Decisions And Revisit Boundary
 
 既有十项产品选择与 AC-12 的“每次选择目标笔记后插入图片”已确定，见
-[DEC-038](../decisions/dec-038-chat-image-generation.md) 与
-[Tracker R-07](../../development/active/chat-image-generation/tracker.md#findings)。
+[DEC-038](../decisions/dec-038-chat-image-generation.md)。
 透明输入和删除聊天后的保留范围已由 Owner 分别按 R-14/R-16 选择，见 DEC-038；
-实际实现与验证进度见 Tracker。
-具体默认尺寸、轮询间隔、接口上限与数据库布局属于 SDD
-待审阅工程设计，不伪装成 Owner 已选择的产品参数。若工程证据迫使缩减上述行为、
+实际实现见[架构契约](../../architecture/chat-image-generation-architecture.md)，
+证据见[验收记录](../../archive/2026/b133-chat-image-generation-validation.md)。
+具体默认尺寸、轮询间隔、接口上限与数据库布局是工程实现，以当前源码为准，
+不伪装成 Owner 已选择的产品参数。若工程证据迫使缩减上述行为、
 增加第三方外发/费用、改变图片管理或平台承诺，先回到 DEC-038 讨论偏差。
 
-## Delivery Handoff
+## Usage
 
-- Active Package: [Feature Home](../../development/active/chat-image-generation/README.md)。
-- Architecture contracts: [Multimodal Chat](../../architecture/multimodal-chat-architecture.md)、
+- 在图片连接设置中选择复用兼容的聊天连接或独立 Wan 连接；独立凭据按设备配置。
+- 在 Chat 输入 `@CreateImage` 并描述图片，或直接提出明确生图请求。添加参考图片
+  可用文件、粘贴或 vault 选择；单独添加图片不会自动生图。首用说明确认实际接收方与费用。
+- 默认生成一张。多张需明确数量/各自描述；部分失败时成功结果仍可用，不自动付费重试。
+- 在结果卡逐张放大、复制或下载；移动“下载”打开系统文件分享，取消不会声称已保存。
+- 点“修改这张”后填写修改要求再发送。透明输入会先暂停说明，确认白底副本后才继续；
+  不接受该处理可停止。输入原件与旧结果不被覆盖。
+- “保存到笔记”每次选择目标笔记后插入；删除聊天清掉任务/版本/prompt 等元数据，
+  图片文件保留。重开本设备历史可读已保存结果，但不同设备不会自动同步 Chat/任务。
+
+## Discussion Detail Traceability
+
+承接原 SDD 的 28 项讨论细节，保留 D01–D10 的已选方案、负例和交付约束；以下映射
+不是 28 个独立测试门。工程建议与已经实现的能力分开，不能据旧草案推导新增产品承诺。
+
+| 讨论项 | 稳定细节 / 可检查负例 | REQ / AC |
+| --- | --- | --- |
+| D01 连续改图 | 新图与较早版本可继续修改，确切父版本分支，不覆盖输入；目标不唯一先询问 | B-133/REQ-03 / B-133/AC-03 |
+| D02 Wan 首版 | Wan 生成/参考/编辑，保留两种现有模型适用能力；不接新 provider 兜底，实际区域/账号证据单列 | B-133/REQ-02 / B-133/AC-02 |
+| D03 独立或复用连接 | 独立模式不跟随 Chat provider 切换；复用不兼容时明确提示，不暗换凭据 | B-133/REQ-05 / B-133/AC-05 |
+| D04 双入口 | 完整标记/候选、单次可移除意图，保留 #skill；选择不执行、发送才执行，空标记不生成 | B-133/REQ-01 / B-133/AC-01 |
+| 意图负例 | 写 prompt、配图讨论、普通看图不生成；歧义先澄清，主 Agent 规划 | B-133/REQ-01 / B-133/AC-01 |
+| Prompt 处理 | 完整描述无必经额外优化轮；整理时同时保留用户原文和实际提交描述 | B-133/REQ-01 / B-133/AC-01；B-133/REQ-11 / B-133/AC-11 |
+| D05 后台 | 文字/会话切换不受图片生成阻塞；旧卡更新不抢焦点或改草稿，未完成图不能暗排编辑队列 | B-133/REQ-08 / B-133/AC-08 |
+| 任务并发工程建议 | 原“全局单 Chat 图片任务/busy”只是设计建议，未作为当前并发承诺；无通用调度器或隐藏择优重试 | B-133/REQ-07 / B-133/AC-07 |
+| D06 原件存储 | 原件进入现有 pa-images 管理、稳定引用，preview 可重建，不靠临时 URL 保存历史 | B-133/REQ-11 / B-133/AC-11 |
+| 文件与同步 | 下载不改归属；每次选笔记才迁移；删 Chat 只留文件，清缓存不删原件，排除状态不夸大 | B-133/REQ-12 / B-133/AC-12 |
+| D07 外部图片 | 文件/粘贴/vault 主动选择；添加本身不生成，参考与编辑语义有别，不覆盖原件 | B-133/REQ-02 / B-133/AC-02 |
+| 多图输入 | 有序确切 refs，校验张数/字节/像素和能力，不能静默丢素材 | B-133/REQ-02 / B-133/AC-02 |
+| D08 数量费用 | 默认一张，明确多张按请求；再来一张是新操作，部分成功保留，不后台扩批 | B-133/REQ-07 / B-133/AC-07 |
+| 防重复收费 | 同操作的重复工具/变参/重挂载不新增费用，主动再生成有新身份，相同 prompt 不误去重 | B-133/REQ-07 / B-133/AC-07 |
+| 完成与停止 | accepted 不是完成；远端生成与本地保存分开，停止不保证远端取消或免费 | B-133/REQ-09 / B-133/AC-09 |
+| D09 有依据恢复 | 有 ID 查原任务；失败恢复已有结果保存；受理未知不自动 POST，未提交可继续，停止不复活 | B-133/REQ-10 / B-133/AC-10 |
+| 恢复限制 | 无应用外常驻；过期、连接/凭据缺失分别解释；不重建已删 Chat | B-133/REQ-10 / B-133/AC-10 |
+| D10 Featured Image | 共用连接，各自模型/数量/路径/笔记提炼/插入语义保留，升级不重填旧密钥 | B-133/REQ-06 / B-133/AC-06 |
+| Featured 恢复边界 | Chat 后台任务不变成重启后自动向变更笔记插图，原目标/内容守卫保留 | B-133/REQ-06 / B-133/AC-06 |
+| 卡片与操作 | 每张独立放大/复制/下载/编辑；详情收纳参数，失败不隐藏成功项，操作可发现 | B-133/REQ-04 / B-133/AC-04 |
+| 导出质量 | 复制真实图片，不能偷换链接；下载原文件，取消不假成功，不用缩略 JPEG 代替 | B-133/REQ-04 / B-133/AC-04 |
+| 编辑质量 | 外发副本去源敏感元数据；透明图说明并确认后才制白底 PNG；原文件不变 | B-133/REQ-03 / B-133/AC-03；B-133/REQ-13 / B-133/AC-13 |
+| 默认参数工程建议 | 早期模型/比例 UI、优先原比例仅为建议；当前 Chat 标准 Wan/2K，Featured 保留已有设置，不暗增费用 | B-133/REQ-05 / B-133/AC-05；B-133/REQ-07 / B-133/AC-07 |
+| 来源透明 | 主动选择、首用说明接收方/费用/存储；不全量外发笔记/Memory，不引公共图床 | B-133/REQ-13 / B-133/AC-13 |
+| AI 与用户事实 | 不声称看见未完成像素，不把生成画面当用户事实；普通改图不自动形成长期风格 | B-133/REQ-11 / B-133/AC-11；B-133/REQ-13 / B-133/AC-13 |
+| 调研证据 | ChatGPT 静态包/官方资料与 PA runtime/应用证据分开，既有 Featured/看图不冒充生图验收 | 验收记录 Research Provenance |
+| 延期与交付终点 | 局部编辑器、图库扫描、跨设备 Chat/任务、新 provider 不纳入；Git/发布权限独立 | Non-goals / DEC-038 |
+| 精简交付 | 最小合理设计、最低充分测试；Desktop + CLI mobile simulator 优先，仅具体移动依赖补真机 | B-133/REQ-14 / B-133/AC-14 |
+
+## Implementation And Acceptance
+
+- 稳定行为与 14 组 REQ/AC 已按适用证据完成验收；2026-09-19 用户反馈 iPhone 15 Pro Max
+  上的 `c66a098` 构建 M-01～M-05 全部通过，开发包按先前条件授权收尾。
+- [验收与迁移记录](../../archive/2026/b133-chat-image-generation-validation.md) 保留
+  source/Desktop/真实 provider 与用户手机报告的区别。手机 OS/Obsidian 版本和哈希原值
+  未提供，不编造；未测 Android、其他区域/账号和真实远端取消不外推。
+- Architecture contracts: [Chat Image Generation](../../architecture/chat-image-generation-architecture.md)、
+  [Multimodal Chat](../../architecture/multimodal-chat-architecture.md)、
   [DEC-034](../decisions/dec-034-unified-agent-task-execution.md)、
   [DEC-037](../decisions/dec-037-pa-agent-essential-capabilities.md)。
-- Release / rollout boundary: 本轮实施已授权；真实 provider 调用及相关数据外发仍
-  分别核对授权和环境，Git 与发布单独授权。未完成验收不宣称运行时已经通过本能力。
+- Release / rollout boundary: 功能代码和设计证据已交付开发分支；收尾不等于 master
+  集成、beta/stable 发布或所有设备通过。新外发/费用、Git 集成与发布仍遵守各自授权。

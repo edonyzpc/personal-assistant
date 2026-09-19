@@ -7,7 +7,7 @@
 | 目的 | 入口 | 权威范围 |
 | --- | --- | --- |
 | 理解 PA 要做什么 | [Product](./product/README.md) | 北极星、产品原则、当前 Product Spec 与已接受决策 |
-| 查 Chat 图片生成与编辑方案 | [B-133 Feature Home](./development/active/chat-image-generation/README.md) / [详细设计](./development/active/chat-image-generation/sdd.md) / [DEC-038](./product/decisions/dec-038-chat-image-generation.md) | 已确认产品选择、技术设计和验收要求；执行状态看 Tracker |
+| 查 Chat 图片生成与编辑 | [Product Spec](./product/specs/pa-chat-image-generation-product-spec.md) / [详细架构](./architecture/chat-image-generation-architecture.md) / [验收记录](./archive/2026/b133-chat-image-generation-validation.md) | 已确认产品选择、使用方法、技术契约与 Desktop/指定 iPhone 验收边界 |
 | 查多模态 Chat 与图文保存 | [B-129 Product Spec](./product/specs/pa-multimodal-chat-product-spec.md) / [DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md) / [Architecture](./architecture/multimodal-chat-architecture.md) / [使用指南](./guides/multimodal-chat-user-guide.md) | 当前产品与技术契约、操作说明及限定验证依据 |
 | 了解当前版本与方向 | [Development Roadmap](./development-roadmap.md) | 当前发布基线与候选主题 |
 | 查看尚未完成的事情 | [Backlog](./backlog.md) | 唯一未完成事项清单；已完成事项不留在这里 |

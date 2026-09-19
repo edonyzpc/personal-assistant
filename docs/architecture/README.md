@@ -8,6 +8,7 @@
 - [PA Agent Architecture](./pa-agent-architecture-plan.md)
 - [PA Agent Runtime Lifecycle](./pa-agent-runtime-lifecycle-plan.md)
 - [Multimodal Chat、文案版本与图文保存](./multimodal-chat-architecture.md)
+- [Chat 图片生成、版本与任务恢复](./chat-image-generation-architecture.md)
 - [Obsidian read tools / Operations boundary](./obsidian-operations-agent-plan.md)
 
 ## Memory / VSS

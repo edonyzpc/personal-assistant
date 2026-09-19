@@ -2,8 +2,8 @@
 
 Decision ID: DEC-038
 Status: Accepted
-Updated: 2026-09-18
-Authority: Owner 于 2026-09-18 在方案讨论中逐项选择 A / 1，确认下列十项产品选择，并明确要求将讨论落成详细方案设计文档。当时授权范围为设计文档；后续实施与合成素材调用的独立授权及结果统一见 Tracker，不包含 commit、push 或发布授权。
+Updated: 2026-09-19
+Authority: Owner 于 2026-09-18 逐项确认十项产品选择，随后授权实施及限定合成素材验证；2026-09-19 授权开发分支提交/推送，并要求移动验收通过后收尾。用户已反馈五项 iPhone 手动验收通过；这些授权不扩展到 master 集成或发布。
 Work item: B-133
 
 ## Context
@@ -75,8 +75,9 @@ Owner 后续对 D06/第 5 条的“保存到笔记”操作补充确认：**每�
   不引入任意文件写权限、公共图床、通用任务平台或跨设备聊天同步。
 - Compatibility / migration: 本决定仅解除 DEC-030 中 B-133 的延期边界；B-129 原文件、
   静态媒体、保存和恢复约束以及 B-132/B-134 的延期继续有效。B-135 原有范围不重开。
-- Work created: [Feature Home](../../development/active/chat-image-generation/README.md)
-  连接技术设计与唯一 Tracker。实现前需独立审阅 SDD 并获得实施授权。
+- Implementation: [架构契约](../../architecture/chat-image-generation-architecture.md)
+  承接已实现的技术设计；开发及指定 iPhone 验收完成后，独有研究、迁移和验证事实
+  压缩保留在[验收记录](../../archive/2026/b133-chat-image-generation-validation.md)。
 
 ## Delivery Constraints — Owner Amendment 2026-09-18
 
@@ -85,16 +86,16 @@ Owner 在要求完整保留讨论细节后，进一步明确本功能交付约�
 与 CLI mobile simulator 完成验证。** 本节修正此前笼统的移动端真机验证措辞。
 
 - 以满足已确认需求的最小合理改动为目标，复用现有图片、Chat、存储和公开 API。
-  新模块/抽象须解释当前必要性；SDD 的 Proposed 名称不要求逐一新建类、服务或数据库。
+  新模块/抽象须解释当前必要性；历史 SDD 的 Proposed 名称不要求逐一新建类、服务或数据库。
 - 每项测试回答一个尚未覆盖的需求或风险；同一行为的有效证据复用，不穷举
   provider × 模型 × 平台 × 尺寸 × 输入方式的组合，不重复跑已覆盖的 build/full gate。
 - 通用行为在 Desktop 验证；移动布局、控件可达性及适用交互优先 CLI mobile
   simulator。仅对实际依赖原生移动能力或已知平台差异的部分补最小真机案例，
-  在 Tracker 写明具体依赖/风险、替代证据不足的原因和通过条件。
+  在当次验证记录写明具体依赖/风险、替代证据不足的原因和通过条件。
 - 不能把模拟器标成真机证据，也不能借精简测试缩减已确认功能、跳过确实相关的
   平台问题或已有必要的集成/发布门禁。不受本功能影响的其他 track 真机要求不变。
-- [讨论细节验收映射](../../development/active/chat-image-generation/sdd.md#13-discussion-detail-traceability)
-  将选择及其细节关联至 REQ/AC；实际执行结果只写 Tracker。
+- [讨论细节验收映射](../specs/pa-chat-image-generation-product-spec.md#discussion-detail-traceability)
+  将选择及其细节关联至 REQ/AC；最终执行证据见验收记录，不保存重复状态表。
 
 ## Revisit Trigger
 
@@ -106,6 +107,7 @@ Wan 实际接口无法满足编辑、数量、异步身份或恢复要求；平�
 
 - Source: Owner 2026-09-18 的逐项产品选择及文档落盘请求。
 - Product Spec: [B-133 Product Spec](../specs/pa-chat-image-generation-product-spec.md)。
-- Architecture / SDD: [Detailed design](../../development/active/chat-image-generation/sdd.md)。
+- Architecture: [Detailed design](../../architecture/chat-image-generation-architecture.md)。
+- Validation: [B-133 验收与迁移记录](../../archive/2026/b133-chat-image-generation-validation.md)。
 - Predecessor: [DEC-030](./dec-030-multimodal-chat-image-copywriting.md) 的图片生成延期项；
   仅该项由本决定承接，不替换其余有效边界。

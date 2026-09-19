@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-09-17
+Updated: 2026-09-19
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-09-19 | `docs/development/active/chat-image-generation/**` | deleted-after-absorption | [DEC-038](../product/decisions/dec-038-chat-image-generation.md), [B-133 Product Spec](../product/specs/pa-chat-image-generation-product-spec.md), [Architecture](../architecture/chat-image-generation-architecture.md), [Validation](./2026/b133-chat-image-generation-validation.md) | 用户明确要求移动验收通过后收尾，已反馈 iPhone 15 Pro Max / c66a098 的五项手动验证通过。稳定设计、28 项讨论细节、14 组 REQ/AC 与使用说明已吸收；独有研究/迁移/provider/设备证据精简保留，不归档完整过程包。Feature Home/SDD/Tracker 可从 c66a098 恢复；无剩余实现 finding，其他设备/区域未测作为证据边界保留，不制造新 Backlog。收尾不表示 master 集成或发布。 |
 | 2026-09-17 | `docs/development/active/pa-agent-essential-capabilities/**` | deleted-after-absorption | [DEC-037](../product/decisions/dec-037-pa-agent-essential-capabilities.md), [B-140 Product Spec](../product/specs/pa-agent-essential-capabilities-product-spec.md), [PA Agent Architecture](../architecture/pa-agent-architecture-plan.md#b-140-note-memory-and-insight-capabilities), [B-140 validation](./2026/b140-pa-agent-essential-capabilities-validation.md), [B-141](../backlog.md#已延期的产品与工程工作) | 用户授权 closeout；T01～15 与 AC01～14 已验收。当前合同吸收稳定行为，独有阶段/App证据压缩保留，T13-UX1 转后续 B-141；完整过程可从提交 `2cab57af` 恢复。自动审批拒绝删除的 9 个测试 Chat 历史保留，未绕过。开发分支 closeout 提交先于 master 集成与发布，不作为其凭据。 |
 | 2026-09-17 | `docs/development/discovery/pa-agent-essential-capabilities.md`、`docs/development/discovery/pa-agent-essential-capabilities/task-design.md` | deleted-after-absorption | [DEC-037](../product/decisions/dec-037-pa-agent-essential-capabilities.md), [B-140 Product Spec](../product/specs/pa-agent-essential-capabilities-product-spec.md), [B-140 validation](./2026/b140-pa-agent-essential-capabilities-validation.md) | Discovery 的需求、决定与真实来源边界已吸收；原文经活跃包暂存于提交 `2cab57af`，不保留已完成的待执行状态。 |
 | 2026-09-13 | `docs/development/active/bounded-code-cleanup/**` | deleted-after-absorption | [DEC-035](../product/decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md), [B-136 Product Spec](../product/specs/pa-bounded-code-cleanup-product-spec.md), [B-136 validation](./2026/b136-bounded-cleanup-validation.md) | 用户明确授权 closeout 和推送；6/6 AC 完成，代码 `76355b9c` 与配套文档 `b23c31f0` 已在 master。当前契约与测试吸收行为、保留理由及兼容边界，仅保留紧凑验证报告和内容受限的原始回执，不归档整个包；Feature Home/Plan/Tracker 历史可从 `b23c31f0` 恢复。没有新增未完成项转入 Backlog。 |
