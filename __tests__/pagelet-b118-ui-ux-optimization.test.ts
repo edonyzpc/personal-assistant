@@ -3,7 +3,7 @@
  *
  * Covers the key behaviors introduced by Slices B–F:
  *   - F-02: Recap Bubble content uses candidate.body as primary text
- *   - F-03: No Modal; Settings default ON + first-use notification
+ *   - F-03: Settings defaults are owned by pagelet-settings.test.ts
  *   - F-04: Reduced-motion CSS (covered by build; declarations validated here)
  *   - F-05: Recall actions (View = no re-run, Later = Review Queue, Dismiss = weak)
  *   - F-06: Pet state convergence (settleForForegroundOwner)
@@ -64,7 +64,7 @@ describe("F-02 Recap Bubble Content", () => {
         };
     }
 
-    it("uses candidate.body as primary finding text", () => {
+    it("renders the default Recap body, source metadata, and why-now hint", () => {
         const candidate = makeRecapCandidate();
         const content = buildPreparedRecapDeliveryContent(candidate, {
             onViewRecap: jest.fn(),
@@ -73,17 +73,10 @@ describe("F-02 Recap Bubble Content", () => {
 
         expect(content.type).toBe("recap-delivery");
         expect(content.findings[0]?.text).toBe("Project notes changed this week.");
-    });
-
-    it("shows source count when multiple sources exist", () => {
-        const candidate = makeRecapCandidate();
-        const content = buildPreparedRecapDeliveryContent(candidate, {
-            onViewRecap: jest.fn(),
-            onLater: jest.fn(),
-        });
-
-        // sourceTitle should mention count for multiple sources
         expect(content.findings[0]?.sourceLink).toBe("notes/project.md");
+        expect(content.findings[0]?.sourceTitle).toBe("Weekly Changes · 2 sources");
+        expect(content.inlineHint?.text).toBe("Recent activity in your vault");
+        expect(content.inlineHint?.icon).toBe("calendar");
     });
 
     it("shows first source title when only one source exists", () => {
@@ -98,18 +91,7 @@ describe("F-02 Recap Bubble Content", () => {
         expect(content.findings[0]?.sourceTitle).toBe("Weekly Changes · Single Note");
     });
 
-    it("preserves whyNow as inline hint", () => {
-        const candidate = makeRecapCandidate();
-        const content = buildPreparedRecapDeliveryContent(candidate, {
-            onViewRecap: jest.fn(),
-            onLater: jest.fn(),
-        });
-
-        expect(content.inlineHint?.text).toBe("Recent activity in your vault");
-        expect(content.inlineHint?.icon).toBe("calendar");
-    });
-
-    it("View action calls onViewRecap; provider call count = 0", () => {
+    it("View action calls onViewRecap with the original candidate", () => {
         const onViewRecap = jest.fn();
         const candidate = makeRecapCandidate();
         const content = buildPreparedRecapDeliveryContent(candidate, {
@@ -119,40 +101,6 @@ describe("F-02 Recap Bubble Content", () => {
 
         content.actions[0]?.callback();
         expect(onViewRecap).toHaveBeenCalledWith(candidate);
-    });
-});
-
-// ---------------------------------------------------------------------------
-// F-03: No Modal + Settings Default ON
-// ---------------------------------------------------------------------------
-
-describe("F-03 No Modal Authorization", () => {
-    it("scopeRecapPreparationEnabled defaults to true", () => {
-        expect(PAGELET_DEFAULTS.scopeRecapPreparationEnabled).toBe(true);
-    });
-
-    it("pageletProviderFirstUseNotified defaults to false", () => {
-        expect(PAGELET_DEFAULTS.pageletProviderFirstUseNotified).toBe(false);
-    });
-
-    it("merge starts scopeRecapPreparationEnabled=true for fresh installs", () => {
-        const result = mergePageletSettings({});
-        expect(result.scopeRecapPreparationEnabled).toBe(true);
-    });
-
-    it("merge preserves pageletProviderFirstUseNotified from data.json", () => {
-        const result = mergePageletSettings({ pageletProviderFirstUseNotified: true });
-        expect(result.pageletProviderFirstUseNotified).toBe(true);
-    });
-
-    it("scopeRecapPreparationEnabled=false from persisted data is honored", () => {
-        // User explicitly disabled in settings
-        const result = mergePageletSettings({
-            scopeRecapPreparationEnabled: false,
-            scopeRecapBackgroundAuthorization: "authorized-v1",
-            scopeRecapAuthorizationContextId: "test-id",
-        });
-        expect(result.scopeRecapPreparationEnabled).toBe(false);
     });
 });
 

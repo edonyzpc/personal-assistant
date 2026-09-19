@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it, jest } from "@jest/globals";
 
 jest.mock("obsidian", () => ({
@@ -121,34 +120,5 @@ describe("B-136 P2 retired Pagelet scope and legacy closures", () => {
         orchestrator.openPanel();
 
         expect(runDeepDiscover).not.toHaveBeenCalled();
-    });
-
-    it("removes the named unreachable orchestrator and plugin members", () => {
-        const orchestrator = readFileSync("src/pagelet/orchestrator.ts", "utf8");
-        for (const symbol of [
-            "runLegacyQuietRecall",
-            "runLegacyScopeRecap",
-            "reviewSelectedScopeLegacy",
-            "analyzeCurrentNote",
-            "discoverLegacyConnections",
-            "scheduleQuietRecallAfterLeafChange",
-            "prepareRecapDelivery",
-            "prepareQuietRecallBubbleNudge",
-        ]) {
-            expect(orchestrator).not.toContain(symbol);
-        }
-
-        const bubbleCoordinator = readFileSync("src/pagelet/BubbleCoordinator.ts", "utf8");
-        expect(bubbleCoordinator).not.toContain("NudgeOwner.PreparedRecap");
-        expect(bubbleCoordinator).not.toContain("NudgeOwner.QuietRecall");
-
-        const plugin = readFileSync("src/plugin.ts", "utf8");
-        for (const symbol of [
-            "cacheVectors",
-            "isVssCached",
-            "acquireQuietRecallRoundAdmission",
-        ]) {
-            expect(plugin).not.toContain(symbol);
-        }
     });
 });

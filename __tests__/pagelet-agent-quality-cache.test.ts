@@ -2771,66 +2771,7 @@ describe('Pagelet agent cache and controller', () => {
         );
     });
 
-    it('fails delivered-action validation closed when abort enters the final source-read window', async () => {
-        const requestAbort = new AbortController();
-        const currentMaterials = materials();
-        const sourceRead = createDeferredSourceRead(
-            relatedMaterial.path,
-            1,
-            () => currentMaterials,
-        );
-        const controller = new PageletDeepDiscoverController({
-            runtime: { run: jest.fn() as never },
-            captureSnapshot: async () => anchor,
-            captureSourceMaterial: sourceRead.captureSourceMaterial,
-            getPolicyIdentity: () => policyIdentity,
-            getEvidenceEpoch: () => 'evidence-1',
-            controllerEpoch: 1,
-            isPathAllowed: () => true,
-        });
-        const identity = pageletAgentInsightToDeliveryCandidate(
-            verifiedInsight(),
-            'en',
-        ).pageletAgent.validationIdentity;
-
-        const pending = controller.validateInsight(identity, requestAbort.signal);
-        await sourceRead.blocked;
-        requestAbort.abort();
-        sourceRead.release();
-
-        await expect(pending).resolves.toBe(false);
-    });
-
-    it('fails delivered-action validation closed when the controller is disposed mid-read', async () => {
-        const currentMaterials = materials();
-        const sourceRead = createDeferredSourceRead(
-            relatedMaterial.path,
-            1,
-            () => currentMaterials,
-        );
-        const controller = new PageletDeepDiscoverController({
-            runtime: { run: jest.fn() as never },
-            captureSnapshot: async () => anchor,
-            captureSourceMaterial: sourceRead.captureSourceMaterial,
-            getPolicyIdentity: () => policyIdentity,
-            getEvidenceEpoch: () => 'evidence-1',
-            controllerEpoch: 1,
-            isPathAllowed: () => true,
-        });
-        const identity = pageletAgentInsightToDeliveryCandidate(
-            verifiedInsight(),
-            'en',
-        ).pageletAgent.validationIdentity;
-
-        const pending = controller.validateInsight(identity);
-        await sourceRead.blocked;
-        controller.dispose();
-        sourceRead.release();
-
-        await expect(pending).resolves.toBe(false);
-    });
-
-    it('fails delivered-action validation closed when a source leaves the boundary mid-read', async () => {
+    function startDeliveredActionValidation(options: { signal?: AbortSignal } = {}) {
         const currentMaterials = materials();
         const sourceRead = createDeferredSourceRead(
             relatedMaterial.path,
@@ -2852,12 +2793,48 @@ describe('Pagelet agent cache and controller', () => {
             'en',
         ).pageletAgent.validationIdentity;
 
-        const pending = controller.validateInsight(identity);
-        await sourceRead.blocked;
-        relatedAllowed = false;
-        sourceRead.release();
+        return {
+            blocked: sourceRead.blocked,
+            controller,
+            pending: controller.validateInsight(identity, options.signal),
+            release: () => sourceRead.release(),
+            revokeRelatedSource: () => {
+                relatedAllowed = false;
+            },
+        };
+    }
 
-        await expect(pending).resolves.toBe(false);
+    it('fails delivered-action validation closed when abort enters the final source-read window', async () => {
+        const requestAbort = new AbortController();
+        const validation = startDeliveredActionValidation({
+            signal: requestAbort.signal,
+        });
+
+        await validation.blocked;
+        requestAbort.abort();
+        validation.release();
+
+        await expect(validation.pending).resolves.toBe(false);
+    });
+
+    it('fails delivered-action validation closed when the controller is disposed mid-read', async () => {
+        const validation = startDeliveredActionValidation();
+
+        await validation.blocked;
+        validation.controller.dispose();
+        validation.release();
+
+        await expect(validation.pending).resolves.toBe(false);
+    });
+
+    it('fails delivered-action validation closed when a source leaves the boundary mid-read', async () => {
+        const validation = startDeliveredActionValidation();
+
+        await validation.blocked;
+        validation.revokeRelatedSource();
+        validation.release();
+
+        await expect(validation.pending).resolves.toBe(false);
     });
 
     it('retries a cached collection under the new epoch and preserves only the healthy sibling', async () => {

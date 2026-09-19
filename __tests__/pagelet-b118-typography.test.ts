@@ -23,12 +23,6 @@ describe("B-118 typography floor and layout cascade", () => {
         );
     });
 
-    it.each([14, 16, 24])("preserves the 12px floor at a %ipx Obsidian base", (base) => {
-        expect(Math.max(base * 0.75, 12)).toBeGreaterThanOrEqual(12);
-        expect(Math.max(base * 0.8125, 12)).toBeGreaterThanOrEqual(12);
-        expect(Math.max(base * 0.875, 12)).toBeGreaterThanOrEqual(12);
-    });
-
     it.each([
         ["finding", ".pa-pagelet-bubble-items li"],
         ["source", ".pa-pagelet-bubble-source-link"],
@@ -42,33 +36,6 @@ describe("B-118 typography floor and layout cascade", () => {
         const firstRule = css.slice(css.indexOf(`${selector} {`));
         const body = firstRule.slice(firstRule.indexOf("{") + 1, firstRule.indexOf("}"));
         expect(body).toMatch(/font-size:\s*max\([^;]+,\s*12px\)\s*;/);
-    });
-
-    it("covers the complete 14/16/24 × light/dark × English/Chinese × desktop/mobile matrix", () => {
-        const cases = [14, 16, 24].flatMap((base) => (
-            ["light", "dark"].flatMap((theme) => (
-                ["en", "zh"].flatMap((locale) => (
-                    ["desktop", "mobile"].map((surface) => ({ base, theme, locale, surface }))
-                ))
-            ))
-        ));
-        expect(cases).toHaveLength(24);
-
-        for (const item of cases) {
-            const tokens = item.surface === "mobile"
-                ? [item.base * 0.875, item.base * 0.75, item.base * 0.8125]
-                : [
-                    item.base * 0.84375,
-                    item.base * 0.6875,
-                    item.base * 0.75,
-                    item.base * 0.8125,
-                    item.base * 0.71875,
-                ];
-            const resolved = tokens.map((value) => Math.max(value, 12));
-            expect(resolved).toHaveLength(tokens.length);
-            expect(resolved.every(Number.isFinite)).toBe(true);
-            expect(resolved.every((value) => value >= 12)).toBe(true);
-        }
     });
 
     it.each([
