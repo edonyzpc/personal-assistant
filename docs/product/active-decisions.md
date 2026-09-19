@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-09-17
+Updated: 2026-09-18
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-038 | Chat 内置图片生成与连续编辑 | 显式/自然语言入口、Wan、独立或复用的统一图片连接、原图和版本保留、后台任务及有依据恢复；不自主增加付费生成 | [Decision](./decisions/dec-038-chat-image-generation.md), [Product Spec](./specs/pa-chat-image-generation-product-spec.md) | 接口或平台不能满足验收，或需新增 provider/外发/费用/同步边界 |
 | DEC-037 | PA Agent 基础能力与自主规划 | 取消 Operations/Memory 规划性开放门；日期由主 Agent 选择并说明，不确定时询问；保留来源、确认与治理规则 | [Decision](./decisions/dec-037-pa-agent-essential-capabilities.md), [Product Spec](./specs/pa-agent-essential-capabilities-product-spec.md) | 基础组合不足或必须改变权限/数据边界 |
 | DEC-036 | Share Card 提供本次导出的原纸、轻印与复印样式 | 每次 Modal 默认原纸且不记忆；轻印处理标题与较轻正文，复印标题保留原始 `scale 4/1` 与 `-3/-3px` 并加淡残影，正文有较轻的独立复印印迹；代码、视觉、品牌和宿主主题不受影响，preview/Copy/Save 共享同一档位 | [Decision](./decisions/dec-036-share-card-print-styles.md), [Product Spec](./specs/pa-share-card-print-styles-product-spec.md), [Architecture](../architecture/share-card-architecture.md) | 小字号可读性、位移裁切或跨引擎结果不可接受，或需要持久默认/自定义参数 |
 | DEC-035 | 有界清理与 Pagelet 旧范围控件退役 | 仅删除旧每次运行范围选择，保留活动笔记 anchor 的跨笔记 Deep Discover、旧命令路由、全局来源/上下文控制；Statistics、Share Card 字体、管理与 Records 入口保留 | [Decision](./decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md), [Product Spec](./specs/pa-bounded-code-cleanup-product-spec.md) | 实际需求要求手选范围，或候选清理发现有效消费者/兼容责任 |

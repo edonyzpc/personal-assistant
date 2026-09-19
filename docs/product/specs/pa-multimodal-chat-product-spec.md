@@ -1,7 +1,7 @@
 # PA Multimodal Chat Product Spec
 
 Document status: Current
-Updated: 2026-09-12
+Updated: 2026-09-18
 Work item: B-129
 Decision: [DEC-030](../decisions/dec-030-multimodal-chat-image-copywriting.md)
 Authority: B-129 用户已确认的图片理解、个性化文案、显式保存与风格参考产品契约。
@@ -351,9 +351,12 @@ PA 收到的文件可能保留拍摄位置等元数据，迁出成为正式附�
 - 旧兼容态安全升级的成功与拒绝分支有源码回归；实测两端旧库因证据不足安全
   拒绝，资料与旧模式保留，未证明这些旧库成功升级。最低 1.11.4 为官方/源码
   依据，未安装旧版实测；各输入手势与任意图片质量不作穷举保证。
-- 后续完整动画/外部资源 SVG、图片生成、跨设备续聊分别由
-  [B-132/B-133/B-134](../../backlog.md#已延期的产品与工程工作) 承接，未定优先级、
-  二期组合或工期。未来扩展须先明确产品、资源、数据与网络边界。
+- 完整动画/外部资源 SVG 与跨设备续聊仍由
+  [B-132/B-134](../../backlog.md#已延期的产品与工程工作) 承接。
+  2026-09-18 图片生成已由 [DEC-038](../decisions/dec-038-chat-image-generation.md) 与
+  [B-133 Product Spec](./pa-chat-image-generation-product-spec.md) 独立定义；执行状态见
+  [B-133 Tracker](../../development/active/chat-image-generation/tracker.md)。本 B-129
+  首版非目标仍是历史范围，不将 B-133 设计误记为本功能已交付。
 - 运行时技术契约见 [Architecture](../../architecture/multimodal-chat-architecture.md)，
   操作见 [使用指南](../../guides/multimodal-chat-user-guide.md)，原始回执和限定验收见
   [历史验证](../../archive/2026/b129-multimodal-chat-validation.md)。是否已发布以发布

@@ -20,6 +20,7 @@
 - [Context Pager](./specs/pa-context-pager-product-spec.md)
 - [Context Management and Conversation Continuity](./specs/pa-context-management-product-spec.md)
 - [Multimodal Chat and Image Copywriting](./specs/pa-multimodal-chat-product-spec.md)
+- [Chat Image Generation and Editing](./specs/pa-chat-image-generation-product-spec.md) — B-133 已确认产品范围；详细设计与执行记录由 Feature Home 接续。
 - [Lightweight Graph Discovery](./specs/pa-lightweight-graph-discovery-product-spec.md)
 - [Scope Recap and Theme Summary](./specs/pa-scope-recap-theme-summary-product-spec.md)
 - [Retrieval Habit Profile](./specs/pa-retrieval-habit-profile-product-spec.md)
