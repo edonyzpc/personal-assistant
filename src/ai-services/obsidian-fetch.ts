@@ -1,4 +1,6 @@
 import { requestUrl, type RequestUrlParam } from 'obsidian';
+import { agentDebugErrorType } from './pa-agent-debug';
+import { prepareProviderAdmission, runProviderAdmission } from './provider-admission-error';
 
 type RequestBody = string | ArrayBuffer | undefined;
 
@@ -35,7 +37,7 @@ export class ProviderRequestScope {
             throwIfAborted(signal);
             const detachedEpoch = this.detachedEpoch;
             if (prepareProviderRequest) {
-                await withAbort(Promise.resolve(prepareProviderRequest(signal)), signal);
+                await withAbort(prepareProviderAdmission(() => prepareProviderRequest(signal)), signal);
                 throwIfAborted(signal);
                 // Cancellation and detachment listeners are promise callbacks.
                 // Yield once so a change observed during preparation cannot win
@@ -51,7 +53,7 @@ export class ProviderRequestScope {
             // construction in one synchronous segment. A detached request
             // observed after the prior snapshot therefore cannot be skipped.
             if (this.detachedRequests.size > 0) continue;
-            beforeDispatch?.();
+            runProviderAdmission(beforeDispatch);
             throwIfAborted(signal);
             const rawRequest = task();
             return await withLocalAbort(rawRequest, signal, () => {
@@ -80,6 +82,65 @@ export interface ObsidianFetchControl {
     /** Validate the already-serialized request immediately before each physical dispatch. */
     prepareProviderRequest?: (signal?: AbortSignal | null) => void | Promise<void>;
     onProviderRequestDiagnostic?: (evidence: ProviderRequestDiagnostic) => void;
+    onProviderRequestTrace?: (event: ProviderRequestTrace) => void;
+    isProviderRequestTraceEnabled?: () => boolean;
+}
+
+export interface ProviderRequestTrace {
+    requestId: string;
+    phase: 'http_dispatch' | 'http_response' | 'http_error';
+    transport: 'obsidian' | 'native';
+    timestamp: number;
+    elapsedMs: number;
+    status?: number;
+    errorType?: string;
+    requestChars?: number;
+    messageCount?: number;
+    toolCount?: number;
+}
+
+let traceRequestSequence = 0;
+
+/** Observe the actual dispatch, without consuming the body or changing its promise. */
+export function traceProviderDispatch<T extends { status?: number }>(
+    task: () => Promise<T>, transport: ProviderRequestTrace['transport'],
+    observer?: (event: ProviderRequestTrace) => void, body?: unknown, enabled?: () => boolean,
+): Promise<T> {
+    if (!observer) return task();
+    let traceEnabled = true;
+    try { traceEnabled = enabled?.() !== false; } catch { traceEnabled = false; }
+    if (!traceEnabled) return task();
+    const startedAt = Date.now();
+    const requestId = `http_${startedAt.toString(36)}_${++traceRequestSequence}`;
+    const shape: Pick<ProviderRequestTrace, 'requestChars' | 'messageCount' | 'toolCount'> = {};
+    if (typeof body === 'string') {
+        shape.requestChars = body.length;
+        try {
+            const value: unknown = JSON.parse(body);
+            if (value && typeof value === 'object') {
+                const record = value as Record<string, unknown>;
+                if (Array.isArray(record.messages)) shape.messageCount = record.messages.length;
+                if (Array.isArray(record.tools)) shape.toolCount = record.tools.length;
+            }
+        } catch { /* Unknown request format; never log the raw body. */ }
+    }
+    const emit = (phase: ProviderRequestTrace['phase'], fields: Partial<ProviderRequestTrace> = {}) => {
+        try { observer({ requestId, phase, transport, timestamp: Date.now(), elapsedMs: Date.now() - startedAt, ...fields }); }
+        catch { /* Logging is never an admission or execution gate. */ }
+    };
+    try {
+        const result = task();
+        // Attach both handlers before calling an observer which might cancel the caller.
+        void result.then(
+            response => emit('http_response', { status: response.status }),
+            error => emit('http_error', { errorType: agentDebugErrorType(error) }),
+        );
+        emit('http_dispatch', shape);
+        return result;
+    } catch (error) {
+        emit('http_error', { errorType: agentDebugErrorType(error) });
+        throw error;
+    }
 }
 
 export interface ProviderRequestDiagnostic {
@@ -283,7 +344,7 @@ export const obsidianFetch = async (
     }
 
     const dispatch = () => {
-        try { return requestUrl(requestParam); }
+        try { return traceProviderDispatch(() => requestUrl(requestParam), 'obsidian', control.onProviderRequestTrace, body, control.isProviderRequestTraceEnabled); }
         finally { reportProviderRequestDiagnostic(body, 'obsidian', control.onProviderRequestDiagnostic); }
     };
     const response = control.providerRequestScope
@@ -297,12 +358,12 @@ export const obsidianFetch = async (
             throwIfAborted(init.signal);
             if (control.prepareProviderRequest) {
                 await withAbort(
-                    Promise.resolve(control.prepareProviderRequest(init.signal)),
+                    prepareProviderAdmission(() => control.prepareProviderRequest!(init.signal)),
                     init.signal,
                 );
             }
             throwIfAborted(init.signal);
-            control.onProviderRequestStart?.();
+            runProviderAdmission(control.onProviderRequestStart);
             throwIfAborted(init.signal);
             return await withAbort(dispatch(), init.signal);
         })();

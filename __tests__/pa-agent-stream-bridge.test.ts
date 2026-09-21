@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@jest/globals";
 import { AgentEventEmitter } from "../src/ai-services/agent-runtime-primitives";
-import type { LegacyAgentEvent, ProviderCompletion } from "../src/ai-services/chat-types";
+import type { AgentEvent, LegacyAgentEvent, ProviderCompletion } from "../src/ai-services/chat-types";
 import { PaAgentLoop } from "../src/ai-services/pa-agent-loop";
+import { createRequiredCapabilityHostPolicy } from "../src/ai-services/pa-agent-required-capability-policy";
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
 import { CanonicalToLegacyEventAdapter, type WritingDeliveryDiagnostic } from "../src/ai-services/pa-agent-stream-bridge";
 import type { GenerationInputSnapshot } from "../src/ai-services/generation-input-snapshot";
@@ -10,13 +11,14 @@ const request = { requestId: "b135-writing-tail" };
 const body = "  原样正文：海风 🌊\r\n\t";
 const envelope = JSON.stringify({ kind: "pa.writing", version: 1, requestId: request.requestId, body, explanation: "说明" });
 
-async function runWritingTail(input: { raw?: string; completion?: ProviderCompletion; current?: boolean; omitFinish?: boolean; revokeAfterContent?: boolean; failDiagnostic?: boolean; generationInput?: GenerationInputSnapshot }) {
+async function runWritingTail(input: { raw?: string; completion?: ProviderCompletion; current?: boolean; omitFinish?: boolean; revokeAfterContent?: boolean; failDiagnostic?: boolean; generationInput?: GenerationInputSnapshot; native?: boolean }) {
     const events: LegacyAgentEvent[] = [];
     const diagnostics: WritingDeliveryDiagnostic[] = [];
     const adapter = new CanonicalToLegacyEventAdapter(new AgentEventEmitter((event) => events.push(event)), undefined, {
         request,
         maxTextChars: 10_000,
         isCurrent: () => input.current !== false,
+        ...(input.native ? { nativeContextHandle: request.requestId } : {}),
         ...(input.generationInput ? { getGenerationInputSnapshot: () => input.generationInput } : {}),
         onDiagnostic: (diagnostic) => {
             expect(events.some((event) => event.kind === "writing-recovery" || event.kind === "writing-artifact")).toBe(false);
@@ -50,6 +52,166 @@ async function runWritingTail(input: { raw?: string; completion?: ProviderComple
 }
 
 describe("B-135 writing completion across adapter, loop and legacy bridge", () => {
+    it.each([false, true])("withdraws a malformed tool phase through the real loop and host policy (native preview: %s)", async native => {
+        const text = "I need to read the note.\n<tool_calls>\n</tool_calls>";
+        const events: LegacyAgentEvent[] = [];
+        const adapter = new CanonicalToLegacyEventAdapter(new AgentEventEmitter(event => events.push(event)), undefined,
+            native ? { request, nativeContextHandle: request.requestId, maxTextChars: 10000, isCurrent: () => true } : undefined);
+        const { hostPolicy } = createRequiredCapabilityHostPolicy({ userInput: "Explain this idea.",
+            availableCapabilities: new Set(), classification: { items: [] } });
+        const loop = new PaAgentLoop({ runId: "missing-native-call", userInput: "Explain this idea.",
+            hostPolicy, model: { stream: async function* () {
+                yield { type: "text_delta", text };
+                yield { type: "provider_completion", completion: "tool_calls" };
+            } }, onEvent: event => adapter.handle(event),
+        });
+        const result = await loop.run();
+        expect(result.status).toBe("incomplete");
+        expect(result.committedFinalText).toBe("");
+        expect(result.endPayload?.diagnostics).toContainEqual({ type: "provider_tool_calls_missing" });
+        expect(events.filter(event => event.kind === "answer-snapshot" || event.kind === "writing-artifact"
+            || event.kind === "writing-recovery")).toEqual([]);
+        expect(events.filter(event => event.kind === "writing-preview").map(event => event.text))
+            .toEqual(native ? [text, ""] : []);
+    });
+
+    it("preserves a literal XML example through native ordinary preview and final delivery", async () => {
+        const text = "XML example: `<tool_calls></tool_calls>`.";
+        const { result, events } = await runWritingTail({ native: true, raw: text, completion: "stop" });
+        expect(result.status).toBe("completed");
+        expect(events.filter(event => event.kind === "writing-preview").map(event => event.text)).toEqual([text]);
+        expect(events.filter(event => event.kind === "answer-snapshot")).toEqual([
+            expect.objectContaining({ snapshot: text }),
+        ]);
+    });
+
+    it.each([false, true])("keeps a missing native call incomplete when required context is available: %s", async available => {
+        const { hostPolicy } = createRequiredCapabilityHostPolicy({ userInput: "Read the current note.",
+            availableCapabilities: new Set(available ? ["get_current_note_context"] : []),
+            classification: { items: [{ capability: "get_current_note_context", level: "required", confidence: 1, reason: "explicit" }] },
+        });
+        const result = await new PaAgentLoop({ runId: "required-missing-native", userInput: "Read the current note.",
+            hostPolicy, model: { stream: async function* () {
+                yield { type: "text_delta", text: "<tool_calls></tool_calls>" };
+                yield { type: "provider_completion", completion: "tool_calls" };
+            } },
+        }).run();
+        expect(result.status).toBe("incomplete");
+        expect(result.committedFinalText).toBe("");
+        expect(result.turns).toHaveLength(available ? 2 : 1);
+        expect(result.turns.every(turn => turn.status === "incomplete")).toBe(true);
+    });
+    it.each(["current", "revoked", "cancelled"] as const)(
+        "keeps final native ordinary delivery consistent after an awaited host policy: %s",
+        async scenario => {
+            let sourceCurrent = true;
+            let enterPolicy!: () => void;
+            let releasePolicy!: () => void;
+            const policyEntered = new Promise<void>(resolve => { enterPolicy = resolve; });
+            const policyReleased = new Promise<void>(resolve => { releasePolicy = resolve; });
+            const controller = new AbortController();
+            const events: LegacyAgentEvent[] = [];
+            const lifecycle: AgentEvent[] = [];
+            const committedSnapshots: string[] = [];
+            const adapter = new CanonicalToLegacyEventAdapter(
+                new AgentEventEmitter(event => events.push(event)),
+                event => lifecycle.push(event),
+                {
+                    request,
+                    nativeContextHandle: request.requestId,
+                    maxTextChars: 10_000,
+                    isCurrent: () => sourceCurrent && !controller.signal.aborted,
+                    isPreviewCurrent: () => sourceCurrent,
+                },
+            );
+            const loop = new PaAgentLoop({
+                runId: `late-native-ordinary-${scenario}`,
+                userInput: "Explain the idea.",
+                signal: controller.signal,
+                writingRequest: request,
+                isFinalTextCurrent: () => sourceCurrent,
+                onCommittedFinalText: text => committedSnapshots.push(text),
+                model: {
+                    stream: async function* () {
+                        yield { type: "text_delta", text: body };
+                        yield { type: "provider_completion", completion: "stop" };
+                    },
+                },
+                hostPolicy: {
+                    afterTurn: async () => {
+                        enterPolicy();
+                        await policyReleased;
+                        return { action: "stop", status: "completed", reason: "answer_ready" };
+                    },
+                },
+                onEvent: event => adapter.handle(event),
+            });
+            const running = loop.run();
+            await policyEntered;
+            expect(lifecycle.filter(event => event.type === "turn_end")).toEqual([
+                expect.objectContaining({ status: "completed" }),
+            ]);
+            expect(committedSnapshots).toEqual([body]);
+            if (scenario !== "current") sourceCurrent = false;
+            if (scenario === "cancelled") controller.abort();
+            releasePolicy();
+            const result = await running;
+            const status = scenario === "current" ? "completed" : scenario === "cancelled" ? "aborted" : "incomplete";
+            expect(result.status).toBe(status);
+            expect(lifecycle.filter(event => event.type === "agent_end")).toEqual([
+                expect.objectContaining({ status }),
+            ]);
+            expect(events.filter(event => event.kind === "writing-artifact")).toEqual([]);
+            if (scenario === "current") {
+                expect(result.committedFinalText).toBe(body);
+                expect(committedSnapshots).toEqual([body]);
+                expect(events.filter(event => event.kind === "answer-snapshot")).toEqual([
+                    expect.objectContaining({ snapshot: body }),
+                ]);
+                expect(events.filter(event => event.kind === "writing-recovery")).toEqual([]);
+            } else {
+                expect(result.committedFinalText).toBe("");
+                expect(committedSnapshots).toEqual([body, ""]);
+                expect(events.filter(event => event.kind === "answer-snapshot")).toEqual([]);
+                expect(events.filter(event => event.kind === "writing-preview").map(event => event.text)).toEqual([body, ""]);
+                expect(events.filter(event => event.kind === "writing-recovery")).toEqual([
+                    expect.objectContaining({ reason: "source_changed", rawText: "", previewText: "" }),
+                ]);
+                expect(lifecycle.find(event => event.type === "agent_end")?.metadata?.diagnostics).toEqual(
+                    expect.arrayContaining([expect.objectContaining({ type: "assistant_source_changed" })]),
+                );
+            }
+        },
+    );
+
+    it("delivers source-current native ordinary text without creating an artifact or recovery", async () => {
+        const { events, diagnostics } = await runWritingTail({ native: true, raw: body });
+        expect(events.filter(event => event.kind === "answer-snapshot")).toEqual([
+            expect.objectContaining({ snapshot: body }),
+        ]);
+        expect(events.filter(event => event.kind === "writing-preview").map(event => event.text)).toEqual([body]);
+        expect(events.filter(event => event.kind === "writing-artifact" || event.kind === "writing-recovery")).toEqual([]);
+        expect(diagnostics).toEqual([]);
+    });
+
+    it.each(["after-content", "before-content"] as const)(
+        "reports source recovery instead of silently dropping native ordinary text revoked %s",
+        async phase => {
+            const { events, diagnostics } = await runWritingTail({ native: true, raw: body,
+                ...(phase === "after-content" ? { revokeAfterContent: true } : { current: false }),
+            });
+            expect(events.filter(event => event.kind === "writing-preview").map(event => event.text))
+                .toEqual(phase === "after-content" ? [body, ""] : []);
+            const recoveries = events.filter(event => event.kind === "writing-recovery");
+            expect(recoveries).toEqual([
+                expect.objectContaining({ requestId: request.requestId, reason: "source_changed", rawText: "", previewText: "" }),
+            ]);
+            expect(events.filter(event => event.kind === "answer-snapshot" || event.kind === "writing-artifact")).toEqual([]);
+            expect(diagnostics).toEqual([expect.objectContaining({ result: "source_changed", providerCompletion: "stop" })]);
+            expect(JSON.stringify({ recoveries, diagnostics })).not.toContain("海风");
+        },
+    );
+
     it("does not turn a local diagnostic failure into a delivery failure", async () => {
         const { result, events } = await runWritingTail({ failDiagnostic: true });
         expect(result.status).toBe("completed");

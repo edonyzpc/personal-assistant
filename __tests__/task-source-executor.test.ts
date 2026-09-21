@@ -7,6 +7,7 @@ import { createCurrentNoteContextTool } from '../src/ai-services/chat-tools';
 import { createPaAgentCapabilityToolExecutor } from '../src/ai-services/pa-agent-host-tools';
 import type { PaAgentToolExecutor, ParsedBufferedToolCall } from '../src/ai-services/pa-agent-types';
 import { createAgentControlSnapshot } from '../src/ai-services/pa-agent-control-policy';
+import { createRequiredCapabilityHostPolicy } from '../src/ai-services/pa-agent-required-capability-policy';
 
 jest.mock('obsidian');
 
@@ -51,6 +52,42 @@ function setup(baseOverride?: PaAgentToolExecutor) {
 }
 
 describe('B-135 complete scope declaration admission', () => {
+    it.each(['invalid_declaration', 'invalid_instruction_quote'])(
+        'repairs %s once before reading, instead of forcing a tool-free answer', async reason => {
+            const h = setup();
+            const modes: Array<string | undefined> = [];
+            const policy = createRequiredCapabilityHostPolicy({ userInput,
+                availableCapabilities: new Set(['get_current_note_context']),
+                classification: { items: [{ capability: 'get_current_note_context', level: 'required', confidence: 1, reason: 'fixture' }] } });
+            const loop = new PaAgentLoop({ runId: 'r', userInput, maxTurns: 4,
+                toolExecutor: h.executor, hostPolicy: policy.hostPolicy,
+                model: { stream: async function* (input) {
+                    modes.push(input.toolMode);
+                    if (modes.length === 1) {
+                        const invalid = reason === 'invalid_declaration'
+                            ? { ...declaration, noteHandles: ['active'] }
+                            : { ...declaration, instructionQuote: 'not in the user request' };
+                        yield { type: 'toolcall_delta', id: 'bad-scope', name: DECLARE_SOURCE_SCOPE, input: invalid, index: 0 } as const;
+                        yield { type: 'toolcall_delta', id: 'blocked-read', name: 'get_current_note_context', input: { mode: 'full' }, index: 1 } as const;
+                    } else if (modes.length === 2 && input.toolMode !== 'final_answer_only') {
+                        expect(h.editor.getValue).not.toHaveBeenCalled();
+                        expect(h.state.snapshot()).toBeUndefined();
+                        expect(input.runtimeInstruction).toContain('correct the source declaration once');
+                        yield { type: 'toolcall_delta', id: 'fixed-scope', name: DECLARE_SOURCE_SCOPE, input: declaration, index: 0 } as const;
+                        yield { type: 'toolcall_delta', id: 'admitted-read', name: 'get_current_note_context', input: { mode: 'full' }, index: 1 } as const;
+                    } else {
+                        yield { type: 'text_delta', text: h.editor.getValue.mock.calls.length ? 'Answer based on Actual editor.' : 'Unable to read the note.' } as const;
+                    }
+                } } });
+            const result = await loop.run();
+            expect(result.turns).toHaveLength(3);
+            expect(modes[1]).not.toBe('final_answer_only');
+            expect(h.editor.getValue).toHaveBeenCalledTimes(1);
+            expect(h.execute).toHaveBeenCalledTimes(1);
+            expect(result.committedFinalText).toBe('Answer based on Actual editor.');
+            expect(h.state.snapshot()?.allowedNoteIds).toEqual(['note-a']);
+        });
+
     it.each(['complete', 'missing', 'extra', 'wrong-id', 'unavailable'] as const)(
         'validates the entire ordered batch plan before source preparation (%s)', variant => {
             const h = setup();

@@ -13,6 +13,9 @@ export type NextModelChunkResult =
 export interface ModelChunkConsumerConfig {
     signal?: AbortSignal;
     assistantIdleTimeoutMs: number;
+    /** Preparation is governed by the wall budget, not provider response idle. */
+    isIdleTimeoutEnabled?: () => boolean;
+    subscribeIdleTimeoutChange?: (listener: () => void) => () => void;
     isAborted: () => boolean;
     isWallClockExceeded: () => boolean;
     wallClockRemainingMs: () => number | undefined;
@@ -38,6 +41,7 @@ export class ModelChunkConsumer {
             let settled = false;
             let idleTimer: PlatformTimeoutHandle | undefined;
             let wallClockTimer: PlatformTimeoutHandle | undefined;
+            const subscriptions: { idle?: () => void; wallClock?: () => void } = {};
 
             const cleanup = () => {
                 if (idleTimer !== undefined) {
@@ -46,7 +50,8 @@ export class ModelChunkConsumer {
                 if (wallClockTimer !== undefined) {
                     clearPlatformTimeout(wallClockTimer);
                 }
-                unsubscribeWallClockDeadlineChange?.();
+                subscriptions.wallClock?.();
+                subscriptions.idle?.();
                 this.config.signal?.removeEventListener("abort", onAbort);
             };
             const settle = (result: NextModelChunkResult) => {
@@ -61,12 +66,17 @@ export class ModelChunkConsumer {
             };
 
             this.config.signal?.addEventListener("abort", onAbort, { once: true });
-            if (Number.isFinite(this.config.assistantIdleTimeoutMs) && this.config.assistantIdleTimeoutMs > 0) {
+            const startIdleTimer = () => {
+                // Repeated dispatch/deadline notifications cannot extend an active idle wait.
+                if (settled || idleTimer !== undefined || this.config.isIdleTimeoutEnabled?.() === false
+                    || !Number.isFinite(this.config.assistantIdleTimeoutMs) || this.config.assistantIdleTimeoutMs <= 0) return;
                 idleTimer = setPlatformTimeout(() => {
                     void this.iterator.return?.();
                     settle({ type: "idle" });
                 }, this.config.assistantIdleTimeoutMs);
-            }
+            };
+            subscriptions.idle = this.config.subscribeIdleTimeoutChange?.(startIdleTimer);
+            startIdleTimer();
             const scheduleWallClockTimer = () => {
                 if (wallClockTimer !== undefined) {
                     clearPlatformTimeout(wallClockTimer);
@@ -80,7 +90,7 @@ export class ModelChunkConsumer {
                 }, wallClockRemainingMs);
             };
             scheduleWallClockTimer();
-            const unsubscribeWallClockDeadlineChange = this.config.subscribeWallClockDeadlineChange?.(
+            subscriptions.wallClock = this.config.subscribeWallClockDeadlineChange?.(
                 scheduleWallClockTimer,
             );
 

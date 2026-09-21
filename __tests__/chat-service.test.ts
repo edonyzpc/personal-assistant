@@ -773,6 +773,64 @@ describe('native tool call fixtures', () => {
 });
 
 describe('ChatService.streamLLM integration', () => {
+    it.each(['correct', 'repeat'] as const)('keeps native source tools for one correction, then handles %s', async correction => {
+        const prompt = '请读取当前笔记并解释';
+        const file = { path: 'notes/current.md', name: 'current.md', basename: 'current', extension: 'md',
+            stat: { mtime: 1, ctime: 1, size: 19 } };
+        const editor = { getValue: jest.fn(() => 'Source note evidence'), getSelection: () => '',
+            lineCount: () => 1, getLine: () => 'Source note evidence', getCursor: () => ({ line: 0, ch: 0 }) };
+        const plugin = createPlugin({ markdownFiles: [file], activeMarkdownView: { file, editor },
+            fileContents: { [file.path]: 'Source note evidence' } });
+        const requests: Array<{ tools: string[]; input?: string }> = [];
+        mockCreateChatModel.mockImplementation(async () => {
+            const turn = requests.length;
+            const request: typeof requests[number] = { tools: [] };
+            requests.push(request);
+            const model = {
+                bindTools: (schemas: Array<{ function: { name: string } }>) => {
+                    request.tools = schemas.map(schema => schema.function.name); return model;
+                },
+                stream: async function* (input: unknown) {
+                    request.input = JSON.stringify(input);
+                    if (turn < 2) {
+                        expect(editor.getValue).not.toHaveBeenCalled();
+                        const invalid = turn === 0 || correction === 'repeat';
+                        yield { content: '', tool_call_chunks: [
+                            { id: `scope-${turn}`, index: 0, name: 'declare_source_scope', args: JSON.stringify({
+                                instructionQuote: prompt, notes: 'current_note', webAllowed: false,
+                                ...(invalid ? { noteHandles: ['note_1'] } : {}),
+                            }) },
+                            { id: `read-${turn}`, index: 1, name: 'get_current_note_context', args: '{"mode":"full"}' },
+                        ] };
+                    } else {
+                        yield { content: correction === 'correct' ? 'Answer based on Source note evidence.' : 'The note could not be read.' };
+                    }
+                },
+            };
+            return model;
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const events: CanonicalAgentEvent[] = [];
+        try {
+            await service.streamLLM(prompt, jest.fn(), undefined, [], { memoryMode: 'skip-memory',
+                onLifecycleEvent: event => events.push(event) });
+        } finally { service.dispose(); }
+        expect(requests).toHaveLength(3);
+        expect(requests[1].tools).toContain('declare_source_scope');
+        expect(requests[1].tools).toContain('get_current_note_context');
+        expect(requests[1].input).toContain('correct the source declaration once');
+        if (correction === 'correct') {
+            expect(editor.getValue).toHaveBeenCalled();
+            expect(requests[2].input).toContain('Source note evidence');
+        } else {
+            expect(editor.getValue).not.toHaveBeenCalled();
+            expect(requests[2].tools).toEqual([]);
+            expect(requests[2].input).toContain('Do not call tools');
+        }
+        expect(events.filter(event => event.type === 'tool_execution_end' && event.outcome === 'success'))
+            .toHaveLength(correction === 'correct' ? 1 : 0);
+    });
+
     it('runs host-bound create_image without a vault source declaration and keeps completion asynchronous', async () => {
         let turn = 0;
         const model = {

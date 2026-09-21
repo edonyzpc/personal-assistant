@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { TFile } from "obsidian";
+import type { VaultInsightsSourceReceipt } from "../src/ai-services/memory-extraction/extraction-scheduler";
 
 import {
     MemoryExtractionScheduler,
@@ -272,6 +273,44 @@ describe("TypeAUserProfileExtractor", () => {
 });
 
 describe("MemoryExtractionScheduler", () => {
+    it("reuses unchanged aggregate evidence but replaces it for changed content and source revocation", async () => {
+        let file = Object.assign(new TFile(), { path: 'notes/source.md', basename: 'source',
+            stat: { mtime: 1, ctime: 1, size: 10 } });
+        let tags = [{ tag: '#first' }];
+        let timestamp = Date.parse('2026-09-21T08:00:00Z');
+        const changed = jest.fn<(source: VaultInsightsSourceReceipt | null) => void>();
+        const scheduler = new MemoryExtractionScheduler({
+            app: { vault: { getMarkdownFiles: () => [file], getAbstractFileByPath: () => file },
+                metadataCache: { getFileCache: () => ({ tags }), resolvedLinks: {}, unresolvedLinks: {} } } as any,
+            chatHistoryManager: {} as any, userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true, onVaultInsightsSourceChanged: changed,
+            now: () => new Date(timestamp),
+        });
+        try {
+            await scheduler.runTypeCRefresh('initial');
+            const original = changed.mock.calls.at(-1)![0];
+            timestamp += 1000;
+            await scheduler.runTypeCRefresh('same-source-same-content');
+            expect(changed.mock.calls.at(-1)![0]).toBe(original);
+            expect(scheduler.getVaultInsightsSnapshot()?.snapshot.generatedAt).toBe(new Date(timestamp).toISOString());
+            tags = [{ tag: '#second' }];
+            await scheduler.runTypeCRefresh('changed-aggregate');
+            const updated = changed.mock.calls.at(-1)![0]!;
+            expect(updated).not.toBe(original);
+            expect(scheduler.getPromptContext().vaultInsights).toContain('#second');
+            file = Object.assign(new TFile(), { path: file.path, basename: file.basename, stat: { ...file.stat } });
+            expect(updated.isSourceCurrent()).toBe(false);
+            await scheduler.runTypeCRefresh('same-facts-different-file-identity');
+            const replaced = changed.mock.calls.at(-1)![0]!;
+            expect(replaced).not.toBe(updated);
+            scheduler.invalidateVaultInsightsSource(file);
+            expect(replaced.isSourceCurrent()).toBe(false);
+            await scheduler.runTypeCRefresh('same-content-after-revocation');
+            expect(changed.mock.calls.at(-1)![0]).not.toBe(replaced);
+            expect(replaced.isSourceCurrent()).toBe(false);
+        } finally { scheduler.dispose(); }
+    });
+
     it("publishes source evidence that survives dispose but detects same-path replacement and explicit clearing", async () => {
         const file = Object.assign(new TFile(), { path: 'notes/source.md', basename: 'source',
             stat: { mtime: 1, ctime: 1, size: 10 } });

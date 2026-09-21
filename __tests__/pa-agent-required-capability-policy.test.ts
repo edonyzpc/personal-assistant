@@ -12,6 +12,59 @@ import { chatToolResultToPaAgentToolExecutionResult } from "../src/ai-services/p
 import type { PaAgentTurnSummary } from "../src/ai-services/pa-agent-loop";
 
 describe("PA Agent required capability HostPolicy", () => {
+    const rejectedSourceBatch = (reason = 'invalid_declaration'): PaAgentTurnSummary => createSummary({
+        status: 'tool_results_ready',
+        toolCalls: ['declare_source_scope', 'get_current_note_context'].map((name, index) => ({
+            type: 'toolCall', id: `${name}-call`, name, input: {}, index,
+        })),
+        toolResults: ['declare_source_scope', 'get_current_note_context'].map(name => createToolResult(name, {
+            isError: true, outcome: 'policy_rejected', metadata: {
+                reason, sourceScopeControl: true, preflightOnly: true, batchPreflightRejected: true,
+            },
+        })),
+    });
+    const sourceRepairPolicy = () => createRequiredCapabilityHostPolicy({ userInput: 'Read the current note',
+        availableCapabilities: new Set(['get_current_note_context']), classification: { items: [] } }).hostPolicy;
+
+    it.each(['invalid_declaration', 'invalid_instruction_quote'])('repairs %s only once per run', async reason => {
+        const policy = sourceRepairPolicy();
+        const summary = rejectedSourceBatch(reason);
+        const first = await policy.afterTurn(summary);
+        expect(first).toMatchObject({ action: 'continue', runtimeInstruction: expect.stringContaining('correct the source declaration once') });
+        expect(first).not.toHaveProperty('toolMode');
+        expect(first).not.toHaveProperty('controlSnapshot');
+        expect(await policy.afterTurn(summary)).toMatchObject({ action: 'continue', toolMode: 'final_answer_only' });
+    });
+
+    it.each(['scope_widening', 'source_run_changed', 'source_read_outside_scope', 'unknown_note_handle',
+        'source_declaration_disabled', 'source_read_plan_unavailable'])('does not treat %s as a format correction', async reason => {
+        expect(await sourceRepairPolicy().afterTurn(rejectedSourceBatch(reason)))
+            .toMatchObject({ action: 'continue', toolMode: 'final_answer_only' });
+    });
+
+    it.each(['mixed-result', 'missing-receipt', 'wrong-call', 'duplicate-result', 'different-reason', 'final-only', 'final-tool-mode'])(
+        'does not reopen tools for %s', async variant => {
+            const summary = rejectedSourceBatch();
+            const metadata = summary.toolResults[1].content.metadata!;
+            if (variant === 'mixed-result') { metadata.outcome = 'success'; summary.toolResults[1].isError = false; }
+            if (variant === 'missing-receipt') delete metadata.preflightOnly;
+            if (variant === 'wrong-call') summary.toolResults[1].toolCallId = 'unrelated';
+            if (variant === 'duplicate-result') summary.toolResults[1] = summary.toolResults[0];
+            if (variant === 'different-reason') metadata.reason = 'invalid_instruction_quote';
+            if (variant === 'final-only') summary.controlSnapshot = createAgentControlSnapshot({ exposureMode: 'final-only' });
+            if (variant === 'final-tool-mode') summary.controlSnapshot = createAgentControlSnapshot({ toolMode: 'final_answer_only' });
+            const decision = await sourceRepairPolicy().afterTurn(summary);
+            expect('runtimeInstruction' in decision ? decision.runtimeInstruction : '').not.toContain('correct the source declaration once');
+        });
+
+    it('does not grant source repair after finalization has already been attempted', async () => {
+        const policy = sourceRepairPolicy();
+        await policy.afterTurn(createSummary({ status: 'tool_results_ready',
+            toolResults: [createToolResult('read_note', { isError: true, outcome: 'recoverable_error' })] }));
+        const decision = await policy.afterTurn(rejectedSourceBatch());
+        expect('runtimeInstruction' in decision ? decision.runtimeInstruction : '').not.toContain('correct the source declaration once');
+    });
+
     it('allows one native context schema correction without opening a new tool scope', async () => {
         const policy = createRequiredCapabilityHostPolicy({ userInput: 'Write a card',
             availableCapabilities: new Set(), classification: { items: [] }, allowWritingContextSchemaRepair: true });

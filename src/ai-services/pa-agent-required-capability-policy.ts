@@ -55,6 +55,7 @@ interface RequiredCapabilityRuntimeState {
     seenMemoryToolCallIds: Set<string>;
     phase: CapabilityRuntimePhase;
     answerCompletionLedger: AnswerCompletionLedger;
+    sourceDeclarationRepairAttempted: boolean;
     allowWritingContextSchemaRepair: boolean;
     writingContextSchemaRepairAttempted: boolean;
     allowManagedActionAfterDuplicateNoteRead: boolean;
@@ -106,6 +107,7 @@ export function createRequiredCapabilityHostPolicy(
         seenMemoryToolCallIds: new Set(),
         phase: { kind: "awaiting_initial_tools" },
         answerCompletionLedger: createAnswerCompletionLedger(),
+        sourceDeclarationRepairAttempted: false,
         allowWritingContextSchemaRepair: options.allowWritingContextSchemaRepair === true,
         writingContextSchemaRepairAttempted: false,
         allowManagedActionAfterDuplicateNoteRead: options.allowManagedActionAfterDuplicateNoteRead === true,
@@ -282,6 +284,16 @@ function decideAfterTurn(
     recordUsedCapabilities(summary, state);
     const priorAppliedInsightActions = state.answerCompletionLedger.appliedInsightActionReceipts.length;
     recordAnswerCompletionTurn(state.answerCompletionLedger, summary, facts);
+
+    // A rejected source batch has performed no reads. Repair its shape before
+    // treating the requested capability as unavailable; keep all Host boundaries.
+    if (canRepairSourceDeclaration(summary, state)) {
+        state.sourceDeclarationRepairAttempted = true;
+        return {
+            action: 'continue', reason: 'tool_results_ready',
+            runtimeInstruction: 'The entire source batch was rejected before any reads. You may correct the source declaration once using the current user request and existing allowed tools. Use an exact, uniquely located instructionQuote from the current user message. Include a nonempty noteHandles array only when notes is selected; omit noteHandles for current_note, vault, or none. The host resolves current_note. Send the corrected declaration and intended reads through native tool calls, never as tool-call markup in answer text. Existing source scope, exclusions, tool restrictions and budgets remain in force; do not widen them. Wait for actual source results before answering about the note.',
+        };
+    }
 
     const failedRequiredCapabilities = getFailedRequiredCapabilityNames(summary, state);
     if (failedRequiredCapabilities.length > 0) {
@@ -653,7 +665,8 @@ function buildMissingRequiredDecision(
             failedRequiredToolRetryAttempted,
         },
     }));
-    const diagnostics = summary.committedFinalText ? undefined : [{
+    const hasFinalText = summary.committedFinalText.trim().length > 0;
+    const diagnostics = hasFinalText ? undefined : [{
         type: "required_capability_missing",
         message: "No answer was produced because required context was not successfully used.",
         capabilities: missingRequired.map((item) => item.capability),
@@ -661,7 +674,7 @@ function buildMissingRequiredDecision(
     return {
         action: "stop",
         reason,
-        status: summary.committedFinalText ? "completed_with_warning" : "incomplete",
+        status: hasFinalText ? "completed_with_warning" : "incomplete",
         warnings,
         ...(diagnostics ? { diagnostics } : {}),
     };
@@ -743,6 +756,30 @@ function getSatisfiedRequiredCapability(
         return "get_current_note_context";
     }
     return undefined;
+}
+
+function canRepairSourceDeclaration(summary: PaAgentTurnSummary, state: RequiredCapabilityRuntimeState): boolean {
+    if (state.sourceDeclarationRepairAttempted || state.answerCompletionLedger.finalizationAttempted
+        || state.answerCompletionLedger.emptyFinalizationRetryAttempted
+        || summary.status !== 'tool_results_ready' || summary.committedFinalText.trim()
+        || summary.controlSnapshot?.toolMode === 'final_answer_only'
+        || summary.controlSnapshot?.exposureMode === 'final-only') return false;
+    const calls = summary.toolCalls.filter(call => call.type === 'toolCall');
+    const declarations = calls.filter(call => call.name === 'declare_source_scope');
+    if (declarations.length !== 1 || summary.toolResults.length !== calls.length
+        || new Set(calls.map(call => call.id)).size !== calls.length) return false;
+    const reason = summary.toolResults[0]?.content.metadata?.reason;
+    if (reason !== 'invalid_declaration' && reason !== 'invalid_instruction_quote') return false;
+    const results = new Map(summary.toolResults.map(result => [result.toolCallId, result]));
+    return results.size === calls.length && calls.every(call => {
+        if (!call.id) return false;
+        const result = results.get(call.id);
+        const metadata = result?.content.metadata;
+        return result?.toolName === call.name && result.isError
+            && metadata?.outcome === 'policy_rejected' && metadata.reason === reason
+            && metadata.sourceScopeControl === true && metadata.preflightOnly === true
+            && metadata.batchPreflightRejected === true;
+    });
 }
 
 function getFailedRequiredCapabilityNames(

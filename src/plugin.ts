@@ -6946,6 +6946,10 @@ export class PluginManager extends Plugin {
     ): VaultInsightsReadSnapshot | null {
         if (!enabled) return null;
         try {
+            // Stale aggregates may remain available to the viewer while a
+            // background refresh is pending. New Chat input uses only evidence
+            // that is valid now, so omitted Insights cannot poison Personal.
+            if (!this.captureVaultInsightsSourceValidity()()) return null;
             const snapshot = this.memoryExtractionScheduler?.getVaultInsightsSnapshot() ?? null;
             if (!snapshot) return null;
             return {

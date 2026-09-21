@@ -59,6 +59,7 @@ export class MemoryPluginIntegration {
     private extractionAdmissionStopped = false;
     private vaultInsightsSourceOwner: object | undefined;
     private vaultInsightsSource: VaultInsightsSourceReceipt | null = null;
+    private vaultInsightsPublicationIdentity: object = {};
     private injectionNoticeSurfacedThisBoot = false;
     private legacyProfileContext: { scope: string; snapshot: UserProfileSnapshot } | null = null;
     private legacyProfileReadEpoch = 0;
@@ -87,7 +88,10 @@ export class MemoryPluginIntegration {
     getVaultInsightsSourceOwner(): object | undefined { return this.vaultInsightsSourceOwner; }
     setVaultInsightsSourceOwner(value: object | undefined): void { this.vaultInsightsSourceOwner = value; }
     getVaultInsightsSource(): VaultInsightsSourceReceipt | null { return this.vaultInsightsSource; }
-    setVaultInsightsSource(value: VaultInsightsSourceReceipt | null): void { this.vaultInsightsSource = value; }
+    setVaultInsightsSource(value: VaultInsightsSourceReceipt | null): void {
+        if (this.vaultInsightsSource !== value) this.vaultInsightsPublicationIdentity = {};
+        this.vaultInsightsSource = value;
+    }
     getStatusNotifier(): MemoryStatusNotifier { return this.statusNotifier; }
     setStatusNotifier(value: MemoryStatusNotifier): void { this.statusNotifier = value; }
     getInjectionNoticeSurfaced(): boolean { return this.injectionNoticeSurfacedThisBoot; }
@@ -139,7 +143,7 @@ export class MemoryPluginIntegration {
     syncExtractionRuntime(): void {
         const settings = this.options.getSettings();
         if (settings.memoryEnabled !== true || settings.memoryExtractionIncludeVaultInsights !== true) {
-            this.vaultInsightsSource = null;
+            this.setVaultInsightsSource(null);
         }
         if (!this.canRunExtraction()) {
             if (!this.extractionAdmissionStopped && this.extractionScheduler) {
@@ -193,7 +197,7 @@ export class MemoryPluginIntegration {
         if (this.extractionAdmissionStopped) return;
         this.extractionAdmissionStopped = true;
         this.vaultInsightsSourceOwner = undefined;
-        this.vaultInsightsSource = null;
+        this.setVaultInsightsSource(null);
         this.extractionScheduler?.stopAdmission?.();
     }
 
@@ -213,21 +217,29 @@ export class MemoryPluginIntegration {
         return source => {
             if (this.options.isUnloading() || this.extractionAdmissionStopped
                 || this.vaultInsightsSourceOwner !== owner) return;
-            this.vaultInsightsSource = source;
+            this.setVaultInsightsSource(source);
         };
     }
 
     captureVaultInsightsSourceValidity(): () => boolean {
         const source = this.vaultInsightsSource;
+        const publication = this.vaultInsightsPublicationIdentity;
         const scope = this.options.getLegacyProfileScope();
         const boundary = this.options.getDataBoundaryFingerprint();
-        return () => !!source && this.vaultInsightsSource === source
-            && !this.options.isUnloading() && !this.extractionAdmissionStopped
-            && this.options.getSettings().memoryEnabled === true
-            && this.options.getSettings().memoryExtractionIncludeVaultInsights === true
-            && this.options.getLegacyProfileScope() === scope
-            && this.options.getDataBoundaryFingerprint() === boundary
-            && source.isSourceCurrent();
+        return () => {
+            try {
+                // A withdrawn receipt must not revive if the same scheduler
+                // later republishes it after a host boundary change.
+                return !!source && this.vaultInsightsSource === source
+                    && this.vaultInsightsPublicationIdentity === publication
+                    && !this.options.isUnloading() && !this.extractionAdmissionStopped
+                    && this.options.getSettings().memoryEnabled === true
+                    && this.options.getSettings().memoryExtractionIncludeVaultInsights === true
+                    && this.options.getLegacyProfileScope() === scope
+                    && this.options.getDataBoundaryFingerprint() === boundary
+                    && source.isSourceCurrent();
+            } catch { return false; }
+        };
     }
 
     invalidateVaultInsightsSourceForFile(file: TAbstractFile, oldPath?: string): void {
@@ -239,7 +251,7 @@ export class MemoryPluginIntegration {
             || (file instanceof TFile && file.extension === "md" && this.options.shouldHandleVaultEvent(file))
             || (!(file instanceof TFile) && this.options.getApp().vault.getMarkdownFiles().some(candidate => (
                 candidate.path.startsWith(`${file.path}/`) && this.options.shouldHandleVaultEvent(candidate)
-            )))) this.vaultInsightsSource = null;
+            )))) this.setVaultInsightsSource(null);
     }
 
     invalidateLegacyProfileContext(): void {
@@ -328,7 +340,8 @@ export class MemoryPluginIntegration {
             return context;
         };
         if (canRunExtraction && settings.memoryExtractionIncludeVaultInsights
-            && this.options.hasConfirmedExtractionConsent()) {
+            && this.options.hasConfirmedExtractionConsent()
+            && this.captureVaultInsightsSourceValidity()()) {
             return attachGuard({ memoryContextMode: "legacy", ...schedulerContext });
         }
         return attachGuard({

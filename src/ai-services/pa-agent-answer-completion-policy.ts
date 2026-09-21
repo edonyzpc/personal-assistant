@@ -202,6 +202,7 @@ export function buildAnswerFinalizationInstruction(
     return [
         reasonLine,
         "This is a finalization turn. Do not call tools.",
+        "Do not simulate tool execution by printing tool-call markup or a plan to call unavailable tools. Answer directly from actual results; a failed read does not establish that the note is missing.",
         "Use only the existing observations and available context to produce the final answer.",
         "If the requested evidence is unavailable or insufficient, say that directly without claiming unavailable evidence.",
     ].join(" ");

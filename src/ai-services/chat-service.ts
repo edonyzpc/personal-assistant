@@ -26,6 +26,7 @@ import type { AgentEvent, ChatAgentStatus, ChatContextUsedItem, ChatMessage, Cha
 import { OperationsService, OperationsSession } from './operations/operations-service';
 import { PaAgentContextSummarizer } from './context/PaAgentContextSummarizer';
 import { createAbortError, throwIfAborted } from './chat-utils';
+import { createAgentDebugLog, traceAgentPhase } from './pa-agent-debug';
 import { ChatImageCapabilityRegistry, chatImageModelKey, type ChatImageCapability } from './image-capability';
 import type {
     OperationsControllerEvent,
@@ -38,6 +39,8 @@ import type {
 
 export type { AgentEvent, ChatAgentStatus, ChatContextUsedItem, ChatMessage, ChatTurnMemoryMetadata, LegacyAgentEvent };
 export { canFallbackToNonStreaming };
+
+let debugRequestSequence = 0;
 
 export function getBailianWebSearchEndpointForBaseURL(baseURL: string): string {
     const normalizedBaseURL = baseURL.trim().replace(/\/+$/, "");
@@ -193,6 +196,12 @@ export class ChatService {
         chatHistory?: ChatMessage[],
         options: StreamLLMOptions = {},
     ): Promise<void> {
+        const debugRequestId = this.host.settings.debug
+            ? `chat_${Date.now().toString(36)}_${++debugRequestSequence}` : undefined;
+        const debug = createAgentDebugLog(() => this.host.settings.debug === true,
+            (message, fields) => this.host.log(message, fields),
+            { chatRequestId: debugRequestId, runId: null, turnId: null });
+        debug('chat_start', { promptChars: prompt.length, historyCount: chatHistory?.length ?? 0 });
         const modelKey = JSON.stringify([
             this.host.settings.aiProvider,
             this.host.settings.baseURL,
@@ -203,7 +212,7 @@ export class ChatService {
         const contextEpoch = this.contextEpoch;
         const imageModelIdentity = { aiProvider: this.host.settings.aiProvider, baseURL: this.host.settings.baseURL, chatModelName: this.host.settings.chatModelName };
         const imageModelKey = chatImageModelKey(imageModelIdentity);
-        const lease = await this.host.agentRunCoordinator?.acquireChatLease(signal);
+        const lease = await traceAgentPhase(debug, 'chat_lease', () => this.host.agentRunCoordinator?.acquireChatLease(signal));
         const unsubscribeOperations = options.onOperationsIntentStaged
             ? this.operationsSession.subscribe((event: OperationsControllerEvent) => {
                 if (event.type === "intent-staged") options.onOperationsIntentStaged?.(event.intent);
@@ -217,7 +226,7 @@ export class ChatService {
             const nativeToolPlanningOptions = {
                 nativeToolPlanningInternalGate: true,
             };
-            const additionalCapabilityProviders = await this.getAdditionalCapabilityProviders();
+            const additionalCapabilityProviders = await traceAgentPhase(debug, 'service_capabilities', () => this.getAdditionalCapabilityProviders());
             throwIfAborted(signal);
             if (contextEpoch !== this.contextEpoch) throw createAbortError();
             const providerResponseDelivery = this.aiUtils
@@ -236,6 +245,7 @@ export class ChatService {
                 operationsToolProvider: this.operationsSession.provider,
             });
             await runtime.streamTurn({
+                ...(debugRequestId ? { debugRequestId } : {}),
                 prompt,
                 conversationId: options.conversationId,
                 createImage: options.createImage,
@@ -266,6 +276,7 @@ export class ChatService {
             runtime?.dispose();
             unsubscribeOperations?.();
             lease?.release();
+            debug('chat_end', { aborted: signal?.aborted === true });
         }
     }
 }

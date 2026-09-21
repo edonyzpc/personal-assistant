@@ -6,6 +6,8 @@ import type {
 } from "./ai-utils";
 import type { AiServiceHost, RetrievalOptimizationFlags } from "./AiServiceHost";
 import type { MemoryMode } from "../memory-manager";
+import { createAgentDebugLog, createAgentEventDebugObserver, describeAgentError, traceAgentPhase } from './pa-agent-debug';
+import { getProviderAdmissionError, ProviderAdmissionError, ProviderInputReprepareRequiredError } from './provider-admission-error';
 import { resolveB125RetrievalOptimizationFlags } from "../retrieval-optimization-platform-policy";
 import type { PageletChatHandoffContext } from "./pagelet-handoff";
 import { stableHash } from "../pa/helpers";
@@ -203,6 +205,8 @@ export interface PaAgentRunOptions {
 }
 
 export interface PaAgentStreamOptions extends PaAgentRunOptions {
+    /** Debug correlation with the service's pre-runtime lease wait. Never enters model input. */
+    debugRequestId?: string;
     /** Host-only writing output selection. Production Chat enables native after B-135 validation. */
     writingOutputProtocol?: "native";
     /** Internal projection value, resolved from the run receipt rather than model input. */
@@ -362,8 +366,11 @@ export const canFallbackToNonStreaming = (
     error: unknown,
     receivedAnyVisibleOutput: boolean,
     signal?: AbortSignal,
+    canReprepareInput = false,
 ): boolean => {
     return !receivedAnyVisibleOutput
+        && (!getProviderAdmissionError(error) || (canReprepareInput
+            && getProviderAdmissionError(error) instanceof ProviderInputReprepareRequiredError))
         && !(error instanceof PaAgentContextOverflowError)
         && !(error instanceof ChatImageRequestError)
         && !isStructuredImageUnsupportedError(error)
@@ -979,6 +986,13 @@ export class PaAgentRuntime {
         };
 
         const runId = createAgentRunId();
+        const debugEnabled = () => this.host.settings.debug === true;
+        const debug = createAgentDebugLog(debugEnabled,
+            (message, fields) => this.host.log(message, fields),
+            { runId, chatRequestId: options.debugRequestId, turnId: null });
+        const debugLifecycle = createAgentEventDebugObserver(debug);
+        debug('runtime_start', { model: this.host.settings.chatModelName, provider: this.host.settings.aiProvider,
+            historyCount: options.chatHistory?.length ?? 0, promptChars: options.prompt.length });
         const userMessageId = `${runId}:source-user`;
         let sourceRunActive = true;
         const sourceRun = new TaskSourceRun({
@@ -1086,6 +1100,14 @@ export class PaAgentRuntime {
                 })),
             });
         }
+        // Use the same receipt for canonical completion and visible delivery.
+        // Cancellation alone does not revoke a received partial answer.
+        const isPreviewCurrent = (): boolean => {
+            assertRequestSourcesCurrent();
+            writingGeneration?.assertCurrent();
+            if (writingGeneration && !writingGeneration.isSourceCurrent()) return false;
+            return imageScope?.isUsable() ?? true;
+        };
         const eventAdapter = new CanonicalToLegacyEventAdapter(legacyEvents, options.onLifecycleEvent, options.writingRequest ? {
             request: options.writingRequest, maxTextChars: MAX_PA_AGENT_PROMPT_CHARS,
             ...(nativeWritingRequest ? { nativeContextHandle: nativeWritingRequest.requestId,
@@ -1099,12 +1121,7 @@ export class PaAgentRuntime {
             },
             // Stopping generation does not revoke already received text. Source,
             // model, image and style changes still invalidate its visible preview.
-            isPreviewCurrent: () => {
-                assertRequestSourcesCurrent();
-                writingGeneration?.assertCurrent();
-                if (writingGeneration && !writingGeneration.isSourceCurrent()) return false;
-                return imageScope?.isUsable() ?? true;
-            },
+            isPreviewCurrent,
             getStyleRevisionIds: () => writingGeneration?.styleRevisionIds ?? [],
             getAssociatedImages: () => writingGeneration?.associatedImages ?? imageScope?.writingMaterials ?? [],
             getWritingContext: () => writingGeneration?.context,
@@ -1153,12 +1170,12 @@ export class PaAgentRuntime {
         let additionalProvidersLoaded = false;
         await recordStartupTimingAsync(
             "capability_preload",
-            () => this.loadAdditionalCapabilityProviders(`${runId}:capability-preload`, options.signal),
+            () => traceAgentPhase(debug, 'capability_preload', () => this.loadAdditionalCapabilityProviders(`${runId}:capability-preload`, options.signal)),
         );
         additionalProvidersLoaded = true;
         const hostContext = await recordStartupTimingAsync(
             "host_context",
-            () => this.loadCanonicalHostContextForRun(options, runId, options.signal),
+            () => traceAgentPhase(debug, 'host_context', () => this.loadCanonicalHostContextForRun(options, runId, options.signal)),
         );
         startupTimings.push({
             phase: "runtime_startup_total",
@@ -1311,14 +1328,23 @@ export class PaAgentRuntime {
             ...context, pageletHandoff: undefined, writingStyleContext: undefined,
         });
         let preparedBackground: string | undefined;
+        let preparedBackgroundSourceCurrent: (() => boolean) | undefined;
         const assertProviderInputCurrent = (signal?: AbortSignal): void => {
             assertRequestCurrent(signal);
-            const currentBackground = formatBackground(readInjectedContext());
+            let backgroundCurrent = false;
+            try {
+                // Revalidate the sources of the already serialized background.
+                // A fresh projection (for example, a new Insights timestamp)
+                // does not replace that input or revoke a still-live receipt.
+                backgroundCurrent = preparedBackground !== undefined && (preparedBackgroundSourceCurrent
+                    ? preparedBackgroundSourceCurrent()
+                    : preparedBackground === formatBackground(readInjectedContext()));
+            } catch { /* A source receipt that cannot be checked is not current. */ }
             assertRequestCurrent(signal);
-            if (preparedBackground === undefined || preparedBackground !== currentBackground) {
-                // The serialized SDK input cannot be replaced here. The ordinary
-                // invoke fallback may prepare a fresh input before visible output.
-                throw new Error("Personal context changed before provider dispatch");
+            if (!backgroundCurrent) {
+                // This check also runs before entering the SDK; keep that local
+                // rejection nonretryable just like the physical fetch guard.
+                throw new ProviderAdmissionError(new Error("Personal context changed before provider dispatch"));
             }
         };
         const availableStyleBudget = (input: PaAgentModelInput, definitions: ChatToolRegistryDefinition[], schemas: ChatToolProviderSchema[]) => {
@@ -1346,9 +1372,16 @@ export class PaAgentRuntime {
         const assertManagementBindingCurrent = async (binding: AnswerVaultBinding | undefined): Promise<void> => {
             await binding?.managementProjection?.binding.prepare();
         };
+        const rejectStaleProjection = (error: unknown): never => {
+            // Only host projection boundaries opt into one fresh-input fallback.
+            // Never convert cancellation or an explicit authorization rejection.
+            if (isAbortError(error) || getProviderAdmissionError(error)) throw error;
+            throw new ProviderInputReprepareRequiredError(error);
+        };
         const assertAnswerVaultCurrent = (binding: AnswerVaultBinding | undefined): void => {
             if (!binding) return;
-            binding.projection.binding.assertCurrent();
+            try { binding.projection.binding.assertCurrent(); }
+            catch (error) { rejectStaleProjection(error); }
             if (stableProviderJson(binding.providerInput) !== binding.serializedInput) {
                 throw new Error("Vault observation projection changed before provider dispatch");
             }
@@ -1371,6 +1404,7 @@ export class PaAgentRuntime {
             const backgroundSourceCurrent = injectedContext?.isSourceCurrent;
             const backgroundGenerationSources = generationInputBackgroundSources(injectedContext);
             preparedBackground = formatBackground(injectedContext);
+            preparedBackgroundSourceCurrent = backgroundSourceCurrent;
             if (writingStyle) {
                 const budget = availableStyleBudget(input, definitions, schemas);
                 if (writingStyle.context.length <= Math.min(WRITING_STYLE_MAX_CONTEXT_CHARS, budget.remainingTextChars, budget.remainingMemoryChars)) {
@@ -1441,12 +1475,14 @@ export class PaAgentRuntime {
                 ...(managementProjection ? { managementProjection } : {}),
             };
             const assertInputCurrent = () => {
-                sourceRun.assertTranscriptCurrent(taskTranscript);
                 assertWritingInputCurrent?.();
-                assertHistoryInputCurrent();
-                if (stableProviderJson(snapshotHistory()) !== sourceHistoryJson) {
-                    throw new Error("Chat history changed before provider dispatch");
-                }
+                try {
+                    sourceRun.assertTranscriptCurrent(taskTranscript);
+                    assertHistoryInputCurrent();
+                    if (stableProviderJson(snapshotHistory()) !== sourceHistoryJson) {
+                        throw new Error("Chat history changed before provider dispatch");
+                    }
+                } catch (error) { rejectStaleProjection(error); }
                 assertAnswerVaultCurrent(answerVaultBinding);
             };
             answerVaultBinding.assertInputCurrent = assertInputCurrent;
@@ -1473,17 +1509,30 @@ export class PaAgentRuntime {
                         : undefined;
                 preparedWritingGeneration = {
                     isSourceCurrent: () => {
+                        let source = 'task';
+                        const rejected = () => {
+                            debug('generation_source_rejected', { turnId: input.turnId, source,
+                                personalState: backgroundGenerationSources.personal.state,
+                                insightsState: backgroundGenerationSources.insights.state });
+                            return false;
+                        };
                         try {
                             assertStoredSources();
+                            source = 'writing_context';
                             assertContextSources?.();
+                            source = 'images';
                             assertImageSources?.();
-                            if (styleSourceCurrent?.() === false) return false;
+                            source = 'style';
+                            if (styleSourceCurrent?.() === false) return rejected();
+                            source = 'background';
                             if (backgroundSourceCurrent ? !backgroundSourceCurrent()
-                                : background && background !== formatBackground(readInjectedContext())) return false;
-                            return historyIdentity === JSON.stringify((options.chatHistory ?? []).map(message => ({
+                                : background && background !== formatBackground(readInjectedContext())) return rejected();
+                            source = 'history';
+                            const historyCurrent = historyIdentity === JSON.stringify((options.chatHistory ?? []).map(message => ({
                                 role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
                             })));
-                        } catch { return false; }
+                            return historyCurrent || rejected();
+                        } catch { return rejected(); }
                     },
                     associatedImages: selectedImages,
                     styleRevisionIds,
@@ -1512,7 +1561,8 @@ export class PaAgentRuntime {
                         assertSourceValidity();
                         assertWritingInputCurrent?.();
                         if (context && currentWritingHandle() !== context.handle) throw new Error('Writing context changed');
-                        if (background !== formatBackground(readInjectedContext())
+                        if ((backgroundSourceCurrent ? !backgroundSourceCurrent()
+                            : background !== formatBackground(readInjectedContext()))
                             || historyIdentity !== JSON.stringify((options.chatHistory ?? []).map(message => ({
                                 role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
                             })))) throw new Error('Writing generation input changed');
@@ -1561,6 +1611,7 @@ export class PaAgentRuntime {
             }, definitions, schemas, vaultObservationProjection, stableProviderJson(sourceHistory), managementProjection);
         };
         const model: PaAgentModel = {
+            reportsProviderRequestStart: true,
             stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
                 try {
                 if (!additionalProvidersLoaded) {
@@ -1601,27 +1652,40 @@ export class PaAgentRuntime {
                         qwenRequestOptions: options.qwenRequestOptions,
                         providerRequestScope,
                         prepareProviderRequest: async signal => {
-                            if (!attempt.binding) throw new Error("Answer vault observation projection is not bound");
-                            await attempt.binding.projection.binding.prepare(signal);
-                            await assertManagementBindingCurrent(attempt.binding);
-                            assertAnswerVaultCurrent(attempt.binding);
+                            await traceAgentPhase(debug, 'provider_source_prepare', async () => {
+                                if (!attempt.binding) throw new Error("Answer vault observation projection is not bound");
+                                try { await attempt.binding.projection.binding.prepare(signal); }
+                                catch (error) { rejectStaleProjection(error); }
+                                await assertManagementBindingCurrent(attempt.binding);
+                                assertAnswerVaultCurrent(attempt.binding);
+                            }, { turnId: input.turnId, stage: 'answer' });
                         },
                         onProviderRequestStart: () => {
-                            const binding = attempt.binding;
-                            if (!binding) throw new Error("Answer vault observation projection is not bound");
-                            assertProviderInputCurrent(input.signal);
-                            binding.assertInputCurrent?.();
-                            assertAnswerVaultCurrent(binding);
-                            binding.managementProjection?.binding.assertCurrent();
-                            if (preparedWritingGeneration && !preparedWritingGeneration.isSourceCurrent()) {
-                                throw new Error('Writing generation sources changed before provider dispatch');
+                            debug('provider_admission:start', { turnId: input.turnId, stage: 'answer' });
+                            try {
+                                const binding = attempt.binding;
+                                if (!binding) throw new Error("Answer vault observation projection is not bound");
+                                assertProviderInputCurrent(input.signal);
+                                binding.assertInputCurrent?.();
+                                assertAnswerVaultCurrent(binding);
+                                binding.managementProjection?.binding.assertCurrent();
+                                if (preparedWritingGeneration && !preparedWritingGeneration.isSourceCurrent()) {
+                                    throw new Error('Writing generation sources changed before provider dispatch');
+                                }
+                                writingGeneration = preparedWritingGeneration;
+                                input.notifyProviderRequestStarted?.();
+                                debug('provider_admission:end', { turnId: input.turnId, stage: 'answer' });
+                            } catch (error) {
+                                debug('provider_admission:error', { turnId: input.turnId, stage: 'answer', ...describeAgentError(error) });
+                                throw error;
                             }
-                            writingGeneration = preparedWritingGeneration;
-                            input.notifyProviderRequestStarted?.();
                         },
                         onProviderRequestDiagnostic: requestDiagnostic("answer", input.turnId),
+                        isProviderRequestTraceEnabled: debugEnabled,
+                        ...(debugEnabled() ? { onProviderRequestTrace: (event: import('./obsidian-fetch').ProviderRequestTrace) =>
+                            debug(event.phase, { ...event, stage: 'answer', turnId: input.turnId }) } : {}),
                     });
-                const llm = await createAnswerModel(streamAttempt);
+                const llm = await traceAgentPhase(debug, 'model_create', () => createAnswerModel(streamAttempt), { turnId: input.turnId });
                 if (nativeWritingRequest && !asNativeToolBindableModel(llm)) {
                     throw new Error("Native writing requires model tool binding.");
                 }
@@ -1656,12 +1720,13 @@ export class PaAgentRuntime {
                 // chain is ready, then synchronously rebuild the canonical
                 // prompt immediately before the first provider request.
                 let providerInput = input.prepareForProviderRetry
-                    ? await input.prepareForProviderRetry()
+                    ? await traceAgentPhase(debug, 'input_revalidation', () => input.prepareForProviderRetry!(), { turnId: input.turnId })
                     : input;
                 injectedContext = readInjectedContext();
                 const preview = previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
                 if (input.toolMode !== "final_answer_only" && preview.outcome.admission === "fit"
                     && (preview.outcome.historyCompressed || preview.reducedToolMessageIds.length > 0)) {
+                    debug('context_summary:start', { turnId: input.turnId });
                     // Summary guards include selected image currentness. Establish
                     // those receipts before the optional summary invokes them.
                     if (imageScope?.hasSelectedImages) {
@@ -1727,6 +1792,9 @@ export class PaAgentRuntime {
                                 summaryVaultState.binding.managementProjection?.binding.assertCurrent();
                             },
                             onProviderRequestDiagnostic: requestDiagnostic("context_summary", input.turnId),
+                            ...(debugEnabled() ? { onProviderRequestTrace: (event: import('./obsidian-fetch').ProviderRequestTrace) =>
+                                debug(event.phase, { ...event, stage: 'context_summary', turnId: input.turnId }) } : {}),
+                            isProviderRequestTraceEnabled: debugEnabled,
                         });
                         assertRequestCurrent(signal);
                         if (source) {
@@ -1858,6 +1926,7 @@ export class PaAgentRuntime {
                         if (input.signal?.aborted) throw error;
                     } finally {
                         preparation.dispose();
+                        debug('context_summary:end', { turnId: input.turnId, modelCalls, durationMs: Date.now() - startedAt });
                     }
                     yield { type: "diagnostic", diagnostic: {
                         type: "context_summary_preparation", modelCalls,
@@ -1868,8 +1937,11 @@ export class PaAgentRuntime {
                     providerInput = input.prepareForProviderRetry
                         ? await input.prepareForProviderRetry() : input;
                 }
-                const canonicalAnswer = await prepareCanonicalProviderInput(providerInput, toolDefinitions, schemas);
+                const canonicalAnswer = await traceAgentPhase(debug, 'canonical_projection',
+                    () => prepareCanonicalProviderInput(providerInput, toolDefinitions, schemas),
+                    { turnId: input.turnId, toolMode: input.toolMode ?? 'normal', toolCount: schemas.length });
                 streamAttempt.binding = canonicalAnswer.vaultBinding;
+                debug('llm_stream:start', { turnId: input.turnId, toolCount: schemas.length });
                 // P0-D: if streaming fails before any visible output (e.g., provider rejected stream
                 // outright or dropped the connection pre-flight), retry via chain.invoke() so the user
                 // still gets the answer instead of a hard runtime error.
@@ -1904,6 +1976,7 @@ export class PaAgentRuntime {
                         return invokeAnswer.providerInput;
                     },
                     onFallback: (reason, error) => {
+                        debug('llm_invoke_fallback', { turnId: input.turnId, reason, ...describeAgentError(error) });
                         legacyEvents.activity(
                             "fallback-stream-invoke",
                             imageScope?.hasImages
@@ -1925,7 +1998,9 @@ export class PaAgentRuntime {
                     yield chunk;
                 }
                 if (imageScope?.hasSelectedImages) options.imageCapability?.onSuccess();
+                debug('llm_stream:end', { turnId: input.turnId });
                 } catch (error) {
+                    debug('llm_stream:error', { turnId: input.turnId, ...describeAgentError(error) });
                     if (!imageScope?.hasImages || isAbortError(error, input.signal) || error instanceof PaAgentContextOverflowError) throw error;
                     options.imageCapability?.onError(error);
                     throw error instanceof ChatImageRequestError ? error
@@ -2043,6 +2118,7 @@ export class PaAgentRuntime {
             userInput: options.prompt,
             userImages: options.images,
             writingRequest: options.writingRequest,
+            ...(nativeWritingRequest ? { isFinalTextCurrent: isPreviewCurrent } : {}),
             ...(nativeWritingRequest ? { nativeWriting: {
                 contextHandle: nativeWritingRequest.requestId,
                 ...(writingContextHost ? { getContextHandle: currentWritingHandle } : {}),
@@ -2055,16 +2131,11 @@ export class PaAgentRuntime {
                 input.signal?.addEventListener("abort", failClosedOnAbort, { once: true });
                 if (input.signal?.aborted) failClosedOnAbort();
                 try {
-                    let transcript = sourceRun.projectTranscript(await memoryEvidenceRegistry.prepareTranscript(
-                        input.transcript,
-                        input.signal,
-                    ));
+                    let transcript = sourceRun.projectTranscript(await traceAgentPhase(debug, 'memory_evidence_prepare',
+                        () => memoryEvidenceRegistry.prepareTranscript(input.transcript, input.signal), { turnId: input.turnId }));
                     if (writingContextRun) transcript = await writingContextRun.projectTranscript(transcript, input.signal);
-                    const primaryVaultProjection = await sourceRun.prepareVaultObservationProjection(
-                        transcript,
-                        [],
-                        input.signal,
-                    );
+                    const primaryVaultProjection = await traceAgentPhase(debug, 'vault_evidence_prepare',
+                        () => sourceRun.prepareVaultObservationProjection(transcript, [], input.signal), { turnId: input.turnId });
                     transcript = primaryVaultProjection.transcript;
                     const constraint = sourceRun.state.snapshot();
                     if (constraint) {
@@ -2192,7 +2263,13 @@ export class PaAgentRuntime {
                     };
                 },
             },
-            onEvent: (event) => eventAdapter.handle(event),
+            onEvent: (event) => {
+                if (this.host.settings.debug) {
+                    try { debugLifecycle(event); } catch { /* Keep diagnostic failures outside lifecycle delivery. */ }
+                }
+                eventAdapter.handle(event);
+            },
+            onDebug: debug,
             ...(hostContext ? { hostContext } : {}),
             ...(initialRuntimeInstruction
                 ? { initialRuntimeInstruction }
@@ -3101,7 +3178,7 @@ export async function* streamWithInvokeFallback(args: {
         stream = await chain.stream(input, { signal });
     } catch (error) {
         yield* requestDiagnosticChunks(args.requestDiagnostics, input);
-        if (canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal)) {
+        if (canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal, Boolean(args.prepareInvokeInput))) {
             onFallback?.("stream_setup_failed", error);
             const invokeInput = args.prepareInvokeInput
                 ? await args.prepareInvokeInput()
@@ -3146,7 +3223,7 @@ export async function* streamWithInvokeFallback(args: {
             }
         }
     } catch (error) {
-        if (providerCompletion === undefined && canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal)) {
+        if (providerCompletion === undefined && canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal, Boolean(args.prepareInvokeInput))) {
             onFallback?.("stream_iteration_failed", error);
             const invokeInput = args.prepareInvokeInput
                 ? await args.prepareInvokeInput()

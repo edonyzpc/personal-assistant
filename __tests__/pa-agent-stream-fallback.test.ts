@@ -3,6 +3,7 @@ import { describe, expect, it, jest } from "@jest/globals";
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
 import type { PaAgentModelStreamChunk } from "../src/ai-services/pa-agent-loop";
 import { PaAgentContextOverflowError } from "../src/ai-services/context";
+import { ProviderAdmissionError, ProviderInputReprepareRequiredError } from "../src/ai-services/provider-admission-error";
 import protocolTrace from "./fixtures/b135-writing-protocol-trace.json";
 
 type FallbackArgs = Parameters<typeof streamWithInvokeFallback>[0];
@@ -30,6 +31,47 @@ function makeChain(overrides: {
 }
 
 describe("streamWithInvokeFallback (P0-D)", () => {
+    it.each([false, true])("does not invoke again after local admission rejection (wrapped=%s)", async (wrapped) => {
+        const admission = new ProviderAdmissionError(new Error("context revoked"));
+        const failure = wrapped ? Object.assign(new Error("connection error"), { cause: admission }) : admission;
+        const invoke = jest.fn<ChainInvoke>(async () => ({ content: "must not retry" }));
+        const prepareInvokeInput = jest.fn(async () => ({ refreshed: true }));
+        await expect(drain(streamWithInvokeFallback({ input: {}, prepareInvokeInput, chain: makeChain({
+            stream: async function* () { throw failure; }, invoke,
+        }) }))).rejects.toBe(failure);
+        expect(invoke).not.toHaveBeenCalled();
+        expect(prepareInvokeInput).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])("reprepares explicitly stale serialized input once before invoke (wrapped=%s)", async wrapped => {
+        const admission = new ProviderInputReprepareRequiredError(new Error("projection changed"));
+        const failure = wrapped ? Object.assign(new Error("connection error"), { cause: admission }) : admission;
+        const prepareInvokeInput = jest.fn(async () => ({ evidence: "CURRENT" }));
+        const invoke = jest.fn<ChainInvoke>(async () => ({ content: "Current answer" }));
+        const chunks = await drain(streamWithInvokeFallback({ input: { evidence: "STALE" }, prepareInvokeInput,
+            chain: makeChain({ stream: async function* () { throw failure; }, invoke }),
+        }));
+        expect(prepareInvokeInput).toHaveBeenCalledTimes(1);
+        expect(invoke).toHaveBeenCalledTimes(1);
+        expect(invoke).toHaveBeenCalledWith({ evidence: "CURRENT" }, undefined);
+        expect(chunks).toEqual([{ type: "text_delta", text: "Current answer" }]);
+    });
+
+    it.each(["no reprojector", "visible output", "invoke rejected"])("does not repeatedly recover stale input after %s", async scenario => {
+        const failure = new ProviderInputReprepareRequiredError(new Error("projection changed"));
+        const prepareInvokeInput = jest.fn(async () => ({ evidence: "CURRENT" }));
+        const invoke = jest.fn<ChainInvoke>(async () => { throw failure; });
+        await expect(drain(streamWithInvokeFallback({ input: { evidence: "STALE" },
+            ...(scenario !== "no reprojector" ? { prepareInvokeInput } : {}),
+            chain: makeChain({ stream: async function* () {
+                if (scenario === "visible output") yield { content: "Already visible" };
+                throw failure;
+            }, invoke }),
+        }))).rejects.toBe(failure);
+        expect(invoke).toHaveBeenCalledTimes(scenario === "invoke rejected" ? 1 : 0);
+        expect(prepareInvokeInput).toHaveBeenCalledTimes(scenario === "invoke rejected" ? 1 : 0);
+    });
+
     it("preserves native tool completion after real argument fragments without invoking again on a failed tail", async () => {
         const trace = protocolTrace.results.find((result) => result.mode === "native")!;
         const invoke = jest.fn<ChainInvoke>(async () => ({ content: "duplicate" }));

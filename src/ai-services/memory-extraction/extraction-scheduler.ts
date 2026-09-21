@@ -127,6 +127,7 @@ export class MemoryExtractionScheduler {
     private readonly getTypeAProcessedTurn: MemoryExtractionSchedulerOptions["getTypeAProcessedTurn"];
     private readonly onVaultInsightsSourceChanged: MemoryExtractionSchedulerOptions["onVaultInsightsSourceChanged"];
     private vaultInsightsSourceIdentity: object = {};
+    private publishedVaultInsightsSource: VaultInsightsSourceReceipt | null = null;
 
     constructor(options: MemoryExtractionSchedulerOptions) {
         this.app = options.app;
@@ -258,6 +259,7 @@ export class MemoryExtractionScheduler {
             this.vaultInsightsRefreshFailed = false;
             this.vaultInsightsMarkdown = "";
             this.vaultInsightsSourceIdentity = {};
+            this.publishedVaultInsightsSource = null;
             this.onVaultInsightsSourceChanged?.(null);
         }
     }
@@ -547,10 +549,21 @@ export class MemoryExtractionScheduler {
             return null;
         }
         if (source && !source.isSourceCurrent()) return null;
+        // Refresh timestamps are bookkeeping, not a change to the aggregate's
+        // source evidence. Reuse only a still-live receipt for identical facts
+        // and the same source set; revocation epochs cannot be revived by text.
+        const reuseSource = source && this.publishedVaultInsightsSource?.isSourceCurrent()
+            && JSON.stringify(this.publishedVaultInsightsSource.sourcePaths) === JSON.stringify(source.sourcePaths)
+            && this.vaultSnapshot
+            && JSON.stringify({ ...this.vaultSnapshot, generatedAt: undefined })
+                === JSON.stringify({ ...snapshot, generatedAt: undefined });
         this.vaultSnapshot = snapshot;
         this.vaultSnapshotDataBoundaryFingerprint = dataBoundaryFingerprint;
         this.vaultInsightsMarkdown = markdown;
-        if (source) this.onVaultInsightsSourceChanged?.(source);
+        if (source) {
+            if (!reuseSource) this.publishedVaultInsightsSource = source;
+            this.onVaultInsightsSourceChanged?.(this.publishedVaultInsightsSource);
+        }
         return snapshot;
     }
 

@@ -3,7 +3,9 @@ import {
 } from "./agent-runtime-primitives";
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import { errorMessage } from "./agent-utils";
+import type { AgentDebugLog } from './pa-agent-debug';
 import { PaAgentContextOverflowError } from "./context/PaAgentContextOverflowError";
+import { getProviderAdmissionError } from "./provider-admission-error";
 import type { AgentRunLease } from "./agent-run-coordinator";
 import { createAbortError, isAbortError } from "./chat-utils";
 import {
@@ -75,6 +77,8 @@ export interface PaAgentModelInput {
 }
 
 export interface PaAgentModel {
+    /** When true, preparation ends only at notifyProviderRequestStarted. */
+    reportsProviderRequestStart?: boolean;
     stream(input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk>;
 }
 
@@ -198,6 +202,8 @@ export interface PaAgentLoopOptions {
     writingRequest?: import("./chat-types").ChatWritingRequest;
     /** Host opt-in only. Pagelet and existing text output retain their own protocol. */
     nativeWriting?: { contextHandle: string; getContextHandle?: () => string | undefined; maxTextChars: number; isCurrent: () => boolean };
+    /** Host source receipt for ordinary text delivery, independent of cancellation. */
+    isFinalTextCurrent?: () => boolean;
     userMessageContent?: UserMessageContent;
     model: PaAgentModel;
     /** Request-local projection hook invoked before every logical model request. */
@@ -209,6 +215,7 @@ export interface PaAgentLoopOptions {
     now?: () => number;
     createId?: (prefix: string) => string;
     onEvent?: (event: AgentEvent) => void;
+    onDebug?: AgentDebugLog;
     onCommittedFinalText?: (snapshot: string) => void;
     hostContext?: Record<string, unknown>;
     initialRuntimeInstruction?: string;
@@ -305,6 +312,7 @@ export class PaAgentLoop {
     private readonly dispatcher: ToolExecutionDispatcher;
     private committedFinalText = "";
     private endPayload?: Record<string, unknown>;
+    private endStatus?: AgentEndStatus;
     private activeTurnToolMode?: PaAgentToolMode;
 
     constructor(private readonly options: PaAgentLoopOptions) {
@@ -555,6 +563,12 @@ export class PaAgentLoop {
                 return this.createResult(status);
             }
 
+            if (turnSummary.diagnostics.some(diagnostic => diagnostic.type === "assistant_source_changed")) {
+                if (loopReservedFinalTurn) reportFinalizationReserve("failed");
+                this.endAgent("incomplete", { reason: "assistant_source_changed", diagnostics: turnSummary.diagnostics });
+                return this.createResult("incomplete");
+            }
+
             if (turnSummary.nativeWritingAttempted) {
                 const fallback: PaAgentTerminalDecision = {
                     action: "stop",
@@ -782,6 +796,7 @@ export class PaAgentLoop {
         let sawText = false;
         let sawToolCall = false;
         let pendingText = "";
+        let hasPendingAnswerText = false;
         let pendingTextReclassified = false;
         const toolCallBuffers: BufferedToolCall[] = [];
         const modelStartedAt = this.now();
@@ -805,6 +820,7 @@ export class PaAgentLoop {
             }
             if (providerRequestStarted) return;
             providerRequestStarted = true;
+            this.debug('provider_request_admitted', { turnId });
             for (const listener of providerRequestDeadlineListeners) listener();
         };
 
@@ -833,6 +849,7 @@ export class PaAgentLoop {
         let inputPreparationCompleted = !this.options.prepareModelInput;
         try {
             if (this.options.prepareModelInput) {
+                this.debug('loop_input_prepare:start', { turnId });
                 modelInput = await this.prepareModelInputForProvider(
                     modelInput,
                     toolMode,
@@ -842,6 +859,7 @@ export class PaAgentLoop {
                     },
                 );
                 inputPreparationCompleted = true;
+                this.debug('loop_input_prepare:end', { turnId });
                 const prepareForProviderRetry = async (): Promise<PaAgentModelInput> => {
                     const baseInput = { ...modelInput };
                     delete baseInput.prepareForProviderRetry;
@@ -884,6 +902,11 @@ export class PaAgentLoop {
             ? new ModelChunkConsumer(iterator, {
                 signal: turnAbort.signal,
                 assistantIdleTimeoutMs: this.assistantIdleTimeoutMs,
+                isIdleTimeoutEnabled: () => !this.options.model.reportsProviderRequestStart || providerRequestStarted,
+                subscribeIdleTimeoutChange: (listener) => {
+                    providerRequestDeadlineListeners.add(listener);
+                    return () => providerRequestDeadlineListeners.delete(listener);
+                },
                 isAborted: () => this.isAborted(),
                 isWallClockExceeded: () => textUsesHardDeadline ? this.isWallClockExceeded() : this.isProviderWaitDeadlineExceeded(
                     toolMode,
@@ -899,6 +922,8 @@ export class PaAgentLoop {
                 },
             })
             : undefined;
+        this.debug('model_wait:start', { turnId, idleTimeoutMs: Number.isFinite(this.assistantIdleTimeoutMs) ? this.assistantIdleTimeoutMs : null,
+            providerRequestStarted });
 
         let completedTextAt: number | undefined;
         let completedOutputAt: number | undefined;
@@ -906,6 +931,8 @@ export class PaAgentLoop {
         while (consumer) {
             const next = await consumer.nextChunk();
             if (next.type !== "chunk") transportOutcome = next.type;
+            if (next.type !== 'chunk') this.debug('model_wait:end', { turnId, outcome: next.type,
+                providerRequestStarted, modelChunkCount, elapsedMs: elapsedSince(modelStartedAt, this.now()) });
             if (next.type === "done") {
                 break;
             }
@@ -930,7 +957,7 @@ export class PaAgentLoop {
             if (next.type === "idle") {
                 turnAbort.abort();
                 stopReason = "idle_timeout";
-                terminalStatus = pendingText.length > 0 ? "completed_with_warning" : "incomplete";
+                terminalStatus = hasPendingAnswerText ? "completed_with_warning" : "incomplete";
                 diagnostics.push({ type: "assistant_idle_timeout", timeoutMs: this.assistantIdleTimeoutMs });
                 break;
             }
@@ -953,7 +980,7 @@ export class PaAgentLoop {
                 const reserveReached = diagnostic.type === "finalization_reserve_reached";
                 terminalStatus = reserveReached
                     ? "incomplete"
-                    : (pendingText.length > 0 ? "completed_with_warning" : "incomplete");
+                    : (hasPendingAnswerText ? "completed_with_warning" : "incomplete");
                 if (reserveReached && pendingText.length > 0) {
                     pendingTextReclassified = true;
                     reclassifyTextPartsAsThinking(assistantMessage.content);
@@ -969,7 +996,7 @@ export class PaAgentLoop {
                     diagnostics.push(this.deadlineDiagnostic(next.error.reason));
                 } else {
                     stopReason = "error";
-                    terminalStatus = pendingText.length > 0 ? "completed_with_warning" : "error";
+                    terminalStatus = hasPendingAnswerText ? "completed_with_warning" : "error";
                     diagnostics.push(providerErrorDiagnostic(next.error));
                 }
                 break;
@@ -983,13 +1010,13 @@ export class PaAgentLoop {
             if (chunk.type === "provider_completion") {
                 if (assistantMessage.providerCompletion !== undefined && assistantMessage.providerCompletion !== chunk.completion) {
                     stopReason = "error";
-                    terminalStatus = "completed_with_warning";
+                    terminalStatus = hasPendingAnswerText ? "completed_with_warning" : "error";
                     diagnostics.push({ type: "provider_completion_conflict" });
                     turnAbort.abort();
                     break;
                 }
                 assistantMessage.providerCompletion = chunk.completion;
-                if (chunk.completion === "stop" && pendingText.length > 0 && !sawToolCall) {
+                if (chunk.completion === "stop" && hasPendingAnswerText && !sawToolCall) {
                     completedTextAt ??= this.now();
                 }
                 if (chunk.completion === "tool_calls" && nativeCollector?.decode() && this.isNativeWritingCurrent()) {
@@ -1005,7 +1032,7 @@ export class PaAgentLoop {
             }
             if (assistantMessage.providerCompletion !== undefined) {
                 stopReason = "error";
-                terminalStatus = pendingText.length > 0 ? "completed_with_warning" : "error";
+                terminalStatus = hasPendingAnswerText ? "completed_with_warning" : "error";
                 diagnostics.push({ type: "provider_content_after_completion" });
                 turnAbort.abort();
                 break;
@@ -1052,7 +1079,9 @@ export class PaAgentLoop {
                         this.events.messageUpdate(turnId, assistantMessage.id, { kind: "text_start" });
                     }
                     pendingText += chunk.text;
-                    if (!textUsesHardDeadline && !sawToolCall && pendingText.length > 0
+                    // Test for meaningful text without altering the provider's exact whitespace.
+                    hasPendingAnswerText ||= chunk.text.trim().length > 0;
+                    if (!textUsesHardDeadline && !sawToolCall && hasPendingAnswerText
                         && this.providerResponseDelivery !== "buffered"
                         && this.usesFinalizationReserve(toolMode)) {
                         // Finish this already visible response within the original
@@ -1127,7 +1156,7 @@ export class PaAgentLoop {
                 && this.didBufferedProviderOverrunFinalizationReserve(toolMode, providerRequestStarted)
             ))
         ) {
-            terminalStatus = toolCallBuffers.length === 0 && pendingText.trim().length > 0
+            terminalStatus = toolCallBuffers.length === 0 && hasPendingAnswerText
                 ? "completed_with_warning"
                 : "incomplete";
             diagnostics.push({
@@ -1169,6 +1198,17 @@ export class PaAgentLoop {
         const toolCalls = toolCallBuffers.map((buffer) => assistantMessage.content[buffer.partIndex]).filter(isToolCallPart);
         const hasToolCall = toolCalls.length > 0;
         const nativeWritingAttempted = nativeCollector?.hasWritingCall === true;
+        if (!hasToolCall && assistantMessage.providerCompletion === "tool_calls"
+            && terminalStatus !== "aborted" && terminalStatus !== "error") {
+            terminalStatus = "incomplete";
+            diagnostics.push({ type: "provider_tool_calls_missing" });
+        }
+        if (!hasToolCall && hasPendingAnswerText && this.options.isFinalTextCurrent) {
+            if (!this.isFinalTextCurrent()) {
+                if (terminalStatus !== "aborted" && terminalStatus !== "error") terminalStatus = "incomplete";
+                diagnostics.push({ type: "assistant_source_changed" });
+            }
+        }
         const nativeWriting = nativeWritingAttempted && toolCalls.length === 1 && terminalStatus === undefined
             && assistantMessage.providerCompletion === "tool_calls" && !this.isAborted() && this.isNativeWritingCurrent()
             ? nativeCollector?.decode() : undefined;
@@ -1234,7 +1274,7 @@ export class PaAgentLoop {
             terminalStatus = "incomplete";
             diagnostics.push(this.turnDeadlineDiagnostic(toolMode));
         }
-        if (!hasToolCall && terminalStatus === undefined && pendingText.length === 0) {
+        if (!hasToolCall && terminalStatus === undefined && !hasPendingAnswerText) {
             terminalStatus = "incomplete";
             diagnostics.push({
                 type: "assistant_empty_response",
@@ -1246,7 +1286,8 @@ export class PaAgentLoop {
         const status: TurnEndStatus = terminalStatus
             ?? (nativeWriting ? "completed" : hasToolCall ? (toolResults.length > 0 ? "tool_results_ready" : "incomplete") : "completed");
 
-        if (!hasToolCall && pendingText.length > 0 && status !== "error" && status !== "incomplete") {
+        if (!hasToolCall && hasPendingAnswerText && status !== "error" && status !== "incomplete"
+            && !diagnostics.some(diagnostic => diagnostic.type === "assistant_source_changed")) {
             this.committedFinalText += pendingText;
             this.options.onCommittedFinalText?.(this.committedFinalText);
         }
@@ -1362,7 +1403,11 @@ export class PaAgentLoop {
 
     private async decideAfterTurn(summary: PaAgentTurnSummary): Promise<PaAgentAfterTurnDecision> {
         if (this.options.hostPolicy) {
-            return this.evaluateHostPolicy(() => this.options.hostPolicy!.afterTurn(summary));
+            const decision = await this.evaluateHostPolicy(() => this.options.hostPolicy!.afterTurn(summary));
+            this.debug('host_policy', { turnId: summary.turnId, action: decision.action, reason: decision.reason,
+                ...('toolMode' in decision ? { nextToolMode: decision.toolMode ?? 'normal' } : {}),
+                ...('status' in decision ? { status: decision.status } : {}) });
+            return decision;
         }
         return {
             action: "stop",
@@ -1375,6 +1420,15 @@ export class PaAgentLoop {
     private isNativeWritingCurrent(): boolean {
         try { return this.options.nativeWriting?.isCurrent() === true; }
         catch { return false; }
+    }
+
+    private isFinalTextCurrent(): boolean {
+        try { return this.options.isFinalTextCurrent?.() ?? true; }
+        catch { return false; }
+    }
+
+    private debug(phase: string, fields: Record<string, unknown>): void {
+        try { this.options.onDebug?.(phase, fields); } catch { /* Observers cannot change loop decisions. */ }
     }
 
     private async decideFinalizationAfterTurn(
@@ -1391,6 +1445,8 @@ export class PaAgentLoop {
             defaultStatus: fallback.status,
             ...(unobservedTurnSummary ? { unobservedTurnSummary } : {}),
         }) : hostPolicy.afterTurn(summary));
+        this.debug('terminal_host_policy', { turnId: summary.turnId, action: decision.action, reason: decision.reason,
+            ...('status' in decision ? { status: decision.status } : {}) });
         if (decision.action === "continue") {
             return mergeTerminalDecisions(fallback, {
                 action: "stop",
@@ -1444,6 +1500,20 @@ export class PaAgentLoop {
     }
 
     private endAgent(status: AgentEndStatus, payload: Record<string, unknown>): void {
+        // Host policy may await after turn_end. Revalidate ordinary text at the
+        // actual delivery boundary as well; a completed model turn is not delivery.
+        if (this.committedFinalText.trim() && !this.turns.at(-1)?.nativeWritingAttempted
+            && !this.isFinalTextCurrent()) {
+            this.committedFinalText = "";
+            this.options.onCommittedFinalText?.("");
+            const diagnostics = Array.isArray(payload.diagnostics) ? payload.diagnostics : [];
+            payload = { ...payload, diagnostics: [...diagnostics, { type: "assistant_source_changed" }] };
+            if (status !== "aborted" && status !== "error") {
+                status = "incomplete";
+                payload.reason = "assistant_source_changed";
+            }
+        }
+        this.endStatus = status;
         const elapsedMs = elapsedSince(this.runStartedAt, this.now());
         const emittedToolCallCount = this.turns.reduce((total, turn) => {
             const value = turn.timing.toolCallCount;
@@ -1488,7 +1558,7 @@ export class PaAgentLoop {
 
     private createResult(status: AgentEndStatus): PaAgentLoopResult {
         return {
-            status,
+            status: this.endStatus ?? status,
             transcript: [...this.transcript],
             committedFinalText: this.committedFinalText,
             turns: [...this.turns],
@@ -1775,6 +1845,7 @@ export class PaAgentLoop {
 }
 
 function providerErrorDiagnostic(error: unknown): Record<string, unknown> {
+    if (getProviderAdmissionError(error)) return { type: "provider_admission_rejected" };
     if (error instanceof PaAgentContextOverflowError) {
         return { type: "context_local_overflow", promptChars: error.promptChars, maxPromptChars: error.maxPromptChars };
     }

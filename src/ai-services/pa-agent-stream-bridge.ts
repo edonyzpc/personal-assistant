@@ -154,6 +154,17 @@ export class CanonicalToLegacyEventAdapter {
             case "message_end":
                 this.canonicalMessages.set(event.message.id, event.message);
                 if (event.message.role !== "assistant") return;
+                // A tool phase without any native calls is a protocol failure,
+                // not a plain-text answer. Withdraw provisional text; the Loop
+                // supplies the incomplete status and diagnostic, not an artifact.
+                if (event.message.providerCompletion === "tool_calls"
+                    && !event.message.content.some(part => part.type === "toolCall")) {
+                    if (this.writing) {
+                        this.writingCandidate = { ...event.message, content: event.message.content.map(part => ({ ...part })) };
+                        this.emitWritingPreview(event.runId, event.message.id, "");
+                    }
+                    return;
+                }
                 if (this.writing) {
                     const transport = event.metadata?.transportOutcome;
                     this.writingTransportOutcome = transport === "done" || transport === "idle" || transport === "aborted"
@@ -232,15 +243,19 @@ export class CanonicalToLegacyEventAdapter {
         const candidate = this.writingCandidate;
         const native = this.usesNativeWriting;
         const calls = candidate?.content.filter((part) => part.type === "toolCall") ?? [];
-        if (native && candidate && calls.length === 0 && !this.nativeArguments) {
-            if (this.isWritingPreviewCurrent()) this.appendAssistantText(candidate.content);
+        if (candidate?.providerCompletion === "tool_calls" && calls.length === 0) return;
+        const sourceCurrent = this.isWritingPreviewCurrent();
+        if (native && candidate && calls.length === 0 && !this.nativeArguments && sourceCurrent) {
+            this.appendAssistantText(candidate.content);
             return;
         }
         const rawText = native ? this.nativeArguments
             : candidate?.content.filter((part) => part.type === "text").map((part) => part.text).join("") ?? "";
         let reason: WritingRecoveryReason | undefined;
         // A warning's impact is unknown here. It must not silently become a verified version.
-        if (!this.isWritingPreviewCurrent()) reason = "source_changed";
+        // Ordinary native replies also need explicit recovery when their preview
+        // was withdrawn; otherwise an empty answer silently keeps its success state.
+        if (!sourceCurrent) reason = "source_changed";
         else if (event.status !== "completed" || !candidate
             || (native ? !this.nativeValidated || candidate.stopReason !== "tool_calls" || calls.length !== 1
                 || calls[0].name !== "present_writing" : candidate.stopReason !== "stop" || calls.length > 0)) reason = "incomplete";

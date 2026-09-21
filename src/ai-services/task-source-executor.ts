@@ -19,7 +19,7 @@ export function createTaskSourceDeclarationSchema(): ChatToolProviderSchema {
                 properties: {
                     instructionQuote: { type: 'string', description: 'Exact, uniquely located quote from the current user message supporting your interpretation. For an unrestricted request, quote the request itself.' },
                     notes: { type: 'string', enum: ['current_note', 'selected', 'vault', 'none'] },
-                    noteHandles: { type: 'array', items: { type: 'string' }, description: 'Required only for selected: host-provided note handles. Never invent handles or use paths as handles.' },
+                    noteHandles: { type: 'array', items: { type: 'string' }, description: 'Use only with notes=selected, where a nonempty array of host-provided note handles is required. Omit this field for current_note, vault and none; the host resolves current_note automatically. Never invent handles or use paths as handles.' },
                     excludedNoteHandles: { type: 'array', items: { type: 'string' } },
                     webAllowed: { type: 'boolean' },
                 },

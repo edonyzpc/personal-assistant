@@ -2739,9 +2739,11 @@ export class LLMView extends ItemView {
         const renderWritingActions = (rendered: RenderedMessage, message: ChatMessage) => {
             rendered.writingButton?.remove(); rendered.writingButton = undefined;
             rendered.writingRecoveryNotice?.remove(); rendered.writingRecoveryNotice = undefined;
-            if (message.writingRecovery && !message.writingVersionId && message.content !== t('plugin.chat.writing.recoveryHint')) {
+            const recoveryHint = t(message.writingRecovery?.reason === 'source_changed'
+                ? 'plugin.chat.writing.sourceChangedHint' : 'plugin.chat.writing.recoveryHint');
+            if (message.writingRecovery && !message.writingVersionId && message.content !== recoveryHint) {
                 rendered.writingRecoveryNotice = rendered.messageDiv.createEl('p', {
-                    cls: 'pa-chat-writing-recovery-notice', text: t('plugin.chat.writing.recoveryHint'),
+                    cls: 'pa-chat-writing-recovery-notice', text: recoveryHint,
                     attr: { role: 'status' },
                 });
             }
@@ -3777,7 +3779,7 @@ export class LLMView extends ItemView {
             return createPaAgentPersistedTurn({
                 runId: canonical.runId,
                 turnId,
-                status: canonical.turnStatuses.get(turnId) as TurnEndStatus | undefined,
+                status: (canonical.terminalStatus ?? canonical.turnStatuses.get(turnId)) as TurnEndStatus | undefined,
                 committedFinalText: responseContent,
                 sourceRecords: canonical.hostSourceRecords,
                 contextUsed: canonical.hostContextUsedItems,
@@ -3870,7 +3872,8 @@ export class LLMView extends ItemView {
                 case 'message_end':
                     upsertCanonicalMessage(turn, event.message);
                     if (event.message.role === 'assistant') {
-                        if (event.message.content.some((part) => part.type === 'toolCall')) {
+                        if (event.message.providerCompletion === 'tool_calls'
+                            || event.message.content.some((part) => part.type === 'toolCall')) {
                             setResponseContent('');
                             return;
                         }
@@ -4621,8 +4624,9 @@ export class LLMView extends ItemView {
                                     ...(event.writingContext?.parentVersionId ? { parentVersionId: event.writingContext.parentVersionId } : {}),
                                     ...(event.writingContext?.scene ? { scene: { ...event.writingContext.scene } } : {}),
                                     rawText: event.rawText, reason: event.reason };
-                                turn.writingRecoveryText = event.reason !== 'source_changed' && event.previewText
-                                    ? event.previewText : t('plugin.chat.writing.recoveryHint');
+                                turn.writingRecoveryText = event.reason === 'source_changed'
+                                    ? t('plugin.chat.writing.sourceChangedHint')
+                                    : event.previewText || t('plugin.chat.writing.recoveryHint');
                                 sawLegacyPartialFailure = true;
                                 delete turn.writingArtifact;
                                 if (isLiveTurn()) updateResponseContent(turn.writingRecoveryText);

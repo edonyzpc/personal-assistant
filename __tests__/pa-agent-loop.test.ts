@@ -18,8 +18,118 @@ import { PaAgentContextOverflowError } from "../src/ai-services/context";
 import { createRequiredCapabilityHostPolicy } from "../src/ai-services/pa-agent-required-capability-policy";
 import type { AgentEvent, PaAgentMessage } from "../src/ai-services/chat-types";
 import { PageletLeadDrivenPolicy } from "../src/pagelet/agent/lead-driven-policy";
+import { ProviderAdmissionError } from "../src/ai-services/provider-admission-error";
 
 describe("PaAgentLoop", () => {
+    it("reports wrapped local admission rejection without exposing the original error", async () => {
+        const result = await new PaAgentLoop({ runId: "admission", userInput: "hello", model: {
+            stream: async function* () {
+                throw Object.assign(new Error("Connection error"), { cause: new ProviderAdmissionError(new Error("private source detail")) });
+            },
+        } }).run();
+        expect(result.status).toBe("error");
+        expect(result.turns[0].diagnostics).toEqual([{ type: "provider_admission_rejected" }]);
+        expect(JSON.stringify(result.endPayload)).not.toContain("private source detail");
+    });
+
+    it.each(["", " \n"])("never completes blank text with conflicting provider finish markers (%j)", async (text) => {
+        const result = await createLoop({ events: [], committedSnapshots: [], chunks: [
+            { type: "thinking_delta", text: "Working." }, { type: "text_delta", text },
+            { type: "provider_completion", completion: "stop" },
+            { type: "provider_completion", completion: "length" },
+        ] }).run();
+        expect(result.status).toBe("error");
+        expect(result.committedFinalText).toBe("");
+        expect(result.turns[0].diagnostics).toContainEqual({ type: "provider_completion_conflict" });
+    });
+
+    it.each(["<tool_calls>\n</tool_calls>", "I need to read the note first."])(
+        "rejects tool-call completion without a native call (%s)", async (text) => {
+            const committedSnapshots: string[] = [];
+            const result = await createLoop({ events: [], committedSnapshots, chunks: [
+                { type: "text_delta", text }, { type: "provider_completion", completion: "tool_calls" },
+            ] }).run();
+            expect(result.status).toBe("incomplete");
+            expect(result.committedFinalText).toBe("");
+            expect(committedSnapshots).toEqual([]);
+            expect(result.turns[0].toolCalls).toEqual([]);
+            expect(result.turns[0].diagnostics).toContainEqual({ type: "provider_tool_calls_missing" });
+        },
+    );
+
+    it("preserves ordinary XML examples completed as text", async () => {
+        const text = "Example: `<tool_calls></tool_calls>` is an XML element.";
+        const result = await createLoop({ events: [], committedSnapshots: [], chunks: [
+            { type: "text_delta", text }, { type: "provider_completion", completion: "stop" },
+        ] }).run();
+        expect(result.status).toBe("completed");
+        expect(result.committedFinalText).toBe(text);
+    });
+
+    it("does not charge local model preparation against provider idle", async () => {
+        jest.useFakeTimers();
+        try {
+            const loop = new PaAgentLoop({ runId: "slow-preparation", userInput: "hello",
+                assistantIdleTimeoutMs: 100, maxWallClockMs: 500,
+                model: { reportsProviderRequestStart: true, stream: async function* (input) {
+                    await new Promise(resolve => setTimeout(resolve, 150));
+                    input.notifyProviderRequestStarted?.();
+                    await new Promise(resolve => setTimeout(resolve, 80));
+                    yield { type: "text_delta", text: "Answer." };
+                } },
+            });
+            const pending = loop.run();
+            await jest.advanceTimersByTimeAsync(230);
+            const result = await pending;
+            expect(result.status).toBe("completed");
+            expect(result.committedFinalText).toBe("Answer.");
+        } finally { jest.useRealTimers(); }
+    });
+
+    it("starts idle at dispatch and does not extend it for repeated dispatch notifications", async () => {
+        jest.useFakeTimers();
+        try {
+            const loop = new PaAgentLoop({ runId: "dispatch-idle", userInput: "hello",
+                assistantIdleTimeoutMs: 100, maxWallClockMs: 500,
+                model: { reportsProviderRequestStart: true, stream: async function* (input) {
+                    await new Promise(resolve => setTimeout(resolve, 150));
+                    input.notifyProviderRequestStarted?.();
+                    await new Promise(resolve => setTimeout(resolve, 80));
+                    input.notifyProviderRequestStarted?.();
+                    await new Promise<void>(() => undefined);
+                } },
+            });
+            const pending = loop.run();
+            await jest.advanceTimersByTimeAsync(250);
+            const result = await pending;
+            expect(result.status).toBe("incomplete");
+            expect(result.turns[0].diagnostics).toContainEqual({ type: "assistant_idle_timeout", timeoutMs: 100 });
+            expect(result.turns[0].timing.modelElapsedMs).toBe(250);
+        } finally { jest.useRealTimers(); }
+    });
+
+    it("bounds preparation by wall clock before any dispatch", async () => {
+        jest.useFakeTimers();
+        try {
+            const loop = new PaAgentLoop({ runId: "preparation-wall", userInput: "hello",
+                assistantIdleTimeoutMs: 100, maxWallClockMs: 200,
+                model: { reportsProviderRequestStart: true, stream: async function* () {
+                    await new Promise<void>(() => undefined);
+                } },
+            });
+            const pending = loop.run();
+            await jest.advanceTimersByTimeAsync(200);
+            const result = await pending;
+            expect(result.status).toBe("incomplete");
+            expect(result.turns[0].diagnostics).toEqual(expect.arrayContaining([
+                expect.objectContaining({ type: "wall_clock_exceeded" }),
+            ]));
+            expect(result.turns[0].diagnostics).not.toEqual(expect.arrayContaining([
+                expect.objectContaining({ type: "assistant_idle_timeout" }),
+            ]));
+        } finally { jest.useRealTimers(); }
+    });
+
     it("surfaces local admission failure from an async generator as a specific terminal diagnostic", async () => {
         const events: AgentEvent[] = [];
         const loop = new PaAgentLoop({
@@ -2162,6 +2272,65 @@ describe("PaAgentLoop", () => {
             status: "incomplete",
             metadata: { diagnostics: [expect.objectContaining({ type: "assistant_empty_response" })] },
         });
+    });
+
+    it.each([false, true])("does not complete whitespace-only text after reasoning (provider stop: %s)", async (withStop) => {
+        const events: AgentEvent[] = [];
+        const committedSnapshots: string[] = [];
+        const loop = createLoop({ events, committedSnapshots, chunks: [
+            { type: "thinking_delta", text: "Considering the question." },
+            { type: "text_delta", text: " \n\t\u3000\u00a0" },
+            ...(withStop ? [{ type: "provider_completion" as const, completion: "stop" as const }] : []),
+        ] });
+        const result = await loop.run();
+        expect(result.status).toBe("incomplete");
+        expect(result.committedFinalText).toBe("");
+        expect(committedSnapshots).toEqual([]);
+        expect(events.at(-1)).toMatchObject({ type: "agent_end", status: "incomplete",
+            metadata: { diagnostics: expect.arrayContaining([{ type: "assistant_empty_response", message: expect.any(String) }]) } });
+    });
+
+    it("does not treat whitespace followed by idle as a partial answer", async () => {
+        const events: AgentEvent[] = [];
+        const committedSnapshots: string[] = [];
+        const result = await createLoop({ events, committedSnapshots,
+            chunks: [{ type: "text_delta", text: " \n" }], neverAfterChunks: true, assistantIdleTimeoutMs: 1 }).run();
+        expect(result.status).toBe("incomplete");
+        expect(result.committedFinalText).toBe("");
+        expect(committedSnapshots).toEqual([]);
+    });
+
+    it("does not mistake a whitespace stop for completed content when the transport tail fails", async () => {
+        const loop = new PaAgentLoop({ runId: "blank-stop-tail", userInput: "hello", model: {
+            stream: async function* () {
+                yield { type: "text_delta", text: " \n" };
+                yield { type: "provider_completion", completion: "stop" };
+                throw new Error("fixture transport failure");
+            },
+        } });
+        const result = await loop.run();
+        expect(result.status).toBe("error");
+        expect(result.committedFinalText).toBe("");
+        expect(result.turns[0].metrics.some(metric => metric.type === "provider_transport_end")).toBe(false);
+    });
+
+    it.each([false, true])("uses one bounded finalization for blank text after an observation (still blank: %s)", async (stillBlank) => {
+        const policy = createRequiredCapabilityHostPolicy({ userInput: "Answer from context", availableCapabilities: new Set(), classification: { items: [] } });
+        const inputs: PaAgentModelInput[] = [];
+        const answer = " \n  Exact answer.\n";
+        const loop = new PaAgentLoop({ runId: "blank-after-observation", userInput: "Answer from context",
+            hostPolicy: policy.hostPolicy, toolExecutor: { execute: async () => ({ outcome: "success", promptText: "Observed fact" }) },
+            model: { stream: async function* (input) {
+                inputs.push(input);
+                if (input.turnIndex === 0) yield { type: "toolcall_delta", id: "read", name: "read_note", input: {}, index: 0 };
+                else yield { type: "text_delta", text: input.turnIndex === 1 || stillBlank ? " \n" : answer };
+            } },
+        });
+        const result = await loop.run();
+        expect(inputs).toHaveLength(3);
+        expect(inputs[2].toolMode).toBe("final_answer_only");
+        expect(result.status).toBe(stillBlank ? "incomplete" : "completed");
+        expect(result.committedFinalText).toBe(stillBlank ? "" : answer);
     });
 
     it("turns an immediately empty assistant stream into incomplete diagnostics", async () => {

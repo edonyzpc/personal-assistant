@@ -8,6 +8,8 @@ import {
     createScopedObsidianFetch,
     obsidianFetch,
     reportProviderRequestDiagnostic,
+    traceProviderDispatch,
+    type ProviderRequestTrace,
     type ProviderRequestDiagnostic,
     type ProviderRequestCancellationCapability,
     type ProviderRequestScope,
@@ -15,6 +17,8 @@ import {
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 import { getPlatformDocument } from '../platform-dom';
 import { throwIfAborted } from './chat-utils';
+import { prepareProviderAdmission, runProviderAdmission } from './provider-admission-error';
+import { onProviderFailedAttempt } from './provider-retry-policy';
 
 export type ChatTransport = 'obsidian' | 'native';
 
@@ -234,6 +238,8 @@ export interface ProviderRequestOptions {
     /** Validate already-serialized input before each physical HTTP dispatch, including SDK retries. */
     prepareProviderRequest?: (signal?: AbortSignal | null) => void | Promise<void>;
     onProviderRequestDiagnostic?: (evidence: ProviderRequestDiagnostic) => void;
+    onProviderRequestTrace?: (event: ProviderRequestTrace) => void;
+    isProviderRequestTraceEnabled?: () => boolean;
 }
 
 export interface CreateChatModelOptions extends ProviderRequestOptions {
@@ -263,6 +269,7 @@ export interface AIUtilsHost {
         chatModelName: string;
         embeddingModelName: string;
         baseURL: string;
+        debug?: boolean;
     };
     getAPIToken(): Promise<string>;
     log(message: string, ...args: unknown[]): void;
@@ -371,17 +378,27 @@ export class AIUtils {
         };
 
         const resolution = this.resolveChatTransport(transport, baseURL);
+        const onProviderRequestTrace = providerRequestOptions.onProviderRequestTrace
+            ?? (this.host.settings.debug ? (event: ProviderRequestTrace) => {
+                if (this.host.settings.debug) this.host.log('PA Agent trace', {
+                    runId: null, turnId: null, stage: 'unscoped', ...event,
+                });
+            } : undefined);
+        const isProviderRequestTraceEnabled = providerRequestOptions.isProviderRequestTraceEnabled
+            ?? (providerRequestOptions.onProviderRequestTrace ? undefined : () => this.host.settings.debug === true);
         if (resolution.effective === 'obsidian') {
             options.fetch = providerRequestOptions.providerRequestScope
                 || providerRequestOptions.onProviderRequestStart
                 || providerRequestOptions.prepareProviderRequest
                 || providerRequestOptions.onProviderRequestDiagnostic
-                ? createScopedObsidianFetch(providerRequestOptions)
+                || onProviderRequestTrace
+                ? createScopedObsidianFetch({ ...providerRequestOptions, onProviderRequestTrace, isProviderRequestTraceEnabled })
                 : obsidianFetch;
         } else if (
             providerRequestOptions.onProviderRequestStart
             || providerRequestOptions.prepareProviderRequest
             || providerRequestOptions.onProviderRequestDiagnostic
+            || onProviderRequestTrace
         ) {
             // Keep native fetch and its propagating AbortSignal. The SDK may
             // await serialization/retry backoff after prompt preparation.
@@ -391,23 +408,23 @@ export class AIUtils {
                 if (providerRequestOptions.prepareProviderRequest) {
                     return (async () => {
                         await withAbortSignal(
-                            Promise.resolve(providerRequestOptions.prepareProviderRequest!(signal)),
+                            prepareProviderAdmission(() => providerRequestOptions.prepareProviderRequest!(signal)),
                             signal,
                         );
                         throwIfAborted(signal ?? undefined);
-                        providerRequestOptions.onProviderRequestStart?.();
+                        runProviderAdmission(providerRequestOptions.onProviderRequestStart);
                         throwIfAborted(signal ?? undefined);
                         // Request objects / non-string bodies stay unknown; do not read
                         // or consume their streams just to obtain optional diagnostics.
-                        try { return await globalThis.fetch(input, init); }
+                        try { return await traceProviderDispatch(() => globalThis.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled); }
                         finally { reportProviderRequestDiagnostic(init?.body, 'native', providerRequestOptions.onProviderRequestDiagnostic); }
                     })();
                 }
-                providerRequestOptions.onProviderRequestStart?.();
+                runProviderAdmission(providerRequestOptions.onProviderRequestStart);
                 throwIfAborted(signal ?? undefined);
                 // Request objects / non-string bodies stay unknown; do not read
                 // or consume their streams just to obtain optional diagnostics.
-                try { return globalThis.fetch(input, init); }
+                try { return traceProviderDispatch(() => globalThis.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled); }
                 finally { reportProviderRequestDiagnostic(init?.body, 'native', providerRequestOptions.onProviderRequestDiagnostic); }
             };
         }
@@ -454,6 +471,7 @@ export class AIUtils {
             case 'qwen': {
                 const modelKwargs = buildQwenModelKwargs(provider, baseURL, options.qwenRequestOptions);
                 return new ChatOpenAI({
+                    onFailedAttempt: onProviderFailedAttempt,
                     model: modelName,
                     apiKey: token,
                     configuration: this.createOpenAIClientOptions(baseURL, transport, options),
@@ -465,6 +483,7 @@ export class AIUtils {
 
             case 'openai': {
                 return new ChatOpenAI({
+                    onFailedAttempt: onProviderFailedAttempt,
                     model: modelName,
                     apiKey: token,
                     configuration: this.createOpenAIClientOptions(baseURL, transport, options),
@@ -565,6 +584,7 @@ export class AIUtils {
             case 'qwen':
             case 'openai': {
                 return new OpenAIEmbeddings({
+                    onFailedAttempt: onProviderFailedAttempt,
                     model: modelName,
                     dimensions: dimensions,
                     apiKey: token,

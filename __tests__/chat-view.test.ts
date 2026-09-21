@@ -1158,6 +1158,49 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementsByClass(containerEl, 'pa-chat-writing-action')).toHaveLength(1);
     });
 
+    it.each(['completed', 'incomplete'] as const)('explains withdrawn ordinary text after a %s model turn and preserves final status on reopen', async (turnStatus) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'source-change-conversation' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native', prepareWritingStyleForScene: jest.fn() });
+        await view.onOpen();
+        view.prefillComposer('Explain this principle');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'message_start', message: assistantMessage('withdrawn-answer', []) }));
+        const shared = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1,
+            runId: 'run_1', requestId: call.options.writingRequest!.requestId, messageId: 'withdrawn-answer' };
+        call.options.onEvent?.({ ...shared, kind: 'writing-preview', text: 'WITHDRAWN_ANSWER' });
+        await flushPromises();
+        call.options.onEvent?.({ ...shared, kind: 'writing-preview', text: '' });
+        const metadata = { diagnostics: [{ type: 'assistant_source_changed' }] };
+        emitCanonical(call, canonicalEvent({ type: 'turn_end', status: turnStatus, metadata }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'incomplete', metadata }));
+        call.options.onEvent?.({ ...shared, kind: 'writing-recovery', rawText: '', previewText: '', reason: 'source_changed' });
+        call.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        const hint = 'The sources used for this answer changed, so the answer was not kept. Please ask again.';
+        expect(view.chatHistory[1]).toMatchObject({ content: hint, canonicalTurn: { status: 'incomplete' },
+            writingRecovery: { reason: 'source_changed', rawText: '' } });
+        expect(getElementByClass(containerEl, 'thinking-status-summary').textContent).toBe('Answer incomplete');
+        expect(allText(containerEl)).not.toContain('WITHDRAWN_ANSWER');
+        expect(allText(containerEl)).not.toContain('Select the intended text from the original response');
+        await view.onClose();
+        const restored = createView({ chatHistoryManager: manager });
+        Object.assign(restored.plugin, { writingVersions: versions });
+        await restored.view.onOpen();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(restored.view.chatHistory[1].content).toBe(hint);
+        expect(getElementByClass(restored.containerEl, 'thinking-status-summary').textContent).toBe('Answer incomplete');
+        expect(allText(restored.containerEl)).not.toContain('WITHDRAWN_ANSWER');
+        await restored.view.onClose();
+        versions.dispose();
+    });
+
     it.each([false, true])('keeps preview/recovery and truthful status after reopen (user cancel=%s)', async (cancelled) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'preview-conversation' });
@@ -5633,6 +5676,32 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls).toHaveLength(1);
         expect(chatHistoryManager.startConversation).not.toHaveBeenCalled();
         expect(chatHistoryManager.recordTurn).not.toHaveBeenCalled();
+    });
+
+    it('withdraws textual tool envelopes when the provider omitted native calls', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        getTextArea(containerEl).value = 'read the selected note';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        const text = 'Need to read first. <tool_calls></tool_calls>';
+        const diagnostics = [{ type: 'provider_tool_calls_missing' }];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'message_update', messageId: 'missing-native',
+            update: { kind: 'text_delta', text } }));
+        emitCanonical(call, canonicalEvent({ type: 'message_end', message: {
+            ...assistantMessage('missing-native', [{ type: 'text', text }]), providerCompletion: 'tool_calls',
+        } }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_end', status: 'incomplete', metadata: { diagnostics } }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'incomplete', metadata: { diagnostics } }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+        expect(allText(getElementByClass(getResponseDiv(view), 'assistant'))).not.toContain(text);
+        expect(view.chatHistory[1]).toMatchObject({ content: '', canonicalTurn: { status: 'incomplete' } });
+        expect(getElementByClass(containerEl, 'thinking-status-summary').textContent).toBe('Answer incomplete');
     });
 
     it('renders canonical incomplete diagnostics without writing them into the answer body', async () => {
