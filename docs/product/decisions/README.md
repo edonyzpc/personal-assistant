@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-09-19
+Updated: 2026-09-20
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-039 | Behavior-preserving plugin shell refactor | Accepted | 保持完整正常功能，按状态/资源所有权逐片迁移；限定 Pagelet、metadata、Callout 生命周期修复，性能不设改进目标 | [Record](./dec-039-plugin-shell-refactor.md) |
 | DEC-038 | Chat image generation and unified image connection | Accepted | Wan 创建/参考/编辑、后台恢复、确切版本与复制下载；Chat/Featured Image 统一连接；透明确认与删聊天仅留文件 | [Record](./dec-038-chat-image-generation.md) |
 | DEC-037 | PA Agent essential capabilities | Accepted | 基础工具自主规划；日期口径由主 Agent 按上下文选择；官方 API 优先 | [Record](./dec-037-pa-agent-essential-capabilities.md) |
 | DEC-036 | Share Card per-export print styles | Accepted | 每次 Modal 默认原纸且不记忆；轻印/复印分层处理标题与正文，保护代码、视觉、品牌和宿主主题，并保持 preview/Copy/Save 一致 | [Record](./dec-036-share-card-print-styles.md) |

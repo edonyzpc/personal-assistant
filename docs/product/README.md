@@ -47,6 +47,7 @@
 
 ## Shared Product Infrastructure
 
+- [Plugin Shell Refactor](./specs/pa-plugin-shell-refactor-product-spec.md) — 保持现有功能、限定生命周期修复与模块所有权边界。
 - [Bounded Code Cleanup](./specs/pa-bounded-code-cleanup-product-spec.md) — 有界清理、旧 Pagelet 范围控件退役及保留能力边界。
 - [Unified Agent Task Execution](./specs/pa-unified-task-execution-product-spec.md)
 

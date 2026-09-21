@@ -1,6 +1,6 @@
 # Personal Assistant — 项目架构全景
 
-> **版本**: v2.8.4 current-doc refresh · **日期**: 2026-08-01 · **作者**: edony
+> **版本**: v2.9.2 current architecture · **日期**: 2026-09-21 · **作者**: edony
 >
 > 本文档面向项目负责人，提供**技术状态**与**产品定义**的全局视图，辅助下一步规划决策。
 
@@ -167,10 +167,6 @@ graph LR
 
 ## 3. 系统架构总览
 
-> **独立架构图** (SVG/PNG): [`architecture-overview.svg`](../assets/architecture-overview.svg) | [`architecture-overview.png`](../assets/architecture-overview.png)
->
-> ![System Architecture](../assets/architecture-overview.png)
-
 ```mermaid
 graph TB
     subgraph User["👤 用户交互层"]
@@ -183,11 +179,19 @@ graph TB
         RIBBON[Ribbon Icon<br/>侧栏图标]
     end
 
-    subgraph Plugin["🔌 Plugin Shell (plugin.ts)"]
-        PM[PluginManager<br/>extends Plugin]
-        LIFECYCLE[onload / onunload<br/>生命周期]
-        EVENTS[Vault Events<br/>create/modify/rename/delete]
-        CMDS[20+ Commands<br/>注册]
+    subgraph Shell["🔌 Plugin Shell"]
+        MAIN[main.ts<br/>Obsidian default export]
+        PM[PluginManager<br/>身份、装配、跨模块生命周期]
+        REG[注册适配器<br/>Commands / Views / Vault events]
+    end
+
+    subgraph Owners["🧩 Plugin-owned integrations"]
+        SMALL[Records / Capture / Metadata / Callout<br/>Stats / Graph / Update / AI actions]
+        PAGEOWN[Pagelet flow owners<br/>feature scope / Discover / actions]
+        CHATOWN[Chat integration<br/>history / images / writing]
+        SETOWN[Settings persistence<br/>AI configuration]
+        GOVOWN[Governance storage / actions]
+        MEMOWN[Memory integration<br/>VSS / extraction lifecycle]
     end
 
     subgraph AI["🤖 AI Services"]
@@ -229,13 +233,17 @@ graph TB
 
     CHAT --> CS
     PAGELET --> AI
-    CMD --> PM
-    RIBBON --> PM
-    SETTINGS --> PM
-
-    PM --> EVENTS
-    PM --> LIFECYCLE
-    PM --> CMDS
+    MAIN --> PM
+    CMD --> REG
+    RIBBON --> REG
+    SETTINGS --> SETOWN
+    PM --> REG
+    PM --> SMALL
+    PM --> PAGEOWN
+    PM --> CHATOWN
+    PM --> SETOWN
+    PM --> GOVOWN
+    PM --> MEMOWN
 
     CS --> AGENT
     AGENT --> CAP
@@ -254,11 +262,17 @@ graph TB
     WORKER --> WASM
 
     PDOM --> Obsidian
-    PM --> Obsidian
+    REG --> Obsidian
+    SMALL --> Obsidian
+    PAGEOWN --> AI
+    CHATOWN --> AI
+    MEMOWN --> MM
+    GOVOWN --> Memory
     SQIDX -.-> OPFS[(OPFS<br/>向量持久化)]
 
     style User fill:#e8f4fd,stroke:#2196f3
-    style Plugin fill:#fff3e0,stroke:#ff9800
+    style Shell fill:#fff3e0,stroke:#ff9800
+    style Owners fill:#fff8e1,stroke:#f9a825
     style AI fill:#f3e5f5,stroke:#9c27b0
     style Memory fill:#e8f5e9,stroke:#4caf50
     style Platform fill:#fce4ec,stroke:#e91e63
@@ -271,15 +285,16 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph L6["Layer 6 · Plugin Shell"]
-        L6A["plugin.ts / main.ts<br/>组装与生命周期"]
+    subgraph L6["Layer 6 · Obsidian Shell"]
+        L6A["main.ts / plugin.ts<br/>Plugin 身份、装配、全局生命周期"]
     end
 
-    subgraph L5["Layer 5 · Feature Modules"]
-        L5A["chat/<br/>对话 UI"]
-        L5B["pagelet/<br/>评审助手"]
-        L5C["stats/<br/>统计"]
-        L5D["components/<br/>React 组件"]
+    subgraph L5["Layer 5 · Integration Owners"]
+        L5A["plugin/* / capture/*<br/>外围功能接线"]
+        L5B["chat/plugin-integration<br/>Chat 资源"]
+        L5C["pagelet/plugin-*<br/>Pagelet flows"]
+        L5D["memory/plugin-*<br/>Memory / governance"]
+        L5E["stats/plugin-integration<br/>统计接线"]
     end
 
     subgraph L4["Layer 4 · AI Services"]
@@ -292,7 +307,7 @@ graph TB
 
     subgraph L3["Layer 3 · Core Domain"]
         L3A["vss/ + vss.ts<br/>向量搜索"]
-        L3B["settings.ts<br/>配置管理"]
+        L3B["settings.ts + settings/pagelet<br/>设置模型与 UI"]
         L3C["memory-manager.ts<br/>Memory 编排"]
     end
 
@@ -312,7 +327,7 @@ graph TB
     L3 --> L2
     L2 --> L1
 
-    L6A -.->|owns all state| L5A & L5B & L5C & L5D
+    L6A -.->|constructs once; delegates narrow capabilities| L5A & L5B & L5C & L5D & L5E
 
     style L6 fill:#fff3e0,stroke:#ff9800
     style L5 fill:#e8f4fd,stroke:#2196f3
@@ -326,11 +341,11 @@ graph TB
 
 | 模式 | 使用场景 | 示例 |
 |------|---------|------|
-| **Observer/Listener** | 状态广播 | `memoryStatusListeners`, `settingsChangeListeners` |
-| **Host Interface** | 依赖反转 | Pagelet Orchestrator ← `PageletHost` → PluginManager |
+| **Observer/Listener** | 状态广播 | `MemoryStatusNotifier`、`SettingsPersistence.onSettingsChanged()` |
+| **Host / capability interface** | 依赖反转 | `ChatHost`、`MemoryHost`、`StatsHost`、Settings 分区能力 |
 | **Capability Registry** | 工具发现 | `CapabilityProvider.load()` → `AgentCapability.execute()` |
 | **Promise 串行** | 线程安全 | VSS `runExclusive()` 保证单线程索引操作 |
-| **直接导入** | 默认方式 | 无 DI 框架，无全局事件总线 |
+| **Root assembly** | 同实例装配 | root 构造 integration/shared service，业务模块不导入 `PluginManager` |
 
 ---
 
@@ -338,18 +353,49 @@ graph TB
 
 ### 5.1 Plugin Shell (`src/plugin.ts`)
 
-`PluginManager extends Plugin` — Obsidian 插件入口。
+`PluginManager extends Plugin` 是唯一 Obsidian 插件入口。它保留 Plugin API 身份、
+integration/shared service 的唯一装配引用、命令与 View 注册，以及需要跨模块交错的
+启动和关闭顺序。业务状态、队列、timer、listener 与 cleanup 由对应 owner 持有；root
+上的兼容 getter/method 只投影同一实例。生产代码只有 `main.ts` 导入该类。
 
-**onload 生命周期**:
-1. 加载并迁移设置 (Settings merge)
-2. 注册 Ribbon 图标、状态栏、20+ 命令
-3. 初始化 VSS (向量搜索) 子系统
-4. 创建 Chat 历史存储 (IndexedDB)
-5. 注册 Views: RecordPreview, Stat, LLMView (Chat), PageletDetailView
-6. 启动 MemoryManager 自动维护
-7. 挂载 Vault 事件监听 (dirty 文件追踪)
-8. 注册 CodeMirror 编辑器扩展 (字数统计)
-9. 同步 Pagelet 运行时 (懒初始化)
+**三阶段启动**:
+
+1. `onload`：缓存当前 `main.js` 身份，加载/迁移 Settings，完成治理 bootstrap 与
+   legacy Profile 恢复；初始化 Chat、Memory/VSS、Stats；注册命令、Views、Vault
+   bridge、编辑器扩展和 Settings tab。
+2. `onLayoutReady`：启动 Graph observer，幂等确认 Memory，恢复 Chat history/image/
+   writing，初始化 Callout 与 Settings watcher。
+3. 既有 0ms phase（源码方法名 `onIdle`）：同步 Pagelet runtime，安排治理审计和
+   onboarding/pattern nudges，并同步 extraction runtime。它不是新的空闲调度策略。
+
+**显式关闭偏序**:
+
+```text
+unloading + feature scope/Metadata/Callout/Modal/diagnostics 同步关闭
+→ extraction admission 与 Memory maintenance 同步停止
+→ await Memory idle
+→ await Settings fixed-point drain
+→ await VSS dispose
+→ Stats flush/dispose
+→ await Chat writing → await image dispose → history release
+→ extraction late resources → governance actions/storage
+→ Pagelet runtime → shared Operations → remaining compatibility stores
+```
+
+Obsidian 的同步 `onunload()` 触发该异步流程并记录最终错误；代码不假设宿主会等待
+Promise。LC-01 的 feature scope、LC-02 Metadata、LC-03 Callout 和 D-11 extraction
+admission 都在首个异步等待前封闭新工作，后段资源仍按原偏序释放。
+
+| Owner | 主要责任 |
+| --- | --- |
+| `plugin/settings-persistence.ts` | 当前 Settings 实例、唯一写队列、迁移和 fixed-point drain |
+| `ai-services/plugin-configuration.ts` | AI 配置/credential transaction、revision 与补偿 |
+| `memory/plugin-governance-storage.ts` | 治理 repository/bootstrap/cache/subscription |
+| `memory/plugin-governance-actions.ts` | 治理 action queue、projection、retry/GC/audit |
+| `memory/plugin-integration.ts` | MemoryManager/VSS、extraction/Profile/Vault Insights 生命周期 |
+| `chat/plugin-integration.ts` | Chat history、images、writing 的构造、恢复和分段关闭 |
+| `pagelet/plugin-*.ts` | feature scope、Deep Discover、兼容 flow 与 action/Operations 接缝 |
+| `plugin/*.ts`、`capture/plugin-integration.ts`、`stats/plugin-integration.ts` | Records、Metadata、Callout、Graph、更新、AI/Share Card、Capture、Stats |
 
 ### 5.2 Platform Layer (`src/platform-dom.ts`)
 
@@ -530,7 +576,13 @@ graph TB
 
 ### 5.7 Settings (`src/settings.ts` + `src/settings/pagelet/`)
 
-`PluginManagerSettings` — 40+ 配置字段:
+`PluginManagerSettings` 定义数据模型，`SettingTab` 负责界面；持久化和运行事务不再
+由这个文件拥有。`SettingsPersistence` 管理实时 Settings 实例与写队列，
+`PluginAIConfiguration` 管理 AI/SecretStorage 事务，Memory/governance owners 提供各自
+动作。Settings UI 通过 persistence、Pagelet、AI、feature、Memory 五组能力组合读取
+当前实例，没有构造期 settings 副本，也不导入整个 `PluginManager`。
+
+主要配置域：
 
 | 域 | 关键配置 |
 |-----|---------|
@@ -1004,6 +1056,11 @@ summary.
 | 要找什么 | 从哪里开始 |
 |---------|-----------|
 | 插件入口 | `src/main.ts` → `src/plugin.ts` |
+| Plugin integrations | `src/plugin/`、`src/capture/plugin-integration.ts`、`src/stats/plugin-integration.ts` |
+| Chat shell integration | `src/chat/plugin-integration.ts` |
+| Memory / governance integration | `src/memory/plugin-integration.ts`、`plugin-governance-storage.ts`、`plugin-governance-actions.ts` |
+| Pagelet integrations | `src/pagelet/plugin-*.ts` |
+| Settings / AI transactions | `src/plugin/settings-persistence.ts`、`src/ai-services/plugin-configuration.ts` |
 | AI Agent 循环 | `src/ai-services/pa-agent-runtime.ts` |
 | 工具注册 | `src/ai-services/capability-registry.ts` |
 | Chat 对话 | `src/chat/chat-view.ts` |
