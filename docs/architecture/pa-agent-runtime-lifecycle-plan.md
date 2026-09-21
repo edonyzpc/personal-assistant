@@ -121,6 +121,23 @@ aborted
 abort_timeout
 ```
 
+When an entire source batch is rejected before execution specifically for
+`invalid_declaration` or `invalid_instruction_quote`, Host Policy permits one
+declaration correction per run before generic tool-failure finalization. Every
+result must match the batch's native calls and carry the Host source-preflight
+rejection receipt. The next turn inherits the existing tool/source constraints
+and unchanged budgets, and must pass the same complete preflight again.
+Repeated errors, scope widening, revoked sources, unknown handles, partial
+results and already-finalizing runs do not receive this correction allowance.
+Reserved finalization never reopens tools.
+
+`noteHandles` is required and nonempty only for `notes=selected`, and must be
+omitted for `current_note`, `vault` and `none`. Current-note identity is resolved
+by the Host. Tool execution uses native tool-call fields; textual XML/JSON
+examples remain ordinary data and never grant execution authority. The prompt
+forbids simulating tool execution in answer text, without stripping legitimate
+user-requested syntax examples from the response.
+
 ## Budgets And Timeouts
 
 | Limit | Default | Enforcement |
@@ -128,7 +145,7 @@ abort_timeout
 | Model turns | 20 | `PaAgentLoop` stops before starting another turn. |
 | Tool calls | 30 | `ToolExecutionDispatcher` returns budget outcome. |
 | Run wall clock | 180,000 ms | Checked before/within turns and tool dispatch. |
-| Assistant idle | 60,000 ms | Incremental delivery with no stream activity produces `idle_timeout`; buffered delivery relies on the absolute wall clock. |
+| Assistant idle | 60,000 ms | For request-boundary-aware models, incremental idle starts at physical request admission; preparation remains wall-clock bounded. Models without this hook retain stream-wait timing. Buffered delivery relies on the absolute wall clock. |
 | Individual tool timeout | 30,000 ms | Default recoverable tool outcome. |
 | Tool abort grace | 2,000 ms | Late unresolved tool becomes `abort_timeout`; late result is ignored. |
 | Loop observations | 64,000 chars | Aggregate prompt observation budget. |
@@ -231,6 +248,78 @@ Required capabilities are satisfied by successful tool results, not by the model
 - Wall-clock and idle termination emit structured diagnostics.
 - Provider/runtime exceptions produce terminal `agent_end` error state and retain safe diagnostic payloads for upstream logs.
 - Partial/pending assistant text is not promoted to a successful final answer after error or abort.
+
+### Debugging one run
+
+New Chat background excludes Vault Insights whose source receipt is missing or
+revoked, without discarding independently valid Personal or awaiting background
+refresh. An unchanged aggregate refresh may reuse a still-live receipt; source
+epochs, host withdrawal and real content changes still invalidate old input.
+At physical dispatch, captured background receipts remain authoritative; the
+string comparison fallback applies only when the host supplied no receipt.
+Local preparation/admission rejection emits `provider_admission_rejected` and
+does not enter SDK retries of the same serialized input. An explicitly classified
+history/Vault projection change may use the existing single stream-to-invoke
+fallback only when a fresh input preparation callback is available and no output
+has arrived. It reprojects and revalidates sources; background, writing, image,
+style and authority rejection cannot use that recovery. Network errors retain
+the installed SDK retry policy and revalidate admission on each physical attempt.
+
+Ordinary answer completion requires at least one non-whitespace text character;
+the original text is otherwise preserved exactly. Reasoning-only and whitespace-only
+streams end incomplete, and only existing bounded observation-based finalization
+may retry them. A provider `stop` with whitespace is not a completed answer.
+Conflicting finish markers without meaningful text are errors. A `tool_calls`
+finish marker without native calls ends incomplete (`provider_tool_calls_missing`)
+and withdraws provisional text in both the bridge and canonical Chat UI. Literal
+XML under a normal `stop` remains ordinary text; it never grants tool execution.
+
+Native Chat's ordinary text delivery reuses the same Host source receipt as its
+preview. Check it before committing text and again after asynchronous Host Policy
+at final delivery. Source invalidation withdraws the answer, emits
+`assistant_source_changed`, and ends incomplete without reopening tools. Abort/error
+statuses retain priority; native writing artifacts and explicit non-text Host
+outputs retain their existing contracts. The compatibility bridge emits a
+source-changed recovery instead of silently dropping ordinary text. Chat persists
+the final run status, so a completed model turn cannot override failed delivery.
+
+With the plugin's existing debug setting enabled, filter the Obsidian developer
+console for `PA Agent trace`. These records supplement `PA Agent timing`; they
+do not change admission, retry, timeout or completion policy.
+
+- `chat_*` and `chat_lease:*` identify the service request before a runtime exists.
+  `chatRequestId` links that request to `runtime_start` and `runId`; lifecycle and preparation
+  records then carry `turnId`. HTTP requests made outside a linked Agent model
+  explicitly use `runId: null`, `turnId: null`, `stage: unscoped`.
+- Preparation records have `:start`, `:end` or `:error`, with durations and known
+  host rejection reason codes. `provider_admission` is a local admission check;
+  only `http_dispatch` records an actual HTTP dispatch. Repeated admission errors
+  without dispatch can expose SDK retries of a local failure.
+  `generation_source_rejected` identifies the rejected source group (task,
+  writing context, images, style, background or history) without logging its content.
+- Each physical HTTP attempt has its own `requestId`; `http_response` records
+  response headers for native fetch, or the buffered response for Obsidian
+  transport. Neither HTTP 200 nor headers prove a complete answer. Pair them
+  with model completion, `message_end`, `turn_end`, and `agent_end`.
+  HTTP `elapsedMs` measures the physical attempt; `runElapsedMs` measures time
+  since the scoped logger was created. They are distinct clocks.
+- Tool records distinguish `policy_rejected`, `preflightOnly` and
+  `batchPreflightRejected` from execution. `host_policy` records the reason and
+  next tool mode, including transitions to `final_answer_only`.
+- Assistant summaries record text length, trimmed text length, thinking length,
+  native tool-call identities and a `containsToolCallMarkup` flag. Textual
+  `<tool_calls>` is an observation about the body, never permission to execute a
+  tool. Only the first message update of each kind is logged, avoiding token-level
+  console traffic.
+
+The trace excludes prompt/response bodies, reasoning text, tool arguments,
+note content, request headers and credentials. HTTP traces inspect only string
+body lengths and message/tool counts; they never consume response streams.
+Observer failures are isolated from execution, and disabling debug silences the
+trace and skips HTTP body inspection. Enabling debug takes effect for newly
+created models; disabling it also silences existing observers. Unknown metadata
+reason/outcome codes and exception names are redacted. Existing unrelated debug
+messages retain their existing behavior.
 
 ## UI And History
 

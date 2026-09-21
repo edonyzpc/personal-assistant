@@ -15,6 +15,7 @@
 ## 验证
 
 - [Pagelet Manual Smoke Checklist](./validation/pagelet-smoke-checklist.md)
+- [PA Agent empty-answer diagnosis, 2026-09-21](./validation/pa-agent-empty-answer-diagnosis-2026-09-21.md) — 本地来源准入失败证据、跨设备症状边界与 debug 观测。
 
 ## Discovery 与 Decision
 
