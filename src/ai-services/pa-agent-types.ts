@@ -66,6 +66,17 @@ export interface PaAgentToolExecutionResult {
     sourceRecords?: PaToolResultContent["sourceRecords"];
     contextUsed?: PaToolResultContent["contextUsed"];
     metadata?: Record<string, unknown>;
+    /** Host-owned execution fact used by recovery and duplicate handling. */
+    executionState?: "not_started" | "running" | "succeeded" | "failed" | "partially_succeeded" | "acceptance_unknown";
+    /** Host-owned recovery affordances; never evidence that an operation succeeded. */
+    recovery?: {
+        code: string;
+        allowedActions: Array<"retry" | "correct_input" | "choose_alternative" | "refresh_required_input" | "query_operation" | "wait" | "needs_user" | "none">;
+        retryAfterMs?: number;
+        operationId?: string;
+        completedParts?: string[];
+        remainingParts?: string[];
+    };
 }
 
 /**
@@ -137,6 +148,15 @@ export interface PaAgentToolExecutor {
      * batch to run serially.
      */
     getExecutionMode?: (toolName: string) => AgentCapabilityExecutionMode | undefined;
+    /** Capability-owned attempt timeout. Omission uses the loop's remote default. */
+    getTimeoutMs?: (toolName: string) => number | undefined;
+    /** Whether an interrupted attempt may be repeated without first querying its state. */
+    getRetrySafety?: (toolName: string) => "read_only" | "side_effect" | undefined;
+    /** Whether an exact successful duplicate is still valid for this user request. */
+    canReuseSuccessfulResult?: (
+        toolCall: PaAgentToolCall,
+        context: { userInput: string },
+    ) => boolean;
 }
 
 export type PaAgentToolMode = "normal" | "final_answer_only";

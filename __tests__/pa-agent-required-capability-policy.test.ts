@@ -33,13 +33,13 @@ describe("PA Agent required capability HostPolicy", () => {
         expect(first).toMatchObject({ action: 'continue', runtimeInstruction: expect.stringContaining('correct the source declaration once') });
         expect(first).not.toHaveProperty('toolMode');
         expect(first).not.toHaveProperty('controlSnapshot');
-        expect(await policy.afterTurn(summary)).toMatchObject({ action: 'continue', toolMode: 'final_answer_only' });
+        expect(await policy.afterTurn(summary)).toMatchObject({ action: 'continue', toolMode: 'normal' });
     });
 
     it.each(['scope_widening', 'source_run_changed', 'source_read_outside_scope', 'unknown_note_handle',
         'source_declaration_disabled', 'source_read_plan_unavailable'])('does not treat %s as a format correction', async reason => {
         expect(await sourceRepairPolicy().afterTurn(rejectedSourceBatch(reason)))
-            .toMatchObject({ action: 'continue', toolMode: 'final_answer_only' });
+            .toMatchObject({ action: 'continue', toolMode: 'normal' });
     });
 
     it.each(['mixed-result', 'missing-receipt', 'wrong-call', 'duplicate-result', 'different-reason', 'final-only', 'final-tool-mode'])(
@@ -57,12 +57,12 @@ describe("PA Agent required capability HostPolicy", () => {
             expect('runtimeInstruction' in decision ? decision.runtimeInstruction : '').not.toContain('correct the source declaration once');
         });
 
-    it('does not grant source repair after finalization has already been attempted', async () => {
+    it('can choose a corrected source declaration after another recoverable path failed', async () => {
         const policy = sourceRepairPolicy();
         await policy.afterTurn(createSummary({ status: 'tool_results_ready',
             toolResults: [createToolResult('read_note', { isError: true, outcome: 'recoverable_error' })] }));
         const decision = await policy.afterTurn(rejectedSourceBatch());
-        expect('runtimeInstruction' in decision ? decision.runtimeInstruction : '').not.toContain('correct the source declaration once');
+        expect('runtimeInstruction' in decision ? decision.runtimeInstruction : '').toContain('correct the source declaration once');
     });
 
     it('allows one native context schema correction without opening a new tool scope', async () => {
@@ -77,18 +77,18 @@ describe("PA Agent required capability HostPolicy", () => {
         expect(first).not.toHaveProperty('controlSnapshot');
         expect(first).not.toHaveProperty('toolMode');
         expect(await policy.hostPolicy.afterTurn(summary)).toMatchObject({
-            action: 'continue', toolMode: 'final_answer_only',
+            action: 'continue', toolMode: 'normal',
         });
     });
 
-    it.each(['legacy', 'policy_rejected', 'mixed-failure'])('does not reopen tools for %s', async mode => {
+    it.each(['legacy', 'policy_rejected', 'mixed-failure'])('keeps alternative recovery paths available for %s', async mode => {
         const policy = createRequiredCapabilityHostPolicy({ userInput: 'Write a card',
             availableCapabilities: new Set(), classification: { items: [] }, allowWritingContextSchemaRepair: mode !== 'legacy' });
         const results = [createToolResult('get_writing_context', { isError: true,
             outcome: mode === 'policy_rejected' ? 'policy_rejected' : 'schema_invalid' })];
         if (mode === 'mixed-failure') results.push(createToolResult('webSearch', { isError: true, outcome: 'policy_rejected' }));
         expect(await policy.hostPolicy.afterTurn(createSummary({ status: 'tool_results_ready', toolResults: results })))
-            .toMatchObject({ action: 'continue', toolMode: 'final_answer_only' });
+            .toMatchObject({ action: 'continue', toolMode: 'normal' });
     });
 
     it("classifies strong and weak deterministic capability signals", () => {
@@ -546,15 +546,7 @@ describe("PA Agent required capability HostPolicy", () => {
                 isError: true,
                 outcome: "recoverable_error",
             })],
-        }))).toMatchObject({
-            action: "stop",
-            reason: "required_capability_failed",
-            status: "completed_with_warning",
-            warnings: [expect.objectContaining({
-                capability: "webSearch",
-                detail: "WebSearch was required but failed or was unavailable.",
-            })],
-        });
+        }))).toMatchObject({ action: "continue", reason: "needs_follow_up", toolMode: "normal" });
     });
 
     it("emits incomplete diagnostics when no answer exists after corrective", async () => {
@@ -702,7 +694,7 @@ describe("PA Agent required capability HostPolicy", () => {
         });
     });
 
-    it("does not loop after a required WebSearch tool returns unavailable", async () => {
+    it("keeps recovery tools available after a required WebSearch tool returns unavailable", async () => {
         const policy = createRequiredCapabilityHostPolicy({
             userInput: "Search the web for the latest docs.",
             availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
@@ -717,15 +709,15 @@ describe("PA Agent required capability HostPolicy", () => {
         }))).toMatchObject({
             action: "continue",
             reason: "needs_follow_up",
-            runtimeInstruction: expect.stringContaining("webSearch already returned an unavailable"),
-            toolMode: "final_answer_only",
+            runtimeInstruction: expect.stringContaining("webSearch returned a recoverable observation"),
+            toolMode: "normal",
         });
 
         expect(await policy.hostPolicy.afterTurn(createSummary({
             committedFinalText: "I cannot verify the latest docs from available context.",
         }))).toMatchObject({
             action: "stop",
-            reason: "required_capability_missing",
+            reason: "required_capability_failed",
             status: "completed_with_warning",
             warnings: [expect.objectContaining({
                 capability: "webSearch",
@@ -876,7 +868,7 @@ describe("PA Agent required capability HostPolicy", () => {
         }))).toMatchObject({
             action: "continue",
             reason: "needs_follow_up",
-            toolMode: "final_answer_only",
+            toolMode: "normal",
         });
 
         expect(await policy.hostPolicy.afterTurn(createSummary({
@@ -938,7 +930,7 @@ describe("PA Agent required capability HostPolicy", () => {
         }))).toMatchObject({
             action: "continue",
             reason: "needs_follow_up",
-            toolMode: "final_answer_only",
+            toolMode: "normal",
         });
 
         expect(await policy.hostPolicy.afterTurn(createSummary({
@@ -951,7 +943,7 @@ describe("PA Agent required capability HostPolicy", () => {
         });
     });
 
-    it("stops duplicate-only retries after a required WebSearch failure", async () => {
+    it("keeps recovery tools available after a duplicate-only retry following required WebSearch failure", async () => {
         const policy = createRequiredCapabilityHostPolicy({
             userInput: "Search the web for the latest docs.",
             availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
@@ -969,12 +961,9 @@ describe("PA Agent required capability HostPolicy", () => {
             status: "tool_results_ready",
             toolResults: [createDuplicateToolResult("webSearch")],
         }))).toMatchObject({
-            action: "stop",
-            status: "incomplete",
-            diagnostics: [expect.objectContaining({
-                type: "duplicate_tool_call_without_answer",
-                tools: ["webSearch"],
-            })],
+            action: "continue",
+            reason: "needs_follow_up",
+            toolMode: "normal",
         });
     });
 

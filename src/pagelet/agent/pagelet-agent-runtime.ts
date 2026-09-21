@@ -1118,7 +1118,7 @@ function buildInitialRuntimeInstruction(
         "At least one non-anchor vault source must materially support the final finding.",
         "Treat search_memory only as a lead; verify non-anchor content with inspect_obsidian_note, search_vault_snippets, or read_note_outline before concluding.",
         "WebSearch may verify a vault-derived external fact but must not become the discovery source.",
-        "The normal target is 3–5 model turns and 8–12 real tool calls; the 30-call and 180-second limits are emergency fuses, not targets.",
+        "The normal target is 3–5 model turns and 8–12 real tool calls. Continue beyond that only for a specific unresolved evidence gap, not to broaden the task.",
         "Once the anchor and one verified non-anchor source support a worthwhile finding, normally finalize instead of broadening the search.",
         ...(recoveryEnabled ? [
             "Normally return one strongest natural-Markdown insight or exactly NO_INSIGHT.",

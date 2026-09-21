@@ -81,10 +81,15 @@ export interface ToolDispatcherConfig {
 
 export class ToolExecutionDispatcher {
     private readonly seenToolCallKeys = new Set<string>();
+    private readonly executionRecords = new Map<string, PaAgentToolExecutionResult>();
     private lastSuccessfulWritingContextKey?: string;
     private _toolCallCount = 0;
+    private _physicalAttemptCount = 0;
+    private _reuseCount = 0;
 
     get toolCallCount(): number { return this._toolCallCount; }
+    get physicalAttemptCount(): number { return this._physicalAttemptCount; }
+    get reuseCount(): number { return this._reuseCount; }
 
     constructor(private readonly config: ToolDispatcherConfig) {}
 
@@ -451,6 +456,7 @@ export class ToolExecutionDispatcher {
             }
 
             const toolResult = this.config.emitToolResult(turnId, toolCall, executionResult);
+            this.rememberExecutionRecord(toolCall, executionResult);
             this.rememberSuccessfulWritingContext(toolCall, executionResult, toolResult);
             toolResults.push(toolResult);
 
@@ -530,6 +536,7 @@ export class ToolExecutionDispatcher {
         for (let i = 0; i < entries.length; i++) {
             const executionResult = results[i];
             const toolResult = this.config.emitToolResult(turnId, entries[i].toolCall, executionResult);
+            this.rememberExecutionRecord(entries[i].toolCall, executionResult);
             this.rememberSuccessfulWritingContext(entries[i].toolCall, executionResult, toolResult);
             toolResults.push(toolResult);
             if (stoppedBy === undefined) {
@@ -622,6 +629,25 @@ export class ToolExecutionDispatcher {
         if (consumedControl) return null;
         const toolCallKey = this.normalizeToolCallKey(toolCall);
         if (this.isDuplicateToolCall(toolCall, toolCallKey, this.seenToolCallKeys)) {
+            const recorded = this.executionRecords.get(toolCallKey);
+            if (recorded?.executionState === "succeeded") {
+                const canReuse = this.config.toolExecutor?.canReuseSuccessfulResult;
+                if (canReuse) {
+                    try {
+                        if (!canReuse.call(this.config.toolExecutor, toolCall, { userInput: this.config.userInput })) {
+                            return null;
+                        }
+                    } catch {
+                        return null;
+                    }
+                }
+                this._reuseCount += 1;
+                return this.reuseSuccessfulResult(toolCall, recorded);
+            }
+            if (recorded?.executionState === "acceptance_unknown"
+                || recorded?.executionState === "partially_succeeded") {
+                return this.blockUnknownOrPartialReplay(toolCall, recorded);
+            }
             return {
                 outcome: "duplicate_skipped",
                 promptText: "",
@@ -647,6 +673,79 @@ export class ToolExecutionDispatcher {
             catch { return false; }
         }
         return seen.has(key);
+    }
+
+    private reuseSuccessfulResult(
+        call: ParsedBufferedToolCall,
+        recorded: PaAgentToolExecutionResult,
+    ): PaAgentToolExecutionResult {
+        const reusedMetadata = { ...(recorded.metadata ?? {}) };
+        delete reusedMetadata.executionElapsedMs;
+        return {
+            ...recorded,
+            outcome: "reused_result",
+            executionState: "succeeded",
+            includeInNextPrompt: true,
+            metadata: {
+                ...reusedMetadata,
+                outcome: "reused_result",
+                reason: "successful_result_reused",
+                reused: true,
+                toolName: call.name,
+            },
+        };
+    }
+
+    private blockUnknownOrPartialReplay(
+        call: ParsedBufferedToolCall,
+        recorded: PaAgentToolExecutionResult,
+    ): PaAgentToolExecutionResult {
+        const executionState = recorded.executionState ?? "acceptance_unknown";
+        return {
+            outcome: "recoverable_error",
+            executionState,
+            promptText: executionState === "partially_succeeded"
+                ? `Tool ${call.name} already completed part of this operation. Continue only the remaining parts; do not repeat completed side effects.`
+                : `Tool ${call.name} may already have submitted this operation. Verify its status before retrying; do not submit it again blindly.`,
+            includeInNextPrompt: true,
+            recovery: recorded.recovery ?? {
+                code: executionState === "partially_succeeded" ? "partial_operation" : "operation_acceptance_unknown",
+                allowedActions: executionState === "partially_succeeded" ? ["choose_alternative", "needs_user"] : ["query_operation", "needs_user"],
+            },
+            metadata: {
+                ...recorded.metadata,
+                outcome: "recoverable_error",
+                reason: executionState === "partially_succeeded" ? "partial_replay_blocked" : "unknown_replay_blocked",
+                replayBlocked: true,
+                toolName: call.name,
+            },
+        };
+    }
+
+    private rememberExecutionRecord(
+        call: ParsedBufferedToolCall,
+        result: PaAgentToolExecutionResult,
+    ): void {
+        if (result.metadata?.preflightOnly === true || result.outcome === "budget_exceeded"
+            || result.outcome === "schema_invalid" || result.outcome === "policy_rejected"
+            || result.outcome === "duplicate_skipped" || result.outcome === "reused_result"
+            || result.outcome === "control_applied") return;
+        const key = this.normalizeToolCallKey(call);
+        const executionState = result.executionState
+            ?? (result.outcome === "success"
+                ? "succeeded"
+                : result.outcome === "aborted" || result.outcome === "abort_timeout"
+                    ? "acceptance_unknown"
+                    : "failed");
+        if (executionState === "succeeded" || executionState === "acceptance_unknown"
+            || executionState === "partially_succeeded") {
+            const normalized = { ...result, executionState };
+            this.executionRecords.set(key, normalized);
+            this.seenToolCallKeys.add(key);
+            return;
+        }
+        this.executionRecords.delete(key);
+        this.seenToolCallKeys.delete(key);
     }
 
     private rememberSuccessfulWritingContext(
@@ -724,6 +823,13 @@ export class ToolExecutionDispatcher {
             });
         }
 
+        this._physicalAttemptCount += 1;
+
+        const timeoutMs = this.config.toolExecutor.getTimeoutMs?.(toolCall.name)
+            ?? this.config.toolTimeoutMs;
+        const retrySafety = this.config.toolExecutor.getRetrySafety?.(toolCall.name)
+            ?? "read_only";
+
         const controller = new AbortController();
         const onAbort = () => controller.abort();
         this.config.signal?.addEventListener("abort", onAbort, { once: true });
@@ -731,7 +837,7 @@ export class ToolExecutionDispatcher {
             controller.abort();
         }
 
-        const interrupt = this.createToolInterruptPromise(controller);
+        const interrupt = this.createToolInterruptPromise(controller, timeoutMs);
         const executionPromise: Promise<ToolExecutionRaceResult> = Promise.resolve().then(() => {
             assertTaskSourceReadCurrent(readGuard);
             return this.config.toolExecutor!.execute({
@@ -765,20 +871,26 @@ export class ToolExecutionDispatcher {
                 case "tool_timeout":
                     return finalize({
                         outcome: this.config.toolTimeoutOutcome,
+                        executionState: retrySafety === "read_only" ? "failed" : "acceptance_unknown",
                         promptText: `Tool ${toolCall.name} timed out.`,
-                        previewText: `Timed out after ${this.config.toolTimeoutMs}ms.`,
+                        previewText: `Timed out after ${timeoutMs}ms.`,
+                        ...(retrySafety === "side_effect" ? { recovery: {
+                            code: "operation_acceptance_unknown",
+                            allowedActions: ["query_operation", "needs_user"] as const,
+                        } } : {}),
                         metadata: {
                             outcome: this.config.toolTimeoutOutcome,
                             reason: "tool_timeout",
-                            timeoutMs: this.config.toolTimeoutMs,
+                            timeoutMs,
                         },
                     });
                 case "aborted":
                 case "wall_clock_exceeded":
-                    return finalize(await this.waitForInterruptedTool(first.type, executionPromise));
+                    return finalize(await this.waitForInterruptedTool(first.type, executionPromise, retrySafety));
                 case "abort_timeout":
                     return finalize({
                         outcome: "abort_timeout",
+                        executionState: retrySafety === "read_only" ? "failed" : "acceptance_unknown",
                         promptText: "",
                         includeInNextPrompt: false,
                         metadata: {
@@ -840,6 +952,7 @@ export class ToolExecutionDispatcher {
     private async waitForInterruptedTool(
         interruptedBy: "aborted" | "wall_clock_exceeded",
         executionPromise: Promise<ToolExecutionRaceResult>,
+        retrySafety: "read_only" | "side_effect",
     ): Promise<PaAgentToolExecutionResult> {
         const graceResult = await Promise.race([
             executionPromise,
@@ -850,6 +963,7 @@ export class ToolExecutionDispatcher {
         if (graceResult.type === "abort_timeout") {
             return {
                 outcome: "abort_timeout",
+                executionState: retrySafety === "read_only" ? "failed" : "acceptance_unknown",
                 promptText: "",
                 includeInNextPrompt: false,
                 metadata: {
@@ -872,7 +986,7 @@ export class ToolExecutionDispatcher {
         };
     }
 
-    private createToolInterruptPromise(controller: AbortController): {
+    private createToolInterruptPromise(controller: AbortController, timeoutMs = this.config.toolTimeoutMs): {
         promise: Promise<ToolExecutionRaceResult>;
         cleanup: () => void;
         outerToolDeadlineAt?: number;
@@ -910,9 +1024,9 @@ export class ToolExecutionDispatcher {
                 return;
             }
 
-            if (Number.isFinite(this.config.toolTimeoutMs) && this.config.toolTimeoutMs >= 0) {
-                outerToolDeadlineAt = this.config.now() + this.config.toolTimeoutMs;
-                toolTimeoutTimer = setPlatformTimeout(() => finish({ type: "tool_timeout" }), this.config.toolTimeoutMs);
+            if (Number.isFinite(timeoutMs) && timeoutMs >= 0) {
+                outerToolDeadlineAt = this.config.now() + timeoutMs;
+                toolTimeoutTimer = setPlatformTimeout(() => finish({ type: "tool_timeout" }), timeoutMs);
             }
             const wallClockRemainingMs = this.config.wallClockRemainingMs();
             if (wallClockRemainingMs !== undefined) {
@@ -965,6 +1079,7 @@ export function hasMeaningfulStructuredToolInput(input: unknown): boolean {
 export function defaultIncludeInNextPrompt(outcome: ToolExecutionOutcome): boolean {
     switch (outcome) {
         case "success":
+        case "reused_result":
         case "control_applied":
         case "recoverable_error":
         case "schema_invalid":

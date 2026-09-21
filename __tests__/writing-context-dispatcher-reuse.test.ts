@@ -44,7 +44,7 @@ async function fixture() {
         events: new AgentLifecycleEventEmitter({ runId: 'run', now: () => 1 }),
         emitToolResult: (_turn, call, result) => ({ role: 'toolResult', id: `result-${call.id}`,
             toolCallId: call.id, toolName: call.name, timestamp: 1,
-            isError: !['success', 'duplicate_skipped'].includes(result.outcome),
+            isError: !['success', 'reused_result', 'duplicate_skipped'].includes(result.outcome),
             content: { ...result, includeInNextPrompt: result.includeInNextPrompt ?? true },
         }) as Extract<PaAgentMessage, { role: 'toolResult' }>,
     });
@@ -79,7 +79,7 @@ describe('writing context dispatcher receipt reuse', () => {
         const f = await fixture();
         try {
             await f.select(0);
-            expect((await f.select(0)).content.metadata?.outcome).toBe('duplicate_skipped');
+            expect((await f.select(0)).content.metadata?.outcome).toBe('reused_result');
             expect(f.prepare).toHaveBeenCalledTimes(1);
         } finally { f.dispose(); }
     });
@@ -97,11 +97,13 @@ describe('writing context dispatcher receipt reuse', () => {
         } finally { f.dispose(); }
     });
 
-    it('preserves ordinary tool deduplication', async () => {
+    it('reuses a successful ordinary tool result without executing it again', async () => {
         const f = await fixture();
         try {
             await f.select(0, 'ordinary');
-            expect((await f.select(0, 'ordinary')).content.metadata?.outcome).toBe('duplicate_skipped');
+            const reused = await f.select(0, 'ordinary');
+            expect(reused.content.metadata?.outcome).toBe('reused_result');
+            expect(reused.content.promptText).toBe('ordinary');
             expect(f.ordinaryExecute).toHaveBeenCalledTimes(1);
         } finally { f.dispose(); }
     });

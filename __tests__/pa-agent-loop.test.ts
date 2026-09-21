@@ -130,6 +130,161 @@ describe("PaAgentLoop", () => {
         } finally { jest.useRealTimers(); }
     });
 
+    it.each(["streamed", "buffered"] as const)(
+        "allows a healthy %s provider response to remain quiet for five minutes by default",
+        async (delivery) => {
+            jest.useFakeTimers();
+            try {
+                const model = delivery === "streamed"
+                    ? {
+                        stream: async function* () {
+                            await new Promise<void>((resolve) => setTimeout(resolve, 300_001));
+                            yield { type: "text_delta", text: "Long response completed." } as const;
+                        },
+                    }
+                    : {
+                        stream: (input: PaAgentModelInput) => streamWithInvokeFallback({
+                            input: {},
+                            signal: input.signal,
+                            prepareInvokeInput: () => ({}),
+                            chain: {
+                                stream: async () => { throw new Error("stream unavailable"); },
+                                invoke: async () => {
+                                    await new Promise<void>((resolve) => setTimeout(resolve, 300_001));
+                                    return { content: "Long response completed.", response_metadata: { finish_reason: "stop" } };
+                                },
+                            },
+                        }),
+                    };
+                const pending = new PaAgentLoop({
+                    runId: `five-minute-${delivery}`,
+                    userInput: "complete the bounded task",
+                    model,
+                    providerResponseDelivery: delivery === "streamed" ? "incremental" : "buffered",
+                }).run();
+
+                await jest.advanceTimersByTimeAsync(300_001);
+                const result = await pending;
+
+                expect(result.status).toBe("completed");
+                expect(result.committedFinalText).toBe("Long response completed.");
+                expect(JSON.stringify(result.turns[0].diagnostics)).not.toContain("assistant_idle_timeout");
+                expect(JSON.stringify(result.turns[0].diagnostics)).not.toContain("provider_attempt_timeout");
+            } finally {
+                jest.useRealTimers();
+            }
+        },
+    );
+
+    it("uses an explicit provider-attempt override and recovers on the next model attempt", async () => {
+        jest.useFakeTimers();
+        try {
+            let attempts = 0;
+            const loop = new PaAgentLoop({
+                runId: "attempt-override",
+                userInput: "complete the bounded task",
+                remoteAttemptTimeoutMs: 50,
+                model: {
+                    stream: async function* (input) {
+                        attempts += 1;
+                        if (attempts === 1) {
+                            await new Promise<void>((resolve) => input.signal?.addEventListener("abort", () => resolve(), { once: true }));
+                            return;
+                        }
+                        yield { type: "text_delta", text: "Recovered." } as const;
+                    },
+                },
+            });
+
+            const pending = loop.run();
+            await jest.advanceTimersByTimeAsync(50);
+            const result = await pending;
+
+            expect(attempts).toBe(2);
+            expect(result.status).toBe("completed");
+            expect(result.committedFinalText).toBe("Recovered.");
+            expect(result.turns[0].diagnostics).toContainEqual({
+                type: "provider_attempt_timeout",
+                timeoutMs: 50,
+            });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("gives each SDK physical request its own provider-attempt deadline", async () => {
+        jest.useFakeTimers();
+        try {
+            const loop = new PaAgentLoop({
+                runId: "physical-attempt-reset",
+                userInput: "complete the bounded task",
+                remoteAttemptTimeoutMs: 100,
+                model: {
+                    reportsProviderRequestStart: true,
+                    stream: async function* (input) {
+                        input.notifyProviderRequestStarted?.();
+                        await new Promise<void>((resolve) => setTimeout(resolve, 80));
+                        input.notifyProviderRequestFailed?.();
+                        await new Promise<void>((resolve) => setTimeout(resolve, 500));
+                        input.notifyProviderRequestStarted?.();
+                        await new Promise<void>((resolve) => setTimeout(resolve, 80));
+                        yield { type: "text_delta", text: "Recovered after SDK retry." } as const;
+                    },
+                },
+            });
+            const pending = loop.run();
+            await jest.advanceTimersByTimeAsync(660);
+            const result = await pending;
+            expect(result.status).toBe("completed");
+            expect(result.committedFinalText).toBe("Recovered after SDK retry.");
+            expect(JSON.stringify(result.turns[0].diagnostics)).not.toContain("provider_attempt_timeout");
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("honors Retry-After between provider recovery turns without holding the turn lease", async () => {
+        jest.useFakeTimers();
+        try {
+            const order: string[] = [];
+            let attempts = 0;
+            const loop = new PaAgentLoop({
+                runId: "retry-after",
+                userInput: "complete the bounded task",
+                turnLeaseProvider: async ({ turnIndex }) => {
+                    order.push(`acquire:${turnIndex}`);
+                    return { release: () => order.push(`release:${turnIndex}`) };
+                },
+                model: { stream: async function* () {
+                    attempts += 1;
+                    order.push(`model:${attempts}`);
+                    if (attempts === 1) {
+                        throw Object.assign(new Error("rate limited"), {
+                            status: 429,
+                            headers: { "retry-after": "2" },
+                        });
+                    }
+                    yield { type: "text_delta", text: "Recovered." } as const;
+                } },
+            });
+            const pending = loop.run();
+            await jest.advanceTimersByTimeAsync(0);
+            expect(order).toEqual(["acquire:0", "model:1", "release:0"]);
+            expect(attempts).toBe(1);
+            await jest.advanceTimersByTimeAsync(1_999);
+            expect(attempts).toBe(1);
+            await jest.advanceTimersByTimeAsync(1);
+            const result = await pending;
+            expect(result.status).toBe("completed");
+            expect(order).toEqual([
+                "acquire:0", "model:1", "release:0",
+                "acquire:1", "model:2", "release:1",
+            ]);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("surfaces local admission failure from an async generator as a specific terminal diagnostic", async () => {
         const events: AgentEvent[] = [];
         const loop = new PaAgentLoop({
@@ -148,6 +303,40 @@ describe("PaAgentLoop", () => {
         });
         expect(JSON.stringify(result.endPayload)).not.toContain("provider_error");
         expect(result.transcript[0]).toMatchObject({ role: "user", content: "keep the original request" });
+    });
+
+    it("revalidates prepared material before an SDK physical retry and blocks revoked content", async () => {
+        let authorized = true;
+        let physicalRequests = 0;
+        const prepareModelInput = async (input: PaAgentModelInput): Promise<PaAgentModelInput> => {
+            if (!authorized) throw new Error("source authorization revoked");
+            return { ...input, runtimeInstruction: "authorized-source-material" };
+        };
+        const loop = new PaAgentLoop({
+            runId: "sdk-retry-revalidation",
+            userInput: "use the authorized source",
+            prepareModelInput,
+            model: {
+                stream: async function* (input) {
+                    physicalRequests += 1;
+                    expect(input.runtimeInstruction).toBe("authorized-source-material");
+                    authorized = false;
+                    await input.prepareForProviderRetry?.();
+                    physicalRequests += 1;
+                    yield { type: "text_delta", text: "must not be sent" } as const;
+                },
+            },
+        });
+
+        const result = await loop.run();
+
+        expect(physicalRequests).toBe(1);
+        expect(result.status).toBe("error");
+        expect(result.committedFinalText).toBe("");
+        expect(result.turns[0].diagnostics).toContainEqual(expect.objectContaining({
+            type: "provider_error",
+            retryable: false,
+        }));
     });
 
     beforeEach(() => {
@@ -736,7 +925,7 @@ describe("PaAgentLoop", () => {
         expect(execute).toHaveBeenCalledTimes(1);
         expect(modelInputs.map((input) => input.toolMode)).toEqual([
             undefined,
-            "final_answer_only",
+            "normal",
         ]);
         expect(result.status).toBe("completed_with_warning");
         expect(result.endPayload).toMatchObject({
@@ -801,7 +990,7 @@ describe("PaAgentLoop", () => {
         expect(execute).toHaveBeenCalledTimes(1);
         expect(modelInputs.map((input) => input.toolMode)).toEqual([
             undefined,
-            "final_answer_only",
+            "normal",
         ]);
         expect(result.status).toBe("completed");
         expect(result.endPayload).not.toHaveProperty("warnings");
@@ -3360,7 +3549,7 @@ describe("PaAgentLoop", () => {
         });
     });
 
-    it("turns duplicate toolcalls into duplicate_skipped toolResults without invoking the executor twice", async () => {
+    it("reuses a successful duplicate tool result without invoking the executor twice", async () => {
         const executorInputs: unknown[] = [];
         const loop = new PaAgentLoop({
             runId: "run_1",
@@ -3386,11 +3575,11 @@ describe("PaAgentLoop", () => {
         expect(executorInputs).toEqual([{ query: "same" }]);
         expect(result.turns[0].toolResults.map((message) => message.content.metadata?.outcome)).toEqual([
             "success",
-            "duplicate_skipped",
+            "reused_result",
         ]);
         expect(result.turns[0].toolResults[1]).toMatchObject({
             isError: false,
-            content: { includeInNextPrompt: false, promptText: "" },
+            content: { includeInNextPrompt: true, promptText: "ok" },
         });
         expect(result.turns[0].timing).toMatchObject({
             toolNames: ["search_memory", "search_memory"],
@@ -3404,11 +3593,39 @@ describe("PaAgentLoop", () => {
                 }),
                 expect.objectContaining({
                     toolName: "search_memory",
-                    outcome: "duplicate_skipped",
-                    includeInNextPrompt: false,
+                    outcome: "reused_result",
+                    includeInNextPrompt: true,
                 }),
             ],
         });
+    });
+
+    it("rereads an exact duplicate when the executor marks latest data as non-reusable", async () => {
+        let executions = 0;
+        const loop = new PaAgentLoop({
+            runId: "latest-reread",
+            userInput: "Read the latest version of this note",
+            model: {
+                stream: () => streamChunks([
+                    { type: "toolcall_delta", id: "call_1", name: "read_note", input: { path: "note.md" }, index: 0 },
+                    { type: "toolcall_delta", id: "call_2", name: "read_note", input: { path: "note.md" }, index: 1 },
+                ]),
+            },
+            toolExecutor: {
+                canReuseSuccessfulResult: () => false,
+                execute: async () => ({ outcome: "success", promptText: `version-${++executions}` }),
+            },
+            createId: createDeterministicId,
+            now: () => 100,
+        });
+
+        const result = await loop.run();
+
+        expect(executions).toBe(2);
+        expect(result.turns[0].toolResults.map(message => message.content.promptText)).toEqual([
+            "version-1",
+            "version-2",
+        ]);
     });
 
     it("converts tool exceptions into recoverable_error toolResults and continues best-effort", async () => {

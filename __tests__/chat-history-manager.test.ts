@@ -306,6 +306,28 @@ describe("ChatHistoryManager", () => {
         expect(manager.deserializeTurn(oldRecord).assistantMessage.canonicalTurn?.status).toBe("aborted");
     });
 
+    it("rehydrates an unfinished running turn as interrupted without claiming completion", async () => {
+        const { manager } = makeManager();
+        await manager.initialize();
+        const persisted = manager.serializeTurn(makeHistoryEntry({
+            assistant: {
+                role: "assistant",
+                content: "",
+                shareCardEligible: false,
+                agentExecution: { runId: "run-interrupted", state: "running", operationIds: ["op-1"] },
+            },
+        }), "conv-interrupted", 0);
+
+        const rehydrated = manager.deserializeTurn(persisted);
+        expect(rehydrated.assistantMessage.agentExecution).toEqual({
+            runId: "run-interrupted", state: "interrupted", operationIds: ["op-1"],
+        });
+        expect(rehydrated.assistantMessage.runtimeWarnings).toContainEqual(expect.objectContaining({ type: "agent_interrupted" }));
+        expect(rehydrated.assistantMessage.canonicalTurn?.status).toBe("incomplete");
+        expect(rehydrated.assistantMessage.content).toContain("interrupted");
+        expect(rehydrated.assistantMessage.shareCardEligible).toBe(false);
+    });
+
     it("deserializes a turn and DOUBLE-WRITES memoryMetadata onto both assistantMessage and historyEntry", async () => {
         const { manager } = makeManager();
         await manager.initialize();

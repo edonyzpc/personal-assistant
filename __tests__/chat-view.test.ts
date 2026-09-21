@@ -1023,7 +1023,29 @@ describe('LLMView turn lifecycle', () => {
         expect(view.getIcon()).toBe(PA_CHAT_SUBAGENT_ICON);
     });
 
-    it('passes native candidates for an ordinary prompt and persists the host-selected parent and semantic scene', async () => {
+    it('keeps ordinary questions outside the writing lifecycle even when native writing is available', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'ordinary-conversation' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native',
+            prepareWritingStyleForScene: jest.fn() });
+        await view.onOpen();
+
+        view.prefillComposer('我们先讨论一下安排');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+
+        expect(streamCalls[0].options.writingOutputProtocol).toBe('native');
+        expect(streamCalls[0].options.writingRequest).toBeDefined();
+        expect(streamCalls[0].options.writingContextHost).toBeDefined();
+        streamCalls[0].onChunk('可以，我们先梳理目标。');
+        streamCalls[0].resolve();
+        await flushPromises();
+        expect(await versions.list('ordinary-conversation')).toEqual([]);
+    });
+
+    it('passes native candidates for writing prompts and persists the host-selected parent and semantic scene', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'native-conversation' });
         const versions = new WritingVersionService(store);
@@ -1056,7 +1078,7 @@ describe('LLMView turn lifecycle', () => {
             await persisted;
             await flushPromises();
         };
-        const first = await submit('我们先讨论一下安排');
+        const first = await submit('写一封团队活动邀请函');
         expect(first.options.writingOutputProtocol).toBe('native');
         expect(first.options.writingRequest).toBeDefined();
         expect(first.options.writingContextHost?.candidates).toEqual([]);
@@ -1066,7 +1088,7 @@ describe('LLMView turn lifecycle', () => {
         const firstVersion = (await versions.list('native-conversation'))[0];
         expect(firstVersion.scene).toEqual(firstScene);
 
-        const second = await submit('保留第二句的意思');
+        const second = await submit('继续改写，保留第二句的意思');
         const contextHost = second.options.writingContextHost!;
         expect(contextHost.candidates.map(version => version.id)).toEqual([firstVersion.id]);
         expect(contextHost.isParentCurrent(firstVersion)).toBe(true);
@@ -1079,7 +1101,7 @@ describe('LLMView turn lifecycle', () => {
         expect(secondVersion.parentVersionId).toBe(firstVersion.id);
         expect(secondVersion.scene).toEqual(secondScene);
 
-        const third = await submit('接下来聊个新内容');
+        const third = await submit('另写一段完全无关的咖啡文案');
         await deliver(third, 'third-native', {});
         const thirdVersion = (await versions.list('native-conversation')).find(version => version.messageId === 'third-native')!;
         expect(thirdVersion.parentVersionId).toBeUndefined();
@@ -1158,14 +1180,14 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementsByClass(containerEl, 'pa-chat-writing-action')).toHaveLength(1);
     });
 
-    it.each(['completed', 'incomplete'] as const)('explains withdrawn ordinary text after a %s model turn and preserves final status on reopen', async (turnStatus) => {
+    it.each(['completed', 'incomplete'] as const)('explains withdrawn writing preview after a %s model turn and preserves final status on reopen', async (turnStatus) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'source-change-conversation' });
         const versions = new WritingVersionService(store);
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
         Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native', prepareWritingStyleForScene: jest.fn() });
         await view.onOpen();
-        view.prefillComposer('Explain this principle');
+        view.prefillComposer('帮我写一段解释这个原则的文案');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const call = streamCalls[0];
@@ -1222,7 +1244,11 @@ describe('LLMView turn lifecycle', () => {
         for (let i = 0; i < 6; i++) await flushPromises();
         expect(allText(containerEl)).toContain('保留这段未完成的正文');
         expect(await versions.list('preview-conversation')).toEqual([]);
-        expect(await store.getTurns('preview-conversation')).toEqual([]);
+        expect(await store.getTurns('preview-conversation')).toEqual([
+            expect.objectContaining({ assistant: expect.objectContaining({
+                agentExecution: expect.objectContaining({ state: 'running' }),
+            }) }),
+        ]);
         if (cancelled) getButtonByClass(containerEl, 'cancel-button').click();
         emitCanonical(call, canonicalEvent({ type: 'turn_end', status: cancelled ? 'aborted' : 'completed_with_warning' }));
         emitCanonical(call, canonicalEvent({ type: 'agent_end', status: cancelled ? 'aborted' : 'completed_with_warning' }));
@@ -1865,7 +1891,11 @@ describe('LLMView turn lifecycle', () => {
             : { ...shared, kind: 'writing-recovery', rawText: 'old raw', reason: 'incomplete' });
         stale.resolve();
         for (let i = 0; i < 8; i++) await flushPromises();
-        expect(await store.getTurns('stale-writing')).toEqual([]);
+        expect(await store.getTurns('stale-writing')).toEqual([
+            expect.objectContaining({ assistant: expect.objectContaining({
+                agentExecution: expect.objectContaining({ state: 'running' }),
+            }) }),
+        ]);
         expect(await versions.list('stale-writing')).toEqual([]);
     });
 
@@ -2812,7 +2842,7 @@ describe('LLMView turn lifecycle', () => {
         }
     });
 
-    it.each(['', '@CreateImage '])('keeps the native reply current when %simage creation persists a new conversation', async (prefix) => {
+    it.each(['', '@CreateImage '])('keeps image creation outside the writing lifecycle when %simage creation persists a new conversation', async (prefix) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'native-image-conversation' });
         const versions = new WritingVersionService(store);
@@ -2829,22 +2859,24 @@ describe('LLMView turn lifecycle', () => {
         getElementByClass(containerEl, 'send-button-visible').click();
         for (let i = 0; i < 5; i++) await flushPromises();
         const call = streamCalls[0];
-        const context = call.options.writingContextHost!;
-        expect(context.conversationId).toBe('native-image-conversation');
-        expect(context.isCurrent()).toBe(true);
+        if (prefix) {
+            expect(call.options.writingContextHost).toBeUndefined();
+            expect(call.options.writingRequest).toBeUndefined();
+        } else {
+            expect(call.options.writingContextHost).toBeDefined();
+            expect(call.options.writingRequest).toBeDefined();
+        }
         if (!prefix) {
-            expect(await store.getConversation('native-image-conversation')).toBeNull();
+            expect(await store.getConversation('native-image-conversation')).not.toBeNull();
             await call.options.createImage!.submit({ prompt: '蓝色纸鹤', operation: 'generate', count: 1, referenceImageRefs: [] });
         }
         expect(await store.getConversation('native-image-conversation')).not.toBeNull();
         expect(submit).toHaveBeenCalledTimes(1);
-        expect(context.isCurrent()).toBe(true);
-        call.options.onEvent?.({ version: 1, turnId: 'turn', seq: 1, timestamp: 1, kind: 'writing-preview',
-            runId: 'run', requestId: call.options.writingRequest!.requestId, messageId: 'native-reply', text: '图片请求已提交。' });
+        call.onChunk('图片请求已提交。');
         await flushPromises();
         expect(allText(containerEl)).toContain('图片请求已提交。');
+        expect(await versions.list('native-image-conversation')).toEqual([]);
         await view.onClose();
-        expect(context.isCurrent()).toBe(false);
         call.resolve();
         await flushPromises();
     });
@@ -3133,7 +3165,11 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementByClass(first.containerEl, 'pa-chat-image-task-card').getAttribute('data-task-id'))
             .toBe('accepted_task');
         expect(await store.getConversation('accepted-before-reply')).not.toBeNull();
-        expect(await store.getTurns('accepted-before-reply')).toHaveLength(0);
+        expect(await store.getTurns('accepted-before-reply')).toEqual([
+            expect.objectContaining({ assistant: expect.objectContaining({
+                agentExecution: expect.objectContaining({ state: 'failed' }),
+            }) }),
+        ]);
         await first.view.onClose();
 
         const restored = createView({ chatHistoryManager: manager });
@@ -3277,7 +3313,7 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[0].resolve();
         await flushPromises();
         await flushPromises();
-        expect(chatHistoryManager.recordTurn).toHaveBeenCalledTimes(1);
+        expect(chatHistoryManager.recordTurn).toHaveBeenCalledTimes(2);
 
         textArea.value = '';
         await expect(view.preparePageletHandoff(context)).resolves.toEqual({ status: 'prepared' });
@@ -3346,7 +3382,7 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[0].resolve();
         await flushPromises();
         await flushPromises();
-        expect(chatHistoryManager.recordTurn).toHaveBeenCalledTimes(1);
+        expect(chatHistoryManager.recordTurn).toHaveBeenCalledTimes(2);
         const existingHistory = [...view.chatHistory];
         mockCancelPendingOperations.mockClear();
 
@@ -3375,7 +3411,7 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[0].resolve();
         await flushPromises();
         await flushPromises();
-        expect(chatHistoryManager.recordTurn).toHaveBeenCalledTimes(1);
+        expect(chatHistoryManager.recordTurn).toHaveBeenCalledTimes(2);
         const existingHistory = [...view.chatHistory];
         mockCancelPendingOperations.mockClear();
 
@@ -3548,7 +3584,8 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('exceeds the local context budget');
         expect(view.chatHistory).toHaveLength(0);
         expect(streamCalls).toHaveLength(1);
-        expect(chatHistoryManager.startConversation).not.toHaveBeenCalled();
+        expect(chatHistoryManager.startConversation).toHaveBeenCalledTimes(1);
+        expect(chatHistoryManager.recordTurn).toHaveBeenCalledTimes(2);
     });
 
     it.each([
@@ -4899,8 +4936,10 @@ describe('LLMView turn lifecycle', () => {
         let releaseSave!: () => void;
         const saving = new Promise<void>((resolve) => { releaseSave = resolve; });
         const append = store.appendTurnAndUpdateConversation.bind(store);
+        let appendCount = 0;
         const appendSpy = jest.spyOn(store, 'appendTurnAndUpdateConversation').mockImplementation(async (...args) => {
-            await saving;
+            appendCount += 1;
+            if (appendCount === 2) await saving;
             return append(...args);
         });
         const manager = new ChatHistoryManager({ store, generateId: () => 'failed-ordinary' });
@@ -4920,7 +4959,7 @@ describe('LLMView turn lifecycle', () => {
         call.onChunk('  已收到的正文\n仍可阅读 🌊');
         call.reject(new Error('network fixture failure'));
         for (let i = 0; i < 8; i++) await flushPromises();
-        expect(appendSpy).toHaveBeenCalledTimes(1);
+        expect(appendSpy).toHaveBeenCalledTimes(2);
         // The stream has failed, but finalization is still awaiting persistence.
         // Both callback paths must already be closed during this window.
         call.onChunk('late stale replacement');
@@ -5674,8 +5713,8 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementsByClass(containerEl, 'context-reduction')).toHaveLength(earlierInvocation ? 1 : 0);
         expect(view.chatHistory).toHaveLength(0);
         expect(streamCalls).toHaveLength(1);
-        expect(chatHistoryManager.startConversation).not.toHaveBeenCalled();
-        expect(chatHistoryManager.recordTurn).not.toHaveBeenCalled();
+        expect(chatHistoryManager.startConversation).toHaveBeenCalledTimes(1);
+        expect(chatHistoryManager.recordTurn).toHaveBeenCalledTimes(2);
     });
 
     it('withdraws textual tool envelopes when the provider omitted native calls', async () => {

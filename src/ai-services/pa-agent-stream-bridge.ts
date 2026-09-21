@@ -202,7 +202,7 @@ export class CanonicalToLegacyEventAdapter {
                 return;
             case "tool_execution_end":
                 this.legacyEvents.activity("tool-done", `${event.toolName} finished`, {
-                    legacyStatus: event.outcome === "success"
+                    legacyStatus: event.outcome === "success" || event.outcome === "reused_result"
                         ? {
                             type: "tool-done",
                             tool: event.toolName,

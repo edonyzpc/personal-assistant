@@ -35,7 +35,7 @@ function setup(preflightBatch?: PaAgentToolExecutor['preflightBatch'], maxToolCa
         emitToolResult: (_turnId, toolCall, result) => {
             results.push(result);
             return { role: 'toolResult', id: `result-${results.length}`, toolCallId: toolCall.id,
-                toolName: toolCall.name, timestamp: 1, isError: !['success', 'control_applied', 'duplicate_skipped'].includes(result.outcome),
+                toolName: toolCall.name, timestamp: 1, isError: !['success', 'reused_result', 'control_applied', 'duplicate_skipped'].includes(result.outcome),
                 content: { promptText: result.promptText, metadata: result.metadata,
                     includeInNextPrompt: result.includeInNextPrompt ?? true } } as Extract<PaAgentMessage, { role: 'toolResult' }>;
         },
@@ -68,6 +68,44 @@ describe('complete tool batch Host preflight', () => {
             metadata: { sourceScopeControl: true, preflightOnly: true } });
         expect(f.dispatcher.toolCallCount).toBe(2);
         expect(JSON.stringify(output)).not.toContain('taskSourceReadGuard');
+    });
+
+    it('retries the same canonical read after a transient failure, then reuses the success', async () => {
+        const f = setup();
+        f.execute.mockResolvedValueOnce({
+            outcome: 'recoverable_error', promptText: 'Temporary failure',
+            executionState: 'failed', recovery: { code: 'temporary_failure', allowedActions: ['retry'] },
+        }).mockResolvedValueOnce({ outcome: 'success', promptText: 'Recovered result' });
+
+        const first = await f.dispatcher.executeBufferedToolCalls('first', 0, [call('one')], 'normal', undefined);
+        const second = await f.dispatcher.executeBufferedToolCalls('second', 1, [call('two')], 'normal', undefined);
+        const third = await f.dispatcher.executeBufferedToolCalls('third', 2, [call('three')], 'normal', undefined);
+
+        expect(first.toolResults[0].content.metadata?.outcome).toBe('recoverable_error');
+        expect(second.toolResults[0].content.metadata?.outcome).toBe('success');
+        expect(third.toolResults[0].content.metadata?.outcome).toBe('reused_result');
+        expect(third.toolResults[0].content.promptText).toBe('Recovered result');
+        expect(f.execute).toHaveBeenCalledTimes(2);
+        expect(f.dispatcher.physicalAttemptCount).toBe(2);
+        expect(f.dispatcher.reuseCount).toBe(1);
+    });
+
+    it('blocks blind replay when a side effect has unknown acceptance', async () => {
+        const f = setup();
+        f.execute.mockResolvedValueOnce({
+            outcome: 'recoverable_error', promptText: 'Submission status unknown',
+            executionState: 'acceptance_unknown',
+            recovery: { code: 'submission_unknown', allowedActions: ['query_operation'], operationId: 'op-1' },
+        });
+
+        await f.dispatcher.executeBufferedToolCalls('first', 0, [call('one', 'vault_write')], 'normal', undefined);
+        const repeated = await f.dispatcher.executeBufferedToolCalls('second', 1, [call('two', 'vault_write')], 'normal', undefined);
+
+        expect(repeated.toolResults[0].content.metadata).toMatchObject({
+            outcome: 'recoverable_error', reason: 'unknown_replay_blocked', replayBlocked: true,
+        });
+        expect(repeated.toolResults[0].content.promptText).toContain('Verify its status');
+        expect(f.execute).toHaveBeenCalledTimes(1);
     });
 
     it.each(['unknown', 'ordinary', 'duplicate-id', 'malformed', 'unconsumed'] as const)(

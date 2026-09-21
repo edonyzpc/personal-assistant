@@ -129,7 +129,7 @@ export class PaAgentContextSummarizer {
             && cached.summary.text.length <= maxChars ? cached : undefined;
         if (reusable?.summary.sourceMessages.length === covered.length) return cloneHistorySummary(reusable.summary);
 
-        return this.runBounded(input.signal, this.options.historyTimeoutMs ?? 30_000, async (deadline, generation) => {
+        return this.runBounded(input.signal, this.options.historyTimeoutMs ?? 1_800_000, async (deadline, generation) => {
             const start = reusable?.summary.sourceMessages.length ?? 0;
             const hostDependencyIndexes = new Set<number>(
                 covered.slice(0, start).map((_message, index) => index + 1),
@@ -175,7 +175,7 @@ export class PaAgentContextSummarizer {
         if (cached && cached.text.length <= maxChars && isCurrentToolSummary(cached, input.source)) {
             return cloneToolSummary(cached);
         }
-        return this.runBounded(input.signal, this.options.toolTimeoutMs ?? 12_000, async (deadline, generation) => {
+        return this.runBounded(input.signal, this.options.toolTimeoutMs ?? 1_800_000, async (deadline, generation) => {
             const structured = await summarizeSources([
                 { index: 1, role: "tool", content: source.content.promptText },
             ], undefined, maxChars, `tool_result (${source.toolName}; isError=${source.isError})`, input.invoke, deadline);

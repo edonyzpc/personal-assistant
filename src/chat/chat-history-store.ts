@@ -31,6 +31,7 @@ import type {
     SourceRecord,
     TurnEndStatus,
     ChatWritingRecovery,
+    ChatMessage,
 } from "../ai-services/chat-types";
 
 export const CHAT_HISTORY_SCHEMA_VERSION = 2;
@@ -86,6 +87,7 @@ export interface PersistedChatMessage {
     hostProvenance?: ChatHostProvenance;
     writingVersionId?: string;
     writingRecovery?: ChatWritingRecovery;
+    agentExecution?: ChatMessage["agentExecution"];
 }
 
 export interface PersistedTurn {
@@ -1324,6 +1326,10 @@ function cloneMessage(message: PersistedChatMessage): PersistedChatMessage {
         ...(message.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(message.hostProvenance) } : {}),
         ...(message.writingVersionId !== undefined ? { writingVersionId: validateWritingVersionId(message.writingVersionId) } : {}),
         ...(message.writingRecovery !== undefined ? { writingRecovery: cloneWritingRecovery(message.writingRecovery) } : {}),
+        ...(message.agentExecution ? { agentExecution: {
+            ...message.agentExecution,
+            ...(message.agentExecution.operationIds ? { operationIds: [...message.agentExecution.operationIds] } : {}),
+        } } : {}),
     };
 }
 

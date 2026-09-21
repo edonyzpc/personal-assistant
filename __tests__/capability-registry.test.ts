@@ -44,6 +44,24 @@ const executeMemorySearch = async (
 });
 
 describe("CapabilityRegistry and core tool capabilities", () => {
+    it("uses a 30-minute remote attempt timeout by default and preserves capability overrides", () => {
+        const definition = toRegistryDefinition(createTestChatToolDefinition({ name: "search_memory" }));
+        const execute = async () => createOkToolResult("search_memory");
+
+        const defaultCapability = createCapabilityFromChatToolDefinition(definition, {
+            providerId: "test-provider",
+            execute,
+        });
+        const overriddenCapability = createCapabilityFromChatToolDefinition(definition, {
+            providerId: "test-provider",
+            timeoutMs: 45_000,
+            execute,
+        });
+
+        expect(defaultCapability.timeoutMs).toBe(1_800_000);
+        expect(overriddenCapability.timeoutMs).toBe(45_000);
+    });
+
     it("keeps the fixed writing output separate from provider-registerable executable tools", () => {
         const registry = new CapabilityRegistry();
         const providerCapability = createTestCapability("search_memory");

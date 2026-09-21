@@ -20,15 +20,9 @@ interface PendingLeaseRequest {
     queued: boolean;
 }
 
-/**
- * Capacity-one coordinator for provider-backed Agent work.
- *
- * Chat owns one lease for its complete run. Pagelet acquires a fresh lease for
- * each turn, which gives an already-waiting Chat run priority at the turn
- * boundary without interrupting in-flight Pagelet work.
- */
+/** Two reserved FIFO lanes keep one Chat and one background Pagelet progressing. */
 export class AgentRunCoordinator implements AgentRunCoordinatorPort {
-    private active = false;
+    private readonly active: Record<AgentRunPriority, boolean> = { chat: false, pagelet: false };
     private readonly chatQueue: PendingLeaseRequest[] = [];
     private readonly pageletQueue: PendingLeaseRequest[] = [];
 
@@ -72,23 +66,27 @@ export class AgentRunCoordinator implements AgentRunCoordinatorPort {
     }
 
     private drain(): void {
-        if (this.active) return;
-        const request = this.chatQueue.shift() ?? this.pageletQueue.shift();
-        if (!request) return;
-
-        request.queued = false;
-        request.signal?.removeEventListener("abort", request.onAbort);
-        this.active = true;
-        request.resolve(this.createLease());
+        this.drainLane("chat");
+        this.drainLane("pagelet");
     }
 
-    private createLease(): AgentRunLease {
+    private drainLane(priority: AgentRunPriority): void {
+        if (this.active[priority]) return;
+        const request = this.queueFor(priority).shift();
+        if (!request) return;
+        request.queued = false;
+        request.signal?.removeEventListener("abort", request.onAbort);
+        this.active[priority] = true;
+        request.resolve(this.createLease(priority));
+    }
+
+    private createLease(priority: AgentRunPriority): AgentRunLease {
         let released = false;
         return {
             release: () => {
                 if (released) return;
                 released = true;
-                this.active = false;
+                this.active[priority] = false;
                 this.drain();
             },
         };

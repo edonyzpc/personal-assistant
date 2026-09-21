@@ -427,6 +427,49 @@ describe("T-07 query evidence foundation", () => {
         expect(historyProjection.history).toEqual([]);
     });
 
+    it("keeps a read snapshot across later vault edits but rejects a later path revocation", async () => {
+        const caches = new Map([
+            ["notes/a.md", { frontmatter: { status: "active" } }],
+            ["notes/b.md", { frontmatter: { status: "active" } }],
+        ]);
+        const fixture = queryFixture(
+            [makeFile("notes/a.md"), makeFile("notes/b.md")],
+            caches,
+        );
+        const result = await fixture.invoke({
+            properties: [{ key: "status", operator: "equals", value: "active" }],
+            sort: { field: "path", direction: "asc" },
+            limit: 2,
+        });
+        let allowed = true;
+        const revalidate = jest.fn(async () => {
+            throw new Error("read snapshots must not be refreshed");
+        });
+        const projection = await prepareVaultObservationProjection({
+            transcript: [queryMessage(result)],
+            history: [],
+            revalidate,
+            isPathAllowed: () => allowed,
+            validationMode: "read_snapshot",
+        });
+
+        caches.set("notes/a.md", { frontmatter: { status: "inactive" } });
+        await projection.binding.prepare();
+        projection.binding.assertCurrent();
+        expect(revalidate).not.toHaveBeenCalled();
+        const projected = JSON.parse(toolResultContent(projection.transcript[0]!).promptText) as {
+            observation: QueryNotesOutput;
+        };
+        expect(projected.observation.matches.map((match) => match.path)).toEqual([
+            "notes/a.md",
+            "notes/b.md",
+        ]);
+
+        allowed = false;
+        await expect(projection.binding.prepare()).rejects.toThrow("authorization changed before dispatch");
+        expect(() => projection.binding.assertCurrent()).toThrow("authorization changed before dispatch");
+    });
+
     it("rejects physical admission after an exact-zero query aggregate changes", async () => {
         const caches = new Map([["notes/empty.md", { frontmatter: { status: "inactive" } }]]);
         const fixture = queryFixture([makeFile("notes/empty.md")], caches);

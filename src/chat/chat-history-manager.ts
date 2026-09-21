@@ -357,6 +357,11 @@ export class ChatHistoryManager {
             ...(entry.assistant.runtimeWarnings && entry.assistant.runtimeWarnings.length > 0
                 ? { runtimeWarnings: entry.assistant.runtimeWarnings.map(cloneRuntimeWarning) }
                 : {}),
+            ...(entry.assistant.agentExecution ? { agentExecution: {
+                ...entry.assistant.agentExecution,
+                ...(entry.assistant.agentExecution.operationIds
+                    ? { operationIds: [...entry.assistant.agentExecution.operationIds] } : {}),
+            } } : {}),
             ...(assistantTurnStatus ? { turnStatus: assistantTurnStatus } : {}),
         };
         const memoryMetadata = entry.assistant.memoryMetadata ?? entry.memoryMetadata;
@@ -420,7 +425,8 @@ export class ChatHistoryManager {
                 : {}),
         };
         const memoryMetadata = turn.memoryMetadata ? cloneMemoryMetadata(turn.memoryMetadata) : undefined;
-        const status = turn.assistant.turnStatus
+        const interruptedExecution = turn.assistant.agentExecution?.state === "running";
+        const status = interruptedExecution ? "incomplete" : turn.assistant.turnStatus
             ?? (turn.assistant.runtimeWarnings?.some((warning) => warning.type === "user_abort")
                 ? "aborted"
                 : "completed");
@@ -439,7 +445,9 @@ export class ChatHistoryManager {
         });
         const assistantMessage: ChatMessage = {
             role: "assistant",
-            content: turn.assistant.content,
+            content: interruptedExecution && !turn.assistant.content.trim()
+                ? "This task was interrupted before it finished. Continue it to resume safely."
+                : turn.assistant.content,
             ...(turn.assistant.writingVersionId !== undefined ? { writingVersionId: turn.assistant.writingVersionId } : {}),
             ...(turn.assistant.writingRecovery !== undefined ? { writingRecovery: { ...turn.assistant.writingRecovery,
                 ...(turn.assistant.writingRecovery.generationInput
@@ -454,6 +462,16 @@ export class ChatHistoryManager {
             ...(turn.assistant.runtimeWarnings && turn.assistant.runtimeWarnings.length > 0
                 ? { runtimeWarnings: turn.assistant.runtimeWarnings.map(cloneRuntimeWarning) }
                 : {}),
+            ...(turn.assistant.agentExecution ? { agentExecution: {
+                ...turn.assistant.agentExecution,
+                state: interruptedExecution ? "interrupted" as const : turn.assistant.agentExecution.state,
+                ...(turn.assistant.agentExecution.operationIds
+                    ? { operationIds: [...turn.assistant.agentExecution.operationIds] } : {}),
+            } } : {}),
+            ...(interruptedExecution ? { runtimeWarnings: [
+                ...(turn.assistant.runtimeWarnings ?? []).map(cloneRuntimeWarning),
+                { type: "agent_interrupted", message: "The task was interrupted by a reload. Continue only after checking any recorded operations." },
+            ] } : {}),
         };
         const historyEntry: HistoryTurnEntry = {
             kind: "history",

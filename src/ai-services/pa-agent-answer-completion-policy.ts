@@ -31,6 +31,8 @@ export interface AnswerCompletionLedger {
     finalizationAttempted: boolean;
     emptyFinalizationRetryAttempted: boolean;
     appliedInsightActionReceipts: string[];
+    equivalentNoProgressCounts: Map<string, number>;
+    strategyChangeIssued: Set<string>;
 }
 
 export type AnswerCompletionDecision =
@@ -48,6 +50,12 @@ export type AnswerCompletionDecision =
         action: "stop_incomplete";
         reason: string;
         diagnostics: Array<Record<string, unknown>>;
+    }
+    | {
+        action: "continue_recovery";
+        reason: "recoverable_tool_failure" | "strategy_change_required";
+        runtimeInstruction: string;
+        toolMode: "normal";
     };
 
 export function createAnswerCompletionLedger(): AnswerCompletionLedger {
@@ -59,6 +67,8 @@ export function createAnswerCompletionLedger(): AnswerCompletionLedger {
         finalizationAttempted: false,
         emptyFinalizationRetryAttempted: false,
         appliedInsightActionReceipts: [],
+        equivalentNoProgressCounts: new Map(),
+        strategyChangeIssued: new Set(),
     };
 }
 
@@ -132,7 +142,7 @@ export function decideAnswerCompletion(input: {
 
     const failedRequiredCapabilities = input.failedRequiredCapabilities ?? [];
     if (failedRequiredCapabilities.length > 0) {
-        return forceFinalizeOnce(input.ledger, "required_tool_failed", failedRequiredCapabilities);
+        return recoverFromFailure(input.ledger, input.summary, failedRequiredCapabilities, true);
     }
 
     if (facts.assistantEmpty && input.ledger.promptIncludedObservationTools.size > 0) {
@@ -161,8 +171,16 @@ export function decideAnswerCompletion(input: {
     }
 
     if (facts.hasOnlyDuplicateOrNoopResults) {
-        if (input.ledger.successfulEvidenceTools.size > 0 || input.ledger.promptIncludedObservationTools.size > 0) {
+        if (input.ledger.successfulEvidenceTools.size > 0) {
             return forceFinalizeOnce(input.ledger, "duplicate_only", facts.duplicateOrNoopToolNames);
+        }
+        if (input.ledger.failedEvidenceTools.size > 0) {
+            return recoverFromFailure(
+                input.ledger,
+                input.summary,
+                [...input.ledger.failedEvidenceTools],
+                false,
+            );
         }
         return {
             action: "stop_incomplete",
@@ -176,10 +194,59 @@ export function decideAnswerCompletion(input: {
     }
 
     if (facts.hasOnlyFailureOrStatusResults || facts.hasPromptIncludedObservation) {
-        return forceFinalizeOnce(input.ledger, "tool_failure", facts.failedToolNames);
+        return recoverFromFailure(input.ledger, input.summary, facts.failedToolNames, false);
     }
 
     return { action: "continue_tooling", reason: "tool_chain_allowed" };
+}
+
+function recoverFromFailure(
+    ledger: AnswerCompletionLedger,
+    summary: PaAgentTurnSummary,
+    toolNames: readonly string[],
+    required: boolean,
+): AnswerCompletionDecision {
+    const observations = summary.toolResults.filter((result) => isFailureOrStatusResult(result));
+    const signature = JSON.stringify(observations.map((result) => ({
+        tool: result.toolName,
+        outcome: result.content.metadata?.outcome ?? "unknown",
+        reason: result.content.metadata?.reason ?? "unknown",
+        executionState: result.content.metadata?.executionState ?? "unknown",
+    })).sort((left, right) => `${left.tool}:${left.reason}`.localeCompare(`${right.tool}:${right.reason}`)));
+    const count = (ledger.equivalentNoProgressCounts.get(signature) ?? 0) + 1;
+    ledger.equivalentNoProgressCounts.set(signature, count);
+    const names = [...new Set(toolNames)].join(", ") || "the attempted tool";
+
+    if (count >= 4 && ledger.strategyChangeIssued.has(signature)) {
+        return {
+            action: "stop_incomplete",
+            reason: "equivalent_no_progress",
+            diagnostics: [{
+                type: "equivalent_no_progress",
+                message: "The task could not make progress after an explicit strategy change.",
+                tools: [...new Set(toolNames)],
+                attempts: count,
+                required,
+            }],
+        };
+    }
+
+    if (count >= 3) {
+        ledger.strategyChangeIssued.add(signature);
+        return {
+            action: "continue_recovery",
+            reason: "strategy_change_required",
+            toolMode: "normal",
+            runtimeInstruction: `${names} has produced the same non-progress result ${count} times. Change strategy now: correct the input, use another currently allowed capability, refresh only the specifically required input, or query an existing operation. Do not repeat an unknown side effect, perturb arguments randomly, or claim progress from this instruction.`,
+        };
+    }
+
+    return {
+        action: "continue_recovery",
+        reason: "recoverable_tool_failure",
+        toolMode: "normal",
+        runtimeInstruction: `${names} returned a recoverable observation. Inspect its actual outcome and allowed recovery actions. Retry the same read-only call only when the failure is temporary, otherwise correct the input or choose another currently allowed path. If a side effect is partial or acceptance is unknown, verify or continue only the remaining parts; do not submit it again blindly.`,
+    };
 }
 
 export function buildAnswerFinalizationInstruction(
@@ -292,7 +359,7 @@ function hasSuccessfulEvidence(
         )
     ) return false;
     return !result.isError
-        && result.content.metadata?.outcome === "success"
+        && (result.content.metadata?.outcome === "success" || result.content.metadata?.outcome === "reused_result")
         && hasPromptIncludedObservation(result);
 }
 

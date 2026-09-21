@@ -48,6 +48,37 @@ function makePersistence(manager: ChatHistoryManager) {
 }
 
 describe("ConversationPersistence", () => {
+    it("persists a running placeholder and overwrites the same turn when the run finalizes", async () => {
+        const recorded: Array<{ turnIndex: number; entry: TimelineEntry }> = [];
+        const manager = {
+            initialize: jest.fn(async () => undefined), isAvailable: () => true,
+            startConversation: jest.fn(async () => ({ ...conversation, turnCount: 0 })),
+            recordTurn: jest.fn(async (input: { turnIndex: number; entry: TimelineEntry }) => {
+                recorded.push({ turnIndex: input.turnIndex, entry: input.entry });
+                return { ...conversation, turnCount: Math.max(conversation.turnCount, input.turnIndex + 1) };
+            }),
+            maybePrune: jest.fn(async () => []),
+        } as unknown as ChatHistoryManager;
+        const persistence = makePersistence(manager);
+
+        await expect(persistence.persistRunningTurn("hello", "run-1", {
+            role: "user", content: "hello",
+        })).resolves.toBe(true);
+        await expect(persistence.persistFinalizedTurn("hello", historyEntry, undefined, "run-1")).resolves.toBe(true);
+
+        expect(recorded.map((entry) => entry.turnIndex)).toEqual([0, 0]);
+        expect(recorded[0].entry.kind === "history" && recorded[0].entry.assistant.agentExecution)
+            .toEqual({ runId: "run-1", state: "running" });
+        expect(recorded[1].entry).toEqual({
+            ...historyEntry,
+            assistant: {
+                ...historyEntry.assistant,
+                agentExecution: { runId: "run-1", state: "completed" },
+            },
+        });
+        expect(historyEntry.assistant.agentExecution).toBeUndefined();
+    });
+
     it("prepares version identity after creating the conversation but before the single turn commit", async () => {
         const order: string[] = [];
         const recordTurn = jest.fn(async () => { order.push('turn'); return conversation; });

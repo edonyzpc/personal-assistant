@@ -18,6 +18,11 @@ export interface ChatMessage {
     memoryMetadata?: ChatTurnMemoryMetadata;
     canonicalTurn?: PaAgentPersistedTurn;
     runtimeWarnings?: ChatRuntimeWarning[];
+    agentExecution?: {
+        runId: string;
+        state: "running" | "interrupted" | "completed" | "partial" | "failed" | "cancelled";
+        operationIds?: string[];
+    };
 }
 
 export interface ChatRuntimeWarning {
@@ -448,6 +453,7 @@ export type AgentMessageUpdate =
 
 export type ToolExecutionOutcome =
     | "success"
+    | "reused_result"
     | "recoverable_error"
     | "schema_invalid"
     | "policy_rejected"

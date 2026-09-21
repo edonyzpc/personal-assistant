@@ -795,7 +795,9 @@ export class PageletRecoveryCoordinator {
             this.options.prevalidateStaged(input);
             return input;
         } catch (error) {
-            this.stageValidationSubreason = "shape";
+            if (this.stageValidationSubreason !== "aborted") {
+                this.stageValidationSubreason = "shape";
+            }
             throw error;
         }
     }

@@ -195,7 +195,7 @@ class ChatToolCapability implements AgentCapability {
         this.cost = definition.cost;
         this.platform = options.platform ?? "both";
         this.outputBudgetChars = definition.outputBudgetChars;
-        this.timeoutMs = options.timeoutMs ?? 30_000;
+        this.timeoutMs = options.timeoutMs ?? 1_800_000;
         this.requiresConfirmation = definition.requiresConfirmation;
         this.failureBehavior = definition.failureBehavior;
         this.statusMessageText = definition.statusMessage;

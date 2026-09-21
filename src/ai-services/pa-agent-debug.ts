@@ -6,7 +6,9 @@ export type AgentDebugLog = (phase: string, fields?: AgentDebugFields) => void;
 // Metadata is extensible. Only these host codes are safe to copy into traces.
 const debugCodes = new Set([
     'success', 'recoverable_error', 'schema_invalid', 'policy_rejected', 'budget_exceeded',
-    'duplicate_skipped', 'control_applied', 'aborted', 'abort_timeout', 'source_unavailable',
+    'duplicate_skipped', 'reused_result', 'successful_result_reused',
+    'partial_replay_blocked', 'unknown_replay_blocked',
+    'control_applied', 'aborted', 'abort_timeout', 'source_unavailable',
     'invalid_declaration', 'invalid_instruction_quote', 'scope_widening', 'unknown_note_handle',
     'new_tool_evidence', 'tool_chain_allowed', 'tool_failure', 'required_tool_failed',
     'empty_after_observation', 'empty_after_finalization', 'duplicate_tool_call_without_answer',
@@ -18,6 +20,8 @@ const debugCodes = new Set([
     'late_tool_after_text', 'model_input_preparation_error', 'native_writing_identity_or_batch_invalid',
     'native_writing_invalid', 'native_writing_policy_requested_continuation', 'max_turns_exceeded',
     'provider_completion_conflict', 'provider_content_after_completion', 'provider_error',
+    'provider_attempt_timeout', 'provider_no_progress', 'equivalent_no_progress',
+    'strategy_change_required',
     'provider_admission_rejected', 'provider_tool_calls_missing',
     'provider_transport_end', 'turn_lease_error', 'user_abort', 'wall_clock_exceeded',
     'done', 'idle', 'error', 'completed', 'completed_with_warning', 'incomplete',

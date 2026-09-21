@@ -19,9 +19,9 @@ import type { CapabilityRegistry } from "../../ai-services/capability-registry";
 import type { AiServiceHost } from "../../ai-services/AiServiceHost";
 
 export const PAGELET_DEEP_DISCOVER_PIPELINE_VERSION = "pagelet-deep-discover-v2" as const;
-export const PAGELET_DEEP_DISCOVER_MAX_TURNS = 12;
-export const PAGELET_DEEP_DISCOVER_MAX_TOOL_CALLS = 30;
-export const PAGELET_DEEP_DISCOVER_MAX_WALL_CLOCK_MS = 180_000;
+export const PAGELET_DEEP_DISCOVER_MAX_TURNS = 256;
+export const PAGELET_DEEP_DISCOVER_MAX_TOOL_CALLS = 1024;
+export const PAGELET_DEEP_DISCOVER_MAX_WALL_CLOCK_MS = Number.POSITIVE_INFINITY;
 export const PAGELET_DEEP_DISCOVER_MAX_OBSERVATION_CHARS = 64_000;
 export const PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 export const PAGELET_NO_INSIGHT = "NO_INSIGHT" as const;

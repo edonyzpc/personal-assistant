@@ -35,7 +35,7 @@ describe("PA Agent answer completion policy", () => {
         const summary = createSummary({ status: "tool_results_ready", toolResults: [sourceControl(), result] });
         recordAnswerCompletionTurn(ledger, summary);
         expect(decideAnswerCompletion({ summary, ledger })).toMatchObject(kind === "failure"
-            ? { action: "force_finalize", reason: "tool_failure" }
+            ? { action: "continue_recovery", reason: "recoverable_tool_failure", toolMode: "normal" }
             : { action: "stop_incomplete", reason: "duplicate_tool_call_without_answer" });
         expect(ledger.promptIncludedObservationTools.has("declare_source_scope")).toBe(false);
     });
@@ -57,7 +57,7 @@ describe("PA Agent answer completion policy", () => {
         expect(ledger.successfulEvidenceTools.has("get_current_note_context")).toBe(true);
     });
 
-    it("forces one no-tool finalization turn after failed-only observations", () => {
+    it("keeps tools available after failed-only observations", () => {
         const ledger = createAnswerCompletionLedger();
         const summary = createSummary({
             status: "tool_results_ready",
@@ -72,14 +72,14 @@ describe("PA Agent answer completion policy", () => {
         recordAnswerCompletionTurn(ledger, summary, facts);
 
         expect(decideAnswerCompletion({ summary, ledger, facts })).toMatchObject({
-            action: "force_finalize",
-            reason: "tool_failure",
-            toolMode: "final_answer_only",
-            runtimeInstruction: expect.stringContaining("Do not call tools"),
+            action: "continue_recovery",
+            reason: "recoverable_tool_failure",
+            toolMode: "normal",
+            runtimeInstruction: expect.stringContaining("Retry the same read-only call"),
         });
     });
 
-    it("treats schema-invalid observations as final-answer-only failures", () => {
+    it("returns schema-invalid observations for correction with tools still available", () => {
         const ledger = createAnswerCompletionLedger();
         const summary = createSummary({
             status: "tool_results_ready",
@@ -95,9 +95,9 @@ describe("PA Agent answer completion policy", () => {
 
         expect(facts.hasOnlyFailureOrStatusResults).toBe(true);
         expect(decideAnswerCompletion({ summary, ledger, facts })).toMatchObject({
-            action: "force_finalize",
-            reason: "tool_failure",
-            toolMode: "final_answer_only",
+            action: "continue_recovery",
+            reason: "recoverable_tool_failure",
+            toolMode: "normal",
         });
     });
 
@@ -115,10 +115,26 @@ describe("PA Agent answer completion policy", () => {
         expect(facts.hasNewSuccessfulEvidence).toBe(false);
         expect(facts.hasOnlyFailureOrStatusResults).toBe(true);
         expect(decideAnswerCompletion({ summary, ledger, facts })).toMatchObject({
-            action: "force_finalize",
-            reason: "tool_failure",
-            toolMode: "final_answer_only",
+            action: "continue_recovery",
+            reason: "recoverable_tool_failure",
+            toolMode: "normal",
         });
+    });
+
+    it("requires a strategy change after three equivalent failures and stops after one more", () => {
+        const ledger = createAnswerCompletionLedger();
+        const summary = createSummary({
+            status: "tool_results_ready",
+            toolResults: [createToolResult("webSearch", {
+                isError: true, outcome: "recoverable_error", promptText: "Temporary failure",
+            })],
+        });
+        const decide = () => decideAnswerCompletion({ summary, ledger });
+
+        expect(decide()).toMatchObject({ action: "continue_recovery", reason: "recoverable_tool_failure" });
+        expect(decide()).toMatchObject({ action: "continue_recovery", reason: "recoverable_tool_failure" });
+        expect(decide()).toMatchObject({ action: "continue_recovery", reason: "strategy_change_required" });
+        expect(decide()).toMatchObject({ action: "stop_incomplete", reason: "equivalent_no_progress" });
     });
 
     it("turns duplicate-only tool results into one finalization attempt, then stops", () => {

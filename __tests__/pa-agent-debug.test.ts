@@ -6,7 +6,8 @@ import type { AgentEvent } from '../src/ai-services/chat-types';
 jest.mock('obsidian');
 
 describe('PA Agent debug observation', () => {
-    it.each(['done', 'idle', 'error', 'needs_follow_up', 'tool_results_ready', 'tool_batch_preflight_rejected'])(
+    it.each(['done', 'idle', 'error', 'needs_follow_up', 'tool_results_ready', 'tool_batch_preflight_rejected',
+        'reused_result', 'successful_result_reused', 'provider_attempt_timeout', 'provider_no_progress'])(
         'preserves the current host code %s', code => {
             const sink = jest.fn<(message: string, fields: Record<string, unknown>) => void>();
             const log = createAgentDebugLog(() => true, sink, {});

@@ -1028,11 +1028,10 @@ describe("B-140 T-07 vault observation physical integration", () => {
         expect(f.sdkAttempts.filter(attempt => attempt.retryCount === "1")).toEqual([
             { stream: false, retryCount: "1" },
         ]);
-        for (const request of f.requests.slice(1)) {
-            expect(requestText(request)).not.toContain("A_LONG_HISTORY_SUMMARY_SOURCE");
-        }
+        expect(f.requests.slice(1).some(request => requestText(request).includes("A_LONG_HISTORY_SUMMARY_SOURCE"))).toBe(true);
+        expect(f.requests.slice(1).every(request => !requestText(request).includes("CHANGED_BEFORE_SUMMARY_RETRY"))).toBe(true);
         expect(f.requests.at(-1)?.stream).toBe(true);
-        expect(requestText(f.requests.at(-1)!)).toContain("B_INDEPENDENT_HISTORY_CHOICE");
+        expect(requestText(f.requests.at(-1)!)).toContain("Keep the independent current choice.");
     });
 
     it("does not reread a budget-hidden source in the final answer binding while B still dispatches", async () => {
@@ -1068,23 +1067,22 @@ describe("B-140 T-07 vault observation physical integration", () => {
 
         expect(f.requests[0]?.stream).toBe(false);
         expect(requestText(f.requests[0]!)).toContain("A_HIDDEN_AFTER_CHANGE");
-        for (const request of f.requests.slice(1)) {
-            expect(requestText(request)).not.toContain("A_HIDDEN_AFTER_CHANGE");
-        }
+        expect(f.requests.slice(1).some(request => requestText(request).includes("A_HIDDEN_AFTER_CHANGE"))).toBe(true);
+        expect(f.requests.slice(1).every(request => !requestText(request).includes("A_HIDDEN_AFTER_CHANGE CHANGED"))).toBe(true);
         const answer = f.requests.at(-1);
         expect(answer?.stream).toBe(true);
-        expect(requestText(answer!)).toContain("B_INDEPENDENT_HISTORY_CHOICE");
+        expect(requestText(answer!)).toContain("Keep only the first summary dependency.");
         const summary = f.modelSpecifications.find(specification => specification.isSummary);
         const answerModel = f.modelSpecifications.find(specification => !specification.isSummary);
         await expect((summary!.options.prepareProviderRequest as () => Promise<void>)())
-            .rejects.toThrow("Vault observation evidence changed before dispatch");
+            .resolves.toBeUndefined();
         const readsBeforeAnswerHook = reads.a;
         await expect((answerModel!.options.prepareProviderRequest as () => Promise<void>)())
             .resolves.toBeUndefined();
         expect(reads.a).toBe(readsBeforeAnswerHook);
     });
 
-    it("rejects the answer when its independent current source changes before physical preparation", async () => {
+    it("keeps the captured answer snapshot when its source is edited before physical preparation", async () => {
         const summaryText = JSON.stringify({
             goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
             facts: [{ text: "Keep the earlier dependency.", sourceMessages: [2] }],
@@ -1118,10 +1116,11 @@ describe("B-140 T-07 vault observation physical integration", () => {
         expect(f.requests.some(request => (
             request.stream
             && requestText(request).includes("B_CHANGED_BEFORE_ANSWER")
-        ))).toBe(false);
+        ))).toBe(true);
+        expect(f.requests.every(request => !requestText(request).includes("B_CHANGED_BEFORE_ANSWER CHANGED"))).toBe(true);
     });
 
-    it("revokes a derived free-text history item as a whole while retaining independent evidence", async () => {
+    it("keeps a derived free-text history snapshot while retaining independent evidence", async () => {
         const f = fixture([{ text: "Current answer" }]);
         const installed = await installReadHistory(f, "A_DERIVED_ANSWER_SENTINEL", "B_INDEPENDENT_HISTORY_SENTINEL");
         f.afterModelCreated(() => {
@@ -1131,11 +1130,11 @@ describe("B-140 T-07 vault observation physical integration", () => {
         await f.run({ images: undefined, prompt: "Continue", chatHistory: installed.history });
         const answer = f.requests.find(request => request.stream);
         expect(answer).toBeDefined();
-        expect(requestText(answer!)).not.toContain("A_DERIVED_ANSWER_SENTINEL");
+        expect(requestText(answer!)).toContain("A_DERIVED_ANSWER_SENTINEL");
         expect(requestText(answer!)).toContain("B_INDEPENDENT_HISTORY_SENTINEL");
     });
 
-    it("selectively removes an invalid structured query item and its aggregate promises before dispatch", async () => {
+    it("keeps the structured query read snapshot when live metadata changes before dispatch", async () => {
         let aStillActive = true;
         const f = fixture((_body, index) => {
             if (index === 0) {
@@ -1197,15 +1196,18 @@ describe("B-140 T-07 vault observation physical integration", () => {
         await f.run({ images: undefined, prompt: "Query my active notes" });
         const answer = f.requests[f.requests.length - 1];
         expect(answer).toBeDefined();
-        expect(requestText(answer!)).not.toContain("notes/a.md");
+        expect(requestText(answer!)).toContain("notes/a.md");
         const queryObservation = JSON.parse(requestText(answer!).match(
             /<untrusted source="tool:query_notes"[^>]*>\s*([\s\S]*?)\s*<\/untrusted>/,
         )![1]).observation;
-        expect(queryObservation.nextCursor).toBeUndefined();
-        expect(queryObservation.sort).toBeUndefined();
-        expect(queryObservation.matchCountKind).toBe("lower-bound");
-        expect(queryObservation.coverage).toEqual({ state: "partial" });
-        expect(queryObservation.matches).toEqual([expect.objectContaining({ path: "notes/b.md" })]);
+        expect(queryObservation.nextCursor).toBeDefined();
+        expect(queryObservation.sort).toEqual({ field: "path", direction: "asc" });
+        expect(queryObservation.matchCountKind).toBe("exact");
+        expect(queryObservation.coverage).toEqual(expect.objectContaining({ state: "complete" }));
+        expect(queryObservation.matches).toEqual([
+            expect.objectContaining({ path: "notes/a.md" }),
+            expect.objectContaining({ path: "notes/b.md" }),
+        ]);
     });
 
     it("fails closed when the vault evidence epoch changes in the final synchronous admission window", async () => {
@@ -1271,7 +1273,8 @@ describe("B-140 T-07 vault observation physical integration", () => {
             { stream: true, retryCount: "1" },
         ]);
         for (const request of f.requests.slice(1)) {
-            expect(requestText(request)).not.toContain("A_STALE_RETRY_SENTINEL");
+            expect(requestText(request)).toContain("A_STALE_RETRY_SENTINEL");
+            expect(requestText(request)).not.toContain("A_SOURCE_BODY CHANGED_ON_FIRST_DISPATCH");
             expect(requestText(request)).toContain("B_INDEPENDENT_HISTORY");
         }
         expect(outcome.ok).toBe(true);

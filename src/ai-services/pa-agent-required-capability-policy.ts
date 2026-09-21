@@ -53,6 +53,9 @@ interface RequiredCapabilityRuntimeState {
         Extract<PaAgentMessage, { role: "toolResult" }>
     >;
     seenMemoryToolCallIds: Set<string>;
+    pendingFailedCapabilities: Set<RequiredCapability>;
+    failedCapabilityObservations: Set<string>;
+    everFailedCapabilities: Set<RequiredCapability>;
     phase: CapabilityRuntimePhase;
     answerCompletionLedger: AnswerCompletionLedger;
     sourceDeclarationRepairAttempted: boolean;
@@ -105,6 +108,9 @@ export function createRequiredCapabilityHostPolicy(
         usedCapabilities: new Set(),
         memoryResultsByToolCallId: new Map(),
         seenMemoryToolCallIds: new Set(),
+        pendingFailedCapabilities: new Set(),
+        failedCapabilityObservations: new Set(),
+        everFailedCapabilities: new Set(),
         phase: { kind: "awaiting_initial_tools" },
         answerCompletionLedger: createAnswerCompletionLedger(),
         sourceDeclarationRepairAttempted: false,
@@ -346,6 +352,14 @@ function decideAfterTurn(
             toolMode: completionDecision.toolMode,
         };
     }
+    if (completionDecision?.action === "continue_recovery") {
+        return {
+            action: "continue",
+            reason: "needs_follow_up",
+            runtimeInstruction: completionDecision.runtimeInstruction,
+            toolMode: completionDecision.toolMode,
+        };
+    }
     if (completionDecision?.action === "continue_tooling" && shouldOpenSameSourceFollowUp(summary)) {
         return buildSameSourceFollowUpDecision(summary);
     }
@@ -379,7 +393,13 @@ function decideAfterTurn(
 
     if (missing.all.length > 0) {
         state.phase = phaseToTerminal(state.phase);
-        return buildMissingRequiredDecision(summary, state, "required_capability_missing");
+        return buildMissingRequiredDecision(
+            summary,
+            state,
+            state.everFailedCapabilities.size > 0
+                ? "required_capability_failed"
+                : "required_capability_missing",
+        );
     }
 
     state.phase = phaseToTerminal(state.phase);
@@ -500,10 +520,9 @@ function handleFailedRequired(
 ): ReturnType<PaAgentHostPolicy["afterTurn"]> {
     if (state.phase.kind === "awaiting_initial_tools") {
         state.phase = { kind: "failed_retry_issued" };
-        return buildFailedRetryDecision(summary, state, facts, failedRequiredCapabilities);
     }
-    state.phase = phaseToTerminal(state.phase);
-    return buildMissingRequiredDecision(summary, state, "required_capability_failed");
+    const decision = buildFailedRetryDecision(summary, state, facts, failedRequiredCapabilities);
+    return decision;
 }
 
 function buildFailedRetryDecision(
@@ -526,11 +545,27 @@ function buildFailedRetryDecision(
             toolMode: completionDecision.toolMode,
         };
     }
+    if (completionDecision?.action === "continue_recovery") {
+        return {
+            action: "continue",
+            reason: "needs_follow_up",
+            runtimeInstruction: completionDecision.runtimeInstruction,
+            toolMode: completionDecision.toolMode,
+        };
+    }
+    if (completionDecision?.action === "stop_incomplete") {
+        return {
+            action: "stop",
+            reason: completionDecision.reason,
+            status: "incomplete",
+            diagnostics: completionDecision.diagnostics,
+        };
+    }
     return {
         action: "continue",
         reason: "needs_follow_up",
         runtimeInstruction: buildFailedRequiredToolInstruction(failedRequiredCapabilities),
-        toolMode: "final_answer_only",
+        toolMode: "normal",
     };
 }
 
@@ -635,8 +670,8 @@ function buildFailedRequiredToolInstruction(capabilities: RequiredCapability[]):
         .join(", ");
     return [
         `${toolList} was already attempted but returned an unavailable or invalid tool result.`,
-        "Do not call that failed tool again in this run.",
-        "Produce the final answer from only available context.",
+        "Inspect the actual result before deciding the next step. Retry the same read-only call only when the result identifies a temporary failure; otherwise correct its input or use another currently allowed capability.",
+        "Do not blindly repeat an unknown side effect or claim that an unavailable result supplied evidence.",
         "If the requested evidence is unavailable, do not claim it was verified.",
     ].join(" ");
 }
@@ -691,6 +726,7 @@ function recordUsedCapabilities(
     state: RequiredCapabilityRuntimeState,
 ): void {
     for (const result of summary.toolResults) {
+        registerRequiredFailure(result, state);
         if (result.toolName === "search_memory") {
             const seenBefore = state.seenMemoryToolCallIds.has(result.toolCallId);
             state.seenMemoryToolCallIds.add(result.toolCallId);
@@ -728,6 +764,7 @@ function synchronizeProjectedMemoryResults(
     for (const result of projectedMemoryResults) {
         state.seenMemoryToolCallIds.add(result.toolCallId);
         state.memoryResultsByToolCallId.set(result.toolCallId, result);
+        registerRequiredFailure(result, state);
     }
 }
 
@@ -751,7 +788,7 @@ function getSatisfiedRequiredCapability(
     if (
         result.toolName === "inspect_obsidian_note"
         && !result.isError
-        && result.content.metadata?.outcome === "success"
+        && (result.content.metadata?.outcome === "success" || result.content.metadata?.outcome === "reused_result")
     ) {
         return "get_current_note_context";
     }
@@ -786,28 +823,33 @@ function getFailedRequiredCapabilityNames(
     summary: PaAgentTurnSummary,
     state: RequiredCapabilityRuntimeState,
 ): RequiredCapability[] {
-    const requiredNames = new Set(getRequiredItems(state.classification).map((item) => item.capability));
-    const failed = new Set(summary.toolResults
-        .filter((result) =>
-            isRequiredCapability(result.toolName)
-            && requiredNames.has(result.toolName)
-            && state.availableCapabilities.has(result.toolName)
-            && (result.isError || isUnavailableMemoryResult(result))
-            && result.content.metadata?.outcome !== "duplicate_skipped"
-        )
-        .map((result) => result.toolName as RequiredCapability));
-    if (
-        requiredNames.has("search_memory")
-        && state.availableCapabilities.has("search_memory")
-        && !isRequiredCapabilitySatisfied(state, "search_memory")
-        && [...state.memoryResultsByToolCallId.values()].some((result) => (
-            (result.isError || isUnavailableMemoryResult(result))
-            && result.content.metadata?.outcome !== "duplicate_skipped"
-        ))
-    ) {
-        failed.add("search_memory");
-    }
-    return [...failed];
+    for (const result of summary.toolResults) registerRequiredFailure(result, state);
+    const failed = [...state.pendingFailedCapabilities];
+    state.pendingFailedCapabilities.clear();
+    return failed;
+}
+
+function registerRequiredFailure(
+    result: PaAgentTurnSummary["toolResults"][number],
+    state: RequiredCapabilityRuntimeState,
+): void {
+    if (!isRequiredCapability(result.toolName)
+        || !getRequiredItems(state.classification).some((item) => item.capability === result.toolName)
+        || !state.availableCapabilities.has(result.toolName)
+        || (!result.isError && !isUnavailableMemoryResult(result))
+        || result.content.metadata?.outcome === "duplicate_skipped") return;
+    const capability = result.toolName;
+    const signature = JSON.stringify({
+        toolCallId: result.toolCallId,
+        capability,
+        outcome: result.content.metadata?.outcome ?? "unknown",
+        reason: result.content.metadata?.reason ?? "unknown",
+        executionState: result.content.metadata?.executionState ?? "unknown",
+    });
+    if (state.failedCapabilityObservations.has(signature)) return;
+    state.failedCapabilityObservations.add(signature);
+    state.pendingFailedCapabilities.add(capability);
+    state.everFailedCapabilities.add(capability);
 }
 
 function isSuccessfulRequiredCapabilityResult(
@@ -818,7 +860,7 @@ function isSuccessfulRequiredCapabilityResult(
     // not be checked and must retain the terminal warning.
     return isRequiredCapability(result.toolName)
         && !result.isError
-        && result.content.metadata?.outcome === "success"
+        && (result.content.metadata?.outcome === "success" || result.content.metadata?.outcome === "reused_result")
         && !isUnavailableMemoryResult(result);
 }
 

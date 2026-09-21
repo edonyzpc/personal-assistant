@@ -121,21 +121,19 @@ export class TaskSourceRun {
         signal?: AbortSignal,
     ): Promise<VaultObservationProjection> => {
         if (!this.isCurrent()) throw new Error('Cannot prepare vault observations from an inactive source run');
-        if (!this.revalidateVaultObservation) {
-            const hasContract = transcript.some(message => message.role === 'toolResult'
-                && message.content.metadata?.vaultObservationContractVersion === 1)
-                || history.some(message => readChatHistoryTurnMetadata(message)?.vaultObservationContractVersion === 1);
-            if (hasContract) throw new Error('Vault observation revalidation is unavailable');
-        }
         return await prepareVaultObservationProjection({
             transcript,
             history,
+            // Read-snapshot projection only rechecks current authorization. The
+            // callback remains part of the shared projection contract but is
+            // intentionally never invoked in this mode.
             revalidate: this.revalidateVaultObservation ?? (async () => {
-                throw new Error('Vault observation revalidation is unavailable');
+                throw new Error('Vault observation live revalidation is unavailable');
             }),
             getEpoch: this.getMemoryEvidenceEpoch,
             isPathAllowed: path => this.isPathAllowed?.(path) ?? true,
             signal,
+            validationMode: 'read_snapshot',
         });
     };
 
@@ -214,7 +212,7 @@ export class TaskSourceRun {
         const captured = records.map(record => {
             const path = record.path;
             const file = path ? this.getFileByPath(path) as VaultFileLike | undefined : undefined;
-            return { path, file, mtime: file?.stat?.mtime, size: file?.stat?.size,
+            return { path, file,
                 web: record.sourceBoundary === 'web', memory: record.sourceBoundary === 'memory' || record.kind === 'memory-reference',
                 noteId: path ? this.resolveNoteId(path) : undefined };
         });
@@ -230,7 +228,6 @@ export class TaskSourceRun {
                 const allowed = source.web ? !constraint || state.allows({ kind: 'web' }, constraint)
                     : source.noteId !== undefined && !!source.path && !!source.file
                         && getFileByPath(source.path) === source.file && source.file.path === source.path
-                        && source.file.stat?.mtime === source.mtime && source.file.stat?.size === source.size
                         && (!constraint || state.allows({ kind: 'note', noteId: source.noteId }, constraint));
                 if (!allowed) throw new Error('Generation material source changed');
             }

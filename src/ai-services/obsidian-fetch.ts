@@ -79,6 +79,8 @@ export interface ObsidianFetchControl {
     providerRequestScope?: ProviderRequestScope;
     /** Synchronous admission check immediately before each physical HTTP dispatch. */
     onProviderRequestStart?: () => void;
+    /** Runs when a physical HTTP attempt fails or returns a non-success status. */
+    onProviderRequestFailed?: () => void;
     /** Validate the already-serialized request immediately before each physical dispatch. */
     prepareProviderRequest?: (signal?: AbortSignal | null) => void | Promise<void>;
     onProviderRequestDiagnostic?: (evidence: ProviderRequestDiagnostic) => void;
@@ -347,14 +349,16 @@ export const obsidianFetch = async (
         try { return traceProviderDispatch(() => requestUrl(requestParam), 'obsidian', control.onProviderRequestTrace, body, control.isProviderRequestTraceEnabled); }
         finally { reportProviderRequestDiagnostic(body, 'obsidian', control.onProviderRequestDiagnostic); }
     };
-    const response = control.providerRequestScope
-        ? await control.providerRequestScope.startRequest(
+    let response;
+    try {
+        response = control.providerRequestScope
+            ? await control.providerRequestScope.startRequest(
             dispatch,
             init.signal,
             control.onProviderRequestStart,
             control.prepareProviderRequest,
         )
-        : await (async () => {
+            : await (async () => {
             throwIfAborted(init.signal);
             if (control.prepareProviderRequest) {
                 await withAbort(
@@ -367,7 +371,12 @@ export const obsidianFetch = async (
             throwIfAborted(init.signal);
             return await withAbort(dispatch(), init.signal);
         })();
+    } catch (error) {
+        control.onProviderRequestFailed?.();
+        throw error;
+    }
     const status = normalizeStatus(response.status);
+    if (status < 200 || status >= 300) control.onProviderRequestFailed?.();
     const canHaveBody = status !== 204 && status !== 205 && status !== 304;
     const responseBody = response.arrayBuffer?.byteLength
         ? response.arrayBuffer

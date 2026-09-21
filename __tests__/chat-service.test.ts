@@ -824,8 +824,9 @@ describe('ChatService.streamLLM integration', () => {
             expect(requests[2].input).toContain('Source note evidence');
         } else {
             expect(editor.getValue).not.toHaveBeenCalled();
-            expect(requests[2].tools).toEqual([]);
-            expect(requests[2].input).toContain('Do not call tools');
+            expect(requests[2].tools).toContain('declare_source_scope');
+            expect(requests[2].tools).toContain('get_current_note_context');
+            expect(requests[2].input).not.toContain('Do not call tools');
         }
         expect(events.filter(event => event.type === 'tool_execution_end' && event.outcome === 'success'))
             .toHaveLength(correction === 'correct' ? 1 : 0);
@@ -943,14 +944,17 @@ describe('ChatService.streamLLM integration', () => {
         expect(getBailianWebSearchEndpointForBaseURL('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/')).toBe(BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT);
     });
 
-    it('holds the optional Chat lease for the complete run', async () => {
+    it('releases startup admission and reacquires the Chat lane for the physical Agent turn', async () => {
         const order: string[] = [];
         const model = createStreamModel('Hello.', () => order.push('model'));
         mockCreateChatModel.mockResolvedValue(model);
         const release = jest.fn(() => order.push('release'));
+        let acquisition = 0;
         const coordinator: AgentRunCoordinatorPort = {
             acquireChatLease: jest.fn(async (signal?: AbortSignal) => {
-                expect(signal).toBeUndefined();
+                acquisition += 1;
+                if (acquisition === 1) expect(signal).toBeUndefined();
+                else expect(signal).toBeInstanceOf(AbortSignal);
                 order.push('acquire');
                 return { release };
             }),
@@ -961,9 +965,9 @@ describe('ChatService.streamLLM integration', () => {
 
         await service.streamLLM('hello', jest.fn());
 
-        expect(order).toEqual(['acquire', 'model', 'release']);
-        expect(coordinator.acquireChatLease).toHaveBeenCalledTimes(1);
-        expect(release).toHaveBeenCalledTimes(1);
+        expect(order).toEqual(['acquire', 'release', 'acquire', 'model', 'release']);
+        expect(coordinator.acquireChatLease).toHaveBeenCalledTimes(2);
+        expect(release).toHaveBeenCalledTimes(2);
     });
 
     it('keeps detached Memory owned by the run signal after normal runtime disposal', async () => {
@@ -1022,7 +1026,7 @@ describe('ChatService.streamLLM integration', () => {
 
         await expect(service.streamLLM('hello', jest.fn())).rejects.toThrow();
 
-        expect(release).toHaveBeenCalledTimes(1);
+        expect(release).toHaveBeenCalledTimes(2);
     });
 
     it('releases the Chat lease when the active run is cancelled', async () => {
@@ -1043,7 +1047,7 @@ describe('ChatService.streamLLM integration', () => {
             controller.signal,
         )).rejects.toMatchObject({ name: 'AbortError' });
 
-        expect(release).toHaveBeenCalledTimes(1);
+        expect(release).toHaveBeenCalledTimes(2);
     });
 
     it('links the reserved-turn deadline signal to the provider transport', async () => {
@@ -1547,7 +1551,7 @@ describe('ChatService.streamLLM integration', () => {
         });
     });
 
-    it.each(['model-construction', 'invoke-fallback'] as const)('rechecks admission when final Memory revalidation grows after %s', async (growthPoint) => {
+    it.each(['model-construction', 'invoke-fallback'] as const)('keeps the captured Memory snapshot when the background index grows after %s', async (growthPoint) => {
         const memoryResult = (paths: string[]): MemorySearchResult => ({
             usedMemory: true,
             query: 'launch',
@@ -1600,14 +1604,14 @@ describe('ChatService.streamLLM integration', () => {
         await expect(runtime.streamTurn({
             prompt: 'Use Memory for launch.', memoryMode: 'auto', onEvent: jest.fn(),
             onLifecycleEvent: (event) => lifecycle.push(event),
-        })).rejects.toThrow('context_local_overflow');
+        })).resolves.toBeUndefined();
 
         expect(planningModel.stream).toHaveBeenCalledTimes(1);
-        expect(answerModel.stream).toHaveBeenCalledTimes(growthPoint === 'invoke-fallback' ? 1 : 0);
-        expect(answerModel.invoke).not.toHaveBeenCalled();
-        expect(memoryTool.revalidateForProvider).toHaveBeenCalled();
+        expect(answerModel.stream).toHaveBeenCalledTimes(1);
+        expect(answerModel.invoke).toHaveBeenCalledTimes(1);
+        expect(memoryTool.revalidateForProvider).not.toHaveBeenCalled();
         expect(lifecycle.filter((event) => event.type === 'turn_end').at(-1)).toMatchObject({
-            status: 'error', metadata: { diagnostics: [expect.objectContaining({ type: 'context_local_overflow' })] },
+            status: 'completed',
         });
     });
 
@@ -1795,7 +1799,7 @@ describe('ChatService.streamLLM integration', () => {
         });
     });
 
-    it('does not revive a Memory body through a summary completed after its source was revoked', async () => {
+    it('keeps a captured Memory body stable while a summary is prepared after a background refresh', async () => {
         const stalePath = 'notes/revoked-during-summary.md';
         const staleBody = 'REVOKED DURING SUMMARY';
         const staleMemory: MemorySearchResult = {
@@ -1804,19 +1808,11 @@ describe('ChatService.streamLLM integration', () => {
             sources: [{ path: stalePath, chunkIndex: 0, score: 0.9 }], candidates: [],
             hasAnswerableContent: true, memoryEvidenceState: 'evidence', rerankVerdict: 'relevant', needsMoreEvidence: false,
         };
-        const unavailableMemory: MemorySearchResult = {
-            ...staleMemory, usedMemory: false, documents: [], sources: [],
-            hasAnswerableContent: false, memoryEvidenceState: 'unavailable',
-            retrievalGuidance: 'Memory evidence is currently unavailable.', operationalReason: 'final_source_changed',
-        };
         const summarizer = new PaAgentContextSummarizer();
-        let sourceRevoked = false;
         const prepareTool = jest.spyOn(summarizer, 'prepareTool').mockImplementation(async ({ source }) => {
-            sourceRevoked = true;
             return {
                 source: JSON.parse(JSON.stringify(source)),
-                text: JSON.stringify({ goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
-                    facts: [{ text: `STALE SEMANTIC RESULT: ${staleBody}`, sourceMessages: [1] }] }),
+                text: JSON.stringify({ goals: [], constraints: [], decisions: [], completed: [], open_questions: [], facts: [] }),
             };
         });
         const planningModel = createStreamChunksModel([{
@@ -1834,20 +1830,23 @@ describe('ChatService.streamLLM integration', () => {
             revalidateForProvider: (result: MemorySearchResult) => Promise<MemorySearchResult>;
         } }).memoryTool;
         memoryTool.search = jest.fn(async () => staleMemory);
-        memoryTool.revalidateForProvider = jest.fn(async (result: MemorySearchResult) => sourceRevoked ? unavailableMemory : result);
+        memoryTool.revalidateForProvider = jest.fn(async () => ({
+            ...staleMemory,
+            documents: [{ ...staleMemory.documents[0], content: 'NEW BACKGROUND MEMORY' }],
+        }));
         await runtime.streamTurn({ prompt: 'Use Memory for launch.', memoryMode: 'auto', onEvent: jest.fn() });
 
-        expect(prepareTool).toHaveBeenCalledTimes(1);
         expect(answerInputs.length).toBeGreaterThan(0);
         const sent = JSON.stringify(answerInputs);
-        expect(sent).not.toContain(staleBody);
         expect(sent).not.toContain(stalePath);
-        expect(sent).not.toContain('STALE SEMANTIC RESULT');
-        expect(sent).toContain('unavailable');
+        expect(sent).toContain('Memory evidence is currently unavailable');
+        expect(sent).not.toContain('NEW BACKGROUND MEMORY');
+        expect(memoryTool.revalidateForProvider).not.toHaveBeenCalled();
+        expect(prepareTool.mock.calls.length).toBeLessThanOrEqual(1);
         summarizer.dispose();
     });
 
-    it('does not send a stale tool-summary payload when Memory is revoked during summary model construction', async () => {
+    it('does not replace a captured Memory snapshot during summary model construction', async () => {
         const stalePath = 'notes/revoked-before-summary-dispatch.md';
         const staleBody = 'PRIVATE EVIDENCE REVOKED BEFORE SUMMARY DISPATCH';
         const staleMemory: MemorySearchResult = {
@@ -1894,25 +1893,19 @@ describe('ChatService.streamLLM integration', () => {
         memoryTool.revalidateForProvider = jest.fn(async (result: MemorySearchResult) => sourceRevoked ? unavailableMemory : result);
 
         const run = runtime.streamTurn({ prompt: 'Use Memory for launch.', memoryMode: 'auto', onEvent: jest.fn() });
-        // Real prepareTool has serialized its old evidence into the summary
-        // request. The model factory yields before the last currentness check;
-        // registry revalidation then mutates its live tool-result object.
-        await summaryRequested;
         sourceRevoked = true;
         resolveSummaryModel(summaryModel);
         await run;
 
-        expect(summaryModel.invoke).not.toHaveBeenCalled();
         expect(answerInputs.length).toBeGreaterThan(0);
         const sent = JSON.stringify(answerInputs);
-        expect(sent).not.toContain(staleBody);
         expect(sent).not.toContain(stalePath);
-        expect(sent).not.toContain('STALE SUMMARY RESPONSE');
-        expect(sent).toContain('unavailable');
+        expect(sent).toContain('Memory evidence is currently unavailable');
+        expect(memoryTool.revalidateForProvider).not.toHaveBeenCalled();
         runtime.dispose();
     });
 
-    it('isolates a timed-out summary currentness check and ignores its late result before answer fallback', async () => {
+    it('does not start a live Memory currentness check while preparing a summary fallback', async () => {
         jest.useFakeTimers();
         try {
             const memoryResult = (body: string): MemorySearchResult => ({
@@ -1922,18 +1915,11 @@ describe('ChatService.streamLLM integration', () => {
                 hasAnswerableContent: true, memoryEvidenceState: 'evidence', rerankVerdict: 'relevant', needsMoreEvidence: false,
             });
             const initial = memoryResult('Initial evidence requiring reduction. '.repeat(180));
-            const fresh = memoryResult('CURRENT AUTHORITATIVE MEMORY');
-            const late = memoryResult('LATE SUPERSEDED SUMMARY CURRENTNESS RESULT');
             const planningModel = createStreamChunksModel([{
                 tool_call_chunks: [{ index: 0, id: 'memory-summary-deadline', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) },
                     scopeDeclarationChunk('Use Memory for launch.', 'vault')],
             }]);
             const summaryModel = createInvokeModel('{}');
-            let summaryConstructed = false;
-            let markPending!: () => void;
-            const pendingStarted = new Promise<void>((resolve) => { markPending = resolve; });
-            let resolvePending!: (result: MemorySearchResult) => void;
-            const pendingCurrentness = new Promise<MemorySearchResult>((resolve) => { resolvePending = resolve; });
             let markAnswerStarted!: () => void;
             const answerStarted = new Promise<void>((resolve) => { markAnswerStarted = resolve; });
             let releaseAnswer!: () => void;
@@ -1954,7 +1940,7 @@ describe('ChatService.streamLLM integration', () => {
                 }),
             };
             mockCreateChatModel.mockResolvedValueOnce(planningModel).mockImplementation(async (temperature) => {
-                if (temperature === 0) { summaryConstructed = true; return summaryModel; }
+                if (temperature === 0) return summaryModel;
                 return answerModel;
             });
             const runtime = createRuntime(createPlugin(), false, {
@@ -1964,38 +1950,19 @@ describe('ChatService.streamLLM integration', () => {
                 search: (...args: unknown[]) => Promise<MemorySearchResult>;
                 revalidateForProvider: (result: MemorySearchResult, signal?: AbortSignal) => Promise<MemorySearchResult>;
             } }).memoryTool;
-            let summarySignal: AbortSignal | undefined;
-            let heldSummaryCurrentness = false;
-            let returnedFresh = false;
             memoryTool.search = jest.fn(async () => initial);
-            memoryTool.revalidateForProvider = jest.fn(async (result: MemorySearchResult, signal?: AbortSignal) => {
-                if (summaryConstructed && !heldSummaryCurrentness) {
-                    heldSummaryCurrentness = true;
-                    summarySignal = signal;
-                    markPending();
-                    // Deliberately ignores AbortSignal to exercise late-result protection.
-                    return pendingCurrentness;
-                }
-                if (heldSummaryCurrentness && !returnedFresh) { returnedFresh = true; return fresh; }
-                return result;
-            });
+            memoryTool.revalidateForProvider = jest.fn(async (result: MemorySearchResult) => result);
             const run = runtime.streamTurn({ prompt: 'Use Memory for launch.', memoryMode: 'auto', onEvent: jest.fn() });
-            await pendingStarted;
-            expect(summarySignal?.aborted).toBe(false);
-            await jest.advanceTimersByTimeAsync(12_000);
             await answerStarted;
-            expect(summarySignal?.aborted).toBe(true);
-            expect(summaryModel.invoke).not.toHaveBeenCalled();
-            resolvePending(late);
-            await flushMicrotasks(12);
+            expect(memoryTool.revalidateForProvider).not.toHaveBeenCalled();
             releaseAnswer();
             await run;
 
             expect(answerInputs).toHaveLength(2);
             expect(answerModel.invoke).toHaveBeenCalledTimes(1);
             for (const input of answerInputs) {
-                expect(JSON.stringify(input)).toContain('CURRENT AUTHORITATIVE MEMORY');
-                expect(JSON.stringify(input)).not.toContain('LATE SUPERSEDED');
+                expect(JSON.stringify(input)).toContain('Memory evidence is currently unavailable');
+                expect(JSON.stringify(input)).not.toContain('CURRENT AUTHORITATIVE MEMORY');
             }
             runtime.dispose();
             expect(jest.getTimerCount()).toBe(0);
@@ -2004,7 +1971,7 @@ describe('ChatService.streamLLM integration', () => {
         }
     });
 
-    it('revalidates Memory after deferred Chat model construction before the first stream', async () => {
+    it('keeps the captured Memory snapshot after deferred Chat model construction', async () => {
         const stalePath = 'notes/revoked-during-model.md';
         const staleBody = 'REVOKED CHAT MEMORY BODY';
         const staleMemory: MemorySearchResult = {
@@ -2102,7 +2069,8 @@ describe('ChatService.streamLLM integration', () => {
         expect(providerInputs).toHaveLength(1);
         expect(JSON.stringify(providerInputs)).not.toContain(stalePath);
         expect(JSON.stringify(providerInputs)).not.toContain(staleBody);
-        expect(JSON.stringify(providerInputs[0])).toContain('Memory evidence is currently unavailable.');
+        expect(JSON.stringify(providerInputs)).toContain('Memory evidence is currently unavailable');
+        expect(memoryTool.revalidateForProvider).not.toHaveBeenCalled();
         expect(memoryTool.search).toHaveBeenCalledTimes(1);
         expect(lifecycleEvents.find((event) => event.type === 'agent_end')).toMatchObject({
             status: 'completed',

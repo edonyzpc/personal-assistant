@@ -3,7 +3,7 @@ import { describe, expect, it } from "@jest/globals";
 import { AgentRunCoordinator } from "../src/ai-services/agent-run-coordinator";
 
 describe("AgentRunCoordinator", () => {
-    it("keeps capacity at one", async () => {
+    it("keeps capacity at one within each lane", async () => {
         const coordinator = new AgentRunCoordinator();
         const first = await coordinator.acquirePageletTurnLease();
         let secondGranted = false;
@@ -21,7 +21,7 @@ describe("AgentRunCoordinator", () => {
         second.release();
     });
 
-    it("lets queued Chat run before the next Pagelet turn", async () => {
+    it("lets Chat and Pagelet progress concurrently while keeping Pagelet FIFO", async () => {
         const coordinator = new AgentRunCoordinator();
         const currentPageletTurn = await coordinator.acquirePageletTurnLease();
         let nextPageletGranted = false;
@@ -29,30 +29,28 @@ describe("AgentRunCoordinator", () => {
             nextPageletGranted = true;
             return lease;
         });
-        const chatPromise = coordinator.acquireChatLease();
-
-        currentPageletTurn.release();
-        const chat = await chatPromise;
+        const chat = await coordinator.acquireChatLease();
         expect(nextPageletGranted).toBe(false);
 
-        chat.release();
+        currentPageletTurn.release();
         const nextPageletTurn = await nextPageletPromise;
         expect(nextPageletGranted).toBe(true);
+        chat.release();
         nextPageletTurn.release();
     });
 
     it("removes an aborted waiter without leaking capacity", async () => {
         const coordinator = new AgentRunCoordinator();
-        const currentPageletTurn = await coordinator.acquirePageletTurnLease();
+        const currentChat = await coordinator.acquireChatLease();
         const controller = new AbortController();
         const waitingChat = coordinator.acquireChatLease(controller.signal);
 
         controller.abort();
 
         await expect(waitingChat).rejects.toMatchObject({ name: "AbortError" });
-        currentPageletTurn.release();
-        const nextPageletTurn = await coordinator.acquirePageletTurnLease();
-        nextPageletTurn.release();
+        currentChat.release();
+        const nextChat = await coordinator.acquireChatLease();
+        nextChat.release();
     });
 
     it("rejects an already-aborted acquisition with AbortError", async () => {

@@ -1121,6 +1121,14 @@ export interface VaultObservationProjectionOptions {
     getEpoch?: () => string;
     isPathAllowed?: (path: string) => boolean;
     signal?: AbortSignal;
+    /**
+     * `current` revalidates note contents against the live vault. `read_snapshot`
+     * keeps the exact, evidence-bound observation that was already returned to
+     * this run while still rechecking current path authorization. The latter is
+     * the ordinary Chat contract: a later edit makes the observation older, not
+     * unauthorized.
+     */
+    validationMode?: "current" | "read_snapshot";
 }
 
 export interface VaultObservationProjection {
@@ -1144,20 +1152,24 @@ export async function prepareVaultObservationProjection(options: VaultObservatio
     let currentBoundEpoch: string | undefined;
     let revalidations: VaultObservationRevalidation[] = [];
     if (hasContractMaterial) {
-        const startEpoch = sealEpoch(options);
-        revalidations = await revalidateGroup(toolEntries, historyEntries, options);
-        if (sealEpoch(options) !== startEpoch) {
-            const retryEpoch = sealEpoch(options);
+        if (options.validationMode === "read_snapshot") {
+            revalidations = snapshotRevalidationGroup(toolEntries, historyEntries, options);
+        } else {
+            const startEpoch = sealEpoch(options);
             revalidations = await revalidateGroup(toolEntries, historyEntries, options);
-            if (sealEpoch(options) !== retryEpoch) {
-                throw new Error("Vault observations continued changing during preparation.");
-            }
-            boundEpoch = retryEpoch;
+            if (sealEpoch(options) !== startEpoch) {
+                const retryEpoch = sealEpoch(options);
+                revalidations = await revalidateGroup(toolEntries, historyEntries, options);
+                if (sealEpoch(options) !== retryEpoch) {
+                    throw new Error("Vault observations continued changing during preparation.");
+                }
+                boundEpoch = retryEpoch;
             } else {
                 boundEpoch = startEpoch;
             }
             currentBoundEpoch = boundEpoch;
         }
+    }
     const validByObservation = new Map<string, VaultObservationRevalidation>();
     for (const result of revalidations) validByObservation.set(result.observationId, result);
     await projectTranscriptObservations(transcript, validByObservation);
@@ -1175,7 +1187,16 @@ export async function prepareVaultObservationProjection(options: VaultObservatio
             async prepare(signal) {
                 throwIfAborted(signal ?? undefined);
                 throwIfAborted(options.signal);
-                if (!hasContractMaterial || boundEpoch === undefined) return;
+                if (!hasContractMaterial) return;
+                if (options.validationMode === "read_snapshot") {
+                    const results = snapshotRevalidationGroup(boundToolEntries, boundHistoryEntries, options);
+                    if (stableJson({ transcript, history }) !== fixedPayload
+                        || !boundResultsStillSupportProjection(boundToolEntries, boundHistoryEntries, results)) {
+                        throw new Error("Vault observation authorization changed before dispatch.");
+                    }
+                    return;
+                }
+                if (boundEpoch === undefined) return;
                 const prepareStartEpoch = sealEpoch(options);
                 const results = await withAbortSignals(
                     revalidateGroup(boundToolEntries, boundHistoryEntries, { ...options, signal: signal ?? options.signal }),
@@ -1191,12 +1212,51 @@ export async function prepareVaultObservationProjection(options: VaultObservatio
                 currentBoundEpoch = prepareStartEpoch;
             },
             assertCurrent() {
+                if (options.validationMode === "read_snapshot") {
+                    if (!snapshotPathsAllowed(boundToolEntries, boundHistoryEntries, options)) {
+                        throw new Error("Vault observation authorization changed before dispatch.");
+                    }
+                    return;
+                }
                 if (hasContractMaterial && currentBoundEpoch !== undefined && sealEpoch(options) !== currentBoundEpoch) {
                     throw new Error("Vault observation evidence changed before dispatch.");
                 }
             },
         },
     };
+}
+
+function snapshotRevalidationGroup(
+    toolEntries: readonly EvidenceEntry[],
+    historyEntries: readonly EvidenceEntry[],
+    options: VaultObservationProjectionOptions,
+): VaultObservationRevalidation[] {
+    const unique = new Map<string, VaultObservationEvidence>();
+    for (const entry of [...toolEntries, ...historyEntries]) {
+        if (!entry.evidence || unique.has(entry.evidence.observationId)) continue;
+        unique.set(entry.evidence.observationId, entry.evidence);
+    }
+    return [...unique.values()].map((evidence) => {
+        const validItemIndexes = evidence.items.flatMap((item, index) => (
+            options.isPathAllowed?.(item.path) === false ? [] : [index]
+        ));
+        return {
+            observationId: evidence.observationId,
+            validItemIndexes,
+            aggregateCurrent: validItemIndexes.length === evidence.items.length,
+        };
+    });
+}
+
+function snapshotPathsAllowed(
+    toolEntries: readonly EvidenceEntry[],
+    historyEntries: readonly EvidenceEntry[],
+    options: VaultObservationProjectionOptions,
+): boolean {
+    return [...toolEntries, ...historyEntries].every((entry) => (
+        entry.evidence !== undefined
+        && entry.evidence.items.every((item) => options.isPathAllowed?.(item.path) !== false)
+    ));
 }
 
 interface EvidenceEntry {

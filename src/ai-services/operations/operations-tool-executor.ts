@@ -52,6 +52,11 @@ export function createOperationsStagingToolExecutor(
                 ? "sequential"
                 : options.baseExecutor.getExecutionMode?.(toolName)
         ),
+        getTimeoutMs: options.baseExecutor.getTimeoutMs?.bind(options.baseExecutor),
+        getRetrySafety: (toolName) => isCoreWriteToolName(toolName)
+            ? "side_effect"
+            : options.baseExecutor.getRetrySafety?.(toolName),
+        canReuseSuccessfulResult: options.baseExecutor.canReuseSuccessfulResult?.bind(options.baseExecutor),
         prepareBatch: async (input) => prepareOperationsBatch(options, input),
         execute: async (input) => {
             const capability = options.registry.get(input.toolCall.name);

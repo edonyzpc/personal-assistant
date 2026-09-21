@@ -63,6 +63,9 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
         getCanonicalToolCallKey: base.getCanonicalToolCallKey?.bind(base),
         canReuseWritingContext: base.canReuseWritingContext?.bind(base),
         getExecutionMode: base.getExecutionMode?.bind(base),
+        getTimeoutMs: base.getTimeoutMs?.bind(base),
+        getRetrySafety: base.getRetrySafety?.bind(base),
+        canReuseSuccessfulResult: base.canReuseSuccessfulResult?.bind(base),
         preflightBatch: input => {
             if (!options.state.matchesRun(input.runId, input.userInput) || !options.isHostCurrent()) {
                 return rejectScope('source_run_changed');

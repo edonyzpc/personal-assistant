@@ -212,7 +212,7 @@ export class ChatService {
         const contextEpoch = this.contextEpoch;
         const imageModelIdentity = { aiProvider: this.host.settings.aiProvider, baseURL: this.host.settings.baseURL, chatModelName: this.host.settings.chatModelName };
         const imageModelKey = chatImageModelKey(imageModelIdentity);
-        const lease = await traceAgentPhase(debug, 'chat_lease', () => this.host.agentRunCoordinator?.acquireChatLease(signal));
+        let startupLease = await traceAgentPhase(debug, 'chat_startup_lease', () => this.host.agentRunCoordinator?.acquireChatLease(signal));
         const unsubscribeOperations = options.onOperationsIntentStaged
             ? this.operationsSession.subscribe((event: OperationsControllerEvent) => {
                 if (event.type === "intent-staged") options.onOperationsIntentStaged?.(event.intent);
@@ -244,6 +244,10 @@ export class ChatService {
                 operationsIntentController: this.operationsSession,
                 operationsToolProvider: this.operationsSession.provider,
             });
+            // Startup admission protects the conversation/model snapshot. The
+            // long-running operation lane is reacquired per Agent turn below.
+            startupLease?.release();
+            startupLease = undefined;
             await runtime.streamTurn({
                 ...(debugRequestId ? { debugRequestId } : {}),
                 prompt,
@@ -268,6 +272,11 @@ export class ChatService {
                 memoryMode,
                 pageletHandoff: options.pageletHandoff,
                 signal,
+                ...(this.host.agentRunCoordinator ? {
+                    turnLeaseProvider: ({ signal: turnSignal }) => (
+                        this.host.agentRunCoordinator!.acquireChatLease(turnSignal)
+                    ),
+                } : {}),
                 qwenRequestOptions: this.getFinalAnswerQwenRequestOptions(),
                 onLifecycleEvent: options.onLifecycleEvent,
                 onEvent: (event) => adaptAgentEvent(event, onChunk, options),
@@ -275,7 +284,7 @@ export class ChatService {
         } finally {
             runtime?.dispose();
             unsubscribeOperations?.();
-            lease?.release();
+            startupLease?.release();
             debug('chat_end', { aborted: signal?.aborted === true });
         }
     }

@@ -235,6 +235,8 @@ export interface ProviderRequestOptions {
     providerRequestScope?: ProviderRequestScope;
     /** Runs synchronously immediately before each physical HTTP dispatch, including SDK retries. */
     onProviderRequestStart?: () => void;
+    /** Runs when a physical HTTP attempt fails or returns a retryable HTTP status. */
+    onProviderRequestFailed?: () => void;
     /** Validate already-serialized input before each physical HTTP dispatch, including SDK retries. */
     prepareProviderRequest?: (signal?: AbortSignal | null) => void | Promise<void>;
     onProviderRequestDiagnostic?: (evidence: ProviderRequestDiagnostic) => void;
@@ -389,6 +391,7 @@ export class AIUtils {
         if (resolution.effective === 'obsidian') {
             options.fetch = providerRequestOptions.providerRequestScope
                 || providerRequestOptions.onProviderRequestStart
+                || providerRequestOptions.onProviderRequestFailed
                 || providerRequestOptions.prepareProviderRequest
                 || providerRequestOptions.onProviderRequestDiagnostic
                 || onProviderRequestTrace
@@ -396,6 +399,7 @@ export class AIUtils {
                 : obsidianFetch;
         } else if (
             providerRequestOptions.onProviderRequestStart
+            || providerRequestOptions.onProviderRequestFailed
             || providerRequestOptions.prepareProviderRequest
             || providerRequestOptions.onProviderRequestDiagnostic
             || onProviderRequestTrace
@@ -416,7 +420,14 @@ export class AIUtils {
                         throwIfAborted(signal ?? undefined);
                         // Request objects / non-string bodies stay unknown; do not read
                         // or consume their streams just to obtain optional diagnostics.
-                        try { return await traceProviderDispatch(() => globalThis.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled); }
+                        try {
+                            const response = await traceProviderDispatch(() => globalThis.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled);
+                            if (!response.ok) providerRequestOptions.onProviderRequestFailed?.();
+                            return response;
+                        } catch (error) {
+                            providerRequestOptions.onProviderRequestFailed?.();
+                            throw error;
+                        }
                         finally { reportProviderRequestDiagnostic(init?.body, 'native', providerRequestOptions.onProviderRequestDiagnostic); }
                     })();
                 }
@@ -424,7 +435,17 @@ export class AIUtils {
                 throwIfAborted(signal ?? undefined);
                 // Request objects / non-string bodies stay unknown; do not read
                 // or consume their streams just to obtain optional diagnostics.
-                try { return traceProviderDispatch(() => globalThis.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled); }
+                try {
+                    const request = traceProviderDispatch(() => globalThis.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled);
+                    void request.then(
+                        response => { if (!response.ok) providerRequestOptions.onProviderRequestFailed?.(); },
+                        () => providerRequestOptions.onProviderRequestFailed?.(),
+                    );
+                    return request;
+                } catch (error) {
+                    providerRequestOptions.onProviderRequestFailed?.();
+                    throw error;
+                }
                 finally { reportProviderRequestDiagnostic(init?.body, 'native', providerRequestOptions.onProviderRequestDiagnostic); }
             };
         }

@@ -43,7 +43,11 @@ import {
 import type { ChatMemoryRecoveryCoordinator } from "./retrieval-recovery-coordinator";
 import type { ProviderRequestScope } from "./obsidian-fetch";
 import { stableStringify } from "./agent-utils";
-import { assertTaskSourceReadCurrent, type TaskSourceReadGuard } from "./task-source-read-guard";
+import {
+    assertTaskSourceReadCurrent,
+    isTaskSourcePathAllowed,
+    type TaskSourceReadGuard,
+} from "./task-source-read-guard";
 import {
     parseMemoryManagementEvidence,
 } from "./memory-management-evidence";
@@ -104,12 +108,18 @@ export class MemoryEvidenceRegistry {
     private failClosedForRun = false;
     private projectionGeneration = 0;
 
-    constructor(private readonly revalidate: (
-        result: MemorySearchResult,
-        signal?: AbortSignal,
-        temporalFilter?: MemoryTemporalFilter | null,
-        taskSourceReadGuard?: TaskSourceReadGuard,
-    ) => Promise<MemorySearchResult>) { }
+    constructor(
+        private readonly revalidate: (
+            result: MemorySearchResult,
+            signal?: AbortSignal,
+            temporalFilter?: MemoryTemporalFilter | null,
+            taskSourceReadGuard?: TaskSourceReadGuard,
+        ) => Promise<MemorySearchResult>,
+        private readonly options: {
+            mode?: "current" | "read_snapshot";
+            isMemoryAllowed?: () => boolean;
+        } = {},
+    ) { }
 
     capture(
         toolCall: PaAgentToolCall,
@@ -167,6 +177,10 @@ export class MemoryEvidenceRegistry {
             let current: MemorySearchResult;
             if (this.failClosedForRun) {
                 current = createUnavailableMemoryObservationResult(registered.result.content.query);
+            } else if (this.options.mode === "read_snapshot") {
+                current = this.isSnapshotAuthorized(registered)
+                    ? registered.result.content
+                    : createUnavailableMemoryObservationResult(registered.result.content.query);
             } else {
                 try {
                     assertTaskSourceReadCurrent(registered.taskSourceReadGuard);
@@ -213,6 +227,23 @@ export class MemoryEvidenceRegistry {
             }
         }
         return projected;
+    }
+
+    private isSnapshotAuthorized(registered: RegisteredMemoryEvidence): boolean {
+        try {
+            if (this.options.isMemoryAllowed?.() === false) return false;
+            assertTaskSourceReadCurrent(registered.taskSourceReadGuard);
+            const result = registered.result.content;
+            const paths = new Set<string>();
+            for (const document of result.documents) paths.add(document.source.path);
+            for (const source of result.sources) paths.add(source.path);
+            for (const candidate of result.candidates ?? []) paths.add(candidate.path);
+            return paths.size === 0 || [...paths].every((path) => (
+                isTaskSourcePathAllowed(registered.taskSourceReadGuard, path)
+            ));
+        } catch {
+            return false;
+        }
     }
 
     /** Permanently revokes captured evidence for the rest of this Agent run. */
@@ -503,6 +534,26 @@ export function createPaAgentCapabilityToolExecutor(
             // batch serial. v2.0.0 capabilities are all read-only and omit executionMode; this hook is wired
             // for future write/mutate tools.
             return options.registry.get(toolName)?.executionMode;
+        },
+        getTimeoutMs: (toolName: string): number | undefined => options.registry.get(toolName)?.timeoutMs,
+        getRetrySafety: (toolName: string): "read_only" | "side_effect" | undefined => {
+            const capability = options.registry.get(toolName);
+            if (!capability) return undefined;
+            return capability.kind === "action"
+                || !["read-only", "network-read"].includes(capability.permission)
+                ? "side_effect"
+                : "read_only";
+        },
+        canReuseSuccessfulResult: (toolCall, context): boolean => {
+            const capability = options.registry.get(toolCall.name);
+            // Wrappers may delegate synthetic/test or independently-owned
+            // capabilities through this executor. Absence from this registry
+            // must preserve the dispatcher's normal successful reuse policy.
+            if (!capability) return true;
+            const isRead = capability.permission === "read-only" || capability.permission === "network-read";
+            if (!isRead) return true;
+            return !/(?:\blatest\b|\bcurrent\b|\bnewest\b|\bup[- ]to[- ]date\b|最新|当前|刚刚|此刻)/iu
+                .test(context.userInput);
         },
         execute: async (input: PaAgentToolExecutionInput): Promise<PaAgentToolExecutionResult> => {
             assertTaskSourceReadCurrent(input.taskSourceReadGuard);

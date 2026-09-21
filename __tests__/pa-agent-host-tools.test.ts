@@ -59,6 +59,7 @@ import type {
 import { ChatMemoryRecoveryCoordinator } from "../src/ai-services/retrieval-recovery-coordinator";
 import { createProviderRequestScope } from "../src/ai-services/obsidian-fetch";
 import { MemorySearchTool } from "../src/ai-services/memory-search-tool";
+import type { TaskSourceReadGuard } from "../src/ai-services/task-source-read-guard";
 
 jest.mock("obsidian");
 
@@ -85,6 +86,7 @@ function registerMemoryEvidence(
     evidence: MemorySearchResult,
     id: string,
     temporalFilter: MemoryTemporalFilter | null = null,
+    taskSourceReadGuard?: TaskSourceReadGuard,
 ): PaAgentMessage[] {
     const toolCall = {
         type: "toolCall" as const,
@@ -107,7 +109,7 @@ function registerMemoryEvidence(
             citationEligible: true,
         })),
     };
-    registry.capture(toolCall, rawResult, "turn-memory", temporalFilter);
+    registry.capture(toolCall, rawResult, "turn-memory", temporalFilter, taskSourceReadGuard);
     const initial = chatToolResultToPaAgentToolExecutionResult(toolCall, rawResult);
     return [{
         role: "toolResult",
@@ -933,6 +935,43 @@ describe("PA Agent canonical host tool executor", () => {
             .not.toContain("CURRENT EVIDENCE");
         expect((second[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.sourceRecords).toEqual([]);
         expect((transcript[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.sourceRecords).toEqual([]);
+    });
+
+    it("keeps an already-read Memory snapshot across background refresh while rechecking authorization", async () => {
+        let allowed = true;
+        let memoryAllowed = true;
+        const guard: TaskSourceReadGuard = {
+            isCurrent: () => true,
+            isPathAllowed: (path) => allowed && path === "notes/current.md",
+        };
+        const revalidate = jest.fn(async () => createMemoryEvidence("NEW BACKGROUND VERSION"));
+        const registry = new MemoryEvidenceRegistry(revalidate, {
+            mode: "read_snapshot",
+            isMemoryAllowed: () => memoryAllowed,
+        });
+        const transcript = registerMemoryEvidence(
+            registry,
+            createMemoryEvidence("READ SNAPSHOT"),
+            "memory-snapshot",
+            null,
+            guard,
+        );
+
+        const first = await registry.prepareTranscript(transcript);
+        const second = await registry.prepareTranscript(first);
+        expect(revalidate).not.toHaveBeenCalled();
+        expect(JSON.stringify(second)).toContain("READ SNAPSHOT");
+        expect(JSON.stringify(second)).not.toContain("NEW BACKGROUND VERSION");
+
+        allowed = false;
+        const revokedByPath = await registry.prepareTranscript(second);
+        expect(JSON.stringify(revokedByPath)).not.toContain("READ SNAPSHOT");
+        expect(JSON.stringify(revokedByPath)).toContain('\\"memoryEvidenceState\\": \\"unavailable\\"');
+
+        allowed = true;
+        memoryAllowed = false;
+        const revokedByMaster = await registry.prepareTranscript(first);
+        expect(JSON.stringify(revokedByMaster)).not.toContain("READ SNAPSHOT");
     });
 
     it("tombstones a reused raw Memory tool-call ID before any same-batch evidence can be projected", async () => {
@@ -1918,7 +1957,7 @@ describe("PA Agent canonical host tool executor", () => {
             expect.any(Object),
         );
         expect(result.turns[0]?.toolResults.map((message) => message.content.metadata?.outcome))
-            .toEqual(["success", "duplicate_skipped"]);
+            .toEqual(["success", "reused_result"]);
     });
 
     it("fails loud with schema_invalid when search_memory tool call omits query (Phase A fail-loud)", async () => {

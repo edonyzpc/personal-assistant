@@ -73,7 +73,8 @@ import {
     type GenerationInputSnapshot,
 } from "./generation-input-snapshot";
 import { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
-import { readProviderCompletion, writingOutputInstruction, nativeWritingOutputInstruction, nativeWritingOutputSchema, cloneChatWritingRequest, selectedWritingContext } from "./writing-output";
+import { readProviderCompletion, writingOutputInstruction, nativeWritingOutputInstruction, nativeWritingOutputSchema, cloneChatWritingRequest, selectedWritingContext, isValidWritingContextHandle } from "./writing-output";
+import { NativeWritingCallCollector } from "./native-writing-call";
 import { ChatImageRequestScope, createResolveChatImagesTool, RESOLVE_CHAT_IMAGES } from "./image-request";
 import { ChatImageRequestError, isStructuredImageUnsupportedError, type ChatImageCapability } from "./image-capability";
 import { formatInjectedContext, MEMORY_CONTEXT_MAX_CHARS } from "./context/PaAgentContextProjector";
@@ -142,6 +143,7 @@ import {
     type PaAgentModelInput,
     type PaAgentModelStreamChunk,
     type PaAgentTurnSummary,
+    type PaAgentTurnLeaseProvider,
     type PaAgentToolExecutor,
 } from "./pa-agent-loop";
 import {
@@ -201,6 +203,8 @@ export interface PaAgentRunOptions {
     /** Visible Pagelet evidence. It is context-only and never grants tool authority. */
     pageletHandoff?: PageletChatHandoffContext;
     signal?: AbortSignal;
+    /** Operation admission for each provider/tool turn; never held across host recovery or user waiting. */
+    turnLeaseProvider?: PaAgentTurnLeaseProvider;
     onStatus?: (status: ChatAgentStatus) => void;
 }
 
@@ -279,7 +283,7 @@ interface PaAgentStartupTiming {
     metadata?: Record<string, unknown>;
 }
 
-const MAX_TURN_WALL_CLOCK_MS = 180_000;
+const MAX_TURN_WALL_CLOCK_MS = Number.POSITIVE_INFINITY;
 const DEFAULT_FINALIZATION_RESERVE_MS = 15_000;
 const MAX_CHAT_HISTORY_CHARS = 60_000;
 const MAX_PA_AGENT_PROMPT_CHARS = 120_000;
@@ -660,6 +664,14 @@ export function createWriteActionAwareToolExecutor(
         getExecutionMode: (toolName: string) => {
             return options.baseExecutor.getExecutionMode?.(toolName);
         },
+        getTimeoutMs: options.baseExecutor.getTimeoutMs?.bind(options.baseExecutor),
+        getRetrySafety: (toolName: string) => {
+            const capability = options.registry.get(toolName);
+            return capability?.kind === "action"
+                ? "side_effect"
+                : options.baseExecutor.getRetrySafety?.(toolName);
+        },
+        canReuseSuccessfulResult: options.baseExecutor.canReuseSuccessfulResult?.bind(options.baseExecutor),
         execute: async (input) => {
             const toolCall = input.toolCall;
             const capability = options.registry.get(toolCall.name);
@@ -1080,7 +1092,10 @@ export class PaAgentRuntime {
         this.activeMemoryRecoveryCoordinators.add(memoryRecoveryCoordinator);
         const memoryEvidenceRegistry = new MemoryEvidenceRegistry((result, signal, temporalFilter, guard) => (
             this.memoryTool.revalidateForProvider(result, signal, temporalFilter, undefined, guard)
-        ));
+        ), {
+            mode: "read_snapshot",
+            isMemoryAllowed: () => this.host.settings.memoryEnabled !== false,
+        });
         try {
         const legacyEvents = new AgentEventEmitter(options.onEvent);
         let injectedContext = this.readInjectedContext(options.pageletHandoff);
@@ -1680,6 +1695,7 @@ export class PaAgentRuntime {
                                 throw error;
                             }
                         },
+                        onProviderRequestFailed: input.notifyProviderRequestFailed,
                         onProviderRequestDiagnostic: requestDiagnostic("answer", input.turnId),
                         isProviderRequestTraceEnabled: debugEnabled,
                         ...(debugEnabled() ? { onProviderRequestTrace: (event: import('./obsidian-fetch').ProviderRequestTrace) =>
@@ -1735,7 +1751,14 @@ export class PaAgentRuntime {
                     }
                     const startedAt = Date.now();
                     let modelCalls = 0;
-                    const preparation = new TurnExecutionDeadline(input.signal, 30_000, "context_summary_timeout");
+                    // Each physical summary request owns its 30-minute attempt
+                    // budget. The orchestration block itself must not impose an
+                    // older short aggregate deadline across multiple requests.
+                    const preparation = new TurnExecutionDeadline(
+                        input.signal,
+                        Number.POSITIVE_INFINITY,
+                        "context_summary_timeout",
+                    );
                     const tools = new Map(runSummaries.tools);
                     // Summary models are tool-free and share the run's provider request scope.
                     // Revalidate each tool source after model construction, immediately before dispatch.
@@ -2124,6 +2147,17 @@ export class PaAgentRuntime {
                 ...(writingContextHost ? { getContextHandle: currentWritingHandle } : {}),
                 maxTextChars: MAX_PA_AGENT_PROMPT_CHARS,
                 isCurrent: () => { assertRequestCurrent(); return (!writingContextRun || !!currentWritingContext()) && (imageScope?.isUsable() ?? true); },
+                isValidContextHandle: isValidWritingContextHandle,
+                createCollector: (contextHandle, maxTextChars) => new NativeWritingCallCollector(contextHandle, maxTextChars),
+                outputName: "present_writing",
+                finalizationInstruction: [
+                    "The ordinary turn deadline has been reached.",
+                    "This is the single reserved finalization turn. Reply with ordinary text or one present_writing output; no source, context or action calls are allowed.",
+                    "Use only existing observations and available context to answer.",
+                    "If evidence is unavailable or insufficient, say so directly without inferring it.",
+                ].join(" "),
+                correctionInstruction: "The writing candidate was not accepted. Correct the native present_writing arguments using the current writing context, then submit one complete candidate. A validation failure is not task completion and does not mean the work was saved.",
+                strategyChangeInstruction: "The writing candidate has failed validation three times without progress. Change strategy: rebuild one complete present_writing candidate from the current writing context and required schema. Do not emit partial arguments, multiple candidates, or ordinary text pretending the work was saved.",
             } } : {}),
             model,
             prepareModelInput: async (input) => {
@@ -2276,7 +2310,8 @@ export class PaAgentRuntime {
                 : {}),
             initialControlSnapshot,
             signal: options.signal,
-            maxTurns: this.options.maxModelTurns ?? 20,
+            ...(options.turnLeaseProvider ? { turnLeaseProvider: options.turnLeaseProvider } : {}),
+            maxTurns: this.options.maxModelTurns ?? 256,
             maxWallClockMs,
             runStartedAt: runtimeStartedAt,
             finalizationReserveMs,
@@ -2309,7 +2344,9 @@ export class PaAgentRuntime {
                     },
                 }
                 : {}),
-            maxToolCalls: this.options.answerStreamMaxToolCalls ?? 30,
+            maxToolCalls: this.options.answerStreamMaxToolCalls ?? 1024,
+            remoteAttemptTimeoutMs: 1_800_000,
+            toolTimeoutMs: 1_800_000,
             maxObservationChars: this.options.answerStreamMaxObservationChars ?? 64_000,
             startupTimings,
             // pi hybrid dispatch (P0-A): read-only/idempotent v2.0.0 tools run concurrently when the model

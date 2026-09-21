@@ -1623,7 +1623,7 @@ describe('Pagelet agent runtime', () => {
             expect.objectContaining({ query: 'project launch' }),
         );
         expect(result.loopResult.turns[0]?.toolResults.map((message) => message.content.metadata?.outcome))
-            .toEqual(['success', 'duplicate_skipped']);
+            .toEqual(['success', 'reused_result']);
     });
 
     it('pins the Host pending first when the Provider rewrites its body and sourceIds', async () => {
@@ -2879,8 +2879,9 @@ describe('Pagelet agent runtime', () => {
         const result = await runtime.run({ anchor, triggerReason: 'explicit' });
 
         expect(observedOuterToolDeadlineAt).toEqual(expect.any(Number));
-        expect(clockAtMemoryAttempt).toBeGreaterThan(observedOuterToolDeadlineAt! - 30_000);
-        expect(observedAttemptDeadlineAt).toBe(observedOuterToolDeadlineAt! - 750);
+        expect(observedOuterToolDeadlineAt! - clockAtMemoryAttempt!).toBeGreaterThan(1_700_000);
+        expect(observedAttemptDeadlineAt).toBeLessThan(observedOuterToolDeadlineAt!);
+        expect(observedAttemptDeadlineAt! - clockAtMemoryAttempt!).toBeLessThanOrEqual(30_000);
         expect(result.loopResult.status).toBe('completed');
         expect(result.finalText).toBe('NO_INSIGHT');
     });
@@ -2934,7 +2935,7 @@ describe('Pagelet agent runtime', () => {
         }
     });
 
-    it('lets one dispatched buffered response finish after softAt without starting another Pagelet turn', async () => {
+    it('lets one dispatched buffered response run past the retired 180-second reserve without a warning', async () => {
         jest.useFakeTimers();
         try {
             const diagnostics = new RetrievalDiagnosticsController(
@@ -2977,29 +2978,16 @@ describe('Pagelet agent runtime', () => {
             const result = await pending;
 
             expect(result.finalText).toBe('NO_INSIGHT');
-            expect(result.loopResult.status).toBe('completed_with_warning');
+            expect(result.loopResult.status).toBe('completed');
             expect(result.loopResult.turns).toHaveLength(1);
-            expect(result.loopResult.turns[0]?.diagnostics).toContainEqual(expect.objectContaining({
+            expect(result.loopResult.turns[0]?.diagnostics).not.toContainEqual(expect.objectContaining({
                 type: 'finalization_reserve_overrun',
-                finalizationReserveMs: 30_000,
             }));
             expect(modelInputs).toHaveLength(1);
             expect(diagnostics.snapshot(diagnosticsSession.sessionId).events
-                .filter((event) => event.phase === 'finalization_reserve'))
-                .toEqual([
-                    expect.objectContaining({
-                        outcome: 'started',
-                        metrics: expect.objectContaining({ configuredReserveMs: 30_000 }),
-                    }),
-                    expect.objectContaining({
-                        outcome: 'deadline',
-                        reason: 'reserve_overrun',
-                        metrics: expect.objectContaining({
-                            configuredReserveMs: 30_000,
-                            remainingMs: 29_000,
-                        }),
-                    }),
-                ]);
+                .filter((event) => event.phase === 'finalization_reserve')).toEqual([
+                expect.objectContaining({ outcome: 'skipped', reason: 'reserve_not_entered' }),
+            ]);
         } finally {
             jest.useRealTimers();
         }
@@ -3148,10 +3136,10 @@ describe('Pagelet agent runtime', () => {
             toolName: 'get_current_note_context',
             isError: false,
             content: {
-                includeInNextPrompt: false,
+                includeInNextPrompt: true,
                 metadata: {
-                    outcome: 'duplicate_skipped',
-                    reason: 'duplicate_tool_call',
+                    outcome: 'reused_result',
+                    reason: 'successful_result_reused',
                 },
             },
         });
@@ -3198,8 +3186,8 @@ describe('Pagelet agent runtime', () => {
         expect(modelInputs).toHaveLength(3);
         expect(modelInputs[2]?.toolMode).toBeUndefined();
         expect(result.loopResult.turns[2]?.toolResults[0]?.content.metadata).toMatchObject({
-            outcome: 'duplicate_skipped',
-            reason: 'duplicate_tool_call',
+            outcome: 'reused_result',
+            reason: 'successful_result_reused',
         });
         expect(result.loopResult.status).toBe('incomplete');
         expect(result.loopResult.endPayload).toMatchObject({
@@ -3963,8 +3951,8 @@ describe('Pagelet agent runtime', () => {
         expect(modelInputs).toHaveLength(3);
         expect(modelInputs[2]?.toolMode).toBe('final_answer_only');
         expect(result.loopResult.turns[1]?.toolResults[0]?.content.metadata).toMatchObject({
-            outcome: 'duplicate_skipped',
-            reason: 'duplicate_tool_call',
+            outcome: 'reused_result',
+            reason: 'successful_result_reused',
         });
         expect(result.loopResult.status).toBe('incomplete');
         expect(result.loopResult.endPayload).toMatchObject({
@@ -4879,7 +4867,7 @@ describe('Pagelet agent runtime', () => {
         expect(result.sourceSnapshots.map((source) => source.path)).not.toContain(relatedMaterial.path);
     });
 
-    it('reserves the last available turn for a source-grounded final answer', async () => {
+    it('lets Pagelet finish semantically without reserving an arbitrary last turn', async () => {
         const modelInputs: PaAgentModelInput[] = [];
         const runtime = createPageletAgentRuntime({
             host: createHost(),
@@ -4896,7 +4884,7 @@ describe('Pagelet agent runtime', () => {
             createModel: () => ({
                 stream: async function* (input: PaAgentModelInput) {
                     modelInputs.push(input);
-                    if (input.toolMode === 'final_answer_only') {
+                    if (input.turnIndex >= 2) {
                         yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
                         return;
                     }
@@ -4922,17 +4910,12 @@ describe('Pagelet agent runtime', () => {
 
         expect(result.loopResult.status).toBe('completed');
         expect(result.finalText).toBe('NO_INSIGHT');
-        expect(result.loopResult.turns).toHaveLength(12);
-        expect(modelInputs[11]).toMatchObject({
-            turnIndex: 11,
-            toolMode: 'final_answer_only',
-        });
-        expect(modelInputs[11]?.runtimeInstruction).toContain(
-            'never mention an unverified .md path',
-        );
+        expect(result.loopResult.turns).toHaveLength(3);
+        expect(modelInputs[2]).toMatchObject({ turnIndex: 2, toolMode: undefined });
+        expect(modelInputs[2]?.runtimeInstruction).toContain('never mention an unverified .md path');
     });
 
-    it('records the Loop-reserved Pagelet finalization boundary', async () => {
+    it('does not reserve Pagelet finalization merely because the retired 180-second point passed', async () => {
         const diagnostics = new RetrievalDiagnosticsController(
             () => 0,
             () => 0,
@@ -4970,7 +4953,7 @@ describe('Pagelet agent runtime', () => {
 
         expect(result.loopResult.status).toBe('completed');
         expect(modelInputs).toHaveLength(1);
-        expect(modelInputs[0]?.toolMode).toBe('final_answer_only');
+        expect(modelInputs[0]?.toolMode).toBeUndefined();
         expect(diagnostics.snapshot(diagnosticsSession.sessionId).events
             .filter((event) => event.phase === 'finalization_reserve')
             .map((event) => ({
@@ -4979,8 +4962,7 @@ describe('Pagelet agent runtime', () => {
                 configuredReserveMs: event.metrics.configuredReserveMs,
             })))
             .toEqual([
-                { surface: 'pagelet', outcome: 'started', configuredReserveMs: 30_000 },
-                { surface: 'pagelet', outcome: 'completed', configuredReserveMs: 30_000 },
+                { surface: 'pagelet', outcome: 'skipped', configuredReserveMs: 30_000 },
             ]);
     });
 
@@ -5009,7 +4991,7 @@ describe('Pagelet agent runtime', () => {
             expectedReason: 'pagelet_citation_protocol_exhausted',
             expectedDiagnostic: 'pagelet_citation_protocol_incomplete',
         },
-    ])('classifies a Loop-reserved final with $label without misreporting exact-lead failure', async ({
+    ])('classifies a policy-requested final with $label without misreporting exact-lead failure', async ({
         firstTurnTools,
         terminalText,
         expectedReason,
@@ -5071,9 +5053,8 @@ describe('Pagelet agent runtime', () => {
             runId: `pagelet-reserved-${expectedDiagnostic}`,
         });
 
-        expect(modelInputs).toHaveLength(2);
-        expect(modelInputs[1]).toMatchObject({
-            turnIndex: 1,
+        expect(modelInputs.length).toBeGreaterThanOrEqual(3);
+        expect(modelInputs.at(-1)).toMatchObject({
             toolMode: 'final_answer_only',
         });
         expect(result.loopResult.status).toBe('incomplete');
@@ -5093,7 +5074,7 @@ describe('Pagelet agent runtime', () => {
         });
     });
 
-    it('reserves finalization before a penultimate blocked WebSearch correction', async () => {
+    it('keeps a blocked WebSearch correction recoverable without relying on a penultimate turn', async () => {
         const web = createFakeWebCapability();
         const modelInputs: PaAgentModelInput[] = [];
         const runtime = createPageletAgentRuntime({
@@ -5110,11 +5091,11 @@ describe('Pagelet agent runtime', () => {
             createModel: () => ({
                 stream: async function* (input: PaAgentModelInput) {
                     modelInputs.push(input);
-                    if (input.toolMode === 'final_answer_only') {
+                    if (input.turnIndex >= 2 || input.toolMode === 'final_answer_only') {
                         yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
                         return;
                     }
-                    if (input.turnIndex === 10) {
+                    if (input.turnIndex === 1) {
                         yield {
                             type: 'toolcall_delta',
                             id: 'penultimate-web',
@@ -5143,8 +5124,8 @@ describe('Pagelet agent runtime', () => {
 
         expect(result.loopResult.status).toBe('completed');
         expect(result.finalText).toBe('NO_INSIGHT');
-        expect(result.loopResult.turns).toHaveLength(12);
-        expect(result.loopResult.turns[10]?.toolResults[0]).toMatchObject({
+        expect(result.loopResult.turns).toHaveLength(3);
+        expect(result.loopResult.turns[1]?.toolResults[0]).toMatchObject({
             toolName: BUILTIN_WEB_SEARCH_TOOL_NAME,
             isError: true,
             content: {
@@ -5153,10 +5134,7 @@ describe('Pagelet agent runtime', () => {
                 },
             },
         });
-        expect(modelInputs[11]).toMatchObject({
-            turnIndex: 11,
-            toolMode: 'final_answer_only',
-        });
+        expect(modelInputs[2]).toMatchObject({ turnIndex: 2 });
         expect(web.execute).not.toHaveBeenCalled();
     });
 

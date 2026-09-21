@@ -6,7 +6,8 @@ import { CanonicalToLegacyEventAdapter } from "../src/ai-services/pa-agent-strea
 import type { AgentEvent, LegacyAgentEvent } from "../src/ai-services/chat-types";
 import trace from "./fixtures/b135-native-identity-trace.json";
 import currentSchemaTrace from "./fixtures/b135-current-schema-trace.json";
-import { nativeWritingOutputSchema } from "../src/ai-services/writing-output";
+import { isValidWritingContextHandle, nativeWritingOutputSchema } from "../src/ai-services/writing-output";
+import { NativeWritingCallCollector } from "../src/ai-services/native-writing-call";
 
 const request = { requestId: "bridge-request" };
 const handle = "b135-identity";
@@ -29,7 +30,18 @@ async function run(options: { truncate?: boolean; revoke?: boolean; mixed?: bool
     });
     const loop = new PaAgentLoop({
         runId: "native-bridge", userInput: "Synthetic writing", signal: controller.signal,
-        nativeWriting: { contextHandle, getContextHandle: options.getContextHandle, maxTextChars: 20_000, isCurrent: () => current },
+        nativeWriting: {
+            contextHandle,
+            getContextHandle: options.getContextHandle,
+            maxTextChars: 20_000,
+            isCurrent: () => current,
+            isValidContextHandle: isValidWritingContextHandle,
+            createCollector: (handle, maxTextChars) => new NativeWritingCallCollector(handle, maxTextChars),
+            outputName: "present_writing",
+            finalizationInstruction: "finalize with present_writing",
+            correctionInstruction: "correct present_writing",
+            strategyChangeInstruction: "change present_writing strategy",
+        },
         model: { stream: () => streamWithInvokeFallback({ input: {}, captureToolIdentity: true, chain: {
             stream: async function* () {
                 if (options.ordinary) {
@@ -93,14 +105,15 @@ describe("native writing bridge host gates", () => {
         ]);
     });
 
-    it("does not retroactively authorize a response that began without a context", async () => {
+    it("does not authorize the first response without context but permits a fresh corrected turn after context appears", async () => {
         let selected: string | undefined;
         const { result, events } = await run({ getContextHandle: () => selected,
             afterMessageStart: () => { selected = handle; },
         });
-        expect(result.status).toBe("incomplete");
-        expect(events.some((event) => event.kind === "writing-artifact")).toBe(false);
-        expect(events.some((event) => event.kind === "writing-preview" && event.text.length > 0)).toBe(false);
+        expect(result.status).toBe("completed");
+        expect(events.filter((event) => event.kind === "writing-artifact")).toEqual([
+            expect.objectContaining({ body }),
+        ]);
     });
 
     it("requires a frozen bridge handle even when canonical output proof is valid", async () => {

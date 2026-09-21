@@ -344,6 +344,7 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
             }
             const successfulResult = summary.toolResults.some((result) => (
                 !result.isError && result.content.includeInNextPrompt
+                && result.content.metadata?.outcome !== "reused_result"
             ));
             if (successfulResult) {
                 const stagedSuccessfully = stageReportedSuccess
@@ -956,7 +957,7 @@ export class PageletLeadDrivenPolicy implements PaAgentHostPolicy {
             staged
                 ? "A verified first insight is pinned. Continue only to resolve its one concrete distinct lead, then finalize a second or exactly NO_INSIGHT."
                 : "Continue only from the strongest evidence-backed lead.",
-            "The normal target is 3–5 model turns and 8–12 real tool calls; 30 calls and 180 seconds are emergency fuses, not exploration targets.",
+            "The normal target is 3–5 model turns and 8–12 real tool calls. Continue beyond that only for a specific unresolved evidence gap, not to broaden the task.",
             staged
                 ? "Do not repeat, expand, summarize, or combine the pinned first insight in the terminal text."
                 : sourceCompleteSecondLead
@@ -1312,10 +1313,11 @@ function getStageValidationFailureReason(
 function onlyDuplicateStatusResults(summary: PaAgentTurnSummary): boolean {
     return summary.toolResults.length > 0
         && summary.toolResults.every((result) => (
-            !result.content.includeInNextPrompt
-            && (
+            (
                 result.content.metadata?.outcome === "duplicate_skipped"
+                || result.content.metadata?.outcome === "reused_result"
                 || result.content.metadata?.reason === "duplicate_tool_call"
+                || result.content.metadata?.reason === "successful_result_reused"
             )
         ));
 }

@@ -25,8 +25,6 @@ import type {
     UserMessageContent,
 } from "./chat-types";
 import { ModelChunkConsumer, appendTextPart } from "./pa-agent-chunk-consumer";
-import { NativeWritingCallCollector } from "./native-writing-call";
-import { isValidWritingContextHandle, type NativeWritingOutput } from "./writing-output";
 import {
     ToolExecutionDispatcher,
     defaultIncludeInNextPrompt,
@@ -74,6 +72,8 @@ export interface PaAgentModelInput {
     prepareForProviderRetry?: () => Promise<PaAgentModelInput>;
     /** Marks the boundary immediately before a physical Provider request is dispatched. */
     notifyProviderRequestStarted?: () => void;
+    /** Marks an HTTP attempt as ended unsuccessfully before SDK retry/backoff. */
+    notifyProviderRequestFailed?: () => void;
 }
 
 export interface PaAgentModel {
@@ -127,7 +127,7 @@ export interface PaAgentTurnSummary {
     timing: PaAgentTurnTiming;
     controlSnapshot?: AgentControlSnapshot;
     /** Host-admitted pure output candidate; final Host Policy still decides delivery. */
-    nativeWriting?: NativeWritingOutput;
+    nativeWriting?: { body: string; explanation: string };
     nativeWritingAttempted?: true;
 }
 
@@ -201,7 +201,25 @@ export interface PaAgentLoopOptions {
     userImages?: import("../chat/image-types").MessageImage[];
     writingRequest?: import("./chat-types").ChatWritingRequest;
     /** Host opt-in only. Pagelet and existing text output retain their own protocol. */
-    nativeWriting?: { contextHandle: string; getContextHandle?: () => string | undefined; maxTextChars: number; isCurrent: () => boolean };
+    nativeWriting?: {
+        contextHandle: string;
+        getContextHandle?: () => string | undefined;
+        maxTextChars: number;
+        isCurrent: () => boolean;
+        isValidContextHandle: (value: unknown) => value is string;
+        createCollector: (contextHandle: string, maxTextChars: number) => {
+            readonly hasWritingCall: boolean;
+            readonly isCandidate: boolean;
+            readonly providerIdentity?: { id?: string; index?: number };
+            readonly rawArguments: string;
+            consume(chunk: Extract<PaAgentModelStreamChunk, { type: "toolcall_delta" }>): void;
+            decode(): { body: string; explanation: string } | undefined;
+        };
+        outputName: NonNullable<AgentControlSnapshot["writingOutput"]>;
+        finalizationInstruction: string;
+        correctionInstruction: string;
+        strategyChangeInstruction: string;
+    };
     /** Host source receipt for ordinary text delivery, independent of cancellation. */
     isFinalTextCurrent?: () => boolean;
     userMessageContent?: UserMessageContent;
@@ -226,6 +244,8 @@ export interface PaAgentLoopOptions {
     /** Buffered bridges have no meaningful inter-chunk network activity; the absolute wall clock remains authoritative. */
     providerResponseDelivery?: 'incremental' | 'buffered';
     assistantIdleTimeoutMs?: number;
+    /** Absolute deadline for one physical model or ordinary remote-tool attempt. */
+    remoteAttemptTimeoutMs?: number;
     maxWallClockMs?: number;
     /** Host run origin in the same clock as `now`; includes preparation before loop construction. */
     runStartedAt?: number;
@@ -289,19 +309,13 @@ const FINALIZATION_RESERVE_RUNTIME_INSTRUCTION = [
     "If evidence is unavailable or insufficient, say so directly without inferring it.",
 ].join(" ");
 
-const NATIVE_WRITING_FINALIZATION_RUNTIME_INSTRUCTION = [
-    "The ordinary turn deadline has been reached.",
-    "This is the single reserved finalization turn. Reply with ordinary text or one present_writing output; no source, context or action calls are allowed.",
-    "Use only existing observations and available context to answer.",
-    "If evidence is unavailable or insufficient, say so directly without inferring it.",
-].join(" ");
-
 export class PaAgentLoop {
     private readonly events: AgentLifecycleEventEmitter;
     private readonly now: () => number;
     private readonly createId: (prefix: string) => string;
     private readonly maxTurns: number;
     private readonly assistantIdleTimeoutMs: number;
+    private readonly remoteAttemptTimeoutMs: number;
     private readonly providerResponseDelivery: 'incremental' | 'buffered';
     private readonly maxWallClockMs: number;
     private readonly finalizationReserveMs: number;
@@ -314,16 +328,17 @@ export class PaAgentLoop {
     private endPayload?: Record<string, unknown>;
     private endStatus?: AgentEndStatus;
     private activeTurnToolMode?: PaAgentToolMode;
+    private readonly providerNoProgressCounts = new Map<string, number>();
+    private nativeWritingNoProgressCount = 0;
 
     constructor(private readonly options: PaAgentLoopOptions) {
         this.now = options.now ?? Date.now;
         this.createId = options.createId ?? createIncrementingIdFactory();
-        this.maxTurns = options.maxTurns ?? 20;
+        this.maxTurns = options.maxTurns ?? 256;
         this.providerResponseDelivery = options.providerResponseDelivery ?? "incremental";
-        this.assistantIdleTimeoutMs = options.providerResponseDelivery === 'buffered'
-            ? Number.POSITIVE_INFINITY
-            : options.assistantIdleTimeoutMs ?? 60_000;
-        this.maxWallClockMs = options.maxWallClockMs ?? 180_000;
+        this.assistantIdleTimeoutMs = options.assistantIdleTimeoutMs ?? Number.POSITIVE_INFINITY;
+        this.remoteAttemptTimeoutMs = options.remoteAttemptTimeoutMs ?? 1_800_000;
+        this.maxWallClockMs = options.maxWallClockMs ?? Number.POSITIVE_INFINITY;
         this.finalizationReserveMs = normalizeFinalizationReserveMs(
             options.finalizationReserveMs,
             this.maxWallClockMs,
@@ -341,10 +356,10 @@ export class PaAgentLoop {
             signal: options.signal,
             runId: options.runId,
             userInput: options.userInput,
-            toolTimeoutMs: options.toolTimeoutMs ?? 30_000,
+            toolTimeoutMs: options.toolTimeoutMs ?? this.remoteAttemptTimeoutMs,
             toolTimeoutOutcome: options.toolTimeoutOutcome ?? "recoverable_error",
             toolAbortGraceMs: options.toolAbortGraceMs ?? 2_000,
-            maxToolCalls: options.maxToolCalls ?? 30,
+            maxToolCalls: options.maxToolCalls ?? 1024,
             now: this.now,
             isAborted: () => this.isAborted(),
             isWallClockExceeded: () => this.isTurnDeadlineExceeded(this.activeTurnToolMode),
@@ -383,7 +398,7 @@ export class PaAgentLoop {
         };
         const resolveFinalizationTurnPreparation = (summary: PaAgentTurnSummary) => {
             const defaultRuntimeInstruction = this.options.nativeWriting
-                ? NATIVE_WRITING_FINALIZATION_RUNTIME_INSTRUCTION
+                ? this.options.nativeWriting.finalizationInstruction
                 : FINALIZATION_RESERVE_RUNTIME_INSTRUCTION;
             const defaultControlSnapshot = deriveContinuedAgentControlSnapshot(summary.controlSnapshot, {
                 runtimeInstruction: defaultRuntimeInstruction,
@@ -551,6 +566,25 @@ export class PaAgentLoop {
             nextToolMode = undefined;
             nextControlSnapshot = undefined;
 
+            if (turnSummary.status === "error" && this.isRecoverableProviderTurn(turnSummary)) {
+                const recovery = this.providerRecoveryInstruction(turnSummary);
+                if (recovery) {
+                    nextRuntimeInstruction = recovery;
+                    nextToolMode = "normal";
+                    nextControlSnapshot = deriveContinuedAgentControlSnapshot(turnSummary.controlSnapshot, {
+                        runtimeInstruction: recovery,
+                        toolMode: "normal",
+                    });
+                    await this.waitForProviderRetry(turnSummary);
+                    continue;
+                }
+                this.endAgent("incomplete", {
+                    reason: "provider_no_progress",
+                    diagnostics: turnSummary.diagnostics,
+                });
+                return this.createResult("incomplete");
+            }
+
             if (turnSummary.status === "aborted" || turnSummary.status === "error") {
                 if (loopReservedFinalTurn) {
                     reportFinalizationReserve(turnSummary.status === "aborted" ? "aborted" : "failed");
@@ -569,7 +603,62 @@ export class PaAgentLoop {
                 return this.createResult("incomplete");
             }
 
+            if (turnSummary.diagnostics.some((diagnostic) => diagnostic.type === "provider_attempt_timeout")) {
+                const recovery = this.providerRecoveryInstruction(turnSummary);
+                if (recovery) {
+                    nextRuntimeInstruction = recovery;
+                    nextToolMode = "normal";
+                    nextControlSnapshot = deriveContinuedAgentControlSnapshot(turnSummary.controlSnapshot, {
+                        runtimeInstruction: recovery,
+                        toolMode: "normal",
+                    });
+                    await this.waitForProviderRetry(turnSummary);
+                    continue;
+                }
+                this.endAgent("incomplete", {
+                    reason: "provider_no_progress",
+                    diagnostics: turnSummary.diagnostics,
+                });
+                return this.createResult("incomplete");
+            }
+
             if (turnSummary.nativeWritingAttempted) {
+                if (!turnSummary.nativeWriting) {
+                    if (!this.isNativeWritingCurrent()) {
+                        const diagnostics = [
+                            ...turnSummary.diagnostics,
+                            { type: "assistant_source_changed", message: "Writing sources changed before delivery." },
+                        ];
+                        this.endAgent("incomplete", {
+                            reason: "assistant_source_changed",
+                            diagnostics,
+                        });
+                        return this.createResult("incomplete");
+                    }
+                    this.nativeWritingNoProgressCount += 1;
+                    if (this.nativeWritingNoProgressCount < 4) {
+                        const outputDomain = this.options.nativeWriting;
+                        if (!outputDomain) {
+                            this.endAgent("incomplete", { reason: "output_domain_unavailable" });
+                            return this.createResult("incomplete");
+                        }
+                        const runtimeInstruction = this.nativeWritingNoProgressCount >= 3
+                            ? outputDomain.strategyChangeInstruction
+                            : outputDomain.correctionInstruction;
+                        nextRuntimeInstruction = runtimeInstruction;
+                        nextToolMode = "normal";
+                        nextControlSnapshot = deriveContinuedAgentControlSnapshot(turnSummary.controlSnapshot, {
+                            runtimeInstruction,
+                            toolMode: "normal",
+                        });
+                        continue;
+                    }
+                    this.endAgent("incomplete", {
+                        reason: "native_writing_no_progress",
+                        diagnostics: turnSummary.diagnostics,
+                    });
+                    return this.createResult("incomplete");
+                }
                 const fallback: PaAgentTerminalDecision = {
                     action: "stop",
                     status: turnSummary.nativeWriting ? this.agentStatusFromTurn(turnSummary.status) : "incomplete",
@@ -753,13 +842,13 @@ export class PaAgentLoop {
             const writing = this.options.nativeWriting;
             nativeContextHandle = writing?.getContextHandle ? writing.getContextHandle() : writing?.contextHandle;
         } catch { /* Unavailable host context grants no output authority. */ }
-        if (!isValidWritingContextHandle(nativeContextHandle)) nativeContextHandle = undefined;
+        if (!this.options.nativeWriting?.isValidContextHandle(nativeContextHandle)) nativeContextHandle = undefined;
         // Recompute from the host run contract on each turn rather than inheriting
         // model data or treating a source-tool allowlist as output authority.
         if (this.options.nativeWriting && nativeContextHandle !== undefined) {
             controlSnapshot = {
                 ...(controlSnapshot ?? createAgentControlSnapshot()),
-                writingOutput: "present_writing",
+                writingOutput: this.options.nativeWriting.outputName,
             };
         } else if (controlSnapshot?.writingOutput) {
             controlSnapshot = { ...controlSnapshot };
@@ -803,6 +892,7 @@ export class PaAgentLoop {
         let firstModelChunkElapsedMs: number | undefined;
         let modelChunkCount = 0;
         let providerRequestStarted = false;
+        let providerRequestStartedAt: number | undefined;
         let textUsesHardDeadline = false;
         let providerPreparationDeadlineReason:
             | "finalization_reserve_reached"
@@ -818,9 +908,14 @@ export class PaAgentLoop {
                 turnAbort.abort();
                 throw new ProviderPreparationDeadlineError(reason);
             }
-            if (providerRequestStarted) return;
             providerRequestStarted = true;
+            providerRequestStartedAt = this.now();
             this.debug('provider_request_admitted', { turnId });
+            for (const listener of providerRequestDeadlineListeners) listener();
+        };
+        const notifyProviderRequestFailed = (): void => {
+            providerRequestStartedAt = undefined;
+            this.debug('provider_request_failed', { turnId });
             for (const listener of providerRequestDeadlineListeners) listener();
         };
 
@@ -836,13 +931,17 @@ export class PaAgentLoop {
             controlSnapshot,
             signal: turnAbort.signal,
             notifyProviderRequestStarted,
+            notifyProviderRequestFailed,
         };
         let terminalStatus: TurnEndStatus | undefined;
         let stopReason: "stop" | "tool_calls" | "error" | "aborted" | "idle_timeout" | "wall_clock_exceeded" | undefined;
         const diagnostics: Array<Record<string, unknown>> = [];
         const metrics: Array<Record<string, unknown>> = [];
         const nativeCollector = this.options.nativeWriting
-            ? new NativeWritingCallCollector(nativeContextHandle ?? "", this.options.nativeWriting.maxTextChars)
+            ? this.options.nativeWriting.createCollector(
+                nativeContextHandle ?? "",
+                this.options.nativeWriting.maxTextChars,
+            )
             : undefined;
 
         let iterator: AsyncIterator<PaAgentModelStreamChunk> | undefined;
@@ -880,6 +979,7 @@ export class PaAgentLoop {
                 throw createAbortError();
             }
             iterator = this.options.model.stream(modelInput)[Symbol.asyncIterator]();
+            if (!this.options.model.reportsProviderRequestStart) notifyProviderRequestStarted();
         } catch (error) {
             if (error instanceof ProviderPreparationDeadlineError) {
                 stopReason = "wall_clock_exceeded";
@@ -902,19 +1002,24 @@ export class PaAgentLoop {
             ? new ModelChunkConsumer(iterator, {
                 signal: turnAbort.signal,
                 assistantIdleTimeoutMs: this.assistantIdleTimeoutMs,
-                isIdleTimeoutEnabled: () => !this.options.model.reportsProviderRequestStart || providerRequestStarted,
+                isIdleTimeoutEnabled: () => this.providerResponseDelivery !== "buffered"
+                    && (!this.options.model.reportsProviderRequestStart || providerRequestStarted),
                 subscribeIdleTimeoutChange: (listener) => {
                     providerRequestDeadlineListeners.add(listener);
                     return () => providerRequestDeadlineListeners.delete(listener);
                 },
                 isAborted: () => this.isAborted(),
-                isWallClockExceeded: () => textUsesHardDeadline ? this.isWallClockExceeded() : this.isProviderWaitDeadlineExceeded(
-                    toolMode,
-                    providerRequestStarted,
-                ),
-                wallClockRemainingMs: () => textUsesHardDeadline ? this.wallClockRemainingMs() : this.providerWaitDeadlineRemainingMs(
-                    toolMode,
-                    providerRequestStarted,
+                isWallClockExceeded: () => this.isRemoteAttemptExceeded(providerRequestStartedAt)
+                    || (textUsesHardDeadline ? this.isWallClockExceeded() : this.isProviderWaitDeadlineExceeded(
+                        toolMode,
+                        providerRequestStarted,
+                    )),
+                wallClockRemainingMs: () => minimumDefined(
+                    this.remoteAttemptRemainingMs(providerRequestStartedAt),
+                    textUsesHardDeadline ? this.wallClockRemainingMs() : this.providerWaitDeadlineRemainingMs(
+                        toolMode,
+                        providerRequestStarted,
+                    ),
                 ),
                 subscribeWallClockDeadlineChange: (listener) => {
                     providerRequestDeadlineListeners.add(listener);
@@ -976,7 +1081,9 @@ export class PaAgentLoop {
             if (next.type === "wall_clock_exceeded") {
                 turnAbort.abort();
                 stopReason = "wall_clock_exceeded";
-                const diagnostic = this.turnDeadlineDiagnostic(toolMode);
+                const diagnostic = this.isRemoteAttemptExceeded(providerRequestStartedAt)
+                    ? { type: "provider_attempt_timeout", timeoutMs: this.remoteAttemptTimeoutMs }
+                    : this.turnDeadlineDiagnostic(toolMode);
                 const reserveReached = diagnostic.type === "finalization_reserve_reached";
                 terminalStatus = reserveReached
                     ? "incomplete"
@@ -1213,7 +1320,7 @@ export class PaAgentLoop {
             && assistantMessage.providerCompletion === "tool_calls" && !this.isAborted() && this.isNativeWritingCurrent()
             ? nativeCollector?.decode() : undefined;
         if (nativeWriting && toolCalls.length === 1) {
-            toolCalls[0].name = "present_writing";
+            toolCalls[0].name = this.options.nativeWriting!.outputName;
             toolCalls[0].input = nativeCollector!.rawArguments;
         }
         if (nativeCollector && hasToolCall && !nativeWriting && pendingText.length > 0) {
@@ -1385,6 +1492,8 @@ export class PaAgentLoop {
             metadata: {
                 outcome: result.outcome,
                 ...result.metadata,
+                ...(result.executionState ? { executionState: result.executionState } : {}),
+                ...(result.recovery ? { recovery: result.recovery } : {}),
                 originalLength,
                 observationChars: promptText.length,
             },
@@ -1534,6 +1643,8 @@ export class PaAgentLoop {
                 turnCount: this.turns.length,
                 toolCallCount: emittedToolCallCount,
                 executedToolCallCount: this.dispatcher.toolCallCount,
+                physicalAttemptCount: this.dispatcher.physicalAttemptCount,
+                reusedToolResultCount: this.dispatcher.reuseCount,
             },
         };
         this.endPayload = timedPayload;
@@ -1568,6 +1679,63 @@ export class PaAgentLoop {
 
     private isAborted(): boolean {
         return this.options.signal?.aborted === true;
+    }
+
+    private isRemoteAttemptExceeded(startedAt: number | undefined): boolean {
+        return startedAt !== undefined && Number.isFinite(this.remoteAttemptTimeoutMs)
+            && this.remoteAttemptTimeoutMs >= 0
+            && this.now() - startedAt >= this.remoteAttemptTimeoutMs;
+    }
+
+    private remoteAttemptRemainingMs(startedAt: number | undefined): number | undefined {
+        if (startedAt === undefined || !Number.isFinite(this.remoteAttemptTimeoutMs)
+            || this.remoteAttemptTimeoutMs < 0) return undefined;
+        return Math.max(0, this.remoteAttemptTimeoutMs - (this.now() - startedAt));
+    }
+
+    private isRecoverableProviderTurn(summary: PaAgentTurnSummary): boolean {
+        return summary.diagnostics.some((diagnostic) => diagnostic.type === "provider_error")
+            && summary.diagnostics.some((diagnostic) => diagnostic.retryable === true)
+            && !summary.diagnostics.some((diagnostic) => diagnostic.type === "provider_admission_rejected"
+                || diagnostic.type === "context_local_overflow");
+    }
+
+    private providerRecoveryInstruction(summary: PaAgentTurnSummary): string | undefined {
+        const signature = summary.diagnostics.some((diagnostic) => diagnostic.type === "provider_attempt_timeout")
+            ? "provider_attempt_timeout" : "provider_error";
+        const count = (this.providerNoProgressCounts.get(signature) ?? 0) + 1;
+        this.providerNoProgressCounts.set(signature, count);
+        if (count >= 4) return undefined;
+        if (count >= 3) {
+            return "The same provider attempt has failed three times without new evidence. Change strategy within the configured provider and current authorization: reduce only unnecessary request work, use an already available observation, or wait when a real Retry-After applies. Do not switch provider/model automatically or claim progress from retrying.";
+        }
+        return "The previous provider attempt ended before a complete response. Retry the task from the preserved run context. Do not repeat completed side effects; verify any operation whose acceptance is unknown before continuing.";
+    }
+
+    /** Retry-After waiting happens between turns, after the coordinator lease is released. */
+    private async waitForProviderRetry(summary: PaAgentTurnSummary): Promise<void> {
+        const retryAfterMs = summary.diagnostics.flatMap((diagnostic) => (
+            typeof diagnostic.retryAfterMs === "number" && Number.isFinite(diagnostic.retryAfterMs)
+                ? [Math.max(0, diagnostic.retryAfterMs)]
+                : []
+        )).at(-1);
+        if (!retryAfterMs || this.isAborted()) return;
+        this.debug("provider_retry_wait:start", { retryAfterMs });
+        await new Promise<void>((resolve) => {
+            let settled = false;
+            let timerStarted = false;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                if (timerStarted) clearPlatformTimeout(timer);
+                this.options.signal?.removeEventListener("abort", finish);
+                resolve();
+            };
+            this.options.signal?.addEventListener("abort", finish, { once: true });
+            const timer: PlatformTimeoutHandle = setPlatformTimeout(finish, retryAfterMs);
+            timerStarted = true;
+        });
+        this.debug("provider_retry_wait:end", { retryAfterMs, aborted: this.isAborted() });
     }
 
     private isWallClockExceeded(): boolean {
@@ -1849,10 +2017,58 @@ function providerErrorDiagnostic(error: unknown): Record<string, unknown> {
     if (error instanceof PaAgentContextOverflowError) {
         return { type: "context_local_overflow", promptChars: error.promptChars, maxPromptChars: error.maxPromptChars };
     }
+    const retryAfterMs = readRetryAfterMs(error);
     return {
         type: "provider_error",
         message: errorMessage(error),
+        retryable: isRetryableProviderTransportError(error),
+        ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
     };
+}
+
+function readRetryAfterMs(error: unknown): number | undefined {
+    if (!error || typeof error !== "object") return undefined;
+    const record = error as Record<string, unknown>;
+    const direct = numberValue(record.retryAfterMs);
+    if (direct !== undefined && direct >= 0) return direct;
+    const headers = record.headers;
+    let raw: unknown;
+    if (headers && typeof headers === "object") {
+        const getter = (headers as { get?: (name: string) => unknown }).get;
+        if (typeof getter === "function") {
+            try { raw = getter.call(headers, "retry-after"); } catch { /* malformed provider headers */ }
+        }
+        raw ??= (headers as Record<string, unknown>)["retry-after"]
+            ?? (headers as Record<string, unknown>)["Retry-After"];
+    }
+    if (typeof raw !== "string" && typeof raw !== "number") return undefined;
+    const text = String(raw).trim();
+    if (!text) return undefined;
+    const seconds = Number(text);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000;
+    const date = Date.parse(text);
+    return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
+function isRetryableProviderTransportError(error: unknown): boolean {
+    if (!error || typeof error !== "object") return false;
+    const record = error as Record<string, unknown>;
+    const status = numberValue(record.status) ?? numberValue(record.statusCode);
+    if (status === 408 || status === 429 || (status !== undefined && status >= 500)) return true;
+    const code = stringValue(record.code)
+        ?? stringValue((record.cause as Record<string, unknown> | undefined)?.code);
+    return code !== undefined && new Set([
+        "ECONNRESET", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT",
+        "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_SOCKET",
+    ]).has(code.toUpperCase());
+}
+
+function numberValue(value: unknown): number | undefined {
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function isOrdinaryEmptyFinalizationResponse(summary: PaAgentTurnSummary): boolean {
@@ -2090,13 +2306,20 @@ function readMetadataNumber(metadata: Record<string, unknown> | undefined, key: 
 }
 
 function isErrorToolOutcome(outcome: ToolExecutionOutcome): boolean {
-    return outcome !== "success" && outcome !== "duplicate_skipped" && outcome !== "control_applied";
+    return outcome !== "success" && outcome !== "reused_result"
+        && outcome !== "duplicate_skipped" && outcome !== "control_applied";
 }
 
 function stringifyToolInput(input: unknown): string {
     if (typeof input === "string") return input;
     if (input === undefined) return "";
     return JSON.stringify(input);
+}
+
+function minimumDefined(left: number | undefined, right: number | undefined): number | undefined {
+    if (left === undefined) return right;
+    if (right === undefined) return left;
+    return Math.min(left, right);
 }
 
 function createIncrementingIdFactory(): (prefix: string) => string {

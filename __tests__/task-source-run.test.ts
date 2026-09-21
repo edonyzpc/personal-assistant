@@ -102,7 +102,7 @@ describe('Task source run host', () => {
         expect(run.contextInstruction()).toBe(narrowed);
     });
 
-    it.each(['delete', 'replace', 'modify', 'boundary', 'memory'] as const)('retains frozen sources after cleanup and rejects later %s', change => {
+    it.each(['delete', 'replace', 'modify', 'boundary', 'memory'] as const)('keeps the read snapshot after cleanup and handles later %s independently', change => {
         const h = fixture();
         h.a.stat = { mtime: 1, size: 12 };
         let memoryAllowed = true;
@@ -117,7 +117,8 @@ describe('Task source run host', () => {
         if (change === 'modify') h.a.stat.mtime = 2;
         if (change === 'boundary') h.getFileByPath.mockReturnValue(undefined);
         if (change === 'memory') memoryAllowed = false;
-        expect(assertSources).toThrow(/source/);
+        if (change === 'modify') expect(assertSources).not.toThrow();
+        else expect(assertSources).toThrow(/source/);
     });
 
     it('captures exact projected task-source purposes without merging equal paths', () => {

@@ -4,9 +4,21 @@ import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
 import protocolTrace from "./fixtures/b135-writing-protocol-trace.json";
 import identityTrace from "./fixtures/b135-native-identity-trace.json";
 import type { PaAgentModelInput } from "../src/ai-services/pa-agent-loop";
+import { NativeWritingCallCollector } from "../src/ai-services/native-writing-call";
+import { isValidWritingContextHandle } from "../src/ai-services/writing-output";
 
 const trace = protocolTrace.results.find((result) => result.mode === "native")!;
-const nativeWriting = { contextHandle: "b135-probe", maxTextChars: 20_000, isCurrent: () => true };
+const nativeWriting = {
+    contextHandle: "b135-probe",
+    maxTextChars: 20_000,
+    isCurrent: () => true,
+    isValidContextHandle: isValidWritingContextHandle,
+    createCollector: (contextHandle: string, maxTextChars: number) => new NativeWritingCallCollector(contextHandle, maxTextChars),
+    outputName: "present_writing" as const,
+    finalizationInstruction: "Reply with present_writing; no source, context or action calls are allowed.",
+    correctionInstruction: "The writing candidate was not accepted. Correct present_writing.",
+    strategyChangeInstruction: "Change strategy for present_writing.",
+};
 const tool = (args = trace.rawArguments, id = "call-1", index = 0, name = "present_writing") => ({
     tool_call_chunks: [{ id, index, name, args }],
 });
@@ -168,9 +180,47 @@ describe("host-enabled native writing loop", () => {
     ])("rejects mixed, conflicting or incomplete output without any tool side effect", async (...chunks) => {
         const outcome = await run(chunks);
         expect(outcome.result.status).not.toBe("completed");
-        expect(outcome.requests).toHaveLength(1);
+        expect(outcome.requests).toEqual(["normal", "normal", "normal", "normal"]);
+        expect(outcome.modelInputs[1].runtimeInstruction).toContain("not accepted");
+        expect(outcome.modelInputs[3].runtimeInstruction).toContain("Change strategy");
         expect(outcome.prepareBatch).not.toHaveBeenCalled();
         expect(outcome.execute).not.toHaveBeenCalled();
+    });
+
+    it("returns an invalid writing candidate to the loop and completes after a corrected candidate", async () => {
+        const inputs: PaAgentModelInput[] = [];
+        const loop = new PaAgentLoop({
+            runId: "native-corrected-loop",
+            userInput: "Write the requested work",
+            nativeWriting,
+            model: {
+                stream: (input) => {
+                    inputs.push(input);
+                    return streamWithInvokeFallback({
+                        captureToolIdentity: true,
+                        input: {},
+                        chain: {
+                            stream: async function* () {
+                                if (input.turnIndex === 0) {
+                                    yield tool(trace.rawArguments.slice(0, -1));
+                                } else {
+                                    yield tool();
+                                    yield finish();
+                                }
+                            },
+                            invoke: async () => { throw new Error("unexpected fallback"); },
+                        },
+                    });
+                },
+            },
+        });
+
+        const result = await loop.run();
+
+        expect(inputs).toHaveLength(2);
+        expect(inputs[1].runtimeInstruction).toContain("not accepted");
+        expect(result.status).toBe("completed");
+        expect(result.turns.at(-1)?.nativeWriting).toEqual({ body: trace.expected, explanation: "" });
     });
 
     it("does not wait for an optional transport tail after complete pure output", async () => {

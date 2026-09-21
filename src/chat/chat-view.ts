@@ -258,7 +258,9 @@ function isShareCardEligibleAssistant(message: ChatMessage): boolean {
 }
 
 function isInterruptedAssistant(message: ChatMessage): boolean {
-    return message.runtimeWarnings?.some((warning) => warning.type === 'partial_output_error' || warning.type === 'user_abort') ?? false;
+    return message.agentExecution?.state === 'interrupted'
+        || (message.runtimeWarnings?.some((warning) => warning.type === 'partial_output_error'
+            || warning.type === 'user_abort' || warning.type === 'agent_interrupted') ?? false);
 }
 
 function uniquePageletVaultSources(context: PageletChatHandoffContext): string[] {
@@ -3269,6 +3271,26 @@ export class LLMView extends ItemView {
                         disableDeleteWhileGenerating: true,
                         memoryMetadata: metadata,
                     });
+                    if (entry.assistant.agentExecution?.state === 'interrupted') {
+                        const resume = assistantRendered.actionDiv.createEl('button', {
+                            cls: 'message-action-button retry-message-button',
+                            attr: { 'aria-label': t("plugin.chat.action.retryMessage"), title: t("plugin.chat.action.retryMessage") },
+                        });
+                        setIcon(resume, 'rotate-cw');
+                        resume.onclick = () => {
+                            if (resume.disabled || isGenerating()) return;
+                            const operationIds = entry.assistant.agentExecution?.operationIds ?? [];
+                            const continuation = [
+                                'Continue the interrupted task from the safe conversation history.',
+                                `Original goal: ${entry.user.content}`,
+                                operationIds.length
+                                    ? `Before any repeat side effect, verify these recorded operations: ${operationIds.join(', ')}.`
+                                    : 'Before any repeat side effect, check whether an earlier operation may already have taken effect.',
+                                'Do not assume missing in-memory progress completed.',
+                            ].join(' ');
+                            void sendPrompt(continuation, entry.user.images ?? []);
+                        };
+                    }
                     const stableMessageId = entry.user.hostProvenance?.messageId;
                     if (stableMessageId) imageTaskMessageTargets.set(stableMessageId, {
                         parent: assistantRendered.messageDiv,
@@ -4147,6 +4169,7 @@ export class LLMView extends ItemView {
                         selectedWritingParentExplicit = false;
                     }
                 } : undefined,
+                turn.userProvenance?.messageId,
             );
             if (turn.writingRequestId && !persisted && isCurrentSession()) new Notice(t('plugin.chat.writing.historyUnavailable'), 12000);
             if (!turn.writingRequestId && !sawLegacyPartialFailure) await maybeRenderOperationsSaveSuggestion(turn, prompt, responseContent);
@@ -4269,10 +4292,14 @@ export class LLMView extends ItemView {
                 ? previousAssistant.writingRecovery : undefined;
             const continueFailedWriting = retryImages === undefined && !selectedWritingParentExplicit
                 && isWritingContinuationPrompt(prompt) && failedWriting;
-            const nativeWriting = this.host.writingOutputProtocol === 'native'
+            // Native writing is a capability the main Agent may choose after
+            // semantically preparing writing context; prompt keywords do not
+            // route the turn. Legacy output retains its compatibility hint.
+            const nativeWriting = !explicitImageIntent && this.host.writingOutputProtocol === 'native'
                 && !!this.host.writingVersions && !!this.host.prepareWritingStyleForScene;
-            const writingRequest = this.host.writingVersions && (nativeWriting || isWritingRequestPrompt(prompt,
-                !!(retryWritingParent ?? selectedWritingVersion ?? retryWritingMaterialContext ?? failedWriting)))
+            const writingIntent = nativeWriting || isWritingRequestPrompt(prompt,
+                !!(retryWritingParent ?? selectedWritingVersion ?? retryWritingMaterialContext ?? failedWriting));
+            const writingRequest = this.host.writingVersions && writingIntent
                 ? { requestId: newWritingActionId() } : undefined;
             const writingParent = !writingRequest || nativeWriting ? undefined : retryImages !== undefined ? retryWritingParent
                 : !isNewWritingTopicPrompt(prompt) && (selectedWritingParentExplicit || isWritingContinuationPrompt(prompt))
@@ -4301,7 +4328,6 @@ export class LLMView extends ItemView {
                 id: ++uiTurnId,
                 prompt,
                 images: turnImages,
-                writingRequestId: writingRequest?.requestId,
                 writingParent,
                 writingMaterialContext,
                 writingMaterials: mergeChatImageMaterials(writingMaterialContext?.associatedImages ?? writingParent?.associatedImages ?? [], turnImages),
@@ -4321,6 +4347,12 @@ export class LLMView extends ItemView {
             };
             if (retryImageOperation) turn.userProvenance!.messageId = retryImageOperation.stableMessageId;
             const stableMessageId = turn.userProvenance!.messageId;
+            const persistedUserMessage: ChatMessage = {
+                role: 'user', content: prompt,
+                ...(turnImages.length ? { images: cloneMessageImages(turnImages) } : {}),
+                hostProvenance: turn.userProvenance!,
+            };
+            await this.conversationPersistence.persistRunningTurn(prompt, stableMessageId, persistedUserMessage);
             const operationId = retryImageOperation?.operationId ?? `image-${stableMessageId}`;
             imageOperationByTurn.set(turn.id, { stableMessageId, operationId, intent: explicitImageIntent });
             let acceptedImageTaskId: string | undefined;
@@ -4587,7 +4619,12 @@ export class LLMView extends ItemView {
                                 recordUserCancellation(turn, event.type === 'turn_end' ? event.turnId : undefined);
                                 return;
                             }
-                            handleCanonicalLifecycleEvent(turn, event, writingRequest ? () => undefined : updateResponseContent, isLiveTurn);
+                            handleCanonicalLifecycleEvent(
+                                turn,
+                                event,
+                                writingRequest && !nativeWriting ? () => undefined : updateResponseContent,
+                                isLiveTurn,
+                            );
                         },
                         onStatus: handleStatus,
                         onReasoningChunk: handleProviderReasoning,
@@ -4596,11 +4633,13 @@ export class LLMView extends ItemView {
                             if (!acceptingStreamEvents) return;
                             if (event.kind === 'writing-preview') {
                                 if (!isLiveTurn() || event.requestId !== writingRequest?.requestId) return;
+                                turn.writingRequestId = event.requestId;
                                 updateResponseContent(event.text);
                                 return;
                             }
                             if (event.kind === 'writing-artifact') {
                                 if (!isLiveTurn() || event.requestId !== writingRequest?.requestId) return;
+                                turn.writingRequestId = event.requestId;
                                 turn.writingMaterials = cloneMessageImages(event.associatedImages ?? turn.writingMaterials ?? []);
                                 turn.writingArtifact = { ...event,
                                     styleRevisionIds: event.styleRevisionIds ? [...event.styleRevisionIds] : undefined,
@@ -4616,6 +4655,7 @@ export class LLMView extends ItemView {
                             }
                             if (event.kind === 'writing-recovery') {
                                 if (!isSameTurn() || event.requestId !== writingRequest?.requestId) return;
+                                turn.writingRequestId = event.requestId;
                                 turn.writingRecoverySourceCurrent = event.isSourceCurrent;
                                 turn.writingRecoveryGenerationInput = event.generationInput
                                     ? cloneGenerationInputSnapshot(event.generationInput) : undefined;
@@ -4723,7 +4763,15 @@ export class LLMView extends ItemView {
                         syncComposerControls();
                         await finalizeSuccessfulTurn(turn, prompt, receivedText, isSameTurn, true);
                     } else {
-                        createTerminalEntry(turn, t("plugin.chat.notice.generationCancelled"), 'cancelled');
+                        const cancellationMessage = t("plugin.chat.notice.generationCancelled");
+                        createTerminalEntry(turn, cancellationMessage, 'cancelled');
+                        await this.conversationPersistence.persistTerminalTurn({
+                            prompt,
+                            runId: stableMessageId,
+                            user: persistedUserMessage,
+                            content: cancellationMessage,
+                            state: 'cancelled',
+                        });
                         this.result = previousResult;
                     }
                 } else {
@@ -4760,6 +4808,13 @@ export class LLMView extends ItemView {
                         await finalizeSuccessfulTurn(turn, prompt, receivedText, isSameTurn, true);
                     } else {
                         createTerminalEntry(turn, failureMessage, 'error', localOverflow ? undefined : String(error));
+                        await this.conversationPersistence.persistTerminalTurn({
+                            prompt,
+                            runId: stableMessageId,
+                            user: persistedUserMessage,
+                            content: failureMessage,
+                            state: 'failed',
+                        });
                         this.result = previousResult;
                     }
                 }
