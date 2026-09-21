@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.13](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.12...2.10.0-beta.13) (2026-09-22)
+
+### Features
+- agent: complete recoverable execution
+
+### Fix
+- agent: prevent stalled and falsely completed chat turns
+
+### Docs
+- agent: record empty-answer diagnosis and validated fixes
+- agent: design recoverable task execution
+- agent: close out B-144
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
