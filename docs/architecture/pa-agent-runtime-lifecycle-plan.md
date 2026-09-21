@@ -1,15 +1,15 @@
 # PA Agent Runtime Lifecycle Contract
 
-Updated: 2026-08-28
+Updated: 2026-09-22
 
 Status: Current canonical lifecycle contract. The long implementation plan and phase evidence are archived at [pa-agent-runtime-lifecycle-plan-implementation-record.md](../archive/pa-agent-runtime-lifecycle-plan-implementation-record.md).
 
-Target amendment: [DEC-040](../product/decisions/dec-040-recoverable-agent-execution.md) and the [B-144 SDD](../development/active/recoverable-agent-execution/sdd.md) define accepted product direction and proposed engineering changes for recovery, 30-minute attempts, source snapshots, domain delivery and concurrency. This document continues to describe the implemented baseline; the [B-144 Tracker](../development/active/recoverable-agent-execution/tracker.md) owns implementation and validation status. Do not read the target design as evidence that the defaults below have changed.
+[DEC-040](../product/decisions/dec-040-recoverable-agent-execution.md) and the [B-144 Product Spec](../product/specs/pa-recoverable-agent-execution-product-spec.md) define the recovery, 30-minute attempt, source snapshot, domain delivery and concurrency behavior implemented by B-144. This document is the current technical contract; source and regression tests remain the executable authority.
 
 ## Run And Turn Model
 
 - One visible user request is one run.
-- A run may contain up to 20 internal model turns.
+- A run has a 256-turn planning guard; ordinary completion and no-progress policy normally stop much earlier.
 - The user message is emitted once, on the first turn.
 - Later turns reuse the canonical transcript plus bounded runtime instructions and tool results.
 - Run-scope events use `turnId = RUN_SCOPE_TURN_ID` (`"__run__"`).
@@ -144,11 +144,11 @@ user-requested syntax examples from the response.
 
 | Limit | Default | Enforcement |
 | --- | ---: | --- |
-| Model turns | 20 | `PaAgentLoop` stops before starting another turn. |
-| Tool calls | 30 | `ToolExecutionDispatcher` returns budget outcome. |
-| Run wall clock | 180,000 ms | Checked before/within turns and tool dispatch. |
-| Assistant idle | 60,000 ms | For request-boundary-aware models, incremental idle starts at physical request admission; preparation remains wall-clock bounded. Models without this hook retain stream-wait timing. Buffered delivery relies on the absolute wall clock. |
-| Individual tool timeout | 30,000 ms | Default recoverable tool outcome. |
+| Model turns | 256 | Planning guard; ordinary completion and no-progress policy normally stop earlier. |
+| Tool calls | 1,024 | Planning guard; duplicate/recovery policy normally stops earlier. |
+| Run wall clock | unbounded | No legacy 180-second forced finalization; an embedding host may explicitly configure a bound. |
+| Assistant idle | unbounded | No generic 60-second silence cutoff; user cancellation and the physical-attempt deadline remain active. |
+| Model/ordinary remote-tool attempt | 1,800,000 ms | Starts at each physical dispatch/execution and includes full response consumption; a capability may override it. |
 | Tool abort grace | 2,000 ms | Late unresolved tool becomes `abort_timeout`; late result is ignored. |
 | Loop observations | 64,000 chars | Aggregate prompt observation budget. |
 | Chat history | 60,000 chars | Runtime/context projection budget. |
@@ -159,10 +159,10 @@ Changing a default requires runtime, tests, `AGENTS.md`, and current architectur
 The dispatcher records the absolute individual-Tool deadline at the same point it
 registers the timeout timer and passes that timestamp through the Host-only
 execution input. Nested Host work must terminate strictly before that real outer
-boundary；it must not restart a fresh 30-second clock after schema validation、
+boundary；it must not restart a fresh clock after schema validation、
 scheduling or GC delay. Chat Memory Recovery currently keeps a 250ms Host
-settlement margin plus a separate 500ms projection margin inside the unchanged
-30,000ms Tool envelope, and classifies projection expiry separately from user
+settlement margin plus a separate 500ms projection margin inside its own
+episode envelope, and classifies projection expiry separately from user
 abort while discarding late results.
 
 ## Provider Transport
@@ -222,7 +222,7 @@ After each turn, host policy can:
 - stop with completed/completed-with-warning/incomplete state;
 - continue with a corrective runtime instruction;
 - require a specific capability result;
-- retry a failed required tool once;
+- continue with bounded recovery after a retryable provider/tool failure;
 - force a final-answer-only turn;
 - surface structured diagnostics/warnings;
 - stop when evidence, budget, or safety conditions are not satisfied.
@@ -263,9 +263,25 @@ Local preparation/admission rejection emits `provider_admission_rejected` and
 does not enter SDK retries of the same serialized input. An explicitly classified
 history/Vault projection change may use the existing single stream-to-invoke
 fallback only when a fresh input preparation callback is available and no output
-has arrived. It reprojects and revalidates sources; background, writing, image,
+has arrived. It reprojects fixed read snapshots and rechecks authorization;
+background, writing, image,
 style and authority rejection cannot use that recovery. Network errors retain
-the installed SDK retry policy and revalidate admission on each physical attempt.
+the installed SDK retry policy and recheck admission on each physical attempt.
+Every physical start resets only that attempt's deadline; a failed attempt ends
+its clock before SDK backoff. Host-level recovery honors a real `Retry-After`
+after releasing the per-turn coordinator lease.
+
+Successful exact duplicate tools reuse their structured result when the
+capability says it remains valid. Failed reads may retry; partially succeeded or
+acceptance-unknown side effects never replay blindly and instead expose query or
+user recovery. Four equivalent provider or candidate failures end as a
+no-progress terminal result rather than looping indefinitely.
+
+Chat and Pagelet share FIFO lanes but hold a lease for one turn only. History
+persists a running placeholder before provider work, overwrites that same turn
+with its terminal state, and converts a leftover running record to interrupted
+on reload. Continue is always a fresh user action; reload never auto-replays a
+provider request or side effect.
 
 Ordinary answer completion requires at least one non-whitespace text character;
 the original text is otherwise preserved exactly. Reasoning-only and whitespace-only

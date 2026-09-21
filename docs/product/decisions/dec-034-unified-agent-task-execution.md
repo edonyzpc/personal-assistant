@@ -2,11 +2,11 @@
 
 Decision ID: DEC-034
 Status: Accepted
-Updated: 2026-09-21
+Updated: 2026-09-22
 Authority: Owner 于 2026-09-08 确认主 Agent 语义决策和统一写作方向；2026-09-09 明确默认学习与个性化边界并将全部新增工作归 B-135。B-135 已完成实现与验证，本记录承担稳定产品选择，历史证据见验证归档。
 Work item: B-135
 
-2026-09-21 局部后续决定：[DEC-040](./dec-040-recoverable-agent-execution.md) 确认普通 Chat 已读材料与授权分离、可恢复循环及 writing 领域化的目标。保留本决定的主 Agent、个性化、物理发送授权、native 协议、旧 reader 和持久动作边界；不重开 B-135。目标实施与验证由 B-144 Tracker 管理，不以已接受设计覆盖现有代码事实。
+2026-09-21 局部后续决定：[DEC-040](./dec-040-recoverable-agent-execution.md) 确认普通 Chat 已读材料与授权分离、可恢复循环及 writing 领域化；B-144 已于 2026-09-22 完成交付与 closeout。保留本决定的主 Agent、个性化、物理发送授权、native 协议、旧 reader 和持久动作边界；不重开 B-135。
 
 ## Context
 

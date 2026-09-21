@@ -2,8 +2,8 @@
 
 Decision ID: DEC-040
 Status: Accepted
-Updated: 2026-09-21
-Authority: Owner 在 2026-09-21 本次 PA Agent 设计讨论中逐项确认 D1–D8，并明确要求完成设计文档；确认产品方向不等于授权本轮实现、部署或发布。
+Updated: 2026-09-22
+Authority: Owner 在 2026-09-21 逐项确认 D1–D8，随后授权按 B-144 方案完成开发、验证与 closeout；本决定记录稳定产品边界，不作为发布凭据。
 Work item: B-144
 
 ## Context
@@ -36,7 +36,7 @@ Owner 要求从架构层面支持长任务、自主纠错，并降低 writing �
 
 ### 与现行契约的关系
 
-本决定窄范围修订 DEC-034、DEC-037 及现行 runtime 契约中的普通 Chat 新鲜度、恢复、时限、调度、writing 耦合和结果表达。实现前，当前 Architecture 继续描述现有代码；本记录与 Product Spec 描述目标，执行状态只看 Tracker。
+本决定窄范围修订 DEC-034、DEC-037 及现行 runtime 契约中的普通 Chat 新鲜度、恢复、时限、调度、writing 耦合和结果表达。B-144 已实现这些边界；当前 Architecture、源码与回归测试描述并保护现行行为。
 
 不撤销逐次物理 dispatch 的授权检查、来源范围、Forget/排除、上下文压缩来源链、写入确认与冲突处理、Undo、图片付费操作的 acceptance-unknown 保护。Pagelet frozen anchor、质量门、只读范围与 quiet no-insight 仍有效。独立 Memory 提取/索引维护的触发与成本授权不因本决定扩大；VSS 写队列保持独占。
 
@@ -45,7 +45,7 @@ Owner 要求从架构层面支持长任务、自主纠错，并降低 writing �
 - Product behavior: 长任务与可恢复失败自然继续；用户看到的是实际交付与剩余影响。
 - Architecture / data / safety: 分离材料版本与动态授权；恢复、去重、领域交付及调度分别负责自己的事实。
 - Compatibility / migration: 保留 native 写作协议、旧作品/history reader、现有操作记录；不自动重放旧 run。
-- Work created or removed: 新增 B-144 设计与分阶段任务；替换强制收尾和特殊恢复分支，不重开 B-135/B-140 已关闭交付。
+- Work created or removed: B-144 已替换强制收尾和特殊恢复分支并完成 closeout；不重开 B-135/B-140 已关闭交付。
 
 ## Revisit Trigger
 
@@ -56,7 +56,6 @@ Owner 要求从架构层面支持长任务、自主纠错，并降低 writing �
 ## Traceability
 
 - Product Spec: [B-144](../specs/pa-recoverable-agent-execution-product-spec.md)
-- Architecture / SDD: [目标设计](../../development/active/recoverable-agent-execution/sdd.md)
-- Execution: [Tracker](../../development/active/recoverable-agent-execution/tracker.md)
+- Architecture: [PA Agent current architecture](../../architecture/pa-agent-architecture-plan.md), [Runtime lifecycle](../../architecture/pa-agent-runtime-lifecycle-plan.md)
 - Related decisions: [DEC-034](./dec-034-unified-agent-task-execution.md), [DEC-037](./dec-037-pa-agent-essential-capabilities.md), [DEC-038](./dec-038-chat-image-generation.md)
 - Supersedes: 上述决策的明确局部边界；不整体替代或归档这些决策。

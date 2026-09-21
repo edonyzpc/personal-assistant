@@ -1,10 +1,10 @@
 # PA Recoverable Agent Execution Product Spec
 
 Document status: Approved
-Updated: 2026-09-21
+Updated: 2026-09-22
 Work item: B-144
 Decision: [DEC-040](../decisions/dec-040-recoverable-agent-execution.md)
-Authority: Owner 在本次设计讨论中确认的用户行为、范围与验收标准；Approved 表示产品选择已确认，不表示实现或运行验证已经完成。
+Authority: Owner 确认的用户行为、范围与验收标准；B-144 已完成实现、自动化验证与 Desktop test-vault 实际交互，本文不作为发布凭据。
 
 ## Problem And Product Outcome
 
@@ -35,7 +35,7 @@ Authority: Owner 在本次设计讨论中确认的用户行为、范围与验收
 - NG-02: 新增分类模型、每类任务一个 Agent、MCP/shell 扩展或更换 provider/model。
 - NG-03: 删除全部保护、自动扩大来源、重复付费生成、取消写入确认，或绕过 Memory/VSS 写队列。
 - NG-04: 改变 Pagelet anchor/质量/quiet no-insight，扩大独立后台提取与学习的授权。
-- NG-05: 以本次文档或既有空回答补丁宣称新架构已实现、性能改善或真机验证通过。
+- NG-05: 由本次交付推断未测的性能提升、真机移动路径或跨重载自动续跑。
 
 ## User Flow And States
 
@@ -78,11 +78,10 @@ Authority: Owner 在本次设计讨论中确认的用户行为、范围与验收
 
 ## Open Decisions
 
-无阻止本次设计的产品选择。30 分钟、前后台完成导向、受控并发、重载后由用户继续均已明确。工程参数及拟新增接口见 SDD，不能据此扩大上述范围。
+None. 30 分钟、前后台完成导向、受控并发、重载后由用户继续均已明确并交付；工程细节见当前 Architecture，不能据此扩大上述范围。
 
-## Delivery Handoff
+## Delivery And Evidence
 
-- Active Package: [Feature Home](../../development/active/recoverable-agent-execution/README.md)
-- Target design: [SDD](../../development/active/recoverable-agent-execution/sdd.md)
-- Current architecture baseline: [Runtime lifecycle](../../architecture/pa-agent-runtime-lifecycle-plan.md)
-- Release / rollout boundary: 本次授权设计文档；实施、部署、Git 交付及发布分别依授权，状态与验证只看 Tracker。
+- B-144 于 2026-09-22 完成 closeout；当前技术契约见 [PA Agent Architecture](../../architecture/pa-agent-architecture-plan.md) 与 [Runtime lifecycle](../../architecture/pa-agent-runtime-lifecycle-plan.md)。
+- 自动化证据：lint、type-check、production build 与 316 suites / 8071 tests 通过；Desktop test-vault 使用真实 DashScope provider 验证普通 Chat、选中文字、writing、取消、重载后用户继续与 Pagelet 路径。
+- 证据边界：buffered/mobile 仅有适配器测试，不声称真机移动验证；本次验证与 closeout 不等于 beta/stable release。

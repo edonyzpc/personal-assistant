@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-09-19
+Updated: 2026-09-22
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -69,8 +69,8 @@ flowchart TD
 | `SourceRecord` and source projection | Keep source records and source-boundary metadata separate from answer text; normalization and copying use the shared source helpers, not a separate store instance. |
 | `MemorySearchTool` | Owns direct/graph candidate collection, selected-model reranking, live-source checks, final allocation, and the allowlisted Memory observation. |
 | `ChatMemoryRecoveryCoordinator` | Owns one run-scoped hidden relaxed attempt, its token/deadlines/frozen plan, exact-repeat suppression, and the cumulative ≤8-document replacement observation. |
-| `TaskSourceRun` | Binds one user request to the Host-allowed note/Web scope and revalidates the material used by every physical provider request. |
-| `WritingContextRun` | Exposes Host-selected writing candidates, binds the selected parent/material/style state to one context handle, and admits the final pure output against that handle. |
+| `TaskSourceRun` | Binds one user request to the Host-allowed note/Web scope, preserves read snapshots, and rechecks current authorization before every physical provider request. |
+| `WritingContextRun` | Exposes Host-selected writing candidates on demand, binds the selected parent/material/style state to one context handle, and admits the final pure output against that handle. |
 | `ChatView` | Consumes canonical lifecycle, writing preview/artifact/recovery events and persists current-turn state, versions and confirmed save results without duplicate legacy rendering. |
 
 ## Capability Model
@@ -213,9 +213,15 @@ Host validation and rejects a mixed batch whose reads are not covered by the
 committed scope. Note scope and personalization are separate: a request limited
 to the current note does not by itself remove eligible Personal, existing
 Memory, or explicitly authorized style samples. Before every physical provider
-request, the Host rebuilds and revalidates the actual admitted inputs.
+request, the Host rebuilds the actual admitted input from the run's read
+snapshots and rechecks live authorization. Ordinary note edits and background
+Memory refresh do not rewrite an already-read snapshot; deletion, exclusion,
+Forget, Data Boundary or lost identity still withdraw it. An explicit request
+for the latest/current version executes a new read rather than reusing an exact
+successful duplicate.
 
-For writing, `get_writing_context` exposes only Host-selected candidates and
+For writing, the main Agent may choose `get_writing_context` without a
+prompt-keyword router. It exposes only Host-selected candidates and
 returns a run-bound context handle. When native writing output is enabled,
 `present_writing` becomes available only after that context is prepared. It must
 be the single output call in its response and cannot be mixed with new source or
@@ -267,16 +273,16 @@ Current top-level constants:
 | Local answer request | 120,000 chars | Rendered system/human messages plus bound schema JSON estimate and a 2,048-character safety reserve. |
 | Read-only tool context | 24,000 chars | Bounded injected tool/context payload. |
 | Loop observation aggregate | 64,000 chars | Production loop cap across tool observations before host policy/finalization. |
-| Run wall clock | 180,000 ms | Hard run budget. |
+| Model/remote attempt | 1,800,000 ms | Per physical request/execution, including response consumption; capability override allowed. |
+| Run wall clock | unbounded by default | No legacy 180-second forced finalization; callers may still configure an explicit bound. |
 
 The 24k read-only context and 64k loop observation cap are different layers; do not collapse them into one constant.
 
-Immediately before a provider request, including a safe pre-output invoke
-fallback, the loop runs the Memory-specific revalidation hook under the same
-absolute soft/hard deadline envelope and reconstructs the prompt from the result.
-Timeout or unavailable currentness projects Memory as unavailable and preserves
-the final-answer reserve；it does not reuse an older serialized transcript
-payload.
+Immediately before a provider request, including SDK physical retries, the
+runtime rebuilds the prompt from fixed read snapshots and current authorization.
+Each physical attempt receives a fresh 30-minute deadline; failed attempts stop
+that clock before SDK backoff. A real `Retry-After` is cancellable, happens after
+the turn lease is released, and does not consume the next attempt's budget.
 
 The final synchronous projection measures the same templates used by the chain.
 Under total-request pressure it reduces old tool evidence, then older history
