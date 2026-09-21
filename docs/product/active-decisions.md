@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-09-20
+Updated: 2026-09-21
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-040 | 以完成任务为目标的可恢复 Agent | 普通 Chat 已读版本、自主恢复、单次模型/同步远程尝试默认 30 分钟；前后台受控并发且不因后台身份减预算；领域交付、真实结果、重载后用户继续。目标行为，不声明已实现 | [Decision](./decisions/dec-040-recoverable-agent-execution.md), [Product Spec](./specs/pa-recoverable-agent-execution-product-spec.md) | 真实能力不支持已确认边界，或 Owner 要求跨重载自动续跑/改变成本与授权策略 |
 | DEC-039 | Plugin shell 行为保持重构与三项局部生命周期修复 | 正常功能/数据/权限/恢复不变，现有 Host 优先；先复现修复再迁移，不重排全局生命周期或追求启动提速 | [Decision](./decisions/dec-039-plugin-shell-refactor.md), [Product Spec](./specs/pa-plugin-shell-refactor-product-spec.md) | 真实证据要求扩大缺陷修复、改变行为/存储/权限/关键时序 |
 | DEC-038 | Chat 内置图片生成与连续编辑 | 显式/自然语言入口、Wan、独立或复用的统一图片连接、原图和版本保留、后台任务及有依据恢复；不自主增加付费生成 | [Decision](./decisions/dec-038-chat-image-generation.md), [Product Spec](./specs/pa-chat-image-generation-product-spec.md) | 接口或平台不能满足验收，或需新增 provider/外发/费用/同步边界 |
 | DEC-037 | PA Agent 基础能力与自主规划 | 取消 Operations/Memory 规划性开放门；日期由主 Agent 选择并说明，不确定时询问；保留来源、确认与治理规则 | [Decision](./decisions/dec-037-pa-agent-essential-capabilities.md), [Product Spec](./specs/pa-agent-essential-capabilities-product-spec.md) | 基础组合不足或必须改变权限/数据边界 |

@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [Recoverable Agent Execution](./specs/pa-recoverable-agent-execution-product-spec.md) — DEC-040 已确认目标；30 分钟尝试、自主恢复、领域交付与并发设计，实施状态由 B-144 Tracker 管理。
 - [PA Agent Essential Capabilities](./specs/pa-agent-essential-capabilities-product-spec.md)
 
 - [Quick Capture and Micronote](./specs/pa-quick-capture-micronote-product-spec.md)

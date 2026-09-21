@@ -2,9 +2,11 @@
 
 Decision ID: DEC-037
 Status: Accepted
-Updated: 2026-09-17
+Updated: 2026-09-21
 Authority: 用户于 2026-09-14 明确要求在 B-140 分支推进开发，并选择日期口径由主 Agent 根据上下文判断；2026-09-16 明确选择记住/纠正指令直接保存，仅歧义或风险时确认。
 Work item: B-140
+
+2026-09-21 局部后续决定：[DEC-040](./dec-040-recoverable-agent-execution.md) 将主 Agent 自主规划延伸到统一恢复、长任务与受控并发；普通 Chat 新鲜度与授权分离。现有工具语义、真实来源/权限、Pagelet anchor 和写入确认继续有效；实现状态只由 B-144 Tracker 承接，不重开 B-140。
 
 ## Context
 

@@ -4,6 +4,8 @@ Updated: 2026-08-28
 
 Status: Current canonical lifecycle contract. The long implementation plan and phase evidence are archived at [pa-agent-runtime-lifecycle-plan-implementation-record.md](../archive/pa-agent-runtime-lifecycle-plan-implementation-record.md).
 
+Target amendment: [DEC-040](../product/decisions/dec-040-recoverable-agent-execution.md) and the [B-144 SDD](../development/active/recoverable-agent-execution/sdd.md) define accepted product direction and proposed engineering changes for recovery, 30-minute attempts, source snapshots, domain delivery and concurrency. This document continues to describe the implemented baseline; the [B-144 Tracker](../development/active/recoverable-agent-execution/tracker.md) owns implementation and validation status. Do not read the target design as evidence that the defaults below have changed.
+
 ## Run And Turn Model
 
 - One visible user request is one run.
