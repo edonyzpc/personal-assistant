@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-09-19
+Updated: 2026-09-21
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-09-21 | `docs/development/active/plugin-shell-refactor/**` | deleted-after-absorption | [DEC-039](../product/decisions/dec-039-plugin-shell-refactor.md), [B-143 Product Spec](../product/specs/pa-plugin-shell-refactor-product-spec.md), [Architecture](../architecture/architecture-overview.md#51-plugin-shell-srcplugints), current source and regression tests | Owner 授权 B-143 closeout；T-00～T-22、AC-01～09、LC-01～03、D-11 与 D-15 均完成验收。稳定职责、生命周期偏序、兼容边界和验证结果已吸收，过程包可从提交 `b4d1ac39` 恢复；没有未完成项需要转入 Backlog，也不归档完整过程包。 |
 | 2026-09-19 | `docs/development/discovery/test-framework-and-suite-optimization.md`、`docs/development/active/test-optimization/**` | deleted-after-absorption | [GOV-003](../development/governance/gov-003-proportionate-test-design.md) | Owner 授权 B-142 closeout；稳定测试规则、12 个删项依据、未采用候选、完整 coverage 与并行评估边界已吸收，focused tests 保留行为保护。Discovery 和 Active Package 均未形成独立已提交历史，不虚构连续移动；不另建 Archive 副本。 |
 | 2026-09-19 | `docs/development/active/chat-image-generation/**` | deleted-after-absorption | [DEC-038](../product/decisions/dec-038-chat-image-generation.md), [B-133 Product Spec](../product/specs/pa-chat-image-generation-product-spec.md), [Architecture](../architecture/chat-image-generation-architecture.md), [Validation](./2026/b133-chat-image-generation-validation.md) | 用户明确要求移动验收通过后收尾，已反馈 iPhone 15 Pro Max / c66a098 的五项手动验证通过。稳定设计、28 项讨论细节、14 组 REQ/AC 与使用说明已吸收；独有研究/迁移/provider/设备证据精简保留，不归档完整过程包。Feature Home/SDD/Tracker 可从 c66a098 恢复；无剩余实现 finding，其他设备/区域未测作为证据边界保留，不制造新 Backlog。收尾不表示 master 集成或发布。 |
 | 2026-09-17 | `docs/development/active/pa-agent-essential-capabilities/**` | deleted-after-absorption | [DEC-037](../product/decisions/dec-037-pa-agent-essential-capabilities.md), [B-140 Product Spec](../product/specs/pa-agent-essential-capabilities-product-spec.md), [PA Agent Architecture](../architecture/pa-agent-architecture-plan.md#b-140-note-memory-and-insight-capabilities), [B-140 validation](./2026/b140-pa-agent-essential-capabilities-validation.md), [B-141](../backlog.md#已延期的产品与工程工作) | 用户授权 closeout；T01～15 与 AC01～14 已验收。当前合同吸收稳定行为，独有阶段/App证据压缩保留，T13-UX1 转后续 B-141；完整过程可从提交 `2cab57af` 恢复。自动审批拒绝删除的 9 个测试 Chat 历史保留，未绕过。开发分支 closeout 提交先于 master 集成与发布，不作为其凭据。 |

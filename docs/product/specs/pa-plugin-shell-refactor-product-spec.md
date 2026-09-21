@@ -1,10 +1,10 @@
 # Plugin Shell Refactor Product Spec
 
-Document status: Approved
-Updated: 2026-09-20
+Document status: Current
+Updated: 2026-09-21
 Work item: B-143
 Decision: [DEC-039](../decisions/dec-039-plugin-shell-refactor.md)
-Authority: Owner 已确认行为保持要求、三项局部生命周期修复边界，并于 2026-09-20 授权按 Plan/SDD 实施、测试和验收。
+Authority: Owner 已确认行为保持要求、三项局部生命周期修复边界，并授权实施、验收与 closeout。
 
 ## Problem And Product Outcome
 
@@ -64,14 +64,19 @@ Markdown vault 仍为来源真值，OPFS 仍为设备本地缓存；现有 Data 
 | B-143/AC-08 | B-143/REQ-07 | LC-02：反复开关不累积有效订阅；停用/卸载取消尚未开始的任务，正常更新、排除路径与重启仍有效；已提交写入不被回滚或中断破坏 |
 | B-143/AC-09 | B-143/REQ-07 | LC-03：卸载终止自有等待并让等待 Promise 正常结束，不向旧实例挂载迟到 API 结果；依赖就绪、未启用与超时回退保持正常 |
 
-## Open Decisions
+## Delivered Status
 
 功能保持、LC-01..03 三项修复及 D-11 最小同步 stop/lifetime gate 均已由 Owner
-确认。D-11 已随 T-19 实施并完成迁移后组合与应用验证；没有剩余产品决策。具体
-模块、开发任务和最终证据见 Approved SDD 与 Tracker。Git、closeout 与发布权限未随
-实施授权给出。
+确认并验收。D-11 已随 Memory/extraction owner 迁移完成；D-15 在旧结构复现后以
+storage owner currentness gate 修复。没有剩余产品决策或未完成 B-143 工作。
 
-## Delivery Handoff
+实现由 `82eb5d2f` 提交，当前架构与最终验收状态由 `b4d1ac39` 记录。最终冻结输入通过
+314 个 suites / 7952 个 tests、lint、生产 build、文档/差异/community source scan，
+并以同一 bundle 完成真实桌面 Obsidian 与 mobile simulator 抽查。实现没有 iOS 专属
+差异，因此未执行真实 iOS gate；未调用真实 provider、读取 secret 或写入用户 vault。
 
-[Feature Home](../../development/active/plugin-shell-refactor/README.md) 接续 Plan/SDD，
-[Tracker](../../development/active/plugin-shell-refactor/tracker.md) 是唯一执行状态和验证权威。
+## Current References
+
+- [DEC-039](../decisions/dec-039-plugin-shell-refactor.md)
+- [Architecture overview](../../architecture/architecture-overview.md#51-plugin-shell-srcplugints)
+- 当前 source、owner/facade tests 与 lifecycle tests

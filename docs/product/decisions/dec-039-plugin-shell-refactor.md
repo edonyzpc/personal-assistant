@@ -2,8 +2,8 @@
 
 Decision ID: DEC-039
 Status: Accepted
-Updated: 2026-09-20
-Authority: Owner 已确认的功能保持原则及 LC-01..03 限定修复范围；不代表新技术细节获批或代码实施授权。
+Updated: 2026-09-21
+Authority: Owner 已确认并验收的功能保持原则、LC-01..03 限定修复范围及 D-11/D-15 最小修复边界。
 Work item: B-143
 
 ## Context
@@ -14,7 +14,8 @@ Work item: B-143
 
 Owner 已接受行为保持路线，并在生命周期复核后要求将三项限定修复纳入方案。
 B-142 已 closeout，其最终测试精简及保留门禁见 [GOV-003](../../development/governance/gov-003-proportionate-test-design.md)。
-最新请求是在 B-142 closeout 后完善设计和开发任务，未要求开始代码实施。
+B-143 已按该路线完成实施与验收；D-11 extraction 同步 early-stop gate 与 D-15
+storage bootstrap 迟到发布窗口均以旧结构重现后按最小边界修复。
 
 ## Options Considered
 
@@ -41,10 +42,9 @@ B-142 已 closeout，其最终测试精简及保留门禁见 [GOV-003](../../dev
 
 ## Consequences
 
-采用 L3 Product track，正式 Spec 固定行为契约，Plan/SDD 描述分片实现；Tracker
-单独记录执行状态和证据。新技术设计仍为 Draft。运行时各阶段必须完成独立 review、
-真实桌面 Obsidian 及 mobile simulator 验证，不能只靠编译或历史 PASS 声称功能等价。
-只有实现实际触及 iOS 专属代码或模拟器无法覆盖的平台行为时才增加真实 iOS gate。
+交付后的 Plugin shell 只保留平台身份、根组装、生命周期入口及兼容 facade；领域状态、
+队列、timer 和清理责任由对应 owner 持有。最终验收已覆盖独立 review、完整测试、真实
+桌面 Obsidian 与 mobile simulator；实现未触及 iOS 专属代码，因此未增加真实 iOS gate。
 
 ## Revisit Trigger
 
@@ -55,7 +55,7 @@ B-142 已 closeout，其最终测试精简及保留门禁见 [GOV-003](../../dev
 ## Traceability
 
 - [Product Spec](../specs/pa-plugin-shell-refactor-product-spec.md)
-- [Feature Home](../../development/active/plugin-shell-refactor/README.md)
+- [Architecture overview](../../architecture/architecture-overview.md#51-plugin-shell-srcplugints)
 
-原 Discovery 的范围、事实、风险及取舍已分别吸收到本 Decision、Spec 和 SDD，
+原 Discovery 的范围、事实、风险及取舍已分别吸收到本 Decision、Spec、当前架构和测试，
 不再保留重复讨论稿。
