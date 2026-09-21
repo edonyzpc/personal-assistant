@@ -42,8 +42,7 @@ jest.mock('obsidian', () => {
     };
 });
 
-import { CalloutModal, DEFAULT_CALLOUTS } from '../src/callout';
-import type { PluginManager } from '../src/plugin';
+import { CalloutModal, DEFAULT_CALLOUTS, type CalloutHost } from '../src/callout';
 
 type EditorPosition = { line: number; ch: number };
 type MockEditor = {
@@ -64,11 +63,11 @@ function createApp(activeView: MarkdownView | null = null): App {
     } as unknown as App;
 }
 
-function createPlugin(calloutManager?: PluginManager['calloutManager']): PluginManager {
+function createHost(callouts?: Callout[]): CalloutHost {
     return {
-        calloutManager,
+        getCallouts: () => callouts,
         log: jest.fn(),
-    } as unknown as PluginManager;
+    };
 }
 
 function setClipboard(writeText: (content: string) => Promise<void>) {
@@ -91,7 +90,7 @@ describe('CalloutModal', () => {
     });
 
     it('falls back to the built-in default callouts when Callout Manager is unavailable', () => {
-        const modal = new CalloutModal(createApp(), createPlugin());
+        const modal = new CalloutModal(createApp(), createHost());
 
         const suggestions = modal.getSuggestions('warn');
         modal.getSuggestions('danger');
@@ -115,25 +114,38 @@ describe('CalloutModal', () => {
             setCursor: jest.fn(),
         };
         const view = new ViewCtor(editor, 'source');
-        const plugin = createPlugin();
-        const modal = new CalloutModal(createApp(view), plugin);
+        const host = createHost();
+        const modal = new CalloutModal(createApp(view), host);
 
         await modal.onChooseSuggestion(infoCallout, {} as KeyboardEvent);
 
         expect(editor.replaceRange).toHaveBeenCalledWith(expect.stringContaining('> [!info] Info'), cursor);
         expect(editor.setCursor).toHaveBeenCalledWith({ line: 6, ch: 3 });
         expect(writeText).toHaveBeenCalledWith(expect.stringContaining('> [!info] Info'));
-        expect(plugin.log).toHaveBeenCalledWith(
+        expect(host.log).toHaveBeenCalledWith(
             'Failed to copy callout markdown to clipboard',
             expect.any(Error),
         );
         expect(mockNoticeMessages).toEqual([]);
     });
 
+    it('reads managed callouts through the narrow host', () => {
+        const customCallout: Callout = {
+            id: 'project-state',
+            icon: 'check',
+            color: '0, 191, 188',
+            sources: [{ type: 'custom' }],
+        };
+        const modal = new CalloutModal(createApp(), createHost([customCallout]));
+
+        expect(modal.getSuggestions('project')).toEqual([customCallout]);
+        expect(mockNoticeMessages).toEqual([]);
+    });
+
     it('keeps copy-to-clipboard as the fallback when no editable markdown view is active', async () => {
         const writeText = jest.fn<(content: string) => Promise<void>>(async () => undefined);
         setClipboard(writeText);
-        const modal = new CalloutModal(createApp(null), createPlugin());
+        const modal = new CalloutModal(createApp(null), createHost());
 
         await modal.onChooseSuggestion(infoCallout, {} as KeyboardEvent);
 

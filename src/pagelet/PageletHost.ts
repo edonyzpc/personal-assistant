@@ -91,6 +91,8 @@ export interface PageletDeepDiscoverUsage {
  */
 export interface PageletHost {
     readonly app: App;
+    readonly pageletFeatureScope: object;
+    isFeatureScopeCurrent(scope: object): boolean;
 
     readonly settings: {
         pagelet: {

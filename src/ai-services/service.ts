@@ -5,7 +5,7 @@ import { EditorView } from '@codemirror/view'
 import { nanoid } from 'nanoid'
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 
-import { AIUtils } from './ai-utils';
+import { AIUtils, type AIUtilsHost } from './ai-utils';
 import { getFeaturedImageSavePath, normalizeFeaturedImageFolderPath } from './featured-image-path';
 import {
     assertFeaturedImageRunCurrent,
@@ -13,7 +13,6 @@ import {
     freezeFeaturedImageRunOptions,
     type FeaturedImageRunOptions,
 } from './featured-image-options';
-import type { PluginManager } from '../plugin'
 import { normalizeFeaturedImageCount, normalizeFeaturedImageModel } from '../settings';
 import { isPluginEnabled } from '../obsidian-internals';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
@@ -208,14 +207,18 @@ interface FeaturedImageGenerationResponse {
     };
 }
 
+export interface AIServiceHost extends AIUtilsHost {
+    readonly app: App;
+}
+
 /**
  * AI服务类，提供统一的AI功能接口
  */
 export class AIService {
     private aiUtils: AIUtils;
-    private plugin: PluginManager;
+    private plugin: AIServiceHost;
 
-    constructor(plugin: PluginManager) {
+    constructor(plugin: AIServiceHost) {
         this.plugin = plugin;
         this.aiUtils = new AIUtils(plugin);
     }

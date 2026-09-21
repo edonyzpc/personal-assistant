@@ -1,4 +1,4 @@
-import type { App, TFile } from "obsidian";
+import { getFrontMatterInfo, parseYaml, type App, type TFile } from "obsidian";
 import { normalizeVaultPath } from "./helpers";
 
 export interface PaRelatedLinkOptions {
@@ -10,6 +10,61 @@ export type PaRelatedLinkResult =
     | { ok: false; reason: "file-not-found" | "frontmatter-unavailable" | "frontmatter-write-failed" };
 
 const PA_RELATED_KEY = "pa-related";
+
+export function readPaRelatedLinksFromMarkdown(markdown: string): string[] {
+    const info = getFrontMatterInfo(markdown);
+    if (!info.exists) {
+        if (/^\uFEFF?---\s*(?:\r?\n|$)/u.test(markdown)) {
+            throw new Error("The target note has invalid Properties.");
+        }
+        return [];
+    }
+    let frontmatter: Record<string, unknown> = {};
+    if (info.frontmatter.trim()) {
+        const parsed = parseYaml(info.frontmatter);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error("The target note has invalid Properties.");
+        }
+        frontmatter = parsed as Record<string, unknown>;
+    }
+    const raw = frontmatter[PA_RELATED_KEY];
+    if (raw === undefined || raw === null) return [];
+    const values = typeof raw === "string"
+        ? [raw]
+        : Array.isArray(raw) && raw.every((entry) => typeof entry === "string")
+            ? raw as string[]
+            : null;
+    if (!values) throw new Error("The existing pa-related Property needs review in Chat.");
+    const deduplicated: string[] = [];
+    const identities = new Set<string>();
+    for (const value of values) {
+        const trimmed = value.trim();
+        if (!trimmed) continue;
+        const wikilinkIdentity = paRelatedWikilinkIdentity(trimmed);
+        const identity = wikilinkIdentity === null
+            ? `literal:${trimmed}`
+            : `wikilink:${wikilinkIdentity}`;
+        if (identities.has(identity)) continue;
+        identities.add(identity);
+        deduplicated.push(trimmed);
+    }
+    return deduplicated;
+}
+
+export function paRelatedWikilinkIdentity(value: string): string | null {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("[[") || !trimmed.endsWith("]]")) return null;
+    const inner = trimmed.slice(2, -2);
+    if (!inner || inner.includes("[") || inner.includes("]")) return null;
+    const aliasAt = inner.indexOf("|");
+    const destination = (aliasAt === -1 ? inner : inner.slice(0, aliasAt)).trim();
+    const fragmentAt = destination.indexOf("#");
+    const rawPath = (fragmentAt === -1 ? destination : destination.slice(0, fragmentAt)).trim();
+    if (!rawPath) return null;
+    const path = rawPath.replace(/\.md$/iu, "");
+    if (fragmentAt === -1) return path;
+    return `${path}#${destination.slice(fragmentAt + 1).trim()}`;
+}
 
 function asMarkdownFile(value: unknown): TFile | null {
     const file = value as TFile | null | undefined;

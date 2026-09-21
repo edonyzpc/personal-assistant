@@ -7,8 +7,7 @@ jest.mock('obsidian', () => ({
     normalizePath: (path: string) => path.replace(/\\/g, '/').replace(/\/+/g, '/'),
 }));
 
-import { LocalGraph } from '../src/local-graph';
-import type { PluginManager } from '../src/plugin';
+import { LocalGraph, type LocalGraphHost } from '../src/local-graph';
 
 const pluginColorGroup = {
     query: 'path:/',
@@ -69,7 +68,7 @@ const createHarness = ({
             colorGroups: [pluginColorGroup],
         },
         log: jest.fn(),
-    } as unknown as PluginManager;
+    } as LocalGraphHost;
 
     return {
         app,

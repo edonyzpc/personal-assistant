@@ -121,6 +121,9 @@ jest.mock('../src/stats/editor-plugin', () => ({
 jest.mock('../src/stats/stats-store', () => ({ normalizeStatisticsView: (view: string) => view }));
 
 import { PluginManager } from '../src/plugin';
+import { SourceAccess, type SourceAccessHost } from '../src/plugin/source-access';
+import type { DataBoundarySettings } from '../src/settings';
+import type { PageletSettings } from '../src/settings/pagelet';
 
 interface FakeFile { path: string; extension?: string }
 
@@ -128,8 +131,8 @@ const DATA_BOUNDARY_DEFAULTS = {
     excludedFolders: [] as string[],
     excludedTags: [] as string[],
     generatedNotePolicy: "exclude-generated" as const,
-    providerDisclosureReasons: [] as string[],
-    cleanupGroups: [] as string[],
+    providerDisclosureReasons: [] as DataBoundarySettings["providerDisclosureReasons"],
+    cleanupGroups: [] as DataBoundarySettings["cleanupGroups"],
 };
 
 const buildHarness = (
@@ -145,9 +148,10 @@ const buildHarness = (
     files.forEach((file) => { file.extension ??= "md"; });
     const plugin = Object.create(PluginManager.prototype) as unknown as {
         app: {
-            vault: {
-                getMarkdownFiles: () => FakeFile[];
-                getAbstractFileByPath: (path: string) => FakeFile | null;
+        vault: {
+            getMarkdownFiles: () => FakeFile[];
+            getAbstractFileByPath: (path: string) => FakeFile | null;
+            read: (file: FakeFile) => Promise<string>;
             };
             metadataCache: {
                 getFileCache: (file: FakeFile) => unknown;
@@ -162,6 +166,7 @@ const buildHarness = (
         isVSSFileEligible: (file: FakeFile, markdown?: string) => boolean;
         isDataBoundaryAllowedPath: (path: string) => boolean;
         log: jest.Mock;
+        sourceAccess: SourceAccess;
         isMemoryProviderPathAllowed: (path: string) => boolean;
         createMemoryGraphBoundarySnapshotSource: (consumer: "chat" | "pagelet") => {
             getEpoch: () => string;
@@ -172,11 +177,17 @@ const buildHarness = (
         vault: {
             getMarkdownFiles: () => files,
             getAbstractFileByPath: (path: string) => files.find((file) => file.path === path) ?? null,
+            read: async () => "",
         },
         metadataCache: {
             getFileCache: (file: FakeFile) => options.metadataByPath?.[file.path],
         },
     };
+    const runtime = plugin as unknown as {
+        createSettingsPersistence(): unknown;
+        settingsPersistence: unknown;
+    };
+    runtime.settingsPersistence = runtime.createSettingsPersistence();
     plugin.settings = {
         vssCacheExcludePath: excludePaths,
         dataBoundary: {
@@ -185,6 +196,20 @@ const buildHarness = (
         },
     };
     plugin.log = jest.fn();
+    plugin.sourceAccess = new SourceAccess({
+        app: plugin.app as unknown as SourceAccessHost,
+        getSettings: () => ({
+            dataBoundary: plugin.settings.dataBoundary,
+            memoryExcludePrefixes: plugin.settings.vssCacheExcludePath ?? [],
+            pagelet: {
+                excludedFolders: [],
+                excludedTags: [],
+                excludedPatterns: [],
+                reviewsFolder: 'reviews',
+            } as unknown as PageletSettings,
+        }),
+        log: plugin.log,
+    });
     return plugin;
 };
 
@@ -422,8 +447,6 @@ describe('PluginManager.getVSSFiles', () => {
                 'notes/missing.md': 1,
             },
         };
-        (plugin as unknown as { memoryGraphTopologyEpoch: number }).memoryGraphTopologyEpoch = 0;
-
         const source = plugin.createMemoryGraphBoundarySnapshotSource('chat');
         expect(source?.classifyPath('notes/allowed.md')).toBe('allowed_markdown');
         expect(source?.classifyPath('private/bridge.md')).toBe('opaque_excluded_markdown');
@@ -435,7 +458,6 @@ describe('PluginManager.getVSSFiles', () => {
     it('changes the graph epoch when exact Memory path-prefix semantics change', () => {
         const plugin = buildHarness([], ['private/']);
         plugin.app.metadataCache.resolvedLinks = {};
-        (plugin as unknown as { memoryGraphTopologyEpoch: number }).memoryGraphTopologyEpoch = 7;
         const source = plugin.createMemoryGraphBoundarySnapshotSource('chat');
         const before = source?.getEpoch();
 

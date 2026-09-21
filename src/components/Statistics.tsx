@@ -1,15 +1,21 @@
 import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { App } from "obsidian";
-import type { PluginManager } from "plugin";
+import type { PluginManagerSettings } from "../settings";
 import type { ChartData, ChartOptions } from "chart.js";
 import type { StatsDashboardData, StatsDashboardDay } from "../stats/stats-types";
 import { normalizeStatisticsView, type StatisticsView } from "../stats/stats-store";
 import { getPluginUiLanguage, pluginT, type PluginLocale } from "../locales/plugin";
 import { getOptionalPlatformWindow } from "../platform-dom";
 
+export interface StatisticsHost {
+    readonly settings: Pick<PluginManagerSettings, "statisticsType" | "statisticsSyncEnabled" | "animation">;
+    saveSettings(): Promise<void>;
+    log(message: string, ...args: unknown[]): void;
+}
+
 type Props = {
 	app: App;
-	plugin: PluginManager;
+	plugin: StatisticsHost;
 	dashboardData: StatsDashboardData;
 };
 

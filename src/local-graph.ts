@@ -2,9 +2,9 @@
 
 import { Notice, Platform, normalizePath, type App, type WorkspaceLeaf } from "obsidian";
 
-import type { PluginManager } from "./plugin"
 import { executeCommandById } from './obsidian-internals';
-import { ViewType, ViewResize } from "./view";
+import type { PluginManagerSettings } from "./settings";
+import { ViewType, ViewResize, type ViewResizeHost } from "./view";
 import { getPluginUiLanguage, pluginT } from "./locales/plugin";
 
 type GraphColorGroup = {
@@ -19,10 +19,14 @@ type GraphConfig = {
     colorGroups?: GraphColorGroup[];
 }
 
-export class LocalGraph extends ViewResize {
+export interface LocalGraphHost extends ViewResizeHost {
+    readonly settings: Pick<PluginManagerSettings, "localGraph" | "enableGraphColors" | "colorGroups">;
+}
+
+export class LocalGraph extends ViewResize<LocalGraphHost> {
     private app: App;
 
-    constructor(app: App, plugin: PluginManager) {
+    constructor(app: App, plugin: LocalGraphHost) {
         super(plugin, ViewType.LocalGraphView);
         this.app = app;
     }

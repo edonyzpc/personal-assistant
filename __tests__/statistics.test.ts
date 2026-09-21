@@ -1,7 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import type { EffectCallback, ReactElement, SetStateAction } from "react";
 import type { App } from "obsidian";
-import type { PluginManager } from "../src/plugin";
 import { pluginT } from "../src/locales/plugin";
 import Statistics, {
     getDefaultStatsRange,
@@ -9,6 +8,7 @@ import Statistics, {
     getStatisticsIssueMessage,
     selectRangeDays,
     shouldShowDevicesMetric,
+    type StatisticsHost,
 } from "../src/components/Statistics";
 
 jest.mock("obsidian");
@@ -53,7 +53,7 @@ class StatisticsRenderer {
     updates = 0;
     tree: unknown;
 
-    constructor(readonly plugin: PluginManager) {
+    constructor(readonly plugin: StatisticsHost) {
         this.render();
     }
 
@@ -133,7 +133,7 @@ function makePlugin(view = "overview") {
         settings: { statisticsType: view, statisticsSyncEnabled: false, animation: false },
         saveSettings,
         log: jest.fn(),
-    } as unknown as PluginManager;
+    } as StatisticsHost;
     return { plugin, saveSettings };
 }
 

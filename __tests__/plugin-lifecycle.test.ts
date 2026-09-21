@@ -1,14 +1,40 @@
 import { describe, expect, it, jest, afterEach } from "@jest/globals";
-import { ItemView, MarkdownView, Modal, Notice, TFile, type Command, type Editor } from "obsidian";
+import { debounce, ItemView, MarkdownView, Modal, Notice, TFile, type App, type Command, type Editor } from "obsidian";
+import { getApi } from "obsidian-callout-manager";
 import { setPlatformMobile, resetPlatform } from "./helpers/platform-mock";
 import { DomStubNode, findAllByTag } from './helpers/dom-stub';
-import { AssistantFeaturedImageHelper } from '../src/ai';
+import { AssistantFeaturedImageHelper, AssistantHelper } from '../src/ai';
 import { pluginT } from '../src/locales/plugin';
 import type { FeaturedImageRunOptions } from '../src/ai-services/featured-image-options';
+import { MetadataUpdater, type MetadataUpdaterDependencies } from '../src/plugin/metadata-updater';
+import { CalloutIntegration } from '../src/plugin/callout-integration';
+import { MemoryStatusNotifier } from '../src/plugin/memory-status';
+import { LocalGraphIntegration } from '../src/plugin/local-graph-integration';
+import { AIActions } from '../src/plugin/ai-actions';
+import { PageletOrchestrator } from '../src/pagelet/orchestrator';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
-import type { SettingsPermissionPatch } from '../src/plugin';
+import type { PluginManager } from '../src/plugin';
+import type { SettingsPermissionPatch } from '../src/plugin/settings-persistence';
+import type { ImageGenerationConnection } from '../src/ai-services/image-generation-connection';
+import type { FeaturedImageDefaults } from '../src/ai-services/featured-image-options';
+import type { FeaturedImageOptionsModalHost } from '../src/settings/featured-image-options-modal';
 
 jest.mock("obsidian-callout-manager", () => ({ getApi: jest.fn() }));
+jest.mock("../src/pagelet/bubble/BubbleView", () => ({
+    BubbleView: class {
+        mount() {}
+        close() {}
+        destroy() {}
+    },
+}));
+jest.mock("../src/pagelet/panel/PanelView", () => ({
+    PanelView: class {
+        isOpen = false;
+        mount() {}
+        close() {}
+        destroy() {}
+    },
+}));
 jest.mock("../src/chat/chat-view", () => ({ VIEW_TYPE_LLM: "llm-view", LLMView: class {} }));
 jest.mock("../src/share-card/share-card-modal", () => ({
     ShareCardModal: class {},
@@ -30,6 +56,72 @@ import { hasDeprecatedSimpleSettingsFields, mergeLoadedSettings } from "../src/s
 import { MemoryUserProfileStore, type MemoryExtractionScheduler } from "../src/ai-services/memory-extraction";
 import type { QuietRecallCandidate, RetrievalHabitProfileRecordResult } from "../src/pa";
 
+const getCalloutApi = getApi as unknown as jest.Mock;
+
+type SettingsNotificationOwner = {
+    settingsPersistence: {
+        notifySettingsChanged: jest.MockedFunction<() => Promise<void>>;
+    };
+};
+
+function attachMemoryStatusNotifier(plugin: unknown): void {
+    (plugin as { memoryStatusNotifier: MemoryStatusNotifier }).memoryStatusNotifier =
+        new MemoryStatusNotifier({ createDebounce: debounce });
+}
+
+function attachAIActions(plugin: unknown): void {
+    type AIActionsPluginSurface = {
+        app: App;
+        settings: PluginManager["settings"];
+        unloading: boolean;
+        aiActions: AIActions;
+        ensureAIConfigured(): boolean;
+        getImageGenerationConnection(): ImageGenerationConnection | null;
+        hasActiveAIProviderCredentialTransition(): boolean;
+        aiProviderConfigurationRevision: number;
+        aiTokenRevision: number;
+        getConfiguredImageAPITokenSecret(): string | null;
+        getAPIToken(): Promise<string>;
+        saveFeaturedImageDefaults(options: FeaturedImageDefaults): Promise<void>;
+        log(...args: unknown[]): void;
+    };
+    const target = plugin as unknown as AIActionsPluginSurface;
+    target.aiActions = new AIActions({
+        ensureAIConfigured: () => target.ensureAIConfigured(),
+        getImageGenerationConnection: () => target.getImageGenerationConnection(),
+        getProviderConnection: () => ({
+            aiProvider: target.settings.aiProvider,
+            baseURL: target.settings.baseURL,
+            chatModelName: target.settings.chatModelName,
+            embeddingModelName: target.settings.embeddingModelName,
+        }),
+        getFeaturedImageDefaults: () => ({
+            featuredImageModel: target.settings.featuredImageModel,
+            numFeaturedImages: target.settings.numFeaturedImages,
+            featuredImagePath: target.settings.featuredImagePath,
+        }),
+        isUnloading: () => target.unloading,
+        hasActiveAIProviderCredentialTransition: () => target.hasActiveAIProviderCredentialTransition(),
+        getProviderConfigurationRevision: () => target.aiProviderConfigurationRevision,
+        getTokenRevision: () => target.aiTokenRevision,
+        getFileByPath: (path) => target.app.vault.getAbstractFileByPath(path),
+        getConfiguredImageAPITokenSecret: () => target.getConfiguredImageAPITokenSecret(),
+        getAPIToken: () => target.getAPIToken(),
+        saveFeaturedImageDefaults: (options) => target.saveFeaturedImageDefaults(options),
+        createSummaryHelper: (editor, view) => new AssistantHelper(target as unknown as PluginManager, editor, view),
+        createFeaturedImageHelper: (editor, view) => new AssistantFeaturedImageHelper(
+            target.app,
+            target as unknown as PluginManager,
+            editor,
+            view,
+        ),
+        openSharedFeatureModal: (host) => (target as unknown as {
+            openSharedFeatureModal(host: FeaturedImageOptionsModalHost): Modal;
+        }).openSharedFeatureModal(host),
+        log: (...args) => target.log(...args),
+    });
+}
+
 describe("B-135 native writing rollout", () => {
     it("exports the validated native protocol from the production Chat host", () => {
         const { plugin } = createPluginHarness({ initialData: { aiProvider: "openai", statisticsVaultId: "native-writing" } });
@@ -41,13 +133,46 @@ describe("B-135 native writing rollout", () => {
     });
 });
 
+describe("B-143 T-13 settings-triggered Pagelet teardown", () => {
+    it("clears root-owned stores when settings sync disables Pagelet", async () => {
+        const { plugin } = createPluginHarness();
+        await plugin.loadSettings();
+        const internals = plugin as unknown as {
+            pageletIntegration: {
+                setOrchestratorForCompatibility(value: unknown): void;
+                currentOrchestrator: unknown;
+            };
+            reviewQueueStore: object;
+            savedInsightStore: object;
+            memoryGovernanceStore: object;
+            retrievalHabitProfileStore: object;
+            syncPageletRuntime(): void;
+        };
+        const destroy = jest.fn();
+        internals.pageletIntegration.setOrchestratorForCompatibility({ destroy } as never);
+        internals.reviewQueueStore = {};
+        internals.savedInsightStore = {};
+        internals.memoryGovernanceStore = {};
+        internals.retrievalHabitProfileStore = {};
+        plugin.settings.pagelet.enabled = false;
+
+        internals.syncPageletRuntime();
+
+        expect(destroy).toHaveBeenCalledTimes(1);
+        expect(internals.pageletIntegration.currentOrchestrator).toBeNull();
+        expect(internals.reviewQueueStore).toBeNull();
+        expect(internals.savedInsightStore).toBeNull();
+        expect(internals.memoryGovernanceStore).toBeNull();
+        expect(internals.retrievalHabitProfileStore).toBeNull();
+    });
+});
+
 describe("B-135 learning preferences migration", () => {
     const base = { aiProvider: "openai", statisticsVaultId: "learning-test" };
-    type LearningInternals = {
+    type LearningInternals = SettingsNotificationOwner & {
         migrateSettings(): Promise<void>;
         pendingLearningPreferencesMigration: boolean;
         canRunMemoryExtractionRuntime(): boolean;
-        notifySettingsChanged(): Promise<void>;
     };
 
     it.each([undefined, false, true, "invalid"])("adopts old %p without confirmation or losing local state", async (enabled) => {
@@ -78,7 +203,7 @@ describe("B-135 learning preferences migration", () => {
             await plugin.loadSettings();
             const state = plugin as unknown as LearningInternals;
             await state.migrateSettings();
-            state.notifySettingsChanged = jest.fn(async () => undefined);
+            state.settingsPersistence.notifySettingsChanged = jest.fn(async () => undefined);
             await Promise.all([
                 plugin.saveSettingsPermissions({ memoryExtractionEnabled: extraction }),
                 plugin.saveSettingsPermissions({ retrievalHabitProfile: { enabled: habit } }),
@@ -127,7 +252,7 @@ describe("B-135 learning preferences migration", () => {
 });
 
 describe("B-135 default learning runtime", () => {
-    type Runtime = {
+    type Runtime = SettingsNotificationOwner & {
         migrateSettings(): Promise<void>;
         syncMemoryExtractionRuntime(): void;
         memoryExtractionScheduler: MemoryExtractionScheduler | null;
@@ -136,7 +261,6 @@ describe("B-135 default learning runtime", () => {
         chatHistoryManager: unknown;
         createChatModel: unknown;
         pageletCostTracker: { record: jest.Mock };
-        notifySettingsChanged(): Promise<void>;
         isDataBoundaryAllowedPath(path: string): boolean;
         recordQuietRecallFeedback(candidate: QuietRecallCandidate, feedback: "view"): Promise<RetrievalHabitProfileRecordResult>;
     };
@@ -160,7 +284,7 @@ describe("B-135 default learning runtime", () => {
             const createModel = jest.fn(async () => ({ invoke }));
             runtime.createChatModel = createModel;
             runtime.pageletCostTracker = { record: jest.fn() };
-            runtime.notifySettingsChanged = async () => runtime.syncMemoryExtractionRuntime();
+            runtime.settingsPersistence.notifySettingsChanged = jest.fn(async () => runtime.syncMemoryExtractionRuntime());
             runtime.syncMemoryExtractionRuntime();
             expect(runtime.memoryExtractionScheduler).not.toBeNull();
             await jest.advanceTimersByTimeAsync(48 * 60 * 60_000);
@@ -201,10 +325,10 @@ describe("B-135 default learning runtime", () => {
         const waiting = new Promise<void>((resolve) => { release = resolve; });
         const entered = new Promise<void>((resolve) => { reached = resolve; });
         let first = true;
-        runtime.notifySettingsChanged = async () => {
+        runtime.settingsPersistence.notifySettingsChanged = jest.fn(async () => {
             if (first) { first = false; reached(); await waiting; }
             runtime.syncMemoryExtractionRuntime();
-        };
+        });
         const stopping = plugin.saveSettingsPermissions({ memoryExtractionEnabled: false });
         try {
             await entered;
@@ -225,7 +349,7 @@ describe("B-135 default learning runtime", () => {
         const runtime = plugin as unknown as Runtime;
         await plugin.loadSettings();
         await runtime.migrateSettings();
-        runtime.notifySettingsChanged = jest.fn(async () => undefined);
+        runtime.settingsPersistence.notifySettingsChanged = jest.fn(async () => undefined);
         runtime.isDataBoundaryAllowedPath = () => true;
         const candidate: QuietRecallCandidate = { id: "recall", title: "Recall", summary: "Related source",
             sourceRefs: [{ path: "notes/source.md", evidenceStrength: "medium" }], whyNow: [],
@@ -244,12 +368,16 @@ describe("B-135 default learning runtime", () => {
 });
 
 describe("B-106 settings lifecycle", () => {
-    type Internals = {
+    type Internals = SettingsNotificationOwner & {
         migrateSettings(): Promise<void>;
         saveSettingsData(snapshot?: unknown): Promise<void>;
         pendingSimpleSettingsCanonicalization: boolean;
-        deepDiscoverScheduler: { setAutomaticEnabled: jest.Mock };
-        notifySettingsChanged(): Promise<void>;
+        deepDiscoverIntegration: {
+            scheduler: { setAutomaticEnabled: jest.Mock };
+            captureAnchorSnapshot(): Promise<unknown>;
+            getOrCreateScheduler(): Promise<unknown>;
+        };
+        retainedReviewIntegration: { rateLimiter: unknown };
         isBackgroundDiscoveryEnabled(): boolean;
     };
 
@@ -326,9 +454,9 @@ describe("B-106 settings lifecycle", () => {
         } });
         await plugin.loadSettings();
         const state = plugin as unknown as Internals;
-        state.notifySettingsChanged = jest.fn(async () => undefined);
+        state.settingsPersistence.notifySettingsChanged = jest.fn(async () => undefined);
         const setAutomaticEnabled = jest.fn();
-        state.deepDiscoverScheduler = { setAutomaticEnabled };
+        state.deepDiscoverIntegration.scheduler = { setAutomaticEnabled };
         let release!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
         const process = adapter.process.getMockImplementation()!;
@@ -355,13 +483,13 @@ describe("B-106 settings lifecycle", () => {
         } });
         await plugin.loadSettings();
         const state = plugin as unknown as Internals;
-        state.notifySettingsChanged = jest.fn(async () => undefined);
-        state.deepDiscoverScheduler = { setAutomaticEnabled: jest.fn() };
+        state.settingsPersistence.notifySettingsChanged = jest.fn(async () => undefined);
+        state.deepDiscoverIntegration.scheduler = { setAutomaticEnabled: jest.fn() };
         adapter.process.mockRejectedValueOnce(new Error("disk unavailable"));
         await expect(plugin.setBackgroundDiscoveryEnabled(true)).rejects.toThrow("disk unavailable");
         expect(plugin.settings.pagelet.backgroundDiscoveryEnabled).toBe(false);
         expect(state.isBackgroundDiscoveryEnabled()).toBe(false);
-        expect(state.deepDiscoverScheduler.setAutomaticEnabled).not.toHaveBeenCalledWith(true);
+        expect(state.deepDiscoverIntegration.scheduler.setAutomaticEnabled).not.toHaveBeenCalledWith(true);
         await plugin.setBackgroundDiscoveryEnabled(true);
         expect(state.isBackgroundDiscoveryEnabled()).toBe(true);
     });
@@ -372,29 +500,29 @@ describe("B-106 settings lifecycle", () => {
         const state = plugin as unknown as Internals & {
             createAiServiceHost(): unknown;
             isPageletProviderPathAllowed(path: string): boolean;
-            capturePageletDeepDiscoverAnchorSnapshot(): Promise<unknown>;
-            getOrCreatePageletDeepDiscoverScheduler(): Promise<unknown>;
+            captureAnchorSnapshot(): Promise<unknown>;
+            getOrCreateScheduler(): Promise<unknown>;
             runPageletDeepDiscover(input: { path: string; triggerReason: "leave-note"; force: boolean }): Promise<unknown>;
         };
         await state.migrateSettings();
-        state.notifySettingsChanged = jest.fn(async () => undefined);
+        state.settingsPersistence.notifySettingsChanged = jest.fn(async () => undefined);
         plugin.getAISetupIssue = jest.fn(() => null);
         state.createAiServiceHost = jest.fn(() => ({}));
         state.isPageletProviderPathAllowed = jest.fn(() => true);
         let finish!: (snapshot: unknown) => void;
-        state.capturePageletDeepDiscoverAnchorSnapshot = jest.fn(() => new Promise((resolve) => { finish = resolve; }));
-        state.getOrCreatePageletDeepDiscoverScheduler = jest.fn(async () => null);
+        state.deepDiscoverIntegration.captureAnchorSnapshot = jest.fn(() => new Promise((resolve) => { finish = resolve; }));
+        state.deepDiscoverIntegration.getOrCreateScheduler = jest.fn(async () => null);
         const run = state.runPageletDeepDiscover({ path: "synthetic.md", triggerReason: "leave-note", force: true });
         await plugin.setBackgroundDiscoveryEnabled(false);
         await plugin.setBackgroundDiscoveryEnabled(true);
         finish({ path: "synthetic.md" });
         await expect(run).resolves.toMatchObject({ status: "quiet", reason: "aborted" });
-        expect(state.getOrCreatePageletDeepDiscoverScheduler).not.toHaveBeenCalled();
+        expect(state.deepDiscoverIntegration.getOrCreateScheduler).not.toHaveBeenCalled();
         await plugin.setBackgroundDiscoveryEnabled(false);
         await expect(state.runPageletDeepDiscover({
             path: "synthetic.md", triggerReason: "leave-note", force: true,
         })).resolves.toMatchObject({ status: "limit", reason: "unavailable" });
-        expect(state.capturePageletDeepDiscoverAnchorSnapshot).toHaveBeenCalledTimes(1);
+        expect(state.deepDiscoverIntegration.captureAnchorSnapshot).toHaveBeenCalledTimes(1);
     });
 
     it("keeps admission closed when a write reaches disk but readback fails", async () => {
@@ -404,14 +532,14 @@ describe("B-106 settings lifecycle", () => {
         await plugin.loadSettings();
         const state = plugin as unknown as Internals;
         await state.migrateSettings();
-        state.notifySettingsChanged = jest.fn(async () => undefined);
-        state.deepDiscoverScheduler = { setAutomaticEnabled: jest.fn() };
+        state.settingsPersistence.notifySettingsChanged = jest.fn(async () => undefined);
+        state.deepDiscoverIntegration.scheduler = { setAutomaticEnabled: jest.fn() };
         adapter.read.mockRejectedValueOnce(new Error("readback unavailable"));
         await expect(plugin.setBackgroundDiscoveryEnabled(true)).rejects.toThrow("readback unavailable");
         expect(readPersisted()).toMatchObject({ pagelet: { backgroundDiscoveryEnabled: true } });
         expect(plugin.settings.pagelet.backgroundDiscoveryEnabled).toBe(false);
         expect(state.isBackgroundDiscoveryEnabled()).toBe(false);
-        expect(state.deepDiscoverScheduler.setAutomaticEnabled).not.toHaveBeenCalledWith(true);
+        expect(state.deepDiscoverIntegration.scheduler.setAutomaticEnabled).not.toHaveBeenCalledWith(true);
         await plugin.setBackgroundDiscoveryEnabled(true);
         expect(state.isBackgroundDiscoveryEnabled()).toBe(true);
     });
@@ -423,8 +551,8 @@ describe("B-106 settings lifecycle", () => {
         await plugin.loadSettings();
         const state = plugin as unknown as Internals;
         await state.migrateSettings();
-        state.notifySettingsChanged = jest.fn(async () => undefined);
-        state.deepDiscoverScheduler = { setAutomaticEnabled: jest.fn() };
+        state.settingsPersistence.notifySettingsChanged = jest.fn(async () => undefined);
+        state.deepDiscoverIntegration.scheduler = { setAutomaticEnabled: jest.fn() };
         const persistedChoices: boolean[] = [];
         const process = adapter.process.getMockImplementation()!;
         adapter.process.mockImplementation(async (...args: unknown[]) => {
@@ -439,21 +567,22 @@ describe("B-106 settings lifecycle", () => {
         ]);
         expect(persistedChoices).toEqual([true, false, true]);
         expect(plugin.settings.pagelet.backgroundDiscoveryEnabled).toBe(true);
-        expect(state.deepDiscoverScheduler.setAutomaticEnabled.mock.calls).toEqual([[true], [false], [true]]);
+        expect(state.deepDiscoverIntegration.scheduler.setAutomaticEnabled.mock.calls).toEqual([[true], [false], [true]]);
     });
 });
 
 describe('B-106 feature and permission Plugin integration', () => {
-    type State = {
+    type State = SettingsNotificationOwner & {
         unloading: boolean;
         settingsSaveTail: Promise<void> | null;
         aiProviderConfigurationRevision: number;
         aiTokenRevision: number;
         aiProviderCredentialTransitionCount: number;
         tokenCacheState: 'unknown' | 'present' | 'missing';
-        _localGraph: unknown;
-        statsManager: { setStatisticsSyncEnabled(enabled: boolean): Promise<void> };
-        notifySettingsChanged(): Promise<void>;
+        localGraphIntegration: LocalGraphIntegration;
+        statsIntegration: {
+            statsManager?: { setStatisticsSyncEnabled(enabled: boolean): Promise<void> };
+        };
         runAdvancedMemoryCommand(checking: boolean, action: () => Promise<void>): boolean;
         runManualMemoryAction(action: () => Promise<void>): Promise<void>;
         vss: unknown;
@@ -498,9 +627,11 @@ describe('B-106 feature and permission Plugin integration', () => {
             learningPreferences: { version: 1, memoryExtraction: 'default', habitLearning: 'disabled' },
         }, secretStorageValues: { 'pa-api-token': 'synthetic-token' } });
         await harness.plugin.loadSettings();
+        attachMemoryStatusNotifier(harness.plugin);
+        attachAIActions(harness.plugin);
         const state = harness.plugin as unknown as State;
         await state.migrateSettings();
-        state.notifySettingsChanged = jest.fn(async () => undefined);
+        state.settingsPersistence.notifySettingsChanged = jest.fn(async () => undefined);
         return { ...harness, state };
     }
     function modalDom() {
@@ -543,7 +674,7 @@ describe('B-106 feature and permission Plugin integration', () => {
         await entered.promise;
         expect(plugin.settings.webSearchEnabled).toBe(false);
         expect(plugin.settings.retrievalHabitProfile.enabled).toBe(false);
-        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+        expect(state.settingsPersistence.notifySettingsChanged).not.toHaveBeenCalled();
         plugin.settings.retrievalHabitProfile.state = { aggregates: [], clearedAt: '2026-09-08T02:00:00.000Z' };
         writing.resolve();
         await saving;
@@ -552,7 +683,7 @@ describe('B-106 feature and permission Plugin integration', () => {
             quickCapture: { inboxPath: 'custom/inbox.md', postProcessingEnabled: true } });
         expect(plugin.settings.retrievalHabitProfile.state.clearedAt).toBe('2026-09-08T02:00:00.000Z');
         expect(plugin.settings.webSearchEnabled).toBe(true);
-        expect(state.notifySettingsChanged).toHaveBeenCalledTimes(1);
+        expect(state.settingsPersistence.notifySettingsChanged).toHaveBeenCalledTimes(1);
     });
 
     it('does not publish failed permission saves and keeps the requested patch independent of caller edits', async () => {
@@ -568,7 +699,7 @@ describe('B-106 feature and permission Plugin integration', () => {
         await rejected;
         expect(plugin.settings.operationsAgentEnabled).toBe(false);
         expect(plugin.settings.retrievalHabitProfile.enabled).toBe(false);
-        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+        expect(state.settingsPersistence.notifySettingsChanged).not.toHaveBeenCalled();
         requested.retrievalHabitProfile.enabled = true;
         const retry = plugin.saveSettingsPermissions(requested);
         requested.retrievalHabitProfile.enabled = false;
@@ -613,7 +744,7 @@ describe('B-106 feature and permission Plugin integration', () => {
             pagelet: { excludedFolders: plugin.settings.pagelet.excludedFolders, excludedTags: plugin.settings.pagelet.excludedTags, excludedPatterns: plugin.settings.pagelet.excludedPatterns },
         });
         await plugin.saveSettingsPermissions(scopePatch(['private']));
-        jest.mocked(state.notifySettingsChanged).mockClear();
+        jest.mocked(state.settingsPersistence.notifySettingsChanged).mockClear();
         const entered = deferred();
         const writing = deferred();
         adapter.process.mockImplementationOnce(async () => {
@@ -627,7 +758,7 @@ describe('B-106 feature and permission Plugin integration', () => {
         await rejected;
         expect(readScopes()).toEqual(scopePatch(['private']));
         expect(readPersisted()).toMatchObject(scopePatch(['private']));
-        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+        expect(state.settingsPersistence.notifySettingsChanged).not.toHaveBeenCalled();
 
         const queued = deferred();
         const retryEntered = deferred();
@@ -657,7 +788,7 @@ describe('B-106 feature and permission Plugin integration', () => {
         });
         expect(plugin.settings.pagelet.petVisible).toBe(livePetVisible);
         expect(plugin.settings.dataBoundary.providerDisclosureReasons).toEqual(disclosure);
-        expect(state.notifySettingsChanged).toHaveBeenCalledTimes(1);
+        expect(state.settingsPersistence.notifySettingsChanged).toHaveBeenCalledTimes(1);
     });
 
     it('serializes statistics persistence before runtime switching and compensates a rejected runtime switch', async () => {
@@ -667,7 +798,7 @@ describe('B-106 feature and permission Plugin integration', () => {
         const process = adapter.process.getMockImplementation()!;
         adapter.process.mockImplementationOnce(async (...args: unknown[]) => { entered.resolve(); await writing.promise; return process(...args); });
         const switchSync = jest.fn<(enabled: boolean) => Promise<void>>(async () => undefined);
-        state.statsManager = { setStatisticsSyncEnabled: switchSync };
+        state.statsIntegration = { statsManager: { setStatisticsSyncEnabled: switchSync } };
         const saving = plugin.setStatisticsSyncEnabled(true);
         await entered.promise;
         expect(switchSync).not.toHaveBeenCalled();
@@ -681,18 +812,18 @@ describe('B-106 feature and permission Plugin integration', () => {
         await expect(plugin.setStatisticsSyncEnabled(false)).rejects.toThrow('store unavailable');
         expect(plugin.settings.statisticsSyncEnabled).toBe(true);
         expect(readPersisted()?.statisticsSyncEnabled).toBe(true);
-        expect(state.notifySettingsChanged).toHaveBeenCalledTimes(1);
+        expect(state.settingsPersistence.notifySettingsChanged).toHaveBeenCalledTimes(1);
     });
 
     it('does not switch statistics storage or publish when saving the sync preference fails', async () => {
         const { plugin, state, adapter } = await fixture();
         const switchSync = jest.fn<(enabled: boolean) => Promise<void>>(async () => undefined);
-        state.statsManager = { setStatisticsSyncEnabled: switchSync };
+        state.statsIntegration = { statsManager: { setStatisticsSyncEnabled: switchSync } };
         adapter.process.mockRejectedValueOnce(new Error('disk unavailable'));
         await expect(plugin.setStatisticsSyncEnabled(true)).rejects.toThrow('disk unavailable');
         expect(switchSync).not.toHaveBeenCalled();
         expect(plugin.settings.statisticsSyncEnabled).toBe(false);
-        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+        expect(state.settingsPersistence.notifySettingsChanged).not.toHaveBeenCalled();
     });
 
     it('keeps the bootstrapped Memory pause committed until its device repository transaction succeeds', async () => {
@@ -716,11 +847,11 @@ describe('B-106 feature and permission Plugin integration', () => {
         const rejected = expect(failed).rejects.toThrow('device store unavailable');
         await entered.promise;
         expect(plugin.settings.memoryAutoAcceptPaused).toBe(true);
-        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+        expect(state.settingsPersistence.notifySettingsChanged).not.toHaveBeenCalled();
         writing.resolve();
         await rejected;
         expect(plugin.settings.memoryAutoAcceptPaused).toBe(true);
-        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+        expect(state.settingsPersistence.notifySettingsChanged).not.toHaveBeenCalled();
         const committed = deferred<Policy>();
         transact.mockImplementationOnce(() => committed.promise);
         const retry = plugin.setMemoryAutoAcceptPaused(false);
@@ -729,7 +860,7 @@ describe('B-106 feature and permission Plugin integration', () => {
         await retry;
         expect(plugin.settings.memoryAutoAcceptPaused).toBe(false);
         expect(plugin.settings.confirmedMemoryCount).toBe(10);
-        expect(state.notifySettingsChanged).toHaveBeenCalledTimes(1);
+        expect(state.settingsPersistence.notifySettingsChanged).toHaveBeenCalledTimes(1);
     });
 
     it('rejects newly queued feature and permission writes during unload', async () => {
@@ -748,7 +879,7 @@ describe('B-106 feature and permission Plugin integration', () => {
         queued.resolve();
         await rejected;
         expect(adapter.process).toHaveBeenCalledTimes(writesBeforeRelease);
-        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+        expect(state.settingsPersistence.notifySettingsChanged).not.toHaveBeenCalled();
     });
 
     it('saves graph defaults through the shared modal without opening a graph when no leaf exists', async () => {
@@ -757,13 +888,34 @@ describe('B-106 feature and permission Plugin integration', () => {
         const getLeaf = jest.fn();
         Object.assign(plugin.app, { workspace: { getLeavesOfType: jest.fn(() => []), getLeaf } });
         const { LocalGraph } = jest.requireActual<typeof import('../src/local-graph')>('../src/local-graph');
-        state._localGraph = new LocalGraph(plugin.app, plugin);
+        const graph = new LocalGraph(plugin.app, plugin);
+        const applyOptionsToOpenGraphs = jest.spyOn(graph, 'applyOptionsToOpenGraphs');
+        const createGraph = jest.fn(() => graph);
+        state.localGraphIntegration = new LocalGraphIntegration({
+            createGraph,
+            isDesktop: () => false,
+            createMutationObserver: (_callback: MutationCallback) => ({
+                observe: jest.fn(),
+                disconnect: jest.fn(),
+            }) as unknown as MutationObserver,
+            getObservedBody: () => ({}) as unknown as globalThis.Element,
+            setTimer: jest.fn<(callback: () => void, ms: number) => number>(() => 0),
+            clearTimer: jest.fn<() => void>(),
+            log: (...args: unknown[]) => plugin.log(args[0] as string, ...args.slice(1)),
+        });
         const modal = plugin.openGraphOptions();
+        const close = jest.spyOn(modal, 'close');
         const depth = nodes(modal, 'input')[0];
         depth.value = '3'; depth.oninput?.();
         await click(modal, 'plugin.settings.graph.options.save');
         expect(plugin.settings.localGraph.depth).toBe(3);
         expect(readPersisted()).toMatchObject({ localGraph: { depth: 3 } });
+        expect(createGraph).toHaveBeenCalledTimes(1);
+        expect(applyOptionsToOpenGraphs).toHaveBeenCalledTimes(1);
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(nodes(modal, 'p').some((node) => (
+            node.textContent === pluginT('plugin.settings.graph.options.applyFailed')
+        ))).toBe(false);
         expect(getLeaf).not.toHaveBeenCalled();
         expect(secretStorage.getSecret).not.toHaveBeenCalled();
     });
@@ -772,9 +924,14 @@ describe('B-106 feature and permission Plugin integration', () => {
         const { plugin, secretStorage } = await fixture();
         modalDom();
         const generate = jest.spyOn(AssistantFeaturedImageHelper.prototype, 'generate');
+        const firstGraphModal = plugin.openGraphOptions();
+        const closeFirstGraphModal = jest.spyOn(firstGraphModal, 'close');
         const defaultsModal = plugin.openFeaturedImageOptions()!;
-        await click(defaultsModal, 'plugin.settings.featuredImage.options.cancel');
-        const { editor, view } = bindNote(plugin);
+        expect(closeFirstGraphModal).toHaveBeenCalledTimes(1);
+        const closeDefaultsModal = jest.spyOn(defaultsModal, 'close');
+        plugin.openGraphOptions();
+        expect(closeDefaultsModal.mock.calls.length).toBeGreaterThanOrEqual(1);
+        const { editor, view, file } = bindNote(plugin);
         const generateModal = plugin.openFeaturedImageOptions(editor, view)!;
         await click(generateModal, 'plugin.settings.featuredImage.options.cancel');
         expect(secretStorage.getSecret).not.toHaveBeenCalled();
@@ -852,7 +1009,7 @@ describe('B-106 feature and permission Plugin integration', () => {
     it('registers context-sensitive commands that use the same graph and image modal entrypoints', async () => {
         const { plugin, secretStorage } = await fixture();
         modalDom();
-        const { editor, view } = bindNote(plugin);
+        const { editor, view, file } = bindNote(plugin);
         const commands = new Map<string, Command>();
         const registrationComplete = new Error('requested commands registered');
         const shellElement = { addClass: jest.fn(), addEventListener: jest.fn(), setAttribute: jest.fn(), onClickEvent: jest.fn() };
@@ -864,7 +1021,7 @@ describe('B-106 feature and permission Plugin integration', () => {
             surfacePendingPageletReviewsFolderMigration: jest.fn(),
             surfacePendingMemoryExtractionConsentMigration: jest.fn(),
             initializeMemorySubsystem: jest.fn(async () => undefined),
-            initializeStatsSubsystem: jest.fn(),
+            statsIntegration: { initialize: jest.fn() },
             createChatHistoryStore: () => new MemoryChatHistoryStore(),
             addRibbonIcon: () => shellElement,
             addStatusBarItem: () => shellElement,
@@ -891,12 +1048,15 @@ describe('B-106 feature and permission Plugin integration', () => {
         expect(graphEntry).toHaveBeenCalledTimes(1);
         const image = commands.get('ai-assistant-featured-images')!;
         expect(image.editorCheckCallback?.(true, editor, view)).toBe(true);
+        expect(view instanceof MarkdownView).toBe(true);
+        expect(plugin.getImageGenerationConnection()).not.toBeNull();
         expect(imageEntry).not.toHaveBeenCalled();
         image.editorCheckCallback?.(false, editor, view);
-        const imageCalls = imageEntry.mock.calls as Array<[unknown, unknown]>;
-        expect(imageCalls).toHaveLength(1);
-        expect(imageCalls[0][0] === editor).toBe(true);
-        expect(imageCalls[0][1] === view).toBe(true);
+        expect(imageEntry).not.toHaveBeenCalled();
+        const activeModal = (plugin as unknown as { activeFeatureOptionsModal: Modal }).activeFeatureOptionsModal;
+        expect(nodes(activeModal, 'p').some((node) => (
+            node.textContent === pluginT('plugin.settings.featuredImage.options.source', 'en', { name: file.basename })
+        ))).toBe(true);
         expect(secretStorage.getSecret).not.toHaveBeenCalled();
         plugin.settings.aiProvider = 'openai';
         expect(image.editorCheckCallback?.(true, editor, view)).toBe(false);
@@ -929,6 +1089,8 @@ describe("Plugin lifecycle integration", () => {
     it('invalidates writing samples on a repository commit even when later Forget cleanup fails', async () => {
         const { plugin } = createPluginHarness();
         await plugin.loadSettings();
+        plugin.log = jest.fn();
+        plugin.log = jest.fn();
         let commit: () => void = () => undefined;
         let finishRefresh!: () => void;
         const stop = jest.fn();
@@ -1001,7 +1163,9 @@ describe("Plugin lifecycle integration", () => {
             await plugin.loadSettings();
             const onSettingsChanged = jest.fn<() => void>();
             plugin.onSettingsChanged(onSettingsChanged);
-            (plugin as unknown as { setupHoverPopoverObserver: () => void }).setupHoverPopoverObserver = jest.fn();
+            (plugin as unknown as {
+                localGraphIntegration: { setupObserver: () => void };
+            }).localGraphIntegration = { setupObserver: jest.fn() };
             (plugin as unknown as { initializeMemorySubsystem: () => Promise<void> }).initializeMemorySubsystem = jest.fn(async () => {
                 (plugin as unknown as { unloading: boolean }).unloading = true;
             });
@@ -1354,6 +1518,7 @@ describe("AI readiness gate", () => {
         };
         const settingsChanged = jest.fn<() => void>();
         const memoryStatusChanged = jest.fn<() => void>();
+        attachMemoryStatusNotifier(plugin);
         plugin.onSettingsChanged(settingsChanged);
         plugin.onMemoryStatusChanged(memoryStatusChanged);
         const host = (plugin as unknown as { createChatHost(): { memoryStatus: {
@@ -1389,6 +1554,7 @@ describe("AI readiness gate", () => {
         await plugin.loadSettings();
         const settingsChanged = jest.fn<() => void>();
         const memoryStatusChanged = jest.fn<() => void>();
+        attachMemoryStatusNotifier(plugin);
         plugin.onSettingsChanged(settingsChanged);
         plugin.onMemoryStatusChanged(memoryStatusChanged);
 
@@ -1412,6 +1578,7 @@ describe("AI readiness gate", () => {
             secretStorageValues: { "pa-api-token": "sk-retained" },
         });
         await plugin.loadSettings();
+        attachMemoryStatusNotifier(plugin);
         plugin.settings.pagelet.enabled = true;
         plugin.settings.pagelet.backgroundDiscoveryEnabled = false;
         const captureAnchor = jest.fn(async () => ({ path: "notes/current.md" }));
@@ -1423,8 +1590,10 @@ describe("AI readiness gate", () => {
         const runtime = plugin as unknown as {
             createAiServiceHost(scope: string): unknown;
             isPageletProviderPathAllowed(path: string): boolean;
-            capturePageletDeepDiscoverAnchorSnapshot(): Promise<{ path: string }>;
-            getOrCreatePageletDeepDiscoverScheduler(): Promise<{ runNow(input: unknown): Promise<unknown> }>;
+            deepDiscoverIntegration: {
+                captureAnchorSnapshot(): Promise<{ path: string }>;
+                getOrCreateScheduler(): Promise<{ runNow(input: unknown): Promise<unknown> }>;
+            };
             runPageletDeepDiscover(input: {
                 path: string;
                 triggerReason: "explicit";
@@ -1433,8 +1602,8 @@ describe("AI readiness gate", () => {
         };
         runtime.createAiServiceHost = jest.fn(() => ({}));
         runtime.isPageletProviderPathAllowed = jest.fn(() => true);
-        runtime.capturePageletDeepDiscoverAnchorSnapshot = captureAnchor;
-        runtime.getOrCreatePageletDeepDiscoverScheduler = getScheduler;
+        runtime.deepDiscoverIntegration.captureAnchorSnapshot = captureAnchor;
+        runtime.deepDiscoverIntegration.getOrCreateScheduler = getScheduler;
 
         expect(secretStorage.getSecret).not.toHaveBeenCalled();
         await expect(runtime.runPageletDeepDiscover({
@@ -1465,6 +1634,7 @@ describe("AI readiness gate", () => {
             },
         });
         await plugin.loadSettings();
+        attachMemoryStatusNotifier(plugin);
         plugin.settings.pagelet.enabled = true;
         plugin.settings.pagelet.backgroundDiscoveryEnabled = false;
         if (throws) {
@@ -1476,8 +1646,10 @@ describe("AI readiness gate", () => {
         const getScheduler = jest.fn(async () => null);
         const runtime = plugin as unknown as {
             isPageletProviderPathAllowed(path: string): boolean;
-            capturePageletDeepDiscoverAnchorSnapshot(): Promise<{ path: string }>;
-            getOrCreatePageletDeepDiscoverScheduler(): Promise<unknown>;
+            deepDiscoverIntegration: {
+                captureAnchorSnapshot(): Promise<{ path: string }>;
+                getOrCreateScheduler(): Promise<unknown>;
+            };
             runPageletDeepDiscover(input: {
                 path: string;
                 triggerReason: "explicit";
@@ -1485,8 +1657,8 @@ describe("AI readiness gate", () => {
             }): Promise<{ status: string; reason?: string }>;
         };
         runtime.isPageletProviderPathAllowed = jest.fn(() => true);
-        runtime.capturePageletDeepDiscoverAnchorSnapshot = captureAnchor;
-        runtime.getOrCreatePageletDeepDiscoverScheduler = getScheduler;
+        runtime.deepDiscoverIntegration.captureAnchorSnapshot = captureAnchor;
+        runtime.deepDiscoverIntegration.getOrCreateScheduler = getScheduler;
 
         await expect(runtime.runPageletDeepDiscover({
             path: "notes/current.md",
@@ -1512,13 +1684,16 @@ describe("AI readiness gate", () => {
                 secretStorageValues: { "pa-api-token": "sk-retained" },
             });
             await harness.plugin.loadSettings();
+            attachMemoryStatusNotifier(harness.plugin);
             harness.plugin.settings.pagelet.enabled = true;
             harness.plugin.settings.pagelet.backgroundDiscoveryEnabled = false;
             const captureAnchor = jest.fn(async () => ({ path: "notes/current.md" }));
             const runtime = harness.plugin as unknown as {
                 aiProviderCredentialTransitionCount: number;
                 isPageletProviderPathAllowed(path: string): boolean;
-                capturePageletDeepDiscoverAnchorSnapshot(): Promise<{ path: string }>;
+                deepDiscoverIntegration: {
+                    captureAnchorSnapshot(): Promise<{ path: string }>;
+                };
                 runPageletDeepDiscover(input: {
                     path: string;
                     triggerReason: "leave-note" | "explicit";
@@ -1526,7 +1701,7 @@ describe("AI readiness gate", () => {
                 }): Promise<{ status: string; reason?: string }>;
             };
             runtime.isPageletProviderPathAllowed = jest.fn(() => true);
-            runtime.capturePageletDeepDiscoverAnchorSnapshot = captureAnchor;
+            runtime.deepDiscoverIntegration.captureAnchorSnapshot = captureAnchor;
             return { ...harness, runtime, captureAnchor };
         };
 
@@ -1562,6 +1737,7 @@ describe("AI readiness gate", () => {
         await plugin.loadSettings();
         const settingsChanged = jest.fn<() => void>();
         const memoryStatusChanged = jest.fn<() => void>();
+        attachMemoryStatusNotifier(plugin);
         plugin.onSettingsChanged(settingsChanged);
         plugin.onMemoryStatusChanged(memoryStatusChanged);
 
@@ -1583,6 +1759,7 @@ describe("AI readiness gate", () => {
             },
         });
         await plugin.loadSettings();
+        attachMemoryStatusNotifier(plugin);
         const prepareFromCommand = jest.fn(async () => undefined);
         (plugin as unknown as { memoryManager: unknown }).memoryManager = {
             getMaintenancePlan: jest.fn(async () => ({
@@ -1712,6 +1889,10 @@ describe("inline AI setup coordinator", () => {
     ).completeAISetup(input);
     const prepareForUnload = (plugin: unknown) => {
         const internals = plugin as Record<string, unknown>;
+        internals.quickCaptureIntegration = { reset: jest.fn() };
+        internals.statsIntegration = { unloadStatistics: jest.fn() };
+        internals.calloutIntegration = { dispose: jest.fn() };
+        internals.metadataUpdater = { dispose: jest.fn() };
         internals.memoryManager = {
             cancelActivePreparation: jest.fn(),
             stopAutoMaintenance: jest.fn(),
@@ -1720,15 +1901,289 @@ describe("inline AI setup coordinator", () => {
         const dispose = jest.fn(async () => undefined);
         internals.vss = { dispose };
         internals.phase3Handle = null;
-        internals.resizeDebounceTimer = null;
-        internals.hoverPopoverObserver = null;
-        internals.debouncedStatusBarUpdate = { cancel: jest.fn() };
+        internals.localGraphIntegration = { disposeObserver: jest.fn() };
+        internals.memoryStatusNotifier = { cancelPending: jest.fn() };
+        internals.shareCardActions = { closeAll: jest.fn() };
         internals.resetDeepDiscoverController = jest.fn();
         internals.cancelMemoryForgetRetry = jest.fn();
         internals.cancelMemoryProfileProjectionRetry = jest.fn();
         internals.cancelMemoryGovernanceGarbageCollection = jest.fn();
         return dispose;
     };
+
+    it("detaches Pagelet event refs before Memory idle drains during unload", async () => {
+        const { plugin } = createPluginHarness();
+        const dispose = prepareForUnload(plugin);
+        const pageletEventRefs = [
+            { id: "pagelet-active-leaf", detached: false },
+            { id: "pagelet-file-open", detached: false },
+        ];
+        const pageletFeatureScope = {
+            unload: () => {
+                for (const eventRef of pageletEventRefs) eventRef.detached = true;
+            },
+        };
+        const removeChild = jest.fn((child: typeof pageletFeatureScope) => child.unload());
+        const internals = plugin as unknown as Record<string, unknown>;
+        plugin.addChild = jest.fn() as never;
+        plugin.removeChild = removeChild as never;
+        internals.pageletFeatureScope = pageletFeatureScope;
+        let releaseIdle!: () => void;
+        const idle = new Promise<void>((resolve) => { releaseIdle = resolve; });
+        internals.memoryManager = {
+            stopAutoMaintenance: jest.fn(),
+            waitForIdle: jest.fn(async () => {
+                await idle;
+            }),
+        } as never;
+        const destroyPagelet = jest.fn();
+        internals.pageletOrchestrator = { destroy: destroyPagelet } as never;
+
+        const unloading = (plugin as unknown as { unloadAsync(): Promise<void> }).unloadAsync();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(removeChild).toHaveBeenCalledWith(pageletFeatureScope);
+        expect(pageletEventRefs.map(({ detached }) => detached)).toEqual([true, true]);
+        expect(destroyPagelet).not.toHaveBeenCalled();
+        releaseIdle();
+        await unloading;
+        expect(destroyPagelet).toHaveBeenCalledTimes(1);
+        expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it("releases the Pagelet scope before orchestrator destruction and repeats close safely", () => {
+        const { plugin } = createPluginHarness();
+        const order: string[] = [];
+        const internals = plugin as unknown as Record<string, unknown>;
+        const scope = {
+            unload: () => order.push("scope-unload"),
+        };
+        const orchestrator = {
+            destroy: () => order.push("orchestrator-destroy"),
+        };
+        plugin.removeChild = jest.fn((child: typeof scope) => child.unload()) as never;
+        internals.pageletFeatureScope = scope;
+        internals.pageletOrchestrator = orchestrator as never;
+        internals.resetDeepDiscoverController = jest.fn();
+        internals.retirePageletOperationsSession = jest.fn();
+        (internals.pageletOperationsIntegration as { selfWrites: Map<string, unknown> }).selfWrites = new Map();
+        internals.reviewQueueStore = null;
+        internals.savedInsightStore = null;
+        internals.memoryGovernanceStore = null;
+        internals.retrievalHabitProfileStore = null;
+        (internals.retainedReviewIntegration as { rateLimiter: unknown }).rateLimiter = null;
+        const disposeScopeRecap = jest.fn();
+        internals.scopeRecapIntegration = { dispose: disposeScopeRecap };
+
+        (plugin as unknown as { destroyPageletRuntime(): void }).destroyPageletRuntime();
+        (plugin as unknown as { destroyPageletRuntime(): void }).destroyPageletRuntime();
+
+        expect(order).toEqual(["scope-unload", "orchestrator-destroy"]);
+        expect(plugin.removeChild).toHaveBeenCalledTimes(1);
+        expect(disposeScopeRecap).toHaveBeenCalledTimes(2);
+    });
+
+    it("destroys a partially initialized Pagelet orchestrator after releasing its scope", async () => {
+        const originalDocument = (globalThis as { document?: unknown }).document;
+        const originalHTMLElement = (globalThis as { HTMLElement?: unknown }).HTMLElement;
+        const removeEventListener = jest.fn();
+        const addEventListener = jest.fn();
+        Object.defineProperty(globalThis, "HTMLElement", {
+            configurable: true,
+            value: class MockHTMLElement {},
+        });
+        Object.defineProperty(globalThis, "document", {
+            configurable: true,
+            value: {
+                body: {},
+                documentElement: {},
+                querySelector: jest.fn(() => null),
+                addEventListener,
+                removeEventListener,
+            },
+        });
+        const { plugin } = createPluginHarness();
+        await plugin.loadSettings();
+        plugin.log = jest.fn();
+        plugin.settings.pagelet.enabled = true;
+        plugin.settings.pagelet.petVisible = false;
+        Object.assign(plugin.app, {
+            workspace: {
+                activeLeaf: null,
+                getMostRecentLeaf: jest.fn(() => null),
+                getActiveViewOfType: jest.fn(() => null),
+                on: jest.fn(() => ({})),
+            },
+            vault: {
+                ...plugin.app.vault,
+                on: jest.fn(() => ({})),
+            },
+            metadataCache: { getFileCache: jest.fn(() => null) },
+        });
+        const internals = plugin as unknown as Record<string, unknown>;
+        internals.syncPageletDeepDiscoverControllerIdentity = jest.fn();
+        internals.getQuietRecallEvaluationPolicyIdentity = jest.fn(() => "test-policy");
+        internals.registerPageletCommandsOnce = jest.fn();
+        internals.registerPageletFocusCommandOnce = jest.fn();
+        internals.pageletOrchestrator = null;
+        (internals.retainedReviewIntegration as { rateLimiter: unknown }).rateLimiter = null;
+        const addedChildren: unknown[] = [];
+        const order: string[] = [];
+        plugin.addChild = jest.fn((child: unknown) => {
+            addedChildren.push(child);
+        }) as never;
+        plugin.removeChild = jest.fn((child: { unload(): void }) => {
+            order.push("release-scope");
+            child.unload();
+        }) as never;
+        const originalInitialize = PageletOrchestrator.prototype.initialize;
+        const originalDestroy = PageletOrchestrator.prototype.destroy;
+        const initialize = jest.spyOn(PageletOrchestrator.prototype, "initialize")
+            .mockImplementationOnce(function partialInitialize(this: PageletOrchestrator) {
+                originalInitialize.call(this);
+                throw new Error("partial initialization failed");
+            });
+        const destroy = jest.spyOn(PageletOrchestrator.prototype, "destroy")
+            .mockImplementation(function trackedDestroy(this: PageletOrchestrator) {
+                order.push("destroy-orchestrator");
+                originalDestroy.call(this);
+            });
+
+        try {
+            (plugin as unknown as { syncPageletRuntime(): void }).syncPageletRuntime();
+
+            expect(initialize).toHaveBeenCalledTimes(1);
+            expect(addedChildren).toHaveLength(1);
+            expect(order).toEqual(["release-scope", "destroy-orchestrator"]);
+            expect(destroy).toHaveBeenCalledTimes(1);
+            expect(removeEventListener.mock.calls.filter(([type]) => type === "keydown")).toHaveLength(2);
+            expect(plugin.log).toHaveBeenCalledWith(
+                "Failed to initialize Pagelet",
+                expect.objectContaining({ message: "partial initialization failed" }),
+            );
+        } finally {
+            (internals.pageletOrchestrator as PageletOrchestrator | null)?.destroy();
+            if (addedChildren[1]) plugin.removeChild(addedChildren[1] as never);
+            destroy.mockRestore();
+            initialize.mockRestore();
+            Object.defineProperty(globalThis, "document", {
+                configurable: true,
+                value: originalDocument,
+            });
+            Object.defineProperty(globalThis, "HTMLElement", {
+                configurable: true,
+                value: originalHTMLElement,
+            });
+        }
+    });
+
+    it("cleans up a stale initializer without releasing a newer current Pagelet scope", async () => {
+        const originalDocument = (globalThis as { document?: unknown }).document;
+        const originalHTMLElement = (globalThis as { HTMLElement?: unknown }).HTMLElement;
+        Object.defineProperty(globalThis, "HTMLElement", {
+            configurable: true,
+            value: class MockHTMLElement {},
+        });
+        Object.defineProperty(globalThis, "document", {
+            configurable: true,
+            value: {
+                body: {},
+                documentElement: {},
+                querySelector: jest.fn(() => null),
+                addEventListener: jest.fn(),
+                removeEventListener: jest.fn(),
+            },
+        });
+        const { plugin } = createPluginHarness();
+        await plugin.loadSettings();
+        plugin.log = jest.fn();
+        plugin.settings.pagelet.enabled = true;
+        plugin.settings.pagelet.petVisible = false;
+        Object.assign(plugin.app, {
+            workspace: {
+                activeLeaf: null,
+                getMostRecentLeaf: jest.fn(() => null),
+                getActiveViewOfType: jest.fn(() => null),
+                on: jest.fn(() => ({})),
+            },
+            vault: {
+                ...plugin.app.vault,
+                on: jest.fn(() => ({})),
+            },
+            metadataCache: { getFileCache: jest.fn(() => null) },
+        });
+        const internals = plugin as unknown as Record<string, unknown>;
+        internals.syncPageletDeepDiscoverControllerIdentity = jest.fn();
+        internals.getQuietRecallEvaluationPolicyIdentity = jest.fn(() => "test-policy");
+        internals.registerPageletCommandsOnce = jest.fn();
+        internals.registerPageletFocusCommandOnce = jest.fn();
+        internals.pageletOrchestrator = null;
+        (internals.retainedReviewIntegration as { rateLimiter: unknown }).rateLimiter = null;
+        const addedChildren: unknown[] = [];
+        const removedChildren: unknown[] = [];
+        plugin.addChild = jest.fn((child: unknown) => {
+            addedChildren.push(child);
+        }) as never;
+        plugin.removeChild = jest.fn((child: { unload(): void }) => {
+            removedChildren.push(child);
+            child.unload();
+        }) as never;
+        const originalInitialize = PageletOrchestrator.prototype.initialize;
+        let oldOrchestrator!: PageletOrchestrator;
+        let newerOrchestrator!: PageletOrchestrator;
+        const initialize = jest.spyOn(PageletOrchestrator.prototype, "initialize")
+            .mockImplementationOnce(function staleInitialize(this: PageletOrchestrator) {
+                oldOrchestrator = this;
+                originalInitialize.call(this);
+                (plugin as unknown as { syncPageletRuntime(): void }).syncPageletRuntime();
+                newerOrchestrator = internals.pageletOrchestrator as PageletOrchestrator;
+                throw new Error("stale initialization failed");
+            });
+        const destroy = jest.spyOn(PageletOrchestrator.prototype, "destroy");
+
+        try {
+            (plugin as unknown as { syncPageletRuntime(): void }).syncPageletRuntime();
+
+            expect(initialize).toHaveBeenCalledTimes(2);
+            expect(addedChildren).toHaveLength(2);
+            expect(internals.pageletFeatureScope).toBe(addedChildren[1]);
+            expect(removedChildren).toEqual([addedChildren[0]]);
+            expect(destroy).toHaveBeenCalledTimes(1);
+            expect(internals.pageletOrchestrator).toBe(newerOrchestrator);
+            expect(internals.pageletOrchestrator).not.toBe(oldOrchestrator);
+            expect(plugin.log).toHaveBeenCalledWith(
+                "Failed to initialize Pagelet",
+                expect.objectContaining({ message: "stale initialization failed" }),
+            );
+
+            internals.retirePageletOperationsSession = jest.fn();
+            (internals.pageletOperationsIntegration as { selfWrites: Map<string, unknown> }).selfWrites = new Map();
+            internals.reviewQueueStore = null;
+            internals.savedInsightStore = null;
+            internals.memoryGovernanceStore = null;
+            internals.retrievalHabitProfileStore = null;
+            internals.pageletRuntime = null;
+            internals.operationsService = null;
+            (plugin as unknown as { destroyPageletRuntime(): void }).destroyPageletRuntime();
+
+            expect(removedChildren).toEqual([addedChildren[0], addedChildren[1]]);
+            expect(destroy).toHaveBeenCalledTimes(2);
+            expect(internals.pageletFeatureScope).toBeNull();
+            expect(internals.pageletOrchestrator).toBeNull();
+        } finally {
+            destroy.mockRestore();
+            initialize.mockRestore();
+            Object.defineProperty(globalThis, "document", {
+                configurable: true,
+                value: originalDocument,
+            });
+            Object.defineProperty(globalThis, "HTMLElement", {
+                configurable: true,
+                value: originalHTMLElement,
+            });
+        }
+    });
 
     it("reuses an existing token while completing a partial provider tuple", async () => {
         const { plugin, secretStorage, readPersisted } = createPluginHarness({
@@ -3012,6 +3467,7 @@ describe("inline AI setup coordinator", () => {
     });
 
     it("drains cancelled Memory work before disposing VSS during unload", async () => {
+        jest.useFakeTimers();
         const { plugin } = createPluginHarness();
         const order: string[] = [];
         let releaseIdle!: () => void;
@@ -3024,12 +3480,63 @@ describe("inline AI setup coordinator", () => {
         });
         const dispose = jest.fn(async () => { order.push("dispose"); });
         const internals = plugin as unknown as Record<string, unknown>;
+        internals.quickCaptureIntegration = { reset: jest.fn() };
+        internals.statsIntegration = {
+            unloadStatistics: jest.fn(() => order.push("stats")),
+        };
+        internals.calloutIntegration = { dispose: jest.fn() };
+        const metadataGetCache = jest.fn<MetadataUpdaterDependencies["metadataCache"]["getCache"]>(() => null);
+        const metadataProcessFrontMatter = jest.fn<MetadataUpdaterDependencies["fileManager"]["processFrontMatter"]>(
+            async () => undefined,
+        );
+        const metadataEventRef = {};
+        const metadataWorkspaceOn = jest.fn<MetadataUpdaterDependencies["workspace"]["on"]>(() => metadataEventRef as never);
+        const metadataRegisterEvent = jest.fn<MetadataUpdaterDependencies["registerEvent"]>();
+        const metadataUpdater = new MetadataUpdater({
+            workspace: {
+                on: metadataWorkspaceOn,
+            },
+            metadataCache: { getCache: metadataGetCache },
+            fileManager: { processFrontMatter: metadataProcessFrontMatter },
+            getSettings: () => ({
+                enableMetadataUpdating: true,
+                metadataExcludePath: [],
+                metadatas: [],
+            }),
+            log: jest.fn(),
+            setActive: (active: boolean) => {
+                if (!active) order.push("metadata-dispose");
+            },
+            notifyDisabled: jest.fn(),
+            registerEvent: metadataRegisterEvent,
+        });
+        metadataUpdater.toggle();
+        expect(metadataRegisterEvent).toHaveBeenCalledWith(metadataEventRef);
+        const metadataListener = metadataWorkspaceOn.mock.calls[0]?.[1];
+        expect(metadataListener).toEqual(expect.any(Function));
+        const MetadataTestFile = TFile as unknown as new (path: string) => TFile;
+        metadataListener?.(new MetadataTestFile("Notes/BeforeUnload.md"));
+        internals.metadataUpdater = metadataUpdater;
+        internals.activeFeatureOptionsModal = {
+            close: jest.fn(() => order.push("feature-modal-close")),
+        };
         internals.memoryManager = { stopAutoMaintenance, waitForIdle };
         internals.vss = { dispose };
+        internals.writingSave = {
+            dispose: jest.fn(async () => {
+                order.push("writing");
+            }),
+        };
         internals.phase3Handle = null;
-        internals.resizeDebounceTimer = null;
-        internals.hoverPopoverObserver = null;
-        internals.debouncedStatusBarUpdate = { cancel: jest.fn() };
+        internals.localGraphIntegration = {
+            disposeObserver: jest.fn(() => order.push("graph-dispose")),
+        };
+        internals.memoryStatusNotifier = {
+            cancelPending: jest.fn(() => order.push("status-cancel")),
+        };
+        internals.shareCardActions = {
+            closeAll: jest.fn(() => order.push("share-close")),
+        };
         internals.resetDeepDiscoverController = jest.fn();
         internals.cancelMemoryForgetRetry = jest.fn();
         internals.cancelMemoryProfileProjectionRetry = jest.fn();
@@ -3039,12 +3546,229 @@ describe("inline AI setup coordinator", () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(order).toEqual(["stop", "drain-start"]);
+        expect(order).toEqual([
+            "metadata-dispose",
+            "feature-modal-close",
+            "share-close",
+            "status-cancel",
+            "graph-dispose",
+            "stop",
+            "drain-start",
+        ]);
         expect(dispose).not.toHaveBeenCalled();
+        metadataListener?.(new MetadataTestFile("Notes/AfterDispose.md"));
+        await jest.advanceTimersByTimeAsync(100);
+        expect(metadataProcessFrontMatter).not.toHaveBeenCalled();
         releaseIdle();
         await unloading;
 
-        expect(order).toEqual(["stop", "drain-start", "drain-finished", "dispose"]);
+        expect(order).toEqual([
+            "metadata-dispose",
+            "feature-modal-close",
+            "share-close",
+            "status-cancel",
+            "graph-dispose",
+            "stop",
+            "drain-start",
+            "drain-finished",
+            "dispose",
+            "stats",
+            "writing",
+        ]);
+        jest.useRealTimers();
+    });
+
+    it("stops queued Memory extraction before waiting for Memory idle", async () => {
+        jest.useFakeTimers();
+        const { plugin } = createPluginHarness();
+        let releaseIdle!: () => void;
+        const idle = new Promise<void>((resolve) => { releaseIdle = resolve; });
+        const extract = jest.fn();
+        const timer = setTimeout(extract, 2_000);
+        const stopAdmission = jest.fn(() => clearTimeout(timer));
+        const dispose = jest.fn();
+        const internals = plugin as unknown as Record<string, unknown>;
+        internals.quickCaptureIntegration = { reset: jest.fn() };
+        internals.statsIntegration = { unloadStatistics: jest.fn() };
+        internals.calloutIntegration = { dispose: jest.fn() };
+        internals.pageletIntegration = {
+            beginUnload: jest.fn(),
+            destroyUnloadedRuntime: jest.fn(),
+            finishUnloadAfterSharedService: jest.fn(),
+        };
+        internals.metadataUpdater = { dispose: jest.fn() };
+        internals.shareCardActions = { closeAll: jest.fn() };
+        internals.localGraphIntegration = { disposeObserver: jest.fn() };
+        internals.memoryStatusNotifier = { cancelPending: jest.fn() };
+        internals.memoryManager = {
+            stopAutoMaintenance: jest.fn(),
+            waitForIdle: jest.fn(async () => idle),
+        };
+        internals.vss = { dispose: jest.fn(async () => undefined) };
+        internals.chatIntegration = {
+            drainWriting: jest.fn(async () => undefined),
+            disposeImages: jest.fn(async () => undefined),
+            releaseHistory: jest.fn(),
+        };
+        internals.memoryExtractionScheduler = { stopAdmission, dispose };
+        internals.governanceActions = { dispose: jest.fn() };
+        internals.governanceStorage = { dispose: jest.fn(async () => undefined) };
+
+        const unloading = (plugin as unknown as { unloadAsync(): Promise<void> }).unloadAsync();
+        await Promise.resolve();
+
+        expect(stopAdmission).toHaveBeenCalledTimes(1);
+        await jest.advanceTimersByTimeAsync(2_000);
+        expect(extract).not.toHaveBeenCalled();
+        expect(dispose).not.toHaveBeenCalled();
+
+        releaseIdle();
+        await unloading;
+        expect(dispose).toHaveBeenCalledTimes(1);
+        jest.useRealTimers();
+    });
+
+    it("cancels a pending Callout Manager poll immediately when root unload starts", async () => {
+        jest.useFakeTimers();
+        const { plugin } = createPluginHarness();
+        (plugin.app as unknown as {
+            plugins: {
+                enabledPlugins: Set<string>;
+                plugins: Record<string, unknown>;
+            };
+        }).plugins = {
+            enabledPlugins: new Set(["callout-manager"]),
+            plugins: {},
+        };
+        getCalloutApi.mockClear();
+        const internals = plugin as unknown as Record<string, unknown>;
+        internals.quickCaptureIntegration = { reset: jest.fn() };
+        internals.statsIntegration = { unloadStatistics: jest.fn() };
+        internals.calloutIntegration = { dispose: jest.fn() };
+        internals.metadataUpdater = { dispose: jest.fn() };
+        const appWithCalloutPlugins = plugin.app as unknown as {
+            plugins?: { enabledPlugins?: Set<string>; plugins?: Record<string, unknown> };
+        };
+        const calloutIntegration = new CalloutIntegration({
+            pluginId: "callout-manager",
+            registry: {
+                isPluginEnabled: (pluginId) => appWithCalloutPlugins.plugins?.enabledPlugins?.has(pluginId) ?? false,
+                getPluginInstance: (pluginId) => appWithCalloutPlugins.plugins?.plugins?.[pluginId],
+            },
+            getApi: () => getCalloutApi() as never,
+            log: (...args: unknown[]) => plugin.log(args[0] as string, ...args.slice(1)),
+        });
+        internals.calloutIntegration = calloutIntegration;
+        let releaseIdle!: () => void;
+        const idle = new Promise<void>((resolve) => { releaseIdle = resolve; });
+        internals.memoryManager = {
+            stopAutoMaintenance: jest.fn(),
+            waitForIdle: jest.fn(async () => {
+                await idle;
+            }),
+        };
+        internals.vss = { dispose: jest.fn(async () => undefined) };
+        internals.phase3Handle = null;
+        internals.localGraphIntegration = { disposeObserver: jest.fn() };
+        internals.memoryStatusNotifier = { cancelPending: jest.fn() };
+        internals.shareCardActions = { closeAll: jest.fn() };
+        internals.resetDeepDiscoverController = jest.fn();
+        internals.cancelMemoryForgetRetry = jest.fn();
+        internals.cancelMemoryProfileProjectionRetry = jest.fn();
+        internals.cancelMemoryGovernanceGarbageCollection = jest.fn();
+
+        const initialize = calloutIntegration.initialize();
+        await Promise.resolve();
+        const unloading = (plugin as unknown as { unloadAsync(): Promise<void> }).unloadAsync();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        try {
+            let settledWithoutTimerAdvance = false;
+            initialize.then(() => { settledWithoutTimerAdvance = true; });
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(settledWithoutTimerAdvance).toBe(true);
+            expect(getCalloutApi).not.toHaveBeenCalled();
+        } finally {
+            await jest.advanceTimersByTimeAsync(2_000);
+            releaseIdle();
+            await initialize;
+            await unloading;
+            jest.useRealTimers();
+        }
+    });
+
+    it("discards a late Callout Manager API result after root unload starts", async () => {
+        jest.useFakeTimers();
+        const { plugin } = createPluginHarness();
+        const api = { getCallouts: jest.fn() };
+        let resolveApi!: (value: typeof api) => void;
+        (plugin.app as unknown as {
+            plugins: {
+                enabledPlugins: Set<string>;
+                plugins: Record<string, unknown>;
+            };
+        }).plugins = {
+            enabledPlugins: new Set(["callout-manager"]),
+            plugins: { "callout-manager": {} },
+        };
+        getCalloutApi.mockClear();
+        getCalloutApi.mockImplementationOnce(() => new Promise<typeof api>((resolve) => {
+            resolveApi = resolve;
+        }));
+        const internals = plugin as unknown as Record<string, unknown>;
+        internals.quickCaptureIntegration = { reset: jest.fn() };
+        internals.statsIntegration = { unloadStatistics: jest.fn() };
+        internals.calloutIntegration = { dispose: jest.fn() };
+        internals.metadataUpdater = { dispose: jest.fn() };
+        const appWithCalloutPlugins = plugin.app as unknown as {
+            plugins?: { enabledPlugins?: Set<string>; plugins?: Record<string, unknown> };
+        };
+        const calloutIntegration = new CalloutIntegration({
+            pluginId: "callout-manager",
+            registry: {
+                isPluginEnabled: (pluginId) => appWithCalloutPlugins.plugins?.enabledPlugins?.has(pluginId) ?? false,
+                getPluginInstance: (pluginId) => appWithCalloutPlugins.plugins?.plugins?.[pluginId],
+            },
+            getApi: () => getCalloutApi() as never,
+            log: (...args: unknown[]) => plugin.log(args[0] as string, ...args.slice(1)),
+        });
+        internals.calloutIntegration = calloutIntegration;
+        let releaseIdle!: () => void;
+        const idle = new Promise<void>((resolve) => { releaseIdle = resolve; });
+        internals.memoryManager = {
+            stopAutoMaintenance: jest.fn(),
+            waitForIdle: jest.fn(async () => {
+                await idle;
+            }),
+        };
+        internals.vss = { dispose: jest.fn(async () => undefined) };
+        internals.phase3Handle = null;
+        internals.localGraphIntegration = { disposeObserver: jest.fn() };
+        internals.memoryStatusNotifier = { cancelPending: jest.fn() };
+        internals.shareCardActions = { closeAll: jest.fn() };
+        internals.resetDeepDiscoverController = jest.fn();
+        internals.cancelMemoryForgetRetry = jest.fn();
+        internals.cancelMemoryProfileProjectionRetry = jest.fn();
+        internals.cancelMemoryGovernanceGarbageCollection = jest.fn();
+
+        const initialize = calloutIntegration.initialize();
+        await Promise.resolve();
+        expect(getCalloutApi).toHaveBeenCalledTimes(1);
+        const unloading = (plugin as unknown as { unloadAsync(): Promise<void> }).unloadAsync();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        try {
+            resolveApi(api);
+            await initialize;
+            expect(calloutIntegration.getCallouts()).toBeUndefined();
+        } finally {
+            releaseIdle();
+            await unloading;
+            jest.useRealTimers();
+        }
     });
 
     it("drains a Settings provider update accepted immediately before unload", async () => {
@@ -3161,6 +3885,10 @@ describe("inline AI setup coordinator", () => {
             harness.writePersisted(next as Record<string, unknown>);
         }) as never;
         const internals = plugin as unknown as Record<string, unknown>;
+        internals.quickCaptureIntegration = { reset: jest.fn() };
+        internals.statsIntegration = { unloadStatistics: jest.fn() };
+        internals.calloutIntegration = { dispose: jest.fn() };
+        internals.metadataUpdater = { dispose: jest.fn() };
         internals.memoryManager = {
             cancelActivePreparation: jest.fn(),
             stopAutoMaintenance: jest.fn(),
@@ -3169,9 +3897,9 @@ describe("inline AI setup coordinator", () => {
         const dispose = jest.fn(async () => undefined);
         internals.vss = { dispose };
         internals.phase3Handle = null;
-        internals.resizeDebounceTimer = null;
-        internals.hoverPopoverObserver = null;
-        internals.debouncedStatusBarUpdate = { cancel: jest.fn() };
+        internals.localGraphIntegration = { disposeObserver: jest.fn() };
+        internals.memoryStatusNotifier = { cancelPending: jest.fn() };
+        internals.shareCardActions = { closeAll: jest.fn() };
         internals.resetDeepDiscoverController = jest.fn();
         internals.cancelMemoryForgetRetry = jest.fn();
         internals.cancelMemoryProfileProjectionRetry = jest.fn();
@@ -3241,6 +3969,10 @@ describe("inline AI setup coordinator", () => {
             harness.writePersisted(next as Record<string, unknown>);
         }) as never;
         const internals = plugin as unknown as Record<string, unknown>;
+        internals.quickCaptureIntegration = { reset: jest.fn() };
+        internals.statsIntegration = { unloadStatistics: jest.fn() };
+        internals.calloutIntegration = { dispose: jest.fn() };
+        internals.metadataUpdater = { dispose: jest.fn() };
         internals.memoryManager = {
             cancelActivePreparation: jest.fn(),
             stopAutoMaintenance: jest.fn(),
@@ -3249,9 +3981,9 @@ describe("inline AI setup coordinator", () => {
         const dispose = jest.fn(async () => undefined);
         internals.vss = { dispose };
         internals.phase3Handle = null;
-        internals.resizeDebounceTimer = null;
-        internals.hoverPopoverObserver = null;
-        internals.debouncedStatusBarUpdate = { cancel: jest.fn() };
+        internals.localGraphIntegration = { disposeObserver: jest.fn() };
+        internals.memoryStatusNotifier = { cancelPending: jest.fn() };
+        internals.shareCardActions = { closeAll: jest.fn() };
         internals.resetDeepDiscoverController = jest.fn();
         internals.cancelMemoryForgetRetry = jest.fn();
         internals.cancelMemoryProfileProjectionRetry = jest.fn();

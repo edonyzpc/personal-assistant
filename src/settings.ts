@@ -1,11 +1,17 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, Modal, Notice, PluginSettingTab, Setting, debounce } from "obsidian";
+import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, debounce } from "obsidian";
 import type { ToggleComponent } from "obsidian";
 import { createSourceScopeSettingState, renderSourceScopeSetting } from "./settings/source-scope-setting";
 
-import type { AIProviderConfigurationPatch, PluginManager } from "./plugin"
+import type {
+    AIProviderConfigurationPatch,
+    ImageGenerationConnectionPatch,
+} from "./ai-services/plugin-configuration";
+import type { APITokenCacheState } from "./ai-services/ai-utils";
+import type { ImageGenerationConnection } from "./ai-services/image-generation-connection";
 import type { AISetupResult } from "./chat/ChatHost";
+import type { ImageAssetService } from "./chat/image-assets";
 import { ImageManagementModal } from "./chat/image-management-modal";
 import { getWritingSceneDisplayValues, normalizeWritingScene } from './chat/writing-style-service';
 import type { WritingStyleScene } from './pa/writing-style';
@@ -46,6 +52,10 @@ import type {
     MemoryControlCenterOrigin,
     MemoryControlCenterSnapshot,
 } from "./pa/memory-control-center";
+import type { MemoryRecordActionResult } from "./pagelet/tab/sections/types";
+import type { SettingsPermissionPatch } from "./plugin/settings-persistence";
+import type { MemoryManager } from "./memory-manager";
+import type { VSS } from "./vss";
 import {
     normalizeMaintenanceMoveActionLog,
     type MaintenanceMoveActionLogEntry,
@@ -1021,9 +1031,92 @@ export function updateQwenResponseOptionAvailability(
 }
 
 
+type MemoryControlCenterAction = "correct" | "pause_use" | "resume_use" | "apply_device_wide"
+    | "limit_to_current_vault" | "forget" | "retry_forget" | "undo_recent_change";
+
+interface SettingsPersistenceHost {
+    settings: PluginManagerSettings;
+    log(...args: unknown[]): void;
+    saveSettings(): Promise<void>;
+    saveSettingsPermissions(patch: SettingsPermissionPatch): Promise<void>;
+    setStatisticsSyncEnabled(enabled: boolean): Promise<void>;
+    setBackgroundDiscoveryEnabled(enabled: boolean): Promise<void>;
+}
+
+interface SettingsPageletHost {
+    getDeepDiscoverUsage(): Promise<{
+        runs: number;
+        dailyCap: number;
+        modelTurns: number;
+        toolCalls: number;
+    }>;
+}
+
+interface SettingsAIConfigurationHost {
+    beginAIProviderConfigurationMutation(): number;
+    updateAIProviderConfiguration(patch: AIProviderConfigurationPatch, invocationEpoch: number): Promise<AISetupResult>;
+    getAPITokenSecretId(): string;
+    getImageAPITokenSecretId(): string;
+    getConfiguredAPITokenSecret(): string | null;
+    getConfiguredImageAPITokenSecret(): string | null;
+    setAPITokenSecret(value: string, origin?: "settings" | "inline-setup"): void;
+    setImageAPITokenSecret(value: string): Promise<void>;
+    clearTokenCache(): void;
+    notifyAIReadinessChanged(): Promise<void>;
+    getAPITokenCacheState(): APITokenCacheState;
+    refreshAPITokenPresence(): APITokenCacheState;
+    getImageGenerationConnection(): ImageGenerationConnection | null;
+    saveImageGenerationConnectionSettings(patch: ImageGenerationConnectionPatch): Promise<void>;
+    cancelActiveMemoryPreparation(): void;
+}
+
+interface SettingsFeatureHost {
+    readonly imageAssetService: ImageAssetService | undefined;
+    openFeaturedImageOptions(): Modal | null;
+    openGraphOptions(): Modal;
+}
+
+interface SettingsMemoryHost {
+    readonly memoryManager: MemoryManager | null;
+    readonly vss: VSS | null;
+    setMemoryAutoAcceptPaused(paused: boolean): Promise<void>;
+    updateMemoryStatusBar(): Promise<void>;
+    showTechnicalMemoryStatus(): Promise<void>;
+    runManualMemoryAction(action: () => Promise<void>): Promise<void>;
+    canShowAiInsights(): boolean;
+    showAiInsights(): void;
+    getMemoryGovernanceUiMode(): "effect_based" | "legacy_threshold" | "unavailable";
+    getMemoryControlCenterSnapshot(): Promise<MemoryControlCenterSnapshot>;
+    runMemoryControlCenterAction(
+        action: MemoryControlCenterAction,
+        targetId: string,
+        summary?: string,
+        options?: { expectedRevisionId?: string; eventId?: string },
+    ): Promise<MemoryRecordActionResult>;
+    correctWritingStyleMemory(
+        claimId: string,
+        exactText: string,
+        scene: WritingStyleScene,
+    ): Promise<MemoryRecordActionResult>;
+    getMemorySuppressionMarkerCount(): number;
+    clearMemorySuppressionMarkers(): Promise<{ ok: boolean; message: string; clearedCount: number }>;
+    getMemoryRollbackStatusMessage(reason?: string): string;
+    rollbackMemoryGovernance(): Promise<{ ok: boolean; message: string }>;
+    getMemoryFinalizationStatusMessage(reason?: string): string;
+    checkAndUpgradeMemoryGovernance(): Promise<{ ok: boolean; message: string }>;
+    finalizeMemoryGovernance(confirmationToken: string): Promise<{ ok: boolean; message: string }>;
+}
+
+export type SettingsPluginHost = Plugin
+    & SettingsPersistenceHost
+    & SettingsPageletHost
+    & SettingsAIConfigurationHost
+    & SettingsFeatureHost
+    & SettingsMemoryHost;
+
 export class SettingTab extends PluginSettingTab {
-    plugin: PluginManager;
-    private log: (...msg: unknown[]) => void;
+    plugin: SettingsPluginHost;
+    private log: (...args: unknown[]) => void;
 
     // Sub-containers for incremental rebuilds (avoids full display() re-render).
     private providerConfigContainer: HTMLDivElement | null = null;
@@ -1111,10 +1204,10 @@ export class SettingTab extends PluginSettingTab {
         void this.savePendingSettings();
     }, 400, true);
 
-    constructor(app: App, plugin: PluginManager) {
+    constructor(app: App, plugin: SettingsPluginHost) {
         super(app, plugin);
         this.plugin = plugin;
-        this.log = (...msg: unknown[]) => plugin.log(...msg);
+        this.log = (...args: unknown[]) => plugin.log(...args);
     }
 
     openGroup(groupId: string, memoryTargetId?: string): void {
@@ -4077,8 +4170,8 @@ export class SettingTab extends PluginSettingTab {
 
     private renderMemoryMaintenanceActions(
         container: HTMLElement,
-        getMemoryManager: () => PluginManager["memoryManager"] | null,
-        getVss: () => PluginManager["vss"] | null,
+        getMemoryManager: () => MemoryManager | null,
+        getVss: () => VSS | null,
     ): void {
         const plugin = this.plugin;
         new Setting(container)

@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from "@jest/globals";
+import { beforeAll, afterAll, describe, expect, it, jest } from "@jest/globals";
 
 jest.mock("obsidian", () => {
     class MockTFile {
@@ -46,6 +46,21 @@ jest.mock("obsidian", () => {
 
 jest.mock("../src/share-card/share-card-modal", () => ({
     ShareCardModal: jest.fn().mockImplementation(() => ({ open: jest.fn() })),
+}));
+jest.mock("../src/pagelet/bubble/BubbleView", () => ({
+    BubbleView: class {
+        mount() {}
+        close() {}
+        destroy() {}
+    },
+}));
+jest.mock("../src/pagelet/panel/PanelView", () => ({
+    PanelView: class {
+        isOpen = false;
+        mount() {}
+        close() {}
+        destroy() {}
+    },
 }));
 
 import { Notice, TFile } from "obsidian";
@@ -142,6 +157,8 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 getFileCache: jest.fn(() => null),
             },
         } as unknown as PageletHost["app"],
+        pageletFeatureScope: {},
+        isFeatureScopeCurrent: () => true,
         settings: {
             pagelet: {
                 enabled: true,
@@ -3223,5 +3240,270 @@ describe("PageletOrchestrator Share Card gate", () => {
                 resourceContext: { basePath: "notes/current.md" },
             },
         );
+    });
+});
+
+describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
+    interface RecordedEventRef {
+        id: string;
+        source: "workspace" | "vault";
+        event: string;
+        callback: (...args: unknown[]) => void;
+        detached: boolean;
+    }
+
+    const originalDocument = (globalThis as { document?: unknown }).document;
+    const originalHTMLElement = (globalThis as { HTMLElement?: unknown }).HTMLElement;
+    beforeAll(() => {
+        Object.defineProperty(globalThis, "HTMLElement", {
+            configurable: true,
+            value: class MockHTMLElement {},
+        });
+        Object.defineProperty(globalThis, "document", {
+            configurable: true,
+            value: {
+                body: {},
+                documentElement: {},
+                querySelector: jest.fn(() => null),
+                addEventListener: jest.fn(),
+                removeEventListener: jest.fn(),
+            },
+        });
+    });
+
+    afterAll(() => {
+        Object.defineProperty(globalThis, "document", {
+            configurable: true,
+            value: originalDocument,
+        });
+        Object.defineProperty(globalThis, "HTMLElement", {
+            configurable: true,
+            value: originalHTMLElement,
+        });
+    });
+
+    function createLifecycleHarness() {
+        const refs: RecordedEventRef[] = [];
+        const featureScope = {};
+        let featureScopeReleased = false;
+        const registerEvent = jest.fn((ref: RecordedEventRef) => ref);
+        const host = makeHost({
+            registerEvent: registerEvent as never,
+            runDeepDiscover: jest.fn(async () => undefined as never),
+            consumePageletOperationsSelfWrite: jest.fn(() => false),
+        });
+        host.settings.pagelet.petVisible = false;
+        host.settings.pagelet.backgroundDiscoveryEnabled = true;
+        const mutableHost = host as unknown as {
+            pageletFeatureScope: object;
+            isFeatureScopeCurrent(scope: object): boolean;
+        };
+        mutableHost.pageletFeatureScope = featureScope;
+        mutableHost.isFeatureScopeCurrent = (scope) => scope === featureScope && !featureScopeReleased;
+        const record = (
+            source: "workspace" | "vault",
+            event: string,
+            callback: (...args: unknown[]) => void,
+        ) => {
+            const ref: RecordedEventRef = {
+                id: `${source}:${event}:${refs.length}`,
+                source,
+                event,
+                callback,
+                detached: false,
+            };
+            refs.push(ref);
+            return ref;
+        };
+        const activeFile = makeTFile("notes/current.md");
+        const leafFor = (path: string) => ({
+            view: {
+                getViewType: () => "markdown",
+                file: { path },
+            },
+        });
+        const workspace = {
+            activeLeaf: null,
+            containerEl: {},
+            getActiveFile: jest.fn(() => activeFile),
+            getMostRecentLeaf: jest.fn(() => null),
+            on: jest.fn((event: string, callback: (...args: unknown[]) => void) => (
+                record("workspace", event, callback)
+            )),
+        };
+        const vault = {
+            getMarkdownFiles: jest.fn(() => [activeFile]),
+            cachedRead: jest.fn(async () => "Current note"),
+            getAbstractFileByPath: jest.fn(() => activeFile),
+            on: jest.fn((event: string, callback: (...args: unknown[]) => void) => (
+                record("vault", event, callback)
+            )),
+        };
+        (host as unknown as { app: PageletHost["app"] }).app = {
+            workspace,
+            vault,
+            metadataCache: { getFileCache: jest.fn(() => null) },
+        } as unknown as PageletHost["app"];
+
+        return {
+            host,
+            refs,
+            registerEvent,
+            releaseFeatureScope: () => {
+                featureScopeReleased = true;
+                for (const ref of refs) ref.detached = true;
+            },
+            workspace,
+            vault,
+            leafFor,
+            createOrchestrator: () => new PageletOrchestrator(host),
+        };
+    }
+
+    it("detaches all five feature event refs when the feature is disabled", () => {
+        const harness = createLifecycleHarness();
+        const orchestrator = harness.createOrchestrator();
+        orchestrator.initialize();
+        expect(harness.registerEvent).toHaveBeenCalledTimes(5);
+
+        orchestrator.destroy();
+        harness.releaseFeatureScope();
+
+        expect(harness.refs).toHaveLength(5);
+        expect(harness.refs.map((ref) => ref.detached)).toEqual([true, true, true, true, true]);
+        harness.releaseFeatureScope();
+        expect(harness.refs.map((ref) => ref.detached)).toEqual([true, true, true, true, true]);
+    });
+
+    it("lets only the current generation receive an event after off/on", () => {
+        const first = createLifecycleHarness();
+        const second = createLifecycleHarness();
+        const firstOrchestrator = first.createOrchestrator();
+        firstOrchestrator.initialize();
+        firstOrchestrator.destroy();
+        first.releaseFeatureScope();
+        const secondOrchestrator = second.createOrchestrator();
+        secondOrchestrator.initialize();
+
+        const firstLeaf = first.refs.find(({ event }) => event === "active-leaf-change");
+        const secondLeaf = second.refs.find(({ event }) => event === "active-leaf-change");
+        expect(firstLeaf).toBeDefined();
+        expect(secondLeaf).toBeDefined();
+
+        firstLeaf?.callback(first.leafFor("notes/old-generation.md"));
+        secondLeaf?.callback(second.leafFor("notes/new-generation.md"));
+
+        expect((firstOrchestrator as unknown as { currentMarkdownAnchorPath: string | null })
+            .currentMarkdownAnchorPath).toBeNull();
+        expect((secondOrchestrator as unknown as { currentMarkdownAnchorPath: string | null })
+            .currentMarkdownAnchorPath).toBe("notes/new-generation.md");
+        secondOrchestrator.destroy();
+    });
+
+    it("rejects a queued modify callback on a destroyed old instance", async () => {
+        jest.useFakeTimers();
+        try {
+            const harness = createLifecycleHarness();
+            const orchestrator = harness.createOrchestrator();
+        orchestrator.initialize();
+        orchestrator.destroy();
+        harness.releaseFeatureScope();
+
+            const modify = harness.refs.find(({ event }) => event === "modify");
+            modify?.callback(makeTFile("notes/queued.md"));
+
+            expect(harness.host.consumePageletOperationsSelfWrite).not.toHaveBeenCalled();
+            await jest.advanceTimersByTimeAsync(10_000);
+            expect(harness.host.runDeepDiscover).not.toHaveBeenCalled();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("keeps normal current-instance modify and insight invalidation events active", async () => {
+        jest.useFakeTimers();
+        try {
+            const harness = createLifecycleHarness();
+            const orchestrator = harness.createOrchestrator();
+            orchestrator.initialize();
+            const panelView = { close: jest.fn(), destroy: jest.fn(), isOpen: true };
+            const openCandidate = {
+                pageletAgent: {
+                    validationIdentity: {
+                        cacheIdentity: { anchor: { path: "notes/open.md" }, sources: [] },
+                },
+            },
+            };
+            const state = orchestrator as unknown as {
+                panelView: { close: jest.Mock; isOpen: boolean };
+                openAgentInsightCandidate: unknown;
+            };
+            state.panelView = panelView;
+            state.openAgentInsightCandidate = openCandidate;
+
+            const modify = harness.refs.find(({ event }) => event === "modify");
+            modify?.callback(makeTFile("notes/current.md"));
+            await jest.advanceTimersByTimeAsync(5_000);
+            expect(harness.host.runDeepDiscover).toHaveBeenCalledWith({
+                path: "notes/current.md",
+                triggerReason: "edit-idle",
+            });
+
+            const deleted = harness.refs.find(({ event }) => event === "delete");
+            deleted?.callback(makeTFile("notes/open.md"));
+            expect(panelView.close).toHaveBeenCalledTimes(1);
+            orchestrator.destroy();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("rejects queued callbacks for every event entry on an old generation", async () => {
+        jest.useFakeTimers();
+        try {
+            const harness = createLifecycleHarness();
+            const orchestrator = harness.createOrchestrator();
+            orchestrator.initialize();
+            const panelView = { close: jest.fn(), destroy: jest.fn(), isOpen: true };
+            const openCandidate = {
+                pageletAgent: {
+                    validationIdentity: {
+                        cacheIdentity: { anchor: { path: "notes/open.md" }, sources: [] },
+                    },
+                },
+            };
+            const state = orchestrator as unknown as {
+                panelView: { close: jest.Mock; isOpen: boolean };
+                openAgentInsightCandidate: unknown;
+                currentMarkdownAnchorPath: string | null;
+            };
+            state.panelView = panelView;
+            state.openAgentInsightCandidate = openCandidate;
+            harness.releaseFeatureScope();
+
+            const eventFor = (name: string) => harness.refs.find(({ event }) => event === name);
+            const callbacks = [
+                eventFor("active-leaf-change"),
+                eventFor("file-open"),
+                eventFor("modify"),
+                eventFor("delete"),
+                eventFor("rename"),
+            ];
+            expect(callbacks.every(Boolean)).toBe(true);
+            callbacks[0]?.callback(harness.leafFor("notes/old-leaf.md"));
+            callbacks[1]?.callback();
+            callbacks[2]?.callback(makeTFile("notes/old-modify.md"));
+            callbacks[3]?.callback(makeTFile("notes/open.md"));
+            callbacks[4]?.callback(makeTFile("notes/open-renamed.md"), "notes/open.md");
+            await jest.advanceTimersByTimeAsync(10_000);
+
+            expect(state.currentMarkdownAnchorPath).toBeNull();
+            expect(harness.host.consumePageletOperationsSelfWrite).not.toHaveBeenCalled();
+            expect(harness.host.runDeepDiscover).not.toHaveBeenCalled();
+            expect(panelView.close).not.toHaveBeenCalled();
+            orchestrator.destroy();
+        } finally {
+            jest.useRealTimers();
+        }
     });
 });

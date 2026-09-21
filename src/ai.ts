@@ -1,21 +1,20 @@
 /* Copyright 2023 edonyzpc */
 import { Editor, MarkdownView, getFrontMatterInfo, type App, type FrontMatterInfo } from 'obsidian';
 import { EditorView } from '@codemirror/view';
-import { AIService } from './ai-services/service';
+import { AIService, type AIServiceHost } from './ai-services/service';
 import type { FeaturedImageRunOptions } from './ai-services/featured-image-options';
-import { PluginManager } from './plugin'
 
 export class AssistantHelper {
     private editor: Editor
     private view: EditorView
     private query: string = ''
-    private plugin: PluginManager
+    private plugin: AIServiceHost
     private fontmatterInfo: FrontMatterInfo
     private readonly markdownView: MarkdownView;
     private aiService: AIService;
 
     constructor(
-        plugin: PluginManager,
+        plugin: AIServiceHost,
         editor: Editor,
         view: MarkdownView,
     ) {
@@ -39,13 +38,13 @@ export class AssistantFeaturedImageHelper {
     private app: App;
     private editor: Editor
     private view: MarkdownView
-    private plugin: PluginManager
-    private log: (...msg: unknown[]) => void;
+    private plugin: AIServiceHost
+    private log: (message: string, ...args: unknown[]) => void;
     private aiService: AIService;
 
     constructor(
         app: App,
-        plugin: PluginManager,
+        plugin: AIServiceHost,
         editor: Editor,
         view: MarkdownView,
     ) {
@@ -53,7 +52,7 @@ export class AssistantFeaturedImageHelper {
         this.plugin = plugin
         this.editor = editor
         this.view = view;
-        this.log = (...msg: unknown[]) => plugin.log(...msg);
+        this.log = (message: string, ...args: unknown[]) => plugin.log(message, ...args);
         this.aiService = new AIService(plugin);
     }
 

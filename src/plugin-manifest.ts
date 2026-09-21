@@ -2,9 +2,9 @@
 
 import { App, normalizePath, request } from 'obsidian';
 import { gt, prerelease, valid } from "semver";
-import type { PluginManager } from "./plugin";
+import type { PluginManagerSettings } from "./settings";
 import type { ObsidianManifest, Manifest, UpdateStatus, PluginReleaseFiles } from "./types/manifest";
-import { ProgressBar } from "./progress-bar";
+import { ProgressBar, type ProgressBarHost } from "./progress-bar";
 import { getPluginManifests, isPluginEnabled, enablePluginAndSave } from "./obsidian-internals";
 import { setPlatformTimeout } from "./platform-dom";
 
@@ -13,23 +13,28 @@ interface CommunityPlugin {
     repo: string;
 }
 
+export interface PluginUpdaterHost extends ProgressBarHost {
+    readonly settings: Pick<PluginManagerSettings, "cachePluginRepo">;
+    saveSettings(): Promise<void>;
+}
+
 export class PluginsUpdater implements ObsidianManifest {
     items: Manifest[];
     URLCDN: string;
     app: App;
     private TagName = 'tag_name';
-    private commandPlugin: PluginManager;
-    private log: (...msg: unknown[]) => void;
+    private commandPlugin: PluginUpdaterHost;
+    private log: (message: string, ...args: unknown[]) => void;
     private totalPlugins: number;
     // json object of obsidian community plugins,
     // and source is in https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugins.json
     private communityPlugins: CommunityPlugin[] | null = null;
     private progressBar: ProgressBar;
 
-    constructor(app: App, plugin: PluginManager) {
+    constructor(app: App, plugin: PluginUpdaterHost) {
         this.app = app;
         this.commandPlugin = plugin;
-        this.log = (...msg: unknown[]) => plugin.log(...msg);
+        this.log = (message: string, ...args: unknown[]) => plugin.log(message, ...args);
         this.URLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases@master/community-plugins.json`;
         this.items = [];
         for (const m of Object.values(getPluginManifests(app))) {

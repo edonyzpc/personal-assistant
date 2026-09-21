@@ -2,12 +2,15 @@
 
 import { Notice, addIcon, setIcon } from "obsidian";
 
-import { PluginManager } from "./plugin";
 import { getPlatformDocument } from "./platform-dom";
 import { generateRandomString, icons } from './utils';
 
+export interface ProgressBarHost {
+    log(message: string, ...args: unknown[]): void;
+}
+
 export class ProgressBar {
-    private log: (...msg: unknown[]) => void;
+    private log: (message: string, ...args: unknown[]) => void;
     private noticeEl: DocumentFragment;
     private steps: number;
     private totalSteps: number;
@@ -18,8 +21,8 @@ export class ProgressBar {
     private gridTextID: string;
     private notice!: Notice;
 
-    constructor(plugin: PluginManager, ID: string, total: number) {
-        this.log = (...msg: unknown[]) => plugin.log(...msg);
+    constructor(plugin: ProgressBarHost, ID: string, total: number) {
+        this.log = (message: string, ...args: unknown[]) => plugin.log(message, ...args);
         this.idNumber = generateRandomString();
         this.gridID = `div-${ID}-progress-bar-grid-${this.idNumber}`;
         this.gridDivID = `div-${ID}-progress-bar-${this.idNumber}`;

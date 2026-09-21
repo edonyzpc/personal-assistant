@@ -2,9 +2,9 @@
 
 import { App, Notice, normalizePath, request } from 'obsidian';
 import { gt, prerelease, valid } from "semver";
-import type { PluginManager } from "./plugin";
+import type { PluginManagerSettings } from "./settings";
 import type { ObsidianManifest, Manifest, UpdateStatus, ThemeReleaseFiles } from "./types/manifest";
-import { ProgressBar } from "./progress-bar";
+import { ProgressBar, type ProgressBarHost } from "./progress-bar";
 import { downloadZipFile, extractFiles } from "./utils";
 import { getPluginUiLanguage, pluginT } from "./locales/plugin";
 import { setPlatformTimeout } from "./platform-dom";
@@ -33,19 +33,24 @@ interface ObsidianCustomCss {
     reloadTheme?: () => Promise<void> | void;
 }
 
+export interface ThemeUpdaterHost extends ProgressBarHost {
+    readonly settings: Pick<PluginManagerSettings, "cacheThemeRepo">;
+    saveSettings(): Promise<void>;
+}
+
 export class ThemeUpdater implements ObsidianManifest {
     items: ThemeManifest[];
     URLCDN: string;
     app: App;
-    private commandPlugin: PluginManager;
-    private log: (...msg: unknown[]) => void;
+    private commandPlugin: ThemeUpdaterHost;
+    private log: (message: string, ...args: unknown[]) => void;
     private communityThemes: CommunityTheme[] | null;
     private TagName = 'tag_name';
     private totalThemes: number;
     private progressBar: ProgressBar;
     private versionRegex = /^\d+(\.\d+)*$/;
 
-    static async init(app: App, plugin: PluginManager): Promise<ThemeUpdater> {
+    static async init(app: App, plugin: ThemeUpdaterHost): Promise<ThemeUpdater> {
         const themeUpdater = new ThemeUpdater(app, plugin);
         themeUpdater.items = await themeUpdater.listThemes(themeUpdater.app);
         const themeJson = await themeUpdater.getCommunityThemesJson();
@@ -104,11 +109,11 @@ export class ThemeUpdater implements ObsidianManifest {
         }
     }
 
-    private constructor(app: App, plugin: PluginManager) {
+    private constructor(app: App, plugin: ThemeUpdaterHost) {
         this.app = app;
         this.URLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases@master/community-css-themes.json`;
         this.commandPlugin = plugin;
-        this.log = (...msg: unknown[]) => plugin.log(...msg);
+        this.log = (message: string, ...args: unknown[]) => plugin.log(message, ...args);
         this.communityThemes = null;
         this.totalThemes = 0;
         this.items = [];

@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import type { App, TFile } from "obsidian";
+import type { TFile } from "obsidian";
 
 import { getVaultConfigDir } from "../../obsidian-paths";
 import type { ExclusionReason, ScopeCandidate, ScopeConfig, ScopeResult } from "./types";
@@ -71,7 +71,10 @@ export function classifyScopeExclusion(input: ScopeExclusionInput): ExclusionRea
 
 export class ScopeResolver {
     constructor(
-        private app: App,
+        private app: {
+            vault: { getMarkdownFiles(): TFile[]; configDir?: string };
+            metadataCache?: { getFileCache?: (file: TFile) => ScopeExclusionMetadataLike | null };
+        },
         private config: ScopeConfig,
     ) {}
 

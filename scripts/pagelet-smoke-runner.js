@@ -107,29 +107,33 @@
     },
   });
 
-  const resetGovernanceStores = (plugin) => {
-    plugin.reviewQueueStore = null;
-    plugin.memoryGovernanceStore = null;
-    plugin.autoConfirmMemoryCandidatesPromise = null;
-  };
-
   const runD6MemorySmoke = async (plugin, sourceFile) => {
     if (!plugin || typeof plugin.createReviewQueueItem !== "function") {
       record("D6 Memory runtime probe available", "FAIL", "createReviewQueueItem is not callable");
       return;
     }
-    // This probe predates device-local Memory governance and can only restore
-    // the legacy settings ledgers it mutates below. Once durable governance is
-    // active, creating a candidate may write protected IndexedDB state that
-    // this shell smoke cannot safely roll back. Keep the live vault read-only;
-    // the durable path is covered by repository/plugin integration tests.
-    if (plugin.deviceMemoryGovernanceRepository
-      || plugin.deviceMemoryReviewQueueRepository
-      || plugin.memoryAdmissionCoordinator) {
+    let capability;
+    try {
+      capability = typeof plugin.getMemoryGovernanceSmokeCapability === "function"
+        ? plugin.getMemoryGovernanceSmokeCapability()
+        : null;
+    } catch (error) {
       record(
         "D6 Memory runtime probe",
         "BLOCKED",
-        "durable device-local Memory governance requires an isolated fixture; protected Memory state was not mutated",
+        `Memory governance safety probe failed; protected state was not mutated: ${String(error)}`,
+      );
+      return;
+    }
+    const validCapability = capability && typeof capability === "object"
+      && capability.schemaVersion === 1
+      && (capability.mode === "blocked" || capability.mode === "isolated_legacy_fixture")
+      && typeof capability.reason === "string";
+    if (!validCapability || capability.mode !== "isolated_legacy_fixture") {
+      record(
+        "D6 Memory runtime probe",
+        "BLOCKED",
+        "an explicit isolated legacy fixture capability is required; protected Memory state was not mutated",
       );
       return;
     }
@@ -142,6 +146,7 @@
       reviewQueue: cloneJson(plugin.settings.reviewQueue || { enabled: true, items: [] }),
       memoryGovernance: cloneJson(plugin.settings.memoryGovernance || { records: [] }),
       confirmedMemoryCount: plugin.settings.confirmedMemoryCount || 0,
+      memoryAutoAcceptPaused: plugin.settings.memoryAutoAcceptPaused === true,
     };
     const eligibleClaim = `Pagelet smoke auto memory ${Date.now()}`;
     const taskClaim = `Pagelet smoke task constraint ${Date.now()}`;
@@ -157,7 +162,6 @@
         records: [],
       };
       plugin.settings.confirmedMemoryCount = 30;
-      resetGovernanceStores(plugin);
 
       const eligible = await plugin.createReviewQueueItem(
         createMemoryCandidateInput(sourceFile, "preference", eligibleClaim),
@@ -186,13 +190,19 @@
           && plugin.settings.confirmedMemoryCount === 31,
         `result=${JSON.stringify(taskConstraint)}; taskRecord=${JSON.stringify(taskRecord)}; count=${plugin.settings.confirmedMemoryCount}`,
       );
+    } catch (error) {
+      record("D6 Memory runtime probe", "FAIL", error?.stack || String(error));
     } finally {
       plugin.settings.reviewQueue = original.reviewQueue;
       plugin.settings.memoryGovernance = original.memoryGovernance;
       plugin.settings.confirmedMemoryCount = original.confirmedMemoryCount;
-      resetGovernanceStores(plugin);
-      if (typeof plugin.saveSettings === "function") await plugin.saveSettings();
-      record("D6 Memory runtime probe restored settings", "PASS");
+      plugin.settings.memoryAutoAcceptPaused = original.memoryAutoAcceptPaused;
+      try {
+        if (typeof plugin.saveSettings === "function") await plugin.saveSettings();
+        record("D6 Memory runtime probe restored settings", "PASS");
+      } catch (error) {
+        record("D6 Memory runtime probe restored settings", "FAIL", error?.stack || String(error));
+      }
     }
   };
 

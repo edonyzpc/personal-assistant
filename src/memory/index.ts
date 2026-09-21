@@ -9,3 +9,4 @@ export type {
     MemorySearchPort,
 } from "./MemorySearchPort";
 export type { MemoryStatusPort } from "./MemoryStatusPort";
+export { MemoryPluginIntegration } from "./plugin-integration";

@@ -1,24 +1,29 @@
 /* Copyright 2023 edonyzpc */
 
-import type { PluginManager } from "./plugin"
+import type { PluginManagerSettings } from "./settings";
 import { getPlatformDocument, getPlatformWindow } from "./platform-dom";
 
 export enum ViewType {
     LocalGraphView,
 }
 
-export class ViewResize {
+export interface ViewResizeHost {
+    readonly settings: Pick<PluginManagerSettings, "localGraph">;
+    log(message: string, ...args: unknown[]): void;
+}
+
+export class ViewResize<THost extends ViewResizeHost = ViewResizeHost> {
     resized: boolean;
-    log: (...msg: unknown[]) => void;
-    plugin: PluginManager;
+    log: (message: string, ...args: unknown[]) => void;
+    plugin: THost;
     private viewType: ViewType;
     private viewDataType = {
         localGraph: "localgraph",
     }
 
-    constructor(plugin: PluginManager, type: ViewType) {
+    constructor(plugin: THost, type: ViewType) {
         this.resized = false;
-        this.log = (...msg: unknown[]) => plugin.log(...msg);
+        this.log = (message: string, ...args: unknown[]) => plugin.log(message, ...args);
         this.plugin = plugin;
         this.viewType = type;
     }

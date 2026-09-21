@@ -4,17 +4,26 @@ import { App, ItemView, TFile, WorkspaceLeaf, addIcon, debounce, type Debouncer,
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 
-import { PluginManager } from './plugin';
 import RecordList from './components/RecordList'
 import { icons } from './utils';
 
 export const RECORD_PREVIEW_TYPE = "record-preview";
 type ReactRoot = ReturnType<typeof createRoot>;
 
+export interface RecordPreviewHost {
+    log(message: string, ...args: unknown[]): void;
+    join(...strings: string[]): string;
+    settings: {
+        targetPath: string;
+        fileFormat: string;
+        previewLimits: number;
+    };
+}
+
 export class RecordPreview extends ItemView {
     componentRoot: ReactRoot | null = null;
     app: App;
-    plugin: PluginManager;
+    plugin: RecordPreviewHost;
     files: string[];
     private vaultEventRefs: EventRef[] = [];
     private isOpen = false;
@@ -22,7 +31,7 @@ export class RecordPreview extends ItemView {
     private refreshRunId = 0;
     private debouncedRefresh: Debouncer<[], void>;
 
-    constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf) {
+    constructor(app: App, plugin: RecordPreviewHost, leaf: WorkspaceLeaf) {
         plugin.log("startup new RecordList");
         super(leaf);
         addIcon('PluginAST_PREVIEW', icons['PluginAST_PREVIEW']);

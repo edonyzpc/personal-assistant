@@ -2,13 +2,17 @@ import { App, ItemView, WorkspaceLeaf, addIcon } from "obsidian";
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 
-import { PluginManager } from "./plugin";
-import Statistics from './components/Statistics'
+import Statistics, { type StatisticsHost } from './components/Statistics'
 import { icons } from './utils'
 import { PluginAST_STAT_ICON } from './constant'
 import { createEmptyDashboardData } from "./stats/stats-store";
 import type { StatsDashboardData } from "./stats/stats-types";
 import { getPluginUiLanguage, pluginT } from "./locales/plugin";
+import type StatsManager from "./stats/stats-manager";
+
+export interface StatsViewHost extends StatisticsHost {
+    readonly statsManager: StatsManager | undefined;
+}
 
 export const STAT_PREVIEW_TYPE = "vault-statistics-preview";
 type ReactRoot = ReturnType<typeof createRoot>;
@@ -16,12 +20,12 @@ type ReactRoot = ReturnType<typeof createRoot>;
 export class Stat extends ItemView {
     componentRoot: ReactRoot | null = null;
     app: App;
-    plugin: PluginManager;
+    plugin: StatsViewHost;
     dashboardData: StatsDashboardData;
     private isOpen = false;
     private openRunId = 0;
 
-    constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf) {
+    constructor(app: App, plugin: StatsViewHost, leaf: WorkspaceLeaf) {
         super(leaf);
         this.app = app;
         this.plugin = plugin;

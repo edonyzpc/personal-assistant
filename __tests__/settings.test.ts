@@ -468,7 +468,7 @@ import {
 } from '../src/settings';
 import { confirmUserAction } from '../src/confirm';
 import { pluginT } from '../src/locales/plugin';
-import type { SettingsPermissionPatch } from '../src/plugin';
+import type { SettingsPermissionPatch } from '../src/plugin/settings-persistence';
 import { ImageManagementModal } from '../src/chat/image-management-modal';
 import { MOCK_LICENSE_TIER } from '../src/ai-services/capability-types';
 import { buildMemoryControlCenterSnapshot } from '../src/pa/memory-control-center';

@@ -276,6 +276,8 @@ export class PageletOrchestrator {
      */
     initialize(): void {
         if (this.destroyed) return;
+        const featureScope = this.host.pageletFeatureScope;
+        if (!this.host.isFeatureScopeCurrent(featureScope)) return;
 
         // 1. Overlay mount root (under workspace.containerEl to avoid titlebar overlap)
         const overlayRoot = getPageletOverlayRoot(this.host.app);
@@ -330,11 +332,13 @@ export class PageletOrchestrator {
         // 2. Workspace event: re-mount Pet when the active leaf changes
         this.host.registerEvent(
             this.host.app.workspace.on("active-leaf-change", (leaf) => {
+                if (!this.isFeatureEventCurrent(featureScope)) return;
                 this.handleLeafChange(leaf);
             }),
         );
         this.host.registerEvent(
             this.host.app.workspace.on("file-open", () => {
+                if (!this.isFeatureEventCurrent(featureScope)) return;
                 this.handleFileOpen();
             }),
         );
@@ -342,6 +346,7 @@ export class PageletOrchestrator {
         // 3. Vault events: markdown-only activity tracking
         this.host.registerEvent(
             this.host.app.vault.on("modify", (file) => {
+                if (!this.isFeatureEventCurrent(featureScope)) return;
                 if (file.path.endsWith(".md")) {
                     this.handleMarkdownModify(file.path);
                 }
@@ -349,6 +354,7 @@ export class PageletOrchestrator {
         );
         this.host.registerEvent(
             this.host.app.vault.on("delete", (file) => {
+                if (!this.isFeatureEventCurrent(featureScope)) return;
                 if (file.path.endsWith(".md")) {
                     this.invalidateAgentInsightForPaths([file.path]);
                 }
@@ -356,6 +362,7 @@ export class PageletOrchestrator {
         );
         this.host.registerEvent(
             this.host.app.vault.on("rename", (file, oldPath) => {
+                if (!this.isFeatureEventCurrent(featureScope)) return;
                 if (file.path.endsWith(".md") || oldPath.endsWith(".md")) {
                     this.invalidateAgentInsightForPaths([oldPath, file.path]);
                 }
@@ -366,11 +373,11 @@ export class PageletOrchestrator {
         // owns all provider-backed background work; legacy preload stays dormant.
         const initialLeaf = this.getCurrentWorkspaceLeaf();
         if (initialLeaf) {
-            this.handleLeafChange(initialLeaf);
+            if (this.isFeatureEventCurrent(featureScope)) this.handleLeafChange(initialLeaf);
         }
 
         // 5. Begin idle tracking
-        this.resetIdleTimer();
+        if (this.isFeatureEventCurrent(featureScope)) this.resetIdleTimer();
     }
 
     /**
@@ -399,6 +406,10 @@ export class PageletOrchestrator {
         this.petView = null;
         this.bubbleView = null;
         this.panelView = null;
+    }
+
+    private isFeatureEventCurrent(featureScope: object): boolean {
+        return !this.destroyed && this.host.isFeatureScopeCurrent(featureScope);
     }
 
     /** Apply latest settings to all runtime collaborators. */

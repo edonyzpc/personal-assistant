@@ -3,7 +3,6 @@
 import { App, Component, SuggestModal, MarkdownView, Notice, getIcon } from 'obsidian'
 import type {  Callout, CalloutID } from 'obsidian-callout-manager';
 
-import type { PluginManager } from './plugin';
 import { type RGB, parseColorRGB } from './color';
 import { getPluginUiLanguage, pluginT } from './locales/plugin';
 import { getPlatformDocument } from './platform-dom';
@@ -38,14 +37,19 @@ export const DEFAULT_CALLOUTS: Callout[] = [
     { id: "cite", icon: "quote-glyph", color: "158, 158, 158", sources: [{ type: "builtin" }] },
 ];
 
+export interface CalloutHost {
+    getCallouts(): ReadonlyArray<Callout> | undefined;
+    log(message: string, ...args: unknown[]): void;
+}
+
 
 export class CalloutModal extends SuggestModal<Callout> {
-    private plugin: PluginManager;
+    private host: CalloutHost;
     private fallbackNoticeShown = false;
 
-    constructor(app: App, plugin: PluginManager) {
+    constructor(app: App, host: CalloutHost) {
         super(app);
-        this.plugin = plugin;
+        this.host = host;
     }
 
     private t(key: string): string {
@@ -56,9 +60,9 @@ export class CalloutModal extends SuggestModal<Callout> {
     getSuggestions(query: string): Callout[] {
         let callouts: ReadonlyArray<Callout> | undefined;
         try {
-            callouts = this.plugin.calloutManager?.getCallouts();
+            callouts = this.host.getCallouts();
         } catch (error) {
-            this.plugin.log('Failed to read callouts from Callout Manager', error);
+            this.host.log('Failed to read callouts from Callout Manager', error);
         }
 
         if (!callouts?.length) {
@@ -143,7 +147,7 @@ export class CalloutModal extends SuggestModal<Callout> {
                 new Notice(this.t("plugin.callout.copiedNoEditable"), 5000);
             }
         } catch (error) {
-            this.plugin.log("Failed to copy callout markdown to clipboard", error);
+            this.host.log("Failed to copy callout markdown to clipboard", error);
             if (!inserted) {
                 if (activeViewMissing) {
                     new Notice(this.t("plugin.callout.noEditableNoClipboard"), 5000);

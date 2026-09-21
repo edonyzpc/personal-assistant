@@ -107,6 +107,7 @@ export class MemoryExtractionScheduler {
     private typeCTimer: PlatformTimeoutHandle | null = null;
     private typeCInterval: PlatformIntervalHandle | null = null;
     private userProfileStoreReady: Promise<void> | null = null;
+    private admissionStopped = false;
     private disposed = false;
     private readonly admissionController = new AbortController();
     private userProfileSnapshot: UserProfileSnapshot | null = null;
@@ -154,11 +155,13 @@ export class MemoryExtractionScheduler {
     }
 
     setSemanticClusterProvider(provider: SemanticClusterProvider): void {
-        this.typeCAnalyzer.setSemanticClusterProvider(provider);
+        this.typeCAnalyzer.setSemanticClusterProvider((maxClusters) => (
+            this.admissionStopped ? Promise.resolve([]) : provider(maxClusters)
+        ));
     }
 
     start(): void {
-        if (this.disposed) return;
+        if (this.admissionStopped) return;
         void this.ensureUserProfileStoreReady().catch((error) => {
             this.log("Type A user profile store failed to initialize", error);
         });
@@ -169,7 +172,18 @@ export class MemoryExtractionScheduler {
     }
 
     dispose(): void {
+        if (this.disposed) return;
+        this.stopAdmission();
         this.disposed = true;
+        void this.profileGovernancePort.dispose().catch((error) => {
+            this.log("Type A user profile store failed to close", error);
+        });
+    }
+
+    /** Stop timers and reject new extraction work without closing the profile store. */
+    stopAdmission(): void {
+        if (this.admissionStopped) return;
+        this.admissionStopped = true;
         this.admissionController.abort();
         if (this.typeATimer) clearPlatformTimeout(this.typeATimer);
         if (this.typeCTimer) clearPlatformTimeout(this.typeCTimer);
@@ -177,9 +191,6 @@ export class MemoryExtractionScheduler {
         this.typeATimer = null;
         this.typeCTimer = null;
         this.typeCInterval = null;
-        void this.profileGovernancePort.dispose().catch((error) => {
-            this.log("Type A user profile store failed to close", error);
-        });
     }
 
     getPromptContext(): MemoryExtractionPromptContext {
@@ -234,7 +245,7 @@ export class MemoryExtractionScheduler {
     }
 
     setIncludeVaultInsightsInPrompt(include: boolean): void {
-        if (this.disposed) return;
+        if (this.admissionStopped) return;
         if (this.includeVaultInsightsInPrompt === include) return;
         this.includeVaultInsightsInPrompt = include;
         if (include) {
@@ -252,7 +263,7 @@ export class MemoryExtractionScheduler {
     }
 
     scheduleTypeAExtraction(conversationId: string, turnCount: number, delayMs = 2_000): void {
-        if (this.disposed) return;
+        if (this.admissionStopped) return;
         if (turnCount % this.typeAIntervalTurns !== 0 && this.lastTypeAConversationId === conversationId) return;
         this.lastTypeAConversationId = conversationId;
         if (this.typeATimer) clearPlatformTimeout(this.typeATimer);
@@ -273,7 +284,7 @@ export class MemoryExtractionScheduler {
 
     /** Revoke in-flight evidence without scheduling analysis (including self-writes). */
     invalidateVaultInsightsSource(file: TAbstractFile | null): void {
-        if (this.disposed) return;
+        if (this.admissionStopped) return;
         if (!this.includeVaultInsightsInPrompt) return;
         if (!file) return;
         if (!(file instanceof TFile)) {
@@ -289,7 +300,7 @@ export class MemoryExtractionScheduler {
     }
 
     handleVaultEvent(file: TAbstractFile | null, reason: string): void {
-        if (this.disposed) return;
+        if (this.admissionStopped) return;
         if (!this.includeVaultInsightsInPrompt) return;
         if (!(file instanceof TFile)) return;
         if (!file.path.endsWith(".md")) return;
@@ -299,7 +310,7 @@ export class MemoryExtractionScheduler {
     }
 
     scheduleTypeCRefresh(reason: string, delayMs = 0): void {
-        if (this.disposed) return;
+        if (this.admissionStopped) return;
         if (!this.includeVaultInsightsInPrompt) return;
         if (this.typeCTimer) clearPlatformTimeout(this.typeCTimer);
         this.typeCTimer = setPlatformTimeout(() => {
@@ -315,25 +326,25 @@ export class MemoryExtractionScheduler {
         scheduledBaseline?: Promise<TypeAAdmissionBaselineOutcome>,
     ): Promise<UserProfileSnapshot | null> {
         if (this.semanticTypeA) return this.runSemanticTypeAExtraction(conversationId, scheduledBaseline);
-        if (this.disposed) return null;
+        if (this.admissionStopped) return null;
         const baselineOutcome = this.admitTypeACandidates
             ? scheduledBaseline ?? this.captureTypeAAdmissionBaselineOutcome()
             : undefined;
         const capturedBaseline = baselineOutcome ? await baselineOutcome : undefined;
         if (capturedBaseline?.status === "failed") throw capturedBaseline.error;
-        if (this.disposed) return null;
+        if (this.admissionStopped) return null;
         const baseline = capturedBaseline?.baseline;
         await this.ensureUserProfileStoreReady();
-        if (this.disposed) return null;
+        if (this.admissionStopped) return null;
         const conversation = await this.chatHistoryManager.findConversation(conversationId);
-        if (this.disposed) return null;
+        if (this.admissionStopped) return null;
         if (!conversation) return this.userProfileSnapshot;
         const turns = await this.chatHistoryManager.getTurns(conversationId);
-        if (this.disposed) return null;
+        if (this.admissionStopped) return null;
         const durableProcessedTurn = this.getTypeAProcessedTurn
             ? await this.getTypeAProcessedTurn(conversationId)
             : undefined;
-        if (this.disposed) return null;
+        if (this.admissionStopped) return null;
         const lastProcessedTurn = Math.max(
             this.typeAProcessedTurnByConversation.get(conversationId) ?? -1,
             durableProcessedTurn ?? -1,
@@ -347,7 +358,7 @@ export class MemoryExtractionScheduler {
                 .map(({ text: _text, ...source }) => ({ ...source })),
         };
         const extracted = await this.extractTypeACandidates(conversation, newTurns);
-        if (this.disposed) return null;
+        if (this.admissionStopped) return null;
         // An extractor or model adapter cannot bypass either admission route.
         const candidates = extracted.filter((candidate) => isChatMemoryRecordAdmissible(candidate, evidence));
         if (this.admitTypeACandidates) {
@@ -356,7 +367,7 @@ export class MemoryExtractionScheduler {
                 : null;
             const proposed = this.typeAExtractor.mergeCandidates(current, candidates, this.now());
             const admitted = await this.admitTypeACandidates({
-                isCurrent: () => !this.disposed,
+                isCurrent: () => !this.admissionStopped,
                 signal: this.admissionController.signal,
                 current,
                 proposed: cloneUserProfileSnapshot(proposed),
@@ -372,7 +383,7 @@ export class MemoryExtractionScheduler {
                     candidates.filter((candidate) => isChatMemoryRecordAdmissible(candidate, evidence)), this.now())
             ));
         }
-        if (this.disposed) return null;
+        if (this.admissionStopped) return null;
         this.typeAProcessedTurnByConversation.set(
             conversationId,
             Math.max(...newTurns.map((turn) => turn.turnIndex)),
@@ -381,11 +392,11 @@ export class MemoryExtractionScheduler {
     }
 
     private async runSemanticTypeAExtraction(conversationId: string, scheduledBaseline?: Promise<TypeAAdmissionBaselineOutcome>): Promise<UserProfileSnapshot | null> {
-        if (this.disposed || !this.admitTypeACandidates || !this.createModelForExtraction || this.isMobileHidden()) return null;
+        if (this.admissionStopped || !this.admitTypeACandidates || !this.createModelForExtraction || this.isMobileHidden()) return null;
         const manager = this.chatHistoryManager as ChatHistoryManager & { captureSourceLifetime?: (id: string) => () => boolean };
         const lease = manager.captureSourceLifetime?.(conversationId);
         const isCurrent = () => {
-            try { return !this.disposed && !this.admissionController.signal.aborted && lease?.() === true; }
+            try { return !this.admissionStopped && !this.admissionController.signal.aborted && lease?.() === true; }
             catch { return false; }
         };
         if (!isCurrent()) return null;
@@ -474,7 +485,7 @@ export class MemoryExtractionScheduler {
         if (this.createModelForExtraction && !this.isMobileHidden()) {
             try {
                 const model = await this.createModelForExtraction();
-                if (this.disposed) return [];
+                if (this.admissionStopped) return [];
                 if (model) {
                     return await this.typeAExtractor.extractCandidatesWithLLM(
                         input,
@@ -502,7 +513,7 @@ export class MemoryExtractionScheduler {
     }
 
     async runTypeCRefresh(_reason: string): Promise<VaultMetacognitionSnapshot | null> {
-        if (this.disposed) return null;
+        if (this.admissionStopped) return null;
         if (!this.includeVaultInsightsInPrompt) return null;
         if (this.isMobileHidden()) return null;
         if (this.typeCRefreshInFlight) return this.typeCRefreshInFlight;
@@ -512,7 +523,7 @@ export class MemoryExtractionScheduler {
                 return snapshot;
             })
             .catch((error) => {
-                if (!this.disposed && this.includeVaultInsightsInPrompt && !this.vaultSnapshot) {
+                if (!this.admissionStopped && this.includeVaultInsightsInPrompt && !this.vaultSnapshot) {
                     this.vaultInsightsRefreshFailed = true;
                 }
                 throw error;
@@ -524,13 +535,13 @@ export class MemoryExtractionScheduler {
     }
 
     private async runTypeCRefreshUnlocked(): Promise<VaultMetacognitionSnapshot | null> {
-        if (this.disposed) return null;
+        if (this.admissionStopped) return null;
         const dataBoundaryFingerprint = this.getDataBoundaryFingerprint();
         const source = this.onVaultInsightsSourceChanged
             ? this.captureVaultInsightsSource(dataBoundaryFingerprint) : undefined;
         const snapshot = await this.typeCAnalyzer.analyze(this.now());
         const markdown = this.typeCAnalyzer.renderMarkdown(snapshot);
-        if (this.disposed || !this.includeVaultInsightsInPrompt) return null;
+        if (this.admissionStopped || !this.includeVaultInsightsInPrompt) return null;
         if (this.getDataBoundaryFingerprint() !== dataBoundaryFingerprint) {
             this.scheduleTypeCRefresh("data-boundary-changed");
             return null;
