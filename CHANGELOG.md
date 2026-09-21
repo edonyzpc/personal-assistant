@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.12](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.11...2.10.0-beta.12) (2026-09-21)
+
+### Improvements
+- plugin: split shell into lifecycle owners
+- release: refresh bundle size budget
+
+### Docs
+- close out B-142 test optimization
+- plugin: record B-143 validated architecture
+- plugin: close out B-143 shell refactor
+
+### Tests
+- streamline B-142 coverage
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
