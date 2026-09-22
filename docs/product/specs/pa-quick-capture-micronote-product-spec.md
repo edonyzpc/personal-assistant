@@ -1,6 +1,6 @@
 # PA Quick Capture And Micronote Product Spec
 
-Updated: 2026-07-11
+Updated: 2026-09-22
 
 ## Status
 
@@ -134,6 +134,36 @@ Configurable options:
 - Daily Note
 - fixed Inbox folder
 - current file
+
+Captures preserve the original Markdown text, including headings, lists, code
+fences, indentation, and whitespace. Do not add a timestamp heading, wrap it in
+a list item, or generate an enclosing code block. Records Preview renders the
+original Markdown. Existing captures are not rewritten.
+
+New Daily Note or Inbox files use the configured Record note template (or the
+built-in default). A standalone `{{content}}` in a custom template places raw
+captures before a fixed footer. Rendering leaves a hidden HTML comment marking
+the end of the capture body; subsequent captures insert before that marker.
+For older Templater notes without a marker, the first nonblank footer line from
+the configured template can identify the insertion point if it appears exactly
+once outside fenced code. Missing or ambiguous insertion points fall back to
+appending at the end. Existing text, metadata, and user-filled footer content are
+not rewritten. Templates without a content slot retain the append-at-end path.
+Current-file captures follow the same insertion rules without indexing the note.
+
+PA templates use `{{title}}`, `{{date}}`, `{{modify}}`, `{{author}}`,
+`{{aliases}}`, `{{subject}}`, and `{{content}}`; they do not execute Templater
+JavaScript. The title and formatted creation/modification times replace the
+equivalent Templater expressions. Existing note metadata is not regenerated
+when adding a capture.
+
+Record's optional **Index note** setting names an existing Markdown note in the
+vault. Creating a Record note, or saving a Daily/Inbox Quick Capture, adds
+`- [[filename]]` only if that link is absent. The check and append use one atomic
+vault operation. This converts the template's indexing script into explicit
+plugin behavior; it does not create a missing index, write to protected paths,
+or index current-file captures. An index failure leaves the original capture
+saved and shows a separate warning rather than reporting the capture as failed.
 
 ### 4.1 Daily Note Default
 
@@ -547,7 +577,6 @@ Deterministic checks:
 
 - What exact command name should v1 use: `PA: Quick Capture`,
   `Pagelet: Quick Capture`, or both?
-- What Markdown format should raw captures use inside Daily Note?
 - Should Inbox folder captures create one file per capture or append to a
   rolling inbox note?
 - What threshold separates short expansion from long expansion?

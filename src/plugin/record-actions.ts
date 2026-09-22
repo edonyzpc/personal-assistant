@@ -2,12 +2,14 @@ import { type App, Notice, TFile, normalizePath } from "obsidian";
 
 import { RECORD_PREVIEW_TYPE } from "../preview";
 import { buildNoteTemplateContext, DEFAULT_NOTE_TEMPLATE, renderNoteTemplate } from "../note-template";
+import { linkRecordToIndex } from "./record-index";
 
 export interface RecordActionSettings {
     targetPath: string;
     fileFormat: string;
     author: string;
     noteTemplate: string;
+    recordIndexPath?: string;
 }
 
 export interface RecordActionDependencies {
@@ -71,6 +73,7 @@ export class RecordActions {
             const context = buildNoteTemplateContext(fileName, timestamp, settings.author, "#thoughts");
             const content = renderNoteTemplate(template, context);
             const file = await vault.create(filePath, content);
+            await linkRecordToIndex(this.dependencies.app, filePath, settings.recordIndexPath, this.dependencies.log);
             const leaf = workspace.getLeaf('tab');
             await leaf.openFile(file);
         } catch (error: unknown) {

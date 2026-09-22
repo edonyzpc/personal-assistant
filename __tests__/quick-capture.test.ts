@@ -55,11 +55,13 @@ jest.mock("obsidian", () => {
     class MockTFile {
         path: string;
         name: string;
+        basename: string;
         extension: string;
 
         constructor(path: string) {
             this.path = path;
             this.name = path.split("/").pop() ?? path;
+            this.basename = this.name.replace(/\.md$/i, "");
             this.extension = path.endsWith(".md") ? "md" : "";
         }
     }
@@ -126,7 +128,6 @@ import {
     QUICK_CAPTURE_DEFAULTS,
     QuickCaptureService,
     buildQuickCaptureDailyPath,
-    buildQuickCaptureEntry,
     mergeQuickCaptureSettings,
     normalizeQuickCaptureInboxPath,
     type QuickCapturePostProcessInput,
@@ -176,6 +177,11 @@ function makeAppHarness(initialFiles: Record<string, string> = {}, activePath?: 
         modify: jest.fn(async (file: TFile, content: string) => {
             files.set(file.path, { file, content });
         }),
+        process: jest.fn(async (file: TFile, callback: (content: string) => string) => {
+            const content = callback(files.get(file.path)?.content ?? "");
+            files.set(file.path, { file, content });
+            return content;
+        }),
     };
     const workspace = {
         getActiveFile: jest.fn(() => activeFile),
@@ -195,6 +201,7 @@ function makeService(
     postProcessCapture?: (input: QuickCapturePostProcessInput) => Promise<void> | void,
     draft?: { value: string },
     onCaptureSaved?: (result: Extract<QuickCaptureResult, { status: "saved" }>) => Promise<void> | void,
+    templateSettings: { noteTemplate?: string; recordIndexPath?: string } = {},
 ): QuickCaptureService {
     return new QuickCaptureService({
         app,
@@ -203,6 +210,7 @@ function makeService(
             fileFormat: "YYYY-MM-DD",
             author: "",
             noteTemplate: "",
+            ...templateSettings,
             quickCapture,
         },
         formatDate: () => "2026-06-28",
@@ -321,11 +329,91 @@ describe("Quick Capture modal layout", () => {
         releaseCreate[0]();
         await Promise.resolve();
         await Promise.resolve();
-        expect(harness.files.get("2026-06-28.md")?.content).toContain("- 09:07 single submit only");
+        expect(harness.files.get("2026-06-28.md")?.content).toContain("\n\nsingle submit only\n");
     });
 });
 
 describe("QuickCaptureService", () => {
+    const slottedTemplate = '---\ntitle: "{{title}}"\nauthor: Writer\n---\n# {{title}}\n\n{{content}}\n\n#journal-context\n\n**Keywords:**';
+
+    it("inserts successive captures before the template footer and links the index once", async () => {
+        const harness = makeAppHarness({ "Index/Thoughts.md": "# Index\n" });
+        const service = makeService(harness.app, undefined, undefined, undefined, undefined, {
+            noteTemplate: slottedTemplate, recordIndexPath: "Index/Thoughts",
+        });
+        await service.captureText("### First\n\n- [ ] original task");
+        await service.captureText("```js\nconst raw = '{{title}}';\n```");
+        const content = harness.files.get("2026-06-28.md")!.content;
+        expect(content).toContain("### First\n\n- [ ] original task\n\n```js\nconst raw = '{{title}}';\n```\n\n");
+        expect(content.indexOf("const raw")).toBeLessThan(content.indexOf("#journal-context"));
+        expect(content).not.toContain("09:07");
+        expect(content.match(/\*\*Keywords:\*\*/g)).toHaveLength(1);
+        expect(harness.files.get("Index/Thoughts.md")!.content).toBe("# Index\n- [[2026-06-28]]\n");
+    });
+
+    it.each(["daily", "current-file"] as const)("inserts into an existing Templater note via %s without rewriting metadata or keywords", async (destination) => {
+        const prefix = '---\ndate: old creation time\nmodify: old modification time\n---\n# Existing\n\nOriginal text\n\n';
+        const footer = '#journal-context\n\n**Keywords:** user keywords';
+        const harness = makeAppHarness({ "2026-06-28.md": prefix + footer }, "2026-06-28.md");
+        const service = makeService(harness.app, { destination }, undefined, undefined, undefined, { noteTemplate: slottedTemplate });
+        await service.captureText("**new capture**");
+        expect(harness.files.get("2026-06-28.md")!.content).toBe(prefix + "**new capture**\n\n" + footer);
+    });
+
+    it("keeps the saved capture successful when the configured index is missing", async () => {
+        const harness = makeAppHarness();
+        const onSaved = jest.fn(() => undefined);
+        const service = makeService(harness.app, undefined, undefined, undefined, onSaved, { recordIndexPath: "Missing/index" });
+        await expect(service.captureText("saved once")).resolves.toMatchObject({ status: "saved" });
+        expect(harness.vault.create).toHaveBeenCalledTimes(1);
+        expect(onSaved).toHaveBeenCalledTimes(1);
+        expect(mockNotices).toContain("Note saved, but the index could not be updated. Check the index note path in Record settings.");
+    });
+
+    it.each([".obsidian/index.md", "../index.md", "2026-06-28.md"])(
+        "does not write an invalid or self-referencing index: %s", async (recordIndexPath) => {
+            const harness = makeAppHarness();
+            const service = makeService(harness.app, undefined, undefined, undefined, undefined, { recordIndexPath });
+            await expect(service.captureText("saved safely")).resolves.toMatchObject({ status: "saved" });
+            expect(harness.vault.process).not.toHaveBeenCalled();
+        },
+    );
+
+    it("uses atomic index updates across captures to different notes", async () => {
+        const harness = makeAppHarness({ "Index/Thoughts.md": "# Index\n" });
+        const options = { recordIndexPath: "Index/Thoughts.md" };
+        const daily = makeService(harness.app, undefined, undefined, undefined, undefined, options);
+        const inbox = makeService(harness.app, { destination: "inbox" }, undefined, undefined, undefined, options);
+        await Promise.all([daily.captureText("daily"), inbox.captureText("inbox")]);
+        expect(harness.files.get("Index/Thoughts.md")!.content).toBe("# Index\n- [[2026-06-28]]\n- [[Quick Capture]]\n");
+        expect(harness.vault.process).toHaveBeenCalledTimes(2);
+    });
+
+    it("preserves an existing index link with trailing annotations", async () => {
+        const existing = "# Index\n- [[2026-06-28]] #reviewed\n";
+        const harness = makeAppHarness({ "Index/Thoughts.md": existing });
+        const service = makeService(harness.app, undefined, undefined, undefined, undefined, { recordIndexPath: "Index/Thoughts" });
+        await service.captureText("new thought");
+        expect(harness.files.get("Index/Thoughts.md")!.content).toBe(existing);
+    });
+
+    it("reports index write failure separately after saving the capture", async () => {
+        const harness = makeAppHarness({ "Index/Thoughts.md": "# Index" });
+        harness.vault.process.mockRejectedValueOnce(new Error("index write failed"));
+        const service = makeService(harness.app, undefined, undefined, undefined, undefined, { recordIndexPath: "Index/Thoughts" });
+        await expect(service.captureText("original survives")).resolves.toMatchObject({ status: "saved" });
+        expect(harness.files.get("2026-06-28.md")!.content).toContain("original survives");
+        expect(mockNotices).not.toContain("Could not save Quick Capture.");
+    });
+
+    it("does not index captures to the current file", async () => {
+        const harness = makeAppHarness({ "current.md": "# Current", "Index/Thoughts.md": "# Index" }, "current.md");
+        const service = makeService(harness.app, { destination: "current-file" }, undefined, undefined, undefined, { recordIndexPath: "Index/Thoughts.md" });
+        await service.captureText("current capture");
+        expect(harness.files.get("Index/Thoughts.md")!.content).toBe("# Index");
+        expect(harness.vault.process).not.toHaveBeenCalled();
+    });
+
     it("writes single-line text to the Record Note with template by default", async () => {
         const harness = makeAppHarness();
         const service = makeService(harness.app);
@@ -337,7 +425,7 @@ describe("QuickCaptureService", () => {
         expect(createdContent).toContain('---\ntitle: "2026-06-28"');
         expect(createdContent).toContain("subject: #capture");
         expect(createdContent).toContain("# 2026-06-28");
-        expect(createdContent).toContain("- 09:07 remember the launch lesson");
+        expect(createdContent).toContain("# 2026-06-28\n\nremember the launch lesson\n");
         expect(harness.vault.modify).not.toHaveBeenCalled();
         expect(mockNotices).toEqual(["Saved to Record Note"]);
     });
@@ -362,7 +450,7 @@ describe("QuickCaptureService", () => {
         await service.captureText("new fragment");
 
         expect(harness.files.get("Inbox/Quick Capture.md")?.content).toBe(
-            "Existing inbox\n\n- 09:07 new fragment\n",
+            "Existing inbox\n\nnew fragment\n",
         );
         expect(harness.vault.create).not.toHaveBeenCalled();
         expect(mockNotices).toEqual(["Saved to Inbox"]);
@@ -382,9 +470,9 @@ describe("QuickCaptureService", () => {
         expect(harness.files.get("Inbox/Quick Capture.md")?.content).toBe([
             "Existing inbox",
             "",
-            "- 09:07 first fragment",
+            "first fragment",
             "",
-            "- 09:07 second fragment",
+            "second fragment",
             "",
         ].join("\n"));
         expect(harness.vault.modify).toHaveBeenCalledTimes(2);
@@ -399,18 +487,65 @@ describe("QuickCaptureService", () => {
         await service.captureText("in-context thought");
 
         expect(harness.files.get("notes/current.md")?.content).toBe(
-            "Working note\n\n- 09:07 in-context thought\n",
+            "Working note\n\nin-context thought\n",
         );
         expect(harness.vault.create).not.toHaveBeenCalled();
         expect(mockNotices).toEqual(["Saved to current note"]);
     });
 
-    it("preserves multiline original text inside a fenced text block", async () => {
-        const text = "line one\nline two with ``` fence";
-        const entry = buildQuickCaptureEntry(text, new Date(2026, 5, 28, 9, 7));
+    it.each([
+        "# Heading",
+        "- first\n  - nested\n- [ ] task",
+        "> quote\n\n**bold** and [[linked note]]",
+        "```ts\nconst value = 1;\n```",
+        "| A | B |\n| --- | --- |\n| 1 | 2 |",
+        "    indented code\n\nparagraph with hard break  \nnext line\n",
+        "\n  leading spaces\r\n\r\ntrailing spaces  \r\n",
+    ])("preserves original Markdown verbatim: %j", async (text) => {
+        const harness = makeAppHarness({ "2026-06-28.md": "# Existing\n" });
+        await makeService(harness.app).captureText(text);
+        expect(harness.files.get("2026-06-28.md")?.content).toBe(`# Existing\n\n${text}\n`);
+    });
 
-        expect(entry).toContain("- 09:07\n````text\n");
-        expect(entry).toContain(text + "\n````");
+    it.each(["daily", "inbox", "current-file"] as const)(
+        "appends Markdown without changing existing content for %s",
+        async (destination) => {
+            const path = destination === "daily" ? "2026-06-28.md"
+                : destination === "inbox" ? "Inbox/Quick Capture.md" : "notes/current.md";
+            const existing = "---\ntitle: Existing\n---\n# Existing\n\n- 08:00 older capture\n";
+            const text = "### Idea\n\n- [ ] task\n\n```ts\nconst x = 1;\n```\n";
+            const harness = makeAppHarness({ [path]: existing }, path);
+
+            await makeService(harness.app, { destination }).captureText(text);
+
+            expect(harness.files.get(path)?.content).toBe(`${existing}\n${text}\n`);
+            expect(harness.vault.create).not.toHaveBeenCalled();
+        },
+    );
+
+    it("uses the configured Record template only when creating the note", async () => {
+        const harness = makeAppHarness();
+        const service = new QuickCaptureService({
+            app: harness.app,
+            settings: {
+                targetPath: ".",
+                fileFormat: "YYYY-MM-DD",
+                author: "Writer",
+                noteTemplate: '---\ntitle: "{{title}}"\nauthor: "{{author}}"\n---\n# {{title}}\n\n{{subject}}\n',
+            },
+            formatDate: () => "2026-06-28",
+            now: () => new Date(2026, 5, 28, 9, 7),
+            log: jest.fn(),
+        });
+
+        await service.captureText("**first**");
+        await service.captureText("- second");
+
+        expect(harness.files.get("2026-06-28.md")?.content).toBe(
+            '---\ntitle: "2026-06-28"\nauthor: "Writer"\n---\n# 2026-06-28\n\n#capture\n\n**first**\n\n- second\n',
+        );
+        expect(harness.vault.create).toHaveBeenCalledTimes(1);
+        expect(harness.vault.modify).toHaveBeenCalledTimes(1);
     });
 
     it("rejects protected vault paths before writing", async () => {
@@ -444,7 +579,7 @@ describe("QuickCaptureService", () => {
             captureId: expect.stringMatching(/^qc-/),
         }));
         const createdContent = (harness.vault.create as jest.Mock).mock.calls[0][1] as string;
-        expect(createdContent).toContain("- 09:07 maybe turn this into a task");
+        expect(createdContent).toContain("\n\nmaybe turn this into a task\n");
     });
 
     it("calls the saved callback only after a raw capture succeeds", async () => {
@@ -480,7 +615,7 @@ describe("QuickCaptureService", () => {
         expect(result.status).toBe("saved");
         expect(postProcessCapture).not.toHaveBeenCalled();
         const createdContent = (harness.vault.create as jest.Mock).mock.calls[0][1] as string;
-        expect(createdContent).toContain("- 09:07 one tap context");
+        expect(createdContent).toContain("\n\none tap context\n");
     });
 
     it("does not let post-processing failure block the raw save", async () => {
@@ -498,7 +633,7 @@ describe("QuickCaptureService", () => {
         });
 
         await Promise.resolve();
-        expect(harness.files.get("2026-06-28.md")?.content).toContain("- 09:07 save even if AI fails");
+        expect(harness.files.get("2026-06-28.md")?.content).toContain("\n\nsave even if AI fails\n");
         expect(mockNotices).toEqual(["Saved to Record Note"]);
     });
 });

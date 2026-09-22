@@ -259,6 +259,7 @@ export interface PluginManagerSettings {
     fileFormat: string;
     author: string;
     noteTemplate: string;
+    recordIndexPath: string;
     previewLimits: number;
     previewTags: string[];
     localGraph: {
@@ -377,6 +378,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     fileFormat: "YYYY-MM-DD",
     author: "",
     noteTemplate: "",
+    recordIndexPath: "",
     previewLimits: 5,
     previewTags: [],
     localGraph: {
@@ -677,6 +679,7 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.focusMode = typeof loadedObject.focusMode === "boolean" ? loadedObject.focusMode : false;
     merged.author = typeof loadedObject.author === "string" ? loadedObject.author.trim() : "";
     merged.noteTemplate = typeof loadedObject.noteTemplate === "string" ? loadedObject.noteTemplate.trim() : "";
+    merged.recordIndexPath = typeof loadedObject.recordIndexPath === "string" ? loadedObject.recordIndexPath.trim() : "";
     merged.retrievalHabitProfile = mergeRetrievalHabitProfileSettings(loadedObject.retrievalHabitProfile);
     merged.memoryExtractionConsent = mergeMemoryExtractionConsentSettings(loadedObject.memoryExtractionConsent);
     merged.learningPreferences = mergeLearningPreferences(loadedObject.learningPreferences);
@@ -2313,6 +2316,15 @@ export class SettingTab extends PluginSettingTab {
                     });
                 text.inputEl.rows = 12;
             });
+        new Setting(parentEl).setName(this.t("plugin.settings.record.indexPath.name"))
+            .setDesc(this.t("plugin.settings.record.indexPath.desc"))
+            .addText(text => text
+                .setPlaceholder("Index/Thoughts.md")
+                .setValue(plugin.settings.recordIndexPath)
+                .onChange((value) => {
+                    plugin.settings.recordIndexPath = value.trim();
+                    this.debouncedSave();
+                }));
         new Setting(parentEl).setName(this.t("plugin.settings.record.previewNumber.name"))
             .setDesc(this.t("plugin.settings.record.previewNumber.desc"))
             .addText(text => {

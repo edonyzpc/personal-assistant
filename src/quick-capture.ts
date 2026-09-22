@@ -2,8 +2,9 @@ import { App, Modal, Notice, TFile, normalizePath } from "obsidian";
 
 import { validateAppendConfinement, validateTargetConfinementSync } from "./ai-services/write-action-framework/target-confinement";
 import { getPluginUiLanguage, pluginT } from "./locales/plugin";
-import { buildNoteTemplateContext, DEFAULT_NOTE_TEMPLATE, renderNoteTemplate } from "./note-template";
+import { buildNoteTemplateContext, DEFAULT_NOTE_TEMPLATE, insertNoteTemplateContent, renderNoteTemplate } from "./note-template";
 import { isRecord, parentFolder } from "./pa/helpers";
+import { linkRecordToIndex } from "./plugin/record-index";
 
 export const QUICK_CAPTURE_COMMAND_ID = "pa-quick-capture";
 export const QUICK_CAPTURE_COMMAND_NAME = "PA: Quick Capture";
@@ -31,6 +32,7 @@ export interface QuickCaptureRuntimeSettings {
     fileFormat: string;
     author: string;
     noteTemplate: string;
+    recordIndexPath?: string;
     quickCapture?: Partial<QuickCaptureSettings>;
 }
 
@@ -138,27 +140,6 @@ export function buildQuickCaptureDailyPath(targetPath: string, formattedDate: st
     return joinVaultPath(targetPath, ensureMarkdownExtension(safeName));
 }
 
-function formatTime(timestamp: Date): string {
-    const hh = String(timestamp.getHours()).padStart(2, "0");
-    const mm = String(timestamp.getMinutes()).padStart(2, "0");
-    return `${hh}:${mm}`;
-}
-
-function fenceForText(text: string): string {
-    const longest = text.match(/`+/g)?.reduce((max, run) => Math.max(max, run.length), 0) ?? 0;
-    return "`".repeat(Math.max(3, longest + 1));
-}
-
-export function buildQuickCaptureEntry(rawText: string, timestamp: Date): string {
-    const time = formatTime(timestamp);
-    if (!rawText.includes("\n")) {
-        return `- ${time} ${rawText}`;
-    }
-    const fence = fenceForText(rawText);
-    const body = rawText.endsWith("\n") ? rawText : `${rawText}\n`;
-    return `- ${time}\n${fence}text\n${body}${fence}`;
-}
-
 function appendEntry(existingContent: string, entry: string): string {
     if (existingContent.length === 0) return `${entry}\n`;
     const separator = existingContent.endsWith("\n\n")
@@ -210,9 +191,7 @@ async function appendToVaultPath(
     const normalizedPath = validateQuickCaptureVaultPath(path);
     const file = app.vault.getAbstractFileByPath(normalizedPath);
     if (file instanceof TFile) {
-        const existing = await app.vault.read(file);
-        await app.vault.modify(file, appendEntry(existing, entry));
-        return normalizedPath;
+        return appendToExistingFile(app, file, entry, templateSettings, timestamp);
     }
     if (file) {
         throw new Error(`Quick Capture target is not a Markdown file: ${normalizedPath}`);
@@ -222,9 +201,8 @@ async function appendToVaultPath(
     const template = templateSettings.noteTemplate || DEFAULT_NOTE_TEMPLATE;
     const context = buildNoteTemplateContext(fileName, timestamp, templateSettings.author, "#capture");
     const rendered = renderNoteTemplate(template, context);
-    const content = rendered.endsWith("\n")
-        ? `${rendered}\n${entry}\n`
-        : `${rendered}\n\n${entry}\n`;
+    const slotted = insertNoteTemplateContent(rendered, entry);
+    const content = slotted ?? appendEntry(rendered, entry);
     await app.vault.create(normalizedPath, content);
     return normalizedPath;
 }
@@ -238,9 +216,21 @@ function getCurrentQuickCaptureFile(app: App): TFile {
     return validation.file;
 }
 
-async function appendToCurrentFile(app: App, file: TFile, entry: string): Promise<string> {
+async function appendToExistingFile(
+    app: App, file: TFile, entry: string, templateSettings: NoteTemplateSettings, timestamp: Date,
+): Promise<string> {
     const existing = await app.vault.read(file);
-    await app.vault.modify(file, appendEntry(existing, entry));
+    const template = templateSettings.noteTemplate || DEFAULT_NOTE_TEMPLATE;
+    const context = buildNoteTemplateContext(
+        file.basename,
+        new Date(file.stat?.ctime ?? timestamp.getTime()),
+        templateSettings.author,
+        "#capture",
+        new Date(file.stat?.mtime ?? timestamp.getTime()),
+    );
+    const emptyTemplate = renderNoteTemplate(template, context);
+    const updated = insertNoteTemplateContent(existing, entry, emptyTemplate) ?? appendEntry(existing, entry);
+    await app.vault.modify(file, updated);
     return file.path;
 }
 
@@ -284,13 +274,13 @@ export class QuickCaptureService {
 
         const settings = mergeQuickCaptureSettings(this.host.settings.quickCapture);
         const timestamp = this.host.now();
-        const entry = buildQuickCaptureEntry(rawText, timestamp);
+        const entry = rawText;
         const captureId = buildQuickCaptureId(rawText, timestamp);
         try {
             if (settings.destination === "current-file") {
                 const currentFile = getCurrentQuickCaptureFile(this.host.app);
                 const path = await this.withAppendQueue(currentFile.path, () =>
-                    appendToCurrentFile(this.host.app, currentFile, entry));
+                    appendToExistingFile(this.host.app, currentFile, entry, this.host.settings, timestamp));
                 new Notice(savedMessage(settings.destination));
                 this.schedulePostProcessing(settings, {
                     captureId,
@@ -318,6 +308,8 @@ export class QuickCaptureService {
                     author: this.host.settings.author,
                     noteTemplate: this.host.settings.noteTemplate,
                 }, timestamp));
+            await linkRecordToIndex(this.host.app, savedPath, this.host.settings.recordIndexPath,
+                (message, ...args) => this.host.log(message, ...args));
             new Notice(savedMessage(settings.destination));
             this.schedulePostProcessing(settings, {
                 captureId,
