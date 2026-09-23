@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-09-22
+Updated: 2026-09-23
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-09-23 | `docs/development/active/agent-debug-view/**` | deleted-after-absorption | [DEC-041](../product/decisions/dec-041-agent-debug-view-and-local-history.md), [B-145 Product Spec](../product/specs/pa-agent-debug-view-product-spec.md), [Architecture](../architecture/pa-agent-debug-view.md), [B-145 validation](./2026/b145-agent-debug-validation.md), current source and regression tests | Owner 授权 B-145 closeout；T-00～T-06 与 AC-01～10 已完成本地验收，稳定产品/技术/安全边界与独有证据已吸收。完整 Feature Home、Plan、SDD、Tracker 可由签名提交 `44b59318` 恢复；无必需未完成项转入 Backlog。CLI mobile simulator 不证明 iOS 真机；closeout 不代替 beta 发布或 BRAT 安装证据。 |
 | 2026-09-22 | `docs/development/active/recoverable-agent-execution/**` | deleted-after-absorption | [DEC-040](../product/decisions/dec-040-recoverable-agent-execution.md), [B-144 Product Spec](../product/specs/pa-recoverable-agent-execution-product-spec.md), [PA Agent Architecture](../architecture/pa-agent-architecture-plan.md), [Runtime lifecycle](../architecture/pa-agent-runtime-lifecycle-plan.md), current source and regression tests | Owner 授权 B-144 closeout；T-00～T-05 与 AC-01～12 已完成，稳定行为、兼容边界和验证限制已吸收。没有未完成项转入 Backlog，不归档完整过程包；Git 历史可恢复 Feature Home、SDD 与 Tracker。closeout 与推送不等于发布。 |
 | 2026-09-21 | `docs/development/active/plugin-shell-refactor/**` | deleted-after-absorption | [DEC-039](../product/decisions/dec-039-plugin-shell-refactor.md), [B-143 Product Spec](../product/specs/pa-plugin-shell-refactor-product-spec.md), [Architecture](../architecture/architecture-overview.md#51-plugin-shell-srcplugints), current source and regression tests | Owner 授权 B-143 closeout；T-00～T-22、AC-01～09、LC-01～03、D-11 与 D-15 均完成验收。稳定职责、生命周期偏序、兼容边界和验证结果已吸收，过程包可从提交 `b4d1ac39` 恢复；没有未完成项需要转入 Backlog，也不归档完整过程包。 |
 | 2026-09-19 | `docs/development/discovery/test-framework-and-suite-optimization.md`、`docs/development/active/test-optimization/**` | deleted-after-absorption | [GOV-003](../development/governance/gov-003-proportionate-test-design.md) | Owner 授权 B-142 closeout；稳定测试规则、12 个删项依据、未采用候选、完整 coverage 与并行评估边界已吸收，focused tests 保留行为保护。Discovery 和 Active Package 均未形成独立已提交历史，不虚构连续移动；不另建 Archive 副本。 |

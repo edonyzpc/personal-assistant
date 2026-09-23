@@ -481,15 +481,15 @@ Persisted replay must not store raw source excerpts, full prompts, full note
 chunks, or full provider output unless a future spec defines redaction,
 retention, cleanup, export, and security review gates.
 
-Scoped target amendment (2026-09-22): [DEC-041](../decisions/dec-041-agent-debug-view-and-local-history.md)
+Scoped delivered amendment (2026-09-23): [DEC-041](../decisions/dec-041-agent-debug-view-and-local-history.md)
 and the [B-145 Debug design](./pa-agent-debug-view-product-spec.md) define the
 owner-approved Chat Debug exception for device-local, filtered body/prompt
 history, up to 30 days with capacity eviction, linked deletion, session-only
 reasoning and attachment references only. Debug export/sync is outside that
-scope. Its filtering, deletion-race and storage-boundary acceptance gates must
-pass before delivery; this design approval is not implementation or security
-validation evidence. Default content-free observability and excluded-source
-boundaries remain unchanged.
+scope. Filtering, deletion-race and storage-boundary gates passed in the
+[B-145 local validation](../../archive/2026/b145-agent-debug-validation.md);
+this does not prove iOS device behavior or beta installation. Default
+content-free observability and excluded-source boundaries remain unchanged.
 
 An opaque bridge is not a replay source or skipped source. Replay may record only
 content-free aggregate facts such as `opaqueBridgeCount`, never the bridge's

@@ -1,10 +1,10 @@
 # PA Agent Debug View 与本机历史设计
 
 Document status: Approved
-Updated: 2026-09-22
+Updated: 2026-09-23
 Work item: B-145
 Decision: [DEC-041](../decisions/dec-041-agent-debug-view-and-local-history.md)
-Authority: Owner 已确认的可视化调试与历史数据边界，并授权设计复核与开发方案。Approved 指产品范围，技术设计方向和待测参数不代表已实现或性能已验证。
+Authority: Owner 已确认的可视化调试与历史数据边界。B-145 已实现并通过本地验证；Approved 指持续有效的产品合同，不把模拟器结果当作 iOS 真机或发布安装证据。
 
 ## Problem And Product Outcome
 
@@ -15,16 +15,16 @@ Authority: Owner 已确认的可视化调试与历史数据边界，并授权设
 - North Star fit: 为“安静且可信”提供可核查依据；普通 Chat 不增加管理负担，
   不为解释运行过程额外生成模型内容，不把调试缺失变成普通用户的待处理任务。
 
-### 当前事实与目标的区分
+### 实现依据与边界
 
-本节为 2026-09-22 源码核查，后文均为目标设计。
+设计阶段的源码核查促成以下接入点；现行行为以源码、[架构](../../architecture/pa-agent-debug-view.md)与回归测试为准。
 
-| 当前事实 | 对设计的影响 | 源码 |
+| 接入事实 | 实现边界 | 源码 |
 | --- | --- | --- |
 | 生命周期已有 runId、turnId、seq、message/tool 事件；观察回调同步调用 | 复用标识和事实源；同步采集开销会进入 Agent 链路 | [chat-types](../../../src/ai-services/chat-types.ts)、[事件发射器](../../../src/ai-services/agent-runtime-primitives.ts) |
-| Debug 主要是内容无关日志，流式更新只记录各类型首次出现 | 不能直接把 console 日志当完整轨迹数据库；不扩展现有日志为正文出口 | [pa-agent-debug](../../../src/ai-services/pa-agent-debug.ts) |
+| 原有 Debug 是内容无关日志，流式更新只记录各类型首次出现 | 新的专用观察器不把 console 日志当完整轨迹数据库，也不扩展原日志为正文出口 | [pa-agent-debug](../../../src/ai-services/pa-agent-debug.ts)、[observation](../../../src/ai-services/agent-debug-observation.ts) |
 | Chat 历史保存消息、状态和摘要；重载的 canonical turn 使用空 messages | 不从旧对话伪造完整历史，不改变原历史 reader 的含义 | [chat-history-manager](../../../src/chat/chat-history-manager.ts) |
-| 已有 IndexedDB Chat store；尚无此设计的 Debug store/view | 可借鉴平台接入和生命周期，不把新存储写成当前能力 | [chat-history-store](../../../src/chat/chat-history-store.ts)、[chat-view](../../../src/chat/chat-view.ts) |
+| Chat 与 Debug 各自有本机 IndexedDB 存储 | 跨库删除通过 Chat outbox 和 Debug 幂等清理衔接，不合并原 Chat 历史语义 | [chat-history-store](../../../src/chat/chat-history-store.ts)、[Debug store](../../../src/agent-debug/store.ts) |
 | Runtime 存在上下文摘要、流式到 invoke 回退、实际请求诊断与 usage 归一化 | Turn、逻辑调用与实际请求尝试必须分层；usage 覆盖和口径需验证 | [pa-agent-runtime](../../../src/ai-services/pa-agent-runtime.ts) |
 | 发送路径的诊断会解析请求体 | 增加快照不能重复遍历/序列化大输入后再宣称“异步无影响” | [obsidian-fetch](../../../src/ai-services/obsidian-fetch.ts) |
 
@@ -333,7 +333,7 @@ flush 周期、清理批量和耗时阈值需要在实施 SDD 中给出数值及
 
 ## Acceptance Criteria
 
-以下为功能验收合同；已执行结果和未完成门见 B-145 Tracker。
+以下为功能验收合同；已执行结果及证据边界见 [B-145 验证记录](../../archive/2026/b145-agent-debug-validation.md)。
 
 | ID | 对应需求 | 最低充分证据与通过条件 |
 | --- | --- | --- |
@@ -348,20 +348,20 @@ flush 周期、清理批量和耗时阈值需要在实施 SDD 中给出数值及
 | B-145/AC-09 | B-145/REQ-09 | 观察器异常、配额满、数据库不可用/版本不兼容、取消/卸载及流式回退故障注入；Agent 行为不改变、无新增网络或模型请求 |
 | B-145/AC-10 | B-145/REQ-10 | 关闭、后台采集、实时查看三态下 Agent 主要功能正常，未引入额外业务请求；队列和内存有界，详情缺口可定位；实际 Obsidian 交互证据。延迟/CPU 数值仅供诊断 |
 
-实施时将这些 REQ/AC 映射到 owning Tracker 的 slice、命令、结果和重跑触发条件。
+实施期间这些 REQ/AC 已映射到当时的 Tracker；完整过程保留在 Git 历史提交 `44b59318`。
 源码/adapter 测试不能替代真实界面交互；受影响的平台按仓库门禁验证，模拟的
 buffered 路径不能称为 iOS 真机性能证据。
 
 ## Open Decisions
 
 无待 Owner 选择的产品问题。30 天加容量滚动淘汰、删除联动和媒体引用边界均已
-明确。存储布局、接入点、工程初值和验收预算由 [SDD](../../development/active/agent-debug-view/sdd.md)
-固定；性能基线和实际通过情况待实现验证，不能把设计参数写成已测结论。
+明确。实际存储布局、接入点和工程预算见 [当前架构](../../architecture/pa-agent-debug-view.md)；
+轻量三态观察不能推导出跨设备延迟分布或 iOS 真机性能。
 
-## Delivery Handoff
+## Delivery And Evidence
 
 - Design entry: 本文为用户要求的完整设计入口；长期取舍见 [DEC-041](../decisions/dec-041-agent-debug-view-and-local-history.md)。
-- Development entry: [Feature Home](../../development/active/agent-debug-view/README.md)；执行状态与验证只看 [Tracker](../../development/active/agent-debug-view/tracker.md)。
-- Implementation handoff: [Plan](../../development/active/agent-debug-view/plan.md) 与 [SDD](../../development/active/agent-debug-view/sdd.md) 承接分阶段交付、删除并发与性能接入；本次授权止于设计开发方案。
+- Current implementation: [架构](../../architecture/pa-agent-debug-view.md) 与源码/回归测试承担运行合同；已完成过程包可由 Git 提交 `44b59318` 恢复。
+- Validation: [B-145 本地验收](../../archive/2026/b145-agent-debug-validation.md)；桌面真实 Obsidian 与 Obsidian CLI mobile simulator 已测，iOS 真机未测。
 - Existing contracts: [Recoverable Agent Execution](./pa-recoverable-agent-execution-product-spec.md)、[Data Boundary](./pa-data-boundary-product-spec.md)、[Memory governance](./pa-memory-control-center-product-spec.md)。
-- Release / rollout boundary: 新视图与内容存储尚未实现；现有 content-free Debug 继续作为当前 runtime 行为。本设计不授予 Git 提交、部署或发布权限。
+- Release / rollout boundary: 本地实现与测试通过不等于 beta 已发布或 BRAT 安装成功；发布和安装须独立核验。

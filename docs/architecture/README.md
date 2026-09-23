@@ -7,6 +7,7 @@
 - [项目架构全景](./architecture-overview.md)
 - [PA Agent Architecture](./pa-agent-architecture-plan.md)
 - [PA Agent Runtime Lifecycle](./pa-agent-runtime-lifecycle-plan.md)
+- [PA Agent Debug View 与本机历史](./pa-agent-debug-view.md)
 - [Multimodal Chat、文案版本与图文保存](./multimodal-chat-architecture.md)
 - [Chat 图片生成、版本与任务恢复](./chat-image-generation-architecture.md)
 - [Obsidian read tools / Operations boundary](./obsidian-operations-agent-plan.md)

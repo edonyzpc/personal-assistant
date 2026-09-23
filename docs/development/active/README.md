@@ -8,7 +8,6 @@ Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governa
 
 | Track | Work item | Feature Home | Tracker |
 | --- | --- | --- | --- |
-| Agent Debug View and local history | B-145 | [Feature Home](./agent-debug-view/README.md) | [Tracker](./agent-debug-view/tracker.md) |
 | Simple settings and unified defaults | B-106 | [Feature Home](./simple-settings/README.md) | [Tracker](./simple-settings/tracker.md) |
 | First-run AI setup and silent Memory preparation | B-126 | [Feature Home](./silent-first-use-memory-preparation/README.md) | [Tracker](./silent-first-use-memory-preparation/tracker.md) |
 | B-125 retrieval shipping-default continuation | B-125 | [Feature Home](./retrieval-optimization-shipping-default/README.md) | [Tracker](./retrieval-optimization-shipping-default/tracker.md) |

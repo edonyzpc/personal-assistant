@@ -61,9 +61,9 @@ Authority: Owner 确认的用户行为、范围与验收标准；B-144 已完成
 - 原有写入确认、目标冲突、Undo、操作审计和图片 submission_unknown 保护不变。
 - debug 默认只存内容无关的标识、阶段、时长、状态和错误类别；快照正文留在既有上下文生命周期，不建立新的原始请求/响应日志仓库。
 
-后续显式 Debug 的目标数据边界由 2026-09-22 [DEC-041](../decisions/dec-041-agent-debug-view-and-local-history.md)
-及 [B-145 设计](./pa-agent-debug-view-product-spec.md) 承接：过滤后的正文/Prompt 本机有界保留，
-reasoning 留在会话内，并联动删除。该功能尚未实现，不改变本节对 B-144 已交付行为的描述；
+显式 Debug 的已交付数据边界由 [DEC-041](../decisions/dec-041-agent-debug-view-and-local-history.md)
+及 [B-145 合同](./pa-agent-debug-view-product-spec.md) 承接：过滤后的正文/Prompt 本机有界保留，
+reasoning 留在会话内，并联动删除。不改变本节对 B-144 默认内容无关观测的描述；
 Debug 关闭不采集原始内容、观察失败不影响执行等约束继续有效。
 
 ## Acceptance Criteria

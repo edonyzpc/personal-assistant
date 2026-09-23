@@ -2,8 +2,8 @@
 
 Decision ID: DEC-041
 Status: Accepted
-Updated: 2026-09-22
-Authority: Owner 在本次 Debug 设计讨论中确认两层数据保留，要求历史包含正文和 Prompt、保留 30 天，随后明确选择容量满时删除最旧记录，并接受删除联动与附件仅保留引用的边界；本次明确要求写成设计文档。Accepted 指产品决定，不表示已实现、验证或授权发布。
+Updated: 2026-09-23
+Authority: Owner 确认两层数据保留、正文和 Prompt 本机历史、最多 30 天、容量满时淘汰最旧记录、删除联动和附件引用边界。B-145 已完成本地实现与验证；Accepted 是产品决定，发布状态须另以发布证据确认。
 Work item: B-145
 
 ## Context
@@ -60,8 +60,8 @@ Work item: B-145
 
 本决定是 [B-144 观测边界](../specs/pa-recoverable-agent-execution-product-spec.md)
 和 [Data Boundary 的文本保留规则](../specs/pa-data-boundary-product-spec.md#101-text-retention-boundary)
-之上的显式 Debug 目标修订：允许本机有界正文/Prompt 历史，并要求相应过滤、
-清理与安全验证。实施前当前 runtime 仍是原有内容无关观察器。
+之上的显式 Debug 修订：允许本机有界正文/Prompt 历史，并要求相应过滤、
+清理与安全验证。当前实现见 [Debug 架构](../../architecture/pa-agent-debug-view.md)。
 
 Debug 关闭不采集原始内容、观察失败不影响执行、真实来源授权、排除/Forget、
 opaque bridge 不可识别、持久动作确认及重载后用户继续等规则保持有效。
@@ -72,7 +72,7 @@ opaque bridge 不可识别、持久动作确认及重载后用户继续等规则
 - Product behavior: 开发/诊断入口可忽略；按执行阶段理解实时状态与近期历史。
 - Architecture / data / safety: 新增本机有界内容存储；删除、内容分类和采集失败必须有回归证据。
 - Compatibility / migration: 保留现有 Chat 历史，不伪造旧运行轨迹；旧记录显示未采集。媒体仍由现有模块拥有。
-- Work created or removed: B-145 承接独立调试能力，不重开已交付 B-144；Owner 随后要求最后设计复核与开发方案，由独立开发入口接续，尚未授权实现。
+- Work created or removed: B-145 独立交付调试能力，不重开已交付 B-144；本地验收及未覆盖的平台边界见 [验证记录](../../archive/2026/b145-agent-debug-validation.md)。
 
 ## Revisit Trigger
 
@@ -84,5 +84,6 @@ opaque bridge 不可识别、持久动作确认及重载后用户继续等规则
 
 - Product Spec / design: [PA Agent Debug View 设计](../specs/pa-agent-debug-view-product-spec.md)
 - Existing execution decision: [DEC-040](./dec-040-recoverable-agent-execution.md)
-- Development entry: [B-145 Feature Home](../../development/active/agent-debug-view/README.md)
+- Current architecture: [PA Agent Debug View](../../architecture/pa-agent-debug-view.md)
+- Historical validation: [B-145 validation](../../archive/2026/b145-agent-debug-validation.md)
 - Source discussion: [GitHub #382](https://github.com/edonyzpc/personal-assistant/discussions/382)；后续选择以本次用户逐项确认为依据，未将其伪称为 GitHub 原讨论内容。
