@@ -453,6 +453,7 @@ export class PaAgentLoop {
             return Promise.resolve(this.createResult("incomplete"));
         };
 
+        let leaseSequence = 0;
         for (let turnIndex = 0; turnIndex < this.maxTurns; turnIndex++) {
             let turnSummary: PaAgentTurnSummary;
             let loopReservedFinalTurn = false;
@@ -478,16 +479,20 @@ export class PaAgentLoop {
                 }
 
                 let turnLease: AgentRunLease | undefined;
+                const debugLeaseId = this.options.turnLeaseProvider ? `${this.options.runId}:lease:${++leaseSequence}` : undefined;
                 const leaseWait = this.options.turnLeaseProvider
                     ? this.createTurnLeaseWaitScope(nextToolMode)
                     : undefined;
                 try {
+                    if (debugLeaseId) this.debug('turn_lease:start', { leaseId: debugLeaseId, turnIndex });
                     turnLease = await this.options.turnLeaseProvider?.({
                         runId: this.options.runId,
                         turnIndex,
                         signal: leaseWait?.signal ?? this.options.signal,
                     });
+                    if (debugLeaseId) this.debug('turn_lease:end', { leaseId: debugLeaseId, turnIndex });
                 } catch (error) {
+                    if (debugLeaseId) this.debug('turn_lease:error', { leaseId: debugLeaseId, turnIndex });
                     const deadlineReason = leaseWait?.deadlineReason();
                     if (deadlineReason === "finalization_reserve_reached") {
                         const stopped = await requestReservedFinalTurn(turnIndex);
@@ -552,6 +557,7 @@ export class PaAgentLoop {
                         nextRuntimeInstruction,
                         nextToolMode,
                         nextControlSnapshot,
+                        debugLeaseId,
                     );
                     if (loopReservedFinalTurn) nextTurnIsLoopReservedFinal = false;
                 } finally {
@@ -835,6 +841,7 @@ export class PaAgentLoop {
         runtimeInstruction?: string,
         toolMode?: PaAgentToolMode,
         controlSnapshot?: AgentControlSnapshot,
+        debugLeaseId?: string,
     ): Promise<PaAgentTurnSummary> {
         // A handle prepared during this response cannot authorize its own output.
         let nativeContextHandle: string | undefined;
@@ -857,6 +864,7 @@ export class PaAgentLoop {
         const turnAbort = this.createTurnAbortScope();
         const turnStartedAt = this.now();
         const turnId = this.createId("turn");
+        if (debugLeaseId) this.debug('turn_lease_bound', { leaseId: debugLeaseId, turnId, turnIndex });
         this.events.turnStart(turnId, {
             turnIndex,
             ...(this.options.hostContext ? { hostContext: this.options.hostContext } : {}),

@@ -8,6 +8,7 @@ import { ChatImageRequestError } from "./image-capability";
 import { throwIfAborted } from "./chat-utils";
 import { chatImageIdentity, mergeChatImageMaterials } from "./chat-image-identity";
 import { escapeTaggedBoundary } from "./agent-utils";
+import type { AgentDebugAttachment } from "./agent-debug-port";
 
 export const RESOLVE_CHAT_IMAGES = "resolve_chat_images";
 const key = (ref: ImageRef): string => `${ref.assetId}:${ref.contentHash}`;
@@ -124,6 +125,19 @@ export class ChatImageRequestScope {
         return { type: "image_request_budget", count: this.selected.size,
             encodedImageBytes: [...this.materialized.values()].reduce((sum, value) => sum + value.lease.blob.size, 0),
             visionTokens: "provider_dependent_not_in_text_estimate" };
+    }
+
+    /** Existing prepared pixels only; no byte reads, new variants, or media ownership. */
+    debugAttachments(): AgentDebugAttachment[] {
+        // The lease exposes no derivative hash or processor receipt: these remain unknown.
+        return [...this.selected.keys()].flatMap(id => {
+            const material = this.materialized.get(id);
+            if (!material) return [];
+            return [{ kind: "image" as const, assetId: material.image.ref.assetId,
+                contentHash: material.image.ref.contentHash, ordinal: material.image.ordinal,
+                mime: material.lease.mime, width: material.lease.width, height: material.lease.height,
+                byteLength: material.lease.blob.size, availability: "provided" as const }];
+        });
     }
 
     /** Source labels have no instruction authority. Binary order follows this exact index. */

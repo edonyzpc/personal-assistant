@@ -466,6 +466,19 @@ const createTFile = (path: string): TFile => {
 };
 
 const installPluginShellOwners = (plugin: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    // These tests own Memory/source fixtures, not a browser Debug database.
+    // The Debug cleanup contract and failure recovery have dedicated integration tests.
+    plugin.agentDebugIntegration = {
+        service: { startRun: jest.fn() },
+        initialize: jest.fn(async () => undefined),
+        beginLegacyForget: jest.fn(() => jest.fn()),
+        forgetClaim: jest.fn(async () => undefined),
+        forgetLegacyRecord: jest.fn(async () => undefined),
+        settingsChanged: jest.fn(), sourceRevoked: jest.fn(),
+        sourcePermissionRevoking: jest.fn(), sourcePermissionCommitted: jest.fn(), sourcePermissionFailed: jest.fn(),
+        viewHost: jest.fn(() => ({})), beginUnload: jest.fn(), dispose: jest.fn(async () => undefined),
+    };
+    plugin.register = jest.fn();
     plugin.settingsPersistence = plugin.createSettingsPersistence();
     plugin.aiConfiguration = plugin.createAIConfiguration();
     plugin.governanceStorage = plugin.createGovernanceStorage();
@@ -1364,11 +1377,13 @@ describe('plugin startup view registration', () => {
             expect(registerView).toHaveBeenCalledWith('stat-preview', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('llm-view', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('pa-pagelet-detail-view', expect.any(Function));
-            expect(registerView).toHaveBeenCalledTimes(4);
+            expect(registerView).toHaveBeenCalledWith('pa-agent-debug-view', expect.any(Function));
+            expect(registerView).toHaveBeenCalledTimes(5);
             const commandIds = plugin.addCommand.mock.calls
                 .map(([command]: [RegisteredPluginCommand]) => command.id);
             expect(commandIds.indexOf('startup-recording')).toBe(0);
             expect(commandIds.indexOf('pa-quick-capture')).toBe(1);
+            expect(commandIds).toContain('open-agent-debug-history');
             expect(commandIds.indexOf('preview-records')).toBeLessThan(commandIds.indexOf('show-statistics'));
             const updatePluginsIndex = commandIds.indexOf('update-plugins');
             const updateThemesIndex = commandIds.indexOf('update-themes');
@@ -1595,7 +1610,7 @@ describe('plugin startup view registration', () => {
                 'init-vss',
             ]);
             expect(plugin.calloutIntegration.initialize).toHaveBeenCalledTimes(1);
-            expect(registerView).toHaveBeenCalledTimes(4);
+            expect(registerView).toHaveBeenCalledTimes(5);
         } finally {
             initializeStats.mockRestore();
             getEditorExtensions.mockRestore();

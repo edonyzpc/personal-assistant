@@ -6,8 +6,6 @@ import { OpenAIEmbeddings } from '@langchain/openai';
 import { computeContentHash } from '../vss-helpers';
 import {
     createScopedObsidianFetch,
-    obsidianFetch,
-    reportProviderRequestDiagnostic,
     traceProviderDispatch,
     type ProviderRequestTrace,
     type ProviderRequestDiagnostic,
@@ -19,6 +17,7 @@ import { getPlatformDocument } from '../platform-dom';
 import { throwIfAborted } from './chat-utils';
 import { prepareProviderAdmission, runProviderAdmission } from './provider-admission-error';
 import { onProviderFailedAttempt } from './provider-retry-policy';
+import type { AgentDebugCallScope } from './agent-debug-port';
 
 export type ChatTransport = 'obsidian' | 'native';
 
@@ -232,6 +231,7 @@ const DASH_SCOPE_NATIVE_TOOL_CALLING_UNSUPPORTED_MODEL_SIGNALS = [
 export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] =
     buildDashScopeNativeToolCallingValidations(DASHSCOPE_NATIVE_TOOL_CALLING_MODELS);
 export interface ProviderRequestOptions {
+    agentDebugCall?: AgentDebugCallScope;
     providerRequestScope?: ProviderRequestScope;
     /** Runs synchronously immediately before each physical HTTP dispatch, including SDK retries. */
     onProviderRequestStart?: () => void;
@@ -381,29 +381,16 @@ export class AIUtils {
 
         const resolution = this.resolveChatTransport(transport, baseURL);
         const onProviderRequestTrace = providerRequestOptions.onProviderRequestTrace
-            ?? (this.host.settings.debug ? (event: ProviderRequestTrace) => {
+            ?? ((event: ProviderRequestTrace) => {
                 if (this.host.settings.debug) this.host.log('PA Agent trace', {
                     runId: null, turnId: null, stage: 'unscoped', ...event,
                 });
-            } : undefined);
+            });
         const isProviderRequestTraceEnabled = providerRequestOptions.isProviderRequestTraceEnabled
             ?? (providerRequestOptions.onProviderRequestTrace ? undefined : () => this.host.settings.debug === true);
         if (resolution.effective === 'obsidian') {
-            options.fetch = providerRequestOptions.providerRequestScope
-                || providerRequestOptions.onProviderRequestStart
-                || providerRequestOptions.onProviderRequestFailed
-                || providerRequestOptions.prepareProviderRequest
-                || providerRequestOptions.onProviderRequestDiagnostic
-                || onProviderRequestTrace
-                ? createScopedObsidianFetch({ ...providerRequestOptions, onProviderRequestTrace, isProviderRequestTraceEnabled })
-                : obsidianFetch;
-        } else if (
-            providerRequestOptions.onProviderRequestStart
-            || providerRequestOptions.onProviderRequestFailed
-            || providerRequestOptions.prepareProviderRequest
-            || providerRequestOptions.onProviderRequestDiagnostic
-            || onProviderRequestTrace
-        ) {
+            options.fetch = createScopedObsidianFetch({ ...providerRequestOptions, onProviderRequestTrace, isProviderRequestTraceEnabled });
+        } else {
             // Keep native fetch and its propagating AbortSignal. The SDK may
             // await serialization/retry backoff after prompt preparation.
             options.fetch = (input, init) => {
@@ -421,14 +408,14 @@ export class AIUtils {
                         // Request objects / non-string bodies stay unknown; do not read
                         // or consume their streams just to obtain optional diagnostics.
                         try {
-                            const response = await traceProviderDispatch(() => globalThis.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled);
+                            const response = await traceProviderDispatch(() => globalThis.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled,
+                                { call: providerRequestOptions.agentDebugCall, diagnostic: providerRequestOptions.onProviderRequestDiagnostic, signal });
                             if (!response.ok) providerRequestOptions.onProviderRequestFailed?.();
                             return response;
                         } catch (error) {
                             providerRequestOptions.onProviderRequestFailed?.();
                             throw error;
                         }
-                        finally { reportProviderRequestDiagnostic(init?.body, 'native', providerRequestOptions.onProviderRequestDiagnostic); }
                     })();
                 }
                 runProviderAdmission(providerRequestOptions.onProviderRequestStart);
@@ -436,7 +423,8 @@ export class AIUtils {
                 // Request objects / non-string bodies stay unknown; do not read
                 // or consume their streams just to obtain optional diagnostics.
                 try {
-                    const request = traceProviderDispatch(() => globalThis.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled);
+                    const request = traceProviderDispatch(() => globalThis.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled,
+                        { call: providerRequestOptions.agentDebugCall, diagnostic: providerRequestOptions.onProviderRequestDiagnostic, signal });
                     void request.then(
                         response => { if (!response.ok) providerRequestOptions.onProviderRequestFailed?.(); },
                         () => providerRequestOptions.onProviderRequestFailed?.(),
@@ -446,7 +434,6 @@ export class AIUtils {
                     providerRequestOptions.onProviderRequestFailed?.();
                     throw error;
                 }
-                finally { reportProviderRequestDiagnostic(init?.body, 'native', providerRequestOptions.onProviderRequestDiagnostic); }
             };
         }
 

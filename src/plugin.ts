@@ -4,6 +4,8 @@ import { type Command, type MarkdownFileInfo, type TAbstractFile, Component, Edi
 import { getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
+import { AgentDebugPluginIntegration } from './agent-debug/plugin-integration';
+import { AgentDebugView, AGENT_DEBUG_VIEW_TYPE } from './agent-debug/view';
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import {
     AIUtils,
@@ -596,6 +598,9 @@ function writeVaultInsightsInjectionNoticeFlag(): void {
 export class PluginManager extends Plugin {
     private createSettingsPersistence(): SettingsPersistence {
         return new SettingsPersistence({
+            onSourcePermissionRevoking: () => this.agentDebugIntegration?.sourcePermissionRevoking(),
+            onSourcePermissionCommitted: () => this.agentDebugIntegration?.sourcePermissionCommitted(),
+            onSourcePermissionFailed: () => this.agentDebugIntegration?.sourcePermissionFailed(),
             loadData: () => this.loadData(),
             saveData: (data) => this.saveData(data),
             getAdapter: () => this.app.vault.adapter,
@@ -1015,6 +1020,40 @@ export class PluginManager extends Plugin {
     private set pageletRuntime(value: PaReviewRuntime | null) {
         this.pageletIntegration.setRuntimeForCompatibility(value);
     }
+    private agentDebugIntegration: AgentDebugPluginIntegration | undefined;
+
+    private getAgentDebugIntegration(): AgentDebugPluginIntegration {
+        return this.agentDebugIntegration ??= new AgentDebugPluginIntegration({
+            vault: this.app.vault,
+            settings: () => this.settings,
+            history: () => this.chatIntegration.getHistoryStore(),
+            recordSourceRevocation: () => this.settingsPersistence.recordSourceRevocation(),
+            readForgetState: async () => {
+                const state = await this.deviceMemoryGovernanceRepository?.initialize();
+                return {
+                    claims: (state?.claims ?? [])
+                        .filter(claim => claim.partition.kind === 'device_collaboration'
+                            || claim.partition.key === this.memoryGovernanceOpaqueVaultKey)
+                        .filter(claim => claim.lifecycle === 'forgotten_tombstone' || claim.lifecycle === 'forget_pending')
+                        .map(claim => ({ id: claim.id, deviceWide: claim.partition.kind === 'device_collaboration' })),
+                    legacyRecordIds: this.getMemoryGovernanceStore().list()
+                        .filter(record => record.lifecycle === 'forgotten_tombstone').map(record => record.id),
+                };
+            },
+        });
+    }
+
+    private async openAgentDebug(conversationId?: string): Promise<void> {
+        const existing = this.app.workspace.getLeavesOfType(AGENT_DEBUG_VIEW_TYPE)[0];
+        const leaf = existing ?? this.app.workspace.getLeaf('tab');
+        if (!existing) await leaf.setViewState({ type: AGENT_DEBUG_VIEW_TYPE, active: true });
+        if (leaf.view instanceof AgentDebugView) leaf.view.revealConversation(conversationId);
+        await this.app.workspace.revealLeaf(leaf);
+        // On mobile, revealLeaf does not dismiss an open Chat drawer; it would
+        // otherwise cover the newly opened Debug tab completely.
+        if (Platform.isMobile) this.app.workspace.rightSplit.collapse();
+    }
+
     private readonly chatIntegration = new ChatPluginIntegration({
         app: this.app,
         getSettings: () => this.settings,
@@ -1034,6 +1073,8 @@ export class PluginManager extends Plugin {
         createOperationsSession: () => this.getOperationsService().createSession({ surface: "chat" }),
         createAiServiceHost: () => this.createAiServiceHost("chat"),
         hostActions: {
+            openAgentDebug: (conversationId) => this.openAgentDebug(conversationId),
+            recordAgentDebugTextCommitted: (runId) => this.agentDebugIntegration?.service.recordTextCommitted(runId),
             isOperationsAgentEnabled: () => this.isOperationsAgentEnabled,
             log: (message, ...args) => this.log(message, ...args),
             getAISetupIssue: () => this.getAISetupIssue(),
@@ -1954,6 +1995,26 @@ export class PluginManager extends Plugin {
         this.chatIntegration.initialize();
         await this.initializeMemorySubsystem();
         if (this.unloading) return;
+        const agentDebug = this.getAgentDebugIntegration();
+        void agentDebug.initialize();
+        this.register(this.onSettingsChanged(() => agentDebug.settingsChanged()));
+        const deniedDebugSources = new Set<string>();
+        const observeDebugSourcePermission = (file: TFile): void => {
+            if (file.extension !== 'md') return;
+            if (this.isDataBoundaryAllowedFile(file)) {
+                deniedDebugSources.delete(file.path);
+            } else if (!deniedDebugSources.has(file.path)) {
+                deniedDebugSources.add(file.path);
+                agentDebug.sourceRevoked();
+            }
+        };
+        this.registerEvent(this.app.metadataCache.on('changed', observeDebugSourcePermission));
+        this.registerEvent(this.app.vault.on('rename', (file) => {
+            if (file instanceof TFile) observeDebugSourcePermission(file);
+        }));
+        this.registerEvent(this.app.vault.on('delete', (file) => {
+            if (file instanceof TFile && file.extension === 'md') agentDebug.sourceRevoked();
+        }));
         this.statsIntegration.initialize();
         const obsidianRegistration = {
             registerView: (viewType: string, factory: (leaf: WorkspaceLeaf) => View) => {
@@ -1964,6 +2025,10 @@ export class PluginManager extends Plugin {
             },
         };
         registerObsidianViews(obsidianRegistration, [
+            {
+                viewType: AGENT_DEBUG_VIEW_TYPE,
+                createView: (leaf) => new AgentDebugView(leaf, agentDebug.viewHost()),
+            },
             {
                 viewType: RECORD_PREVIEW_TYPE,
                 createView: (leaf) => { return new RecordPreview(this.app, this, leaf); },
@@ -2029,6 +2094,10 @@ export class PluginManager extends Plugin {
             callback: () => {
                 this.openQuickCaptureModal();
             }
+        }, {
+            id: 'open-agent-debug-history',
+            name: this.t('plugin.agentDebug.open'),
+            callback: () => { void this.openAgentDebug(); },
         }]);
 
         this.addCommand({
@@ -5099,9 +5168,11 @@ export class PluginManager extends Plugin {
         }
 
         let forgotten: Awaited<ReturnType<MemoryGovernanceStore["forget"]>>;
+        const finishDebugForget = this.getAgentDebugIntegration().beginLegacyForget();
         try {
             forgotten = await this.getMemoryGovernanceStore().forget(current.id, "user_remove");
         } catch (error) {
+            finishDebugForget();
             this.log("Confirmed Memory removal persist failed", { id: current.id, error });
             return {
                 ok: false,
@@ -5111,6 +5182,7 @@ export class PluginManager extends Plugin {
             };
         }
         if (!forgotten.ok) {
+            finishDebugForget();
             return {
                 ok: false,
                 message: pageletT("pagelet.tab.memory.removeFailed", this.getPageletLocale(), {
@@ -5119,11 +5191,21 @@ export class PluginManager extends Plugin {
             };
         }
 
+        let debugCleanupPending = false;
+        try {
+            await this.getAgentDebugIntegration().forgetLegacyRecord(current.id);
+        } catch {
+            debugCleanupPending = true;
+        } finally {
+            finishDebugForget();
+        }
+
         await this.reconcileMemoryQueueAudit();
 
         return {
             ok: true,
-            message: pageletT("pagelet.tab.memory.removed", this.getPageletLocale()),
+            message: debugCleanupPending ? this.t('plugin.agentDebug.cleanupPending')
+                : pageletT("pagelet.tab.memory.removed", this.getPageletLocale()),
             record: forgotten.value,
         };
     }
@@ -5258,6 +5340,7 @@ export class PluginManager extends Plugin {
         const getOperationsAgentEnabled = () => this.isOperationsAgentEnabled;
         const retrievalDiagnostics = this.retrievalDiagnostics.bindSurface(surface);
         const host: AiServiceHost = {
+            ...(surface === 'chat' ? { agentDebug: this.getAgentDebugIntegration().service } : {}),
             app: this.app,
             settings: this.settings,
             log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
@@ -6519,6 +6602,7 @@ export class PluginManager extends Plugin {
 
     private async unloadAsync(): Promise<void> {
         this.unloading = true;
+        this.agentDebugIntegration?.beginUnload();
         this.pageletIntegration.beginUnload();
         this.metadataUpdater.dispose();
         this.calloutIntegration.dispose();
@@ -6539,6 +6623,7 @@ export class PluginManager extends Plugin {
             this.log("Failed to drain Memory maintenance during unload", error);
         });
         await this.drainSettingsWrites();
+        await this.agentDebugIntegration?.dispose();
         await this.memoryIntegration.disposeVss().catch((error) => this.log("Failed to dispose Memory local index", error));
         this.statsIntegration.unloadStatistics();
         await this.chatIntegration.drainWriting();
@@ -7532,6 +7617,8 @@ export class PluginManager extends Plugin {
                 state = await repository.initialize();
             }
             const cleanupPort: ExactMemoryProjectionCleanupPort = {
+                cleanupDebugCopies: ({ claimId, partition }) => this.getAgentDebugIntegration()
+                    .forgetClaim(claimId, partition.kind === 'device_collaboration'),
                 cleanupExactProjection: (input) => this.cleanupExactMemoryProjection(input.projectionLink),
                 prepareLegacyCompatibilityForget: (input) => (
                     this.prepareLegacyCompatibilityForget(input)

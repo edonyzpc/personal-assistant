@@ -1023,6 +1023,69 @@ describe('LLMView turn lifecycle', () => {
         expect(view.getIcon()).toBe(PA_CHAT_SUBAGENT_ICON);
     });
 
+    it('keeps the Debug entry independent from send, cancellation and draft state', async () => {
+        const { view, plugin, containerEl, emitSettingsChanged } = createView();
+        const openAgentDebug = jest.fn();
+        Object.assign(plugin, { openAgentDebug });
+        await view.onOpen();
+        const debug = getElementByClass(containerEl, 'pa-chat-debug-button');
+        expect(debug.hidden).toBe(true);
+        // Higher specificity than `.llm-buttons button.pa-chat-icon-button` is required:
+        // a bare `[hidden]` rule still leaves the flex button visible in Obsidian.
+        const css = readFileSync('src/custom.pcss', 'utf8');
+        expect(getCssRuleBlock(css, '.pa-chat-view .pa-chat-debug-button[hidden]')).toContain('display: none');
+        plugin.settings.debug = true;
+        await emitSettingsChanged();
+        expect(debug.hidden).toBe(false);
+        getTextArea(containerEl).value = 'keep this draft';
+        debug.click();
+        expect(openAgentDebug).toHaveBeenCalledTimes(1);
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+        expect(getTextArea(containerEl).value).toBe('keep this draft');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        debug.click();
+        expect(debug.disabled).toBe(false);
+        expect(streamCalls[0].signal?.aborted).toBe(false);
+        plugin.settings.debug = false;
+        await emitSettingsChanged();
+        expect(debug.hidden).toBe(true);
+        streamCalls[0].resolve();
+        await flushPromises();
+    });
+
+    it('reports only the first valid nonempty assistant DOM commit, not a provider delta', async () => {
+        const { view, plugin, containerEl } = createView();
+        const recordAgentDebugTextCommitted = jest.fn();
+        Object.assign(plugin, { recordAgentDebugTextCommitted });
+        plugin.settings.debug = true;
+        await view.onOpen();
+        getTextArea(containerEl).value = 'show evidence';
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start', runId: 'debug-render-run' }));
+        let finishRender: (() => void) | undefined;
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>)
+            .mockImplementation((_app, markdown, el) => new Promise<void>(resolve => {
+                finishRender = () => { el.setText(markdown); resolve(); };
+            }));
+        const message = assistantMessage('debug-answer', []);
+        emitCanonical(call, canonicalEvent({ type: 'message_start', runId: 'debug-render-run', message }));
+        emitCanonical(call, canonicalEvent({ type: 'message_update', runId: 'debug-render-run', messageId: message.id,
+            update: { kind: 'text_delta', text: 'Visible answer' } }));
+        expect(recordAgentDebugTextCommitted).not.toHaveBeenCalled();
+        finishRender?.();
+        await flushPromises();
+        expect(recordAgentDebugTextCommitted).toHaveBeenCalledWith('debug-render-run');
+        expect(recordAgentDebugTextCommitted).toHaveBeenCalledTimes(1);
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>)
+            .mockImplementation((_app, markdown, el) => { el.setText(markdown); });
+        call.resolve();
+        await flushPromises();
+        expect(recordAgentDebugTextCommitted).toHaveBeenCalledTimes(1);
+    });
+
     it('keeps ordinary questions outside the writing lifecycle even when native writing is available', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'ordinary-conversation' });
@@ -7526,9 +7589,11 @@ describe('LLMView turn lifecycle', () => {
         ]);
         expect(actions.parentElement).toBe(composerRow);
         expect(actions.children.filter((child) => child.tagName !== 'input')).toEqual([
-            getButtonByClass(containerEl, 'pa-chat-add-images'), askButton, memoryControl, cancelButton, moreControl,
+            getButtonByClass(containerEl, 'pa-chat-add-images'), askButton,
+            getButtonByClass(containerEl, 'pa-chat-debug-button'), memoryControl, cancelButton, moreControl,
         ]);
-        expect(actions.children.indexOf(memoryControl)).toBe(actions.children.indexOf(askButton) + 1);
+        expect(actions.children.indexOf(getButtonByClass(containerEl, 'pa-chat-debug-button'))).toBe(actions.children.indexOf(askButton) + 1);
+        expect(actions.children.indexOf(memoryControl)).toBe(actions.children.indexOf(askButton) + 2);
         expect(actions.children.indexOf(moreControl)).toBe(actions.children.length - 1);
         expect(getButtonsByText(actions, 'Add to Editor')).toHaveLength(0);
         expect(memoryControl.children).toContain(memoryChip);

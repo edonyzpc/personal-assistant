@@ -4,6 +4,8 @@ import { rewriteQueryForSearch, REWRITE_SYSTEM_PROMPT, REWRITE_TIMEOUT_MS, type 
 import { clearPlatformTimeout, setPlatformTimeout } from "../platform-dom";
 import type { AIUtils, ProviderRequestOptions } from "./ai-utils";
 import type { AiServiceHost, LatestMemorySourceMaterial } from "./AiServiceHost";
+import type { AgentDebugCallScope } from "./agent-debug-port";
+import { agentDebugError, agentDebugNow, createAgentDebugCall, observeAgentDebugCall, observeAgentDebugResponse } from "./agent-debug-observation";
 import { createAbortError, throwIfAborted } from "./chat-utils";
 import { truncate } from "./chat-tool-execution-helpers";
 import { normalizeVaultPath } from "../pa/helpers";
@@ -189,6 +191,7 @@ export type MemorySearchInvocationOptions =
         readonly absoluteDeadlineMs?: number;
         readonly providerRequestScope?: ProviderRequestOptions["providerRequestScope"];
         readonly providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
+        readonly debugScope?: MemorySearchDebugScope;
         /** Run-owned lifetime for detached DEC-028 preparation; never an attempt deadline signal. */
         readonly memoryPreparationOwnerSignal?: AbortSignal;
     }
@@ -201,6 +204,7 @@ export type MemorySearchInvocationOptions =
         readonly absoluteDeadlineMs?: number;
         readonly providerRequestScope?: ProviderRequestOptions["providerRequestScope"];
         readonly providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
+        readonly debugScope?: MemorySearchDebugScope;
         /** Run-owned lifetime for detached DEC-028 preparation; never an attempt deadline signal. */
         readonly memoryPreparationOwnerSignal?: AbortSignal;
     };
@@ -209,8 +213,10 @@ const MEMORY_SEARCH_INVOCATIONS = new WeakMap<AbortSignal, MemorySearchInvocatio
 export type MemorySearchRequestDiagnostic = (
     stage: "query_rewrite" | "rerank",
 ) => ProviderRequestOptions["onProviderRequestDiagnostic"];
+export type MemorySearchDebugScope = Pick<AgentDebugCallScope, "recorder" | "parentId" | "turnId">;
 interface MemorySearchProviderRequestOptions extends ProviderRequestOptions {
     providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
+    debugScope?: MemorySearchDebugScope;
 }
 const MEMORY_SEARCH_TEMPORAL_FILTER_CAPTURES = new WeakMap<
     MemorySearchInvocationOptions,
@@ -231,6 +237,7 @@ export function createStandardMemorySearchInvocation(options: {
     absoluteDeadlineMs?: number;
     providerRequestScope?: ProviderRequestOptions["providerRequestScope"];
     providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
+    debugScope?: MemorySearchDebugScope;
     memoryPreparationOwnerSignal?: AbortSignal;
 }): MemorySearchInvocationOptions {
     const invocation: MemorySearchInvocationOptions = Object.freeze({
@@ -247,6 +254,7 @@ export function createStandardMemorySearchInvocation(options: {
             : {}),
         ...(options.providerRequestScope ? { providerRequestScope: options.providerRequestScope } : {}),
         ...(options.providerRequestDiagnostic ? { providerRequestDiagnostic: options.providerRequestDiagnostic } : {}),
+        ...(options.debugScope ? { debugScope: options.debugScope } : {}),
         ...(options.memoryPreparationOwnerSignal
             ? { memoryPreparationOwnerSignal: options.memoryPreparationOwnerSignal }
             : {}),
@@ -265,6 +273,7 @@ export function createRelaxedMemorySearchInvocation(
         absoluteDeadlineMs?: number;
         providerRequestScope?: ProviderRequestOptions["providerRequestScope"];
         providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
+        debugScope?: MemorySearchDebugScope;
         memoryPreparationOwnerSignal?: AbortSignal;
     } = {},
 ): MemorySearchInvocationOptions {
@@ -281,6 +290,7 @@ export function createRelaxedMemorySearchInvocation(
             : {}),
         ...(control.providerRequestScope ? { providerRequestScope: control.providerRequestScope } : {}),
         ...(control.providerRequestDiagnostic ? { providerRequestDiagnostic: control.providerRequestDiagnostic } : {}),
+        ...(control.debugScope ? { debugScope: control.debugScope } : {}),
         ...(control.memoryPreparationOwnerSignal
             ? { memoryPreparationOwnerSignal: control.memoryPreparationOwnerSignal }
             : {}),
@@ -882,6 +892,12 @@ export class MemorySearchTool {
         signal?: AbortSignal,
         providerRequestOptions?: MemorySearchProviderRequestOptions,
     ): Promise<RewrittenQuery> {
+        const debugScope = providerRequestOptions?.debugScope;
+        const debugCall = debugScope ? createAgentDebugCall(debugScope.recorder, {
+            parentId: debugScope.parentId,
+            turnId: debugScope.turnId, purpose: "query_rewrite",
+            provider: this.host.settings.aiProvider, model: policyModelName, lineage: { unknown: true },
+        }) : undefined;
         const controller = new AbortController();
         const combined = combineAbortSignals(signal ? [signal, controller.signal] : [controller.signal]);
         const timeoutId = setPlatformTimeout(() => controller.abort(), REWRITE_TIMEOUT_MS);
@@ -890,6 +906,8 @@ export class MemorySearchTool {
             const llm = await this.aiUtils.createChatModel(0, {
                 transport: "native",
                 modelName: policyModelName,
+                agentDebugCall: debugCall,
+                isProviderRequestTraceEnabled: () => this.host.settings.debug === true,
                 ...(this.taskSourceReadGuard ? { onProviderRequestStart: () => assertTaskSourceReadCurrent(this.taskSourceReadGuard) } : {}),
                 onProviderRequestDiagnostic: providerRequestOptions?.providerRequestDiagnostic?.("query_rewrite"),
                 ...(providerRequestOptions?.providerRequestScope
@@ -904,10 +922,15 @@ export class MemorySearchTool {
                     HumanMessagePromptTemplate.fromTemplate("{query}"),
                 ]);
                 const response = await prompt.pipe(llm).invoke({ query: q }, { signal: s });
+                observeAgentDebugResponse(debugCall, response);
                 return typeof response.content === "string" ? response.content : "";
             };
-            return await rewriteQueryForSearch(query, invoker, combined.signal);
-        } catch {
+            const rewritten = await rewriteQueryForSearch(query, invoker, combined.signal);
+            observeAgentDebugCall(debugCall, { phase: "consumer_end", status: "completed",
+                timing: { event: "consumer_end", at: agentDebugNow() } });
+            return rewritten;
+        } catch (error) {
+            observeAgentDebugCall(debugCall, { phase: "error", status: combined.signal.aborted ? "cancelled" : "failed", error: agentDebugError(error) });
             return { keywords: null, temporal: "none" };
         } finally {
             clearPlatformTimeout(timeoutId);
@@ -921,6 +944,12 @@ export class MemorySearchTool {
         absoluteDeadlineMs?: number,
         providerRequestOptions?: MemorySearchProviderRequestOptions,
     ): Promise<PreparedMemoryReranker | null> {
+        const debugScope = providerRequestOptions?.debugScope;
+        const debugCall = debugScope ? createAgentDebugCall(debugScope.recorder, {
+            parentId: debugScope.parentId,
+            turnId: debugScope.turnId, purpose: "rerank",
+            provider: this.host.settings.aiProvider, model: selectedModel.modelName, lineage: { unknown: true },
+        }) : undefined;
         throwIfAborted(signal);
         const controller = new AbortController();
         const combined = combineAbortSignals(signal ? [signal, controller.signal] : [controller.signal]);
@@ -985,6 +1014,8 @@ export class MemorySearchTool {
                 Promise.resolve(this.aiUtils.createChatModel(0, {
                     transport: "native",
                     modelName: selectedModel.modelName,
+                    agentDebugCall: debugCall,
+                    isProviderRequestTraceEnabled: () => this.host.settings.debug === true,
                     ...(this.taskSourceReadGuard ? { onProviderRequestStart: () => assertTaskSourceReadCurrent(this.taskSourceReadGuard) } : {}),
                     onProviderRequestDiagnostic: providerRequestOptions?.providerRequestDiagnostic?.("rerank"),
                     ...(providerRequestOptions?.providerRequestScope
@@ -1044,6 +1075,7 @@ export class MemorySearchTool {
                             combined.signal,
                         );
                         if (providerResult.type === "aborted") {
+                            observeAgentDebugCall(debugCall, { phase: "consumer_end", status: "cancelled", missingReason: "usage_not_observed" });
                             throwIfAborted(signal);
                             return createFailOpenOutcome(
                                 candidates,
@@ -1056,9 +1088,13 @@ export class MemorySearchTool {
                         if (providerResult.type === "rejected") throw providerResult.error;
                         throwIfAborted(signal);
                         const response = providerResult.value;
+                        observeAgentDebugResponse(debugCall, response);
+                        observeAgentDebugCall(debugCall, { phase: "consumer_end", status: "completed",
+                            timing: { event: "consumer_end", at: agentDebugNow() } });
                         const content = typeof response.content === "string" ? response.content : "";
                         return parseRerankResponse(content, candidates);
-                    } catch {
+                    } catch (error) {
+                        observeAgentDebugCall(debugCall, { phase: "error", status: combined.signal.aborted ? "cancelled" : "failed", error: agentDebugError(error) });
                         throwIfAborted(signal);
                         return createFailOpenOutcome(
                             candidates,
@@ -1070,7 +1106,8 @@ export class MemorySearchTool {
                     }
                 },
             };
-        } catch {
+        } catch (error) {
+            observeAgentDebugCall(debugCall, { phase: "error", status: signal?.aborted ? "cancelled" : "failed", error: agentDebugError(error) });
             dispose();
             throwIfAborted(signal);
             if (childAbortReason === "policy_disabled") {

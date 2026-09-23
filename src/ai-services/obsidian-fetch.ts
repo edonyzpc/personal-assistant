@@ -1,6 +1,8 @@
 import { requestUrl, type RequestUrlParam } from 'obsidian';
 import { agentDebugErrorType } from './pa-agent-debug';
 import { prepareProviderAdmission, runProviderAdmission } from './provider-admission-error';
+import { observeAgentDebug, type AgentDebugCallScope } from './agent-debug-port';
+import { agentDebugNow, bindAgentDebugAttempt } from './agent-debug-observation';
 
 type RequestBody = string | ArrayBuffer | undefined;
 
@@ -75,6 +77,7 @@ export class ProviderRequestScope {
 export const createProviderRequestScope = (): ProviderRequestScope => new ProviderRequestScope();
 
 export interface ObsidianFetchControl {
+    agentDebugCall?: AgentDebugCallScope;
     /** Run-local barrier for physically-live requestUrl calls after local abort. */
     providerRequestScope?: ProviderRequestScope;
     /** Synchronous admission check immediately before each physical HTTP dispatch. */
@@ -107,45 +110,107 @@ let traceRequestSequence = 0;
 export function traceProviderDispatch<T extends { status?: number }>(
     task: () => Promise<T>, transport: ProviderRequestTrace['transport'],
     observer?: (event: ProviderRequestTrace) => void, body?: unknown, enabled?: () => boolean,
+    observation?: { call?: AgentDebugCallScope; diagnostic?: ObsidianFetchControl['onProviderRequestDiagnostic']; signal?: AbortSignal | null },
 ): Promise<T> {
-    if (!observer) return task();
-    let traceEnabled = true;
-    try { traceEnabled = enabled?.() !== false; } catch { traceEnabled = false; }
-    if (!traceEnabled) return task();
+    if (!observer && !observation?.call && !observation?.diagnostic) return task();
+    const isEnabled = () => { try { return enabled?.() !== false; } catch { return false; } };
     const startedAt = Date.now();
+    const monotonicStartedAt = agentDebugNow();
     const requestId = `http_${startedAt.toString(36)}_${++traceRequestSequence}`;
-    const shape: Pick<ProviderRequestTrace, 'requestChars' | 'messageCount' | 'toolCount'> = {};
-    if (typeof body === 'string') {
-        shape.requestChars = body.length;
-        try {
-            const value: unknown = JSON.parse(body);
-            if (value && typeof value === 'object') {
-                const record = value as Record<string, unknown>;
-                if (Array.isArray(record.messages)) shape.messageCount = record.messages.length;
-                if (Array.isArray(record.tools)) shape.toolCount = record.tools.length;
-            }
-        } catch { /* Unknown request format; never log the raw body. */ }
-    }
+    const call = observation?.call;
+    if (call) bindAgentDebugAttempt(call, requestId);
+    let dispatchObserved = false;
     const emit = (phase: ProviderRequestTrace['phase'], fields: Partial<ProviderRequestTrace> = {}) => {
-        try { observer({ requestId, phase, transport, timestamp: Date.now(), elapsedMs: Date.now() - startedAt, ...fields }); }
+        if (!isEnabled()) return;
+        try { observer?.({ requestId, phase, transport, timestamp: Date.now(), elapsedMs: Date.now() - startedAt, ...fields }); }
         catch { /* Logging is never an admission or execution gate. */ }
+    };
+    const observeResult = (phase: 'response' | 'error', fields: { status?: number; errorType?: string }) => {
+        if (call) observeAgentDebug(call.recorder, () => ({
+            nodeId: requestId, parentId: call.callId, kind: "attempt", phase,
+            callId: call.callId, attemptId: requestId, turnId: call.turnId,
+            transport: transport === "obsidian" ? "buffered" : "native",
+            // Native fetch resolves at headers, before the SDK consumes the stream body.
+            status: phase === 'error' || (fields.status !== undefined && fields.status >= 400) ? "failed"
+                : transport === "obsidian" ? "completed" : "running",
+            outcome: fields.status === undefined ? fields.errorType : `http_${fields.status}`,
+            timing: { event: "response", at: agentDebugNow() },
+            ...(!dispatchObserved ? { missingReason: "dispatch_not_collected" } : {}),
+        }));
+    };
+    const onAbort = () => {
+        if (call) observeAgentDebug(call.recorder, () => ({
+            nodeId: requestId, parentId: call.callId, kind: "attempt", phase: "local_cancelled",
+            callId: call.callId, attemptId: requestId, turnId: call.turnId,
+            status: "cancelled", outcome: transport === "obsidian" ? "remote_outcome_unknown" : "cancellation_requested",
+        }));
     };
     try {
         const result = task();
         // Attach both handlers before calling an observer which might cancel the caller.
         void result.then(
-            response => emit('http_response', { status: response.status }),
-            error => emit('http_error', { errorType: agentDebugErrorType(error) }),
+            response => {
+                observation?.signal?.removeEventListener('abort', onAbort);
+                emit('http_response', { status: response.status });
+                observeResult('response', { status: response.status });
+            },
+            error => {
+                observation?.signal?.removeEventListener('abort', onAbort);
+                const errorType = agentDebugErrorType(error);
+                emit('http_error', { errorType });
+                observeResult('error', { errorType });
+            },
         );
+        observation?.signal?.addEventListener('abort', onAbort, { once: true });
+        const traceEnabled = isEnabled();
+        // An explicit content-free diagnostic callback predates Debug capture and
+        // remains independent of the console trace toggle.
+        const diagnosticEnabled = observation?.diagnostic !== undefined;
+        let contentEnabled = false;
+        try { contentEnabled = call?.recorder.enabled() === true; } catch { /* Missing collector is optional. */ }
+        const shape: Pick<ProviderRequestTrace, 'requestChars' | 'messageCount' | 'toolCount'> = {};
+        let record: Record<string, unknown> | undefined;
+        // This bound avoids parsing arbitrarily large inline image payloads. The original body
+        // is already owned by the transport; Debug never clones/consumes Request streams.
+        const inspectable = typeof body === 'string' && body.length <= 1_048_576;
+        if ((traceEnabled || contentEnabled || diagnosticEnabled) && inspectable) {
+            shape.requestChars = body.length;
+            try {
+                const value: unknown = JSON.parse(body);
+                if (value && typeof value === 'object' && !Array.isArray(value)) record = value as Record<string, unknown>;
+            } catch { /* Unsupported body shape stays unobservable. */ }
+            if (Array.isArray(record?.messages)) shape.messageCount = record.messages.length;
+            if (Array.isArray(record?.tools)) shape.toolCount = record.tools.length;
+        }
+        if (contentEnabled && call) {
+            dispatchObserved = true;
+            observeAgentDebug(call.recorder, () => ({
+                nodeId: requestId, parentId: call.callId, kind: "attempt", phase: "dispatch", status: "running",
+                callId: call.callId, attemptId: requestId, turnId: call.turnId,
+                provider: call.provider, model: typeof record?.model === 'string' ? record.model : call.model,
+                transport: transport === "obsidian" ? "buffered" : "native",
+                prompt: record, lineage: call.lineage ?? { unknown: true },
+                attachments: call.getAttachments?.(),
+                timing: { event: "dispatch", at: monotonicStartedAt },
+                ...(!record ? { missingReason: typeof body === 'string' && !inspectable ? "request_body_limit" : "unobservable_body" } : {}),
+            }));
+        }
+        if (observation?.diagnostic) {
+            try { observation.diagnostic({ ...providerRequestDiagnostic(record, transport), ...(call ? { requestId } : {}) }); }
+            catch { /* The physical request is already running; observers cannot reject it. */ }
+        }
         emit('http_dispatch', shape);
         return result;
     } catch (error) {
+        observation?.signal?.removeEventListener('abort', onAbort);
         emit('http_error', { errorType: agentDebugErrorType(error) });
+        observeResult('error', { errorType: agentDebugErrorType(error) });
         throw error;
     }
 }
 
 export interface ProviderRequestDiagnostic {
+    requestId?: string;
     transport: 'obsidian' | 'native';
     bodyState: 'json_object' | 'unknown';
     maxTokens: number | 'absent' | 'unknown';
@@ -166,16 +231,19 @@ export function reportProviderRequestDiagnostic(
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) record = parsed as Record<string, unknown>;
         } catch { /* Opaque/non-JSON bodies have no observable token limits. */ }
     }
+    try { observer(providerRequestDiagnostic(record, transport)); }
+    catch { /* Diagnostics cannot block the physical request. */ }
+}
+
+function providerRequestDiagnostic(record: Record<string, unknown> | undefined, transport: ProviderRequestDiagnostic['transport']): ProviderRequestDiagnostic {
     const readLimit = (key: string): number | 'absent' | 'unknown' => {
         if (!record) return 'unknown';
         if (!Object.prototype.hasOwnProperty.call(record, key)) return 'absent';
         const value = record[key];
         return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 'unknown';
     };
-    try {
-        observer({ transport, bodyState: record ? 'json_object' : 'unknown',
-            maxTokens: readLimit('max_tokens'), maxCompletionTokens: readLimit('max_completion_tokens') });
-    } catch { /* Diagnostics cannot block the physical request. */ }
+    return { transport, bodyState: record ? 'json_object' : 'unknown',
+        maxTokens: readLimit('max_tokens'), maxCompletionTokens: readLimit('max_completion_tokens') };
 }
 
 const createAbortError = (): Error => {
@@ -346,8 +414,9 @@ export const obsidianFetch = async (
     }
 
     const dispatch = () => {
-        try { return traceProviderDispatch(() => requestUrl(requestParam), 'obsidian', control.onProviderRequestTrace, body, control.isProviderRequestTraceEnabled); }
-        finally { reportProviderRequestDiagnostic(body, 'obsidian', control.onProviderRequestDiagnostic); }
+        return traceProviderDispatch(() => requestUrl(requestParam), 'obsidian', control.onProviderRequestTrace,
+            body, control.isProviderRequestTraceEnabled,
+            { call: control.agentDebugCall, diagnostic: control.onProviderRequestDiagnostic, signal: init.signal });
     };
     let response;
     try {

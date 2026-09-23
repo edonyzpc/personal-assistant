@@ -249,6 +249,27 @@ function useProjection(
 }
 
 describe("MemoryGovernanceCoordinator", () => {
+    it("resumes claim-wide Debug cleanup independently of exact projection links", async () => {
+        const state = createState();
+        state.projectionLinks.push({ id: "original-projection", claimId: "claim-a",
+            target: { kind: "prompt_projection", projectionId: "original-prompt" }, relation: "origin",
+            state: "active", sourceFingerprintId: "source-a", ruleFingerprint: "rule-a", createdAt: NOW.toISOString() });
+        const repo = repository(state);
+        let fail = true;
+        const cleanupDebugCopies = jest.fn(async () => { if (fail) throw new Error("Debug DB unavailable"); });
+        const coordinator = new MemoryGovernanceCoordinator({
+            repository: repo, opaqueVaultKey: "vault-a", now: () => NOW, idFactory: ids("debug-forget"),
+            projectionCleanupPort: { cleanupExactProjection: async () => undefined, cleanupDebugCopies },
+        });
+        const first = await coordinator.forget({ claimId: "claim-a" });
+        expect(first).toMatchObject({ ok: false, pending: true, reason: "debug_cleanup_failed" });
+        expect((await repo.initialize()).pendingOperations.some((item) => item.kind === "forget")).toBe(true);
+        fail = false;
+        expect(await coordinator.resumePendingForgets()).toMatchObject({ ok: true });
+        expect(cleanupDebugCopies).toHaveBeenCalledTimes(2);
+        expect((await repo.initialize()).claims.find((item) => item.id === "claim-a")?.lifecycle).toBe("forgotten_tombstone");
+    });
+
     it('keeps legacy recovery while ordinary governance and Undo expiry continue in the preserving phase', async () => {
         const initial = createState({ compatibility: true });
         initial.migrationStates['vault-a'].phase = 'governed_preserving_legacy';

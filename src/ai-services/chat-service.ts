@@ -27,6 +27,9 @@ import { OperationsService, OperationsSession } from './operations/operations-se
 import { PaAgentContextSummarizer } from './context/PaAgentContextSummarizer';
 import { createAbortError, throwIfAborted } from './chat-utils';
 import { createAgentDebugLog, traceAgentPhase } from './pa-agent-debug';
+import { agentDebugError, agentDebugStatus, observeAgentDebugPhase } from './agent-debug-observation';
+import type { AgentDebugNodeStatus, AgentDebugRunRecorder } from './agent-debug-port';
+import type { AgentRunLease } from './agent-run-coordinator';
 import { ChatImageCapabilityRegistry, chatImageModelKey, type ChatImageCapability } from './image-capability';
 import type {
     OperationsControllerEvent,
@@ -196,10 +199,20 @@ export class ChatService {
         chatHistory?: ChatMessage[],
         options: StreamLLMOptions = {},
     ): Promise<void> {
-        const debugRequestId = this.host.settings.debug
-            ? `chat_${Date.now().toString(36)}_${++debugRequestSequence}` : undefined;
+        let debugRecorder: AgentDebugRunRecorder | undefined;
+        try {
+            debugRecorder = this.host.agentDebug?.startRun({ conversationId: options.conversationId,
+                prompt, provider: this.host.settings.aiProvider, model: this.host.settings.chatModelName });
+        } catch { /* Observability cannot reject a Chat request. */ }
+        let debugStatus: AgentDebugNodeStatus = "completed";
+        let debugFailure: ReturnType<typeof agentDebugError>;
+        const debugRequestId = debugRecorder?.captureId
+            ?? `chat_${Date.now().toString(36)}_${++debugRequestSequence}`;
         const debug = createAgentDebugLog(() => this.host.settings.debug === true,
-            (message, fields) => this.host.log(message, fields),
+            (message, fields) => {
+                this.host.log(message, fields);
+                observeAgentDebugPhase(debugRecorder, String(fields.phase), fields);
+            },
             { chatRequestId: debugRequestId, runId: null, turnId: null });
         debug('chat_start', { promptChars: prompt.length, historyCount: chatHistory?.length ?? 0 });
         const modelKey = JSON.stringify([
@@ -212,14 +225,15 @@ export class ChatService {
         const contextEpoch = this.contextEpoch;
         const imageModelIdentity = { aiProvider: this.host.settings.aiProvider, baseURL: this.host.settings.baseURL, chatModelName: this.host.settings.chatModelName };
         const imageModelKey = chatImageModelKey(imageModelIdentity);
-        let startupLease = await traceAgentPhase(debug, 'chat_startup_lease', () => this.host.agentRunCoordinator?.acquireChatLease(signal));
-        const unsubscribeOperations = options.onOperationsIntentStaged
-            ? this.operationsSession.subscribe((event: OperationsControllerEvent) => {
-                if (event.type === "intent-staged") options.onOperationsIntentStaged?.(event.intent);
-            })
-            : undefined;
+        let startupLease: AgentRunLease | undefined;
+        let unsubscribeOperations: (() => void) | undefined;
         let runtime: PaAgentRuntime | undefined;
         try {
+            startupLease = await traceAgentPhase(debug, 'chat_startup_lease', () => this.host.agentRunCoordinator?.acquireChatLease(signal));
+            unsubscribeOperations = options.onOperationsIntentStaged
+                ? this.operationsSession.subscribe((event: OperationsControllerEvent) => {
+                    if (event.type === "intent-staged") options.onOperationsIntentStaged?.(event.intent);
+                }) : undefined;
             throwIfAborted(signal);
             if (contextEpoch !== this.contextEpoch) throw createAbortError();
             const memoryMode = options.memoryMode ?? "auto";
@@ -250,6 +264,7 @@ export class ChatService {
             startupLease = undefined;
             await runtime.streamTurn({
                 ...(debugRequestId ? { debugRequestId } : {}),
+                debugRecorder,
                 prompt,
                 conversationId: options.conversationId,
                 createImage: options.createImage,
@@ -278,14 +293,22 @@ export class ChatService {
                     ),
                 } : {}),
                 qwenRequestOptions: this.getFinalAnswerQwenRequestOptions(),
-                onLifecycleEvent: options.onLifecycleEvent,
+                onLifecycleEvent: (event) => {
+                    if (event.type === "agent_end") debugStatus = agentDebugStatus(event.status);
+                    options.onLifecycleEvent?.(event);
+                },
                 onEvent: (event) => adaptAgentEvent(event, onChunk, options),
             });
+        } catch (error) {
+            debugStatus = signal?.aborted || (error instanceof Error && error.name === "AbortError") ? "cancelled" : "failed";
+            debugFailure = agentDebugError(error);
+            throw error;
         } finally {
             runtime?.dispose();
             unsubscribeOperations?.();
             startupLease?.release();
             debug('chat_end', { aborted: signal?.aborted === true });
+            try { debugRecorder?.finish(debugStatus, debugFailure); } catch { /* Never replace the business result. */ }
         }
     }
 }

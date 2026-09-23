@@ -5,7 +5,6 @@ import { Platform, requestUrl } from "obsidian";
 import { AIUtils, DASHSCOPE_COMPATIBLE_BASE_URL } from "../src/ai-services/ai-utils";
 import {
     createProviderRequestScope,
-    obsidianFetch,
 } from "../src/ai-services/obsidian-fetch";
 import { PaAgentLoop } from "../src/ai-services/pa-agent-loop";
 import {
@@ -283,24 +282,31 @@ describe("iOS DashScope chat transport", () => {
         Platform.isMobile = true;
         Platform.isIosApp = true;
 
-        const iosDashScopeModel = await new AIUtils(makeHost()).createChatModel(0, {
-            transport: "native",
-        });
-        const iosOpenAIModel = await new AIUtils(makeHost("https://api.openai.com/v1")).createChatModel(0, {
-            transport: "native",
-        });
+        const response = JSON.stringify({ id: "chatcmpl-routing", object: "chat.completion", created: 1,
+            model: "deepseek-v4-pro", choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }] });
+        mockedRequestUrl.mockResolvedValue(responseFixture(response, "application/json"));
+        const nativeFetch = jest.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(response, {
+            status: 200, headers: { "content-type": "application/json" },
+        }));
+        try {
+            const iosDashScopeModel = await new AIUtils(makeHost()).createChatModel(0, { transport: "native" });
+            await iosDashScopeModel.invoke([new HumanMessage("routing fixture")]);
+            expect(mockedRequestUrl).toHaveBeenCalledTimes(1);
+            expect(nativeFetch).not.toHaveBeenCalled();
 
-        expect(iosDashScopeModel.clientConfig.fetch).toBe(obsidianFetch);
-        expect(iosOpenAIModel.clientConfig.fetch).toBeUndefined();
+            const iosOpenAIModel = await new AIUtils(makeHost("https://api.openai.com/v1")).createChatModel(0, { transport: "native" });
+            await iosOpenAIModel.invoke([new HumanMessage("routing fixture")]);
+            expect(mockedRequestUrl).toHaveBeenCalledTimes(1);
+            expect(nativeFetch).toHaveBeenCalledTimes(1);
 
-        Platform.isDesktop = true;
-        Platform.isMobile = false;
-        Platform.isIosApp = false;
-        const desktopDashScopeModel = await new AIUtils(makeHost()).createChatModel(0, {
-            transport: "native",
-        });
-
-        expect(desktopDashScopeModel.clientConfig.fetch).toBeUndefined();
+            Platform.isDesktop = true;
+            Platform.isMobile = false;
+            Platform.isIosApp = false;
+            const desktopDashScopeModel = await new AIUtils(makeHost()).createChatModel(0, { transport: "native" });
+            await desktopDashScopeModel.invoke([new HumanMessage("routing fixture")]);
+            expect(mockedRequestUrl).toHaveBeenCalledTimes(1);
+            expect(nativeFetch).toHaveBeenCalledTimes(2);
+        } finally { nativeFetch.mockRestore(); }
     });
 
     it("completes an iOS DashScope invoke through the proven requestUrl bridge", async () => {

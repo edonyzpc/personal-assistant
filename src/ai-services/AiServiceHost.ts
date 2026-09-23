@@ -44,6 +44,7 @@ export interface LatestMemorySourceMaterial {
  * exposing only the settings, Memory search port, and vault metadata they use.
  */
 export interface AiServiceHost {
+    readonly agentDebug?: import("./agent-debug-port").AgentDebugPort;
     readonly app: App;
     readonly settings: {
         debug: boolean;

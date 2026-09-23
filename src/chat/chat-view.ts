@@ -724,6 +724,16 @@ export class LLMView extends ItemView {
         });
         setIcon(sendButton, 'send');
         sendButton.createSpan({ cls: 'pa-sr-only', text: t("plugin.chat.action.ask") });
+        const debugButton = buttonDiv.createEl('button', {
+            cls: 'pa-chat-icon-button pa-chat-debug-button',
+            attr: { type: 'button', title: t('plugin.agentDebug.open'), 'aria-label': t('plugin.agentDebug.open') },
+        });
+        setIcon(debugButton, 'bug');
+        debugButton.onclick = () => {
+            if (!this.host.settings.debug) return;
+            // The host opens another leaf; opening diagnostics must not close Chat or send its draft.
+            void this.host.openAgentDebug?.(this.conversationPersistence.activeConversationId ?? undefined);
+        };
         const memoryControl = buttonDiv.createSpan({ cls: 'pa-chat-memory-control' });
         const memoryChip = memoryControl.createEl('button', {
             cls: 'pa-chat-icon-button pa-chat-memory-chip personal-assistant-ai-statusbar',
@@ -1232,6 +1242,7 @@ export class LLMView extends ItemView {
             return this.host.getAISetupIssue?.() ?? null;
         };
         const syncComposerControls = () => {
+            debugButton.hidden = !this.host.settings.debug || !this.host.openAgentDebug;
             const generating = isGenerating();
             const commandPrompt = parseCreateImageCommand(textArea.value);
             const hasDraft = composerDraft.canSend(textArea.value)
@@ -2280,6 +2291,20 @@ export class LLMView extends ItemView {
             return getOptionalPlatformDocument()?.createElement('div')
                 ?? this.responseDiv.createDiv({ cls: 'message-render-buffer-detached-fallback' }) as HTMLElement;
         };
+        const debugRenderedTurns = new WeakMap<RenderedMessage, UiTurn>();
+        const debugCommittedMessages = new WeakSet<RenderedMessage>();
+        const recordDebugTextCommit = (rendered: RenderedMessage, buffer: HTMLElement, content: string) => {
+            if (!this.host.settings.debug || !this.host.recordAgentDebugTextCommitted
+                || debugCommittedMessages.has(rendered) || !content.trim()
+                || !buffer.textContent?.trim() || !rendered.contentDiv.isConnected) return;
+            const runId = debugRenderedTurns.get(rendered)?.canonicalLifecycle.runId;
+            if (!runId || rendered.contentDiv.ownerDocument?.visibilityState === 'hidden') return;
+            // A committed buffer in a hidden leaf is not an observed Chat response.
+            if (typeof rendered.contentDiv.getClientRects === 'function'
+                && rendered.contentDiv.getClientRects().length === 0) return;
+            debugCommittedMessages.add(rendered);
+            try { this.host.recordAgentDebugTextCommitted(runId); } catch { /* Debug cannot affect rendering. */ }
+        };
         const stabilizeMermaidMessageLayout = (
             rendered: RenderedMessage,
             renderToken: number,
@@ -2410,6 +2435,7 @@ export class LLMView extends ItemView {
                     rendered.renderedContent = content;
                     rendered.renderedContentMode = mermaidTransform.deferred ? 'deferred-mermaid' : 'full';
                     this.updateClickableLink(buffer);
+                    recordDebugTextCommit(rendered, buffer, content);
                     if (!options.deferMermaid) {
                         if (hasMermaidSources && (options.forceScroll || isGenerating() || isFinalizing)) {
                             stabilizeMermaidMessageLayout(
@@ -2468,6 +2494,7 @@ export class LLMView extends ItemView {
                             rendered.renderedContent = content;
                             rendered.renderedContentMode = 'deferred-mermaid';
                             this.updateClickableLink(fallbackBuffer);
+                            recordDebugTextCommit(rendered, fallbackBuffer, content);
                             scrollToBottom({
                                 force: options.forceScroll,
                                 behavior: options.forceScroll ? 'smooth' : 'auto',
@@ -4385,6 +4412,7 @@ export class LLMView extends ItemView {
                         sourcePath: turnSourcePath,
                     },
                 );
+                debugRenderedTurns.set(turn.assistantMessage, turn);
                 if (turn.userProvenance?.messageId) {
                     imageTaskMessageTargets.set(turn.userProvenance.messageId, {
                         parent: turn.assistantMessage.messageDiv,
@@ -4428,6 +4456,7 @@ export class LLMView extends ItemView {
                     } else {
                         turn.assistantMessage.memoryMetadata = turn.memoryMetadata;
                     }
+                    debugRenderedTurns.set(turn.assistantMessage, turn);
                     renderLiveMarkdownInto(turn.assistantMessage, responseContent, isLiveTurn);
                 };
 

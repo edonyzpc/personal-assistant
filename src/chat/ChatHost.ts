@@ -35,6 +35,8 @@ export interface AISetupInput {
 }
 
 export interface ChatHost {
+    openAgentDebug?(conversationId?: string): void | Promise<void>;
+    recordAgentDebugTextCommitted?(runtimeRunId: string): void;
     readonly app: App;
     readonly settings: {
         debug: boolean;

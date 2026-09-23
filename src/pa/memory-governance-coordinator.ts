@@ -40,6 +40,8 @@ const COMPLETED_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const MAX_FORGET_TRANSITIONS_PER_RUN = 10_000;
 
 export interface ExactMemoryProjectionCleanupPort {
+    /** Claim-wide copies are not necessarily represented by a projection link. */
+    cleanupDebugCopies?(input: { claimId: string; partition: MemoryPartitionKey }): Promise<void>;
     /**
      * Removes one projection selected only by its persisted opaque link. The
      * implementation must be idempotent because a crash can repeat a
@@ -1141,6 +1143,32 @@ export class MemoryGovernanceCoordinator {
                     });
                 });
                 if (!normalized.ok) return normalized;
+                continue;
+            }
+
+            if (!operation.debugCopiesRedacted && this.projectionCleanupPort?.cleanupDebugCopies) {
+                try {
+                    await withMemoryExternalOperationTimeout(
+                        "forget_debug_cleanup",
+                        () => this.projectionCleanupPort!.cleanupDebugCopies!({
+                            claimId: operation.claimId,
+                            partition: clonePartition(operation.partition),
+                        }),
+                        this.externalOperationTimeoutMs,
+                    );
+                } catch {
+                    await this.recordForgetFailure(operationId, "debug_cleanup_failed", timestamp);
+                    return failure("debug_cleanup_failed", true);
+                }
+                const recorded = await this.runDomainMutation(() => this.repository.transact((draft) => {
+                    this.assertMutationEnvelope(draft, timestamp);
+                    const pending = requireForgetOperation(draft, operationId, operation.phase);
+                    pending.debugCopiesRedacted = true;
+                    pending.updatedAt = timestamp;
+                    delete pending.lastErrorCode;
+                    return pending.id;
+                }));
+                if (!recorded.ok) return recorded;
                 continue;
             }
 

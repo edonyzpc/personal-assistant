@@ -773,6 +773,41 @@ describe('native tool call fixtures', () => {
 });
 
 describe('ChatService.streamLLM integration', () => {
+    it('records startup lease failure before a runtime exists without changing the rejection', async () => {
+        const failure = new Error('startup admission failed');
+        const recorder = { captureId: 'capture-startup', enabled: () => true, bindRun: jest.fn(), observe: jest.fn(), finish: jest.fn() };
+        const base = createPlugin({ agentRunCoordinator: {
+            acquireChatLease: async () => { throw failure; },
+            acquirePageletTurnLease: async () => ({ release: jest.fn() }),
+        } });
+        const plugin = { ...base, settings: { ...base.settings, debug: true }, agentDebug: {
+            startRun: jest.fn<(input: { conversationId?: string; prompt: string; provider: string; model: string }) => typeof recorder>(() => recorder),
+        } };
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        await expect(service.streamLLM('inspect startup', jest.fn(), undefined, [], { conversationId: 'conversation' })).rejects.toBe(failure);
+        expect(plugin.agentDebug.startRun).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'conversation', prompt: 'inspect startup' }));
+        expect(recorder.bindRun).not.toHaveBeenCalled();
+        expect(recorder.observe).toHaveBeenCalledWith(expect.objectContaining({ phase: 'chat_startup_lease:error', status: 'failed' }));
+        expect(recorder.finish).toHaveBeenCalledWith('failed', expect.objectContaining({ message: 'startup admission failed' }));
+        expect(mockCreateChatModel).not.toHaveBeenCalled();
+        service.dispose();
+    });
+
+    it('keeps Agent delivery unchanged when the optional Debug recorder fails', async () => {
+        const fail = () => { throw new Error('Debug unavailable'); };
+        const base = createPlugin();
+        const plugin = { ...base, settings: { ...base.settings, debug: true }, agentDebug: { startRun: () => ({
+            captureId: 'broken-recorder', enabled: () => true, bindRun: fail, observe: fail, finish: fail,
+        }) } };
+        mockCreateChatModel.mockResolvedValue(createStreamModel('Business answer.'));
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const output: string[] = [];
+        await service.streamLLM('hello', chunk => output.push(chunk));
+        expect(output.join('')).toContain('Business answer.');
+        expect(mockCreateChatModel).toHaveBeenCalledTimes(1);
+        service.dispose();
+    });
+
     it.each(['correct', 'repeat'] as const)('keeps native source tools for one correction, then handles %s', async correction => {
         const prompt = '请读取当前笔记并解释';
         const file = { path: 'notes/current.md', name: 'current.md', basename: 'current', extension: 'md',

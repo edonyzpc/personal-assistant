@@ -1021,6 +1021,12 @@ describe('B-106 feature and permission Plugin integration', () => {
             surfacePendingPageletReviewsFolderMigration: jest.fn(),
             surfacePendingMemoryExtractionConsentMigration: jest.fn(),
             initializeMemorySubsystem: jest.fn(async () => undefined),
+            getAgentDebugIntegration: jest.fn(() => ({
+                initialize: jest.fn(async () => undefined),
+                settingsChanged: jest.fn(), viewHost: jest.fn(), sourceRevoked: jest.fn(),
+            })),
+            register: jest.fn(),
+            registerEvent: jest.fn(),
             statsIntegration: { initialize: jest.fn() },
             createChatHistoryStore: () => new MemoryChatHistoryStore(),
             addRibbonIcon: () => shellElement,
@@ -1033,6 +1039,7 @@ describe('B-106 feature and permission Plugin integration', () => {
             },
         });
         Object.assign(plugin.app.vault, { on: jest.fn(() => ({})) });
+        Object.assign(plugin.app, { metadataCache: { on: jest.fn(() => ({})) } });
         await expect(plugin.onload()).rejects.toBe(registrationComplete);
         const graphEntry = jest.spyOn(plugin, 'openGraphOptions');
         const imageEntry = jest.spyOn(plugin, 'openFeaturedImageOptions');

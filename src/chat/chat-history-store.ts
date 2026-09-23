@@ -35,12 +35,13 @@ import type {
 } from "../ai-services/chat-types";
 
 export const CHAT_HISTORY_SCHEMA_VERSION = 2;
-export const CHAT_HISTORY_IDB_VERSION = 3;
+export const CHAT_HISTORY_IDB_VERSION = 4;
 export const MAX_CONVERSATIONS = 50;
 
 const CONVERSATIONS_STORE = "conversations";
 const TURNS_STORE = "turns";
 const METADATA_STORE = "metadata";
+const DEBUG_DELETIONS_STORE = "debugDeletionOutbox";
 const ASSETS_STORE = "assets";
 const VARIANTS_STORE = "variants";
 const WRITING_VERSIONS_STORE = "writingVersions";
@@ -108,6 +109,9 @@ export interface PersistedTurn {
 }
 
 export interface ChatHistoryStore {
+    listDebugDeletions?(): Promise<ChatDebugDeletion[]>;
+    acknowledgeDebugDeletion?(id: string): Promise<void>;
+    onDebugDeletion?(listener: ChatDebugDeletionListener): () => void;
     initialize(): Promise<void>;
 
     listConversations(): Promise<PersistedConversation[]>;
@@ -167,6 +171,51 @@ export interface ChatHistoryStore {
     dispose(): Promise<void>;
 }
 
+/** Content-free intent committed atomically with the source deletion. */
+export interface ChatDebugDeletion {
+    id: string;
+    conversationId: string;
+    runIds?: string[];
+    deletedAt: number;
+    deleteConversation: boolean;
+}
+
+type ChatDebugDeletionListener = (event: {
+    conversationId: string; phase: "start" | "committed" | "failed";
+}) => void;
+
+let debugDeletionSequence = 0;
+function createDebugDeletion(conversationId: string, turns: readonly PersistedTurn[], deleteConversation: boolean): ChatDebugDeletion {
+    const runIds = turns.map((turn) => turn.assistant.agentExecution?.runId);
+    return {
+        id: `debug-delete:${Date.now()}:${++debugDeletionSequence}:${Math.random().toString(36).slice(2)}`,
+        conversationId,
+        ...(runIds.length && runIds.every((id): id is string => !!id) ? { runIds: [...new Set(runIds)] } : {}),
+        deletedAt: Date.now(),
+        deleteConversation,
+    };
+}
+
+class ChatDebugDeletionNotifications {
+    private readonly debugDeletionListeners = new Set<ChatDebugDeletionListener>();
+
+    onDebugDeletion(listener: ChatDebugDeletionListener): () => void {
+        this.debugDeletionListeners.add(listener);
+        return () => this.debugDeletionListeners.delete(listener);
+    }
+
+    protected async observeDeletion(conversationId: string, work: () => Promise<void>): Promise<void> {
+        const notify = (phase: "start" | "committed" | "failed") => {
+            for (const listener of this.debugDeletionListeners) {
+                try { listener({ conversationId, phase }); } catch { /* Debug cannot prevent source deletion. */ }
+            }
+        };
+        notify("start");
+        try { await work(); notify("committed"); }
+        catch (error) { notify("failed"); throw error; }
+    }
+}
+
 export function buildTurnRecordKey(conversationId: string, turnIndex: number): string {
     return `${conversationId}${TURN_KEY_SEPARATOR}${padTurnIndex(turnIndex)}`;
 }
@@ -183,7 +232,13 @@ function turnUpperBound(conversationId: string): string {
     return `${conversationId}${String.fromCharCode(TURN_KEY_SEPARATOR.charCodeAt(0) + 1)}`;
 }
 
-export class MemoryChatHistoryStore implements ChatHistoryStore {
+export class MemoryChatHistoryStore extends ChatDebugDeletionNotifications implements ChatHistoryStore {
+    private readonly debugDeletions = new Map<string, ChatDebugDeletion>();
+
+    async listDebugDeletions(): Promise<ChatDebugDeletion[]> {
+        return [...this.debugDeletions.values()].map((entry) => ({ ...entry, runIds: entry.runIds?.slice() }));
+    }
+    async acknowledgeDebugDeletion(id: string): Promise<void> { this.debugDeletions.delete(id); }
     private readonly conversations = new Map<string, PersistedConversation>();
     private readonly turns = new Map<string, PersistedTurn>();
     private activeConversationId: string | null = null;
@@ -221,11 +276,13 @@ export class MemoryChatHistoryStore implements ChatHistoryStore {
     }
 
     async deleteConversation(id: string): Promise<void> {
-        await this.deleteTurnsForConversation(id);
-        this.conversations.delete(id);
-        if (this.activeConversationId === id) {
-            this.activeConversationId = null;
-        }
+        await this.observeDeletion(id, async () => {
+            const deletion = createDebugDeletion(id, await this.getTurns(id), true);
+            await this.deleteTurnsForConversation(id);
+            this.conversations.delete(id);
+            if (this.activeConversationId === id) this.activeConversationId = null;
+            this.debugDeletions.set(deletion.id, deletion);
+        });
     }
 
     async getTurns(conversationId: string): Promise<PersistedTurn[]> {
@@ -263,27 +320,35 @@ export class MemoryChatHistoryStore implements ChatHistoryStore {
     }
 
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
-        const turn = this.turns.get(buildTurnRecordKey(conversationId, turnIndex));
-        const messageId = turn?.user.hostProvenance?.messageId;
-        if (messageId) this.removeImageTasks(conversationId, messageId);
-        this.turns.delete(buildTurnRecordKey(conversationId, turnIndex));
-        this.releaseTurnOwners(new Set([imageTurnOwnerId(conversationId, turnIndex)]));
-        this.pruneWriting(conversationId, turnIndex);
+        await this.observeDeletion(conversationId, async () => {
+            const turn = this.turns.get(buildTurnRecordKey(conversationId, turnIndex));
+            const deletion = createDebugDeletion(conversationId, turn ? [turn] : [], false);
+            const messageId = turn?.user.hostProvenance?.messageId;
+            if (messageId) this.removeImageTasks(conversationId, messageId);
+            this.turns.delete(buildTurnRecordKey(conversationId, turnIndex));
+            this.releaseTurnOwners(new Set([imageTurnOwnerId(conversationId, turnIndex)]));
+            this.pruneWriting(conversationId, turnIndex);
+            this.debugDeletions.set(deletion.id, deletion);
+        });
     }
 
     async deleteTurnsForConversation(conversationId: string): Promise<void> {
-        this.removeImageTasks(conversationId);
-        const lower = turnPrefix(conversationId);
-        const upper = turnUpperBound(conversationId);
-        const owners = new Set<string>();
-        for (const [key, turn] of Array.from(this.turns.entries())) {
-            if (key >= lower && key < upper) {
-                owners.add(imageTurnOwnerId(conversationId, turn.turnIndex));
-                this.turns.delete(key);
+        await this.observeDeletion(conversationId, async () => {
+            const deletion = createDebugDeletion(conversationId, await this.getTurns(conversationId), false);
+            this.removeImageTasks(conversationId);
+            const lower = turnPrefix(conversationId);
+            const upper = turnUpperBound(conversationId);
+            const owners = new Set<string>();
+            for (const [key, turn] of Array.from(this.turns.entries())) {
+                if (key >= lower && key < upper) {
+                    owners.add(imageTurnOwnerId(conversationId, turn.turnIndex));
+                    this.turns.delete(key);
+                }
             }
-        }
-        this.releaseTurnOwners(owners);
-        this.pruneWriting(conversationId);
+            this.releaseTurnOwners(owners);
+            this.pruneWriting(conversationId);
+            this.debugDeletions.set(deletion.id, deletion);
+        });
     }
 
     async pruneOldConversations(maxConversations: number): Promise<string[]> {
@@ -483,12 +548,21 @@ export class MemoryChatHistoryStore implements ChatHistoryStore {
     }
 }
 
-export class IndexedDbChatHistoryStore implements ChatHistoryStore {
+export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications implements ChatHistoryStore {
     private db: IDBDatabase | null = null;
     private initializing: Promise<void> | null = null;
     private generation = 0;
 
-    constructor(private readonly dbName: string, private readonly indexedDb: IDBFactory) { }
+    constructor(private readonly dbName: string, private readonly indexedDb: IDBFactory) { super(); }
+
+    async listDebugDeletions(): Promise<ChatDebugDeletion[]> {
+        return requestToPromise<ChatDebugDeletion[]>(this.getStore(DEBUG_DELETIONS_STORE, "readonly").getAll());
+    }
+    async acknowledgeDebugDeletion(id: string): Promise<void> {
+        await this.writeTransaction([DEBUG_DELETIONS_STORE], async (tx) => {
+            tx.objectStore(DEBUG_DELETIONS_STORE).delete(id);
+        });
+    }
 
     async initialize(): Promise<void> {
         if (this.db) return;
@@ -529,7 +603,7 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
     }
 
     async deleteConversation(id: string): Promise<void> {
-        await this.writeTransaction([CONVERSATIONS_STORE, METADATA_STORE, TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE,
+        await this.observeDeletion(id, () => this.writeTransaction([DEBUG_DELETIONS_STORE, CONVERSATIONS_STORE, METADATA_STORE, TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE,
             SAVE_RECEIPTS_STORE, IMAGE_GENERATION_TASKS_STORE, GENERATED_IMAGE_VERSIONS_STORE], async (transaction) => {
             await this.removeImageTasks(transaction, id);
             await this.removeTurns(transaction, id);
@@ -537,7 +611,8 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
             const metadataStore = transaction.objectStore(METADATA_STORE);
             const entry = await requestToPromise<{ key: string; value: string | null } | undefined>(metadataStore.get(ACTIVE_CONVERSATION_KEY));
             if (entry?.value === id) metadataStore.delete(ACTIVE_CONVERSATION_KEY);
-        });
+            transaction.objectStore(DEBUG_DELETIONS_STORE).put(createDebugDeletion(id, [], true));
+        }));
     }
 
     async renameConversationImageAnchors(oldPath: string, newPath: string): Promise<void> {
@@ -580,7 +655,7 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
     }
 
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
-        await this.writeTransaction([TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE, SAVE_RECEIPTS_STORE, METADATA_STORE,
+        await this.observeDeletion(conversationId, () => this.writeTransaction([DEBUG_DELETIONS_STORE, TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE, SAVE_RECEIPTS_STORE, METADATA_STORE,
             IMAGE_GENERATION_TASKS_STORE, GENERATED_IMAGE_VERSIONS_STORE], async (transaction) => {
             const key = buildTurnRecordKey(conversationId, turnIndex);
             const record = await requestToPromise<TurnRecord | undefined>(transaction.objectStore(TURNS_STORE).get(key));
@@ -589,15 +664,19 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
             await this.removeTurnOwners(transaction, new Set([imageTurnOwnerId(conversationId, turnIndex)]));
             transaction.objectStore(TURNS_STORE).delete(key);
             await this.pruneWriting(transaction, conversationId, turnIndex);
-        });
+            transaction.objectStore(DEBUG_DELETIONS_STORE).put(createDebugDeletion(conversationId, record ? [record.turn] : [], false));
+        }));
     }
 
     async deleteTurnsForConversation(conversationId: string): Promise<void> {
-        await this.writeTransaction([TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE, SAVE_RECEIPTS_STORE,
+        await this.observeDeletion(conversationId, () => this.writeTransaction([DEBUG_DELETIONS_STORE, TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE, SAVE_RECEIPTS_STORE,
             METADATA_STORE, IMAGE_GENERATION_TASKS_STORE, GENERATED_IMAGE_VERSIONS_STORE], async (transaction) => {
+            const range = makeIDBKeyRange().bound(turnPrefix(conversationId), turnUpperBound(conversationId), false, true);
+            const records = await requestToPromise<TurnRecord[]>(transaction.objectStore(TURNS_STORE).getAll(range));
             await this.removeImageTasks(transaction, conversationId);
             await this.removeTurns(transaction, conversationId);
-        });
+            transaction.objectStore(DEBUG_DELETIONS_STORE).put(createDebugDeletion(conversationId, records.map(({ turn }) => turn), false));
+        }));
     }
 
     async pruneOldConversations(maxConversations: number): Promise<string[]> {
@@ -913,6 +992,9 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
                 if (!db.objectStoreNames.contains(METADATA_STORE)) {
                     db.createObjectStore(METADATA_STORE, { keyPath: "key" });
                 }
+                if (!db.objectStoreNames.contains(DEBUG_DELETIONS_STORE)) {
+                    db.createObjectStore(DEBUG_DELETIONS_STORE, { keyPath: "id" });
+                }
                 for (const name of [ASSETS_STORE, VARIANTS_STORE, WRITING_VERSIONS_STORE, SAVE_RECEIPTS_STORE]) {
                     if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: "id" });
                 }
@@ -1034,6 +1116,9 @@ export class UnavailableChatHistoryStore implements ChatHistoryStore {
     async initialize(): Promise<void> {
         throw this.error;
     }
+
+    async listDebugDeletions(): Promise<ChatDebugDeletion[]> { throw this.error; }
+    async acknowledgeDebugDeletion(_id: string): Promise<void> { throw this.error; }
 
     async listConversations(): Promise<PersistedConversation[]> {
         throw this.error;

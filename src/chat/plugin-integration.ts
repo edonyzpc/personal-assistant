@@ -36,6 +36,8 @@ export interface ChatPluginSourceCapability {
 }
 
 export interface ChatHostActions {
+    openAgentDebug?: ChatHost["openAgentDebug"];
+    recordAgentDebugTextCommitted?: ChatHost["recordAgentDebugTextCommitted"];
     isOperationsAgentEnabled(): boolean;
     log(message: string, ...args: unknown[]): void;
     getAISetupIssue(): string | null;
@@ -296,6 +298,8 @@ export class ChatPluginIntegration {
         const actions = this.dependencies.hostActions;
         return {
             app: this.dependencies.app,
+            openAgentDebug: actions.openAgentDebug,
+            recordAgentDebugTextCommitted: actions.recordAgentDebugTextCommitted,
             settings: this.dependencies.getSettings(),
             get isOperationsAgentEnabled() {
                 return actions.isOperationsAgentEnabled();

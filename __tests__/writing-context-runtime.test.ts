@@ -157,7 +157,8 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
     } catch (caught) { error = caught; }
     finally { runtime.dispose(); versions.dispose(); }
     return { events, lifecycle, inputs, serializedInputs, images, pagelet, parent, schemas, prepareStyle, createModel, error, retryErrors, log: host.log as jest.Mock,
-        revokeStyle: () => { styleCurrent = false; }, revokePersonal: () => { personalCurrent = false; } };
+        revokeStyle: () => { styleCurrent = false; }, revokePersonal: () => { personalCurrent = false; },
+        setDebug: (enabled: boolean) => { host.settings.debug = enabled; } };
 }
 
 describe('native writing context runtime integration', () => {
@@ -192,11 +193,23 @@ describe('native writing context runtime integration', () => {
         expect(JSON.stringify(traces)).not.toContain('Authorized personal background');
     });
 
-    it('does not attach HTTP trace observers to runtime models with debug disabled', async () => {
+    it('keeps the installed HTTP hook silent until Debug is enabled and stops it again when disabled', async () => {
         const result = await runScenario('ordinary');
         expect(result.inputs).toHaveLength(1);
-        expect(result.createModel.mock.calls.every(([, options]) => !options?.onProviderRequestTrace)).toBe(true);
+        const options = result.createModel.mock.calls[0][1]!;
+        const event = { requestId: 'dynamic-hook', phase: 'http_dispatch' as const, transport: 'native' as const,
+            timestamp: 1, elapsedMs: 0 };
+        expect(options.isProviderRequestTraceEnabled?.()).toBe(false);
+        options.onProviderRequestTrace?.(event);
         expect(result.log.mock.calls.some(([message]) => message === 'PA Agent trace')).toBe(false);
+        result.setDebug(true);
+        expect(options.isProviderRequestTraceEnabled?.()).toBe(true);
+        options.onProviderRequestTrace?.(event);
+        expect(result.log).toHaveBeenCalledWith('PA Agent trace', expect.objectContaining({ phase: 'http_dispatch', requestId: 'dynamic-hook' }));
+        result.log.mockClear(); result.setDebug(false);
+        expect(options.isProviderRequestTraceEnabled?.()).toBe(false);
+        options.onProviderRequestTrace?.(event);
+        expect(result.log).not.toHaveBeenCalled();
     });
 
     it('keeps a non-enumerable Personal source receipt across style projection and runtime cleanup', async () => {

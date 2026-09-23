@@ -117,6 +117,8 @@ const FEATURED_IMAGE_MODELS: readonly FeaturedImageModel[] = [
 const FEATURED_IMAGE_COUNT_MAX = 4;
 
 export interface DataBoundarySettings {
+    /** Content-free permission epoch; narrowing then widening cannot revive revoked copies. */
+    sourceRevocationEpoch?: string;
     excludedFolders: string[];
     excludedTags: string[];
     generatedNotePolicy: GeneratedNotePolicy;
@@ -846,6 +848,9 @@ function normalizeEnumStringArray<T extends readonly string[]>(
 export function mergeDataBoundarySettings(loaded: unknown): DataBoundarySettings {
     const loadedObject = isRecord(loaded) ? loaded : {};
     return {
+        ...(typeof loadedObject.sourceRevocationEpoch === "string"
+            && /^[a-zA-Z0-9:_-]{1,128}$/.test(loadedObject.sourceRevocationEpoch)
+            ? { sourceRevocationEpoch: loadedObject.sourceRevocationEpoch } : {}),
         excludedFolders: normalizeTrimmedStringArray(loadedObject.excludedFolders, DATA_BOUNDARY_DEFAULTS.excludedFolders),
         excludedTags: normalizeTrimmedStringArray(loadedObject.excludedTags, DATA_BOUNDARY_DEFAULTS.excludedTags),
         generatedNotePolicy: normalizeDataBoundaryGeneratedNotePolicy(loadedObject.generatedNotePolicy),

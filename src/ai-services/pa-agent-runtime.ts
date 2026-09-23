@@ -7,6 +7,9 @@ import type {
 import type { AiServiceHost, RetrievalOptimizationFlags } from "./AiServiceHost";
 import type { MemoryMode } from "../memory-manager";
 import { createAgentDebugLog, createAgentEventDebugObserver, describeAgentError, traceAgentPhase } from './pa-agent-debug';
+import type { AgentDebugCallScope, AgentDebugRunRecorder } from './agent-debug-port';
+import { agentDebugError, agentDebugNow, createAgentDebugCall, observeAgentDebugCall,
+    observeAgentDebugLifecycle, observeAgentDebugPhase, observeAgentDebugResponse } from './agent-debug-observation';
 import { getProviderAdmissionError, ProviderAdmissionError, ProviderInputReprepareRequiredError } from './provider-admission-error';
 import { resolveB125RetrievalOptimizationFlags } from "../retrieval-optimization-platform-policy";
 import type { PageletChatHandoffContext } from "./pagelet-handoff";
@@ -209,6 +212,8 @@ export interface PaAgentRunOptions {
 }
 
 export interface PaAgentStreamOptions extends PaAgentRunOptions {
+    /** Explicit Chat ownership; standalone/background runs never inherit a global observer. */
+    debugRecorder?: AgentDebugRunRecorder;
     /** Debug correlation with the service's pre-runtime lease wait. Never enters model input. */
     debugRequestId?: string;
     /** Host-only writing output selection. Production Chat enables native after B-135 validation. */
@@ -998,9 +1003,14 @@ export class PaAgentRuntime {
         };
 
         const runId = createAgentRunId();
+        const debugRecorder = options.debugRecorder;
+        try { debugRecorder?.bindRun(runId); } catch { /* Debug cannot affect runtime admission. */ }
         const debugEnabled = () => this.host.settings.debug === true;
         const debug = createAgentDebugLog(debugEnabled,
-            (message, fields) => this.host.log(message, fields),
+            (message, fields) => {
+                observeAgentDebugPhase(debugRecorder, String(fields.phase), fields);
+                this.host.log(message, fields);
+            },
             { runId, chatRequestId: options.debugRequestId, turnId: null });
         const debugLifecycle = createAgentEventDebugObserver(debug);
         debug('runtime_start', { model: this.host.settings.chatModelName, provider: this.host.settings.aiProvider,
@@ -1625,9 +1635,18 @@ export class PaAgentRuntime {
                 transcript: vaultObservationProjection.transcript,
             }, definitions, schemas, vaultObservationProjection, stableProviderJson(sourceHistory), managementProjection);
         };
+        const debugModelIdentity = () => ({ provider: this.host.settings.aiProvider, model: this.host.settings.chatModelName });
         const model: PaAgentModel = {
             reportsProviderRequestStart: true,
             stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
+                const debugCall = createAgentDebugCall(debugRecorder, {
+                    parentId: input.turnId, turnId: input.turnId, purpose: "answer",
+                    ...debugModelIdentity(),
+                    lineage: { unknown: true },
+                    getAttachments: imageScope ? () => imageScope.debugAttachments() : undefined,
+                });
+                let debugConsumerEnded = false;
+                let debugProviderCompletion: string | undefined;
                 try {
                 if (!additionalProvidersLoaded) {
                     additionalProvidersLoaded = true;
@@ -1666,6 +1685,7 @@ export class PaAgentRuntime {
                         transport: "native",
                         qwenRequestOptions: options.qwenRequestOptions,
                         providerRequestScope,
+                        agentDebugCall: debugCall,
                         prepareProviderRequest: async signal => {
                             await traceAgentPhase(debug, 'provider_source_prepare', async () => {
                                 if (!attempt.binding) throw new Error("Answer vault observation projection is not bound");
@@ -1698,8 +1718,8 @@ export class PaAgentRuntime {
                         onProviderRequestFailed: input.notifyProviderRequestFailed,
                         onProviderRequestDiagnostic: requestDiagnostic("answer", input.turnId),
                         isProviderRequestTraceEnabled: debugEnabled,
-                        ...(debugEnabled() ? { onProviderRequestTrace: (event: import('./obsidian-fetch').ProviderRequestTrace) =>
-                            debug(event.phase, { ...event, stage: 'answer', turnId: input.turnId }) } : {}),
+                        onProviderRequestTrace: (event: import('./obsidian-fetch').ProviderRequestTrace) =>
+                            debug(event.phase, { ...event, stage: 'answer', turnId: input.turnId }),
                     });
                 const llm = await traceAgentPhase(debug, 'model_create', () => createAnswerModel(streamAttempt), { turnId: input.turnId });
                 if (nativeWritingRequest && !asNativeToolBindableModel(llm)) {
@@ -1763,6 +1783,12 @@ export class PaAgentRuntime {
                     // Summary models are tool-free and share the run's provider request scope.
                     // Revalidate each tool source after model construction, immediately before dispatch.
                     const invokeForSource = (source?: PaAgentToolSummarySource, history?: readonly ChatMessage[]): PaAgentSummaryInvoke => async (payload, signal) => {
+                        const summaryCall = createAgentDebugCall(debugRecorder, {
+                            parentId: input.turnId, turnId: input.turnId, purpose: "context_summary",
+                            ...debugModelIdentity(),
+                            lineage: { unknown: true },
+                        });
+                        try {
                         interface SummaryVaultBinding {
                             projection: VaultObservationProjection;
                             serializedInput: string;
@@ -1778,6 +1804,7 @@ export class PaAgentRuntime {
                         const summaryModel = await planner.createFinalAnswerModel(0, {
                             transport: "native", maxTokens: payload.maxOutputTokens,
                             qwenRequestOptions: { enableThinking: false }, providerRequestScope,
+                            agentDebugCall: summaryCall,
                             prepareProviderRequest: async prepareSignal => {
                                 if (!summaryVaultState.binding) throw new Error("Summary vault observation projection is not bound");
                                 await summaryVaultState.binding.projection.binding.prepare(prepareSignal);
@@ -1815,8 +1842,8 @@ export class PaAgentRuntime {
                                 summaryVaultState.binding.managementProjection?.binding.assertCurrent();
                             },
                             onProviderRequestDiagnostic: requestDiagnostic("context_summary", input.turnId),
-                            ...(debugEnabled() ? { onProviderRequestTrace: (event: import('./obsidian-fetch').ProviderRequestTrace) =>
-                                debug(event.phase, { ...event, stage: 'context_summary', turnId: input.turnId }) } : {}),
+                            onProviderRequestTrace: (event: import('./obsidian-fetch').ProviderRequestTrace) =>
+                                debug(event.phase, { ...event, stage: 'context_summary', turnId: input.turnId }),
                             isProviderRequestTraceEnabled: debugEnabled,
                         });
                         assertRequestCurrent(signal);
@@ -1902,7 +1929,14 @@ export class PaAgentRuntime {
                         }
                         modelCalls++;
                         const response = await summaryModel.invoke(payload.messages, { signal });
+                        observeAgentDebugResponse(summaryCall, response);
+                        observeAgentDebugCall(summaryCall, { phase: "consumer_end", status: "completed",
+                            timing: { event: "consumer_end", at: agentDebugNow() } });
                         return stringifyChunkContent(response);
+                        } catch (error) {
+                            observeAgentDebugCall(summaryCall, { phase: "error", status: signal?.aborted ? "cancelled" : "failed", error: agentDebugError(error) });
+                            throw error;
+                        }
                     };
                     try {
                         const outerManagementProjection = await prepareManagementProjection(
@@ -1970,6 +2004,7 @@ export class PaAgentRuntime {
                 // still gets the answer instead of a hard runtime error.
                 for await (const chunk of streamWithInvokeFallback({
                     chain,
+                    debugCall,
                     input: canonicalAnswer.providerInput,
                     // The loop-owned signal links user cancellation with the
                     // current soft/hard deadline. The outer request signal
@@ -2014,6 +2049,7 @@ export class PaAgentRuntime {
                         );
                     },
                 })) {
+                    if (chunk.type === "provider_completion") debugProviderCompletion = chunk.completion;
                     const providerUsage = readProviderUsageDiagnostic(chunk);
                     if (providerUsage) {
                         contextManager.recordProviderUsage(providerUsage);
@@ -2022,12 +2058,25 @@ export class PaAgentRuntime {
                 }
                 if (imageScope?.hasSelectedImages) options.imageCapability?.onSuccess();
                 debug('llm_stream:end', { turnId: input.turnId });
+                observeAgentDebugCall(debugCall, { phase: "consumer_end", status: "completed",
+                    timing: { event: "consumer_end", at: agentDebugNow() } });
+                debugConsumerEnded = true;
                 } catch (error) {
-                    debug('llm_stream:error', { turnId: input.turnId, ...describeAgentError(error) });
+                    const debugErrorStatus = debugProviderCompletion === "stop" ? "completed" : input.signal?.aborted ? "cancelled" : "failed";
+                    observeAgentDebugCall(debugCall, { phase: "error", status: debugErrorStatus, error: agentDebugError(error),
+                        ...(debugProviderCompletion ? { missingReason: "transport_ended_after_completion" } : {}),
+                        timing: { event: "consumer_end", at: agentDebugNow() } });
+                    debugConsumerEnded = true;
+                    debug('llm_stream:error', { turnId: input.turnId, status: debugErrorStatus, ...describeAgentError(error) });
                     if (!imageScope?.hasImages || isAbortError(error, input.signal) || error instanceof PaAgentContextOverflowError) throw error;
                     options.imageCapability?.onError(error);
                     throw error instanceof ChatImageRequestError ? error
                         : new ChatImageRequestError(isStructuredImageUnsupportedError(error) ? "unsupported_model" : "provider_failed");
+                } finally {
+                    if (!debugConsumerEnded) observeAgentDebugCall(debugCall, {
+                        phase: "consumer_end", status: debugProviderCompletion ? "completed" : input.signal?.aborted ? "cancelled" : "partial",
+                        missingReason: "consumer_closed_before_eof", timing: { event: "consumer_end", at: agentDebugNow() },
+                    });
                 }
             },
         };
@@ -2041,6 +2090,9 @@ export class PaAgentRuntime {
             providerRequestScope,
             memoryPreparationOwnerSignal,
             getMemoryRequestDiagnostic: (turnId) => (stage) => requestDiagnostic(stage, turnId),
+            getMemoryDebugScope: (turnId, toolCallId) => debugRecorder ? {
+                recorder: debugRecorder, parentId: `${turnId}:tool:${toolCallId}`, turnId,
+            } : undefined,
             currentMemoryUsage,
             memoryActionRequest,
             revalidateMemorySearch: (result, signal, temporalFilter, temporalAudit, guard) => (
@@ -2298,6 +2350,7 @@ export class PaAgentRuntime {
                 },
             },
             onEvent: (event) => {
+                observeAgentDebugLifecycle(debugRecorder, event);
                 if (this.host.settings.debug) {
                     try { debugLifecycle(event); } catch { /* Keep diagnostic failures outside lifecycle delivery. */ }
                 }
@@ -3204,6 +3257,7 @@ export async function* streamWithInvokeFallback(args: {
     prepareInvokeInput?: () => unknown | PromiseLike<unknown>;
     /** Emitted for each attempted request, never for preliminary projections. */
     requestDiagnostics?: (input: unknown) => Array<Record<string, unknown>>;
+    debugCall?: AgentDebugCallScope;
 }): AsyncGenerator<PaAgentModelStreamChunk, void, unknown> {
     const { chain, input, signal, onFallback } = args;
     const streamedToolNames = args.streamedToolNames ?? new Map<string, string>();
@@ -3221,7 +3275,7 @@ export async function* streamWithInvokeFallback(args: {
                 ? await args.prepareInvokeInput()
                 : input;
             throwIfAborted(signal);
-            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics, args.captureToolIdentity);
+            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics, args.captureToolIdentity, args.debugCall);
             return;
         }
         throw error;
@@ -3230,19 +3284,32 @@ export async function* streamWithInvokeFallback(args: {
     yield* requestDiagnosticChunks(args.requestDiagnostics, input);
 
     try {
+        let firstContent = true;
+        let firstText = true;
         for await (const chunk of stream) {
             throwIfAborted(signal);
+            observeAgentDebugResponse(args.debugCall, chunk, "delta", "stream");
             const chunkCompletion = readProviderCompletion(chunk);
             const providerUsage = extractProviderUsage(chunk);
             if (providerUsage) {
                 yield { type: "diagnostic", diagnostic: { type: "provider_usage", usage: providerUsage } };
             }
             const reasoning = getReasoningContent(chunk);
+            const content = stringifyChunkContent(chunk);
+            if (firstContent && (reasoning || content)) {
+                firstContent = false;
+                observeAgentDebugCall(args.debugCall, { phase: "first_model_content",
+                    timing: { event: "first_model_content", at: agentDebugNow() } });
+            }
+            if (firstText && content) {
+                firstText = false;
+                observeAgentDebugCall(args.debugCall, { phase: "first_provider_text",
+                    timing: { event: "first_provider_text", at: agentDebugNow() } });
+            }
             if (reasoning) {
                 receivedAnyVisibleOutput = true;
                 yield { type: "thinking_delta", text: reasoning };
             }
-            const content = stringifyChunkContent(chunk);
             if (content) {
                 receivedAnyVisibleOutput = true;
                 yield { type: "text_delta", text: content };
@@ -3256,6 +3323,8 @@ export async function* streamWithInvokeFallback(args: {
             // even if advancing the transport subsequently fails.
             if (chunkCompletion && chunkCompletion !== providerCompletion) {
                 providerCompletion = chunkCompletion;
+                observeAgentDebugCall(args.debugCall, { phase: "provider_completion", outcome: providerCompletion,
+                    timing: { event: "provider_completion", at: agentDebugNow() } });
                 yield { type: "provider_completion", completion: providerCompletion };
             }
         }
@@ -3266,7 +3335,7 @@ export async function* streamWithInvokeFallback(args: {
                 ? await args.prepareInvokeInput()
                 : input;
             throwIfAborted(signal);
-            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics, args.captureToolIdentity);
+            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics, args.captureToolIdentity, args.debugCall);
             return;
         }
         throw error;
@@ -3280,6 +3349,7 @@ async function* invokeAsModelChunks(
     streamedToolNames: Map<string, string>,
     requestDiagnostics?: (input: unknown) => Array<Record<string, unknown>>,
     captureToolIdentity = false,
+    debugCall?: AgentDebugCallScope,
 ): AsyncGenerator<PaAgentModelStreamChunk, void, unknown> {
     let response: unknown;
     try {
@@ -3290,6 +3360,7 @@ async function* invokeAsModelChunks(
     }
     yield* requestDiagnosticChunks(requestDiagnostics, input);
     throwIfAborted(signal);
+    observeAgentDebugResponse(debugCall, response, "replace", "invoke");
     const providerUsage = extractProviderUsage(response);
     if (providerUsage) {
         yield { type: "diagnostic", diagnostic: { type: "provider_usage", usage: providerUsage } };
@@ -3299,6 +3370,10 @@ async function* invokeAsModelChunks(
         yield { type: "thinking_delta", text: reasoning };
     }
     const content = stringifyChunkContent(response);
+    if (reasoning || content) observeAgentDebugCall(debugCall, { phase: "first_model_content",
+        timing: { event: "first_model_content", at: agentDebugNow() } });
+    if (content) observeAgentDebugCall(debugCall, { phase: "first_provider_text",
+        timing: { event: "first_provider_text", at: agentDebugNow() } });
     if (content) {
         yield { type: "text_delta", text: content };
     }
@@ -3306,7 +3381,11 @@ async function* invokeAsModelChunks(
         yield toolDelta;
     }
     const completion = readProviderCompletion(response);
-    if (completion) yield { type: "provider_completion", completion };
+    if (completion) {
+        observeAgentDebugCall(debugCall, { phase: "provider_completion", outcome: completion,
+            timing: { event: "provider_completion", at: agentDebugNow() } });
+        yield { type: "provider_completion", completion };
+    }
 }
 
 function* requestDiagnosticChunks(

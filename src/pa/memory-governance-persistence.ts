@@ -315,6 +315,8 @@ export interface MemoryForgetOperation {
     partition: MemoryPartitionKey;
     suppressionMarkerIds: string[];
     targets: Array<{ projectionLinkId: string; state: "pending" | "done" }>;
+    /** Missing on older pending operations means this cleanup still needs to run. */
+    debugCopiesRedacted?: boolean;
     phase: "blocked" | "claim_redacted" | "linked_copies_redacted"
         | "recovery_payloads_redacted" | "projections_reconciled";
     attemptCount: number;
@@ -1222,6 +1224,7 @@ function parsePendingOperation(value: unknown): MemoryPendingOperation | null {
             partition,
             suppressionMarkerIds: markerIds,
             targets: targets.value,
+            ...(value.debugCopiesRedacted === true ? { debugCopiesRedacted: true } : {}),
             phase: value.phase,
             attemptCount: value.attemptCount,
             createdAt,

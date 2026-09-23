@@ -71,6 +71,7 @@ export interface PaAgentCapabilityToolExecutorOptions {
     /** Shared by every Provider request in one logical Agent run. */
     providerRequestScope?: ProviderRequestScope;
     getMemoryRequestDiagnostic?: (turnId: string) => import("./memory-search-tool").MemorySearchRequestDiagnostic;
+    getMemoryDebugScope?: (turnId: string, toolCallId: string) => import("./memory-search-tool").MemorySearchDebugScope | undefined;
     /** Run-owned lifetime for detached DEC-028 Memory preparation. */
     memoryPreparationOwnerSignal?: AbortSignal;
     currentMemoryUsage?: () => MemoryManagementCurrentUsageInput | undefined;
@@ -644,6 +645,7 @@ export function createPaAgentCapabilityToolExecutor(
                                 absoluteDeadlineMs: attempt.absoluteDeadlineMs,
                                 providerRequestScope: options.providerRequestScope,
                                 providerRequestDiagnostic: options.getMemoryRequestDiagnostic?.(input.turnId),
+                                debugScope: options.getMemoryDebugScope?.(input.turnId, toolCall.id),
                                 memoryPreparationOwnerSignal: options.memoryPreparationOwnerSignal,
                             })
                             : createRelaxedMemorySearchInvocation(attempt.seed, {
@@ -652,6 +654,7 @@ export function createPaAgentCapabilityToolExecutor(
                                 absoluteDeadlineMs: attempt.absoluteDeadlineMs,
                                 providerRequestScope: options.providerRequestScope,
                                 providerRequestDiagnostic: options.getMemoryRequestDiagnostic?.(input.turnId),
+                                debugScope: options.getMemoryDebugScope?.(input.turnId, toolCall.id),
                                 memoryPreparationOwnerSignal: options.memoryPreparationOwnerSignal,
                             });
                         return runWithMemorySearchInvocation(

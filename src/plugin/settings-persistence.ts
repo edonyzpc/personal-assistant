@@ -60,6 +60,10 @@ interface LegacyMemoryCompatibilityBarrierPort {
 }
 
 export interface SettingsPersistenceDependencies {
+    /** Synchronous invalidation only; observer failures must not block permission changes. */
+    onSourcePermissionRevoking?(): void;
+    onSourcePermissionCommitted?(): void;
+    onSourcePermissionFailed?(): void;
     loadData(): Promise<unknown>;
     saveData(data: unknown): Promise<void>;
     getAdapter(): SettingsDataAdapter;
@@ -121,6 +125,33 @@ function arraysEqual(left: string[], right: string[]): boolean {
     return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+interface SourcePermissionSnapshot {
+    excluded: string[];
+    generated: PluginManagerSettings["dataBoundary"]["generatedNotePolicy"];
+}
+
+function sourcePermissionSnapshot(settings: PluginManagerSettings): SourcePermissionSnapshot {
+    const boundary = settings.dataBoundary;
+    return {
+        excluded: [
+            ...(boundary?.excludedFolders ?? []).map((value) => `folder:${value}`),
+            ...(boundary?.excludedTags ?? []).map((value) => `tag:${value}`),
+            ...(settings.vssCacheExcludePath ?? []).map((value) => `memory:${value}`),
+        ],
+        generated: boundary?.generatedNotePolicy ?? "ask",
+    };
+}
+
+function sourcePermissionNarrowed(previous: SourcePermissionSnapshot, next: SourcePermissionSnapshot): boolean {
+    const rank = { "include-generated": 0, ask: 1, "exclude-generated": 2 };
+    return next.excluded.some((value) => !previous.excluded.includes(value))
+        || rank[next.generated] > rank[previous.generated];
+}
+
+function newSourceRevocationEpoch(): string {
+    return `source:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+}
+
 function readPageletMigrationFlag(): boolean {
     try {
         return getPlatformLocalStorage()?.getItem(PAGELET_MIGRATION_NOTICE_KEY) === "1";
@@ -138,6 +169,8 @@ function writePageletMigrationFlag(): void {
 }
 
 export class SettingsPersistence {
+    private persistedSourcePermission: SourcePermissionSnapshot | undefined;
+    private persistedSourceEpoch: string | undefined;
     private settings!: PluginManagerSettings;
     private settingsChangeListeners = new Set<() => void | Promise<void>>();
     private settingsSaveTail: Promise<void> | null = null;
@@ -161,6 +194,8 @@ export class SettingsPersistence {
 
     setCurrentSettingsForCompatibility(settings: PluginManagerSettings): void {
         this.settings = settings;
+        this.persistedSourcePermission = sourcePermissionSnapshot(settings);
+        this.persistedSourceEpoch = settings.dataBoundary?.sourceRevocationEpoch;
     }
 
     getSettingsSaveTailForCompatibility(): Promise<void> | null {
@@ -230,6 +265,8 @@ export class SettingsPersistence {
         this.legacyAiProviderMigration = classifyLegacyAiProviderMigration(loaded);
         this.pendingSimpleSettingsCanonicalization = hasDeprecatedSimpleSettingsFields(loaded);
         this.settings = mergeLoadedSettings(loaded);
+        this.persistedSourcePermission = sourcePermissionSnapshot(this.settings);
+        this.persistedSourceEpoch = this.settings.dataBoundary?.sourceRevocationEpoch;
         const rawPreferences = loaded && typeof loaded === "object"
             ? (loaded as Record<string, unknown>).learningPreferences
             : undefined;
@@ -347,6 +384,18 @@ export class SettingsPersistence {
         await this.notifySettingsChanged();
     }
 
+    /** File permission revocations survive a subsequent allow event and process restart. */
+    async recordSourceRevocation(): Promise<void> {
+        await this.enqueueWrite(async () => {
+            if (this.dependencies.isUnloading()) throw new Error("Plugin is unloading");
+            await this.saveSettingsData({
+                ...this.settings,
+                dataBoundary: { ...this.settings.dataBoundary, sourceRevocationEpoch: newSourceRevocationEpoch() },
+            });
+        });
+        await this.notifySettingsChanged();
+    }
+
     async setStatisticsSyncEnabled(enabled: boolean): Promise<void> {
         await this.enqueueWrite(async () => {
             if (this.dependencies.isUnloading()) throw new Error("Plugin is unloading");
@@ -432,10 +481,44 @@ export class SettingsPersistence {
     }
 
     async saveSettingsData(settingsSnapshot: PluginManagerSettings = this.settings): Promise<void> {
-        const canonical = omitDeprecatedSimpleSettingsFields(settingsSnapshot);
+        const permission = sourcePermissionSnapshot(settingsSnapshot);
+        const narrowed = this.persistedSourcePermission !== undefined
+            && sourcePermissionNarrowed(this.persistedSourcePermission, permission);
+        const epoch = narrowed ? newSourceRevocationEpoch() : settingsSnapshot.dataBoundary?.sourceRevocationEpoch;
+        const revoking = narrowed || epoch !== this.persistedSourceEpoch;
+        if (revoking) {
+            try { this.dependencies.onSourcePermissionRevoking?.(); } catch { /* Optional observer. */ }
+        }
+        const canonical = omitDeprecatedSimpleSettingsFields({
+            ...settingsSnapshot,
+            dataBoundary: { ...settingsSnapshot.dataBoundary, ...(epoch ? { sourceRevocationEpoch: epoch } : {}) },
+        });
+        const committed = () => {
+            this.persistedSourcePermission = permission;
+            this.persistedSourceEpoch = epoch;
+            if (epoch) this.settings.dataBoundary.sourceRevocationEpoch = epoch;
+            if (revoking) {
+                try { this.dependencies.onSourcePermissionCommitted?.(); } catch { /* Optional observer. */ }
+            }
+        };
+        try {
+            await this.saveCanonicalSettings(canonical, committed);
+        } catch (error) {
+            if (revoking) {
+                try { this.dependencies.onSourcePermissionFailed?.(); } catch { /* Optional observer. */ }
+            }
+            throw error;
+        }
+    }
+
+    private async saveCanonicalSettings(
+        canonical: ReturnType<typeof omitDeprecatedSimpleSettingsFields>,
+        committed: () => void,
+    ): Promise<void> {
         const barrier = this.dependencies.getLegacyMemoryCompatibilityBarrier();
         if (!barrier || !barrier.isActive() && !barrier.isFinalizing()) {
             await this.dependencies.saveData(canonical);
+            committed();
             this.pendingSimpleSettingsCanonicalization = false;
             return;
         }
@@ -461,6 +544,7 @@ export class SettingsPersistence {
         }
         this.dependencies.updateLegacyMemoryPayload(barrier.snapshot());
         await this.dependencies.synchronizeNonMemoryQueueFromPersisted(processed.readback);
+        committed();
         this.pendingSimpleSettingsCanonicalization = false;
     }
 

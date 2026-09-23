@@ -16,7 +16,7 @@ function cloneSettings(value: unknown): PluginManagerSettings {
     return JSON.parse(JSON.stringify(value)) as PluginManagerSettings;
 }
 
-function createOwner(initialData: Record<string, unknown>): SettingsPersistence {
+function createOwner(initialData: Record<string, unknown>, overrides: Partial<SettingsPersistenceDependencies> = {}): SettingsPersistence {
     let persisted = JSON.parse(JSON.stringify(initialData)) as Record<string, unknown>;
     const dependencies: SettingsPersistenceDependencies = {
         loadData: jest.fn(async () => JSON.parse(JSON.stringify(persisted)) as Record<string, unknown>),
@@ -55,6 +55,7 @@ function createOwner(initialData: Record<string, unknown>): SettingsPersistence 
         getPageletLocale: () => "en",
         createStatisticsVaultId: () => "settings-owner-test",
         log: jest.fn(),
+        ...overrides,
     };
     const owner = new SettingsPersistence(dependencies);
     owner.setCurrentSettingsForCompatibility(cloneSettings(DEFAULT_SETTINGS));
@@ -62,6 +63,56 @@ function createOwner(initialData: Record<string, unknown>): SettingsPersistence 
 }
 
 describe("B-143 settings persistence owner", () => {
+    it("keeps the Debug permission gate closed until the same settings write commits", async () => {
+        const write = deferred();
+        const revoking = jest.fn();
+        const committed = jest.fn();
+        const owner = createOwner({}, {
+            saveData: () => write.promise,
+            onSourcePermissionRevoking: revoking,
+            onSourcePermissionCommitted: committed,
+        });
+        await owner.loadSettings();
+        const save = owner.saveSettingsPermissions({ dataBoundary: { excludedTags: ["private"] } });
+        for (let i = 0; i < 4; i++) await Promise.resolve();
+        expect(revoking).toHaveBeenCalledTimes(1);
+        expect(committed).not.toHaveBeenCalled();
+        write.resolve();
+        await save;
+        expect(committed).toHaveBeenCalledTimes(1);
+        expect(owner.currentSettings.dataBoundary.sourceRevocationEpoch).toMatch(/^source:/);
+    });
+
+    it("reports a failed revocation commit without falsely reporting success", async () => {
+        const failed = jest.fn();
+        const committed = jest.fn();
+        const owner = createOwner({}, {
+            saveData: async () => { throw new Error("write uncertain"); },
+            onSourcePermissionFailed: failed,
+            onSourcePermissionCommitted: committed,
+        });
+        await owner.loadSettings();
+        await expect(owner.saveSettingsPermissions({ dataBoundary: { excludedTags: ["private"] } }))
+            .rejects.toThrow("write uncertain");
+        expect(failed).toHaveBeenCalledTimes(1);
+        expect(committed).not.toHaveBeenCalled();
+    });
+
+    it("keeps a durable source revocation epoch when a failed notification is followed by permission widening", async () => {
+        const owner = createOwner({});
+        await owner.loadSettings();
+        owner.onSettingsChanged(() => { throw new Error("observer failed"); });
+        await owner.saveSettingsPermissions({ dataBoundary: { excludedFolders: ["private"] } });
+        const epoch = owner.currentSettings.dataBoundary.sourceRevocationEpoch;
+        expect(epoch).toMatch(/^source:/);
+        await owner.saveSettingsPermissions({ dataBoundary: { excludedFolders: [] } });
+        await owner.loadSettings();
+        expect(owner.currentSettings.dataBoundary.excludedFolders).toEqual([]);
+        expect(owner.currentSettings.dataBoundary.sourceRevocationEpoch).toBe(epoch);
+        await owner.recordSourceRevocation();
+        expect(owner.currentSettings.dataBoundary.sourceRevocationEpoch).not.toBe(epoch);
+    });
+
     it("replaces defaults on load while live consumers follow the owner's current instance", async () => {
         const owner = createOwner({
             author: "loaded author",

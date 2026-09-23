@@ -74,6 +74,32 @@ import {
     type PersistedTurn,
 } from "../src/chat/chat-history-store";
 
+describe("B-145 Chat deletion outbox", () => {
+    it("commits the stable run identity with the deleted turn, and retains intent until acknowledged", async () => {
+        const factory = new FakeIndexedDbFactory();
+        const store = new IndexedDbChatHistoryStore("debug-outbox", factory as unknown as IDBFactory);
+        await store.initialize();
+        await store.appendTurn(makeTurn({ assistant: {
+            role: "assistant", content: "private result",
+            agentExecution: { runId: "run-original", state: "completed" },
+        } }));
+        const phases: string[] = [];
+        const detach = store.onDebugDeletion((event) => phases.push(event.phase));
+        await store.deleteTurn("conv-1", 0);
+        const [intent] = await store.listDebugDeletions();
+        expect(intent).toMatchObject({ conversationId: "conv-1", runIds: ["run-original"], deleteConversation: false });
+        expect(JSON.stringify(intent)).not.toContain("private result");
+        expect(phases).toEqual(["start", "committed"]);
+        expect(factory.db.transactionCalls.some((stores) => stores.includes("turns") && stores.includes("debugDeletionOutbox"))).toBe(true);
+        await store.appendTurn(makeTurn({ assistant: { role: "assistant", content: "new result",
+            agentExecution: { runId: "run-new", state: "completed" } } }));
+        expect((await store.listDebugDeletions())[0].runIds).toEqual(["run-original"]);
+        await store.acknowledgeDebugDeletion(intent.id);
+        expect(await store.listDebugDeletions()).toEqual([]);
+        detach();
+    });
+});
+
 function makeConversation(overrides: Partial<PersistedConversation> = {}): PersistedConversation {
     return {
         id: "conv-1",
@@ -311,8 +337,8 @@ describe("IndexedDbChatHistoryStore", () => {
         const store = new IndexedDbChatHistoryStore("chat-history-test", factory as unknown as IDBFactory);
         await store.initialize();
         expect(factory.openCalls).toBe(1);
-        // Original stores plus multimodal metadata, Blob cache and image generation records.
-        expect(factory.db.createObjectStoreCalls).toBe(9);
+        // Existing history/media stores plus the atomic Debug deletion outbox.
+        expect(factory.db.createObjectStoreCalls).toBe(10);
 
         await store.upsertConversation(makeConversation({ id: "c1", title: "Topic A" }));
         await store.upsertConversation(makeConversation({ id: "c2", title: "Topic B", updatedAt: "2026-05-29T11:00:00.000Z" }));
@@ -802,13 +828,13 @@ describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s
     });
 });
 
-it('adds v3 stores without removing v1 text history or metadata', async () => {
+it('adds current stores without removing v1 text history or metadata', async () => {
     const factory = new FakeIndexedDbFactory({ hasStores: true });
     factory.db.getStore('turns').set(buildTurnRecordKey('conv-1', 0), { key: buildTurnRecordKey('conv-1', 0), turn: makeTurn() });
     factory.db.getStore('metadata').set('schema-version', { key: 'schema-version', value: 1 });
     const store = new IndexedDbChatHistoryStore('existing', factory as unknown as IDBFactory);
     await store.initialize();
-    expect(factory.db.createObjectStoreCalls).toBe(6);
+    expect(factory.db.createObjectStoreCalls).toBe(7);
     expect((await store.getTurns('conv-1'))[0]).toEqual(makeTurn());
     expect(await store.getSchemaVersion()).toBe(1);
 });
