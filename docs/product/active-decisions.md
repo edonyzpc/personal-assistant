@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-041 | Agent 可视化 Debug 与本机历史 | Chat 阶段轨迹；正文/过滤 Prompt 最多 30 天并按容量淘汰最旧 Run；reasoning 留在会话内，删除联动，附件不复制 | [Decision](./decisions/dec-041-agent-debug-view-and-local-history.md), [设计文档](./specs/pa-agent-debug-view-product-spec.md) | 存储/性能无法满足边界，或需持久 reasoning、媒体本体、同步/导出及全后台覆盖 |
 | DEC-040 | 以完成任务为目标的可恢复 Agent | B-144 已交付普通 Chat 已读版本、自主恢复、单次模型/同步远程尝试默认 30 分钟；前后台受控并发且不因后台身份减预算；领域交付、真实结果、重载后用户继续 | [Decision](./decisions/dec-040-recoverable-agent-execution.md), [Product Spec](./specs/pa-recoverable-agent-execution-product-spec.md), [Runtime lifecycle](../architecture/pa-agent-runtime-lifecycle-plan.md) | 真实能力不支持已确认边界，或 Owner 要求跨重载自动续跑/改变成本与授权策略 |
 | DEC-039 | Plugin shell 行为保持重构与三项局部生命周期修复 | 正常功能/数据/权限/恢复不变，现有 Host 优先；先复现修复再迁移，不重排全局生命周期或追求启动提速 | [Decision](./decisions/dec-039-plugin-shell-refactor.md), [Product Spec](./specs/pa-plugin-shell-refactor-product-spec.md) | 真实证据要求扩大缺陷修复、改变行为/存储/权限/关键时序 |
 | DEC-038 | Chat 内置图片生成与连续编辑 | 显式/自然语言入口、Wan、独立或复用的统一图片连接、原图和版本保留、后台任务及有依据恢复；不自主增加付费生成 | [Decision](./decisions/dec-038-chat-image-generation.md), [Product Spec](./specs/pa-chat-image-generation-product-spec.md) | 接口或平台不能满足验收，或需新增 provider/外发/费用/同步边界 |

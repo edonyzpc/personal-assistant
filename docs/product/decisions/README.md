@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-041 | Agent Debug View and bounded local history | Accepted | Chat 阶段轨迹、正文与过滤 Prompt、最多 30 天加容量滚动淘汰、会话 reasoning、删除联动与媒体引用边界 | [Record](./dec-041-agent-debug-view-and-local-history.md) |
 | DEC-040 | Recoverable Agent task execution | Accepted | B-144 已交付已读版本、自主纠错、单次尝试默认 30 分钟、前后台完成导向与受控并发、writing 领域化、真实交付及重载后用户继续 | [Record](./dec-040-recoverable-agent-execution.md) |
 | DEC-039 | Behavior-preserving plugin shell refactor | Accepted | 保持完整正常功能，按状态/资源所有权逐片迁移；限定 Pagelet、metadata、Callout 生命周期修复，性能不设改进目标 | [Record](./dec-039-plugin-shell-refactor.md) |
 | DEC-038 | Chat image generation and unified image connection | Accepted | Wan 创建/参考/编辑、后台恢复、确切版本与复制下载；Chat/Featured Image 统一连接；透明确认与删聊天仅留文件 | [Record](./dec-038-chat-image-generation.md) |
