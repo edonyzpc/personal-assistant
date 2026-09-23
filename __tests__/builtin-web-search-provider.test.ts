@@ -24,6 +24,8 @@ type MockRequestUrlParam = { body?: unknown; headers?: Record<string, string> };
 
 describe("BuiltinWebSearchProvider", () => {
     it("can scope the DashScope WebSearch allowlist to the international endpoint", () => {
+        expect(BAILIAN_WEB_SEARCH_MCP_ENDPOINT).toBe("https://dashscope.aliyuncs.com/api/v1/mcps/EnhancedSearch/mcp");
+        expect(BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT).toBe("https://dashscope-intl.aliyuncs.com/api/v1/mcps/WebSearch/mcp");
         expect(createBailianWebSearchNetworkPolicy(BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT)).toMatchObject({
             allowedEndpoints: [BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT],
         });
@@ -127,6 +129,28 @@ describe("BuiltinWebSearchProvider", () => {
                 ok: false,
                 error: "WebSearch call limit reached for this turn.",
             });
+    });
+
+    it("keeps only the requested number of sources when the MCP returns more", async () => {
+        const provider = createProvider({
+            request: async () => ({
+                status: 200,
+                body: { results: [
+                    { title: "One", url: "https://example.com/one" },
+                    { title: "Two", url: "https://example.com/two" },
+                ] },
+            }),
+        });
+        const registry = createPaidCapabilityRegistry();
+        await registry.registerProvider(provider, createLoadContext());
+
+        const result = await registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "bounded", limit: 1 }, {
+            host: createPlugin(),
+            turnId: "turn-bounded",
+        });
+
+        expect(result.sourceRecords?.map((source) => source.url)).toEqual(["https://example.com/one"]);
+        expect(result.content).toMatchObject({ untrusted_web_results: [expect.objectContaining({ url: "https://example.com/one" })] });
     });
 
     it("drops inflight requests on abort and returns the documented cancel message", async () => {
@@ -361,7 +385,15 @@ describe("BuiltinWebSearchProvider", () => {
                 text: JSON.stringify({
                     jsonrpc: "2.0",
                     id: "tools-list",
-                    result: { tools: [{ name: "web_search" }] },
+                    result: { tools: [{
+                        name: "enhanced_search",
+                        inputSchema: {
+                            type: "object",
+                            properties: { query: { type: "string" }, count: { type: "integer" } },
+                            required: ["query"],
+                            additionalProperties: false,
+                        },
+                    }] },
                 }),
             }))
             .mockResolvedValueOnce(mockObsidianResponse({
@@ -403,7 +435,10 @@ describe("BuiltinWebSearchProvider", () => {
         });
         expect(requestUrlMock).toHaveBeenCalledTimes(4);
         expect(startRequest).toHaveBeenCalledTimes(4);
-        const requestBodies = requestUrlMock.mock.calls.map(([requestParam]) => JSON.parse(String(requestParam.body)) as { method: string });
+        const requestBodies = requestUrlMock.mock.calls.map(([requestParam]) => JSON.parse(String(requestParam.body)) as {
+            method: string;
+            params?: { name?: string; arguments?: Record<string, unknown> };
+        });
         expect(requestBodies.map((body) => body.method)).toEqual([
             "initialize",
             "notifications/initialized",
@@ -413,6 +448,46 @@ describe("BuiltinWebSearchProvider", () => {
         expect(requestUrlMock.mock.calls[2]?.[0].headers).toMatchObject({
             "mcp-session-id": "session-1",
         });
+        expect(requestBodies[3]?.params).toEqual({
+            name: "enhanced_search",
+            arguments: { query: "latest news", count: 2 },
+        });
+    });
+
+    it("does not call a search tool whose required arguments cannot be supplied", async () => {
+        const requestUrlMock = requestUrl as unknown as jest.MockedFunction<(request: MockRequestUrlParam) => Promise<unknown>>;
+        requestUrlMock.mockReset();
+        requestUrlMock
+            .mockResolvedValueOnce(mockObsidianResponse({
+                text: JSON.stringify({ jsonrpc: "2.0", id: "initialize", result: {} }),
+            }))
+            .mockResolvedValueOnce(mockObsidianResponse({ status: 202, text: "" }))
+            .mockResolvedValueOnce(mockObsidianResponse({
+                text: JSON.stringify({
+                    jsonrpc: "2.0", id: "tools-list", result: {
+                        tools: [{
+                            name: "enhanced_search",
+                            inputSchema: {
+                                type: "object",
+                                properties: { query: { type: "string" }, credential: { type: "string" } },
+                                required: ["query", "credential"],
+                            },
+                        }],
+                    },
+                }),
+            }));
+
+        const response = await requestBailianWebSearchMcp({
+            endpoint: BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
+            headers: { Authorization: "Bearer sk-SECRET_TOKEN_SENTINEL" },
+            body: { query: "latest news", limit: 2 },
+        }, {});
+
+        expect(response).toEqual({
+            status: 502,
+            body: { error: "WebSearch MCP search tool has an unsupported input schema." },
+        });
+        expect(requestUrlMock).toHaveBeenCalledTimes(3);
     });
 
     it("drains a timed-out physical MCP request before the next dispatch in the same run only", async () => {

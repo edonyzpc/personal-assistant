@@ -2,7 +2,7 @@
 
 Decision ID: DEC-001
 Status: Accepted
-Updated: 2026-07-12
+Updated: 2026-09-23
 Authority: PA Agent builtin remote WebSearch transport、allowlist、auth、redaction 与 abort 边界。
 Decision date: 2026-05-22
 Work item: Historical SPEC-05
@@ -17,9 +17,18 @@ Obsidian desktop and mobile both need a browser-compatible implementation. The o
 
 Use a narrow builtin HTTP adapter for Bailian WebSearch instead of adding the official MCP SDK in SPEC-05.
 
-The builtin allowlisted endpoint is:
+The builtin allowlisted endpoint for the China DashScope region is now the
+EnhancedSearch service, per the owner-requested 2026-09-23 update and
+[Bailian's connection guide](https://help.aliyun.com/zh/model-studio/token-plan-harness-tool):
 
-- `https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp`
+- `https://dashscope.aliyuncs.com/api/v1/mcps/EnhancedSearch/mcp`
+
+The existing international DashScope route retains
+`https://dashscope-intl.aliyuncs.com/api/v1/mcps/WebSearch/mcp` until Bailian
+documents an international EnhancedSearch endpoint. Both routes remain fixed
+in the plugin allowlist. EnhancedSearch requires a regular Bailian API key
+(`sk-...`), not a Token Plan model key (`sk-sp-...`); the current PA setting
+uses the configured DashScope key and does not introduce a second credential.
 
 The adapter presents an `AgentCapability` with:
 
@@ -42,7 +51,8 @@ The adapter must use `CapabilityRegistry.registerProvider(...)` so provider load
 - Do not support stdio, shell, local executables, local MCP servers, SSE bridges, or dynamic tool discovery.
 - Treat the remote response as buffered JSON. SPEC-05 does not require true streaming.
 - Enforce a per-request deadline and maximum serialized response size before building model observations or source records.
-- The narrow adapter uses the minimal Streamable HTTP JSON-RPC sequence needed for this builtin server: `initialize`, `notifications/initialized`, `tools/list`, then `tools/call`. The selected tool name is resolved from `tools/list` instead of hardcoding an unknown server-side function name.
+- Limit normalized web sources to the requested result count even when the remote service returns more.
+- The narrow adapter uses the minimal Streamable HTTP JSON-RPC sequence needed for this builtin server: `initialize`, `notifications/initialized`, `tools/list`, then `tools/call`. The selected tool name and supported query/result-count argument names are resolved from `tools/list` instead of hardcoding an unknown server-side function name or sending undeclared arguments. An unsupported search-tool schema is recoverable unavailable before `tools/call`.
 
 ## Auth Contract
 

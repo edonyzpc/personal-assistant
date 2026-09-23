@@ -33,7 +33,8 @@ import type { PrepareCapabilityArgumentsRepair } from "./capability-types";
 export const BUILTIN_WEB_SEARCH_PROVIDER_ID = "builtin-web-search";
 export const BUILTIN_WEB_SEARCH_TOOL_NAME = "webSearch";
 export const WEB_SEARCH_CANCELLED_MESSAGE = "Web search cancelled - request was already sent to the provider";
-export const BAILIAN_WEB_SEARCH_MCP_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp";
+export const BAILIAN_WEB_SEARCH_MCP_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/mcps/EnhancedSearch/mcp";
+// Bailian has not published an international EnhancedSearch endpoint.
 export const BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/mcps/WebSearch/mcp";
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
@@ -132,9 +133,13 @@ export async function requestBailianWebSearchMcp(
         return { status: toolsList.status >= 400 ? toolsList.status : 502, body: toolsList.body };
     }
 
-    const toolName = selectWebSearchMcpToolName(toolsList.body);
-    if (!toolName) {
+    const tool = selectWebSearchMcpTool(toolsList.body);
+    if (!tool) {
         return { status: 502, body: { error: "WebSearch MCP did not expose a search tool." } };
+    }
+    const toolArguments = createWebSearchMcpArguments(tool, input);
+    if (!toolArguments) {
+        return { status: 502, body: { error: "WebSearch MCP search tool has an unsupported input schema." } };
     }
 
     const toolCall = await postMcpJsonRpc(request, {
@@ -142,16 +147,12 @@ export async function requestBailianWebSearchMcp(
         id: "tools-call",
         method: "tools/call",
         params: {
-            name: toolName,
-            arguments: {
-                query: input.query,
-                limit: input.limit,
-                count: input.limit,
-            },
+            name: readString(tool.name),
+            arguments: toolArguments,
         },
     }, context, sessionId);
 
-    if (toolCall.status >= 400 || hasJsonRpcError(toolCall.body)) {
+    if (toolCall.status >= 400 || hasJsonRpcError(toolCall.body) || asRecord(asRecord(toolCall.body)?.result)?.isError === true) {
         return { status: toolCall.status >= 400 ? toolCall.status : 502, body: toolCall.body };
     }
 
@@ -295,7 +296,7 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
                     redactor: this.redactor,
                     providerId: this.id,
                 },
-            );
+            ).slice(0, parsed.limit);
             return {
                 status: "ok",
                 observation: {
@@ -591,14 +592,31 @@ function hasJsonRpcError(body: unknown): boolean {
     return Boolean(record?.error);
 }
 
-function selectWebSearchMcpToolName(body: unknown): string | null {
+function selectWebSearchMcpTool(body: unknown): Record<string, unknown> | null {
     const tools = readMcpTools(body);
-    const names = tools
-        .map((tool) => readString(tool.name))
-        .filter((name) => name.length > 0);
-    const exact = names.find((name) => ["web_search", "webSearch", "WebSearch", "search"].includes(name));
+    const exact = tools.find((tool) => ["web_search", "webSearch", "WebSearch", "search"].includes(readString(tool.name)));
     if (exact) return exact;
-    return names.find((name) => name.toLowerCase().includes("search")) ?? null;
+    return tools.find((tool) => readString(tool.name).toLowerCase().includes("search")) ?? null;
+}
+
+function createWebSearchMcpArguments(tool: Record<string, unknown>, input: WebSearchInput): Record<string, unknown> | null {
+    const schema = asRecord(tool.inputSchema);
+    if (!schema) return { query: input.query };
+    const properties = asRecord(schema.properties);
+    if (!properties) return null;
+    const queryKey = ["query", "search_query", "searchQuery", "q", "keywords"]
+        .find((key) => asRecord(properties[key])?.type === "string");
+    if (!queryKey) return null;
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    if (required.some((key) => key !== queryKey && !["limit", "count", "max_results", "maxResults"].includes(key))) {
+        return null;
+    }
+    const args: Record<string, unknown> = { [queryKey]: input.query };
+    const limitKeys = ["limit", "count", "max_results", "maxResults"];
+    const limitKey = limitKeys.find((key) => required.includes(key) && asRecord(properties[key])?.type === "integer")
+        ?? limitKeys.find((key) => asRecord(properties[key])?.type === "integer");
+    if (limitKey) args[limitKey] = input.limit;
+    return required.every((key) => typeof key === "string" && Object.prototype.hasOwnProperty.call(args, key)) ? args : null;
 }
 
 function readMcpTools(body: unknown): Array<Record<string, unknown>> {

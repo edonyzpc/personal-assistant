@@ -861,7 +861,7 @@
     "plugin.settings.qwen.thinking.name": "Show Qwen model thinking",
     "plugin.settings.qwen.thinking.desc": "Show the model thinking text returned by DashScope in this chat session. It is not added to the final answer, notes, or Memory.",
     "plugin.settings.qwen.webSearch.name": "Enable builtin WebSearch tool",
-    "plugin.settings.qwen.webSearch.desc": "Allow PA Agent to call the read-only builtin WebSearch tool. Search queries may be sent to DashScope WebSearch MCP and can produce web sources.",
+    "plugin.settings.qwen.webSearch.desc": "Allow PA Agent to use read-only web search. Queries are sent to DashScope search, may consume search quota or incur charges, and can return web sources.",
     "plugin.settings.advanced.title": "Advanced",
     "plugin.settings.advanced.desc": "Diagnostics, telemetry, and developer-facing toggles.",
     "plugin.settings.advanced.debug.name": "Debug",

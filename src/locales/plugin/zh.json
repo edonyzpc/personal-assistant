@@ -861,7 +861,7 @@
     "plugin.settings.qwen.thinking.name": "显示 Qwen 模型思考过程",
     "plugin.settings.qwen.thinking.desc": "显示 DashScope 在本次 Chat 会话中返回的模型思考文本。它不会加入最终回答、笔记或 Memory。",
     "plugin.settings.qwen.webSearch.name": "启用内置 WebSearch 工具",
-    "plugin.settings.qwen.webSearch.desc": "允许 PA Agent 调用只读内置 WebSearch 工具。搜索查询可能会发送给 DashScope WebSearch MCP，并可能产生网页来源。",
+    "plugin.settings.qwen.webSearch.desc": "允许 PA Agent 使用只读联网搜索。查询会发送给 DashScope 搜索服务，可能消耗搜索额度或产生费用，并返回网页来源。",
     "plugin.settings.advanced.title": "高级",
     "plugin.settings.advanced.desc": "诊断、遥测和面向开发者的开关。",
     "plugin.settings.advanced.debug.name": "Debug",
