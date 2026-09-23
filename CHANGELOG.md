@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.14](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.13...2.10.0-beta.14) (2026-09-23)
+
+### Features
+- add PA Agent debug trace and local history
+
+### Fix
+- capture: preserve Markdown in Record templates
+
+### Docs
+- capture B-145 design and validation
+- close out B-145 agent debug delivery
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
