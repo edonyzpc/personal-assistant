@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-09-22
+Updated: 2026-09-24
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -237,6 +237,9 @@ schema, source currentness and the generation-input snapshot before creating one
 artifact/version. Preview reads and saves nothing; saving remains an explicit
 confirmed Host action. Legacy JSON, recovery and persisted-version readers stay
 available for existing records.
+`report_task_incomplete` is a separate pure output for Chat and explicit Writing:
+it delivers an explanation without creating a work, cannot share a batch with
+other calls, and an invalid report receives bounded correction under the run budget.
 
 ### Operations Agent providers
 

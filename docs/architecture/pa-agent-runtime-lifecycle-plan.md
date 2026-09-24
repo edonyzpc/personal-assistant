@@ -1,10 +1,11 @@
 # PA Agent Runtime Lifecycle Contract
 
-Updated: 2026-09-22
+Updated: 2026-09-24
 
 Status: Current canonical lifecycle contract. The long implementation plan and phase evidence are archived at [pa-agent-runtime-lifecycle-plan-implementation-record.md](../archive/pa-agent-runtime-lifecycle-plan-implementation-record.md).
 
 [DEC-040](../product/decisions/dec-040-recoverable-agent-execution.md) and the [B-144 Product Spec](../product/specs/pa-recoverable-agent-execution-product-spec.md) define the recovery, 30-minute attempt, source snapshot, domain delivery and concurrency behavior implemented by B-144. This document is the current technical contract; source and regression tests remain the executable authority.
+[DEC-042](../product/decisions/dec-042-agent-task-source-boundary.md) supersedes the ordinary source-declaration protocol and binds Writing to explicit Chat operations.
 
 ## Run And Turn Model
 
@@ -123,22 +124,21 @@ aborted
 abort_timeout
 ```
 
-When an entire source batch is rejected before execution specifically for
-`invalid_declaration` or `invalid_instruction_quote`, Host Policy permits one
-declaration correction per run before generic tool-failure finalization. Every
-result must match the batch's native calls and carry the Host source-preflight
-rejection receipt. The next turn inherits the existing tool/source constraints
-and unchanged budgets, and must pass the same complete preflight again.
-Repeated errors, scope widening, revoked sources, unknown handles, partial
-results and already-finalizing runs do not receive this correction allowance.
-Reserved finalization never reopens tools.
+Ordinary note reads do not require `declare_source_scope`, `noteHandles`, or a
+model-declared user boundary. The Agent follows natural-language source
+instructions; the Host checks actual note identities, Data Boundary, enabled
+capabilities, and the complete batch before reading. It rechecks admitted
+source snapshots before physical provider requests and final answer delivery.
+A rejected batch executes no member. WebSearch also rechecks its live setting
+after any detached-request barrier, immediately before the physical send.
 
-`noteHandles` is required and nonempty only for `notes=selected`, and must be
-omitted for `current_note`, `vault` and `none`. Current-note identity is resolved
-by the Host. Tool execution uses native tool-call fields; textual XML/JSON
-examples remain ordinary data and never grant execution authority. The prompt
-forbids simulating tool execution in answer text, without stripping legitimate
-user-requested syntax examples from the response.
+The optional `report_task_incomplete` call is pure output for ordinary Chat and
+explicit Writing. It must be the only call and contain exactly one nonempty
+`answer` string. Invalid arguments or a mixed batch execute no other tools and
+receive bounded correction turns under the existing run budget; an accepted
+report supplies visible text and an `incomplete` terminal state without creating
+a Writing artifact. Tool execution uses native tool-call fields; textual
+XML/JSON examples remain ordinary data and never grant execution authority.
 
 ## Budgets And Timeouts
 
