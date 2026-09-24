@@ -1700,7 +1700,7 @@ export class PaAgentRuntime {
                 const schemas = schemaResult.ok && input.toolMode !== "final_answer_only"
                     ? schemaResult.schemas
                     : [];
-                if (!options.writingRequest && !hasOperationsStagedAcknowledgementInstruction(input.runtimeInstruction)) {
+                if (!hasOperationsStagedAcknowledgementInstruction(input.runtimeInstruction)) {
                     schemas.push(taskIncompleteOutputSchema());
                 }
                 const nativeContextHandle = currentWritingHandle();
@@ -2228,9 +2228,7 @@ export class PaAgentRuntime {
             userImages: options.images,
             writingRequest: options.writingRequest,
             isFinalTextCurrent: () => answerSourceValidity !== undefined && isPreviewCurrent(),
-            allowTaskIncompleteReport: options.writingRequest
-                ? false
-                : runtimeInstruction => !hasOperationsStagedAcknowledgementInstruction(runtimeInstruction),
+            allowTaskIncompleteReport: runtimeInstruction => !hasOperationsStagedAcknowledgementInstruction(runtimeInstruction),
             ...(nativeWritingRequest ? { nativeWriting: {
                 contextHandle: nativeWritingRequest.requestId,
                 ...(writingContextHost ? { getContextHandle: currentWritingHandle } : {}),
@@ -2636,10 +2634,9 @@ export class PaAgentRuntime {
         const nativeWritingRequest = options.writingOutputProtocol === "native" ? options.writingRequest : undefined;
         const nativeContextHandle = nativeWritingRequest
             ? (options.writingContextHost ? options.writingContextHandle : nativeWritingRequest.requestId) : undefined;
-        const mayReportIncomplete = !options.writingRequest
-            && !hasOperationsStagedAcknowledgementInstruction(input.runtimeInstruction);
+        const mayReportIncomplete = !hasOperationsStagedAcknowledgementInstruction(input.runtimeInstruction);
         let toolDefinitionsText = input.toolMode === "final_answer_only"
-            ? (nativeContextHandle ? "Only present_writing (pure output) is available. No source, context or action tools are available in this finalization turn."
+            ? (nativeContextHandle ? "Only present_writing or report_task_incomplete (pure outputs) are available. No source, context or action tools are available in this finalization turn."
                 : mayReportIncomplete ? "No source, context or action tools are available in this finalization turn."
                     : "No tools are available in this finalization turn.")
             : formatPlannerToolDefinitions(toolDefinitions ?? filterToolDefinitionsByToolUseConstraints(

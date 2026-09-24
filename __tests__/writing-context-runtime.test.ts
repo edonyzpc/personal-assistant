@@ -16,7 +16,7 @@ afterEach(() => jest.restoreAllMocks());
 
 const scene = { writingTask: 'email', purpose: 'invitation', audience: 'colleagues', domain: 'work' };
 const body = '  请来参加周五的分享。\n🌱\n';
-type Scenario = 'complete' | 'ordinary' | 'premature' | 'mixed' | 'revoked' | 'physical-retry' | 'image-subset' | 'image-empty' | 'schema-repair' | 'reselect' | 'new-topic' | 'personal-source' | 'personal-retry' | 'pagelet' | 'incomplete' | 'stale-insights';
+type Scenario = 'complete' | 'ordinary' | 'reported-incomplete' | 'premature' | 'mixed' | 'revoked' | 'physical-retry' | 'image-subset' | 'image-empty' | 'schema-repair' | 'reselect' | 'new-topic' | 'personal-source' | 'personal-retry' | 'pagelet' | 'incomplete' | 'stale-insights';
 
 async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = false, backgroundAdmission?: {
     change: 'live-refresh' | 'revoked-same-text' | 'unguarded-refresh'; writing: boolean;
@@ -97,6 +97,12 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
             inputs.push(text);
             serializedInputs.push(JSON.stringify(input));
             const turn = inputs.length;
+            if (scenario === 'reported-incomplete') {
+                yield new AIMessageChunk({ content: '', tool_call_chunks: [{ id: 'report', index: 0,
+                    name: 'report_task_incomplete', args: JSON.stringify({ answer: 'I cannot complete this writing task.' }) }] });
+                yield new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'tool_calls' } });
+                return;
+            }
             if (scenario === 'ordinary' || scenario === 'ordinary-revoked') {
                 yield new AIMessageChunk({ content: 'We can discuss the options first.' });
                 yield new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'stop' } });
@@ -353,6 +359,20 @@ describe('native writing context runtime integration', () => {
         expect(result.prepareStyle).not.toHaveBeenCalled();
         expect(result.events.some(event => event.kind === 'writing-artifact' || event.kind === 'writing-recovery')).toBe(false);
         expect(result.lifecycle.at(-1)).toMatchObject({ type: 'agent_end', status: 'completed' });
+    });
+
+    it('lets explicit Writing report an unfinished task without creating a work or recovery artifact', async () => {
+        const result = await runScenario('reported-incomplete');
+        expect(result.error).toBeUndefined();
+        expect(result.inputs).toHaveLength(1);
+        expect(result.schemas[0].map(schema => schema.function.name)).toContain('report_task_incomplete');
+        expect(result.lifecycle.at(-1)).toMatchObject({ type: 'agent_end', status: 'incomplete',
+            metadata: expect.objectContaining({ reason: 'agent_reported_incomplete' }) });
+        expect(result.events).toContainEqual(expect.objectContaining({
+            kind: 'answer-snapshot', snapshot: 'I cannot complete this writing task.',
+        }));
+        expect(result.events.some(event => event.kind === 'writing-artifact' || event.kind === 'writing-recovery')).toBe(false);
+        expect(result.prepareStyle).not.toHaveBeenCalled();
     });
 
     it('reports withheld ordinary Chat as incomplete when its generation sources change during streaming', async () => {

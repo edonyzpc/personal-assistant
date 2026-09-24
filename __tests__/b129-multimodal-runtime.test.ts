@@ -726,10 +726,12 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
         expect(JSON.stringify([f.events, f.lifecycle, f.host.log.mock.calls])).not.toContain("SECRET");
     });
 
-    it("keeps images and final JSON instructions in a reserved final turn with no bound tools", async () => {
+    it("keeps images and final JSON instructions in a reserved final turn with only the incomplete output tool", async () => {
         const f = fixture([{ text: envelope() }], { maxWallClockMs: 10_000, finalizationReserveMs: 10_000 });
         await f.run({ writingRequest: { requestId: "writing-1" } });
-        expect(f.requests).toHaveLength(1); expect(f.requests[0].tools ?? []).toHaveLength(0); expect(pixels(f.requests[0])).toHaveLength(1);
+        expect(f.requests).toHaveLength(1);
+        expect(f.requests[0].tools?.map(tool => tool.function.name)).toEqual(['report_task_incomplete']);
+        expect(pixels(f.requests[0])).toHaveLength(1);
         expect(requestText(f.requests[0])).toContain('"requestId":"writing-1"');
         expect(f.events.some((event) => event.kind === "writing-artifact")).toBe(true);
     });

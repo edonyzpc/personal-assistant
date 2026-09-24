@@ -335,6 +335,7 @@ export class PaAgentLoop {
     private activeTurnToolMode?: PaAgentToolMode;
     private readonly providerNoProgressCounts = new Map<string, number>();
     private nativeWritingNoProgressCount = 0;
+    private invalidIncompleteReportCount = 0;
 
     constructor(private readonly options: PaAgentLoopOptions) {
         this.now = options.now ?? Date.now;
@@ -620,6 +621,30 @@ export class PaAgentLoop {
             if (turnSummary.agentReportedIncomplete) {
                 if (loopReservedFinalTurn) reportFinalizationReserve("failed");
                 this.endAgent("incomplete", { reason: "agent_reported_incomplete" });
+                return this.createResult("incomplete");
+            }
+
+            if (!turnSummary.nativeWritingAttempted
+                && turnSummary.diagnostics.some(diagnostic => diagnostic.type === "task_incomplete_report_invalid")) {
+                this.invalidIncompleteReportCount += 1;
+                if (!loopReservedFinalTurn && this.invalidIncompleteReportCount < 3 && !this.isWallClockExceeded()) {
+                    const runtimeInstruction = [
+                        `${REPORT_TASK_INCOMPLETE} was rejected: it must be the only call and contain exactly one non-empty string field named answer.`,
+                        "No other call in that batch was executed. Correct the report if the task remains unfinished; otherwise continue the task normally.",
+                    ].join(" ");
+                    nextRuntimeInstruction = runtimeInstruction;
+                    nextToolMode = "normal";
+                    nextControlSnapshot = deriveContinuedAgentControlSnapshot(turnSummary.controlSnapshot, {
+                        runtimeInstruction,
+                        toolMode: "normal",
+                    });
+                    continue;
+                }
+                if (loopReservedFinalTurn) reportFinalizationReserve("failed");
+                this.endAgent("incomplete", {
+                    reason: "task_incomplete_report_invalid",
+                    diagnostics: turnSummary.diagnostics,
+                });
                 return this.createResult("incomplete");
             }
 

@@ -42,6 +42,32 @@ describe("PaAgentLoop", () => {
         expect(executed).toBe(0);
     });
 
+    it('lets the Agent correct a malformed incomplete report without executing its mixed batch', async () => {
+        let modelTurns = 0;
+        let executed = 0;
+        const result = await new PaAgentLoop({ runId: 'correct-incomplete-report', userInput: 'Answer from the note',
+            allowTaskIncompleteReport: true,
+            model: { stream: async function* (input) {
+                modelTurns += 1;
+                if (modelTurns === 2) expect(input.runtimeInstruction).toContain('exactly one non-empty string field named answer');
+                yield { type: 'toolcall_delta', id: `report-${modelTurns}`, name: 'report_task_incomplete',
+                    input: modelTurns === 1
+                        ? { answer: 'Cannot finish.', reason: 'source_excluded' }
+                        : { answer: 'Cannot finish from the excluded note.' }, index: 0 } as const;
+                if (modelTurns === 1) yield { type: 'toolcall_delta', id: 'write', name: 'vault_create',
+                    input: { path: 'unexpected.md', content: 'unexpected' }, index: 1 } as const;
+                yield { type: 'provider_completion', completion: 'tool_calls' } as const;
+            } },
+            toolExecutor: { execute: async () => { executed += 1; return { outcome: 'success', promptText: 'unexpected' }; } },
+        }).run();
+        expect(modelTurns).toBe(2);
+        expect(executed).toBe(0);
+        expect(result.status).toBe('incomplete');
+        expect(result.committedFinalText).toBe('Cannot finish from the excluded note.');
+        expect(result.endPayload).toMatchObject({ reason: 'agent_reported_incomplete' });
+        expect(result.turns[0].diagnostics).toContainEqual({ type: 'task_incomplete_report_invalid' });
+    });
+
     it('keeps ordinary final text completed even when it discusses an unavailable source', async () => {
         const result = await new PaAgentLoop({ runId: 'ordinary-source-answer', userInput: 'Explain the situation',
             allowTaskIncompleteReport: true,

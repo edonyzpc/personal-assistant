@@ -76,6 +76,45 @@ describe("BuiltinWebSearchProvider", () => {
         expect(requestUrlMock).toHaveBeenCalledTimes(1);
     });
 
+    it('rechecks WebSearch after the detached-request barrier before sending a query', async () => {
+        const requestUrlMock = requestUrl as unknown as jest.MockedFunction<(request: MockRequestUrlParam) => Promise<unknown>>;
+        requestUrlMock.mockReset();
+        requestUrlMock.mockResolvedValue(mockObsidianResponse({ text: '{}' }));
+        const providerRequestScope = createProviderRequestScope();
+        const priorController = new AbortController();
+        let priorStarted!: () => void;
+        let releasePrior!: () => void;
+        const started = new Promise<void>(resolve => { priorStarted = resolve; });
+        const priorPhysicalRequest = new Promise<void>(resolve => { releasePrior = resolve; });
+        const prior = providerRequestScope.startRequest(async () => {
+            priorStarted();
+            await priorPhysicalRequest;
+        }, priorController.signal);
+        await started;
+        priorController.abort();
+        await expect(prior).rejects.toMatchObject({ name: 'AbortError' });
+
+        const originalWait = providerRequestScope.waitForDetachedRequests.bind(providerRequestScope);
+        let barrierEntered!: () => void;
+        const entered = new Promise<void>(resolve => { barrierEntered = resolve; });
+        jest.spyOn(providerRequestScope, 'waitForDetachedRequests').mockImplementation(signal => {
+            barrierEntered();
+            return originalWait(signal);
+        });
+        let enabled = true;
+        const search = requestBailianWebSearchMcp({
+            endpoint: BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
+            headers: { Authorization: 'Bearer test' },
+            body: { query: 'must not leave the device', limit: 2 },
+        }, { providerRequestScope, isEnabled: () => enabled });
+        await entered;
+        enabled = false;
+        releasePrior();
+
+        await expect(search).resolves.toMatchObject({ status: 403 });
+        expect(requestUrlMock).not.toHaveBeenCalled();
+    });
+
     it("rejects non-allowlisted or non-HTTPS endpoints before exporting capabilities", async () => {
         const provider = createProvider({
             policy: createPolicy({ allowedEndpoints: ["http://example.com/mcp/web-search"] }),

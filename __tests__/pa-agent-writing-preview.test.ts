@@ -210,21 +210,22 @@ describe('writing preview with a governed style through the production runtime',
             const f = await fixture('tail-error', false, true, true, { enterReserve: () => { now = 750; }, extraCall });
             await f.run();
             expect(f.providerInputs).toHaveLength(1);
-            expect(f.schemaBatches.at(-1)).toHaveLength(1);
+            expect(f.schemaBatches.at(-1)?.map(schema => (schema as { function: { name: string } }).function.name))
+                .toEqual(['report_task_incomplete', 'present_writing']);
             expect(f.events.some((event) => event.kind === 'writing-artifact')).toBe(false);
             expect(f.lifecycle.some((event) => event.type === 'tool_execution_start')).toBe(false);
             expect(f.lifecycle.find((event) => event.type === 'agent_end')).toMatchObject({ status: 'incomplete' });
         },
     );
-    it('binds only the pure output and delivers once when model setup reaches the reserved final phase', async () => {
+    it('binds only the two mutually exclusive pure outputs and delivers once in the reserved final phase', async () => {
         let now = 0;
         jest.spyOn(Date, 'now').mockImplementation(() => now);
         const f = await fixture('tail-error', false, true, true, { enterReserve: () => { now = 750; } });
         await f.run();
         expect(f.providerInputs).toHaveLength(1);
-        expect(f.schemaBatches.at(-1)).toEqual([expect.objectContaining({ function: expect.objectContaining({ name: 'present_writing' }) })]);
-        expect(JSON.stringify(f.providerInputs[0])).toContain('Only present_writing (pure output) is available');
-        expect(JSON.stringify(f.providerInputs[0])).not.toContain('report_task_incomplete');
+        expect(f.schemaBatches.at(-1)?.map(schema => (schema as { function: { name: string } }).function.name))
+            .toEqual(['report_task_incomplete', 'present_writing']);
+        expect(JSON.stringify(f.providerInputs[0])).toContain('Only present_writing or report_task_incomplete (pure outputs) are available');
         expect(f.lifecycle.filter((event) => event.type === 'turn_start')).toContainEqual(expect.objectContaining({
             metadata: expect.objectContaining({ toolMode: 'final_answer_only', controlSnapshot: expect.objectContaining({ writingOutput: 'present_writing', sourceScope: 'none' }) }),
         }));

@@ -52,6 +52,27 @@ async function runWritingTail(input: { raw?: string; completion?: ProviderComple
 }
 
 describe("B-135 writing completion across adapter, loop and legacy bridge", () => {
+    it.each([true, false])('emits ordinary answer snapshots only after source-checked commit: %s', async remainsCurrent => {
+        const events: LegacyAgentEvent[] = [];
+        let sourceCurrent = true;
+        const adapter = new CanonicalToLegacyEventAdapter(new AgentEventEmitter(event => events.push(event)));
+        const result = await new PaAgentLoop({
+            runId: `ordinary-source-${remainsCurrent}`,
+            userInput: 'Answer from the note.',
+            isFinalTextCurrent: () => sourceCurrent,
+            model: { stream: async function* () {
+                yield { type: 'text_delta', text: 'Source-derived answer.' } as const;
+                yield { type: 'provider_completion', completion: 'stop' } as const;
+                if (!remainsCurrent) sourceCurrent = false;
+            } },
+            onEvent: event => adapter.handle(event),
+            onCommittedFinalText: snapshot => adapter.syncCommittedAnswer(snapshot),
+        }).run();
+        expect(result.status).toBe(remainsCurrent ? 'completed' : 'incomplete');
+        expect(events.filter(event => event.kind === 'answer-snapshot').map(event => event.snapshot))
+            .toEqual(remainsCurrent ? ['Source-derived answer.'] : []);
+    });
+
     it.each([false, true])("withdraws a malformed tool phase through the real loop and host policy (native preview: %s)", async native => {
         const text = "I need to read the note.\n<tool_calls>\n</tool_calls>";
         const events: LegacyAgentEvent[] = [];

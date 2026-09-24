@@ -4,6 +4,7 @@ import { cloneChatWritingRequest, decodeNativeWritingOutput, decodeWritingOutput
 import { decodeNativeWritingPreview, decodeWritingPreview } from "./writing-preview";
 import { cloneMessageImages, type MessageImage } from "../chat/image-types";
 import { cloneGenerationInputSnapshot, type GenerationInputSnapshot } from "./generation-input-snapshot";
+import { REPORT_TASK_INCOMPLETE } from "./pa-agent-task-outcome";
 import type {
     AgentEvent,
     AssistantMessagePart,
@@ -95,7 +96,9 @@ export class CanonicalToLegacyEventAdapter {
 
     /** Pure output has no assistant text message, so deliver only text committed by the Loop. */
     syncCommittedAnswer(snapshot: string): void {
-        if (this.writing || this.ended || snapshot === this.committedLegacySnapshot) return;
+        const writingIncompleteReport = this.writingCandidate?.content.some(part =>
+            part.type === "toolCall" && part.name === REPORT_TASK_INCOMPLETE) === true;
+        if ((this.writing && !writingIncompleteReport) || this.ended || snapshot === this.committedLegacySnapshot) return;
         if (snapshot && !this.committedLegacySnapshot) this.legacyEvents.answerStarted();
         this.committedLegacySnapshot = snapshot;
         this.legacyEvents.answerSnapshot(snapshot);
@@ -196,8 +199,8 @@ export class CanonicalToLegacyEventAdapter {
                     this.emitWritingPreview(event.runId, event.message.id, this.currentWritingPreview(text));
                     return;
                 }
-                if (event.message.content.some((part) => part.type === "toolCall")) return;
-                this.appendAssistantText(event.message.content);
+                // Canonical message text is provisional until the Loop checks
+                // live source validity and commits it through syncCommittedAnswer.
                 return;
             case "tool_execution_start":
                 this.legacyEvents.activity("tool-running", `Running ${event.toolName}`, {
@@ -251,6 +254,7 @@ export class CanonicalToLegacyEventAdapter {
         const candidate = this.writingCandidate;
         const native = this.usesNativeWriting;
         const calls = candidate?.content.filter((part) => part.type === "toolCall") ?? [];
+        if (calls.some(part => part.name === REPORT_TASK_INCOMPLETE)) return;
         if (candidate?.providerCompletion === "tool_calls" && calls.length === 0) return;
         const sourceCurrent = this.isWritingPreviewCurrent();
         if (native && (calls.length !== 1 || calls[0].name !== "present_writing")) {

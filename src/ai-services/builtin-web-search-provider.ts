@@ -556,23 +556,37 @@ async function postMcpJsonRpc(
     context: BuiltinWebSearchRequestContext,
     sessionId?: string,
 ): Promise<{ status: number; headers: Headers; body: unknown }> {
+    const disabled = () => ({ status: 403, headers: new Headers(), body: { error: "WebSearch is disabled." } });
     if (context.isEnabled?.() === false) {
-        return { status: 403, headers: new Headers(), body: { error: "WebSearch is disabled." } };
+        return disabled();
     }
-    const response = await obsidianFetch(request.endpoint, {
-        method: "POST",
-        headers: {
-            ...request.headers,
-            Accept: "application/json, text/event-stream",
-            "Content-Type": "application/json",
-            "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
-            ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
-        },
-        body: JSON.stringify(payload),
-        signal: context.signal,
-    }, {
-        providerRequestScope: context.providerRequestScope,
-    });
+    let disabledBeforeDispatch = false;
+    let response: Response;
+    try {
+        response = await obsidianFetch(request.endpoint, {
+            method: "POST",
+            headers: {
+                ...request.headers,
+                Accept: "application/json, text/event-stream",
+                "Content-Type": "application/json",
+                "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+                ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
+            },
+            body: JSON.stringify(payload),
+            signal: context.signal,
+        }, {
+            providerRequestScope: context.providerRequestScope,
+            onProviderRequestStart: () => {
+                if (context.isEnabled?.() === false) {
+                    disabledBeforeDispatch = true;
+                    throw new Error("WebSearch is disabled.");
+                }
+            },
+        });
+    } catch (error) {
+        if (disabledBeforeDispatch) return disabled();
+        throw error;
+    }
     const text = await response.text();
     return {
         status: response.status,
