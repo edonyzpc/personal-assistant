@@ -6,6 +6,7 @@ import { errorMessage } from "./agent-utils";
 import type { AgentDebugLog } from './pa-agent-debug';
 import { PaAgentContextOverflowError } from "./context/PaAgentContextOverflowError";
 import { getProviderAdmissionError } from "./provider-admission-error";
+import { parseTaskIncompleteOutput, REPORT_TASK_INCOMPLETE } from './pa-agent-task-outcome';
 import type { AgentRunLease } from "./agent-run-coordinator";
 import { createAbortError, isAbortError } from "./chat-utils";
 import {
@@ -129,6 +130,8 @@ export interface PaAgentTurnSummary {
     /** Host-admitted pure output candidate; final Host Policy still decides delivery. */
     nativeWriting?: { body: string; explanation: string };
     nativeWritingAttempted?: true;
+    /** Agent-authored structured terminal result, never inferred from answer wording. */
+    agentReportedIncomplete?: true;
 }
 
 export interface PaAgentTerminalPolicyContext {
@@ -222,6 +225,8 @@ export interface PaAgentLoopOptions {
     };
     /** Host source receipt for ordinary text delivery, independent of cancellation. */
     isFinalTextCurrent?: () => boolean;
+    /** Exposes the optional pure-output incomplete report in the Chat runtime. */
+    allowTaskIncompleteReport?: boolean | ((runtimeInstruction?: string) => boolean);
     userMessageContent?: UserMessageContent;
     model: PaAgentModel;
     /** Request-local projection hook invoked before every logical model request. */
@@ -397,9 +402,12 @@ export class PaAgentLoop {
             }
         };
         const resolveFinalizationTurnPreparation = (summary: PaAgentTurnSummary) => {
-            const defaultRuntimeInstruction = this.options.nativeWriting
+            const baseInstruction = this.options.nativeWriting
                 ? this.options.nativeWriting.finalizationInstruction
                 : FINALIZATION_RESERVE_RUNTIME_INSTRUCTION;
+            const defaultRuntimeInstruction = this.options.allowTaskIncompleteReport
+                ? `${baseInstruction} The sole exception is a single ${REPORT_TASK_INCOMPLETE} pure output call when the user task cannot be completed; include the user-facing explanation in its answer field.`
+                : baseInstruction;
             const defaultControlSnapshot = deriveContinuedAgentControlSnapshot(summary.controlSnapshot, {
                 runtimeInstruction: defaultRuntimeInstruction,
                 toolMode: "final_answer_only",
@@ -606,6 +614,12 @@ export class PaAgentLoop {
             if (turnSummary.diagnostics.some(diagnostic => diagnostic.type === "assistant_source_changed")) {
                 if (loopReservedFinalTurn) reportFinalizationReserve("failed");
                 this.endAgent("incomplete", { reason: "assistant_source_changed", diagnostics: turnSummary.diagnostics });
+                return this.createResult("incomplete");
+            }
+
+            if (turnSummary.agentReportedIncomplete) {
+                if (loopReservedFinalTurn) reportFinalizationReserve("failed");
+                this.endAgent("incomplete", { reason: "agent_reported_incomplete" });
                 return this.createResult("incomplete");
             }
 
@@ -1312,6 +1326,11 @@ export class PaAgentLoop {
 
         const toolCalls = toolCallBuffers.map((buffer) => assistantMessage.content[buffer.partIndex]).filter(isToolCallPart);
         const hasToolCall = toolCalls.length > 0;
+        const mayReportIncomplete = typeof this.options.allowTaskIncompleteReport === 'function'
+            ? this.options.allowTaskIncompleteReport(runtimeInstruction)
+            : this.options.allowTaskIncompleteReport === true;
+        const incompleteReportCall = mayReportIncomplete
+            ? toolCalls.find(call => call.name === REPORT_TASK_INCOMPLETE) : undefined;
         const nativeWritingAttempted = nativeCollector?.hasWritingCall === true;
         if (!hasToolCall && assistantMessage.providerCompletion === "tool_calls"
             && terminalStatus !== "aborted" && terminalStatus !== "error") {
@@ -1359,7 +1378,7 @@ export class PaAgentLoop {
         const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
         let toolExecutionStoppedBy: "aborted" | "wall_clock_exceeded" | undefined;
         let toolExecutionElapsedMs: number | undefined;
-        if (hasToolCall && terminalStatus === undefined && !nativeWritingAttempted) {
+        if (hasToolCall && terminalStatus === undefined && !nativeWritingAttempted && !incompleteReportCall) {
             const toolExecutionStartedAt = this.now();
             const execution = await this.dispatcher.executeBufferedToolCalls(
                 turnId, turnIndex, toolCallBuffers, toolMode, controlSnapshot,
@@ -1368,7 +1387,7 @@ export class PaAgentLoop {
             toolResults.push(...execution.toolResults);
             diagnostics.push(...execution.diagnostics);
             toolExecutionStoppedBy = execution.stoppedBy;
-        } else if (hasToolCall && !nativeWritingAttempted) {
+        } else if (hasToolCall && !nativeWritingAttempted && !incompleteReportCall) {
             diagnostics.push({
                 type: "tool_required",
                 message: this.options.toolExecutor
@@ -1388,6 +1407,21 @@ export class PaAgentLoop {
         } else if (toolExecutionStoppedBy === "wall_clock_exceeded") {
             terminalStatus = "incomplete";
             diagnostics.push(this.turnDeadlineDiagnostic(toolMode));
+        }
+        let agentReportedIncomplete = false;
+        if (incompleteReportCall && terminalStatus === undefined) {
+            const answer = toolCalls.length === 1 && assistantMessage.providerCompletion === 'tool_calls'
+                ? parseTaskIncompleteOutput(incompleteReportCall.input) : undefined;
+            if (!answer) {
+                diagnostics.push({ type: 'task_incomplete_report_invalid' });
+            } else if (!this.isFinalTextCurrent()) {
+                diagnostics.push({ type: 'assistant_source_changed' });
+            } else {
+                agentReportedIncomplete = true;
+                this.committedFinalText += answer;
+                this.options.onCommittedFinalText?.(this.committedFinalText);
+            }
+            terminalStatus = 'incomplete';
         }
         if (!hasToolCall && terminalStatus === undefined && !hasPendingAnswerText) {
             terminalStatus = "incomplete";
@@ -1449,6 +1483,7 @@ export class PaAgentLoop {
             ...(controlSnapshot ? { controlSnapshot } : {}),
             ...(nativeWritingAttempted ? { nativeWritingAttempted: true as const } : {}),
             ...(nativeWriting ? { nativeWriting } : {}),
+            ...(agentReportedIncomplete ? { agentReportedIncomplete: true as const } : {}),
         };
         turnAbort.dispose();
         return summary;
@@ -1665,6 +1700,8 @@ export class PaAgentLoop {
                 return "completed";
             case "completed_with_warning":
                 return "completed_with_warning";
+            case "needs_user":
+                return "needs_user";
             case "aborted":
                 return "aborted";
             case "error":
@@ -2131,9 +2168,10 @@ function moreConservativeTerminalStatus(
     const priority: Record<AgentEndStatus, number> = {
         completed: 0,
         completed_with_warning: 1,
-        incomplete: 2,
-        error: 3,
-        aborted: 4,
+        needs_user: 2,
+        incomplete: 3,
+        error: 4,
+        aborted: 5,
     };
     return priority[decision] > priority[fallback] ? decision : fallback;
 }

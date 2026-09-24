@@ -54,6 +54,7 @@ export interface BuiltinWebSearchHttpResponse {
 export interface BuiltinWebSearchRequestContext {
     signal?: AbortSignal;
     providerRequestScope?: ProviderRequestScope;
+    isEnabled?: () => boolean;
 }
 
 export type BuiltinWebSearchRequest = (
@@ -67,6 +68,8 @@ export interface BuiltinWebSearchProviderOptions {
     request: BuiltinWebSearchRequest;
     redactor?: AgentRedactor;
     timeoutMs?: number;
+    /** Live settings admission; a loaded capability is not durable permission. */
+    isEnabled?: () => boolean;
 }
 
 interface WebSearchInput {
@@ -176,6 +179,7 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
     private readonly request: BuiltinWebSearchRequest;
     private readonly redactor: AgentRedactor;
     private readonly timeoutMs: number;
+    private readonly isEnabled: () => boolean;
     private readonly callsByTurn = new Map<string, number>();
 
     constructor(options: BuiltinWebSearchProviderOptions) {
@@ -186,6 +190,7 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
             secretValues: options.apiKey ? [options.apiKey] : [],
         });
         this.timeoutMs = options.timeoutMs ?? WEB_SEARCH_TIMEOUT_MS;
+        this.isEnabled = options.isEnabled ?? (() => true);
     }
 
     async load(_context: ProviderLoadContext): Promise<ProviderLoadResult> {
@@ -255,6 +260,7 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
         if (!parsed) {
             return unavailableResult("Invalid WebSearch input.", "invalid input", []);
         }
+        if (!this.isEnabled()) return unavailableResult("WebSearch is disabled.", parsed.query, []);
         const endpoint = this.getEndpoint();
         if (!endpoint || !this.isAllowedEndpoint(endpoint)) {
             return unavailableResult("WebSearch endpoint is not allowed.", parsed.query, []);
@@ -273,6 +279,9 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
         this.inflightRequests.add(requestId);
         try {
             const response = await this.runRequestWithAbortAndTimeout(requestId, parsed, context);
+            if (response === "disabled") {
+                return unavailableResult("WebSearch is disabled.", parsed.query, []);
+            }
             if (response === "cancelled") {
                 return unavailableResult(WEB_SEARCH_CANCELLED_MESSAGE, parsed.query, []);
             }
@@ -322,9 +331,10 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
         requestId: string,
         input: WebSearchInput,
         context: AgentCapabilityContext,
-    ): Promise<BuiltinWebSearchHttpResponse | "cancelled" | "failed" | "timeout"> {
+    ): Promise<BuiltinWebSearchHttpResponse | "cancelled" | "disabled" | "failed" | "timeout"> {
         const endpoint = this.getEndpoint();
         if (!endpoint) return "cancelled";
+        if (!this.isEnabled()) return "disabled";
         const signal = context.signal;
         if (signal?.aborted) {
             this.inflightRequests.delete(requestId);
@@ -335,7 +345,7 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
             const requestController = new AbortController();
             let settled = false;
             let timeoutId: PlatformTimeoutHandle | null = null;
-            const settle = (value: BuiltinWebSearchHttpResponse | "cancelled" | "failed" | "timeout") => {
+            const settle = (value: BuiltinWebSearchHttpResponse | "cancelled" | "disabled" | "failed" | "timeout") => {
                 if (settled) return;
                 settled = true;
                 if (timeoutId !== null) clearPlatformTimeout(timeoutId);
@@ -367,13 +377,14 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
             }, {
                 signal: requestController.signal,
                 providerRequestScope: context.providerRequestScope,
+                isEnabled: this.isEnabled,
             }).then(
                 (response) => {
                     if (!this.inflightRequests.has(requestId)) {
                         settle("cancelled");
                         return;
                     }
-                    settle(response);
+                    settle(this.isEnabled() ? response : "disabled");
                 },
                 () => settle("failed"),
             );
@@ -545,6 +556,9 @@ async function postMcpJsonRpc(
     context: BuiltinWebSearchRequestContext,
     sessionId?: string,
 ): Promise<{ status: number; headers: Headers; body: unknown }> {
+    if (context.isEnabled?.() === false) {
+        return { status: 403, headers: new Headers(), body: { error: "WebSearch is disabled." } };
+    }
     const response = await obsidianFetch(request.endpoint, {
         method: "POST",
         headers: {

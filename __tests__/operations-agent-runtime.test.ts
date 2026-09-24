@@ -5,7 +5,7 @@ import type { App } from "obsidian";
 
 import { AIUtils } from "../src/ai-services/ai-utils";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
-import type { AgentEvent } from "../src/ai-services/chat-types";
+import type { AgentEvent, LegacyAgentEvent } from "../src/ai-services/chat-types";
 import { PolicyEngine } from "../src/ai-services/policy-engine";
 import { PaAgentLoop } from "../src/ai-services/pa-agent-loop";
 import { createAgentControlSnapshot } from "../src/ai-services/pa-agent-control-policy";
@@ -236,8 +236,7 @@ describe("Operations Agent runtime discovery and staging", () => {
 
     it("keeps default Chat Operations actions available on a later turn", async () => {
         const fixture = operationsRuntimeFixture("Read notes/other.md, then create notes/result.md with the conclusion.", [
-            sourceDeclaration("Read notes/other.md", "vault"),
-            toolCall("read", "read_note", { path: "notes/other.md" }, 2),
+            toolCall("read", "read_note", { path: "notes/other.md" }, 0),
         ], {
             nextToolCalls: (_input, modelTurn) => modelTurn === 2
                 ? [toolCall("create", "vault_create", { path: "notes/result.md", content: "Conclusion" }, 0)]
@@ -461,9 +460,7 @@ describe("Operations Agent runtime discovery and staging", () => {
 describe("Operations-independent first-turn read capabilities", () => {
     it("exposes the fixed Memory action when the host action port is present", async () => {
         const prompt = "Remember that I prefer blue cards.";
-        const fixture = operationsRuntimeFixture(prompt, [
-            sourceDeclaration(prompt, "none"),
-        ], {
+        const fixture = operationsRuntimeFixture(prompt, [], {
             operationsAgentEnabled: false,
             operationsController: false,
             memoryActions: true,
@@ -479,9 +476,8 @@ describe("Operations-independent first-turn read capabilities", () => {
 
     it("exposes and executes the approved first-turn read set without Memory-first or Operations gates", async () => {
         const fixture = operationsRuntimeFixture("Query notes/other.md, then read its saved body.", [
-            sourceDeclaration("Query notes/other.md, then read its saved body.", "vault"),
-            toolCall("query", "query_notes", { path: "notes/other.md", limit: 1 }, 1),
-            toolCall("read", "read_note", { path: "notes/other.md" }, 2),
+            toolCall("query", "query_notes", { path: "notes/other.md", limit: 1 }, 0),
+            toolCall("read", "read_note", { path: "notes/other.md" }, 1),
         ], {
             operationsAgentEnabled: false,
             operationsController: false,
@@ -510,6 +506,8 @@ describe("Operations-independent first-turn read capabilities", () => {
                 expect(firstProviderInput).toContain(`"${toolName}"`);
             }
             expect(fixture.boundToolNames[0]).not.toContain("vault_create");
+            expect(fixture.boundToolNames[0]).not.toContain("declare_source_scope");
+            expect(fixture.boundToolNames[0]).not.toContain("request_source_decision");
             expect(fixture.lifecycle).toEqual(expect.arrayContaining([
                 expect.objectContaining({
                     type: "tool_execution_end", toolCallId: "query", outcome: "success",
@@ -529,8 +527,7 @@ describe("Operations-independent first-turn read capabilities", () => {
 
     it("does not advertise an additional provider capability when its real preload is unavailable", async () => {
         const fixture = operationsRuntimeFixture("Read notes/other.md.", [
-            sourceDeclaration("Read notes/other.md.", "vault"),
-            toolCall("read", "read_note", { path: "notes/other.md" }, 1),
+            toolCall("read", "read_note", { path: "notes/other.md" }, 0),
         ], {
             operationsAgentEnabled: false,
             operationsController: false,
@@ -556,20 +553,20 @@ describe("Operations-independent first-turn read capabilities", () => {
     });
 });
 
-describe("Operations runtime task source declarations", () => {
-    it("stages a declared create-then-append batch without reading old note text or performing writes", async () => {
+describe("Operations runtime task source admission", () => {
+    it("stages a create-then-append batch without a source declaration or writes", async () => {
         const prompt = "不要读取现有笔记。新建 notes/new.md，内容为 # Draft，然后追加 Final。";
         const fixture = operationsRuntimeFixture(prompt, [
-            sourceDeclaration("不要读取现有笔记", "none"),
-            toolCall("create", "vault_create", { path: "notes/new.md", content: "# Draft" }, 1),
-            toolCall("append", "vault_append", { path: "notes/new.md", content: "Final" }, 2),
+            toolCall("create", "vault_create", { path: "notes/new.md", content: "# Draft" }, 0),
+            toolCall("append", "vault_append", { path: "notes/new.md", content: "Final" }, 1),
         ]);
         try {
             await fixture.run();
 
             expect(fixture.boundToolNames[0]).toEqual(expect.arrayContaining([
-                "declare_source_scope", "vault_create", "vault_append",
+                "vault_create", "vault_append",
             ]));
+            expect(fixture.boundToolNames[0]).not.toContain("declare_source_scope");
             expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
             const [intent] = fixture.controller.listPendingIntents();
             expect(intent).toMatchObject({
@@ -581,7 +578,6 @@ describe("Operations runtime task source declarations", () => {
             });
             expect(intent).not.toHaveProperty("taskSourceReadGuard");
             expect(fixture.lifecycle).toEqual(expect.arrayContaining([
-                expect.objectContaining({ type: "tool_execution_end", toolCallId: "scope", outcome: "control_applied" }),
                 expect.objectContaining({ type: "tool_execution_end", toolCallId: "create", outcome: "success", metadata: expect.objectContaining({ contentMetadata: expect.objectContaining({ staged: true, wrote: false }) }) }),
                 expect.objectContaining({ type: "tool_execution_end", toolCallId: "append", outcome: "success", metadata: expect.objectContaining({ contentMetadata: expect.objectContaining({ staged: true, wrote: false }) }) }),
                 expect.objectContaining({ type: "agent_end", status: "completed" }),
@@ -593,22 +589,21 @@ describe("Operations runtime task source declarations", () => {
         }
     });
 
-    it("rejects the complete declared batch when append requires old text outside the current-note scope", async () => {
-        const prompt = "只用当前笔记作为素材。新建 notes/new.md，并向 notes/other.md 追加结论。";
+    it("rejects the complete batch when append would read a Data Boundary excluded note", async () => {
+        const prompt = "新建 notes/new.md，并向 notes/other.md 追加结论。";
         const fixture = operationsRuntimeFixture(prompt, [
-            sourceDeclaration("只用当前笔记作为素材", "current_note"),
-            toolCall("create", "vault_create", { path: "notes/new.md", content: "Conclusion" }, 1),
-            toolCall("append", "vault_append", { path: "notes/other.md", content: "Conclusion" }, 2),
-        ]);
+            toolCall("create", "vault_create", { path: "notes/new.md", content: "Conclusion" }, 0),
+            toolCall("append", "vault_append", { path: "notes/other.md", content: "Conclusion" }, 1),
+        ], { excludedPaths: ["notes/other.md"] });
         try {
             await fixture.run();
 
             expect(fixture.stageIntent).not.toHaveBeenCalled();
             expect(fixture.controller.listPendingIntents()).toEqual([]);
-            for (const toolCallId of ["scope", "create", "append"]) {
+            for (const toolCallId of ["create", "append"]) {
                 expect(fixture.lifecycle).toContainEqual(expect.objectContaining({
                     type: "tool_execution_end", toolCallId, outcome: "policy_rejected",
-                    metadata: expect.objectContaining({ contentMetadata: expect.objectContaining({ reason: "source_read_outside_scope" }) }),
+                    metadata: expect.objectContaining({ contentMetadata: expect.objectContaining({ reason: "source_excluded" }) }),
                 }));
             }
             expect(fixture.vault.adapter.exists).not.toHaveBeenCalled();
@@ -618,12 +613,11 @@ describe("Operations runtime task source declarations", () => {
         }
     });
 
-    it("publishes a returned context-used note handle and accepts a later selected-note narrowing", async () => {
-        const prompt = "先使用整个知识库查阅 notes/other.md 的标题结构，然后只使用找到的这篇笔记，继续读取完整标题结构。";
+    it("publishes a returned context-used note handle and permits a later read without declaration", async () => {
+        const prompt = "查阅另一篇笔记的标题结构，然后继续读取完整标题结构。";
         let discoveredHandle: string | undefined;
         const fixture = operationsRuntimeFixture(prompt, [
-            sourceDeclaration("先使用整个知识库", "vault"),
-            toolCall("outline-first", "read_note_outline", { path: "notes/other.md", max_headings: 1 }, 1),
+            toolCall("outline-first", "read_note_outline", { path: "notes/other.md", max_headings: 1 }, 0),
         ], {
             outlineHeadings: [
                 { level: 1, heading: "Returned outline fact" },
@@ -635,14 +629,7 @@ describe("Operations runtime task source declarations", () => {
                     .find(note => note.path === "notes/other.md")?.handle;
                 if (!discoveredHandle) return undefined;
                 return [
-                    {
-                        type: "toolCall", id: "scope-selected", name: "declare_source_scope", index: 0,
-                        input: {
-                            instructionQuote: "然后只使用找到的这篇笔记", notes: "selected",
-                            noteHandles: [discoveredHandle], webAllowed: false,
-                        },
-                    },
-                    toolCall("outline-selected", "read_note_outline", { path: "notes/other.md", max_headings: 2 }, 1),
+                    toolCall("outline-selected", "read_note_outline", { path: "notes/other.md", max_headings: 2 }, 0),
                 ];
             },
             finalText: "这篇笔记包含 Returned outline fact 和 Scoped follow-up fact 两个标题。",
@@ -655,9 +642,7 @@ describe("Operations runtime task source declarations", () => {
             expect(directories[0].notes.map(note => note.path)).toEqual(["notes/current.md"]);
             expect(discoveredHandle).toEqual(expect.any(String));
             expect(directories[1].notes).toContainEqual({ path: "notes/other.md", handle: discoveredHandle });
-            expect(directories[2]).toEqual({
-                currentNoteHandle: null, notes: [{ path: "notes/other.md", handle: discoveredHandle }],
-            });
+            expect(directories[2].notes).toContainEqual({ path: "notes/other.md", handle: discoveredHandle });
 
             const toolMessages = fixture.lifecycle.flatMap(event => (
                 event.type === "message_end" && event.message.role === "toolResult" ? [event.message] : []
@@ -675,9 +660,7 @@ describe("Operations runtime task source declarations", () => {
                 sourceRecords: [{ kind: "context-used", path: "notes/other.md", citationEligible: false }],
             } });
             expect(selectedRead?.content.promptText).toContain("Scoped follow-up fact");
-            expect(toolMessages.find(message => message.toolCallId === "scope-selected")).toMatchObject({
-                isError: false, content: { metadata: { outcome: "control_applied", scopeRevision: 2 } },
-            });
+            expect(toolMessages.some(message => message.toolName === "declare_source_scope")).toBe(false);
             expect(fixture.getFileCache.mock.calls.map(([file]) => file.path)).toEqual([
                 "notes/other.md", "notes/other.md",
             ]);
@@ -693,20 +676,152 @@ describe("Operations runtime task source declarations", () => {
             fixture.dispose();
         }
     });
-});
 
-function sourceDeclaration(
-    instructionQuote: string,
-    notes: "current_note" | "none" | "vault",
-): ParsedBufferedToolCall {
-    return {
-        type: "toolCall", id: "scope", name: "declare_source_scope", index: 0,
-        input: { instructionQuote, notes, webAllowed: false },
-    };
-}
+    it("keeps a linked note in the next directory after reading the current outline", async () => {
+        const fixture = operationsRuntimeFixture("先读当前笔记，再读它链接的复盘", [
+            toolCall("outline-current", "read_note_outline", { path: "notes/current.md" }, 0),
+        ], {
+            linkedNotePath: "notes/other.md",
+            outlineHeadings: [{ level: 1, heading: "Current outline" }],
+            nextToolCalls: (input, modelTurn) => modelTurn === 2
+                && readProviderNoteDirectory(input).notes.some(note => note.path === "notes/other.md")
+                ? [toolCall("read-linked", "read_note", { path: "notes/other.md" }, 0)] : undefined,
+            finalText: "已根据当前笔记与链接复盘回答。",
+        });
+        try {
+            await fixture.run();
+            expect(fixture.providerInputs).toHaveLength(3);
+            expect(readProviderNoteDirectory(fixture.providerInputs[1]).notes)
+                .toEqual(expect.arrayContaining([expect.objectContaining({ path: "notes/other.md" })]));
+            expect(fixture.lifecycle).toEqual(expect.arrayContaining([
+                expect.objectContaining({ type: "tool_execution_end", toolCallId: "read-linked", outcome: "success" }),
+                expect.objectContaining({ type: "agent_end", status: "completed" }),
+            ]));
+        } finally {
+            fixture.dispose();
+        }
+    });
+
+    it("does not complete an ordinary answer when a used note is excluded after the final provider request", async () => {
+        const excludedPaths: string[] = [];
+        const finalText = "PRIVATE OTHER NOTE BODY informs this answer.";
+        const fixture = operationsRuntimeFixture("Read the other note and answer", [
+            toolCall("read-other", "read_note_outline", { path: "notes/other.md" }, 0),
+        ], {
+            excludedPaths,
+            outlineHeadings: [{ level: 1, heading: "Other fact" }],
+            finalText,
+            onFinalAnswerRequest: () => excludedPaths.push("notes/other.md"),
+        });
+        try {
+            await fixture.run();
+            expect(fixture.providerInputs).toHaveLength(2);
+            expect(fixture.lifecycle).toContainEqual(expect.objectContaining({
+                type: "turn_end", status: "incomplete",
+                metadata: expect.objectContaining({
+                    diagnostics: expect.arrayContaining([expect.objectContaining({ type: "assistant_source_changed" })]),
+                }),
+            }));
+            expect(fixture.lifecycle).toContainEqual(expect.objectContaining({
+                type: "agent_end", status: "incomplete",
+            }));
+            expect(fixture.lifecycle.some(event => event.type === "agent_end" && event.status === "completed"))
+                .toBe(false);
+        } finally {
+            fixture.dispose();
+        }
+    });
+
+    it("keeps an ordinary answer valid after a same-file content edit", async () => {
+        const fixture = operationsRuntimeFixture("Read the other note and answer", [
+            toolCall("read-other", "read_note_outline", { path: "notes/other.md" }, 0),
+        ], {
+            outlineHeadings: [{ level: 1, heading: "Other fact" }],
+            finalText: "The earlier note snapshot contained Other fact.",
+            onFinalAnswerRequest: () => {
+                fixture.otherFile.stat.mtime += 1;
+            },
+        });
+        try {
+            await fixture.run();
+            expect(fixture.providerInputs).toHaveLength(2);
+            expect(fixture.lifecycle).toContainEqual(expect.objectContaining({
+                type: "agent_end", status: "completed",
+            }));
+        } finally {
+            fixture.dispose();
+        }
+    });
+
+    it("never projects a current-note link alias under the linked target identity", async () => {
+        const excludedPaths: string[] = [];
+        const alias = "SENSITIVE CURRENT NOTE ALIAS";
+        const fixture = operationsRuntimeFixture("Read the linked note", [
+            toolCall("read-other", "read_note_outline", { path: "notes/other.md" }, 0),
+        ], {
+            excludedPaths,
+            linkedNotePath: "notes/other.md",
+            linkedNoteAlias: alias,
+            outlineHeadings: [{ level: 1, heading: "Public target fact" }],
+            onToolCacheRead: path => {
+                if (path === "notes/other.md") excludedPaths.push("notes/current.md");
+            },
+            finalText: "The linked note has Public target fact.",
+        });
+        try {
+            await fixture.run();
+            expect(fixture.providerInputs).toHaveLength(2);
+            const directory = readProviderNoteDirectory(fixture.providerInputs[1]);
+            expect(directory.currentNoteHandle).toBeNull();
+            expect(directory.notes).toEqual(expect.arrayContaining([
+                expect.objectContaining({ path: "notes/other.md" }),
+            ]));
+            expect(JSON.stringify(fixture.providerInputs)).not.toContain(alias);
+            expect(fixture.lifecycle).toContainEqual(expect.objectContaining({
+                type: "agent_end", status: "completed",
+            }));
+        } finally {
+            fixture.dispose();
+        }
+    });
+
+    it('lets the Agent explicitly report an unfinished excluded-source task', async () => {
+        const explanation = 'I cannot answer from the excluded current note.';
+        const fixture = operationsRuntimeFixture('Answer from the current note', [
+            toolCall('read-current', 'get_current_note_context', {}, 0),
+        ], {
+            excludedPaths: ['notes/current.md'],
+            nextToolCalls: (_input, modelTurn) => modelTurn === 2
+                ? [toolCall('report', 'report_task_incomplete', { answer: explanation }, 0)] : undefined,
+        });
+        try {
+            await fixture.run();
+            expect(fixture.boundToolNames[0]).toContain('report_task_incomplete');
+            expect(JSON.stringify(fixture.providerInputs[0])).toContain('Do not print <report_task_incomplete>');
+            expect(fixture.lifecycle).toContainEqual(expect.objectContaining({
+                type: 'agent_end', status: 'incomplete',
+                metadata: expect.objectContaining({ reason: 'agent_reported_incomplete' }),
+            }));
+            expect(fixture.lifecycle).toContainEqual(expect.objectContaining({
+                type: 'turn_end', status: 'incomplete',
+            }));
+            expect(JSON.stringify(fixture.lifecycle)).toContain(explanation);
+            expect(fixture.legacyEvents).toContainEqual(expect.objectContaining({
+                kind: 'answer-snapshot', snapshot: explanation,
+            }));
+            expect(fixture.vault.cachedRead).not.toHaveBeenCalled();
+        } finally {
+            fixture.dispose();
+        }
+    });
+});
 
 interface OperationsRuntimeFixtureOptions {
     outlineHeadings?: Array<{ level: number; heading: string }>;
+    linkedNotePath?: string;
+    linkedNoteAlias?: string;
+    onToolCacheRead?: (path: string) => void;
+    onFinalAnswerRequest?: () => void;
     nextToolCalls?: (input: unknown, modelTurn: number) => readonly ParsedBufferedToolCall[] | undefined;
     finalText?: string;
     operationsAgentEnabled?: boolean;
@@ -715,6 +830,7 @@ interface OperationsRuntimeFixtureOptions {
     memoryActions?: boolean;
     additionalCapabilityProviders?: PaAgentRuntimeOptions["additionalCapabilityProviders"];
     policyOptions?: PaAgentRuntimeOptions["policyOptions"];
+    excludedPaths?: readonly string[];
 }
 
 function operationsRuntimeFixture(
@@ -753,9 +869,12 @@ function operationsRuntimeFixture(
     const controller = new OperationsIntentController({ vault, trashFile });
     const stageIntent = jest.spyOn(controller, "stageIntent");
     const executeIntent = jest.spyOn(controller, "executeIntent");
-    const getFileCache = jest.fn((_file: OperationsVaultFile) => fixtureOptions.outlineHeadings
-        ? { headings: fixtureOptions.outlineHeadings }
-        : { frontmatter: { status: "active" } });
+    const getFileCache = jest.fn((file: OperationsVaultFile) => {
+        fixtureOptions.onToolCacheRead?.(file.path);
+        return fixtureOptions.outlineHeadings
+            ? { headings: fixtureOptions.outlineHeadings }
+            : { frontmatter: { status: "active" } };
+    });
     const host = createAiServiceHost({
         settings: { memoryEnabled: false, operationsAgentEnabled: fixtureOptions.operationsAgentEnabled ?? true },
         app: {
@@ -765,9 +884,15 @@ function operationsRuntimeFixture(
                 getMostRecentLeaf: () => null,
                 getLeavesOfType: () => [],
             },
-            metadataCache: { getFileCache },
+            metadataCache: {
+                getFileCache,
+                getCache: (path: string) => path === currentFile.path && fixtureOptions.linkedNotePath
+                    ? { links: [{ link: fixtureOptions.linkedNotePath,
+                        ...(fixtureOptions.linkedNoteAlias ? { displayText: fixtureOptions.linkedNoteAlias } : {}) }] } : null,
+                getFirstLinkpathDest: (link: string) => link === otherFile.path ? otherFile : null,
+            },
         } as unknown as App,
-        isDataBoundaryAllowedPath: () => true,
+        isDataBoundaryAllowedPath: (path: string) => !fixtureOptions.excludedPaths?.includes(path),
         isOperationsAgentEnabled: fixtureOptions.operationsHostUnavailable !== true,
     });
     Object.assign(host, {
@@ -796,6 +921,7 @@ function operationsRuntimeFixture(
                 yield new AIMessageChunk({ content: "", response_metadata: { finish_reason: "tool_calls" } });
                 return;
             }
+            fixtureOptions.onFinalAnswerRequest?.();
             yield new AIMessageChunk({ content: fixtureOptions.finalText ?? (controller.listPendingIntents().length
                 ? "请确认这份修改提案；尚未写入笔记。"
                 : "当前取材范围不允许读取该笔记，未暂存或执行修改。") });
@@ -808,6 +934,7 @@ function operationsRuntimeFixture(
         return model as unknown as Awaited<ReturnType<AIUtils["createChatModel"]>>;
     });
     const lifecycle: AgentEvent[] = [];
+    const legacyEvents: LegacyAgentEvent[] = [];
     const runtime = new PaAgentRuntime(host, aiUtils, {
         skillContextProvider: null,
         operationsIntentController: fixtureOptions.operationsController === false ? undefined : controller,
@@ -818,10 +945,11 @@ function operationsRuntimeFixture(
         ...(fixtureOptions.policyOptions ? { policyOptions: fixtureOptions.policyOptions } : {}),
     });
     return {
-        vault, trashFile, controller, stageIntent, executeIntent, getFileCache,
-        boundToolNames, providerInputs, lifecycle,
+        vault, otherFile, trashFile, controller, stageIntent, executeIntent, getFileCache,
+        boundToolNames, providerInputs, lifecycle, legacyEvents,
         run: () => runtime.streamTurn({
             prompt, memoryMode: "auto", onLifecycleEvent: event => lifecycle.push(event),
+            onEvent: event => legacyEvents.push(event),
         }),
         dispose: () => {
             runtime.dispose();

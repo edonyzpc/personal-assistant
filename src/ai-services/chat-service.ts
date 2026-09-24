@@ -53,6 +53,8 @@ export function getBailianWebSearchEndpointForBaseURL(baseURL: string): string {
 }
 
 export interface StreamLLMOptions {
+    /** Exact user-authored text before this call's app-owned prompt additions. */
+    userText?: string;
     images?: import('../chat/image-types').MessageImage[];
     imageAssetService?: import('../chat/image-assets').ImageAssetService;
     writingRequest?: import('./chat-types').ChatWritingRequest;
@@ -72,6 +74,8 @@ export interface StreamLLMOptions {
     /** Visible Pagelet evidence to inject into this explicit user turn only. */
     pageletHandoff?: PageletChatHandoffContext;
     onLifecycleEvent?: (event: AgentEvent) => void;
+    /** Host-validated final text, including a pure incomplete result. */
+    onCommittedFinalText?: (snapshot: string) => void;
     onEvent?: (event: LegacyAgentEvent) => void;
     onStatus?: (status: ChatAgentStatus) => void;
     onReasoningChunk?: (chunk: string) => void;
@@ -174,10 +178,13 @@ export class ChatService {
     private async getAdditionalCapabilityProviders(): Promise<CapabilityProvider[]> {
         if (!this.shouldLoadBuiltinWebSearchProvider()) return [];
         const apiKey = await this.aiUtils.getAPIToken();
+        const endpoint = this.getBuiltinWebSearchEndpoint();
         return [new BuiltinWebSearchProvider({
-            policy: createBailianWebSearchNetworkPolicy(this.getBuiltinWebSearchEndpoint()),
+            policy: createBailianWebSearchNetworkPolicy(endpoint),
             apiKey,
             request: requestBailianWebSearchMcp,
+            isEnabled: () => this.shouldLoadBuiltinWebSearchProvider()
+                && this.getBuiltinWebSearchEndpoint() === endpoint,
         })];
     }
 
@@ -266,6 +273,7 @@ export class ChatService {
                 ...(debugRequestId ? { debugRequestId } : {}),
                 debugRecorder,
                 prompt,
+                userText: options.userText,
                 conversationId: options.conversationId,
                 createImage: options.createImage,
                 chatHistory,
@@ -297,6 +305,7 @@ export class ChatService {
                     if (event.type === "agent_end") debugStatus = agentDebugStatus(event.status);
                     options.onLifecycleEvent?.(event);
                 },
+                onCommittedFinalText: options.onCommittedFinalText,
                 onEvent: (event) => adaptAgentEvent(event, onChunk, options),
             });
         } catch (error) {

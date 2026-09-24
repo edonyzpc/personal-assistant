@@ -9,20 +9,19 @@ jest.mock('obsidian');
 describe('B-135 source preflight through action wrappers', () => {
     it.each(['operations', 'write-action'] as const)('%s cannot prepare part of a rejected material batch', async wrapper => {
         const scope = new TaskSourceConstraintState({ runId: 'run', userMessageId: 'u',
-            userText: '只用当前笔记', currentNoteHandle: 'active', noteHandles: new Map([['active', 'a']]) });
+            userText: '只用当前笔记', noteHandles: new Map([['active', 'a']]) });
+        const admission = scope.snapshot();
         const execute = jest.fn(async () => ({ outcome: 'success' as const, promptText: 'must not read' }));
         const prepareBatch = jest.fn(async () => undefined);
         const canonical = jest.fn(() => 'must-not-prepare');
         const mode = jest.fn(() => 'sequential' as const);
         const preflightBatch: NonNullable<PaAgentToolExecutor['preflightBatch']> = input => {
-            const candidate = scope.prepareDeclaration({ notes: 'current_note', webAllowed: false,
-                instructionQuote: '只用当前笔记' });
-            if (!candidate.ok) throw new Error(candidate.reason);
-            // These are host-held read plans, not source identities supplied by model args.
+            // The second target is excluded by a real Host read plan, so the
+            // whole batch is denied before any action wrapper prepares it.
             const reads = new Map([['get_current_note_context', 'a'], ['frontmatter_update', 'b']]);
-            const allowed = input.toolCalls.every(call => scope.allows({ kind: 'note', noteId: reads.get(call.name)! }, candidate.constraint));
+            const allowed = input.toolCalls.every(call => reads.get(call.name) === 'a'
+                && scope.allows({ kind: 'note', noteId: 'a' }, admission));
             if (!allowed) return { outcome: 'policy_rejected', promptText: 'The complete batch must stay within the current note.' };
-            if (!scope.commit(candidate.constraint)) throw new Error('stale batch');
             return undefined;
         };
         const base: PaAgentToolExecutor = { execute, prepareBatch, getCanonicalToolCallKey: canonical,
@@ -43,7 +42,7 @@ describe('B-135 source preflight through action wrappers', () => {
             } } });
         const result = await loop.run();
         expect(result.turns[0].toolResults).toHaveLength(2);
-        expect(scope.snapshot()).toBeUndefined();
+        expect(scope.snapshot()).toBe(admission);
         for (const operation of [execute, prepareBatch, canonical, mode, lookup, stageIntent, executeAction]) {
             expect(operation).not.toHaveBeenCalled();
         }

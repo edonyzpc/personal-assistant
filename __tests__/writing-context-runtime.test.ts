@@ -110,9 +110,7 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
                     scene: scenario === 'schema-repair' && turn === 1 ? JSON.stringify(scene) : selectedScene, currentInstructionConflicts: false,
                     imageRefs: scenario === 'image-subset' ? [images[1].ref] : [] };
                 yield new AIMessageChunk({ content: '', tool_call_chunks: [
-                    ...(scenario === 'schema-repair' && turn === 1 ? [{ id: 'scope', index: 0, name: 'declare_source_scope',
-                        args: JSON.stringify({ instructionQuote: 'Use the earlier proposal for an invitation', notes: 'none', webAllowed: false }) }] : []),
-                    { id: `prepare-${turn}`, index: scenario === 'schema-repair' && turn === 1 ? 1 : 0,
+                    { id: `prepare-${turn}`, index: 0,
                         name: 'get_writing_context', args: JSON.stringify(selection) },
                     ...(scenario === 'mixed' ? [{ id: 'output', index: 1, name: 'present_writing',
                         args: JSON.stringify({ contextHandle: 'request', body }) }] : []),
@@ -267,11 +265,9 @@ describe('native writing context runtime integration', () => {
         const result = await runScenario('schema-repair');
         expect(result.error).toBeUndefined();
         expect(result.inputs).toHaveLength(3);
-        expect(result.inputs[0]).toContain('No task-material scope has been accepted');
-        expect(result.inputs[1]).toContain('Task-material scope is already accepted');
-        expect(result.inputs[1]).toContain('Do not repeat the declaration for an unchanged scope');
-        expect(result.inputs[1]).not.toContain('No task-material scope has been accepted');
-        expect(result.inputs[2]).toContain('Task-material scope is already accepted');
+        expect(result.inputs[0]).toContain('Follow the current user request when choosing notes');
+        expect(result.inputs[1]).toContain('Follow the current user request when choosing notes');
+        expect(result.inputs[2]).toContain('Follow the current user request when choosing notes');
         expect(result.schemas[1].map(schema => schema.function.name)).toContain('get_writing_context');
         expect(result.prepareStyle).toHaveBeenCalledTimes(1);
         expect(result.events.filter(event => event.kind === 'writing-artifact')).toEqual([
@@ -367,8 +363,7 @@ describe('native writing context runtime integration', () => {
         expect(result.lifecycle.at(-1)).toMatchObject({ type: 'agent_end', status: 'incomplete' });
         expect(result.events.filter(event => event.kind === 'writing-preview').map(event => event.text))
             .toEqual(['We can discuss the options first.', '']);
-        expect(result.events.find(event => event.kind === 'writing-recovery'))
-            .toMatchObject({ reason: 'source_changed', rawText: '', previewText: '' });
+        expect(result.events.some(event => event.kind === 'writing-recovery')).toBe(false);
         expect(result.events.some(event => event.kind === 'answer-snapshot' || event.kind === 'writing-artifact')).toBe(false);
     });
 

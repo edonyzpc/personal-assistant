@@ -117,13 +117,12 @@ function fixture(replies: Reply[] | ((body: RequestBody, index: number) => Reply
 const pixels = (request: RequestBody) => request.messages.flatMap((message) => Array.isArray(message.content) ? message.content.filter((part) => part.type === "image_url") : []);
 const requestText = (request: RequestBody) => request.messages.map((message) => typeof message.content === "string" ? message.content : message.content.filter((part) => part.type === "text").map((part) => part.text).join("")).join("\n");
 
-describe('B-135 production source declaration', () => {
+describe('B-135 production source handling', () => {
     it('does not create a writing artifact when a supplied note disappears after the final request', async () => {
         const prompt = '根据当前笔记写一段文字';
         let live = true;
         const f = fixture([
             { tools: [
-                { name: 'declare_source_scope', input: { instructionQuote: prompt, notes: 'current_note', webAllowed: false } },
                 { name: 'get_current_note_context', input: { mode: 'full' } },
             ] },
             { text: envelope('SOURCE_BASED_WRITING'), onEnd: () => { live = false; } },
@@ -173,27 +172,18 @@ describe('B-135 production source declaration', () => {
         expect(JSON.stringify(history)).toBe(original);
     });
 
-    it.each(['tags', 'backlinks'] as const)('withdraws %s aggregate evidence when its hidden source is excluded', async kind => {
-        const prompt = '先查全库再只用B';
-        const f = fixture((body, index) => {
-            if (index === 0) return { tools: [
-                { name: 'declare_source_scope', input: { instructionQuote: '先查全库', notes: 'vault', webAllowed: false } },
-                kind === 'tags' ? { name: 'list_vault_tags', input: {} }
-                    : { name: 'inspect_obsidian_note', input: { path: 'B.md' } },
-                { name: 'read_note_outline', input: { path: 'B.md' } },
-            ] };
-            if (index === 1) {
-                const match = requestText(body).match(/\{"handle":"([^"]+)","path":"B.md"\}/);
-                expect(match).not.toBeNull();
-                return { tool: { name: 'declare_source_scope', input: { instructionQuote: '只用B',
-                    notes: 'selected', noteHandles: [match![1]], webAllowed: false } } };
-            }
-            return { text: '按B继续' };
-        }, { operationsIntentController: { stageIntent: async () => { throw new Error('Unexpected write'); } } as never });
+    it.each(['tags', 'backlinks'] as const)('keeps %s aggregate evidence behind Data Boundary', async kind => {
+        const prompt = '查阅 B 的结构';
+        const f = fixture([{ tools: [
+            kind === 'tags' ? { name: 'list_vault_tags', input: {} }
+                : { name: 'inspect_obsidian_note', input: { path: 'B.md' } },
+            { name: 'read_note_outline', input: { path: 'B.md' } },
+        ] }, { text: '按B继续' }], { operationsIntentController: { stageIntent: async () => { throw new Error('Unexpected write'); } } as never });
         const files = ['HIDDEN_SOURCE_A', 'B'].map(name => ({ path: `${name}.md`, name: `${name}.md`, basename: name,
             extension: 'md', stat: { ctime: 1, mtime: 1, size: 0 } }));
         jest.spyOn(f.host.app.vault, 'getMarkdownFiles').mockReturnValue(files as never);
         jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation((...args: unknown[]) => files.find(file => file.path === args[0]) as never);
+        Object.assign(f.host, { isDataBoundaryAllowedPath: (path: string) => path !== 'HIDDEN_SOURCE_A.md' });
         jest.spyOn(f.host.app.metadataCache, 'getFileCache').mockImplementation((...args: unknown[]) => ({
             tags: [{ tag: (args[0] as typeof files[0]).basename === 'B' ? '#B' : '#PRIVATE_AGGREGATE_A' }],
             headings: [{ level: 1, heading: 'B_ALLOWED_OUTLINE' }],
@@ -208,11 +198,10 @@ describe('B-135 production source declaration', () => {
             getMemoryEvidenceEpoch: () => 'vault-epoch-stable',
         });
         await f.run({ images: undefined, prompt });
-        expect(f.requests).toHaveLength(3);
-        expect(requestText(f.requests[1])).toContain('HIDDEN_SOURCE_A');
-        expect(requestText(f.requests[2])).not.toContain('HIDDEN_SOURCE_A');
-        expect(requestText(f.requests[2])).not.toContain('PRIVATE_AGGREGATE_A');
-        expect(requestText(f.requests[2])).toContain('B_ALLOWED_OUTLINE');
+        expect(f.requests).toHaveLength(2);
+        expect(requestText(f.requests[1])).not.toContain('HIDDEN_SOURCE_A');
+        expect(requestText(f.requests[1])).not.toContain('PRIVATE_AGGREGATE_A');
+        expect(requestText(f.requests[1])).toContain('B_ALLOWED_OUTLINE');
     });
 
     it('does not promote a canonical status-only Memory reference into a revoked history dependency', async () => {
@@ -287,7 +276,6 @@ describe('B-135 production source declaration', () => {
         let revokedAt = -1;
         const f = fixture((body, index) => {
             if (index === 0) return { tools: [
-                { name: 'declare_source_scope', input: { instructionQuote: prompt, notes: 'current_note', webAllowed: false } },
                 { name: 'get_current_note_context', input: { mode: 'full' } },
             ] };
             if (revokedAt === -1 && requestText(body).includes('SERIALIZED_VAULT_SECRET')
@@ -320,20 +308,15 @@ describe('B-135 production source declaration', () => {
         }
     });
 
-    it('removes earlier Vault material after narrowing to B while preserving B and Personal', async () => {
+    it('does not deliver writing after a used Vault source is revoked', async () => {
         const prompt = '先读取两篇笔记，再只用B整理';
         const f = fixture((body, index) => {
             if (index === 0) return { tools: [
-                { name: 'declare_source_scope', input: { instructionQuote: '先读取两篇笔记', notes: 'vault', webAllowed: false } },
                 { name: 'read_note_outline', input: { path: 'A.md' } },
                 { name: 'read_note_outline', input: { path: 'B.md' } },
             ] };
             if (index === 1) {
-                const match = requestText(body).match(/\{"handle":"([^"]+)","path":"B.md"\}/);
-                expect(match).not.toBeNull();
-                return { tool: { name: 'declare_source_scope', input: {
-                    instructionQuote: '只用B整理', notes: 'selected', noteHandles: [match![1]], webAllowed: false,
-                } } };
+                Object.assign(f.host, { isDataBoundaryAllowedPath: (path: string) => path !== 'A.md' });
             }
             return { text: envelope('按B整理') };
         }, { operationsIntentController: { stageIntent: async () => { throw new Error('Unexpected write in read-only fixture'); } } as never });
@@ -347,26 +330,17 @@ describe('B-135 production source declaration', () => {
         f.host.getMemoryExtractionPromptContext.mockReturnValue({ memoryContextMode: 'governed', governedMemoryContext: 'VALID_PERSONAL_BACKGROUND' });
         await f.run({ images: undefined, prompt, writingRequest: { requestId: 'writing-1' } });
         expect(f.lifecycle.filter(event => event.type === 'message_end' && event.message.role === 'toolResult').map(event => event.type === 'message_end' ? event.message : null)).not.toEqual(expect.arrayContaining([expect.objectContaining({ isError: true })]));
-        expect(f.requests).toHaveLength(3);
+        expect(f.requests).toHaveLength(2);
         expect(requestText(f.requests[1])).toContain('A_PRIVATE_MATERIAL');
         expect(requestText(f.requests[1])).toContain('B_ALLOWED_MATERIAL');
-        expect(requestText(f.requests[2])).not.toContain('A_PRIVATE_MATERIAL');
-        expect(requestText(f.requests[2])).toContain('B_ALLOWED_MATERIAL');
-        expect(requestText(f.requests[2])).toContain('VALID_PERSONAL_BACKGROUND');
-        const artifact = f.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> =>
-            event.kind === 'writing-artifact');
-        expect(artifact?.generationInput?.task).toEqual({
-            state: 'identified',
-            sources: [expect.objectContaining({ boundary: 'read-only-tool',
-                revision: { state: 'identified', scope: 'current_process', path: 'B.md', mtime: 22, size: 42 } })],
-        });
-        expect(JSON.stringify(artifact?.generationInput)).not.toContain('A.md');
+        expect(requestText(f.requests[1])).toContain('VALID_PERSONAL_BACKGROUND');
+        expect(f.events.some(event => event.kind === 'writing-artifact')).toBe(false);
+        expect(f.events.some(event => event.kind === 'writing-recovery')).toBe(true);
     });
 
     it('does not publish internal Memory path enumeration as a source directory', async () => {
         const prompt = 'Search my notes for a matching idea';
         const f = fixture([{ tools: [
-            { name: 'declare_source_scope', input: { instructionQuote: prompt, notes: 'vault', webAllowed: false } },
             { name: 'search_memory', input: { query: 'matching idea' } },
         ] }, { text: 'No matching notes found' }]);
         const file = { path: 'INTERNAL_ENUMERATION_ONLY.md', extension: 'md' };
@@ -395,15 +369,11 @@ describe('B-135 production source declaration', () => {
         expect(requestText(f.requests[0])).toContain('"currentNoteHandle":null');
     });
 
-    it.each(['admitted', 'separate', 'missing', 'conflicting'] as const)('preflights a real current-note/Memory batch: %s', async mode => {
+    it('preflights a real current-note/Memory batch without source declaration', async () => {
         const prompt = '只用当前笔记的资料整理提纲，保持我的表达习惯';
-        const declaration = { name: 'declare_source_scope', input: { instructionQuote: prompt, notes: 'current_note', webAllowed: false } };
         const reads = [{ name: 'get_current_note_context', input: { mode: 'full' } },
             { name: 'search_memory', input: { query: 'outline' } }];
-        const f = fixture(mode === 'separate'
-            ? [{ tool: declaration }, { tools: reads }, { text: 'Draft outline' }]
-            : [{ tools: [...(mode === 'missing' ? [] : [declaration]), ...reads,
-                ...(mode === 'conflicting' ? [{ name: 'webSearch', input: { query: 'outside source' } }] : [])] }, { text: 'Draft outline' }]);
+        const f = fixture([{ tools: reads }, { text: 'Draft outline' }]);
         const file = { path: 'notes/current.md', name: 'current.md', basename: 'current', extension: 'md', stat: { ctime: 1, mtime: 1, size: 20 } };
         const editor = { getValue: jest.fn(() => 'CURRENT_NOTE_BODY'), getSelection: () => '',
             lineCount: () => 1, getLine: () => 'CURRENT_NOTE_BODY', getCursor: () => ({ line: 0, ch: 0 }) };
@@ -415,30 +385,21 @@ describe('B-135 production source declaration', () => {
         const ready = jest.spyOn(f.host.memorySearch, 'ensureReadyForChat').mockResolvedValue({ decision: 'use-memory' });
         const search = jest.spyOn(f.host.memorySearch, 'searchHybrid');
         await f.run({ images: undefined, prompt });
-        expect(f.requests[0].tools?.some(tool => tool.function.name === 'declare_source_scope')).toBe(true);
+        expect(f.requests[0].tools?.some(tool => tool.function.name === 'declare_source_scope')).toBe(false);
         expect(requestText(f.requests[0])).toContain('VALID_PERSONAL_BACKGROUND');
         expect(requestText(f.requests[0])).not.toContain('CURRENT_NOTE_BODY');
-        if (mode === 'admitted' || mode === 'separate') {
-            expect(editor.getValue).toHaveBeenCalledTimes(1);
-            expect(search).toHaveBeenCalledWith('outline', expect.objectContaining({
-                noteScope: { allowedPaths: [file.path], excludedPaths: [] },
-            }));
-            expect(ready).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.anything(), { existingOnly: true });
-            expect(f.requests.slice(1).some(request => requestText(request).includes('CURRENT_NOTE_BODY'))).toBe(true);
-            expect(f.lifecycle.some(event => event.type === 'message_end' && event.message.role === 'toolResult'
-                && event.message.content.metadata?.outcome === 'control_applied')).toBe(true);
-        } else {
-            expect(editor.getValue).not.toHaveBeenCalled();
-            expect(search).not.toHaveBeenCalled();
-            expect(ready).not.toHaveBeenCalled();
-        }
+        expect(editor.getValue).toHaveBeenCalledTimes(1);
+        expect(search).toHaveBeenCalledWith('outline', expect.objectContaining({
+            noteScope: { allowedPaths: [file.path], excludedPaths: [] },
+        }));
+        expect(ready).toHaveBeenCalledWith('outline', expect.anything(), expect.anything(), undefined);
+        expect(f.requests.slice(1).some(request => requestText(request).includes('CURRENT_NOTE_BODY'))).toBe(true);
     });
 
     it('keeps current-note task material, Personal, existing Memory and authorized style in one physical writing input', async () => {
         const prompt = '只用当前笔记整理一段邀请，保持我的表达习惯';
         const f = fixture([
             { tools: [
-                { name: 'declare_source_scope', input: { instructionQuote: '只用当前笔记', notes: 'current_note', webAllowed: false } },
                 { name: 'get_current_note_context', input: { mode: 'full' } },
             ] },
             { text: envelope('COMBINED_SOURCE_WRITING') },
@@ -1139,14 +1100,6 @@ describe("B-140 T-07 vault observation physical integration", () => {
         const f = fixture((_body, index) => {
             if (index === 0) {
                 return { tools: [
-                    {
-                        name: "declare_source_scope",
-                        input: {
-                            instructionQuote: "Query my active notes",
-                            notes: "vault",
-                            webAllowed: false,
-                        },
-                    },
                     {
                         name: "query_notes",
                         input: {

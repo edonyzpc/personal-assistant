@@ -517,6 +517,10 @@ function getResponseDiv(view: LLMView) {
     return view.responseDiv as unknown as MockElement;
 }
 
+function prefillWriting(view: LLMView, prompt: string): boolean {
+    return view.prefillComposer(`@Writing ${prompt}`);
+}
+
 function allText(root: MockElement): string {
     return [root.textContent, ...root.children.map(allText)].join('');
 }
@@ -1099,9 +1103,9 @@ describe('LLMView turn lifecycle', () => {
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
 
-        expect(streamCalls[0].options.writingOutputProtocol).toBe('native');
-        expect(streamCalls[0].options.writingRequest).toBeDefined();
-        expect(streamCalls[0].options.writingContextHost).toBeDefined();
+        expect(streamCalls[0].options.writingOutputProtocol).toBeUndefined();
+        expect(streamCalls[0].options.writingRequest).toBeUndefined();
+        expect(streamCalls[0].options.writingContextHost).toBeUndefined();
         streamCalls[0].onChunk('可以，我们先梳理目标。');
         streamCalls[0].resolve();
         await flushPromises();
@@ -1128,7 +1132,7 @@ describe('LLMView turn lifecycle', () => {
                     streamCalls.push(call); notify(call);
                 }));
             });
-            view.prefillComposer(prompt);
+            prefillWriting(view, prompt);
             getElementByClass(containerEl, 'send-button-visible').click();
             return invoked;
         };
@@ -1179,7 +1183,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
         Object.assign(plugin, { writingVersions: versions });
         await view.onOpen();
-        view.prefillComposer('帮我写一段旅行文案');
+        prefillWriting(view, '帮我写一段旅行文案');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const call = streamCalls[0];
@@ -1225,7 +1229,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
         Object.assign(plugin, { writingVersions: versions });
         await view.onOpen();
-        view.prefillComposer('重写文案');
+        prefillWriting(view, '重写文案');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const call = streamCalls[0];
@@ -1250,7 +1254,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
         Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native', prepareWritingStyleForScene: jest.fn() });
         await view.onOpen();
-        view.prefillComposer('帮我写一段解释这个原则的文案');
+        prefillWriting(view, '帮我写一段解释这个原则的文案');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const call = streamCalls[0];
@@ -1286,6 +1290,44 @@ describe('LLMView turn lifecycle', () => {
         versions.dispose();
     });
 
+    it('withdraws ordinary final text when its source is revoked before delivery and after reload', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'ordinary-source-revoked' });
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        view.prefillComposer('Explain the current note');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'message_end',
+            message: assistantMessage('revoked_answer', [{ type: 'text', text: 'REVOKED_NOTE_FACT' }]) }));
+        const metadata = { diagnostics: [{ type: 'assistant_source_changed' }] };
+        emitCanonical(call, canonicalEvent({ type: 'turn_end', status: 'incomplete', metadata }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'incomplete', metadata }));
+        call.resolve();
+        for (let i = 0; i < 12 && view.chatHistory.length < 2; i++) await flushPromises();
+
+        const hint = 'The sources used for this answer changed, so the answer was not kept. Please ask again.';
+        expect(view.chatHistory[1].content).toBe(hint);
+        expect(view.chatHistory[1].canonicalTurn?.status).toBe('incomplete');
+        expect(view.chatHistory[1].canonicalTurn?.committedFinalText).toBe('');
+        expect(JSON.stringify(view.chatHistory[1].canonicalTurn?.messages)).not.toContain('REVOKED_NOTE_FACT');
+        expect((await store.getTurns('ordinary-source-revoked'))[0].assistant.content).toBe(hint);
+        expect(view.result).toBe('');
+        expect(allText(containerEl)).not.toContain('REVOKED_NOTE_FACT');
+        expect(getButtonsByText(containerEl, 'Add to Editor')).toHaveLength(0);
+
+        await view.onClose();
+        const restored = createView({ chatHistoryManager: manager });
+        await restored.view.onOpen();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(restored.view.chatHistory[1].content).toBe(hint);
+        expect(allText(restored.containerEl)).not.toContain('REVOKED_NOTE_FACT');
+        await restored.view.onClose();
+    });
+
     it.each([false, true])('keeps preview/recovery and truthful status after reopen (user cancel=%s)', async (cancelled) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'preview-conversation' });
@@ -1293,7 +1335,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
         Object.assign(plugin, { writingVersions: versions });
         await view.onOpen();
-        view.prefillComposer('写一段旅行文案');
+        prefillWriting(view, '写一段旅行文案');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const call = streamCalls[0];
@@ -1362,7 +1404,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
         Object.assign(plugin, { writingVersions: versions });
         await view.onOpen();
-        view.prefillComposer('帮我写一段旅行文案');
+        prefillWriting(view, '帮我写一段旅行文案');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const first = streamCalls[0];
@@ -1375,8 +1417,11 @@ describe('LLMView turn lifecycle', () => {
             messageId: 'parent', body: 'Parent body', explanation: '', associatedImages: [material] });
         first.resolve();
         await firstSaved;
-        for (let i = 0; i < 8; i++) await flushPromises();
-        view.prefillComposer('短一点');
+        prefillWriting(view, '短一点');
+        for (let i = 0; i < 30 && getButtonByClass(containerEl, 'send-button-visible').disabled; i++) {
+            await flushPromises();
+        }
+        expect(getButtonByClass(containerEl, 'send-button-visible').disabled).toBe(false);
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const next = streamCalls[1];
@@ -1394,7 +1439,7 @@ describe('LLMView turn lifecycle', () => {
         expect(stored.find((version) => version.messageId === 'parent')?.associatedImages).toEqual([material]);
         if (kind === 'artifact') expect(stored.find((version) => version.messageId === 'subset')?.associatedImages).toEqual([]);
         else if (kind === 'continue') {
-            view.prefillComposer('继续刚才的文案任务');
+            prefillWriting(view, '继续刚才的文案任务');
             getElementByClass(containerEl, 'send-button-visible').click();
             await flushPromises();
             const continuation = streamCalls[2];
@@ -1437,7 +1482,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
         Object.assign(plugin, { writingVersions: versions });
         await view.onOpen();
-        view.prefillComposer('请起草一段文案');
+        prefillWriting(view, '请起草一段文案');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const call = streamCalls[0];
@@ -1486,7 +1531,7 @@ describe('LLMView turn lifecycle', () => {
             const initial = createView({ chatHistoryManager: manager });
             Object.assign(initial.plugin, { writingVersions: versions });
             await initial.view.onOpen();
-            initial.view.prefillComposer('写一段文案');
+            prefillWriting(initial.view, '写一段文案');
             getElementByClass(initial.containerEl, 'send-button-visible').click();
             await flushPromises();
             const call = streamCalls[0];
@@ -1594,7 +1639,7 @@ describe('LLMView turn lifecycle', () => {
         const initial = createView({ chatHistoryManager: manager });
         Object.assign(initial.plugin, { writingVersions: versions });
         await initial.view.onOpen();
-        initial.view.prefillComposer('写一段文案');
+        prefillWriting(initial.view, '写一段文案');
         getElementByClass(initial.containerEl, 'send-button-visible').click();
         await flushPromises();
         const call = streamCalls[0];
@@ -1652,7 +1697,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
         Object.assign(plugin, { writingVersions: versions });
         await view.onOpen();
-        view.prefillComposer('继续刚才的文案任务：请重新查看第3张图片');
+        prefillWriting(view, '继续刚才的文案任务：请重新查看第3张图片');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const call = streamCalls[0];
@@ -1698,7 +1743,7 @@ describe('LLMView turn lifecycle', () => {
             expect((await store.getTurns('resolved-writing'))[0].assistant.writingVersionId).toBe(recovered.id);
             recoveryModal.onClose();
             openRecovery.mockRestore();
-            restored.view.prefillComposer('短一点');
+            prefillWriting(restored.view, '短一点');
             getElementByClass(restored.containerEl, 'send-button-visible').click();
             await flushPromises();
             expect(streamCalls[1].options.writingContext).toMatchObject({ parentVersionId: recovered.id,
@@ -1724,7 +1769,7 @@ describe('LLMView turn lifecycle', () => {
         fixture.view.chatHistory.push({ role: 'user', content: 'unrelated HEIC question', images: [
             { ordinal: 1, label: 'source.heic', ref: { assetId: 'heic', contentHash: 'b'.repeat(64) } },
         ] }, { role: 'assistant', content: 'unrelated answer' });
-        fixture.view.prefillComposer('写一段旅行文案');
+        prefillWriting(fixture.view, '写一段旅行文案');
         const draft = (fixture.view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
         draft.completeImport(draft.beginImport(material.label), material);
         getElementByClass(fixture.containerEl, 'send-button-visible').click();
@@ -1742,7 +1787,7 @@ describe('LLMView turn lifecycle', () => {
             await fixture.view.onOpen();
             for (let i = 0; i < 8; i++) await flushPromises();
         }
-        fixture.view.prefillComposer('继续刚才的文案任务：请重新查看第3张图片');
+        prefillWriting(fixture.view, '继续刚才的文案任务：请重新查看第3张图片');
         getElementByClass(fixture.containerEl, 'send-button-visible').click();
         await flushPromises();
         expect(streamCalls[1].options).toMatchObject({ writingMaterialContext: {
@@ -1751,7 +1796,7 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls[1].options.writingContext).toBeUndefined();
         streamCalls[1].resolve();
         for (let i = 0; i < 8; i++) await flushPromises();
-        fixture.view.prefillComposer('换个话题，帮我写一封工作邮件');
+        prefillWriting(fixture.view, '换个话题，帮我写一封工作邮件');
         getElementByClass(fixture.containerEl, 'send-button-visible').click();
         await flushPromises();
         expect(streamCalls[2].options).not.toHaveProperty('writingMaterialContext', expect.anything());
@@ -1793,7 +1838,7 @@ describe('LLMView turn lifecycle', () => {
             // ticks do not imply that either operation has completed.
             await waitUntil(() => fixture.view.abortController === null);
         };
-        const writing = await send('写一段旅行文案');
+        const writing = await send('@Writing 写一段旅行文案');
         writing.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1', kind: 'writing-artifact',
             requestId: writing.options.writingRequest!.requestId, messageId: 'travel-writing', body: 'Trip body', explanation: '', associatedImages: [material] });
         await settle(writing);
@@ -1829,12 +1874,11 @@ describe('LLMView turn lifecycle', () => {
             expect(lookup).not.toHaveBeenCalled();
         }
         lookup.mockRestore();
-        const short = await send('短一点');
+        const short = await send('@Writing 短一点');
+        expect(short.options.writingRequest).toBeDefined();
         if (timing === 'same_task') {
-            expect(short.options.writingRequest).toBeDefined();
             expect(short.options.writingContext).toMatchObject({ text: 'Trip body', associatedImages: [{ ...material, ordinal: 1 }] });
         } else {
-            expect(short.options.writingRequest).toBeUndefined();
             expect(short.options.writingContext).toBeUndefined();
         }
         expect(short.options.writingMaterialContext).toBeUndefined();
@@ -1855,7 +1899,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
         Object.assign(plugin, { writingVersions: versions });
         await view.onOpen();
-        view.prefillComposer('写一段旅行文案');
+        prefillWriting(view, '写一段旅行文案');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const call = streamCalls[0];
@@ -1888,7 +1932,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
         Object.assign(plugin, { writingVersions: versions });
         await view.onOpen();
-        view.prefillComposer('写一段旅行文案');
+        prefillWriting(view, '写一段旅行文案');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const call = streamCalls[0];
@@ -1914,7 +1958,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
         Object.assign(plugin, { writingVersions: versions });
         await view.onOpen();
-        view.prefillComposer('写一段旅行文案');
+        prefillWriting(view, '写一段旅行文案');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const call = streamCalls[0];
@@ -1941,7 +1985,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
         Object.assign(plugin, { writingVersions: versions });
         await view.onOpen();
-        view.prefillComposer('写一段旅行文案');
+        prefillWriting(view, '写一段旅行文案');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const stale = streamCalls[0];
@@ -2922,13 +2966,8 @@ describe('LLMView turn lifecycle', () => {
         getElementByClass(containerEl, 'send-button-visible').click();
         for (let i = 0; i < 5; i++) await flushPromises();
         const call = streamCalls[0];
-        if (prefix) {
-            expect(call.options.writingContextHost).toBeUndefined();
-            expect(call.options.writingRequest).toBeUndefined();
-        } else {
-            expect(call.options.writingContextHost).toBeDefined();
-            expect(call.options.writingRequest).toBeDefined();
-        }
+        expect(call.options.writingContextHost).toBeUndefined();
+        expect(call.options.writingRequest).toBeUndefined();
         if (!prefix) {
             expect(await store.getConversation('native-image-conversation')).not.toBeNull();
             await call.options.createImage!.submit({ prompt: '蓝色纸鹤', operation: 'generate', count: 1, referenceImageRefs: [] });
@@ -3257,7 +3296,7 @@ describe('LLMView turn lifecycle', () => {
                 Object.assign(area, { selectionStart: start + replacement.length, selectionEnd: start + replacement.length });
             } });
         area.dispatchEvent('input');
-        const imageCandidates = getElementByClass(containerEl, 'pa-chat-create-image-typeahead');
+        const imageCandidates = getElementByClass(containerEl, 'pa-chat-action-typeahead');
         expect(imageCandidates.hidden).toBe(false);
         getElementByClass(containerEl, 'pa-chat-input').dispatchEvent('focusout', { relatedTarget: null });
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -3285,7 +3324,7 @@ describe('LLMView turn lifecycle', () => {
         area.value = '@Cre';
         Object.assign(area, { selectionStart: 4, selectionEnd: 4 });
         area.dispatchEvent('input');
-        getButtonByClass(imageCandidates, 'pa-chat-create-image-typeahead-item').click();
+        getButtonByClass(imageCandidates, 'pa-chat-action-typeahead-item').click();
         expect(area.value).toBe('');
         expect(getElementByClass(containerEl, 'pa-chat-create-image-intent').hidden).toBe(false);
         area.value = '#';
@@ -3293,6 +3332,264 @@ describe('LLMView turn lifecycle', () => {
         area.dispatchEvent('input');
         expect(imageCandidates.hidden).toBe(true);
         expect(getElementByClass(containerEl, 'pa-chat-skill-typeahead').hidden).toBe(false);
+    });
+
+    it('binds native Writing only after selecting its composer action', async () => {
+        const { view, plugin, containerEl } = createView();
+        const versions = new WritingVersionService(new MemoryChatHistoryStore());
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native',
+            prepareWritingStyleForScene: jest.fn() });
+        await view.onOpen();
+        const area = getTextArea(containerEl);
+        area.value = '@Wri';
+        Object.assign(area, { selectionStart: 4, selectionEnd: 4,
+            setRangeText: (replacement: string, start: number, end: number) => {
+                area.value = `${area.value.slice(0, start)}${replacement}${area.value.slice(end)}`;
+            } });
+        area.dispatchEvent('input');
+        const actions = getElementByClass(containerEl, 'pa-chat-action-typeahead');
+        expect(actions.hidden).toBe(false);
+        getButtonByClass(actions, 'pa-chat-action-typeahead-item').click();
+        expect(area.value).toBe('');
+        expect(getElementByClass(containerEl, 'pa-chat-writing-intent').hidden).toBe(false);
+        area.value = '写一封邀请函';
+        area.dispatchEvent('input');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        expect(streamCalls[0].prompt).toBe('写一封邀请函');
+        expect(streamCalls[0].options.writingOutputProtocol).toBe('native');
+        expect(streamCalls[0].options.writingRequest).toBeDefined();
+        expect(streamCalls[0].options.writingContextHost).toBeDefined();
+        expect(getElementByClass(containerEl, 'pa-chat-writing-intent').hidden).toBe(true);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await view.onClose();
+        versions.dispose();
+    });
+
+    it('accepts a direct @Writing command and keeps an empty command in the draft', async () => {
+        const { view, plugin, containerEl } = createView();
+        const versions = new WritingVersionService(new MemoryChatHistoryStore());
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native',
+            prepareWritingStyleForScene: jest.fn() });
+        await view.onOpen();
+        const area = getTextArea(containerEl);
+        area.value = '@Writing ';
+        area.dispatchEvent('input');
+        expect(getElementByClass(containerEl, 'send-button-visible').disabled).toBe(true);
+        area.value = '@Writing 写一封邀请函';
+        area.dispatchEvent('input');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        expect(streamCalls[0].prompt).toBe('写一封邀请函');
+        expect(streamCalls[0].options.writingRequest).toBeDefined();
+        streamCalls[0].resolve();
+        await flushPromises();
+        await view.onClose();
+        versions.dispose();
+    });
+
+    it('keeps conflicting explicit actions in the draft instead of dispatching the other action', async () => {
+        const { view, plugin, containerEl } = createView();
+        const versions = new WritingVersionService(new MemoryChatHistoryStore());
+        const submit = jest.fn(async () => ({ taskId: 'unexpected' }));
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native',
+            prepareWritingStyleForScene: jest.fn(), imageGenerationService: { submit, list: async () => [],
+                subscribe: () => () => undefined } });
+        await view.onOpen();
+        const area = getTextArea(containerEl);
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        draft.setImageIntent({ operation: 'generate', referenceImageRefs: [] });
+        area.value = '@Writing 写一封邀请函';
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        expect(streamCalls).toHaveLength(0);
+        expect(submit).not.toHaveBeenCalled();
+        expect(area.value).toBe('@Writing 写一封邀请函');
+        draft.setWritingIntent();
+        area.value = '@CreateImage 一只蓝色纸鹤';
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        expect(streamCalls).toHaveLength(0);
+        expect(submit).not.toHaveBeenCalled();
+        expect(area.value).toBe('@CreateImage 一只蓝色纸鹤');
+        versions.dispose();
+    });
+
+    it('keeps a failed Writing retry visible when its action is temporarily unavailable', async () => {
+        const { view, plugin, containerEl } = createView();
+        const versions = new WritingVersionService(new MemoryChatHistoryStore());
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native',
+            prepareWritingStyleForScene: jest.fn() });
+        await view.onOpen();
+        view.prefillComposer('@Writing 写一封邀请函');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        streamCalls[0].reject(new Error('network failed'));
+        await flushPromises();
+        await flushPromises();
+        const retry = getButtonByClass(containerEl, 'retry-message-button');
+        Object.assign(plugin, { writingVersions: undefined });
+        retry.click();
+        await flushPromises();
+        expect(streamCalls).toHaveLength(1);
+        expect(getButtonByClass(containerEl, 'retry-message-button')).toBe(retry);
+        expect(retry.disabled).toBe(false);
+        expect(allText(containerEl)).toContain('写一封邀请函');
+        Object.assign(plugin, { writingVersions: versions });
+        retry.click();
+        await flushPromises();
+        expect(streamCalls).toHaveLength(2);
+        expect(streamCalls[1].options.writingRequest).toBeDefined();
+        streamCalls[1].resolve();
+        await flushPromises();
+        versions.dispose();
+    });
+
+    it('clears an explicitly selected Writing parent when its composer action is removed', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'explicit-writing-parent' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native',
+            prepareWritingStyleForScene: jest.fn() });
+        await view.onOpen();
+        view.prefillComposer('@Writing 写一封邀请函');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const first = streamCalls[0];
+        first.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+            kind: 'writing-artifact', runId: 'run_1', requestId: first.options.writingRequest!.requestId,
+            messageId: 'invite', body: '初稿', explanation: '' });
+        first.resolve();
+        let parent = (await versions.list('explicit-writing-parent'))[0];
+        for (let i = 0; i < 30 && !parent; i++) {
+            await flushPromises();
+            parent = (await versions.list('explicit-writing-parent'))[0];
+        }
+        expect(parent).toBeDefined();
+        for (let i = 0; i < 20 && view.abortController !== null; i++) await flushPromises();
+        expect(view.abortController).toBeNull();
+        const opened: WritingVersionModal[] = [];
+        const open = jest.spyOn(WritingVersionModal.prototype, 'open').mockImplementation(function (this: WritingVersionModal) {
+            opened.push(this);
+        });
+        try {
+            getElementByClass(containerEl, 'pa-chat-writing-action').click();
+            const modalHost = (opened[0] as unknown as { host: { onSelect: (version: WritingVersion) => void } }).host;
+            modalHost.onSelect(parent!);
+            const chip = getElementByClass(containerEl, 'pa-chat-writing-intent');
+            expect(chip.hidden).toBe(false);
+            walk(chip, (element) => element.tagName === 'button')!.click();
+            expect(chip.hidden).toBe(true);
+            expect(view.prefillComposer('@Writing 另写一封邀请函')).toBe(true);
+            expect(getButtonByClass(containerEl, 'send-button-visible').disabled).toBe(false);
+            getElementByClass(containerEl, 'send-button-visible').click();
+            for (let i = 0; i < 20 && streamCalls.length < 2; i++) await flushPromises();
+            expect(streamCalls[1].options.writingContextHost?.selectedParentVersionId).toBeUndefined();
+            streamCalls[1].resolve();
+            await flushPromises();
+        } finally {
+            open.mockRestore();
+            versions.dispose();
+        }
+    });
+
+    it('retries a failed Writing action with its original selected parent', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'writing-parent-retry' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native',
+            prepareWritingStyleForScene: jest.fn() });
+        await view.onOpen();
+        view.prefillComposer('@Writing 写一封邀请函');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const initial = streamCalls[0];
+        initial.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+            kind: 'writing-artifact', runId: 'run_1', requestId: initial.options.writingRequest!.requestId,
+            messageId: 'invite', body: '初稿', explanation: '' });
+        initial.resolve();
+        let parent = (await versions.list('writing-parent-retry'))[0];
+        for (let i = 0; i < 30 && !parent; i++) {
+            await flushPromises();
+            parent = (await versions.list('writing-parent-retry'))[0];
+        }
+        expect(parent).toBeDefined();
+        for (let i = 0; i < 20 && view.abortController !== null; i++) await flushPromises();
+        const opened: WritingVersionModal[] = [];
+        const open = jest.spyOn(WritingVersionModal.prototype, 'open').mockImplementation(function (this: WritingVersionModal) {
+            opened.push(this);
+        });
+        try {
+            getElementByClass(containerEl, 'pa-chat-writing-action').click();
+            const modalHost = (opened[0] as unknown as { host: { onSelect: (version: WritingVersion) => void } }).host;
+            modalHost.onSelect(parent!);
+            getTextArea(containerEl).value = '写得更短';
+            getTextArea(containerEl).dispatchEvent('input');
+            getElementByClass(containerEl, 'send-button-visible').click();
+            for (let i = 0; i < 20 && streamCalls.length < 2; i++) await flushPromises();
+            expect(streamCalls[1].options.writingContextHost?.selectedParentVersionId).toBe(parent.id);
+            streamCalls[1].reject(new Error('network failed'));
+            for (let i = 0; i < 20 && !getElementsByClass(containerEl, 'retry-message-button').length; i++) await flushPromises();
+            modalHost.onSelect({ ...parent, id: 'different-parent' });
+            getElementByClass(containerEl, 'retry-message-button').click();
+            for (let i = 0; i < 20 && streamCalls.length < 3; i++) await flushPromises();
+            expect(streamCalls[2].options.writingContextHost?.selectedParentVersionId).toBe(parent.id);
+            streamCalls[2].resolve();
+            await flushPromises();
+        } finally {
+            open.mockRestore();
+            versions.dispose();
+        }
+    });
+
+    it.each([false, true])('resumes an interrupted Writing action after reload (selected parent=%s)', async (withParent) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'writing-reload' });
+        await manager.initialize();
+        const versions = new WritingVersionService(store);
+        let conversation = await manager.startConversation('Writing task');
+        const parent = withParent ? await versions.create({
+            requestId: 'parent_request', messageId: 'parent_message', conversationId: conversation.id,
+            turnIndex: 0, text: 'Earlier draft', images: [],
+        }) : undefined;
+        if (parent) conversation = await manager.recordTurn({
+            conversationId: conversation.id, turnIndex: 0, conversation, userPrompt: 'Earlier draft',
+            entry: { kind: 'history', user: { role: 'user', content: 'Earlier draft' },
+                assistant: { role: 'assistant', content: 'Earlier draft', writingVersionId: parent.id } },
+        });
+        const turnIndex = parent ? 1 : 0;
+        const action = { kind: 'writing' as const, ...(parent ? { parentVersionId: parent.id } : {}) };
+        await manager.recordTurn({
+            conversationId: conversation.id, turnIndex, conversation, userPrompt: 'Write an invitation',
+            entry: { kind: 'history', user: { role: 'user', content: 'Write an invitation', writingAction: action },
+                assistant: { role: 'assistant', content: '', shareCardEligible: false,
+                    agentExecution: { runId: 'interrupted-writing', state: 'running' } } },
+        });
+        expect((await store.getTurns(conversation.id))[turnIndex].user.writingAction).toEqual(action);
+
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native',
+            prepareWritingStyleForScene: jest.fn() });
+        await view.onOpen();
+        for (let i = 0; i < 12 && !getElementsByClass(containerEl, 'retry-message-button').length; i++) await flushPromises();
+        getButtonByClass(containerEl, 'retry-message-button').click();
+        for (let i = 0; i < 20 && !streamCalls.length; i++) await flushPromises();
+        expect(streamCalls).toHaveLength(1);
+        expect(streamCalls[0].options.writingRequest).toBeDefined();
+        expect(streamCalls[0].options.writingContextHost?.selectedParentVersionId).toBe(parent?.id);
+        streamCalls[0].resolve();
+        for (let i = 0; i < 20 && view.abortController !== null; i++) await flushPromises();
+        expect(view.prefillComposer('An ordinary follow-up')).toBe(true);
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let i = 0; i < 20 && streamCalls.length < 2; i++) await flushPromises();
+        expect(streamCalls[1].options.writingRequest).toBeUndefined();
+        streamCalls[1].resolve();
+        await flushPromises();
+        await view.onClose();
+        versions.dispose();
     });
 
     it('keeps natural-language image creation available to Agent without submitting before its tool choice', async () => {
@@ -3389,6 +3686,24 @@ describe('LLMView turn lifecycle', () => {
         const attachment = getElementByClass(containerEl, 'pa-chat-pagelet-attachment');
         expect(attachment.hidden).toBe(false);
         expect(allText(attachment)).toContain(context.body);
+    });
+
+    it('keeps an empty Writing action from being replaced by Pagelet handoff or external prefill', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        draft.setWritingIntent();
+
+        expect(view.prefillComposer('An unrelated ordinary question')).toBe(false);
+        await expect(view.preparePageletHandoff(createPageletHandoffContext()))
+            .resolves.toEqual({ status: 'draft-conflict' });
+        expect(getTextArea(containerEl).value).toBe('');
+        expect(draft.snapshot('').writingIntent).toBe(true);
+
+        draft.clearWritingIntent();
+        await expect(view.preparePageletHandoff(createPageletHandoffContext()))
+            .resolves.toEqual({ status: 'prepared' });
+        await view.onClose();
     });
 
     it('clears a prepared Pagelet attachment when the user starts New Chat', async () => {
@@ -5285,6 +5600,76 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementsByClass(containerEl, 'thinking-status')).toHaveLength(1);
     });
 
+    it.each(['ask again', 'cancel'])('keeps an old source request readable after reload without granting access when users %s', async (action) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'source-choice-conversation' });
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        getTextArea(containerEl).value = '只用当前笔记回答原因';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        const decision = toolResultMessage('source_decision_1', {
+            toolCallId: 'call_source_decision', toolName: 'request_source_decision',
+            content: { promptText: '需要读取其他笔记吗？', includeInNextPrompt: false,
+                metadata: { sourceDecisionRequest: true, requestedSource: 'other_notes',
+                    boundary: { allowedPaths: ['current.md'], excludedPaths: [], webAllowed: false } } },
+        });
+        emitCanonical(call, canonicalEvent({ type: 'message_end', message: decision }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'needs_user' }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory[1].canonicalTurn?.status).toBe('needs_user');
+        expect(view.chatHistory[1].content).toBe('需要读取其他笔记吗？');
+        expect(allText(containerEl)).toContain('需要读取其他笔记吗？');
+        expect(allText(containerEl)).toContain('Earlier source request');
+        expect(allText(containerEl)).not.toContain('Waiting for your choice');
+        expect(allText(containerEl)).toContain('Its permission buttons are no longer available');
+        expect(getElementsByClass(containerEl, 'pa-chat-source-decision-actions')).toHaveLength(1);
+        await view.onClose();
+        const restored = createView({ chatHistoryManager: manager });
+        await restored.view.onOpen();
+        for (let index = 0; index < 6; index++) await flushPromises();
+        expect(restored.view.chatHistory[1].content).toBe('需要读取其他笔记吗？');
+        expect(allText(restored.containerEl)).toContain('需要读取其他笔记吗？');
+        expect(allText(restored.containerEl)).toContain('Earlier source request');
+        expect(allText(restored.containerEl)).not.toContain('Waiting for your choice');
+        expect(allText(restored.containerEl)).toContain('Its permission buttons are no longer available');
+        expect(allText(restored.containerEl)).not.toContain('Allow for this task');
+        expect(allText(restored.containerEl)).not.toContain('Keep my limit');
+        expect(getElementsByClass(restored.containerEl, 'pa-chat-source-decision-actions')).toHaveLength(1);
+        if (action === 'cancel') {
+            getButtonByText(restored.containerEl, 'Cancel task').click();
+            await flushPromises();
+            expect(streamCalls).toHaveLength(1);
+            expect(restored.view.chatHistory[1].canonicalTurn?.status).toBe('aborted');
+            expect(getElementsByClass(restored.containerEl, 'pa-chat-source-decision-actions')).toHaveLength(0);
+            await restored.view.onClose();
+            const cancelled = createView({ chatHistoryManager: manager });
+            await cancelled.view.onOpen();
+            for (let index = 0; index < 6; index++) await flushPromises();
+            expect(cancelled.view.chatHistory[1].canonicalTurn?.status).toBe('aborted');
+            expect(getElementsByClass(cancelled.containerEl, 'pa-chat-source-decision-actions')).toHaveLength(0);
+            return;
+        }
+        getTextArea(restored.containerEl).value = '请只根据当前笔记重新回答';
+        void getButtonByText(restored.containerEl, 'Ask').click();
+        await flushPromises();
+        expect(streamCalls[1].prompt).toBe('请只根据当前笔记重新回答');
+        expect(streamCalls[1].options).not.toHaveProperty('sourceDecisionContinuation');
+        streamCalls[1].onChunk('新回答');
+        streamCalls[1].resolve();
+        await flushPromises();
+        await flushPromises();
+        expect(restored.view.chatHistory[1].canonicalTurn?.status).toBe('needs_user');
+        expect(restored.view.chatHistory[3].content).toBe('新回答');
+    });
+
     it('renders canonical lifecycle phases without duplicate legacy chunks', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
@@ -5862,6 +6247,60 @@ describe('LLMView turn lifecycle', () => {
             canonicalTurn: expect.objectContaining({ status: 'incomplete' }),
             runtimeWarnings: [expect.objectContaining({ type: 'assistant_empty_response' })],
         });
+    });
+
+    it('shows and retains the Agent explanation when it explicitly reports an incomplete task', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        getTextArea(containerEl).value = '只用当前笔记回答；如果无法读取，请说明任务未完成。';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        const explanation = '当前笔记已被排除，本轮无法完成。';
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        call.options.onCommittedFinalText?.(explanation);
+        emitCanonical(call, canonicalEvent({ type: 'turn_end', status: 'incomplete' }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'incomplete',
+            metadata: { reason: 'agent_reported_incomplete' } }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+        expect(allText(getElementByClass(getResponseDiv(view), 'assistant'))).toContain(explanation);
+        expect(view.chatHistory[1]).toMatchObject({
+            content: explanation,
+            canonicalTurn: { status: 'incomplete', committedFinalText: explanation },
+        });
+        await view.onClose();
+    });
+
+    it('keeps an incomplete ordinary question out of Writing recovery when native writing is available', async () => {
+        const { view, plugin, containerEl } = createView();
+        const versions = new WritingVersionService(new MemoryChatHistoryStore());
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native',
+            prepareWritingStyleForScene: jest.fn() });
+        try {
+            await view.onOpen();
+            getTextArea(containerEl).value = '这些模型在“coding领域”达到 AGI 了吗？';
+            void getButtonByText(containerEl, 'Ask').click();
+            await flushPromises();
+            const call = streamCalls[0];
+            expect(call.options.writingRequest).toBeUndefined();
+            emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+            emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+            emitCanonical(call, canonicalEvent({ type: 'turn_end', status: 'incomplete' }));
+            emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'incomplete' }));
+            call.resolve();
+            await flushPromises();
+            await flushPromises();
+            expect(view.chatHistory[1].canonicalTurn?.status).toBe('incomplete');
+            expect(view.chatHistory[1].writingRecovery).toBeUndefined();
+            expect(allText(containerEl)).not.toContain('Select the intended text from the original response');
+            expect(getElementByClass(containerEl, 'thinking-status-summary').textContent).toBe('Answer incomplete');
+        } finally {
+            await view.onClose();
+            versions.dispose();
+        }
     });
 
     it('does not render canonical runtime instructions verbatim', async () => {
@@ -7585,6 +8024,7 @@ describe('LLMView turn lifecycle', () => {
         expect(composerRow.children).toEqual([
             getElementByClass(containerEl, 'pa-chat-image-draft'),
             getElementByClass(containerEl, 'pa-chat-create-image-intent'),
+            getElementByClass(containerEl, 'pa-chat-writing-intent'),
             getTextArea(containerEl), actions,
         ]);
         expect(actions.parentElement).toBe(composerRow);

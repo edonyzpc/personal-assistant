@@ -224,6 +224,7 @@ describe('writing preview with a governed style through the production runtime',
         expect(f.providerInputs).toHaveLength(1);
         expect(f.schemaBatches.at(-1)).toEqual([expect.objectContaining({ function: expect.objectContaining({ name: 'present_writing' }) })]);
         expect(JSON.stringify(f.providerInputs[0])).toContain('Only present_writing (pure output) is available');
+        expect(JSON.stringify(f.providerInputs[0])).not.toContain('report_task_incomplete');
         expect(f.lifecycle.filter((event) => event.type === 'turn_start')).toContainEqual(expect.objectContaining({
             metadata: expect.objectContaining({ toolMode: 'final_answer_only', controlSnapshot: expect.objectContaining({ writingOutput: 'present_writing', sourceScope: 'none' }) }),
         }));

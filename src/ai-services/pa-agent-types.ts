@@ -107,8 +107,6 @@ export interface PaAgentToolBatchPreparationResult {
 export interface PaAgentToolBatchPreflightAdmission {
     kind: "admitted";
     taskSourceReadGuard?: import('./task-source-read-guard').TaskSourceReadGuard;
-    /** Only declare_source_scope calls may be consumed as control receipts. */
-    controlResults?: ReadonlyMap<string, PaAgentToolExecutionResult>;
 }
 
 export interface PaAgentToolExecutor {
@@ -116,10 +114,8 @@ export interface PaAgentToolExecutor {
     /**
      * Synchronous Host-fact validation of the complete parsed phase, before
      * filtering, canonical keys or preparation. Do not read external sources.
-     * Undefined keeps legacy admission; an execution result rejects every call.
-     * An explicit admission binds this batch's read guard and control receipts.
-     * Rejections and applied controls consume the normal call budget; neither
-     * counts as a successful source observation.
+     * Undefined keeps ordinary executor admission; an execution result rejects every call.
+     * An explicit admission binds this batch's read guard.
      */
     preflightBatch?(
         input: Omit<PaAgentToolBatchPreparationInput, "signal">,

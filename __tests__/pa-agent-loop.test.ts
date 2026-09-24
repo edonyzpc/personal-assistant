@@ -21,6 +21,62 @@ import { PageletLeadDrivenPolicy } from "../src/pagelet/agent/lead-driven-policy
 import { ProviderAdmissionError } from "../src/ai-services/provider-admission-error";
 
 describe("PaAgentLoop", () => {
+    it('uses an explicit incomplete report for task status and its user-facing answer', async () => {
+        let executed = 0;
+        const events: AgentEvent[] = [];
+        const result = await new PaAgentLoop({ runId: 'reported-incomplete', userInput: 'Summarize the excluded note',
+            allowTaskIncompleteReport: true,
+            model: { stream: async function* () {
+                yield { type: 'toolcall_delta', id: 'report', name: 'report_task_incomplete',
+                    input: { answer: 'I cannot summarize that note because it is excluded.' }, index: 0 } as const;
+                yield { type: 'provider_completion', completion: 'tool_calls' } as const;
+            } },
+            toolExecutor: { execute: async () => { executed += 1; return { outcome: 'success', promptText: 'unexpected' }; } },
+            hostPolicy: { afterTurn: () => ({ action: 'stop', status: 'completed', reason: 'text_present' }) },
+            onEvent: event => events.push(event),
+        }).run();
+        expect(result.status).toBe('incomplete');
+        expect(result.committedFinalText).toBe('I cannot summarize that note because it is excluded.');
+        expect(result.endPayload).toMatchObject({ reason: 'agent_reported_incomplete' });
+        expect(events).toContainEqual(expect.objectContaining({ type: 'turn_end', status: 'incomplete' }));
+        expect(executed).toBe(0);
+    });
+
+    it('keeps ordinary final text completed even when it discusses an unavailable source', async () => {
+        const result = await new PaAgentLoop({ runId: 'ordinary-source-answer', userInput: 'Explain the situation',
+            allowTaskIncompleteReport: true,
+            model: { stream: async function* () {
+                yield { type: 'text_delta', text: 'The note was unavailable, but here is the answer from other evidence.' } as const;
+                yield { type: 'provider_completion', completion: 'stop' } as const;
+            } },
+        }).run();
+        expect(result.status).toBe('completed');
+    });
+
+    it('does not execute a mixed incomplete report batch or deliver a revoked report', async () => {
+        for (const revoked of [false, true]) {
+            let executed = 0;
+            const result = await new PaAgentLoop({ runId: `invalid-report-${revoked}`, userInput: 'Answer',
+                allowTaskIncompleteReport: true,
+                isFinalTextCurrent: () => !revoked,
+                model: { stream: async function* () {
+                    yield { type: 'toolcall_delta', id: 'report', name: 'report_task_incomplete',
+                        input: { answer: 'I could not finish.' }, index: 0 } as const;
+                    if (!revoked) yield { type: 'toolcall_delta', id: 'write', name: 'vault_create',
+                        input: { path: 'unexpected.md', content: 'unexpected' }, index: 1 } as const;
+                    yield { type: 'provider_completion', completion: 'tool_calls' } as const;
+                } },
+                toolExecutor: { execute: async () => { executed += 1; return { outcome: 'success', promptText: 'unexpected' }; } },
+            }).run();
+            expect(result.status).toBe('incomplete');
+            expect(result.committedFinalText).toBe('');
+            expect(executed).toBe(0);
+            expect(result.turns[0].diagnostics).toContainEqual(expect.objectContaining({
+                type: revoked ? 'assistant_source_changed' : 'task_incomplete_report_invalid',
+            }));
+        }
+    });
+
     it("reports wrapped local admission rejection without exposing the original error", async () => {
         const result = await new PaAgentLoop({ runId: "admission", userInput: "hello", model: {
             stream: async function* () {

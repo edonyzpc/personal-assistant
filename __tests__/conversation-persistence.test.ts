@@ -79,6 +79,28 @@ describe("ConversationPersistence", () => {
         expect(historyEntry.assistant.agentExecution).toBeUndefined();
     });
 
+    it('persists a source decision as awaiting_user instead of task completion', async () => {
+        const recorded: TimelineEntry[] = [];
+        const manager = {
+            initialize: jest.fn(async () => undefined), isAvailable: () => true,
+            startConversation: jest.fn(async () => ({ ...conversation, turnCount: 0 })),
+            recordTurn: jest.fn(async (input: { entry: TimelineEntry }) => {
+                recorded.push(input.entry);
+                return conversation;
+            }),
+            maybePrune: jest.fn(async () => []),
+        } as unknown as ChatHistoryManager;
+        const persistence = makePersistence(manager);
+        const entry: TimelineEntry = { kind: 'history', user: { role: 'user', content: '只用当前笔记' },
+            assistant: { role: 'assistant', content: '需要你决定是否读取其他笔记。',
+                canonicalTurn: { schemaVersion: 1, runId: 'run-choice', turnId: 'turn-1',
+                    status: 'needs_user', committedFinalText: '需要你决定是否读取其他笔记。', messages: [] } } };
+        await expect(persistence.persistFinalizedTurn('只用当前笔记', entry, undefined, 'run-choice'))
+            .resolves.toBe(true);
+        expect(recorded[0].kind === 'history' && recorded[0].assistant.agentExecution)
+            .toEqual({ runId: 'run-choice', state: 'awaiting_user' });
+    });
+
     it("prepares version identity after creating the conversation but before the single turn commit", async () => {
         const order: string[] = [];
         const recordTurn = jest.fn(async () => { order.push('turn'); return conversation; });

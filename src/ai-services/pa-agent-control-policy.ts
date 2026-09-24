@@ -85,8 +85,6 @@ const DEFAULT_BUDGET_STATE: PaAgentControlBudgetState = {
     wallClockExceeded: false,
 };
 
-const HOST_SOURCE_CONTROL_TOOL_NAME = "declare_source_scope";
-
 /** Builds a control snapshot from explicit option overrides, inferring exposure and scope when omitted. */
 export function createAgentControlSnapshot(
     options: CreateAgentControlSnapshotOptions = {},
@@ -141,18 +139,10 @@ export function createInitialAgentControlSnapshot(
     const blockedToolNames = new Set(options.constraints?.blockedToolNames ?? []);
     const availableSemanticToolNames = subtractTools(options.availableSemanticToolNames, blockedToolNames);
     const availableMetaToolNames = subtractTools(options.availableMetaToolNames ?? new Set(), blockedToolNames);
-    const availableHostSourceControl = availableMetaToolNames.has(HOST_SOURCE_CONTROL_TOOL_NAME)
-        ? new Set([HOST_SOURCE_CONTROL_TOOL_NAME])
-        : new Set<string>();
-    const availableOptionalMetaToolNames = subtractTools(
-        availableMetaToolNames,
-        availableHostSourceControl,
-    );
     if (options.constraints?.allowedToolNames) {
         const allowedToolNames = unionTools(
             intersectTools(options.constraints.allowedToolNames, availableSemanticToolNames),
-            intersectTools(options.constraints.allowedToolNames, availableOptionalMetaToolNames),
-            availableHostSourceControl,
+            intersectTools(options.constraints.allowedToolNames, availableMetaToolNames),
         );
         return createAgentControlSnapshot({
             exposureMode: "source-scoped",

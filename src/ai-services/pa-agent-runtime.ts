@@ -18,7 +18,7 @@ import { MemorySearchTool } from "./memory-search-tool";
 import { TaskSourceRun } from "./task-source-run";
 import { WritingContextRun, type WritingContextRunHost } from "./writing-context-run";
 import { createWritingContextCapability, GET_WRITING_CONTEXT } from "./writing-context-tool";
-import { createTaskSourceConstrainedExecutor, createTaskSourceDeclarationSchema, DECLARE_SOURCE_SCOPE } from "./task-source-executor";
+import { createTaskSourceConstrainedExecutor } from "./task-source-executor";
 import {
     captureExplicitTemporalIntent,
     ChatMemoryRecoveryCoordinator,
@@ -77,6 +77,7 @@ import {
 } from "./generation-input-snapshot";
 import { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
 import { readProviderCompletion, writingOutputInstruction, nativeWritingOutputInstruction, nativeWritingOutputSchema, cloneChatWritingRequest, selectedWritingContext, isValidWritingContextHandle } from "./writing-output";
+import { REPORT_TASK_INCOMPLETE, taskIncompleteOutputSchema } from './pa-agent-task-outcome';
 import { NativeWritingCallCollector } from "./native-writing-call";
 import { ChatImageRequestScope, createResolveChatImagesTool, RESOLVE_CHAT_IMAGES } from "./image-request";
 import { ChatImageRequestError, isStructuredImageUnsupportedError, type ChatImageCapability } from "./image-capability";
@@ -186,6 +187,8 @@ export type {
 
 export interface PaAgentRunOptions {
     prompt: string;
+    /** Exact user-authored text before Chat appends capability instructions. */
+    userText?: string;
     chatHistory?: ChatMessage[];
     images?: import("../chat/image-types").MessageImage[];
     imageAssetService?: import("../chat/image-assets").ImageAssetService;
@@ -224,6 +227,7 @@ export interface PaAgentStreamOptions extends PaAgentRunOptions {
     historyBudgetChars?: number;
     qwenRequestOptions?: QwenRequestOptions;
     onLifecycleEvent?: (event: AgentEvent) => void;
+    onCommittedFinalText?: (snapshot: string) => void;
     onEvent?: (event: LegacyAgentEvent) => void;
 }
 
@@ -949,6 +953,7 @@ export class PaAgentRuntime {
         };
         let preparedWritingGeneration: WritingGenerationSnapshot | undefined;
         let writingGeneration: WritingGenerationSnapshot | undefined;
+        let answerSourceValidity: (() => boolean) | undefined;
         const assertRequestSourcesCurrent = (signal?: AbortSignal): void => {
             if (options.isCurrent?.() === false) throw createAbortError();
             imageScope?.assertReady(signal);
@@ -1018,10 +1023,22 @@ export class PaAgentRuntime {
         const userMessageId = `${runId}:source-user`;
         let sourceRunActive = true;
         const sourceRun = new TaskSourceRun({
-            runId, userMessageId, userText: options.prompt,
+            runId, userMessageId, userText: options.userText ?? options.prompt,
+            requestText: options.prompt,
             workspace: this.host.app.workspace,
             getFileByPath: path => this.host.isDataBoundaryAllowedPath?.(path) === false
                 ? undefined : this.host.app.vault.getAbstractFileByPath(path),
+            getCurrentNoteLinks: path => {
+                try {
+                    const cache = this.host.app.metadataCache?.getCache(path);
+                    return (cache?.links ?? []).flatMap(link => {
+                        const file = this.host.app.metadataCache.getFirstLinkpathDest(link.link, path);
+                        // Link display text belongs to the source note body. Only
+                        // the target file identity may outlive that note's access.
+                        return file ? [{ path: file.path }] : [];
+                    });
+                } catch { return []; }
+            },
             isCurrent: () => sourceRunActive && !options.signal?.aborted && options.isCurrent?.() !== false,
             areSourcesCurrent: () => sourceRunActive && options.isCurrent?.() !== false,
             isMemoryAllowed: () => this.host.settings.memoryEnabled !== false,
@@ -1129,6 +1146,7 @@ export class PaAgentRuntime {
         // Cancellation alone does not revoke a received partial answer.
         const isPreviewCurrent = (): boolean => {
             assertRequestSourcesCurrent();
+            if (answerSourceValidity?.() === false) return false;
             writingGeneration?.assertCurrent();
             if (writingGeneration && !writingGeneration.isSourceCurrent()) return false;
             return imageScope?.isUsable() ?? true;
@@ -1231,7 +1249,6 @@ export class PaAgentRuntime {
             }
         }
         const availableMetaToolNames = new Set<string>();
-        availableMetaToolNames.add(DECLARE_SOURCE_SCOPE);
         if (writingContextCapability) availableMetaToolNames.add(GET_WRITING_CONTEXT);
         if (imageScope?.hasImages) availableMetaToolNames.add(RESOLVE_CHAT_IMAGES);
         if (options.createImage && exportableToolNames.has("create_image")) availableSemanticToolNames.add("create_image");
@@ -1391,6 +1408,7 @@ export class PaAgentRuntime {
             actualToolSources: Array<Extract<PaAgentMessage, { role: "toolResult" }>>;
             actualHistorySources: ChatMessage[];
             sourceHistoryJson: string;
+            isSourceCurrent: () => boolean;
             managementProjection?: MemoryManagementProjection;
             assertInputCurrent?: () => void;
         }
@@ -1490,6 +1508,19 @@ export class PaAgentRuntime {
             }
             const assertWritingInputCurrent = writingContextRun?.captureTranscriptValidity(taskTranscript);
             const assertHistoryInputCurrent = sourceRun.captureSourceValidity([], actualHistorySources);
+            // This receipt belongs to the exact projected material sent for the
+            // answer. Keep it independent of Writing, and check authorization
+            // and file identity at visible/final delivery without treating a
+            // same-file content edit as revocation.
+            const assertDeliveredTaskSources = sourceRun.capturePersistenceSourceValidity(
+                actualToolSources, actualHistorySources);
+            const isDeliveredSourceCurrent = () => {
+                try {
+                    assertDeliveredTaskSources();
+                    if (backgroundSourceCurrent?.() === false) return false;
+                    return true;
+                } catch { return false; }
+            };
             const answerVaultBinding: AnswerVaultBinding = {
                 projection: physicalVaultProjection,
                 providerInput: result,
@@ -1497,6 +1528,7 @@ export class PaAgentRuntime {
                 actualToolSources,
                 actualHistorySources,
                 sourceHistoryJson,
+                isSourceCurrent: isDeliveredSourceCurrent,
                 ...(managementProjection ? { managementProjection } : {}),
             };
             const assertInputCurrent = () => {
@@ -1599,6 +1631,7 @@ export class PaAgentRuntime {
             answerVaultBinding.serializedInput = stableProviderJson(result);
             physicalVaultProjection.serializedInput = answerVaultBinding.serializedInput;
             answerVaultBinding.providerInput = result;
+            answerSourceValidity = answerVaultBinding.isSourceCurrent;
             return { providerInput: result, vaultBinding: answerVaultBinding };
         };
         const prepareCanonicalProviderInput = async (
@@ -1667,9 +1700,8 @@ export class PaAgentRuntime {
                 const schemas = schemaResult.ok && input.toolMode !== "final_answer_only"
                     ? schemaResult.schemas
                     : [];
-                if (schemaResult.ok && input.toolMode !== "final_answer_only"
-                    && isAllowedHostToolCall(DECLARE_SOURCE_SCOPE, activeToolUseConstraints?.allowedToolNames, activeToolUseConstraints?.blockedToolNames)) {
-                    schemas.push(createTaskSourceDeclarationSchema());
+                if (!options.writingRequest && !hasOperationsStagedAcknowledgementInstruction(input.runtimeInstruction)) {
+                    schemas.push(taskIncompleteOutputSchema());
                 }
                 const nativeContextHandle = currentWritingHandle();
                 if (nativeWritingRequest && nativeContextHandle && input.controlSnapshot?.writingOutput === "present_writing") {
@@ -1707,6 +1739,7 @@ export class PaAgentRuntime {
                                 if (preparedWritingGeneration && !preparedWritingGeneration.isSourceCurrent()) {
                                     throw new Error('Writing generation sources changed before provider dispatch');
                                 }
+                                answerSourceValidity = binding.isSourceCurrent;
                                 writingGeneration = preparedWritingGeneration;
                                 input.notifyProviderRequestStarted?.();
                                 debug('provider_admission:end', { turnId: input.turnId, stage: 'answer' });
@@ -2180,9 +2213,10 @@ export class PaAgentRuntime {
                         || (call.name === LOAD_SKILL_TOOL_NAME && this.skillContextProvider?.ownsCapability(capability)));
                 });
                 const independentIds = new Set(independent.map(call => call.id));
-                const plans = sourceRun.resolveReadPlans(calls.filter(call => !independentIds.has(call.id)));
-                if (!plans) return undefined;
-                const complete = new Map(plans);
+                const readPlans = sourceRun.resolveReadPlansWithReason(calls.filter(call => !independentIds.has(call.id)));
+                if (!readPlans.ok) return { rejectionReason: readPlans.reason === 'source_excluded'
+                    ? 'source_excluded' as const : 'source_read_plan_unavailable' as const };
+                const complete = new Map(readPlans.plans);
                 for (const call of independent) complete.set(call.id, { reads: [] });
                 return complete;
             },
@@ -2193,7 +2227,10 @@ export class PaAgentRuntime {
             userInput: options.prompt,
             userImages: options.images,
             writingRequest: options.writingRequest,
-            ...(nativeWritingRequest ? { isFinalTextCurrent: isPreviewCurrent } : {}),
+            isFinalTextCurrent: () => answerSourceValidity !== undefined && isPreviewCurrent(),
+            allowTaskIncompleteReport: options.writingRequest
+                ? false
+                : runtimeInstruction => !hasOperationsStagedAcknowledgementInstruction(runtimeInstruction),
             ...(nativeWritingRequest ? { nativeWriting: {
                 contextHandle: nativeWritingRequest.requestId,
                 ...(writingContextHost ? { getContextHandle: currentWritingHandle } : {}),
@@ -2225,18 +2262,17 @@ export class PaAgentRuntime {
                     transcript = primaryVaultProjection.transcript;
                     const constraint = sourceRun.state.snapshot();
                     if (constraint) {
-                        for (const message of transcript) {
-                            if (message.role !== "toolResult" || message.isError || !message.content.includeInNextPrompt) continue;
-                            const paths = (message.content.sourceRecords ?? []).flatMap(record =>
+                        const paths = transcript.flatMap(message => {
+                            if (message.role !== "toolResult" || message.isError || !message.content.includeInNextPrompt) return [];
+                            return (message.content.sourceRecords ?? []).flatMap(record =>
                                 record.path && !record.redacted && !record.statusOnly
                                 && (record.kind === "context-used"
                                     || (record.kind === "memory-reference" && record.citationEligible !== false))
                                     ? [record.path] : []);
-                            // Publishing is separate from identity lookup: only
-                            // already returned, still-admitted source paths may
-                            // become a bounded directory of model-visible handles.
-                            sourceRun.publishAdmittedNotePaths(paths, constraint);
-                        }
+                        });
+                        // Publish the complete projected transcript once. A later
+                        // result must not erase an earlier still-valid source.
+                        sourceRun.publishAdmittedNotePaths(paths, constraint);
                     }
                     requiredCapabilityPolicy.synchronizeProjectedTranscript(transcript);
                     return {
@@ -2355,6 +2391,10 @@ export class PaAgentRuntime {
                     try { debugLifecycle(event); } catch { /* Keep diagnostic failures outside lifecycle delivery. */ }
                 }
                 eventAdapter.handle(event);
+            },
+            onCommittedFinalText: snapshot => {
+                eventAdapter.syncCommittedAnswer(snapshot);
+                options.onCommittedFinalText?.(snapshot);
             },
             onDebug: debug,
             ...(hostContext ? { hostContext } : {}),
@@ -2596,12 +2636,19 @@ export class PaAgentRuntime {
         const nativeWritingRequest = options.writingOutputProtocol === "native" ? options.writingRequest : undefined;
         const nativeContextHandle = nativeWritingRequest
             ? (options.writingContextHost ? options.writingContextHandle : nativeWritingRequest.requestId) : undefined;
+        const mayReportIncomplete = !options.writingRequest
+            && !hasOperationsStagedAcknowledgementInstruction(input.runtimeInstruction);
         let toolDefinitionsText = input.toolMode === "final_answer_only"
-            ? (nativeContextHandle ? "Only present_writing (pure output) is available. No source, context or action tools are available in this finalization turn." : "No tools are available in this finalization turn.")
+            ? (nativeContextHandle ? "Only present_writing (pure output) is available. No source, context or action tools are available in this finalization turn."
+                : mayReportIncomplete ? "No source, context or action tools are available in this finalization turn."
+                    : "No tools are available in this finalization turn.")
             : formatPlannerToolDefinitions(toolDefinitions ?? filterToolDefinitionsByToolUseConstraints(
                 this.toolRegistry.listDefinitions(),
                 toolUseConstraints,
             ));
+        if (mayReportIncomplete) {
+            toolDefinitionsText += `\nIf you cannot complete the user task, call ${REPORT_TASK_INCOMPLETE} as one native function/tool call with the explanation in answer. Do not print <${REPORT_TASK_INCOMPLETE}>, JSON, or any marker in ordinary text: that text will be shown literally and will not mark the task incomplete. Optional pure output schema: ${JSON.stringify(taskIncompleteOutputSchema().function)}`;
+        }
         if (nativeWritingRequest && nativeContextHandle && input.toolMode !== "final_answer_only") {
             toolDefinitionsText += `\nPure output declaration (not a source or action): ${JSON.stringify(nativeWritingOutputSchema(nativeWritingRequest, nativeContextHandle).function)}`;
         }
@@ -2990,6 +3037,10 @@ export const OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION = [
 
 export function isOperationsStagedAcknowledgement(runtimeInstruction?: string): boolean {
     return runtimeInstruction === OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION;
+}
+
+function hasOperationsStagedAcknowledgementInstruction(runtimeInstruction?: string): boolean {
+    return runtimeInstruction?.includes(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION) === true;
 }
 
 function hasStagedOperationsIntent(summary: PaAgentTurnSummary): boolean {

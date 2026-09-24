@@ -174,9 +174,7 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
                 expect(committedSnapshots).toEqual([body, ""]);
                 expect(events.filter(event => event.kind === "answer-snapshot")).toEqual([]);
                 expect(events.filter(event => event.kind === "writing-preview").map(event => event.text)).toEqual([body, ""]);
-                expect(events.filter(event => event.kind === "writing-recovery")).toEqual([
-                    expect.objectContaining({ reason: "source_changed", rawText: "", previewText: "" }),
-                ]);
+                expect(events.filter(event => event.kind === "writing-recovery")).toEqual([]);
                 expect(lifecycle.find(event => event.type === "agent_end")?.metadata?.diagnostics).toEqual(
                     expect.arrayContaining([expect.objectContaining({ type: "assistant_source_changed" })]),
                 );
@@ -195,7 +193,7 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
     });
 
     it.each(["after-content", "before-content"] as const)(
-        "reports source recovery instead of silently dropping native ordinary text revoked %s",
+        "keeps native ordinary text revoked %s out of Writing recovery",
         async phase => {
             const { events, diagnostics } = await runWritingTail({ native: true, raw: body,
                 ...(phase === "after-content" ? { revokeAfterContent: true } : { current: false }),
@@ -203,11 +201,9 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
             expect(events.filter(event => event.kind === "writing-preview").map(event => event.text))
                 .toEqual(phase === "after-content" ? [body, ""] : []);
             const recoveries = events.filter(event => event.kind === "writing-recovery");
-            expect(recoveries).toEqual([
-                expect.objectContaining({ requestId: request.requestId, reason: "source_changed", rawText: "", previewText: "" }),
-            ]);
+            expect(recoveries).toEqual([]);
             expect(events.filter(event => event.kind === "answer-snapshot" || event.kind === "writing-artifact")).toEqual([]);
-            expect(diagnostics).toEqual([expect.objectContaining({ result: "source_changed", providerCompletion: "stop" })]);
+            expect(diagnostics).toEqual([]);
             expect(JSON.stringify({ recoveries, diagnostics })).not.toContain("海风");
         },
     );

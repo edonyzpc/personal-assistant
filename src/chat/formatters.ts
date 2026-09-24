@@ -371,6 +371,7 @@ export function formatCanonicalTerminalSummary(
     if (warnings.some((warning) => warning.type === 'context_local_overflow')) {
         return ft('plugin.chat.formatter.warningContextTooLong');
     }
+    if (status === 'needs_user') return ft('plugin.chat.formatter.summaryNeedsUser');
     if (status === 'incomplete' || warnings.some((warning) => warning.type === 'assistant_empty_response')) {
         return ft('plugin.chat.formatter.summaryIncomplete');
     }

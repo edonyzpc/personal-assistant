@@ -104,12 +104,6 @@ function createInvokeModel(content: unknown, onInput?: (input: unknown) => void)
     return model;
 }
 
-/** Each caller supplies the current user's actual request and proposed boundary. */
-function scopeDeclarationChunk(instructionQuote: string, notes: 'vault' | 'current_note' | 'none', webAllowed = false) {
-    return { index: 1, id: 'scope-declaration', name: 'declare_source_scope',
-        args: JSON.stringify({ instructionQuote, notes, webAllowed }) };
-}
-
 function createNativeToolPlanningModel(
     response: unknown,
     callbacks: {
@@ -156,18 +150,12 @@ function createStreamChunksModel(chunks: unknown[], onInput?: (input: Record<str
     return model;
 }
 
-function createNoWebDeclarationModel(quote: string, notes: 'vault' | 'none', onInput?: (input: Record<string, string>) => void) {
-    let turn = 0;
+function createNoWebAnswerModel(onInput?: (input: Record<string, string>) => void) {
     const model = {
         bindTools: jest.fn(() => model),
         stream: jest.fn(async function* (input: Record<string, string>) {
             onInput?.(input);
-            if (turn++ === 0) {
-                yield { tool_call_chunks: [
-                    { index: 0, id: 'forbidden-web', name: 'webSearch', args: JSON.stringify({ query: 'weather' }) },
-                    scopeDeclarationChunk(quote, notes, false),
-                ] };
-            } else yield { content: 'Answer without web access.' };
+            yield { content: 'Answer without web access.' };
         }),
     };
     return model;
@@ -328,7 +316,6 @@ function createPlugin(overrides: {
 }
 
 const approvedFirstTurnToolNames = [
-    'declare_source_scope',
     'get_current_note_context',
     'get_memory_status',
     'get_memory_usage',
@@ -347,7 +334,7 @@ const approvedFirstTurnToolNames = [
 ].sort();
 
 function expectedFirstTurnToolNames(...additionalToolNames: string[]) {
-    return [...approvedFirstTurnToolNames, ...additionalToolNames].sort();
+    return [...approvedFirstTurnToolNames, 'report_task_incomplete', ...additionalToolNames].sort();
 }
 
 function createRuntime(
@@ -511,7 +498,7 @@ describe('run-scoped Provider transport ownership', () => {
                         id: 'scope-memory-call',
                         name: 'search_memory',
                         args: JSON.stringify({ query: 'launch' }),
-                    }, scopeDeclarationChunk('Use Memory for launch.', 'vault')],
+                    }],
                 };
             }),
             invoke: jest.fn(),
@@ -773,6 +760,23 @@ describe('native tool call fixtures', () => {
 });
 
 describe('ChatService.streamLLM integration', () => {
+    it('passes the raw user text separately from app-owned prompt instructions', async () => {
+        const plugin = createPlugin();
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const stream = jest.spyOn(PaAgentRuntime.prototype, 'streamTurn').mockResolvedValue(undefined);
+        try {
+            await service.streamLLM('只用当前笔记\n\nApp image instruction', jest.fn(), undefined, [], {
+                userText: '只用当前笔记',
+            });
+            expect(stream).toHaveBeenCalledWith(expect.objectContaining({
+                prompt: '只用当前笔记\n\nApp image instruction', userText: '只用当前笔记',
+            }));
+        } finally {
+            stream.mockRestore();
+            service.dispose();
+        }
+    });
+
     it('records startup lease failure before a runtime exists without changing the rejection', async () => {
         const failure = new Error('startup admission failed');
         const recorder = { captureId: 'capture-startup', enabled: () => true, bindRun: jest.fn(), observe: jest.fn(), finish: jest.fn() };
@@ -808,7 +812,7 @@ describe('ChatService.streamLLM integration', () => {
         service.dispose();
     });
 
-    it.each(['correct', 'repeat'] as const)('keeps native source tools for one correction, then handles %s', async correction => {
+    it('reads the current note without a source declaration round', async () => {
         const prompt = '请读取当前笔记并解释';
         const file = { path: 'notes/current.md', name: 'current.md', basename: 'current', extension: 'md',
             stat: { mtime: 1, ctime: 1, size: 19 } };
@@ -827,18 +831,13 @@ describe('ChatService.streamLLM integration', () => {
                 },
                 stream: async function* (input: unknown) {
                     request.input = JSON.stringify(input);
-                    if (turn < 2) {
+                    if (turn === 0) {
                         expect(editor.getValue).not.toHaveBeenCalled();
-                        const invalid = turn === 0 || correction === 'repeat';
                         yield { content: '', tool_call_chunks: [
-                            { id: `scope-${turn}`, index: 0, name: 'declare_source_scope', args: JSON.stringify({
-                                instructionQuote: prompt, notes: 'current_note', webAllowed: false,
-                                ...(invalid ? { noteHandles: ['note_1'] } : {}),
-                            }) },
-                            { id: `read-${turn}`, index: 1, name: 'get_current_note_context', args: '{"mode":"full"}' },
+                            { id: 'read-current', index: 0, name: 'get_current_note_context', args: '{"mode":"full"}' },
                         ] };
                     } else {
-                        yield { content: correction === 'correct' ? 'Answer based on Source note evidence.' : 'The note could not be read.' };
+                        yield { content: 'Answer based on Source note evidence.' };
                     }
                 },
             };
@@ -850,21 +849,13 @@ describe('ChatService.streamLLM integration', () => {
             await service.streamLLM(prompt, jest.fn(), undefined, [], { memoryMode: 'skip-memory',
                 onLifecycleEvent: event => events.push(event) });
         } finally { service.dispose(); }
-        expect(requests).toHaveLength(3);
-        expect(requests[1].tools).toContain('declare_source_scope');
-        expect(requests[1].tools).toContain('get_current_note_context');
-        expect(requests[1].input).toContain('correct the source declaration once');
-        if (correction === 'correct') {
-            expect(editor.getValue).toHaveBeenCalled();
-            expect(requests[2].input).toContain('Source note evidence');
-        } else {
-            expect(editor.getValue).not.toHaveBeenCalled();
-            expect(requests[2].tools).toContain('declare_source_scope');
-            expect(requests[2].tools).toContain('get_current_note_context');
-            expect(requests[2].input).not.toContain('Do not call tools');
-        }
+        expect(requests).toHaveLength(2);
+        expect(requests[0].tools).not.toContain('declare_source_scope');
+        expect(requests[0].tools).toContain('get_current_note_context');
+        expect(editor.getValue).toHaveBeenCalled();
+        expect(requests[1].input).toContain('Source note evidence');
         expect(events.filter(event => event.type === 'tool_execution_end' && event.outcome === 'success'))
-            .toHaveLength(correction === 'correct' ? 1 : 0);
+            .toHaveLength(1);
     });
 
     it('runs host-bound create_image without a vault source declaration and keeps completion asynchronous', async () => {
@@ -1012,7 +1003,7 @@ describe('ChatService.streamLLM integration', () => {
                 id: 'memory-first-use',
                 name: 'search_memory',
                 args: JSON.stringify({ query: 'launch' }),
-            }, scopeDeclarationChunk('launch', 'vault')],
+            }],
         }]);
         const finalModel = createStreamModel('Answer now.');
         mockCreateChatModel
@@ -1602,8 +1593,7 @@ describe('ChatService.streamLLM integration', () => {
         const expanded = memoryResult(Array.from({ length: 4 }, (_, index) => `notes/${'source'.repeat(15)}-${index}.md`));
         let expandedAtFinalBoundary = false;
         const planningModel = createStreamChunksModel([{
-            tool_call_chunks: [{ index: 0, id: 'memory-before-growth', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) },
-                scopeDeclarationChunk('Use Memory for launch.', 'vault')],
+            tool_call_chunks: [{ index: 0, id: 'memory-before-growth', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
         }]);
         const answerModel = {
             bindTools: jest.fn(() => answerModel),
@@ -1851,8 +1841,7 @@ describe('ChatService.streamLLM integration', () => {
             };
         });
         const planningModel = createStreamChunksModel([{
-            tool_call_chunks: [{ index: 0, id: 'memory-before-summary', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) },
-                scopeDeclarationChunk('Use Memory for launch.', 'vault')],
+            tool_call_chunks: [{ index: 0, id: 'memory-before-summary', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
         }]);
         const answerInputs: unknown[] = [];
         const answerModel = createStreamModel('Memory evidence is unavailable.', (input) => answerInputs.push(input));
@@ -1896,8 +1885,7 @@ describe('ChatService.streamLLM integration', () => {
             retrievalGuidance: 'Memory evidence is currently unavailable.', operationalReason: 'final_source_changed',
         };
         const planningModel = createStreamChunksModel([{
-            tool_call_chunks: [{ index: 0, id: 'memory-before-summary-dispatch', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) },
-                scopeDeclarationChunk('Use Memory for launch.', 'vault')],
+            tool_call_chunks: [{ index: 0, id: 'memory-before-summary-dispatch', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
         }]);
         const summaryModel = createInvokeModel(JSON.stringify({
             goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
@@ -1951,8 +1939,7 @@ describe('ChatService.streamLLM integration', () => {
             });
             const initial = memoryResult('Initial evidence requiring reduction. '.repeat(180));
             const planningModel = createStreamChunksModel([{
-                tool_call_chunks: [{ index: 0, id: 'memory-summary-deadline', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) },
-                    scopeDeclarationChunk('Use Memory for launch.', 'vault')],
+                tool_call_chunks: [{ index: 0, id: 'memory-summary-deadline', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
             }]);
             const summaryModel = createInvokeModel('{}');
             let markAnswerStarted!: () => void;
@@ -2044,7 +2031,7 @@ describe('ChatService.streamLLM integration', () => {
                         id: 'memory-before-deferred-model',
                         name: 'search_memory',
                         args: JSON.stringify({ query: 'launch' }),
-                    }, scopeDeclarationChunk('Use Memory for launch.', 'vault')],
+                    }],
                 };
             }),
             invoke: jest.fn(),
@@ -2309,8 +2296,8 @@ describe('ChatService.streamLLM integration', () => {
         expect(exportedToolNames).toContain('webSearch');
     });
 
-    it('honors explicit notes-only source scope when WebSearch is available', async () => {
-        const model = createNoWebDeclarationModel('只从我的笔记里找周至擅长什么', 'vault');
+    it('keeps WebSearch available while the Agent can honor a notes-only request', async () => {
+        const model = createNoWebAnswerModel();
         mockCreateChatModel.mockResolvedValue(model);
         const plugin = createPlugin({ webSearchEnabled: true });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
@@ -2323,10 +2310,7 @@ describe('ChatService.streamLLM integration', () => {
             .map((tool) => tool.function?.name)
             .sort();
         expect(exportedToolNames).toEqual(expectedFirstTurnToolNames('webSearch'));
-        expect(events).toEqual(expect.arrayContaining([expect.objectContaining({
-            type: 'tool_execution_end', toolName: 'webSearch', outcome: 'policy_rejected',
-        })]));
-        expect(JSON.stringify(events)).toContain('source_read_outside_scope');
+        expect(events.some(event => event.type === 'tool_execution_end' && event.toolName === 'webSearch')).toBe(false);
     });
 
     it('exposes core proposals after opt-in without creating a card for an ordinary text answer', async () => {
@@ -2399,7 +2383,7 @@ describe('ChatService.streamLLM integration', () => {
         ]));
     });
 
-    it('exposes source declaration and Operations without regex-narrowing a current-note-only save', async () => {
+    it('exposes Operations without regex-narrowing a current-note-only save', async () => {
         const model = createStreamChunksModel([{ content: 'proposal ready' }]);
         mockCreateChatModel.mockResolvedValue(model);
         const plugin = createPlugin({ operationsAgentEnabled: true });
@@ -2591,9 +2575,9 @@ describe('ChatService.streamLLM integration', () => {
         expect(JSON.stringify(warningCall)).not.toContain('PRIVATE_NOTE_CONTENT');
     });
 
-    it('honors Chinese explicit no-web when weather/current-info would otherwise route to WebSearch', async () => {
+    it('passes a Chinese no-web instruction to the Agent while WebSearch remains available', async () => {
         const modelInputs: Record<string, string>[] = [];
-        const model = createNoWebDeclarationModel('不要联网，看一下杭州今天的天气', 'none', (input) => {
+        const model = createNoWebAnswerModel((input) => {
             modelInputs.push(input);
         });
         mockCreateChatModel.mockResolvedValue(model);
@@ -2627,10 +2611,7 @@ describe('ChatService.streamLLM integration', () => {
         expect(modelInputs[0]?.input).toContain('Recent chat history');
         expect(modelInputs[0]?.input).toContain('我目前只有 webSearch');
         expect(modelInputs[0]?.input).toContain('不要联网，看一下杭州今天的天气');
-        expect(canonicalEvents).toEqual(expect.arrayContaining([expect.objectContaining({
-            type: 'tool_execution_end', toolName: 'webSearch', outcome: 'policy_rejected',
-        })]));
-        expect(JSON.stringify(canonicalEvents)).toContain('source_read_outside_scope');
+        expect(canonicalEvents.some(event => event.type === 'tool_execution_end' && event.toolName === 'webSearch')).toBe(false);
         expect(canonicalEvents.find((event) => event.type === 'agent_end')).toMatchObject({
             status: 'completed',
             metadata: expect.not.objectContaining({
@@ -2670,9 +2651,9 @@ describe('ChatService.streamLLM integration', () => {
         expect(modelInputs[0]?.input).not.toContain('explicitly forbids web or internet access');
     });
 
-    it('lets current-turn no-web override profile content that mentions using WebSearch', async () => {
+    it('keeps the current no-web instruction visible despite a WebSearch profile preference', async () => {
         const modelInputs: Record<string, string>[] = [];
-        const model = createNoWebDeclarationModel('不要联网，看一下杭州今天的天气', 'none', (input) => {
+        const model = createNoWebAnswerModel((input) => {
             modelInputs.push(input);
         });
         mockCreateChatModel.mockResolvedValue(model);
@@ -2697,10 +2678,7 @@ describe('ChatService.streamLLM integration', () => {
             .sort();
         expect(exportedToolNames).toEqual(expectedFirstTurnToolNames('webSearch'));
         expect(modelInputs[0]?.tool_definitions).toContain('webSearch');
-        expect(events).toEqual(expect.arrayContaining([expect.objectContaining({
-            type: 'tool_execution_end', toolName: 'webSearch', outcome: 'policy_rejected',
-        })]));
-        expect(JSON.stringify(events)).toContain('source_read_outside_scope');
+        expect(events.some(event => event.type === 'tool_execution_end' && event.toolName === 'webSearch')).toBe(false);
         expect(modelInputs[0]?.input).toContain('I usually prefer web search for weather checks.');
     });
 

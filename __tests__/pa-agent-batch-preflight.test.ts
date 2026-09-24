@@ -45,28 +45,20 @@ function setup(preflightBatch?: PaAgentToolExecutor['preflightBatch'], maxToolCa
 }
 
 describe('complete tool batch Host preflight', () => {
-    const control: PaAgentToolExecutionResult = { outcome: 'control_applied', promptText: 'Source scope established.' };
     function admitted(guard?: TaskSourceReadGuard) {
-        return { kind: 'admitted' as const, taskSourceReadGuard: guard,
-            controlResults: new Map([['declare', control]]) };
+        return { kind: 'admitted' as const, taskSourceReadGuard: guard };
     }
 
-    it('consumes a declaration before preparation, passes the exact batch guard, and preserves result order', async () => {
+    it('passes the batch guard through preparation and execution', async () => {
         const guard = { isCurrent: () => true, isPathAllowed: () => true };
         const f = setup(() => admitted(guard));
         const output = await f.dispatcher.executeBufferedToolCalls('turn', 0,
-            [call('declare', 'declare_source_scope', '{}', 0), call('read', 'vault_read', '{"path":"a.md"}', 1)], 'normal', undefined);
-        expect(f.canonical.mock.calls.every(([entry]) => entry.name === 'vault_read')).toBe(true);
-        expect(f.mode.mock.calls.map(([name]) => name)).toEqual(['vault_read']);
+            [call('read', 'vault_read', '{"path":"a.md"}')], 'normal', undefined);
         expect(f.prepare).toHaveBeenCalledTimes(1);
         expect(f.prepare.mock.calls[0][0]).toMatchObject({ taskSourceReadGuard: guard });
-        expect(f.prepare.mock.calls[0][0].toolCalls.map((entry) => entry.id)).toEqual(['read']);
-        expect(f.execute).toHaveBeenCalledTimes(1);
         expect(f.execute.mock.calls[0][0].taskSourceReadGuard).toBe(guard);
-        expect(output.toolResults.map((result) => result.toolCallId)).toEqual(['declare', 'read']);
-        expect(f.results[0]).toMatchObject({ outcome: 'control_applied', includeInNextPrompt: true,
-            metadata: { sourceScopeControl: true, preflightOnly: true } });
-        expect(f.dispatcher.toolCallCount).toBe(2);
+        expect(output.toolResults.map(result => result.toolCallId)).toEqual(['read']);
+        expect(f.results[0].outcome).toBe('success');
         expect(JSON.stringify(output)).not.toContain('taskSourceReadGuard');
     });
 
@@ -108,68 +100,6 @@ describe('complete tool batch Host preflight', () => {
         expect(f.execute).toHaveBeenCalledTimes(1);
     });
 
-    it.each(['unknown', 'ordinary', 'duplicate-id', 'malformed', 'unconsumed'] as const)(
-        'rejects invalid %s control consumption before any tool callback', async (invalid) => {
-            const controls = new Map([[invalid === 'unknown' ? 'missing' : invalid === 'ordinary' ? 'read' : 'declare', control]]);
-            if (invalid === 'unconsumed') controls.clear();
-            const f = setup(() => ({ kind: 'admitted', controlResults: controls }));
-            await f.dispatcher.executeBufferedToolCalls('turn', 0, [
-                call('declare', 'declare_source_scope', invalid === 'malformed' ? '{bad' : '{}'),
-                call(invalid === 'duplicate-id' ? 'declare' : 'read', 'vault_read', '{"path":"a.md"}', 1),
-            ], 'normal', undefined);
-            for (const callback of [f.canonical, f.prepare, f.mode, f.execute]) expect(callback).not.toHaveBeenCalled();
-            expect(f.results.map((entry) => entry.outcome)).toEqual(['policy_rejected', 'policy_rejected']);
-            expect(f.dispatcher.toolCallCount).toBe(2);
-        },
-    );
-
-    it('strips source observations from control receipts and never labels them source success', async () => {
-        const f = setup(() => ({ kind: 'admitted', controlResults: new Map([['declare', {
-            outcome: 'success', promptText: 'Scope established', sourceRecords: [], contextUsed: [],
-            metadata: { outcome: 'success', sourceScopeControl: false, preflightOnly: false },
-        }]]) }));
-        await f.dispatcher.executeBufferedToolCalls('turn', 0, [call('declare', 'declare_source_scope')], 'normal', undefined);
-        expect(f.results[0]).toMatchObject({ outcome: 'control_applied',
-            metadata: { outcome: 'control_applied', sourceScopeControl: true, preflightOnly: true } });
-        expect(f.results[0]).not.toHaveProperty('sourceRecords');
-        expect(f.results[0]).not.toHaveProperty('contextUsed');
-        expect(f.execute).not.toHaveBeenCalled();
-    });
-
-    it('reserves budget for consumed declarations before deciding which source calls may prepare', async () => {
-        const f = setup(() => admitted(), 1);
-        await f.dispatcher.executeBufferedToolCalls('turn', 0,
-            [call('declare', 'declare_source_scope', '{}', 0), call('read', 'vault_read', '{"path":"a.md"}', 1)], 'normal', undefined);
-        expect(f.prepare).not.toHaveBeenCalled();
-        expect(f.execute).not.toHaveBeenCalled();
-        expect(f.results.map((entry) => entry.outcome)).toEqual(['control_applied', 'budget_exceeded']);
-        expect(f.dispatcher.toolCallCount).toBe(1);
-    });
-
-    it.each(['sequential', 'parallel'] as const)('reserves the last call for a trailing declaration in %s mode before any source preparation', async (mode) => {
-        const f = setup(() => admitted(), 1);
-        f.mode.mockReturnValue(mode);
-        const result = await f.dispatcher.executeBufferedToolCalls('turn', 0,
-            [call('read', 'vault_read', '{"path":"a.md"}', 0), call('declare', 'declare_source_scope', '{}', 1)], 'normal', undefined);
-        expect(f.canonical).not.toHaveBeenCalled();
-        expect(f.prepare).not.toHaveBeenCalled();
-        expect(f.execute).not.toHaveBeenCalled();
-        expect(result.toolResults.map((entry) => entry.toolCallId)).toEqual(['read', 'declare']);
-        expect(f.results.map((entry) => entry.outcome)).toEqual(['budget_exceeded', 'control_applied']);
-        expect(f.dispatcher.toolCallCount).toBe(1);
-    });
-
-    it('rejects excess admitted controls as a complete batch before any partial source preparation', async () => {
-        const f = setup(() => ({ kind: 'admitted', controlResults: new Map([['declare', control], ['second-declare', control]]) }), 1);
-        await f.dispatcher.executeBufferedToolCalls('turn', 0, [
-            call('read', 'vault_read', '{"path":"a.md"}', 0),
-            call('declare', 'declare_source_scope', '{}', 1), call('second-declare', 'declare_source_scope', '{}', 2),
-        ], 'normal', undefined);
-        for (const callback of [f.canonical, f.prepare, f.mode, f.execute]) expect(callback).not.toHaveBeenCalled();
-        expect(f.results.map((entry) => entry.outcome)).toEqual(['policy_rejected', 'budget_exceeded', 'budget_exceeded']);
-        expect(f.dispatcher.toolCallCount).toBe(1);
-    });
-
     it.each(['preflight', 'canonical', 'preparation', 'preparation-error'] as const)(
         'rejects the complete admitted batch when its guard fails at %s', async (phase) => {
             let current = phase !== 'preflight';
@@ -181,10 +111,10 @@ describe('complete tool batch Host preflight', () => {
             });
             if (phase === 'preparation-error') f.prepare.mockRejectedValueOnce(new Error('Cannot prepare safely'));
             await f.dispatcher.executeBufferedToolCalls('turn', 0,
-                [call('declare', 'declare_source_scope'), call('read', 'vault_read', '{"path":"a.md"}', 1)], 'normal', undefined);
+                [call('read', 'vault_read', '{"path":"a.md"}', 1)], 'normal', undefined);
             expect(f.execute).not.toHaveBeenCalled();
             expect(f.mode).not.toHaveBeenCalled();
-            expect(f.results.map((entry) => entry.outcome)).toEqual(['policy_rejected', 'policy_rejected']);
+            expect(f.results.map((entry) => entry.outcome)).toEqual(['policy_rejected']);
             if (phase === 'preflight' || phase === 'canonical') expect(f.prepare).not.toHaveBeenCalled();
         },
     );
@@ -222,18 +152,6 @@ describe('complete tool batch Host preflight', () => {
         release(); await first;
         expect(f.prepare.mock.calls.map(([input]) => input.taskSourceReadGuard)).toEqual(guards);
         expect(f.execute.mock.calls.map(([input]) => input.taskSourceReadGuard)).toEqual([guards[1], guards[0]]);
-    });
-
-    it('emits a real loop control receipt as non-error without presenting source success', async () => {
-        const loop = new PaAgentLoop({ runId: 'control-only', userInput: 'Only current note', maxTurns: 1,
-            model: { stream: async function* () {
-                yield { type: 'toolcall_delta', id: 'declare', name: 'declare_source_scope', input: {}, index: 0 } as const;
-            } }, toolExecutor: { preflightBatch: () => admitted(), execute: async () => { throw new Error('Must not execute'); } },
-        });
-        const result = await loop.run();
-        expect(result.turns[0].toolResults[0]).toMatchObject({ isError: false,
-            content: { includeInNextPrompt: true, metadata: { outcome: 'control_applied', sourceScopeControl: true, preflightOnly: true } } });
-        expect(result.turns[0].toolResults.some((entry) => entry.content.metadata?.outcome === 'success')).toBe(false);
     });
 
     it('sees every parsed entry before policy filtering, duplicates, canonical keys or preparation', async () => {

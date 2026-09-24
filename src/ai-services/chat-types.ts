@@ -4,6 +4,7 @@ import type { ChatHostProvenance } from "./chat-provenance";
 import type { PersistedSourceRef } from "../pa/contracts/source-ref";
 import type { GenerationInputSnapshot } from "./generation-input-snapshot";
 import type { VaultObservationEvidence } from "./vault-observation-evidence";
+import type { TaskSourcePendingDecision } from './task-source-history';
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
@@ -12,15 +13,19 @@ export interface ChatMessage {
     hostProvenance?: ChatHostProvenance;
     /** Immutable host version reference; never accepted from a model response. */
     writingVersionId?: string;
+    /** This turn's user-selected Writing action, never inferred from prior messages. */
+    writingAction?: { kind: 'writing'; parentVersionId?: string };
     writingRecovery?: ChatWritingRecovery;
     /** Explicit false when a persisted assistant output did not complete safely. */
     shareCardEligible?: boolean;
     memoryMetadata?: ChatTurnMemoryMetadata;
     canonicalTurn?: PaAgentPersistedTurn;
+    /** Host-admitted source choice retained when canonical tool messages are compacted from history. */
+    sourceDecision?: TaskSourcePendingDecision;
     runtimeWarnings?: ChatRuntimeWarning[];
     agentExecution?: {
         runId: string;
-        state: "running" | "interrupted" | "completed" | "partial" | "failed" | "cancelled";
+        state: "running" | "interrupted" | "awaiting_user" | "completed" | "partial" | "failed" | "cancelled";
         operationIds?: string[];
     };
 }
@@ -332,6 +337,7 @@ export type AgentLifecycleEventType =
 export type AgentEndStatus =
     | "completed"
     | "completed_with_warning"
+    | "needs_user"
     | "incomplete"
     | "aborted"
     | "error";
@@ -339,6 +345,7 @@ export type AgentEndStatus =
 export type TurnEndStatus =
     | "completed"
     | "tool_results_ready"
+    | "needs_user"
     | "completed_with_warning"
     | "incomplete"
     | "aborted"

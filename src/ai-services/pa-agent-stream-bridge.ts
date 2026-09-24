@@ -93,6 +93,14 @@ export class CanonicalToLegacyEventAdapter {
         }
     }
 
+    /** Pure output has no assistant text message, so deliver only text committed by the Loop. */
+    syncCommittedAnswer(snapshot: string): void {
+        if (this.writing || this.ended || snapshot === this.committedLegacySnapshot) return;
+        if (snapshot && !this.committedLegacySnapshot) this.legacyEvents.answerStarted();
+        this.committedLegacySnapshot = snapshot;
+        this.legacyEvents.answerSnapshot(snapshot);
+    }
+
     handle(event: AgentEvent): void {
         if (this.ended) return;
         this.runId ??= event.runId;
@@ -245,16 +253,18 @@ export class CanonicalToLegacyEventAdapter {
         const calls = candidate?.content.filter((part) => part.type === "toolCall") ?? [];
         if (candidate?.providerCompletion === "tool_calls" && calls.length === 0) return;
         const sourceCurrent = this.isWritingPreviewCurrent();
-        if (native && candidate && calls.length === 0 && !this.nativeArguments && sourceCurrent) {
-            this.appendAssistantText(candidate.content);
+        if (native && (calls.length !== 1 || calls[0].name !== "present_writing")) {
+            // Native writing is available to ordinary Chat turns. Only an
+            // actual writing output candidate belongs to Writing recovery.
+            // Canonical task status owns an ordinary answer's failure state.
+            if (candidate && !sourceCurrent) this.emitWritingPreview(event.runId, candidate.id, "");
+            if (candidate && calls.length === 0 && sourceCurrent) this.appendAssistantText(candidate.content);
             return;
         }
         const rawText = native ? this.nativeArguments
             : candidate?.content.filter((part) => part.type === "text").map((part) => part.text).join("") ?? "";
         let reason: WritingRecoveryReason | undefined;
         // A warning's impact is unknown here. It must not silently become a verified version.
-        // Ordinary native replies also need explicit recovery when their preview
-        // was withdrawn; otherwise an empty answer silently keeps its success state.
         if (!sourceCurrent) reason = "source_changed";
         else if (event.status !== "completed" || !candidate
             || (native ? !this.nativeValidated || candidate.stopReason !== "tool_calls" || calls.length !== 1

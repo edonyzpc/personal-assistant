@@ -31,7 +31,7 @@ describe("createAgentControlSnapshot", () => {
 });
 
 describe("createInitialAgentControlSnapshot", () => {
-    it("intersects explicit material tools with actual availability and admits only the host source control", () => {
+    it("intersects explicit tools with actual availability", () => {
         const snapshot = createInitialAgentControlSnapshot({
             constraints: {
                 allowedToolNames: new Set(["query_notes", "webSearch"]),
@@ -43,7 +43,6 @@ describe("createInitialAgentControlSnapshot", () => {
                 "webSearch",
             ]),
             availableMetaToolNames: new Set([
-                "declare_source_scope",
                 "load_skill",
                 "get_writing_context",
                 "resolve_chat_images",
@@ -51,18 +50,16 @@ describe("createInitialAgentControlSnapshot", () => {
         });
 
         expect([...snapshot.allowedToolNames!].sort()).toEqual([
-            "declare_source_scope",
             "query_notes",
             "webSearch",
         ]);
     });
 
-    it("lets explicit blocked tools win over every normal and host-only capability", () => {
+    it("lets explicit blocked tools win over every available capability", () => {
         const snapshot = createInitialAgentControlSnapshot({
             constraints: {
                 allowedToolNames: new Set(["query_notes"]),
                 blockedToolNames: new Set([
-                    "declare_source_scope",
                     "load_skill",
                     "get_writing_context",
                     "resolve_chat_images",
@@ -70,7 +67,6 @@ describe("createInitialAgentControlSnapshot", () => {
             },
             availableSemanticToolNames: new Set(["query_notes", "read_note", "webSearch"]),
             availableMetaToolNames: new Set([
-                "declare_source_scope",
                 "load_skill",
                 "get_writing_context",
                 "resolve_chat_images",
@@ -79,7 +75,6 @@ describe("createInitialAgentControlSnapshot", () => {
 
         expect([...snapshot.allowedToolNames!]).toEqual(["query_notes"]);
         expect([...snapshot.blockedToolNames!].sort()).toEqual([
-            "declare_source_scope",
             "get_writing_context",
             "load_skill",
             "resolve_chat_images",
@@ -242,7 +237,7 @@ describe("deriveSameSourceFollowUpAgentControlSnapshot", () => {
                 "search_memory",
                 "query_notes",
                 "read_note",
-                "declare_source_scope",
+                "read_note_outline",
             ]),
             blockedToolNames: new Set(["webSearch", "load_skill", "search_vault_snippets"]),
         });
@@ -253,9 +248,9 @@ describe("deriveSameSourceFollowUpAgentControlSnapshot", () => {
         });
 
         expect([...result.allowedToolNames!].sort()).toEqual([
-            "declare_source_scope",
             "query_notes",
             "read_note",
+            "read_note_outline",
             "search_memory",
         ]);
         expect(result.allowedToolNames!.has("webSearch")).toBe(false);

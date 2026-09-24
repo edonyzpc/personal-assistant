@@ -11,21 +11,18 @@ jest.mock('obsidian');
 
 function scoped() {
     const state = new TaskSourceConstraintState({ runId: 'r', userMessageId: 'u', userText: 'only current note',
-        noteHandles: new Map([['active', 'file-object-a']]), currentNoteHandle: 'active' });
-    const prepared = state.prepareDeclaration({ instructionQuote: 'only current note', notes: 'current_note', webAllowed: false });
-    if (!prepared.ok) throw new Error(prepared.reason);
+        noteHandles: new Map([['active', 'file-object-a']]) });
     let active = true;
-    const files = new Map([['a.md', 'file-object-a'], ['b.md', 'file-object-b']]);
-    const guard = state.createReadGuard(prepared.constraint, path => files.get(path), () => active);
-    return { state, constraint: prepared.constraint, guard, files, invalidate: () => { active = false; } };
+    const files = new Map([['a.md', 'file-object-a']]);
+    const guard = state.createReadGuard(state.snapshot(), path => files.get(path) === 'file-object-a' ? files.get(path) : undefined,
+        () => active);
+    return { state, constraint: state.snapshot(), guard, files, invalidate: () => { active = false; } };
 }
 
 describe('B-135 per-call read guard', () => {
-    it('cannot read with a prepared candidate and revokes after scope or host lifetime changes', () => {
+    it('rejects changed identity and revokes after Host lifetime changes', () => {
         const h = scoped();
-        expect(isTaskSourcePathAllowed(h.guard, 'a.md')).toBe(false);
-        expect(() => assertTaskSourceReadCurrent(h.guard)).toThrow('no longer current');
-        h.state.commit(h.constraint);
+        expect(() => assertTaskSourceReadCurrent(h.guard)).not.toThrow();
         expect(isTaskSourcePathAllowed(h.guard, 'a.md')).toBe(true);
         expect(isTaskSourcePathAllowed(h.guard, 'b.md')).toBe(false);
         h.files.set('a.md', 'recreated-file-object');
@@ -36,16 +33,8 @@ describe('B-135 per-call read guard', () => {
         expect(h.guard.isCurrent()).toBe(false);
     });
 
-    it('invalidates previously captured guards on a new committed revision', () => {
-        const h = scoped(); h.state.commit(h.constraint);
-        const prepared = h.state.prepareDeclaration({ instructionQuote: 'only current note', notes: 'none', webAllowed: false });
-        if (!prepared.ok) throw new Error(prepared.reason);
-        h.state.commit(prepared.constraint);
-        expect(h.guard.isCurrent()).toBe(false);
-    });
-
     it('can inspect an admitted output target without authorizing its existing body as material', () => {
-        const h = scoped(); h.state.commit(h.constraint);
+        const h = scoped();
         const guard = h.state.createReadGuard(h.constraint, path => h.files.get(path), () => true,
             path => path === 'new-output.md');
         expect(isTaskSourcePathAllowed(guard, 'new-output.md', 'output_target_exists')).toBe(true);
@@ -66,7 +55,7 @@ describe('B-135 per-call read guard', () => {
     }
 
     it('passes the exact host guard through the real executor, registry and adapter', async () => {
-        const h = scoped(); h.state.commit(h.constraint);
+        const h = scoped();
         const definition = createCurrentNoteContextTool();
         const observe = jest.fn(async (_input, context) => {
             expect(context.taskSourceReadGuard).toBe(h.guard);
@@ -83,7 +72,7 @@ describe('B-135 per-call read guard', () => {
     });
 
     it('does not prepare stale input or return observations revoked during capability execution', async () => {
-        const h = scoped(); h.state.commit(h.constraint);
+        const h = scoped();
         const definition = createCurrentNoteContextTool();
         const observe = jest.fn(async () => {
             h.invalidate();
@@ -101,7 +90,7 @@ describe('B-135 per-call read guard', () => {
     });
 
     it('rechecks after outer recovery revalidation before capturing evidence', async () => {
-        const h = scoped(); h.state.commit(h.constraint);
+        const h = scoped();
         const registry = new CapabilityRegistry();
         registry.registerMany(createCoreToolCapabilities([createSearchMemoryTool(async () => ({
             usedMemory: false, query: 'q', documents: [], sources: [],
@@ -125,8 +114,8 @@ describe('B-135 per-call read guard', () => {
     });
 
     it('keeps concurrent calls on one executor bound to their own guard', async () => {
-        const a = scoped(); a.state.commit(a.constraint);
-        const b = scoped(); b.state.commit(b.constraint);
+        const a = scoped();
+        const b = scoped();
         let release!: () => void;
         const pending = new Promise<void>(resolve => { release = resolve; });
         let ready!: () => void;

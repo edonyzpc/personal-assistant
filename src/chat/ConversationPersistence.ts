@@ -589,8 +589,9 @@ export class ConversationPersistence {
     }
 }
 
-function persistedExecutionState(message: ChatMessage): "completed" | "partial" | "failed" | "cancelled" {
+function persistedExecutionState(message: ChatMessage): "awaiting_user" | "completed" | "partial" | "failed" | "cancelled" {
     const status = message.canonicalTurn?.status;
+    if (status === 'needs_user') return 'awaiting_user';
     if (status === "aborted" || message.runtimeWarnings?.some((warning) => warning.type === "user_abort")) {
         return "cancelled";
     }

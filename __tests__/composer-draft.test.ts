@@ -76,4 +76,23 @@ describe("image composer ownership", () => {
         draft.clearImageIntent();
         expect(draft.snapshot("Make the sky darker").imageIntent).toBeUndefined();
     });
+
+    test("writing is an explicit single-use action that survives only an untouched failed send", () => {
+        const draft = new ComposerDraft<string>();
+        draft.setWritingIntent();
+        expect(draft.hasDraft("")).toBe(true);
+        expect(draft.canSend("")).toBe(false);
+        const sent = draft.take("Draft an invitation")!;
+        expect(sent.snapshot.writingIntent).toBe(true);
+        expect(draft.snapshot("").writingIntent).toBeUndefined();
+        expect(draft.restore(sent, "")).toBe("Draft an invitation");
+        expect(draft.snapshot("Draft an invitation").writingIntent).toBe(true);
+        draft.setImageIntent({ operation: "generate", referenceImageRefs: [] });
+        expect(draft.hasDraft("")).toBe(true);
+        expect(draft.snapshot("Draft an invitation").writingIntent).toBeUndefined();
+        draft.setWritingIntent();
+        expect(draft.snapshot("Draft an invitation").imageIntent).toBeUndefined();
+        draft.clearWritingIntent();
+        expect(draft.snapshot("Draft an invitation").writingIntent).toBeUndefined();
+    });
 });

@@ -992,6 +992,28 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 	height: var(--pa-chat-button-icon-size);
 }
 
+.pa-chat-view .pa-chat-source-decision-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 10px 0 4px;
+}
+
+.pa-chat-view .pa-chat-source-decision-actions p {
+	flex-basis: 100%;
+	margin: 0;
+}
+
+.pa-chat-view .pa-chat-source-decision-actions button {
+	max-width: 100%;
+	min-height: 36px;
+	white-space: normal;
+}
+
+body.is-mobile .pa-chat-view .pa-chat-source-decision-actions button {
+	min-height: 44px;
+}
+
 @media (hover: none) {
 	.llm-view button.message-action-button {
 		flex-basis: 44px;
@@ -2075,7 +2097,7 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button::before {
 	gap: 4px;
 }
 
-.pa-chat-view .pa-chat-create-image-typeahead {
+.pa-chat-view .pa-chat-action-typeahead {
 	position: absolute;
 	z-index: 40;
 	left: 12px;
@@ -8890,7 +8912,8 @@ body.is-mobile .pa-share-card-print-style-option {
     resize: vertical;
 }
 
-.pa-chat-view .pa-chat-create-image-intent:not([hidden]) {
+.pa-chat-view .pa-chat-create-image-intent:not([hidden]),
+.pa-chat-view .pa-chat-writing-intent:not([hidden]) {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -8899,7 +8922,8 @@ body.is-mobile .pa-share-card-print-style-option {
     color: var(--text-accent);
     font-size: var(--font-ui-small);
 }
-.pa-chat-view .pa-chat-create-image-intent button {
+.pa-chat-view .pa-chat-create-image-intent button,
+.pa-chat-view .pa-chat-writing-intent button {
     min-width: 32px;
     min-height: 32px;
 }

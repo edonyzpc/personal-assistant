@@ -12,6 +12,7 @@ import type { HistoryTurnEntry } from "./types";
 import {
     CHAT_HISTORY_SCHEMA_VERSION,
     MAX_CONVERSATIONS,
+    cloneSourceDecision,
     type ChatHistoryStore,
     type PersistedConversation,
     type PersistedChatMessage,
@@ -333,6 +334,7 @@ export class ChatHistoryManager {
             content: entry.user.content,
             ...(entry.user.images ? { images: cloneMessageImages(entry.user.images) } : {}),
             ...(entry.user.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(entry.user.hostProvenance) } : {}),
+            ...(entry.user.writingAction !== undefined ? { writingAction: { ...entry.user.writingAction } } : {}),
             ...(entry.user.runtimeWarnings && entry.user.runtimeWarnings.length > 0
                 ? { runtimeWarnings: entry.user.runtimeWarnings.map(cloneRuntimeWarning) }
                 : {}),
@@ -362,6 +364,8 @@ export class ChatHistoryManager {
                 ...(entry.assistant.agentExecution.operationIds
                     ? { operationIds: [...entry.assistant.agentExecution.operationIds] } : {}),
             } } : {}),
+            ...(entry.assistant.sourceDecision
+                ? { sourceDecision: cloneSourceDecision(entry.assistant.sourceDecision) } : {}),
             ...(assistantTurnStatus ? { turnStatus: assistantTurnStatus } : {}),
         };
         const memoryMetadata = entry.assistant.memoryMetadata ?? entry.memoryMetadata;
@@ -420,6 +424,7 @@ export class ChatHistoryManager {
             content: turn.user.content,
             ...(turn.user.images ? { images: cloneMessageImages(turn.user.images) } : {}),
             ...(turn.user.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(turn.user.hostProvenance) } : {}),
+            ...(turn.user.writingAction !== undefined ? { writingAction: { ...turn.user.writingAction } } : {}),
             ...(turn.user.runtimeWarnings && turn.user.runtimeWarnings.length > 0
                 ? { runtimeWarnings: turn.user.runtimeWarnings.map(cloneRuntimeWarning) }
                 : {}),
@@ -455,6 +460,8 @@ export class ChatHistoryManager {
             ...(turn.assistant.images ? { images: cloneMessageImages(turn.assistant.images) } : {}),
             ...(turn.assistant.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(turn.assistant.hostProvenance) } : {}),
             canonicalTurn,
+            ...(turn.assistant.sourceDecision
+                ? { sourceDecision: cloneSourceDecision(turn.assistant.sourceDecision) } : {}),
             ...(turn.assistant.shareCardEligible !== undefined
                 ? { shareCardEligible: turn.assistant.shareCardEligible }
                 : {}),

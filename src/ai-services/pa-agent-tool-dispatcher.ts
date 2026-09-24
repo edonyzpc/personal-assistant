@@ -105,7 +105,6 @@ export class ToolExecutionDispatcher {
             .map((buffer) => parseBufferedToolCall(buffer));
         const preflight = this.config.toolExecutor?.preflightBatch;
         let readGuard: TaskSourceReadGuard | undefined;
-        let controlResults: ReadonlyMap<string, PaAgentToolExecutionResult> = new Map();
         if (preflight && turnToolMode !== "final_answer_only" && parsedToolCalls.length > 0) {
             if (this.config.isAborted()) return { toolResults: [], diagnostics: [], stoppedBy: "aborted" };
             if (this.config.isWallClockExceeded()) return { toolResults: [], diagnostics: [], stoppedBy: "wall_clock_exceeded" };
@@ -128,11 +127,7 @@ export class ToolExecutionDispatcher {
                     }
                     if (result && "kind" in result && result.kind === "admitted") {
                         const admitted = this.validatePreflightAdmission(result, parsedToolCalls);
-                        if ((admitted.controlResults?.size ?? 0) > this.config.maxToolCalls - this.toolCallCount) {
-                            throw new Error("Insufficient budget for admitted source controls.");
-                        }
                         readGuard = admitted.taskSourceReadGuard;
-                        controlResults = admitted.controlResults ?? new Map();
                     } else {
                         if (!result || !("promptText" in result) || typeof result.promptText !== "string" || !result.promptText.trim()) {
                             throw new Error("Batch preflight returned an invalid rejection.");
@@ -168,7 +163,6 @@ export class ToolExecutionDispatcher {
                 parsedToolCalls,
                 turnToolMode,
                 turnControlSnapshot,
-                controlResults,
                 readGuard,
             );
             preparation = await this.prepareToolBatch(
@@ -180,7 +174,7 @@ export class ToolExecutionDispatcher {
                 readGuard,
             );
             assertTaskSourceReadCurrent(readGuard);
-            dispatch = this.resolveBatchExecutionMode(parsedToolCalls.filter((call) => !controlResults.has(call.id)));
+            dispatch = this.resolveBatchExecutionMode(parsedToolCalls);
             assertTaskSourceReadCurrent(readGuard);
         } catch (error) {
             if (!readGuard) throw error;
@@ -196,7 +190,6 @@ export class ToolExecutionDispatcher {
                 turnToolMode,
                 turnControlSnapshot,
                 preparation.toolResults,
-                controlResults,
                 readGuard,
             );
             return {
@@ -211,7 +204,6 @@ export class ToolExecutionDispatcher {
             turnToolMode,
             turnControlSnapshot,
             preparation.toolResults,
-            controlResults,
             readGuard,
         );
         return {
@@ -229,33 +221,13 @@ export class ToolExecutionDispatcher {
             throw new Error("Invalid task source read guard.");
         }
         assertTaskSourceReadCurrent(guard);
-        const controls = new Map<string, PaAgentToolExecutionResult>();
-        const callsById = new Map<string, ParsedBufferedToolCall>();
-        for (const call of toolCalls) {
-            if (callsById.has(call.id)) throw new Error("Ambiguous batch tool-call identity.");
-            callsById.set(call.id, call);
+        if (new Set(toolCalls.map(call => call.id)).size !== toolCalls.length) {
+            throw new Error("Ambiguous batch tool-call identity.");
         }
-        if (admission.controlResults !== undefined) {
-            if (!(admission.controlResults instanceof Map)) throw new Error("Invalid batch control results.");
-            for (const [id, result] of admission.controlResults) {
-                const call = callsById.get(id);
-                if (!call || call.name !== "declare_source_scope" || call.parseError
-                    || !result || typeof result.promptText !== "string" || !result.promptText.trim()
-                    || (result.outcome !== "success" && result.outcome !== "control_applied")) {
-                    throw new Error("Invalid source-scope control consumption.");
-                }
-                controls.set(id, {
-                    outcome: "control_applied", promptText: result.promptText,
-                    ...(typeof result.previewText === "string" ? { previewText: result.previewText } : {}),
-                    includeInNextPrompt: true,
-                    metadata: { ...result.metadata, outcome: "control_applied", sourceScopeControl: true, preflightOnly: true },
-                });
-            }
+        if (toolCalls.some(call => call.name === 'declare_source_scope' || call.name === 'request_source_decision')) {
+            throw new Error("Retired task-source controls cannot be admitted.");
         }
-        if (toolCalls.some((call) => call.name === "declare_source_scope" && !controls.has(call.id))) {
-            throw new Error("Source-scope declaration was not consumed by Host preflight.");
-        }
-        return { kind: "admitted", taskSourceReadGuard: guard, controlResults: controls };
+        return { kind: "admitted", taskSourceReadGuard: guard };
     }
 
     private rejectPreflightBatch(
@@ -289,23 +261,18 @@ export class ToolExecutionDispatcher {
         toolCalls: ParsedBufferedToolCall[],
         toolMode: PaAgentToolMode | undefined,
         controlSnapshot: AgentControlSnapshot | undefined,
-        controlResults: ReadonlyMap<string, PaAgentToolExecutionResult>,
         readGuard?: TaskSourceReadGuard,
     ): ParsedBufferedToolCall[] {
         if (toolMode === "final_answer_only") return [];
         const meaningfulToolCallNames = collectMeaningfulToolCallNames(toolCalls);
         const projectedSeen = new Set(this.seenToolCallKeys);
         let projectedCount = this.toolCallCount;
-        let remainingControls = controlResults.size;
         const eligible: ParsedBufferedToolCall[] = [];
         for (const toolCall of toolCalls) {
             assertTaskSourceReadCurrent(readGuard);
-            const control = controlResults.has(toolCall.id);
-            if (control) remainingControls -= 1;
             if (this.classifyControlSnapshotSkip(toolCall, controlSnapshot)) continue;
             if (isPlaceholderParsedToolCall(toolCall) && meaningfulToolCallNames.has(toolCall.name)) continue;
-            if (projectedCount + remainingControls >= this.config.maxToolCalls || toolCall.parseError) continue;
-            if (control) { projectedCount += 1; continue; }
+            if (projectedCount >= this.config.maxToolCalls || toolCall.parseError) continue;
             const key = this.normalizeToolCallKey(toolCall);
             assertTaskSourceReadCurrent(readGuard);
             if (this.isDuplicateToolCall(toolCall, key, projectedSeen)) continue;
@@ -419,13 +386,11 @@ export class ToolExecutionDispatcher {
         turnToolMode: PaAgentToolMode | undefined,
         turnControlSnapshot: AgentControlSnapshot | undefined,
         preparedToolResults: ReadonlyMap<string, PaAgentToolExecutionResult>,
-        controlResults: ReadonlyMap<string, PaAgentToolExecutionResult>,
         readGuard?: TaskSourceReadGuard,
     ): Promise<ToolExecutionSummary> {
         const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
         const diagnostics: Array<Record<string, unknown>> = [];
         const meaningfulToolCallNames = collectMeaningfulToolCallNames(parsedToolCalls);
-        let remainingControls = controlResults.size;
 
         for (const toolCall of parsedToolCalls) {
             if (this.config.isAborted()) {
@@ -439,19 +404,17 @@ export class ToolExecutionDispatcher {
                 index: toolCall.index,
             });
 
-            const control = controlResults.get(toolCall.id);
-            if (control) remainingControls -= 1;
-            const skipResult = this.consumeExpiredSourceGuardAttempt(readGuard, remainingControls)
-                ?? this.classifyPreflightSkip(toolCall, meaningfulToolCallNames, turnToolMode, turnControlSnapshot, Boolean(control), remainingControls);
+            const skipResult = this.consumeExpiredSourceGuardAttempt(readGuard)
+                ?? this.classifyPreflightSkip(toolCall, meaningfulToolCallNames, turnToolMode, turnControlSnapshot);
             let executionResult: PaAgentToolExecutionResult;
             if (skipResult) {
                 executionResult = skipResult;
             } else {
                 if (toolCall.name === "get_writing_context") this.lastSuccessfulWritingContextKey = undefined;
-                if (!control) this.seenToolCallKeys.add(this.normalizeToolCallKey(toolCall));
+                this.seenToolCallKeys.add(this.normalizeToolCallKey(toolCall));
                 this._toolCallCount += 1;
                 executionResult = !isReadGuardCurrent(readGuard) ? sourceGuardRejection()
-                    : control ?? preparedToolResults.get(toolCall.id)
+                    : preparedToolResults.get(toolCall.id)
                         ?? await this.executeRealToolCall(turnId, turnIndex, toolCall, readGuard);
             }
 
@@ -478,7 +441,6 @@ export class ToolExecutionDispatcher {
         turnToolMode: PaAgentToolMode | undefined,
         turnControlSnapshot: AgentControlSnapshot | undefined,
         preparedToolResults: ReadonlyMap<string, PaAgentToolExecutionResult>,
-        controlResults: ReadonlyMap<string, PaAgentToolExecutionResult>,
         readGuard?: TaskSourceReadGuard,
     ): Promise<ToolExecutionSummary> {
         const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
@@ -492,23 +454,20 @@ export class ToolExecutionDispatcher {
         }
 
         const meaningfulToolCallNames = collectMeaningfulToolCallNames(parsedToolCalls);
-        let remainingControls = controlResults.size;
         // Pre-flight pass: classify each tool call in deterministic order so state mutations
         // (seenToolCallKeys, toolCallCount) mirror the sequential path. Only the "real" executes run concurrently.
         const entries: ParallelToolEntry[] = [];
         for (const toolCall of parsedToolCalls) {
-            const control = controlResults.get(toolCall.id);
-            if (control) remainingControls -= 1;
-            const skipResult = this.consumeExpiredSourceGuardAttempt(readGuard, remainingControls)
-                ?? this.classifyPreflightSkip(toolCall, meaningfulToolCallNames, turnToolMode, turnControlSnapshot, Boolean(control), remainingControls);
+            const skipResult = this.consumeExpiredSourceGuardAttempt(readGuard)
+                ?? this.classifyPreflightSkip(toolCall, meaningfulToolCallNames, turnToolMode, turnControlSnapshot);
             if (skipResult) {
                 entries.push({ toolCall, skipResult });
                 continue;
             }
             if (toolCall.name === "get_writing_context") this.lastSuccessfulWritingContextKey = undefined;
-            if (!control) this.seenToolCallKeys.add(this.normalizeToolCallKey(toolCall));
+            this.seenToolCallKeys.add(this.normalizeToolCallKey(toolCall));
             this._toolCallCount += 1;
-            entries.push({ toolCall, ...(control ? { skipResult: control } : {}) });
+            entries.push({ toolCall });
         }
 
         for (const entry of entries) {
@@ -551,9 +510,9 @@ export class ToolExecutionDispatcher {
         return { toolResults, diagnostics, ...(stoppedBy ? { stoppedBy } : {}) };
     }
 
-    private consumeExpiredSourceGuardAttempt(guard: TaskSourceReadGuard | undefined, reservedControls = 0): PaAgentToolExecutionResult | undefined {
+    private consumeExpiredSourceGuardAttempt(guard: TaskSourceReadGuard | undefined): PaAgentToolExecutionResult | undefined {
         if (isReadGuardCurrent(guard)) return undefined;
-        if (this.toolCallCount + reservedControls >= this.config.maxToolCalls) {
+        if (this.toolCallCount >= this.config.maxToolCalls) {
             return { outcome: "budget_exceeded", promptText: "Tool call budget exceeded.",
                 metadata: { outcome: "budget_exceeded", maxToolCalls: this.config.maxToolCalls } };
         }
@@ -566,8 +525,6 @@ export class ToolExecutionDispatcher {
         meaningfulToolCallNames: Set<string>,
         turnToolMode: PaAgentToolMode | undefined,
         turnControlSnapshot: AgentControlSnapshot | undefined,
-        consumedControl = false,
-        reservedControls = 0,
     ): PaAgentToolExecutionResult | null {
         // Ops Agent prerequisite: when toolMode=final_answer_only, the runtime exports zero tool
         // schemas (see pa-agent-runtime.ts `tool_definitions: input.toolMode === "final_answer_only" ? []`)
@@ -603,7 +560,7 @@ export class ToolExecutionDispatcher {
                 },
             };
         }
-        if (this.toolCallCount + reservedControls >= this.config.maxToolCalls) {
+        if (this.toolCallCount >= this.config.maxToolCalls) {
             return {
                 outcome: "budget_exceeded",
                 promptText: `Tool call budget exceeded before running ${toolCall.name}.`,
@@ -626,7 +583,6 @@ export class ToolExecutionDispatcher {
                 },
             };
         }
-        if (consumedControl) return null;
         const toolCallKey = this.normalizeToolCallKey(toolCall);
         if (this.isDuplicateToolCall(toolCall, toolCallKey, this.seenToolCallKeys)) {
             const recorded = this.executionRecords.get(toolCallKey);

@@ -3,7 +3,7 @@ import type { MarkdownViewLike, VaultFileLike } from '../src/ai-services/chat-to
 import type { ParsedBufferedToolCall } from '../src/ai-services/pa-agent-types';
 import type { TaskSourceConstraint } from '../src/ai-services/task-source-constraint';
 import type { ChatMessage, PaAgentMessage } from '../src/ai-services/chat-types';
-import { createTaskSourceConstrainedExecutor, DECLARE_SOURCE_SCOPE } from '../src/ai-services/task-source-executor';
+import { createTaskSourceConstrainedExecutor } from '../src/ai-services/task-source-executor';
 import {
     MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS,
     MAX_TASK_SOURCE_NOTE_HANDLES,
@@ -12,6 +12,8 @@ import {
 } from '../src/ai-services/task-source-run';
 
 jest.mock('obsidian');
+
+const userText = '请查找资料并回答';
 
 function fixture(currentPath = 'notes/a.md') {
     const a: VaultFileLike = { path: currentPath };
@@ -26,7 +28,7 @@ function fixture(currentPath = 'notes/a.md') {
         getLeavesOfType: jest.fn((_type: string) => []),
     } as unknown as Workspace;
     const getFileByPath = jest.fn((path: string): unknown => files.get(path));
-    const host: TaskSourceRunHost = { runId: 'run-1', userMessageId: 'user-1', userText: '只用当前笔记',
+    const host: TaskSourceRunHost = { runId: 'run-1', userMessageId: 'user-1', userText,
         workspace, getFileByPath, isCurrent: () => current };
     return { a, b, canvas, files, host, getFileByPath,
         create: () => new TaskSourceRun(host),
@@ -35,27 +37,20 @@ function fixture(currentPath = 'notes/a.md') {
     };
 }
 
-function contextNotes(run: TaskSourceRun): { currentNoteHandle: string | null; notes: { handle: string; path: string }[] } {
+function contextNotes(run: TaskSourceRun): { currentNoteHandle: string | null;
+    notes: { handle: string; path: string; title?: string }[] } {
     return JSON.parse(run.contextInstruction().split('\n').slice(-1)[0]);
 }
 
-function prepare(run: TaskSourceRun, input: Record<string, unknown> = {}): TaskSourceConstraint {
-    const result = run.state.prepareDeclaration({ instructionQuote: '只用当前笔记', notes: 'current_note', webAllowed: false, ...input });
-    if (!result.ok) throw new Error(result.reason);
-    return result.constraint;
-}
-
-function commit(run: TaskSourceRun, input: Record<string, unknown> = {}): TaskSourceConstraint {
-    const constraint = prepare(run, input);
-    if (!run.state.commit(constraint)) throw new Error('Fixture did not commit');
-    return constraint;
+function admission(run: TaskSourceRun): TaskSourceConstraint {
+    return run.state.snapshot();
 }
 
 function call(id: string, name: string, input: unknown = {}): ParsedBufferedToolCall {
     return { type: 'toolCall', id, name, input, index: 0 };
 }
 
-function executorFor(run: TaskSourceRun) {
+function executorFor(run: TaskSourceRun, userInput = userText) {
     const execute = jest.fn(async () => ({ outcome: 'success' as const, promptText: 'unused' }));
     const prepareBatch = jest.fn(async () => undefined);
     const executor = createTaskSourceConstrainedExecutor({
@@ -64,61 +59,59 @@ function executorFor(run: TaskSourceRun) {
         resolveReadPlans: run.resolveReadPlans, resolveNoteSearchScope: run.resolveNoteSearchScope,
     });
     return { execute, prepareBatch, preflight: (toolCalls: ParsedBufferedToolCall[]) => executor.preflightBatch!({
-        runId: 'run-1', turnId: 'turn-1', turnIndex: 0, userInput: '只用当前笔记', toolCalls,
+        runId: 'run-1', turnId: 'turn-1', turnIndex: 0, userInput, toolCalls,
     }) };
 }
 
 describe('Task source run host', () => {
-    it('distinguishes an uncommitted declaration from the accepted scope while preserving read gates', () => {
-        const run = fixture().create();
-        const initial = run.contextInstruction();
-        expect(initial).toContain('No task-material scope has been accepted');
-        expect(initial).toContain('Without new task-material reads, answer or deliver the work directly');
-        const candidate = prepare(run, { notes: 'none' });
-        expect(run.contextInstruction()).toBe(initial);
-        expect(run.state.allows({ kind: 'web' })).toBe(false);
-        expect(run.state.commit(candidate)).toBe(true);
-        const accepted = run.contextInstruction();
-        expect(accepted).toContain('Task-material scope is already accepted');
-        expect(accepted).toContain('Do not repeat the declaration for an unchanged scope');
-        expect(accepted).not.toContain('No task-material scope has been accepted');
-        expect(accepted).toContain('"notes":"none","webAllowed":false');
-        expect(run.state.allows({ kind: 'web' })).toBe(false);
-        expect(run.state.allows({ kind: 'vault_search' })).toBe(false);
-    });
-
-    it('reports genuine committed narrowing without accepting a failed or wider declaration', () => {
-        const run = fixture().create();
-        expect(run.state.prepareDeclaration({ instructionQuote: 'absent quote', notes: 'vault', webAllowed: true }).ok).toBe(false);
-        expect(run.contextInstruction()).toContain('No task-material scope has been accepted');
-        commit(run, { notes: 'vault', webAllowed: true });
-        expect(run.contextInstruction()).toContain('"notes":"vault","webAllowed":true');
-        commit(run, { notes: 'none', webAllowed: false });
-        const narrowed = run.contextInstruction();
-        expect(narrowed).toContain('"notes":"none","webAllowed":false');
-        expect(narrowed).toContain('A user correction or new evidence may require a narrower declaration');
-        expect(run.state.prepareDeclaration({ instructionQuote: '只用当前笔记', notes: 'vault', webAllowed: true }))
-            .toMatchObject({ ok: false, reason: 'scope_widening' });
-        expect(run.contextInstruction()).toBe(narrowed);
-    });
-
-    it.each(['delete', 'replace', 'modify', 'boundary', 'memory'] as const)('keeps the read snapshot after cleanup and handles later %s independently', change => {
+    it('admits ordinary reads and rejects retired controls in the same batch', () => {
         const h = fixture();
-        h.a.stat = { mtime: 1, size: 12 };
-        let memoryAllowed = true;
-        const run = new TaskSourceRun({ ...h.host, isMemoryAllowed: () => memoryAllowed });
-        const history: ChatMessage[] = [{ role: 'assistant', content: 'Source-backed previous work',
-            memoryMetadata: { hasMemoryContent: true, allowedMemorySourcePaths: [h.a.path] } }];
-        const assertSources = run.capturePersistenceSourceValidity([], history);
-        h.setCurrent(false);
-        expect(assertSources).not.toThrow();
-        if (change === 'delete') h.files.delete(h.a.path);
-        if (change === 'replace') h.files.set(h.a.path, { path: h.a.path, stat: { mtime: 1, size: 12 } });
-        if (change === 'modify') h.a.stat.mtime = 2;
-        if (change === 'boundary') h.getFileByPath.mockReturnValue(undefined);
-        if (change === 'memory') memoryAllowed = false;
-        if (change === 'modify') expect(assertSources).not.toThrow();
-        else expect(assertSources).toThrow(/source/);
+        const run = h.create();
+        const source = run.state.snapshot();
+        expect(source).toMatchObject({ allowedNoteIds: null, excludedNoteIds: [], webAllowed: true });
+        expect(run.contextInstruction()).not.toContain('declare_source_scope');
+        expect(executorFor(run).preflight([
+            call('legacy', 'declare_source_scope', { notes: 'vault' }),
+            call('read', 'read_note', { path: h.b.path }),
+        ])).toMatchObject({ outcome: 'policy_rejected', metadata: { reason: 'source_control_unavailable' } });
+        const admitted = executorFor(run).preflight([call('read', 'read_note', { path: h.b.path })]);
+        if (!admitted || !('kind' in admitted)) throw new Error('Expected admission');
+        expect(admitted.taskSourceReadGuard?.isPathAllowed(h.b.path)).toBe(true);
+        h.files.set(h.b.path, { path: h.b.path });
+        expect(admitted.taskSourceReadGuard?.isPathAllowed(h.b.path)).toBe(false);
+    });
+
+    it('keeps the independent Data Boundary exclusion', () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host,
+            isPathAllowed: path => path !== h.b.path,
+            getFileByPath: path => path === h.b.path ? undefined : h.files.get(path) });
+        expect(run.resolveNoteId(h.b.path)).toBeUndefined();
+        expect(executorFor(run).preflight([call('read', 'read_note', { path: h.b.path })]))
+            .toMatchObject({ outcome: 'policy_rejected' });
+    });
+
+    it('preserves the excluded-current-note reason without exposing a note identity', () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host,
+            isPathAllowed: path => path !== h.a.path,
+            getFileByPath: path => path === h.a.path ? undefined : h.files.get(path) });
+        expect(contextNotes(run).currentNoteHandle).toBeNull();
+        expect(run.resolveReadPlansWithReason([call('current', 'get_current_note_context')]))
+            .toEqual({ ok: false, toolCallId: 'current', reason: 'source_excluded' });
+    });
+
+    it('keeps a live linked target discoverable without publishing its source alias', () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host,
+            getCurrentNoteLinks: () => [{ path: h.b.path }] });
+        const source = run.state.snapshot();
+        expect(contextNotes(run).notes.map(note => note.path)).toContain(h.b.path);
+        expect(contextNotes(run).notes.find(note => note.path === h.b.path)).not.toHaveProperty('title');
+        expect(run.publishAdmittedNotePaths([h.a.path], source)).toBe(true);
+        expect(contextNotes(run).notes.map(note => note.path)).toContain(h.b.path);
+        h.files.delete(h.b.path);
+        expect(contextNotes(run).notes.map(note => note.path)).not.toContain(h.b.path);
     });
 
     it('captures exact projected task-source purposes without merging equal paths', () => {
@@ -233,20 +226,20 @@ describe('Task source run host', () => {
             });
         },
     );
-    it('projects known historical sources, retains legacy choices, and restores reauthorized history in a later run', () => {
+    it('projects historical sources using current Host validity while preserving original messages', () => {
         const h = fixture();
-        const fromNote = (path: string): ChatMessage => ({ role: 'assistant', content: path === h.a.path ? 'A_FACT_AND_PROPOSAL' : 'B_FACT',
+        const fromNote = (path: string): ChatMessage => ({ role: 'assistant', content: path,
             memoryMetadata: { hasMemoryContent: false, allowedMemorySourcePaths: [], sourceRecords: [
                 { kind: 'context-used', dedupKey: path, path, sourceBoundary: 'read-only-tool' },
             ] } });
         const history: ChatMessage[] = [fromNote(h.a.path), fromNote(h.b.path),
-            { role: 'assistant', content: 'legacy first and second choices' }, { role: 'user', content: 'use the second' }];
+            { role: 'assistant', content: 'legacy choices' }, { role: 'user', content: 'use the second' }];
         const run = h.create();
         expect(run.projectHistory(history)).toEqual(history);
-        commit(run, { notes: 'selected', noteHandles: ['note_2'] });
+        h.files.delete(h.a.path);
         expect(run.projectHistory(history)).toEqual(history.slice(1));
-        expect(history[0].content).toBe('A_FACT_AND_PROPOSAL');
-        // The next real request may authorize A again; no persisted history is deleted.
+        expect(history[0].content).toBe(h.a.path);
+        h.files.set(h.a.path, h.a);
         expect(h.create().projectHistory(history)).toEqual(history);
     });
 
@@ -279,11 +272,10 @@ describe('Task source run host', () => {
         expect(run.projectHistory(history)).toEqual(history.slice(1));
     });
 
-    it.each(['deleted', 'replaced', 'excluded'] as const)('removes %s evidence and its metadata without editing conversation history', reason => {
+    it.each(['deleted', 'replaced'] as const)('removes %s evidence and its metadata without editing conversation history', reason => {
         const h = fixture();
         const run = h.create();
         run.resolveNoteId(h.b.path);
-        commit(run, { notes: 'vault' });
         const result: PaAgentMessage = {
             role: 'toolResult', id: 'result-a', toolCallId: 'call-a', toolName: 'read_note_outline',
             timestamp: 1, isError: false, content: {
@@ -298,7 +290,6 @@ describe('Task source run host', () => {
         expect(run.projectTranscript([result])[0]).toBe(result);
         if (reason === 'deleted') h.files.delete(h.a.path);
         if (reason === 'replaced') h.files.set(h.a.path, { path: h.a.path });
-        if (reason === 'excluded') commit(run, { notes: 'selected', noteHandles: ['note_2'] });
         const projected = run.projectTranscript([user, assistant, result]);
         expect(projected[0]).toBe(user);
         expect(projected[1]).toBe(assistant);
@@ -327,7 +318,26 @@ describe('Task source run host', () => {
         expect(resolveNoteId(h.a.path)).toBe('run-1:note:1');
         expect(h.getFileByPath.mock.calls.every(([path]) => path === h.a.path)).toBe(true);
         expect(forbiddenRead).not.toHaveBeenCalled();
-        expect(run.state.snapshot()).toBeUndefined();
+        expect(run.state.snapshot()).toMatchObject({ allowedNoteIds: null, excludedNoteIds: [] });
+    });
+
+    it('exposes linked and user-named identities without treating model text as Host admission', () => {
+        const h = fixture();
+        h.host.userText = '只用当前笔记和它链接的报告回答，不要查网页';
+        h.host.getCurrentNoteLinks = () => [{ path: h.b.path, title: 'Sensitive alias from current note' }];
+        const run = h.create();
+        const directory = contextNotes(run);
+        expect(directory.notes.map(note => note.path)).toEqual([h.a.path, h.b.path]);
+        expect(directory.notes.find(note => note.path === h.b.path)).not.toHaveProperty('title');
+        expect(run.state.allows({ kind: 'note', noteId: run.resolveNoteId(h.b.path)! })).toBe(true);
+        expect(run.state.allows({ kind: 'web' })).toBe(true);
+    });
+
+    it('exposes an exact user-named path as identity data', () => {
+        const h = fixture();
+        h.host.userText = '只允许读取 notes/b.md 回答';
+        const run = h.create();
+        expect(contextNotes(run).notes.map(note => note.path)).toEqual([h.a.path, h.b.path]);
     });
 
     it('copies the original run and message fields before host lookups and preserves method bindings', () => {
@@ -341,16 +351,16 @@ describe('Task source run host', () => {
         };
         h.host.isCurrent = function (this: TaskSourceRunHost) { expect(this).toBe(h.host); return true; };
         const run = h.create();
-        const snapshot = commit(run);
-        expect(snapshot).toMatchObject({ runId: 'run-1', userMessageId: 'user-1', allowedNoteIds: ['run-1:note:1'] });
-        expect(run.state.matchesRun('run-1', '只用当前笔记')).toBe(true);
+        const snapshot = admission(run);
+        expect(snapshot).toMatchObject({ runId: 'run-1', userMessageId: 'user-1', allowedNoteIds: null });
+        expect(run.state.matchesRun('run-1', userText)).toBe(true);
         expect(run.state.matchesRun('changed-run', 'new instruction')).toBe(false);
     });
 
     it('registers discovered Markdown and Canvas files without changing the committed authorization', () => {
         const h = fixture();
         const run = h.create();
-        const snapshot = commit(run);
+        const snapshot = admission(run);
         const bId = run.resolveNoteId(h.b.path)!;
         const canvasId = run.resolveNoteId(h.canvas.path)!;
         expect(bId).toBeDefined();
@@ -358,11 +368,10 @@ describe('Task source run host', () => {
         expect(run.resolveNoteId(h.b.path)).toBe(bId);
         expect(contextNotes(run).notes.map(note => note.path)).toEqual([h.a.path]);
         expect(run.state.snapshot()).toBe(snapshot);
-        expect(run.state.allows({ kind: 'note', noteId: bId })).toBe(false);
-        expect(run.state.allows({ kind: 'note', noteId: canvasId })).toBe(false);
+        expect(run.state.allows({ kind: 'note', noteId: bId })).toBe(true);
+        expect(run.state.allows({ kind: 'note', noteId: canvasId })).toBe(true);
         expect(run.state.registerNoteHandle('note_1', bId)).toBe(false);
-        expect(run.state.prepareDeclaration({ instructionQuote: '只用当前笔记', notes: 'selected',
-            noteHandles: ['note_2'], webAllowed: false })).toEqual({ ok: false, reason: 'scope_widening' });
+        expect(run.state.snapshot()).toBe(snapshot);
     });
 
     it.each(['missing', 'wrong_path', 'folder', 'image', 'unstable_object', 'lookup_error'] as const)
@@ -387,7 +396,7 @@ describe('Task source run host', () => {
         const h = fixture();
         const run = h.create();
         const originalPath = h.a.path;
-        const scope = commit(run);
+        const scope = admission(run);
         h.files.delete(originalPath);
         if (change === 'replace') h.files.set(originalPath, { path: originalPath });
         if (change === 'rename') {
@@ -396,7 +405,6 @@ describe('Task source run host', () => {
             expect(run.resolveNoteId(h.a.path)).toBeUndefined();
         }
         expect(run.resolveNoteId(originalPath)).toBeUndefined();
-        expect(() => run.resolveNoteSearchScope(scope)).toThrow('identity is no longer live');
         expect(contextNotes(run)).toEqual({ currentNoteHandle: null, notes: [] });
         h.a.path = originalPath;
         h.files.set(originalPath, h.a);
@@ -423,69 +431,22 @@ describe('Task source run host', () => {
         expect(run.resolveNoteId(h.a.path)).toBeDefined();
         expect(contextNotes(run).currentNoteHandle).toBeNull();
         expect(run.resolveReadPlans([call('current', 'get_current_note_context')])).toBeUndefined();
-        expect(run.state.prepareDeclaration({ instructionQuote: '只用当前笔记', notes: 'current_note', webAllowed: false }))
-            .toEqual({ ok: false, reason: 'unknown_note_handle' });
     });
 
-    it('requires its own current committed constraint and distinguishes no notes from the vault', () => {
+    it('keeps a fixed vault search admission and rejects copied or foreign snapshots', () => {
         const h = fixture();
         const run = h.create();
-        const candidate = prepare(run, { notes: 'vault' });
-        expect(() => run.resolveNoteSearchScope(candidate)).toThrow();
-        expect(run.state.commit(candidate)).toBe(true);
-        expect(run.resolveNoteSearchScope(candidate)).toEqual({ allowedPaths: null, excludedPaths: [] });
-        expect(() => run.resolveNoteSearchScope({ ...candidate })).toThrow();
-        expect(() => run.resolveNoteSearchScope(commit(h.create(), { notes: 'vault' }))).toThrow();
-        const current = commit(run);
-        expect(run.resolveNoteSearchScope(current)).toEqual({ allowedPaths: [h.a.path], excludedPaths: [] });
-        const empty = commit(run, { notes: 'none' });
-        expect(() => run.resolveNoteSearchScope(current)).toThrow();
-        const scope = run.resolveNoteSearchScope(empty);
-        expect(scope).toEqual({ allowedPaths: [], excludedPaths: [] });
-        expect(Object.isFrozen(scope)).toBe(true);
-        expect(Object.isFrozen(scope.allowedPaths)).toBe(true);
-        expect(Object.isFrozen(scope.excludedPaths)).toBe(true);
-    });
-
-    it('rejects the entire search when any selected allowed identity has gone away', () => {
-        const h = fixture();
-        const run = h.create();
-        const vaultScope = commit(run, { notes: 'vault' });
-        expect(run.publishAdmittedNotePaths([h.b.path], vaultScope)).toBe(true);
-        const scope = commit(run, { notes: 'selected', noteHandles: contextNotes(run).notes.map(note => note.handle) });
-        expect(run.resolveNoteSearchScope(scope)).toEqual({ allowedPaths: [h.a.path, h.b.path], excludedPaths: [] });
-        h.files.delete(h.b.path);
-        expect(() => run.resolveNoteSearchScope(scope)).toThrow('identity is no longer live');
-    });
-
-    it('retains the original excluded path after deletion and same-path recreation', () => {
-        const h = fixture();
-        const run = h.create();
-        const vaultScope = commit(run, { notes: 'vault' });
-        expect(run.publishAdmittedNotePaths([h.b.path], vaultScope)).toBe(true);
-        const handle = contextNotes(run).notes.find(note => note.path === h.b.path)!.handle;
-        const constraint = commit(run, { notes: 'vault', excludedNoteHandles: [handle] });
-        expect(contextNotes(run).notes.map(note => note.path)).toEqual([h.a.path]);
-        h.files.delete(h.b.path);
-        expect(run.resolveNoteSearchScope(constraint)).toEqual({ allowedPaths: null, excludedPaths: [h.b.path] });
-        h.files.set(h.b.path, { path: h.b.path });
-        expect(run.resolveNoteId(h.b.path)).toBeUndefined();
-        expect(run.resolveNoteSearchScope(constraint)).toEqual({ allowedPaths: null, excludedPaths: [h.b.path] });
-    });
-
-    it.each(['allowed', 'excluded'] as const)('rejects a state-only %s handle that has no real run identity', kind => {
-        const run = fixture().create();
-        expect(run.state.registerNoteHandle('foreign', 'unbound-note')).toBe(true);
-        const scope = commit(run, kind === 'allowed'
-            ? { notes: 'selected', noteHandles: ['foreign'] }
-            : { notes: 'vault', excludedNoteHandles: ['foreign'] });
-        expect(() => run.resolveNoteSearchScope(scope)).toThrow();
+        const scope = admission(run);
+        expect(run.resolveNoteSearchScope(scope)).toEqual({ allowedPaths: null, excludedPaths: [] });
+        expect(() => run.resolveNoteSearchScope({ ...scope })).toThrow();
+        expect(() => run.resolveNoteSearchScope(admission(h.create()))).toThrow();
+        expect(Object.isFrozen(run.resolveNoteSearchScope(scope))).toBe(true);
     });
 
     it('rejects a revoked run before identity reads and handles a failing lifecycle check', () => {
         const h = fixture();
         const run = h.create();
-        const scope = commit(run);
+        const scope = admission(run);
         h.getFileByPath.mockClear();
         h.setCurrent(false);
         expect(run.isCurrent()).toBe(false);
@@ -496,18 +457,6 @@ describe('Task source run host', () => {
         expect(h.getFileByPath).not.toHaveBeenCalled();
         h.host.isCurrent = () => { throw new Error('no host'); };
         expect(h.create().isCurrent()).toBe(false);
-    });
-
-    it.each(['run', 'scope'] as const)('rechecks %s currentness after live identity lookup', change => {
-        const h = fixture();
-        const run = h.create();
-        const scope = commit(run);
-        h.getFileByPath.mockImplementation(path => {
-            if (change === 'run') h.setCurrent(false);
-            else commit(run, { notes: 'none' });
-            return h.files.get(path);
-        });
-        expect(() => run.resolveNoteSearchScope(scope)).toThrow('scope is no longer current');
     });
 
     it('plans a complete core batch with real discovered identities and preserves virtual Operations order', () => {
@@ -528,94 +477,39 @@ describe('Task source run host', () => {
         expect(plans.get('append')).toEqual({ reads: [], outputTargetPaths: ['notes/new.md'] });
         expect(h.getFileByPath).not.toHaveBeenCalledWith('notes/new.md');
         expect(run.resolveReadPlans([calls[calls.length - 1], calls[calls.length - 2]])).toBeUndefined();
-        expect(run.state.snapshot()).toBeUndefined();
+        expect(run.state.snapshot()).toMatchObject({ allowedNoteIds: null });
     });
 
     it.each(['unknown_tool', 'load_tool_capability', 'read_image', 'present_writing'])
     ('rejects the complete batch for unplanned %s instead of assigning no reads', name => {
         const run = fixture().create();
         expect(run.resolveReadPlans([call('current', 'get_current_note_context'), call('extra', name)])).toBeUndefined();
-        expect(run.state.snapshot()).toBeUndefined();
+        expect(run.state.snapshot()).toMatchObject({ allowedNoteIds: null });
     });
 
-    it('admits a declaration plus current-note and Memory reads together with a live scoped guard', () => {
+    it('passes one live Host read guard to a current-note and Memory batch', () => {
         const h = fixture();
         const run = h.create();
         const executor = executorFor(run);
         const result = executor.preflight([
-            call('scope', DECLARE_SOURCE_SCOPE, { instructionQuote: '只用当前笔记', notes: 'current_note', webAllowed: false }),
             call('current', 'get_current_note_context'), call('memory', 'search_memory', 'query'),
         ]);
         if (!result || !('kind' in result)) throw new Error('Expected source admission');
-        expect(result.controlResults?.get('scope')?.outcome).toBe('control_applied');
         const guard = result.taskSourceReadGuard;
-        if (!guard) throw new Error('Expected the admitted source guard');
-        expect(guard.getNoteSearchScope!()).toEqual({ allowedPaths: [h.a.path], excludedPaths: [] });
+        if (!guard) throw new Error('Expected source guard');
+        expect(guard.getNoteSearchScope!()).toEqual({ allowedPaths: null, excludedPaths: [] });
         expect(guard.isPathAllowed(h.a.path)).toBe(true);
-        expect(guard.isPathAllowed(h.b.path)).toBe(false);
-        expect(contextNotes(run).notes.map(note => note.path)).toEqual([h.a.path]);
-        expect(run.state.snapshot()?.allowedNoteIds).toEqual(['run-1:note:1']);
+        expect(guard.isPathAllowed(h.b.path)).toBe(true);
         h.files.set(h.a.path, { path: h.a.path });
         expect(guard.isPathAllowed(h.a.path)).toBe(false);
-        expect(() => guard.getNoteSearchScope!()).toThrow();
         expect(executor.execute).not.toHaveBeenCalled();
         expect(executor.prepareBatch).not.toHaveBeenCalled();
-    });
-
-    it('rejects a mixed out-of-scope batch without committing even though its identities were discovered', () => {
-        const h = fixture();
-        const run = h.create();
-        const executor = executorFor(run);
-        expect(executor.preflight([
-            call('scope', DECLARE_SOURCE_SCOPE, { instructionQuote: '只用当前笔记', notes: 'current_note', webAllowed: false }),
-            call('current', 'get_current_note_context'), call('other', 'read_note_outline', { path: h.b.path }),
-        ])).toMatchObject({ outcome: 'policy_rejected', metadata: { reason: 'source_read_outside_scope' } });
-        expect(run.resolveNoteId(h.b.path)).toBeDefined();
-        expect(contextNotes(run).notes.some(note => note.path === h.b.path)).toBe(false);
-        expect(run.state.snapshot()).toBeUndefined();
-        expect(executor.execute).not.toHaveBeenCalled();
-        expect(executor.prepareBatch).not.toHaveBeenCalled();
-    });
-
-    it('keeps current-note scope and its next instruction unchanged after guard probes and rejected reads of other notes', () => {
-        const h = fixture();
-        const run = h.create();
-        const scope = commit(run);
-        const before = run.contextInstruction();
-        const guard = run.state.createReadGuard(scope, run.resolveNoteId, run.isCurrent);
-        expect(guard.isPathAllowed(h.b.path)).toBe(false);
-        expect(guard.isPathAllowed(h.canvas.path)).toBe(false);
-        const executor = executorFor(run);
-        expect(executor.preflight([call('other', 'inspect_obsidian_note', { path: h.b.path })]))
-            .toMatchObject({ outcome: 'policy_rejected', metadata: { reason: 'source_read_outside_scope' } });
-        expect(run.publishAdmittedNotePaths([h.b.path], scope)).toBe(false);
-        expect(run.contextInstruction()).toBe(before);
-        expect(run.contextInstruction()).not.toContain(h.b.path);
-        expect(run.contextInstruction()).not.toContain(h.canvas.path);
-        expect(run.state.snapshot()).toBe(scope);
-        expect(executor.execute).not.toHaveBeenCalled();
-        expect(executor.prepareBatch).not.toHaveBeenCalled();
-    });
-
-    it('does not publish a successful plan or a rejected plan before any scope is committed', () => {
-        const h = fixture();
-        const run = h.create();
-        const before = run.contextInstruction();
-        expect(run.resolveReadPlans([call('other', 'inspect_obsidian_note', { path: h.b.path })])).toBeDefined();
-        expect(run.resolveReadPlans([call('canvas', 'read_canvas_summary', { path: h.canvas.path }),
-            call('unknown', 'unplanned_tool')])).toBeUndefined();
-        expect(run.resolveNoteId(h.b.path)).toBeDefined();
-        expect(run.resolveNoteId(h.canvas.path)).toBeDefined();
-        const candidate = prepare(run, { notes: 'vault' });
-        expect(run.publishAdmittedNotePaths([h.b.path], candidate)).toBe(false);
-        expect(run.contextInstruction()).toBe(before);
-        expect(run.state.snapshot()).toBeUndefined();
     });
 
     it('does not turn thousands of internal vault guard registrations into a public directory', () => {
         const h = fixture();
         const run = h.create();
-        const scope = commit(run, { notes: 'vault' });
+        const scope = admission(run);
         const guard = run.state.createReadGuard(scope, run.resolveNoteId, run.isCurrent);
         const before = run.contextInstruction();
         let allowedCount = 0;
@@ -630,30 +524,22 @@ describe('Task source run host', () => {
         expect(run.state.snapshot()).toBe(scope);
     });
 
-    it('publishes host-confirmed visible sources only within the exact current scope and hides later exclusions', () => {
+    it('publishes only live Host-confirmed identities and removes a deleted source', () => {
         const h = fixture();
         const run = h.create();
-        const scope = commit(run, { notes: 'vault' });
-        run.resolveReadPlans([call('other', 'read_note_outline', { path: h.b.path })]);
-        expect(contextNotes(run).notes.map(note => note.path)).toEqual([h.a.path]);
-        expect(run.publishAdmittedNotePaths([h.b.path], { ...scope })).toBe(false);
+        const scope = admission(run);
+        expect(run.publishAdmittedNotePaths([h.b.path, h.canvas.path], { ...scope })).toBe(false);
         expect(run.publishAdmittedNotePaths([h.b.path, h.canvas.path], scope)).toBe(true);
-        const data = contextNotes(run);
-        expect(data.notes.map(note => note.path)).toEqual([h.a.path, h.canvas.path, h.b.path]);
-        const excluded = data.notes.find(note => note.path === h.b.path)!.handle;
-        const narrower = commit(run, { notes: 'vault', excludedNoteHandles: [excluded] });
-        expect(run.publishAdmittedNotePaths([h.b.path], narrower)).toBe(false);
-        expect(run.publishAdmittedNotePaths([h.canvas.path], scope)).toBe(false);
+        expect(contextNotes(run).notes.map(note => note.path)).toEqual([h.a.path, h.canvas.path, h.b.path]);
+        h.files.delete(h.b.path);
         expect(contextNotes(run).notes.map(note => note.path)).toEqual([h.a.path, h.canvas.path]);
-        const none = commit(run, { notes: 'none' });
-        expect(contextNotes(run)).toEqual({ currentNoteHandle: null, notes: [] });
-        expect(run.publishAdmittedNotePaths([h.a.path], none)).toBe(false);
+        expect(run.publishAdmittedNotePaths([h.b.path], scope)).toBe(false);
     });
 
     it('keeps the current note and the exact published projection within the handle limit', () => {
         const h = fixture();
         const run = h.create();
-        const scope = commit(run, { notes: 'vault' });
+        const scope = admission(run);
         const paths = Array.from({ length: MAX_TASK_SOURCE_NOTE_HANDLES + 20 }, (_, index) => `notes/visible-${index}.md`);
         for (const path of paths) h.files.set(path, { path });
         const firstId = run.resolveNoteId(paths[0]);
@@ -672,7 +558,7 @@ describe('Task source run host', () => {
     it('budgets escaped directory characters using whole paths, while keeping the newest visible sources', () => {
         const h = fixture();
         const run = h.create();
-        const scope = commit(run, { notes: 'vault' });
+        const scope = admission(run);
         const paths = Object.freeze(Array.from({ length: 8 }, (_, index) => `notes/${'<&'.repeat(250)}-${index}.md`));
         for (const path of paths) h.files.set(path, { path });
         expect(run.publishAdmittedNotePaths(paths, scope)).toBe(true);
@@ -688,7 +574,7 @@ describe('Task source run host', () => {
     it('retains an opaque current handle without truncating a current path that exceeds the directory budget', () => {
         const h = fixture(`notes/${'<&'.repeat(1000)}.md`);
         const run = h.create();
-        const scope = commit(run, { notes: 'vault' });
+        const scope = admission(run);
         expect(run.publishAdmittedNotePaths([h.b.path], scope)).toBe(true);
         const encoded = run.contextInstruction().split('\n').slice(-1)[0];
         expect(encoded.length).toBeLessThanOrEqual(MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS);
@@ -699,7 +585,7 @@ describe('Task source run host', () => {
     it('does not partially publish a group when a later source identity cannot be verified', () => {
         const h = fixture();
         const run = h.create();
-        const scope = commit(run, { notes: 'vault' });
+        const scope = admission(run);
         const before = run.contextInstruction();
         expect(run.publishAdmittedNotePaths([h.b.path, 'notes/missing.md'], scope)).toBe(false);
         expect(run.contextInstruction()).toBe(before);
@@ -713,11 +599,7 @@ describe('Task source run host', () => {
         expect(instruction).not.toContain('</host>');
         expect(instruction).toContain('\\u003c/host\\u003e');
         expect(contextNotes(run).notes).toEqual([{ handle: 'note_1', path: h.a.path }]);
-        expect(instruction).toContain('same tool-call batch');
-        expect(instruction).toContain('Personal, existing Memory background');
-        expect(instruction).toContain('authorized style or history');
-        expect(instruction).toContain('neither write nor network permission');
-        expect(instruction).toContain('Data Boundary, Forget, or action confirmation');
+        expect(instruction).toContain('Data Boundary');
         expect(instruction).not.toContain(h.host.userText);
     });
 });

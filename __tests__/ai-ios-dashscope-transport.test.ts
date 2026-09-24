@@ -910,18 +910,6 @@ describe("iOS DashScope chat transport", () => {
                             id: "",
                             type: "function",
                             function: { name: "search_memory", arguments: '{"query":"memory"}' },
-                        }, {
-                            index: 1,
-                            id: "memory-source-scope",
-                            type: "function",
-                            function: {
-                                name: "declare_source_scope",
-                                arguments: JSON.stringify({
-                                    instructionQuote: "Search my notes for memory",
-                                    notes: "vault",
-                                    webAllowed: false,
-                                }),
-                            },
                         }],
                     }, null),
                     completionChunk({}, "tool_calls"),

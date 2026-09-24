@@ -44,6 +44,38 @@ describe("BuiltinWebSearchProvider", () => {
         });
     });
 
+    it('rechecks the live WebSearch setting before a loaded capability sends a request', async () => {
+        let enabled = true;
+        const request = jest.fn<BuiltinWebSearchRequest>(async () => okResponse());
+        const registry = createPaidCapabilityRegistry();
+        await registry.registerProvider(createProvider({ request, isEnabled: () => enabled }), createLoadContext());
+        enabled = false;
+
+        const result = await registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: 'test query' }, {
+            host: createPlugin(), turnId: 'turn-disabled',
+        });
+        expect(result).toMatchObject({ ok: false, error: expect.anything() });
+        expect(request).not.toHaveBeenCalled();
+    });
+
+    it('stops the MCP sequence before another physical send when WebSearch is disabled', async () => {
+        let enabled = true;
+        const requestUrlMock = requestUrl as unknown as jest.MockedFunction<(request: MockRequestUrlParam) => Promise<unknown>>;
+        requestUrlMock.mockReset();
+        requestUrlMock.mockImplementationOnce(async () => {
+            enabled = false;
+            return mockObsidianResponse({ text: JSON.stringify({ jsonrpc: '2.0', id: 'initialize', result: {} }) });
+        });
+
+        const response = await requestBailianWebSearchMcp({
+            endpoint: BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
+            headers: { Authorization: 'Bearer test' },
+            body: { query: 'test query', limit: 2 },
+        }, { isEnabled: () => enabled });
+        expect(response.status).toBe(403);
+        expect(requestUrlMock).toHaveBeenCalledTimes(1);
+    });
+
     it("rejects non-allowlisted or non-HTTPS endpoints before exporting capabilities", async () => {
         const provider = createProvider({
             policy: createPolicy({ allowedEndpoints: ["http://example.com/mcp/web-search"] }),
@@ -571,12 +603,14 @@ function createProvider(overrides: {
     policy?: AgentNetworkPolicy;
     request?: BuiltinWebSearchRequest;
     timeoutMs?: number;
+    isEnabled?: () => boolean;
 } = {}): BuiltinWebSearchProvider {
     return new BuiltinWebSearchProvider({
         policy: overrides.policy ?? createPolicy(),
         apiKey: "apiKey" in overrides ? overrides.apiKey : "sk-SECRET_TOKEN_SENTINEL",
         request: overrides.request ?? (async () => okResponse()),
         timeoutMs: overrides.timeoutMs,
+        isEnabled: overrides.isEnabled,
     });
 }
 

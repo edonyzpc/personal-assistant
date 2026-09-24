@@ -20,11 +20,13 @@ export interface TaskSourceReadPlanHost {
     currentNoteId(): string | undefined;
     /** The real current Markdown view's path; the caller verifies file identity. */
     actualCurrentNotePath(): string | undefined;
+    /** Deterministic data boundary check; never grants a source identity. */
+    isPathAllowed?(path: string): boolean;
 }
 
 export type TaskSourceReadPlansResult =
     | { ok: true; plans: ReadonlyMap<string, TaskSourceReadPlan> }
-    | { ok: false; toolCallId: string; reason: 'invalid_call' | 'source_identity_unavailable' | 'unplanned_tool' };
+    | { ok: false; toolCallId: string; reason: 'invalid_call' | 'source_identity_unavailable' | 'source_excluded' | 'unplanned_tool' };
 
 /**
  * Plan the whole raw tool batch without preparing capabilities or reading vault
@@ -133,14 +135,16 @@ export function resolveTaskSourceReadPlans(
             }
             plans.set(call.id, freezePlan(plan));
         } catch (error) {
-            return { ok: false, toolCallId: call.id, reason: error instanceof SourceIdentityUnavailable
-                ? 'source_identity_unavailable' : 'invalid_call' };
+            return { ok: false, toolCallId: call.id, reason: error instanceof SourceExcluded
+                ? 'source_excluded' : error instanceof SourceIdentityUnavailable
+                    ? 'source_identity_unavailable' : 'invalid_call' };
         }
     }
     return { ok: true, plans };
 }
 
 class SourceIdentityUnavailable extends Error { }
+class SourceExcluded extends Error { }
 
 function resolveIdentity(path: string, host: TaskSourceReadPlanHost): string {
     let noteId: string | undefined;
@@ -150,6 +154,7 @@ function resolveIdentity(path: string, host: TaskSourceReadPlanHost): string {
 }
 
 function planNote(path: string, host: TaskSourceReadPlanHost): TaskSourceReadPlan {
+    if (host.isPathAllowed?.(path) === false) throw new SourceExcluded();
     return { reads: [{ kind: 'note', noteId: resolveIdentity(path, host) }] };
 }
 
@@ -160,6 +165,7 @@ function planCurrentNote(host: TaskSourceReadPlanHost): TaskSourceReadPlan {
         currentId = host.currentNoteId();
         path = host.actualCurrentNotePath();
     } catch { throw new SourceIdentityUnavailable(); }
+    if (path && host.isPathAllowed?.(path) === false) throw new SourceExcluded();
     if (!currentId || !path || resolveIdentity(path, host) !== currentId) throw new SourceIdentityUnavailable();
     return { reads: [{ kind: 'note', noteId: currentId }] };
 }

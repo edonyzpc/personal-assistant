@@ -1,7 +1,7 @@
 import type { Workspace } from "obsidian";
 import type { MarkdownFileLike, MarkdownViewLike } from "../src/ai-services/chat-tool-execution-helpers";
 import { TaskSourceNoteIdentities } from "../src/ai-services/task-source-note-identities";
-import { TaskSourceConstraintState, type TaskSourceConstraint } from "../src/ai-services/task-source-constraint";
+import { TaskSourceConstraintState } from "../src/ai-services/task-source-constraint";
 
 jest.mock("obsidian");
 
@@ -27,15 +27,9 @@ function harness() {
     };
 }
 
-function stateFor(identities: TaskSourceNoteIdentities): TaskSourceConstraintState {
+function stateFor(identities: TaskSourceNoteIdentities, userText = "只用当前笔记"): TaskSourceConstraintState {
     return new TaskSourceConstraintState({ runId: "run-1", userMessageId: "user-1",
-        userText: "只用当前笔记", noteHandles: identities.noteHandles(), currentNoteHandle: identities.currentNote?.handle });
-}
-
-function currentCandidate(state: TaskSourceConstraintState): TaskSourceConstraint {
-    const prepared = state.prepareDeclaration({ instructionQuote: "只用当前笔记", notes: "current_note", webAllowed: false });
-    if (!prepared.ok) throw new Error(prepared.reason);
-    return prepared.constraint;
+        userText, noteHandles: identities.noteHandles() });
 }
 
 describe("Task source note identities", () => {
@@ -199,132 +193,66 @@ describe("Task source note identities", () => {
         expect(identities.registerFile(canvas)).toBeDefined();
     });
 
-    it("registers discovered notes idempotently without changing a prepared or committed scope", () => {
+    it("registers discovered identities without changing fixed Host admission", () => {
         const h = harness();
         const identities = new TaskSourceNoteIdentities(h.host);
         const state = stateFor(identities);
-        const candidate = currentCandidate(state);
+        const admission = state.snapshot();
         const other = identities.registerFile(h.b)!;
         expect(identities.registerFile(h.b)).toBe(other);
         expect(state.registerNoteHandle(other.handle, other.noteId)).toBe(true);
         expect(state.registerNoteHandle(other.handle, other.noteId)).toBe(true);
         expect(state.registerNoteHandle(identities.currentNote!.handle, other.noteId)).toBe(false);
-        expect(state.commit(candidate)).toBe(true);
-        expect(state.snapshot()).toBe(candidate);
-        expect(state.allows({ kind: "note", noteId: other.noteId })).toBe(false);
-        expect(state.prepareDeclaration({ instructionQuote: "只用当前笔记", notes: "selected",
-            noteHandles: [other.handle], webAllowed: false })).toEqual({ ok: false, reason: "scope_widening" });
+        expect(state.snapshot()).toBe(admission);
         const copy = identities.noteHandles() as Map<string, string>;
         copy.set(identities.currentNote!.handle, other.noteId);
-        expect(identities.noteHandles().get(identities.currentNote!.handle)).toBe(candidate.allowedNoteIds![0]);
+        expect(identities.noteHandles().get(identities.currentNote!.handle))
+            .toBe(identities.currentNote!.noteId);
         expect(state.registerNoteHandle("", "new-id")).toBe(false);
         expect(state.registerNoteHandle("new-handle", " ")).toBe(false);
-        expect(identities.pathForNoteId("foreign-id")).toBeUndefined();
-        expect(identities.capturedPathForNoteId("foreign-id")).toBeUndefined();
     });
 
-    it("keeps an excluded path bound when the file is deleted and recreated in the same run", () => {
+    it("does not revive a deleted and recreated path in the same run", () => {
         const h = harness();
         const identities = new TaskSourceNoteIdentities(h.host);
-        const excluded = identities.registerFile(h.b)!;
-        const state = stateFor(identities);
-        const prepared = state.prepareDeclaration({ instructionQuote: "只用当前笔记", notes: "vault",
-            excludedNoteHandles: [excluded.handle], webAllowed: false });
-        if (!prepared.ok || !state.commit(prepared.constraint)) throw new Error("Scope fixture did not commit");
+        const original = identities.registerFile(h.b)!;
         const replacement = { path: h.b.path };
         h.files.set(replacement.path, replacement);
         expect(identities.registerFile(replacement)).toBeUndefined();
         expect(identities.resolveNoteId(replacement.path)).toBeUndefined();
-        expect(state.snapshot()).toBe(prepared.constraint);
-        expect(prepared.constraint.excludedNoteIds.map(id => identities.capturedPathForNoteId(id))).toEqual([replacement.path]);
+        expect(identities.capturedPathForNoteId(original.noteId)).toBe(replacement.path);
     });
 });
 
-describe("Scoped Memory reads from task source constraints", () => {
-    it("resolves a committed current-note search scope from real identities and rejects same-path recreation", () => {
+describe("Memory search guard from fixed Host admission", () => {
+    it("rechecks current identity before and after resolving a search scope", () => {
         const h = harness();
         const identities = new TaskSourceNoteIdentities(h.host);
         const state = stateFor(identities);
-        const candidate = currentCandidate(state);
-        expect(state.commit(candidate)).toBe(true);
-        const getScope = jest.fn(() => ({
-            allowedPaths: candidate.allowedNoteIds === null ? null : candidate.allowedNoteIds.map(noteId => {
-                const path = identities.pathForNoteId(noteId);
-                if (!path) throw new Error("An allowed note identity is no longer live.");
-                return path;
-            }),
-            excludedPaths: candidate.excludedNoteIds.map(noteId => {
-                const path = identities.capturedPathForNoteId(noteId);
-                if (!path) throw new Error("An excluded note identity is unknown.");
-                return path;
-            }),
-        }));
-        const guard = state.createReadGuard(candidate, path => identities.resolveNoteId(path),
-            () => identities.isCurrentNoteView(), undefined, getScope);
-        expect(guard.getNoteSearchScope!()).toEqual({ allowedPaths: ["notes/a.md"], excludedPaths: [] });
-        expect(guard.isPathAllowed("notes/a.md")).toBe(true);
-        expect(guard.isPathAllowed("notes/b.md")).toBe(false);
-
-        h.files.delete("notes/a.md");
-        expect(() => guard.getNoteSearchScope!()).toThrow("no longer current");
-        expect(guard.isPathAllowed("notes/a.md")).toBe(false);
-        const replacement = { path: "notes/a.md" };
-        h.files.set(replacement.path, replacement);
-        h.setActive({ file: replacement });
-        expect(identities.registerFile(replacement)).toBeUndefined();
-        expect(() => guard.getNoteSearchScope!()).toThrow("no longer current");
-        expect(guard.isPathAllowed(replacement.path)).toBe(false);
-        expect(getScope).toHaveBeenCalledTimes(1);
-        expect(state.snapshot()).toBe(candidate);
-    });
-
-    it("admits only owned current or prepared scope snapshots and never upgrades a broad search", () => {
-        const h = harness();
-        const state = stateFor(new TaskSourceNoteIdentities(h.host));
-        expect(state.allows({ kind: "scoped_vault_search" })).toBe(false);
-        const candidate = currentCandidate(state);
-        expect(state.allows({ kind: "scoped_vault_search" }, candidate)).toBe(true);
-        expect(state.allows({ kind: "scoped_vault_search" }, { ...candidate })).toBe(false);
-        expect(state.allows({ kind: "vault_search" }, candidate)).toBe(false);
-        expect(state.commit(candidate)).toBe(true);
-        expect(state.allows({ kind: "scoped_vault_search" })).toBe(true);
-        expect(state.allows({ kind: "vault_search" })).toBe(false);
-    });
-
-    it("checks a committed current scope before and after resolving each search plan", () => {
-        const h = harness();
-        const identities = new TaskSourceNoteIdentities(h.host);
-        const state = stateFor(identities);
-        const candidate = currentCandidate(state);
-        const scope = { allowedPaths: [h.a.path], excludedPaths: [] };
-        const getScope = jest.fn(() => scope);
+        const admission = state.snapshot();
         let hostCurrent = true;
-        const guard = state.createReadGuard(candidate, path => identities.resolveNoteId(path), () => hostCurrent, undefined, getScope);
-        expect(() => guard.getNoteSearchScope!()).toThrow("no longer current");
-        expect(getScope).not.toHaveBeenCalled();
-        expect(state.commit(candidate)).toBe(true);
-        expect(guard.getNoteSearchScope!()).toBe(scope);
-        getScope.mockImplementationOnce(() => { hostCurrent = false; return scope; });
+        const getScope = jest.fn(() => ({ allowedPaths: null, excludedPaths: [] as string[] }));
+        const guard = state.createReadGuard(admission, path => identities.resolveNoteId(path),
+            () => hostCurrent && identities.isCurrentNoteView(), undefined, getScope);
+        expect(guard.getNoteSearchScope!()).toEqual({ allowedPaths: null, excludedPaths: [] });
+        expect(guard.isPathAllowed(h.a.path)).toBe(true);
+        getScope.mockImplementationOnce(() => { hostCurrent = false; return { allowedPaths: null, excludedPaths: [] }; });
         expect(() => guard.getNoteSearchScope!()).toThrow("no longer current");
         expect(getScope).toHaveBeenCalledTimes(2);
         expect(() => guard.getNoteSearchScope!()).toThrow("no longer current");
         expect(getScope).toHaveBeenCalledTimes(2);
     });
 
-    it("does not provide an unrestricted fallback or reuse a getter after scope tightening", () => {
+    it("has no unscoped fallback and rejects a forged admission snapshot", () => {
         const h = harness();
         const identities = new TaskSourceNoteIdentities(h.host);
         const state = stateFor(identities);
-        const candidate = currentCandidate(state);
-        state.commit(candidate);
-        const unplanned = state.createReadGuard(candidate, path => identities.resolveNoteId(path), () => true);
+        const admission = state.snapshot();
+        const unplanned = state.createReadGuard(admission, path => identities.resolveNoteId(path), () => true);
         expect(unplanned.getNoteSearchScope).toBeUndefined();
-        const getScope = jest.fn(() => ({ allowedPaths: [h.a.path], excludedPaths: [] }));
-        const guard = state.createReadGuard(candidate, path => identities.resolveNoteId(path), () => true, undefined, getScope);
-        const narrowed = state.prepareDeclaration({ instructionQuote: "只用当前笔记", notes: "none", webAllowed: false });
-        if (!narrowed.ok || !state.commit(narrowed.constraint)) throw new Error("Scope fixture did not narrow");
-        expect(state.allows({ kind: "scoped_vault_search" }, candidate)).toBe(false);
-        expect(() => guard.getNoteSearchScope!()).toThrow("no longer current");
-        expect(getScope).not.toHaveBeenCalled();
+        const forged = state.createReadGuard({ ...admission }, path => identities.resolveNoteId(path), () => true,
+            undefined, () => ({ allowedPaths: null, excludedPaths: [] }));
+        expect(forged.isCurrent()).toBe(false);
+        expect(() => forged.getNoteSearchScope!()).toThrow("no longer current");
     });
 });

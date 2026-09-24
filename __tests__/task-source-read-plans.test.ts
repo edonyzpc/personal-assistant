@@ -9,7 +9,7 @@ import { OperationsIntentController } from '../src/ai-services/operations/operat
 import type { CoreWriteToolName, OperationsVault } from '../src/ai-services/operations/types';
 import type { ParsedBufferedToolCall } from '../src/ai-services/pa-agent-types';
 import { TaskSourceConstraintState } from '../src/ai-services/task-source-constraint';
-import { createTaskSourceConstrainedExecutor, DECLARE_SOURCE_SCOPE } from '../src/ai-services/task-source-executor';
+import { createTaskSourceConstrainedExecutor } from '../src/ai-services/task-source-executor';
 import { TaskSourceNoteIdentities } from '../src/ai-services/task-source-note-identities';
 import { resolveTaskSourceReadPlans, type TaskSourceReadPlanHost } from '../src/ai-services/task-source-read-plans';
 
@@ -37,13 +37,20 @@ function plansFor(calls: ParsedBufferedToolCall[], host: TaskSourceReadPlanHost)
 
 function currentState() {
     const state = new TaskSourceConstraintState({ runId: 'run', userMessageId: 'user',
-        userText: '只用当前笔记', currentNoteHandle: 'current', noteHandles: new Map([['current', 'note-a'], ['other', 'note-b']]) });
-    const candidate = state.prepareDeclaration({ instructionQuote: '只用当前笔记', notes: 'current_note', webAllowed: false });
-    if (!candidate.ok) throw new Error(candidate.reason);
-    return { state, candidate: candidate.constraint };
+        userText: '只用当前笔记', noteHandles: new Map([['current', 'note-a'], ['other', 'note-b']]) });
+    return { state, candidate: state.snapshot() };
 }
 
 describe('Task source raw batch read plans', () => {
+    it('reports a settings exclusion before attempting current or exact note identity admission', () => {
+        const { host } = fixture();
+        const restrictedHost = { ...host, isPathAllowed: (path: string) => path !== 'notes/a.md' };
+        expect(resolveTaskSourceReadPlans([call('current', 'get_current_note_context')], restrictedHost))
+            .toEqual({ ok: false, toolCallId: 'current', reason: 'source_excluded' });
+        expect(resolveTaskSourceReadPlans([call('exact', 'read_note', { path: 'notes/a.md' })], restrictedHost))
+            .toEqual({ ok: false, toolCallId: 'exact', reason: 'source_excluded' });
+    });
+
     it('plans all eight existing Vault tools plus Memory and web without reading host data', () => {
         const { host } = fixture();
         const forbidden = jest.fn(() => { throw new Error('No body, metadata or registry preparation'); });
@@ -202,7 +209,7 @@ describe('Task source raw batch read plans', () => {
             .toEqual({ ok: false, toolCallId: 'current', reason: 'source_identity_unavailable' });
     });
 
-    it('requires a declared restricted scope for enumeration, while an exact snippet path requires that note', () => {
+    it('plans broad and exact searches from real Host targets without a model scope', () => {
         const { host } = fixture();
         const { state, candidate } = currentState();
         const plans = plansFor([
@@ -212,10 +219,10 @@ describe('Task source raw batch read plans', () => {
             call('exact', 'search_vault_snippets', { q: 'token', path: 'notes/b.md' }),
         ], host);
         for (const id of ['metadata', 'tags', 'folder']) {
-            expect(plans.get(id)!.reads.every(read => state.allows(read))).toBe(false);
+            expect(plans.get(id)!.reads.every(read => state.allows(read))).toBe(true);
             expect(plans.get(id)!.reads.every(read => state.allows(read, candidate))).toBe(true);
         }
-        expect(plans.get('exact')!.reads.every(read => state.allows(read, candidate))).toBe(false);
+        expect(plans.get('exact')!.reads.every(read => state.allows(read, candidate))).toBe(true);
         expect(plans.get('exact')).toEqual({ reads: [{ kind: 'note', noteId: 'note-b' }] });
     });
 
@@ -276,35 +283,27 @@ describe('Operations task source virtual baseline plans', () => {
         return { state, execute, prepareBatch, resolveReadPlans, preflight };
     }
 
-    it('admits create-then-append through the batch resolver with a notes:none declaration', () => {
+    it('admits create-then-append through the batch resolver without a declaration', () => {
         const h = wrappedPlanner();
         const create = call('create', 'vault_create', { path: 'notes/new.md', content: 'draft' });
         const append = call('append', 'vault_append', { path: 'notes/new.md', content: 'addition' });
-        const result = h.preflight([
-            call('scope', DECLARE_SOURCE_SCOPE, { instructionQuote: '只用当前笔记', notes: 'none', webAllowed: false }),
-            create, append,
-        ]);
+        const result = h.preflight([create, append]);
         expect(h.resolveReadPlans).toHaveBeenCalledTimes(1);
         expect(h.resolveReadPlans).toHaveBeenCalledWith([create, append]);
         if (!result || !('kind' in result)) throw new Error('Expected batch admission');
-        expect(h.state.snapshot()?.allowedNoteIds).toEqual([]);
+        expect(h.state.snapshot().allowedNoteIds).toBeNull();
         expect(result.taskSourceReadGuard!.isPathAllowed('notes/new.md', 'output_target_exists')).toBe(true);
         expect(result.taskSourceReadGuard!.isPathAllowed('notes/new.md', 'task_material')).toBe(false);
-        expect(result.controlResults?.get('scope')?.outcome).toBe('control_applied');
         expect(h.execute).not.toHaveBeenCalled();
         expect(h.prepareBatch).not.toHaveBeenCalled();
     });
 
-    it.each([false, true])('rejects append-then-create before preparation with a current-note declaration: %s', declare => {
+    it('admits append-then-create when the existing note is independently readable', () => {
         const h = wrappedPlanner();
         const calls = [call('append', 'vault_append', { path: 'notes/b.md', content: 'addition' }),
             call('create', 'vault_create', { path: 'notes/b.md', content: 'draft' })];
-        if (declare) calls.unshift(call('scope', DECLARE_SOURCE_SCOPE,
-            { instructionQuote: '只用当前笔记', notes: 'current_note', webAllowed: false }));
-        expect(h.preflight(calls)).toMatchObject({ outcome: 'policy_rejected', metadata: {
-            reason: declare ? 'source_read_outside_scope' : 'source_declaration_required',
-        } });
-        expect(h.state.snapshot()).toBeUndefined();
+        expect(h.preflight(calls)).toMatchObject({ kind: 'admitted' });
+        expect(h.state.snapshot()).toBeDefined();
         expect(h.execute).not.toHaveBeenCalled();
         expect(h.prepareBatch).not.toHaveBeenCalled();
     });
@@ -368,7 +367,6 @@ describe('Operations task source virtual baseline plans', () => {
         const plans = plansFor(calls, host);
         const { state, candidate } = currentState();
         expect([...plans.values()].every(plan => plan.reads.every(read => state.allows(read, candidate)))).toBe(true);
-        expect(state.commit(candidate)).toBe(true);
         const targets = new Set([...plans.values()].flatMap(plan => [...plan.outputTargetPaths ?? []]));
         const guard = state.createReadGuard(candidate, host.resolveNoteId, () => true, path => targets.has(path));
         const vault: OperationsVault = {

@@ -18,6 +18,7 @@ export interface AnswerCompletionTurnFacts {
     hasNewSuccessfulEvidence: boolean;
     hasPromptIncludedObservation: boolean;
     hasOnlyDuplicateOrNoopResults: boolean;
+    hasRepeatedSuccessfulEvidence: boolean;
     hasOnlyFailureOrStatusResults: boolean;
     failedToolNames: string[];
     duplicateOrNoopToolNames: string[];
@@ -25,6 +26,8 @@ export interface AnswerCompletionTurnFacts {
 
 export interface AnswerCompletionLedger {
     successfulEvidenceTools: Set<string>;
+    successfulObservationKeys: Set<string>;
+    repeatedEvidenceNoProgressCount: number;
     promptIncludedObservationTools: Set<string>;
     failedEvidenceTools: Set<string>;
     noNewInformationTools: Set<string>;
@@ -61,6 +64,8 @@ export type AnswerCompletionDecision =
 export function createAnswerCompletionLedger(): AnswerCompletionLedger {
     return {
         successfulEvidenceTools: new Set(),
+        successfulObservationKeys: new Set(),
+        repeatedEvidenceNoProgressCount: 0,
         promptIncludedObservationTools: new Set(),
         failedEvidenceTools: new Set(),
         noNewInformationTools: new Set(),
@@ -72,13 +77,28 @@ export function createAnswerCompletionLedger(): AnswerCompletionLedger {
     };
 }
 
-export function deriveAnswerCompletionTurnFacts(summary: PaAgentTurnSummary): AnswerCompletionTurnFacts {
+export function deriveAnswerCompletionTurnFacts(
+    summary: PaAgentTurnSummary,
+    ledger?: AnswerCompletionLedger,
+): AnswerCompletionTurnFacts {
     // An accepted scope changes admission state but supplies no task evidence.
     // Keep it out of completion heuristics; the loop still charges its turn/budget.
-    const observations = summary.toolResults.filter(result => !isAppliedSourceControl(result));
+    const observations = summary.toolResults;
     const promptIncludedResults = observations.filter(hasPromptIncludedObservation);
-    const successfulEvidenceResults = observations.filter(hasSuccessfulEvidence);
-    const duplicateOrNoopResults = observations.filter(isDuplicateOrNoopResult);
+    const seenThisTurn = new Set<string>();
+    const repeatedSuccesses = new Set<PaAgentTurnSummary["toolResults"][number]>();
+    const successfulEvidenceResults = observations.filter(result => {
+        if (!hasSuccessfulEvidence(result)) return false;
+        const key = successfulObservationKey(result);
+        if (ledger?.successfulObservationKeys.has(key) || seenThisTurn.has(key)) {
+            repeatedSuccesses.add(result);
+            return false;
+        }
+        seenThisTurn.add(key);
+        return true;
+    });
+    const duplicateOrNoopResults = observations.filter(result =>
+        isDuplicateOrNoopResult(result) || repeatedSuccesses.has(result));
     const failureOrStatusResults = observations.filter(isFailureOrStatusResult);
 
     return {
@@ -90,7 +110,8 @@ export function deriveAnswerCompletionTurnFacts(summary: PaAgentTurnSummary): An
         hasNewSuccessfulEvidence: successfulEvidenceResults.length > 0,
         hasPromptIncludedObservation: promptIncludedResults.length > 0,
         hasOnlyDuplicateOrNoopResults: observations.length > 0
-            && observations.every(isDuplicateOrNoopResult),
+            && observations.every(result => isDuplicateOrNoopResult(result) || repeatedSuccesses.has(result)),
+        hasRepeatedSuccessfulEvidence: repeatedSuccesses.size > 0,
         hasOnlyFailureOrStatusResults: observations.length > 0
             && successfulEvidenceResults.length === 0
             && failureOrStatusResults.length > 0
@@ -105,14 +126,15 @@ export function recordAnswerCompletionTurn(
     summary: PaAgentTurnSummary,
     facts: AnswerCompletionTurnFacts = deriveAnswerCompletionTurnFacts(summary),
 ): void {
+    if (facts.hasNewSuccessfulEvidence) ledger.repeatedEvidenceNoProgressCount = 0;
     for (const result of summary.toolResults) {
-        if (isAppliedSourceControl(result)) continue;
         const appliedInsightReceipt = parseAppliedInsightActionReceipt(result);
         if (appliedInsightReceipt && !ledger.appliedInsightActionReceipts.includes(appliedInsightReceipt)) {
             ledger.appliedInsightActionReceipts.push(appliedInsightReceipt);
         }
         if (hasSuccessfulEvidence(result)) {
             ledger.successfulEvidenceTools.add(result.toolName);
+            ledger.successfulObservationKeys.add(successfulObservationKey(result));
         }
         if (hasPromptIncludedObservation(result)) {
             ledger.promptIncludedObservationTools.add(result.toolName);
@@ -172,6 +194,9 @@ export function decideAnswerCompletion(input: {
 
     if (facts.hasOnlyDuplicateOrNoopResults) {
         if (input.ledger.successfulEvidenceTools.size > 0) {
+            if (facts.hasRepeatedSuccessfulEvidence) {
+                return recoverFromRepeatedEvidence(input.ledger, facts.duplicateOrNoopToolNames);
+            }
             return forceFinalizeOnce(input.ledger, "duplicate_only", facts.duplicateOrNoopToolNames);
         }
         if (input.ledger.failedEvidenceTools.size > 0) {
@@ -198,6 +223,29 @@ export function decideAnswerCompletion(input: {
     }
 
     return { action: "continue_tooling", reason: "tool_chain_allowed" };
+}
+
+function recoverFromRepeatedEvidence(
+    ledger: AnswerCompletionLedger,
+    toolNames: readonly string[],
+): AnswerCompletionDecision {
+    const attempts = ++ledger.repeatedEvidenceNoProgressCount;
+    if (attempts >= 2) {
+        return { action: "stop_incomplete", reason: "equivalent_no_progress", diagnostics: [{
+            type: "equivalent_no_progress",
+            message: "The assistant repeated already available evidence after a strategy change.",
+            tools: [...new Set(toolNames)], attempts,
+        }] };
+    }
+    return {
+        action: "continue_recovery", reason: "strategy_change_required", toolMode: "normal",
+        runtimeInstruction: [
+            `${[...new Set(toolNames)].join(", ")} returned evidence already available in this run.`,
+            "Do not read the same source again. The original task remains unfinished unless its requested fact is supported.",
+            "If an admitted note names a linked source for the missing fact and that source is allowed, read that specific note now. Use scoped search only when no specific source is available.",
+            "Otherwise answer only what the evidence supports and state what remains unresolved.",
+        ].join(" "),
+    };
 }
 
 function recoverFromFailure(
@@ -334,14 +382,6 @@ function parseAppliedInsightActionReceipt(result: PaAgentTurnSummary["toolResult
     });
 }
 
-function isAppliedSourceControl(result: PaAgentTurnSummary["toolResults"][number]): boolean {
-    return !result.isError
-        && result.toolName === "declare_source_scope"
-        && result.content.metadata?.outcome === "control_applied"
-        && result.content.metadata?.sourceScopeControl === true
-        && result.content.metadata?.preflightOnly === true;
-}
-
 function hasPromptIncludedObservation(
     result: PaAgentTurnSummary["toolResults"][number],
 ): boolean {
@@ -361,6 +401,13 @@ function hasSuccessfulEvidence(
     return !result.isError
         && (result.content.metadata?.outcome === "success" || result.content.metadata?.outcome === "reused_result")
         && hasPromptIncludedObservation(result);
+}
+
+function successfulObservationKey(result: PaAgentTurnSummary["toolResults"][number]): string {
+    // Compare the actual observation presented to the model. A successful
+    // re-read with identical content has not added task evidence, regardless
+    // of its new tool-call id or source declaration revision.
+    return `${result.toolName}\u0000${result.content.promptText}`;
 }
 
 function isDuplicateOrNoopResult(

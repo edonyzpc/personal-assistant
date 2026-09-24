@@ -310,6 +310,7 @@ describe("ChatHistoryManager", () => {
         const { manager } = makeManager();
         await manager.initialize();
         const persisted = manager.serializeTurn(makeHistoryEntry({
+            user: { role: "user", content: "Write an invitation", writingAction: { kind: 'writing' } },
             assistant: {
                 role: "assistant",
                 content: "",
@@ -319,6 +320,8 @@ describe("ChatHistoryManager", () => {
         }), "conv-interrupted", 0);
 
         const rehydrated = manager.deserializeTurn(persisted);
+        expect(persisted.user.writingAction).toEqual({ kind: 'writing' });
+        expect(rehydrated.userMessage.writingAction).toEqual({ kind: 'writing' });
         expect(rehydrated.assistantMessage.agentExecution).toEqual({
             runId: "run-interrupted", state: "interrupted", operationIds: ["op-1"],
         });
@@ -326,6 +329,35 @@ describe("ChatHistoryManager", () => {
         expect(rehydrated.assistantMessage.canonicalTurn?.status).toBe("incomplete");
         expect(rehydrated.assistantMessage.content).toContain("interrupted");
         expect(rehydrated.assistantMessage.shareCardEligible).toBe(false);
+    });
+
+    it('rehydrates an awaiting source choice without automatically resuming it', async () => {
+        const { manager } = makeManager();
+        await manager.initialize();
+        const question = '需要你决定是否读取其他笔记。';
+        const persisted = manager.serializeTurn(makeHistoryEntry({ assistant: {
+            role: 'assistant', content: question, shareCardEligible: false,
+            agentExecution: { runId: 'run-choice', state: 'awaiting_user' },
+            sourceDecision: { source: 'other_notes',
+                boundary: { allowedPaths: ['notes/current.md'], excludedPaths: [], webAllowed: false } },
+            canonicalTurn: { schemaVersion: 1, runId: 'run-choice', turnId: 'turn-1',
+                status: 'needs_user', committedFinalText: question, messages: [{
+                    role: 'toolResult', id: 'decision-result', toolCallId: 'decision-call',
+                    toolName: 'request_source_decision', timestamp: 1, isError: false,
+                    content: { promptText: question, includeInNextPrompt: false,
+                        metadata: { sourceDecisionRequest: true, requestedSource: 'other_notes',
+                            boundary: { allowedPaths: ['notes/current.md'], excludedPaths: [], webAllowed: false } } },
+                }] },
+        } }), 'conv-choice', 0);
+        const rehydrated = manager.deserializeTurn(persisted);
+        expect(rehydrated.assistantMessage.agentExecution).toEqual({ runId: 'run-choice', state: 'awaiting_user' });
+        expect(rehydrated.assistantMessage.canonicalTurn?.status).toBe('needs_user');
+        expect(rehydrated.assistantMessage.sourceDecision).toEqual({ source: 'other_notes',
+            boundary: { allowedPaths: ['notes/current.md'], excludedPaths: [], webAllowed: false } });
+        expect(rehydrated.assistantMessage.canonicalTurn?.messages).toEqual([]);
+        expect(rehydrated.assistantMessage.content).toBe(question);
+        expect(rehydrated.assistantMessage.runtimeWarnings ?? []).not.toContainEqual(
+            expect.objectContaining({ type: 'agent_interrupted' }));
     });
 
     it("deserializes a turn and DOUBLE-WRITES memoryMetadata onto both assistantMessage and historyEntry", async () => {

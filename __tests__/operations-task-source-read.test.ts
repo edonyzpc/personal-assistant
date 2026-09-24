@@ -29,19 +29,18 @@ async function harness() {
         turnId: "turn", platform: "desktop", settings: { operationsAgentEnabled: true },
     });
     registry.registerMany(loaded.capabilities);
+    let active = true;
     const state = new TaskSourceConstraintState({
         runId: "run", userMessageId: "user", userText: "只用当前笔记，保存到新笔记。",
-        noteHandles: new Map([["current", "note-a"], ["other", "note-b"]]), currentNoteHandle: "current",
+        noteHandles: new Map([["current", "note-a"]]),
     });
-    const candidate = state.prepareDeclaration({ instructionQuote: "只用当前笔记", notes: "current_note", webAllowed: false });
-    if (!candidate.ok || !state.commit(candidate.constraint)) throw new Error("Scope fixture did not commit");
-    const guard = state.createReadGuard(candidate.constraint,
-        path => path === "notes/a.md" ? "note-a" : path === "notes/b.md" ? "note-b" : undefined,
-        () => true,
+    const guard = state.createReadGuard(state.snapshot(),
+        path => path === "notes/a.md" ? "note-a" : undefined,
+        () => active,
         path => path === "notes/new.md");
     const baseExecutor: PaAgentToolExecutor = { execute: jest.fn(async () => ({ outcome: "success" as const, promptText: "base" })) };
     const executor = createOperationsStagingToolExecutor({ baseExecutor, registry, controller });
-    return { vault, controller, state, guard, baseExecutor, executor };
+    return { vault, controller, state, guard, baseExecutor, executor, revoke: () => { active = false; } };
 }
 
 function call(id: string, name: string, input: unknown, index = 0): ParsedBufferedToolCall {
@@ -59,8 +58,7 @@ describe("Operations executor task source read boundary", () => {
         const prepare = jest.fn(async () => undefined);
         h.baseExecutor.prepareBatch = prepare;
         try {
-            const narrowed = h.state.prepareDeclaration({ instructionQuote: "只用当前笔记", notes: "none", webAllowed: false });
-            if (!narrowed.ok || !h.state.commit(narrowed.constraint)) throw new Error("Fixture did not narrow");
+            h.revoke();
             const result = await h.executor.prepareBatch!(batch([
                 call("append", "vault_append", { path: "notes/a.md", content: "after" }),
             ], h.guard));
@@ -122,8 +120,7 @@ describe("Operations executor task source read boundary", () => {
             const preparation = h.executor.prepareBatch!(batch([
                 call("append", "vault_append", { path: "notes/a.md", content: "after" }),
             ], h.guard));
-            const narrowed = h.state.prepareDeclaration({ instructionQuote: "只用当前笔记", notes: "none", webAllowed: false });
-            if (!narrowed.ok || !h.state.commit(narrowed.constraint)) throw new Error("Narrowing fixture did not commit");
+            h.revoke();
             releasePrepare();
             const result = await preparation;
             expect(result?.toolResults.get("append")).toMatchObject({ metadata: { staged: false, wrote: false } });

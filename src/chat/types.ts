@@ -73,7 +73,9 @@ export type UiTurn = {
     images?: MessageImage[];
     userProvenance?: ChatHostProvenance;
     writingRequestId?: string;
+    writingIntent?: boolean;
     writingParent?: WritingVersion;
+    writingSelectedParent?: WritingVersion;
     writingMaterialContext?: ChatWritingMaterialContext;
     writingMaterials?: MessageImage[];
     writingArtifact?: { requestId: string; messageId: string; body: string; explanation: string; styleRevisionIds?: string[];
@@ -110,6 +112,8 @@ export type TerminalTurnEntry = {
     prompt: string;
     images?: MessageImage[];
     writingParent?: WritingVersion;
+    writingIntent?: boolean;
+    writingSelectedParent?: WritingVersion;
     writingMaterialContext?: ChatWritingMaterialContext;
     content: string;
     terminalKind: 'error' | 'cancelled';

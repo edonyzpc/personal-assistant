@@ -9,37 +9,6 @@ import {
 import type { PaAgentTurnSummary } from "../src/ai-services/pa-agent-loop";
 
 describe("PA Agent answer completion policy", () => {
-    const sourceControl = () => createToolResult("declare_source_scope", {
-        outcome: "control_applied",
-        metadata: { sourceScopeControl: true, preflightOnly: true },
-    });
-
-    it("continues after a standalone scope control without recording evidence or an observation", () => {
-        const ledger = createAnswerCompletionLedger();
-        const summary = createSummary({ status: "tool_results_ready", toolResults: [sourceControl()] });
-        const facts = deriveAnswerCompletionTurnFacts(summary);
-        recordAnswerCompletionTurn(ledger, summary, facts);
-        expect(facts.hasNewSuccessfulEvidence).toBe(false);
-        expect(facts.hasPromptIncludedObservation).toBe(false);
-        expect(ledger).toEqual(createAnswerCompletionLedger());
-        expect(decideAnswerCompletion({ summary, ledger, facts })).toEqual({
-            action: "continue_tooling", reason: "tool_chain_allowed",
-        });
-    });
-
-    it.each(["failure", "duplicate"])("does not let an applied control mask a %s result", kind => {
-        const ledger = createAnswerCompletionLedger();
-        const result = kind === "failure"
-            ? createToolResult("read_note_outline", { isError: true, outcome: "policy_rejected" })
-            : createDuplicateToolResult("read_note_outline");
-        const summary = createSummary({ status: "tool_results_ready", toolResults: [sourceControl(), result] });
-        recordAnswerCompletionTurn(ledger, summary);
-        expect(decideAnswerCompletion({ summary, ledger })).toMatchObject(kind === "failure"
-            ? { action: "continue_recovery", reason: "recoverable_tool_failure", toolMode: "normal" }
-            : { action: "stop_incomplete", reason: "duplicate_tool_call_without_answer" });
-        expect(ledger.promptIncludedObservationTools.has("declare_source_scope")).toBe(false);
-    });
-
     it("allows normal tool chaining when new successful evidence was gathered", () => {
         const ledger = createAnswerCompletionLedger();
         const summary = createSummary({
@@ -55,6 +24,52 @@ describe("PA Agent answer completion policy", () => {
             reason: "new_tool_evidence",
         });
         expect(ledger.successfulEvidenceTools.has("get_current_note_context")).toBe(true);
+    });
+
+    it("offers one strategy change before stopping repeated successful note reads", () => {
+        const ledger = createAnswerCompletionLedger();
+        const first = createSummary({ status: "tool_results_ready", toolResults: [
+            createToolResult("get_current_note_context", { promptText: "note version A" }),
+        ] });
+        recordAnswerCompletionTurn(ledger, first);
+
+        const repeated = createSummary({ status: "tool_results_ready", toolResults: [
+            createToolResult("get_current_note_context", { promptText: "note version A" }),
+        ] });
+        const facts = deriveAnswerCompletionTurnFacts(repeated, ledger);
+        recordAnswerCompletionTurn(ledger, repeated, facts);
+        expect(facts).toMatchObject({ hasNewSuccessfulEvidence: false,
+            hasOnlyDuplicateOrNoopResults: true,
+            duplicateOrNoopToolNames: ["get_current_note_context"] });
+        expect(decideAnswerCompletion({ summary: repeated, ledger, facts })).toMatchObject({
+            action: "continue_recovery", reason: "strategy_change_required", toolMode: "normal",
+            runtimeInstruction: expect.stringContaining("read that specific note"),
+        });
+        expect(decideAnswerCompletion({ summary: repeated, ledger, facts })).toMatchObject({
+            action: "stop_incomplete", reason: "equivalent_no_progress",
+        });
+    });
+
+    it("continues when a repeated read actually changes or a mixed batch adds evidence", () => {
+        const ledger = createAnswerCompletionLedger();
+        recordAnswerCompletionTurn(ledger, createSummary({ status: "tool_results_ready", toolResults: [
+            createToolResult("get_current_note_context", { promptText: "note version A" }),
+        ] }));
+        const changed = createSummary({ status: "tool_results_ready", toolResults: [
+            createToolResult("get_current_note_context", { promptText: "note version B" }),
+        ] });
+        expect(deriveAnswerCompletionTurnFacts(changed, ledger).hasNewSuccessfulEvidence).toBe(true);
+
+        const mixed = createSummary({ status: "tool_results_ready", toolResults: [
+            createToolResult("get_current_note_context", { promptText: "note version A" }),
+            createToolResult("read_note", { promptText: "new retrospective" }),
+        ] });
+        const facts = deriveAnswerCompletionTurnFacts(mixed, ledger);
+        expect(facts.hasNewSuccessfulEvidence).toBe(true);
+        expect(facts.hasOnlyDuplicateOrNoopResults).toBe(false);
+        expect(decideAnswerCompletion({ summary: mixed, ledger, facts })).toMatchObject({
+            action: "continue_tooling", reason: "new_tool_evidence",
+        });
     });
 
     it("keeps tools available after failed-only observations", () => {

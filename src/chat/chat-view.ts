@@ -3,6 +3,7 @@ import { ChatService, type AgentEvent, type ChatAgentStatus, type ChatContextUse
 import { BUNDLED_SKILL_CATALOG } from '../ai-services/bundled-skill-catalog';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
 import { PaAgentContextOverflowError } from '../ai-services/context';
+import { isTaskSourceDecisionBoundary, type TaskSourceDecisionKind } from '../ai-services/task-source-history';
 import type {
     ChatRuntimeWarning,
     ChatWritingMaterialContext,
@@ -71,7 +72,7 @@ import { ImageSourcePickerModal, VaultImagePickerModal } from './image-managemen
 import { GeneratedImageNotePickerModal, saveGeneratedImageToNote } from './image-save-to-note';
 import { classifyChatUserProvenanceKind } from '../pa/chat-memory-admission';
 import { mergeChatImageMaterials } from '../ai-services/chat-image-identity';
-import { isNewWritingTopicPrompt, isWritingContinuationPrompt, isWritingRequestPrompt } from '../ai-services/writing-output';
+import { isNewWritingTopicPrompt, isWritingContinuationPrompt } from '../ai-services/writing-output';
 import { WritingRecoveryModal, WritingVersionModal, WritingSaveRecoveryListModal, newWritingActionId, type WritingModalHost } from './writing-modal';
 import { mergeWritingImages, type WritingVersion } from './writing-types';
 import { inferWritingScene } from './writing-style-service';
@@ -123,6 +124,11 @@ function hasPartialShareCardWarning(warnings: readonly ChatRuntimeWarning[] = []
 
 function parseCreateImageCommand(value: string): string | null {
     const match = /^\s*@CreateImage(?:\s+([\s\S]*))?\s*$/i.exec(value);
+    return match ? (match[1] ?? '').trim() : null;
+}
+
+function parseWritingCommand(value: string): string | null {
+    const match = /^\s*@Writing(?:\s+([\s\S]*))?\s*$/i.exec(value);
     return match ? (match[1] ?? '').trim() : null;
 }
 
@@ -391,7 +397,7 @@ export class LLMView extends ItemView {
 
     prefillComposer(prompt: string): boolean {
         if (!this.composerTextArea || !this.syncComposerControlsForExternalPrefill) return false;
-        if (this.composerDraft?.snapshot('').images.length) return false;
+        if (this.composerDraft?.hasDraft('')) return false;
         if (this.composerTextArea.value.trim().length > 0 && this.composerTextArea.value !== prompt) {
             this.composerTextArea.focus();
             return false;
@@ -617,6 +623,8 @@ export class LLMView extends ItemView {
         imageDraftEl.hidden = true;
         const imageIntentEl = composerRow.createDiv({ cls: 'pa-chat-create-image-intent' });
         imageIntentEl.hidden = true;
+        const writingIntentEl = composerRow.createDiv({ cls: 'pa-chat-writing-intent' });
+        writingIntentEl.hidden = true;
         const textArea = composerRow.createEl('textarea', {
             attr: { rows: '3', placeholder: t("plugin.chat.placeholder.askAboutNotes") }
         });
@@ -628,29 +636,29 @@ export class LLMView extends ItemView {
             },
         });
         skillTypeahead.hidden = true;
-        const imageTypeahead = inputDiv.createDiv({
-            cls: 'pa-chat-skill-typeahead pa-chat-create-image-typeahead',
-            attr: { role: 'listbox', 'aria-label': t('plugin.chat.createImage.title') },
+        const actionTypeahead = inputDiv.createDiv({
+            cls: 'pa-chat-skill-typeahead pa-chat-action-typeahead',
+            attr: { role: 'listbox', 'aria-label': t('plugin.chat.action.choose') },
         });
-        imageTypeahead.hidden = true;
-        let chooseImageTypeahead: (() => void) | undefined;
+        actionTypeahead.hidden = true;
+        let chooseActionTypeahead: (() => void) | undefined;
         let composing = false;
-        textArea.addEventListener('compositionstart', () => { composing = true; hideImageTypeahead(); });
+        textArea.addEventListener('compositionstart', () => { composing = true; hideActionTypeahead(); });
         textArea.addEventListener('compositionend', () => { composing = false; renderSkillTypeahead(); });
 
         textArea.addEventListener('keydown', (e: KeyboardEvent) => {
             // IME confirmation can arrive after compositionend with keyCode 229.
             if (e.isComposing || e.keyCode === 229) return;
-            if (e.key === 'Escape' && (!skillTypeahead.hidden || !imageTypeahead.hidden)) {
+            if (e.key === 'Escape' && (!skillTypeahead.hidden || !actionTypeahead.hidden)) {
                 e.preventDefault();
                 hideSkillTypeahead();
-                hideImageTypeahead();
+                hideActionTypeahead();
                 return;
             }
             if (e.key !== 'Enter' || e.shiftKey) return;
-            if (!imageTypeahead.hidden && chooseImageTypeahead) {
+            if (!actionTypeahead.hidden && chooseActionTypeahead) {
                 e.preventDefault();
-                chooseImageTypeahead();
+                chooseActionTypeahead();
                 return;
             }
             if (isGenerating()) {
@@ -945,6 +953,10 @@ export class LLMView extends ItemView {
         // Host callbacks live only in this view; history contains data alone.
         const writingRecoverySources = new WeakMap<ChatMessage, () => boolean>();
         let selectedWritingParentExplicit = false;
+        const clearSelectedWritingParent = () => {
+            selectedWritingVersion = undefined;
+            selectedWritingParentExplicit = false;
+        };
         let restoredTerminalDraft: { turnId: number; snapshot: ComposerSnapshot<MessageImage> } | undefined;
         let thinkingStatusId = 0;
         let historyDeleteButtons: HTMLButtonElement[] = [];
@@ -1026,129 +1038,139 @@ export class LLMView extends ItemView {
             skillTypeahead.empty();
             skillTypeahead.hidden = true;
         };
-        const hideImageTypeahead = () => {
-            imageTypeahead.empty();
-            imageTypeahead.hidden = true;
-            chooseImageTypeahead = undefined;
+        const hideActionTypeahead = () => {
+            actionTypeahead.empty();
+            actionTypeahead.hidden = true;
+            chooseActionTypeahead = undefined;
         };
-        const getImageTriggerMatch = () => {
-            if (!this.host.imageGenerationService) return null;
+        const getActionTriggerMatch = () => {
             if (composing || textArea.selectionStart !== textArea.selectionEnd) return null;
             const prefix = textArea.value.slice(0, textArea.selectionStart);
             const match = /(?:^|\s)@([a-z]*)$/i.exec(prefix);
-            if (!match || !'createimage'.startsWith(match[1].toLowerCase())) return null;
-            return { start: prefix.length - match[1].length - 1, end: prefix.length };
+            if (!match) return null;
+            const query = match[1].toLowerCase();
+            const actions = [
+                ...(this.host.imageGenerationService && 'createimage'.startsWith(query) ? ['CreateImage' as const] : []),
+                ...(this.host.writingVersions && 'writing'.startsWith(query) ? ['Writing' as const] : []),
+            ];
+            return actions.length ? { start: prefix.length - match[1].length - 1, end: prefix.length, actions } : null;
         };
-        const renderImageTypeahead = () => {
-            const match = getImageTriggerMatch();
-            imageTypeahead.empty();
-            imageTypeahead.hidden = !match;
-            chooseImageTypeahead = undefined;
+        const renderActionTypeahead = () => {
+            const match = getActionTriggerMatch();
+            actionTypeahead.empty();
+            actionTypeahead.hidden = !match;
+            chooseActionTypeahead = undefined;
             if (!match) return false;
-            const choose = () => {
-                const current = getImageTriggerMatch();
-                if (!current) return;
-                textArea.setRangeText('', current.start, current.end, 'end');
-                composerDraft.touchText();
-                composerDraft.setImageIntent({ operation: 'generate', referenceImageRefs: [] });
-                hideImageTypeahead();
-                hideSkillTypeahead();
-                renderImageDraft();
-                syncComposerControls();
-                textArea.focus();
-            };
-            chooseImageTypeahead = choose;
-            const button = imageTypeahead.createEl('button', {
-                cls: 'pa-chat-skill-typeahead-item pa-chat-create-image-typeahead-item',
-                attr: { type: 'button', role: 'option', title: t('plugin.chat.createImage.title') },
-            });
-            button.createSpan({ cls: 'pa-chat-skill-typeahead-name', text: 'CreateImage' });
-            button.onclick = choose;
-            imageTypeahead.hidden = false;
-            const placement = positionTypeaheadNearCaret(textArea, imageTypeahead, containerEl);
-            if (placement === 'hidden') hideImageTypeahead();
+            for (const action of match.actions) {
+                const choose = () => {
+                    const current = getActionTriggerMatch();
+                    if (!current?.actions.includes(action)) return;
+                    textArea.setRangeText('', current.start, current.end, 'end');
+                    composerDraft.touchText();
+                    if (action === 'CreateImage') {
+                        composerDraft.setImageIntent({ operation: 'generate', referenceImageRefs: [] });
+                        clearSelectedWritingParent();
+                    } else composerDraft.setWritingIntent();
+                    hideActionTypeahead();
+                    hideSkillTypeahead();
+                    renderImageDraft();
+                    syncComposerControls();
+                    textArea.focus();
+                };
+                chooseActionTypeahead ??= choose;
+                const button = actionTypeahead.createEl('button', {
+                    cls: 'pa-chat-skill-typeahead-item pa-chat-action-typeahead-item',
+                    attr: { type: 'button', role: 'option', title: t(action === 'CreateImage'
+                        ? 'plugin.chat.createImage.title' : 'plugin.chat.writing.action') },
+                });
+                button.createSpan({ cls: 'pa-chat-skill-typeahead-name', text: action });
+                button.onclick = choose;
+            }
+            actionTypeahead.hidden = false;
+            const placement = positionTypeaheadNearCaret(textArea, actionTypeahead, containerEl);
+            if (placement === 'hidden') hideActionTypeahead();
             return true;
         };
-        const syncVisibleImageTypeahead = () => {
-            if (imageTypeahead.hidden) return;
-            renderImageTypeahead();
+        const syncVisibleActionTypeahead = () => {
+            if (actionTypeahead.hidden) return;
+            renderActionTypeahead();
         };
-        const imageTypeaheadEvents = ['scroll', 'select', 'keyup'] as const;
-        for (const eventName of imageTypeaheadEvents) {
-            textArea.addEventListener(eventName, syncVisibleImageTypeahead);
+        const actionTypeaheadEvents = ['scroll', 'select', 'keyup'] as const;
+        for (const eventName of actionTypeaheadEvents) {
+            textArea.addEventListener(eventName, syncVisibleActionTypeahead);
         }
-        const imageTypeaheadDocument = getOptionalPlatformDocument();
+        const actionTypeaheadDocument = getOptionalPlatformDocument();
         if (
-            imageTypeaheadDocument
-            && typeof imageTypeaheadDocument.addEventListener === 'function'
-            && typeof imageTypeaheadDocument.removeEventListener === 'function'
+            actionTypeaheadDocument
+            && typeof actionTypeaheadDocument.addEventListener === 'function'
+            && typeof actionTypeaheadDocument.removeEventListener === 'function'
         ) {
-            imageTypeaheadDocument.addEventListener('selectionchange', syncVisibleImageTypeahead);
+            actionTypeaheadDocument.addEventListener('selectionchange', syncVisibleActionTypeahead);
         }
-        const imageTypeaheadWindow = getOptionalPlatformWindow();
+        const actionTypeaheadWindow = getOptionalPlatformWindow();
         if (
-            imageTypeaheadWindow
-            && typeof imageTypeaheadWindow.addEventListener === 'function'
-            && typeof imageTypeaheadWindow.removeEventListener === 'function'
+            actionTypeaheadWindow
+            && typeof actionTypeaheadWindow.addEventListener === 'function'
+            && typeof actionTypeaheadWindow.removeEventListener === 'function'
         ) {
             for (const eventName of ['resize', 'orientationchange'] as const) {
-                imageTypeaheadWindow.addEventListener(eventName, syncVisibleImageTypeahead);
+                actionTypeaheadWindow.addEventListener(eventName, syncVisibleActionTypeahead);
             }
         }
-        const imageTypeaheadResizeObserverConstructor = (imageTypeaheadWindow as (Window & {
+        const actionTypeaheadResizeObserverConstructor = (actionTypeaheadWindow as (Window & {
             ResizeObserver?: new (callback: ResizeObserverCallback) => ResizeObserver;
         }) | undefined)?.ResizeObserver;
-        const imageTypeaheadResizeObserver = typeof imageTypeaheadResizeObserverConstructor === 'function'
-            ? new imageTypeaheadResizeObserverConstructor(syncVisibleImageTypeahead)
+        const actionTypeaheadResizeObserver = typeof actionTypeaheadResizeObserverConstructor === 'function'
+            ? new actionTypeaheadResizeObserverConstructor(syncVisibleActionTypeahead)
             : undefined;
-        imageTypeaheadResizeObserver?.observe(containerEl);
-        let imageTypeaheadBlurTimer: PlatformTimeoutHandle | null = null;
-        const hideImageTypeaheadAfterBlur = (event: FocusEvent) => {
-            if (event.relatedTarget && imageTypeahead.contains(event.relatedTarget as Node)) return;
-            if (imageTypeaheadBlurTimer !== null) clearPlatformTimeout(imageTypeaheadBlurTimer);
-            imageTypeaheadBlurTimer = setPlatformTimeout(() => {
-                imageTypeaheadBlurTimer = null;
-                const activeDocument = imageTypeahead.ownerDocument ?? imageTypeaheadDocument;
+        actionTypeaheadResizeObserver?.observe(containerEl);
+        let actionTypeaheadBlurTimer: PlatformTimeoutHandle | null = null;
+        const hideActionTypeaheadAfterBlur = (event: FocusEvent) => {
+            if (event.relatedTarget && actionTypeahead.contains(event.relatedTarget as Node)) return;
+            if (actionTypeaheadBlurTimer !== null) clearPlatformTimeout(actionTypeaheadBlurTimer);
+            actionTypeaheadBlurTimer = setPlatformTimeout(() => {
+                actionTypeaheadBlurTimer = null;
+                const activeDocument = actionTypeahead.ownerDocument ?? actionTypeaheadDocument;
                 const activeElement = activeDocument?.activeElement;
                 if (activeElement === textArea) return;
-                if (activeElement && imageTypeahead.contains(activeElement as Node)) return;
-                hideImageTypeahead();
+                if (activeElement && actionTypeahead.contains(activeElement as Node)) return;
+                hideActionTypeahead();
             }, 0);
-            (imageTypeaheadBlurTimer as unknown as { unref?: () => void }).unref?.();
+            (actionTypeaheadBlurTimer as unknown as { unref?: () => void }).unref?.();
         };
-        inputDiv.addEventListener('focusout', hideImageTypeaheadAfterBlur);
+        inputDiv.addEventListener('focusout', hideActionTypeaheadAfterBlur);
         this.registerViewTeardown(() => {
-            for (const eventName of imageTypeaheadEvents) {
-                textArea.removeEventListener(eventName, syncVisibleImageTypeahead);
+            for (const eventName of actionTypeaheadEvents) {
+                textArea.removeEventListener(eventName, syncVisibleActionTypeahead);
             }
             if (
-                imageTypeaheadDocument
-                && typeof imageTypeaheadDocument.removeEventListener === 'function'
+                actionTypeaheadDocument
+                && typeof actionTypeaheadDocument.removeEventListener === 'function'
             ) {
-                imageTypeaheadDocument.removeEventListener('selectionchange', syncVisibleImageTypeahead);
+                actionTypeaheadDocument.removeEventListener('selectionchange', syncVisibleActionTypeahead);
             }
             if (
-                imageTypeaheadWindow
-                && typeof imageTypeaheadWindow.removeEventListener === 'function'
+                actionTypeaheadWindow
+                && typeof actionTypeaheadWindow.removeEventListener === 'function'
             ) {
                 for (const eventName of ['resize', 'orientationchange'] as const) {
-                    imageTypeaheadWindow.removeEventListener(eventName, syncVisibleImageTypeahead);
+                    actionTypeaheadWindow.removeEventListener(eventName, syncVisibleActionTypeahead);
                 }
             }
-            inputDiv.removeEventListener('focusout', hideImageTypeaheadAfterBlur);
-            imageTypeaheadResizeObserver?.disconnect();
-            if (imageTypeaheadBlurTimer !== null) {
-                clearPlatformTimeout(imageTypeaheadBlurTimer);
-                imageTypeaheadBlurTimer = null;
+            inputDiv.removeEventListener('focusout', hideActionTypeaheadAfterBlur);
+            actionTypeaheadResizeObserver?.disconnect();
+            if (actionTypeaheadBlurTimer !== null) {
+                clearPlatformTimeout(actionTypeaheadBlurTimer);
+                actionTypeaheadBlurTimer = null;
             }
-            hideImageTypeahead();
+            hideActionTypeahead();
         });
         const getSkillTriggerMatch = () => {
             const value = textArea.value;
             return /(?:^|\s)#([a-z0-9-]*)$/i.exec(value);
         };
         const renderSkillTypeahead = () => {
-            if (renderImageTypeahead()) { hideSkillTypeahead(); return; }
+            if (renderActionTypeahead()) { hideSkillTypeahead(); return; }
             const match = getSkillTriggerMatch();
             if (!match) {
                 hideSkillTypeahead();
@@ -1245,8 +1267,10 @@ export class LLMView extends ItemView {
             debugButton.hidden = !this.host.settings.debug || !this.host.openAgentDebug;
             const generating = isGenerating();
             const commandPrompt = parseCreateImageCommand(textArea.value);
+            const writingCommandPrompt = parseWritingCommand(textArea.value);
             const hasDraft = composerDraft.canSend(textArea.value)
-                && (commandPrompt === null || commandPrompt.length > 0);
+                && (commandPrompt === null || commandPrompt.length > 0)
+                && (writingCommandPrompt === null || writingCommandPrompt.length > 0);
             const setupIssue = getBlockingAISetupIssue();
             const imagesUnsupported = composerDraft.snapshot(textArea.value).images.length > 0
                 && this.chatService.getImageCapability?.() === 'unsupported'
@@ -1286,7 +1310,8 @@ export class LLMView extends ItemView {
             }
         };
         const renderImageDraft = (revealEntryId?: number) => {
-            const imageIntent = composerDraft.snapshot(textArea.value).imageIntent;
+            const draft = composerDraft.snapshot(textArea.value);
+            const imageIntent = draft.imageIntent;
             imageIntentEl.empty();
             imageIntentEl.hidden = !imageIntent;
             if (imageIntent) {
@@ -1299,6 +1324,23 @@ export class LLMView extends ItemView {
                 setIcon(removeIntent, 'x');
                 removeIntent.onclick = () => {
                     composerDraft.clearImageIntent();
+                    renderImageDraft();
+                    syncComposerControls();
+                    textArea.focus();
+                };
+            }
+            writingIntentEl.empty();
+            writingIntentEl.hidden = !draft.writingIntent;
+            if (draft.writingIntent) {
+                writingIntentEl.createSpan({ text: t('plugin.chat.writing.action') });
+                const removeIntent = writingIntentEl.createEl('button', {
+                    attr: { type: 'button', title: t('plugin.chat.writing.removeAction'),
+                        'aria-label': t('plugin.chat.writing.removeAction') },
+                });
+                setIcon(removeIntent, 'x');
+                removeIntent.onclick = () => {
+                    composerDraft.clearWritingIntent();
+                    clearSelectedWritingParent();
                     renderImageDraft();
                     syncComposerControls();
                     textArea.focus();
@@ -1735,6 +1777,7 @@ export class LLMView extends ItemView {
                     }
                     composerDraft.setImageIntent({ operation: 'edit', parentVersionId: version.versionId,
                         referenceImageRefs: [cloneImageRef(version.assetRef)] });
+                    clearSelectedWritingParent();
                     renderImageDraft(); syncComposerControls(); textArea.focus();
                 }).catch(error => { this.host.log('Could not prepare image edit', error); new Notice(t('plugin.chat.createImage.versionUnavailable')); }); };
 
@@ -1825,6 +1868,7 @@ export class LLMView extends ItemView {
                 composerDraft.setImageIntent({ operation: task.request.operation,
                     referenceImageRefs: task.request.inputRefs.map(cloneImageRef),
                     ...(task.request.parentVersionId ? { parentVersionId: task.request.parentVersionId } : {}) });
+                clearSelectedWritingParent();
                 textArea.value = task.request.userPrompt;
                 composerDraft.touchText();
                 renderImageDraft();
@@ -2761,6 +2805,9 @@ export class LLMView extends ItemView {
                     if (!isCurrentSession() || version.conversationId !== this.conversationPersistence.activeConversationId) return;
                     selectedWritingVersion = version;
                     selectedWritingParentExplicit = true;
+                    composerDraft.setWritingIntent();
+                    renderImageDraft();
+                    syncComposerControls();
                     showComposerHint(t('plugin.chat.writing.continueHint'));
                 },
             };
@@ -3243,6 +3290,57 @@ export class LLMView extends ItemView {
             await deleteHistoryPairForMessages(expectedUser, expectedAssistant);
         };
 
+        const isLegacySourceDecisionResult = (message: PaAgentMessage) => message.role === 'toolResult'
+            && message.toolName === 'request_source_decision'
+            && message.content.metadata?.sourceDecisionRequest === true;
+
+        const readPendingSourceDecision = (assistant: ChatMessage | undefined) => {
+            if (assistant?.canonicalTurn?.status !== 'needs_user') return undefined;
+            const decision = assistant.canonicalTurn.messages.find(isLegacySourceDecisionResult);
+            const metadata = decision?.role === 'toolResult' ? decision.content.metadata : undefined;
+            const source = metadata?.requestedSource ?? assistant.sourceDecision?.source;
+            const boundary = metadata?.boundary ?? assistant.sourceDecision?.boundary;
+            const excludedPath = metadata?.excludedPath ?? assistant.sourceDecision?.excludedPath;
+            if (!['other_notes', 'excluded_note', 'web', 'both'].includes(String(source))
+                || !isTaskSourceDecisionBoundary(boundary)
+                || (source === 'excluded_note' && (typeof excludedPath !== 'string'
+                    || !boundary.excludedPaths.includes(excludedPath)))) return undefined;
+            return { source: source as TaskSourceDecisionKind, boundary,
+                ...(typeof excludedPath === 'string' ? { excludedPath } : {}) };
+        };
+
+        const renderLegacySourceDecisionActions = (rendered: RenderedMessage, entry: Extract<TimelineEntry, { kind: 'history' }>) => {
+            if (timelineEntries.at(-1) !== entry) return;
+            const decision = readPendingSourceDecision(entry.assistant);
+            if (!decision) return;
+            const actions = rendered.messageDiv.createDiv({ cls: 'pa-chat-source-decision-actions' });
+            rendered.messageDiv.insertBefore(actions, rendered.actionDiv);
+            actions.createEl('p', { text: t('plugin.chat.sourceDecision.legacyUnavailable') });
+            const cancel = actions.createEl('button', { text: t('plugin.chat.sourceDecision.cancel') });
+            cancel.onclick = () => {
+                if (isGenerating() || timelineEntries.at(-1) !== entry) return;
+                const original = { content: entry.assistant.content,
+                    canonicalTurn: entry.assistant.canonicalTurn, agentExecution: entry.assistant.agentExecution,
+                    sourceDecision: entry.assistant.sourceDecision };
+                const text = t('plugin.chat.sourceDecision.cancelled');
+                entry.assistant.content = text;
+                entry.assistant.canonicalTurn = { ...entry.assistant.canonicalTurn!, status: 'aborted',
+                    committedFinalText: text };
+                entry.assistant.agentExecution = { runId: entry.assistant.canonicalTurn.runId, state: 'cancelled' };
+                entry.assistant.sourceDecision = undefined;
+                void this.conversationPersistence.reviseFinalizedTurn(entry, async () => undefined).then(persisted => {
+                    if (!persisted) {
+                        entry.assistant.content = original.content;
+                        entry.assistant.canonicalTurn = original.canonicalTurn;
+                        entry.assistant.agentExecution = original.agentExecution;
+                        entry.assistant.sourceDecision = original.sourceDecision;
+                        new Notice(t('plugin.chat.sourceDecision.cancelFailed'));
+                    }
+                    renderTimeline();
+                });
+            };
+        };
+
         const renderTimeline = () => {
             discardPendingOperations();
             this.cancelScheduledScroll();
@@ -3278,7 +3376,9 @@ export class LLMView extends ItemView {
                         renderRuntimeWarnings(statusView, runtimeWarnings);
                         completeThinkingStatus(
                             statusView,
-                            formatCanonicalTerminalSummary(entry.assistant.canonicalTurn?.status, runtimeWarnings),
+                            readPendingSourceDecision(entry.assistant)
+                                ? t('plugin.chat.sourceDecision.legacySummary')
+                                : formatCanonicalTerminalSummary(entry.assistant.canonicalTurn?.status, runtimeWarnings),
                         );
                     }
                     const assistantRendered = createMessageElement(entry.assistant, {
@@ -3306,6 +3406,7 @@ export class LLMView extends ItemView {
                         setIcon(resume, 'rotate-cw');
                         resume.onclick = () => {
                             if (resume.disabled || isGenerating()) return;
+                            resume.disabled = true;
                             const operationIds = entry.assistant.agentExecution?.operationIds ?? [];
                             const continuation = [
                                 'Continue the interrupted task from the safe conversation history.',
@@ -3315,9 +3416,30 @@ export class LLMView extends ItemView {
                                     : 'Before any repeat side effect, check whether an earlier operation may already have taken effect.',
                                 'Do not assume missing in-memory progress completed.',
                             ].join(' ');
-                            void sendPrompt(continuation, entry.user.images ?? []);
+                            void (async () => {
+                                const writingAction = entry.user.writingAction;
+                                let parent: WritingVersion | undefined;
+                                if (writingAction) {
+                                    const versions = this.host.writingVersions;
+                                    if (!versions) { showComposerHint(t('plugin.chat.writing.actionUnavailable')); return; }
+                                    if (writingAction.parentVersionId) {
+                                        parent = await versions.get(writingAction.parentVersionId) ?? undefined;
+                                        if (!parent || !isCurrentSession()
+                                            || parent.conversationId !== this.conversationPersistence.activeConversationId) {
+                                            showComposerHint(t('plugin.chat.writing.referenceUnavailable'));
+                                            return;
+                                        }
+                                    }
+                                }
+                                await sendPrompt(continuation, entry.user.images ?? [], undefined, parent,
+                                    undefined, writingAction?.kind === 'writing');
+                            })().catch(error => {
+                                this.host.log('Could not resume interrupted Chat task', error);
+                                showComposerHint(t('plugin.chat.writing.referenceUnavailable'));
+                            }).finally(() => { if (resume.isConnected) resume.disabled = false; });
                         };
                     }
+                    renderLegacySourceDecisionActions(assistantRendered, entry);
                     const stableMessageId = entry.user.hostProvenance?.messageId;
                     if (stableMessageId) imageTaskMessageTargets.set(stableMessageId, {
                         parent: assistantRendered.messageDiv,
@@ -3368,8 +3490,12 @@ export class LLMView extends ItemView {
             setIcon(retryButton, 'rotate-cw');
             retryButton.onclick = () => {
                 if (retryButton.disabled || isGenerating()) return;
-                removeTerminalEntry(entry);
-                void sendPrompt(entry.prompt, entry.images ?? [], entry.id, entry.writingParent, entry.writingMaterialContext);
+                retryButton.disabled = true;
+                void sendPrompt(entry.prompt, entry.images ?? [], entry.id,
+                    entry.writingSelectedParent ?? entry.writingParent, entry.writingMaterialContext,
+                    entry.writingIntent).finally(() => {
+                    if (entry.terminalRow?.isConnected) retryButton.disabled = false;
+                });
             };
 
             const deleteButton = actions.createEl('button', {
@@ -3443,6 +3569,8 @@ export class LLMView extends ItemView {
                 id: turn.id,
                 prompt: turn.prompt,
                 writingParent: turn.writingParent,
+                writingIntent: turn.writingIntent,
+                writingSelectedParent: turn.writingSelectedParent,
                 writingMaterialContext: turn.writingMaterialContext,
                 images: turn.images ? cloneMessageImages(turn.images) : undefined,
                 content,
@@ -3821,6 +3949,7 @@ export class LLMView extends ItemView {
         const persistCanonicalTurnFromLifecycle = (turn: UiTurn, responseContent: string) => {
             const canonical = turn.canonicalLifecycle;
             if (!canonical.active || !canonical.runId) return undefined;
+            const sourceChanged = canonical.warnings.some((warning) => warning.type === 'assistant_source_changed');
             const turnId = canonical.finalTurnId
                 ?? [...canonical.turnStatuses.keys()].at(-1)
                 ?? canonical.currentTurnId;
@@ -3829,10 +3958,12 @@ export class LLMView extends ItemView {
                 runId: canonical.runId,
                 turnId,
                 status: (canonical.terminalStatus ?? canonical.turnStatuses.get(turnId)) as TurnEndStatus | undefined,
-                committedFinalText: responseContent,
+                committedFinalText: sourceChanged ? '' : responseContent,
                 sourceRecords: canonical.hostSourceRecords,
                 contextUsed: canonical.hostContextUsedItems,
-                messages: canonical.messages,
+                messages: sourceChanged ? canonical.messages.map((message) => message.role === 'assistant'
+                    ? { ...message, content: message.content.filter((part) => part.type !== 'text') }
+                    : message) : canonical.messages,
             });
         };
 
@@ -3959,6 +4090,9 @@ export class LLMView extends ItemView {
                     if (event.metadata?.diagnostics) {
                         addCanonicalRuntimeWarnings(turn, event.metadata.diagnostics);
                     }
+                    if (canonical.warnings.some((warning) => warning.type === 'assistant_source_changed')) {
+                        setResponseContent('');
+                    }
                     return;
                 case 'agent_end':
                     canonical.terminalStatus = event.status;
@@ -3967,10 +4101,15 @@ export class LLMView extends ItemView {
                         : canonical.finalTurnId;
                     addCanonicalRuntimeWarnings(turn, event.metadata?.warnings);
                     addCanonicalRuntimeWarnings(turn, event.metadata?.diagnostics);
+                    if (canonical.warnings.some((warning) => warning.type === 'assistant_source_changed')) {
+                        setResponseContent('');
+                    }
                     if (turn.statusView) {
                         completeThinkingStatus(
                             turn.statusView,
-                            formatCanonicalTerminalSummary(event.status, turn.canonicalLifecycle.warnings),
+                            event.status === 'needs_user' && canonical.messages.some(isLegacySourceDecisionResult)
+                                ? t('plugin.chat.sourceDecision.legacySummary')
+                                : formatCanonicalTerminalSummary(event.status, turn.canonicalLifecycle.warnings),
                         );
                     }
                     return;
@@ -4088,6 +4227,8 @@ export class LLMView extends ItemView {
             const userRendered = turn.userMessage;
             const assistantRendered = turn.assistantMessage;
             if (!userRendered || !assistantRendered) return false;
+            const sourceChanged = turn.canonicalLifecycle.warnings.some(
+                (warning) => warning.type === 'assistant_source_changed');
             // Persist the same interruption fact used by live actions so a
             // resolved partial/recovery response cannot become complete on reopen.
             if (sawLegacyPartialFailure && !isInterruptedAssistant({
@@ -4099,24 +4240,31 @@ export class LLMView extends ItemView {
             }
             const canonicalTurn = persistCanonicalTurnFromLifecycle(turn, responseContent);
             refreshTurnMetadataFromCanonical(turn, canonicalTurn);
+            const decisionQuestion = canonicalTurn?.status === 'needs_user'
+                ? canonicalTurn.messages.find(isLegacySourceDecisionResult)
+                : undefined;
+            const visibleContent = decisionQuestion?.role === 'toolResult'
+                && decisionQuestion.content.promptText.trim()
+                ? decisionQuestion.content.promptText
+                : sourceChanged ? t('plugin.chat.writing.sourceChangedHint') : responseContent;
 
             assistantRendered.memoryMetadata = turn.memoryMetadata;
             assistantRendered.canonicalTurn = canonicalTurn;
             const liveRenderSettled = await settleLiveMarkdownRenderBeforeFinal(
                 assistantRendered,
-                responseContent,
+                visibleContent,
                 isLiveTurn,
             );
             if (!liveRenderSettled || !isLiveTurn()) return false;
             cancelPendingLiveMarkdownRender(assistantRendered);
             if (
-                responseContent
+                visibleContent
                 && (
-                    assistantRendered.renderedContent !== responseContent
+                    assistantRendered.renderedContent !== visibleContent
                     || assistantRendered.renderedContentMode !== 'full'
                 )
             ) {
-                const rendered = await renderMarkdownInto(assistantRendered, responseContent, isLiveTurn);
+                const rendered = await renderMarkdownInto(assistantRendered, visibleContent, isLiveTurn);
                 if (!rendered || !isLiveTurn()) return false;
             }
 
@@ -4124,11 +4272,14 @@ export class LLMView extends ItemView {
 
             const userMessage: ChatMessage = { role: 'user', content: prompt,
                 ...(turn.images?.length ? { images: cloneMessageImages(turn.images) } : {}),
+                ...(turn.writingIntent ? { writingAction: { kind: 'writing' as const,
+                    ...((turn.writingSelectedParent ?? turn.writingParent)?.id
+                        ? { parentVersionId: (turn.writingSelectedParent ?? turn.writingParent)!.id } : {}) } } : {}),
                 ...(turn.userProvenance ? { hostProvenance: turn.userProvenance } : {}),
             };
             const assistantMessage: ChatMessage = {
                 role: 'assistant',
-                content: responseContent,
+                content: visibleContent,
                 hostProvenance: { version: 1, messageId: `${turn.userProvenance?.messageId ?? turn.id}-assistant`, kind: 'ai_draft' },
                 ...(turn.writingRecovery ? { writingRecovery: { ...turn.writingRecovery,
                     parentVersionId: turn.writingRecovery.parentVersionId ?? turn.writingParent?.id,
@@ -4162,6 +4313,10 @@ export class LLMView extends ItemView {
                     : {}),
             };
             if (turn.writingRecoverySourceCurrent) writingRecoverySources.set(assistantMessage, turn.writingRecoverySourceCurrent);
+            if (canonicalTurn?.status === 'needs_user') {
+                assistantMessage.agentExecution = { runId: canonicalTurn.runId, state: 'awaiting_user' };
+                assistantMessage.sourceDecision = readPendingSourceDecision(assistantMessage);
+            }
             this.chatHistory.push(userMessage, assistantMessage);
             const historyEntry: TimelineEntry = {
                 kind: 'history',
@@ -4173,7 +4328,7 @@ export class LLMView extends ItemView {
                 providerReasoningObserved: turn.providerReasoningObserved,
             };
             timelineEntries.push(historyEntry);
-            if (!sawLegacyPartialFailure) this.result = responseContent;
+            if (!sawLegacyPartialFailure) this.result = sourceChanged ? '' : visibleContent;
             readConversationImageAnchor();
             const persisted = await this.conversationPersistence.persistFinalizedTurn(prompt, historyEntry,
                 turn.writingArtifact && this.host.writingVersions ? async (context, isCurrent) => {
@@ -4199,8 +4354,11 @@ export class LLMView extends ItemView {
                 turn.userProvenance?.messageId,
             );
             if (turn.writingRequestId && !persisted && isCurrentSession()) new Notice(t('plugin.chat.writing.historyUnavailable'), 12000);
-            if (!turn.writingRequestId && !sawLegacyPartialFailure) await maybeRenderOperationsSaveSuggestion(turn, prompt, responseContent);
+            if (!turn.writingRequestId && !sawLegacyPartialFailure && !sourceChanged) {
+                await maybeRenderOperationsSaveSuggestion(turn, prompt, responseContent);
+            }
             renderWritingActions(assistantRendered, assistantMessage);
+            renderLegacySourceDecisionActions(assistantRendered, historyEntry);
 
             const deleteCompletedPair = () => deleteHistoryPairForMessages(userMessage, assistantMessage);
             ensureCompletedMessageActions(userRendered, {
@@ -4209,7 +4367,7 @@ export class LLMView extends ItemView {
             });
             ensureCompletedMessageActions(assistantRendered, {
                 onDelete: deleteCompletedPair,
-                onAddToEditor: sawLegacyPartialFailure ? undefined : (content) => addContentToEditor(content),
+                onAddToEditor: sawLegacyPartialFailure || sourceChanged ? undefined : (content) => addContentToEditor(content),
                 onShareAsCard: isShareCardEligibleAssistant(assistantMessage)
                     ? (content, sourcePath) => {
                         new ShareCardModal(this.app, {
@@ -4243,10 +4401,12 @@ export class LLMView extends ItemView {
                 ) {
                 completeThinkingStatus(
                     turn.statusView,
-                    formatCanonicalTerminalSummary(
-                        turn.canonicalLifecycle.terminalStatus,
-                        turn.canonicalLifecycle.warnings,
-                    ),
+                    decisionQuestion
+                        ? t('plugin.chat.sourceDecision.legacySummary')
+                        : formatCanonicalTerminalSummary(
+                            turn.canonicalLifecycle.terminalStatus,
+                            turn.canonicalLifecycle.warnings,
+                        ),
                 );
             } else {
                 stopThinkingLoader(turn.statusView);
@@ -4258,14 +4418,25 @@ export class LLMView extends ItemView {
         };
 
         const sendPrompt = async (rawPrompt: string, retryImages?: MessageImage[], retryTurnId?: number, retryWritingParent?: WritingVersion,
-            retryWritingMaterialContext?: ChatWritingMaterialContext) => {
+            retryWritingMaterialContext?: ChatWritingMaterialContext, retryWritingIntent = false) => {
             const commandPrompt = parseCreateImageCommand(rawPrompt);
             if (commandPrompt !== null && !commandPrompt) {
                 showComposerHint(t('plugin.chat.createImage.promptRequired'));
                 return;
             }
-            const prompt = commandPrompt ?? rawPrompt;
-            if ((commandPrompt !== null || composerDraft.snapshot(rawPrompt).imageIntent)
+            const writingCommandPrompt = commandPrompt === null ? parseWritingCommand(rawPrompt) : null;
+            if (writingCommandPrompt !== null && !writingCommandPrompt) {
+                showComposerHint(t('plugin.chat.writing.promptRequired'));
+                return;
+            }
+            const prompt = commandPrompt ?? writingCommandPrompt ?? rawPrompt;
+            const currentDraft = composerDraft.snapshot(rawPrompt);
+            if (retryImages === undefined && ((commandPrompt !== null && currentDraft.writingIntent)
+                || (writingCommandPrompt !== null && currentDraft.imageIntent))) {
+                showComposerHint(t('plugin.chat.action.conflict'));
+                return;
+            }
+            if (retryImages === undefined && (commandPrompt !== null || currentDraft.imageIntent)
                 && requestedImageCount(prompt) > 4) {
                 showComposerHint(t('plugin.chat.createImage.countTooHigh'));
                 return;
@@ -4292,6 +4463,14 @@ export class LLMView extends ItemView {
                 syncComposerControls();
                 return;
             }
+            const writingActionSelected = retryImages === undefined
+                ? writingCommandPrompt !== null || currentDraft.writingIntent
+                : retryWritingIntent;
+            if (writingActionSelected && (!this.host.writingVersions
+                || (this.host.writingOutputProtocol === 'native' && !this.host.prepareWritingStyleForScene))) {
+                showComposerHint(t('plugin.chat.writing.actionUnavailable'));
+                return;
+            }
             const consumeRestoredRetry = retryTurnId !== undefined && restoredTerminalDraft?.turnId === retryTurnId
                 && composerDraft.isUnchanged(restoredTerminalDraft.snapshot) && textArea.value === restoredTerminalDraft.snapshot.text;
             const sentDraft: SentComposerDraft<MessageImage> | null = retryImages === undefined || consumeRestoredRetry ? composerDraft.take(prompt) : null;
@@ -4303,9 +4482,11 @@ export class LLMView extends ItemView {
             const explicitImageIntent: ComposerImageIntent | undefined = draftImageIntent ?? (commandPrompt !== null
                 ? { operation: turnImages.length ? 'reference' : 'generate', referenceImageRefs: turnImages.map(image => cloneImageRef(image.ref)) }
                 : undefined);
+            if (explicitImageIntent) clearSelectedWritingParent();
             if (sentDraft && commandPrompt !== null && !sentDraft.snapshot.imageIntent) {
                 sentDraft.snapshot.imageIntent = explicitImageIntent;
             }
+            if (sentDraft && writingCommandPrompt !== null) sentDraft.snapshot.writingIntent = true;
             if (retryImages === undefined && isNewWritingTopicPrompt(prompt)) {
                 selectedWritingVersion = undefined;
                 selectedWritingParentExplicit = false;
@@ -4319,21 +4500,29 @@ export class LLMView extends ItemView {
                 ? previousAssistant.writingRecovery : undefined;
             const continueFailedWriting = retryImages === undefined && !selectedWritingParentExplicit
                 && isWritingContinuationPrompt(prompt) && failedWriting;
-            // Native writing is a capability the main Agent may choose after
-            // semantically preparing writing context; prompt keywords do not
-            // route the turn. Legacy output retains its compatibility hint.
-            const nativeWriting = !explicitImageIntent && this.host.writingOutputProtocol === 'native'
+            // Writing is an explicit composer action, including a selected version
+            // or a retry of that action. Ordinary Chat never binds writing tools.
+            const explicitWritingIntent = !explicitImageIntent && Boolean(sentDraft?.snapshot.writingIntent
+                || writingCommandPrompt !== null || retryWritingIntent);
+            const nativeWriting = explicitWritingIntent && this.host.writingOutputProtocol === 'native'
                 && !!this.host.writingVersions && !!this.host.prepareWritingStyleForScene;
-            const writingIntent = nativeWriting || isWritingRequestPrompt(prompt,
-                !!(retryWritingParent ?? selectedWritingVersion ?? retryWritingMaterialContext ?? failedWriting));
-            const writingRequest = this.host.writingVersions && writingIntent
+            const writingRequest = this.host.writingVersions && explicitWritingIntent
                 ? { requestId: newWritingActionId() } : undefined;
             const writingParent = !writingRequest || nativeWriting ? undefined : retryImages !== undefined ? retryWritingParent
                 : !isNewWritingTopicPrompt(prompt) && (selectedWritingParentExplicit || isWritingContinuationPrompt(prompt))
                     && (!continueFailedWriting || selectedWritingVersion?.id === failedWriting?.parentVersionId) ? selectedWritingVersion : undefined;
+            const writingSelectedParent = nativeWriting
+                ? (retryImages !== undefined ? retryWritingParent
+                    : selectedWritingParentExplicit ? selectedWritingVersion : undefined)
+                : undefined;
             const writingMaterialContext = !writingRequest || nativeWriting ? undefined : retryImages !== undefined ? retryWritingMaterialContext
                 : continueFailedWriting ? { requestId: continueFailedWriting.requestId,
                     associatedImages: cloneMessageImages(previousAssistant?.images ?? previousUser?.images ?? []) } : undefined;
+            if (retryTurnId !== undefined) {
+                const retryEntry = timelineEntries.find((entry): entry is TerminalTurnEntry => entry.kind === 'terminal'
+                    && entry.id === retryTurnId);
+                if (retryEntry) removeTerminalEntry(retryEntry);
+            }
             isStopping = false;
             isFinalizing = false;
             removeElement(emptyStateEl);
@@ -4355,7 +4544,9 @@ export class LLMView extends ItemView {
                 id: ++uiTurnId,
                 prompt,
                 images: turnImages,
+                writingIntent: explicitWritingIntent,
                 writingParent,
+                writingSelectedParent,
                 writingMaterialContext,
                 writingMaterials: mergeChatImageMaterials(writingMaterialContext?.associatedImages ?? writingParent?.associatedImages ?? [], turnImages),
                 userProvenance: {
@@ -4363,7 +4554,7 @@ export class LLMView extends ItemView {
                     messageId: `chat-${sessionId}-${turnId}-${Date.now()}`,
                     kind: classifyChatUserProvenanceKind(prompt, {
                         hasImages: turnImages.length > 0,
-                        writingContext: ['writing_request', 'user_local_edit'].includes(
+                        writingContext: explicitWritingIntent || ['writing_request', 'user_local_edit'].includes(
                             [...this.chatHistory].reverse().find((message) => message.role === 'user')?.hostProvenance?.kind ?? '',
                         ),
                     }),
@@ -4377,6 +4568,9 @@ export class LLMView extends ItemView {
             const persistedUserMessage: ChatMessage = {
                 role: 'user', content: prompt,
                 ...(turnImages.length ? { images: cloneMessageImages(turnImages) } : {}),
+                ...(explicitWritingIntent ? { writingAction: { kind: 'writing' as const,
+                    ...((writingSelectedParent ?? writingParent)?.id
+                        ? { parentVersionId: (writingSelectedParent ?? writingParent)!.id } : {}) } } : {}),
                 hostProvenance: turn.userProvenance!,
             };
             await this.conversationPersistence.persistRunningTurn(prompt, stableMessageId, persistedUserMessage);
@@ -4476,8 +4670,7 @@ export class LLMView extends ItemView {
                     const getAllowedVersionIds = () => [...new Set([
                         ...timelineEntries.flatMap(entry => entry.kind === 'history' && entry.assistant.writingVersionId
                             ? [entry.assistant.writingVersionId] : []),
-                        ...(selectedWritingVersion ? [selectedWritingVersion.id] : []),
-                        ...(retryWritingParent ? [retryWritingParent.id] : []),
+                        ...(writingSelectedParent ? [writingSelectedParent.id] : []),
                     ])];
                     const candidates = await this.conversationPersistence.prepareWritingCandidates(versions, {
                         getAllowedVersionIds, isCurrent: isSameTurn, signal: controller.signal,
@@ -4486,7 +4679,7 @@ export class LLMView extends ItemView {
                     writingContextHost = {
                         conversationId: candidates.conversationId ?? conversationIdForMemoryActions ?? writingRequest!.requestId,
                         candidates: candidates.candidates, versions,
-                        selectedParentVersionId: retryWritingParent?.id ?? (selectedWritingParentExplicit ? selectedWritingVersion?.id : undefined),
+                        selectedParentVersionId: writingSelectedParent?.id,
                         styles: { prepare: (scene, budget) => this.host.prepareWritingStyleForScene!(scene, budget) },
                         isParentCurrent: candidates.isParentCurrent,
                         isParentSourceCurrent: candidates.isParentSourceCurrent,
@@ -4618,6 +4811,7 @@ export class LLMView extends ItemView {
                     chatSupportsImages ? modelHistory : modelHistory.map(message => ({ ...message, images: undefined })),
                     {
                         memoryMode: "auto",
+                        userText: prompt,
                         conversationId: conversationIdForMemoryActions ?? undefined,
                         images: chatSupportsImages ? turnImages : [],
                         createImage,
@@ -4654,6 +4848,10 @@ export class LLMView extends ItemView {
                                 writingRequest && !nativeWriting ? () => undefined : updateResponseContent,
                                 isLiveTurn,
                             );
+                        },
+                        onCommittedFinalText: snapshot => {
+                            if (!acceptingStreamEvents || !isLiveTurn() || responseContent === snapshot) return;
+                            updateResponseContent(snapshot);
                         },
                         onStatus: handleStatus,
                         onReasoningChunk: handleProviderReasoning,

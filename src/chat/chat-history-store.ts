@@ -87,8 +87,10 @@ export interface PersistedChatMessage {
     images?: MessageImage[];
     hostProvenance?: ChatHostProvenance;
     writingVersionId?: string;
+    writingAction?: ChatMessage["writingAction"];
     writingRecovery?: ChatWritingRecovery;
     agentExecution?: ChatMessage["agentExecution"];
+    sourceDecision?: ChatMessage["sourceDecision"];
 }
 
 export interface PersistedTurn {
@@ -532,7 +534,10 @@ export class MemoryChatHistoryStore extends ChatDebugDeletionNotifications imple
     }
 
     private pruneWriting(conversationId: string, turnIndex?: number): void {
-        const recoveryPins = [...this.turns.values()].flatMap((turn) => [turn.user.writingRecovery?.parentVersionId, turn.assistant.writingRecovery?.parentVersionId])
+        const recoveryPins = [...this.turns.values()].flatMap((turn) => [turn.user.writingRecovery?.parentVersionId,
+            turn.assistant.writingRecovery?.parentVersionId,
+            ...(['running', 'interrupted'].includes(turn.assistant.agentExecution?.state ?? '')
+                ? [turn.user.writingAction?.parentVersionId] : [])])
             .filter((id): id is string => !!id);
         const plan = writingPrunePlan([...this.writingVersions.values()], [...this.saveReceipts.values()], conversationId, turnIndex,
             recoveryPins, this.prunableWritingVersions);
@@ -1040,7 +1045,8 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
     }
     private async writeTurn(transaction: IDBTransaction, turn: PersistedTurn): Promise<void> {
         const versions = new Map<string, WritingVersion>();
-        for (const message of [turn.user, turn.assistant]) for (const id of [message.writingVersionId, message.writingRecovery?.parentVersionId]) if (id) {
+        for (const message of [turn.user, turn.assistant]) for (const id of [message.writingVersionId,
+            message.writingRecovery?.parentVersionId, message.writingAction?.parentVersionId]) if (id) {
             const value = await requestToPromise<unknown>(transaction.objectStore(WRITING_VERSIONS_STORE).get(id));
             if (value) versions.set(id, cloneWritingVersion(value));
         }
@@ -1081,7 +1087,10 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
         const priorCandidates = new Set(metadataRecords.filter((entry) => typeof entry.key === 'string'
             && entry.key.startsWith('writing-prune:') && entry.value === true).map((entry) => entry.key.slice('writing-prune:'.length)));
         const turns = await requestToPromise<TurnRecord[]>(transaction.objectStore(TURNS_STORE).getAll());
-        const recoveryPins = turns.flatMap(({ turn }) => [turn.user.writingRecovery?.parentVersionId, turn.assistant.writingRecovery?.parentVersionId])
+        const recoveryPins = turns.flatMap(({ turn }) => [turn.user.writingRecovery?.parentVersionId,
+            turn.assistant.writingRecovery?.parentVersionId,
+            ...(['running', 'interrupted'].includes(turn.assistant.agentExecution?.state ?? '')
+                ? [turn.user.writingAction?.parentVersionId] : [])])
             .filter((id): id is string => !!id);
         const plan = writingPrunePlan(allVersions, allReceipts, conversationId, turnIndex, recoveryPins, priorCandidates);
         for (const id of plan.candidates) metadata.put({ key: `writing-prune:${id}`, value: true });
@@ -1410,12 +1419,21 @@ function cloneMessage(message: PersistedChatMessage): PersistedChatMessage {
         ...(message.images !== undefined ? { images: cloneMessageImages(message.images) } : {}),
         ...(message.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(message.hostProvenance) } : {}),
         ...(message.writingVersionId !== undefined ? { writingVersionId: validateWritingVersionId(message.writingVersionId) } : {}),
+        ...(message.writingAction !== undefined ? { writingAction: cloneWritingAction(message.writingAction) } : {}),
         ...(message.writingRecovery !== undefined ? { writingRecovery: cloneWritingRecovery(message.writingRecovery) } : {}),
         ...(message.agentExecution ? { agentExecution: {
             ...message.agentExecution,
             ...(message.agentExecution.operationIds ? { operationIds: [...message.agentExecution.operationIds] } : {}),
         } } : {}),
+        ...(message.sourceDecision ? { sourceDecision: cloneSourceDecision(message.sourceDecision) } : {}),
     };
+}
+
+export function cloneSourceDecision(decision: NonNullable<ChatMessage['sourceDecision']>): NonNullable<ChatMessage['sourceDecision']> {
+    return { source: decision.source, boundary: {
+        allowedPaths: decision.boundary.allowedPaths === null ? null : [...decision.boundary.allowedPaths],
+        excludedPaths: [...decision.boundary.excludedPaths], webAllowed: decision.boundary.webAllowed,
+    }, ...(decision.excludedPath ? { excludedPath: decision.excludedPath } : {}) };
 }
 
 function assertAssetIdentity(old: ImageAsset | undefined, next: ImageAsset): void {
@@ -1428,6 +1446,14 @@ function assertAssetIdentity(old: ImageAsset | undefined, next: ImageAsset): voi
 function validateWritingVersionId(value: unknown): string {
     if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value)) throw new Error('Invalid writing version identity');
     return value;
+}
+function cloneWritingAction(value: unknown): NonNullable<ChatMessage['writingAction']> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid writing action');
+    const action = value as Record<string, unknown>;
+    if (action.kind !== 'writing') throw new Error('Invalid writing action');
+    return { kind: 'writing',
+        ...(action.parentVersionId !== undefined
+            ? { parentVersionId: validateWritingVersionId(action.parentVersionId) } : {}) };
 }
 function cloneWritingRecovery(value: unknown): ChatWritingRecovery {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid writing recovery');
@@ -1488,6 +1514,10 @@ function assertTurnWritingVersions(turn: PersistedTurn, get: (id: string) => Wri
         if (message.writingRecovery?.parentVersionId) {
             const parent = get(message.writingRecovery.parentVersionId);
             if (!parent || parent.conversationId !== turn.conversationId) throw new Error('Writing recovery parent mismatch');
+        }
+        if (message.writingAction?.parentVersionId && ['running', 'interrupted'].includes(turn.assistant.agentExecution?.state ?? '')) {
+            const parent = get(message.writingAction.parentVersionId);
+            if (!parent || parent.conversationId !== turn.conversationId) throw new Error('Writing action parent mismatch');
         }
     }
 }
