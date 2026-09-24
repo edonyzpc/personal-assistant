@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [PA Agent Task Source Boundary](./specs/pa-agent-task-source-boundary-product-spec.md) — B-146 已按后续产品决定完成本地验收：Agent 自主取材、Host 保留明确运行保护；事实质量改进另见 B-148。
 - [PA Agent Debug View 与本机历史设计](./specs/pa-agent-debug-view-product-spec.md)
 - [Recoverable Agent Execution](./specs/pa-recoverable-agent-execution-product-spec.md) — B-144 已交付 DEC-040 的 30 分钟尝试、自主恢复、领域交付与受控并发行为。
 - [PA Agent Essential Capabilities](./specs/pa-agent-essential-capabilities-product-spec.md)

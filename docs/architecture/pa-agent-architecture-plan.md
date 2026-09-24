@@ -207,21 +207,28 @@ abort, or deadline expiry invalidates the token and discards late work.
 
 ### Task source and writing output
 
-The main Agent interprets the user's goal and may call `declare_source_scope`
-before note or Web reads. `TaskSourceRun` commits that declaration only after
-Host validation and rejects a mixed batch whose reads are not covered by the
-committed scope. Note scope and personalization are separate: a request limited
-to the current note does not by itself remove eligible Personal, existing
-Memory, or explicitly authorized style samples. Before every physical provider
-request, the Host rebuilds the actual admitted input from the run's read
-snapshots and rechecks live authorization. Ordinary note edits and background
-Memory refresh do not rewrite an already-read snapshot; deletion, exclusion,
-Forget, Data Boundary or lost identity still withdraw it. An explicit request
-for the latest/current version executes a new read rather than reusing an exact
-successful duplicate.
+For ordinary Chat, the main Agent chooses which notes to read and whether to use
+enabled Web search. `TaskSourceRun` exposes bounded note identities as data;
+ordinary reads do not require `declare_source_scope` or a model-declared user
+boundary. Before dispatching a batch, the Host plans the actual reads and
+checks file identity, Data Boundary exclusions, enabled capabilities, and
+output targets. A mixed batch with an inadmissible read is rejected before any
+source in that batch is read. Excluded notes return the deterministic
+`source_excluded` reason. User instructions about which sources to use remain
+instructions for the Agent rather than keyword-based Host admission rules.
+Note scope and personalization are separate: a request limited to the current
+note does not by itself remove eligible Personal or existing Memory. Before
+every physical provider request, the Host rebuilds the actual admitted input
+from the run's read snapshots and rechecks live authorization. Ordinary note
+edits and background Memory refresh do not rewrite an already-read snapshot;
+deletion, exclusion, Forget, Data Boundary or lost identity still withdraw it.
+An explicit request for the latest/current version executes a new read rather
+than reusing an exact successful duplicate.
 
-For writing, the main Agent may choose `get_writing_context` without a
-prompt-keyword router. It exposes only Host-selected candidates and
+For writing, Chat binds `get_writing_context` only after the user selects the
+`@Writing` action or explicitly continues an existing writing version. Ordinary
+Chat does not expose the writing tools or infer writing intent from prompt
+keywords. The context tool exposes only Host-selected candidates and
 returns a run-bound context handle. When native writing output is enabled,
 `present_writing` becomes available only after that context is prepared. It must
 be the single output call in its response and cannot be mixed with new source or

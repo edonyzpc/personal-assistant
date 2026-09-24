@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-09-20
+Updated: 2026-09-24
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -24,6 +24,8 @@ Updated: 2026-09-20
 | B-134 | 跨设备图片聊天续接 | 承接 DEC-030 后续方向；用户选择启动后先设计聊天历史、图片引用/原件可用性、冲突恢复及同步隐私边界。首期仍仅承诺同设备续聊；图片进入 vault 或正式附件同步不等于聊天同步，也不自动扩大到风格同步 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md), [当前存储契约](./architecture/multimodal-chat-architecture.md) |
 | B-130 | Chat 严格回答格式遵循 | B-128 F-20 为非阻塞 P3：默认预算下请求纯 JSON 仍可能得到说明/围栏。出现明确依赖机器可解析输出的调用方，或真实用户工作流被格式阻断时重启；先保留同输入的语义/格式对照，不用猜测截取 JSON 掩盖错误，也不以更短输出牺牲关键细节 | User request 2026-09-06 closeout；[B-128 Spec](./product/specs/pa-context-management-product-spec.md#delivered-scope-and-limits), [formatAtDefaultBudget 与撤回候选](./archive/2026/b-128-context-management-validation.md) |
 | B-131 | Context 摘要去重与字段归类 | B-128 F-23 为非阻塞 P3：当前同义重复无矛盾、无遗漏且在预算内。重复内容可复现地挤占必要事实、增加摘要批次或造成可感知延迟时重启；沿用原文/摘要/实际入模/续答证据，避免仅为字段整齐增加模型矩阵或 Memory 能力 | User request 2026-09-06 closeout；[B-128 Spec](./product/specs/pa-context-management-product-spec.md#delivered-scope-and-limits), [targetedSemantic 原始摘要](./archive/2026/b-128-context-management-validation.md) |
+| B-147 | Chat Data Boundary 排除来源的本次例外接线 | 现有 Data Boundary 产品规格定义显式 UI、仅本次有效的排除例外，但 2026-09-23 源码核查显示 Chat 的 `SourceAccess`、运行时和 UI 尚无相应接线；旧 `request_source_decision` 只扩展模型声明的用户范围，不能充当例外。用户明确选择启动时，单独设计目标、显式确认、运行身份、Replay 与回退；B-146 保持排除硬门，不附带实现 | [Data Boundary Product Spec](./product/specs/pa-data-boundary-product-spec.md#4-excluded-scopes), [B-146 validation](./archive/2026/b146-agent-task-source-boundary-validation.md#findings-and-follow-up) |
+| B-148 | PA Agent 回答事实核实与证据适配 | B-146/F-24 已证实引用网页与结论支持范围脱节。Owner 接受按任务需要加强核实，并要求方法泛化：Agent 根据问题、已获证据和不确定性自行决定是否补查、如何核对和何时收束；不按关键词、领域清单或每次联网固定追加验证。Host 只记录可确定的来源与执行事实，不裁决自然语言主张真假；不能承诺零错误。启动时核对搜索结果目前仅向 Agent 投影标题、URL、摘要的能力边界；设计可复用的原文取证和 Agent 自检，再用跨主题、跨模型样例验收主张与来源、模型、评测条件和结论是否匹配，不做 AGI 特例 | Owner discussion 2026-09-24；[B-146 事实核查](./archive/2026/b146-agent-task-source-boundary-validation.md#findings-and-follow-up) |
 | B-102 | Obsidian Operations CLI adapter (v1B) | Desktop CLI reads 的用户价值足以覆盖 probe、allowlist、timeout、argv execution 与 vault confinement 成本时，重新开启 SPEC-05 | [Architecture plan](./architecture/obsidian-operations-agent-plan.md) |
 | B-103 | 用户自定义 Skills | 先确认产品价值、工具权限、Settings UX 与 vault-side discovery 边界，再写 SDD | [Historical tracker](./archive/v2-post-release-spec-driven-development.md) |
 | B-104 | PA Agent latency levers | 必须先有同口径 p50/p95 样本；再评估 read-only batch、compact final-answer 与 direct route | [Historical plan](./archive/pa-agent-latency-optimization-plan.md) |

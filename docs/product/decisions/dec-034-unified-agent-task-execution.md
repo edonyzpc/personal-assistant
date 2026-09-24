@@ -2,11 +2,13 @@
 
 Decision ID: DEC-034
 Status: Accepted
-Updated: 2026-09-22
+Updated: 2026-09-24
 Authority: Owner 于 2026-09-08 确认主 Agent 语义决策和统一写作方向；2026-09-09 明确默认学习与个性化边界并将全部新增工作归 B-135。B-135 已完成实现与验证，本记录承担稳定产品选择，历史证据见验证归档。
 Work item: B-135
 
 2026-09-21 局部后续决定：[DEC-040](./dec-040-recoverable-agent-execution.md) 确认普通 Chat 已读材料与授权分离、可恢复循环及 writing 领域化；B-144 已于 2026-09-22 完成交付与 closeout。保留本决定的主 Agent、个性化、物理发送授权、native 协议、旧 reader 和持久动作边界；不重开 B-135。
+
+2026-09-24 局部替代：[DEC-042 显式 Writing 决定](./dec-042-agent-task-source-boundary.md#2026-09-24-owner-补充写作由显式-chat-操作触发)替代下文“主 Agent 自行选择写作路径”和“用户无需选择写作模式”的入口要求。普通 Chat 仍由主 Agent 理解问题、取材和回答，但只有用户选择 `@Writing` 等显式操作，或明确选择继续已有作品，才为本轮开启作品上下文与交付。其余主 Agent、作品生命周期、native 交付及旧 reader 边界继续有效；B-135 当时的选择与证据保留为历史事实。
 
 ## Context
 
@@ -69,7 +71,7 @@ B-135实施、真实provider、部署和阶段验收已完成，最终范围见�
 
 ## Consequences
 
-- Product behavior: 用户无需选择写作模式；保留个性化，减少错误取材和重复检索；新默认仍有明确退出。
+- Product behavior: “用户无需选择写作模式”是 B-135 当时的入口选择，已于 2026-09-24 按上方局部替代改为显式 Writing 操作；保留个性化，减少错误取材和重复检索；新默认仍有明确退出。
 - Architecture / data / safety: 主 Agent 解释语义，宿主保有真实身份、来源、权限、完整性、预算和保存职责；不声称宿主能够独立证明模型对自然语言的理解。
 - Compatibility / migration: 新旧 settings、Chat、recovery、版本和 provenance reader 已分别验证；迁移不改源笔记、不触发额外提取或整库重建。后续结构变化仍须重新验证对应reader。
 - 2026-09-09 Owner 确认新学习来源凭据采用明确格式版本：降级旧版时保留治理库数据，暂停旧版对该库的读取、确认和恢复；重新升级后恢复使用，原笔记不修改。旧插件保存、legacy画像和重新升级路径已由B-135/T-19实测；未知版本拒绝仍不能单独替代整条兼容链证明。

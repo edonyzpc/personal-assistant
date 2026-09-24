@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-09-23
+Updated: 2026-09-24
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-09-24 | `docs/development/active/agent-task-source-boundary/**` | deleted-after-absorption | [DEC-042](../product/decisions/dec-042-agent-task-source-boundary.md), [B-146 Product Spec](../product/specs/pa-agent-task-source-boundary-product-spec.md), [PA Agent architecture](../architecture/pa-agent-architecture-plan.md#task-source-and-writing-output), [B-146 validation](./2026/b146-agent-task-source-boundary-validation.md), [Backlog B-147/B-148](../backlog.md) | Owner 授权 B-146 closeout；REQ/AC-07–08 的当前产品与运行职责已吸收，review 修复及实际验收保留为紧凑归档。旧 REQ/AC-01–06 仅为已替代历史。Feature Home、Plan、SDD、Tracker 本轮从未提交的工作树删除，不声称可由先前 Git 提交恢复。事实质量 FAIL 由 B-148 承接，Data Boundary 本次例外由 B-147 承接；应用中途操作与真机证据边界见归档。远程合入与发布另按实际动作验证。 |
 | 2026-09-23 | `docs/development/active/agent-debug-view/**` | deleted-after-absorption | [DEC-041](../product/decisions/dec-041-agent-debug-view-and-local-history.md), [B-145 Product Spec](../product/specs/pa-agent-debug-view-product-spec.md), [Architecture](../architecture/pa-agent-debug-view.md), [B-145 validation](./2026/b145-agent-debug-validation.md), current source and regression tests | Owner 授权 B-145 closeout；T-00～T-06 与 AC-01～10 已完成本地验收，稳定产品/技术/安全边界与独有证据已吸收。完整 Feature Home、Plan、SDD、Tracker 可由签名提交 `44b59318` 恢复；无必需未完成项转入 Backlog。CLI mobile simulator 不证明 iOS 真机；closeout 不代替 beta 发布或 BRAT 安装证据。 |
 | 2026-09-22 | `docs/development/active/recoverable-agent-execution/**` | deleted-after-absorption | [DEC-040](../product/decisions/dec-040-recoverable-agent-execution.md), [B-144 Product Spec](../product/specs/pa-recoverable-agent-execution-product-spec.md), [PA Agent Architecture](../architecture/pa-agent-architecture-plan.md), [Runtime lifecycle](../architecture/pa-agent-runtime-lifecycle-plan.md), current source and regression tests | Owner 授权 B-144 closeout；T-00～T-05 与 AC-01～12 已完成，稳定行为、兼容边界和验证限制已吸收。没有未完成项转入 Backlog，不归档完整过程包；Git 历史可恢复 Feature Home、SDD 与 Tracker。closeout 与推送不等于发布。 |
 | 2026-09-21 | `docs/development/active/plugin-shell-refactor/**` | deleted-after-absorption | [DEC-039](../product/decisions/dec-039-plugin-shell-refactor.md), [B-143 Product Spec](../product/specs/pa-plugin-shell-refactor-product-spec.md), [Architecture](../architecture/architecture-overview.md#51-plugin-shell-srcplugints), current source and regression tests | Owner 授权 B-143 closeout；T-00～T-22、AC-01～09、LC-01～03、D-11 与 D-15 均完成验收。稳定职责、生命周期偏序、兼容边界和验证结果已吸收，过程包可从提交 `b4d1ac39` 恢复；没有未完成项需要转入 Backlog，也不归档完整过程包。 |
