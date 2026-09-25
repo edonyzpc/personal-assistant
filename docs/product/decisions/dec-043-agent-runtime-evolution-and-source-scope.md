@@ -2,7 +2,7 @@
 
 Decision ID: DEC-043
 Status: Accepted
-Updated: 2026-09-24
+Updated: 2026-09-25
 Authority: Owner 在当前架构评审讨论中接受五项演进方向，确认三种范围、默认/记忆与图标优先，并接受硬约束、上下文取舍和运行中切换方案；随后明确要求落地产品设计文档。
 Work item: B-149
 
@@ -10,7 +10,7 @@ Work item: B-149
 
 基于 `master@6fce3824` 的评审，Owner 选择用用户可见的问答范围硬约束，降低模型判断取材权限的负担。原型参考只提供三选一交互思路，不授予外部产品文案或机制在 PA 中的权威。
 
-当前 [DEC-042](./dec-042-agent-task-source-boundary.md) 不提供本轮硬范围控件；普通自由语言来源要求由 Agent 遵循，Host 保留明确设置与执行保护。新的选择需要覆盖历史、摘要和派生材料，否则禁用新读取仍不能兑现用户对范围的预期。
+先前 [DEC-042](./dec-042-agent-task-source-boundary.md) 不提供硬范围控件；普通自由语言来源要求由 Agent 遵循，Host 保留明确设置与执行保护。B-149 的选择覆盖历史、摘要和派生材料，否则禁用新读取仍不能兑现用户对范围的预期。
 
 同时，执行事实与领域结果、动作历史、恢复进展、取消、来源版本及资源预算需要分清责任。演进应服务于[“随手记下，需要时自然浮现”](../pa-product-north-star.md)，不把 PA 扩展成让用户管理复杂流程的通用 Agent 平台。
 
@@ -59,9 +59,15 @@ Work item: B-149
 
 Owner 随后要求复核是否仍有待决点；上述细化已确认，不重复请求批准。消息格式、模块接口、参数及样例属于技术设计与测量工作，实质改变产品/权限/兼容/成本承诺时才重新决策。
 
+### D6 — B-149 实施期间确认的辅助投入与证据边界
+
+Owner 选择费用优先：每个 run 的辅助摘要最多 30 次物理模型请求（包含重试）、累计辅助活动等待最多 60 分钟。达到总额后，仍能合法推进的主任务继续；必要上下文无法保全时明确返回可恢复的上下文不足。60 分钟只阻止下一次辅助派发，不截断已经开始且仍受单次 30 分钟期限约束的请求。实现另以 90,000 estimated-or-known token 作辅助准入下界；缺失的 provider usage 仍标为未知，不伪称完整费用。
+
+缺材料总结的验收允许有边界的概率措辞，例如“很可能在您的笔记中并不存在”，前提是说明已观察到的有限零命中、Memory 不可用等证据限制，且明确总结未完成；不能把推断当作已证实的全库事实。逐例验证及其跨 bundle 限制见 [B-149 验证记录](../../archive/2026/b149-pa-agent-runtime-evolution-validation.md)。
+
 ### 生效与替代边界
 
-这是**已批准的目标产品设计**，并非已实现或发布；具体行为与验收由 [B-149 Product Spec](../specs/pa-agent-runtime-evolution-product-spec.md)承接。
+这是 B-149 已交付的产品决定；具体行为与验收由 [B-149 Product Spec](../specs/pa-agent-runtime-evolution-product-spec.md)承接。开发验收不代替独立的版本发布或 BRAT 安装证据。
 
 - 局部替代 DEC-042 中“不增加本轮结构化取材控件”的未来边界：新增用户显式选择的 Host 硬约束；不恢复模型自报授权或 Host 对任意自由文本的权限解释。
 - 在问答范围限制内继续适用“Chat 可读资料可用于已启用模型与搜索”的规则。我的笔记禁止网络取材，网络资料禁止自动笔记背景；综合模式不另设内容敏感性外发层或逐次搜索确认。
@@ -74,7 +80,7 @@ Owner 随后要求复核是否仍有待决点；上述细化已确认，不重�
 - Product behavior: 默认回到笔记，范围可预期；少一次隐式判断，但收紧或跨范围追问可能需要用户重述条件。
 - Architecture / data / safety: 工具、上下文、摘要/恢复与物理请求共用可确定的边界；动作结果由对应 owner 提供，动态撤销与材料版本分别处理。
 - Compatibility / migration: 同会话选择可恢复；旧会话保守映射有效权限；旧历史和作品继续可查看，不伪造缺失来源，不为迁移自动调用模型。
-- Work created or removed: B-149 承接产品设计与待实施工作；后续清理退役策略并补足真实任务评测，不新建泛化编排平台。本次文档不改变 runtime。
+- Work created or removed: B-149 已完成范围控制、五项 runtime 演进及逐例评测；无未完成实现项转入 Backlog。未建设泛化编排平台。
 
 ## Revisit Trigger
 
@@ -86,7 +92,7 @@ Owner 随后要求复核是否仍有待决点；上述细化已确认，不重�
 ## Traceability
 
 - Product Spec: [PA Agent 问答范围与 Runtime 演进](../specs/pa-agent-runtime-evolution-product-spec.md)。
-- Development: [B-149 Feature Home](../../development/active/pa-agent-runtime-evolution/README.md)；执行状态只见其 Tracker。
+- Validation: [B-149 验证记录](../../archive/2026/b149-pa-agent-runtime-evolution-validation.md)；完整开发过程可从 Git 历史恢复。
 - Existing contracts: [DEC-040](./dec-040-recoverable-agent-execution.md)、[DEC-041](./dec-041-agent-debug-view-and-local-history.md)、[DEC-042](./dec-042-agent-task-source-boundary.md)。
-- Current implementation: [PA Agent Architecture](../../architecture/pa-agent-architecture-plan.md)、[Runtime lifecycle](../../architecture/pa-agent-runtime-lifecycle-plan.md)；实施后按实更新。
+- Current implementation: [PA Agent Architecture](../../architecture/pa-agent-architecture-plan.md)、[Runtime lifecycle](../../architecture/pa-agent-runtime-lifecycle-plan.md)。
 - Supersedes: 上述 DEC-042 的局部取材选择边界，其余要求继续有效；没有整份 Decision 退役。

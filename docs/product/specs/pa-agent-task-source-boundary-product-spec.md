@@ -6,7 +6,7 @@ Work item: B-146
 Decision: [DEC-042](../decisions/dec-042-agent-task-source-boundary.md)
 Authority: Owner 最终确认的当前产品边界与验收条件。原方案的 B-146/REQ-01–06、AC-01–06 已由 DEC-042 后续修订替代，仅为历史事实；本规格以 REQ-07–08、AC-07–08 为准。
 
-> 后续目标由 [DEC-043](../decisions/dec-043-agent-runtime-evolution-and-source-scope.md) 与 [B-149 产品设计](./pa-agent-runtime-evolution-product-spec.md)局部接续：新增用户显式选择的问答范围，硬约束实际取材、历史及派生上下文。本文仍记录 B-146 已交付行为；新的范围设计尚未实现。自由语言不充当 Host 已证明的权限、显式 Writing 和独立动作保护继续适用。
+> [DEC-043](../decisions/dec-043-agent-runtime-evolution-and-source-scope.md) 与 [B-149 产品合同](./pa-agent-runtime-evolution-product-spec.md)已局部接续：用户显式选择的问答范围硬约束实际取材、历史及派生上下文。本文仍记录 B-146 已交付行为；自由语言不充当 Host 已证明的权限、显式 Writing 和独立动作保护继续适用。
 
 ## Current Boundary
 

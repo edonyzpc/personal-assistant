@@ -6,7 +6,7 @@ Status: Current canonical lifecycle contract. The long implementation plan and p
 
 [DEC-040](../product/decisions/dec-040-recoverable-agent-execution.md) and the [B-144 Product Spec](../product/specs/pa-recoverable-agent-execution-product-spec.md) define the recovery, 30-minute attempt, source snapshot, domain delivery and concurrency behavior implemented by B-144. This document is the current technical contract; source and regression tests remain the executable authority.
 [DEC-042](../product/decisions/dec-042-agent-task-source-boundary.md) supersedes the ordinary source-declaration protocol and binds Writing to explicit Chat operations.
-[DEC-043](../product/decisions/dec-043-agent-runtime-evolution-and-source-scope.md) defines Chat source selection and runtime evidence boundaries; delivery status is recorded only in the [B-149 Tracker](../development/active/pa-agent-runtime-evolution/tracker.md).
+[DEC-043](../product/decisions/dec-043-agent-runtime-evolution-and-source-scope.md) defines the delivered Chat source selection and runtime evidence boundaries; B-149's scoped local verification and limits are retained in its [validation record](../archive/2026/b149-pa-agent-runtime-evolution-validation.md).
 
 ## Run And Turn Model
 

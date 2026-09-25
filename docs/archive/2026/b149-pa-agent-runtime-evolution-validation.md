@@ -1,6 +1,8 @@
-# B-149 固定任务评测记录
+# B-149 PA Agent Runtime Evolution 验证记录
 
-本页记录 T-12 的逐例事实和人工判读；任务状态以 [Tracker](./tracker.md) 为准。测试只使用虚构材料、repo `test` vault 和已配置的 `qwen/deepseek-v4-pro`。模型参数为 `temperature=0.8`、stream；固定 Web 响应用于可重复任务比较，另有一次真实 Web MCP 连接检查。真实模型物理请求累计 **99/180**，其中 G0 基线 23 次，后续 76 次。180 是本次测试总授权（50 + 30 + 100），与 PA 平时每 run 的辅助摘要 30 次/60 分钟上限无关。
+本页保留 B-149 完成后的逐例验证事实与人工判读，不作为当前运行或发布状态权威；稳定行为见 [Product Spec](../../product/specs/pa-agent-runtime-evolution-product-spec.md) 和 [PA Agent Architecture](../../architecture/pa-agent-architecture-plan.md)。13/13 AC 的本地验收记录可从 Git 中的原 Tracker 恢复。测试只使用虚构材料、repo `test` vault 和已配置的 `qwen/deepseek-v4-pro`。模型参数为 `temperature=0.8`、stream；固定 Web 响应用于可重复任务比较，另有一次真实 Web MCP 连接检查。真实模型物理请求累计 **99/180**，其中 G0 基线 23 次，后续 76 次。180 是本次测试总授权（50 + 30 + 100），与 PA 平时每 run 的辅助摘要 30 次/60 分钟上限无关。
+
+最终 `3503e50d…` bundle 经 `make deploy` 的 lint/build/328 suites/8325 tests 自然通过，部署到 test vault 后完成桌面及 CLI mobile simulator 的相关交互验证；最终包 E-05 和自动后台 Pagelet/Chat 并行亦有同包证据。模拟器不证明 iOS 真机键盘或真机 BRAT 安装。开发验收、Git 集成和 beta 发布分别核验。
 
 ## 输入和证据口径
 

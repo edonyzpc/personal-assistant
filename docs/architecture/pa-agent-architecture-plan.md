@@ -366,6 +366,11 @@ per attempt when attributable, including failed or cancelled attempts; unknown
 usage remains unknown rather than being added to a fabricated total. After
 preparation and before every answer attempt, source
 currentness is revalidated and the complete request passes local admission.
+The owner-approved auxiliary ceiling is 30 physical requests including retries
+and 60 minutes of cumulative active wait per run, with 90,000
+estimated-or-known tokens as the admission lower bound. Exhaustion leaves the
+main task running when its required context remains intact; otherwise it reports
+recoverable insufficient context rather than silently dropping constraints.
 Tool-summary payload snapshots and registry live references use independent
 clones. Optional summary checks use their own cancellation scope; late results
 cannot update caches or mutate the input used by answer fallback.

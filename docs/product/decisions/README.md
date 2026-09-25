@@ -1,14 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-09-24
+Updated: 2026-09-25
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
-| DEC-043 | PA Agent 问答范围硬约束与 Runtime 演进 | Accepted | 三种显式范围、默认笔记、派生上下文准入、切换取舍与五项架构方向；目标设计，局部接续 DEC-042 | [Record](./dec-043-agent-runtime-evolution-and-source-scope.md) |
+| DEC-043 | PA Agent 问答范围硬约束与 Runtime 演进 | Accepted | B-149 已交付三种显式范围、默认笔记、派生上下文准入、切换取舍与五项架构演进；局部接续 DEC-042 | [Record](./dec-043-agent-runtime-evolution-and-source-scope.md) |
 | DEC-042 | PA Agent task source boundary and revisable plan | Accepted | B-146 已本地验收：Agent 遵循自由语言取材限制、Host 不硬拦普通读取；独立权限和高后果保护保留 | [Record](./dec-042-agent-task-source-boundary.md) |
 | DEC-041 | Agent Debug View and bounded local history | Accepted | Chat 阶段轨迹、正文与过滤 Prompt、最多 30 天加容量滚动淘汰、会话 reasoning、删除联动与媒体引用边界 | [Record](./dec-041-agent-debug-view-and-local-history.md) |
 | DEC-040 | Recoverable Agent task execution | Accepted | B-144 已交付已读版本、自主纠错、单次尝试默认 30 分钟、前后台完成导向与受控并发、writing 领域化、真实交付及重载后用户继续 | [Record](./dec-040-recoverable-agent-execution.md) |

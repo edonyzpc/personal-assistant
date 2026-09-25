@@ -2,13 +2,13 @@
 
 Decision ID: DEC-042
 Status: Accepted
-Updated: 2026-09-24
+Updated: 2026-09-25
 Authority: Owner 于 2026-09-23 先确认取材声明与 Host 准入方案，随后明确改为 Agent 遵循自由语言取材指令、Host 不作相应硬拦截；后述修订优先于原决定。
 Work item: B-146
 
 > **当前决定以最后一节 Owner 修订为准。**下文原方案及随后被替代的敏感外发分层保留为设计演变记录；自由语言限制作为 Host 硬上限、首次结构化取材声明及按该声明拦截读取的要求已被替代。已交付范围和验证限制见[当前 Product Spec](../specs/pa-agent-task-source-boundary-product-spec.md)与 [B-146 validation](../../archive/2026/b146-agent-task-source-boundary-validation.md)。
 
-> **2026-09-24 后续目标决定：[DEC-043](./dec-043-agent-runtime-evolution-and-source-scope.md)。**Owner 已另行接受三种显式问答范围及实际输入/派生上下文的硬约束，局部替代本文“不增加本轮硬范围控件”的未来边界；这不是模型声明授权，也不重启敏感外发分层。自由语言职责、显式 Writing、Data Boundary 和独立动作保护继续有效。新设计见 [B-149 Product Spec](../specs/pa-agent-runtime-evolution-product-spec.md)，尚不改写 B-146 的已交付行为。
+> **2026-09-24 后续决定：[DEC-043](./dec-043-agent-runtime-evolution-and-source-scope.md)。**Owner 已另行接受并由 B-149 交付三种显式问答范围及实际输入/派生上下文的硬约束，局部替代本文“不增加本轮硬范围控件”的未来边界；这不是模型声明授权，也不重启敏感外发分层。自由语言职责、显式 Writing、Data Boundary 和独立动作保护继续有效。当前范围合同见 [B-149 Product Spec](../specs/pa-agent-runtime-evolution-product-spec.md)，B-146 的历史交付事实仍保留。
 
 ## Context
 

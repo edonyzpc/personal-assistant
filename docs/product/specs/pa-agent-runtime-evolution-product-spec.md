@@ -1,12 +1,12 @@
 # PA Agent 产品设计：问答范围与 Runtime 演进
 
 Document status: Approved
-Updated: 2026-09-24
+Updated: 2026-09-25
 Work item: B-149
 Decision: [DEC-043](../decisions/dec-043-agent-runtime-evolution-and-source-scope.md)
-Authority: Owner 已确认的五项架构演进方向、三种问答范围及上下文取舍；本文定义目标产品行为与验收标准。
+Authority: Owner 已确认并由 B-149 交付的五项架构演进、三种问答范围及上下文取舍；本文定义当前产品行为与验收标准。
 
-> **本文是已批准的目标设计，不是已实现行为。**设计基于 `master@6fce3824` 的评审与随后产品讨论；现行实现仍见 [PA Agent Architecture](../../architecture/pa-agent-architecture-plan.md)。技术设计和开发测试计划由 [B-149 Feature Home](../../development/active/pa-agent-runtime-evolution/README.md) 接续，执行状态只见其 Tracker；建立计划不等于启动 runtime 改动、部署或发布。
+> **本文是 B-149 已交付行为的产品合同。**设计始于 `master@6fce3824` 的评审；实现见 [PA Agent Architecture](../../architecture/pa-agent-architecture-plan.md)，本地验收及限制见 [B-149 验证记录](../../archive/2026/b149-pa-agent-runtime-evolution-validation.md)。本地验收不等于版本发布或 BRAT 安装验证。
 
 默认从我的笔记寻找依据；需要时，用户选择网络资料或综合模式。用户决定可用资料的边界，PA 负责在边界内理解问题、寻找证据、恢复可修正的错误，并交付与实际执行一致的结果。
 
@@ -179,6 +179,8 @@ flowchart TD
 
 对于明确要求基于笔记的任务，缺少依据时默认不自动附送通用答案。用户明确要求通用解释时可以回答，并区分它与笔记证据；已有部分依据时交付能够支持的部分，具体说明缺口。继续检索由任务缺口和新线索决定，不规定零命中后必须再查固定次数，也不因此扩大来源范围。
 
+Agent 可以基于有限线索表达“很可能不存在”等不确定推断；须同时说明检索覆盖范围或能力不可用等限制，并保持缺材料总结未完成。推断不能升格为已证实的全库不存在。
+
 不新增按词语猜测失败的 Host 判断；保留现有结构化未完成报告。Agent 遗漏报告造成的语义误判仍属于评测风险，不能以此承诺零错误。普通 Chat 继续与显式 `@Writing` 或明确续写分开。
 
 ### 5.2 方向二：保留可供下一步使用的动作历史
@@ -209,7 +211,7 @@ flowchart TD
 
 上下文准备应考虑当前模型可用窗口、输出预留、实际使用量和必要任务材料。字符数估计可以作为粗略后备，不能假装等于各模型真实可用预算。当前轮次/工具硬上限继续作为保护，不能仅为“简化”改成任意较小值。
 
-历史压缩、工具结果摘要等辅助调用应能解释其成本和收益，避免无必要地串行挡住首个有用输出。降级仍须保住用户限制、来源和动作事实，不能靠静默丢失关键上下文让请求勉强通过。本设计不批准新的默认总费用/token 截断值；若真实数据表明需要改变产品限制，再单独决定。
+历史压缩、工具结果摘要等辅助调用应能解释其成本和收益，避免无必要地串行挡住首个有用输出。降级仍须保住用户限制、来源和动作事实，不能靠静默丢失关键上下文让请求勉强通过。B-149 实施期间 Owner 另行确认每 run 辅助摘要 30 次物理请求和 60 分钟累计活动等待上限；这不是主任务总费用或时长上限。
 
 采用一套围绕任务目标与真实进展工作的投入策略，不新增“快答/深度”开关，也不增加按任务类别决定强制额度的意图分类器。日常找回在取得足够依据、完成必要核对后交付；用户明确要求多方案比较、完整梳理或深入核实，就需要完成更多子目标。三种资料范围不充当思考深度或费用档位，必要核实不能为追求速度省略。
 
@@ -217,7 +219,7 @@ flowchart TD
 
 - 仅在需要腾出上下文空间，或能够减少后续重复输入时执行，不要求每份结果都经过模型摘要。
 - 同一份未变化材料不反复生成多个摘要版本；复用仍须通过当前来源准入。
-- 辅助调用单独计入次数、token 和等待成本。具体额度依据基线测量确定，不在缺乏数据时预设任意值。
+- 辅助调用单独计入次数、token 和等待成本；每 run 最多 30 次物理请求（含重试）、累计活动等待 60 分钟，另以 90,000 estimated-or-known token 作辅助准入下界。60 分钟只阻止启动下一次摘要，不缩短已开始的单次 30 分钟尝试；缺失 usage 保持未知。
 - 达到辅助预算后停止可选优化，不自动终止仍能合法推进的主任务；该额度不是新的整任务费用或时长截止线。
 - 如果缺少必要压缩就无法继续，按上下文不足处理并如实说明，不能丢失关键条件后声称完成。必要准备仍受来源、取消、尝试期限与恢复规则约束。
 
@@ -282,16 +284,16 @@ flowchart TD
 
 确定性底线先通过：已定义场景中的越界、虚假保存、错误版本身份、取消失效与未知副作用重放不能用其他任务得分抵消。在底线通过后，同等质量优先更快、更省；经对照证明显著提高任务正确性时，允许有证据支持的成本增加，明显增加时提交具体收益与代价再由 Owner 权衡。该原则不授权无限增加费用或等待，也不允许用更低成本换取已知的权限或真实交付缺陷。
 
-沿用仓库适用的 focused/full 检查和实际应用门禁；具体命令、输入身份与验证结果进入未来实施 Tracker，不重复写进本文。真实 provider 的资料发送与成本沿用适用授权；本文及历史评审不代替新的运行证据。评测复用 [Eval Harness](./pa-eval-harness-product-spec.md) 与现有 Debug，不建设独立平台或默认采集用户正文。
+沿用仓库适用的 focused/full 检查和实际应用门禁；B-149 的命令、输入身份与逐例结果保留在[验证记录](../../archive/2026/b149-pa-agent-runtime-evolution-validation.md)。真实 provider 的资料发送与成本沿用适用授权；历史评审不代替运行证据。评测复用 [Eval Harness](./pa-eval-harness-product-spec.md) 与现有 Debug，不建设独立平台或默认采集用户正文。
 
 ## 10. 决策与后续接续
 
 **无阻塞本设计的待决产品问题。**范围名称、默认/记忆、图标优先、硬约束覆盖、连续性取舍及运行中切换方式均已确认。Owner 后续已接受五项细化，包括缺少笔记依据时不自动补通用答案，以及底线通过后允许有证据支持的质量/成本权衡。
 
-具体来源记录格式、消息适配、模块拆分、压缩参数、辅助额度和评测样例由技术设计与基线测量解决，不能改变本文产品承诺。只有证据表明需要缩小既有模型兼容范围、放宽来源/连续性取舍、增加新的用户可见限制，或接受明显成本/等待增加等实质变化时，才重新提交对应产品决定；不把普通实现细节变成重复确认。
+来源记录格式、消息适配、模块拆分和评测样例已按当前架构与回归测试实现；辅助额度依 Owner 后续费用优先决定确定。只有证据表明需要缩小既有模型兼容范围、放宽来源/连续性取舍、增加新的用户可见限制，或接受明显成本/等待增加等实质变化时，才重新提交对应产品决定；不把普通实现细节变成重复确认。
 
 - 产品决定：[DEC-043](../decisions/dec-043-agent-runtime-evolution-and-source-scope.md)。
-- 开发入口：[B-149 Feature Home](../../development/active/pa-agent-runtime-evolution/README.md)，包含 SDD、开发测试计划与唯一状态 Tracker；不把设计完成记为功能交付。
-- 当前实现：[PA Agent Architecture](../../architecture/pa-agent-architecture-plan.md)、[Runtime lifecycle](../../architecture/pa-agent-runtime-lifecycle-plan.md)、[B-146 Spec](./pa-agent-task-source-boundary-product-spec.md)。交付时才据实际行为更新 Architecture。
+- 当前实现：[PA Agent Architecture](../../architecture/pa-agent-architecture-plan.md)、[Runtime lifecycle](../../architecture/pa-agent-runtime-lifecycle-plan.md)、[B-146 Spec](./pa-agent-task-source-boundary-product-spec.md)。
+- 历史验证：[B-149 验证记录](../../archive/2026/b149-pa-agent-runtime-evolution-validation.md)；完整过程可从 Git 历史恢复。跨 bundle 的真实模型案例不构成同一最终包 12/12 重跑；G0 与 E-12 的部分 usage、价格未知。
 - 继承契约：[DEC-040](../decisions/dec-040-recoverable-agent-execution.md) 的可恢复执行；[DEC-042](../decisions/dec-042-agent-task-source-boundary.md) 的自由语言职责、显式 Writing 与独立动作保护。
-- 实施按 Feature Home 中的技术设计和验证计划接续，覆盖跨模块来源、历史迁移及回退；实际启动、Git 集成与发布分别处理。
+- 后续变更继续遵守来源、历史迁移和回退边界；Git 集成与版本发布分别核验。
