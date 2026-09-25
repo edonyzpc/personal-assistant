@@ -578,6 +578,12 @@ async function waitForTurnCompletion(view: LLMView) {
     expect(view.abortController).toBeNull();
 }
 
+async function waitForStreamCallCount(calls: StreamCall[], count: number) {
+    const deadline = Date.now() + 2000;
+    while (calls.length < count && Date.now() < deadline) await flushPromises();
+    expect(calls).toHaveLength(count);
+}
+
 function createPageletHandoffContext(body = `# Verified insight\n\n${"Complete evidence. ".repeat(40)}`): PageletChatHandoffContext {
     return {
         version: 1,
@@ -4064,13 +4070,13 @@ describe('LLMView turn lifecycle', () => {
             getTextArea(containerEl).value = '写得更短';
             getTextArea(containerEl).dispatchEvent('input');
             getElementByClass(containerEl, 'send-button-visible').click();
-            for (let i = 0; i < 20 && streamCalls.length < 2; i++) await flushPromises();
+            await waitForStreamCallCount(streamCalls, 2);
             expect(streamCalls[1].options.writingContextHost?.selectedParentVersionId).toBe(parent.id);
             streamCalls[1].reject(new Error('network failed'));
             for (let i = 0; i < 20 && !getElementsByClass(containerEl, 'retry-message-button').length; i++) await flushPromises();
             modalHost.onSelect({ ...parent, id: 'different-parent' });
             getElementByClass(containerEl, 'retry-message-button').click();
-            for (let i = 0; i < 20 && streamCalls.length < 3; i++) await flushPromises();
+            await waitForStreamCallCount(streamCalls, 3);
             expect(streamCalls[2].options.writingContextHost?.selectedParentVersionId).toBe(parent.id);
             streamCalls[2].resolve();
             await flushPromises();
@@ -4111,7 +4117,7 @@ describe('LLMView turn lifecycle', () => {
         await view.onOpen();
         for (let i = 0; i < 12 && !getElementsByClass(containerEl, 'retry-message-button').length; i++) await flushPromises();
         getButtonByClass(containerEl, 'retry-message-button').click();
-        for (let i = 0; i < 20 && !streamCalls.length; i++) await flushPromises();
+        await waitForStreamCallCount(streamCalls, 1);
         expect(streamCalls).toHaveLength(1);
         expect(streamCalls[0].options.writingRequest).toBeDefined();
         expect(streamCalls[0].options.writingContextHost?.selectedParentVersionId).toBe(parent?.id);
@@ -4119,7 +4125,7 @@ describe('LLMView turn lifecycle', () => {
         await waitForTurnCompletion(view);
         expect(view.prefillComposer('An ordinary follow-up')).toBe(true);
         getElementByClass(containerEl, 'send-button-visible').click();
-        for (let i = 0; i < 20 && streamCalls.length < 2; i++) await flushPromises();
+        await waitForStreamCallCount(streamCalls, 2);
         expect(streamCalls[1].options.writingRequest).toBeUndefined();
         streamCalls[1].resolve();
         await flushPromises();
