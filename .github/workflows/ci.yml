@@ -64,7 +64,7 @@ jobs:
         run: npm run build
       - name: Test
         if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
-        run: npm run test:all -- --runInBand --coverage
+        run: npm run test:all -- --maxWorkers=4 --coverage
       - name: Audit bundle
         if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
         run: npm run audit:bundle

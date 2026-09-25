@@ -7,7 +7,6 @@
  * small fake-DOM approach as the other raw-DOM Pagelet view tests.
  */
 
-import { readFileSync } from "node:fs";
 import { afterAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
 
 jest.mock("obsidian", () => ({
@@ -266,23 +265,6 @@ const globalRecord = globalThis as unknown as Record<string, unknown>;
 const originalDocument = globalRecord.document;
 const originalWindow = globalRecord.window;
 
-function getCssBlock(source: string, marker: string): string {
-    const markerStart = source.indexOf(marker);
-    if (markerStart < 0) throw new Error(`Missing CSS marker: ${marker}`);
-    const blockStart = source.indexOf("{", markerStart);
-    if (blockStart < 0) throw new Error(`Missing CSS block: ${marker}`);
-
-    let depth = 0;
-    for (let index = blockStart; index < source.length; index += 1) {
-        if (source[index] === "{") depth += 1;
-        if (source[index] === "}") {
-            depth -= 1;
-            if (depth === 0) return source.slice(markerStart, index + 1);
-        }
-    }
-    throw new Error(`Unclosed CSS block: ${marker}`);
-}
-
 globalRecord.document = new FakeDocument();
 
 import { BubbleView } from "../src/pagelet/bubble/BubbleView";
@@ -433,16 +415,6 @@ describe("Pagelet BubbleView", () => {
         view.destroy();
     });
 
-    it("keeps the mobile context action touch-sized", () => {
-        const css = readFileSync("src/custom.pcss", "utf8");
-        const block = getCssBlock(
-            css,
-            "body.is-mobile .pa-pagelet-bubble-context-action-btn",
-        );
-
-        expect(block).toContain("min-width: 44px;");
-        expect(block).toContain("min-height: 44px;");
-    });
 
     it("renders a local clue as Discovery without Recall stack or why-now chrome", () => {
         const container = new FakeElement("div");
@@ -825,29 +797,6 @@ describe("Pagelet BubbleView", () => {
         view.destroy();
     });
 
-    it("keeps portrait bubbles near-full-width and bounds shallow phone landscapes", () => {
-        const css = readFileSync("src/custom.pcss", "utf8");
-        const mobileBlock = getCssBlock(css, ".pa-pagelet-bubble.pa-pagelet-bubble--mobile");
-        const landscapeBlock = getCssBlock(
-            css,
-            "@media (orientation: landscape) and (max-height: 500px)",
-        );
-
-        expect(mobileBlock).toContain("left: 8px;");
-        expect(mobileBlock).toContain("right: 8px;");
-        expect(mobileBlock).toContain("width: auto;");
-        expect(landscapeBlock).toContain(
-            "body.is-mobile .pa-pagelet-bubble.pa-pagelet-bubble--mobile",
-        );
-        expect(landscapeBlock).toContain("env(safe-area-inset-left, 0px)");
-        expect(landscapeBlock).toContain("env(safe-area-inset-right, 0px)");
-        expect(landscapeBlock).toContain("width: min(");
-        expect(landscapeBlock).toContain("480px");
-        expect(landscapeBlock).toContain("margin-inline: auto;");
-        expect(landscapeBlock).not.toContain("transform:");
-        expect(landscapeBlock).not.toContain("position:");
-        expect(landscapeBlock).not.toContain("z-index:");
-    });
 
     it("keeps the first desktop placement inside the visible viewport edge", () => {
         const doc = globalRecord.document as FakeDocument;

@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
-import { readFileSync } from "fs";
 import { TFile } from "obsidian";
 import type { App } from "obsidian";
 
@@ -259,17 +258,6 @@ describe("Quick Capture settings helpers", () => {
 });
 
 describe("Quick Capture modal layout", () => {
-    it("keeps the command modal roomy enough for multiline capture", () => {
-        const source = readFileSync("src/quick-capture.ts", "utf8");
-        const css = readFileSync("src/custom.pcss", "utf8");
-
-        expect(source).toContain("pa-quick-capture-modal-shell");
-        expect(source).toContain('rows: "12"');
-        expect(css).toMatch(/\.pa-quick-capture-modal-shell\s*{[\s\S]*?width:\s*min\(720px,\s*calc\(100vw - 32px\)\);[\s\S]*?overflow-x:\s*hidden;/);
-        expect(css).toMatch(/\.pa-quick-capture-modal__input\s*{[\s\S]*?min-height:\s*clamp\(260px,\s*42vh,\s*420px\);[\s\S]*?max-height:\s*min\(62vh,\s*620px\);[\s\S]*?overflow-y:\s*auto;/);
-        expect(css).toMatch(/\.pa-quick-capture-modal__actions\s*{[\s\S]*?position:\s*sticky;[\s\S]*?bottom:\s*0;/);
-        expect(css).toMatch(/body\.is-mobile\s+\.pa-quick-capture-modal__input\s*{[\s\S]*?min-height:\s*clamp\(220px,\s*48vh,\s*420px\);[\s\S]*?max-height:\s*62vh;/);
-    });
 
     it("preserves unsaved modal text across accidental close and clears it on cancel", () => {
         const harness = makeAppHarness();

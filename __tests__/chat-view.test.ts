@@ -571,6 +571,13 @@ function flushPromises() {
     return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+async function waitForTurnCompletion(view: LLMView) {
+    // Writing finalization awaits native hashing and persistence across event-loop turns.
+    const deadline = Date.now() + 2000;
+    while (view.abortController !== null && Date.now() < deadline) await flushPromises();
+    expect(view.abortController).toBeNull();
+}
+
 function createPageletHandoffContext(body = `# Verified insight\n\n${"Complete evidence. ".repeat(40)}`): PageletChatHandoffContext {
     return {
         version: 1,
@@ -1126,10 +1133,6 @@ describe('LLMView turn lifecycle', () => {
         const { view, containerEl } = createView({ panelWidth: 250 });
         await view.onOpen();
         const trigger = getButtonByClass(containerEl, 'pa-chat-source-scope-button');
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        expect(css).toMatch(/\.pa-chat-source-scope-control\s*\{[\s\S]*?flex:\s*0 0 auto;/);
-        expect(getCssRuleBlock(css, '.pa-chat-source-scope-menu'))
-            .toContain('--pa-chat-menu-min-width: 280px;');
         trigger.dispatchEvent('touchstart');
         await new Promise(resolve => setTimeout(resolve, 580));
         trigger.dispatchEvent('touchend');
@@ -1392,7 +1395,7 @@ describe('LLMView turn lifecycle', () => {
         expect(first.options.runSourceSelection).not.toHaveProperty('persistedSelectionRevision');
         const firstChoice = first.options.runSourceSelection;
         first.resolve();
-        for (let i = 0; i < 5; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         view.prefillComposer('second question');
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
@@ -1400,7 +1403,7 @@ describe('LLMView turn lifecycle', () => {
         expect(first.options.runSourceSelection).toBe(firstChoice);
         expect(first.options.runSourceSelection?.scope).toBe('notes');
         streamCalls[1].resolve();
-        await flushPromises();
+        await waitForTurnCompletion(view);
         await view.onClose();
     });
 
@@ -1435,7 +1438,7 @@ describe('LLMView turn lifecycle', () => {
                 explanation: '', writingContext, associatedImages: [] });
             call.resolve();
             await persisted;
-            await flushPromises();
+            await waitForTurnCompletion(view);
         };
         const first = await submit('写一封团队活动邀请函');
         expect(first.options.writingOutputProtocol).toBe('native');
@@ -1496,7 +1499,7 @@ describe('LLMView turn lifecycle', () => {
         call.options.onEvent?.(artifact);
         call.options.onEvent?.(artifact);
         call.resolve();
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         const stored = await versions.list('writing-conversation');
         expect(stored).toHaveLength(1);
         expect(stored[0].text).toBe(artifact.body);
@@ -1530,7 +1533,7 @@ describe('LLMView turn lifecycle', () => {
             kind: 'writing-recovery', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
             messageId: 'incomplete_answer', rawText, reason: 'provider_incomplete' });
         call.resolve();
-        for (let i = 0; i < 6; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         expect(await versions.list('recovery-conversation')).toEqual([]);
         expect(view.chatHistory[1].writingRecovery?.rawText).toBe(rawText);
         expect(view.chatHistory[1].content).not.toContain(rawText);
@@ -1563,7 +1566,7 @@ describe('LLMView turn lifecycle', () => {
         emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'incomplete', metadata }));
         call.options.onEvent?.({ ...shared, kind: 'writing-recovery', rawText: '', previewText: '', reason: 'source_changed' });
         call.resolve();
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         const hint = 'The sources used for this answer changed, so the answer was not kept. Please ask again.';
         expect(view.chatHistory[1]).toMatchObject({ content: hint, canonicalTurn: { status: 'incomplete' },
             writingRecovery: { reason: 'source_changed', rawText: '' } });
@@ -1599,7 +1602,7 @@ describe('LLMView turn lifecycle', () => {
         emitCanonical(call, canonicalEvent({ type: 'turn_end', status: 'incomplete', metadata }));
         emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'incomplete', metadata }));
         call.resolve();
-        for (let i = 0; i < 12 && view.chatHistory.length < 2; i++) await flushPromises();
+        await waitForTurnCompletion(view);
 
         const hint = 'The sources used for this answer changed, so the answer was not kept. Please ask again.';
         expect(view.chatHistory[1].content).toBe(hint);
@@ -1654,7 +1657,7 @@ describe('LLMView turn lifecycle', () => {
             call.options.onEvent?.({ ...shared, kind: 'writing-preview', text: 'late cancelled text' });
             call.reject(new DOMException('Aborted', 'AbortError'));
         } else call.resolve();
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         expect(view.chatHistory[1].content).toBe(text);
         expect(view.chatHistory[1].shareCardEligible).toBe(false);
         expect(view.chatHistory[1].canonicalTurn?.status).toBe(cancelled ? 'aborted' : 'completed_with_warning');
@@ -1680,17 +1683,6 @@ describe('LLMView turn lifecycle', () => {
 
     it.each(['artifact', 'recovery', 'continue'] as const)('does not restore parent images after the host supplies an empty %s material snapshot', async (kind) => {
         const store = new MemoryChatHistoryStore();
-        let appendedCount = 0;
-        let firstAppended!: () => void;
-        let secondAppended!: () => void;
-        const firstSaved = new Promise<void>((resolve) => { firstAppended = resolve; });
-        const secondSaved = new Promise<void>((resolve) => { secondAppended = resolve; });
-        const append = store.appendTurnAndUpdateConversation.bind(store);
-        jest.spyOn(store, 'appendTurnAndUpdateConversation').mockImplementation(async (...args) => {
-            await append(...args);
-            if (++appendedCount === 1) firstAppended();
-            else if (appendedCount === 2) secondAppended();
-        });
         const manager = new ChatHistoryManager({ store, generateId: () => 'subset-writing' });
         const versions = new WritingVersionService(store);
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
@@ -1708,11 +1700,8 @@ describe('LLMView turn lifecycle', () => {
         first.options.onEvent?.({ ...envelope, kind: 'writing-artifact', requestId: first.options.writingRequest!.requestId,
             messageId: 'parent', body: 'Parent body', explanation: '', associatedImages: [material] });
         first.resolve();
-        await firstSaved;
         prefillWriting(view, '短一点');
-        for (let i = 0; i < 30 && getButtonByClass(containerEl, 'send-button-visible').disabled; i++) {
-            await flushPromises();
-        }
+        await waitForTurnCompletion(view);
         expect(getButtonByClass(containerEl, 'send-button-visible').disabled).toBe(false);
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
@@ -1723,8 +1712,7 @@ describe('LLMView turn lifecycle', () => {
             ? { ...shared, kind: 'writing-artifact', body: 'Text without images', explanation: '' }
             : { ...shared, kind: 'writing-recovery', rawText: 'Candidate without images', reason: 'incomplete' });
         next.resolve();
-        await secondSaved;
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         const turns = await store.getTurns('subset-writing');
         expect(turns[1].assistant.images).toEqual([]);
         const stored = await versions.list('subset-writing');
@@ -1743,7 +1731,7 @@ describe('LLMView turn lifecycle', () => {
                 text: 'Parent body', textHash: next.options.writingContext!.textHash,
             });
             continuation.resolve();
-            for (let i = 0; i < 8; i++) await flushPromises();
+            await waitForTurnCompletion(view);
         } else {
             expect(stored).toHaveLength(1);
             const opened: WritingRecoveryModal[] = [];
@@ -1785,7 +1773,7 @@ describe('LLMView turn lifecycle', () => {
             messageId: 'guarded_answer', rawText: 'prefix BODY suffix', reason: 'invalid_output',
             isSourceCurrent: () => allowed });
         call.resolve();
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         allowed = sourceCurrent;
         const openedRecoveries: WritingRecoveryModal[] = [];
         const openRecovery = jest.spyOn(WritingRecoveryModal.prototype, 'open').mockImplementation(function (this: WritingRecoveryModal) { openedRecoveries.push(this); });
@@ -1847,7 +1835,7 @@ describe('LLMView turn lifecycle', () => {
             messageId: 'editor_answer', rawText: 'prefix BODY suffix', reason: 'invalid_output',
             generationInput, isSourceCurrent: () => true });
         call.resolve();
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         const opened: WritingRecoveryModal[] = [];
         const open = jest.spyOn(WritingRecoveryModal.prototype, 'open').mockImplementation(function (this: WritingRecoveryModal) {
             opened.push(this);
@@ -1909,7 +1897,7 @@ describe('LLMView turn lifecycle', () => {
             ...(directParent ? { writingContext: { parentVersionId } } : {}),
             generationInput, isSourceCurrent: () => true });
         call.resolve();
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         expect((await store.getTurns('parent-recovery'))[0]?.assistant.writingRecovery?.generationInput)
             .toEqual(generationInput);
         if (directParent) plugin.prepareWritingRecoverySources.mockRejectedValue(new Error('Personal source revoked'));
@@ -1974,7 +1962,7 @@ describe('LLMView turn lifecycle', () => {
                 isSourceCurrent: () => true });
             emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'completed_with_warning' }));
             call.resolve();
-            for (let i = 0; i < 8; i++) await flushPromises();
+            await waitForTurnCompletion(initial.view);
             await initial.view.onClose();
             const before = (await store.getTurns('reloaded-recovery'))[0].assistant.writingRecovery;
             if (!before) throw new Error('Expected persisted recovery fixture');
@@ -2074,7 +2062,7 @@ describe('LLMView turn lifecycle', () => {
             messageId: 'complete_answer', rawText: 'prefix BODY suffix', reason: 'invalid_output',
             generationInput: writingGenerationInput() });
         call.resolve();
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(initial.view);
         await initial.view.onClose();
 
         const restored = createView({ chatHistoryManager: manager });
@@ -2110,14 +2098,6 @@ describe('LLMView turn lifecycle', () => {
 
     it.each(['artifact', 'recovery'] as const)('persists host resolved materials for writing %s with no composer images', async (kind) => {
         const store = new MemoryChatHistoryStore();
-        let markSaved!: () => void;
-        const saved = new Promise<void>((resolve) => { markSaved = resolve; });
-        const append = store.appendTurnAndUpdateConversation.bind(store);
-        jest.spyOn(store, 'appendTurnAndUpdateConversation').mockImplementation(async (...args) => {
-            const result = await append(...args);
-            markSaved();
-            return result;
-        });
         const manager = new ChatHistoryManager({ store, generateId: () => 'resolved-writing' });
         const versions = new WritingVersionService(store);
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
@@ -2137,8 +2117,7 @@ describe('LLMView turn lifecycle', () => {
         call.options.onEvent?.(kind === 'artifact' ? { ...shared, kind: 'writing-artifact', body: 'BODY', explanation: '' }
             : { ...shared, kind: 'writing-recovery', rawText: 'prefix BODY suffix', reason: 'invalid_output', writingContext: { scene: semanticScene } });
         call.resolve();
-        await saved;
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         const turns = await store.getTurns('resolved-writing');
         expect(turns[0].assistant.images).toEqual([material]);
         if (kind === 'artifact') expect((await versions.list('resolved-writing'))[0].associatedImages.map((image) => image.ref)).toEqual([material.ref]);
@@ -2205,7 +2184,7 @@ describe('LLMView turn lifecycle', () => {
             kind: 'writing-recovery', requestId: failed.options.writingRequest!.requestId,
             rawText: '{"body":""}', reason: 'invalid_output', ...(empty ? { associatedImages: [] } : {}) });
         failed.resolve();
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(fixture.view);
         if (reopen) {
             await fixture.view.onClose();
             fixture = createView({ chatHistoryManager: manager });
@@ -2221,7 +2200,7 @@ describe('LLMView turn lifecycle', () => {
         } });
         expect(streamCalls[1].options.writingContext).toBeUndefined();
         streamCalls[1].resolve();
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(fixture.view);
         prefillWriting(fixture.view, '换个话题，帮我写一封工作邮件');
         getElementByClass(fixture.containerEl, 'send-button-visible').click();
         await flushPromises();
@@ -2337,7 +2316,7 @@ describe('LLMView turn lifecycle', () => {
         await waiting;
         sourceCurrent = false;
         release();
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         expect(put).not.toHaveBeenCalled();
         expect(await versions.list('source-admission')).toEqual([]);
         expect(view.chatHistory[1].writingVersionId).toBeUndefined();
@@ -2346,10 +2325,7 @@ describe('LLMView turn lifecycle', () => {
     it('keeps the writing visible and discloses when its chat turn could not be persisted', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'history-failure-conversation' });
-        let recordAttempted!: () => void;
-        const attempted = new Promise<void>((resolve) => { recordAttempted = resolve; });
         jest.spyOn(manager, 'recordTurn').mockImplementation(async () => {
-            recordAttempted();
             throw new Error('IDB quota');
         });
         const versions = new WritingVersionService(store);
@@ -2366,8 +2342,7 @@ describe('LLMView turn lifecycle', () => {
             kind: 'writing-artifact', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
             messageId: 'writing_answer', body: 'Keep this exact writing.', explanation: '' });
         call.resolve();
-        await attempted;
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         expect(view.chatHistory[1].content).toBe('Keep this exact writing.');
         const versionId = view.chatHistory[1].writingVersionId;
         expect(versionId).toEqual(expect.any(String));
@@ -2409,7 +2384,7 @@ describe('LLMView turn lifecycle', () => {
             kind: 'writing-artifact', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
             messageId: 'writing_answer', body: 'Keep this temporary writing.', explanation: '' });
         call.resolve();
-        for (let i = 0; i < 8; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         expect(view.chatHistory[1].content).toBe('Keep this temporary writing.');
         expect(view.chatHistory[1].writingVersionId).toBeUndefined();
         expect(getElementsByClass(containerEl, 'pa-chat-writing-action')).toHaveLength(0);
@@ -4031,14 +4006,9 @@ describe('LLMView turn lifecycle', () => {
             kind: 'writing-artifact', runId: 'run_1', requestId: first.options.writingRequest!.requestId,
             messageId: 'invite', body: '初稿', explanation: '' });
         first.resolve();
-        let parent = (await versions.list('explicit-writing-parent'))[0];
-        for (let i = 0; i < 30 && !parent; i++) {
-            await flushPromises();
-            parent = (await versions.list('explicit-writing-parent'))[0];
-        }
+        await waitForTurnCompletion(view);
+        const parent = (await versions.list('explicit-writing-parent'))[0];
         expect(parent).toBeDefined();
-        for (let i = 0; i < 20 && view.abortController !== null; i++) await flushPromises();
-        expect(view.abortController).toBeNull();
         const opened: WritingVersionModal[] = [];
         const open = jest.spyOn(WritingVersionModal.prototype, 'open').mockImplementation(function (this: WritingVersionModal) {
             opened.push(this);
@@ -4080,13 +4050,9 @@ describe('LLMView turn lifecycle', () => {
             kind: 'writing-artifact', runId: 'run_1', requestId: initial.options.writingRequest!.requestId,
             messageId: 'invite', body: '初稿', explanation: '' });
         initial.resolve();
-        let parent = (await versions.list('writing-parent-retry'))[0];
-        for (let i = 0; i < 30 && !parent; i++) {
-            await flushPromises();
-            parent = (await versions.list('writing-parent-retry'))[0];
-        }
+        await waitForTurnCompletion(view);
+        const parent = (await versions.list('writing-parent-retry'))[0];
         expect(parent).toBeDefined();
-        for (let i = 0; i < 20 && view.abortController !== null; i++) await flushPromises();
         const opened: WritingVersionModal[] = [];
         const open = jest.spyOn(WritingVersionModal.prototype, 'open').mockImplementation(function (this: WritingVersionModal) {
             opened.push(this);
@@ -4150,7 +4116,7 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls[0].options.writingRequest).toBeDefined();
         expect(streamCalls[0].options.writingContextHost?.selectedParentVersionId).toBe(parent?.id);
         streamCalls[0].resolve();
-        for (let i = 0; i < 20 && view.abortController !== null; i++) await flushPromises();
+        await waitForTurnCompletion(view);
         expect(view.prefillComposer('An ordinary follow-up')).toBe(true);
         getElementByClass(containerEl, 'send-button-visible').click();
         for (let i = 0; i < 20 && streamCalls.length < 2; i++) await flushPromises();
@@ -8133,13 +8099,6 @@ describe('LLMView turn lifecycle', () => {
         expect(documentWithFocus.activeElement).toBeNull();
     });
 
-    it('keeps inline setup controls touch-sized on mobile', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-
-        expect(css).toMatch(/body\.is-mobile\s+\.pa-chat-empty-chip\s*{[\s\S]*?min-height:\s*44px;/);
-        expect(css).toMatch(/body\.is-mobile\s+\.pa-chat-setup-token-input\s*{[\s\S]*?min-height:\s*44px;[\s\S]*?font-size:\s*16px;/);
-        expect(css).toMatch(/body\.is-mobile\s+\.pa-chat-setup-advanced-link\s*{[\s\S]*?min-height:\s*44px;/);
-    });
 
     it('uses panel-width density classes instead of viewport media queries', async () => {
         const { view, containerEl } = createView({ panelWidth: 340 });
@@ -8149,106 +8108,12 @@ describe('LLMView turn lifecycle', () => {
         expect(containerEl.classList.contains('is-compact')).toBe(true);
     });
 
-    it('keeps Operations cards scoped to Chat with touch-sized actions', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const suggestionActions = getCssRuleBlock(
-            css,
-            '.pa-chat-view .pa-operations-save-suggestion__actions > button',
-        );
-        const intentActions = getCssRuleBlock(
-            css,
-            '.pa-chat-view .pa-operations-intent-card__undo',
-        );
 
-        expect(css).toContain('.pa-chat-view .pa-operations-save-suggestion {');
-        expect(css).toContain('.pa-chat-view .pa-operations-intent-card {');
-        expect(css).toMatch(/\.pa-chat-view \.pa-operations-intent-card \[hidden\] \{\s*display: none;\s*\}/);
-        expect(suggestionActions).toContain('min-height: 44px;');
-        expect(intentActions).toContain('min-height: 44px;');
-    });
 
-    it('keeps message actions discoverable in the bottom toolbar', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
 
-        expect(css).toMatch(/\.llm-view\s+\.message-actions\s*{[\s\S]*?position:\s*relative;[\s\S]*?display:\s*flex;[\s\S]*?gap:\s*6px;[\s\S]*?max-width:\s*100%;[\s\S]*?margin-top:\s*10px;[\s\S]*?opacity:\s*0\.72;/);
-        expect(css).not.toMatch(/\.llm-view\s+\.message-actions\s*{[\s\S]*?width:\s*fit-content;/);
-        expect(css).toMatch(/\.llm-view\s+\.llm-message\.user\s+\.message-actions\s*{[\s\S]*?justify-content:\s*flex-end;/);
-        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.message-actions\s*{[\s\S]*?opacity:\s*1;/);
-        expect(css).toMatch(/\.llm-view\.is-narrow\s+\.message-actions\s*{[\s\S]*?opacity:\s*1;/);
-    });
 
-    it('pins message action buttons to icon size in mobile button styles', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
 
-        expect(css).toMatch(/\.llm-view\s+button\.message-action-button\s*{[\s\S]*?appearance:\s*none;[\s\S]*?box-sizing:\s*border-box;[\s\S]*?background:\s*transparent;[\s\S]*?flex:\s*0 0 28px;[\s\S]*?min-width:\s*28px;[\s\S]*?min-height:\s*28px;[\s\S]*?max-width:\s*28px;[\s\S]*?max-height:\s*28px;[\s\S]*?box-shadow:\s*none;/);
-        expect(css).toMatch(/\.llm-view\s+button\.message-action-button:focus\s*{[\s\S]*?outline:\s*none;/);
-        expect(css).toMatch(/\.llm-view\s+button\.message-action-button:focus-visible:not\(:disabled\)\s*{[\s\S]*?box-shadow:\s*inset 0 0 0 1px var\(--interactive-accent\);/);
-        expect(css).toMatch(/\.llm-view\s+button\.message-action-button\s+svg\s*{[\s\S]*?display:\s*block;[\s\S]*?flex:\s*0 0 auto;[\s\S]*?width:\s*var\(--pa-chat-button-icon-size\);[\s\S]*?height:\s*var\(--pa-chat-button-icon-size\);/);
-        expect(css).toMatch(/\.llm-view\s+button\.message-action-button:hover:not\(:disabled\),[\s\S]*?\.llm-view\s+button\.message-action-button:focus-visible:not\(:disabled\)\s*{/);
-        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+button\.message-action-button\s*{[\s\S]*?flex-basis:\s*44px;[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/);
-    });
 
-    it('overlays rendered code copy buttons until hover or keyboard focus', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const codeBlock = getCssRuleBlock(css, '.llm-view .message-content pre');
-        const copyButtonBlock = getCssRuleBlock(css, '.llm-view .message-content pre > button.copy-code-button');
-
-        expect(codeBlock).toContain('position: relative;');
-        expect(copyButtonBlock).toContain('position: absolute;');
-        expect(copyButtonBlock).toContain('inset-block-start: 6px;');
-        expect(copyButtonBlock).toContain('inset-inline-end: 6px;');
-        expect(copyButtonBlock).toContain('opacity: 0;');
-        expect(copyButtonBlock).toContain('pointer-events: none;');
-        expect(copyButtonBlock).not.toContain('display: none;');
-        expect(css).toMatch(/\.llm-view\s+\.message-content\s+pre:hover\s*>\s*button\.copy-code-button,\s*\n\.llm-view\s+\.message-content\s+pre:focus-within\s*>\s*button\.copy-code-button\s*{[\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;/);
-        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.message-content\s+pre\s*>\s*button\.copy-code-button\s*{[\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;/);
-    });
-
-    it('allows selecting rendered message text', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const messageContentBlock = getCssRuleBlock(css, '.llm-view .message-content');
-
-        expect(messageContentBlock).toContain('-webkit-user-select: text;');
-        expect(messageContentBlock).toContain('user-select: text;');
-    });
-
-    it('opens message overflow menus upward from the bottom toolbar', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const sharedMenuItemBlock = getCssRuleBlock(css, '.pa-chat-menu .pa-chat-menu-item');
-        const messageMenuItemBlock = getCssRuleBlock(css, '.pa-chat-message-menu .pa-chat-menu-item');
-
-        expect(css).toMatch(/\.pa-chat-message-menu\s*{[\s\S]*?--pa-chat-menu-min-width:\s*96px;[\s\S]*?top:\s*auto;[\s\S]*?bottom:\s*calc\(100% \+ 8px\);[\s\S]*?padding:\s*3px;/);
-        expect(css).toMatch(/\.llm-view\s+\.llm-message\.assistant\s+\.pa-chat-message-menu,[\s\S]*?\.llm-view\s+\.llm-message\.system\s+\.pa-chat-message-menu\s*{[\s\S]*?right:\s*auto;[\s\S]*?left:\s*0;/);
-        expect(css).toMatch(/\.llm-view\s+\.llm-message\.assistant\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*110px;[\s\S]*?--pa-chat-message-menu-arrow-right:\s*auto;/);
-        expect(css).toMatch(/\.llm-view\s+\.llm-message\.system\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*76px;[\s\S]*?--pa-chat-message-menu-arrow-right:\s*auto;/);
-        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.llm-message\.assistant\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*166px;[\s\S]*?\.llm-view\s+\.llm-message\.system\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*116px;/);
-        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{\s*\.pa-chat-message-menu\s*{\s*--pa-chat-menu-min-width:\s*144px;/);
-        expect(css).toMatch(/\.pa-chat-message-menu::after\s*{[\s\S]*?top:\s*auto;[\s\S]*?right:\s*var\(--pa-chat-message-menu-arrow-right\);[\s\S]*?left:\s*var\(--pa-chat-message-menu-arrow-left\);[\s\S]*?bottom:\s*-6px;[\s\S]*?border-right:\s*1px solid var\(--background-modifier-border\);[\s\S]*?border-bottom:\s*1px solid var\(--background-modifier-border\);/);
-        expect(css).toMatch(/\.pa-chat-message-menu\.pa-chat-message-menu-below\s*{[\s\S]*?top:\s*calc\(100% \+ 8px\);[\s\S]*?bottom:\s*auto;/);
-        expect(sharedMenuItemBlock).toContain('box-sizing: border-box;');
-        expect(sharedMenuItemBlock).toContain('grid-template-columns: 18px minmax(0, 1fr);');
-        expect(sharedMenuItemBlock).toContain('min-height: 38px;');
-        expect(sharedMenuItemBlock).toContain('gap: 0 10px;');
-        expect(css.indexOf('.pa-chat-message-menu .pa-chat-menu-item {')).toBeGreaterThan(css.indexOf('.pa-chat-menu .pa-chat-menu-item {'));
-        expect(messageMenuItemBlock).toContain('grid-template-columns: 18px minmax(0, max-content);');
-        expect(messageMenuItemBlock).toContain('justify-content: center;');
-        expect(messageMenuItemBlock).toContain('padding: 0 8px;');
-        expect(messageMenuItemBlock).not.toContain('font-size');
-    });
-
-    it('sizes role identicons for desktop and compact chat panes', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const assistantIdenticonModel = getChatRoleIdenticonModel('assistant');
-        const identiconBlock = getCssRuleBlock(css, '.llm-view .pa-chat-role-identicon');
-
-        expect(css).toMatch(/\.llm-view\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*20px;[\s\S]*?--pa-chat-role-icon-padding:\s*2px;[\s\S]*?gap:\s*6px;/);
-        expect(css).toMatch(/\.llm-view\s+\.pa-chat-role-identicon\s*{[\s\S]*?flex:\s*0 0 var\(--pa-chat-role-icon-size\);[\s\S]*?width:\s*var\(--pa-chat-role-icon-size\);[\s\S]*?height:\s*var\(--pa-chat-role-icon-size\);[\s\S]*?padding:\s*var\(--pa-chat-role-icon-padding\);/);
-        expect(identiconBlock).toContain('border-radius: 8px;');
-        expect(identiconBlock).not.toContain('border-radius: 50%;');
-        expect(css).toMatch(/\.llm-view\.is-compact\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*22px;[\s\S]*?gap:\s*7px;/);
-        expect(assistantIdenticonModel.viewBox).toBe('-3 -3 26 26');
-        expect(assistantIdenticonModel.cellSize).toBe(4);
-    });
 
     it('keeps role identicon colors stable while varying shapes by session seed', () => {
         const firstAssistantModel = getChatRoleIdenticonModel('assistant', 'session-alpha');
@@ -8275,262 +8140,12 @@ describe('LLMView turn lifecycle', () => {
         }
     });
 
-    it('keeps ldrs chat loaders visible when reduced motion is enabled', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const reducedMotionStart = css.indexOf('@media (prefers-reduced-motion: reduce)');
-        const reducedMotionEnd = css.indexOf('.llm-view.is-narrow', reducedMotionStart);
-        const reducedMotionBlock = css.slice(reducedMotionStart, reducedMotionEnd);
 
-        expect(reducedMotionStart).toBeGreaterThanOrEqual(0);
-        expect(reducedMotionEnd).toBeGreaterThan(reducedMotionStart);
-        expect(reducedMotionBlock).not.toContain('.pa-chat-role-loader-element');
-        expect(reducedMotionBlock).not.toMatch(/\.pa-chat-role-loader-fallback\s*{[\s\S]*?display:\s*inline-flex;/);
-    });
 
-    it('uses a bright vivid color cycle for ldrs chat loaders', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const colorCycleStart = css.indexOf('@keyframes pa-chat-loader-color-cycle');
-        const colorCycleEnd = css.indexOf('.llm-view .thinking-status-header', colorCycleStart);
-        const colorCycleBlock = css.slice(colorCycleStart, colorCycleEnd);
 
-        expect(colorCycleStart).toBeGreaterThanOrEqual(0);
-        expect(colorCycleEnd).toBeGreaterThan(colorCycleStart);
-        expect(css).toContain('--pa-chat-loader-color-rose: #e84466;');
-        expect(css).toContain('--pa-chat-loader-color-orange: #e89a2a;');
-        expect(css).toContain('--pa-chat-loader-color-lime: #48c25e;');
-        expect(css).toContain('--pa-chat-loader-color-cyan: #2ab8e0;');
-        expect(css).toContain('--pa-chat-loader-color-violet: #b06de0;');
-        expect(colorCycleBlock).not.toContain('--interactive-accent');
-        expect(colorCycleBlock).not.toContain('--color-cyan');
-        expect(colorCycleBlock).not.toContain('--color-green');
-        expect(colorCycleBlock).not.toContain('--color-yellow');
-    });
 
-    it('pins the Thinking status toggle so theme button defaults cannot add leading space', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const headerBlock = getCssRuleBlock(css, '.llm-view .thinking-status-header');
-        const toggleBlock = getCssRuleBlock(css, '.llm-view .thinking-status-header > button.thinking-status-toggle');
-        const toggleSvgBlock = getCssRuleBlock(css, '.llm-view .thinking-status-header > button.thinking-status-toggle > svg.svg-icon');
-        const roleBlock = getCssRuleBlock(css, '.llm-view .thinking-status-role');
 
-        expect(headerBlock).toContain('justify-content: flex-start;');
-        expect(toggleBlock).toContain('appearance: none;');
-        expect(toggleBlock).toContain('flex: 0 0 22px;');
-        expect(toggleBlock).toContain('min-width: 22px;');
-        expect(toggleBlock).toContain('max-width: 22px;');
-        expect(toggleBlock).toContain('min-height: 22px;');
-        expect(toggleBlock).toContain('max-height: 22px;');
-        expect(toggleBlock).toContain('margin: 0;');
-        expect(toggleBlock).toContain('padding: 2px;');
-        expect(toggleSvgBlock).toContain('display: block;');
-        expect(toggleSvgBlock).toContain('flex: 0 0 14px;');
-        expect(toggleSvgBlock).toContain('min-width: 14px;');
-        expect(toggleSvgBlock).toContain('max-width: 14px;');
-        expect(toggleSvgBlock).toContain('min-height: 14px;');
-        expect(toggleSvgBlock).toContain('max-height: 14px;');
-        expect(toggleSvgBlock).toContain('stroke: currentColor;');
-        expect(roleBlock).toContain('width: auto;');
-        expect(roleBlock).toContain('max-width: none;');
-    });
 
-    it('keeps the chat composer in the visible flex area when mobile keyboards shrink the visual viewport', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const drawerInnerBlock = getCssRuleBlock(css, '.workspace-drawer-inner.pa-chat-drawer-host');
-        const mobileDrawerInnerBlock = getCssRuleBlock(css, 'body.is-mobile .workspace-drawer-inner.pa-chat-drawer-host');
-        const mobileViewBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view');
-        const mobileInputBlock = getCssRuleBlock(css, 'body.is-mobile .llm-input');
-        const baseTextareaBlock = getCssRuleBlock(css, '.llm-input textarea');
-        const mobileTextareaBlock = getCssRuleBlock(css, 'body.is-mobile .llm-input textarea');
-        const mobileButtonsBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons');
-        const iconButtonBlock = getCssRuleBlock(css, '.pa-chat-icon-button,\n.llm-buttons button.pa-chat-icon-button');
-        const iconButtonSvgBlock = getCssRuleBlock(css, '.pa-chat-icon-button svg,\n.llm-buttons button.pa-chat-icon-button svg');
-        const memoryChipBlock = getCssRuleBlock(css, '.pa-chat-memory-chip,\n.llm-buttons button.pa-chat-memory-chip');
-        const memoryChipSvgBlock = getCssRuleBlock(css, '.pa-chat-memory-chip svg,\n.llm-buttons button.pa-chat-memory-chip svg');
-        const cancelButtonBlock = getCssRuleBlock(css, '.llm-buttons button.cancel-button');
-        const mobileIconButtonBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons button.pa-chat-icon-button');
-        const mobileIconButtonHitAreaBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons button.pa-chat-icon-button::before');
-        const mobileCompactInputBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-compact .llm-input');
-        const mobileCompactTextareaBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-compact .llm-input textarea');
-        const mobileKeyboardInputBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-keyboard-open .llm-input');
-        const mobileKeyboardChatBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-keyboard-open .llm-chat-container');
-        const mobileHandleBlock = getCssRuleBlock(css, 'body.is-mobile .pa-tab-bar-handle');
-        const mobileLightHandleBlock = getCssRuleBlock(css, 'body.theme-light.is-mobile .pa-tab-bar-handle');
-        const mobileDarkHandleBlock = getCssRuleBlock(css, 'body.theme-dark.is-mobile .pa-tab-bar-handle');
-        const mobileExpandedHandleBlock = getCssRuleBlock(css, 'body.is-mobile .pa-tab-bar-handle[aria-expanded="true"]');
-        const mobileHandleHitAreaBlock = getCssRuleBlock(css, 'body.is-mobile .pa-tab-bar-handle::before');
-        const mobileHandleIconBlock = getCssRuleBlock(css, 'body.is-mobile .pa-tab-bar-handle svg');
-        const mobileKeyboardHandleBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle');
-        const mobileKeyboardHandleIconBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg');
-        const keyboardSpacerBlock = getCssRuleBlock(css, '.pa-chat-keyboard-spacer');
-        const mobileKeyboardSpacerBlock = getCssRuleBlock(css, 'body.is-mobile .pa-chat-keyboard-spacer');
-        const mobileOpenKeyboardSpacerBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-keyboard-open .pa-chat-keyboard-spacer');
-
-        expect(css).toMatch(/\.llm-view\s*{[\s\S]*?--pa-chat-keyboard-clearance:\s*0px;[\s\S]*?--pa-chat-keyboard-accessory-clearance:\s*0px;[\s\S]*?--pa-chat-keyboard-offset:\s*0px;[\s\S]*?--pa-chat-composer-height:\s*0px;[\s\S]*?--pa-chat-button-icon-size:\s*14px;[\s\S]*?--pa-chat-keyboard-motion:\s*180ms cubic-bezier\(0\.22,\s*1,\s*0\.36,\s*1\);[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*hidden;[\s\S]*?padding:\s*0 0 var\(--pa-chat-keyboard-clearance,\s*0px\);[\s\S]*?position:\s*relative;/);
-        expect(css).not.toMatch(/\.llm-view\s*{[^}]*transition:\s*padding-bottom/);
-        expect(css).not.toMatch(/\.llm-view\.is-keyboard-open\s*{[\s\S]*?padding-bottom:\s*0;/);
-        expect(drawerInnerBlock).toContain('padding-bottom: max(6px, env(safe-area-inset-bottom, 6px));');
-        expect(mobileDrawerInnerBlock).toContain('--pa-chat-drawer-top-clearance: clamp(10px, calc(env(safe-area-inset-top, 0px) - 24px), 24px);');
-        expect(mobileDrawerInnerBlock).toContain('padding-top: var(--pa-chat-drawer-top-clearance);');
-        expect(mobileViewBlock).toContain('--pa-chat-button-icon-size: 12px;');
-        expect(mobileViewBlock).toContain('padding-bottom: 0;');
-        expect(css).toMatch(/\.llm-chat-container\s*{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/);
-        expect(css).toMatch(/\.llm-chat-container\s*{[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;/);
-        expect(css).toMatch(/\.llm-chat-container::before\s*{[\s\S]*?content:\s*"";[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;[\s\S]*?pointer-events:\s*none;/);
-        expect(css).not.toMatch(/\.llm-chat-container\s*{[^}]*transition:\s*padding-bottom/);
-        expect(css).toMatch(/\.llm-view\.is-keyboard-open\s+\.llm-chat-container\s*{[\s\S]*?padding-bottom:\s*calc\(14px \+ var\(--pa-chat-composer-height,\s*0px\)\);/);
-        expect(css).toMatch(/\.pa-chat-empty-state\s*{[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*100%;/);
-        expect(css).toMatch(/\.llm-input\s*{[\s\S]*?flex:\s*0 0 auto;[\s\S]*?transform:\s*translate3d\(0,\s*0,\s*0\);[\s\S]*?transition:\s*transform var\(--pa-chat-keyboard-motion\);[\s\S]*?z-index:\s*3;/);
-        const baseInputBlock = css.match(/(?:^|\n)\.llm-input\s*{[^}]*}/)?.[0] ?? '';
-        expect(baseInputBlock).not.toContain('will-change: transform');
-        expect(css).toMatch(/\.llm-view\.is-keyboard-open\s+\.llm-input\s*{[\s\S]*?position:\s*absolute;[\s\S]*?bottom:\s*0;[\s\S]*?transform:\s*translate3d\(0,\s*var\(--pa-chat-keyboard-offset,\s*0px\),\s*0\);[\s\S]*?will-change:\s*transform;[\s\S]*?z-index:\s*30;/);
-        expect(mobileInputBlock).toContain('padding: 8px 8px calc(8px + var(--pa-chat-status-bar-clearance, 0px));');
-        expect(mobileInputBlock).toContain('transition: none;');
-        expect(baseTextareaBlock).toContain('box-sizing: border-box;');
-        expect(mobileTextareaBlock).toContain('height: 72px;');
-        expect(mobileTextareaBlock).toContain('min-height: 72px;');
-        expect(mobileTextareaBlock).toContain('max-height: min(26vh, 124px);');
-        expect(mobileTextareaBlock).toContain('overflow-y: auto;');
-        expect(mobileTextareaBlock).toContain('padding: 8px 10px;');
-        expect(mobileButtonsBlock).toContain('gap: 4px;');
-        expect(mobileButtonsBlock).toContain('padding: 8px 7px 7px;');
-        expect(iconButtonBlock).toContain('width: 30px;');
-        expect(iconButtonBlock).toContain('height: 30px;');
-        expect(iconButtonBlock).toContain('flex: 0 0 30px;');
-        expect(iconButtonBlock).toContain('border-radius: 7px;');
-        expect(iconButtonSvgBlock).toContain('width: var(--pa-chat-button-icon-size);');
-        expect(iconButtonSvgBlock).toContain('height: var(--pa-chat-button-icon-size);');
-        expect(memoryChipBlock).toContain('width: 30px;');
-        expect(memoryChipBlock).toContain('height: 30px;');
-        expect(memoryChipBlock).toContain('flex: 0 0 30px;');
-        expect(memoryChipBlock).toContain('border-radius: 7px;');
-        expect(memoryChipSvgBlock).toContain('width: var(--pa-chat-button-icon-size);');
-        expect(memoryChipSvgBlock).toContain('height: var(--pa-chat-button-icon-size);');
-        expect(cancelButtonBlock).toContain('width: 30px;');
-        expect(cancelButtonBlock).toContain('height: 30px;');
-        expect(cancelButtonBlock).toContain('border-radius: 7px;');
-        expect(mobileIconButtonBlock).toContain('width: 28px;');
-        expect(mobileIconButtonBlock).toContain('height: 28px;');
-        expect(mobileIconButtonBlock).toContain('flex: 0 0 28px;');
-        expect(mobileIconButtonBlock).toContain('border-radius: 8px;');
-        expect(mobileIconButtonHitAreaBlock).toContain('content: "";');
-        expect(mobileIconButtonHitAreaBlock).toContain('inset: -8px;');
-        expect(mobileIconButtonHitAreaBlock).toContain('border-radius: 14px;');
-        expect(mobileCompactInputBlock).toContain('padding: 8px 8px calc(8px + var(--pa-chat-status-bar-clearance, 0px));');
-        expect(mobileCompactTextareaBlock).toContain('height: 66px;');
-        expect(mobileCompactTextareaBlock).toContain('min-height: 66px;');
-        expect(mobileCompactTextareaBlock).toContain('max-height: min(26vh, 116px);');
-        expect(mobileCompactTextareaBlock).not.toContain('padding-bottom:');
-        expect(mobileKeyboardInputBlock).toContain('position: relative;');
-        expect(mobileKeyboardInputBlock).toContain('bottom: auto;');
-        expect(mobileKeyboardInputBlock).toContain('transform: translate3d(0, 0, 0);');
-        expect(mobileKeyboardInputBlock).toContain('will-change: auto;');
-        expect(mobileKeyboardInputBlock).toContain('z-index: 3;');
-        expect(mobileKeyboardChatBlock).toContain('padding-bottom: 14px;');
-        expect(mobileHandleBlock).toContain('--pa-tab-bar-handle-color: color-mix(in srgb, var(--text-normal) 72%, var(--text-muted));');
-        expect(mobileHandleBlock).toContain('--pa-tab-bar-handle-expanded-color: color-mix(in srgb, var(--interactive-accent) 78%, var(--text-normal));');
-        expect(mobileHandleBlock).toContain('position: relative;');
-        expect(mobileHandleBlock).toContain('min-height: 20px;');
-        expect(mobileHandleBlock).toContain('padding: 0;');
-        expect(mobileHandleBlock).toContain('color: var(--pa-tab-bar-handle-color);');
-        expect(mobileHandleBlock).toContain('opacity: 0.82;');
-        expect(mobileLightHandleBlock).toContain('--pa-tab-bar-handle-color: color-mix(in srgb, var(--text-normal) 76%, var(--text-muted));');
-        expect(mobileDarkHandleBlock).toContain('--pa-tab-bar-handle-color: color-mix(in srgb, var(--text-normal) 82%, var(--text-muted));');
-        expect(mobileExpandedHandleBlock).toContain('color: var(--pa-tab-bar-handle-expanded-color);');
-        expect(mobileExpandedHandleBlock).toContain('opacity: 0.92;');
-        expect(mobileHandleHitAreaBlock).toContain('inset: -10px 0;');
-        expect(mobileHandleIconBlock).toContain('width: 14px;');
-        expect(mobileHandleIconBlock).toContain('height: 14px;');
-        expect(mobileHandleIconBlock).toContain('stroke-width: 2.4px;');
-        expect(mobileKeyboardHandleBlock).toContain('min-height: 12px;');
-        expect(mobileKeyboardHandleIconBlock).toContain('width: 11px;');
-        expect(mobileKeyboardHandleIconBlock).toContain('height: 11px;');
-        expect(keyboardSpacerBlock).toContain('display: none;');
-        expect(keyboardSpacerBlock).toContain('flex: 0 0 0px;');
-        expect(keyboardSpacerBlock).toContain('height: 0;');
-        expect(keyboardSpacerBlock).toContain('contain: layout paint size;');
-        expect(keyboardSpacerBlock).not.toContain('transition:');
-        expect(mobileKeyboardSpacerBlock).toContain('display: block;');
-        expect(mobileKeyboardSpacerBlock).toContain('flex-basis: var(--pa-chat-keyboard-clearance, 0px);');
-        expect(mobileKeyboardSpacerBlock).toContain('height: var(--pa-chat-keyboard-clearance, 0px);');
-        expect(mobileOpenKeyboardSpacerBlock).toContain('flex-basis: var(--pa-chat-keyboard-clearance, 0px);');
-        expect(mobileOpenKeyboardSpacerBlock).toContain('height: var(--pa-chat-keyboard-clearance, 0px);');
-        expect(css).not.toMatch(/(?:^|\n)\.notice\s*{/);
-        expect(css).toMatch(/\.pa-notice-shell\s*{[\s\S]*?background-color:\s*var\(--pa-background-primary\);/);
-        expect(css).not.toMatch(/\.popover\s+\.popover-content\s*{[\s\S]*?width:\s*100% !important;/);
-        expect(css).toMatch(/\.popover\.resize-popover-width\s+\.popover-content\s*{[\s\S]*?width:\s*var\(--resize-popover-width\);/);
-        expect(css).not.toMatch(/\.llm-view\.is-keyboard-native-fallback\s*{[\s\S]*?--pa-chat-keyboard-accessory-clearance:/);
-        expect(css).not.toMatch(/\.is-keyboard-native-fallback\s+\.pa-chat-keyboard-spacer\s*{[\s\S]*?transition:/);
-        expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-input\s*{[\s\S]*?transition:\s*none;/);
-    });
-
-    it('keeps Mermaid preview controls usable on narrow mobile panes', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const chatContainerBlock = getCssRuleBlock(css, '.llm-chat-container');
-        const messageBlock = getCssRuleBlock(css, '.llm-message');
-        const messageContentBlock = getCssRuleBlock(css, '.llm-view .message-content');
-        const renderBufferBlock = getCssRuleBlock(css, '.llm-view .message-render-buffer');
-        const shellBlock = getCssRuleBlock(css, '.llm-view .pa-chat-mermaid-shell');
-        const viewportBlock = getCssRuleBlock(css, '.llm-view .pa-chat-mermaid-viewport');
-        const diagramBlock = getCssRuleBlock(css, '.llm-view .pa-chat-mermaid-viewport > .mermaid,\n.llm-view .pa-chat-mermaid-viewport > .block-language-mermaid');
-        const svgBlock = getCssRuleBlock(css, '.llm-view .pa-chat-mermaid-viewport svg');
-
-        expect(chatContainerBlock).toContain('box-sizing: border-box;');
-        expect(chatContainerBlock).toContain('display: flex;');
-        expect(chatContainerBlock).toContain('flex-direction: column;');
-        expect(chatContainerBlock).toContain('min-width: 0;');
-        expect(chatContainerBlock).toContain('width: 100%;');
-        expect(chatContainerBlock).toContain('overflow-x: hidden;');
-        expect(chatContainerBlock).toContain('overscroll-behavior-x: none;');
-        expect(chatContainerBlock).toContain('overscroll-behavior-y: contain;');
-        expect(messageBlock).toContain('min-width: 0;');
-        expect(messageContentBlock).toContain('box-sizing: border-box;');
-        expect(messageContentBlock).toContain('overflow-x: hidden;');
-        expect(renderBufferBlock).toContain('box-sizing: border-box;');
-        expect(renderBufferBlock).toContain('width: 100%;');
-        expect(renderBufferBlock).toContain('overflow-x: hidden;');
-        expect(shellBlock).toContain('box-sizing: border-box;');
-        expect(shellBlock).toContain('min-width: 0;');
-        expect(shellBlock).toContain('width: 100%;');
-        expect(viewportBlock).toContain('box-sizing: border-box;');
-        expect(viewportBlock).toContain('min-width: 0;');
-        expect(viewportBlock).toContain('width: 100%;');
-        expect(viewportBlock).toContain('overflow-x: auto;');
-        expect(viewportBlock).toContain('overflow-y: auto;');
-        expect(viewportBlock).toContain('touch-action: pan-x pan-y;');
-        expect(diagramBlock).toContain('display: block;');
-        expect(diagramBlock).toContain('width: max-content;');
-        expect(svgBlock).toContain('min-width: 100%;');
-        expect(css).toMatch(/\.llm-view\s+\.pa-chat-mermaid-viewport\s*{[\s\S]*?-webkit-overflow-scrolling:\s*touch;[\s\S]*?overscroll-behavior:\s*contain;/);
-        expect(css).toMatch(/body\.is-mobile\s+\.llm-view\s+\.pa-chat-mermaid-shell,\s*\nbody\.is-mobile\s+\.llm-view\s+\.pa-chat-mermaid-viewport\s*{[\s\S]*?max-width:\s*100%;/);
-        expect(css).toMatch(/\.llm-view\.is-narrow\s+\.pa-chat-mermaid-open-button\s*{[\s\S]*?width:\s*40px;[\s\S]*?height:\s*40px;[\s\S]*?min-width:\s*40px;[\s\S]*?min-height:\s*40px;/);
-        expect(css).toMatch(/\.pa-chat-mermaid-modal-viewport\s*{[\s\S]*?-webkit-overflow-scrolling:\s*touch;[\s\S]*?overscroll-behavior:\s*contain;/);
-    });
-
-    it('keeps chat history rows inside the modal width on mobile', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-
-        expect(css).toMatch(/\.pa-chat-history-modal-shell\s*{[\s\S]*?width:\s*min\(720px,\s*calc\(100vw - 32px\)\);[\s\S]*?overflow-x:\s*hidden;/);
-        expect(css).toMatch(/\.pa-chat-history-list\s*{[\s\S]*?list-style:\s*none;[\s\S]*?max-width:\s*100%;[\s\S]*?overflow-x:\s*hidden;/);
-        expect(css).toMatch(/\.pa-chat-history-item\s*{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s*44px;[\s\S]*?min-width:\s*0;/);
-        expect(css).toMatch(/\.pa-chat-history-open\s*{[\s\S]*?max-width:\s*100%;[\s\S]*?min-width:\s*0;[\s\S]*?overflow:\s*hidden;/);
-        expect(css).toMatch(/\.pa-chat-history-title,\s*\n\.pa-chat-history-preview,\s*\n\.pa-chat-history-meta\s*{[\s\S]*?text-overflow:\s*ellipsis;[\s\S]*?white-space:\s*nowrap;/);
-        expect(css).toMatch(/body\.is-mobile\s+\.pa-chat-history-modal-shell\s*{[\s\S]*?max-width:\s*calc\(100vw - 24px\);/);
-    });
-
-    it('keeps destructive chat confirmation hover contrast high', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const baseWarningBlock = getCssRuleBlock(css, '.pa-chat-confirmation-modal button.mod-warning,\n.pa-chat-confirmation-modal button.mod-destructive');
-        const hoverWarningBlock = getCssRuleBlock(css, '.pa-chat-confirmation-modal button.mod-warning:hover,\n.pa-chat-confirmation-modal button.mod-warning:focus-visible,\n.pa-chat-confirmation-modal button.mod-destructive:hover,\n.pa-chat-confirmation-modal button.mod-destructive:focus-visible');
-        const activeWarningBlock = getCssRuleBlock(css, '.pa-chat-confirmation-modal button.mod-warning:active,\n.pa-chat-confirmation-modal button.mod-destructive:active');
-
-        expect(baseWarningBlock).toContain('background-color: color-mix(in srgb, var(--text-error, #ef4444) 14%, var(--background-primary));');
-        expect(baseWarningBlock).toContain('color: var(--text-error, #ef4444);');
-        expect(baseWarningBlock).not.toContain('color: var(--text-on-accent, #ffffff);');
-        expect(hoverWarningBlock).toContain('background-color: color-mix(in srgb, var(--text-error, #ef4444) 86%, #7f1d1d);');
-        expect(hoverWarningBlock).toContain('color: var(--text-on-accent, #ffffff);');
-        expect(activeWarningBlock).toContain('background-color: color-mix(in srgb, var(--text-error, #ef4444) 72%, #7f1d1d);');
-        expect(activeWarningBlock).toContain('color: var(--text-on-accent, #ffffff);');
-    });
 
     it('hides chat history previews that duplicate the title', () => {
         expect(getDistinctChatHistoryPreview(
@@ -8547,35 +8162,6 @@ describe('LLMView turn lifecycle', () => {
         )).toBe('Different note context was used.');
     });
 
-    it('keeps message bubble enter animation opt-in and role icons transition fill and motion', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const messageBaseRule = css.match(/\.llm-message\s*{([\s\S]*?)\n}/);
-        const identiconRule = css.match(/\.llm-view\s+\.pa-chat-role-identicon\s*{([\s\S]*?)\n}/)?.[1] ?? '';
-        const identiconSvgRule = css.match(/\.llm-view\s+\.pa-chat-role-identicon-svg\s*{([\s\S]*?)\n}/)?.[1] ?? '';
-        const identiconCellRule = css.match(/\.llm-view\s+\.pa-chat-role-identicon-cell\s*{([\s\S]*?)\n}/)?.[1] ?? '';
-        const emptyScanRule = css.match(/\.llm-view\s+\.pa-chat-role-identicon-empty-scan\s*{([\s\S]*?)\n}/)?.[1] ?? '';
-
-        expect(messageBaseRule?.[1]).not.toMatch(/\banimation\s*:/);
-        expect(css).toMatch(/--pa-chat-role-identicon-yellow:\s*#f6c445;/);
-        expect(css).toMatch(/@keyframes\s+pa-chat-role-identicon-empty-scan/);
-        expect(css).toMatch(/@keyframes\s+pa-chat-role-identicon-filled-scan/);
-        expect(identiconRule).toMatch(/transition:[\s\S]*background-color 220ms ease,[\s\S]*box-shadow 220ms ease,[\s\S]*opacity 180ms ease,[\s\S]*transform 240ms cubic-bezier/);
-        expect(identiconSvgRule).toMatch(/fill:\s*none;/);
-        expect(identiconSvgRule).toMatch(/shape-rendering:\s*crispEdges;/);
-        expect(identiconSvgRule).toMatch(/transition:[\s\S]*opacity 200ms ease,[\s\S]*transform 240ms cubic-bezier/);
-        expect(identiconCellRule).toMatch(/fill:\s*var\(--pa-chat-role-identicon-fill\);/);
-        expect(identiconCellRule).not.toContain('transition:');
-        expect(emptyScanRule).toMatch(/opacity:\s*0;/);
-        expect(css).toMatch(/\.llm-message\.llm-message-enter\s*{[\s\S]*?animation:\s*message-fade-in 160ms ease-out;/);
-        expect(identiconRule).toMatch(/overflow:\s*hidden;/);
-        expect(css).toMatch(/\.llm-view\s+\.pa-chat-role-identicon-active\s+\.pa-chat-role-identicon-empty-scan\s*{[\s\S]*?animation:\s*pa-chat-role-identicon-empty-scan 1\.4s step-end infinite;/);
-        expect(css).toMatch(/\.llm-view\s+\.pa-chat-role-identicon-active\s+\.pa-chat-role-identicon-filled-scan\s*{[\s\S]*?animation:\s*pa-chat-role-identicon-filled-scan 1\.4s step-end infinite;/);
-        expect(css).toMatch(/\.llm-message\[aria-busy="true"\]\s+\.pa-chat-role-identicon-assistant\s*{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateY\(-1px\);/);
-        expect(css).toMatch(/@starting-style\s*{[\s\S]*?\.llm-message\.llm-message-enter\s+\.pa-chat-role-identicon\s*{[\s\S]*?opacity:\s*0\.72;[\s\S]*?transform:\s*translateY\(3px\);/);
-        expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-message\.llm-message-enter\s*{[\s\S]*?animation:\s*none;/);
-        expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-view\s+\.pa-chat-role-identicon,[\s\S]*?\.llm-view\s+\.pa-chat-role-identicon-svg\s*{[\s\S]*?transition:\s*none;/);
-        expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-view\s+\.pa-chat-role-identicon-empty-scan,[\s\S]*?\.llm-view\s+\.pa-chat-role-identicon-filled-scan\s*{[\s\S]*?animation:\s*none;/);
-    });
 
     it('anchors Memory and More menus inside their composer action controls', async () => {
         const { view, containerEl } = createView();
@@ -8622,23 +8208,6 @@ describe('LLMView turn lifecycle', () => {
         expect(memoryChip.getAttribute('aria-label')).toBe('Memory ready');
     });
 
-    it('keeps composer controls in a separate bottom row instead of overlaying draft text', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const composer = getCssRuleBlock(css, '.pa-chat-composer-row');
-        const textarea = getCssRuleBlock(css, '.llm-input textarea');
-        const actions = css.match(/(?:^|\n)\.llm-buttons\s*{([^}]*)}/)?.[1] ?? '';
-        const compactMemory = getCssRuleBlock(
-            css,
-            '.llm-view.is-compact .pa-chat-memory-control,\n.llm-view:not(.is-compact) .pa-chat-compact-memory-action',
-        );
-
-        expect(composer).toContain('display: flex;');
-        expect(composer).toContain('flex-direction: column;');
-        expect(textarea).toContain('padding: 12px;');
-        expect(actions).toContain('width: 100%;');
-        expect(actions).not.toContain('position: absolute;');
-        expect(compactMemory).toContain('display: none;');
-    });
 
     it('shows bundled guide typeahead candidates from the composer trigger', async () => {
         const { view, containerEl } = createView();

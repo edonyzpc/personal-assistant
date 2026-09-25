@@ -109,7 +109,9 @@ future service gate into ordinary plugin release preparation.
 | Source behavior, including tests under `src/` | `npm test -- --runInBand` | No |
 | Scripts, offline fixture and documentation contracts | `npm run test:tooling -- --runInBand` | No |
 | Current-bundle receipt and runtime probe contracts | `npm run test:artifacts -- --runInBand` | Yes |
-| Complete CI/release coverage | `npm run test:all -- --runInBand --coverage` | Yes |
+| Complete regular CI coverage | `npm run test:all -- --maxWorkers=4 --coverage` | Yes |
+| Complete versioned-tag CI coverage | `npm run test:all -- --maxWorkers=4 --coverage` | Yes |
+| Complete local release-preparation coverage | `npm run test:all -- --runInBand --coverage` | Yes |
 | Documentation checker and skill contracts | `npm run test:docs -- --runInBand` | No |
 
 Use `--runTestsByPath <suite>` with the matching group for focused checks.
@@ -141,7 +143,7 @@ deployments are authorized together, `make deploy deploy-icloud` shares one
 full validation run.
 
 The tag release workflow always rebuilds and runs complete coverage against the
-final versioned tag. A pre-version-bump local build cannot substitute for those
+final versioned tag, using two Jest workers. A pre-version-bump local build cannot substitute for those
 release assets. This optimization does not authorize publishing or change the
 release gates.
 

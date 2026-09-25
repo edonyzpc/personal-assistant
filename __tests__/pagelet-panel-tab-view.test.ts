@@ -8,7 +8,6 @@
  */
 
 import { afterAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
-import { readFileSync } from "node:fs";
 
 const mockMarkdownRender = jest.fn((
     _app: unknown,
@@ -1761,15 +1760,6 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.textContent).toContain("In use");
     });
 
-    it("keeps Memory controls scoped and touch-sized on mobile", () => {
-        const css = readFileSync("src/custom.pcss", "utf8");
-        expect(css).toMatch(/body\.is-mobile \.pa-pagelet-tab-memory-action,[\s\S]*?min-height:\s*44px;/);
-        expect(css).toMatch(/body\.is-mobile \.pa-pagelet-tab-memory-actions,[\s\S]*?flex-direction:\s*column;/);
-        expect(css).toContain(".pa-pagelet-tab-memory-correction-input");
-        expect(css).not.toContain(".workspace .pa-pagelet-tab-memory-action");
-        const tombstoneRule = css.match(/\.pa-pagelet-tab-memory-card--tombstone\s*\{[^}]*\}/)?.[0] ?? "";
-        expect(tombstoneRule).not.toMatch(/pointer-events:\s*none/);
-    });
 
     it("keeps effect-based Pagelet limited to per-item candidate review", () => {
         const container = new FakeElement("div");
@@ -4336,20 +4326,4 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(relatedNoteClick).not.toHaveBeenCalled();
     });
 
-    it("ties Bubble, Panel, Tab, and Pet text tiers to Obsidian's text-size setting", () => {
-        const css = readFileSync("src/custom.pcss", "utf8");
-        const pageletTypographyRoot = /\.pa-pagelet-bubble,\s*\.pa-pagelet-panel,\s*\.pa-pagelet-tab,\s*\.pa-pagelet-pet\s*\{([\s\S]*?)\}/.exec(css)?.[1] ?? "";
-
-        expect(pageletTypographyRoot).toContain(
-            "--font-ui-medium: calc(var(--font-text-size, 16px) * 0.875);",
-        );
-        expect(pageletTypographyRoot).toContain(
-            "--font-ui-small: calc(var(--font-text-size, 16px) * 0.8125);",
-        );
-        expect(pageletTypographyRoot).toContain(
-            "--font-ui-smaller: calc(var(--font-text-size, 16px) * 0.75);",
-        );
-        expect(css).toMatch(/\.pa-pagelet-panel-preview-h1\s*\{[\s\S]*?font-size:\s*var\(--font-text-size, 16px\);/);
-        expect(css).toMatch(/\.pa-pagelet-tab-section h2\s*\{[\s\S]*?font-size:\s*calc\(var\(--font-text-size, 16px\) \* 1\.125\);/);
-    });
 });

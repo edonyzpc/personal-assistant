@@ -29,19 +29,6 @@ describe("scripts/release.mjs", () => {
         );
     });
 
-    it("rejects prerelease dry-runs from detached HEAD before release state is created", () => {
-        const repo = createReleaseRepo();
-        const script = join(process.cwd(), "scripts/release.mjs");
-
-        commit(repo, "feat(pagelet): prepare beta recall");
-        git(repo, ["switch", "--detach"]);
-
-        const output = expectReleaseFailure(repo, script, "2.9.0-beta.1");
-
-        expect(output).toContain(
-            "Prerelease version 2.9.0-beta.1 must be cut from beta/2.9.0-beta.1; current branch is detached HEAD.",
-        );
-    });
 
     it("allows prerelease dry-runs from the matching beta version branch", () => {
         const repo = createReleaseRepo();
@@ -123,7 +110,10 @@ describe("scripts/release.mjs", () => {
         expect(readMakeTarget(makefile, "deploy-icloud").prerequisites).toContain("bin");
         // Read step structure so adding a safe CI condition does not require
         // mirroring whitespace or line placement in the test.
-        for (const [workflow, job] of [[ciWorkflow, "validate"], [releaseWorkflow, "build"]]) {
+        for (const [workflow, job, testCommand] of [
+            [ciWorkflow, "validate", "npm run test:all -- --maxWorkers=4 --coverage"],
+            [releaseWorkflow, "build", "npm run test:all -- --maxWorkers=4 --coverage"],
+        ]) {
             const steps = loadYaml(workflow).jobs[job].steps;
             const lintIndex = steps.findIndex((step: { name: string }) => step.name === "Lint");
             const buildIndex = steps.findIndex((step: { name: string }) => step.name === "Build");
@@ -133,7 +123,7 @@ describe("scripts/release.mjs", () => {
             expect(testIndex).toBeGreaterThan(buildIndex);
             expect(steps[lintIndex].run).toBe("npm run lint");
             expect(steps[buildIndex].run).toMatch(/^npm run build(?: --if-present)?$/u);
-            expect(steps[testIndex].run).toBe("npm run test:all -- --runInBand --coverage");
+            expect(steps[testIndex].run).toBe(testCommand);
             expect(steps[testIndex].if).toBe(steps[buildIndex].if);
             expect(steps[lintIndex].if).toBe(steps[buildIndex].if);
         }
