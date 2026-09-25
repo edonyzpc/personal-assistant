@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.15](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.14...2.10.0-beta.15) (2026-09-25)
+
+### Features
+- agent: deliver B-146 task source boundary
+- pa-agent: deliver B-149 runtime evolution
+
+### Fix
+- agent: use Bailian EnhancedSearch for web search
+- agent: close B-146 runtime review gaps
+
+### Docs
+- agent: close out B-146 source boundary
+- agent: record B-146 review fixes and validation
+- pa-agent: record B-149 contracts and validation
+- pa-agent: close out B-149
+
+### Tests
+- streamline tests and release validation
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
