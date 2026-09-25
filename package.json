@@ -62,7 +62,7 @@
     "typescript": "5.8.3"
   },
   "dependencies": {
-    "@langchain/core": "1.1.41",
+    "@langchain/core": "1.2.12",
     "@langchain/openai": "1.4.4",
     "@sqlite.org/sqlite-wasm": "3.53.0-build1",
     "@zumer/snapdom": "2.23.2",
