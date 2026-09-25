@@ -8,6 +8,8 @@ Work item: B-146
 
 > **当前决定以最后一节 Owner 修订为准。**下文原方案及随后被替代的敏感外发分层保留为设计演变记录；自由语言限制作为 Host 硬上限、首次结构化取材声明及按该声明拦截读取的要求已被替代。已交付范围和验证限制见[当前 Product Spec](../specs/pa-agent-task-source-boundary-product-spec.md)与 [B-146 validation](../../archive/2026/b146-agent-task-source-boundary-validation.md)。
 
+> **2026-09-24 后续目标决定：[DEC-043](./dec-043-agent-runtime-evolution-and-source-scope.md)。**Owner 已另行接受三种显式问答范围及实际输入/派生上下文的硬约束，局部替代本文“不增加本轮硬范围控件”的未来边界；这不是模型声明授权，也不重启敏感外发分层。自由语言职责、显式 Writing、Data Boundary 和独立动作保护继续有效。新设计见 [B-149 Product Spec](../specs/pa-agent-runtime-evolution-product-spec.md)，尚不改写 B-146 的已交付行为。
+
 ## Context
 
 B-135 选择主 Agent 理解任务，由 Host 守来源和执行边界；B-144 选择任务完成导向的自主恢复。本次 Obsidian Chat 事故中，普通咨询的 `declare_source_scope` 因模型把中文引号改为英文引号而得到 `invalid_instruction_quote`，整个取材批次未执行，最终无进展并显示 `incomplete`。已检查的 [实现](../../../src/ai-services/task-source-constraint.ts)仅证明引文在传入文本中逐字且唯一出现，不证明声明的 `notes`、`webAllowed` 符合用户意思；[现有测试](../../../__tests__/task-source-run.test.ts)也能在用户文本为“只用当前笔记”时提交更广的 `vault` 范围。当前同一 run 的已提交范围只能收窄，使 Agent 的初步计划变成不可扩大的上限。

@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-09-24
+Updated: 2026-09-25
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -69,7 +69,7 @@ flowchart TD
 | `SourceRecord` and source projection | Keep source records and source-boundary metadata separate from answer text; normalization and copying use the shared source helpers, not a separate store instance. |
 | `MemorySearchTool` | Owns direct/graph candidate collection, selected-model reranking, live-source checks, final allocation, and the allowlisted Memory observation. |
 | `ChatMemoryRecoveryCoordinator` | Owns one run-scoped hidden relaxed attempt, its token/deadlines/frozen plan, exact-repeat suppression, and the cumulative ≤8-document replacement observation. |
-| `TaskSourceRun` | Binds one user request to the Host-allowed note/Web scope, preserves read snapshots, and rechecks current authorization before every physical provider request. |
+| `TaskSourceRun` | Binds one user request to its Host-selected notes, web, or combined scope, admits only compatible complete input lineage, preserves read snapshots, and rechecks current authorization before every physical provider request. |
 | `WritingContextRun` | Exposes Host-selected writing candidates on demand, binds the selected parent/material/style state to one context handle, and admits the final pure output against that handle. |
 | `ChatView` | Consumes canonical lifecycle, writing preview/artifact/recovery events and persists current-turn state, versions and confirmed save results without duplicate legacy rendering. |
 
@@ -207,8 +207,12 @@ abort, or deadline expiry invalidates the token and discards late work.
 
 ### Task source and writing output
 
-For ordinary Chat, the main Agent chooses which notes to read and whether to use
-enabled Web search. `TaskSourceRun` exposes bounded note identities as data;
+For ordinary Chat, the user selects My notes, Web sources, or Combined mode per
+conversation; a new conversation defaults to My notes. Chat freezes the choice
+before asynchronous preparation for each request. A switch during a run applies
+to the next request, without cancelling or replaying the current one. The main
+Agent chooses which permitted sources to consult; the choice never enables a
+disabled capability or authorizes an action. `TaskSourceRun` exposes bounded note identities as data;
 ordinary reads do not require `declare_source_scope` or a model-declared user
 boundary. Before dispatching a batch, the Host plans the actual reads and
 checks file identity, Data Boundary exclusions, enabled capabilities, and
@@ -273,18 +277,19 @@ The general vault tools use Obsidian public APIs at the existing minimum App ver
 - `PaAgentContextProjector`: controlled context injection and history projection measured after JSON escaping and wrappers. Complete history is retained when it fits; otherwise recent complete turns take priority over older excerpts.
 - `PaAgentContextHygiene`: removes status-only noise and repairs orphaned tool/message shapes.
 - `PaAgentContextCompactor`: deterministic tool reduction grouped by assistant/model cycle, protecting the latest two cycles from soft compaction. Bounded replacement markers identify the tool, call, original size, error status and sources; canonical evidence remains unchanged.
-- `PaAgentContextBudget`: local character admission, token estimates and provider usage snapshots. Estimates do not guarantee fit in a provider's token window.
+- `PaAgentContextBudget`: admission against a verified model window and output reserve when known, otherwise the local character fallback; token estimates and measured provider usage stay distinct. Estimates do not guarantee provider acceptance.
 
 Current top-level constants:
 
 | Budget | Current value | Meaning |
 | --- | ---: | --- |
 | Chat history | 60,000 chars | Maximum history projection before compaction/truncation. |
-| Local answer request | 120,000 chars | Rendered system/human messages plus bound schema JSON estimate and a 2,048-character safety reserve. |
+| Local answer request | Verified window minus output reserve and 512-token safety margin; otherwise 120,000 chars | Final rendered messages and bound schema are measured together. The character value is an unknown-model fallback, not a universal model limit. |
 | Read-only tool context | 24,000 chars | Bounded injected tool/context payload. |
 | Loop observation aggregate | 64,000 chars | Production loop cap across tool observations before host policy/finalization. |
 | Model/remote attempt | 1,800,000 ms | Per physical request/execution, including response consumption; capability override allowed. |
 | Run wall clock | unbounded by default | No legacy 180-second forced finalization; callers may still configure an explicit bound. |
+| Auxiliary context summaries | 30 physical requests, 60 minutes active wait, 90,000 estimated-or-known admission tokens per run | Optional summaries stop at the first exhausted limit; retries count as physical attempts. A required context that cannot fit ends with a recoverable Context explanation. |
 
 The 24k read-only context and 64k loop observation cap are different layers; do not collapse them into one constant.
 
@@ -353,8 +358,13 @@ output remains distinct from this source presentation.
 
 ChatService owns the ephemeral summary cache. History edits, deletion, switching,
 closing and provider/model changes invalidate it; reload rebuilds from saved
-Chat messages. Summary requests are tool-free, cancellable and bounded by the
-run deadline. After preparation and before every answer attempt, source
+Chat messages. Summary requests are tool-free and cancellable. The run-local
+auxiliary ledger admits another physical request only while its request, active
+wait and token limits allow it; starting no further request does not shorten an
+already dispatched 30-minute attempt. Provider-reported physical usage is kept
+per attempt when attributable, including failed or cancelled attempts; unknown
+usage remains unknown rather than being added to a fabricated total. After
+preparation and before every answer attempt, source
 currentness is revalidated and the complete request passes local admission.
 Tool-summary payload snapshots and registry live references use independent
 clones. Optional summary checks use their own cancellation scope; late results
@@ -374,10 +384,9 @@ historical evidence without granting current authority. Cross-field deduplicatio
 is a model instruction, not a guaranteed schema property.
 
 History summaries reserve at most 8,000 characters within the actual history
-allocation; tool summaries default to at most 1,500 characters. One history
-preparation and the aggregate model-turn preparation each have a 30-second
-deadline; an individual tool preparation has 12 seconds, all subordinate to the
-run deadline. An empty intermediate batch may continue to later sources when
+allocation; tool summaries default to at most 1,500 characters. Each physical
+summary request uses the ordinary 30-minute attempt deadline, while the
+run-local auxiliary limits above control total optional work. An empty intermediate batch may continue to later sources when
 there is no prior valid state. An update that erases valid prior state, a final
 empty result, invalid output, or timeout cannot replace the cache. Exact source
 snapshots determine reuse; counts or short hashes alone cannot validate it.
@@ -390,6 +399,28 @@ or changing the Memory index.
 
 ## Source And Trust Boundaries
 
+- A current run carries an immutable Host source selection. My notes excludes
+  Web material; Web sources excludes automatic vault, Memory, Personal and
+  Pagelet material; Combined mode may use both only while their independent
+  settings and Data Boundary permit them. Existing displayed history stays
+  visible when a later run narrows its source scope.
+- Input lineage records the complete source dependencies of actual provider
+  input, tool arguments/results, summaries, images and Writing versions.
+  Compatible complete lineage may be reused; mixed or unknown lineage cannot
+  be laundered by a shorter answer or summary. Live source and version checks
+  run again before physical dispatch and final delivery. A source-free Host
+  observation must be independently proven source-free before reuse.
+- Assistant calls and paired results are projected from one canonical action
+  history. Native tool messages and compatibility text carry the same call IDs,
+  original arguments and results; an unpaired or ambiguous result is marked
+  unknown, never inferred from nearby text. Old actions provide context, not
+  current permission or a reason to replay a possible side effect.
+- Domain owners emit typed facts for success, normal no-match, unavailable
+  retrieval, pending confirmation and committed output. The main Agent decides
+  whether the user goal is covered; Host completion policy verifies necessary
+  tools, sources and receipts. An accepted Writing artifact is distinct from a
+  confirmed save receipt, and a task missing necessary evidence may end
+  incomplete without a generic fabricated answer.
 - Memory references, Context Used, Web sources, and Skill context retain distinct origin metadata.
 - Tool observations are wrapped and treated as untrusted data, not instructions.
 - Web titles/snippets and vault content cannot alter host policy or capability permissions.

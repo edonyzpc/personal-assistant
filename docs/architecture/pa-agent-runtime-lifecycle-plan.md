@@ -1,11 +1,12 @@
 # PA Agent Runtime Lifecycle Contract
 
-Updated: 2026-09-24
+Updated: 2026-09-25
 
 Status: Current canonical lifecycle contract. The long implementation plan and phase evidence are archived at [pa-agent-runtime-lifecycle-plan-implementation-record.md](../archive/pa-agent-runtime-lifecycle-plan-implementation-record.md).
 
 [DEC-040](../product/decisions/dec-040-recoverable-agent-execution.md) and the [B-144 Product Spec](../product/specs/pa-recoverable-agent-execution-product-spec.md) define the recovery, 30-minute attempt, source snapshot, domain delivery and concurrency behavior implemented by B-144. This document is the current technical contract; source and regression tests remain the executable authority.
 [DEC-042](../product/decisions/dec-042-agent-task-source-boundary.md) supersedes the ordinary source-declaration protocol and binds Writing to explicit Chat operations.
+[DEC-043](../product/decisions/dec-043-agent-runtime-evolution-and-source-scope.md) defines Chat source selection and runtime evidence boundaries; delivery status is recorded only in the [B-149 Tracker](../development/active/pa-agent-runtime-evolution/tracker.md).
 
 ## Run And Turn Model
 
@@ -13,6 +14,7 @@ Status: Current canonical lifecycle contract. The long implementation plan and p
 - A run has a 256-turn planning guard; ordinary completion and no-progress policy normally stop much earlier.
 - The user message is emitted once, on the first turn.
 - Later turns reuse the canonical transcript plus bounded runtime instructions and tool results.
+- Chat freezes its conversation's My notes, Web sources, or Combined selection at send time. A change during a run affects only the next request; source withdrawal can still invalidate an affected in-flight input or delivery.
 - Run-scope events use `turnId = RUN_SCOPE_TURN_ID` (`"__run__"`).
 - `agent_end.metadata.finalTurnId` records the final real turn id.
 
@@ -90,6 +92,13 @@ Canonical transcript messages are:
 - `assistant`: ordered thinking, text, and toolCall parts plus stop reason;
 - `toolResult`: tool call identity, bounded prompt/preview content, error state, sources, Context Used, and safe metadata.
 
+Model-facing action history pairs each assistant tool call with its result by
+identity. Native and compatibility messages project the same admitted groups,
+including original arguments and result status. A missing or ambiguous result
+remains explicitly unknown, not inferred from a sibling call. Tool observations
+carry their own admitted source lineage, including independently proven
+source-free no-match or unavailable results, into the next request.
+
 `message_update` distinguishes thinking/text/toolcall start, delta, and end. Thinking and provisional assistant text are progress, not committed final answer text.
 
 The final visible answer is derived only from committed final text. When a streamed assistant message transitions into tool calls, pending text may be reclassified as thinking and must not be persisted as final answer content.
@@ -129,6 +138,11 @@ model-declared user boundary. The Agent follows natural-language source
 instructions; the Host checks actual note identities, Data Boundary, enabled
 capabilities, and the complete batch before reading. It rechecks admitted
 source snapshots before physical provider requests and final answer delivery.
+A Chat source selection also limits exported tools, automatic background,
+history, summaries and actual physical request bodies. Complete compatible
+input lineage may be projected; mixed or unknown dependencies are withheld.
+Displayed prior history remains visible even when the next model request cannot
+use it. This selection never enables WebSearch or grants write access.
 A rejected batch executes no member. WebSearch also rechecks its live setting
 after any detached-request barrier, immediately before the physical send.
 
@@ -153,6 +167,8 @@ XML/JSON examples remain ordinary data and never grant execution authority.
 | Loop observations | 64,000 chars | Aggregate prompt observation budget. |
 | Chat history | 60,000 chars | Runtime/context projection budget. |
 | Read-only tool context | 24,000 chars | Separate bounded context injection layer. |
+| Answer input | Verified model window minus verified output reserve and 512-token safety margin; otherwise 120,000 chars | Estimate includes rendered messages and bound schemas; unknown metadata uses the character fallback. |
+| Auxiliary summaries per run | 30 physical requests / 60 minutes active wait / 90,000 estimated-or-known reserved tokens | Retries count as physical attempts; optional work stops at the first limit, and irreducible required context fails with an explicit recoverable Context result. |
 
 Changing a default requires runtime, tests, `AGENTS.md`, and current architecture docs to move together.
 
@@ -270,12 +286,22 @@ the installed SDK retry policy and recheck admission on each physical attempt.
 Every physical start resets only that attempt's deadline; a failed attempt ends
 its clock before SDK backoff. Host-level recovery honors a real `Retry-After`
 after releasing the per-turn coordinator lease.
+The auxiliary limits admit new summary attempts; they do not shorten a request
+already dispatched under its 30-minute physical deadline. A run-local usage
+ledger distinguishes physical attempts from logical calls, records known
+provider usage once per attributable physical response, and leaves missing or
+ambiguous usage unknown. It does not infer money from token estimates.
 
 Successful exact duplicate tools reuse their structured result when the
 capability says it remains valid. Failed reads may retry; partially succeeded or
 acceptance-unknown side effects never replay blindly and instead expose query or
 user recovery. Four equivalent provider or candidate failures end as a
 no-progress terminal result rather than looping indefinitely.
+Continuous same-cause failures form a recovery episode; genuine new evidence
+may begin another episode, while full-run turns, tools and physical costs remain
+cumulative. Unknown action side effects still require verification before
+replay. Normal zero-match, unavailable retrieval and missing evidence for the
+requested answer have different completion meanings.
 
 Chat and Pagelet share FIFO lanes but hold a lease for one turn only. History
 persists a running placeholder before provider work, overwrites that same turn
