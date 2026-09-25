@@ -8,6 +8,7 @@ import { imageSourceHash } from './image-policy';
 import { cloneWritingVersion, hashWritingText, type WritingVersion } from './writing-types';
 import { cloneSaveReceipt, type SaveAttachment, type SaveReceipt } from './save-receipt-types';
 import { WRITING_NOTE_PROVENANCE_KEY } from './writing-note-provenance';
+import type { PaAgentResultFact } from '../ai-services/pa-agent-result-facts';
 
 export type { SaveReceipt, SaveAttachment } from './save-receipt-types';
 export interface PreparedWritingSave {
@@ -16,6 +17,13 @@ export interface PreparedWritingSave {
     /** Initial full note, preserving exact body and separately marked provenance. */
     previewMarkdown: string;
     release(): void;
+}
+export type WritingSaveOutcome = SaveReceipt & { resultFact?: PaAgentResultFact };
+
+function withSaveResultFact(receipt: SaveReceipt): WritingSaveOutcome {
+    return receipt.state === 'completed'
+        ? { ...receipt, resultFact: { kind: 'applied', action: 'writing_save', receiptId: receipt.id } }
+        : receipt;
 }
 interface SavePreview { receipt: SaveReceipt; released: boolean; }
 interface FileVerification { assertCurrent(): void; release(): void; }
@@ -78,7 +86,7 @@ export class WritingSaveAction {
         }, input.signal);
     }
 
-    execute(operationId: string, options: { signal?: AbortSignal } = {}): Promise<SaveReceipt> {
+    execute(operationId: string, options: { signal?: AbortSignal } = {}): Promise<WritingSaveOutcome> {
         return this.enqueue(async (signal) => {
             const existing = await this.store.getSaveReceipt(operationId);
             const preview = this.previews.get(operationId);
@@ -91,16 +99,16 @@ export class WritingSaveAction {
                 // First durable receipt precedes every note/attachment write.
                 await this.store.putSaveReceipt(receipt);
             }
-            try { return await this.run(receipt, signal); }
+            try { return withSaveResultFact(await this.run(receipt, signal)); }
             finally { this.releasePreview(operationId); }
         }, options.signal);
     }
 
-    retry(operationId: string, options: { signal?: AbortSignal } = {}): Promise<SaveReceipt> {
+    retry(operationId: string, options: { signal?: AbortSignal } = {}): Promise<WritingSaveOutcome> {
         return this.enqueue(async (signal) => {
             const receipt = await this.store.getSaveReceipt(operationId);
             if (!receipt) throw new WritingSaveError('receipt_unavailable');
-            return this.run(receipt, signal);
+            return withSaveResultFact(await this.run(receipt, signal));
         }, options.signal);
     }
     listReceipts(writingVersionId?: string): Promise<SaveReceipt[]> { return this.enqueue(() => this.store.listSaveReceipts(writingVersionId)); }

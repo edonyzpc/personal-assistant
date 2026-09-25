@@ -1,14 +1,16 @@
 import type {
     PaAgentTurnSummary,
 } from "./pa-agent-loop";
+import { HostProgressLedger, appliedInsightReceipt, preparedWritingContextSelection } from "./pa-agent-progress";
+import { parseVaultObservationEvidence } from "./vault-observation-evidence";
 
 export type AnswerCompletionToolMode = "normal" | "final_answer_only";
 
 export type AnswerCompletionForceReason =
     | "tool_failure"
     | "duplicate_only"
-    | "empty_after_observation"
-    | "required_tool_failed";
+    | "repeated_no_match"
+    | "empty_after_observation";
 
 export interface AnswerCompletionTurnFacts {
     hasFinalText: boolean;
@@ -20,14 +22,19 @@ export interface AnswerCompletionTurnFacts {
     hasOnlyDuplicateOrNoopResults: boolean;
     hasRepeatedSuccessfulEvidence: boolean;
     hasOnlyFailureOrStatusResults: boolean;
+    hasOnlyNoMatchResults: boolean;
     failedToolNames: string[];
     duplicateOrNoopToolNames: string[];
 }
 
 export interface AnswerCompletionLedger {
+    hostProgress: HostProgressLedger;
+    progressEpoch: number;
     successfulEvidenceTools: Set<string>;
     successfulObservationKeys: Set<string>;
+    memoryObservationKeys: Set<string>;
     repeatedEvidenceNoProgressCount: number;
+    consecutiveEmptyVaultNoMatchTurns: number;
     promptIncludedObservationTools: Set<string>;
     failedEvidenceTools: Set<string>;
     noNewInformationTools: Set<string>;
@@ -41,7 +48,7 @@ export interface AnswerCompletionLedger {
 export type AnswerCompletionDecision =
     | {
         action: "continue_tooling";
-        reason: "new_tool_evidence" | "tool_chain_allowed";
+        reason: "new_tool_evidence" | "tool_chain_allowed" | "normal_no_match";
     }
     | {
         action: "force_finalize";
@@ -63,9 +70,13 @@ export type AnswerCompletionDecision =
 
 export function createAnswerCompletionLedger(): AnswerCompletionLedger {
     return {
+        hostProgress: new HostProgressLedger(),
+        progressEpoch: 0,
         successfulEvidenceTools: new Set(),
         successfulObservationKeys: new Set(),
+        memoryObservationKeys: new Set(),
         repeatedEvidenceNoProgressCount: 0,
+        consecutiveEmptyVaultNoMatchTurns: 0,
         promptIncludedObservationTools: new Set(),
         failedEvidenceTools: new Set(),
         noNewInformationTools: new Set(),
@@ -85,16 +96,23 @@ export function deriveAnswerCompletionTurnFacts(
     // Keep it out of completion heuristics; the loop still charges its turn/budget.
     const observations = summary.toolResults;
     const promptIncludedResults = observations.filter(hasPromptIncludedObservation);
+    const hostReceipts = (ledger?.hostProgress ?? new HostProgressLedger()).preview(observations);
     const seenThisTurn = new Set<string>();
     const repeatedSuccesses = new Set<PaAgentTurnSummary["toolResults"][number]>();
-    const successfulEvidenceResults = observations.filter(result => {
+    const successfulEvidenceResults = observations.filter((result, index) => {
         if (!hasSuccessfulEvidence(result)) return false;
-        const key = successfulObservationKey(result);
-        if (ledger?.successfulObservationKeys.has(key) || seenThisTurn.has(key)) {
+        if (result.content.metadata?.outcome === "reused_result") {
             repeatedSuccesses.add(result);
             return false;
         }
-        seenThisTurn.add(key);
+        const keys = successfulObservationKeys(result, hostReceipts[index]);
+        const hasNewReceipt = keys.some(key => !ledger?.successfulObservationKeys.has(key)
+            && !seenThisTurn.has(key));
+        keys.forEach(key => seenThisTurn.add(key));
+        if (!hasNewReceipt) {
+            repeatedSuccesses.add(result);
+            return false;
+        }
         return true;
     });
     const duplicateOrNoopResults = observations.filter(result =>
@@ -116,6 +134,8 @@ export function deriveAnswerCompletionTurnFacts(
             && successfulEvidenceResults.length === 0
             && failureOrStatusResults.length > 0
             && observations.every((result) => isFailureOrStatusResult(result) || isDuplicateOrNoopResult(result)),
+        hasOnlyNoMatchResults: observations.length > 0
+            && observations.every(result => result.content.resultFact?.kind === "no_match"),
         failedToolNames: uniqueToolNames(failureOrStatusResults),
         duplicateOrNoopToolNames: uniqueToolNames(duplicateOrNoopResults),
     };
@@ -126,15 +146,30 @@ export function recordAnswerCompletionTurn(
     summary: PaAgentTurnSummary,
     facts: AnswerCompletionTurnFacts = deriveAnswerCompletionTurnFacts(summary),
 ): void {
-    if (facts.hasNewSuccessfulEvidence) ledger.repeatedEvidenceNoProgressCount = 0;
-    for (const result of summary.toolResults) {
-        const appliedInsightReceipt = parseAppliedInsightActionReceipt(result);
-        if (appliedInsightReceipt && !ledger.appliedInsightActionReceipts.includes(appliedInsightReceipt)) {
-            ledger.appliedInsightActionReceipts.push(appliedInsightReceipt);
+    const hostReceipts = ledger.hostProgress.preview(summary.toolResults);
+    const advanced = ledger.hostProgress.record(summary.toolResults);
+    ledger.progressEpoch = summary.progressEpoch ?? ledger.hostProgress.epoch;
+    if (advanced) ledger.repeatedEvidenceNoProgressCount = 0;
+    if (summary.toolResults.length > 0) {
+        const noMatchOrUnavailableMemory = summary.toolResults.every(result =>
+            result.content.resultFact?.kind === "no_match"
+            || (result.toolName === "search_memory"
+                && result.content.resultFact?.kind === "unavailable"));
+        const hasEmptyVaultNoMatch = summary.toolResults.some(isEmptyVaultNoMatch);
+        ledger.consecutiveEmptyVaultNoMatchTurns = noMatchOrUnavailableMemory && hasEmptyVaultNoMatch
+            ? ledger.consecutiveEmptyVaultNoMatchTurns + 1 : 0;
+    }
+    for (const [index, result] of summary.toolResults.entries()) {
+        const insightReceipt = appliedInsightReceipt(result);
+        if (insightReceipt && !ledger.appliedInsightActionReceipts.includes(insightReceipt)) {
+            ledger.appliedInsightActionReceipts.push(insightReceipt);
         }
         if (hasSuccessfulEvidence(result)) {
             ledger.successfulEvidenceTools.add(result.toolName);
-            ledger.successfulObservationKeys.add(successfulObservationKey(result));
+            successfulObservationKeys(result, hostReceipts[index]).forEach(key => {
+                ledger.successfulObservationKeys.add(key);
+                if (result.toolName === "search_memory") ledger.memoryObservationKeys.add(key);
+            });
         }
         if (hasPromptIncludedObservation(result)) {
             ledger.promptIncludedObservationTools.add(result.toolName);
@@ -152,20 +187,42 @@ export function recordAnswerCompletionTurn(
     }
 }
 
+/** The provider's current Memory projection replaces earlier Memory facts after revocation. */
+export function synchronizeProjectedMemoryCompletion(
+    ledger: AnswerCompletionLedger,
+    transcript: readonly import("./chat-types").PaAgentMessage[],
+): void {
+    const projected = transcript.filter((message): message is Extract<import("./chat-types").PaAgentMessage, { role: "toolResult" }> =>
+        message.role === "toolResult" && message.toolName === "search_memory");
+    // This is the complete current provider transcript. Revocation may remove
+    // every Memory result, so an empty projection also withdraws prior facts.
+    for (const key of ledger.memoryObservationKeys) ledger.successfulObservationKeys.delete(key);
+    ledger.memoryObservationKeys.clear();
+    ledger.successfulEvidenceTools.delete("search_memory");
+    ledger.promptIncludedObservationTools.delete("search_memory");
+    ledger.failedEvidenceTools.delete("search_memory");
+    const receipts = ledger.hostProgress.preview(projected);
+    for (const [index, result] of projected.entries()) {
+        if (hasSuccessfulEvidence(result)) {
+            ledger.successfulEvidenceTools.add("search_memory");
+            successfulObservationKeys(result, receipts[index]).forEach(key => {
+                ledger.successfulObservationKeys.add(key);
+                ledger.memoryObservationKeys.add(key);
+            });
+        }
+        if (hasPromptIncludedObservation(result)) ledger.promptIncludedObservationTools.add("search_memory");
+        if (isFailureOrStatusResult(result)) ledger.failedEvidenceTools.add("search_memory");
+    }
+}
+
 export function decideAnswerCompletion(input: {
     summary: PaAgentTurnSummary;
     ledger: AnswerCompletionLedger;
     facts?: AnswerCompletionTurnFacts;
-    failedRequiredCapabilities?: string[];
 }): AnswerCompletionDecision | undefined {
     const facts = input.facts ?? deriveAnswerCompletionTurnFacts(input.summary);
     if (facts.hasFinalText) return undefined;
     if (input.summary.status === "aborted" || input.summary.status === "error") return undefined;
-
-    const failedRequiredCapabilities = input.failedRequiredCapabilities ?? [];
-    if (failedRequiredCapabilities.length > 0) {
-        return recoverFromFailure(input.ledger, input.summary, failedRequiredCapabilities, true);
-    }
 
     if (facts.assistantEmpty && input.ledger.promptIncludedObservationTools.size > 0) {
         if (!input.ledger.emptyFinalizationRetryAttempted) {
@@ -192,6 +249,15 @@ export function decideAnswerCompletion(input: {
         return { action: "continue_tooling", reason: "new_tool_evidence" };
     }
 
+    if (input.ledger.consecutiveEmptyVaultNoMatchTurns >= 2) {
+        return forceFinalizeOnce(input.ledger, "repeated_no_match",
+            uniqueToolNames(input.summary.toolResults));
+    }
+
+    if (facts.hasOnlyNoMatchResults) {
+        return { action: "continue_tooling", reason: "normal_no_match" };
+    }
+
     if (facts.hasOnlyDuplicateOrNoopResults) {
         if (input.ledger.successfulEvidenceTools.size > 0) {
             if (facts.hasRepeatedSuccessfulEvidence) {
@@ -204,7 +270,6 @@ export function decideAnswerCompletion(input: {
                 input.ledger,
                 input.summary,
                 [...input.ledger.failedEvidenceTools],
-                false,
             );
         }
         return {
@@ -219,7 +284,7 @@ export function decideAnswerCompletion(input: {
     }
 
     if (facts.hasOnlyFailureOrStatusResults || facts.hasPromptIncludedObservation) {
-        return recoverFromFailure(input.ledger, input.summary, facts.failedToolNames, false);
+        return recoverFromFailure(input.ledger, input.summary, facts.failedToolNames);
     }
 
     return { action: "continue_tooling", reason: "tool_chain_allowed" };
@@ -252,15 +317,14 @@ function recoverFromFailure(
     ledger: AnswerCompletionLedger,
     summary: PaAgentTurnSummary,
     toolNames: readonly string[],
-    required: boolean,
 ): AnswerCompletionDecision {
     const observations = summary.toolResults.filter((result) => isFailureOrStatusResult(result));
-    const signature = JSON.stringify(observations.map((result) => ({
+    const signature = JSON.stringify([ledger.progressEpoch, observations.map((result) => ({
         tool: result.toolName,
         outcome: result.content.metadata?.outcome ?? "unknown",
-        reason: result.content.metadata?.reason ?? "unknown",
         executionState: result.content.metadata?.executionState ?? "unknown",
-    })).sort((left, right) => `${left.tool}:${left.reason}`.localeCompare(`${right.tool}:${right.reason}`)));
+    })).sort((left, right) => `${left.tool}:${left.outcome}:${left.executionState}`
+        .localeCompare(`${right.tool}:${right.outcome}:${right.executionState}`))]);
     const count = (ledger.equivalentNoProgressCounts.get(signature) ?? 0) + 1;
     ledger.equivalentNoProgressCounts.set(signature, count);
     const names = [...new Set(toolNames)].join(", ") || "the attempted tool";
@@ -274,7 +338,6 @@ function recoverFromFailure(
                 message: "The task could not make progress after an explicit strategy change.",
                 tools: [...new Set(toolNames)],
                 attempts: count,
-                required,
             }],
         };
     }
@@ -304,12 +367,12 @@ export function buildAnswerFinalizationInstruction(
     const toolList = toolNames.length > 0 ? [...new Set(toolNames)].join(", ") : "the prior tools";
     const reasonLine = (() => {
         switch (reason) {
-            case "required_tool_failed":
-                return `${toolList} already returned an unavailable, invalid, or failed result.`;
             case "tool_failure":
                 return `${toolList} returned only unavailable, invalid, skipped, or status observations.`;
             case "duplicate_only":
                 return `${toolList} has already been gathered or produced no new information.`;
+            case "repeated_no_match":
+                return `${toolList} returned repeated no-match observations in the permitted notes. State only what was searched; an unavailable Memory result does not prove that content is absent.`;
             case "empty_after_observation":
                 return "The previous assistant turn ended without final answer text after observations were provided.";
         }
@@ -320,6 +383,9 @@ export function buildAnswerFinalizationInstruction(
         "Do not simulate tool execution by printing tool-call markup or a plan to call unavailable tools. Answer directly from actual results; a failed read does not establish that the note is missing.",
         "Use only the existing observations and available context to produce the final answer.",
         "If the requested evidence is unavailable or insufficient, say that directly without claiming unavailable evidence.",
+        ...(reason === "repeated_no_match" ? [
+            "For a lookup, give a bounded not-found result. For a task requiring missing material, explain that it remains incomplete.",
+        ] : []),
     ].join(" ");
 }
 
@@ -356,41 +422,28 @@ function forceFinalizeOnce(
     };
 }
 
-function parseAppliedInsightActionReceipt(result: PaAgentTurnSummary["toolResults"][number]): string | null {
-    if (result.toolName !== "manage_saved_insight" || result.isError || !result.content.promptText) return null;
-    let payload: unknown;
-    try {
-        payload = JSON.parse(result.content.promptText);
-    } catch {
-        return null;
-    }
-    if (!payload || typeof payload !== "object") return null;
-    const envelope = payload as Record<string, unknown>;
-    const observation = envelope.observation;
-    if (envelope.tool !== "manage_saved_insight" || !observation || typeof observation !== "object") return null;
-    const action = observation as Record<string, unknown>;
-    if (action.kind !== "insight-action" || action.status !== "applied"
-        || !["save", "later", "archive", "restore"].includes(String(action.action))) return null;
-    return JSON.stringify({
-        action: action.action,
-        status: "applied",
-        ...(typeof action.insightId === "string" ? { insightId: action.insightId } : {}),
-        ...(typeof action.reviewItemId === "string" ? { reviewItemId: action.reviewItemId } : {}),
-        ...(typeof action.insightStatus === "string" ? { insightStatus: action.insightStatus } : {}),
-        ...(typeof action.updatedAt === "string" ? { updatedAt: action.updatedAt } : {}),
-        ...(action.influencePolicy === "weak-only" ? { influencePolicy: "weak-only" } : {}),
-    });
-}
-
 function hasPromptIncludedObservation(
     result: PaAgentTurnSummary["toolResults"][number],
 ): boolean {
     return result.content.includeInNextPrompt && result.content.promptText.trim().length > 0;
 }
 
+function isEmptyVaultNoMatch(result: PaAgentTurnSummary["toolResults"][number]): boolean {
+    if (result.toolName !== "search_vault_snippets" || result.content.resultFact?.kind !== "no_match"
+        || result.content.metadata?.vaultObservationContractVersion !== 1) return false;
+    const parsed = parseVaultObservationEvidence(result.content.metadata.vaultObservationEvidence);
+    return parsed.ok && parsed.evidence.tool === "search_vault_snippets"
+        && parsed.evidence.coverage.state === "complete"
+        && parsed.evidence.coverage.scannedPermittedNotes === 0
+        && parsed.evidence.coverage.evaluatedCandidates === 0
+        && parsed.evidence.items.length === 0;
+}
+
 function hasSuccessfulEvidence(
     result: PaAgentTurnSummary["toolResults"][number],
 ): boolean {
+    const fact = result.content.resultFact;
+    if (fact && fact.kind !== "evidence" && fact.kind !== "applied") return false;
     if (
         result.toolName === "search_memory"
         && (
@@ -403,11 +456,12 @@ function hasSuccessfulEvidence(
         && hasPromptIncludedObservation(result);
 }
 
-function successfulObservationKey(result: PaAgentTurnSummary["toolResults"][number]): string {
-    // Compare the actual observation presented to the model. A successful
-    // re-read with identical content has not added task evidence, regardless
-    // of its new tool-call id or source declaration revision.
-    return `${result.toolName}\u0000${result.content.promptText}`;
+function successfulObservationKeys(result: PaAgentTurnSummary["toolResults"][number], receipts: string[]): string[] {
+    if (receipts.length > 0) return receipts;
+    if (preparedWritingContextSelection(result) !== null) return [];
+    // An unversioned success remains usable once for ordinary tool chaining,
+    // but changing its prompt text cannot manufacture a new progress identity.
+    return [`unverified:${result.toolName}`];
 }
 
 function isDuplicateOrNoopResult(
@@ -421,6 +475,11 @@ function isFailureOrStatusResult(
     result: PaAgentTurnSummary["toolResults"][number],
 ): boolean {
     if (result.content.metadata?.outcome === "duplicate_skipped") return false;
+    const fact = result.content.resultFact;
+    if (fact?.kind === "no_match" || fact?.kind === "approval_pending"
+        || fact?.kind === "applied" || fact?.kind === "evidence") return false;
+    if (fact?.kind === "unavailable" || fact?.kind === "transient_failure"
+        || fact?.kind === "partial" || fact?.kind === "unknown") return true;
     if (
         result.toolName === "search_memory"
         && (

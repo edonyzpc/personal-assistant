@@ -16,11 +16,14 @@ import type {
 } from "../src/ai-services/pa-agent-types";
 import {
     type PaAgentRuntimeOptions,
-    createOperationsAcknowledgementControlSnapshot,
-    isOperationsStagedAcknowledgement,
-    OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
     PaAgentRuntime,
 } from "../src/ai-services/pa-agent-runtime";
+import {
+    createOperationsAcknowledgementControlSnapshot,
+    hasStagedOperationsIntent,
+    isOperationsStagedAcknowledgement,
+    OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
+} from "../src/ai-services/operations/operations-acknowledgement-policy";
 import { OperationsIntentController } from "../src/ai-services/operations/operations-intent-controller";
 import {
     createOperationsStagingToolExecutor,
@@ -53,6 +56,13 @@ import { createAiServiceHost } from "../src/tests/factories/host-factory";
 jest.mock("obsidian");
 
 describe("Operations Agent runtime discovery and staging", () => {
+    it("requires an owner approval_pending receipt before staging acknowledgement", () => {
+        const result = { toolName: "vault_create", isError: false,
+            content: { metadata: { staged: true, wrote: false } } };
+        expect(hasStagedOperationsIntent({ toolResults: [result] } as never)).toBe(false);
+        expect(hasStagedOperationsIntent({ toolResults: [{ ...result, content: { ...result.content,
+            resultFact: { kind: "approval_pending", intentId: "intent-1" } } }] } as never)).toBe(true);
+    });
     it("loads exactly the four approved action capabilities without the legacy persisted opt-in", async () => {
         const provider = new OperationsToolProvider();
 
@@ -151,6 +161,9 @@ describe("Operations Agent runtime discovery and staging", () => {
             batch.signal,
         );
         expect(prepared?.toolResults.get("call-1")?.promptText).toBe(OPERATIONS_STAGED_MESSAGE);
+        expect(prepared?.toolResults.get("call-1")?.resultFact).toEqual({
+            kind: "approval_pending", intentId: "intent-1",
+        });
         expect(OPERATIONS_STAGED_MESSAGE).toContain("latest user request");
         expect(OPERATIONS_STAGED_MESSAGE).toContain("no write has occurred");
         expect(OPERATIONS_STAGED_MESSAGE).toContain("does not report the state of any earlier proposal");

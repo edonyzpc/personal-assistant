@@ -1,4 +1,5 @@
 import type { ChatToolContext, ChatToolDefinition, ChatToolResult } from "./chat-tool-types";
+import { assertTaskSourceMemoryReadCurrent, assertTaskSourceNoteDomainCurrent } from './task-source-read-guard';
 import {
     buildMemoryManagementEvidence,
     MEMORY_MANAGEMENT_CONTRACT_VERSION,
@@ -151,11 +152,16 @@ async function executeManagementTool<Input, Output>(
     input: Input,
     context: ChatToolContext,
 ): Promise<ChatToolResult<Output>> {
+    const assertDomain = () => operation === 'status'
+        ? assertTaskSourceNoteDomainCurrent(context.taskSourceReadGuard)
+        : assertTaskSourceMemoryReadCurrent(context.taskSourceReadGuard);
+    assertDomain();
     const port = context.host.memoryManagement;
     if (!port) return unavailableResult(tool, input, "port_missing");
     let observation: MemoryManagementObservation;
     try {
         observation = await port.prepareObservation({ operation, request: requestFor(tool, input) });
+        assertDomain();
     } catch {
         return unavailableResult(tool, input, "not_ready");
     }
@@ -185,6 +191,7 @@ async function executeManagementTool<Input, Output>(
         };
     }
     try {
+        assertDomain();
         let content: Output;
         if (tool === "get_memory_status") content = await port.getStatus() as Output;
         else if (tool === "query_memories") content = await port.queryMemories(input as MemoryManagementQueryInput) as Output;
@@ -197,6 +204,7 @@ async function executeManagementTool<Input, Output>(
             content,
         });
         const current = await port.prepareObservation(provisional, context.currentMemoryUsage);
+        assertDomain();
         if (!current.ready) return unavailableResult(tool, input, current.reason ?? "not_ready");
         if (!current.stateFingerprint) return unavailableResult(tool, input, "not_ready");
         const evidence: MemoryManagementEvidence = buildMemoryManagementEvidence({

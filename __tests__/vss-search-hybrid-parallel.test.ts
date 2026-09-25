@@ -11,6 +11,7 @@ import { TFile } from 'obsidian';
 // each call.
 const embedDelayHolder = { current: 0 };
 const embedQueryCalls: { count: number; lastPrompt: string | null } = { count: 0, lastPrompt: null };
+const embeddingAdmission = { current: undefined as (() => void) | undefined };
 
 jest.mock('obsidian', () => {
     class MockTFile {
@@ -61,10 +62,12 @@ jest.mock('../src/ai-services/ai-utils', () => {
             constructor(..._args: any[]) { }
             getDocumentContent(markdown: string) { return { content: markdown }; }
             cleanMarkdownContent(content: string) { return content; }
-            async createEmbeddings() {
+            async createEmbeddings(_dimensions?: number, options?: { onProviderRequestStart?: () => void }) {
+                embeddingAdmission.current = options?.onProviderRequestStart;
                 return {
                     embedDocuments: async (texts: string[]) => texts.map(() => [0.1, 0.2]),
                     embedQuery: async (prompt: string) => {
+                        embeddingAdmission.current?.();
                         embedQueryCalls.count++;
                         embedQueryCalls.lastPrompt = prompt;
                         if (embedDelayHolder.current > 0) {
@@ -213,6 +216,7 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
         embedDelayHolder.current = 0;
         embedQueryCalls.count = 0;
         embedQueryCalls.lastPrompt = null;
+        embeddingAdmission.current = undefined;
         buildFtsQueryMock.mockClear();
         Object.defineProperty(globalThis, 'localStorage', {
             configurable: true,
@@ -254,6 +258,19 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
         await searchPromise;
 
         vss.dispose();
+    });
+
+    it('forwards scoped embedding admission to the physical embedQuery attempt', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+        const onProviderRequestStart = jest.fn(() => { throw new Error('scoped Memory revoked'); });
+        try {
+            await expect(vss.searchHybrid('NOTE_DERIVED_EMBED_QUERY', { onProviderRequestStart }))
+                .rejects.toThrow('scoped Memory revoked');
+            expect(onProviderRequestStart).toHaveBeenCalledTimes(1);
+            expect(embedQueryCalls.count).toBe(0);
+        } finally { vss.dispose(); }
     });
 
     it('uses the rewritten override when the promise resolves with a string', async () => {

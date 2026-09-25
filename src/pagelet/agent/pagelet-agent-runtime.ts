@@ -30,6 +30,7 @@ import {
 } from "../../ai-services/vault-observation-evidence";
 import { resolveB125RetrievalOptimizationFlags } from "../../retrieval-optimization-platform-policy";
 import type { PaAgentMessage, SourceRecord } from "../../ai-services/chat-types";
+import { cloneSourceRecord } from "../../ai-services/source-store";
 import {
     capturePageletSourceSnapshot,
     hashPageletContent,
@@ -1332,10 +1333,7 @@ function addSourceTool(map: Map<string, Set<string>>, path: string, toolName: st
 }
 
 function cloneSourceRecords(records: readonly SourceRecord[]): SourceRecord[] {
-    return records.map((record) => ({
-        ...record,
-        metadata: record.metadata ? { ...record.metadata } : undefined,
-    }));
+    return records.map(cloneSourceRecord);
 }
 
 function dedupeWebObservations(

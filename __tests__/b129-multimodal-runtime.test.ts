@@ -3,17 +3,25 @@ import { BaseMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
 import { AIUtils } from "../src/ai-services/ai-utils";
 import { createReadNoteTool } from "../src/ai-services/chat-tool-factories";
+import { BuiltinWebSearchProvider, createBailianWebSearchNetworkPolicy,
+    type BuiltinWebSearchRequest } from "../src/ai-services/builtin-web-search-provider";
 import { revalidateVaultObservationFromApp } from "../src/ai-services/vault-observation-evidence";
 import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
+import type { AgentDebugObservation, AgentDebugRunRecorder } from "../src/ai-services/agent-debug-port";
 import type { MemorySearchPort } from "../src/memory/MemorySearchPort";
 import { PaAgentRuntime, type PaAgentRuntimeOptions, type PaAgentStreamOptions } from "../src/ai-services/pa-agent-runtime";
 import { ChatService } from "../src/ai-services/chat-service";
 import type { AgentEvent, LegacyAgentEvent, ChatMessage } from "../src/ai-services/chat-types";
 import type { ImageAssetService } from "../src/chat/image-assets";
 import type { MessageImage } from "../src/chat/image-types";
+import { WritingVersionService } from "../src/chat/writing-versions";
+import type { WritingVersion } from "../src/chat/writing-types";
 import { createPaAgentPersistedTurn } from "../src/ai-services/pa-agent-history";
+import { generationInputSnapshotInputLineage } from "../src/ai-services/input-lineage";
 import { decodeWritingOutput, isWritingContinuationPrompt, isWritingRequestPrompt, readProviderCompletion } from "../src/ai-services/writing-output";
 import { formatInjectedContext, MEMORY_CONTEXT_MAX_CHARS } from "../src/ai-services/context/PaAgentContextProjector";
+import type { PaAgentContextSummarizer, PaAgentSummaryRequest } from "../src/ai-services/context/PaAgentContextSummarizer";
+import { traceProviderDispatch } from "../src/ai-services/obsidian-fetch";
 
 jest.mock("obsidian");
 const realFetch = globalThis.fetch;
@@ -23,7 +31,8 @@ const image = (n: number): MessageImage => ({ ref: { assetId: `image-${n}`, cont
 const envelope = (body = '正文："海风"\n🌊') => JSON.stringify({ kind: "pa.writing", version: 1, requestId: "writing-1", body, explanation: "参考当前材料" });
 type RequestBody = { stream?: boolean; messages: Array<{ role: string; content: string | Array<Record<string, unknown>> }>; tools?: Array<{ function: { name: string } }> };
 type FixtureTool = { name: string; input: unknown };
-type Reply = { text?: string; finish?: string | null; tool?: FixtureTool; tools?: FixtureTool[]; error?: unknown; httpError?: { status: number; code: string; retryAfter?: string }; onEnd?: () => void };
+type Reply = { text?: string; finish?: string | null; tool?: FixtureTool; tools?: FixtureTool[]; error?: unknown; httpError?: { status: number; code: string; retryAfter?: string };
+    usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; onEnd?: () => void };
 const response = (body: RequestBody, reply: Reply): Response => {
     if (reply.error) throw reply.error;
     if (reply.httpError) return new Response(JSON.stringify({ error: { code: reply.httpError.code, message: "Request rejected; echoed data:image/jpeg;base64,SECRET" } }), {
@@ -34,7 +43,8 @@ const response = (body: RequestBody, reply: Reply): Response => {
     const message = tools.length ? { role: "assistant", content: "", tool_calls: tools.map((tool, index) => ({ id: `call-${index + 1}`, type: "function", function: { name: tool.name, arguments: JSON.stringify(tool.input) } })) }
         : { role: "assistant", content: reply.text ?? "ordinary answer" };
     const finish = reply.finish === undefined ? "stop" : reply.finish;
-    if (!body.stream) { reply.onEnd?.(); return new Response(JSON.stringify({ ...common, object: "chat.completion", choices: [{ index: 0, message, finish_reason: finish }] }), { headers: { "content-type": "application/json" } }); }
+    if (!body.stream) { reply.onEnd?.(); return new Response(JSON.stringify({ ...common, object: "chat.completion", choices: [{ index: 0, message, finish_reason: finish }],
+        ...(reply.usage ? { usage: reply.usage } : {}) }), { headers: { "content-type": "application/json" } }); }
     const frame = (delta: unknown, reason: string | null = null) => `data: ${JSON.stringify({ ...common, object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: reason }] })}\n\n`;
     const frames = tools.length ? [frame({ ...message, tool_calls: message.tool_calls!.map((tool, index) => ({ ...tool, index })) })]
         : [(reply.text ?? "ordinary answer").slice(0, 9), (reply.text ?? "ordinary answer").slice(9, 37), (reply.text ?? "ordinary answer").slice(37)].map((content) => frame({ role: "assistant", content }));
@@ -118,6 +128,292 @@ const pixels = (request: RequestBody) => request.messages.flatMap((message) => A
 const requestText = (request: RequestBody) => request.messages.map((message) => typeof message.content === "string" ? message.content : message.content.filter((part) => part.type === "text").map((part) => part.text).join("")).join("\n");
 
 describe('B-135 production source handling', () => {
+    it.each([
+        { scope: 'notes' as const, hidden: ['webSearch'], visible: ['read_note'] },
+        { scope: 'web' as const, hidden: ['read_note', 'search_memory', 'query_memories', 'get_vault_insights'], visible: [] },
+    ])('keeps $scope source tools out of the physical provider schema', async ({ scope, hidden, visible }) => {
+        const f = fixture([{ text: 'Scoped answer' }]);
+        f.host.settings.webSearchEnabled = true;
+        await f.run({ images: [], prompt: 'Answer within this scope',
+            runSourceSelection: { schemaVersion: 1, scope, selectionId: `tool-${scope}`, userMessageId: `user-${scope}` } });
+        const names = f.requests[0].tools?.map(tool => tool.function.name) ?? [];
+        for (const name of hidden) expect(names).not.toContain(name);
+        for (const name of visible) expect(names).toContain(name);
+    });
+
+    it('rejects a forged web-scope Memory query before its independent port reads anything', async () => {
+        const f = fixture([{ tool: { name: 'query_memories', input: { text: 'private' } } },
+            { text: 'No private Memory was read.' }]);
+        const prepareObservation = jest.fn(async () => { throw new Error('Memory port must not be reached'); });
+        Object.assign(f.host, { memoryManagement: { prepareObservation } });
+        await f.run({ images: [], prompt: 'Web only',
+            runSourceSelection: { schemaVersion: 1, scope: 'web', selectionId: 'web-memory', userMessageId: 'web-user' } });
+        expect(prepareObservation).not.toHaveBeenCalled();
+        expect(f.requests[0].tools?.map(tool => tool.function.name)).not.toContain('query_memories');
+    });
+
+    it('keeps a note-derived combined Web query from reaching MCP after the note is revoked', async () => {
+        const path = 'private/DERIVED_WEB_QUERY.md';
+        const file = { path, stat: { ctime: 1, mtime: 1, size: 32 } };
+        let noteCurrent = true;
+        const webRequest = jest.fn<BuiltinWebSearchRequest>(async () => {
+            throw new Error('A revoked note query reached Web MCP');
+        });
+        const provider = new BuiltinWebSearchProvider({ policy: createBailianWebSearchNetworkPolicy(),
+            apiKey: 'synthetic-web-token', request: webRequest, isEnabled: () => true });
+        const f = fixture([
+            { tool: { name: 'webSearch', input: { query: 'DERIVED_WEB_QUERY_SENTINEL' } },
+                onEnd: () => { noteCurrent = false; } },
+            { text: 'The source was revoked.' },
+        ], { additionalCapabilityProviders: [provider], policyOptions: { licenseTier: 'paid' } });
+        f.host.settings.webSearchEnabled = true;
+        Object.assign(f.host.app.vault, { getAbstractFileByPath: (candidate: string) =>
+            candidate === path && noteCurrent ? file : null });
+        await f.run({ images: [], prompt: 'Find related web sources', chatHistory: [{ role: 'assistant',
+            content: 'DERIVED_WEB_QUERY_SENTINEL', inputLineage: { schemaVersion: 1,
+                completeness: 'complete', dependencies: [{ kind: 'vault', path, via: 'note' }] } }],
+            runSourceSelection: { schemaVersion: 1, scope: 'combined', selectionId: 'combined-web-query',
+                userMessageId: 'combined-user' } });
+        expect(f.requests[0].tools?.map(tool => tool.function.name)).toContain('webSearch');
+        expect(requestText(f.requests[0])).toContain('DERIVED_WEB_QUERY_SENTINEL');
+        expect(webRequest).not.toHaveBeenCalled();
+    });
+
+    it('does not send a pixel-derived combined Web query after the image asset is revoked', async () => {
+        let revokeImage: () => void = () => undefined;
+        const webRequest = jest.fn<BuiltinWebSearchRequest>(async () => {
+            throw new Error('A revoked image query reached Web MCP');
+        });
+        const provider = new BuiltinWebSearchProvider({ policy: createBailianWebSearchNetworkPolicy(),
+            apiKey: 'synthetic-web-token', request: webRequest, isEnabled: () => true });
+        const f = fixture([{ tool: { name: 'webSearch', input: { query: 'PIXEL_DERIVED_QUERY_SENTINEL' } },
+            onEnd: () => revokeImage() }, { text: 'Image source unavailable.' }],
+        { additionalCapabilityProviders: [provider], policyOptions: { licenseTier: 'paid' } });
+        revokeImage = f.invalidate;
+        f.host.settings.webSearchEnabled = true;
+        await f.run({ prompt: 'Find related public images', runSourceSelection: { schemaVersion: 1,
+            scope: 'combined', selectionId: 'combined-image-web', userMessageId: 'image-web-user' } }).catch(() => undefined);
+        expect(pixels(f.requests[0])).toHaveLength(1);
+        expect(webRequest).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])('guards a pixel-derived Memory query at its physical port (revoked=%s)', async revoked => {
+        let revokeImage: () => void = () => undefined;
+        const f = fixture([{ tool: { name: 'search_memory', input: { query: 'PIXEL_DERIVED_MEMORY_SENTINEL' } },
+            onEnd: () => { if (revoked) revokeImage(); } }, { text: 'Memory search finished.' }]);
+        revokeImage = f.invalidate;
+        f.host.settings.memoryEnabled = true;
+        const file = { path: 'notes/allowed.md', extension: 'md' };
+        jest.spyOn(f.host.app.vault, 'getMarkdownFiles').mockReturnValue([file] as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockReturnValue(file as never);
+        jest.spyOn(f.host.memorySearch, 'ensureReadyForChat').mockResolvedValue({ decision: 'use-memory' });
+        const search = jest.spyOn(f.host.memorySearch, 'searchHybrid');
+        await f.run({ prompt: 'Find related notes', runSourceSelection: { schemaVersion: 1,
+            scope: 'combined', selectionId: `combined-image-memory-${revoked}`, userMessageId: 'image-memory-user' } })
+            .catch(error => { if (!revoked) throw error; });
+        expect(pixels(f.requests[0])).toHaveLength(1);
+        expect(search).toHaveBeenCalledTimes(revoked ? 0 : 1);
+    });
+
+    it('rechecks a pixel-derived Memory query after preflight and before its physical search', async () => {
+        const f = fixture([{ tool: { name: 'search_memory', input: { query: 'LATE_PIXEL_MEMORY_SENTINEL' } } },
+            { text: 'Image source unavailable.' }]);
+        f.host.settings.memoryEnabled = true;
+        const file = { path: 'notes/allowed.md', extension: 'md' };
+        jest.spyOn(f.host.app.vault, 'getMarkdownFiles').mockReturnValue([file] as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockReturnValue(file as never);
+        jest.spyOn(f.host.memorySearch, 'ensureReadyForChat').mockImplementation(async () => {
+            f.invalidate();
+            return { decision: 'use-memory' };
+        });
+        const search = jest.spyOn(f.host.memorySearch, 'searchHybrid');
+        await f.run({ prompt: 'Find related notes', runSourceSelection: { schemaVersion: 1,
+            scope: 'combined', selectionId: 'combined-image-memory-late', userMessageId: 'image-memory-user' } })
+            .catch(() => undefined);
+        expect(pixels(f.requests[0])).toHaveLength(1);
+        expect(search).not.toHaveBeenCalled();
+    });
+
+    it.each(['web', 'combined'] as const)('sends a current-user %s query to the admitted Web provider', async scope => {
+        const webRequest = jest.fn<BuiltinWebSearchRequest>(async () => ({ status: 200, body: {
+            results: [{ title: 'Public result', url: 'https://example.com/result', snippet: 'Public snippet' }],
+        } }));
+        const provider = new BuiltinWebSearchProvider({ policy: createBailianWebSearchNetworkPolicy(),
+            apiKey: 'synthetic-web-token', request: webRequest, isEnabled: () => true });
+        const f = fixture([{ tool: { name: 'webSearch', input: { query: 'PUBLIC_USER_WEB_QUERY_SENTINEL' } } },
+            { text: 'Public result received.' }],
+        { additionalCapabilityProviders: [provider], policyOptions: { licenseTier: 'paid' } });
+        f.host.settings.webSearchEnabled = true;
+        await f.run({ images: [], prompt: 'PUBLIC_USER_WEB_QUERY_SENTINEL',
+            runSourceSelection: { schemaVersion: 1, scope, selectionId: `current-${scope}`,
+                userMessageId: `current-user-${scope}` } });
+        expect(webRequest).toHaveBeenCalledTimes(1);
+        expect(webRequest.mock.calls[0]?.[0]?.body).toMatchObject({ query: 'PUBLIC_USER_WEB_QUERY_SENTINEL' });
+    });
+
+    it('saves a legitimate scoped Writing artifact after its stream closes and still rejects note revocation', async () => {
+        const path = 'notes/WRITING_CONTEXT.md';
+        const file = { path, extension: 'md', stat: { ctime: 1, mtime: 1, size: 1 } };
+        let liveFile: typeof file | null = file;
+        const f = fixture([{ text: envelope('Scoped writing body') }]);
+        Object.assign(f.host.app.workspace, { getActiveViewOfType: () => ({ file }) });
+        Object.assign(f.host.app.vault, { getAbstractFileByPath: (candidate: string) =>
+            candidate === path ? liveFile : null });
+        await f.run({ images: [], prompt: 'Write using the visible note', writingRequest: { requestId: 'writing-1' },
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'writing-scope',
+                userMessageId: 'writing-user' } });
+        const artifact = f.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> =>
+            event.kind === 'writing-artifact');
+        if (!artifact?.generationInput || !artifact.isSourceCurrent) throw new Error('Missing Writing source receipt');
+        expect(generationInputSnapshotInputLineage(artifact.generationInput).completeness).toBe('complete');
+        expect(artifact.isSourceCurrent()).toBe(true);
+        let stored: WritingVersion | undefined;
+        const versions = new WritingVersionService({
+            getWritingVersion: async () => null,
+            listWritingVersions: async () => stored ? [stored] : [],
+            putWritingVersion: async (version, assertSourceCurrent) => {
+                assertSourceCurrent?.(); stored = version;
+            },
+        });
+        const version = await versions.create({ requestId: artifact.requestId, messageId: artifact.messageId,
+            conversationId: 'scoped-writing', turnIndex: 0, text: artifact.body, images: [],
+            generationInput: artifact.generationInput }, artifact.isSourceCurrent);
+        expect(version.text).toBe('Scoped writing body');
+        expect(stored?.id).toBe(version.id);
+        liveFile = null;
+        expect(artifact.isSourceCurrent()).toBe(false);
+    });
+
+    it('does not carry a published note-directory path into the next web request without any note read', async () => {
+        const path = 'private/NOTE_DIRECTORY_SENTINEL.md';
+        const file = { path, stat: { mtime: 1, size: 1 } };
+        const notes = fixture([{ text: path }]);
+        Object.assign(notes.host.app.workspace, { getActiveViewOfType: () => ({ file }) });
+        Object.assign(notes.host.app.vault, { getAbstractFileByPath: (candidate: string) => candidate === path ? file : null });
+        await notes.run({ images: undefined, prompt: 'Describe the visible note',
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'notes-choice',
+                userMessageId: 'notes-user' } });
+        const answer = notes.lifecycle.find(event => event.type === 'message_end'
+            && event.message.role === 'assistant');
+        if (answer?.type !== 'message_end' || answer.message.role !== 'assistant') {
+            throw new Error('Missing canonical answer lineage');
+        }
+        jest.restoreAllMocks();
+        const web = fixture([{ text: 'Web answer' }]);
+        web.host.settings.webSearchEnabled = true;
+        await web.run({ images: undefined, prompt: 'CURRENT_WEB_USER_KEEP',
+            chatHistory: [
+                { role: 'assistant', content: path, inputLineage: answer.message.inputLineage },
+                { role: 'assistant', content: 'PUBLIC_WEB_KEEP', inputLineage: {
+                    schemaVersion: 1, completeness: 'complete',
+                    dependencies: [{ kind: 'web', providerId: 'web', resultKey: 'public-hit' }],
+                } },
+            ], runSourceSelection: { schemaVersion: 1, scope: 'web', selectionId: 'web-choice',
+                userMessageId: 'web-user' } });
+
+        expect(requestText(notes.requests[0])).toContain(path);
+        expect(requestText(web.requests[0])).toContain('CURRENT_WEB_USER_KEEP');
+        expect(requestText(web.requests[0])).toContain('PUBLIC_WEB_KEEP');
+        expect(requestText(web.requests[0])).not.toContain(path);
+        expect(answer.message.inputLineage?.dependencies).toContainEqual({ kind: 'vault', path, via: 'note' });
+    });
+
+    it('omits private history, automatic Memory context, and its image index from a web-scope physical request', async () => {
+        const f = fixture([{ text: 'Web answer' }]);
+        f.host.settings.webSearchEnabled = true;
+        f.host.getMemoryExtractionPromptContext.mockReturnValue({
+            userProfile: 'PRIVATE_PROFILE_SENTINEL',
+        });
+        const note: ChatMessage = { role: 'assistant', content: 'PRIVATE_NOTE_SENTINEL', images: [image(3)],
+            inputLineage: { schemaVersion: 1, completeness: 'complete',
+                dependencies: [{ kind: 'vault', path: 'private/note.md', via: 'note' }] } };
+        const web: ChatMessage = { role: 'assistant', content: 'PUBLIC_WEB_SENTINEL',
+            inputLineage: { schemaVersion: 1, completeness: 'complete',
+                dependencies: [{ kind: 'web', providerId: 'web', resultKey: 'hit-1' }] } };
+        await f.run({ prompt: 'Summarize the web result', chatHistory: [note, web],
+            runSourceSelection: { schemaVersion: 1, scope: 'web', selectionId: 'choice-1',
+                userMessageId: 'current-user' } });
+        expect(f.requests).toHaveLength(1);
+        expect(requestText(f.requests[0])).toContain('PUBLIC_WEB_SENTINEL');
+        expect(requestText(f.requests[0])).not.toMatch(/PRIVATE_NOTE_SENTINEL|PRIVATE_PROFILE_SENTINEL|private\/note\.md|image-3/);
+        expect(f.host.getMemoryExtractionPromptContext).not.toHaveBeenCalled();
+        expect(pixels(f.requests[0])).toHaveLength(1);
+        const answer = f.lifecycle.find(event => event.type === 'message_end'
+            && event.message.role === 'assistant');
+        expect(answer?.type === 'message_end' ? answer.message.inputLineage : undefined).toMatchObject({
+            completeness: 'complete', dependencies: expect.arrayContaining([
+                { kind: 'web', providerId: 'web', resultKey: 'hit-1' },
+                { kind: 'user-text', messageId: 'current-user' },
+            ]),
+        });
+    });
+
+    it('keeps an unproven automatic Personal projection out of a notes-scoped physical body', async () => {
+        const f = fixture([{ text: 'Current user answer' }]);
+        f.host.getMemoryExtractionPromptContext.mockReturnValue({ userProfile: 'LEGACY_PROFILE_SCOPE_SENTINEL' });
+        await f.run({ images: undefined, prompt: 'Answer from what I supplied',
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'notes-background',
+                userMessageId: 'current-user' } });
+        expect(f.requests).toHaveLength(1);
+        expect(requestText(f.requests[0])).toContain('Answer from what I supplied');
+        expect(requestText(f.requests[0])).not.toContain('LEGACY_PROFILE_SCOPE_SENTINEL');
+    });
+
+    it('does not send or budget an unproven legacy Writing parent in a scoped Chat request', async () => {
+        const f = fixture([{ text: envelope('Fresh body') }]);
+        await f.run({ images: undefined, prompt: 'Write a fresh paragraph',
+            writingRequest: { requestId: 'writing-1' },
+            writingContext: { parentVersionId: 'legacy-parent',
+                text: 'LEGACY_PARENT_SENTINEL',
+                textHash: 'a'.repeat(64), associatedImages: [] },
+            runSourceSelection: { schemaVersion: 1, scope: 'notes',
+                selectionId: 'scope-writing', userMessageId: 'writing-user' } });
+        expect(f.requests).toHaveLength(1);
+        expect(requestText(f.requests[0])).not.toContain('LEGACY_PARENT_SENTINEL');
+    });
+
+    it('does not reject a scoped turn because an excluded legacy parent exceeds the prompt budget', async () => {
+        const f = fixture([{ text: envelope('Fresh body') }]);
+        await f.run({ images: undefined, prompt: 'Write a fresh paragraph',
+            writingRequest: { requestId: 'writing-1' },
+            writingContext: { parentVersionId: 'legacy-parent',
+                text: `EXCLUDED_PARENT${'x'.repeat(200_000)}`,
+                textHash: 'a'.repeat(64), associatedImages: [] },
+            runSourceSelection: { schemaVersion: 1, scope: 'notes',
+                selectionId: 'scope-budget', userMessageId: 'writing-user' } });
+        expect(f.requests).toHaveLength(1);
+        expect(requestText(f.requests[0])).not.toContain('EXCLUDED_PARENT');
+    });
+
+    it('retains a complete explicit Writing parent when its full ancestry fits the selected scope', async () => {
+        const f = fixture([{ text: envelope('Continued body') }]);
+        const textHash = 'a'.repeat(64);
+        await f.run({ images: undefined, prompt: 'Continue the parent',
+            writingRequest: { requestId: 'writing-1' },
+            writingContext: { parentVersionId: 'known-parent', text: 'KNOWN_PARENT_SENTINEL',
+                textHash, associatedImages: [],
+                inputLineage: { schemaVersion: 1, completeness: 'complete', dependencies: [
+                    { kind: 'user-text', messageId: 'parent-user' },
+                    { kind: 'writing-version', versionId: 'known-parent', textHash },
+                ] } },
+            runSourceSelection: { schemaVersion: 1, scope: 'notes',
+                selectionId: 'scope-parent', userMessageId: 'writing-user' } });
+        expect(requestText(f.requests[0])).toContain('KNOWN_PARENT_SENTINEL');
+    });
+
+    it('does not prepare automatic Writing style in web scope', async () => {
+        const f = fixture([{ text: envelope('Web writing') }]);
+        const prepareWritingStyle = jest.fn(async () => ({
+            context: 'PRIVATE_STYLE_SENTINEL', revisionIds: ['private-style'],
+            isCurrent: () => true,
+        }));
+        await f.run({ images: undefined, prompt: 'Write from web material',
+            writingRequest: { requestId: 'writing-1' }, prepareWritingStyle,
+            runSourceSelection: { schemaVersion: 1, scope: 'web',
+                selectionId: 'scope-web-style', userMessageId: 'writing-user' } });
+        expect(prepareWritingStyle).not.toHaveBeenCalled();
+        expect(requestText(f.requests[0])).not.toContain('PRIVATE_STYLE_SENTINEL');
+    });
     it('does not create a writing artifact when a supplied note disappears after the final request', async () => {
         const prompt = '根据当前笔记写一段文字';
         let live = true;
@@ -228,7 +524,8 @@ describe('B-135 production source handling', () => {
         ];
         const original = JSON.stringify(history);
         const f = fixture(body => ({ text: body.stream ? '继续第二个方案' : JSON.stringify({
-            goals: [], constraints: [], decisions: [], completed: [], open_questions: [], facts: [],
+            goals: [{ text: '保留我的原始要求', sourceMessages: [1] }],
+            constraints: [], decisions: [], completed: [], open_questions: [], facts: [],
         }) }));
         // A is absent. Legacy messages without source metadata retain continuity.
         await f.run({ images: undefined, prompt: '继续', chatHistory: history,
@@ -450,15 +747,20 @@ describe('B-135 production source handling', () => {
         const artifact = f.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> =>
             event.kind === 'writing-artifact');
         expect(artifact?.generationInput).toMatchObject({
+            schemaVersion: 2,
             task: { state: 'identified', sources: [expect.objectContaining({
                 purpose: 'task_material',
-                revision: { state: 'identified', scope: 'current_process', path: current.path, mtime: 23, size: 41 },
+                path: current.path,
+                revision: { state: 'identified', basis: 'editor_snapshot',
+                    digest: { algorithm: 'sha1', scope: 'editor_projection', value: expect.stringMatching(/^[a-f0-9]{40}$/) } },
             })] },
+            lineage: { state: 'unknown' },
             personal: { state: 'identified', mode: 'governed',
                 revisions: [{ claimId: 'personal-claim', revisionId: 'personal-revision' }] },
             insights: { state: 'unknown', mode: 'governed' },
             style: { state: 'identified', revisionIds: ['authorized-style-revision'] },
         });
+        expect(artifact?.generationInput?.task.sources[0].revision).not.toHaveProperty('stat');
         expect(JSON.stringify(artifact?.generationInput)).not.toContain(other.path);
     });
 });
@@ -580,7 +882,182 @@ describe.each([
     });
 });
 
+function repeatedSummaryPreparation(calls: number, preserveCoveredSource: boolean): PaAgentContextSummarizer {
+    return {
+        prepareHistory: async (input: { history: readonly ChatMessage[];
+            invoke: (payload: PaAgentSummaryRequest, signal: AbortSignal) => Promise<unknown>;
+            signal?: AbortSignal }) => {
+            const source = input.history[0];
+            const payload: PaAgentSummaryRequest = {
+                messages: [{ role: 'system', content: 'Summarize the bound source as JSON.' },
+                    { role: 'user', content: JSON.stringify({ sourceMessages: [1] }) }],
+                maxOutputTokens: 256,
+                bindingSources: [{ index: 1, role: source.role, content: source.content }],
+                bindingSourceMessages: [source],
+            };
+            for (let index = 0; index < calls; index++) {
+                await input.invoke(payload, input.signal ?? new AbortController().signal);
+            }
+            return preserveCoveredSource ? { sourceMessages: input.history, text: JSON.stringify({
+                goals: [], constraints: [{ text: 'Export must remain offline.', sourceMessages: [1] }],
+                decisions: [], completed: [], open_questions: [], facts: [],
+            }) } : undefined;
+        },
+        prepareTool: async () => undefined,
+    } as unknown as PaAgentContextSummarizer;
+}
+
 describe('B-135 T14 selected-image history summary', () => {
+    it.each(['cancelled', 'source_changed'] as const)(
+    'keeps late summary usage but never records %s response text or reasoning in Debug', async state => {
+        const controller = new AbortController();
+        let current = true;
+        const debugEvents: AgentDebugObservation[] = [];
+        const debugRecorder: AgentDebugRunRecorder = {
+            captureId: 'late-summary-debug', enabled: () => true,
+            bindRun: () => undefined, finish: () => undefined,
+            observe: event => { debugEvents.push(event); },
+        };
+        const f = fixture(() => { throw new Error('The fake model must not use HTTP'); },
+            { contextSummarizer: repeatedSummaryPreparation(1, false) });
+        const createModel = AIUtils.prototype.createChatModel as jest.MockedFunction<AIUtils['createChatModel']>;
+        const normalCreateModel = createModel.getMockImplementation()!;
+        createModel.mockImplementation(async function (this: AIUtils, temperature, modelOptions) {
+            if (modelOptions?.maxTokens !== 256) return normalCreateModel.call(this, temperature, modelOptions);
+            return ({
+            invoke: async () => {
+                await traceProviderDispatch(() => Promise.resolve({ status: 200 }), 'native', undefined,
+                    '{"messages":[]}', () => false, { call: modelOptions.agentDebugCall });
+                if (state === 'cancelled') controller.abort(); // The model ignores its signal and resolves late.
+                else current = false;
+                return { content: 'LATE_CANCELLED_SUMMARY',
+                    additional_kwargs: { reasoning_content: 'LATE_CANCELLED_REASON' },
+                    usage_metadata: { input_tokens: 5, output_tokens: 2 } };
+            },
+            }) as never;
+        });
+        let accounting: { knownPhysicalTokens: number; attempts: Array<{ purpose: string; totalTokens?: number }> } | undefined;
+        await f.run({ images: undefined, prompt: 'Continue with prior requirements',
+            chatHistory: [{ role: 'user', content: 'Export must remain offline. ' + 'context '.repeat(1_000) },
+                { role: 'assistant', content: 'Keep this requirement. ' + 'detail '.repeat(1_000) }],
+            historyBudgetChars: 1200, signal: controller.signal, isCurrent: () => current, debugRecorder,
+            onUsageAccounting: snapshot => { accounting = snapshot; } }).catch(() => undefined);
+        expect(createModel.mock.calls.some(([, options]) => options?.maxTokens === 256)).toBe(true);
+        expect(accounting?.knownPhysicalTokens).toBe(7);
+        expect(accounting?.attempts).toEqual(expect.arrayContaining([expect.objectContaining({
+            purpose: 'context_summary', totalTokens: 7,
+        })]));
+        expect(debugEvents.some(event => event.text?.includes('LATE_CANCELLED_SUMMARY')
+            || event.reasoning?.includes('LATE_CANCELLED_REASON'))).toBe(false);
+        expect(f.events.some(event => event.kind === 'answer-snapshot')).toBe(false);
+    });
+
+    it('bounds actual auxiliary SDK retries at 30 physical requests and leaves required context in local overflow', async () => {
+        const history: ChatMessage[] = [
+            { role: 'user', content: 'Export must remain offline. ' + 'context '.repeat(1_000) },
+            { role: 'assistant', content: 'Keep this requirement. ' + 'detail '.repeat(1_000) },
+        ];
+        const f = fixture((_body, index) => index === 29
+            ? { httpError: { status: 429, code: 'rate_limit', retryAfter: '0' } }
+            : { text: '{}' }, { contextSummarizer: repeatedSummaryPreparation(30, false) }, 1);
+        let accounting: { attempts: Array<{ purpose: string; estimatedPromptTokens?: number }> } | undefined;
+        await expect(f.run({ images: undefined, prompt: 'Compare all prior requirements',
+            chatHistory: history, historyBudgetChars: 1200,
+            onUsageAccounting: snapshot => { accounting = snapshot; } }))
+            .rejects.toThrow('context_local_overflow');
+        expect(f.requests).toHaveLength(30);
+        expect(f.requests.every(request => request.stream === false)).toBe(true);
+        expect(f.requests.every(request => Number((request as RequestBody & { max_tokens?: number }).max_tokens) === 256)).toBe(true);
+        expect(f.sdkAttempts).toHaveLength(31); // The SDK tried one more retry; local admission blocked its fetch.
+        expect(f.sdkAttempts.at(-1)?.retryCount).toBe('1');
+        const summaryAttempts = accounting?.attempts.filter(attempt => attempt.purpose === 'context_summary') ?? [];
+        expect(summaryAttempts).toHaveLength(30);
+        expect(summaryAttempts.every(attempt => (attempt.estimatedPromptTokens ?? 0) > 0)).toBe(true);
+        expect(summaryAttempts.reduce((total, attempt) => total + attempt.estimatedPromptTokens! + 256, 0))
+            .toBeLessThanOrEqual(90_000);
+        expect(f.events.some(event => event.kind === 'answer-snapshot')).toBe(false);
+    });
+
+    it('uses SDK reported prompt usage to stop later optional summaries before the request cap', async () => {
+        const history: ChatMessage[] = [
+            { role: 'user', content: 'Export must remain offline. ' + 'context '.repeat(1_000) },
+            { role: 'assistant', content: 'Keep this requirement. ' + 'detail '.repeat(1_000) },
+        ];
+        const f = fixture(() => ({ text: '{}', usage: {
+            prompt_tokens: 10_000, completion_tokens: 20, total_tokens: 10_020,
+        } }), { contextSummarizer: repeatedSummaryPreparation(10, false) });
+        let accounting: { attempts: Array<{ purpose: string; measuredPromptTokens?: number;
+            estimatedPromptTokens?: number }> } | undefined;
+        await expect(f.run({ images: undefined, prompt: 'Compare all prior requirements',
+            chatHistory: history, historyBudgetChars: 1200,
+            onUsageAccounting: snapshot => { accounting = snapshot; } }))
+            .rejects.toThrow('context_local_overflow');
+        expect(f.requests).toHaveLength(9); // The tenth optional request exceeds 90k known-or-reserved tokens.
+        const summaries = accounting?.attempts.filter(attempt => attempt.purpose === 'context_summary') ?? [];
+        expect(summaries).toHaveLength(9);
+        expect(summaries.every(attempt => attempt.measuredPromptTokens === 10_000
+            && (attempt.estimatedPromptTokens ?? Infinity) < 10_000)).toBe(true);
+        expect(f.events.some(event => event.kind === 'answer-snapshot')).toBe(false);
+    });
+
+    it('lets the main answer continue when the final admitted summary already preserves required context', async () => {
+        const history: ChatMessage[] = [
+            { role: 'user', content: 'Export must remain offline. ' + 'context '.repeat(1_000) },
+            { role: 'assistant', content: 'Keep this requirement. ' + 'detail '.repeat(1_000) },
+        ];
+        const f = fixture((body, index) => index < 30 ? { text: '{}' } : { text: 'Final answer from preserved context.' },
+            { contextSummarizer: repeatedSummaryPreparation(30, true) });
+        let accounting: { attempts: Array<{ purpose: string }> } | undefined;
+        await f.run({ images: undefined, prompt: 'Compare all prior requirements',
+            chatHistory: history, historyBudgetChars: 1200,
+            onUsageAccounting: snapshot => { accounting = snapshot; } });
+        expect(f.requests.filter(request => request.stream === false)).toHaveLength(30);
+        expect(f.requests.filter(request => request.stream === true)).toHaveLength(1);
+        expect(accounting?.attempts.filter(attempt => attempt.purpose === 'context_summary')).toHaveLength(30);
+        expect(f.events.some(event => event.kind === 'answer-snapshot')).toBe(true);
+    });
+
+    it('retains measured summary usage when the image source changes after HTTP response', async () => {
+        let invalidate: () => void = () => undefined;
+        const debugEvents: AgentDebugObservation[] = [];
+        const debugRecorder: AgentDebugRunRecorder = {
+            captureId: 'stale-summary-debug', enabled: () => true,
+            bindRun: () => undefined, finish: () => undefined,
+            observe: event => { debugEvents.push(event); },
+        };
+        const f = fixture((body) => body.stream ? { text: 'Stale summary must not reach an answer.' } : {
+            text: JSON.stringify({ goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
+                facts: [{ text: 'STALE SUMMARY RESPONSE', sourceMessages: [1] }] }),
+            usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+            onEnd: () => invalidate(),
+        });
+        invalidate = f.invalidate;
+        let accounting: { attempts: Array<{ purpose: string; totalTokens?: number; complete: boolean }>; knownPhysicalTokens: number } | undefined;
+        await f.run({ prompt: 'Continue our discussion', historyBudgetChars: 1200,
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'summary-stale-image', userMessageId: 'summary-user' },
+            chatHistory: [{ role: 'user', content: 'Historical source fact. ' + 'context '.repeat(800), images: [image(1)],
+                inputLineage: { schemaVersion: 1, completeness: 'complete', dependencies: [
+                    { kind: 'user-text', messageId: 'history-user' },
+                    { kind: 'attachment', ownerMessageId: 'history-user', ref: image(1).ref },
+                ] } },
+            { role: 'assistant', content: 'Prior alternatives. ' + 'detail '.repeat(800),
+                inputLineage: { schemaVersion: 1, completeness: 'complete', dependencies: [
+                    { kind: 'user-text', messageId: 'history-user' },
+                    { kind: 'attachment', ownerMessageId: 'history-user', ref: image(1).ref },
+                ] } }],
+            debugRecorder,
+            onUsageAccounting: snapshot => { accounting = snapshot; } }).catch(() => undefined);
+        expect(f.requests.some(request => request.stream === false)).toBe(true);
+        expect(accounting?.attempts).toEqual(expect.arrayContaining([expect.objectContaining({
+            purpose: 'context_summary', totalTokens: 7, complete: false,
+        })]));
+        expect(accounting?.knownPhysicalTokens).toBeGreaterThanOrEqual(7);
+        expect(f.events.some(event => event.kind === 'answer-snapshot'
+            && JSON.stringify(event).includes('STALE SUMMARY RESPONSE'))).toBe(false);
+        expect(debugEvents.some(event => event.text?.includes('STALE SUMMARY RESPONSE')
+            || event.reasoning?.includes('STALE SUMMARY RESPONSE'))).toBe(false);
+    });
+
     it.each(['valid', 'revoked'] as const)('preserves selected-image summary preparation for %s sources', async state => {
         const f = fixture(body => ({ text: body.stream ? 'Current answer' : JSON.stringify({
             goals: [], constraints: [], decisions: [], completed: [], open_questions: [],

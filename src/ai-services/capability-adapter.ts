@@ -31,10 +31,11 @@ import {
 import { createToolFailureResult } from "./chat-tool-execution-helpers";
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 import { getErrorType } from "./agent-utils";
-import type { ChatAgentSource } from "./chat-types";
+import type { ChatAgentSource, ObservedSourceRevision } from "./chat-types";
 import { createSourceDedupKey } from "./source-store";
+import { parseObservedSourceRevision } from "./generation-input-snapshot";
 import { parseMemoryManagementEvidence } from "./memory-management-evidence";
-import { parseVaultObservationEvidence, stableJson } from "./vault-observation-evidence";
+import { parseVaultObservationEvidence, stableJson, type VaultObservationEvidence } from "./vault-observation-evidence";
 
 export interface ChatToolCapabilityAdapterOptions {
     providerId: string;
@@ -62,12 +63,6 @@ export function chatToolResultToAgentCapabilityResult(
     providerId: string,
     result: ChatToolResult<unknown>,
 ): AgentCapabilityResult {
-    const visibleRecords = chatSourcesToSourceRecords(
-        result.sources,
-        definition.name,
-        providerId,
-        definition.sourceBoundary,
-    );
     // Preserve only explicitly host-only dependencies, never arbitrary legacy
     // source metadata that could grant citation or visible-source eligibility.
     const dependencyRecords = (result.sourceRecords ?? []).filter(record =>
@@ -81,6 +76,13 @@ export function chatToolResultToAgentCapabilityResult(
     const managementEvidence = result.memoryManagementContractVersion === 1
         ? parseMemoryManagementEvidence(result.memoryManagementEvidence)
         : { ok: false as const, reason: "missing evidence" };
+    const visibleRecords = chatSourcesToSourceRecords(
+        result.sources,
+        definition.name,
+        providerId,
+        definition.sourceBoundary,
+        evidence.ok && evidence.evidence.tool === definition.name ? evidence.evidence : undefined,
+    );
     if (result.ok && result.vaultObservationContractVersion === 1
         && (!evidence.ok || evidence.evidence.tool !== definition.name)) {
         return {
@@ -113,6 +115,8 @@ export function chatToolResultToAgentCapabilityResult(
         inputSummary: result.inputSummary,
         sources: result.sources,
         sourceRecords: [...visibleRecords, ...dependencyRecords],
+        resultFact: result.ok ? result.resultFact
+            : { kind: "unavailable", capability: definition.name, reason: "tool_unavailable" },
         ...(evidence.ok && evidence.evidence.tool === definition.name ? {
             vaultObservationEvidence: evidence.evidence,
             vaultObservationContractVersion: 1 as const,
@@ -134,18 +138,52 @@ function chatSourcesToSourceRecords(
     capabilityName: string,
     providerId: string,
     sourceBoundary: AgentCapabilitySourceBoundary,
+    evidence?: VaultObservationEvidence,
 ): SourceRecord[] {
-    return sources.map((source) => ({
-        kind: sourceBoundaryToSourceRecordKind(sourceBoundary),
-        dedupKey: createSourceDedupKey(source.path),
-        capabilityName,
-        providerId,
-        sourceBoundary,
-        path: source.path,
-        chunkIndex: source.chunkIndex,
-        score: source.score,
-        citationEligible: sourceBoundary === "memory",
-    }));
+    return sources.map((source, index) => {
+        const observedRevision = parseObservedSourceRevision(source.observedRevision)
+            ?? observationItemRevision(evidence, index, source.path);
+        return {
+            kind: sourceBoundaryToSourceRecordKind(sourceBoundary),
+            dedupKey: createSourceDedupKey(source.path),
+            capabilityName,
+            providerId,
+            sourceBoundary,
+            path: source.path,
+            chunkIndex: source.chunkIndex,
+            score: source.score,
+            citationEligible: sourceBoundary === "memory",
+            ...(observedRevision ? { observedRevision } : {}),
+        };
+    });
+}
+
+function observationItemRevision(
+    evidence: VaultObservationEvidence | undefined,
+    index: number,
+    path: string,
+): ObservedSourceRevision | undefined {
+    if (!evidence) return undefined;
+    const item = evidence.items[index];
+    if (!item || item.path !== path) return undefined;
+    if (evidence.tool === "read_note" && item.kind === "read-result") {
+        return { state: "identified", basis: "vault_read", digest: { algorithm: "sha1",
+            scope: item.part === "body" ? "body_partition" : "properties_partition", value: item.contentHash } };
+    }
+    if (evidence.tool === "query_notes" && item.kind === "query-match") {
+        return { state: "identified", basis: "metadata_snapshot", digest: { algorithm: "sha1",
+            scope: "metadata_projection", value: item.metadataDigest } };
+    }
+    if (evidence.tool === "search_vault_snippets" && item.kind === "snippet-match") {
+        return { state: "identified", basis: "vault_read", digest: { algorithm: "sha1",
+            scope: "snippet_projection", value: item.outputDigest } };
+    }
+    if (evidence.tool === "inspect_obsidian_note" && item.kind === "inspect-result") {
+        return { state: "identified", basis: item.bodyHash ? "vault_read" : "metadata_snapshot",
+            digest: { algorithm: "sha1", scope: item.bodyHash ? "body_partition" : "metadata_projection",
+                value: item.bodyHash ?? item.cacheProjectionDigest } };
+    }
+    return undefined;
 }
 
 function sourceBoundaryToSourceRecordKind(

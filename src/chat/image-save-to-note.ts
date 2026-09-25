@@ -34,8 +34,9 @@ export class GeneratedImageNotePickerModal extends Modal {
 
 /** Promote a generated original once, then append a Markdown embed to the chosen note. */
 export async function saveGeneratedImageToNote(app: App, images: ImageAssetService,
-    ref: ImageRef, note: TFile, operationId: string): Promise<void> {
+    ref: ImageRef, note: TFile, operationId: string, assertSourceCurrent?: () => void): Promise<void> {
     const requireNote = () => {
+        assertSourceCurrent?.();
         if (note.extension !== 'md' || app.vault.getAbstractFileByPath(note.path) !== note) {
             throw new Error('Selected note is no longer available.');
         }
@@ -48,9 +49,12 @@ export async function saveGeneratedImageToNote(app: App, images: ImageAssetServi
         const filename = imagePath.split('/').pop();
         if (!filename) throw new Error('Generated image has no filename.');
         const result = await images.promoteToNote(ref, { sourcePath: imagePath, operationId,
+            ...(assertSourceCurrent ? { isCurrent: () => { assertSourceCurrent(); return true; } } : {}),
             targetPath: async () => {
                 requireNote();
-                return app.fileManager.getAvailablePathForAttachment(filename, note.path);
+                const path = await app.fileManager.getAvailablePathForAttachment(filename, note.path);
+                requireNote();
+                return path;
             } });
         imagePath = result.path;
     }

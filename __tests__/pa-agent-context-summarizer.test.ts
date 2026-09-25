@@ -3,6 +3,10 @@ import type { ChatMessage } from "../src/ai-services/chat-types";
 import { PaAgentContextSummarizer, type PaAgentSummaryInvoke, type PaAgentSummaryRequest } from "../src/ai-services/context/PaAgentContextSummarizer";
 import { planHistoryContext } from "../src/ai-services/context/PaAgentHistoryContextPlan";
 import type { PaAgentToolSummarySource } from "../src/ai-services/context/PaAgentContextSummaryTypes";
+import { isCurrentHistorySummary } from '../src/ai-services/context/PaAgentContextSummaryTypes';
+import { createPaAgentAuxiliarySummaryBudget, createPaAgentSummaryAttemptClock } from '../src/ai-services/pa-agent-runtime';
+import { PaAgentRunUsageLedger } from '../src/ai-services/agent-usage-ledger';
+import { createPaAgentPersistedTurn } from '../src/ai-services/pa-agent-history';
 
 // Keep default cache/lifecycle cases within one request; chunking cases set larger sizes explicitly.
 function history(turns = 12, size = 250): ChatMessage[] {
@@ -106,6 +110,70 @@ describe("PaAgentContextSummarizer", () => {
         expect(body(invoke.mock.calls[1][0]).sourceMessages[0].index).toBe(1);
     });
 
+    it('invalidates a cached summary when a source receipt mutates under the same message text', async () => {
+        const input = history();
+        input[1].memoryMetadata = { hasMemoryContent: false, allowedMemorySourcePaths: [],
+            sourceRecords: [{ kind: 'context-used', dedupKey: 'note-a',
+                sourceBoundary: 'read-only-tool', path: 'notes/a.md' }] };
+        const invoke = jest.fn(respond);
+        const coordinator = new PaAgentContextSummarizer();
+        await coordinator.prepareHistory({ history: input, historyBudgetChars: 3_000, invoke });
+        input[1].memoryMetadata.sourceRecords![0].path = 'notes/b.md';
+        await coordinator.prepareHistory({ history: input, historyBudgetChars: 3_000, invoke });
+        expect(invoke).toHaveBeenCalledTimes(2);
+        expect(body(invoke.mock.calls[1][0]).previousSummary).toBeNull();
+    });
+
+    it('uses canonical source truth and run scope to invalidate same-text summaries', () => {
+        const base = history(1);
+        const oldMetadata = { hasMemoryContent: false, allowedMemorySourcePaths: [],
+            sourceRecords: [{ kind: 'context-used' as const, dedupKey: 'old',
+                sourceBoundary: 'read-only-tool' as const, path: 'notes/old.md' }] };
+        const makeAssistant = (path: string): ChatMessage => ({ ...base[1],
+            memoryMetadata: oldMetadata,
+            canonicalTurn: { schemaVersion: 1, runId: 'run', turnId: 'turn', messages: [],
+                sourceRecords: [{ kind: 'context-used', dedupKey: path,
+                    sourceBoundary: 'read-only-tool', path }] } as never,
+        });
+        const before = [base[0], makeAssistant('notes/a.md')];
+        const summary = { text: JSON.stringify(schema()), sourceMessages: before };
+        expect(isCurrentHistorySummary(summary, [base[0], makeAssistant('notes/b.md')])).toBe(false);
+        const scoped = [base[0], { ...makeAssistant('notes/a.md'),
+            runSourceSelection: { schemaVersion: 1 as const, scope: 'notes' as const,
+                selectionId: 'scope-a', userMessageId: 'user' } }];
+        const changedScope = [base[0], { ...scoped[1],
+            runSourceSelection: { schemaVersion: 1 as const, scope: 'web' as const,
+                selectionId: 'scope-b', userMessageId: 'user' } }];
+        expect(isCurrentHistorySummary({ ...summary, sourceMessages: scoped }, changedScope)).toBe(false);
+    });
+
+    it('retains canonical action and derived tool sources in a cached history snapshot', async () => {
+        const input = history();
+        const oldMetadata = { hasMemoryContent: false, allowedMemorySourcePaths: [],
+            sourceRecords: [{ kind: 'context-used' as const, dedupKey: 'old',
+                sourceBoundary: 'read-only-tool' as const, path: 'notes/old.md' }] };
+        const canonical = (path: string) => createPaAgentPersistedTurn({
+            runId: 'run', turnId: 'turn', messages: [
+                { role: 'assistant', id: 'action', timestamp: 1,
+                    content: [{ type: 'toolCall', id: 'call', name: 'read_note', input: { path } }] },
+                { role: 'toolResult', id: 'result', toolCallId: 'call', toolName: 'read_note',
+                    timestamp: 2, isError: false, content: { promptText: 'Evidence', includeInNextPrompt: true,
+                        sourceRecords: [{ kind: 'context-used', dedupKey: path,
+                            sourceBoundary: 'read-only-tool', path }] } },
+            ],
+        });
+        input[1] = { ...input[1], memoryMetadata: oldMetadata, canonicalTurn: canonical('notes/a.md') };
+        const invoke = jest.fn(respond);
+        const coordinator = new PaAgentContextSummarizer();
+        expect(await coordinator.prepareHistory({ history: input, historyBudgetChars: 3_000, invoke })).toBeDefined();
+        expect(await coordinator.prepareHistory({ history: input, historyBudgetChars: 3_000, invoke })).toBeDefined();
+        expect(invoke).toHaveBeenCalledTimes(1);
+        input[1] = { ...input[1], canonicalTurn: canonical('notes/b.md') };
+        expect(await coordinator.prepareHistory({ history: input, historyBudgetChars: 3_000, invoke })).toBeDefined();
+        expect(invoke).toHaveBeenCalledTimes(2);
+        expect(body(invoke.mock.calls[1][0]).previousSummary).toBeNull();
+    });
+
     it("chunks large escaped messages within the complete serialized request budget and preserves global indices", async () => {
         const input = [
             { role: "user" as const, content: Array.from({ length: 7_000 }, (_, index) => `Early requirement ${index} "\\\n😀`).join("") },
@@ -128,6 +196,186 @@ describe("PaAgentContextSummarizer", () => {
             expect(part.content).toBe(input[0].content.slice(part.start, part.end));
             expect(/[\uD800-\uDBFF]$/u.test(part.content)).toBe(false);
         });
+    });
+
+    it('gives each rolling physical invoke its own 30-minute deadline', async () => {
+        jest.useFakeTimers();
+        try {
+            const source = tool(Array.from({ length: 2500 }, (_, index) => `Distinct evidence ${index}. `).join(''));
+            const invoke = jest.fn<PaAgentSummaryInvoke>().mockImplementation(async request => {
+                await jest.advanceTimersByTimeAsync(20 * 60_000);
+                return respond(request, new AbortController().signal);
+            });
+            const result = await new PaAgentContextSummarizer().prepareTool({ source, invoke });
+            expect(invoke.mock.calls.length).toBeGreaterThanOrEqual(2);
+            expect(result).toBeDefined();
+        } finally { jest.useRealTimers(); }
+    });
+
+    it('starts the physical clock after preparation and resets it for a second request', async () => {
+        jest.useFakeTimers();
+        const owner = new AbortController();
+        const clock = createPaAgentSummaryAttemptClock(owner.signal);
+        try {
+            await jest.advanceTimersByTimeAsync(20 * 60_000); // source/model preparation
+            expect(clock.signal.aborted).toBe(false);
+            clock.start();
+            await jest.advanceTimersByTimeAsync(20 * 60_000);
+            expect(clock.signal.aborted).toBe(false);
+            clock.failed();
+            clock.start();
+            await jest.advanceTimersByTimeAsync(20 * 60_000);
+            expect(clock.signal.aborted).toBe(false);
+            await jest.advanceTimersByTimeAsync(10 * 60_000);
+            expect(clock.signal.aborted).toBe(true);
+        } finally { clock.dispose(); jest.useRealTimers(); }
+    });
+
+    it('caps confirmed summary attempts across calls and SDK retries without counting synchronous non-dispatch', () => {
+        const ledger = new PaAgentRunUsageLedger();
+        let now = 0;
+        const budget = createPaAgentAuxiliarySummaryBudget(() => ledger.snapshot().attempts, () => now);
+        const noDispatch = budget.begin('sync-failure', 1125);
+        noDispatch.admit(100); // The transport then throws before returning a request promise.
+        noDispatch.finish();
+        for (let index = 0; index < 30; index++) {
+            const callId = index < 2 ? 'retried-summary' : `summary-${index}`;
+            const activity = budget.begin(callId, 1125);
+            activity.admit(100);
+            ledger.dispatch(callId, 'context_summary', `http-${index}`, { tokens: 100, method: 'cjk_json_messages' });
+            activity.finish();
+            now += 1;
+        }
+        const rejected = budget.begin('next-summary', 1125);
+        expect(() => rejected.admit(100)).toThrow('physical_requests');
+        rejected.finish();
+        expect(budget.snapshot()).toMatchObject({ physicalRequests: 30,
+            estimatedReservedTokens: 36_750, exhaustedReason: 'physical_requests' });
+    });
+
+    it('counts only active summary time and blocks the next dispatch after 60 minutes', () => {
+        const ledger = new PaAgentRunUsageLedger();
+        let now = 0;
+        const budget = createPaAgentAuxiliarySummaryBudget(() => ledger.snapshot().attempts, () => now);
+        for (let index = 0; index < 3; index++) {
+            const activity = budget.begin(`summary-${index}`, 1125);
+            activity.admit(100);
+            ledger.dispatch(`summary-${index}`, 'context_summary', `http-${index}`, { tokens: 100, method: 'fixture' });
+            now += 20 * 60_000;
+            activity.finish();
+            if (index < 2) now += 3 * 60 * 60_000; // Ordinary Chat/tool idle time is not summary waiting.
+        }
+        expect(budget.snapshot()).toMatchObject({ activeElapsedMs: 60 * 60_000, physicalRequests: 3 });
+        const rejected = budget.begin('fourth-summary', 1125);
+        expect(() => rejected.admit(100)).toThrow('active_elapsed');
+        rejected.finish();
+        expect(ledger.snapshot().attempts).toHaveLength(3);
+    });
+
+    it('does not interrupt an admitted attempt at the run limit and still charges a cancelled physical request', () => {
+        const ledger = new PaAgentRunUsageLedger();
+        let now = 0;
+        const budget = createPaAgentAuxiliarySummaryBudget(() => ledger.snapshot().attempts, () => now);
+        const activity = budget.begin('late-summary', 1125);
+        now = 59 * 60_000;
+        activity.admit(100); // The request starts before the 60-minute auxiliary threshold.
+        ledger.dispatch('late-summary', 'context_summary', 'http-late', { tokens: 100, method: 'fixture' });
+        now += 20 * 60_000; // A healthy physical attempt retains its independent 30-minute guard.
+        ledger.fail('http-late', true);
+        activity.finish();
+        expect(budget.snapshot()).toMatchObject({ physicalRequests: 1,
+            estimatedReservedTokens: 1225, activeElapsedMs: 79 * 60_000 });
+        expect(ledger.snapshot().attempts[0].status).toBe('cancelled');
+        const next = budget.begin('next-summary', 1125);
+        expect(() => next.admit(100)).toThrow('active_elapsed');
+        next.finish();
+    });
+
+    it('reserves estimated prompt plus actual max output for each physical summary attempt', () => {
+        const ledger = new PaAgentRunUsageLedger();
+        const budget = createPaAgentAuxiliarySummaryBudget(() => ledger.snapshot().attempts);
+        for (let index = 0; index < 20; index++) {
+            const callId = `summary-${index}`;
+            const activity = budget.begin(callId, 1125);
+            activity.admit(3300);
+            ledger.dispatch(callId, 'context_summary', `http-${index}`, { tokens: 3300, method: 'cjk_json_messages' });
+            activity.finish();
+        }
+        expect(budget.snapshot()).toMatchObject({ physicalRequests: 20, estimatedReservedTokens: 88_500 });
+        const rejected = budget.begin('next-summary', 1125);
+        expect(() => rejected.admit(3300)).toThrow('estimated_or_known_tokens');
+        rejected.finish();
+        expect(ledger.snapshot().attempts).toHaveLength(20);
+    });
+
+    it('treats a confirmed summary request with missing estimate as unknown rather than free', () => {
+        const ledger = new PaAgentRunUsageLedger();
+        const budget = createPaAgentAuxiliarySummaryBudget(() => ledger.snapshot().attempts);
+        ledger.dispatch('unmeasured-summary', 'context_summary', 'http-unknown');
+        const next = budget.begin('next-summary', 1125);
+        expect(() => next.admit(100)).toThrow('estimate_unknown');
+        next.finish();
+        expect(budget.snapshot()).toMatchObject({ physicalRequests: 1,
+            estimatedReservedTokens: null, exhaustedReason: 'estimate_unknown' });
+    });
+
+    it('uses known physical prompt usage above the estimate when admitting the next summary', () => {
+        const ledger = new PaAgentRunUsageLedger();
+        const budget = createPaAgentAuxiliarySummaryBudget(() => ledger.snapshot().attempts);
+        for (let index = 0; index < 8; index++) {
+            const callId = `summary-${index}`;
+            const attemptId = `http-${index}`;
+            const activity = budget.begin(callId, 2250);
+            activity.admit(100);
+            ledger.dispatch(callId, 'context_summary', attemptId, { tokens: 100, method: 'fixture' });
+            ledger.response(callId, 'context_summary', attemptId, 200);
+            ledger.record(callId, 'context_summary', { inputTokens: 10_000, outputTokens: 20,
+                totalTokens: 10_020, complete: true }, 'provider-usage');
+            ledger.finishResponsePhase(callId, 'completed');
+            activity.finish();
+        }
+        expect(budget.snapshot()).toMatchObject({ physicalRequests: 8,
+            estimatedReservedTokens: 18_800, admissionTokens: 98_000 });
+        const next = budget.begin('next-summary', 2250);
+        expect(() => next.admit(100)).toThrow('estimated_or_known_tokens');
+        next.finish();
+    });
+
+    it('uses a larger complete provider total as the cost floor without adding it to the estimate', () => {
+        const ledger = new PaAgentRunUsageLedger();
+        const budget = createPaAgentAuxiliarySummaryBudget(() => ledger.snapshot().attempts);
+        const activity = budget.begin('summary', 1000);
+        activity.admit(100);
+        ledger.dispatch('summary', 'context_summary', 'http', { tokens: 100, method: 'fixture' });
+        ledger.response('summary', 'context_summary', 'http', 200);
+        ledger.record('summary', 'context_summary', { inputTokens: 1000, outputTokens: 4000,
+            totalTokens: 5000, complete: true }, 'provider-usage');
+        ledger.finishResponsePhase('summary', 'completed');
+        activity.finish();
+        expect(budget.snapshot()).toMatchObject({ estimatedReservedTokens: 1100, admissionTokens: 5000 });
+        expect(ledger.snapshot().knownPhysicalTokens).toBe(5000);
+    });
+
+    it('uses a known total from a cancelled physical response as an admission floor', () => {
+        const ledger = new PaAgentRunUsageLedger();
+        const budget = createPaAgentAuxiliarySummaryBudget(() => ledger.snapshot().attempts);
+        const activity = budget.begin('summary', 1000);
+        activity.admit(100);
+        ledger.dispatch('summary', 'context_summary', 'http', { tokens: 100, method: 'fixture' });
+        ledger.response('summary', 'context_summary', 'http', 200);
+        ledger.fail('http', true);
+        expect(ledger.record('summary', 'context_summary', { totalTokens: 100_000, complete: false },
+            'provider-usage')).toBe('http');
+        activity.finish();
+        expect(ledger.snapshot()).toMatchObject({ knownPhysicalTokens: 100_000,
+            physicalTotalTokens: null, physicalAttribution: 'incomplete', attempts: [
+                { attemptId: 'http', status: 'cancelled', totalTokens: 100_000, complete: false },
+            ] });
+        expect(budget.snapshot()).toMatchObject({ estimatedReservedTokens: 1100,
+            admissionTokens: 100_000 });
+        const next = budget.begin('next-summary', 1000);
+        expect(() => next.admit(100)).toThrow('estimated_or_known_tokens');
+        next.finish();
     });
 
     it("keeps complete exchanges together when they fit a request", async () => {

@@ -243,11 +243,12 @@ export class ImageAssetService {
     }
 
     /** A durable intent owns recovery across the vault rename and local registry. */
-    promoteToNote(input: ImageRef, options: { sourcePath: string; targetPath: string | (() => Promise<string>); operationId: string; signal?: AbortSignal }): Promise<{ path: string }> {
+    promoteToNote(input: ImageRef, options: { sourcePath: string; targetPath: string | (() => Promise<string>);
+        operationId: string } & ImageVerificationOptions): Promise<{ path: string }> {
         const ref = cloneImageRef(input);
         options = { ...options };
         return this.enqueue(async () => {
-            checkImageOperation(options.signal);
+            checkImageOperation(options.signal, options.isCurrent);
             validateImagePath(options.sourcePath);
             if (!/^[A-Za-z0-9_-]{1,160}$/.test(options.operationId)) throw new ImageAssetError('promotion_identity_invalid');
             await this.recoverPromotion(ref);
@@ -278,14 +279,14 @@ export class ImageAssetService {
                     await this.store.setImageSetting(this.promotionKey(this.ref(asset)), promotion);
                 }
             }
-            checkImageOperation(options.signal);
+            checkImageOperation(options.signal, options.isCurrent);
             this.assertAllowed(promotion.sourcePath, 'note'); this.assertAllowed(promotion.targetPath, 'note');
             const parent = promotion.targetPath.split('/').slice(0, -1).join('/');
             if (parent) await this.ensureDirectory(parent);
             const source = this.file(promotion.sourcePath);
             const revision = this.fileRevision, mtime = source?.stat.mtime, size = source?.stat.size;
             if (!source || await imageSourceHash(await this.readFileBytes(source)) !== promotion.contentHash) throw new ImageAssetError('source_changed');
-            checkImageOperation(options.signal);
+            checkImageOperation(options.signal, options.isCurrent);
             this.assertAllowed(promotion.sourcePath, 'note'); this.assertAllowed(promotion.targetPath, 'note');
             if (this.fileRevision !== revision || source.stat.mtime !== mtime || source.stat.size !== size
                 || source.path !== promotion.sourcePath || this.file(promotion.sourcePath) !== source

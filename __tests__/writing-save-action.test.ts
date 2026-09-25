@@ -143,6 +143,7 @@ describe('frozen writing save and crash recovery', () => {
     it('prepares without writes, then creates generated-marked exact text before resolving relative attachments', async () => {
         const h = await setup();
         const prepared = await h.action.prepare({ writingVersionId: h.version.id, targetNotePath: 'notes/saved.md' });
+        expect(prepared.receipt).not.toHaveProperty('resultFact');
         expect(prepared.previewMarkdown).toContain(h.version.text);
         expect(prepared.previewMarkdown).toContain('pa_writing:');
         expect(prepared.receipt.attachments[0]).toMatchObject({ sourceName: '用户照片', attachmentKind: 'original', transfer: 'move' });
@@ -157,6 +158,7 @@ describe('frozen writing save and crash recovery', () => {
         });
         const receipt = await h.action.execute(prepared.operationId);
         expect(receipt.state).toBe('completed');
+        expect(receipt.resultFact).toEqual({ kind: 'applied', action: 'writing_save', receiptId: prepared.operationId });
         expect(receipt.attachments[0].plannedPath).toMatch(/^notes\/assets\/.*\.jpg$/);
         expect(h.binary.has(h.sourcePath)).toBe(false);
         expect(h.binary.get(receipt.attachments[0].plannedPath!)).toEqual(h.source);
@@ -205,6 +207,7 @@ describe('frozen writing save and crash recovery', () => {
         h.vault.process.mockImplementationOnce(async (file, transform) => { h.text.set(file.path, 'user edit'); return transform('user edit'); });
         const partial = await h.action.execute(prepared.operationId);
         expect(partial).toMatchObject({ state: 'partial', failureReason: 'note_changed' });
+        expect(partial.resultFact).toBeUndefined();
         expect(h.text.get('notes/saved.md')).toBe('user edit');
         expect((await h.action.retry(prepared.operationId)).failureReason).toBe('note_changed');
         const other = await setup(), preview = await other.action.prepare({ writingVersionId: other.version.id, targetNotePath: 'notes/saved.md' });

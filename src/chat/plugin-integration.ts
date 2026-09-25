@@ -24,6 +24,7 @@ import type {
 } from "../ai-services/chat-types";
 import type { MessageImage } from "./image-types";
 import type { WritingRecoverySourceReceipt } from "./writing-recovery-sources";
+import type { ChatSourceScope } from "../ai-services/chat-source-scope";
 import type { WritingScene } from "./writing-types";
 import type { MemoryStatusPort } from "../memory/MemoryStatusPort";
 
@@ -268,6 +269,7 @@ export class ChatPluginIntegration {
         images: readonly MessageImage[],
         conversationId: string,
         metadata?: ChatTurnMemoryMetadata,
+        scope?: ChatSourceScope,
     ): Promise<WritingRecoverySourceReceipt> {
         const manager = this.chatHistoryManager;
         const versions = this.writingVersions;
@@ -291,7 +293,7 @@ export class ChatPluginIntegration {
                 return { isCurrent: () => this.imageAssetService === imageAssets && receipt.isCurrent() };
             },
             verifyGenerationSource: (source) => this.dependencies.writingRecovery.verifyGenerationSource(source),
-        }, recovery, images, conversationId, metadata);
+        }, recovery, images, conversationId, metadata, scope);
     }
 
     createChatHost(): ChatHost {
@@ -318,8 +320,8 @@ export class ChatPluginIntegration {
             rememberWritingStyle: (versionId, scene) => actions.rememberWritingStyle(versionId, scene),
             readWritingStyleReferences: (revisionIds, signal) =>
                 actions.readWritingStyleReferences(revisionIds, signal) as never,
-            prepareWritingRecoverySources: (recovery, images, conversationId, metadata) =>
-                this.prepareWritingRecoverySources(recovery, images, conversationId, metadata),
+            prepareWritingRecoverySources: (recovery, images, conversationId, metadata, scope) =>
+                this.prepareWritingRecoverySources(recovery, images, conversationId, metadata, scope),
             onWritingReferencesChanged: (listener) => actions.onWritingReferencesChanged(listener),
             prepareWritingStyle: (prompt, parentScene, budget) =>
                 actions.prepareWritingStyle(prompt, parentScene, budget),

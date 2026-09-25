@@ -42,6 +42,7 @@ import type {
 import { OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS } from "./chat-tool-types";
 import type { SourceRecord } from "./chat-types";
 import { createSourceDedupKey } from "./source-store";
+import { memoryResultFact } from "./pa-agent-result-facts";
 import { getPlatformCrypto } from "../platform-dom";
 import { assertTaskSourceReadCurrent, isTaskSourcePathAllowed, type TaskSourceReadGuard } from "./task-source-read-guard";
 import {
@@ -253,6 +254,10 @@ export function createSearchMemoryTool(
                 inputSummary: input.query,
                 content: result,
                 sources: result.sources,
+                ...(result.memoryEvidenceState ? { resultFact: memoryResultFact({
+                    memoryEvidenceState: result.memoryEvidenceState,
+                    sources: result.sources,
+                }) } : {}),
             };
         },
     };
@@ -513,15 +518,28 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
                 title: getFileTitle(file),
                 mode: input.mode,
             };
-            const source = [{ path: file.path }];
+            const observedResult = async (summary: string) => {
+                const basis = editor && input.mode !== "metadata" ? "editor_snapshot" : "metadata_snapshot";
+                let observedRevision: NonNullable<SourceRecord["observedRevision"]>;
+                try {
+                    observedRevision = { state: "identified", basis,
+                        digest: { algorithm: "sha1",
+                            scope: basis === "editor_snapshot" ? "editor_projection" : "metadata_projection",
+                            value: await computeContentHash(JSON.stringify(output)) } };
+                } catch {
+                    observedRevision = { state: "unknown", reason: "not_captured" };
+                }
+                throwIfAborted(context.signal);
+                return createCurrentNoteResult(summary, output, [{ path: file.path, observedRevision }]);
+            };
 
             if (input.mode === "metadata" || !editor) {
-                return createCurrentNoteResult(input.mode, output, source);
+                return observedResult(input.mode);
             }
 
             if (input.mode === "outline") {
                 applyOutline(output, extractHeadingsFromEditor(editor));
-                return createCurrentNoteResult(input.mode, output, source);
+                return observedResult(input.mode);
             }
 
             if (input.mode === "full") {
@@ -534,13 +552,13 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
                 output.fullText = truncate(fullText, CURRENT_NOTE_FULL_CONTENT_BUDGET_CHARS);
                 output.fullTextTruncated = output.fullText.length < fullText.length;
                 applyOutline(output, extractHeadingsFromEditor(editor));
-                return createCurrentNoteResult(input.mode, output, source);
+                return observedResult(input.mode);
             }
 
             const selection = editor.getSelection?.().trim();
             if (selection) {
                 output.selection = truncate(selection, CURRENT_NOTE_CONTENT_BUDGET_CHARS);
-                return createCurrentNoteResult("selection", output, source);
+                return observedResult("selection");
             }
 
             const nearbyText = getHeadingSectionOrNearbyText(editor);
@@ -548,7 +566,7 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
                 output.nearbyText = truncate(nearbyText, CURRENT_NOTE_CONTENT_BUDGET_CHARS);
             }
             applyOutline(output, extractHeadingsFromEditor(editor));
-            return createCurrentNoteResult("nearby", output, source);
+            return observedResult("nearby");
         },
     });
 }
@@ -594,7 +612,12 @@ export function createSearchVaultMetadataTool(
             throwIfAborted(context.signal);
             const metadataCache = getMetadataCache(context.host);
             const querySignals = buildMetadataQuerySignals(input.query);
-            const matches = getMarkdownFiles(context.host)
+            const markdownFiles = context.host.app.vault.getMarkdownFiles?.();
+            if (!Array.isArray(markdownFiles)) {
+                return createToolFailureResult("search_vault_metadata", input.query,
+                    "Vault note enumeration is unavailable.");
+            }
+            const matches = markdownFiles
                 .filter((file) => isAllowedPath(file.path, options.isPathAllowed))
                 .map((file) => scoreMetadataMatch(file, metadataCache.getFileCache?.(file), querySignals))
                 .filter((match): match is VaultMetadataMatch => match !== null)
@@ -607,6 +630,9 @@ export function createSearchVaultMetadataTool(
                 inputSummary: input.query,
                 content: { query: input.query, matches },
                 sources: matches.map((match) => ({ path: match.path })),
+                ...(matches.length === 0
+                    ? { resultFact: { kind: "no_match" as const, search: "metadata" as const } }
+                    : {}),
             };
         },
     }, options);
@@ -939,7 +965,9 @@ export function createReadNoteTool(
                     tool: "read_note",
                     inputSummary: file.path,
                     content: segment.content,
-                    sources: [{ path: file.path }],
+                    sources: [{ path: file.path, observedRevision: { state: "identified", basis: "vault_read",
+                        digest: { algorithm: "sha1", scope: "whole_file", value: sourceVersion },
+                        stat: { mtime: stat.mtime, size: stat.size } } }],
                     vaultObservationEvidence: evidence,
                     vaultObservationContractVersion: 1,
                 };
@@ -1086,6 +1114,14 @@ export function createQueryNotesTool(
                     inputSummary: `limit:${input.limit}`,
                     content: result.content,
                     sources: result.matches.map(match => ({ path: match.path })),
+                    ...(result.content.matches.length > 0
+                        ? { resultFact: { kind: "evidence" as const,
+                            sourceRefs: result.matches.map(match => match.path) } }
+                        : result.content.matchCount === 0 && result.content.matchCountKind === "exact"
+                            && result.content.coverage.state === "complete" && !result.content.coverage.cacheUnknown
+                            ? { resultFact: { kind: "no_match" as const, search: "metadata" as const,
+                                observationId: evidence.observationId } }
+                            : {}),
                     sourceRecords: createMetadataDependencyRecords("query_notes", dependencyPaths),
                     vaultObservationEvidence: evidence,
                     vaultObservationContractVersion: 1,
@@ -1531,6 +1567,15 @@ export function createSearchVaultSnippetsTool(
                     inputSummary: scopedInput.scope ? `${input.query} in ${scopedInput.scope}` : input.query,
                     content: result.content,
                     sources: result.matchPaths.map(path => ({ path })),
+                    ...(result.content.matches.length > 0
+                        ? { resultFact: { kind: "evidence" as const, sourceRefs: [...result.matchPaths] } }
+                        : result.content.matchCount === 0 && result.content.matchCountKind === "exact"
+                            && result.content.coverage.state === "complete"
+                            && !result.content.coverage.skippedFiles && !result.content.missingScope
+                            && !result.content.unsupportedScope && !result.content.unavailableSources?.length
+                            ? { resultFact: { kind: "no_match" as const, search: "snippet" as const,
+                                observationId: evidence.observationId } }
+                            : {}),
                     sourceRecords: createMetadataDependencyRecords("search_vault_snippets", dependencyPaths),
                     vaultObservationEvidence: evidence,
                     vaultObservationContractVersion: 1,
@@ -1857,11 +1902,13 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
                 ...(subrequestIndex === undefined ? {} : { subrequestIndex: subrequestIndex as number }),
                 ...(parentVersionId ? { parentVersionId } : {}) };
         },
-        execute: async (input) => {
+        execute: async (input, context) => {
             const index = input.subrequestIndex ?? 1;
             const prior = submitted.get(index);
             const alreadySubmitted = prior !== undefined;
-            const entry = prior ?? { input, receipt: Promise.resolve().then(() => binding.submit(input)) };
+            const isSourceCurrent = context.taskSourceReadGuard?.captureSourceValidity?.();
+            const entry = prior ?? { input, receipt: Promise.resolve().then(() => isSourceCurrent
+                ? binding.submit(input, isSourceCurrent) : binding.submit(input)) };
             if (!prior) submitted.set(index, entry);
             const inputSummary = `${entry.input.operation}; count:${entry.input.count}`;
             try {

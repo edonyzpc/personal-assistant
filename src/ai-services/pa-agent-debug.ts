@@ -11,7 +11,7 @@ const debugCodes = new Set([
     'control_applied', 'aborted', 'abort_timeout', 'source_unavailable',
     'invalid_declaration', 'invalid_instruction_quote', 'scope_widening', 'unknown_note_handle',
     'user_boundary_conflict', 'user_boundary_changed',
-    'new_tool_evidence', 'tool_chain_allowed', 'tool_failure', 'required_tool_failed',
+    'new_tool_evidence', 'tool_chain_allowed', 'tool_failure',
     'empty_after_observation', 'empty_after_finalization', 'duplicate_tool_call_without_answer',
     'assistant_empty_response', 'assistant_idle_timeout', 'assistant_source_changed', 'context_local_overflow',
     'final_answer_only_violation', 'finalization_policy_preparation_error',

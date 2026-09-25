@@ -4,12 +4,12 @@ import type { ImageAsset } from "../src/chat/image-types";
 import { hashWritingText, type WritingVersion } from "../src/chat/writing-types";
 import { WritingVersionService } from "../src/chat/writing-versions";
 import { decodeNativeWritingOutput } from "../src/ai-services/writing-output";
-import type { GenerationInputSnapshot } from "../src/ai-services/generation-input-snapshot";
+import type { GenerationInputSnapshotV1, GenerationInputSnapshotV2 } from "../src/ai-services/generation-input-snapshot";
 import writingProtocolTrace from "./fixtures/b135-writing-protocol-trace.json";
 jest.mock('../src/platform-dom', () => ({ ...jest.requireActual('../src/platform-dom'), getPlatformCrypto: () => jest.requireActual('node:crypto').webcrypto }));
 import { createContextPagerStateFromChatContextUsed } from "../src/pa/context-pager";
 
-const generationInput = (): GenerationInputSnapshot => ({
+const generationInput = (): GenerationInputSnapshotV1 => ({
     schemaVersion: 1, inputPurpose: 'writing', task: { state: 'none', sources: [] },
     personal: { state: 'none' }, insights: { state: 'none' }, style: { state: 'none' }, images: [],
     parent: { state: 'none' }, pagelet: { state: 'none' },
@@ -730,6 +730,113 @@ describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s
         ]);
         reopened.dispose();
     });
+    it('reads v2 observed Writing recovery without losing revision or unknown lineage', async () => {
+        const factory = new FakeIndexedDbFactory() as unknown as IDBFactory;
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('observed-recovery', factory);
+        await store.initialize();
+        const receipt: GenerationInputSnapshotV2 = { ...generationInput(), schemaVersion: 2,
+            task: { state: 'identified', sources: [{ purpose: 'task_material', kind: 'context-used',
+                boundary: 'read-only-tool', dedupKey: 'source:a', path: 'notes/a.md',
+                revision: { state: 'identified', basis: 'vault_read',
+                    digest: { algorithm: 'sha1', scope: 'whole_file', value: 'a'.repeat(40) } } }] },
+            lineage: { state: 'unknown' } };
+        await store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: 'Recovered draft',
+            writingRecovery: { requestId: 'v2-recovery', rawText: 'Recovered draft',
+                reason: 'incomplete', generationInput: receipt } } }));
+        const reader = backend === 'indexeddb' ? new IndexedDbChatHistoryStore('observed-recovery', factory) : store;
+        await reader.initialize();
+        const restored = (await reader.getTurns('conv-1'))[0].assistant.writingRecovery?.generationInput;
+        expect(restored).toEqual(receipt);
+        if (restored?.schemaVersion === 2 && restored.task.sources[0].revision.state === 'identified') {
+            restored.task.sources[0].revision.digest.value = 'b'.repeat(40);
+        }
+        expect((await reader.getTurns('conv-1'))[0].assistant.writingRecovery?.generationInput).toEqual(receipt);
+    });
+
+    it('keeps damaged stored user ancestry explicitly unknown on memory and IndexedDB reads', async () => {
+        const factory = new FakeIndexedDbFactory();
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('damaged-user-ancestry', factory as unknown as IDBFactory);
+        await store.initialize();
+        await store.appendTurn(makeTurn({ user: { role: 'user', content: 'Readable user text',
+            hostProvenance: { version: 1, messageId: 'user-old', kind: 'ordinary_user_statement' },
+            inputLineage: { schemaVersion: 1, completeness: 'complete',
+                dependencies: [{ kind: 'user-text', messageId: 'user-old' }] } } }));
+        const key = buildTurnRecordKey('conv-1', 0);
+        const persisted = backend === 'memory'
+            ? (store as unknown as { turns: Map<string, PersistedTurn> }).turns.get(key)!
+            : (factory.db.getStore('turns').get(key) as { turn: PersistedTurn }).turn;
+        persisted.user.inputLineage = { schemaVersion: 1, completeness: 'complete',
+            dependencies: [{ kind: 'vault', path: 'notes/a.md', via: 'invalid' }] } as never;
+        const reader = backend === 'indexeddb'
+            ? new IndexedDbChatHistoryStore('damaged-user-ancestry', factory as unknown as IDBFactory) : store;
+        await reader.initialize();
+        const restored = (await reader.getTurns('conv-1'))[0].user;
+        expect(restored.content).toBe('Readable user text');
+        expect(restored.inputLineage).toEqual({ schemaVersion: 1, completeness: 'unknown', dependencies: [] });
+    });
+
+    it('keeps conversation text and recovery draft when a stored v2 source identity is damaged', async () => {
+        const factory = new FakeIndexedDbFactory();
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('damaged-recovery', factory as unknown as IDBFactory);
+        await store.initialize();
+        const receipt: GenerationInputSnapshotV2 = { ...generationInput(), schemaVersion: 2,
+            task: { state: 'identified', sources: [{ purpose: 'task_material', kind: 'context-used',
+                boundary: 'read-only-tool', dedupKey: 'source:a', path: 'notes/a.md',
+                revision: { state: 'identified', basis: 'vault_read',
+                    digest: { algorithm: 'sha1', scope: 'whole_file', value: 'a'.repeat(40) } } }] },
+            lineage: { state: 'unknown' } };
+        const recovery = { requestId: 'damaged-recovery', rawText: 'Raw unfinished draft',
+            reason: 'incomplete' as const, generationInput: receipt };
+        await store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: 'Readable answer', writingRecovery: recovery } }));
+        await store.appendTurn(makeTurn({ turnIndex: 1, assistant: { role: 'assistant', content: 'Later answer' } }));
+        const damaged = { ...receipt, task: { state: 'identified', sources: [{ ...receipt.task.sources[0], path: undefined }] } };
+        await expect(store.appendTurn(makeTurn({ turnIndex: 2, assistant: { role: 'assistant', content: 'Rejected write',
+            writingRecovery: { ...recovery, generationInput: damaged as never } } }))).rejects.toThrow();
+        const key = buildTurnRecordKey('conv-1', 0);
+        const persisted = backend === 'memory'
+            ? (store as unknown as { turns: Map<string, PersistedTurn> }).turns.get(key)!
+            : (factory.db.getStore('turns').get(key) as { turn: PersistedTurn }).turn;
+        persisted.assistant.writingRecovery!.generationInput = damaged as never;
+        const reader = backend === 'indexeddb' ? new IndexedDbChatHistoryStore('damaged-recovery', factory as unknown as IDBFactory) : store;
+        await reader.initialize();
+        const restored = await reader.getTurns('conv-1');
+        expect(restored.map((turn) => turn.assistant.content)).toEqual(['Readable answer', 'Later answer']);
+        expect(restored[0].assistant.writingRecovery).toMatchObject({ requestId: 'damaged-recovery', rawText: 'Raw unfinished draft' });
+        expect(restored[0].assistant.writingRecovery?.generationInput).toBeUndefined();
+    });
+
+    it('keeps Writing version text when a stored v2 source identity is damaged', async () => {
+        const factory = new FakeIndexedDbFactory();
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('damaged-version', factory as unknown as IDBFactory);
+        await store.initialize();
+        const receipt: GenerationInputSnapshotV2 = { ...generationInput(), schemaVersion: 2,
+            task: { state: 'identified', sources: [{ purpose: 'task_material', kind: 'context-used',
+                boundary: 'read-only-tool', dedupKey: 'source:a', path: 'notes/a.md',
+                revision: { state: 'identified', basis: 'vault_read',
+                    digest: { algorithm: 'sha1', scope: 'whole_file', value: 'a'.repeat(40) } } }] },
+            lineage: { state: 'unknown' } };
+        const writer = new WritingVersionService(store);
+        const version = await writer.create({ requestId: 'damaged-version', messageId: 'damaged-version',
+            conversationId: 'conv-1', turnIndex: 0, text: 'Preserved Writing text', images: [], generationInput: receipt });
+        const damaged = { ...receipt, task: { state: 'identified', sources: [{ ...receipt.task.sources[0], path: undefined }] } };
+        await expect(store.putWritingVersion({ ...version, generationInput: damaged as never })).rejects.toThrow();
+        const persisted = backend === 'memory'
+            ? (store as unknown as { writingVersions: Map<string, WritingVersion> }).writingVersions.get(version.id)!
+            : factory.db.getStore('writingVersions').get(version.id) as WritingVersion;
+        persisted.generationInput = damaged as never;
+        const reader = backend === 'indexeddb' ? new IndexedDbChatHistoryStore('damaged-version', factory as unknown as IDBFactory) : store;
+        await reader.initialize();
+        const reopened = new WritingVersionService(reader);
+        expect(await reopened.get(version.id)).toMatchObject({ text: 'Preserved Writing text', textHash: version.textHash });
+        expect((await reopened.get(version.id))?.generationInput).toBeUndefined();
+        expect((await reopened.list('conv-1'))[0].generationInput).toBeUndefined();
+        await writer.dispose(); await reopened.dispose();
+    });
+
     it('preserves normalized recovery scenes across reload without sharing mutable objects', async () => {
         const factory = new FakeIndexedDbFactory() as unknown as IDBFactory;
         const store = backend === 'memory' ? new MemoryChatHistoryStore() : new IndexedDbChatHistoryStore('recovery-scene', factory);
@@ -757,6 +864,54 @@ describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s
                 writingRecovery: { ...recovery, scene: invalid as never } } }))).rejects.toThrow();
         }
         expect(await reader.getTurns('conv-1')).toHaveLength(1);
+    });
+    it('keeps a newer source selection when an older turn snapshot commits later', async () => {
+        const store = await open();
+        const old = Object.assign(makeConversation(), { sourceSelection: {
+            schemaVersion: 1, scope: 'notes', revision: 1, basis: 'user',
+        } });
+        const current = Object.assign(makeConversation(), { sourceSelection: {
+            schemaVersion: 1, scope: 'web', revision: 2, basis: 'user',
+        } });
+        await store.upsertConversation(current as never);
+        await store.appendTurnAndUpdateConversation(makeTurn(), { ...old, turnCount: 1 } as never);
+        const saved = await store.getConversation('conv-1');
+        expect(saved).toMatchObject({ turnCount: 1, sourceSelection: current.sourceSelection });
+        (saved as unknown as { sourceSelection: { scope: string } }).sourceSelection.scope = 'combined';
+        expect(await store.getConversation('conv-1')).toMatchObject({ sourceSelection: current.sourceSelection });
+    });
+    it('advances source revisions in the store and prevents ordinary upserts from restoring an older choice', async () => {
+        const store = await open();
+        const original = makeConversation();
+        await store.upsertConversation(original);
+        expect(await store.updateConversationSourceSelection('missing', 'web')).toBeNull();
+        expect(await store.updateConversationSourceSelection('conv-1', 'web')).toEqual({
+            schemaVersion: 1, scope: 'web', revision: 1, basis: 'user',
+        });
+        expect(await store.updateConversationSourceSelection('conv-1', 'combined')).toEqual({
+            schemaVersion: 1, scope: 'combined', revision: 2, basis: 'user',
+        });
+        await store.upsertConversation(original);
+        expect(await store.getConversation('conv-1')).toMatchObject({ sourceSelection: {
+            schemaVersion: 1, scope: 'combined', revision: 2, basis: 'user',
+        } });
+    });
+    it('keeps legacy history readable when the stored source selection is damaged', async () => {
+        const factory = new FakeIndexedDbFactory();
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('damaged-source-selection', factory as unknown as IDBFactory);
+        await store.initialize();
+        await store.upsertConversation(makeConversation());
+        const damaged = {
+            schemaVersion: 99, scope: 'combined', revision: -1, basis: 'user',
+        };
+        const record = backend === 'memory'
+            ? (store as unknown as { conversations: Map<string, PersistedConversation> }).conversations.get('conv-1')!
+            : factory.db.getStore('conversations').get('conv-1') as PersistedConversation;
+        record.sourceSelection = damaged as never;
+        await store.appendTurn(makeTurn());
+        expect(await store.getConversation('conv-1')).not.toHaveProperty('sourceSelection');
+        expect((await store.getTurns('conv-1'))[0].assistant.content).toBe('Hi there');
     });
     it('retains a fixed conversation anchor before any image and does not let a stale turn snapshot undo a folder rename', async () => {
         const store = await open(), original = makeConversation({ imageAnchor: { kind: 'existing_note', path: 'notes/source.md' } });

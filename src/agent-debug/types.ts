@@ -38,6 +38,10 @@ export interface DebugRun {
     provider?: string;
     model?: string;
     usage?: DebugUsage;
+    /** Only proven response-to-request usage; never summed with logicalUsage. */
+    physicalUsage?: DebugUsage;
+    /** Provider usage without a provable physical attempt identity. */
+    logicalUsage?: DebugUsage;
     eventCount: number;
     accountedBytes: number;
     lastCommittedSeq: number;

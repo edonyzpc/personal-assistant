@@ -71,6 +71,16 @@ function summariesFor(tool: PaAgentToolSummarySource, text = JSON.stringify({ fi
 }
 
 describe("complete lossless history projection", () => {
+    it('invalidates a same-text summary when the represented ancestry changes', () => {
+        const first = [{ role: 'assistant', content: 'same answer', inputLineage: {
+            schemaVersion: 1, completeness: 'complete', dependencies: [{ kind: 'web', providerId: 'web', resultKey: 'a' }],
+        } }] as ChatMessage[];
+        const second = [{ role: 'assistant', content: 'same answer', inputLineage: {
+            schemaVersion: 1, completeness: 'complete', dependencies: [{ kind: 'vault', path: 'notes/private.md', via: 'note' }],
+        } }] as ChatMessage[];
+        expect(isCurrentHistorySummary(summaryFor(first, 1), second)).toBe(false);
+    });
+
     it('keeps internal aggregate dependencies out of compaction markers while retaining visible sources', () => {
         const tool = result('aggregate');
         tool.toolName = 'list_vault_tags';
@@ -216,7 +226,7 @@ describe("semantic prefix projection", () => {
         expect(JSON.stringify(messages)).toBe(before);
     });
 
-    it('retains only item-level semantic sources plus the represented raw tail', () => {
+    it('retains every Host summary input even when model output cites one item', () => {
         const messages = history(12, 400);
         const plan = planHistoryContext(messages, 2200);
         const semantic = summaryFor(messages, plan.coveredMessages, JSON.stringify({
@@ -229,11 +239,11 @@ describe("semantic prefix projection", () => {
         });
 
         expect(projected.history.sourceMessages).toContainEqual(messages[2]);
-        expect(projected.history.sourceMessages).not.toContainEqual(messages[0]);
-        expect(projected.history.sourceMessages).toEqual([messages[2], ...messages.slice(plan.coveredMessages)]);
+        expect(projected.history.sourceMessages).toContainEqual(messages[0]);
+        expect(projected.history.sourceMessages).toEqual(messages);
     });
 
-    it('maps a metadata-stripped semantic cache back to the current source-bearing history', () => {
+    it('rejects a metadata-stripped semantic cache with unproven source ancestry', () => {
         const messages = history(12, 400);
         messages[1].canonicalTurn = { schemaVersion: 1, runId: 'source-run', turnId: 'source-turn', messages: [],
             sourceRecords: [{ kind: 'memory-reference', dedupKey: 'memory-source', sourceBoundary: 'memory',
@@ -253,10 +263,8 @@ describe("semantic prefix projection", () => {
             maxHistorySummaryChars: 0, summaries: { history: summary },
         });
 
-        expect(projected.history.sourceMessages[0]).toBe(messages[1]);
-        expect(projected.history.sourceMessages[0].canonicalTurn?.sourceRecords).toEqual(
-            messages[1].canonicalTurn?.sourceRecords,
-        );
+        expect(projected.history.semanticSummaryChars).toBe(0);
+        expect(projected.input).not.toContain('The second source message remains relevant.');
     });
 
     it('invalidates a cached history summary when host observation evidence changes without text changes', () => {

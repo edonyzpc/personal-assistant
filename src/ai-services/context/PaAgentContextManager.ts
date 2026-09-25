@@ -1,9 +1,11 @@
 import type { ChatMessage, PaAgentMessage } from "../chat-types";
-import { PaAgentContextBudget, type PaAgentContextBudgetSnapshot, type PaAgentProviderUsage } from "./PaAgentContextBudget";
+import { PaAgentContextBudget, type PaAgentContextBudgetSnapshot, type PaAgentProviderUsage,
+    type PaAgentModelBudgetFacts } from "./PaAgentContextBudget";
 import { PaAgentContextCompactor } from "./PaAgentContextCompactor";
 import { PaAgentContextHygiene } from "./PaAgentContextHygiene";
 import { PaAgentContextProjector, type PaAgentInjectedContext } from "./PaAgentContextProjector";
 import type { PaAgentContextSummaries } from "./PaAgentContextSummaryTypes";
+import { projectPaAgentActionHistory, type PaAgentActionGroup } from "../pa-agent-action-history";
 
 export interface PaAgentContextManagerInput {
     prompt: string;
@@ -22,13 +24,22 @@ export interface PaAgentContextManagerInput {
     formatToolObservations: (transcript: readonly PaAgentMessage[], turnIndex: number) => string;
     /** Runtime owns actual template/schema formatting; the reducer remains provider-free. */
     measurePromptChars?: (parts: PaAgentContextParts) => number;
+    measurePromptEnvelope?: (parts: PaAgentContextParts) => {
+        promptChars: number;
+        estimatedPromptTokens: number;
+        estimateMethod: "cjk_text_and_serialized_schema" | "cjk_text_schema_image_reserve";
+    };
+    modelBudgetFacts?: PaAgentModelBudgetFacts;
 }
 
 export interface PaAgentContextParts {
     input: string;
+    currentInput: string;
+    history: import('./PaAgentContextProjector').PaAgentProjectedHistory;
     availableSkills: string;
     toolDefinitions: string;
     toolObservations: string;
+    actionHistory: PaAgentActionGroup[];
 }
 
 export interface PaAgentContextOutcome {
@@ -77,6 +88,7 @@ export class PaAgentContextManager {
         const hygiene = this.hygiene.clean(input.transcript);
         let micro = this.compactor.microCompact(hygiene.transcript, {
             maxObservationChars: input.maxObservationChars,
+            allowRecentHardTruncation: false,
             summaries: input.summaries,
             canonicalTranscript: hygiene.transcript,
         });
@@ -98,15 +110,23 @@ export class PaAgentContextManager {
         const measure = () => {
             parts = {
                 input: projected.input,
+                currentInput: projected.currentInput,
+                history: projected.history,
                 availableSkills: input.availableSkills,
                 toolDefinitions: input.toolDefinitions,
                 toolObservations: input.formatToolObservations(micro.transcript, input.turnIndex),
+                actionHistory: projectPaAgentActionHistory(micro.transcript),
             };
+            const envelope = input.measurePromptEnvelope?.(parts);
             return this.budget.snapshot({
                 ...parts,
                 maxPromptChars: input.maxPromptChars,
                 maxObservationChars: input.maxObservationChars,
-                localEnvelopeChars: input.measurePromptChars?.(parts),
+                localEnvelopeChars: envelope?.promptChars ?? input.measurePromptChars?.(parts),
+                localEnvelopeEstimatedTokens: envelope?.estimatedPromptTokens,
+                localEnvelopeEstimateMethod: envelope?.estimateMethod,
+                modelBudgetFacts: input.modelBudgetFacts,
+                actionHistoryChars: JSON.stringify(parts.actionHistory).length,
             });
         };
         let budget = measure();
@@ -130,9 +150,16 @@ export class PaAgentContextManager {
         // The lane cap includes escaping and wrappers, not just raw observation text.
         // Two passes are bounded; irreducible markers remain for final fail-closed admission.
         for (let pass = 0; pass < 2 && budget.toolObservationChars > input.maxObservationChars; pass++) {
-            reduceTools(Math.max(0, observationChars() - (budget.toolObservationChars - input.maxObservationChars)), true);
+            reduceTools(Math.max(0, observationChars() - (budget.toolObservationChars - input.maxObservationChars)), false);
         }
-        const excess = () => Math.max(0, budget.promptChars - budget.maxPromptChars);
+        const excess = () => {
+            const charExcess = Math.max(0, budget.promptChars - budget.maxPromptChars);
+            if (budget.admissionBasis !== "estimated_tokens" || budget.maxInputTokens === undefined) return charExcess;
+            const tokenExcess = Math.max(0, budget.estimatedPromptTokens - budget.maxInputTokens);
+            const charsPerToken = budget.estimatedPromptTokens > 0
+                ? budget.promptChars / budget.estimatedPromptTokens : 1;
+            return Math.max(charExcess, Math.ceil(tokenExcess * charsPerToken));
+        };
         if (excess() > 0) {
             // One ordered stronger projection. Reuse clones, never rewrite the canonical inputs.
             reduceTools(Math.max(input.maxObservationChars, observationChars()), false);
@@ -156,17 +183,25 @@ export class PaAgentContextManager {
                 rebuilds++;
                 budget = measure();
             }
-            if (excess() > 0) reduceTools(Math.max(0, observationChars() - excess()), true);
+            if (excess() > 0) reduceTools(Math.max(0, observationChars() - excess()), false);
         }
         const finalToolResults = micro.transcript.filter((message) => message.role === "toolResult");
         const toolResultsCompacted = finalToolResults.filter((message) => message.content.metadata?.compacted === true).length;
         const toolResultsHardTruncated = finalToolResults.filter((message) => message.content.metadata?.contextBudgetTruncated === true).length;
+        const unverifiedToolReduction = finalToolResults.some((message) =>
+            message.content.metadata?.contextBudgetTruncated === true
+            || (message.content.metadata?.compacted === true
+                && message.content.metadata.contextSemanticSummaryUsed !== true));
         const outcome: PaAgentContextOutcome = {
             historyCompressed: projected.history.historyCompressed,
             toolResultsCompacted,
             toolResultsHardTruncated,
             budgetLimited: toolResultsHardTruncated > 0 || projected.history.omittedCount > 0,
-            admission: budget.promptChars <= budget.maxPromptChars
+            // The legacy digest clips user text and can omit whole turns. It is
+            // never evidence that an earlier necessary constraint survived.
+            admission: projected.history.omittedCount === 0 && projected.history.summaryChars === 0
+                && !unverifiedToolReduction
+                && !budget.configurationOverflow && excess() === 0
                 && budget.toolObservationChars <= input.maxObservationChars ? "fit" : "local_overflow",
         };
 

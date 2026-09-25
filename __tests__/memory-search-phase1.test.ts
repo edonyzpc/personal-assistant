@@ -21,6 +21,7 @@ import type { QueryTemporalIntent } from "../src/ai-services/query-rewriter";
 import type { RetrievalDiagnosticEventInput } from "../src/ai-services/retrieval-diagnostics";
 import { createHeadingAwareMarkdownChunks } from "../src/vss/markdown-chunker";
 import { createProviderRequestScope } from "../src/ai-services/obsidian-fetch";
+import type { TaskSourceReadGuard } from "../src/ai-services/task-source-read-guard";
 
 const materializer = {
     cleanMarkdown: (markdown: string) => markdown,
@@ -558,6 +559,9 @@ describe("Phase 1 search assembly", () => {
         absoluteDeadlineMs?: number;
         providerRequestScope?: ReturnType<typeof createProviderRequestScope>;
         recordDiagnostic?: (event: RetrievalDiagnosticEventInput) => void;
+        taskSourceReadGuard?: TaskSourceReadGuard;
+        retryRerankAfterFirstSend?: () => void;
+        currentGeneration?: () => string;
     }) {
         const candidateMarkdownByPath = options.candidateMarkdownByPath ?? {
             "notes/one.md": "# One\n\nUseful current evidence.",
@@ -580,8 +584,19 @@ describe("Phase 1 search assembly", () => {
                 },
             },
         })));
-        const invoke = jest.fn(async (_input: unknown, config?: { signal?: AbortSignal }) => {
+        const physicalRerankBodies: string[] = [];
+        let rerankRequestOptions: { prepareProviderRequest?: () => Promise<void> | void } | undefined;
+        const invoke = jest.fn(async (input: unknown, config?: { signal?: AbortSignal }) => {
             options.onRerankInvoke?.();
+            if (options.retryRerankAfterFirstSend) {
+                await rerankRequestOptions?.prepareProviderRequest?.();
+                const body = (input as { toChatMessages?: () => Array<{ content: unknown }> })
+                    .toChatMessages?.().map(message => String(message.content)).join("\n") ?? String(input);
+                physicalRerankBodies.push(body);
+                options.retryRerankAfterFirstSend();
+                await rerankRequestOptions?.prepareProviderRequest?.();
+                physicalRerankBodies.push(body);
+            }
             return {
                 content: options.invokeResponse
                     ? await options.invokeResponse(config?.signal)
@@ -589,8 +604,9 @@ describe("Phase 1 search assembly", () => {
             };
         });
         const llm = RunnableLambda.from(invoke);
-        const createChatModel = jest.fn(async (_temperature?: number, _options?: unknown) => {
+        const createChatModel = jest.fn(async (_temperature?: number, modelOptions?: unknown) => {
             options.onModelCreate?.();
+            rerankRequestOptions = modelOptions as typeof rerankRequestOptions;
             return llm;
         });
         const readLatestMemorySource = jest.fn(options.readLatest);
@@ -613,7 +629,7 @@ describe("Phase 1 search assembly", () => {
                             path,
                             current: true,
                             reason: "current",
-                            generation: `generation:${path}`,
+                            generation: options.currentGeneration?.() ?? `generation:${path}`,
                         })),
                     };
                 }),
@@ -642,7 +658,7 @@ describe("Phase 1 search assembly", () => {
                 return materializer.hashContent(content);
             },
         };
-        const tool = new MemorySearchTool(host as never, aiUtils as never);
+        const tool = new MemorySearchTool(host as never, aiUtils as never, "chat", options.taskSourceReadGuard);
         const invocation = options.captureRecoverySeed
             || options.temporalIntent !== undefined
             || options.temporalFilterCapture !== undefined
@@ -669,8 +685,29 @@ describe("Phase 1 search assembly", () => {
             undefined,
             invocation,
         );
-        return { result, invoke, createChatModel, readLatestMemorySource, tool, invocation };
+        return { result, invoke, createChatModel, readLatestMemorySource, tool, invocation, physicalRerankBodies };
     }
+
+    it("revalidates the sealed rerank candidates before a physical retry", async () => {
+        let generation = "generation:notes/one.md";
+        const guard: TaskSourceReadGuard = {
+            isCurrent: () => true,
+            isMemoryAllowed: () => true,
+            isPathAllowed: () => true,
+        };
+        const search = await runSearch({
+            strict: true,
+            response: '{"verdict":"relevant","ranking":[0],"needsMoreEvidence":false}',
+            readLatest: async (path) => latestSource(path, "# One\n\nUseful current evidence."),
+            taskSourceReadGuard: guard,
+            retryRerankAfterFirstSend: () => { generation = "generation:changed"; },
+            currentGeneration: () => generation,
+        });
+
+        expect(search.physicalRerankBodies).toHaveLength(1);
+        expect(search.physicalRerankBodies[0]).toContain("Useful current evidence");
+        expect(search.result).toMatchObject({ memoryEvidenceState: "unavailable" });
+    });
 
     it("clears a valid-none result only when the strict flag is on", async () => {
         const response = '{"verdict":"none_relevant","ranking":[],"needsMoreEvidence":true}';

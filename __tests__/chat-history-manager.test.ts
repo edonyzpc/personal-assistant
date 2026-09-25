@@ -103,6 +103,31 @@ function makeHistoryEntry(overrides: Partial<HistoryTurnEntry> = {}): HistoryTur
 }
 
 describe("ChatHistoryManager", () => {
+    it('publishes only committed source metadata without revoking an existing source lease', async () => {
+        const { manager, store } = makeManager();
+        await manager.initialize();
+        const conversation = await manager.startConversation('hello');
+        const lease = manager.observeSourceLifetime(conversation.id);
+        const seen: Array<{ conversationId: string; scope: string; revision: number }> = [];
+        const unsubscribe = manager.subscribeConversationSourceSelection(event => seen.push({
+            conversationId: event.conversationId, scope: event.selection.scope,
+            revision: event.selection.revision,
+        }));
+        expect(await manager.updateConversationSourceSelection(conversation.id, 'web'))
+            .toMatchObject({ scope: 'web', revision: 1 });
+        expect(lease.isCurrent()).toBe(true);
+        expect(lease.signal.aborted).toBe(false);
+        expect(seen).toEqual([{ conversationId: conversation.id, scope: 'web', revision: 1 }]);
+        jest.spyOn(store, 'updateConversationSourceSelection').mockRejectedValueOnce(new Error('save failed'));
+        await expect(manager.updateConversationSourceSelection(conversation.id, 'combined')).rejects.toThrow('save failed');
+        expect(seen).toHaveLength(1);
+        unsubscribe();
+        expect(await manager.updateConversationSourceSelection(conversation.id, 'notes'))
+            .toMatchObject({ scope: 'notes', revision: 2 });
+        expect(seen).toHaveLength(1);
+        lease.release();
+    });
+
     describe("source lifetime", () => {
         function deferred() {
             let resolve!: () => void;

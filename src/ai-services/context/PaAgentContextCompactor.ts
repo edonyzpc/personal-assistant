@@ -82,7 +82,18 @@ export class PaAgentContextCompactor {
         const compacted = transcript.map((message): PaAgentMessage => {
             if (message.role !== "toolResult") return cloneMessage(message);
             const cloned = cloneToolResultMessage(message);
-            if (isRecent(cloned)) return cloned;
+            if (isRecent(cloned)) {
+                const semantic = currentSummaries.get(cloned.id);
+                if (!semantic) return cloned;
+                const replacement = compactToolResultPromptText(cloned, semantic);
+                if (replacement.length >= cloned.content.promptText.length) return cloned;
+                currentChars += replacement.length - cloned.content.promptText.length;
+                compactedToolResults++;
+                return { ...cloned, content: { ...cloned.content, promptText: replacement,
+                    metadata: { ...cloned.content.metadata, compacted: true,
+                        contextSemanticSummaryUsed: true,
+                        originalPromptTextLength: originalToolResultLength(cloned) } } };
+            }
             if (!cloned.content.includeInNextPrompt || cloned.content.promptText.length === 0) return cloned;
             if (currentChars <= maxObservationChars * targetRatio) return cloned;
             const replacement = compactToolResultPromptText(cloned, currentSummaries.get(cloned.id));
@@ -248,8 +259,9 @@ function truncateToolResultPromptText(
     // cannot fit it. The final-request guard must then decline the request.
     // Never turn a small result into a larger placeholder.
     if (marker.length >= text.length) return text;
-    if (maxChars <= marker.length || message.content.metadata?.compacted === true) return marker;
-    return `${text.slice(0, maxChars - marker.length - 1).trimEnd()}\n${marker}`;
+    // A prefix can cut a JSON value or source reference in half. Keep the
+    // complete result or one truthful reduction marker with its call identity.
+    return marker;
 }
 
 function totalObservationChars(transcript: readonly PaAgentMessage[]): number {

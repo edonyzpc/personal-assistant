@@ -149,7 +149,8 @@ describe("host-enabled native writing loop", () => {
 
     it("finishes one exact output without prepare, execute, tool results or acknowledgement", async () => {
         const afterTurn = jest.fn(async (summary: PaAgentTurnSummary) => {
-            expect(summary.nativeWriting).toEqual({ body: trace.expected, explanation: "" });
+            expect(summary.nativeWriting).toMatchObject({ kind: "accepted_for_delivery", receiptId: expect.any(String) });
+            expect(summary.nativeWriting).not.toHaveProperty("body");
             expect(summary.toolCalls).toHaveLength(1);
             return { action: "stop" as const, status: "completed" as const, reason: "accepted" };
         });
@@ -220,7 +221,7 @@ describe("host-enabled native writing loop", () => {
         expect(inputs).toHaveLength(2);
         expect(inputs[1].runtimeInstruction).toContain("not accepted");
         expect(result.status).toBe("completed");
-        expect(result.turns.at(-1)?.nativeWriting).toEqual({ body: trace.expected, explanation: "" });
+        expect(result.turns.at(-1)?.nativeWriting).toMatchObject({ kind: "accepted_for_delivery", receiptId: expect.any(String) });
     });
 
     it("does not wait for an optional transport tail after complete pure output", async () => {

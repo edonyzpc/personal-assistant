@@ -55,30 +55,8 @@
  * encoded form retains a space-prefix for each token (real tokenizers behave
  * the same way; ignoring whitespace would systematically under-count by ~15%).
  */
-export function estimateTokens(text: string): number {
-    if (typeof text !== "string" || text.length === 0) return 0;
-    let cjk = 0;
-    let other = 0;
-    // Iterate codepoints so surrogate-paired supplementary CJK ideographs
-    // count as one token, not two.
-    for (const ch of text) {
-        const code = ch.codePointAt(0)!;
-        if (
-            (code >= 0x3400 && code <= 0x4DBF)
-            || (code >= 0x4E00 && code <= 0x9FFF)
-            || (code >= 0xF900 && code <= 0xFAFF)
-            || (code >= 0x20000 && code <= 0x2A6DF)
-            || (code >= 0x2A700 && code <= 0x2B73F)
-            || (code >= 0x2B740 && code <= 0x2B81F)
-            || (code >= 0x2B820 && code <= 0x2CEAF)
-        ) {
-            cjk += 1;
-        } else {
-            other += 1;
-        }
-    }
-    return cjk + Math.ceil(other / 4);
-}
+export { estimateApproximateTokens as estimateTokens } from "../token-estimate";
+import { estimateApproximateTokens as estimateTokens } from "../token-estimate";
 
 /**
  * Sum estimateTokens over an arbitrary set of strings — useful for prompt

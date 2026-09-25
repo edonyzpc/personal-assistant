@@ -14,6 +14,9 @@ import type {
     VaultSnippetSearchOutput,
 } from "../src/ai-services/chat-tool-types";
 import type { ChatMessage, PaAgentMessage } from "../src/ai-services/chat-types";
+import { createAnswerCompletionLedger, decideAnswerCompletion, deriveAnswerCompletionTurnFacts }
+    from "../src/ai-services/pa-agent-answer-completion-policy";
+import type { PaAgentTurnSummary } from "../src/ai-services/pa-agent-loop";
 import {
     MAX_VAULT_OBSERVATION_ENVELOPES_PER_TURN,
     assertVaultObservationHistory,
@@ -375,6 +378,9 @@ describe("T-07 query evidence foundation", () => {
 
         caches.set("notes/a.md", { frontmatter: { status: "inactive" } });
         message = queryMessage(result);
+        (message as Extract<PaAgentMessage, { role: "toolResult" }>).content.resultFact = {
+            kind: "evidence", sourceRefs: ["notes/a.md", "notes/b.md"],
+        };
         projection = await prepareVaultObservationProjection({
             transcript: [message],
             history: [],
@@ -385,6 +391,8 @@ describe("T-07 query evidence foundation", () => {
             observation: QueryNotesOutput;
         };
         expect(projected.observation.matches.map(match => match.path)).toEqual(["notes/b.md"]);
+        expect((projection.transcript[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.resultFact)
+            .toEqual({ kind: "evidence", sourceRefs: ["notes/b.md"] });
         expect(projected.observation.nextCursor).toBeUndefined();
         expect(projected.observation.matchCountKind).toBe("lower-bound");
         expect(projected.observation.sort).toBeUndefined();
@@ -678,8 +686,10 @@ describe("T-07 snippet evidence foundation", () => {
         expect(result.content!.matches).toEqual([]);
         const contents = new Map([["notes/empty.md", "# Empty\nneedle match"]]);
         fixture.cachedRead.mockImplementation(async file => contents.get((file as { path: string }).path) ?? "");
+        const message = snippetMessage(result) as Extract<PaAgentMessage, { role: "toolResult" }>;
+        message.content.resultFact = { kind: "no_match", search: "snippet" };
         const projection = await prepareVaultObservationProjection({
-            transcript: [snippetMessage(result)],
+            transcript: [message],
             history: [],
             revalidate: evidence => revalidateVaultObservationFromApp(fixture.host, evidence),
             getEpoch: () => "epoch-1",
@@ -687,6 +697,18 @@ describe("T-07 snippet evidence foundation", () => {
         expect(JSON.parse(toolResultContent(projection.transcript[0]!).promptText)).toMatchObject({
             status: "unavailable",
         });
+        const projectedResult = projection.transcript[0] as Extract<PaAgentMessage, { role: "toolResult" }>;
+        expect(projectedResult.content.resultFact).toMatchObject({ kind: "unavailable" });
+        const turn: PaAgentTurnSummary = { turnId: "vault-fact", turnIndex: 0,
+            status: "tool_results_ready", committedFinalText: "", pendingTextReclassified: false,
+            assistantMessage: { role: "assistant", id: "answer", content: [], timestamp: 1 },
+            diagnostics: [], metrics: [], toolCalls: [], toolResults: [projectedResult],
+            timing: { turnIndex: 0, status: "tool_results_ready", elapsedMs: 0, modelElapsedMs: 0,
+                modelChunkCount: 0, toolCallCount: 0, toolResultCount: 1 } };
+        const ledger = createAnswerCompletionLedger();
+        const facts = deriveAnswerCompletionTurnFacts(turn, ledger);
+        expect(facts.hasOnlyNoMatchResults).toBe(false);
+        expect(decideAnswerCompletion({ summary: turn, ledger, facts })).toMatchObject({ action: "continue_recovery" });
         await expect(projection.binding.prepare()).rejects.toThrow("changed before dispatch");
     });
 
@@ -699,8 +721,10 @@ describe("T-07 snippet evidence foundation", () => {
         const fixture = snippetFixture(files, contents);
         const result = await fixture.invoke({ query: "needle", limit: 5 });
         contents.set("notes/a.md", "# A\nchanged");
+        const message = snippetMessage(result) as Extract<PaAgentMessage, { role: "toolResult" }>;
+        message.content.resultFact = { kind: "evidence", sourceRefs: ["notes/a.md", "notes/b.md"] };
         const projection = await prepareVaultObservationProjection({
-            transcript: [snippetMessage(result)],
+            transcript: [message],
             history: [],
             revalidate: evidence => revalidateVaultObservationFromApp(fixture.host, evidence),
             getEpoch: () => "epoch-1",
@@ -709,6 +733,8 @@ describe("T-07 snippet evidence foundation", () => {
             observation: VaultSnippetSearchOutput;
         };
         expect(projected.observation.matches.map(match => match.path)).toEqual(["notes/b.md"]);
+        expect((projection.transcript[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.resultFact)
+            .toEqual({ kind: "evidence", sourceRefs: ["notes/b.md"] });
         expect(projected.observation.nextCursor).toBeUndefined();
         expect(projected.observation.matchCountKind).toBe("lower-bound");
         expect(projected.observation.page).toBeUndefined();

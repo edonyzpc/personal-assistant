@@ -1,1365 +1,175 @@
 import { describe, expect, it } from "@jest/globals";
-
-import {
-    classifyRequiredCapabilitiesDeterministic,
-    createRequiredCapabilityHostPolicy,
-    inspectRequiredCapabilityPhase,
-    resolveRequiredCapabilityClassification,
-    type RequiredCapability,
-} from "../src/ai-services/pa-agent-required-capability-policy";
+import { createRequiredCapabilityHostPolicy } from "../src/ai-services/pa-agent-required-capability-policy";
 import { createAgentControlSnapshot } from "../src/ai-services/pa-agent-control-policy";
-import { chatToolResultToPaAgentToolExecutionResult } from "../src/ai-services/pa-agent-host-tools";
 import type { PaAgentTurnSummary } from "../src/ai-services/pa-agent-loop";
+import type { PaAgentResultFact } from "../src/ai-services/pa-agent-result-facts";
 
-describe("PA Agent required capability HostPolicy", () => {
-    it('allows one native context schema correction without opening a new tool scope', async () => {
-        const policy = createRequiredCapabilityHostPolicy({ userInput: 'Write a card',
-            availableCapabilities: new Set(), classification: { items: [] }, allowWritingContextSchemaRepair: true });
-        const summary = createSummary({ status: 'tool_results_ready', toolResults: [
-            createToolResult('get_writing_context', { isError: true, outcome: 'schema_invalid' }),
+describe("PA Agent observation based Host policy", () => {
+    it("allows one native Writing context schema correction within the existing scope", async () => {
+        const policy = createRequiredCapabilityHostPolicy({ allowWritingContextSchemaRepair: true });
+        const invalid = summary({ status: "tool_results_ready", toolResults: [
+            toolResult("get_writing_context", { isError: true, outcome: "schema_invalid" }),
         ] });
-        const first = await policy.hostPolicy.afterTurn(summary);
-        expect(first).toMatchObject({ action: 'continue', reason: 'tool_results_ready',
-            runtimeInstruction: expect.stringContaining('correct the arguments once') });
-        expect(first).not.toHaveProperty('controlSnapshot');
-        expect(first).not.toHaveProperty('toolMode');
-        expect(await policy.hostPolicy.afterTurn(summary)).toMatchObject({
-            action: 'continue', toolMode: 'normal',
-        });
+        const first = await policy.hostPolicy.afterTurn(invalid);
+        expect(first).toMatchObject({ action: "continue", reason: "tool_results_ready",
+            runtimeInstruction: expect.stringContaining("correct the arguments once") });
+        expect(first).not.toHaveProperty("controlSnapshot");
+        expect(await policy.hostPolicy.afterTurn(invalid)).toMatchObject({ action: "continue", toolMode: "normal" });
     });
 
-    it.each(['legacy', 'policy_rejected', 'mixed-failure'])('keeps alternative recovery paths available for %s', async mode => {
-        const policy = createRequiredCapabilityHostPolicy({ userInput: 'Write a card',
-            availableCapabilities: new Set(), classification: { items: [] }, allowWritingContextSchemaRepair: mode !== 'legacy' });
-        const results = [createToolResult('get_writing_context', { isError: true,
-            outcome: mode === 'policy_rejected' ? 'policy_rejected' : 'schema_invalid' })];
-        if (mode === 'mixed-failure') results.push(createToolResult('webSearch', { isError: true, outcome: 'policy_rejected' }));
-        expect(await policy.hostPolicy.afterTurn(createSummary({ status: 'tool_results_ready', toolResults: results })))
-            .toMatchObject({ action: 'continue', toolMode: 'normal' });
+    it.each(["policy_rejected", "recoverable_error"])("keeps normal recovery for %s", async outcome => {
+        const policy = createRequiredCapabilityHostPolicy({ allowWritingContextSchemaRepair: true });
+        expect(await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready", toolResults: [
+            toolResult("get_writing_context", { isError: true, outcome }),
+        ] }))).toMatchObject({ action: "continue", toolMode: "normal" });
     });
 
-    it("classifies strong and weak deterministic capability signals", () => {
-        expect(classifyRequiredCapabilitiesDeterministic("Search the web for the latest docs.").items).toEqual([
-            expect.objectContaining({
-                capability: "webSearch",
-                confidence: 0.9,
-                level: "required",
-            }),
-        ]);
-        expect(classifyRequiredCapabilitiesDeterministic("Use my materials if helpful.").items).toEqual([
-            expect.objectContaining({
-                capability: "search_memory",
-                confidence: 0.65,
-                level: "suggested",
-            }),
-        ]);
+    it("retries an empty answer from actual observations once, then stops incomplete", async () => {
+        const policy = createRequiredCapabilityHostPolicy();
+        await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready", toolResults: [
+            toolResult("read_note", { resultFact: { kind: "evidence", sourceRefs: ["A.md"] } }),
+        ] }));
+        const empty = summary({ status: "incomplete", diagnostics: [{ type: "assistant_empty_response" }] });
+        expect(await policy.hostPolicy.afterTurn(empty)).toMatchObject({ action: "continue", toolMode: "final_answer_only" });
+        expect(await policy.hostPolicy.afterTurn(empty)).toMatchObject({ action: "stop", status: "incomplete",
+            reason: "empty_after_finalization" });
     });
 
-    describe("English baseline classification (SDD §7.1 deterministic)", () => {
-        it("classifies English webSearch weak-signal inputs as suggested", () => {
-            expect(classifyRequiredCapabilitiesDeterministic("This may have changed recently.").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", confidence: 0.65, level: "suggested" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("Is there a newest release out?").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", confidence: 0.65, level: "suggested" }),
-            ]);
-        });
-
-        it("classifies latest/today freshness questions with external nouns as required", () => {
-            expect(classifyRequiredCapabilitiesDeterministic("What's the latest Obsidian release?").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", confidence: 0.9, level: "required" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("What is today's weather in Shanghai?").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", confidence: 0.9, level: "required" }),
-            ]);
-        });
-
-        it("classifies English search_memory strong-signal inputs as required", () => {
-            expect(classifyRequiredCapabilitiesDeterministic("Check my notes for the spec.").items).toEqual([
-                expect.objectContaining({ capability: "search_memory", confidence: 0.9, level: "required" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("Search my vault for the design doc.").items).toEqual([
-                expect.objectContaining({ capability: "search_memory", confidence: 0.9, level: "required" }),
-            ]);
-        });
-
-        it("classifies English current-note weak-signal inputs as suggested", () => {
-            expect(classifyRequiredCapabilitiesDeterministic("Summarize this document for me.").items).toEqual([
-                expect.objectContaining({ capability: "get_current_note_context", confidence: 0.65, level: "suggested" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("What does the selected text mean?").items).toEqual([
-                expect.objectContaining({ capability: "get_current_note_context", confidence: 0.65, level: "suggested" }),
-            ]);
-        });
+    it("offers one bound managed action after repeated note reads without treating the read as an applied action", async () => {
+        const policy = createRequiredCapabilityHostPolicy({ allowManagedActionAfterDuplicateNoteRead: true });
+        await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready", toolResults: [
+            toolResult("read_note", { resultFact: { kind: "evidence", sourceRefs: ["A.md"] } }),
+        ] }));
+        const duplicate = summary({ status: "tool_results_ready", toolResults: [
+            toolResult("read_note", { outcome: "duplicate_skipped", promptText: "", includeInNextPrompt: false }),
+        ] });
+        expect(await policy.hostPolicy.afterTurn(duplicate)).toMatchObject({ action: "continue",
+            runtimeInstruction: expect.stringContaining("bound managed action") });
+        expect(await policy.hostPolicy.afterTurn(duplicate)).not.toMatchObject({
+            runtimeInstruction: expect.stringContaining("bound managed action") });
     });
 
-    describe("CJK keyword classification (SDD §7.2)", () => {
-        it("classifies Chinese webSearch strong-signal inputs as required", () => {
-            expect(classifyRequiredCapabilitiesDeterministic("网上查 React 最新版本").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", level: "required" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("在线查这个 API 文档").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", level: "required" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("上网查一下今天的天气").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", level: "required" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("看一下杭州今天的天气").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", level: "required" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("杭州现在气温多少").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", level: "required" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("今天北京天气").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", level: "required" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("北京今天天气").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", level: "required" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("上海现在气温多少").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", level: "required" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("今天北京空气质量怎么样").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", level: "required" }),
-            ]);
-        });
-
-        it("does not trigger WebSearch from standalone air-quality wording without a current-info cue", () => {
-            expect(classifyRequiredCapabilitiesDeterministic("我的笔记里提到空气质量的段落").items).not.toEqual(
-                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
-            );
-            expect(classifyRequiredCapabilitiesDeterministic("当前笔记里空气质量是什么意思").items).not.toEqual(
-                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
-            );
-            expect(classifyRequiredCapabilitiesDeterministic("我的笔记里有没有北京天气记录").items).not.toEqual(
-                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
-            );
-            expect(classifyRequiredCapabilitiesDeterministic("我的笔记里今天写的天气段落").items).not.toEqual(
-                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
-            );
-            expect(classifyRequiredCapabilitiesDeterministic("当前笔记里“天气”这个词是什么意思").items).not.toEqual(
-                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
-            );
-        });
-
-        it("classifies Chinese memory strong-signal inputs as required", () => {
-            expect(classifyRequiredCapabilitiesDeterministic("我的笔记里写过什么相关内容").items).toEqual([
-                expect.objectContaining({ capability: "search_memory", level: "required" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("笔记库里有相关资料吗").items).toEqual([
-                expect.objectContaining({ capability: "search_memory", level: "required" }),
-            ]);
-        });
-
-        it("classifies Chinese current-note signals correctly", () => {
-            expect(classifyRequiredCapabilitiesDeterministic("总结当前笔记").items).toEqual([
-                expect.objectContaining({ capability: "get_current_note_context", level: "required" }),
-            ]);
-            expect(classifyRequiredCapabilitiesDeterministic("这篇文章在讲什么").items).toEqual([
-                expect.objectContaining({ capability: "get_current_note_context", level: "suggested" }),
-            ]);
-        });
-
-        it("classifies mixed Chinese-English input via English strong signals", () => {
-            expect(classifyRequiredCapabilitiesDeterministic("web search for the latest React docs").items).toEqual([
-                expect.objectContaining({ capability: "webSearch", level: "required" }),
-            ]);
-        });
-
-        // Per SDD §4.4: each of these used to trip bare 最新/今天/当前/更新 in the old
-        // CJK keyword table. Split per-input so a failing case is named in the test output.
-        it.each([
-            "今天写了什么笔记",
-            "最新的项目进展",
-            "更新一下笔记内容",
-        ])("does NOT trigger webSearch on generic Chinese adverb: %s (regression guard)", (input) => {
-            expect(classifyRequiredCapabilitiesDeterministic(input).items).not.toEqual(
-                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
-            );
-        });
-
-        it.each([
-            "基于上下文给我建议",
-            "当前任务是什么",
-        ])("does NOT trigger get_current_note_context on generic term: %s (regression guard)", (input) => {
-            expect(classifyRequiredCapabilitiesDeterministic(input).items).not.toEqual(
-                expect.arrayContaining([expect.objectContaining({ capability: "get_current_note_context" })]),
-            );
-        });
+    it("reports only an actual Saved Insight receipt", async () => {
+        const policy = createRequiredCapabilityHostPolicy();
+        const forged = await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready", toolResults: [
+            toolResult("manage_saved_insight", { promptText: "Saved!" }),
+        ] }));
+        expect(forged).not.toMatchObject({ runtimeInstruction: expect.stringContaining("already applied") });
+        const applied = await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready", toolResults: [
+            toolResult("manage_saved_insight", { resultFact: { kind: "applied", action: "saved_insight", receiptId: "receipt-1" } }),
+        ] }));
+        expect(applied).toMatchObject({ action: "continue", runtimeInstruction: expect.stringContaining("receipt-1") });
     });
 
-    it("does not treat current-note prompts as web freshness requests", () => {
-        const classification = classifyRequiredCapabilitiesDeterministic(
-            "Use the current note context only. What is the exact positive snippet token in this current note?",
-        );
-
-        expect(classification.items).toEqual([expect.objectContaining({
-            capability: "get_current_note_context",
-            confidence: 0.9,
-            level: "required",
-        })]);
-        expect(classification.items).not.toEqual(expect.arrayContaining([
-            expect.objectContaining({ capability: "webSearch" }),
-        ]));
+    it("continues a valid zero-hit Memory observation without a required-tool warning", async () => {
+        const policy = createRequiredCapabilityHostPolicy();
+        const decision = await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready", toolResults: [
+            toolResult("search_memory", { resultFact: { kind: "no_match", search: "memory" },
+                metadata: { memoryEvidenceState: "none" } }),
+        ] }));
+        expect(decision).toMatchObject({ action: "continue", reason: "tool_results_ready",
+            controlSnapshot: { exposureMode: "answer-ready" } });
+        expect(decision).not.toHaveProperty("warnings");
     });
 
-    it("honors explicit no-web and current-note-only constraints over policy classifier output", async () => {
-        const classification = await resolveRequiredCapabilityClassification({
-            userInput: "Use the current note only. Find the token whose prefix is pa-positive-snippet-token. Do not use web search.",
-            classifier: {
-                classify: async () => ({
-                    items: [
-                        {
-                            capability: "webSearch",
-                            confidence: 0.95,
-                            reason: "classifier false positive",
-                        },
-                        {
-                            capability: "get_current_note_context",
-                            confidence: 0.9,
-                            reason: "current note requested",
-                        },
-                    ],
-                }),
-            },
-        });
-
-        expect(classification.items).toEqual([expect.objectContaining({
-            capability: "get_current_note_context",
-            level: "required",
-        })]);
+    it("treats unavailable Memory as recovery rather than no match", async () => {
+        const policy = createRequiredCapabilityHostPolicy();
+        const decision = await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready", toolResults: [
+            toolResult("search_memory", { resultFact: { kind: "unavailable", capability: "search_memory", reason: "offline" },
+                metadata: { memoryEvidenceState: "unavailable" } }),
+        ] }));
+        expect(decision).toMatchObject({ action: "continue", toolMode: "normal",
+            runtimeInstruction: expect.stringContaining("recoverable observation") });
     });
 
-    it("honors Chinese explicit no-web constraints over weather/current-info routes", async () => {
-        const classification = await resolveRequiredCapabilityClassification({
-            userInput: "不要联网，看一下杭州今天的天气",
-            classifier: {
-                classify: async () => ({
-                    items: [{
-                        capability: "webSearch",
-                        confidence: 0.95,
-                        reason: "weather route",
-                    }],
-                }),
-            },
-        });
-
-        expect(classification.items).not.toEqual(expect.arrayContaining([
-            expect.objectContaining({ capability: "webSearch" }),
-        ]));
+    it("replaces earlier Memory evidence when the provider projection revokes it", async () => {
+        const policy = createRequiredCapabilityHostPolicy();
+        const evidence = toolResult("search_memory", { resultFact: { kind: "evidence", sourceRefs: ["A.md"] },
+            metadata: { memoryEvidenceState: "evidence" } });
+        await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready", toolResults: [evidence] }));
+        const revoked = { ...evidence, content: { ...evidence.content,
+            resultFact: { kind: "unavailable" as const, capability: "search_memory", reason: "source_revoked" },
+            metadata: { ...evidence.content.metadata, memoryEvidenceState: "unavailable" } } };
+        policy.synchronizeProjectedTranscript([revoked]);
+        const duplicate = toolResult("search_memory", { outcome: "duplicate_skipped", promptText: "", includeInNextPrompt: false });
+        const decision = await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready", toolResults: [duplicate] }));
+        expect(decision).toMatchObject({ action: "continue", toolMode: "normal" });
+        expect(decision).not.toMatchObject({ toolMode: "final_answer_only" });
     });
 
-    it("honors explicit no-memory wording without suppressing WebSearch", async () => {
-        const classification = await resolveRequiredCapabilityClassification({
-            userInput: "Use WebSearch. Search the web for the official Obsidian homepage domain. Do not answer from memory.",
-            classifier: {
-                classify: async () => ({
-                    items: [
-                        {
-                            capability: "webSearch",
-                            confidence: 0.95,
-                            reason: "web explicitly requested",
-                        },
-                        {
-                            capability: "search_memory",
-                            confidence: 0.9,
-                            reason: "classifier false positive from the word memory",
-                        },
-                    ],
-                }),
-            },
-        });
-
-        expect(classification.items).toEqual([expect.objectContaining({
-            capability: "webSearch",
-            level: "required",
-        })]);
-        expect(classification.items).not.toEqual(expect.arrayContaining([
-            expect.objectContaining({ capability: "search_memory" }),
-        ]));
-    });
-
-    it("uses classifier JSON when it returns before the timeout", async () => {
-        const seenInputs: unknown[] = [];
-        const classification = await resolveRequiredCapabilityClassification({
-            userInput: "Should I use my notes?",
-            classifier: {
-                classify: async (input) => {
-                    seenInputs.push(input);
-                    return JSON.stringify({
-                        items: [{
-                            capability: "search_memory",
-                            confidence: 0.82,
-                            reason: "model classified notes as required",
-                        }],
-                    });
-                },
-            },
-        });
-
-        expect(seenInputs).toEqual([expect.objectContaining({
-            userInput: "Should I use my notes?",
-        })]);
-        expect(JSON.stringify(seenInputs[0])).not.toContain("vault");
-        expect(classification).toEqual({
-            items: [expect.objectContaining({
-                capability: "search_memory",
-                confidence: 0.82,
-                level: "required",
-            })],
-        });
-    });
-
-    it("uses deterministic fallback when no policy classifier is configured", async () => {
-        await expect(resolveRequiredCapabilityClassification({
-            userInput: "Search the web for latest docs.",
-        })).resolves.toEqual({
-            items: [expect.objectContaining({
-                capability: "webSearch",
-                confidence: 0.9,
-                level: "required",
-            })],
-        });
-    });
-
-    it("normalizes classifier confidence levels and ignores low-confidence items", async () => {
-        await expect(resolveRequiredCapabilityClassification({
-            userInput: "Review this request.",
-            classifier: {
-                classify: async () => ({
-                    items: [
-                        {
-                            capability: "search_memory",
-                            confidence: 0.75,
-                            reason: "required boundary",
-                        },
-                        {
-                            capability: "webSearch",
-                            confidence: 0.45,
-                            reason: "suggested boundary",
-                        },
-                        {
-                            capability: "get_current_note_context",
-                            confidence: 0.44,
-                            reason: "below boundary",
-                        },
-                        {
-                            capability: "unknown_tool",
-                            confidence: 1,
-                            reason: "unknown capability",
-                        },
-                    ],
-                }),
-            },
-        })).resolves.toEqual({
-            items: [
-                expect.objectContaining({
-                    capability: "search_memory",
-                    confidence: 0.75,
-                    level: "required",
-                }),
-                expect.objectContaining({
-                    capability: "webSearch",
-                    confidence: 0.45,
-                    level: "suggested",
-                }),
-            ],
-        });
-    });
-
-    it("falls back when classifier times out and ignores late results", async () => {
-        let lateResolved = false;
-        const classification = await resolveRequiredCapabilityClassification({
-            userInput: "Search the web for latest docs.",
-            timeoutMs: 1,
-            classifier: {
-                classify: () => new Promise((resolve) => {
-                    setTimeout(() => {
-                        lateResolved = true;
-                        resolve({
-                            items: [{
-                                capability: "search_memory",
-                                confidence: 0.95,
-                                reason: "late wrong result",
-                            }],
-                        });
-                    }, 20);
-                }),
-            },
-        });
-
-        expect(classification).toEqual({
-            items: [expect.objectContaining({ capability: "webSearch", level: "required" })],
-        });
-        await new Promise((resolve) => setTimeout(resolve, 25));
-        expect(lateResolved).toBe(true);
-        expect(classification.items.map((item) => item.capability)).toEqual(["webSearch"]);
-    });
-
-    it("falls back when classifier returns invalid JSON or throws", async () => {
-        await expect(resolveRequiredCapabilityClassification({
-            userInput: "Search the web for latest docs.",
-            classifier: { classify: async () => "not json" },
-        })).resolves.toMatchObject({
-            items: [expect.objectContaining({ capability: "webSearch" })],
-        });
-
-        await expect(resolveRequiredCapabilityClassification({
-            userInput: "Search the web for latest docs.",
-            classifier: { classify: async () => { throw new Error("policy model failed"); } },
-        })).resolves.toMatchObject({
-            items: [expect.objectContaining({ capability: "webSearch" })],
-        });
-    });
-
-    it("applies explicit no-web constraints again at host-policy construction", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "不要联网，看一下杭州今天的天气",
-            availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
-            classification: {
-                items: [{
-                    capability: "webSearch",
-                    confidence: 0.95,
-                    level: "required",
-                    reason: "classifier false positive",
-                }],
-            },
-        });
-
-        expect(policy.classification.items).toEqual([]);
-        expect(policy.initialRuntimeInstruction).toBeUndefined();
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "不联网时无法核验实时天气。",
-        }))).toMatchObject({
-            action: "stop",
-            status: "completed",
-        });
-    });
-
-    it("injects a required first-turn instruction and allows one corrective turn", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Search the web for the latest docs.",
-            availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
-        });
-
-        expect(policy.initialRuntimeInstruction).toContain("WebSearch (webSearch)");
-        expect(policy.initialRuntimeInstruction).toContain("Use the listed tool or tools if available");
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Answer without web.",
-        }))).toMatchObject({
-            action: "continue",
-            reason: "corrective_turn",
-            runtimeInstruction: expect.stringContaining("WebSearch (webSearch)"),
-        });
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Still no web.",
-        }))).toMatchObject({
-            action: "stop",
-            status: "completed_with_warning",
-            warnings: [expect.objectContaining({
-                type: "required_capability_missing",
-                capability: "webSearch",
-                metadata: expect.objectContaining({
-                    available: true,
-                    correctiveAttempted: true,
-                }),
-            })],
-        });
-    });
-
-    it("does not satisfy required capabilities from tool calls or failed tool results", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Search the web for the latest docs.",
-            availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Tried a tool call.",
-            toolCalls: [{
-                type: "toolCall",
-                id: "web-call",
-                name: "webSearch",
-                input: { query: "latest docs" },
-            }],
-        }))).toMatchObject({
-            action: "continue",
-            reason: "corrective_turn",
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Tool failed.",
-            toolResults: [createToolResult("webSearch", {
-                isError: true,
-                outcome: "recoverable_error",
-            })],
-        }))).toMatchObject({ action: "continue", reason: "needs_follow_up", toolMode: "normal" });
-    });
-
-    it("emits incomplete diagnostics when no answer exists after corrective", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Search the web for the latest docs.",
-            availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary())).toMatchObject({
-            action: "continue",
-            reason: "corrective_turn",
-        });
-        expect(await policy.hostPolicy.afterTurn(createSummary())).toMatchObject({
-            action: "stop",
-            status: "incomplete",
-            diagnostics: [expect.objectContaining({
-                type: "required_capability_missing",
-                capabilities: ["webSearch"],
-            })],
-        });
-    });
-
-    it("retries once when successful tool observations are followed by an empty assistant response", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Use gathered context.",
-            availableCapabilities: new Set<RequiredCapability>(["get_current_note_context"]),
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createToolResult("get_current_note_context")],
-        }))).toMatchObject({
-            action: "continue",
-            reason: "tool_results_ready",
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "incomplete",
-            diagnostics: [{ type: "assistant_empty_response" }],
-        }))).toMatchObject({
-            action: "continue",
-            reason: "needs_follow_up",
-            runtimeInstruction: expect.stringContaining("This is a finalization turn. Do not call tools."),
-            toolMode: "final_answer_only",
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "incomplete",
-            diagnostics: [{ type: "assistant_empty_response" }],
-        }))).toMatchObject({
-            action: "stop",
-            status: "incomplete",
-        });
-    });
-
-    it("retries duplicate-only tool turns with an explicit answer-from-observations instruction", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Use the current note only. Find the token whose prefix is pa-positive-snippet-token.",
-            availableCapabilities: new Set<RequiredCapability>(["get_current_note_context"]),
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createToolResult("get_current_note_context")],
-        }))).toMatchObject({
-            action: "continue",
-            reason: "tool_results_ready",
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createDuplicateToolResult("get_current_note_context")],
-        }))).toMatchObject({
-            action: "continue",
-            reason: "needs_follow_up",
-            runtimeInstruction: expect.stringContaining("get_current_note_context has already been gathered"),
-            toolMode: "final_answer_only",
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createDuplicateToolResult("get_current_note_context")],
-        }))).toMatchObject({
-            action: "stop",
-            status: "incomplete",
-            diagnostics: [expect.objectContaining({
-                type: "duplicate_tool_call_without_answer",
-                tools: ["get_current_note_context"],
-            })],
-        });
-    });
-
-    it("allows one managed-action continuation after duplicate note reads", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Save the source-backed insight.",
-            availableCapabilities: new Set(),
-            classification: { items: [] },
-            allowManagedActionAfterDuplicateNoteRead: true,
-        });
-        await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready", toolResults: [createToolResult("read_note")],
-        }));
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready", toolResults: [createDuplicateToolResult("read_note")],
-        }))).toMatchObject({
-            action: "continue", reason: "needs_follow_up",
-            runtimeInstruction: expect.stringContaining("call that action now"),
-        });
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready", toolResults: [createDuplicateToolResult("read_note")],
-        }))).toMatchObject({ action: "continue", toolMode: "final_answer_only" });
-    });
-
-    it("instructs the answer to report a host-applied Saved Insight action", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Save this insight.", availableCapabilities: new Set(), classification: { items: [] },
-        });
-        const actionResult = createToolResult("manage_saved_insight", {
-            promptText: JSON.stringify({ tool: "manage_saved_insight", observation: {
-                kind: "insight-action", action: "save", status: "applied", insightId: "ins-test",
-            } }),
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready", toolResults: [actionResult],
-        }))).toMatchObject({
-            action: "continue", reason: "needs_follow_up",
-            runtimeInstruction: expect.stringContaining('"insightId":"ins-test"'),
-        });
-    });
-
-    it("treats successful note inspection as satisfying current-note requirements", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Inspect the current note structure.",
-            availableCapabilities: new Set<RequiredCapability>(["get_current_note_context"]),
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Operations Smoke Note; tags; callout; embed",
-            toolResults: [createToolResult("inspect_obsidian_note")],
-        }))).toMatchObject({
-            action: "stop",
-            status: "completed",
-        });
-    });
-
-    it("keeps recovery tools available after a required WebSearch tool returns unavailable", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Search the web for the latest docs.",
-            availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createToolResult("webSearch", {
-                isError: true,
-                outcome: "recoverable_error",
-            })],
-        }))).toMatchObject({
-            action: "continue",
-            reason: "needs_follow_up",
-            runtimeInstruction: expect.stringContaining("webSearch returned a recoverable observation"),
-            toolMode: "normal",
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "I cannot verify the latest docs from available context.",
-        }))).toMatchObject({
-            action: "stop",
-            reason: "required_capability_failed",
-            status: "completed_with_warning",
-            warnings: [expect.objectContaining({
-                capability: "webSearch",
-                detail: "WebSearch was required but failed or was unavailable.",
-                metadata: expect.objectContaining({
-                    failedRequiredToolRetryAttempted: true,
-                }),
-            })],
-        });
-    });
-
-    it("retracts required Memory satisfaction when the provider projection becomes unavailable", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Check my notes for the launch plan.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-        });
-        const initialMemory = createToolResult("search_memory", {
-            metadata: { memoryEvidenceState: "evidence" },
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [initialMemory],
-        }))).toMatchObject({ action: "continue" });
-
-        policy.synchronizeProjectedTranscript([{
-            ...initialMemory,
-            content: {
-                ...initialMemory.content,
-                metadata: {
-                    ...initialMemory.content.metadata,
-                    memoryEvidenceState: "unavailable",
-                },
-            },
-        }]);
-
-        await expect(Promise.resolve(policy.hostPolicy.finalizeAfterTurn!(createSummary({
-            committedFinalText: "I cannot verify the launch plan from available notes.",
-        }), {
-            defaultStatus: "completed",
-            reason: "finalization_reserve_completed",
-            // The Loop skipped normal afterTurn at the soft boundary. Its raw
-            // summary still carries the pre-projection evidence and must not
-            // restore it over the unavailable provider projection above.
-            unobservedTurnSummary: createSummary({
-                status: "tool_results_ready",
-                toolResults: [initialMemory],
-            }),
-        }))).resolves.toMatchObject({
-            action: "stop",
-            status: "completed_with_warning",
-            reason: "required_capability_failed",
-            warnings: [expect.objectContaining({
-                capability: "search_memory",
-                detail: "Memory from notes was required but failed or was unavailable.",
-            })],
-        });
-    });
-
-    it("keeps projected zero-hit Memory satisfied without requesting another search", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Check my notes for the launch plan.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-        });
-        const noHits = createToolResult("search_memory", {
-            metadata: { memoryEvidenceState: "none" },
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [noHits],
-        }))).toMatchObject({ action: "continue" });
-        policy.synchronizeProjectedTranscript([noHits]);
-
-        await expect(Promise.resolve(policy.hostPolicy.finalizeAfterTurn!(createSummary({
-            committedFinalText: "No matching notes were found.",
-        }), {
-            defaultStatus: "completed",
-            reason: "finalization_reserve_completed",
-        }))).resolves.toEqual({
-            action: "stop",
-            status: "completed",
-            reason: "finalization_reserve_completed",
-        });
-    });
-
-    it("does not erase prior Memory satisfaction when a projection contains no Memory result", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Check my notes for the launch plan.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-        });
-        const evidence = createToolResult("search_memory", {
-            metadata: { memoryEvidenceState: "evidence" },
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [evidence],
-        }))).toMatchObject({ action: "continue" });
+    it("withdraws earlier Memory evidence when the full projection drops its result", async () => {
+        const policy = createRequiredCapabilityHostPolicy();
+        await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready", toolResults: [
+            toolResult("search_memory", { resultFact: { kind: "evidence", sourceRefs: ["A.md"] } }),
+        ] }));
         policy.synchronizeProjectedTranscript([]);
-
-        await expect(Promise.resolve(policy.hostPolicy.finalizeAfterTurn!(createSummary({
-            committedFinalText: "The launch plan is in the available notes.",
-        }), {
-            defaultStatus: "completed",
-            reason: "finalization_reserve_completed",
-        }))).resolves.toEqual({
-            action: "stop",
-            status: "completed",
-            reason: "finalization_reserve_completed",
-        });
+        const decision = await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready", toolResults: [
+            toolResult("search_memory", { outcome: "duplicate_skipped", promptText: "", includeInNextPrompt: false }),
+        ] }));
+        expect(decision).toMatchObject({ action: "stop", status: "incomplete",
+            reason: "duplicate_tool_call_without_answer" });
+        const emptyPolicy = createRequiredCapabilityHostPolicy();
+        await emptyPolicy.hostPolicy.afterTurn(summary({ status: "tool_results_ready", toolResults: [
+            toolResult("search_memory", { resultFact: { kind: "evidence", sourceRefs: ["A.md"] } }),
+        ] }));
+        emptyPolicy.synchronizeProjectedTranscript([]);
+        const empty = await emptyPolicy.hostPolicy.afterTurn(summary({ status: "incomplete",
+            diagnostics: [{ type: "assistant_empty_response" }] }));
+        expect(empty).toMatchObject({ action: "stop", status: "incomplete" });
     });
 
-    it("treats malformed-but-ok Memory projection metadata as a failed required capability", async () => {
-        const execution = chatToolResultToPaAgentToolExecutionResult(
-            {
-                type: "toolCall",
-                id: "malformed-memory-call",
-                index: 0,
-                name: "search_memory",
-                input: { query: "launch" },
-            },
-            {
-                ok: true,
-                tool: "search_memory",
-                inputSummary: "launch",
-                content: { documents: "not-an-array" },
-                sources: [{ path: "notes/must-not-pass.md" }],
-            },
-        );
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Check my notes for the launch plan.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-        });
-
-        expect(execution.metadata).toMatchObject({ memoryEvidenceState: "unavailable" });
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [{
-                ...createToolResult("search_memory"),
-                toolCallId: "malformed-memory-call",
-                content: {
-                    promptText: execution.promptText,
-                    includeInNextPrompt: true,
-                    metadata: execution.metadata,
-                },
-            }],
-        }))).toMatchObject({
-            action: "continue",
-            reason: "needs_follow_up",
-            toolMode: "normal",
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Memory is unavailable.",
-        }))).toMatchObject({
-            action: "stop",
-            status: "completed_with_warning",
-            warnings: [expect.objectContaining({ capability: "search_memory" })],
-        });
-    });
-
-    it("treats a malformed guarded Memory document as unavailable through the real converter", async () => {
-        const execution = chatToolResultToPaAgentToolExecutionResult(
-            {
-                type: "toolCall",
-                id: "malformed-memory-document-call",
-                index: 0,
-                name: "search_memory",
-                input: { query: "launch" },
-            },
-            {
-                ok: true,
-                tool: "search_memory",
-                inputSummary: "launch",
-                content: {
-                    usedMemory: true,
-                    query: "launch",
-                    documents: [{
-                        content: 123,
-                        score: 0.9,
-                        source: { path: "notes/malformed.md", score: 0.9 },
-                    }],
-                    sources: [{ path: "notes/malformed.md", score: 0.9 }],
-                    hasAnswerableContent: true,
-                    memoryEvidenceState: "evidence",
-                    rerankVerdict: "relevant",
-                },
-                sources: [{ path: "notes/malformed.md", score: 0.9 }],
-            },
-        );
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Check my notes for the launch plan.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-        });
-
-        expect(execution.promptText).not.toContain("notes/malformed.md");
-        expect(execution.metadata).toMatchObject({ memoryEvidenceState: "unavailable" });
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [{
-                ...createToolResult("search_memory"),
-                toolCallId: "malformed-memory-document-call",
-                content: {
-                    promptText: execution.promptText,
-                    includeInNextPrompt: true,
-                    metadata: execution.metadata,
-                },
-            }],
-        }))).toMatchObject({
-            action: "continue",
-            reason: "needs_follow_up",
-            toolMode: "normal",
-        });
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Memory evidence is unavailable.",
-        }))).toMatchObject({
-            action: "stop",
-            reason: "required_capability_failed",
-            status: "completed_with_warning",
-            warnings: [expect.objectContaining({ capability: "search_memory" })],
-        });
-    });
-
-    it("keeps recovery tools available after a duplicate-only retry following required WebSearch failure", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Search the web for the latest docs.",
-            availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
-        });
-
-        await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createToolResult("webSearch", {
-                isError: true,
-                outcome: "recoverable_error",
-            })],
+    it("keeps answer-ready tools within the previous allowlist", async () => {
+        const policy = createRequiredCapabilityHostPolicy();
+        const decision = await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready",
+            toolResults: [toolResult("read_note", { resultFact: { kind: "evidence", sourceRefs: ["A.md"] } })],
+            controlSnapshot: createAgentControlSnapshot({ sourceScope: "notes",
+                allowedToolNames: new Set(["read_note"]) }),
         }));
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createDuplicateToolResult("webSearch")],
-        }))).toMatchObject({
-            action: "continue",
-            reason: "needs_follow_up",
-            toolMode: "normal",
-        });
+        expect(decision).toMatchObject({ action: "continue", reason: "tool_results_ready",
+            controlSnapshot: { exposureMode: "answer-ready", sourceScope: "notes" } });
+        if (decision.action !== "continue") throw new Error("Expected answer-ready continuation");
+        expect([...decision.controlSnapshot!.allowedToolNames!]).toEqual(["read_note"]);
     });
 
-    it("adds an unavailable note without corrective turns", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Search the web for the latest docs.",
-            availableCapabilities: new Set(),
-        });
-
-        expect(policy.initialRuntimeInstruction).toContain("unavailable in this runtime");
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Answer from available context.",
-        }))).toMatchObject({
-            action: "stop",
-            status: "completed_with_warning",
-            warnings: [expect.objectContaining({
-                capability: "webSearch",
-                metadata: expect.objectContaining({
-                    available: false,
-                    correctiveAttempted: false,
-                }),
-            })],
-        });
-    });
-
-    it("treats suggested capabilities as hints without warning metadata", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Use my materials if helpful.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-        });
-
-        expect(policy.initialRuntimeInstruction).toContain("may benefit from Memory from notes");
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Direct answer.",
-        }))).toMatchObject({
-            action: "stop",
-            status: "completed",
-        });
-    });
-
-    it("handles multi-capability required and suggested combinations precisely", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Use my notes and search the web for current launch context.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory", "webSearch"]),
-            classification: {
-                items: [
-                    {
-                        capability: "search_memory",
-                        confidence: 0.9,
-                        reason: "notes required",
-                        level: "required",
-                    },
-                    {
-                        capability: "webSearch",
-                        confidence: 0.86,
-                        reason: "freshness required",
-                        level: "required",
-                    },
-                    {
-                        capability: "get_current_note_context",
-                        confidence: 0.62,
-                        reason: "current note might help",
-                        level: "suggested",
-                    },
-                ],
-            },
-        });
-
-        expect(policy.initialRuntimeInstruction).toContain("Memory from notes (search_memory)");
-        expect(policy.initialRuntimeInstruction).toContain("WebSearch (webSearch)");
-        expect(policy.initialRuntimeInstruction).not.toContain("current note context (get_current_note_context)");
-
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Used Memory only.",
-            toolResults: [createToolResult("search_memory")],
-        }))).toMatchObject({
-            action: "continue",
-            reason: "corrective_turn",
-            runtimeInstruction: expect.stringContaining("WebSearch (webSearch)"),
-        });
-
-        const stop = await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Still missing web.",
-            toolResults: [createToolResult("search_memory")],
-        }));
-        expect(stop).toMatchObject({
-            action: "stop",
-            status: "completed_with_warning",
-            warnings: [expect.objectContaining({
-                capability: "webSearch",
-            })],
-        });
-        expect(stop.action === "stop" ? stop.warnings?.map((warning) => warning.capability) : []).toEqual(["webSearch"]);
-
-        const satisfiedPolicy = createRequiredCapabilityHostPolicy({
-            userInput: "Use my notes and search the web for current launch context.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory", "webSearch"]),
-            classification: policy.classification,
-        });
-        expect(await satisfiedPolicy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Used both.",
-            toolResults: [
-                createToolResult("search_memory"),
-                createToolResult("webSearch"),
-            ],
-        }))).toMatchObject({
-            action: "stop",
-            status: "completed",
-        });
-    });
-
-    it("is idempotent after reaching a terminal stop decision (SDD §7.3)", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Search the web for the latest docs.",
-            availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
-        });
-
-        // Round 1: initial → corrective_issued
-        expect(await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Answer without web.",
-        }))).toMatchObject({ action: "continue", reason: "corrective_turn" });
-
-        // Round 2: corrective_issued → terminal(from corrective)
-        const terminalDecision = await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Still no web.",
-        }));
-        expect(terminalDecision).toMatchObject({ action: "stop" });
-
-        // Round 3+: any further call should be a no-op stop, never crash, never re-run policy
-        const post = await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "After terminal.",
-        }));
-        expect(post).toMatchObject({ action: "stop", reason: "terminal_idempotent", status: "completed" });
-    });
-
-    describe("phase introspection (SDD §7.3)", () => {
-        it("starts in awaiting_initial_tools", () => {
-            const policy = createRequiredCapabilityHostPolicy({
-                userInput: "Search the web for the latest docs.",
-                availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
-            });
-            expect(inspectRequiredCapabilityPhase(policy.hostPolicy)).toBe("awaiting_initial_tools");
-        });
-
-        it("transitions to corrective_issued after a corrective_turn", async () => {
-            const policy = createRequiredCapabilityHostPolicy({
-                userInput: "Search the web for the latest docs.",
-                availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
-            });
-            await policy.hostPolicy.afterTurn(createSummary({ committedFinalText: "Answer without web." }));
-            expect(inspectRequiredCapabilityPhase(policy.hostPolicy)).toBe("corrective_issued");
-        });
-
-        it("transitions to failed_retry_issued when a required tool fails from initial", async () => {
-            const policy = createRequiredCapabilityHostPolicy({
-                userInput: "Search the web for the latest docs.",
-                availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
-            });
-            await policy.hostPolicy.afterTurn(createSummary({
-                committedFinalText: "Tried web but it failed.",
-                toolResults: [createToolResult("webSearch", { isError: true, outcome: "recoverable_error" })],
-            }));
-            expect(inspectRequiredCapabilityPhase(policy.hostPolicy)).toBe("failed_retry_issued");
-        });
-
-        it("transitions to terminal after a stop decision", async () => {
-            const policy = createRequiredCapabilityHostPolicy({
-                userInput: "Search the web for the latest docs.",
-                availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
-            });
-            await policy.hostPolicy.afterTurn(createSummary({ committedFinalText: "Answer without web." }));
-            await policy.hostPolicy.afterTurn(createSummary({ committedFinalText: "Still no web." }));
-            expect(inspectRequiredCapabilityPhase(policy.hostPolicy)).toBe("terminal");
-        });
-    });
-
-    it("warns only for unsatisfied required capabilities when available and unavailable capabilities are mixed", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Use my notes and current web information.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-            classification: {
-                items: [
-                    {
-                        capability: "search_memory",
-                        confidence: 0.9,
-                        reason: "notes required",
-                        level: "required",
-                    },
-                    {
-                        capability: "webSearch",
-                        confidence: 0.9,
-                        reason: "web required",
-                        level: "required",
-                    },
-                ],
-            },
-        });
-
-        expect(policy.initialRuntimeInstruction).toContain("Memory from notes (search_memory)");
-        expect(policy.initialRuntimeInstruction).toContain("WebSearch (webSearch), but that capability is unavailable");
-
-        const stop = await policy.hostPolicy.afterTurn(createSummary({
-            committedFinalText: "Used Memory, web unavailable.",
-            toolResults: [createToolResult("search_memory")],
-        }));
-        expect(stop).toMatchObject({
-            action: "stop",
-            status: "completed_with_warning",
-            warnings: [expect.objectContaining({
-                capability: "webSearch",
-                metadata: expect.objectContaining({
-                    available: false,
-                    correctiveAttempted: false,
-                }),
-            })],
-        });
-        expect(stop.action === "stop" ? stop.warnings?.map((warning) => warning.capability) : []).toEqual(["webSearch"]);
-    });
-
-    it("continues successful observations with answer-ready guidance instead of final-only", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Check my notes for Zhou Zhi.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-        });
-        const decision = await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createToolResult("search_memory")],
-            controlSnapshot: createAgentControlSnapshot({
-                exposureMode: "narrowed-required",
-                sourceScope: "notes",
-                allowedToolNames: new Set(["search_memory"]),
-            }),
-        }));
-
-        expect(decision).toMatchObject({
-            action: "continue",
-            reason: "tool_results_ready",
-            runtimeInstruction: expect.stringContaining("Answer directly if the existing observations are sufficient."),
-            controlSnapshot: {
-                exposureMode: "answer-ready",
-                sourceScope: "notes",
-            },
-        });
-        if (decision.action === "continue") {
-            expect(decision.toolMode).toBeUndefined();
-            expect([...decision.controlSnapshot!.allowedToolNames!]).toEqual(["search_memory"]);
-            expect(decision.controlSnapshot!.diagnostics.map((diagnostic) => diagnostic.type)).toContain("answer_ready_decision");
-        }
-    });
-
-    it.each(["absent", "allowed", "blocked"])("does not expand the allowed set in Memory follow-up: %s", async state => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Check notes, then narrow the source.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-        });
-        const decision = await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createToolResult("search_memory", { metadata: { needsSnippetFollowup: true } })],
-            controlSnapshot: createAgentControlSnapshot({
-                allowedToolNames: new Set(["search_memory", "webSearch", "load_skill",
-                    ...(state === "absent" ? [] : ["read_note_outline"])]),
-                blockedToolNames: new Set(state === "blocked" ? ["read_note_outline"] : []),
-            }),
-        }));
-        expect(decision.action).toBe("continue");
-        if (decision.action !== "continue") throw new Error("Expected follow-up");
-        expect([...decision.controlSnapshot!.allowedToolNames!].sort()).toEqual([
-            "load_skill",
-            "search_memory",
-            "webSearch",
-            ...(state === "allowed" ? ["read_note_outline"] : []),
-        ].sort());
-        expect(decision.controlSnapshot!.budgetState.followUpRoundCount).toBe(1);
-        expect(decision.controlSnapshot!.blockedToolNames?.has("read_note_outline")).toBe(state === "blocked");
-    });
-
-    it("keeps Memory follow-up unconstrained when the previous snapshot had no allowlist", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Check my notes for Zhou Zhi.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-        });
-        const decision = await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createToolResult("search_memory", {
-                metadata: { needsSnippetFollowup: true },
-            })],
-        }));
-
-        expect(decision).toMatchObject({
-            action: "continue",
-            reason: "needs_follow_up",
-            controlSnapshot: {
-                exposureMode: "follow-up",
-                sourceScope: "notes",
-            },
-        });
-        if (decision.action === "continue") {
-            expect(decision.controlSnapshot!.allowedToolNames).toBeUndefined();
-        }
-    });
-
-    it("keeps an explicit empty allowlist empty in Memory follow-up", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Check my notes for Zhou Zhi.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-        });
-        const decision = await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createToolResult("search_memory", {
-                metadata: { needsSnippetFollowup: true },
-            })],
-            controlSnapshot: createAgentControlSnapshot({
-                exposureMode: "source-scoped",
-                sourceScope: "notes",
-                allowedToolNames: new Set<string>(),
-            }),
-        }));
-
-        expect(decision.action).toBe("continue");
-        if (decision.action !== "continue") throw new Error("Expected follow-up");
-        expect(decision.controlSnapshot!.allowedToolNames).toBeDefined();
-        expect(decision.controlSnapshot!.allowedToolNames!.size).toBe(0);
-    });
-
-    it("removes a blocked follow-up tool from the effective Memory follow-up allowlist", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Check my notes for Zhou Zhi.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-        });
-        const decision = await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createToolResult("search_memory", {
-                metadata: { needsSnippetFollowup: true },
-            })],
-            controlSnapshot: createAgentControlSnapshot({
-                exposureMode: "source-scoped",
-                sourceScope: "notes",
+    it("preserves Memory same-source follow-up and its existing allowlist", async () => {
+        const policy = createRequiredCapabilityHostPolicy();
+        const decision = await policy.hostPolicy.afterTurn(summary({ status: "tool_results_ready",
+            toolResults: [toolResult("search_memory", { resultFact: { kind: "evidence", sourceRefs: ["A.md"] },
+                metadata: { needsSnippetFollowup: true } })],
+            controlSnapshot: createAgentControlSnapshot({ sourceScope: "notes",
                 allowedToolNames: new Set(["search_memory", "search_vault_snippets"]),
-                blockedToolNames: new Set(["search_vault_snippets"]),
-            }),
+                blockedToolNames: new Set(["search_vault_snippets"]) }),
         }));
-
-        expect(decision.action).toBe("continue");
+        expect(decision).toMatchObject({ action: "continue", reason: "needs_follow_up",
+            controlSnapshot: { sourceScope: "notes" } });
         if (decision.action !== "continue") throw new Error("Expected follow-up");
         expect([...decision.controlSnapshot!.allowedToolNames!]).toEqual(["search_memory"]);
-        expect(decision.controlSnapshot!.blockedToolNames?.has("search_vault_snippets")).toBe(true);
     });
 
-    it("keeps a final-only Memory follow-up constrained to the final answer", async () => {
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Check my notes for Zhou Zhi.",
-            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
-        });
-        const decision = await policy.hostPolicy.afterTurn(createSummary({
-            status: "tool_results_ready",
-            toolResults: [createToolResult("search_memory", {
-                metadata: { needsSnippetFollowup: true },
-            })],
-            controlSnapshot: createAgentControlSnapshot({
-                exposureMode: "final-only",
-                sourceScope: "notes",
-                allowedToolNames: new Set(["search_memory"]),
-                toolMode: "final_answer_only",
-            }),
-        }));
-
-        expect(decision).toMatchObject({
-            action: "continue",
-            reason: "needs_follow_up",
-            runtimeInstruction: expect.stringContaining("targeted note follow-up"),
-            controlSnapshot: {
-                exposureMode: "final-only",
-                sourceScope: "none",
-                toolMode: "final_answer_only",
-            },
-        });
-        if (decision.action === "continue") {
-            expect(decision.controlSnapshot!.allowedToolNames).toBeDefined();
-            expect(decision.controlSnapshot!.allowedToolNames!.size).toBe(0);
-        }
+    it("returns the actual terminal status on repeated calls", async () => {
+        const policy = createRequiredCapabilityHostPolicy();
+        const terminal = summary({ status: "incomplete", committedFinalText: "" });
+        expect(await policy.hostPolicy.afterTurn(terminal)).toMatchObject({ action: "stop", status: "incomplete" });
+        expect(await policy.hostPolicy.afterTurn(terminal)).toMatchObject({ action: "stop", status: "incomplete" });
     });
 });
 
-function createSummary(overrides: Partial<PaAgentTurnSummary> = {}): PaAgentTurnSummary {
-    return {
-        turnId: "turn-1",
-        turnIndex: 0,
-        status: "completed",
-        assistantMessage: {
-            role: "assistant",
-            id: "assistant-1",
-            content: [],
-            timestamp: 1000,
-        },
-        committedFinalText: "",
-        pendingTextReclassified: false,
-        toolCalls: [],
-        toolResults: [],
-        diagnostics: [],
-        metrics: [],
-        timing: {
-            turnIndex: 0,
-            status: "completed",
-            elapsedMs: 0,
-            modelElapsedMs: 0,
-            modelChunkCount: 0,
-            toolCallCount: 0,
-            toolResultCount: 0,
-        },
-        ...overrides,
-    };
+function summary(overrides: Partial<PaAgentTurnSummary> = {}): PaAgentTurnSummary {
+    return { turnId: "turn-1", turnIndex: 0, status: "completed",
+        assistantMessage: { role: "assistant", id: "assistant-1", content: [], timestamp: 1000 },
+        committedFinalText: "", pendingTextReclassified: false, toolCalls: [], toolResults: [],
+        diagnostics: [], metrics: [], timing: { turnIndex: 0, status: "completed", elapsedMs: 0,
+            modelElapsedMs: 0, modelChunkCount: 0, toolCallCount: 0, toolResultCount: 0 }, ...overrides };
 }
 
-function createToolResult(
-    toolName: string,
-    options: { isError?: boolean; outcome?: string; promptText?: string; metadata?: Record<string, unknown> } = {},
-): PaAgentTurnSummary["toolResults"][number] {
-    return {
-        role: "toolResult",
-        id: `${toolName}-result`,
-        toolCallId: `${toolName}-call`,
-        toolName,
-        content: {
-            promptText: options.promptText ?? `${toolName} observation`,
-            includeInNextPrompt: true,
-            metadata: {
-                outcome: options.outcome ?? "success",
-                ...(options.metadata ?? {}),
-            },
-        },
-        isError: options.isError ?? false,
-        timestamp: 1000,
-    };
-}
-
-function createDuplicateToolResult(toolName: string): PaAgentTurnSummary["toolResults"][number] {
-    return {
-        role: "toolResult",
-        id: `${toolName}-duplicate-result`,
-        toolCallId: `${toolName}-duplicate-call`,
-        toolName,
-        content: {
-            promptText: "",
-            includeInNextPrompt: false,
-            metadata: {
-                outcome: "duplicate_skipped",
-            },
-        },
-        isError: false,
-        timestamp: 1000,
-    };
+function toolResult(toolName: string, options: {
+    isError?: boolean; outcome?: string; promptText?: string; includeInNextPrompt?: boolean;
+    metadata?: Record<string, unknown>; resultFact?: PaAgentResultFact;
+} = {}): PaAgentTurnSummary["toolResults"][number] {
+    return { role: "toolResult", id: `${toolName}-result`, toolCallId: `${toolName}-call`, toolName,
+        content: { promptText: options.promptText ?? `${toolName} observation`,
+            includeInNextPrompt: options.includeInNextPrompt ?? true,
+            metadata: { outcome: options.outcome ?? "success", ...options.metadata },
+            ...(options.resultFact ? { resultFact: options.resultFact } : {}) },
+        isError: options.isError ?? false, timestamp: 1000 };
 }

@@ -4,6 +4,7 @@ import type { ParsedBufferedToolCall } from '../src/ai-services/pa-agent-types';
 import type { TaskSourceConstraint } from '../src/ai-services/task-source-constraint';
 import type { ChatMessage, PaAgentMessage } from '../src/ai-services/chat-types';
 import { createTaskSourceConstrainedExecutor } from '../src/ai-services/task-source-executor';
+import { completeInputLineage, toGenerationInputLineage } from '../src/ai-services/input-lineage';
 import {
     MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS,
     MAX_TASK_SOURCE_NOTE_HANDLES,
@@ -22,6 +23,8 @@ function fixture(currentPath = 'notes/a.md') {
     const files = new Map<string, VaultFileLike>([[a.path, a], [b.path, b], [canvas.path, canvas]]);
     let active: MarkdownViewLike | null = { file: a };
     let current = true;
+    let sourceEpoch = 'epoch-1';
+    let memoryAllowed = true;
     const workspace = {
         getActiveViewOfType: jest.fn((_type: unknown) => active),
         getMostRecentLeaf: jest.fn(() => null),
@@ -29,11 +32,14 @@ function fixture(currentPath = 'notes/a.md') {
     } as unknown as Workspace;
     const getFileByPath = jest.fn((path: string): unknown => files.get(path));
     const host: TaskSourceRunHost = { runId: 'run-1', userMessageId: 'user-1', userText,
-        workspace, getFileByPath, isCurrent: () => current };
+        workspace, getFileByPath, isCurrent: () => current,
+        getMemoryEvidenceEpoch: () => sourceEpoch, isMemoryAllowed: () => memoryAllowed };
     return { a, b, canvas, files, host, getFileByPath,
         create: () => new TaskSourceRun(host),
         setActive(view: MarkdownViewLike | null) { active = view; },
         setCurrent(value: boolean) { current = value; },
+        setSourceEpoch(value: string) { sourceEpoch = value; },
+        setMemoryAllowed(value: boolean) { memoryAllowed = value; },
     };
 }
 
@@ -64,6 +70,268 @@ function executorFor(run: TaskSourceRun, userInput = userText) {
 }
 
 describe('Task source run host', () => {
+    it('keeps only source-compatible history in a selected Chat run without erasing the display records', () => {
+        const h = fixture();
+        const history = [
+            { role: 'user', content: 'EXPLICIT_USER', inputLineage: { schemaVersion: 1,
+                completeness: 'complete', dependencies: [{ kind: 'user-text', messageId: 'user-old' }] } },
+            { role: 'assistant', content: 'PRIVATE_NOTE', inputLineage: { schemaVersion: 1,
+                completeness: 'complete', dependencies: [{ kind: 'vault', path: h.a.path, via: 'note' }] } },
+            { role: 'assistant', content: 'PUBLIC_WEB', inputLineage: { schemaVersion: 1,
+                completeness: 'complete', dependencies: [{ kind: 'web', providerId: 'web', resultKey: 'result-1' }] } },
+            { role: 'assistant', content: 'LEGACY_UNKNOWN' },
+        ] as ChatMessage[];
+        const run = new TaskSourceRun({ ...h.host, runSourceSelection: {
+            schemaVersion: 1, scope: 'web', selectionId: 'scope-1', userMessageId: h.host.userMessageId,
+        } });
+
+        expect(run.projectHistory(history).map(message => message.content)).toEqual(['EXPLICIT_USER', 'PUBLIC_WEB']);
+        expect(history.map(message => message.content)).toEqual([
+            'EXPLICIT_USER', 'PRIVATE_NOTE', 'PUBLIC_WEB', 'LEGACY_UNKNOWN',
+        ]);
+    });
+
+    it('keeps a source-free Vault search observation in its creating notes run only', () => {
+        const h = fixture();
+        const lineage = { schemaVersion: 1, completeness: 'complete', dependencies: [
+            { kind: 'run-notes-observation', runId: 'run-1', owner: 'vault', sourceEpoch: 'epoch-1' },
+        ] } as unknown as Parameters<TaskSourceRun['admitsLineage']>[0];
+        const notes = new TaskSourceRun({ ...h.host, runSourceSelection: {
+            schemaVersion: 1, scope: 'notes', selectionId: 'notes-run', userMessageId: h.host.userMessageId,
+        } });
+        const web = new TaskSourceRun({ ...h.host, runSourceSelection: {
+            schemaVersion: 1, scope: 'web', selectionId: 'web-run', userMessageId: h.host.userMessageId,
+        } });
+        const later = new TaskSourceRun({ ...h.host, runId: 'run-2', runSourceSelection: {
+            schemaVersion: 1, scope: 'notes', selectionId: 'later-run', userMessageId: h.host.userMessageId,
+        } });
+        const result = { role: 'toolResult', id: 'empty-search', toolCallId: 'call-1',
+            toolName: 'search_vault_metadata', isError: false, inputLineage: lineage,
+            content: { promptText: '{"matches":[]}', includeInNextPrompt: true,
+                sourceRecords: [], resultFact: { kind: 'no_match', search: 'metadata' } },
+        } as unknown as PaAgentMessage;
+
+        expect(notes.admitsLineage(lineage)).toBe(true);
+        expect(toGenerationInputLineage(lineage, [])).toMatchObject({ state: 'complete',
+            dependencies: [{ kind: 'vault', identity: JSON.stringify(lineage?.dependencies[0]) }] });
+        expect(notes.projectTranscript([result])).toHaveLength(1);
+        expect(notes.captureLineageSourceValidity(lineage)()).toBe(true);
+        h.setSourceEpoch('epoch-2');
+        expect(notes.admitsLineage(lineage)).toBe(false);
+        expect(notes.captureLineageSourceValidity(lineage)()).toBe(false);
+        expect(notes.captureRunNotesObservationLineage('vault', 'epoch-1').completeness).toBe('unknown');
+        h.setSourceEpoch('epoch-1');
+        expect(web.admitsLineage(lineage)).toBe(false);
+        expect(web.projectTranscript([result])).toEqual([]);
+        expect(later.admitsLineage(lineage)).toBe(false);
+        expect(new TaskSourceRun({ ...h.host, runId: 'run-2' }).admitsLineage(lineage)).toBe(false);
+        expect(new TaskSourceRun({ ...h.host, getMemoryEvidenceEpoch: undefined })
+            .captureRunNotesObservationLineage('vault', 'epoch-1').completeness).toBe('unknown');
+        h.setCurrent(false);
+        expect(notes.captureLineageSourceValidity(lineage)()).toBe(false);
+    });
+
+    it('keeps a prior notes answer grounded only in user text in Web history', () => {
+        const h = fixture();
+        const web = new TaskSourceRun({ ...h.host, runId: 'run-2', runSourceSelection: {
+            schemaVersion: 1, scope: 'web', selectionId: 'web-run', userMessageId: h.host.userMessageId,
+        } });
+        const answer = { role: 'assistant', content: 'USER_TEXT_ONLY',
+            inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'old-user' }]),
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'old-notes',
+                userMessageId: 'old-user' } } as ChatMessage;
+
+        expect(web.projectHistory([answer])).toEqual([answer]);
+    });
+
+    it('withdraws a Memory empty observation when Memory availability changes', () => {
+        const h = fixture();
+        const notes = new TaskSourceRun({ ...h.host, runSourceSelection: {
+            schemaVersion: 1, scope: 'notes', selectionId: 'notes-run', userMessageId: h.host.userMessageId,
+        } });
+        const lineage = { schemaVersion: 1, completeness: 'complete', dependencies: [{
+            kind: 'run-notes-observation', runId: 'run-1', owner: 'memory',
+            sourceEpoch: 'epoch-1', memoryEnabled: true,
+        }] } as unknown as Parameters<TaskSourceRun['admitsLineage']>[0];
+
+        expect(notes.admitsLineage(lineage)).toBe(true);
+        const current = notes.captureLineageSourceValidity(lineage);
+        expect(current()).toBe(true);
+        h.setMemoryAllowed(false);
+        expect(notes.admitsLineage(lineage)).toBe(false);
+        expect(current()).toBe(false);
+        const unavailable = notes.captureRunNotesObservationLineage('memory', 'epoch-1', false);
+        expect(unavailable.completeness).toBe('complete');
+        expect(notes.admitsLineage(unavailable)).toBe(true);
+        h.setMemoryAllowed(true);
+        expect(notes.admitsLineage(unavailable)).toBe(false);
+    });
+
+    it('does not carry an older notes answer with a recorded empty tool observation into Web history', () => {
+        const h = fixture();
+        const web = new TaskSourceRun({ ...h.host, runId: 'run-2', runSourceSelection: {
+            schemaVersion: 1, scope: 'web', selectionId: 'web-run', userMessageId: h.host.userMessageId,
+        } });
+        const history = [{ role: 'assistant', content: 'NO_MATCH_FROM_OLD_NOTES_RUN',
+            inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'old-user' }]), runSourceSelection: {
+                schemaVersion: 1, scope: 'notes', selectionId: 'old-notes', userMessageId: 'old-user',
+            }, canonicalTurn: { schemaVersion: 1, runId: 'old-run', turnId: 'old-turn', messages: [{
+                role: 'toolResult', id: 'old-empty-search', toolCallId: 'old-call',
+                toolName: 'search_vault_metadata', isError: false, timestamp: 0,
+                content: { promptText: '{"tool":"search_vault_metadata","status":"ok","observation":{"query":"x","matches":[]}}',
+                    includeInNextPrompt: true, metadata: { outcome: 'success' }, sourceRecords: [] },
+            } as PaAgentMessage] } }] as ChatMessage[];
+
+        expect(web.projectHistory(history)).toEqual([]);
+    });
+
+    it('binds only paths actually printed in the note directory to their current availability', () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, runSourceSelection: {
+            schemaVersion: 1, scope: 'notes', selectionId: 'notes-run', userMessageId: h.host.userMessageId,
+        } });
+        const directory = run.captureContextInstruction();
+        expect(directory.instruction).toContain(h.a.path);
+        expect(directory.paths).toContain(h.a.path);
+        expect(directory.paths).not.toContain(h.b.path);
+        expect(directory.isCurrent()).toBe(true);
+        h.files.delete(h.a.path);
+        expect(directory.isCurrent()).toBe(false);
+    });
+
+    it('separates the physical attempt from a retained source-only Writing receipt', () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, areSourcesCurrent: () => true,
+            runSourceSelection: { schemaVersion: 1, scope: 'notes',
+                selectionId: 'writing-run', userMessageId: h.host.userMessageId } });
+        const directory = run.captureContextInstruction();
+        expect(directory.paths).toContain(h.a.path);
+        expect(directory.isAttemptCurrent()).toBe(true);
+        h.setCurrent(false);
+        expect(directory.isAttemptCurrent()).toBe(false);
+        expect(directory.isCurrent()).toBe(true);
+        h.files.delete(h.a.path);
+        expect(directory.isCurrent()).toBe(false);
+    });
+
+    it('keeps a pure user-text web instruction current when the optional Web capability is off', () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, isWebAllowed: () => false, runSourceSelection: {
+            schemaVersion: 1, scope: 'web', selectionId: 'web-run', userMessageId: h.host.userMessageId,
+        } });
+        const directory = run.captureContextInstruction();
+        expect(directory.paths).toEqual([]);
+        expect(directory.isCurrent()).toBe(true);
+        expect(run.admitsLineage(completeInputLineage([{ kind: 'user-text', messageId: 'current-user' }]))).toBe(true);
+    });
+
+    it('does not replace a damaged recorded user ancestry with its raw-text provenance', () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, runSourceSelection: {
+            schemaVersion: 1, scope: 'web', selectionId: 'web-run', userMessageId: h.host.userMessageId,
+        } });
+        const user = { role: 'user', content: 'PRIVATE_BACKGROUND_SENTINEL',
+            hostProvenance: { version: 1, messageId: 'user-old', kind: 'ordinary_user_statement' },
+            inputLineage: { schemaVersion: 1, completeness: 'complete', dependencies: [
+                { kind: 'vault', path: h.a.path, via: 'invalid' },
+            ] },
+        } as unknown as ChatMessage;
+
+        expect(run.projectHistory([user])).toEqual([]);
+        expect(user.content).toBe('PRIVATE_BACKGROUND_SENTINEL');
+    });
+
+    it.each(['notes', 'web', 'combined'] as const)(
+        'rechecks all three target scopes for history originally captured in %s', (origin) => {
+            const h = fixture();
+            const user = { kind: 'user-text' as const, messageId: 'old-user' };
+            const note = { kind: 'vault' as const, path: h.a.path, via: 'note' as const };
+            const web = { kind: 'web' as const, providerId: 'web', resultKey: 'hit-1' };
+            const history = [
+                { role: 'user', content: 'USER', dependencies: [user] },
+                { role: 'assistant', content: 'NOTE', dependencies: [note] },
+                { role: 'assistant', content: 'WEB', dependencies: [web] },
+                { role: 'assistant', content: 'MIXED', dependencies: [note, web] },
+            ].map(({ role, content, dependencies }) => ({ role, content,
+                inputLineage: { schemaVersion: 1, completeness: 'complete', dependencies },
+                hostProvenance: { version: 1, messageId: `from-${origin}`, kind: 'ai_draft' },
+            })) as ChatMessage[];
+            history.push({ role: 'assistant', content: 'UNKNOWN' });
+            for (const [target, expected] of [
+                ['notes', ['USER', 'NOTE']],
+                ['web', ['USER', 'WEB']],
+                ['combined', ['USER', 'NOTE', 'WEB', 'MIXED']],
+            ] as const) {
+                const run = new TaskSourceRun({ ...h.host, runSourceSelection: {
+                    schemaVersion: 1, scope: target, selectionId: `${origin}:${target}`,
+                    userMessageId: h.host.userMessageId,
+                } });
+                expect(run.projectHistory(history).map(message => message.content)).toEqual(expected);
+                if (target === 'web') expect(run.contextInstruction()).not.toContain(h.a.path);
+            }
+            const disabledWeb = new TaskSourceRun({ ...h.host, isWebAllowed: () => false,
+                runSourceSelection: { schemaVersion: 1, scope: 'combined',
+                    selectionId: `${origin}:disabled`, userMessageId: h.host.userMessageId } });
+            expect(disabledWeb.projectHistory(history).map(message => message.content)).toEqual(['USER', 'NOTE']);
+            h.files.delete(h.a.path);
+            const revokedNote = new TaskSourceRun({ ...h.host, runSourceSelection: {
+                schemaVersion: 1, scope: 'combined', selectionId: `${origin}:revoked`,
+                userMessageId: h.host.userMessageId } });
+            expect(revokedNote.projectHistory(history).map(message => message.content)).toEqual(['USER', 'WEB']);
+        },
+    );
+
+    it('drops a mixed assistant call together with a web result that echoed its private query', () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, runSourceSelection: {
+            schemaVersion: 1, scope: 'web', selectionId: 'web-run', userMessageId: h.host.userMessageId,
+        } });
+        const mixed = completeInputLineage([
+            { kind: 'vault', path: h.a.path, via: 'note' },
+            { kind: 'web', providerId: 'web', resultKey: 'hit' },
+        ]);
+        const assistant: PaAgentMessage = { role: 'assistant', id: 'assistant', timestamp: 1,
+            inputLineage: mixed,
+            content: [{ type: 'toolCall', id: 'call-web', name: 'search_web', input: { query: 'PRIVATE_QUERY' } }] };
+        const result: PaAgentMessage = { role: 'toolResult', id: 'result', timestamp: 2,
+            toolCallId: 'call-web', toolName: 'search_web', isError: false, inputLineage: mixed,
+            content: { includeInNextPrompt: true, promptText: 'PRIVATE_QUERY; PUBLIC_RESULT' } };
+        expect(run.projectTranscript([assistant, result])).toEqual([]);
+        expect(assistant.content).toHaveLength(1);
+        expect(result.content.promptText).toContain('PRIVATE_QUERY');
+    });
+
+    it('retains governed Personal history only while its claim revision remains live', () => {
+        const h = fixture();
+        let active = true;
+        const run = new TaskSourceRun({ ...h.host,
+            isPersonalAllowed: source => active && source.revisions[0]?.revisionId === 'revision-1',
+            runSourceSelection: { schemaVersion: 1, scope: 'combined',
+                selectionId: 'personal-run', userMessageId: h.host.userMessageId } });
+        const personal: ChatMessage = { role: 'assistant', content: 'PERSONAL_BUDGET',
+            inputLineage: completeInputLineage([{ kind: 'personal', source: {
+                state: 'identified', mode: 'governed',
+                revisions: [{ claimId: 'claim-1', revisionId: 'revision-1' }],
+            } }]) };
+        expect(run.projectHistory([personal])).toEqual([personal]);
+        active = false;
+        expect(run.projectHistory([personal])).toEqual([]);
+    });
+
+    it('freezes a Chat run choice at the real user message while standalone runs keep their old policy', () => {
+        const h = fixture();
+        const selection = { schemaVersion: 1 as const, scope: 'web' as const,
+            selectionId: 'conversation:selection:1', userMessageId: h.host.userMessageId };
+        const run = new TaskSourceRun({ ...h.host, runSourceSelection: selection });
+        expect(run.runSourceSelection).toEqual(selection);
+        expect(Object.isFrozen(run.runSourceSelection)).toBe(true);
+        expect(h.create().runSourceSelection).toBeUndefined();
+        expect(h.create().state.snapshot()).toMatchObject({ allowedNoteIds: null, webAllowed: true });
+        expect(() => new TaskSourceRun({ ...h.host, runSourceSelection: {
+            ...selection, userMessageId: 'different-message',
+        } })).toThrow('does not match');
+    });
+
     it('admits ordinary reads and rejects retired controls in the same batch', () => {
         const h = fixture();
         const run = h.create();
@@ -132,14 +400,14 @@ describe('Task source run host', () => {
         const captured = run.captureGenerationInputTaskSources(messages, []);
 
         expect(captured).toEqual({
-            state: 'identified',
+            state: 'unknown',
             sources: [
                 expect.objectContaining({ purpose: 'task_material', boundary: 'read-only-tool', dedupKey: 'outline:a',
-                    capabilityName: 'read_note_outline', revision: { state: 'identified', scope: 'current_process',
-                        path: h.a.path, mtime: 17, size: 29 } }),
+                    capabilityName: 'read_note_outline', path: h.a.path,
+                    revision: { state: 'unknown', reason: 'not_captured' } }),
                 expect.objectContaining({ purpose: 'task_material', boundary: 'memory', dedupKey: 'memory:a',
-                    capabilityName: 'search_memory', revision: { state: 'identified', scope: 'current_process',
-                        path: h.a.path, mtime: 17, size: 29 } }),
+                    capabilityName: 'search_memory', path: h.a.path,
+                    revision: { state: 'unknown', reason: 'not_captured' } }),
             ],
         });
         expect(JSON.stringify(captured)).not.toContain('OUTLINE_BODY');
@@ -160,7 +428,7 @@ describe('Task source run host', () => {
         expect(actual).toEqual({
             state: 'unknown',
             sources: [expect.objectContaining({ dedupKey: 'web:one',
-                revision: { state: 'unknown', url: 'https://example.invalid/source' } })],
+                url: 'https://example.invalid/source', revision: { state: 'unknown', reason: 'not_captured' } })],
         });
         expect(JSON.stringify(actual)).not.toContain('omitted.md');
         expect(JSON.stringify(run.captureGenerationInputTaskSources([web], omittedHistory))).toContain('omitted.md');
@@ -179,7 +447,7 @@ describe('Task source run host', () => {
         expect(run.captureGenerationInputTaskSources([skill], [])).toEqual({
             state: 'unknown',
             sources: [expect.objectContaining({ kind: 'skill-guide', boundary: 'skill-context',
-                revision: { state: 'unknown', path: 'bundled/writing/SKILL.md' } })],
+                path: 'bundled/writing/SKILL.md', revision: { state: 'unknown', reason: 'not_captured' } })],
         });
     });
 

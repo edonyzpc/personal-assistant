@@ -11,7 +11,6 @@ import {
     PaAgentRuntime,
     streamWithInvokeFallback,
 } from "../src/ai-services/pa-agent-runtime";
-import { resolveRequiredCapabilityClassification } from "../src/ai-services/pa-agent-required-capability-policy";
 import { createHeadingAwareMarkdownChunks } from "../src/vss/markdown-chunker";
 
 jest.mock("obsidian");
@@ -752,24 +751,24 @@ describe("iOS DashScope chat transport", () => {
         expect(onProviderRequestStart).toHaveBeenCalledTimes(2);
     });
 
-    it("drains a timed-out capability classifier before the same PA run dispatches its main answer", async () => {
+    it("keeps two same-scope iOS requests on their selected transports", async () => {
         jest.useFakeTimers();
         try {
             Platform.isDesktop = false;
             Platform.isMobile = true;
             Platform.isIosApp = true;
-            let completeClassifier!: (value: unknown) => void;
-            const classifierRequest = new Promise<unknown>((resolve) => {
-                completeClassifier = resolve;
+            let completeFirst!: (value: unknown) => void;
+            const firstRequest = new Promise<unknown>((resolve) => {
+                completeFirst = resolve;
             });
-            let markClassifierStarted!: () => void;
-            const classifierStarted = new Promise<void>((resolve) => {
-                markClassifierStarted = resolve;
+            let markFirstStarted!: () => void;
+            const firstStarted = new Promise<void>((resolve) => {
+                markFirstStarted = resolve;
             });
             mockedRequestUrl
                 .mockImplementationOnce(() => {
-                    markClassifierStarted();
-                    return classifierRequest;
+                    markFirstStarted();
+                    return firstRequest;
                 })
                 .mockResolvedValueOnce(responseFixture(JSON.stringify({
                     id: "chatcmpl-main",
@@ -786,26 +785,14 @@ describe("iOS DashScope chat transport", () => {
             const host = makeRuntimeHost({ policyModelName: "deepseek-v4-pro" });
             const aiUtils = new AIUtils(host as never);
             const providerRequestScope = createProviderRequestScope();
-            const classifierModel = await aiUtils.createChatModel(0, {
+            const firstModel = await aiUtils.createChatModel(0, {
                 transport: "obsidian",
                 modelName: "deepseek-v4-pro",
                 providerRequestScope,
             });
-            const classifierPending = resolveRequiredCapabilityClassification({
-                userInput: "Reply READY",
-                classifier: {
-                    classify: async ({ userInput, signal }) => (
-                        await classifierModel.invoke(
-                            [new HumanMessage(userInput)],
-                            { signal },
-                        )
-                    ).content,
-                },
-            });
+            const firstPending = firstModel.invoke([new HumanMessage("First request")]);
 
-            await classifierStarted;
-            await jest.advanceTimersByTimeAsync(800);
-            await expect(classifierPending).resolves.toEqual({ items: [] });
+            await firstStarted;
             expect(mockedRequestUrl).toHaveBeenCalledTimes(1);
             expect(JSON.parse((mockedRequestUrl.mock.calls[0][0] as { body: string }).body)).toMatchObject({
                 stream: false,
@@ -817,20 +804,21 @@ describe("iOS DashScope chat transport", () => {
             });
             const mainPending = mainModel.invoke([new HumanMessage("Reply READY")]);
             await flushMicrotasks();
-            expect(mockedRequestUrl).toHaveBeenCalledTimes(1);
+            expect(mockedRequestUrl).toHaveBeenCalledTimes(2);
 
-            completeClassifier(responseFixture(JSON.stringify({
-                id: "chatcmpl-classifier-late",
+            completeFirst(responseFixture(JSON.stringify({
+                id: "chatcmpl-first-late",
                 object: "chat.completion",
                 created: 1,
-                model: "qwen-policy",
+                model: "deepseek-v4-pro",
                 choices: [{
                     index: 0,
-                    message: { role: "assistant", content: '{"items":[]}' },
+                    message: { role: "assistant", content: "FIRST" },
                     finish_reason: "stop",
                 }],
             }), "application/json"));
 
+            await expect(firstPending).resolves.toMatchObject({ content: "FIRST" });
             await expect(mainPending).resolves.toMatchObject({ content: "READY" });
             expect(mockedRequestUrl).toHaveBeenCalledTimes(2);
             const requests = mockedRequestUrl.mock.calls.map(([request]) => (

@@ -1,8 +1,24 @@
+import type { ProviderCompletion } from "./chat-types";
 import type { PaAgentModelStreamChunk } from "./pa-agent-types";
 import { decodeNativeWritingOutput, isValidWritingContextHandle, type NativeWritingOutput } from "./writing-output";
 
 type ToolCallDelta = Extract<PaAgentModelStreamChunk, { type: "toolcall_delta" }>;
 const WRITING_TOOL_NAME = "present_writing";
+let nextCandidateReceipt = 0;
+
+export interface NativeWritingCandidateAdmission {
+    exclusiveToolCall: boolean;
+    providerCompletion: ProviderCompletion;
+    executionReady: boolean;
+    sourceCurrent: boolean;
+    aborted: boolean;
+}
+
+/** Opaque, run-local proof that the owner accepted a candidate for final delivery. */
+export interface AcceptedWritingCandidate {
+    kind: "accepted_for_delivery";
+    receiptId: string;
+}
 
 /**
  * Accumulates one provider-identified output call. It owns neither permission
@@ -109,6 +125,15 @@ export class NativeWritingCallCollector {
             return undefined;
         }
         return output;
+    }
+
+    get isCompleteCandidate(): boolean { return this.decode() !== undefined; }
+
+    acceptForDelivery(admission: NativeWritingCandidateAdmission): AcceptedWritingCandidate | undefined {
+        if (!admission.exclusiveToolCall || admission.providerCompletion !== "tool_calls"
+            || !admission.executionReady || !admission.sourceCurrent || admission.aborted
+            || !this.decode()) return undefined;
+        return { kind: "accepted_for_delivery", receiptId: `writing_candidate_${++nextCandidateReceipt}` };
     }
 
     private acceptIdentity(id: string | undefined, index: number | undefined): boolean {

@@ -5358,6 +5358,12 @@ export class PluginManager extends Plugin {
             },
             getMemoryExtractionPromptContext: () =>
                 this.getMemoryExtractionPromptContext() as unknown as Record<string, unknown>,
+            isPersonalSourceCurrent: source => this.writingRecoveryPersonalSourceCurrent(source),
+            captureWritingStyleSourceValidity: async revisionIds => {
+                const service = this.writingStyleService;
+                if (!service) throw new Error('Writing style unavailable');
+                return service.captureGenerationSourceValidity(revisionIds);
+            },
             memorySearch: {
                 ensureReadyForChat: (query, signal, preparationOwnerSignal, options) => (
                     this.ensureMemoryReadyForChat(query, signal, preparationOwnerSignal, options)
@@ -5617,6 +5623,7 @@ export class PluginManager extends Plugin {
         ref: PersistedSourceRef,
         memory: boolean,
         expectedRevision?: { mtime: number; size: number },
+        expectedWholeFileHash?: string,
     ): Promise<WritingRecoverySourceReceipt> {
         const isPathAllowed = (path: string) => memory
             ? this.settings.memoryEnabled === true && this.isMemoryProviderPathAllowed(path)
@@ -5624,6 +5631,9 @@ export class PluginManager extends Plugin {
         const source = await this.captureLatestMemorySource(ref.path, isPathAllowed, 'chat');
         if (!source || expectedRevision
             && (source.mtime !== expectedRevision.mtime || source.size !== expectedRevision.size)) {
+            throw new Error('Writing source unavailable');
+        }
+        if (expectedWholeFileHash && await computeContentHash(source.markdown) !== expectedWholeFileHash) {
             throw new Error('Writing source unavailable');
         }
         // Generic PersistedSourceRef hashes have no uniform body/algorithm
@@ -5746,15 +5756,26 @@ export class PluginManager extends Plugin {
                 return { isCurrent };
             }
             const memory = source.kind === 'memory-reference' || source.boundary === 'memory';
-            const path = source.revision.path;
+            const path = 'path' in source.revision ? source.revision.path
+                : 'path' in source ? source.path : undefined;
             if (path && source.boundary !== 'skill-context') {
                 if (!memory && source.kind === 'context-used' && source.boundary === 'read-only-tool'
                     && source.capabilityName === 'read_canvas_summary' && source.revision.state === 'identified') {
-                    return this.verifyWritingRecoveryCanvas(path, source.revision);
+                    if ('scope' in source.revision) return this.verifyWritingRecoveryCanvas(path, source.revision);
+                    if (source.revision.stat) return this.verifyWritingRecoveryCanvas(path, source.revision.stat);
+                    throw new Error('Writing Canvas source unavailable');
                 }
+                // Only a complete vault read can be replayed against source.markdown.
+                // Editor and partition observations keep a path/lifetime guard;
+                // the recovery UI requires explicit incomplete-source confirmation.
                 return this.verifyWritingRecoveryNote({ path }, memory,
                     source.revision.state === 'identified'
-                        ? { mtime: source.revision.mtime, size: source.revision.size } : undefined);
+                        ? 'scope' in source.revision
+                            ? { mtime: source.revision.mtime, size: source.revision.size }
+                            : source.revision.stat : undefined,
+                    source.revision.state === 'identified' && 'digest' in source.revision
+                        && source.revision.digest.scope === 'whole_file'
+                        ? source.revision.digest.value : undefined);
             }
             const isCurrent = () => !this.unloading && (!memory || this.settings.memoryEnabled === true);
             if (!isCurrent()) throw new Error('Writing task source unavailable');

@@ -65,6 +65,7 @@ export interface PaAgentToolExecutionResult {
     includeInNextPrompt?: boolean;
     sourceRecords?: PaToolResultContent["sourceRecords"];
     contextUsed?: PaToolResultContent["contextUsed"];
+    resultFact?: PaToolResultContent["resultFact"];
     metadata?: Record<string, unknown>;
     /** Host-owned execution fact used by recovery and duplicate handling. */
     executionState?: "not_started" | "running" | "succeeded" | "failed" | "partially_succeeded" | "acceptance_unknown";
@@ -130,11 +131,6 @@ export interface PaAgentToolExecutor {
         toolCall: PaAgentToolCall,
         context: { userInput: string },
     ): string | undefined;
-    /** Only get_writing_context: true means this exact selection has a still-valid current receipt. */
-    canReuseWritingContext?(
-        toolCall: PaAgentToolCall,
-        context: { userInput: string },
-    ): boolean;
     prepareBatch?(
         input: PaAgentToolBatchPreparationInput,
     ): Promise<PaAgentToolBatchPreparationResult | void>;

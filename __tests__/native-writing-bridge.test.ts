@@ -87,7 +87,7 @@ describe("native writing bridge host gates", () => {
         const { result, events } = await run({ deltas });
         expect(result.status).toBe("completed");
         expect(events.filter(event => event.kind === "writing-artifact")).toEqual([
-            expect.objectContaining({ body }),
+            expect.objectContaining({ body, resultFact: expect.objectContaining({ kind: "artifact_ready", requestId: request.requestId, receiptId: expect.any(String) }) }),
         ]);
         expect(events.filter(event => event.kind === "writing-recovery")).toHaveLength(0);
     });

@@ -63,6 +63,10 @@ export class TurnExecutionDeadline {
         return this.controller.signal;
     }
 
+    abort(): void {
+        this.controller.abort();
+    }
+
     dispose(): void {
         if (this.timeoutId !== null) {
             clearPlatformTimeout(this.timeoutId);

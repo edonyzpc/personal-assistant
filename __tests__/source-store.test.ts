@@ -6,6 +6,7 @@ import {
     normalizeSourceRecord,
     sanitizeWebSourceUrl,
 } from "../src/ai-services/source-store";
+import { mergeSourceRecords, normalizeSourceRecords } from '../src/chat/formatters';
 
 describe("source record normalization", () => {
     it("sanitizes web URLs and rejects non-web schemes", () => {
@@ -75,5 +76,22 @@ describe("source record normalization", () => {
 
         expect(record.metadata).toEqual(metadata);
         expect(record.metadata).not.toBe(metadata);
+    });
+
+    it('keeps observed A and B records distinct through stored normalization and visible merging', () => {
+        const observed = (value: string) => ({ kind: 'context-used', dedupKey: 'source:fixed',
+            path: 'notes/project.md', sourceBoundary: 'read-only-tool',
+            observedRevision: { state: 'identified', basis: 'vault_read',
+                digest: { algorithm: 'sha1', scope: 'whole_file', value } } });
+        const [a, b] = normalizeSourceRecords([observed('a'.repeat(40)), observed('b'.repeat(40))]);
+        expect(a.observedRevision).toMatchObject({ digest: { value: 'a'.repeat(40) } });
+        expect(b.observedRevision).toMatchObject({ digest: { value: 'b'.repeat(40) } });
+        expect(mergeSourceRecords([a], [b])).toHaveLength(2);
+        const copy = cloneSourceRecord(a);
+        if (a.observedRevision?.state === 'identified') a.observedRevision.digest.value = 'c'.repeat(40);
+        expect(copy.observedRevision).toMatchObject({ digest: { value: 'a'.repeat(40) } });
+        expect(normalizeSourceRecords([{ ...observed('a'.repeat(40)), observedRevision: {
+            state: 'identified', basis: 'vault_read', digest: { algorithm: 'sha1',
+                scope: 'whole_file', value: 'bad' } } }])[0]).not.toHaveProperty('observedRevision');
     });
 });

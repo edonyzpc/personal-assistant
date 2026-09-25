@@ -1,6 +1,7 @@
 import type { ChatToolContext, ChatToolDefinition, ChatToolResult } from "./chat-tool-types";
 import type { SavedInsightQuery } from "../pa/insight-read-port";
 import { buildMemoryManagementEvidence, MEMORY_MANAGEMENT_CONTRACT_VERSION } from "./memory-management-evidence";
+import { assertTaskSourceNoteDomainCurrent } from './task-source-read-guard';
 
 type InsightToolName = "get_vault_insights" | "query_saved_insights";
 
@@ -38,10 +39,12 @@ async function read(
     input: SavedInsightQuery | Record<string, never>,
     context: ChatToolContext,
 ): Promise<ChatToolResult<Record<string, unknown>>> {
+    assertTaskSourceNoteDomainCurrent(context.taskSourceReadGuard);
     const port = context.host.insightRead;
     if (!port) return { ok: false, tool, inputSummary: tool, content: null, sources: [], error: "Insight records are unavailable." };
     const result = tool === "get_vault_insights" ? port.getVaultInsights()
         : port.querySavedInsights(input as SavedInsightQuery);
+    assertTaskSourceNoteDomainCurrent(context.taskSourceReadGuard);
     const request = tool === "get_vault_insights" ? {} : Object.fromEntries(
         Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]),
     );
@@ -53,6 +56,7 @@ async function read(
         content: result.content,
     });
     const current = await port.prepareObservation(evidence);
+    assertTaskSourceNoteDomainCurrent(context.taskSourceReadGuard);
     if (!current.ready) return { ok: false, tool, inputSummary: tool, content: null, sources: [], error: "Insight sources changed before the result was returned." };
     return {
         ok: true,

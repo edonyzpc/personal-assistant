@@ -68,7 +68,8 @@ export class PaAgentContextProjector {
         this.compactor = compactor;
     }
 
-    projectUserInput(options: PaAgentProjectedInputOptions): { input: string; history: PaAgentProjectedHistory } {
+    projectUserInput(options: PaAgentProjectedInputOptions): { input: string; currentInput: string;
+        history: PaAgentProjectedHistory } {
         const history = this.projectHistory(
             options.chatHistory,
             options.maxHistoryChars,
@@ -79,13 +80,14 @@ export class PaAgentContextProjector {
         const runtimeInstruction = options.runtimeInstruction
             ? `\n\n<runtime_instruction>\n${options.runtimeInstruction}\n</runtime_instruction>`
             : "";
-        const input = [
-            history.text ? `Recent chat history:\n${history.text}` : "",
+        const currentInput = [
             options.hostContext ? `Host context:\n${options.hostContext}` : "",
             injected ? `Personal context:\n${injected}` : "",
             `User input:\n${options.prompt}${runtimeInstruction}`,
         ].filter(Boolean).join("\n\n");
-        return { input, history };
+        const input = [history.text ? `Recent chat history:\n${history.text}` : "", currentInput]
+            .filter(Boolean).join("\n\n");
+        return { input, currentInput, history };
     }
 
     annotateOrigins(transcript: readonly PaAgentMessage[]): Array<{ id: string; origin: string }> {
@@ -114,6 +116,61 @@ export class PaAgentContextProjector {
             }, history);
         }
 
+        // A persisted action's parameters and call/result relationship are
+        // protected history. Trim whole ordinary turns from oldest to newest
+        // while keeping every action turn in its original chronological place.
+        // If the protected set itself is too large, final admission fails.
+        if (history.some(message => message.canonicalTurn?.messages.some(part =>
+            part.role === "assistant" && part.content.some(item => item.type === "toolCall")))) {
+            const semantic = summaries?.history?.text.trim()
+                && isCurrentHistorySummary(summaries.history, history) ? summaries.history : undefined;
+            const summaryText = semantic ? formatSemanticHistorySummary(semantic.text) : "";
+            const summarizedPrefixCount = semantic?.sourceMessages.length ?? 0;
+            const firstUser = history.findIndex(message => message.role === "user");
+            const turns = firstUser < 0 ? [history] : [
+                ...(firstUser > 0 ? [history.slice(0, firstUser)] : []),
+                ...groupChatTurns(history.slice(firstUser)),
+            ];
+            let consumed = 0;
+            const turnEnds = turns.map(turn => (consumed += turn.length));
+            const protectedIndices = new Set(turns.flatMap((turn, index) => turn.some(message =>
+                message.canonicalTurn?.messages.some(part => part.role === "assistant"
+                    && part.content.some(item => item.type === "toolCall"))) ? [index] : []));
+            const retainedIndices = new Set(protectedIndices);
+            const retained = () => turns.flatMap((turn, index) => retainedIndices.has(index) ? turn : []);
+            const formatRetained = (compactResults: boolean) => [summaryText,
+                formatHistoryMessages(retained(), compactResults)].filter(Boolean).join("\n\n");
+            let compactActionResults = formatRetained(false).length > budget;
+            let ordinaryTurnLimitReached = false;
+            for (let index = turns.length - 1; index >= 0; index--) {
+                if (protectedIndices.has(index) || turnEnds[index] <= summarizedPrefixCount
+                    || ordinaryTurnLimitReached) continue;
+                retainedIndices.add(index);
+                if (formatRetained(compactActionResults).length > budget) {
+                    if (!compactActionResults && formatRetained(true).length <= budget) {
+                        compactActionResults = true;
+                    } else {
+                        retainedIndices.delete(index);
+                        ordinaryTurnLimitReached = true;
+                    }
+                }
+            }
+            const text = formatRetained(compactActionResults);
+            const retainedMessageIndices = new Set<number>();
+            let start = 0;
+            for (const [index, turn] of turns.entries()) {
+                if (retainedIndices.has(index)) for (let offset = 0; offset < turn.length; offset++) {
+                    retainedMessageIndices.add(start + offset);
+                }
+                start += turn.length;
+            }
+            const sourceMessages = history.filter((_message, index) =>
+                index < summarizedPrefixCount || retainedMessageIndices.has(index));
+            return withHistorySources({ text, compactedCount: summarizedPrefixCount, summaryChars: 0,
+                semanticSummaryChars: semantic?.text.length ?? 0,
+                omittedCount: history.length - sourceMessages.length, historyCompressed: true }, sourceMessages);
+        }
+
         const semantic = summaries?.history;
         if (semantic?.text.trim() && isCurrentHistorySummary(semantic, history)) {
             const summaryText = formatSemanticHistorySummary(semantic.text);
@@ -136,7 +193,7 @@ export class PaAgentContextProjector {
                 semanticSummaryChars: semantic.text.length,
                 omittedCount: tail.omittedCount,
                 historyCompressed: true,
-            }, [...semanticHistorySourceMessages(semantic, history), ...tail.sourceMessages]);
+            }, [...history.slice(0, coveredMessages), ...tail.sourceMessages]);
         }
 
         // Keep complete recent exchanges as a contiguous suffix. Count the
@@ -189,36 +246,6 @@ function withHistorySources(
 ): PaAgentProjectedHistory {
     Object.defineProperty(history, 'sourceMessages', { value: [...sourceMessages] });
     return history as PaAgentProjectedHistory;
-}
-
-function semanticHistorySourceMessages(
-    summary: NonNullable<PaAgentContextSummaries['history']>,
-    currentHistory: readonly ChatMessage[],
-): ChatMessage[] {
-    const currentPrefix = currentHistory.slice(0, summary.sourceMessages.length);
-    try {
-        const parsed = JSON.parse(summary.text) as Record<string, unknown>;
-        const indices = new Set<number>();
-        for (const items of Object.values(parsed)) {
-            if (!Array.isArray(items)) throw new Error('Invalid semantic history summary');
-            for (const item of items) {
-                if (!item || typeof item !== 'object' || !Array.isArray((item as { sourceMessages?: unknown }).sourceMessages)) {
-                    throw new Error('Invalid semantic history source map');
-                }
-                for (const index of (item as { sourceMessages: unknown[] }).sourceMessages) {
-                    if (!Number.isSafeInteger(index) || (index as number) < 1 || (index as number) > summary.sourceMessages.length) {
-                        throw new Error('Invalid semantic history source index');
-                    }
-                    indices.add(index as number);
-                }
-            }
-        }
-        return [...indices].sort((left, right) => left - right).map(index => currentPrefix[index - 1]);
-    } catch {
-        // Compatibility summaries without item-level indices are opaque. Keep
-        // their complete verified basis instead of guessing a narrower source set.
-        return currentPrefix;
-    }
 }
 
 function formatProjectedHistory(summary: string, history: ChatMessage[]): string {

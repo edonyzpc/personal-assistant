@@ -41,6 +41,8 @@ import {
 } from "../src/ai-services/pa-agent-runtime";
 import { AgentLifecycleEventEmitter } from "../src/ai-services/agent-runtime-primitives";
 import { ToolExecutionDispatcher } from "../src/ai-services/pa-agent-tool-dispatcher";
+import { createAnswerCompletionLedger, decideAnswerCompletion }
+    from "../src/ai-services/pa-agent-answer-completion-policy";
 import type { PaAgentMessage } from "../src/ai-services/chat-types";
 import { BUNDLED_SKILL_RESOURCES } from "../src/ai-services/bundled-skills";
 import { SkillContextProvider } from "../src/ai-services/skill-context-provider";
@@ -657,6 +659,7 @@ describe("PA Agent canonical host tool executor", () => {
         );
 
         expect(result.promptText).toContain('"memoryEvidenceState": "none"');
+        expect(result.resultFact).toEqual({ kind: "no_match", search: "memory" });
         expect(result.metadata).toMatchObject({
             outcome: "success",
             hitCount: 0,
@@ -694,6 +697,74 @@ describe("PA Agent canonical host tool executor", () => {
         );
 
         expect(result.metadata).toMatchObject({ memoryEvidenceState: "unavailable" });
+        expect(result.resultFact).toMatchObject({ kind: "unavailable", capability: "search_memory" });
+        expect(result.contextUsed?.[0]).toMatchObject({
+            citationEligible: false,
+            statusOnly: true,
+            sources: [],
+        });
+    });
+
+    it.each([
+        ["missing guidance", undefined],
+        ["misleading guidance", "No relevant Memory evidence was selected."],
+    ] as const)("canonicalizes an unavailable Memory result with %s", (_case, retrievalGuidance) => {
+        const result = chatToolResultToPaAgentToolExecutionResult(
+            { type: "toolCall", id: "call-unavailable-memory", index: 0, name: "search_memory", input: { query: "launch" } },
+            {
+                ok: true,
+                tool: "search_memory",
+                inputSummary: "launch",
+                content: {
+                    usedMemory: false,
+                    query: "launch",
+                    documents: [],
+                    sources: [{ path: "notes/private.md" }],
+                    candidates: [{ path: "notes/private.md", excerpt: "SECRET RAW CANDIDATE" }],
+                    hasAnswerableContent: false,
+                    memoryEvidenceState: "unavailable",
+                    rerankVerdict: "none_relevant",
+                    ...(retrievalGuidance ? { retrievalGuidance } : {}),
+                },
+                sources: [{ path: "notes/private.md" }],
+                sourceRecords: [{
+                    kind: "memory-reference",
+                    dedupKey: "private",
+                    path: "notes/private.md",
+                    citationEligible: true,
+                }],
+            },
+        );
+
+        expect(JSON.parse(result.promptText)).toEqual({
+            tool: "search_memory",
+            status: "ok",
+            input: "launch",
+            observation: {
+                query: "launch",
+                documents: [],
+                sources: [],
+                hasAnswerableContent: false,
+                memoryEvidenceState: "unavailable",
+                rerankVerdict: "relevant",
+                retrievalGuidance: "Memory retrieval is currently unavailable; empty results do not establish that no matching notes exist. Do not infer note content.",
+            },
+        });
+        expect(result.promptText).not.toContain("notes/private.md");
+        expect(result.promptText).not.toContain("SECRET RAW CANDIDATE");
+        expect(result.sourceRecords).toEqual([]);
+        expect(result.resultFact).toEqual({
+            kind: "unavailable",
+            capability: "search_memory",
+            reason: "memory_evidence_unavailable",
+        });
+        expect(result.metadata).toMatchObject({
+            outcome: "success",
+            hitCount: 0,
+            candidateCount: 0,
+            memoryEvidenceState: "unavailable",
+            rerankVerdict: "relevant",
+        });
         expect(result.contextUsed?.[0]).toMatchObject({
             citationEligible: false,
             statusOnly: true,
@@ -759,6 +830,7 @@ describe("PA Agent canonical host tool executor", () => {
         );
 
         expect(result.promptText).toContain('"memoryEvidenceState": "unavailable"');
+        expect(result.resultFact).toMatchObject({ kind: "unavailable", capability: "search_memory" });
         expect(result.promptText).not.toContain("notes/wrong-query.md");
         expect(result.metadata).toMatchObject({ memoryEvidenceState: "unavailable" });
     });
@@ -844,7 +916,8 @@ describe("PA Agent canonical host tool executor", () => {
             rerankVerdict: "none_relevant",
         })).toMatchObject({
             memoryEvidenceState: "unavailable",
-            rerankVerdict: "none_relevant",
+            rerankVerdict: "relevant",
+            retrievalGuidance: "Memory retrieval is currently unavailable; empty results do not establish that no matching notes exist. Do not infer note content.",
         });
     });
 
@@ -918,13 +991,15 @@ describe("PA Agent canonical host tool executor", () => {
                 includeInNextPrompt: true,
                 sourceRecords: initial.sourceRecords,
                 contextUsed: initial.contextUsed,
+                resultFact: initial.resultFact,
             },
         }];
 
         const first = await registry.prepareTranscript(transcript);
         expect(first[0]).toMatchObject({
             role: "toolResult",
-            content: { sourceRecords: [expect.objectContaining({ path: "notes/current.md" })] },
+            content: { sourceRecords: [expect.objectContaining({ path: "notes/current.md" })],
+                resultFact: { kind: "evidence", sourceRefs: ["notes/current.md"] } },
         });
         const second = await registry.prepareTranscript(first);
 
@@ -934,7 +1009,11 @@ describe("PA Agent canonical host tool executor", () => {
         expect((second[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.promptText)
             .not.toContain("CURRENT EVIDENCE");
         expect((second[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.sourceRecords).toEqual([]);
+        expect((second[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.resultFact)
+            .toMatchObject({ kind: "unavailable", capability: "search_memory" });
         expect((transcript[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.sourceRecords).toEqual([]);
+        expect((transcript[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.resultFact)
+            .toMatchObject({ kind: "unavailable", capability: "search_memory" });
     });
 
     it("keeps an already-read Memory snapshot across background refresh while rechecking authorization", async () => {
@@ -1015,7 +1094,9 @@ describe("PA Agent canonical host tool executor", () => {
         expect((second[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.sourceRecords).toEqual([]);
     });
 
-    it("finalizes reverse-completing parallel raw-ID collisions before lifecycle emission", async () => {
+    it.each(["evidence", "no_match"] as const)(
+        "finalizes reverse-completing parallel raw-ID collisions with %s before lifecycle emission",
+        async variant => {
         const resolvers = new Map<string, (result: MemorySearchResult) => void>();
         const executeMemorySearch = jest.fn((input: SearchMemoryInput) => new Promise<MemorySearchResult>((resolve) => {
             resolvers.set(input.query, resolve);
@@ -1065,6 +1146,7 @@ describe("PA Agent canonical host tool executor", () => {
                         includeInNextPrompt: result.includeInNextPrompt ?? true,
                         ...(result.sourceRecords ? { sourceRecords: result.sourceRecords } : {}),
                         ...(result.contextUsed ? { contextUsed: result.contextUsed } : {}),
+                        ...(result.resultFact ? { resultFact: result.resultFact } : {}),
                         ...(result.metadata ? { metadata: result.metadata } : {}),
                     },
                 };
@@ -1106,15 +1188,16 @@ describe("PA Agent canonical host tool executor", () => {
         }
         expect([...resolvers.keys()].sort()).toEqual(["first query", "second query"]);
 
-        resolvers.get("second query")!({
-            ...createMemoryEvidence("SECOND BODY MUST NOT EMIT", "notes/second-parallel.md"),
-            query: "second query",
-        });
+        const memoryResult = (query: string, body: string, path: string): MemorySearchResult => variant === "no_match"
+            ? { usedMemory: false, query, documents: [], sources: [], candidates: [],
+                hasAnswerableContent: false, memoryEvidenceState: "none", rerankVerdict: "none_relevant",
+                needsMoreEvidence: true }
+            : { ...createMemoryEvidence(body, path), query };
+        resolvers.get("second query")!(memoryResult(
+            "second query", "SECOND BODY MUST NOT EMIT", "notes/second-parallel.md"));
         await Promise.resolve();
-        resolvers.get("first query")!({
-            ...createMemoryEvidence("FIRST BODY MUST NOT EMIT", "notes/first-parallel.md"),
-            query: "first query",
-        });
+        resolvers.get("first query")!(memoryResult(
+            "first query", "FIRST BODY MUST NOT EMIT", "notes/first-parallel.md"));
 
         const summary = await execution;
         lifecycle.turnEnd("parallel-collision-turn", "tool_results_ready", undefined, summary.toolResults);
@@ -1134,6 +1217,7 @@ describe("PA Agent canonical host tool executor", () => {
             expect(message.content.promptText).not.toContain("BODY MUST NOT EMIT");
             expect(message.content.previewText).not.toContain("BODY MUST NOT EMIT");
             expect(message.content.sourceRecords).toEqual([]);
+            expect(message.content.resultFact).toMatchObject({ kind: "unavailable", capability: "search_memory" });
             expect(message.content.contextUsed).toEqual([expect.objectContaining({
                 category: "memory",
                 sources: [],
@@ -1142,6 +1226,19 @@ describe("PA Agent canonical host tool executor", () => {
         }
         expect(JSON.stringify(lifecycleEvents)).not.toContain("notes/first-parallel.md");
         expect(JSON.stringify(lifecycleEvents)).not.toContain("notes/second-parallel.md");
+        if (variant === "no_match") {
+            const completion = decideAnswerCompletion({
+                summary: { turnId: "parallel-collision-turn", turnIndex: 0, status: "tool_results_ready",
+                    assistantMessage: { role: "assistant", id: "assistant", content: [], timestamp: 1 },
+                    committedFinalText: "", pendingTextReclassified: false, toolCalls: [],
+                    toolResults: summary.toolResults, diagnostics: [], metrics: [],
+                    timing: { turnIndex: 0, status: "tool_results_ready", elapsedMs: 1,
+                        modelElapsedMs: 0, modelChunkCount: 0, toolCallCount: 2, toolResultCount: 2 },
+                } satisfies PaAgentTurnSummary,
+                ledger: createAnswerCompletionLedger(),
+            });
+            expect(completion).toMatchObject({ action: "continue_recovery", reason: "recoverable_tool_failure" });
+        }
     });
 
     it("tombstones duplicate Memory transcript occurrences even when the dispatcher skipped re-execution", async () => {
@@ -2039,7 +2136,10 @@ describe("PA Agent canonical host tool executor", () => {
             path: "notes/current.md",
             turnId: result.turns[0]?.turnId,
             citationEligible: false,
+            observedRevision: { state: "identified", basis: "editor_snapshot",
+                digest: { algorithm: "sha1", scope: "editor_projection", value: expect.stringMatching(/^[a-f0-9]{40}$/) } },
         })]);
+        expect(result.turns[0]?.progressEpoch).toBe(1);
         expect(toolResult?.content.contextUsed).toEqual([expect.objectContaining({
             category: "current-note",
             label: "Current note",
@@ -2327,10 +2427,11 @@ describe("PA Agent canonical host tool executor", () => {
         expect(toolResult?.content.sourceRecords).not.toEqual(expect.arrayContaining([
             expect.objectContaining({ kind: "web-source" }),
         ]));
+        expect(toolResult?.content.resultFact).toMatchObject({ kind: "unavailable", capability: "webSearch" });
         expect(toolResult?.content.contextUsed).toEqual([expect.objectContaining({
-            category: "read-only-tool",
-            label: "WebSearch",
-            detail: "0 normalized web sources",
+            category: "tool-unavailable",
+            label: "WebSearch unavailable",
+            detail: "WebSearch returned an unreadable result.",
             statusOnly: true,
         })]);
     });

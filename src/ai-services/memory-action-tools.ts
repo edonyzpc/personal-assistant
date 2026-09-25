@@ -1,5 +1,6 @@
 import type { ChatToolContext, ChatToolDefinition, ChatToolResult } from "./chat-tool-types";
 import { throwIfAborted } from "./chat-utils";
+import { assertTaskSourceMemoryReadCurrent } from './task-source-read-guard';
 import {
     MEMORY_ACTION_NAMES,
     MEMORY_ACTION_TOOL_NAME,
@@ -131,6 +132,11 @@ async function executeMemoryAction(
     });
     if (!port) return unavailable("action_port_missing");
     if (!binding) return unavailable("action_binding_missing");
+    const sourceCurrent = () => {
+        try { assertTaskSourceMemoryReadCurrent(context.taskSourceReadGuard); return true; }
+        catch { return false; }
+    };
+    if (!sourceCurrent()) return unavailable("action_source_not_current");
     if (!binding.isCurrent()) return unavailable("action_request_not_current");
     if (!binding.userPrompt.includes(input.userExpression)) {
         return unavailable("user_expression_not_from_current_prompt");
@@ -138,7 +144,9 @@ async function executeMemoryAction(
 
     let content: MemoryActionResult;
     try {
-        content = await port.execute({ ...input, binding });
+        const admittedBinding = context.taskSourceReadGuard
+            ? { ...binding, isCurrent: () => binding.isCurrent() && sourceCurrent() } : binding;
+        content = await port.execute({ ...input, binding: admittedBinding });
     } catch {
         return unavailable("action_failed");
     }
@@ -159,6 +167,7 @@ async function actionEvidence(
     const port = context.host.memoryManagement;
     if (!port) return {};
     try {
+        assertTaskSourceMemoryReadCurrent(context.taskSourceReadGuard);
         const request = {
             action: content.action,
             status: content.status,
@@ -182,6 +191,7 @@ async function actionEvidence(
             aggregateFingerprint: provisional.aggregateFingerprint,
             items: provisional.items,
         });
+        assertTaskSourceMemoryReadCurrent(context.taskSourceReadGuard);
         if (!observation.ready || !observation.stateFingerprint
             || observation.aggregateCurrent === false
             || !observation.validItemIndexes?.includes(0)) return {};

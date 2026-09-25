@@ -148,7 +148,7 @@ export interface CreateImageHostBinding {
     stableMessageId: string;
     operationId: string;
     /** Revalidates refs, user cost budget and the durable operation before paid dispatch. */
-    submit(input: CreateImageToolInput): Promise<{ taskId: string }>;
+    submit(input: CreateImageToolInput, isSourceCurrent?: () => boolean): Promise<{ taskId: string }>;
 }
 
 /**

@@ -14,6 +14,7 @@ import type {
 import type { AiServiceHost } from "./AiServiceHost";
 import type { ChatMessage, PaAgentMessage } from "./chat-types";
 import { computeContentHash } from "../vss-helpers";
+import { cloneSourceRecord } from "./source-store";
 import { getReadNotePartView } from "./read-note-tool-helpers";
 import {
     createSnapshotProjectionBudget,
@@ -1345,7 +1346,7 @@ function cloneProjectionMessage(message: PaAgentMessage): PaAgentMessage {
         ...message,
         content: {
             ...message.content,
-            sourceRecords: message.content.sourceRecords?.map(record => ({ ...record, metadata: record.metadata ? { ...record.metadata } : undefined })),
+            sourceRecords: message.content.sourceRecords?.map(cloneSourceRecord),
             metadata: metadata ? JSON.parse(stableJson(metadata)) as Record<string, unknown> : undefined,
         },
     };
@@ -1519,7 +1520,10 @@ async function projectStructuredObservation(
     }
     const retainedIndexes = new Set(result.validItemIndexes);
     const allItemsValid = evidence.items.every((_item, index) => retainedIndexes.has(index));
-    if (allItemsValid && result.aggregateCurrent === true) return true;
+    if (allItemsValid && result.aggregateCurrent === true) {
+        synchronizeProjectedSearchFact(message, evidence, retainedIndexes);
+        return true;
+    }
     if (retainedIndexes.size === 0) return false;
     const originalMatches = [...matches];
     const projectedMatches = originalMatches.filter((_match, index) => retainedIndexes.has(index));
@@ -1547,7 +1551,24 @@ async function projectStructuredObservation(
         vaultObservationEvidence: await rebindStructuredEvidence(evidence, observation, result, originalMatches),
         vaultObservationContractVersion: 1,
     };
+    synchronizeProjectedSearchFact(message, evidence, retainedIndexes);
     return projectedMatches.length > 0;
+}
+
+function synchronizeProjectedSearchFact(
+    message: Extract<PaAgentMessage, { role: "toolResult" }>,
+    evidence: Extract<VaultObservationEvidence, { tool: "query_notes" | "search_vault_snippets" }>,
+    retainedIndexes: ReadonlySet<number>,
+): void {
+    const sourceRefs = [...new Set(evidence.items.filter((_item, index) => retainedIndexes.has(index))
+        .map(item => item.path))];
+    if (sourceRefs.length > 0) {
+        message.content.resultFact = { kind: "evidence", sourceRefs };
+        return;
+    }
+    const expectedSearch = evidence.tool === "query_notes" ? "metadata" : "snippet";
+    if (message.content.resultFact?.kind !== "no_match"
+        || message.content.resultFact.search !== expectedSearch) delete message.content.resultFact;
 }
 
 async function rebindStructuredEvidence(
@@ -1602,6 +1623,8 @@ function withdrawToolObservation(message: Extract<PaAgentMessage, { role: "toolR
         error: "Vault observation evidence is currently unavailable.",
     });
     message.content.sourceRecords = [];
+    message.content.resultFact = { kind: "unavailable", capability: message.toolName,
+        reason: "vault_observation_unavailable" };
     message.content.metadata = {
         ...message.content.metadata,
         vaultObservationEvidenceInvalid: true,

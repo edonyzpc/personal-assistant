@@ -1,12 +1,24 @@
 import { TaskSourceConstraintState } from '../src/ai-services/task-source-constraint';
+import type { ChatSourceScope } from '../src/ai-services/chat-source-scope';
 
-function state() {
+function state(sourceScope?: ChatSourceScope) {
     return new TaskSourceConstraintState({ runId: 'run', userMessageId: 'user',
         userText: '只用当前笔记', requestText: '只用当前笔记\n[app context]',
-        noteHandles: new Map([['current', 'note-a']]) });
+        noteHandles: new Map([['current', 'note-a']]), sourceScope });
 }
 
 describe('Task source Host admission', () => {
+    it.each([
+        { sourceScope: 'notes' as const, notes: true, web: false },
+        { sourceScope: 'web' as const, notes: false, web: true },
+        { sourceScope: 'combined' as const, notes: true, web: true },
+    ])('intersects $sourceScope with every note, search and web read', ({ sourceScope, notes, web }) => {
+        const admission = state(sourceScope);
+        expect(admission.allows({ kind: 'note', noteId: 'note-a' })).toBe(notes);
+        expect(admission.allows({ kind: 'vault_search' })).toBe(notes);
+        expect(admission.allows({ kind: 'scoped_vault_search' })).toBe(notes);
+        expect(admission.allows({ kind: 'web' })).toBe(web);
+    });
     it('starts with one fixed admission and binds it to the complete request identity', () => {
         const admission = state();
         const snapshot = admission.snapshot();

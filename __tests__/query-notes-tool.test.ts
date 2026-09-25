@@ -390,7 +390,10 @@ describe('createQueryNotesTool', () => {
 
     it('returns exact zero for an allowed missing path without cache or body reads', async () => {
         const f = setup([makeFile('other.md')]);
-        const result = output(await f.invoke({ path: 'notes/missing.md' }));
+        const execution = await f.invoke({ path: 'notes/missing.md' });
+        const result = output(execution);
+        expect(execution.resultFact).toMatchObject({ kind: 'no_match', search: 'metadata',
+            observationId: expect.any(String) });
         expect(result.matchCount).toBe(0);
         expect(result.matchCountKind).toBe('exact');
         expect(result.coverage.evaluatedCandidates).toBe(0);
@@ -751,6 +754,7 @@ describe('createQueryNotesTool', () => {
         const missingFiles = await f.invoke({});
         expect(missingFiles.ok).toBe(false);
         expect(missingFiles.content).toBeNull();
+        expect(missingFiles.resultFact?.kind).not.toBe('no_match');
 
         const g = setup([makeFile('note.md')]);
         (g.context.host.app.metadataCache as { getFileCache?: unknown }).getFileCache = undefined;

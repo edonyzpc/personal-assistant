@@ -7,6 +7,7 @@ import type {
 } from "../src/ai-services/memory-action-types";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
 import { PaAgentRuntime } from "../src/ai-services/pa-agent-runtime";
+import { createMemoryActionTool } from "../src/ai-services/memory-action-tools";
 
 jest.mock("obsidian");
 
@@ -59,6 +60,21 @@ function createBinding(): MemoryActionHostBinding {
 }
 
 describe("B-140 T-09 Memory action tool", () => {
+    it("does not enter the action port after scoped Memory permission is revoked", async () => {
+        const execute = jest.fn<MemoryActionPort["execute"]>(async () => ({
+            kind: "memory-action" as const, action: "remember" as const, status: "applied" as const,
+            memoryEnabled: true, effectiveUse: "active" as const,
+        }));
+        const tool = createMemoryActionTool();
+        const host = createHost({ execute });
+        const input = tool.validateInput({ action: "remember", userExpression: "Please remember",
+            content: "I prefer concise replies", memoryType: "preference", sensitivity: "low" });
+        const result = await tool.execute(input, { host, memoryActionRequest: createBinding(),
+            taskSourceReadGuard: { isCurrent: () => true, isPathAllowed: () => true,
+                isMemoryAllowed: () => false } } as never);
+        expect(execute).not.toHaveBeenCalled();
+        expect(result.content).not.toMatchObject({ status: "applied" });
+    });
     it("exports and executes the fixed tool only through a live host action binding", async () => {
         const execute = jest.fn<MemoryActionPort["execute"]>(async () => ({
             kind: "memory-action" as const,

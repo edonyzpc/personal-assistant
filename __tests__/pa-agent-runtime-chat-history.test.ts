@@ -2,14 +2,69 @@ import { describe, expect, it } from "@jest/globals";
 
 import {
     formatCanonicalChatHistory,
-    getReadOnlyToolObservationMessage,
 } from "../src/ai-services/pa-agent-runtime";
 import { buildMemoryManagementEvidence } from "../src/ai-services/memory-management-evidence";
-import { createPaAgentPersistedTurn } from "../src/ai-services/pa-agent-history";
+import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from "../src/ai-services/pa-agent-history";
 import { ChatHistoryManager } from "../src/chat/chat-history-manager";
 import { MemoryChatHistoryStore } from "../src/chat/chat-history-store";
+import { completeInputLineage } from "../src/ai-services/input-lineage";
 
 describe("formatCanonicalChatHistory (#2.2)", () => {
+    it('round-trips assistant ancestry through canonical turn and conversation storage without losing the text on damage', async () => {
+        const lineage = completeInputLineage([{ kind: 'user-text', messageId: 'user-source' },
+            { kind: 'web', providerId: 'search', resultKey: 'hit-1' }]);
+        const canonical = createPaAgentPersistedTurn({ runId: 'run-lineage', turnId: 'turn-lineage',
+            messages: [{ role: 'assistant', id: 'assistant-source', timestamp: 1,
+                content: [{ type: 'text', text: 'Answer from source' }], inputLineage: lineage }] });
+        expect(canonical.inputLineage).toEqual(lineage);
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store });
+        await manager.initialize();
+        const conversation = await manager.startConversation('question');
+        await manager.recordTurn({ conversationId: conversation.id, turnIndex: 0, conversation,
+            userPrompt: 'question', entry: { kind: 'history',
+                user: { role: 'user', content: 'question', inputLineage: completeInputLineage([
+                    { kind: 'user-text', messageId: 'user-source' }]) },
+                assistant: { role: 'assistant', content: 'Answer from source', inputLineage: lineage,
+                    canonicalTurn: canonical } } });
+        const stored = (await manager.getTurns(conversation.id))[0];
+        expect(manager.deserializeTurn(stored).assistantMessage.inputLineage).toEqual(lineage);
+        expect(manager.deserializeTurn(stored).assistantMessage.canonicalTurn?.inputLineage).toEqual(lineage);
+        stored.assistant.inputLineage = { ...lineage, dependencies: [{ kind: 'forged' }] } as never;
+        const restored = manager.deserializeTurn(stored);
+        expect(restored.assistantMessage.content).toBe('Answer from source');
+        expect(restored.assistantMessage.inputLineage).toEqual({ schemaVersion: 1,
+            completeness: 'unknown', dependencies: [] });
+    });
+    it('retains a Host run choice through history without promoting it into model-visible history', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store });
+        await manager.initialize();
+        const conversation = await manager.startConversation('first');
+        const runSourceSelection = Object.freeze({ schemaVersion: 1 as const, scope: 'web' as const,
+            selectionId: 'conversation:selection:1', persistedSelectionRevision: 2,
+            userMessageId: 'stable-user-message' });
+        const entry = { kind: 'history' as const,
+            user: { role: 'user' as const, content: 'question', runSourceSelection,
+                hostProvenance: { version: 1 as const, messageId: 'stable-user-message',
+                    kind: 'ordinary_user_statement' as const } },
+            assistant: { role: 'assistant' as const, content: 'answer' } };
+        await manager.recordTurn({ conversationId: conversation.id, turnIndex: 0, entry,
+            userPrompt: 'question', conversation });
+        const restored = manager.deserializeTurn((await manager.getTurns(conversation.id))[0]);
+        expect(restored.userMessage.runSourceSelection).toEqual(runSourceSelection);
+        expect(readChatHistoryTurnMetadata(restored.assistantMessage)?.runSourceSelection).toEqual(runSourceSelection);
+        expect(formatCanonicalChatHistory([restored.userMessage, restored.assistantMessage]))
+            .not.toContain(runSourceSelection.selectionId);
+        const malformed = await manager.getTurns(conversation.id);
+        malformed[0].user.runSourceSelection = { ...runSourceSelection, scope: 'forged' as never };
+        expect(manager.deserializeTurn(malformed[0]).assistantMessage.content).toBe('answer');
+        expect(readChatHistoryTurnMetadata(manager.deserializeTurn(malformed[0]).assistantMessage)?.runSourceSelection)
+            .toBeUndefined();
+        malformed[0].user.runSourceSelection = { ...runSourceSelection, userMessageId: 'another-message' };
+        expect(manager.deserializeTurn(malformed[0]).assistantMessage.runSourceSelection).toBeUndefined();
+    });
+
     it("returns empty string for empty input", () => {
         // The empty-string contract matters because the answer-stream prompt template
         // concatenates this output into the host-context block. Returning "<chat_history>"
@@ -80,24 +135,6 @@ describe("formatCanonicalChatHistory (#2.2)", () => {
         expect(body.toLowerCase()).not.toContain("</chat_history>");
         expect(body).toContain("<\\/chat_history>");
     });
-    it("describes snippet paging without misreporting ordinary continuation as skipped files", () => {
-        expect(getReadOnlyToolObservationMessage("search_vault_snippets", {
-            kind: "vault-snippets",
-            query: "needle",
-            matches: [{ path: "a.md" }],
-            matchCount: 2,
-            page: { startIndex: 0, returnedCount: 1, requestedLimit: 1, hasMore: true },
-            coverage: { state: "complete" },
-        })).toBe("Found 1 of 2 bounded snippet match(es); more are available.");
-
-        expect(getReadOnlyToolObservationMessage("search_vault_snippets", {
-            kind: "vault-snippets",
-            query: "needle",
-            matches: [],
-            truncated: true,
-        })).toBe("Found 0 bounded snippet match(es).");
-    });
-
     it("preserves management evidence across canonical history serialization and reopen", async () => {
         const evidence = buildMemoryManagementEvidence({
             tool: "get_memory_status",
@@ -202,20 +239,4 @@ describe("formatCanonicalChatHistory (#2.2)", () => {
             .toMatchObject({ memoryManagementEvidence: [], memoryManagementEvidenceInvalid: true });
     });
 
-    it("keeps partial scan and partial note-structure facts separate from whole-tool unavailability", () => {
-        expect(getReadOnlyToolObservationMessage("search_vault_snippets", {
-            kind: "vault-snippets",
-            query: "needle",
-            matches: [{ path: "a.md" }],
-            coverage: { state: "partial" },
-        })).toBe("Found 1 bounded snippet match(es) from a partial scan.");
-
-        expect(getReadOnlyToolObservationMessage("inspect_obsidian_note", {
-            kind: "note-structure",
-            path: "a.md",
-            headings: [{ level: 1, text: "Kept" }],
-            unavailableSources: ["metadata cache"],
-            coverage: { state: "partial", cacheCoverage: "existing-items-only" },
-        })).toBe("Read partial note structure: 1 heading(s).");
-    });
 });

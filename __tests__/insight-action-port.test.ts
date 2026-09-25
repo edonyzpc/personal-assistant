@@ -2,6 +2,7 @@ import { createInsightActionPort } from "../src/pa/insight-action-port";
 import { SavedInsightStore } from "../src/pa/saved-insight-store";
 import { ReviewQueueStore } from "../src/pa/review-queue-store";
 import { PaAgentRuntime } from "../src/ai-services/pa-agent-runtime";
+import { createInsightActionTool } from "../src/ai-services/insight-action-tool";
 import type { CapabilityRegistry } from "../src/ai-services/capability-registry";
 import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
 
@@ -35,6 +36,19 @@ function fixture() {
 }
 
 describe("explicit insight action port", () => {
+    it("does not enter the persistent action port after scoped note access is revoked", async () => {
+        const { port, binding, saved } = fixture();
+        const execute = jest.spyOn(port, 'execute');
+        const tool = createInsightActionTool();
+        const input = tool.validateInput({ action: 'save', userExpression: '请保存这个洞察',
+            text: '用户想法', type: 'question', origin: 'user-authored' });
+        const result = await tool.execute(input, { host: { insightActions: port }, memoryActionRequest: binding,
+            taskSourceReadGuard: { isCurrent: () => true, isPathAllowed: () => true,
+                isNoteDomainAllowed: () => false } } as never);
+        expect(execute).not.toHaveBeenCalled();
+        expect(saved.list()).toHaveLength(0);
+        expect(result.content).not.toMatchObject({ status: 'applied' });
+    });
     it("exports the fixed action tool and binds its execution to the current user request", async () => {
         const { port, binding, saved } = fixture();
         const host = {
@@ -63,6 +77,8 @@ describe("explicit insight action port", () => {
         expect(missingBinding.content).toMatchObject({ status: "failed", reason: "action_unavailable" });
         const applied = await registry.execute("manage_saved_insight", input, { host, memoryActionRequest: binding });
         expect(applied.content).toMatchObject({ status: "applied", insightId: "ins-1" });
+        expect(applied.resultFact).toMatchObject({ kind: "applied", action: "saved_insight",
+            receiptId: expect.stringContaining('"insightId":"ins-1"') });
         expect(saved.list()).toHaveLength(1);
     });
     it("saves a user-authored item once, keeps weak-only effect, and rejects same-request drift", async () => {

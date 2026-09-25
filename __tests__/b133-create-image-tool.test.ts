@@ -52,6 +52,29 @@ describe("B-133 create_image host binding", () => {
         expect(JSON.stringify(first)).not.toContain(request.prompt);
     });
 
+    it("passes a source-only receipt to queued image submission", async () => {
+        let sourceCurrent = true;
+        let receipt: (() => boolean) | undefined;
+        const submit = jest.fn(async (_input: CreateImageToolInput, isSourceCurrent?: () => boolean) => {
+            receipt = isSourceCurrent;
+            return { taskId: "task-scoped" };
+        });
+        const tool = createCreateImageTool({ conversationId: "conversation-1", stableMessageId: "message-1",
+            operationId: "operation-1", submit });
+        const context = { host: {} as ChatToolContext['host'], taskSourceReadGuard: {
+            isCurrent: () => true,
+            isPathAllowed: () => true,
+            captureSourceValidity: () => () => sourceCurrent,
+        } } as ChatToolContext;
+
+        const result = await tool.execute(tool.validateInput(request), context);
+        expect(result.ok).toBe(true);
+        expect(submit).toHaveBeenCalledWith(request, expect.any(Function));
+        expect(receipt?.()).toBe(true);
+        sourceCurrent = false;
+        expect(receipt?.()).toBe(false);
+    });
+
     it("keeps separate explicit subrequests distinct while deduplicating each slot", async () => {
         const submit = jest.fn(async (input: CreateImageToolInput) => ({ taskId: `task-${input.subrequestIndex ?? 1}` }));
         const tool = createCreateImageTool({ conversationId: "conversation-1", stableMessageId: "message-1",

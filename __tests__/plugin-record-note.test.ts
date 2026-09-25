@@ -458,7 +458,7 @@ import { collectChatMemorySources, createChatMemoryCandidateEvidence } from '../
 import { hashWritingStyleText } from '../src/pa/writing-style';
 import type { WritingStyleService } from '../src/chat/writing-style-service';
 import { hashWritingText, type WritingVersion } from '../src/chat/writing-types';
-import type { GenerationInputSnapshot } from '../src/ai-services/generation-input-snapshot';
+import type { GenerationInputSnapshot, GenerationInputSnapshotV1, GenerationInputSnapshotV2 } from '../src/ai-services/generation-input-snapshot';
 
 const createTFile = (path: string): TFile => {
     const FileCtor = TFile as unknown as { new(path: string): TFile };
@@ -772,8 +772,8 @@ const createTFileWithStat = (path: string, stat: { mtime: number; size: number; 
 };
 
 const recoveryGenerationInput = (
-    overrides: Partial<GenerationInputSnapshot> = {},
-): GenerationInputSnapshot => ({
+    overrides: Partial<GenerationInputSnapshotV1> = {},
+): GenerationInputSnapshotV1 => ({
     schemaVersion: 1, inputPurpose: 'writing', task: { state: 'none', sources: [] },
     personal: { state: 'none' }, insights: { state: 'none' }, style: { state: 'none' }, images: [],
     parent: { state: 'none' }, pagelet: { state: 'none' }, ...overrides,
@@ -4021,6 +4021,33 @@ describe('Memory governance plugin bootstrap', () => {
             expect(webReceipt.isCurrent()).toBe(true);
             plugin.settings.webSearchEnabled = false;
             expect(webReceipt.isCurrent()).toBe(false);
+        });
+
+        it('checks a v2 whole-file hash when content changes without a stat change', async () => {
+            const { plugin, path, file, boundary } = await setupNoteBackedStyle();
+            plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+            plugin.isDataBoundaryAllowedPath = jest.fn((candidate: string) => boundary.allowed && candidate === path);
+            const markdown = '# Travel style\n海风替我保存了这段旅行。';
+            const task = { purpose: 'task_material' as const, kind: 'context-used' as const,
+                boundary: 'read-only-tool' as const, dedupKey: `note:${path}`, path,
+                revision: { state: 'identified' as const, basis: 'vault_read' as const,
+                    digest: { algorithm: 'sha1' as const, scope: 'whole_file' as const,
+                        value: await computeContentHash(markdown) },
+                    stat: { mtime: file.stat.mtime, size: file.stat.size } } };
+            const generationInput: GenerationInputSnapshotV2 = { ...recoveryGenerationInput(), schemaVersion: 2,
+                task: { state: 'identified', sources: [task] }, lineage: { state: 'unknown' } };
+            const recovery = { requestId: 'v2-recovery', rawText: 'Old AI draft',
+                reason: 'invalid_output' as const, generationInput };
+            const receipt = await plugin.createChatHost().prepareWritingRecoverySources(
+                recovery, [], 'style-conversation');
+            expect(receipt.isCurrent()).toBe(true);
+            boundary.allowed = false;
+            expect(receipt.isCurrent()).toBe(false);
+            boundary.allowed = true;
+            plugin.captureLatestMemorySource = jest.fn(async () => ({ path,
+                markdown: markdown.replace('海', '山'), mtime: file.stat.mtime, size: file.stat.size }));
+            await expect(plugin.createChatHost().prepareWritingRecoverySources(
+                recovery, [], 'style-conversation')).rejects.toThrow('Writing source unavailable');
         });
 
         it('revalidates an unchanged Canvas task source without treating it as Markdown', async () => {

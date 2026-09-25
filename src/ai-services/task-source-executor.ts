@@ -16,6 +16,10 @@ interface TaskSourceExecutorHost {
     state: TaskSourceConstraintState;
     resolveHostNoteId(path: string): string | undefined;
     isHostCurrent(): boolean;
+    isWebAllowed?(): boolean;
+    isMemoryAllowed?(): boolean;
+    isInputCurrent?(calls: readonly ParsedBufferedToolCall[]): boolean;
+    captureInputSourceValidity?(calls: readonly ParsedBufferedToolCall[]): (() => boolean) | undefined;
     resolveNoteSearchScope?(constraint: TaskSourceConstraint): NoteSearchScope;
 }
 
@@ -36,13 +40,14 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
         execute: base.execute.bind(base),
         prepareBatch: base.prepareBatch?.bind(base),
         getCanonicalToolCallKey: base.getCanonicalToolCallKey?.bind(base),
-        canReuseWritingContext: base.canReuseWritingContext?.bind(base),
         getExecutionMode: base.getExecutionMode?.bind(base),
         getTimeoutMs: base.getTimeoutMs?.bind(base),
         getRetrySafety: base.getRetrySafety?.bind(base),
         canReuseSuccessfulResult: base.canReuseSuccessfulResult?.bind(base),
         preflightBatch: input => {
-            if (!options.state.matchesRun(input.runId, input.userInput) || !options.isHostCurrent()) {
+            const isInputCurrent = () => options.isHostCurrent()
+                && options.isInputCurrent?.(input.toolCalls) !== false;
+            if (!options.state.matchesRun(input.runId, input.userInput) || !isInputCurrent()) {
                 return rejectScope('source_run_changed');
             }
             if (input.toolCalls.some(call => call.parseError)
@@ -78,14 +83,19 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
             if (baseResult !== undefined) {
                 return 'kind' in baseResult ? rejectScope('conflicting_source_admission') : baseResult;
             }
-            if (!options.isHostCurrent() || !options.state.isCurrent(constraint)) {
+            if (!isInputCurrent() || !options.state.isCurrent(constraint)) {
                 return rejectScope('source_run_changed');
             }
+            const sourceValidity = options.captureInputSourceValidity?.(input.toolCalls);
+            if (sourceValidity && !sourceValidity()) return rejectScope('source_run_changed');
             return { kind: 'admitted',
                 taskSourceReadGuard: options.state.createReadGuard(
-                    constraint, options.resolveHostNoteId, options.isHostCurrent,
+                    constraint, options.resolveHostNoteId, isInputCurrent,
                     path => outputTargets.has(path),
                     options.resolveNoteSearchScope ? () => options.resolveNoteSearchScope!(constraint) : undefined,
+                    options.isWebAllowed,
+                    options.isMemoryAllowed,
+                    sourceValidity,
                 ) };
         },
     };

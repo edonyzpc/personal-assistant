@@ -4,8 +4,26 @@ export type TaskSourceReadKind = 'task_material' | 'output_target_exists';
 export interface TaskSourceReadGuard {
     isCurrent(): boolean;
     isPathAllowed(path: string, kind?: TaskSourceReadKind): boolean;
+    /** Exact live domain admission for physical auxiliary requests. */
+    isWebAllowed?(): boolean;
+    isMemoryAllowed?(): boolean;
+    isNoteDomainAllowed?(): boolean;
+    /** Source-only receipt survives the run so queued work can recheck its prompt ancestry. */
+    captureSourceValidity?(): () => boolean;
     /** Host-resolved query boundary; absence cannot fall back to an unrestricted search. */
     getNoteSearchScope?(): NoteSearchScope;
+}
+
+export function assertTaskSourceMemoryReadCurrent(guard: TaskSourceReadGuard | undefined): void {
+    assertTaskSourceReadCurrent(guard);
+    if (guard && guard.isMemoryAllowed?.() !== true) throw new Error('Task source Memory is no longer available.');
+}
+
+export function assertTaskSourceNoteDomainCurrent(guard: TaskSourceReadGuard | undefined): void {
+    assertTaskSourceReadCurrent(guard);
+    if (guard && guard.isNoteDomainAllowed?.() !== true) {
+        throw new Error('Task source note domain is no longer available.');
+    }
 }
 
 export function assertTaskSourceReadCurrent(guard: TaskSourceReadGuard | undefined): void {

@@ -1,4 +1,5 @@
 /** Chat-scoped, optional observation port. It never owns execution or cancellation. */
+import type { PaAgentRunUsageLedger } from './agent-usage-ledger';
 export type AgentDebugDomain =
     | "vault_notes" | "personal_memory" | "insights" | "legacy_memory" | "chat_history";
 
@@ -96,6 +97,10 @@ export interface AgentDebugPort {
 /** Explicit ownership of one logical model call; never part of provider input. */
 export interface AgentDebugCallScope {
     recorder: AgentDebugRunRecorder;
+    /** Run-local accounting remains active when Debug capture is disabled. */
+    usageLedger?: PaAgentRunUsageLedger;
+    /** Budget estimate for the input currently bound to the next physical dispatch. */
+    promptEstimate?: { tokens: number; method: string };
     callId: string;
     parentId: string;
     turnId?: string;

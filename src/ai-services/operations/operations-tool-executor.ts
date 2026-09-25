@@ -43,7 +43,6 @@ export function createOperationsStagingToolExecutor(
 ): PaAgentToolExecutor {
     return {
         preflightBatch: options.baseExecutor.preflightBatch?.bind(options.baseExecutor),
-        canReuseWritingContext: options.baseExecutor.canReuseWritingContext?.bind(options.baseExecutor),
         getCanonicalToolCallKey: (toolCall, context) => (
             options.baseExecutor.getCanonicalToolCallKey?.(toolCall, context)
         ),
@@ -202,6 +201,7 @@ async function prepareOperationsBatch(
                 outcome: "success",
                 promptText: OPERATIONS_STAGED_MESSAGE,
                 previewText: `Staged ${toolCall.name} for inline review; no write occurred.`,
+                resultFact: { kind: "approval_pending", intentId: intent.id },
                 metadata: {
                     outcome: "success",
                     intentId: intent.id,

@@ -25,6 +25,8 @@ export interface ImageGenerationTask {
     createdAt: string;
     updatedAt: string;
     revision: number;
+    /** This queued prompt used scoped material; only an ephemeral source receipt may dispatch it. */
+    requiresSourceReceipt?: boolean;
     request: {
         userPrompt: string;
         submittedPrompt: string;
@@ -183,6 +185,10 @@ export function cloneImageGenerationTask(value: unknown): ImageGenerationTask {
     if (input.providerRequestId !== undefined) result.providerRequestId = text(input.providerRequestId, 256);
     if (input.lastProviderState !== undefined) result.lastProviderState = text(input.lastProviderState, 128);
     if (input.nextPollAt !== undefined) result.nextPollAt = integer(input.nextPollAt);
+    if (input.requiresSourceReceipt !== undefined) {
+        if (typeof input.requiresSourceReceipt !== 'boolean') throw new Error('Invalid image source receipt marker.');
+        result.requiresSourceReceipt = input.requiresSourceReceipt;
+    }
     if (input.stopIntent !== undefined) {
         if (typeof input.stopIntent !== 'boolean') throw new Error('Invalid image generation stop intent.');
         result.stopIntent = input.stopIntent;

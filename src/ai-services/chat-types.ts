@@ -5,12 +5,18 @@ import type { PersistedSourceRef } from "../pa/contracts/source-ref";
 import type { GenerationInputSnapshot } from "./generation-input-snapshot";
 import type { VaultObservationEvidence } from "./vault-observation-evidence";
 import type { TaskSourcePendingDecision } from './task-source-history';
+import type { RunSourceSelection } from './chat-source-scope';
+import type { InputLineage } from './input-lineage';
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
     content: string;
     images?: MessageImage[];
     hostProvenance?: ChatHostProvenance;
+    /** Captured by Chat before asynchronous preparation; never inferred from model text. */
+    runSourceSelection?: RunSourceSelection;
+    /** Host ancestry of this exact body; absent or invalid means unknown. */
+    inputLineage?: InputLineage;
     /** Immutable host version reference; never accepted from a model response. */
     writingVersionId?: string;
     /** This turn's user-selected Writing action, never inferred from prior messages. */
@@ -42,6 +48,7 @@ export interface ChatAgentSource {
     path: string;
     chunkIndex?: number;
     score?: number;
+    observedRevision?: ObservedSourceRevision;
 }
 
 export type ChatAgentStatus =
@@ -235,6 +242,8 @@ export interface ChatTurnMemoryMetadata {
     allowedMemorySourcePaths: string[];
     contextUsed?: ChatContextUsedItem[];
     sourceRecords?: SourceRecord[];
+    runSourceSelection?: RunSourceSelection;
+    inputLineage?: InputLineage;
     contextTrace?: PersistedContextTrace;
     /** Trusted host observation envelopes retained for later revalidation. */
     vaultObservationEvidence?: VaultObservationEvidence[];
@@ -291,6 +300,15 @@ export type SourceRecordBoundary =
     | "web"
     | "skill-context";
 
+/** Identity of material at observation time, never inferred from a later file stat. */
+export type ObservedSourceRevision =
+    | { state: "identified"; basis: "vault_read" | "editor_snapshot" | "metadata_snapshot";
+        digest: { algorithm: "sha1"; scope: "whole_file" | "editor_projection"
+            | "metadata_projection" | "body_partition" | "properties_partition"
+            | "snippet_projection"; value: string };
+        stat?: { mtime: number; size: number } }
+    | { state: "unknown"; reason: "not_captured" | "legacy" | "unstable_read" };
+
 export interface SourceRecord {
     kind: SourceRecordKind;
     dedupKey: string;
@@ -309,6 +327,7 @@ export interface SourceRecord {
     citationEligible?: boolean;
     statusOnly?: boolean;
     metadata?: Record<string, unknown>;
+    observedRevision?: ObservedSourceRevision;
 }
 
 export interface SourceDisplayChip {
@@ -366,7 +385,11 @@ export type ProviderCompletion = "stop" | "tool_calls" | "length" | "content_fil
 export interface ChatWritingRequest { requestId: string; }
 /** Host receipt metadata; absent means the legacy path, an empty object means a new work with unknown scene. */
 export interface ChatWritingContextMetadata { parentVersionId?: string; scene?: import('../chat/writing-types').WritingScene; }
-export interface ChatWritingContext { parentVersionId: string; text: string; textHash: string; associatedImages: MessageImage[]; }
+export interface ChatWritingContext { parentVersionId: string; text: string; textHash: string;
+    associatedImages: MessageImage[];
+    /** Host-verified parent ancestry; absence remains unknown for scoped Chat. */
+    inputLineage?: InputLineage;
+}
 /** A failed writing task has material lineage without a validated parent body/version. Host-only. */
 export interface ChatWritingMaterialContext { requestId: string; associatedImages: MessageImage[]; }
 export interface ChatWritingStyleResult {
@@ -394,6 +417,8 @@ export interface PaToolResultContent {
     sourceRecords?: SourceRecord[];
     contextUsed?: ChatContextUsedItem[];
     metadata?: Record<string, unknown>;
+    /** Host-only domain result; never serialized into the provider observation. */
+    resultFact?: import("./pa-agent-result-facts").PaAgentResultFact;
 }
 
 export const PA_AGENT_CANONICAL_TURN_SCHEMA_VERSION = 1;
@@ -404,6 +429,7 @@ export type PaAgentMessage =
         id: string;
         content: UserMessageContent;
         images?: MessageImage[];
+        inputLineage?: InputLineage;
         timestamp: number;
     }
     | {
@@ -415,6 +441,7 @@ export type PaAgentMessage =
         /** Host-only request marker, used to keep raw envelopes out of ordinary history. */
         writingRequestId?: string;
         /** Trusted host evidence used only by provider projection; never model input. */
+        inputLineage?: InputLineage;
         memoryManagementEvidence?: import("./memory-management-evidence").MemoryManagementEvidence[];
         memoryManagementContractVersion?: 1;
         memoryManagementEvidenceInvalid?: boolean;
@@ -426,6 +453,7 @@ export type PaAgentMessage =
         toolCallId: string;
         toolName: string;
         content: PaToolResultContent;
+        inputLineage?: InputLineage;
         isError: boolean;
         timestamp: number;
     };
@@ -438,6 +466,7 @@ export interface PaAgentPersistedTurn {
     committedFinalText?: string;
     sourceRecords?: SourceRecord[];
     contextUsed?: ChatContextUsedItem[];
+    inputLineage?: InputLineage;
     vaultObservationEvidence?: VaultObservationEvidence[];
     vaultObservationContractVersion?: 1;
     vaultObservationEvidenceInvalid?: boolean;
@@ -630,7 +659,7 @@ export type LegacyAgentEvent =
     | LegacyAgentAnswerSnapshotEvent
     | LegacyAgentReasoningChunkEvent
     | LegacyAgentTurnMetadataEvent
-    | (LegacyAgentEventBase & { kind: "writing-artifact"; runId: string; requestId: string; messageId: string; body: string; explanation: string; preamble?: string; styleRevisionIds?: string[]; associatedImages?: MessageImage[]; writingContext?: ChatWritingContextMetadata; generationInput?: GenerationInputSnapshot;
+    | (LegacyAgentEventBase & { kind: "writing-artifact"; runId: string; requestId: string; messageId: string; body: string; explanation: string; resultFact?: import("./pa-agent-result-facts").PaAgentResultFact; preamble?: string; styleRevisionIds?: string[]; associatedImages?: MessageImage[]; writingContext?: ChatWritingContextMetadata; generationInput?: GenerationInputSnapshot;
         /** Ephemeral host receipt from the generating request; never a persisted/model field. */
         isSourceCurrent?: () => boolean })
     | (LegacyAgentEventBase & { kind: "writing-preview"; runId: string; requestId: string; messageId: string; text: string })
@@ -706,6 +735,7 @@ export interface ChatToolResult<Output> {
     content: Output | null;
     sources: ChatAgentSource[];
     sourceRecords?: SourceRecord[];
+    resultFact?: import("./pa-agent-result-facts").PaAgentResultFact;
     vaultObservationEvidence?: VaultObservationEvidence;
     vaultObservationContractVersion?: 1;
     memoryManagementEvidence?: import("./memory-management-evidence").MemoryManagementEvidence;

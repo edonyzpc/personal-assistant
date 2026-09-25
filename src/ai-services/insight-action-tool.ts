@@ -1,6 +1,7 @@
 import type { ChatToolContext, ChatToolDefinition, ChatToolResult } from "./chat-tool-types";
 import type { InsightActionInput, InsightActionResult } from "../pa/insight-action-port";
 import { SAVED_INSIGHT_TYPES } from "../pa/saved-insight-store";
+import { assertTaskSourceNoteDomainCurrent } from './task-source-read-guard';
 
 type ToolInput = Omit<InsightActionInput, "binding">;
 const ACTIONS = ["save", "later", "archive", "restore"] as const;
@@ -96,12 +97,32 @@ export function createInsightActionTool(): ChatToolDefinition<ToolInput, Insight
                 content: { kind: "insight-action", action: input.action, status: "failed", reason },
             });
             if (!context.host.insightActions || !context.memoryActionRequest) return unavailable("action_unavailable");
+            const sourceCurrent = () => {
+                try { assertTaskSourceNoteDomainCurrent(context.taskSourceReadGuard); return true; }
+                catch { return false; }
+            };
+            if (!sourceCurrent()) return unavailable("source_not_current");
             if (context.signal?.aborted || !context.memoryActionRequest.isCurrent()) return unavailable("request_not_current");
             if (!context.memoryActionRequest.userPrompt.includes(input.userExpression)) return unavailable("user_expression_not_from_current_prompt");
             try {
+                const binding = context.taskSourceReadGuard
+                    ? { ...context.memoryActionRequest,
+                        isCurrent: () => context.memoryActionRequest!.isCurrent() && sourceCurrent() }
+                    : context.memoryActionRequest;
+                const action = await context.host.insightActions.execute({ ...input, binding });
                 return {
                     ok: true, tool: "manage_saved_insight", inputSummary: input.action, sources: [],
-                    content: await context.host.insightActions.execute({ ...input, binding: context.memoryActionRequest }),
+                    content: action,
+                    ...(action.status === "applied" && (action.insightId || action.reviewItemId)
+                        ? { resultFact: { kind: "applied" as const, action: "saved_insight" as const,
+                            receiptId: JSON.stringify({ action: action.action,
+                                ...(action.insightId ? { insightId: action.insightId } : {}),
+                                ...(action.reviewItemId ? { reviewItemId: action.reviewItemId } : {}),
+                                ...(action.insightStatus ? { insightStatus: action.insightStatus } : {}),
+                                ...(action.updatedAt ? { updatedAt: action.updatedAt } : {}),
+                                ...(action.influencePolicy ? { influencePolicy: action.influencePolicy } : {}),
+                            }) } }
+                        : {}),
                 };
             } catch {
                 return unavailable("action_failed");

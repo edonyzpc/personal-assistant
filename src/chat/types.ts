@@ -72,13 +72,14 @@ export type UiTurn = {
     prompt: string;
     images?: MessageImage[];
     userProvenance?: ChatHostProvenance;
+    runSourceSelection?: import('../ai-services/chat-source-scope').RunSourceSelection;
     writingRequestId?: string;
     writingIntent?: boolean;
     writingParent?: WritingVersion;
     writingSelectedParent?: WritingVersion;
     writingMaterialContext?: ChatWritingMaterialContext;
     writingMaterials?: MessageImage[];
-    writingArtifact?: { requestId: string; messageId: string; body: string; explanation: string; styleRevisionIds?: string[];
+    writingArtifact?: { requestId: string; messageId: string; body: string; explanation: string; resultFact?: import('../ai-services/pa-agent-result-facts').PaAgentResultFact; styleRevisionIds?: string[];
         writingContext?: import('../ai-services/chat-types').ChatWritingContextMetadata; generationInput?: GenerationInputSnapshot;
         isSourceCurrent?: () => boolean };
     writingRecovery?: ChatWritingRecovery;

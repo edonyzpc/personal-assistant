@@ -317,7 +317,17 @@ export class OperationsIntentController {
         this.intents.delete(intentId);
         this.terminalStates.set(intentId, state);
         this.emit({ type: "intent-state-changed", intent: finalIntent });
-        const executionResult = Object.freeze({ intentId, state, operations: Object.freeze(results) });
+        const completedRefs = results.flatMap(result => result.status === "succeeded" && result.receiptId
+            ? [result.receiptId] : []);
+        const remainingRefs = results.flatMap(result => result.status !== "succeeded" ? [result.operationId] : []);
+        const resultFact = state === "completed" && completedRefs.length === results.length
+            ? { kind: "applied" as const, action: "operations" as const,
+                receiptId: JSON.stringify({ intentId, receipts: completedRefs }) }
+            : state === "partial"
+                ? { kind: "partial" as const, completedRefs, remainingRefs }
+                : undefined;
+        const executionResult = Object.freeze({ intentId, state, operations: Object.freeze(results),
+            ...(resultFact ? { resultFact } : {}) });
         this.emit({ type: "intent-result", result: executionResult });
         return executionResult;
     }

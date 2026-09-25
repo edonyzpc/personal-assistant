@@ -33,7 +33,7 @@ async function fixture() {
         onPrepared: () => { if (state.failDelivery) { state.failDelivery = false; throw new Error('Delivery preparation failed'); } },
         getBudget: () => ({ remainingTextChars: 10_000, remainingMemoryChars: 6000 }) }));
     const executor = createPaAgentCapabilityToolExecutor({ registry, host: { log: jest.fn() } as never,
-        canReuseWritingContext: input => run.matchesCurrentSelection(input) });
+        isWritingSelectionCurrent: input => run.matchesCurrentSelection(input) });
     const ordinaryExecute = jest.fn(async () => ({ outcome: 'success' as const, promptText: 'ordinary' }));
     const originalExecute = executor.execute.bind(executor);
     executor.execute = input => input.toolCall.name === 'ordinary' ? ordinaryExecute() : originalExecute(input);

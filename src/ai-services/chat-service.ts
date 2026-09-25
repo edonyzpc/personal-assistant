@@ -55,6 +55,8 @@ export function getBailianWebSearchEndpointForBaseURL(baseURL: string): string {
 export interface StreamLLMOptions {
     /** Exact user-authored text before this call's app-owned prompt additions. */
     userText?: string;
+    /** Immutable Host choice captured with the exact Chat user message. */
+    runSourceSelection?: import('./chat-source-scope').RunSourceSelection;
     images?: import('../chat/image-types').MessageImage[];
     imageAssetService?: import('../chat/image-assets').ImageAssetService;
     writingRequest?: import('./chat-types').ChatWritingRequest;
@@ -74,6 +76,8 @@ export interface StreamLLMOptions {
     /** Visible Pagelet evidence to inject into this explicit user turn only. */
     pageletHandoff?: PageletChatHandoffContext;
     onLifecycleEvent?: (event: AgentEvent) => void;
+    /** Content-free run accounting; used by the controlled evaluation recorder. */
+    onUsageAccounting?: (snapshot: import('./agent-usage-ledger').PaAgentUsageLedgerSnapshot) => void;
     /** Host-validated final text, including a pure incomplete result. */
     onCommittedFinalText?: (snapshot: string) => void;
     onEvent?: (event: LegacyAgentEvent) => void;
@@ -272,8 +276,10 @@ export class ChatService {
             await runtime.streamTurn({
                 ...(debugRequestId ? { debugRequestId } : {}),
                 debugRecorder,
+                onUsageAccounting: options.onUsageAccounting,
                 prompt,
                 userText: options.userText,
+                runSourceSelection: options.runSourceSelection,
                 conversationId: options.conversationId,
                 createImage: options.createImage,
                 chatHistory,

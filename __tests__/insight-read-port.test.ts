@@ -1,6 +1,7 @@
 import { createInsightReadPort } from "../src/pa/insight-read-port";
 import { buildMemoryManagementEvidence, prepareMemoryManagementProjection } from "../src/ai-services/memory-management-evidence";
 import { createInsightReadTools } from "../src/ai-services/insight-read-tools";
+import { TaskSourceConstraintState } from '../src/ai-services/task-source-constraint';
 import type { ChatToolContext } from "../src/ai-services/chat-tool-types";
 import type { ChatMessage, PaAgentMessage } from "../src/ai-services/chat-types";
 import type { VaultMetacognitionSnapshot } from "../src/ai-services/memory-extraction/type-c-analyzer";
@@ -30,6 +31,17 @@ function insight(id: string, path: string | null, status: SavedInsight["status"]
 }
 
 describe("existing insight read port", () => {
+    it('does not read an Insight port from a web-scoped independent call', async () => {
+        const getVaultInsights = jest.fn(() => { throw new Error('private Insight read'); });
+        const state = new TaskSourceConstraintState({ runId: 'web-insight', userMessageId: 'user',
+            userText: 'Web only', noteHandles: new Map(), sourceScope: 'web' });
+        const guard = state.createReadGuard(state.snapshot(), () => undefined, () => true);
+        const tool = createInsightReadTools().find(candidate => candidate.name === 'get_vault_insights');
+        if (!tool) throw new Error('Missing Insight tool');
+        await expect(tool.execute({}, { host: { insightRead: { getVaultInsights } } as unknown as ChatToolContext['host'],
+            taskSourceReadGuard: guard })).rejects.toThrow('Task source note domain');
+        expect(getVaultInsights).not.toHaveBeenCalled();
+    });
     it("reads a prepared Type-C snapshot and revokes it when its complete source receipt changes", async () => {
         let sourceCurrent = true;
         const getVaultInsights = jest.fn(() => ({

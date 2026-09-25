@@ -12,6 +12,9 @@ import { PA_AGENT_CANONICAL_TURN_SCHEMA_VERSION } from "./chat-types";
 import { cloneSourceRecord } from "./source-store";
 import { cloneContextReductionReceipt, createContextPagerStateFromChatContextUsed } from "../pa";
 import { cloneMessageImages } from "../chat/image-types";
+import { parseRunSourceSelection } from './chat-source-scope';
+import { cloneInputLineage, unionInputLineages } from './input-lineage';
+import { cloneResultFact } from './pa-agent-result-facts';
 import {
     assertVaultObservationHistory,
     cloneVaultObservationEvidence,
@@ -36,6 +39,8 @@ export interface CreatePaAgentPersistedTurnInput {
 
 export function createPaAgentPersistedTurn(input: CreatePaAgentPersistedTurnInput): PaAgentPersistedTurn {
     const finalWritingMessage = [...input.messages].reverse().find((message) => message.role === "assistant" && message.writingRequestId);
+    const modelVisibleMessages = input.messages.filter(message => message.role === 'assistant'
+        || (message.role === 'toolResult' && message.content.includeInNextPrompt));
     const observationEvidence: VaultObservationEvidence[] = [];
     let observationEvidenceInvalid = false;
     const managementEvidence: MemoryManagementEvidence[] = [];
@@ -74,6 +79,9 @@ export function createPaAgentPersistedTurn(input: CreatePaAgentPersistedTurnInpu
         schemaVersion: PA_AGENT_CANONICAL_TURN_SCHEMA_VERSION,
         runId: input.runId,
         turnId: input.turnId,
+        ...(modelVisibleMessages.some(message => message.inputLineage)
+            ? { inputLineage: unionInputLineages(...modelVisibleMessages
+                .map(message => message.inputLineage)) } : {}),
         ...(input.status ? { status: input.status } : {}),
         ...(input.committedFinalText !== undefined ? { committedFinalText: input.committedFinalText } : {}),
         ...(input.sourceRecords && input.sourceRecords.length > 0
@@ -119,6 +127,7 @@ export function readChatHistoryTurnMetadata(
     legacyMetadata?: ChatTurnMemoryMetadata,
 ): ChatTurnMemoryMetadata | undefined {
     const metadata = assistantMessage.memoryMetadata ?? legacyMetadata;
+    const runSourceSelection = parseRunSourceSelection(assistantMessage.runSourceSelection ?? metadata?.runSourceSelection);
     if (assistantMessage.canonicalTurn) {
         const canonical = extractCanonicalTurnMetadata(assistantMessage.canonicalTurn);
         // Source/Memory truth still comes from the canonical turn. The body-free
@@ -133,13 +142,18 @@ export function readChatHistoryTurnMetadata(
                 reduction,
             };
         }
-        return canonical;
+        const inputLineage = cloneInputLineage(assistantMessage.inputLineage ?? canonical.inputLineage);
+        return { ...canonical, ...(runSourceSelection ? { runSourceSelection } : {}),
+            ...(inputLineage ? { inputLineage } : {}) };
     }
-    return metadata ? cloneTurnMetadata(metadata) : undefined;
+    return metadata ? { ...cloneTurnMetadata(metadata), ...(runSourceSelection ? { runSourceSelection } : {}),
+        ...(cloneInputLineage(assistantMessage.inputLineage)
+            ? { inputLineage: cloneInputLineage(assistantMessage.inputLineage) } : {}) }
+        : runSourceSelection ? { hasMemoryContent: false, allowedMemorySourcePaths: [], runSourceSelection } : undefined;
 }
 
 export function extractCanonicalTurnMetadata(
-    turn: Pick<PaAgentPersistedTurn, "messages"> & Partial<Pick<PaAgentPersistedTurn, "runId" | "turnId" | "sourceRecords" | "contextUsed" | "vaultObservationEvidence" | "vaultObservationContractVersion" | "vaultObservationEvidenceInvalid" | "memoryManagementEvidence" | "memoryManagementContractVersion" | "memoryManagementEvidenceInvalid">>,
+    turn: Pick<PaAgentPersistedTurn, "messages"> & Partial<Pick<PaAgentPersistedTurn, "runId" | "turnId" | "sourceRecords" | "contextUsed" | "inputLineage" | "vaultObservationEvidence" | "vaultObservationContractVersion" | "vaultObservationEvidenceInvalid" | "memoryManagementEvidence" | "memoryManagementContractVersion" | "memoryManagementEvidenceInvalid">>,
 ): ChatTurnMemoryMetadata {
     const sourceRecords = dedupeSourceRecords([
         ...(turn.sourceRecords ?? []).map(cloneSourceRecord),
@@ -160,6 +174,7 @@ export function extractCanonicalTurnMetadata(
         allowedMemorySourcePaths,
         ...(contextUsed.length > 0 ? { contextUsed } : {}),
         ...(sourceRecords.length > 0 ? { sourceRecords } : {}),
+        ...(cloneInputLineage(turn.inputLineage) ? { inputLineage: cloneInputLineage(turn.inputLineage) } : {}),
         ...(turn.vaultObservationEvidenceInvalid || turn.vaultObservationEvidence ? {
             vaultObservationEvidence: turn.vaultObservationEvidenceInvalid
                 ? []
@@ -206,6 +221,7 @@ function dedupeSourceRecords(records: SourceRecord[]): SourceRecord[] {
             record.path ?? "",
             record.url ?? "",
             record.title ?? "",
+            JSON.stringify(record.observedRevision ?? null),
         ].join("\u0000");
         if (!byKey.has(key)) {
             byKey.set(key, record);
@@ -258,6 +274,10 @@ function cloneTurnMetadata(metadata: ChatTurnMemoryMetadata): ChatTurnMemoryMeta
         allowedMemorySourcePaths: [...metadata.allowedMemorySourcePaths],
         ...(metadata.contextUsed ? { contextUsed: metadata.contextUsed.map(cloneContextUsedItem) } : {}),
         ...(metadata.sourceRecords ? { sourceRecords: metadata.sourceRecords.map(cloneSourceRecord) } : {}),
+        ...(parseRunSourceSelection(metadata.runSourceSelection)
+            ? { runSourceSelection: parseRunSourceSelection(metadata.runSourceSelection) } : {}),
+        ...(cloneInputLineage(metadata.inputLineage)
+            ? { inputLineage: cloneInputLineage(metadata.inputLineage) } : {}),
         ...(metadata.contextTrace ? { contextTrace: cloneContextTrace(metadata.contextTrace) } : {}),
         ...(metadata.vaultObservationContractVersion === 1 ? {
             ...(metadata.vaultObservationEvidenceInvalid ? {
@@ -333,6 +353,7 @@ function clonePaAgentMessage(message: PaAgentMessage): PaAgentMessage {
     if (message.role === "assistant") {
         return {
             ...message,
+            ...(cloneInputLineage(message.inputLineage) ? { inputLineage: cloneInputLineage(message.inputLineage) } : {}),
             content: message.content.map((part) => ({ ...part })),
             ...(message.memoryManagementEvidence ? {
                 memoryManagementEvidence: message.memoryManagementEvidence.map(cloneMemoryManagementEvidence),
@@ -342,17 +363,21 @@ function clonePaAgentMessage(message: PaAgentMessage): PaAgentMessage {
     if (message.role === "toolResult") {
         return {
             ...message,
+            ...(cloneInputLineage(message.inputLineage) ? { inputLineage: cloneInputLineage(message.inputLineage) } : {}),
             content: {
                 ...message.content,
                 sourceRecords: message.content.sourceRecords?.map(cloneSourceRecord),
                 contextUsed: message.content.contextUsed?.map(cloneContextUsedItem),
+                resultFact: cloneResultFact(message.content.resultFact),
                 metadata: message.content.metadata ? cloneToolMetadata(message.content.metadata) : undefined,
             },
         };
     }
     return Array.isArray(message.content)
-        ? { ...message, ...(message.images ? { images: cloneMessageImages(message.images) } : {}), content: message.content.map((part) => ({ ...part })) }
-        : { ...message, ...(message.images ? { images: cloneMessageImages(message.images) } : {}) };
+        ? { ...message, ...(cloneInputLineage(message.inputLineage) ? { inputLineage: cloneInputLineage(message.inputLineage) } : {}),
+            ...(message.images ? { images: cloneMessageImages(message.images) } : {}), content: message.content.map((part) => ({ ...part })) }
+        : { ...message, ...(cloneInputLineage(message.inputLineage) ? { inputLineage: cloneInputLineage(message.inputLineage) } : {}),
+            ...(message.images ? { images: cloneMessageImages(message.images) } : {}) };
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

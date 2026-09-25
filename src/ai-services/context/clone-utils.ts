@@ -2,11 +2,15 @@ import type { PaAgentMessage } from "../chat-types";
 import { cloneMessageImages } from "../../chat/image-types";
 import { cloneVaultObservationEvidence } from "../vault-observation-evidence";
 import { cloneMemoryManagementEvidence } from "../memory-management-evidence";
+import { cloneSourceRecord } from "../source-store";
+import { cloneInputLineage } from "../input-lineage";
+import { cloneResultFact } from "../pa-agent-result-facts";
 
 export function cloneMessage(message: PaAgentMessage): PaAgentMessage {
     if (message.role === "user") {
         return {
             ...message,
+            ...(cloneInputLineage(message.inputLineage) ? { inputLineage: cloneInputLineage(message.inputLineage) } : {}),
             ...(message.images ? { images: cloneMessageImages(message.images) } : {}),
             content: Array.isArray(message.content)
                 ? message.content.map((part) => ({ ...part, metadata: part.metadata ? { ...part.metadata } : undefined }))
@@ -16,6 +20,7 @@ export function cloneMessage(message: PaAgentMessage): PaAgentMessage {
     if (message.role === "assistant") {
         return {
             ...message,
+            ...(cloneInputLineage(message.inputLineage) ? { inputLineage: cloneInputLineage(message.inputLineage) } : {}),
             content: message.content.map((part) => ({ ...part })),
             ...(message.memoryManagementEvidence ? {
                 memoryManagementEvidence: message.memoryManagementEvidence.map(cloneMemoryManagementEvidence),
@@ -24,13 +29,12 @@ export function cloneMessage(message: PaAgentMessage): PaAgentMessage {
     }
     return {
         ...message,
+        ...(cloneInputLineage(message.inputLineage) ? { inputLineage: cloneInputLineage(message.inputLineage) } : {}),
         content: {
             ...message.content,
-            sourceRecords: message.content.sourceRecords?.map((record) => ({
-                ...record,
-                metadata: record.metadata ? { ...record.metadata } : undefined,
-            })),
+            sourceRecords: message.content.sourceRecords?.map(cloneSourceRecord),
             contextUsed: message.content.contextUsed?.map((item) => ({ ...item })),
+            resultFact: cloneResultFact(message.content.resultFact),
             metadata: message.content.metadata ? cloneToolMetadata(message.content.metadata) : undefined,
         },
     };

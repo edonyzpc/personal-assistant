@@ -39,6 +39,7 @@ export function writingContextObservation(value: PreparedWritingContext) {
     return {
         contextHandle: value.handle,
         parent: value.parent ? { text: value.parent.text, textHash: value.parent.textHash } : null,
+        scene: value.scene ? { ...value.scene } : null,
         images: cloneMessageImages(value.images),
         style: { context: value.styleContext, revisionIds: [...value.styleRevisionIds] },
     };

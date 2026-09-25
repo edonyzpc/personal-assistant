@@ -31,12 +31,14 @@ function document(path: string) {
 
 function harness(noteScope = scope) {
     let current = true;
+    let memoryAllowed = true;
     let delay: Promise<void> | undefined;
     const blocked = new Set<string>();
     const boundaryBlocked = new Set<string>();
     const wait = async () => { await delay; };
     const guard: TaskSourceReadGuard = {
         isCurrent: jest.fn(() => current),
+        isMemoryAllowed: jest.fn(() => memoryAllowed),
         isPathAllowed: jest.fn((path: string) => !blocked.has(path) && [A, B, EXCLUDED, OPAQUE].includes(path)),
     };
     const ensureReadyForChat = jest.fn<MemorySearchPort['ensureReadyForChat']>().mockImplementation(async () => {
@@ -89,6 +91,7 @@ function harness(noteScope = scope) {
         readLatestMemorySource, getMemoryEvidenceEpoch, getGraphBoundarySnapshotSource, cancelGraphCandidateRank,
         getMarkdownFiles,
         setCurrent: (value: boolean) => { current = value; },
+        setMemoryAllowed: (value: boolean) => { memoryAllowed = value; },
         setDelay: (value: Promise<void>) => { delay = value; },
     };
 }
@@ -104,6 +107,7 @@ describe('per-invocation task source Memory host', () => {
         expect(fixture.searchHybrid).toHaveBeenCalledWith('query', {
             signal, retrievalMode: 'relaxed', absoluteDeadlineMs: 123,
             noteScope: { allowedPaths: [A, B, OPAQUE], excludedPaths: [EXCLUDED] },
+            onProviderRequestStart: expect.any(Function),
         });
         expect(fixture.searchHybrid.mock.contexts[0]).toBe(fixture.host.memorySearch);
     });
@@ -142,6 +146,7 @@ describe('per-invocation task source Memory host', () => {
         await expect(fixture.operations.search()).resolves.toEqual([document(A)]);
         expect(fixture.searchHybrid).toHaveBeenCalledWith('query', {
             noteScope: { allowedPaths: [A], excludedPaths: [EXCLUDED] },
+            onProviderRequestStart: expect.any(Function),
         });
         expect(forbiddenMetadata).not.toHaveBeenCalled();
         expect(fixture.getMarkdownFiles).toHaveBeenCalledTimes(1);
@@ -154,6 +159,7 @@ describe('per-invocation task source Memory host', () => {
         await expect(fixture.operations.search()).rejects.toThrow('outside');
         expect(fixture.searchHybrid).toHaveBeenCalledWith('query', {
             noteScope: { allowedPaths: [A], excludedPaths: [] },
+            onProviderRequestStart: expect.any(Function),
         });
     });
 
@@ -172,6 +178,25 @@ describe('per-invocation task source Memory host', () => {
             expect(fixture.getGraphBoundarySnapshotSource).not.toHaveBeenCalled();
         },
     );
+
+    it('blocks a live Memory revocation before dispatch and discards an in-flight result', async () => {
+        const fixture = harness();
+        fixture.setMemoryAllowed(false);
+        await expect(fixture.operations.search()).rejects.toThrow('Memory is no longer available');
+        expect(fixture.searchHybrid).not.toHaveBeenCalled();
+
+        fixture.setMemoryAllowed(true);
+        const pending = deferred<void>();
+        fixture.setDelay(pending.promise);
+        const request = fixture.operations.search();
+        const rejected = expect(request).rejects.toThrow('Memory is no longer available');
+        expect(fixture.searchHybrid).toHaveBeenCalledTimes(1);
+        fixture.setMemoryAllowed(false);
+        expect(() => fixture.searchHybrid.mock.calls[0]?.[1]?.onProviderRequestStart?.())
+            .toThrow('Memory is no longer available');
+        pending.resolve();
+        await rejected;
+    });
 
     it.each(['chunks', 'evidence', 'rank'] as const)('rejects the entire %s path batch before any partial read', async operation => {
         const fixture = harness();
@@ -246,7 +271,8 @@ describe('per-invocation task source Memory host', () => {
         const fixture = harness();
         const mutableScope: NoteSearchScope = { allowedPaths: [A], excludedPaths: [] };
         const scopedA = createTaskSourceMemoryHost(fixture.host, fixture.guard, mutableScope);
-        const scopedB = createTaskSourceMemoryHost(fixture.host, { isCurrent: () => true, isPathAllowed: path => path === B },
+        const scopedB = createTaskSourceMemoryHost(fixture.host, { isCurrent: () => true,
+            isMemoryAllowed: () => true, isPathAllowed: path => path === B },
             { allowedPaths: [B], excludedPaths: [] });
         mutableScope.allowedPaths = [B];
         const pending = deferred<ReturnType<typeof document>[]>();

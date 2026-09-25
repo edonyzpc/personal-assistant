@@ -4,19 +4,27 @@ import type {
     NativeToolCallingValidation,
     QwenRequestOptions,
 } from "./ai-utils";
+import { resolvePaAgentModelBudgetFacts } from "./ai-utils";
+import { PaAgentRunUsageLedger, type PaAgentUsageLedgerSnapshot } from './agent-usage-ledger';
 import type { AiServiceHost, RetrievalOptimizationFlags } from "./AiServiceHost";
 import type { MemoryMode } from "../memory-manager";
 import { createAgentDebugLog, createAgentEventDebugObserver, describeAgentError, traceAgentPhase } from './pa-agent-debug';
 import type { AgentDebugCallScope, AgentDebugRunRecorder } from './agent-debug-port';
 import { agentDebugError, agentDebugNow, createAgentDebugCall, observeAgentDebugCall,
-    observeAgentDebugLifecycle, observeAgentDebugPhase, observeAgentDebugResponse } from './agent-debug-observation';
+    observeAgentDebugLifecycle, observeAgentDebugPhase, observeAgentDebugResponse,
+    beginAgentDebugResponsePhase, finishAgentDebugResponsePhase } from './agent-debug-observation';
 import { getProviderAdmissionError, ProviderAdmissionError, ProviderInputReprepareRequiredError } from './provider-admission-error';
 import { resolveB125RetrievalOptimizationFlags } from "../retrieval-optimization-platform-policy";
 import type { PageletChatHandoffContext } from "./pagelet-handoff";
 import { stableHash } from "../pa/helpers";
 import { MemorySearchTool } from "./memory-search-tool";
-import { TaskSourceRun } from "./task-source-run";
-import { WritingContextRun, type WritingContextRunHost } from "./writing-context-run";
+import { TaskSourceRun, historyInputLineage } from "./task-source-run";
+import { parseRunSourceSelection } from './chat-source-scope';
+import { cloneInputLineage, completeInputLineage, sourceRecordsInputLineage,
+    toGenerationInputLineage, unionInputLineages, unknownInputLineage,
+    resolveWritingVersionInputLineage, writingVersionInputLineage,
+    type InputLineage, type InputDependency } from './input-lineage';
+import { WritingContextRun, writingContextObservation, type WritingContextRunHost } from "./writing-context-run";
 import { createWritingContextCapability, GET_WRITING_CONTEXT } from "./writing-context-tool";
 import { createTaskSourceConstrainedExecutor } from "./task-source-executor";
 import {
@@ -26,22 +34,20 @@ import {
 import type { RetrievalDiagnosticEventInput } from "./retrieval-diagnostics";
 import {
     createPaAgentAnswerStreamPrompt,
+    buildPaAgentFinalMessages,
     createOperationsPromptGuidance,
     formatCanonicalHostContext,
     formatSkillCatalog,
     formatToolObservations,
     measurePaAgentRequestChars,
+    measurePaAgentRequestEnvelope,
+    type PaAgentRequestEnvelopeEstimate,
 } from "./pa-agent-prompts";
+import { estimateApproximateTokens } from '../token-estimate';
+import type { PaAgentActionGroup } from "./pa-agent-action-history";
+import { ChatOpenAI } from "@langchain/openai";
 import {
     type ChatToolProviderSchema,
-    isInspectObsidianNoteResult,
-    isObsidianOperationsV1AToolName,
-    isListRecentNotesResult,
-    isReadCanvasSummaryResult,
-    isReadNoteOutlineResult,
-    isSearchVaultMetadataResult,
-    isVaultSnippetSearchResult,
-    isVaultTagsResult,
     createCurrentNoteContextTool,
     createInspectObsidianNoteTool,
     createListRecentNotesTool,
@@ -61,7 +67,10 @@ import {
     AgentEventEmitter,
     TurnExecutionDeadline,
 } from "./agent-runtime-primitives";
-import { PaAgentContextSummarizer, type PaAgentSummaryInvoke } from "./context/PaAgentContextSummarizer";
+import { MAX_TOOL_SUMMARY_CHARS, PaAgentContextSummarizer,
+    type PaAgentSummaryInvoke } from "./context/PaAgentContextSummarizer";
+import { resolvePaAgentInputTokenLimit, resolvePaAgentPromptCharCeiling,
+    type PaAgentModelBudgetFacts } from "./context/PaAgentContextBudget";
 import { cloneMessage } from "./context/clone-utils";
 import { isCurrentHistorySummary, isCurrentToolSummary, type PaAgentContextSummaries, type PaAgentToolSummarySource } from "./context/PaAgentContextSummaryTypes";
 import { chatHistoryImageMetadata } from "./chat-image-identity";
@@ -99,6 +108,7 @@ import {
     type PolicyEngineOptions,
 } from "./policy-engine";
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from '../platform-dom';
 import {
     createProviderRequestScope,
 } from "./obsidian-fetch";
@@ -110,6 +120,13 @@ import {
     type OperationsIntentStager,
 } from "./operations/operations-tool-executor";
 import { CORE_WRITE_TOOL_NAMES } from "./operations/types";
+import {
+    createOperationsAcknowledgementControlSnapshot,
+    hasOperationsStagedAcknowledgementInstruction,
+    hasStagedOperationsIntent,
+    isOperationsStagedAcknowledgement,
+    OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
+} from "./operations/operations-acknowledgement-policy";
 import {
     chatToolResultToPaAgentToolExecutionResult,
     createPaAgentCapabilityToolExecutor,
@@ -138,7 +155,6 @@ import {
 } from "./write-action-framework";
 import {
     createRequiredCapabilityHostPolicy,
-    type RequiredCapability,
 } from "./pa-agent-required-capability-policy";
 import {
     PaAgentLoop,
@@ -146,7 +162,6 @@ import {
     type PaAgentModel,
     type PaAgentModelInput,
     type PaAgentModelStreamChunk,
-    type PaAgentTurnSummary,
     type PaAgentTurnLeaseProvider,
     type PaAgentToolExecutor,
 } from "./pa-agent-loop";
@@ -157,10 +172,8 @@ import {
     type PaAgentProviderUsage,
 } from "./context";
 import {
-    createAgentControlSnapshot,
     createInitialAgentControlSnapshot,
     toolConstraintsFromAgentControlSnapshot,
-    type AgentControlSnapshot,
 } from "./pa-agent-control-policy";
 import type {
     AgentEvent,
@@ -189,6 +202,8 @@ export interface PaAgentRunOptions {
     prompt: string;
     /** Exact user-authored text before Chat appends capability instructions. */
     userText?: string;
+    /** Chat-only Host snapshot; omission preserves standalone caller behavior. */
+    runSourceSelection?: import('./chat-source-scope').RunSourceSelection;
     chatHistory?: ChatMessage[];
     images?: import("../chat/image-types").MessageImage[];
     imageAssetService?: import("../chat/image-assets").ImageAssetService;
@@ -217,6 +232,8 @@ export interface PaAgentRunOptions {
 export interface PaAgentStreamOptions extends PaAgentRunOptions {
     /** Explicit Chat ownership; standalone/background runs never inherit a global observer. */
     debugRecorder?: AgentDebugRunRecorder;
+    /** Content-free, run-local accounting report for evaluation and diagnostics. */
+    onUsageAccounting?: (snapshot: PaAgentUsageLedgerSnapshot) => void;
     /** Debug correlation with the service's pre-runtime lease wait. Never enters model input. */
     debugRequestId?: string;
     /** Host-only writing output selection. Production Chat enables native after B-135 validation. */
@@ -284,8 +301,6 @@ export interface PaAgentRuntimeOptions {
     };
 }
 
-type ReadOnlyToolContextAvailability = "available" | "partial" | "unavailable";
-
 interface PaAgentStartupTiming {
     phase: string;
     elapsedMs: number;
@@ -296,7 +311,6 @@ const MAX_TURN_WALL_CLOCK_MS = Number.POSITIVE_INFINITY;
 const DEFAULT_FINALIZATION_RESERVE_MS = 15_000;
 const MAX_CHAT_HISTORY_CHARS = 60_000;
 const MAX_PA_AGENT_PROMPT_CHARS = 120_000;
-export const MAX_READ_ONLY_TOOL_CONTEXT_CHARS = 24000;
 const BASE_VAULT_READ_TOOL_NAMES = [
     "search_vault_metadata",
     "list_recent_notes",
@@ -306,6 +320,19 @@ const BASE_VAULT_READ_TOOL_NAMES = [
     "search_vault_snippets",
     "list_vault_tags",
 ] as const;
+// Keep this security admission explicit; adding a read tool to exposure alone
+// must not make its errors source-free observations.
+const SOURCE_FREE_VAULT_FAILURE_LABELS: ReadonlyMap<string, string> = new Map([
+    ["search_vault_metadata", "Vault metadata unavailable"],
+    ["search_vault_snippets", "Note snippets unavailable"],
+    ["query_notes", "Read-only tool unavailable"],
+    ["list_vault_tags", "Vault tags unavailable"],
+    ["list_recent_notes", "Recent notes unavailable"],
+    ["read_note", "Read-only tool unavailable"],
+    ["read_note_outline", "Note outline unavailable"],
+    ["inspect_obsidian_note", "Note structure unavailable"],
+    ["read_canvas_summary", "Canvas structure unavailable"],
+]);
 const APPROVED_FIRST_TURN_READ_TOOL_NAMES = [
     "search_memory",
     "get_memory_status",
@@ -318,6 +345,11 @@ const APPROVED_FIRST_TURN_READ_TOOL_NAMES = [
     "read_note",
     ...BASE_VAULT_READ_TOOL_NAMES,
     "webSearch",
+] as const;
+const NOTE_SOURCE_TOOL_NAMES = [
+    'search_memory', 'get_memory_status', 'query_memories', 'get_memory_usage',
+    'manage_memory', 'get_vault_insights', 'query_saved_insights', 'manage_saved_insight',
+    'get_current_note_context', 'query_notes', 'read_note', ...BASE_VAULT_READ_TOOL_NAMES,
 ] as const;
 
 class OperationsTurnPolicyEngine extends PolicyEngine {
@@ -598,6 +630,182 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
         : undefined;
 }
 
+/** Empty searches and standard read-only failures have no path receipts.
+ * Admit only owner-classified observations with closed, source-free provider text. */
+function isSafeSourceFreeToolObservation(
+    message: Extract<PaAgentMessage, { role: "toolResult" }>,
+): boolean {
+    if (message.content.sourceRecords?.length || !message.content.includeInNextPrompt) return false;
+    let envelope: Record<string, unknown> | undefined;
+    try { envelope = asRecord(JSON.parse(message.content.promptText)); } catch { return false; }
+    if (!envelope || envelope.tool !== message.toolName || typeof envelope.input !== "string") return false;
+
+    const fact = message.content.resultFact;
+    const expectedVaultFailureLabel = SOURCE_FREE_VAULT_FAILURE_LABELS.get(message.toolName);
+    if (expectedVaultFailureLabel && message.isError
+        && message.content.metadata?.outcome === "recoverable_error") {
+        const contextUsed = message.content.contextUsed;
+        const statusContext = asRecord(contextUsed?.[0]);
+        return fact?.kind === "unavailable" && fact.capability === message.toolName
+            && fact.reason === "tool_unavailable"
+            && contextUsed?.length === 1
+            && hasOnlyKeys(statusContext, ["category", "label", "detail", "citationEligible", "statusOnly"])
+            && statusContext?.category === "tool-unavailable"
+            && statusContext.label === expectedVaultFailureLabel
+            && statusContext.detail === "Read-only tool was unavailable."
+            && statusContext.citationEligible === false && statusContext.statusOnly === true
+            && message.content.previewText === "Read-only tool was unavailable."
+            && message.content.metadata.tool === message.toolName
+            && message.content.metadata.inputSummary === "execution failed"
+            && message.content.metadata.ok === false
+            && message.content.metadata.sourceRecordCount === 0
+            && message.content.metadata.contextUsedCount === 1
+            && (message.content.metadata.unavailableReason === undefined
+                || message.content.metadata.unavailableReason === "Read-only tool was unavailable.")
+            && message.content.metadata.vaultObservationEvidence === undefined
+            && message.content.metadata.vaultObservationContractVersion === undefined
+            && hasOnlyKeys(envelope, ["tool", "status", "input", "error"])
+            && envelope.status === "unavailable" && envelope.input === "execution failed"
+            && envelope.error === "Read-only tool was unavailable.";
+    }
+
+    if (message.toolName === "search_memory" && message.isError
+        && message.content.metadata?.outcome === "recoverable_error") {
+        return hasOnlyKeys(envelope, ["tool", "status", "input", "error"])
+            && envelope.status === "unavailable" && envelope.input === "execution failed"
+            && envelope.error === "Read-only tool was unavailable.";
+    }
+
+    if (message.toolName === "search_memory" && !message.isError
+        && message.content.metadata?.outcome === "success"
+        && fact?.kind === "unavailable" && fact.capability === "search_memory"
+        && fact.reason === "memory_evidence_unavailable" && envelope.status === "ok"
+        && hasOnlyKeys(envelope, ["tool", "status", "input", "observation"])) {
+        const observation = asRecord(envelope.observation);
+        return hasOnlyKeys(observation, ["query", "documents", "sources", "hasAnswerableContent",
+            "memoryEvidenceState", "rerankVerdict", "retrievalGuidance"])
+            && observation?.query === envelope.input && emptyArray(observation.documents)
+            && emptyArray(observation.sources) && observation.hasAnswerableContent === false
+            && observation.memoryEvidenceState === "unavailable"
+            && (observation.rerankVerdict === "relevant" || observation.rerankVerdict === "none_relevant")
+            && (observation.retrievalGuidance === undefined
+                || observation.retrievalGuidance === "Memory evidence is currently unavailable; do not infer note content."
+                || observation.retrievalGuidance === "Memory retrieval is currently unavailable; empty results do not establish that no matching notes exist. Do not infer note content.");
+    }
+    if (message.isError || message.content.metadata?.outcome !== "success"
+        || fact?.kind !== "no_match" || envelope.status !== "ok"
+        || !hasOnlyKeys(envelope, ["tool", "status", "input", "observation"])) return false;
+    const observation = asRecord(envelope.observation);
+    if (!observation) return false;
+
+    if (message.toolName === "search_vault_metadata" && fact.search === "metadata") {
+        return hasOnlyKeys(observation, ["query", "matches"])
+            && typeof observation.query === "string" && emptyArray(observation.matches);
+    }
+    if (message.toolName === "query_notes" && fact.search === "metadata"
+        && message.content.metadata?.vaultObservationContractVersion === 1) {
+        const coverage = asRecord(observation.coverage);
+        return hasOnlyKeys(observation, ["query", "matches", "matchCount", "matchCountKind", "sort", "coverage"])
+            && isSafeQueryNotesQuery(observation.query) && isSafeQueryNotesSort(observation.sort)
+            && emptyArray(observation.matches) && observation.matchCount === 0
+            && observation.matchCountKind === "exact" && coverage?.state === "complete"
+            && hasOnlyKeys(coverage, ["state", "scannedPermittedNotes", "evaluatedCandidates",
+                "candidateCapExceeded", "projectionBudgetExceeded", "cacheUnknown"])
+            && isCount(coverage.scannedPermittedNotes) && isCount(coverage.evaluatedCandidates)
+            && coverage.candidateCapExceeded === undefined
+            && coverage.projectionBudgetExceeded === undefined && coverage.cacheUnknown === undefined;
+    }
+    if (message.toolName === "search_vault_snippets" && fact.search === "snippet"
+        && message.content.metadata?.vaultObservationContractVersion === 1) {
+        const coverage = asRecord(observation.coverage);
+        const page = asRecord(observation.page);
+        return hasOnlyKeys(observation, ["kind", "query", "scope", "part", "caseSensitive",
+            "matches", "matchCount", "matchCountKind", "page", "coverage", "scannedFiles",
+            "scannedBytes", "consideredFiles", "skippedFiles", "truncated", "omittedCount"])
+            && observation.kind === "vault-snippets" && typeof observation.query === "string"
+            && (observation.scope === undefined || typeof observation.scope === "string")
+            && (observation.part === "body" || observation.part === "properties"
+                || observation.part === "all")
+            && typeof observation.caseSensitive === "boolean"
+            && emptyArray(observation.matches) && observation.matchCount === 0
+            && observation.matchCountKind === "exact" && coverage?.state === "complete"
+            && hasOnlyKeys(coverage, ["state", "scannedPermittedNotes", "evaluatedCandidates",
+                "readNotes", "readBytes", "evaluatedBytes", "skippedFiles",
+                "candidateCapExceeded", "fileCapExceeded", "byteCapExceeded", "unknownFileSize"])
+            && ["scannedPermittedNotes", "evaluatedCandidates", "readNotes", "readBytes",
+                "evaluatedBytes"].every(key => isCount(coverage[key]))
+            && ["skippedFiles", "candidateCapExceeded", "fileCapExceeded", "byteCapExceeded",
+                "unknownFileSize"].every(key => coverage[key] === undefined)
+            && page !== undefined && hasOnlyKeys(page, ["startIndex", "returnedCount", "requestedLimit", "hasMore",
+                "outputBudgetExceeded"])
+            && page.startIndex === 0 && page.returnedCount === 0
+            && isCount(page.requestedLimit) && page.requestedLimit > 0
+            && page.hasMore === false && page.outputBudgetExceeded === undefined
+            && ["scannedFiles", "scannedBytes", "consideredFiles", "skippedFiles",
+                "omittedCount"].every(key => observation[key] === undefined || isCount(observation[key]))
+            && observation.skippedFiles === undefined && observation.truncated === undefined;
+    }
+    if (message.toolName === "search_memory" && fact.search === "memory") {
+        return hasOnlyKeys(observation, ["query", "documents", "sources", "hasAnswerableContent",
+            "memoryEvidenceState", "rerankVerdict", "retrievalGuidance"])
+            && typeof observation.query === "string" && emptyArray(observation.documents)
+            && emptyArray(observation.sources) && observation.hasAnswerableContent === false
+            && observation.memoryEvidenceState === "none"
+            && observation.rerankVerdict === "none_relevant"
+            && (observation.retrievalGuidance === undefined
+                || observation.retrievalGuidance === "No relevant Memory evidence was selected.");
+    }
+    return false;
+}
+
+function hasOnlyKeys(value: Record<string, unknown> | undefined, allowed: readonly string[]): boolean {
+    return Boolean(value && Object.keys(value).every(key => allowed.includes(key)));
+}
+
+function emptyArray(value: unknown): boolean {
+    return Array.isArray(value) && value.length === 0;
+}
+
+function isCount(value: unknown): value is number {
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isSafeQueryNotesSort(value: unknown): boolean {
+    const sort = asRecord(value);
+    return Boolean(sort && hasOnlyKeys(sort, ["field", "direction"])
+        && (sort.field === "path" || sort.field === "ctime" || sort.field === "mtime")
+        && (sort.direction === "asc" || sort.direction === "desc"));
+}
+
+function isSafeQueryNotesQuery(value: unknown): boolean {
+    const query = asRecord(value);
+    if (!query || !hasOnlyKeys(query, ["path", "folder", "tags", "properties", "date", "sort"])
+        || !isSafeQueryNotesSort(query.sort)) return false;
+    if (query.path !== undefined && typeof query.path !== "string") return false;
+    if (query.folder !== undefined && typeof query.folder !== "string") return false;
+    if (query.tags !== undefined && (!Array.isArray(query.tags)
+        || !query.tags.every(tag => typeof tag === "string"))) return false;
+    if (query.properties !== undefined && (!Array.isArray(query.properties)
+        || !query.properties.every(property => {
+            const condition = asRecord(property);
+            return condition && hasOnlyKeys(condition, ["key", "operator", "value"])
+                && typeof condition.key === "string"
+                && (condition.operator === "exists" || condition.operator === "equals"
+                    || condition.operator === "contains")
+                && (condition.value === undefined || condition.value === null
+                    || ["string", "number", "boolean"].includes(typeof condition.value));
+        }))) return false;
+    if (query.date !== undefined) {
+        const date = asRecord(query.date);
+        if (!date || !hasOnlyKeys(date, ["field", "property", "kind", "from", "to"])
+            || (date.field !== "ctime" && date.field !== "mtime" && date.field !== "property")
+            || (date.property !== undefined && typeof date.property !== "string")
+            || (date.kind !== "timestamp" && date.kind !== "calendar-date")
+            || typeof date.from !== "string" || typeof date.to !== "string") return false;
+    }
+    return true;
+}
+
 function safeStringifyEndPayload(payload: Record<string, unknown>): string {
     try {
         return JSON.stringify(payload);
@@ -666,7 +874,6 @@ export function createWriteActionAwareToolExecutor(
 ): PaAgentToolExecutor {
     return {
         preflightBatch: options.baseExecutor.preflightBatch?.bind(options.baseExecutor),
-        canReuseWritingContext: options.baseExecutor.canReuseWritingContext?.bind(options.baseExecutor),
         getCanonicalToolCallKey: (toolCall, context) => (
             options.baseExecutor.getCanonicalToolCallKey?.(toolCall, context)
         ),
@@ -926,8 +1133,22 @@ export class PaAgentRuntime {
 
     private async streamPaAgentCanonicalTurn(options: PaAgentStreamOptions): Promise<void> {
         if (options.writingRequest) options = { ...options, writingRequest: cloneChatWritingRequest(options.writingRequest) };
+        const runSourceSelection = parseRunSourceSelection(options.runSourceSelection);
+        if (options.runSourceSelection !== undefined && !runSourceSelection) {
+            throw new Error('Invalid Chat run source selection');
+        }
         const nativeWritingRequest = options.writingOutputProtocol === "native" ? options.writingRequest : undefined;
+        const budgetModelIdentity = {
+            provider: this.host.settings.aiProvider,
+            model: this.host.settings.chatModelName,
+            baseURL: this.host.settings.baseURL,
+        };
+        const modelBudgetFacts = resolvePaAgentModelBudgetFacts(budgetModelIdentity);
+        const maxPromptChars = resolvePaAgentPromptCharCeiling(modelBudgetFacts, MAX_PA_AGENT_PROMPT_CHARS);
+        const maxInputTokens = resolvePaAgentInputTokenLimit(modelBudgetFacts);
         const writingContextHost = nativeWritingRequest ? options.writingContextHost : undefined;
+        let allowLegacyWritingContext = !runSourceSelection;
+        let legacyWritingContextIdentity: string | undefined;
         let writingContextRun: WritingContextRun | undefined;
         let writingContextCapability: AgentCapability | undefined;
         let writingContextBudget = { remainingTextChars: 0, remainingMemoryChars: 0 };
@@ -936,12 +1157,9 @@ export class PaAgentRuntime {
         };
         const currentWritingHandle = () => writingContextHost ? currentWritingContext()?.handle : nativeWritingRequest?.requestId;
         const projectionOptions = () => ({ ...options,
-            ...(writingContextHost ? { writingContext: undefined, writingContextHandle: currentWritingHandle() } : {}),
+            ...(!allowLegacyWritingContext || writingContextHost
+                ? { writingContext: undefined, writingContextHandle: currentWritingHandle() } : {}),
         });
-        const imageScope = options.images?.length || options.chatHistory?.some((message) => message.images?.length) || options.writingContext || options.writingMaterialContext
-            ? new ChatImageRequestScope({ images: options.images, history: options.chatHistory, writingContext: options.writingContext,
-                writingMaterialContext: options.writingMaterialContext,
-                prompt: options.prompt, service: options.imageAssetService, isCurrent: options.isCurrent }) : undefined;
         let writingStyle: import("./chat-types").ChatWritingStyleResult | undefined;
         type WritingGenerationSnapshot = {
             assertCurrent: () => void;
@@ -955,7 +1173,17 @@ export class PaAgentRuntime {
         let writingGeneration: WritingGenerationSnapshot | undefined;
         let answerSourceValidity: (() => boolean) | undefined;
         const assertRequestSourcesCurrent = (signal?: AbortSignal): void => {
+            if (this.host.settings.aiProvider !== budgetModelIdentity.provider
+                || this.host.settings.chatModelName !== budgetModelIdentity.model
+                || this.host.settings.baseURL !== budgetModelIdentity.baseURL) {
+                throw new Error('PA Agent model configuration changed during this run');
+            }
             if (options.isCurrent?.() === false) throw createAbortError();
+            if (runSourceSelection && allowLegacyWritingContext && options.writingContext
+                && (JSON.stringify(options.writingContext) !== legacyWritingContextIdentity
+                    || !sourceRun.admitsLineage(options.writingContext.inputLineage))) {
+                throw new ChatImageRequestError('request_changed');
+            }
             imageScope?.assertReady(signal);
             if (writingStyle && !(writingStyle.isSourceCurrent ? writingStyle.isSourceCurrent() : writingStyle.isCurrent())) {
                 throw new ChatImageRequestError("request_changed");
@@ -969,14 +1197,17 @@ export class PaAgentRuntime {
         // Reject an irreducibly large current request before optional context preparation.
         // This lower bound does not replace the complete, revalidated per-attempt guard below.
         const minimumRequestChars = measurePaAgentRequestChars({
-            input: [options.prompt, writingContextHost ? "" : selectedWritingContext(options.writingContext), options.writingRequest ? (nativeWritingRequest ? (writingContextHost ? "" : nativeWritingOutputInstruction(options.writingRequest)) : writingOutputInstruction(options.writingRequest)) : ""].filter(Boolean).join("\n\n"),
+            input: [options.prompt, writingContextHost || !allowLegacyWritingContext ? ""
+                : selectedWritingContext(options.writingContext), options.writingRequest ? (nativeWritingRequest
+                    ? (writingContextHost ? "" : nativeWritingOutputInstruction(options.writingRequest))
+                    : writingOutputInstruction(options.writingRequest)) : ""].filter(Boolean).join("\n\n"),
             available_skills: "",
             tool_definitions: "",
             tool_observations: "",
             operations_guidance: "",
         }, []);
-        if (minimumRequestChars > MAX_PA_AGENT_PROMPT_CHARS) {
-            throw new PaAgentContextOverflowError(minimumRequestChars, MAX_PA_AGENT_PROMPT_CHARS);
+        if (maxInputTokens === 0 || minimumRequestChars > maxPromptChars) {
+            throw new PaAgentContextOverflowError(minimumRequestChars, maxPromptChars);
         }
         const runtimeStartedAt = Date.now();
         const startupTimings: PaAgentStartupTiming[] = [];
@@ -1009,6 +1240,8 @@ export class PaAgentRuntime {
 
         const runId = createAgentRunId();
         const debugRecorder = options.debugRecorder;
+        const usageLedger = new PaAgentRunUsageLedger();
+        const auxiliarySummaryBudget = createPaAgentAuxiliarySummaryBudget(() => usageLedger.snapshot().attempts);
         try { debugRecorder?.bindRun(runId); } catch { /* Debug cannot affect runtime admission. */ }
         const debugEnabled = () => this.host.settings.debug === true;
         const debug = createAgentDebugLog(debugEnabled,
@@ -1020,10 +1253,42 @@ export class PaAgentRuntime {
         const debugLifecycle = createAgentEventDebugObserver(debug);
         debug('runtime_start', { model: this.host.settings.chatModelName, provider: this.host.settings.aiProvider,
             historyCount: options.chatHistory?.length ?? 0, promptChars: options.prompt.length });
-        const userMessageId = `${runId}:source-user`;
+        const userMessageId = runSourceSelection?.userMessageId ?? `${runId}:source-user`;
+        const explicitAttachmentKeys = new Set([
+            ...(options.images ?? []),
+            ...(options.chatHistory ?? []).flatMap(message => message.role === 'user'
+                && (message.hostProvenance?.messageId || message.runSourceSelection?.userMessageId)
+                ? message.images ?? [] : []),
+        ].map(image => `${image.ref.assetId}:${image.ref.contentHash}`));
+        const admittedParentLineages = new Map<string, InputLineage>();
+        const admittedParentSourceValidity = new Map<string, { textHash: string; isCurrent: () => boolean }>();
+        const styleGuards = new Map<string, () => boolean>();
+        const styleKey = (ids: readonly string[]) => JSON.stringify([...new Set(ids)].sort());
+        const captureStyles = async (lineage: InputLineage | undefined): Promise<void> => {
+            if (!runSourceSelection || runSourceSelection.scope === 'web' || lineage?.completeness !== 'complete') return;
+            for (const dependency of lineage.dependencies) {
+                if (dependency.kind !== 'writing-style') continue;
+                const key = styleKey(dependency.revisionIds);
+                if (styleGuards.has(key)) continue;
+                try {
+                    const receipt = await this.host.captureWritingStyleSourceValidity?.(dependency.revisionIds);
+                    styleGuards.set(key, receipt?.isCurrent() ? receipt.isCurrent : () => false);
+                } catch { styleGuards.set(key, () => false); }
+            }
+        };
+        let checkingParentLineage: InputLineage | undefined;
+        const hasVerifiedVersion = (versionId: string, textHash: string): boolean => {
+            const matches = (lineage: InputLineage | undefined) => lineage?.completeness === 'complete'
+                && lineage.dependencies.some(dependency => dependency.kind === 'writing-version'
+                    && dependency.versionId === versionId && dependency.textHash === textHash);
+            return matches(checkingParentLineage)
+                || matches(options.writingContext?.inputLineage)
+                || [...admittedParentLineages.values()].some(matches);
+        };
         let sourceRunActive = true;
         const sourceRun = new TaskSourceRun({
             runId, userMessageId, userText: options.userText ?? options.prompt,
+            runSourceSelection,
             requestText: options.prompt,
             workspace: this.host.app.workspace,
             getFileByPath: path => this.host.isDataBoundaryAllowedPath?.(path) === false
@@ -1040,12 +1305,49 @@ export class PaAgentRuntime {
                 } catch { return []; }
             },
             isCurrent: () => sourceRunActive && !options.signal?.aborted && options.isCurrent?.() !== false,
-            areSourcesCurrent: () => sourceRunActive && options.isCurrent?.() !== false,
+            areSourcesCurrent: () => options.isCurrent?.() !== false,
             isMemoryAllowed: () => this.host.settings.memoryEnabled !== false,
+            isWebAllowed: () => this.host.settings.webSearchEnabled === true,
+            isAttachmentAllowed: ref => Boolean(options.imageAssetService)
+                && explicitAttachmentKeys.has(`${ref.assetId}:${ref.contentHash}`),
+            isWritingVersionAllowed: hasVerifiedVersion,
+            isWritingStyleAllowed: ids => styleGuards.get(styleKey(ids))?.() === true,
+            isPersonalAllowed: source => this.host.isPersonalSourceCurrent?.(source) === true,
             revalidateVaultObservation: this.host.revalidateVaultObservation?.bind(this.host),
             isPathAllowed: path => this.host.isDataBoundaryAllowedPath?.(path) !== false,
             getMemoryEvidenceEpoch: this.host.getMemoryEvidenceEpoch?.bind(this.host),
         });
+        if (runSourceSelection && options.writingContext) {
+            const parentLineage = cloneInputLineage(options.writingContext.inputLineage);
+            await captureStyles(parentLineage);
+            allowLegacyWritingContext = Boolean(parentLineage?.dependencies.some(dependency =>
+                dependency.kind === 'writing-version'
+                && dependency.versionId === options.writingContext!.parentVersionId
+                && dependency.textHash === options.writingContext!.textHash))
+                && sourceRun.admitsLineage(parentLineage);
+            if (allowLegacyWritingContext) legacyWritingContextIdentity = JSON.stringify(options.writingContext);
+        }
+        if (runSourceSelection) {
+            for (const message of options.chatHistory ?? []) {
+                await captureStyles(cloneInputLineage(message.inputLineage
+                    ?? readChatHistoryTurnMetadata(message)?.inputLineage));
+            }
+        }
+        const admittedImageHistory = sourceRun.projectHistory(options.chatHistory ?? []);
+        const admittedImageKeys = new Set([...(options.images ?? []),
+            ...admittedImageHistory.flatMap(message => message.images ?? [])]
+            .map(image => `${image.ref.assetId}:${image.ref.contentHash}`));
+        const admittedWritingMaterials = runSourceSelection && options.writingMaterialContext
+            ? { ...options.writingMaterialContext,
+                associatedImages: options.writingMaterialContext.associatedImages.filter(image =>
+                    admittedImageKeys.has(`${image.ref.assetId}:${image.ref.contentHash}`)) }
+            : options.writingMaterialContext;
+        const imageScope: ChatImageRequestScope | undefined = options.images?.length || admittedImageHistory.some(message => message.images?.length)
+            || (allowLegacyWritingContext && options.writingContext) || admittedWritingMaterials?.associatedImages.length
+            ? new ChatImageRequestScope({ images: options.images, history: admittedImageHistory,
+                ...(allowLegacyWritingContext ? { writingContext: options.writingContext } : {}),
+                writingMaterialContext: admittedWritingMaterials,
+                prompt: options.prompt, service: options.imageAssetService, isCurrent: options.isCurrent }) : undefined;
         const memoryActionRequest = {
             runId,
             userMessageId,
@@ -1055,6 +1357,34 @@ export class PaAgentRuntime {
             isCurrent: sourceRun.isCurrent,
         };
         const providerRequestScope = createProviderRequestScope();
+        const currentUserLineage = completeInputLineage([
+            { kind: 'user-text', messageId: userMessageId },
+            ...(options.images ?? []).map(image => ({ kind: 'attachment' as const,
+                ownerMessageId: userMessageId, ref: { ...image.ref } })),
+        ]);
+        const answerLineageByTurn = new Map<string, InputLineage>();
+        const answerAttachmentValidityByTurn = new Map<string, () => boolean>();
+        const callLineageById = new Map<string, InputLineage>();
+        const callNotesObservationStateById = new Map<string, {
+            sourceEpoch?: string; memoryEnabled?: boolean;
+        }>();
+        const callAttachmentValidityById = new Map<string, () => boolean>();
+        const captureAttachmentSourceValidity = async (lineage: InputLineage, signal?: AbortSignal): Promise<() => boolean> => {
+            if (!runSourceSelection) return () => true;
+            const refs = [...new Map(lineage.dependencies.flatMap(dependency => dependency.kind === 'attachment'
+                ? [[`${dependency.ref.assetId}:${dependency.ref.contentHash}`, dependency.ref] as const] : [])).values()];
+            if (!refs.length) return () => true;
+            if (!options.imageAssetService) throw new ChatImageRequestError('source_unavailable');
+            const receipts = await Promise.all(refs.map(ref => options.imageAssetService!.verify(ref, 'provider', {
+                signal, isCurrent: () => sourceRun.isCurrent(),
+            })));
+            const isCurrent = () => {
+                try { return receipts.every(receipt => receipt.isCurrent()); }
+                catch { return false; }
+            };
+            if (!isCurrent()) throw new ChatImageRequestError('request_changed');
+            return isCurrent;
+        };
         let physicalRequestSequence = 0;
         const requestDiagnostic = (stage: "answer" | "context_summary" | "query_rewrite" | "rerank", turnId: string) =>
             (evidence: import("./obsidian-fetch").ProviderRequestDiagnostic) => {
@@ -1125,7 +1455,16 @@ export class PaAgentRuntime {
         });
         try {
         const legacyEvents = new AgentEventEmitter(options.onEvent);
-        let injectedContext = this.readInjectedContext(options.pageletHandoff);
+        const readAdmittedInjectedContext = (): PaAgentInjectedContext | undefined => {
+            // A web run must not even prepare automatic private background.
+            if (runSourceSelection?.scope === 'web') return undefined;
+            const context = this.readInjectedContext(runSourceSelection ? undefined : options.pageletHandoff);
+            if (!runSourceSelection || !context) return context;
+            const lineage = backgroundInputLineage(context, generationInputBackgroundSources(context));
+            return context.isSourceCurrent?.() !== false && sourceRun.admitsLineage(lineage)
+                ? context : undefined;
+        };
+        let injectedContext = readAdmittedInjectedContext();
         const governedMemoryTrace = injectedContext?.governedMemoryTrace ?? [];
         if (governedMemoryTrace.length > 0) {
             legacyEvents.turnMetadata({
@@ -1193,9 +1532,40 @@ export class PaAgentRuntime {
             if (!this.toolRegistry.register(imageGenerationCapability)) throw new Error("Image generation capability unavailable");
         }
         if (writingContextHost) {
+            const candidates = runSourceSelection ? (await Promise.all(writingContextHost.candidates.map(async candidate => {
+                const lineage = await resolveWritingVersionInputLineage(candidate,
+                    id => writingContextHost.versions.get(id));
+                await captureStyles(lineage);
+                checkingParentLineage = lineage;
+                const admitted = sourceRun.admitsLineage(lineage);
+                checkingParentLineage = undefined;
+                if (!admitted) return undefined;
+                admittedParentLineages.set(candidate.id, lineage);
+                admittedParentSourceValidity.set(candidate.id, { textHash: candidate.textHash,
+                    isCurrent: sourceRun.captureLineageSourceValidity(lineage) });
+                return candidate;
+            }))).filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
+                : writingContextHost.candidates;
             writingContextRun = new WritingContextRun({
                 ...writingContextHost, runId,
+                candidates,
+                ...(runSourceSelection?.scope === 'web' ? { styles: { prepare: async () => ({
+                    context: '', revisionIds: [], isCurrent: () => true,
+                }) } } : runSourceSelection ? { styles: { prepare: async (...args: Parameters<typeof writingContextHost.styles.prepare>) => {
+                    const prepared = await writingContextHost.styles.prepare(...args);
+                    if (prepared.context || prepared.revisionIds.length) {
+                        styleGuards.set(styleKey(prepared.revisionIds),
+                            prepared.isSourceCurrent?.bind(prepared) ?? (() => false));
+                    }
+                    return prepared;
+                } } } : {}),
                 isCurrent: () => sourceRunActive && options.isCurrent?.() !== false && writingContextHost.isCurrent(),
+                isParentCurrent: parent => writingContextHost.isParentCurrent(parent)
+                    && (!runSourceSelection || sourceRun.admitsLineage(admittedParentLineages.get(parent.id))),
+                isParentSourceCurrent: parent => (writingContextHost.isParentSourceCurrent?.(parent)
+                    ?? writingContextHost.isParentCurrent(parent))
+                    && (!runSourceSelection || (admittedParentSourceValidity.get(parent.id)?.textHash === parent.textHash
+                        && admittedParentSourceValidity.get(parent.id)?.isCurrent() === true)),
                 verifyImages: async (refs, signal) => {
                     throwIfAborted(signal);
                     if (imageScope) return imageScope.verifyWritingMaterials(refs, signal);
@@ -1228,7 +1598,6 @@ export class PaAgentRuntime {
                 memoryMode: options.memoryMode,
             },
         });
-        const availableRequiredCapabilities = this.getAvailableRequiredCapabilities(options);
         const exportableToolNames = new Set(
             this.toolRegistry.listDefinitions().map((definition) => definition.name),
         );
@@ -1256,31 +1625,24 @@ export class PaAgentRuntime {
             availableMetaToolNames.add(LOAD_SKILL_TOOL_NAME);
         }
         const requiredCapabilityPolicy = createRequiredCapabilityHostPolicy({
-            userInput: options.prompt,
-            availableCapabilities: availableRequiredCapabilities,
-            // The main Agent chooses sources from the actual task/context.
-            // Keep observed-evidence completion checks without predicting a
-            // mandatory tool list or invoking a separate intent model.
-            classification: { items: [] },
             allowWritingContextSchemaRepair: Boolean(writingContextRun),
             allowManagedActionAfterDuplicateNoteRead: Boolean(this.host.insightActions
                 && exportableToolNames.has("manage_saved_insight")),
         });
         // Structured host controls apply before dispatch. Natural-language task
         // boundaries are interpreted by the same main Agent and admitted below.
-        const toolUseConstraints: PaAgentToolUseConstraints = {
-            blockedToolNames: new Set(options.memoryMode === "skip-memory" ? ["search_memory"] : []),
-        };
-        const initialRuntimeInstruction = combineRuntimeInstructions([
-            requiredCapabilityPolicy.initialRuntimeInstruction,
+        const fixedBlockedToolNames = new Set<string>([
+            ...(options.memoryMode === "skip-memory" ? ["search_memory"] : []),
+            ...(runSourceSelection?.scope === 'web' ? NOTE_SOURCE_TOOL_NAMES : []),
+            ...(runSourceSelection?.scope === 'notes' ? ['webSearch'] : []),
         ]);
+        const toolUseConstraints: PaAgentToolUseConstraints = {
+            blockedToolNames: fixedBlockedToolNames,
+        };
         const initialControlSnapshot = createInitialAgentControlSnapshot({
             ...(toolUseConstraints ? { constraints: toolUseConstraints } : {}),
             availableSemanticToolNames,
             availableMetaToolNames,
-            ...(initialRuntimeInstruction
-                ? { initialRuntimeInstruction }
-                : {}),
         });
 
         const loadAdditionalCapabilityProviders = this.loadAdditionalCapabilityProviders.bind(this);
@@ -1289,10 +1651,14 @@ export class PaAgentRuntime {
         const contextManager = this.contextManager;
         const contextSummarizer = this.contextSummarizer;
         let runSummaries: PaAgentContextSummaries = {};
+        let actionProjectionMode: "native" | "compat" = "compat";
         const snapshotHistory = (): ChatMessage[] => sourceRun.projectHistory(options.chatHistory ?? []).map(message => {
             const metadata = readChatHistoryTurnMetadata(message);
+            const inputLineage = historyInputLineage(message);
             return { role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
-                ...(metadata ? { memoryMetadata: metadata } : {}) };
+                ...(inputLineage ? { inputLineage } : {}),
+                ...(metadata ? { memoryMetadata: metadata } : {}),
+                ...(message.canonicalTurn ? { canonicalTurn: message.canonicalTurn } : {}) };
         });
         const currentMemoryUsage = () => {
             const context = injectedContext;
@@ -1335,9 +1701,12 @@ export class PaAgentRuntime {
             }
             return `Before presenting writing, call get_writing_context and wait for its result. Select the parent and scene from the conversation semantically; use parentHandle=null for a new topic and omit scene when unknown. Authorized parent handles (JSON data): ${JSON.stringify(writingContextRun.candidateDirectory())}`;
         };
-        const withImageContext = (input: PaAgentModelInput): PaAgentModelInput => ({
+        type ContextInstructionReceipt = ReturnType<TaskSourceRun['captureContextInstruction']>;
+        const withImageContext = (input: PaAgentModelInput,
+            directory?: ContextInstructionReceipt): PaAgentModelInput => ({
             ...input, runtimeInstruction: combineRuntimeInstructions([
-                input.runtimeInstruction, sourceRun.contextInstruction(), imageScope?.hasImages ? imageScope.contextText() : undefined,
+                input.runtimeInstruction, directory?.instruction ?? sourceRun.contextInstruction(),
+                imageScope?.hasImages ? imageScope.contextText() : undefined,
                 writingPreparationInstruction(),
             ]),
         });
@@ -1346,15 +1715,18 @@ export class PaAgentRuntime {
             toolDefinitions?: ChatToolRegistryDefinition[],
             boundSchemas?: ChatToolProviderSchema[],
             history: ChatMessage[] | undefined = sourceRun.projectHistory(options.chatHistory ?? []),
+            directory?: ContextInstructionReceipt,
         ) =>
             this.buildPaAgentCanonicalModelInput(
                 { ...projectionOptions(), chatHistory: history },
-                withImageContext(input),
+                withImageContext(input, directory),
                 toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
                 toolDefinitions,
                 injectedContext,
                 boundSchemas,
                 runSummaries,
+                actionProjectionMode,
+                modelBudgetFacts,
             );
         const previewCanonicalModelInput = (
             input: PaAgentModelInput,
@@ -1364,8 +1736,9 @@ export class PaAgentRuntime {
             { ...projectionOptions(), chatHistory: sourceRun.projectHistory(options.chatHistory ?? []) }, withImageContext(input),
             toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
             toolDefinitions, injectedContext, boundSchemas,
+            runSummaries, actionProjectionMode, modelBudgetFacts,
         ).projection;
-        const readInjectedContext = () => this.readInjectedContext(options.pageletHandoff);
+        const readInjectedContext = readAdmittedInjectedContext;
         const formatBackground = (context: PaAgentInjectedContext | undefined) => formatInjectedContext({
             ...context, pageletHandoff: undefined, writingStyleContext: undefined,
         });
@@ -1393,7 +1766,7 @@ export class PaAgentRuntime {
             const baseline = previewCanonicalModelInput(input, definitions, schemas);
             return {
                 remainingTextChars: Math.max(0, Math.min(
-                    MAX_PA_AGENT_PROMPT_CHARS - baseline.budget.promptChars - 2,
+                    baseline.budget.maxPromptChars - baseline.budget.promptChars - 2,
                     writingContextRun
                         ? (this.options.answerStreamMaxObservationChars ?? 64_000) - baseline.budget.toolObservationChars
                         : Infinity,
@@ -1405,6 +1778,7 @@ export class PaAgentRuntime {
             projection: VaultObservationProjection;
             providerInput: Record<string, unknown>;
             serializedInput: string;
+            promptEstimate?: PaAgentRequestEnvelopeEstimate;
             actualToolSources: Array<Extract<PaAgentMessage, { role: "toolResult" }>>;
             actualHistorySources: ChatMessage[];
             sourceHistoryJson: string;
@@ -1456,11 +1830,13 @@ export class PaAgentRuntime {
                     writingStyle = undefined;
                 }
             }
+            let directoryReceipt = sourceRun.captureContextInstruction();
             let { providerInput: result, projection } = buildCanonicalModelInput(
                 input,
                 definitions,
                 schemas,
                 vaultObservationProjection.history,
+                directoryReceipt,
             );
             let actualToolSources = projection.sourceToolMessages;
             let actualHistorySources = projection.history.sourceMessages;
@@ -1474,11 +1850,13 @@ export class PaAgentRuntime {
                 // Revalidation can replace source observations while the request is
                 // being assembled. Rebuild from the newer physical material; never
                 // reuse the old projection's admission for the new payload.
+                directoryReceipt = sourceRun.captureContextInstruction();
                 const rebuilt = buildCanonicalModelInput(
                     input,
                     definitions,
                     schemas,
                     physicalVaultProjection.history,
+                    directoryReceipt,
                 );
                 result = rebuilt.providerInput;
                 projection = rebuilt.projection;
@@ -1494,6 +1872,50 @@ export class PaAgentRuntime {
                     throw new Error("Vault observation projection changed before provider dispatch");
                 }
             }
+            const writingContextAtRequest = currentWritingContext();
+            const selectedImageDependencies: InputDependency[] = [];
+            let selectedImageLineageUnknown = false;
+            for (const image of imageScope?.selectedImages ?? []) {
+                const historyOwner = admittedImageHistory.find(message => message.role === 'user'
+                    && message.images?.some(candidate => candidate.ref.assetId === image.ref.assetId
+                        && candidate.ref.contentHash === image.ref.contentHash));
+                const owner = (options.images ?? []).some(current =>
+                    current.ref.assetId === image.ref.assetId && current.ref.contentHash === image.ref.contentHash)
+                    ? userMessageId : historyOwner?.hostProvenance?.messageId
+                        ?? historyOwner?.runSourceSelection?.userMessageId;
+                if (owner) selectedImageDependencies.push({ kind: 'attachment', ownerMessageId: owner, ref: { ...image.ref } });
+                else selectedImageLineageUnknown = true;
+            }
+            const requestLineage = unionInputLineages(
+                currentUserLineage,
+                completeInputLineage(directoryReceipt.paths.map(path => ({ kind: 'vault', path, via: 'note' }))),
+                ...actualHistorySources.map(historyInputLineage),
+                ...actualToolSources.map(message => cloneInputLineage(message.inputLineage)),
+                backgroundInputLineage(injectedContext, backgroundGenerationSources),
+                selectedImageLineageUnknown ? unknownInputLineage(selectedImageDependencies)
+                    : completeInputLineage(selectedImageDependencies),
+                ...(writingContextAtRequest?.parent
+                    ? [admittedParentLineages.get(writingContextAtRequest.parent.id)
+                        ?? writingVersionInputLineage(writingContextAtRequest.parent)]
+                    : allowLegacyWritingContext && options.writingContext
+                        ? [cloneInputLineage(options.writingContext.inputLineage) ?? unknownInputLineage()] : []),
+                ...(writingContextAtRequest?.styleContext ? [writingContextAtRequest.styleRevisionIds.length
+                    ? completeInputLineage([{ kind: 'writing-style',
+                        revisionIds: [...writingContextAtRequest.styleRevisionIds] }])
+                    : unknownInputLineage()] : []),
+                ...(writingStyle?.context ? [writingStyle.revisionIds.length
+                    ? completeInputLineage([{ kind: 'writing-style', revisionIds: [...writingStyle.revisionIds] }])
+                    : unknownInputLineage()] : []),
+                ...(injectedContext?.pageletHandoff
+                    ? [unknownInputLineage()] : []),
+            );
+            if (!sourceRun.admitsLineage(requestLineage)) {
+                throw new Error('Answer input lineage is outside the current task source scope');
+            }
+            const isAttachmentSourceCurrent = await captureAttachmentSourceValidity(requestLineage, input.signal);
+            const isRequestLineageSourceCurrent = sourceRun.captureLineageSourceValidity(requestLineage);
+            answerLineageByTurn.set(input.turnId, requestLineage);
+            answerAttachmentValidityByTurn.set(input.turnId, isAttachmentSourceCurrent);
             const taskTranscript = input.transcript.map(cloneMessage);
             const admittedPaths = projection.sourceToolMessages.flatMap(message =>
                 (message.content.sourceRecords ?? []).flatMap(record =>
@@ -1517,7 +1939,9 @@ export class PaAgentRuntime {
             const isDeliveredSourceCurrent = () => {
                 try {
                     assertDeliveredTaskSources();
-                    if (backgroundSourceCurrent?.() === false) return false;
+                    if (!directoryReceipt.isCurrent()) return false;
+                    if (backgroundSourceCurrent?.() === false || !isRequestLineageSourceCurrent()
+                        || !isAttachmentSourceCurrent()) return false;
                     return true;
                 } catch { return false; }
             };
@@ -1534,8 +1958,17 @@ export class PaAgentRuntime {
             const assertInputCurrent = () => {
                 assertWritingInputCurrent?.();
                 try {
+                    if (!sourceRun.admitsLineage(requestLineage)) {
+                        throw new Error('Answer input lineage changed before provider dispatch');
+                    }
+                    if (!isAttachmentSourceCurrent()) {
+                        throw new Error('Answer attachment source changed before provider dispatch');
+                    }
                     sourceRun.assertTranscriptCurrent(taskTranscript);
                     assertHistoryInputCurrent();
+                    if (!directoryReceipt.isAttemptCurrent()) {
+                        throw new Error('Published note directory changed before provider dispatch');
+                    }
                     if (stableProviderJson(snapshotHistory()) !== sourceHistoryJson) {
                         throw new Error("Chat history changed before provider dispatch");
                     }
@@ -1561,7 +1994,7 @@ export class PaAgentRuntime {
                 const usesStyle = Boolean(context?.styleContext || writingStyle?.context || styleRevisionIds.length);
                 const parent = context?.parent
                     ? { versionId: context.parent.id, textHash: context.parent.textHash }
-                    : !writingContextHost && options.writingContext
+                    : !writingContextHost && allowLegacyWritingContext && options.writingContext
                         ? { versionId: options.writingContext.parentVersionId, textHash: options.writingContext.textHash }
                         : undefined;
                 preparedWritingGeneration = {
@@ -1575,6 +2008,7 @@ export class PaAgentRuntime {
                         };
                         try {
                             assertStoredSources();
+                            if (!directoryReceipt.isCurrent()) return rejected();
                             source = 'writing_context';
                             assertContextSources?.();
                             source = 'images';
@@ -1594,9 +2028,10 @@ export class PaAgentRuntime {
                     associatedImages: selectedImages,
                     styleRevisionIds,
                     generationInput: {
-                        schemaVersion: 1,
+                        schemaVersion: 2,
                         inputPurpose: 'writing',
                         task: taskSources,
+                        lineage: toGenerationInputLineage(requestLineage, taskSources.sources),
                         ...cloneGenerationInputBackgroundSources(backgroundGenerationSources),
                         style: !usesStyle ? { state: 'none' }
                             : styleRevisionIds.length > 0
@@ -1609,7 +2044,8 @@ export class PaAgentRuntime {
                             ? { state: 'identified', versionId: parent.versionId,
                                 textHash: { algorithm: 'sha256', value: parent.textHash } }
                             : { state: 'none' },
-                        pagelet: generationInputPageletSource(options.pageletHandoff),
+                        pagelet: generationInputPageletSource(runSourceSelection?.scope === 'web'
+                            ? undefined : options.pageletHandoff),
                     },
                     ...(context ? { context: { ...(context.parent ? { parentVersionId: context.parent.id } : {}),
                         ...(context.scene ? { scene: { ...context.scene } } : {}) } } : {}),
@@ -1626,9 +2062,22 @@ export class PaAgentRuntime {
                     },
                 };
             }
-            if (imageScope?.hasImages) result.messages = [imageScope.message(result.input as string, input.signal)];
+            if (imageScope?.hasImages) {
+                result.messages = buildPaAgentFinalMessages(projection.input, projection.actionHistory,
+                    actionProjectionMode, imageScope.message(projection.input, input.signal),
+                    projection.history, projection.currentInput);
+            }
+            const actualEnvelope = measurePaAgentRequestEnvelope(result as Record<string, string>, schemas,
+                result.messages as import("@langchain/core/messages").BaseMessage[]);
+            const actualMaxChars = maxPromptChars;
+            if (actualEnvelope.promptChars > actualMaxChars
+                || (maxInputTokens !== undefined
+                    && actualEnvelope.estimatedPromptTokens > maxInputTokens)) {
+                throw new PaAgentContextOverflowError(actualEnvelope.promptChars, actualMaxChars);
+            }
             assertProviderInputCurrent(input.signal);
             answerVaultBinding.serializedInput = stableProviderJson(result);
+            answerVaultBinding.promptEstimate = actualEnvelope;
             physicalVaultProjection.serializedInput = answerVaultBinding.serializedInput;
             answerVaultBinding.providerInput = result;
             answerSourceValidity = answerVaultBinding.isSourceCurrent;
@@ -1640,7 +2089,8 @@ export class PaAgentRuntime {
             if (imageScope?.hasSelectedImages && options.imageCapability?.get() === "unsupported") throw new ChatImageRequestError("unsupported_model");
             if (imageScope?.hasSelectedImages) await imageScope.prepare(input.signal);
             let prepared = input.prepareForProviderRetry ? await input.prepareForProviderRetry() : input;
-            if (options.writingRequest && options.prepareWritingStyle && !writingContextRun) {
+            if (options.writingRequest && options.prepareWritingStyle && !writingContextRun
+                && runSourceSelection?.scope !== 'web') {
                 injectedContext = readInjectedContext();
                 writingStyle = undefined;
                 const { remainingTextChars, remainingMemoryChars } = availableStyleBudget(prepared, definitions, schemas);
@@ -1677,7 +2127,7 @@ export class PaAgentRuntime {
                     ...debugModelIdentity(),
                     lineage: { unknown: true },
                     getAttachments: imageScope ? () => imageScope.debugAttachments() : undefined,
-                });
+                }, usageLedger);
                 let debugConsumerEnded = false;
                 let debugProviderCompletion: string | undefined;
                 try {
@@ -1689,6 +2139,9 @@ export class PaAgentRuntime {
                     ?? toolUseConstraints;
                 const exportFilter = {
                     ...activeToolUseConstraints,
+                    blockedToolNames: new Set([
+                        ...(activeToolUseConstraints.blockedToolNames ?? []), ...fixedBlockedToolNames,
+                    ]),
                     includeActions: operationsActionsEligible,
                 };
                 const schemaResult = toolRegistry.exportProviderSchemasSafe(exportFilter);
@@ -1715,6 +2168,8 @@ export class PaAgentRuntime {
                 const createAnswerModel = async (attempt: { binding?: AnswerVaultBinding }) =>
                     await planner.createFinalAnswerModel(0.8, {
                         transport: "native",
+                        expectedModelIdentity: budgetModelIdentity,
+                        ...(modelBudgetFacts.maxTokens ? { maxTokens: modelBudgetFacts.maxTokens } : {}),
                         qwenRequestOptions: options.qwenRequestOptions,
                         providerRequestScope,
                         agentDebugCall: debugCall,
@@ -1732,6 +2187,10 @@ export class PaAgentRuntime {
                             try {
                                 const binding = attempt.binding;
                                 if (!binding) throw new Error("Answer vault observation projection is not bound");
+                                if (binding.promptEstimate && debugCall) debugCall.promptEstimate = {
+                                    tokens: binding.promptEstimate.estimatedPromptTokens,
+                                    method: binding.promptEstimate.estimateMethod,
+                                };
                                 assertProviderInputCurrent(input.signal);
                                 binding.assertInputCurrent?.();
                                 assertAnswerVaultCurrent(binding);
@@ -1755,11 +2214,12 @@ export class PaAgentRuntime {
                             debug(event.phase, { ...event, stage: 'answer', turnId: input.turnId }),
                     });
                 const llm = await traceAgentPhase(debug, 'model_create', () => createAnswerModel(streamAttempt), { turnId: input.turnId });
+                actionProjectionMode = llm instanceof ChatOpenAI ? "native" : "compat";
                 if (nativeWritingRequest && !asNativeToolBindableModel(llm)) {
                     throw new Error("Native writing requires model tool binding.");
                 }
                 const streamedToolNames = new Map<string, string>();
-                const prompt = createPaAgentAnswerStreamPrompt(imageScope?.hasImages ?? false);
+                const prompt = createPaAgentAnswerStreamPrompt();
                 const streamRunnable = bindStreamingToolsIfAvailable(llm, schemas);
                 const streamChain = prompt.pipe(streamRunnable) as unknown as NativeToolStreamingAndInvocableRunnable;
                 let invokeChain: NativeToolStreamingAndInvocableRunnable | undefined;
@@ -1774,6 +2234,9 @@ export class PaAgentRuntime {
                         if (!invokeAttempt.binding) throw new Error("Answer vault observation projection is not bound");
                         if (!invokeChain) {
                             const invokeLlm = await createAnswerModel(invokeAttempt);
+                            if (actionProjectionMode === "native" && !(invokeLlm instanceof ChatOpenAI)) {
+                                throw new Error("Invoke adapter cannot represent the native action history");
+                            }
                             if (nativeWritingRequest && !asNativeToolBindableModel(invokeLlm)) {
                                 throw new Error("Native writing requires model tool binding.");
                             }
@@ -1793,8 +2256,16 @@ export class PaAgentRuntime {
                     : input;
                 injectedContext = readInjectedContext();
                 const preview = previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
-                if (input.toolMode !== "final_answer_only" && preview.outcome.admission === "fit"
-                    && (preview.outcome.historyCompressed || preview.reducedToolMessageIds.length > 0)) {
+                const summaryToolIds = preview.outcome.admission === 'local_overflow'
+                    ? providerInput.transcript.filter((message): message is PaAgentToolSummarySource =>
+                        message.role === 'toolResult' && message.content.includeInNextPrompt
+                        && message.content.promptText.length > MAX_TOOL_SUMMARY_CHARS)
+                        .sort((left, right) => right.content.promptText.length - left.content.promptText.length)
+                        .map(message => message.id)
+                    : [];
+                const needsHistorySummary = preview.history.summaryChars > 0 || preview.history.omittedCount > 0;
+                if (input.toolMode !== "final_answer_only" && preview.outcome.admission === "local_overflow"
+                    && (needsHistorySummary || summaryToolIds.length > 0)) {
                     debug('context_summary:start', { turnId: input.turnId });
                     // Summary guards include selected image currentness. Establish
                     // those receipts before the optional summary invokes them.
@@ -1820,10 +2291,12 @@ export class PaAgentRuntime {
                             parentId: input.turnId, turnId: input.turnId, purpose: "context_summary",
                             ...debugModelIdentity(),
                             lineage: { unknown: true },
-                        });
-                        try {
+                        }, usageLedger);
+                        if (!summaryCall) throw new Error('Summary usage accounting is unavailable');
                         interface SummaryVaultBinding {
                             projection: VaultObservationProjection;
+                            lineage: InputLineage;
+                            isAttachmentSourceCurrent: () => boolean;
                             serializedInput: string;
                             expectedSources: ReadonlyArray<{ index: number; role: "user" | "assistant" | "tool"; content: string }>;
                             historySources?: readonly ChatMessage[];
@@ -1833,13 +2306,23 @@ export class PaAgentRuntime {
                             managementProjection?: MemoryManagementProjection;
                         }
                         const summaryVaultState: { binding?: SummaryVaultBinding } = {};
+                        const budgetActivity = auxiliarySummaryBudget.begin(summaryCall.callId, payload.maxOutputTokens);
+                        const summaryAttemptClock = createPaAgentSummaryAttemptClock(signal);
+                        try {
                         let summarySource = source;
                         const summaryModel = await planner.createFinalAnswerModel(0, {
                             transport: "native", maxTokens: payload.maxOutputTokens,
+                            expectedModelIdentity: budgetModelIdentity,
                             qwenRequestOptions: { enableThinking: false }, providerRequestScope,
                             agentDebugCall: summaryCall,
                             prepareProviderRequest: async prepareSignal => {
                                 if (!summaryVaultState.binding) throw new Error("Summary vault observation projection is not bound");
+                                if (!sourceRun.admitsLineage(summaryVaultState.binding.lineage)) {
+                                    throw new Error('Context summary lineage changed before dispatch');
+                                }
+                                if (!summaryVaultState.binding.isAttachmentSourceCurrent()) {
+                                    throw new Error('Context summary attachment source changed before dispatch');
+                                }
                                 await summaryVaultState.binding.projection.binding.prepare(prepareSignal);
                                 if (summaryVaultState.binding.managementSource) {
                                     const currentManagement = await projectManagementObservations([summaryVaultState.binding.managementSource]);
@@ -1857,6 +2340,12 @@ export class PaAgentRuntime {
                             onProviderRequestStart: () => {
                                 assertRequestCurrent(signal);
                                 if (!summaryVaultState.binding) throw new Error("Summary vault observation projection is not bound");
+                                if (!sourceRun.admitsLineage(summaryVaultState.binding.lineage)) {
+                                    throw new Error('Context summary lineage changed before physical dispatch');
+                                }
+                                if (!summaryVaultState.binding.isAttachmentSourceCurrent()) {
+                                    throw new Error('Context summary attachment source changed before physical dispatch');
+                                }
                                 if (summarySource) sourceRun.assertTranscriptCurrent([summarySource]);
                                 if (summarySource) writingContextRun?.captureTranscriptValidity([summarySource])();
                                 const boundHistory = summaryVaultState.binding.historySources;
@@ -1873,7 +2362,15 @@ export class PaAgentRuntime {
                                 }
                                 summaryVaultState.binding.projection.binding.assertCurrent();
                                 summaryVaultState.binding.managementProjection?.binding.assertCurrent();
+                                const estimatedPromptTokens = estimateApproximateTokens(JSON.stringify(payload.messages));
+                                summaryCall.promptEstimate = {
+                                    tokens: estimatedPromptTokens,
+                                    method: 'cjk_json_messages',
+                                };
+                                budgetActivity.admit(estimatedPromptTokens);
+                                summaryAttemptClock.start();
                             },
+                            onProviderRequestFailed: summaryAttemptClock.failed,
                             onProviderRequestDiagnostic: requestDiagnostic("context_summary", input.turnId),
                             onProviderRequestTrace: (event: import('./obsidian-fetch').ProviderRequestTrace) =>
                                 debug(event.phase, { ...event, stage: 'context_summary', turnId: input.turnId }),
@@ -1945,8 +2442,18 @@ export class PaAgentRuntime {
                         if (stableProviderJson(payload.bindingSources ?? []) !== stableProviderJson(expectedSources)) {
                             throw new Error("Context summary source changed before dispatch");
                         }
+                        const summaryLineage = unionInputLineages(
+                            ...(summarySource ? [cloneInputLineage(summarySource.inputLineage)] : []),
+                            ...bindingHistorySources.map(historyInputLineage),
+                        );
+                        if (!sourceRun.admitsLineage(summaryLineage)) {
+                            throw new Error('Context summary sources are outside the current scope');
+                        }
+                        const isAttachmentSourceCurrent = await captureAttachmentSourceValidity(summaryLineage, signal);
                         summaryVaultState.binding = {
                             projection: summaryVaultProjection,
+                            lineage: summaryLineage,
+                            isAttachmentSourceCurrent,
                             serializedInput: stableProviderJson(payload.messages),
                             expectedSources,
                             historySources: bindingHistorySources,
@@ -1961,14 +2468,35 @@ export class PaAgentRuntime {
                             throw new Error("Context summary request exceeds local budget");
                         }
                         modelCalls++;
-                        const response = await summaryModel.invoke(payload.messages, { signal });
-                        observeAgentDebugResponse(summaryCall, response);
+                        const response = await summaryModel.invoke(payload.messages, { signal: summaryAttemptClock.signal });
+                        // The provider has already returned this usage. Record it even if
+                        // the source changed while the request was in flight.
+                        observeAgentDebugResponse(summaryCall, response, "replace", "provider-usage", "usage_only");
+                        if (!isAttachmentSourceCurrent()) {
+                            throw new Error('Context summary attachment source changed before delivery');
+                        }
+                        const cancelledBeforeDelivery = summaryAttemptClock.signal.aborted
+                            || signal.aborted || input.signal?.aborted === true;
+                        const sourceCurrent = summaryVaultState.binding !== undefined
+                            && sourceRun.isCurrent()
+                            && sourceRun.admitsLineage(summaryVaultState.binding.lineage);
+                        if (cancelledBeforeDelivery || !sourceCurrent) {
+                            observeAgentDebugCall(summaryCall, { phase: 'consumer_end',
+                                status: cancelledBeforeDelivery ? 'cancelled' : 'partial',
+                                missingReason: cancelledBeforeDelivery
+                                    ? 'cancelled_before_delivery' : 'source_changed_before_delivery' });
+                            return undefined;
+                        }
+                        observeAgentDebugResponse(summaryCall, response, "replace", "provider-usage", "content_only");
                         observeAgentDebugCall(summaryCall, { phase: "consumer_end", status: "completed",
                             timing: { event: "consumer_end", at: agentDebugNow() } });
                         return stringifyChunkContent(response);
                         } catch (error) {
                             observeAgentDebugCall(summaryCall, { phase: "error", status: signal?.aborted ? "cancelled" : "failed", error: agentDebugError(error) });
                             throw error;
+                        } finally {
+                            summaryAttemptClock.dispose();
+                            budgetActivity.finish();
                         }
                     };
                     try {
@@ -1992,14 +2520,16 @@ export class PaAgentRuntime {
                         const historySources = isOperationsStagedAcknowledgement(input.runtimeInstruction)
                             ? undefined
                             : summaryProjection.history;
-                        const history = await contextSummarizer.prepareHistory({
+                        const history = needsHistorySummary ? await contextSummarizer.prepareHistory({
                             history: historySources ?? [],
                             historyBudgetChars: preview.historyBudgetChars,
                             invoke: invokeForSource(undefined, historySources), signal: preparation.signal,
-                        });
+                            deadlineManagedByInvoke: true,
+                        }) : runSummaries.history;
                         runSummaries = { history, tools };
-                        for (const id of preview.reducedToolMessageIds) {
+                        for (const id of summaryToolIds) {
                             preparation.throwIfAborted();
+                            if (previewCanonicalModelInput(providerInput, toolDefinitions, schemas).outcome.admission === 'fit') break;
                             const current = providerInput.transcript.find((message) => message.id === id);
                             if (current?.role !== "toolResult" || !current.content.includeInNextPrompt) continue;
                             // Registry revalidation can mutate live transcript references.
@@ -2008,6 +2538,7 @@ export class PaAgentRuntime {
                             const source = cloneMessage(current) as PaAgentToolSummarySource;
                             const summary = await contextSummarizer.prepareTool({
                                 source, invoke: invokeForSource(source), signal: preparation.signal,
+                                deadlineManagedByInvoke: true,
                             });
                             if (summary) tools.set(id, summary);
                         }
@@ -2021,6 +2552,7 @@ export class PaAgentRuntime {
                     yield { type: "diagnostic", diagnostic: {
                         type: "context_summary_preparation", modelCalls,
                         elapsedMs: Math.max(0, Date.now() - startedAt),
+                        auxiliaryBudget: auxiliarySummaryBudget.snapshot(),
                         historyReady: Boolean(runSummaries.history), toolSummaries: tools.size,
                     } };
                     // No summary derived before this await may bypass final source validation.
@@ -2043,6 +2575,10 @@ export class PaAgentRuntime {
                     // current soft/hard deadline. The outer request signal
                     // alone would let a timed-out stream/invoke keep running.
                     signal: providerInput.signal,
+                    isDebugContentCurrent: () => {
+                        try { return isPreviewCurrent(); }
+                        catch { return false; } // A stale receipt must not persist rejected content in Debug.
+                    },
                     streamedToolNames,
                     captureToolIdentity: Boolean(nativeWritingRequest),
                     requestDiagnostics: (requestInput) => {
@@ -2115,7 +2651,7 @@ export class PaAgentRuntime {
         };
         const baseToolExecutor = createPaAgentCapabilityToolExecutor({
             registry: this.toolRegistry,
-            ...(writingContextRun ? { canReuseWritingContext: writingContextRun.matchesCurrentSelection.bind(writingContextRun) } : {}),
+            ...(writingContextRun ? { isWritingSelectionCurrent: writingContextRun.matchesCurrentSelection.bind(writingContextRun) } : {}),
             host: this.host,
             platform: this.options.runtimePlatform ?? "desktop",
             memoryEvidenceRegistry,
@@ -2123,9 +2659,10 @@ export class PaAgentRuntime {
             providerRequestScope,
             memoryPreparationOwnerSignal,
             getMemoryRequestDiagnostic: (turnId) => (stage) => requestDiagnostic(stage, turnId),
-            getMemoryDebugScope: (turnId, toolCallId) => debugRecorder ? {
-                recorder: debugRecorder, parentId: `${turnId}:tool:${toolCallId}`, turnId,
-            } : undefined,
+            getMemoryDebugScope: (turnId, toolCallId) => ({
+                recorder: debugRecorder, usageLedger,
+                parentId: `${turnId}:tool:${toolCallId}`, turnId,
+            }),
             currentMemoryUsage,
             memoryActionRequest,
             revalidateMemorySearch: (result, signal, temporalFilter, temporalAudit, guard) => (
@@ -2188,6 +2725,19 @@ export class PaAgentRuntime {
             baseExecutor: materialToolExecutor, state: sourceRun.state,
             resolveHostNoteId: sourceRun.resolveNoteId,
             isHostCurrent: sourceRun.isCurrent,
+            isWebAllowed: sourceRun.isWebReadAllowed,
+            isMemoryAllowed: sourceRun.isMemoryReadAllowed,
+            isInputCurrent: calls => calls.every(call => sourceRun.admitsLineage(callLineageById.get(call.id))),
+            captureInputSourceValidity: calls => {
+                const lineage = unionInputLineages(...calls.map(call => callLineageById.get(call.id)));
+                if (!runSourceSelection || !lineage.dependencies.some(dependency => dependency.kind !== 'user-text')) {
+                    return undefined;
+                }
+                const sourceValidity = sourceRun.captureLineageSourceValidity(lineage);
+                const attachmentChecks = calls.filter(call => callLineageById.get(call.id)?.dependencies.some(
+                    dependency => dependency.kind === 'attachment')).map(call => callAttachmentValidityById.get(call.id));
+                return () => sourceValidity() && attachmentChecks.every(check => check?.() === true);
+            },
             resolveNoteSearchScope: sourceRun.resolveNoteSearchScope,
             resolveReadPlans: calls => {
                 // These fixed capabilities use their own admission ports.
@@ -2217,7 +2767,13 @@ export class PaAgentRuntime {
                 if (!readPlans.ok) return { rejectionReason: readPlans.reason === 'source_excluded'
                     ? 'source_excluded' as const : 'source_read_plan_unavailable' as const };
                 const complete = new Map(readPlans.plans);
-                for (const call of independent) complete.set(call.id, { reads: [] });
+                for (const call of independent) {
+                    const reads = [
+                        'get_memory_status', 'query_memories', 'get_memory_usage', 'manage_memory',
+                        'get_vault_insights', 'query_saved_insights', 'manage_saved_insight',
+                    ].includes(call.name) ? [{ kind: 'scoped_vault_search' as const }] : [];
+                    complete.set(call.id, { reads });
+                }
                 return complete;
             },
         });
@@ -2247,6 +2803,7 @@ export class PaAgentRuntime {
                 strategyChangeInstruction: "The writing candidate has failed validation three times without progress. Change strategy: rebuild one complete present_writing candidate from the current writing context and required schema. Do not emit partial arguments, multiple candidates, or ordinary text pretending the work was saved.",
             } } : {}),
             model,
+            providerModelIdentity: debugModelIdentity,
             prepareModelInput: async (input) => {
                 const failClosedOnAbort = () => memoryEvidenceRegistry.failClosed();
                 input.signal?.addEventListener("abort", failClosedOnAbort, { once: true });
@@ -2384,6 +2941,80 @@ export class PaAgentRuntime {
                 },
             },
             onEvent: (event) => {
+                if (event.type === 'message_end') {
+                    const message = event.message;
+                    if (message.role === 'user') message.inputLineage = cloneInputLineage(currentUserLineage);
+                    else if (message.role === 'assistant') {
+                        message.inputLineage = cloneInputLineage(answerLineageByTurn.get(event.turnId))
+                            ?? unknownInputLineage();
+                        for (const part of message.content) if (part.type === 'toolCall' && part.id) {
+                            callLineageById.set(part.id, message.inputLineage);
+                            callNotesObservationStateById.set(part.id, {
+                                sourceEpoch: sourceRun.currentNotesObservationEpoch(),
+                                ...(part.name === 'search_memory'
+                                    ? { memoryEnabled: sourceRun.currentMemoryAvailability() } : {}),
+                            });
+                            const attachmentValidity = answerAttachmentValidityByTurn.get(event.turnId);
+                            if (attachmentValidity) callAttachmentValidityById.set(part.id, attachmentValidity);
+                        }
+                    } else {
+                        const records = message.content.sourceRecords ?? [];
+                        let writingContextLineage: InputLineage | undefined;
+                        if (runSourceSelection && message.toolName === GET_WRITING_CONTEXT
+                            && !message.isError && message.content.includeInNextPrompt) {
+                            try {
+                                const prepared = writingContextRun?.current();
+                                const payload = JSON.parse(message.content.promptText) as {
+                                    observation?: { contextHandle?: unknown };
+                                };
+                                if (prepared && payload.observation?.contextHandle === prepared.handle
+                                    && JSON.stringify(payload.observation) === JSON.stringify(writingContextObservation(prepared))) {
+                                    const parentLineage = prepared.parent
+                                        ? admittedParentLineages.get(prepared.parent.id) : completeInputLineage();
+                                    const styleLineage = prepared.styleContext || prepared.styleRevisionIds.length
+                                        ? prepared.styleRevisionIds.length
+                                            ? completeInputLineage([{ kind: 'writing-style',
+                                                revisionIds: [...prepared.styleRevisionIds] }])
+                                            : unknownInputLineage()
+                                        : completeInputLineage();
+                                    const imageDependencies: InputDependency[] = [];
+                                    let imagesIdentified = true;
+                                    for (const image of prepared.images) {
+                                        const current = (options.images ?? []).some(candidate =>
+                                            candidate.ref.assetId === image.ref.assetId
+                                            && candidate.ref.contentHash === image.ref.contentHash);
+                                        const historyOwner = (options.chatHistory ?? []).find(candidate => candidate.role === 'user'
+                                                && candidate.images?.some(attached => attached.ref.assetId === image.ref.assetId
+                                                    && attached.ref.contentHash === image.ref.contentHash));
+                                        const owner = current ? userMessageId
+                                            : historyOwner?.hostProvenance?.messageId
+                                                ?? historyOwner?.runSourceSelection?.userMessageId;
+                                        if (!owner) { imagesIdentified = false; continue; }
+                                        imageDependencies.push({ kind: 'attachment', ownerMessageId: owner,
+                                            ref: { ...image.ref } });
+                                    }
+                                    writingContextLineage = unionInputLineages(parentLineage, styleLineage,
+                                        imagesIdentified ? completeInputLineage(imageDependencies)
+                                            : unknownInputLineage(imageDependencies));
+                                }
+                            } catch { /* An unmatched or invalid tool observation remains unknown. */ }
+                        }
+                        const sourceFreeNotesObservation = records.length === 0
+                            && isSafeSourceFreeToolObservation(message);
+                        const resultLineage = writingContextLineage
+                            ?? (records.length ? sourceRecordsInputLineage(records)
+                                : message.content.metadata?.statusOnly === true
+                                    ? completeInputLineage()
+                                    : sourceFreeNotesObservation
+                                        ? sourceRun.captureRunNotesObservationLineage(
+                                            message.toolName === 'search_memory' ? 'memory' : 'vault',
+                                            callNotesObservationStateById.get(message.toolCallId)?.sourceEpoch,
+                                            callNotesObservationStateById.get(message.toolCallId)?.memoryEnabled)
+                                        : unknownInputLineage());
+                        message.inputLineage = unionInputLineages(
+                            callLineageById.get(message.toolCallId), resultLineage);
+                    }
+                }
                 observeAgentDebugLifecycle(debugRecorder, event);
                 if (this.host.settings.debug) {
                     try { debugLifecycle(event); } catch { /* Keep diagnostic failures outside lifecycle delivery. */ }
@@ -2396,9 +3027,6 @@ export class PaAgentRuntime {
             },
             onDebug: debug,
             ...(hostContext ? { hostContext } : {}),
-            ...(initialRuntimeInstruction
-                ? { initialRuntimeInstruction }
-                : {}),
             initialControlSnapshot,
             signal: options.signal,
             ...(options.turnLeaseProvider ? { turnLeaseProvider: options.turnLeaseProvider } : {}),
@@ -2465,6 +3093,8 @@ export class PaAgentRuntime {
             throw new Error(`PA Agent canonical runtime failed${detail}`);
         }
         } finally {
+            try { options.onUsageAccounting?.(usageLedger.snapshot()); }
+            catch { /* Accounting observers cannot change the Agent outcome. */ }
             sourceRunActive = false;
             writingContextRun?.dispose();
             if (writingContextCapability) this.toolRegistry.unregister(writingContextCapability);
@@ -2518,20 +3148,6 @@ export class PaAgentRuntime {
             ...(payload.warnings ? { warnings: payload.warnings } : {}),
             ...(payload.diagnostics ? { diagnostics: payload.diagnostics } : {}),
         });
-    }
-
-    private getAvailableRequiredCapabilities(options: PaAgentStreamOptions): Set<RequiredCapability> {
-        const available = new Set<RequiredCapability>();
-        if (options.memoryMode !== "skip-memory" && this.toolRegistry.getDefinition("search_memory")) {
-            available.add("search_memory");
-        }
-        if (this.toolRegistry.getDefinition("get_current_note_context")) {
-            available.add("get_current_note_context");
-        }
-        if (this.toolRegistry.getDefinition("webSearch")) {
-            available.add("webSearch");
-        }
-        return available;
     }
 
     private areOperationsActionsAvailable(): boolean {
@@ -2596,16 +3212,22 @@ export class PaAgentRuntime {
         injectedContext?: PaAgentInjectedContext,
         boundSchemas: ChatToolProviderSchema[] = [],
         summaries?: PaAgentContextSummaries,
+        actionMode: "native" | "compat" = "compat",
+        modelBudgetFacts?: PaAgentModelBudgetFacts,
     ) {
         const { projection, operationsGuidance } = this.projectPaAgentCanonicalModelInput(
-            options, input, toolUseConstraints, toolDefinitions, injectedContext, boundSchemas, summaries,
+            options, input, toolUseConstraints, toolDefinitions, injectedContext, boundSchemas, summaries, actionMode,
+            modelBudgetFacts,
         );
-        if (projection.outcome.admission === "local_overflow") {
-            throw new PaAgentContextOverflowError(projection.budget.promptChars, projection.budget.maxPromptChars);
-        }
         if (options.writingContextHost && options.writingContextHandle) {
-            assertCompleteWritingContextProjection(input.transcript, projection.toolObservations,
-                input.turnIndex, options.writingContextHandle);
+            assertCompleteWritingContextProjection(input.transcript, projection.actionHistory,
+                options.writingContextHandle);
+        }
+        if (projection.outcome.admission === "local_overflow") {
+            if (options.writingContextHost && options.writingContextHandle) {
+                throw new Error("Complete writing context does not fit in the provider input");
+            }
+            throw new PaAgentContextOverflowError(projection.budget.promptChars, projection.budget.maxPromptChars);
         }
         return {
             providerInput: {
@@ -2614,6 +3236,8 @@ export class PaAgentRuntime {
                 tool_definitions: projection.toolDefinitions,
                 tool_observations: projection.toolObservations,
                 operations_guidance: operationsGuidance,
+                messages: buildPaAgentFinalMessages(projection.input, projection.actionHistory,
+                    actionMode, undefined, projection.history, projection.currentInput),
                 __context_projection_diagnostic: JSON.stringify(projection.diagnostics),
             } as Record<string, unknown>,
             projection,
@@ -2628,6 +3252,8 @@ export class PaAgentRuntime {
         injectedContext?: PaAgentInjectedContext,
         boundSchemas: ChatToolProviderSchema[] = [],
         summaries?: PaAgentContextSummaries,
+        actionMode: "native" | "compat" = "compat",
+        modelBudgetFacts?: PaAgentModelBudgetFacts,
     ) {
         const availableSkills = formatSkillCatalog(input.hostContext);
         const hostContext = formatCanonicalHostContext(input.hostContext);
@@ -2669,15 +3295,17 @@ export class PaAgentRuntime {
                 ? Math.min(MAX_CHAT_HISTORY_CHARS, Math.max(0, Math.floor(options.historyBudgetChars)))
                 : MAX_CHAT_HISTORY_CHARS,
             maxPromptChars: MAX_PA_AGENT_PROMPT_CHARS,
+            modelBudgetFacts,
             maxObservationChars: this.options.answerStreamMaxObservationChars ?? 64_000,
             formatToolObservations,
-            measurePromptChars: (parts) => measurePaAgentRequestChars({
+            measurePromptEnvelope: (parts) => measurePaAgentRequestEnvelope({
                 input: parts.input,
                 available_skills: parts.availableSkills,
                 tool_definitions: parts.toolDefinitions,
                 tool_observations: parts.toolObservations,
                 operations_guidance: operationsGuidance,
-            }, boundSchemas),
+            }, boundSchemas, buildPaAgentFinalMessages(parts.input, parts.actionHistory,
+                actionMode, undefined, parts.history, parts.currentInput)),
         });
         return { projection, operationsGuidance };
     }
@@ -2730,6 +3358,25 @@ function generationInputBackgroundSources(
     };
 }
 
+function backgroundInputLineage(
+    context: PaAgentInjectedContext | undefined,
+    sources: GenerationInputBackgroundSources,
+): InputLineage {
+    const rendered = formatInjectedContext({ ...context,
+        pageletHandoff: undefined, writingStyleContext: undefined });
+    if (!rendered) return completeInputLineage();
+    const dependencies: InputDependency[] = [];
+    if (sources.personal.state === 'identified') {
+        dependencies.push({ kind: 'personal', source: sources.personal });
+    }
+    if (sources.insights.state === 'unknown') dependencies.push({ kind: 'insight', source: sources.insights });
+    // The current run can use a live guarded opaque projection, but cannot
+    // claim a complete persistable ancestry for it or a legacy profile.
+    return sources.personal.state === 'unknown' || sources.insights.state === 'unknown'
+        || dependencies.length === 0 ? unknownInputLineage(dependencies)
+        : completeInputLineage(dependencies);
+}
+
 function generationInputPageletSource(
     pagelet: PageletChatHandoffContext | undefined,
 ): GenerationInputPageletSource {
@@ -2753,9 +3400,9 @@ function generationInputPageletSource(
 
 /** A valid receipt cannot authorize output if prompt compaction removed any of its actual context. */
 function assertCompleteWritingContextProjection(
-    transcript: readonly PaAgentMessage[], toolObservations: string, turnIndex: number, handle: string,
+    transcript: readonly PaAgentMessage[], actionHistory: readonly PaAgentActionGroup[], handle: string,
 ): void {
-    const source = transcript.find(message => {
+    const source = transcript.find((message): message is Extract<PaAgentMessage, { role: "toolResult" }> => {
         if (message.role !== "toolResult" || message.toolName !== GET_WRITING_CONTEXT
             || message.isError || !message.content.includeInNextPrompt) return false;
         try {
@@ -2764,14 +3411,9 @@ function assertCompleteWritingContextProjection(
         } catch { return false; }
     });
     if (!source) throw new Error("Complete writing context is missing from the provider input");
-    // Use the real formatter so escaping is identical. Projection may omit older
-    // tools and renumber blocks, so compare the complete body inside this tool's
-    // envelope rather than relying on an index or an unescaped substring.
-    const expected = formatToolObservations([source], turnIndex);
-    const expectedBody = expected.slice(expected.indexOf("\n"));
-    for (const match of toolObservations.matchAll(/<untrusted source="tool:get_writing_context"[^>]*>/g)) {
-        if (toolObservations.startsWith(expectedBody, match.index! + match[0].length)) return;
-    }
+    if (actionHistory.some(group => group.calls.some(call => call.name === GET_WRITING_CONTEXT
+        && call.id === source.toolCallId && call.results.some(result => result.id === source.id
+            && result.text === source.content.promptText)))) return;
     throw new Error("Complete writing context does not fit in the provider input");
 }
 
@@ -2857,23 +3499,6 @@ function parseOptionalDiagnostic(value: unknown): unknown {
 }
 
 
-function readStringArray(value: unknown): string[] {
-    if (!Array.isArray(value)) return [];
-    return value.map((entry) => {
-        if (typeof entry === "string") return entry;
-        if (entry && typeof entry === "object") {
-            const record = entry as Record<string, unknown>;
-            if (typeof record.candidate_id === "string") return record.candidate_id;
-            if (typeof record.candidateId === "string") return record.candidateId;
-            if (typeof record.source_path === "string") return record.source_path;
-            if (typeof record.sourcePath === "string") return record.sourcePath;
-            if (typeof record.path === "string") return record.path;
-            if (typeof record.id === "string") return record.id;
-        }
-        return "";
-    }).map((entry) => entry.trim()).filter(Boolean);
-}
-
 // A3 progressive disclosure: ContextUsed is derived from tool execution results
 // (chat-view.ts builds them from canonical toolResult metadata), not from host
 // pre-context. The catalog (L1) is metadata only. The A1 helpers
@@ -2888,129 +3513,6 @@ function asNativeToolBindableModel(value: unknown): NativeToolBindableModel | un
     return typeof bindTools === "function" ? value as NativeToolBindableModel : undefined;
 }
 
-function getReadOnlyToolContentAvailability(content: unknown): ReadOnlyToolContextAvailability {
-    if (!content || typeof content !== "object") return "available";
-    const record = content as Record<string, unknown>;
-    const coverage = record.coverage as { state?: unknown } | undefined;
-    const page = record.page as { outputBudgetExceeded?: unknown } | undefined;
-    // Search paging and scan coverage are independent. A page with more matches
-    // is not evidence that files were skipped; old histories used `truncated`
-    // for ordinary additional matches, so that flag alone must not imply loss.
-    if (record.kind === "vault-snippets") {
-        if (record.missingScope === true || record.unsupportedScope === true) {
-            return "unavailable";
-        }
-        const unavailableSources = readStringArray(record.unavailableSources);
-        if (unavailableSources.length > 0) {
-            return Array.isArray(record.matches) && record.matches.length > 0
-                || coverage?.state === "partial"
-                ? "partial"
-                : "unavailable";
-        }
-        if (
-            coverage?.state === "partial"
-            || readStringArray(record.skippedSources).length > 0
-            || (typeof record.skippedFiles === "number" && record.skippedFiles > 0)
-            || page?.outputBudgetExceeded === true
-        ) {
-            return "partial";
-        }
-        return "available";
-    }
-    if (record.kind === "note-structure") {
-        if (coverage?.state === "partial" || record.truncated === true) return "partial";
-        const unavailableSources = readStringArray(record.unavailableSources);
-        return unavailableSources.length >= 2 ? "unavailable" : unavailableSources.length === 1 ? "partial" : "available";
-    }
-    if (
-        readStringArray(record.unavailableSources).length > 0
-        || record.missingScope === true
-        || record.unsupportedScope === true
-    ) {
-        return "unavailable";
-    }
-    if (readStringArray(record.skippedSources).length > 0 || record.truncated === true) {
-        return "partial";
-    }
-    return "available";
-}
-
-export function isReadOnlyContextToolResult(tool: string, content: unknown): boolean {
-    if (tool === "search_vault_metadata") return isSearchVaultMetadataResult(content);
-    if (tool === "list_recent_notes") return isListRecentNotesResult(content);
-    if (tool === "read_note_outline") return isReadNoteOutlineResult(content);
-    if (tool === "inspect_obsidian_note") return isInspectObsidianNoteResult(content);
-    if (tool === "read_canvas_summary") return isReadCanvasSummaryResult(content);
-    if (tool === "search_vault_snippets") return isVaultSnippetSearchResult(content);
-    if (tool === "list_vault_tags") return isVaultTagsResult(content);
-    return false;
-}
-
-export function getReadOnlyToolObservationMessage(tool: string, content: unknown): string {
-    const availability = getReadOnlyToolContentAvailability(content);
-    if (availability === "unavailable") {
-        return getUnavailableReadOnlyToolObservationMessage(tool, content);
-    }
-    if (tool === "search_vault_metadata" && isSearchVaultMetadataResult(content)) {
-        return `Found ${content.matches.length} metadata match(es).`;
-    }
-    if (tool === "list_recent_notes" && isListRecentNotesResult(content)) {
-        return `Listed ${content.notes.length} recent note(s).`;
-    }
-    if (tool === "read_note_outline" && isReadNoteOutlineResult(content)) {
-        return `Read ${content.headings.length} heading(s) from note outline.`;
-    }
-    if (tool === "inspect_obsidian_note" && isInspectObsidianNoteResult(content)) {
-        const facts = [
-            Array.isArray(content.headings) ? `${content.headings.length} heading(s)` : undefined,
-            Array.isArray(content.tasks) ? `${content.tasks.length} task(s)` : undefined,
-            Array.isArray(content.tags) ? `${content.tags.length} tag(s)` : undefined,
-            Array.isArray(content.outgoingLinks) ? `${content.outgoingLinks.length} outgoing link(s)` : undefined,
-            Array.isArray(content.backlinks) ? `${content.backlinks.length} backlink(s)` : undefined,
-        ].filter(Boolean);
-        return facts.length > 0
-            ? `${availability === "partial" ? "Read partial note structure" : "Read note structure"}: ${facts.join(", ")}.`
-            : availability === "partial" ? "Read partial note structure." : "Read note structure.";
-    }
-    if (tool === "read_canvas_summary" && isReadCanvasSummaryResult(content)) {
-        return availability === "partial"
-            ? `Read partial canvas structure: ${content.nodeCount} node(s), ${content.edgeCount} edge(s).`
-            : `Read canvas structure: ${content.nodeCount} node(s), ${content.edgeCount} edge(s).`;
-    }
-    if (tool === "search_vault_snippets" && isVaultSnippetSearchResult(content)) {
-        if (availability === "partial") {
-            return content.page?.outputBudgetExceeded
-                ? `Found ${content.matches.length} of ${content.matchCount} bounded snippet match(es); the result page hit its output budget.`
-                : `Found ${content.matches.length} bounded snippet match(es) from a partial scan.`;
-        }
-        return content.page?.hasMore
-            ? `Found ${content.matches.length} of ${content.matchCount} bounded snippet match(es); more are available.`
-            : `Found ${content.matches.length} bounded snippet match(es).`;
-    }
-    if (tool === "list_vault_tags" && isVaultTagsResult(content)) {
-        return availability === "partial"
-            ? `Listed ${content.tags.length} vault tag(s) from partial metadata.`
-            : `Listed ${content.tags.length} vault tag(s).`;
-    }
-    if (isObsidianOperationsV1AToolName(tool)) {
-        return "Read Obsidian context.";
-    }
-    return `${tool} completed.`;
-}
-
-function getUnavailableReadOnlyToolObservationMessage(tool: string, content: unknown): string {
-    const record = content && typeof content === "object" ? content as Record<string, unknown> : {};
-    if (tool === "search_vault_snippets") {
-        if (record.unsupportedScope === true) return "Snippet scope is not a supported Markdown scope.";
-        if (record.missingScope === true) return "Snippet scope was not found.";
-        return "Snippet search unavailable.";
-    }
-    if (tool === "read_canvas_summary") return "Canvas structure unavailable.";
-    if (tool === "list_vault_tags") return "Vault tags unavailable.";
-    if (tool === "inspect_obsidian_note") return "Note structure unavailable.";
-    return "Vault context unavailable.";
-}
-
 function bindStreamingToolsIfAvailable(llm: unknown, schemas: ChatToolProviderSchema[]): NativeToolStreamingRunnable {
     const bindable = schemas.length > 0 ? asNativeToolBindableModel(llm) : undefined;
     const runnable = bindable ? bindable.bindTools(schemas) : llm;
@@ -3023,51 +3525,6 @@ function bindStreamingToolsIfAvailable(llm: unknown, schemas: ChatToolProviderSc
 interface PaAgentToolUseConstraints {
     allowedToolNames?: ReadonlySet<string>;
     blockedToolNames?: ReadonlySet<string>;
-}
-
-export const OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION = [
-    "The current user's Operations proposal was staged successfully in the inline confirmation card, and nothing has been written yet.",
-    "Reply only with a concise acknowledgement that this current proposal is ready for review.",
-    "Do not mention internal turns, tool availability, or the state or content of any earlier proposal.",
-    "Do not call tools or claim that a write has completed.",
-].join(" ");
-
-export function isOperationsStagedAcknowledgement(runtimeInstruction?: string): boolean {
-    return runtimeInstruction === OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION;
-}
-
-function hasOperationsStagedAcknowledgementInstruction(runtimeInstruction?: string): boolean {
-    return runtimeInstruction?.includes(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION) === true;
-}
-
-function hasStagedOperationsIntent(summary: PaAgentTurnSummary): boolean {
-    return summary.toolResults.some((result) => (
-        CORE_WRITE_TOOL_NAMES.some((toolName) => toolName === result.toolName)
-        && result.content.metadata?.staged === true
-        && result.content.metadata?.wrote === false
-    ));
-}
-
-export function createOperationsAcknowledgementControlSnapshot(
-    previous?: AgentControlSnapshot,
-): AgentControlSnapshot {
-    return createAgentControlSnapshot({
-        exposureMode: "answer-ready",
-        sourceScope: previous?.sourceScope ?? "none",
-        allowedToolNames: new Set(),
-        ...(previous?.blockedToolNames ? { blockedToolNames: previous.blockedToolNames } : {}),
-        ...(previous ? { blockedReasons: previous.blockedReasons } : {}),
-        runtimeInstruction: OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
-        toolMode: "normal",
-        ...(previous ? { budgetState: previous.budgetState } : {}),
-        diagnostics: [
-            ...(previous?.diagnostics ?? []),
-            {
-                type: "operations_intent_staged_acknowledgement",
-                message: "Operations proposal is staged; the next turn may only acknowledge the inline confirmation card.",
-            },
-        ],
-    });
 }
 
 function combineRuntimeInstructions(instructions: Array<string | undefined>): string | undefined {
@@ -3298,6 +3755,7 @@ export async function* streamWithInvokeFallback(args: {
     chain: NativeToolStreamingAndInvocableRunnable;
     input: unknown;
     signal?: AbortSignal;
+    isDebugContentCurrent?: () => boolean;
     streamedToolNames?: Map<string, string>;
     /** Preserve original identity for the opt-in native output admission path. */
     captureToolIdentity?: boolean;
@@ -3313,9 +3771,11 @@ export async function* streamWithInvokeFallback(args: {
     let providerCompletion: import("./chat-types").ProviderCompletion | undefined;
 
     let stream: AsyncIterable<unknown>;
+    beginAgentDebugResponsePhase(args.debugCall);
     try {
         stream = await chain.stream(input, { signal });
     } catch (error) {
+        finishAgentDebugResponsePhase(args.debugCall, signal?.aborted ? 'cancelled' : 'failed');
         yield* requestDiagnosticChunks(args.requestDiagnostics, input);
         if (canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal, Boolean(args.prepareInvokeInput))) {
             onFallback?.("stream_setup_failed", error);
@@ -3323,7 +3783,8 @@ export async function* streamWithInvokeFallback(args: {
                 ? await args.prepareInvokeInput()
                 : input;
             throwIfAborted(signal);
-            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics, args.captureToolIdentity, args.debugCall);
+            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics,
+                args.captureToolIdentity, args.debugCall, args.isDebugContentCurrent);
             return;
         }
         throw error;
@@ -3335,8 +3796,11 @@ export async function* streamWithInvokeFallback(args: {
         let firstContent = true;
         let firstText = true;
         for await (const chunk of stream) {
+            observeAgentDebugResponse(args.debugCall, chunk, "delta", "stream", "usage_only");
             throwIfAborted(signal);
-            observeAgentDebugResponse(args.debugCall, chunk, "delta", "stream");
+            if (args.isDebugContentCurrent?.() !== false) {
+                observeAgentDebugResponse(args.debugCall, chunk, "delta", "stream", "content_only");
+            }
             const chunkCompletion = readProviderCompletion(chunk);
             const providerUsage = extractProviderUsage(chunk);
             if (providerUsage) {
@@ -3377,13 +3841,15 @@ export async function* streamWithInvokeFallback(args: {
             }
         }
     } catch (error) {
+        finishAgentDebugResponsePhase(args.debugCall, signal?.aborted ? 'cancelled' : 'failed');
         if (providerCompletion === undefined && canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal, Boolean(args.prepareInvokeInput))) {
             onFallback?.("stream_iteration_failed", error);
             const invokeInput = args.prepareInvokeInput
                 ? await args.prepareInvokeInput()
                 : input;
             throwIfAborted(signal);
-            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics, args.captureToolIdentity, args.debugCall);
+            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics,
+                args.captureToolIdentity, args.debugCall, args.isDebugContentCurrent);
             return;
         }
         throw error;
@@ -3398,17 +3864,24 @@ async function* invokeAsModelChunks(
     requestDiagnostics?: (input: unknown) => Array<Record<string, unknown>>,
     captureToolIdentity = false,
     debugCall?: AgentDebugCallScope,
+    isDebugContentCurrent?: () => boolean,
 ): AsyncGenerator<PaAgentModelStreamChunk, void, unknown> {
     let response: unknown;
+    beginAgentDebugResponsePhase(debugCall);
     try {
         response = await chain.invoke(input, signal ? { signal } : undefined);
     } catch (error) {
+        finishAgentDebugResponsePhase(debugCall, signal?.aborted ? 'cancelled' : 'failed');
         yield* requestDiagnosticChunks(requestDiagnostics, input);
         throw error;
     }
+    observeAgentDebugResponse(debugCall, response, "replace", "invoke", "usage_only");
     yield* requestDiagnosticChunks(requestDiagnostics, input);
+    if (signal?.aborted) finishAgentDebugResponsePhase(debugCall, 'cancelled');
     throwIfAborted(signal);
-    observeAgentDebugResponse(debugCall, response, "replace", "invoke");
+    if (isDebugContentCurrent?.() !== false) {
+        observeAgentDebugResponse(debugCall, response, "replace", "invoke", "content_only");
+    }
     const providerUsage = extractProviderUsage(response);
     if (providerUsage) {
         yield { type: "diagnostic", diagnostic: { type: "provider_usage", usage: providerUsage } };
@@ -3488,10 +3961,123 @@ function normalizeProviderUsage(value: unknown): PaAgentProviderUsage | undefine
     if (completionTokens !== undefined) usage.completionTokens = completionTokens;
     if (totalTokens !== undefined) {
         usage.totalTokens = totalTokens;
-    } else if (promptTokens !== undefined || completionTokens !== undefined) {
-        usage.totalTokens = (promptTokens ?? 0) + (completionTokens ?? 0);
+    } else if (promptTokens !== undefined && completionTokens !== undefined) {
+        usage.totalTokens = promptTokens + completionTokens;
     }
     return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
+/** Starts at the transport's physical admission hook, not during source preparation. */
+export function createPaAgentSummaryAttemptClock(ownerSignal: AbortSignal,
+    timeoutMs = 1_800_000): {
+        signal: AbortSignal; start: () => void; failed: () => void; dispose: () => void;
+    } {
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    ownerSignal.addEventListener('abort', cancel, { once: true });
+    if (ownerSignal.aborted) controller.abort();
+    let timer: PlatformTimeoutHandle | undefined;
+    const clear = () => {
+        if (timer !== undefined) clearPlatformTimeout(timer);
+        timer = undefined;
+    };
+    return { signal: controller.signal,
+        start: () => { clear(); if (!controller.signal.aborted) {
+            timer = setPlatformTimeout(cancel, timeoutMs);
+        } },
+        failed: clear,
+        dispose: () => { clear(); ownerSignal.removeEventListener('abort', cancel); },
+    };
+}
+
+const MAX_AUXILIARY_SUMMARY_PHYSICAL_REQUESTS = 30;
+const MAX_AUXILIARY_SUMMARY_ACTIVE_MS = 60 * 60_000;
+// The fixed long SDK fixture needs 48,357 prompt-plus-output reserved tokens
+// over 12 requests. This 90k admission cap leaves room for later tools/retries;
+// measured usage can raise its floor but is never added to an estimated bill.
+const MAX_AUXILIARY_SUMMARY_ADMISSION_TOKENS = 90_000;
+type AuxiliaryBudgetReason = 'physical_requests' | 'active_elapsed'
+    | 'estimated_or_known_tokens' | 'estimate_unknown';
+
+/** Run-local optional summary admission; only confirmed transport attempts spend request/token quota. */
+export function createPaAgentAuxiliarySummaryBudget(
+    attempts: () => PaAgentUsageLedgerSnapshot['attempts'],
+    now: () => number = agentDebugNow,
+): {
+    begin: (callId: string, maxOutputTokens: number) => { admit: (estimatedPromptTokens: number) => void; finish: () => void };
+    snapshot: () => { physicalRequests: number; activeElapsedMs: number;
+        estimatedReservedTokens: number | null; admissionTokens: number | null;
+        exhaustedReason?: AuxiliaryBudgetReason };
+} {
+    const outputReserveByCall = new Map<string, number>();
+    const active = new Map<symbol, number>();
+    let completedElapsedMs = 0;
+    let exhaustedReason: AuxiliaryBudgetReason | undefined;
+    const elapsedMs = () => completedElapsedMs + [...active.values()]
+        .reduce((total, startedAt) => total + Math.max(0, now() - startedAt), 0);
+    const usage = () => {
+        const physical = attempts().filter(attempt => attempt.purpose === 'context_summary');
+        let estimatedReservedTokens = 0;
+        let admissionTokens = 0;
+        let estimateKnown = true;
+        let admissionKnown = true;
+        for (const attempt of physical) {
+            const outputReserve = outputReserveByCall.get(attempt.callId);
+            if (outputReserve === undefined) {
+                estimateKnown = false;
+                admissionKnown = false;
+                continue;
+            }
+            if (attempt.estimatedPromptTokens === undefined) estimateKnown = false;
+            else estimatedReservedTokens += attempt.estimatedPromptTokens + outputReserve;
+            const promptFloor = Math.max(attempt.estimatedPromptTokens ?? -1,
+                attempt.measuredPromptTokens ?? -1);
+            // A partial/cancelled response is not a complete bill, but any
+            // provider total already attributed to this attempt is a cost floor.
+            const knownTotal = attempt.totalTokens;
+            if (promptFloor < 0 && knownTotal === undefined) admissionKnown = false;
+            else admissionTokens += Math.max(promptFloor < 0 ? 0 : promptFloor + outputReserve,
+                knownTotal ?? 0);
+        }
+        return { physicalRequests: physical.length,
+            estimatedReservedTokens: estimateKnown ? estimatedReservedTokens : null,
+            admissionTokens: admissionKnown ? admissionTokens : null };
+    };
+    const reject = (reason: AuxiliaryBudgetReason): never => {
+        exhaustedReason = reason;
+        throw new Error(`PA Agent auxiliary summary budget exhausted: ${reason}`);
+    };
+    return {
+        begin: (callId, maxOutputTokens) => {
+            if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0) reject('estimate_unknown');
+            outputReserveByCall.set(callId, maxOutputTokens);
+            const identity = Symbol(callId);
+            active.set(identity, now());
+            return {
+                admit: estimatedPromptTokens => {
+                    if (!Number.isSafeInteger(estimatedPromptTokens) || estimatedPromptTokens < 0) reject('estimate_unknown');
+                    const current = usage();
+                    if (current.physicalRequests >= MAX_AUXILIARY_SUMMARY_PHYSICAL_REQUESTS) reject('physical_requests');
+                    if (elapsedMs() >= MAX_AUXILIARY_SUMMARY_ACTIVE_MS) reject('active_elapsed');
+                    const spent = current.admissionTokens;
+                    if (spent === null) return reject('estimate_unknown');
+                    if (spent + estimatedPromptTokens + maxOutputTokens
+                        > MAX_AUXILIARY_SUMMARY_ADMISSION_TOKENS) reject('estimated_or_known_tokens');
+                },
+                finish: () => {
+                    const startedAt = active.get(identity);
+                    if (startedAt === undefined) return;
+                    completedElapsedMs += Math.max(0, now() - startedAt);
+                    active.delete(identity);
+                    if (!attempts().some(attempt => attempt.purpose === 'context_summary' && attempt.callId === callId)) {
+                        outputReserveByCall.delete(callId);
+                    }
+                },
+            };
+        },
+        snapshot: () => ({ ...usage(), activeElapsedMs: elapsedMs(),
+            ...(exhaustedReason ? { exhaustedReason } : {}) }),
+    };
 }
 
 function firstFiniteNumber(record: Record<string, unknown>, keys: readonly string[]): number | undefined {

@@ -18,6 +18,7 @@ import { throwIfAborted } from './chat-utils';
 import { prepareProviderAdmission, runProviderAdmission } from './provider-admission-error';
 import { onProviderFailedAttempt } from './provider-retry-policy';
 import type { AgentDebugCallScope } from './agent-debug-port';
+import type { PaAgentModelBudgetFacts } from './context/PaAgentContextBudget';
 
 export type ChatTransport = 'obsidian' | 'native';
 
@@ -249,6 +250,8 @@ export interface CreateChatModelOptions extends ProviderRequestOptions {
     qwenRequestOptions?: QwenRequestOptions;
     modelName?: string;
     maxTokens?: number;
+    /** A run budget may be used only by the exact provider, model and endpoint constructed here. */
+    expectedModelIdentity?: { provider: string; model: string; baseURL: string };
 }
 
 export interface CreateEmbeddingsOptions extends ProviderRequestOptions {
@@ -469,6 +472,11 @@ export class AIUtils {
         const provider = readiness.aiProvider;
         const modelName = readiness.chatModelName;
         const baseURL = readiness.baseURL;
+        if (options.expectedModelIdentity && (
+            provider !== options.expectedModelIdentity.provider
+            || modelName !== options.expectedModelIdentity.model
+            || baseURL !== options.expectedModelIdentity.baseURL
+        )) throw new Error('PA Agent model configuration changed during this run');
         const transport = options.transport ?? 'obsidian';
         const token = (await this.getAPIToken()).trim();
         if (!token) {
@@ -652,6 +660,26 @@ function normalizeBaseURL(value: unknown): string {
 export function isDashScopeCompatibleBaseURL(value: unknown): boolean {
     const normalized = normalizeBaseURL(value);
     return DASHSCOPE_COMPATIBLE_BASE_URLS.some((baseURL) => normalizeBaseURL(baseURL) === normalized);
+}
+
+/** Exact provider/model/endpoint metadata only; other OpenAI-compatible endpoints stay unknown. */
+export function resolvePaAgentModelBudgetFacts(input: {
+    provider: unknown;
+    model: unknown;
+    baseURL: unknown;
+}): PaAgentModelBudgetFacts {
+    if (normalizeCapabilityValue(input.provider) === 'qwen'
+        && normalizeCapabilityValue(input.model) === 'deepseek-v4-pro'
+        && isDashScopeCompatibleBaseURL(input.baseURL)) {
+        // Verified 2026-09-25 for this exact DashScope model/endpoint only:
+        // https://help.aliyun.com/zh/model-studio/deepseek-v4-pro
+        // https://help.aliyun.com/en/model-studio/qwen-api-via-dashscope
+        // The latter documents max_tokens' default at the model output limit.
+        return { contextWindowTokens: 1_000_000, outputReserveTokens: 393_216,
+            maxTokens: 393_216, contextWindowSource: 'verified_metadata',
+            outputReserveSource: 'verified_metadata' };
+    }
+    return { contextWindowSource: 'unknown', outputReserveSource: 'unknown' };
 }
 
 export function resolveChatTransport(input: {

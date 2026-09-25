@@ -1,4 +1,5 @@
 import type { AgentEvent } from "./chat-types";
+import type { PaAgentRunUsageLedger } from './agent-usage-ledger';
 import {
     observeAgentDebug,
     type AgentDebugCallScope,
@@ -9,10 +10,26 @@ import {
 } from "./agent-debug-port";
 
 let callSequence = 0;
-const latestAttempts = new WeakMap<AgentDebugCallScope, string>();
 
 export function bindAgentDebugAttempt(scope: AgentDebugCallScope, attemptId: string): void {
-    latestAttempts.set(scope, attemptId);
+    scope.usageLedger?.dispatch(scope.callId, scope.purpose, attemptId, scope.promptEstimate);
+}
+
+export function beginAgentDebugResponsePhase(scope: AgentDebugCallScope | undefined): void {
+    if (scope) scope.usageLedger?.beginResponsePhase(scope.callId, scope.purpose);
+}
+
+export function markAgentDebugAttemptResponse(scope: AgentDebugCallScope, attemptId: string, status?: number): void {
+    scope.usageLedger?.response(scope.callId, scope.purpose, attemptId, status);
+}
+
+export function markAgentDebugAttemptFailure(scope: AgentDebugCallScope, attemptId: string, cancelled = false): void {
+    scope.usageLedger?.fail(attemptId, cancelled);
+}
+
+export function finishAgentDebugResponsePhase(scope: AgentDebugCallScope | undefined,
+    outcome: 'completed' | 'partial' | 'failed' | 'cancelled'): void {
+    if (scope) scope.usageLedger?.finishResponsePhase(scope.callId, outcome);
 }
 
 export const agentDebugNow = (): number => typeof performance === "undefined" ? Date.now() : performance.now();
@@ -69,9 +86,13 @@ export function agentDebugStatus(status: string): AgentDebugNodeStatus {
 export function createAgentDebugCall(
     recorder: AgentDebugRunRecorder | undefined,
     input: Omit<AgentDebugCallScope, "recorder" | "callId"> & { callId?: string },
+    usageLedger?: PaAgentRunUsageLedger,
 ): AgentDebugCallScope | undefined {
-    if (!recorder) return undefined;
-    const scope = { ...input, recorder, callId: input.callId ?? `${recorder.captureId}:llm:${++callSequence}` };
+    if (!recorder && !usageLedger) return undefined;
+    const effectiveRecorder = recorder ?? { captureId: 'usage', enabled: () => false,
+        bindRun: () => undefined, observe: () => undefined, finish: () => undefined };
+    const scope = { ...input, recorder: effectiveRecorder, usageLedger,
+        callId: input.callId ?? `${effectiveRecorder.captureId}:llm:${++callSequence}` };
     observeAgentDebug(recorder, () => ({ ...callIdentity(scope), phase: "prepare", status: "running" }));
     return scope;
 }
@@ -91,7 +112,12 @@ export function observeAgentDebugCall(
 ): void {
     if (!scope) return;
     observeAgentDebug(scope.recorder, () => ({ ...callIdentity(scope), ...observation }));
-    const attemptId = latestAttempts.get(scope);
+    const attemptId = (observation.phase === 'consumer_end' || observation.phase === 'error')
+        ? scope.usageLedger?.finishResponsePhase(scope.callId,
+            observation.status === 'cancelled' ? 'cancelled'
+                : observation.phase === 'error' ? 'failed'
+                    : observation.status === 'partial' || observation.missingReason ? 'partial' : 'completed')
+        : undefined;
     if (attemptId && (observation.phase === "consumer_end" || observation.phase === "error")) {
         observeAgentDebug(scope.recorder, () => ({
             nodeId: attemptId, parentId: scope.callId, kind: "attempt", phase: observation.phase!,
@@ -139,21 +165,34 @@ export function observeAgentDebugResponse(
     response: unknown,
     mode: "delta" | "replace" = "replace",
     usageKey = "provider-usage",
+    observation: "all" | "usage_only" | "content_only" = "all",
 ): void {
     if (!scope) return;
-    observeAgentDebug(scope.recorder, () => {
-        const content = field(response, "content");
-        const text = responseText(content);
-        const reasoning = field(field(response, "additional_kwargs"), "reasoning_content");
-        const usage = readAgentDebugUsage(response);
-        return {
-            ...callIdentity(scope), phase: "receiving", status: "running",
-            ...(text ? { text, textMode: mode } : {}),
-            ...(typeof reasoning === "string" && reasoning ? { reasoning } : {}),
-            ...(Array.isArray(content) && (field(content, "length") as number) > 256 ? { missingReason: "output_block_limit" } : {}),
-            usage: usage ? { ...usage, updateKey: usageKey } : undefined,
-        };
-    });
+    const usage = observation !== "content_only" && (scope.usageLedger || scope.recorder.enabled())
+        ? readAgentDebugUsage(response) : undefined;
+    const attemptId = usage && scope.usageLedger
+        ? scope.usageLedger.record(scope.callId, scope.purpose, usage, usageKey) : undefined;
+    if (observation !== "usage_only" || (usage && !attemptId)) {
+        observeAgentDebug(scope.recorder, () => {
+            const content = observation === "usage_only" ? undefined : field(response, "content");
+            const text = responseText(content);
+            const reasoning = observation === "usage_only" ? undefined
+                : field(field(response, "additional_kwargs"), "reasoning_content");
+            return {
+                ...callIdentity(scope), phase: "receiving", status: "running",
+                ...(text ? { text, textMode: mode } : {}),
+                ...(typeof reasoning === "string" && reasoning ? { reasoning } : {}),
+                ...(Array.isArray(content) && (field(content, "length") as number) > 256 ? { missingReason: "output_block_limit" } : {}),
+                usage: usage && !attemptId ? { ...usage, updateKey: usageKey,
+                    ...(scope.usageLedger?.hasAmbiguousResponsePhase(scope.callId) ? { complete: false } : {}) } : undefined,
+            };
+        });
+    }
+    if (usage && attemptId) observeAgentDebug(scope.recorder, () => ({
+        nodeId: attemptId, parentId: scope.callId, kind: 'attempt', phase: 'usage',
+        purpose: scope.purpose, callId: scope.callId, attemptId, turnId: scope.turnId,
+        usage: { ...usage, updateKey: usageKey },
+    }));
 }
 
 /** Lifecycle deltas/results are observed directly; cumulative message_end never backfills content. */

@@ -17,6 +17,18 @@ export function createChatMenuItem(
     return button;
 }
 
+export function createChatChoiceMenuItem(parent: HTMLElement, input: {
+    text: string; description: string; icon: string; cls?: string;
+}): HTMLButtonElement {
+    const button = createChatMenuItem(parent, input);
+    button.classList.add('pa-chat-menu-choice');
+    button.createSpan({ cls: 'pa-chat-menu-choice-description', text: input.description });
+    const check = button.createSpan({ cls: 'pa-chat-menu-choice-check' });
+    check.setAttribute('aria-hidden', 'true');
+    setIcon(check, 'check');
+    return button;
+}
+
 export function createChatMenuDivider(parent: HTMLElement) {
     parent.createDiv({ cls: 'pa-chat-menu-divider' });
 }

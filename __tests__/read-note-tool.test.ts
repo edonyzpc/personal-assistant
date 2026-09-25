@@ -1,11 +1,14 @@
 import type { AiServiceHost } from '../src/ai-services/AiServiceHost';
 import { chatToolResultToAgentCapabilityResult } from '../src/ai-services/capability-adapter';
-import { createReadNoteTool } from '../src/ai-services/chat-tool-factories';
+import { createCurrentNoteContextTool, createReadNoteTool } from '../src/ai-services/chat-tool-factories';
 import type { ChatToolContext, ChatToolResult } from '../src/ai-services/chat-tool-types';
 import { isReadNoteResult } from '../src/ai-services/chat-tool-guards';
 import { readVaultFile } from '../src/ai-services/chat-tool-execution-helpers';
 import { computeContentHash } from '../src/vss-helpers';
 import type { ReadNoteOutput } from '../src/ai-services/chat-tool-types';
+import type { Workspace } from 'obsidian';
+import type { PaAgentMessage } from '../src/ai-services/chat-types';
+import { TaskSourceRun } from '../src/ai-services/task-source-run';
 
 jest.mock('obsidian');
 
@@ -125,6 +128,55 @@ function output(result: ChatToolResult<ReadNoteOutput>): ReadNoteOutput {
 }
 
 describe('createReadNoteTool', () => {
+    it('keeps the observed A body revision in a Writing source snapshot after the file becomes B', async () => {
+        const f = setup('Version A');
+        const read = await f.invoke({ path: f.path });
+        expect(read.ok).toBe(true);
+        const adapted = chatToolResultToAgentCapabilityResult(
+            { name: 'read_note', sourceBoundary: 'read-only-tool' }, 'core', read,
+        );
+        f.replaceContent('Version B');
+        f.file.stat.mtime += 1;
+        const workspace = { getActiveViewOfType: () => null, getMostRecentLeaf: () => null,
+            getLeavesOfType: () => [] } as unknown as Workspace;
+        const run = new TaskSourceRun({ runId: 'run', userMessageId: 'user', userText: 'Write from this note',
+            workspace, getFileByPath: path => path === f.path ? f.file : null, isCurrent: () => true });
+        const transcript: PaAgentMessage[] = [{ role: 'toolResult', id: 'read-result', toolCallId: 'read-call',
+            toolName: 'read_note', timestamp: 1, isError: false,
+            content: { promptText: JSON.stringify(read.content), includeInNextPrompt: true,
+                sourceRecords: adapted.sourceRecords } }];
+
+        expect(run.captureGenerationInputTaskSources(transcript, [])).toMatchObject({
+            state: 'identified',
+            sources: [{ revision: { state: 'identified', basis: 'vault_read',
+                digest: { algorithm: 'sha1', scope: 'whole_file', value: await computeContentHash('Version A') },
+                stat: { mtime: 101, size: 9 } } }],
+        });
+    });
+
+    it('distinguishes equal-stat bodies and marks unsaved editor text as an editor projection', async () => {
+        const f = setup('A');
+        const before = await f.invoke({ path: f.path });
+        f.replaceContent('B');
+        const after = await f.invoke({ path: f.path });
+        expect(f.file.stat.size).toBe(1);
+        expect(before.sources[0].observedRevision).toMatchObject({
+            basis: 'vault_read', digest: { scope: 'whole_file', value: await computeContentHash('A') },
+            stat: { mtime: 101, size: 1 },
+        });
+        expect(after.sources[0].observedRevision).toMatchObject({
+            basis: 'vault_read', digest: { scope: 'whole_file', value: await computeContentHash('B') },
+            stat: { mtime: 101, size: 1 },
+        });
+        f.allowed.add('notes/active.md');
+        const editorTool = createCurrentNoteContextTool();
+        const editorResult = await editorTool.execute(editorTool.validateInput({ mode: 'full' }), f.context);
+        const editorRecord = chatToolResultToAgentCapabilityResult(editorTool, 'core', editorResult).sourceRecords[0];
+        expect(editorRecord.observedRevision).toMatchObject({ state: 'identified', basis: 'editor_snapshot',
+            digest: { algorithm: 'sha1', scope: 'editor_projection' } });
+        expect(editorRecord.observedRevision).not.toHaveProperty('stat');
+    });
+
     it('separates saved body content from raw YAML properties with original-file lines', async () => {
         const content = '---\ndate: 2026-01-01\ntags: [project]\n---\nBody mentions 2026-02-03.\nSecond body line.\n';
         const f = setup(content);
@@ -515,15 +567,19 @@ describe('createReadNoteTool', () => {
     it('keeps visible provenance through result.sources and the capability adapter', async () => {
         const f = setup('source body');
         const result = await f.invoke({ path: f.path });
-        expect(result.sources).toEqual([{ path: f.path }]);
+        expect(result.sources).toEqual([expect.objectContaining({ path: f.path,
+            observedRevision: { state: 'identified', basis: 'vault_read',
+                digest: { algorithm: 'sha1', scope: 'whole_file', value: await computeContentHash('source body') },
+                stat: { mtime: 101, size: 11 } } })]);
         const adapted = chatToolResultToAgentCapabilityResult(
             f.tool,
             'test-provider',
             result,
         );
-        expect(adapted.sources).toEqual([{ path: f.path }]);
+        expect(adapted.sources).toEqual(result.sources);
         expect(adapted.sourceRecords).toEqual([
-            expect.objectContaining({ path: f.path, sourceBoundary: 'read-only-tool' }),
+            expect.objectContaining({ path: f.path, sourceBoundary: 'read-only-tool',
+                observedRevision: result.sources[0].observedRevision }),
         ]);
     });
 });

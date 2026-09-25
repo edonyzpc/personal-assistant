@@ -186,6 +186,9 @@ describe("T-07 host observation evidence contracts", () => {
         const adapted = chatToolResultToAgentCapabilityResult(fixture.tool, "test-provider", result);
         expect(carrier(adapted).vaultObservationContractVersion).toBe(1);
         expect(carrier(adapted).vaultObservationEvidence).toEqual(evidence);
+        expect(adapted.sourceRecords[0].observedRevision).toMatchObject({
+            state: 'identified', basis: 'vault_read', digest: { scope: 'whole_file' },
+        });
     });
 
     it.each([
@@ -221,6 +224,9 @@ describe("T-07 host observation evidence contracts", () => {
         const adapted = chatToolResultToAgentCapabilityResult(fixture.tool, "test-provider", result);
         expect(carrier(adapted).vaultObservationEvidence).toEqual(evidence);
         expect(carrier(adapted).vaultObservationContractVersion).toBe(1);
+        if (files.length) expect(adapted.sourceRecords.find(record => !record.statusOnly)?.observedRevision)
+            .toMatchObject({ state: 'identified', basis: 'metadata_snapshot',
+                digest: { scope: 'metadata_projection' } });
     });
 
     it("marks successful snippets with the new host contract without copying snippet bodies", async () => {
@@ -257,6 +263,10 @@ describe("T-07 host observation evidence contracts", () => {
             range: output.matches[0].range,
         });
         expect(JSON.stringify(evidence)).not.toContain("SNIPPET_BODY_SENTINEL");
+        expect(chatToolResultToAgentCapabilityResult(tool, 'test-provider', result)
+            .sourceRecords.find(record => !record.statusOnly)?.observedRevision).toMatchObject({
+                state: 'identified', basis: 'vault_read', digest: { scope: 'snippet_projection' },
+            });
     });
 
     it("marks cache-only inspect evidence with its actual structure and link dependencies", async () => {

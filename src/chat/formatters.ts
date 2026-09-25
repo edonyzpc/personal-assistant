@@ -1,5 +1,6 @@
 import type { ChatAgentStatus, ChatContextUsedItem } from '../ai-services/chat-service';
 import type { ChatRuntimeWarning, SourceRecord } from '../ai-services/chat-types';
+import { parseObservedSourceRevision } from '../ai-services/generation-input-snapshot';
 import { getPluginUiLanguage, pluginT, type PluginLocale } from '../locales/plugin';
 
 function ft(key: string, params?: Readonly<Record<string, string | number>>, locale?: PluginLocale): string {
@@ -165,6 +166,7 @@ export function normalizeSourceRecords(value: unknown): SourceRecord[] {
             if (!item || typeof item !== 'object') return null;
             const record = item as Record<string, unknown>;
             if (typeof record.kind !== 'string' || typeof record.dedupKey !== 'string') return null;
+            const observedRevision = parseObservedSourceRevision(record.observedRevision);
             return {
                 kind: record.kind as SourceRecord['kind'],
                 dedupKey: record.dedupKey,
@@ -187,6 +189,7 @@ export function normalizeSourceRecords(value: unknown): SourceRecord[] {
                 metadata: record.metadata && typeof record.metadata === 'object'
                     ? record.metadata as Record<string, unknown>
                     : undefined,
+                ...(observedRevision ? { observedRevision } : {}),
             };
         })
         .filter((item): item is SourceRecord => Boolean(item));
@@ -201,6 +204,7 @@ export function mergeSourceRecords(current: SourceRecord[], incoming: SourceReco
             record.path ?? '',
             record.url ?? '',
             record.title ?? '',
+            JSON.stringify(record.observedRevision ?? null),
         ].join('\u0000');
         if (!byKey.has(key)) {
             byKey.set(key, record);

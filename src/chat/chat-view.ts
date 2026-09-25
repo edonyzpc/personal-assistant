@@ -1,7 +1,10 @@
 import { WorkspaceLeaf, MarkdownView, Notice, ItemView, Modal, Platform, setIcon, Component, TFile, type EventRef } from 'obsidian';
 import { ChatService, type AgentEvent, type ChatAgentStatus, type ChatContextUsedItem, type ChatMessage, type ChatTurnMemoryMetadata } from '../ai-services/chat-service';
 import { BUNDLED_SKILL_CATALOG } from '../ai-services/bundled-skill-catalog';
+import type { ChatSourceScope } from '../ai-services/chat-source-scope';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
+import { cloneInputLineage, completeInputLineage, generationInputSnapshotInputLineage, resolveWritingVersionInputLineage,
+    unknownInputLineage } from '../ai-services/input-lineage';
 import { PaAgentContextOverflowError } from '../ai-services/context';
 import { isTaskSourceDecisionBoundary, type TaskSourceDecisionKind } from '../ai-services/task-source-history';
 import type {
@@ -25,7 +28,7 @@ import type { ChatHistoryManager } from './chat-history-manager';
 import type { PersistedConversation, PersistedTurn } from './chat-history-store';
 import { ConversationPersistence } from './ConversationPersistence';
 import { renderMarkdownWithOwner, containsMermaidFence, deferMermaidFences, getMermaidFenceSources, scheduleMermaidEnhancement, renderMermaidSourceWarning } from './mermaid';
-import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatMenuDivider, createChatMenuLabel, updateChatMenuAvailableWidth } from './menu-helpers';
+import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatChoiceMenuItem, createChatMenuDivider, createChatMenuLabel, updateChatMenuAvailableWidth } from './menu-helpers';
 import { formatSourceSummary, mergeContextUsedItems, normalizeContextUsedItems, normalizeSourceRecords, mergeSourceRecords, getContextUsedItemsFromStatus, formatAgentStatus, formatCanonicalToolStatus, formatCanonicalToolCompletedStatus, formatRuntimeWarningLabel, formatRuntimeWarningDetail, formatCanonicalTerminalSummary, runtimeWarningKey } from './formatters';
 import {
     createChatRoleIdenticonSessionSeed,
@@ -80,6 +83,7 @@ import { ChatImageRequestError } from '../ai-services/image-capability';
 import {
     cloneGenerationInputSnapshot,
     generationInputNeedsRecoveryConfirmation,
+    generationInputRequiresConfirmationDespiteLiveReceipt,
     type GenerationInputSnapshot,
 } from '../ai-services/generation-input-snapshot';
 import { positionTypeaheadNearCaret } from './typeahead-position';
@@ -88,6 +92,7 @@ export { VIEW_TYPE_LLM };
 export { formatOperationsPreview };
 export const PA_CHAT_SUBAGENT_ICON = "PA_CHAT_SUBAGENT";
 export type { ChatMessage };
+let sourceScopeMenuSequence = 0;
 
 const LIVE_MARKDOWN_SLOW_RENDER_MS = 12;
 const LIVE_MARKDOWN_RENDER_COOLDOWN_MS = 32;
@@ -114,7 +119,8 @@ function writingBackgroundSourceRefs(
     const refs = records.filter((record) => record.path && record.citationEligible !== false && !record.redacted
         && (!actualSources || actualSources.some(source => source.dedupKey === record.dedupKey
             && source.boundary === (record.sourceBoundary ?? (record.kind === 'memory-reference' ? 'memory' : 'unknown'))
-            && (source.revision.path ?? '') === record.path)));
+            && ('path' in source.revision ? source.revision.path : 'path' in source ? source.path : undefined)
+                === record.path)));
     return [...new Map(refs.map(record => [record.path!, { path: record.path! }])).values()];
 }
 
@@ -176,7 +182,8 @@ class GeneratedImagePreviewModal extends Modal {
     }
 }
 
-async function copyGeneratedImage(ownerDocument: Document, bytes: ArrayBuffer, mime: string): Promise<void> {
+async function copyGeneratedImage(ownerDocument: Document, bytes: ArrayBuffer, mime: string,
+    assertSourceCurrent?: () => void): Promise<void> {
     const ownerWindow = ownerDocument.defaultView as (Window & { ClipboardItem?: typeof ClipboardItem }) | null;
     const Item = ownerWindow?.ClipboardItem;
     if (!Item || !ownerWindow?.navigator.clipboard?.write) throw new Error('image clipboard unavailable');
@@ -208,6 +215,7 @@ async function copyGeneratedImage(ownerDocument: Document, bytes: ArrayBuffer, m
             urlApi.revokeObjectURL(url);
         }
     }
+    assertSourceCurrent?.();
     await ownerWindow.navigator.clipboard.write([new Item({ 'image/png': png })]);
 }
 
@@ -700,6 +708,40 @@ export class LLMView extends ItemView {
         imagePicker.hidden = true;
         const originalPicker = buttonDiv.createEl('input', { attr: { type: 'file', multiple: '' } });
         originalPicker.hidden = true;
+        const sourceScopeControl = buttonDiv.createSpan({ cls: 'pa-chat-source-scope-control' });
+        const sourceScopeButton = sourceScopeControl.createEl('button', {
+            cls: 'pa-chat-icon-button pa-chat-source-scope-button',
+            attr: { type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false' },
+        });
+        const sourceScopeMenu = sourceScopeControl.createDiv({
+            cls: 'pa-chat-menu pa-chat-source-scope-menu',
+            attr: { role: 'menu' },
+        });
+        sourceScopeMenu.id = `pa-chat-source-scope-menu-${++sourceScopeMenuSequence}`;
+        sourceScopeMenu.hidden = true;
+        sourceScopeButton.setAttribute('aria-controls', sourceScopeMenu.id);
+        const scopeChoices: Array<{ scope: ChatSourceScope; icon: string; name: string; description: string;
+            button: HTMLButtonElement }> = [];
+        for (const [scope, icon, nameKey, descriptionKey] of [
+            ['notes', 'book-open', 'notes', 'notesDescription'],
+            ['web', 'globe', 'web', 'webDescription'],
+            ['combined', 'layers', 'combined', 'combinedDescription'],
+        ] as const) {
+            const name = t(`plugin.chat.sourceScope.${nameKey}`);
+            const description = t(`plugin.chat.sourceScope.${descriptionKey}`);
+            const button = createChatChoiceMenuItem(sourceScopeMenu, {
+                text: name, description, icon, cls: 'pa-chat-source-scope-option',
+            });
+            button.setAttribute('role', 'menuitemradio');
+            button.setAttribute('data-source-scope', scope);
+            scopeChoices.push({ scope, icon, name, description, button });
+        }
+        const retrySourceScopeButton = createChatMenuItem(sourceScopeMenu, {
+            text: t('plugin.chat.sourceScope.retry'), icon: 'refresh-cw',
+            cls: 'pa-chat-source-scope-retry',
+        });
+        retrySourceScopeButton.hidden = true;
+        retrySourceScopeButton.setAttribute('role', 'menuitem');
         const pendingImageSelections = new Map<HTMLInputElement, number>();
         const openImageFilePicker = (picker: HTMLInputElement) => {
             pendingImageSelections.set(picker, composerDraft.snapshot('').draftId);
@@ -770,6 +812,8 @@ export class LLMView extends ItemView {
         setIcon(cancelButton, 'square');
         cancelButton.createSpan({ cls: 'pa-sr-only', text: t("plugin.chat.action.stopGeneration") });
         cancelButton.classList.add('cancel-button-hidden');
+        // Keep the menu near the pane's right edge so narrow views can show its full names.
+        buttonDiv.appendChild(sourceScopeControl);
         const moreControl = buttonDiv.createSpan({ cls: 'pa-chat-more-control' });
         const moreButton = moreControl.createEl('button', {
             cls: 'pa-chat-icon-button pa-chat-more-button',
@@ -1654,6 +1698,9 @@ export class LLMView extends ItemView {
         };
         const isCurrentSession = () => this.viewSessionId === sessionId;
         const imageGeneration = this.host.imageGenerationService;
+        const canDeliverImageTask = (task: ImageGenerationTask): boolean =>
+            !task.deliverySuppressed && task.recoveryReason !== 'source_changed'
+                && (imageGeneration?.canDeliverTask?.(task) ?? !task.requiresSourceReceipt);
         type ImageTaskCardTarget = { parent: HTMLElement; before?: HTMLElement };
         const imageTaskCards = new Map<string, HTMLElement>();
         const imageTaskMessageTargets = new Map<string, ImageTaskCardTarget>();
@@ -1724,8 +1771,9 @@ export class LLMView extends ItemView {
             if (task.inputWhiteBackgroundApplied) card.createDiv({ cls: 'pa-chat-image-task-card__recovery',
                 text: t('plugin.chat.createImage.whiteBackgroundApplied') });
             const outputs = card.createDiv({ cls: 'pa-chat-image-task-card__outputs' });
-            outputs.hidden = task.outputs.length === 0;
-            for (const output of task.outputs) {
+            const canDeliverOutputs = canDeliverImageTask(task);
+            outputs.hidden = task.outputs.length === 0 || !canDeliverOutputs;
+            for (const output of canDeliverOutputs ? task.outputs : []) {
                 const outputRow = outputs.createDiv({ cls: 'pa-chat-image-task-card__output' });
                 if (output.saveState !== 'saved' || !output.assetRef) {
                     outputRow.createDiv({ cls: 'pa-chat-image-task-card__output-state',
@@ -1748,7 +1796,8 @@ export class LLMView extends ItemView {
                     let release: (() => void) | undefined;
                     cleanups.push(() => { release?.(); preview.removeAttribute('src'); });
                     void this.host.imageAssetService.resolveVariant(assetRef, 'preview').then(lease => {
-                        if (!isCurrentSession() || imageTaskCards.get(task.taskId) !== card || !preview.isConnected) {
+                        if (!isCurrentSession() || imageTaskCards.get(task.taskId) !== card || !preview.isConnected
+                            || !canDeliverImageTask(task)) {
                             lease.release(); return;
                         }
                         const urlApi = URL;
@@ -1758,9 +1807,16 @@ export class LLMView extends ItemView {
                         preview.hidden = false;
                     }).catch(error => this.host.log('Could not preview generated image', error));
                 }
-                const read = () => imageGeneration.readOutput(task.taskId, output.outputId);
+                const read = async () => {
+                    if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
+                    const file = await imageGeneration.readOutput(task.taskId, output.outputId);
+                    if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
+                    return file;
+                };
                 previewButton.onclick = () => { void read().then(file => {
-                    if (isCurrentSession()) new GeneratedImagePreviewModal(this.app, file.bytes, file.mime).open();
+                    if (isCurrentSession() && canDeliverImageTask(task)) {
+                        new GeneratedImagePreviewModal(this.app, file.bytes, file.mime).open();
+                    }
                 }).catch(error => { this.host.log('Could not open generated image', error); new Notice(t('plugin.chat.createImage.imageUnavailable')); }); };
 
                 const editButton = createMessageActionButton(imageFrame, {
@@ -1771,7 +1827,9 @@ export class LLMView extends ItemView {
                 editButton.createSpan({ cls: 'pa-chat-image-task-card__image-action-text',
                     text: t('plugin.chat.createImage.editThis') });
                 editButton.onclick = () => { void imageGeneration.getVersionForOutput(task.taskId, output.outputId).then(version => {
-                    if (!version || !isCurrentSession()) { new Notice(t('plugin.chat.createImage.versionUnavailable')); return; }
+                    if (!version || !isCurrentSession() || !canDeliverImageTask(task)) {
+                        new Notice(t('plugin.chat.createImage.versionUnavailable')); return;
+                    }
                     if (composerDraft.hasDraft(textArea.value) || isGenerating()) {
                         showComposerHint(t('plugin.chat.createImage.finishDraftEdit')); return;
                     }
@@ -1786,8 +1844,10 @@ export class LLMView extends ItemView {
                     icon: 'download',
                     label: t('plugin.chat.createImage.download'),
                 });
-                downloadButton.onclick = () => { void read().then(file =>
-                    downloadGeneratedImage(outputRow.ownerDocument, file.bytes, file.mime, file.filename)).catch(error => {
+                downloadButton.onclick = () => { void read().then(file => {
+                    if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
+                    return downloadGeneratedImage(outputRow.ownerDocument, file.bytes, file.mime, file.filename);
+                }).catch(error => {
                     if ((error as { name?: string })?.name === 'AbortError') return;
                     this.host.log('Could not export generated image', error); new Notice(t('plugin.chat.createImage.downloadFailed'));
                 }); };
@@ -1798,8 +1858,12 @@ export class LLMView extends ItemView {
                     icon: 'copy',
                     label: t('plugin.chat.createImage.copy'),
                 });
-                copyButton.onclick = () => { void read().then(file =>
-                    copyGeneratedImage(outputRow.ownerDocument, file.bytes, file.mime)).then(() =>
+                copyButton.onclick = () => { void read().then(file => {
+                    if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
+                    return copyGeneratedImage(outputRow.ownerDocument, file.bytes, file.mime, () => {
+                        if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
+                    });
+                }).then(() =>
                     new Notice(t('plugin.chat.createImage.copied'))).catch(error => {
                     this.host.log('Could not copy generated image', error); new Notice(t('plugin.chat.createImage.copyFailed'));
                 }); };
@@ -1812,11 +1876,14 @@ export class LLMView extends ItemView {
                         label: t('plugin.chat.createImage.saveToNote'),
                     });
                     saveButton.onclick = () => {
-                        if (savingToNote) return;
+                        if (savingToNote || !canDeliverImageTask(task)) return;
                         new GeneratedImageNotePickerModal(this.app, note => {
+                            if (!canDeliverImageTask(task)) return;
                             savingToNote = true;
                             void saveGeneratedImageToNote(this.app, images, assetRef, note,
-                                `generated_${task.taskId}_${output.providerOrdinal}`).then(() => {
+                                `generated_${task.taskId}_${output.providerOrdinal}`, () => {
+                                    if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
+                                }).then(() => {
                                 new Notice(t('plugin.chat.createImage.savedToNote', { note: note.path }));
                             }).catch(error => {
                                 this.host.log('Could not save generated image to note', error);
@@ -1878,7 +1945,8 @@ export class LLMView extends ItemView {
             const details = card.createEl('details', { cls: 'pa-chat-image-task-card__details' });
             details.createEl('summary', { text: t('plugin.chat.createImage.details') });
             details.createDiv({ text: t('plugin.chat.createImage.prompt', { prompt: task.request.userPrompt }) });
-            details.createDiv({ text: t('plugin.chat.createImage.submitted', { prompt: task.request.submittedPrompt }) });
+            if (canDeliverOutputs) details.createDiv({ text: t('plugin.chat.createImage.submitted',
+                { prompt: task.request.submittedPrompt }) });
             details.createDiv({ text: t('plugin.chat.createImage.modelCount', { model: task.request.model,
                 count: task.request.count, createdAt: task.createdAt }) });
             if (task.request.size) details.createDiv({ text: t('plugin.chat.createImage.size', { size: task.request.size }) });
@@ -2834,11 +2902,18 @@ export class LLMView extends ItemView {
                 if (message.writingVersionId) { new WritingVersionModal(this.app, host, message.writingVersionId).open(); return; }
                 const recovery = message.writingRecovery;
                 if (!recovery) return;
+                const generationInput = recovery.generationInput;
+                const recoveryScope = this.conversationPersistence.currentSourceSelection.scope;
                 const generationSourceCurrent = writingRecoverySources.get(message);
-                const requiresSourceConfirmation = !generationSourceCurrent
-                    && (!recovery.generationInput
-                        || generationInputNeedsRecoveryConfirmation(recovery.generationInput));
-                const hasCompleteGenerationIdentity = Boolean(generationSourceCurrent) || !requiresSourceConfirmation;
+                const recordedLineage = generationInput?.schemaVersion === 2
+                    ? generationInputSnapshotInputLineage(generationInput) : undefined;
+                const requiresSourceConfirmation = !generationInput
+                    || Boolean(recovery.parentVersionId)
+                    || recordedLineage?.completeness === 'unknown'
+                    || recordedLineage?.dependencies.some(dependency => dependency.kind === 'writing-version') === true
+                    || generationInputRequiresConfirmationDespiteLiveReceipt(generationInput)
+                    || (!generationSourceCurrent
+                        && generationInputNeedsRecoveryConfirmation(generationInput));
                 new WritingRecoveryModal(this.app, recovery, async (text, origin, confirmedIncompleteSources) => {
                     if (!isCurrentSession()) throw new Error('Writing view closed');
                     if (requiresSourceConfirmation && confirmedIncompleteSources !== true) {
@@ -2852,10 +2927,25 @@ export class LLMView extends ItemView {
                         // A failed generating receipt is never downgraded to an
                         // incomplete record. Reload confirmation only covers
                         // missing history; recorded sources still need checks.
-                        const sourceCurrent = generationSourceCurrent ?? (await this.host.prepareWritingRecoverySources?.(
-                            recovery, images, context.conversationId,
-                            readChatHistoryTurnMetadata(message, entry.memoryMetadata)))?.isCurrent;
+                        const needsRecordedVerification = generationInput?.schemaVersion === 2
+                            || Boolean(recovery.parentVersionId) || !generationSourceCurrent;
+                        const prepared = needsRecordedVerification
+                            ? await this.host.prepareWritingRecoverySources?.(recovery, images, context.conversationId,
+                                readChatHistoryTurnMetadata(message, entry.memoryMetadata), recoveryScope)
+                            : undefined;
+                        const sourceCurrent = prepared
+                            ? () => (!generationSourceCurrent || generationSourceCurrent()) && prepared.isCurrent()
+                            : needsRecordedVerification ? undefined : generationSourceCurrent;
                         if (!sourceCurrent) throw new Error('Writing recovery verification unavailable');
+                        if (generationInput?.schemaVersion === 2 && prepared?.lineageComplete !== true
+                            && confirmedIncompleteSources !== true) {
+                            throw new Error('Writing recovery requires source confirmation');
+                        }
+                        const hasCompleteGenerationIdentity = Boolean(generationInput)
+                            && (generationInput?.schemaVersion === 2
+                                ? prepared?.lineageComplete === true
+                                    && !generationInputRequiresConfirmationDespiteLiveReceipt(generationInput)
+                                : !requiresSourceConfirmation);
                         version = await host.versions.create({ ...context, requestId: newWritingActionId(),
                             messageId: recovery.messageId ?? recovery.requestId, text, origin,
                             parentVersionId: recovery.parentVersionId,
@@ -2867,7 +2957,9 @@ export class LLMView extends ItemView {
                                 ? { referenceScope: 'request' as const }
                                 : { referenceScopeUnverified: true }),
                             images,
-                        }, () => isCurrentSession() && isCurrent() && sourceCurrent());
+                        }, () => isCurrentSession() && isCurrent()
+                            && this.conversationPersistence.currentSourceSelection.scope === recoveryScope
+                            && sourceCurrent());
                         message.writingVersionId = version.id;
                     });
                     if (!persisted || !version) { delete message.writingVersionId; throw new Error('Writing persistence unavailable'); }
@@ -4271,6 +4363,12 @@ export class LLMView extends ItemView {
             if (!isLiveTurn()) return false;
 
             const userMessage: ChatMessage = { role: 'user', content: prompt,
+                inputLineage: completeInputLineage([{ kind: 'user-text',
+                    messageId: turn.userProvenance?.messageId ?? turn.runSourceSelection?.userMessageId ?? String(turn.id) },
+                ...(turn.images ?? []).map(image => ({ kind: 'attachment' as const,
+                    ownerMessageId: turn.userProvenance?.messageId ?? turn.runSourceSelection?.userMessageId ?? String(turn.id),
+                    ref: { ...image.ref } }))]),
+                ...(turn.runSourceSelection ? { runSourceSelection: turn.runSourceSelection } : {}),
                 ...(turn.images?.length ? { images: cloneMessageImages(turn.images) } : {}),
                 ...(turn.writingIntent ? { writingAction: { kind: 'writing' as const,
                     ...((turn.writingSelectedParent ?? turn.writingParent)?.id
@@ -4280,6 +4378,9 @@ export class LLMView extends ItemView {
             const assistantMessage: ChatMessage = {
                 role: 'assistant',
                 content: visibleContent,
+                inputLineage: cloneInputLineage(canonicalTurn?.inputLineage ?? turn.memoryMetadata?.inputLineage)
+                    ?? unknownInputLineage(),
+                ...(turn.runSourceSelection ? { runSourceSelection: turn.runSourceSelection } : {}),
                 hostProvenance: { version: 1, messageId: `${turn.userProvenance?.messageId ?? turn.id}-assistant`, kind: 'ai_draft' },
                 ...(turn.writingRecovery ? { writingRecovery: { ...turn.writingRecovery,
                     parentVersionId: turn.writingRecovery.parentVersionId ?? turn.writingParent?.id,
@@ -4330,9 +4431,12 @@ export class LLMView extends ItemView {
             timelineEntries.push(historyEntry);
             if (!sawLegacyPartialFailure) this.result = sourceChanged ? '' : visibleContent;
             readConversationImageAnchor();
+            let createdWritingVersion: WritingVersion | undefined;
             const persisted = await this.conversationPersistence.persistFinalizedTurn(prompt, historyEntry,
                 turn.writingArtifact && this.host.writingVersions ? async (context, isCurrent) => {
                     const artifact = turn.writingArtifact!;
+                    if (artifact.resultFact && (artifact.resultFact.kind !== 'artifact_ready'
+                        || artifact.resultFact.requestId !== artifact.requestId)) return;
                     const version = await this.host.writingVersions!.create({ ...context,
                         requestId: artifact.requestId, messageId: artifact.messageId, text: artifact.body,
                         explanation: artifact.explanation, parentVersionId: artifact.writingContext
@@ -4345,15 +4449,20 @@ export class LLMView extends ItemView {
                             turn.canonicalLifecycle.hostSourceRecords ?? [], artifact.generationInput,
                         ),
                     }, () => isCurrent() && artifact.isSourceCurrent?.() !== false);
+                    createdWritingVersion = version;
                     assistantMessage.writingVersionId = version.id;
-                    if (isCurrent() && isCurrentSession()) {
-                        selectedWritingVersion = version;
-                        selectedWritingParentExplicit = false;
-                    }
                 } : undefined,
                 turn.userProvenance?.messageId,
             );
-            if (turn.writingRequestId && !persisted && isCurrentSession()) new Notice(t('plugin.chat.writing.historyUnavailable'), 12000);
+            if (createdWritingVersion && isCurrentSession()) {
+                selectedWritingVersion = createdWritingVersion;
+                selectedWritingParentExplicit = false;
+            }
+            if (turn.writingRequestId && !persisted && isCurrentSession()) {
+                new Notice(t(createdWritingVersion
+                    ? 'plugin.chat.writing.historyUnavailable'
+                    : 'plugin.chat.writing.versionUnavailable'), 12000);
+            }
             if (!turn.writingRequestId && !sawLegacyPartialFailure && !sourceChanged) {
                 await maybeRenderOperationsSaveSuggestion(turn, prompt, responseContent);
             }
@@ -4565,8 +4674,15 @@ export class LLMView extends ItemView {
             };
             if (retryImageOperation) turn.userProvenance!.messageId = retryImageOperation.stableMessageId;
             const stableMessageId = turn.userProvenance!.messageId;
+            // Capture before the first persistence/lease await. Later scope edits belong to the next run.
+            const runSourceSelection = this.conversationPersistence.captureRunSourceSelection(stableMessageId);
+            turn.runSourceSelection = runSourceSelection;
             const persistedUserMessage: ChatMessage = {
                 role: 'user', content: prompt,
+                inputLineage: completeInputLineage([{ kind: 'user-text', messageId: stableMessageId },
+                    ...turnImages.map(image => ({ kind: 'attachment' as const,
+                        ownerMessageId: stableMessageId, ref: { ...image.ref } }))]),
+                runSourceSelection,
                 ...(turnImages.length ? { images: cloneMessageImages(turnImages) } : {}),
                 ...(explicitWritingIntent ? { writingAction: { kind: 'writing' as const,
                     ...((writingSelectedParent ?? writingParent)?.id
@@ -4700,7 +4816,7 @@ export class LLMView extends ItemView {
                     try {
                         for (const task of await imageGeneration.list(conversationIdForMemoryActions)) {
                             if (task.stableMessageId === stableMessageId) priorImageRequests.set(task.operationId, task);
-                            if (task.deliverySuppressed) continue;
+                            if (!canDeliverImageTask(task)) continue;
                             for (const output of task.outputs) {
                                 if (output.saveState !== 'saved' || !output.assetRef) continue;
                                 authorizedImageRefs.set(imageRefToken(output.assetRef), cloneImageRef(output.assetRef));
@@ -4724,7 +4840,8 @@ export class LLMView extends ItemView {
                     conversationId: conversationIdForMemoryActions,
                     stableMessageId,
                     operationId,
-                    submit: async (input: CreateImageToolInput) => {
+                    submit: async (input: CreateImageToolInput, isSourceCurrent?: () => boolean) => {
+                        if (isSourceCurrent?.() === false) throw new Error('Image prompt sources changed.');
                         if (!isSameTurn() || !imageGeneration) throw new Error('Image request is no longer current.');
                         const index = input.subrequestIndex ?? 1;
                         if (index > 1 && (!allowsSeparateImageRequests(prompt) || index > imageBudget)) {
@@ -4778,9 +4895,11 @@ export class LLMView extends ItemView {
                         if (durableConversationId !== conversationIdForMemoryActions || !isSameTurn()) {
                             throw new Error('Image conversation is unavailable.');
                         }
+                        if (isSourceCurrent?.() === false) throw new Error('Image prompt sources changed.');
                         const accepted = await imageGeneration.submit({ conversationId: durableConversationId,
                             stableMessageId, operationId: requestOperationId, userPrompt: prompt, submittedPrompt: input.prompt,
-                            operation: input.operation, count: input.count, inputRefs, ...(parentVersionId ? { parentVersionId } : {}) });
+                            operation: input.operation, count: input.count, inputRefs, ...(parentVersionId ? { parentVersionId } : {}),
+                            ...(isSourceCurrent ? { isSourceCurrent } : {}) });
                         acceptedImageTaskId = accepted.taskId;
                         acceptedImageSubrequests.add(index);
                         const operation = imageOperationByTurn.get(turn.id);
@@ -4800,6 +4919,10 @@ export class LLMView extends ItemView {
                         count: requestedImageCount(prompt), referenceImageRefs: chosenRefs,
                         ...(explicitImageIntent.parentVersionId ? { parentVersionId: explicitImageIntent.parentVersionId } : {}) });
                 }
+                const legacyWritingLineage = turn.writingParent && runSourceSelection && this.host.writingVersions
+                    ? await resolveWritingVersionInputLineage(turn.writingParent,
+                        id => this.host.writingVersions!.get(id)) : undefined;
+                if (!isLiveTurn()) throw new DOMException('Cancelled', 'AbortError');
                 await this.chatService.streamLLM(
                     `${prompt}${imageInstructions}${selectedInstruction}`,
                     (chunk) => {
@@ -4812,6 +4935,7 @@ export class LLMView extends ItemView {
                     {
                         memoryMode: "auto",
                         userText: prompt,
+                        runSourceSelection,
                         conversationId: conversationIdForMemoryActions ?? undefined,
                         images: chatSupportsImages ? turnImages : [],
                         createImage,
@@ -4820,10 +4944,12 @@ export class LLMView extends ItemView {
                         writingContextHost,
                         writingOutputProtocol: nativeWriting ? 'native' : undefined,
                         prepareWritingStyle: writingRequest && this.host.prepareWritingStyle
-                            ? (budget) => this.host.prepareWritingStyle!(prompt, turn.writingParent?.scene, budget) : undefined,
+                            ? (budget) => this.host.prepareWritingStyle!(prompt,
+                                runSourceSelection ? undefined : turn.writingParent?.scene, budget) : undefined,
                         writingContext: turn.writingParent ? {
                             parentVersionId: turn.writingParent.id, text: turn.writingParent.text,
                             textHash: turn.writingParent.textHash, associatedImages: turn.writingParent.associatedImages,
+                            ...(legacyWritingLineage ? { inputLineage: legacyWritingLineage } : {}),
                         } : undefined,
                         writingMaterialContext: turn.writingMaterialContext,
                         pageletHandoff: turnPageletHandoff ?? undefined,
@@ -5166,6 +5292,146 @@ export class LLMView extends ItemView {
             moreButton.setAttribute('aria-expanded', 'false');
         });
         const memoryMenuAutoClose = createIdleMenuAutoClose(memoryMenu, memoryChip, closeMemoryMenu);
+        const closeSourceScopeMenu = () => {
+            sourceScopeMenu.hidden = true;
+            sourceScopeButton.setAttribute('aria-expanded', 'false');
+        };
+        const sourceScopeMenuAutoClose = createIdleMenuAutoClose(
+            sourceScopeMenu, sourceScopeButton, closeSourceScopeMenu);
+        const selectedScopeChoice = () => scopeChoices.find(choice =>
+            choice.scope === this.conversationPersistence.currentSourceSelection.scope) ?? scopeChoices[0];
+        const syncSourceScopeControl = () => {
+            const selected = selectedScopeChoice();
+            const label = t('plugin.chat.sourceScope.control', { scope: selected.name });
+            setIcon(sourceScopeButton, selected.icon);
+            sourceScopeButton.setAttribute('aria-label', label);
+            sourceScopeButton.setAttribute('title', `${label} — ${selected.description}`);
+            sourceScopeButton.setAttribute('data-source-scope', selected.scope);
+            sourceScopeMenu.setAttribute('aria-label', label);
+            for (const choice of scopeChoices) {
+                choice.button.setAttribute('aria-checked', String(choice.scope === selected.scope));
+            }
+            retrySourceScopeButton.hidden = !this.conversationPersistence.didSourceSelectionSaveFail;
+        };
+        const openSourceScopeMenu = () => {
+            composerMenuAutoClose.close();
+            memoryMenuAutoClose.close();
+            syncSourceScopeControl();
+            sourceScopeMenu.hidden = false;
+            sourceScopeButton.setAttribute('aria-expanded', 'true');
+            updateChatMenuAvailableWidth(sourceScopeMenu);
+            sourceScopeMenuAutoClose.schedule();
+            selectedScopeChoice().button.focus();
+        };
+        sourceScopeButton.onclick = () => {
+            if (sourceScopeMenu.hidden) openSourceScopeMenu();
+            else sourceScopeMenuAutoClose.close();
+        };
+        sourceScopeButton.addEventListener('keydown', (event: KeyboardEvent) => {
+            // Enter and Space use the button's native click activation once.
+            if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+            event.preventDefault();
+            openSourceScopeMenu();
+        });
+        const historyScopeHint = (before: ChatSourceScope, after: ChatSourceScope) => {
+            if (before === after) return '';
+            if (after === 'notes') return t('plugin.chat.sourceScope.historyToNotes');
+            if (after === 'web') return t('plugin.chat.sourceScope.historyToWeb');
+            return '';
+        };
+        const changeSourceScope = (scope: ChatSourceScope) => {
+            sourceScopeMenuAutoClose.close();
+            const before = this.conversationPersistence.currentSourceSelection.scope;
+            if (scope === before) return;
+            const conversationId = this.conversationPersistence.activeConversationId;
+            const selectedName = scopeChoices.find(choice => choice.scope === scope)!.name;
+            const explanation = historyScopeHint(before, scope);
+            const message = [isGenerating() ? t('plugin.chat.sourceScope.nextMessage', { scope: selectedName }) : '',
+                explanation].filter(Boolean).join(' ');
+            if (message) showComposerHint(message);
+            void this.conversationPersistence.selectSourceScope(scope).then(saved => {
+                if (!isCurrentSession() || this.conversationPersistence.activeConversationId !== conversationId
+                    || this.conversationPersistence.currentSourceSelection.scope !== scope) return;
+                syncSourceScopeControl();
+                if (!saved && conversationId && this.conversationPersistence.didSourceSelectionSaveFail) {
+                    showComposerHint(t('plugin.chat.sourceScope.saveFailed'));
+                }
+            });
+            syncSourceScopeControl();
+        };
+        const onSourceScopeMenuKeydown = (button: HTMLButtonElement, event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                sourceScopeMenuAutoClose.close();
+                sourceScopeButton.focus();
+            } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                const controls = [...scopeChoices.map(choice => choice.button),
+                    ...(!retrySourceScopeButton.hidden ? [retrySourceScopeButton] : [])];
+                const index = controls.indexOf(button);
+                if (index < 0) return;
+                controls[(index + (event.key === 'ArrowDown' ? 1 : controls.length - 1))
+                    % controls.length].focus();
+            }
+        };
+        scopeChoices.forEach((choice) => {
+            choice.button.onclick = () => {
+                changeSourceScope(choice.scope);
+                sourceScopeButton.focus();
+            };
+            choice.button.addEventListener('keydown', (event: KeyboardEvent) =>
+                onSourceScopeMenuKeydown(choice.button, event));
+        });
+        retrySourceScopeButton.addEventListener('keydown', (event: KeyboardEvent) =>
+            onSourceScopeMenuKeydown(retrySourceScopeButton, event));
+        retrySourceScopeButton.onclick = () => {
+            sourceScopeMenuAutoClose.close();
+            const conversationId = this.conversationPersistence.activeConversationId;
+            const scope = this.conversationPersistence.currentSourceSelection.scope;
+            void this.conversationPersistence.retryPendingSourceSelection().then(saved => {
+                if (!isCurrentSession() || this.conversationPersistence.activeConversationId !== conversationId
+                    || this.conversationPersistence.currentSourceSelection.scope !== scope) return;
+                syncSourceScopeControl();
+                showComposerHint(t(saved ? 'plugin.chat.sourceScope.saved' : 'plugin.chat.sourceScope.saveFailed'));
+            });
+        };
+        const sourceScopeDocument = containerEl.ownerDocument ?? getOptionalPlatformDocument();
+        const onSourceScopeOutsidePointer = (event: Event) => {
+            if (sourceScopeMenu.hidden || sourceScopeControl.contains(event.target as Node)) return;
+            sourceScopeMenuAutoClose.close();
+        };
+        for (const event of ['pointerdown', 'click']) {
+            sourceScopeDocument?.addEventListener?.(event, onSourceScopeOutsidePointer, true);
+        }
+        let sourceScopeLongPressTimer: PlatformTimeoutHandle | null = null;
+        const clearSourceScopeLongPress = () => {
+            if (sourceScopeLongPressTimer !== null) clearPlatformTimeout(sourceScopeLongPressTimer);
+            sourceScopeLongPressTimer = null;
+        };
+        sourceScopeButton.addEventListener('touchstart', () => {
+            clearSourceScopeLongPress();
+            sourceScopeLongPressTimer = setPlatformTimeout(() => {
+                sourceScopeLongPressTimer = null;
+                if (!isCurrentSession()) return;
+                const choice = selectedScopeChoice();
+                showComposerHint(`${choice.name}: ${choice.description}`);
+            }, 550);
+        }, { passive: true });
+        for (const event of ['touchend', 'touchcancel']) {
+            sourceScopeButton.addEventListener(event, clearSourceScopeLongPress);
+        }
+        this.registerViewTeardown(() => {
+            for (const event of ['pointerdown', 'click']) {
+                sourceScopeDocument?.removeEventListener?.(event, onSourceScopeOutsidePointer, true);
+            }
+            clearSourceScopeLongPress();
+        });
+        const unsubscribeSourceScope = this.host.chatHistoryManager?.subscribeConversationSourceSelection?.((event) => {
+            if (!isCurrentSession() || event.conversationId !== this.conversationPersistence.activeConversationId) return;
+            queueMicrotask(() => { if (isCurrentSession()) syncSourceScopeControl(); });
+        });
+        if (unsubscribeSourceScope) this.registerViewTeardown(unsubscribeSourceScope);
+        syncSourceScopeControl();
 
         const applyRestoredConversation = (
             conversation: PersistedConversation,
@@ -5173,6 +5439,10 @@ export class LLMView extends ItemView {
         ) => {
             const hydrated = this.conversationPersistence.hydrateConversation(conversation, turns);
             if (!hydrated) return;
+            syncSourceScopeControl();
+            if (this.conversationPersistence.currentSourceSelection.basis === 'conservative-fallback') {
+                showComposerHint(t('plugin.chat.sourceScope.legacyChoice'));
+            }
             imageTasksConversationId = conversation.id;
             imageOperationByTurn.clear();
             conversationAnchorFile = undefined;
@@ -5280,6 +5550,7 @@ export class LLMView extends ItemView {
             imageOperationByTurn.clear();
             clearImageTaskCards();
             this.conversationPersistence.resetActiveConversationState();
+            syncSourceScopeControl();
             conversationAnchorFile = undefined;
             this.resetRoleIdenticonSessionSeed();
             this.unloadAllMarkdownRenderOwners();
@@ -5325,6 +5596,7 @@ export class LLMView extends ItemView {
                         this.chatHistory = [];
                         timelineEntries = [];
                         this.conversationPersistence.resetActiveConversationState();
+                        syncSourceScopeControl();
                         conversationAnchorFile = undefined;
                         this.resetRoleIdenticonSessionSeed();
                         this.unloadAllMarkdownRenderOwners();
@@ -5406,6 +5678,7 @@ export class LLMView extends ItemView {
         moreButton.onclick = () => {
             const willOpen = composerMenu.hidden;
             if (willOpen) {
+                sourceScopeMenuAutoClose.close();
                 memoryMenuAutoClose.close();
                 pendingSavesButton.hidden = true;
                 composerMenu.hidden = false;
@@ -5441,6 +5714,7 @@ export class LLMView extends ItemView {
 
         const toggleMemoryMenu = (anchor: HTMLElement, trigger: HTMLButtonElement) => {
             const willOpen = memoryMenu.hidden;
+            sourceScopeMenuAutoClose.close();
             composerMenuAutoClose.close();
             if (!willOpen) {
                 memoryMenuAutoClose.close();
@@ -5493,6 +5767,7 @@ export class LLMView extends ItemView {
         this.mobileInputAdapter.disconnectKeyboardClearance();
         this.disconnectMemoryStatusListener();
         this.disconnectSettingsChangeListener();
+        this.conversationPersistence.dispose();
         this.mobileInputAdapter.teardownMobileTabBarAutoHide();
         this.clearChatDrawerHost();
         this.clearPendingPageletHandoff();

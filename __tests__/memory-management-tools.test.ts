@@ -6,6 +6,7 @@ import type {
 } from "../src/ai-services/AiServiceHost";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
 import { PaAgentRuntime } from "../src/ai-services/pa-agent-runtime";
+import { TaskSourceConstraintState } from '../src/ai-services/task-source-constraint';
 
 jest.mock("obsidian");
 
@@ -65,6 +66,24 @@ function createRuntimeRegistry(host = createHost()): CapabilityRegistry {
 }
 
 describe("B-140 T-08 Memory management Chat tools", () => {
+    it('does not reach a scoped Memory content port after Memory is turned off during preparation', async () => {
+        let releasePrepare!: (value: unknown) => void;
+        const prepareObservation = jest.fn(() => new Promise(resolve => { releasePrepare = resolve; }));
+        const queryMemories = jest.fn(async () => { throw new Error('revoked Memory content read'); });
+        const host = createPortHost({ prepareObservation, queryMemories } as unknown as MemoryManagementReadPort);
+        const state = new TaskSourceConstraintState({ runId: 'combined-memory', userMessageId: 'user',
+            userText: 'Read Memory', noteHandles: new Map(), sourceScope: 'combined' });
+        const guard = state.createReadGuard(state.snapshot(), () => undefined, () => true,
+            undefined, undefined, undefined, () => host.settings.memoryEnabled === true);
+        const registry = createRuntimeRegistry(host);
+        const pending = registry.execute('query_memories', { text: 'private' }, { host, taskSourceReadGuard: guard });
+        await Promise.resolve();
+        expect(prepareObservation).toHaveBeenCalledTimes(1);
+        host.settings.memoryEnabled = false;
+        releasePrepare({ purpose: 'memory_management', ready: true, memoryEnabled: true, stateFingerprint: 'old' });
+        await pending;
+        expect(queryMemories).not.toHaveBeenCalled();
+    });
     it("exports and admits the three fixed read-only management tools", () => {
         const registry = createRuntimeRegistry();
         const names = registry.listDefinitions().map((definition) => definition.name);

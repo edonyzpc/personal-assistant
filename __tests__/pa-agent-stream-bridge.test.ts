@@ -78,8 +78,7 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
         const events: LegacyAgentEvent[] = [];
         const adapter = new CanonicalToLegacyEventAdapter(new AgentEventEmitter(event => events.push(event)), undefined,
             native ? { request, nativeContextHandle: request.requestId, maxTextChars: 10000, isCurrent: () => true } : undefined);
-        const { hostPolicy } = createRequiredCapabilityHostPolicy({ userInput: "Explain this idea.",
-            availableCapabilities: new Set(), classification: { items: [] } });
+        const { hostPolicy } = createRequiredCapabilityHostPolicy();
         const loop = new PaAgentLoop({ runId: "missing-native-call", userInput: "Explain this idea.",
             hostPolicy, model: { stream: async function* () {
                 yield { type: "text_delta", text };
@@ -106,11 +105,8 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
         ]);
     });
 
-    it.each([false, true])("keeps a missing native call incomplete when required context is available: %s", async available => {
-        const { hostPolicy } = createRequiredCapabilityHostPolicy({ userInput: "Read the current note.",
-            availableCapabilities: new Set(available ? ["get_current_note_context"] : []),
-            classification: { items: [{ capability: "get_current_note_context", level: "required", confidence: 1, reason: "explicit" }] },
-        });
+    it("keeps a missing native call incomplete without predicting a required capability", async () => {
+        const { hostPolicy } = createRequiredCapabilityHostPolicy();
         const result = await new PaAgentLoop({ runId: "required-missing-native", userInput: "Read the current note.",
             hostPolicy, model: { stream: async function* () {
                 yield { type: "text_delta", text: "<tool_calls></tool_calls>" };
@@ -119,7 +115,7 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
         }).run();
         expect(result.status).toBe("incomplete");
         expect(result.committedFinalText).toBe("");
-        expect(result.turns).toHaveLength(available ? 2 : 1);
+        expect(result.turns).toHaveLength(1);
         expect(result.turns.every(turn => turn.status === "incomplete")).toBe(true);
     });
     it.each(["current", "revoked", "cancelled"] as const)(

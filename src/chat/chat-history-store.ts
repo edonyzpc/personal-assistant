@@ -2,8 +2,10 @@ import type { Vault } from "obsidian";
 import { getVaultConfigDirStorageScope } from "../obsidian-paths";
 import { getPlatformIDBKeyRange, getPlatformIndexedDB } from "../platform-dom";
 import { cloneContextReductionReceipt } from "../pa/contracts/context-trace";
+import { parseConversationSourceSelection, parseRunSourceSelection,
+    type ChatSourceScope, type ConversationSourceSelection } from "../ai-services/chat-source-scope";
 import { cloneChatHostProvenance, type ChatHostProvenance } from "../ai-services/chat-provenance";
-import { cloneWritingVersion, hashWritingText, writingSceneSchema, type WritingVersion } from "./writing-types";
+import { cloneStoredWritingVersion, cloneWritingVersion, hashWritingText, writingSceneSchema, type WritingVersion } from "./writing-types";
 import { cloneGenerationInputSnapshot } from "../ai-services/generation-input-snapshot";
 import {
     cloneGeneratedImageVersion, cloneImageGenerationTask,
@@ -11,6 +13,7 @@ import {
 } from "./image-generation-types";
 import { cloneSaveReceipt, assertSaveReceiptUpdate, type SaveReceipt } from "./save-receipt-types";
 import { cloneSourceRecord } from "../ai-services/source-store";
+import { cloneRecordedInputLineage } from "../ai-services/input-lineage";
 import {
     assertVaultObservationHistory,
     cloneVaultObservationEvidence,
@@ -75,6 +78,7 @@ export interface PersistedConversation {
     preview: string;
     operationsSaveSuggestionState?: "offered" | "accepted" | "declined";
     imageAnchor?: ConversationImageAnchor;
+    sourceSelection?: ConversationSourceSelection;
 }
 
 export interface PersistedChatMessage {
@@ -86,6 +90,8 @@ export interface PersistedChatMessage {
     turnStatus?: TurnEndStatus;
     images?: MessageImage[];
     hostProvenance?: ChatHostProvenance;
+    runSourceSelection?: import('../ai-services/chat-source-scope').RunSourceSelection;
+    inputLineage?: import('../ai-services/input-lineage').InputLineage;
     writingVersionId?: string;
     writingAction?: ChatMessage["writingAction"];
     writingRecovery?: ChatWritingRecovery;
@@ -119,6 +125,8 @@ export interface ChatHistoryStore {
     listConversations(): Promise<PersistedConversation[]>;
     getConversation(id: string): Promise<PersistedConversation | null>;
     upsertConversation(conversation: PersistedConversation): Promise<void>;
+    /** Atomically advances the latest committed choice, independent of turn writes. */
+    updateConversationSourceSelection(id: string, scope: ChatSourceScope): Promise<ConversationSourceSelection | null>;
     deleteConversation(id: string): Promise<void>;
     renameConversationImageAnchors(oldPath: string, newPath: string): Promise<void>;
 
@@ -168,7 +176,7 @@ export interface ChatHistoryStore {
     claimImageGenerationSubmission(taskId: string, expectedRevision: number, updatedAt: string): Promise<ImageGenerationTask | null>;
     getGeneratedImageVersion(versionId: string): Promise<GeneratedImageVersion | null>;
     listGeneratedImageVersions(taskId: string): Promise<GeneratedImageVersion[]>;
-    putGeneratedImageVersion(version: GeneratedImageVersion): Promise<void>;
+    putGeneratedImageVersion(version: GeneratedImageVersion, assertSourceCurrent?: () => void): Promise<void>;
 
     dispose(): Promise<void>;
 }
@@ -272,6 +280,15 @@ export class MemoryChatHistoryStore extends ChatDebugDeletionNotifications imple
         this.conversations.set(conversation.id, preserveConversationAnchor(conversation, this.conversations.get(conversation.id)));
     }
 
+    async updateConversationSourceSelection(id: string, scope: ChatSourceScope): Promise<ConversationSourceSelection | null> {
+        const previous = this.conversations.get(id);
+        if (!previous) return null;
+        const revision = (parseConversationSourceSelection(previous.sourceSelection)?.revision ?? 0) + 1;
+        const selection: ConversationSourceSelection = { schemaVersion: 1, scope, revision, basis: 'user' };
+        this.conversations.set(id, { ...cloneConversation(previous), sourceSelection: selection });
+        return { ...selection };
+    }
+
     async renameConversationImageAnchors(oldPath: string, newPath: string): Promise<void> {
         validateImagePath(oldPath); validateImagePath(newPath);
         for (const [id, conversation] of this.conversations) this.conversations.set(id, renameConversationAnchor(conversation, oldPath, newPath));
@@ -293,7 +310,7 @@ export class MemoryChatHistoryStore extends ChatDebugDeletionNotifications imple
         const matched: PersistedTurn[] = [];
         for (const [key, turn] of this.turns) {
             if (key >= lower && key < upper) {
-                matched.push(cloneTurn(turn));
+                matched.push(cloneTurn(turn, true));
             }
         }
         matched.sort((a, b) => a.turnIndex - b.turnIndex);
@@ -431,10 +448,10 @@ export class MemoryChatHistoryStore extends ChatDebugDeletionNotifications imple
     }
 
     async getWritingVersion(id: string): Promise<WritingVersion | null> {
-        const value = this.writingVersions.get(id); return value ? cloneWritingVersion(value) : null;
+        const value = this.writingVersions.get(id); return value ? cloneStoredWritingVersion(value) : null;
     }
     async listWritingVersions(conversationId: string): Promise<WritingVersion[]> {
-        return [...this.writingVersions.values()].filter((v) => v.conversationId === conversationId).map(cloneWritingVersion);
+        return [...this.writingVersions.values()].filter((v) => v.conversationId === conversationId).map(cloneStoredWritingVersion);
     }
     async putWritingVersion(version: WritingVersion, assertSourceCurrent?: () => void): Promise<void> {
         const copy = cloneWritingVersion(version);
@@ -504,10 +521,11 @@ export class MemoryChatHistoryStore extends ChatDebugDeletionNotifications imple
     async listGeneratedImageVersions(taskId: string): Promise<GeneratedImageVersion[]> {
         return [...this.generatedImageVersions.values()].filter((version) => version.taskId === taskId).map(cloneGeneratedImageVersion);
     }
-    async putGeneratedImageVersion(version: GeneratedImageVersion): Promise<void> {
+    async putGeneratedImageVersion(version: GeneratedImageVersion, assertSourceCurrent?: () => void): Promise<void> {
         const copy = cloneGeneratedImageVersion(version), previous = this.generatedImageVersions.get(copy.versionId);
         assertGeneratedImageVersion(copy, this.imageGenerationTasks.get(copy.taskId), previous,
             [...this.generatedImageVersions.values()]);
+        assertSourceCurrent?.();
         this.generatedImageVersions.set(copy.versionId, copy);
     }
 
@@ -607,6 +625,20 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
         });
     }
 
+    async updateConversationSourceSelection(id: string, scope: ChatSourceScope): Promise<ConversationSourceSelection | null> {
+        let committed: ConversationSourceSelection | null = null;
+        await this.writeTransaction([CONVERSATIONS_STORE], async (tx) => {
+            const store = tx.objectStore(CONVERSATIONS_STORE);
+            const previous = await requestToPromise<PersistedConversation | undefined>(store.get(id));
+            if (!previous) return;
+            const revision = (parseConversationSourceSelection(previous.sourceSelection)?.revision ?? 0) + 1;
+            const selection: ConversationSourceSelection = { schemaVersion: 1, scope, revision, basis: 'user' };
+            store.put({ ...cloneConversation(previous), sourceSelection: selection });
+            committed = { ...selection };
+        });
+        return committed;
+    }
+
     async deleteConversation(id: string): Promise<void> {
         await this.observeDeletion(id, () => this.writeTransaction([DEBUG_DELETIONS_STORE, CONVERSATIONS_STORE, METADATA_STORE, TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE,
             SAVE_RECEIPTS_STORE, IMAGE_GENERATION_TASKS_STORE, GENERATED_IMAGE_VERSIONS_STORE], async (transaction) => {
@@ -636,7 +668,7 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
         const range = makeIDBKeyRange().bound(turnPrefix(conversationId), turnUpperBound(conversationId), false, true);
         const records = await requestToPromise<Array<TurnRecord>>(store.getAll(range));
         return records
-            .map((record) => cloneTurn(record.turn))
+            .map((record) => cloneTurn(record.turn, true))
             .sort((a, b) => a.turnIndex - b.turnIndex);
     }
 
@@ -783,11 +815,11 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
 
     async getWritingVersion(id: string): Promise<WritingVersion | null> {
         const value = await requestToPromise<unknown>(this.getStore(WRITING_VERSIONS_STORE, 'readonly').get(id));
-        return value === undefined ? null : cloneWritingVersion(value);
+        return value === undefined ? null : cloneStoredWritingVersion(value);
     }
     async listWritingVersions(conversationId: string): Promise<WritingVersion[]> {
         return (await requestToPromise<unknown[]>(this.getStore(WRITING_VERSIONS_STORE, 'readonly').getAll()))
-            .map(cloneWritingVersion).filter((v) => v.conversationId === conversationId);
+            .map(cloneStoredWritingVersion).filter((v) => v.conversationId === conversationId);
     }
     async putWritingVersion(version: WritingVersion, assertSourceCurrent?: () => void): Promise<void> {
         const copy = cloneWritingVersion(version);
@@ -907,8 +939,9 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
         }
         return versions;
     }
-    async putGeneratedImageVersion(version: GeneratedImageVersion): Promise<void> {
+    async putGeneratedImageVersion(version: GeneratedImageVersion, assertSourceCurrent?: () => void): Promise<void> {
         const copy = cloneGeneratedImageVersion(version);
+        assertSourceCurrent?.();
         await this.writeTransaction([IMAGE_GENERATION_TASKS_STORE, GENERATED_IMAGE_VERSIONS_STORE], async (tx) => {
             const versions = tx.objectStore(GENERATED_IMAGE_VERSIONS_STORE);
             const taskValue = await requestToPromise<unknown>(tx.objectStore(IMAGE_GENERATION_TASKS_STORE).get(copy.taskId));
@@ -926,6 +959,7 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
                 }
             }
             assertGeneratedImageVersion(copy, task, previous, allVersions);
+            assertSourceCurrent?.();
             versions.put(copy);
         });
     }
@@ -1142,6 +1176,10 @@ export class UnavailableChatHistoryStore implements ChatHistoryStore {
         throw this.error;
     }
 
+    async updateConversationSourceSelection(_id: string, _scope: ChatSourceScope): Promise<ConversationSourceSelection | null> {
+        throw this.error;
+    }
+
     async deleteConversation(_id: string): Promise<void> {
         throw this.error;
     }
@@ -1213,7 +1251,7 @@ export class UnavailableChatHistoryStore implements ChatHistoryStore {
     async claimImageGenerationSubmission(_taskId: string, _expectedRevision: number, _updatedAt: string): Promise<ImageGenerationTask | null> { throw this.error; }
     async getGeneratedImageVersion(_versionId: string): Promise<GeneratedImageVersion | null> { throw this.error; }
     async listGeneratedImageVersions(_taskId: string): Promise<GeneratedImageVersion[]> { throw this.error; }
-    async putGeneratedImageVersion(_version: GeneratedImageVersion): Promise<void> { throw this.error; }
+    async putGeneratedImageVersion(_version: GeneratedImageVersion, _assertSourceCurrent?: () => void): Promise<void> { throw this.error; }
 
     async dispose(): Promise<void> {
         // Nothing to close.
@@ -1371,13 +1409,20 @@ function makeIDBKeyRange(): typeof IDBKeyRange {
 }
 
 function cloneConversation(conversation: PersistedConversation): PersistedConversation {
-    return { ...conversation, ...(conversation.imageAnchor !== undefined ? { imageAnchor: cloneConversationImageAnchor(conversation.imageAnchor) } : {}) };
+    const { sourceSelection, ...fields } = conversation;
+    const parsedSelection = parseConversationSourceSelection(sourceSelection);
+    return { ...fields,
+        ...(conversation.imageAnchor !== undefined ? { imageAnchor: cloneConversationImageAnchor(conversation.imageAnchor) } : {}),
+        ...(parsedSelection ? { sourceSelection: parsedSelection } : {}),
+    };
 }
 function preserveConversationAnchor(incoming: PersistedConversation, previous?: PersistedConversation): PersistedConversation {
     const copy = cloneConversation(incoming);
     // Normal metadata/turn writes may carry a UI snapshot from before a rename.
     // Only the explicit rename transaction changes an already chosen anchor.
     if (previous?.imageAnchor !== undefined) copy.imageAnchor = cloneConversationImageAnchor(previous.imageAnchor);
+    const latestSelection = parseConversationSourceSelection(previous?.sourceSelection);
+    if (latestSelection) copy.sourceSelection = latestSelection;
     return copy;
 }
 function renameConversationAnchor(conversation: PersistedConversation, oldPath: string, newPath: string): PersistedConversation {
@@ -1389,12 +1434,12 @@ function renameConversationAnchor(conversation: PersistedConversation, oldPath: 
     return copy;
 }
 
-function cloneTurn(turn: PersistedTurn): PersistedTurn {
+function cloneTurn(turn: PersistedTurn, discardInvalidGenerationInput = false): PersistedTurn {
     return {
         conversationId: turn.conversationId,
         turnIndex: turn.turnIndex,
-        user: cloneMessage(turn.user),
-        assistant: cloneMessage(turn.assistant),
+        user: cloneMessage(turn.user, discardInvalidGenerationInput),
+        assistant: cloneMessage(turn.assistant, discardInvalidGenerationInput),
         ...(turn.memoryMetadata ? { memoryMetadata: cloneMemoryMetadata(turn.memoryMetadata) } : {}),
         ...(turn.vaultObservationContractVersion === 1 ? cloneVaultEvidenceState(turn) : {}),
         ...(turn.memoryManagementContractVersion === 1 ? cloneManagementEvidenceState(turn) : {}),
@@ -1406,7 +1451,7 @@ function cloneTurn(turn: PersistedTurn): PersistedTurn {
     };
 }
 
-function cloneMessage(message: PersistedChatMessage): PersistedChatMessage {
+function cloneMessage(message: PersistedChatMessage, discardInvalidGenerationInput: boolean): PersistedChatMessage {
     return {
         role: message.role,
         content: message.content,
@@ -1418,9 +1463,13 @@ function cloneMessage(message: PersistedChatMessage): PersistedChatMessage {
         ...(message.turnStatus ? { turnStatus: message.turnStatus } : {}),
         ...(message.images !== undefined ? { images: cloneMessageImages(message.images) } : {}),
         ...(message.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(message.hostProvenance) } : {}),
+        ...(parseRunSourceSelection(message.runSourceSelection)
+            ? { runSourceSelection: parseRunSourceSelection(message.runSourceSelection) } : {}),
+        ...(cloneRecordedInputLineage(message.inputLineage)
+            ? { inputLineage: cloneRecordedInputLineage(message.inputLineage) } : {}),
         ...(message.writingVersionId !== undefined ? { writingVersionId: validateWritingVersionId(message.writingVersionId) } : {}),
         ...(message.writingAction !== undefined ? { writingAction: cloneWritingAction(message.writingAction) } : {}),
-        ...(message.writingRecovery !== undefined ? { writingRecovery: cloneWritingRecovery(message.writingRecovery) } : {}),
+        ...(message.writingRecovery !== undefined ? { writingRecovery: cloneWritingRecovery(message.writingRecovery, discardInvalidGenerationInput) } : {}),
         ...(message.agentExecution ? { agentExecution: {
             ...message.agentExecution,
             ...(message.agentExecution.operationIds ? { operationIds: [...message.agentExecution.operationIds] } : {}),
@@ -1455,17 +1504,26 @@ function cloneWritingAction(value: unknown): NonNullable<ChatMessage['writingAct
         ...(action.parentVersionId !== undefined
             ? { parentVersionId: validateWritingVersionId(action.parentVersionId) } : {}) };
 }
-function cloneWritingRecovery(value: unknown): ChatWritingRecovery {
+function cloneWritingRecovery(value: unknown, discardInvalidGenerationInput: boolean): ChatWritingRecovery {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid writing recovery');
     const recovery = value as Record<string, unknown>;
     if (typeof recovery.rawText !== 'string' || recovery.rawText.length > 1_000_000
         || !['incomplete', 'provider_incomplete', 'invalid_output', 'source_changed'].includes(String(recovery.reason))) throw new Error('Invalid writing recovery');
+    let generationInput: ChatWritingRecovery['generationInput'];
+    if (recovery.generationInput !== undefined) {
+        if (discardInvalidGenerationInput) {
+            try { generationInput = cloneGenerationInputSnapshot(recovery.generationInput); }
+            catch { /* Keep the recovery draft; its source identity is now unknown. */ }
+        } else {
+            generationInput = cloneGenerationInputSnapshot(recovery.generationInput);
+        }
+    }
     return { requestId: validateWritingVersionId(recovery.requestId), rawText: recovery.rawText,
         reason: recovery.reason as ChatWritingRecovery['reason'],
         ...(recovery.scene !== undefined ? { scene: writingSceneSchema.parse(recovery.scene) } : {}),
         ...(recovery.parentVersionId !== undefined ? { parentVersionId: validateWritingVersionId(recovery.parentVersionId) } : {}),
         ...(recovery.backgroundSourceRefs !== undefined ? { backgroundSourceRefs: cloneWritingRecoverySources(recovery.backgroundSourceRefs) } : {}),
-        ...(recovery.generationInput !== undefined ? { generationInput: cloneGenerationInputSnapshot(recovery.generationInput) } : {}),
+        ...(generationInput !== undefined ? { generationInput } : {}),
         ...(recovery.messageId !== undefined ? { messageId: validateWritingVersionId(recovery.messageId) } : {}) };
 }
 function cloneWritingRecoverySources(value: unknown): PersistedSourceRef[] {
@@ -1578,6 +1636,10 @@ function cloneMemoryMetadata(metadata: ChatTurnMemoryMetadata): ChatTurnMemoryMe
         allowedMemorySourcePaths: [...metadata.allowedMemorySourcePaths],
         ...(metadata.contextUsed ? { contextUsed: metadata.contextUsed.map(cloneContextUsedItem) } : {}),
         ...(metadata.sourceRecords ? { sourceRecords: metadata.sourceRecords.map(cloneSourceRecord) } : {}),
+        ...(parseRunSourceSelection(metadata.runSourceSelection)
+            ? { runSourceSelection: parseRunSourceSelection(metadata.runSourceSelection) } : {}),
+        ...(cloneRecordedInputLineage(metadata.inputLineage)
+            ? { inputLineage: cloneRecordedInputLineage(metadata.inputLineage) } : {}),
         ...(metadata.contextTrace ? { contextTrace: cloneContextTrace(metadata.contextTrace) } : {}),
         ...(metadata.vaultObservationContractVersion === 1 ? cloneVaultEvidenceState(metadata) : {}),
         ...(metadata.memoryManagementContractVersion === 1 ? cloneManagementEvidenceState(metadata) : {}),

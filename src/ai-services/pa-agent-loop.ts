@@ -1,11 +1,13 @@
 import {
     AgentLifecycleEventEmitter,
+    TurnExecutionDeadline,
 } from "./agent-runtime-primitives";
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import { errorMessage } from "./agent-utils";
 import type { AgentDebugLog } from './pa-agent-debug';
 import { PaAgentContextOverflowError } from "./context/PaAgentContextOverflowError";
 import { getProviderAdmissionError } from "./provider-admission-error";
+import { HostProgressLedger } from "./pa-agent-progress";
 import { parseTaskIncompleteOutput, REPORT_TASK_INCOMPLETE } from './pa-agent-task-outcome';
 import type { AgentRunLease } from "./agent-run-coordinator";
 import { createAbortError, isAbortError } from "./chat-utils";
@@ -127,8 +129,11 @@ export interface PaAgentTurnSummary {
     metrics: Array<Record<string, unknown>>;
     timing: PaAgentTurnTiming;
     controlSnapshot?: AgentControlSnapshot;
+    /** Run-local epoch advanced only by new Host-verifiable observations or results. */
+    progressEpoch?: number;
+    hasHostProgress?: boolean;
     /** Host-admitted pure output candidate; final Host Policy still decides delivery. */
-    nativeWriting?: { body: string; explanation: string };
+    nativeWriting?: import("./native-writing-call").AcceptedWritingCandidate;
     nativeWritingAttempted?: true;
     /** Agent-authored structured terminal result, never inferred from answer wording. */
     agentReportedIncomplete?: true;
@@ -215,8 +220,10 @@ export interface PaAgentLoopOptions {
             readonly isCandidate: boolean;
             readonly providerIdentity?: { id?: string; index?: number };
             readonly rawArguments: string;
+            readonly isCompleteCandidate: boolean;
             consume(chunk: Extract<PaAgentModelStreamChunk, { type: "toolcall_delta" }>): void;
-            decode(): { body: string; explanation: string } | undefined;
+            acceptForDelivery(admission: import("./native-writing-call").NativeWritingCandidateAdmission):
+                import("./native-writing-call").AcceptedWritingCandidate | undefined;
         };
         outputName: NonNullable<AgentControlSnapshot["writingOutput"]>;
         finalizationInstruction: string;
@@ -241,6 +248,8 @@ export interface PaAgentLoopOptions {
     onDebug?: AgentDebugLog;
     onCommittedFinalText?: (snapshot: string) => void;
     hostContext?: Record<string, unknown>;
+    /** Read at recovery time so a changed configured model starts a separate error episode. */
+    providerModelIdentity?: () => { provider: string; model: string };
     initialRuntimeInstruction?: string;
     initialControlSnapshot?: AgentControlSnapshot;
     maxTurns?: number;
@@ -334,6 +343,7 @@ export class PaAgentLoop {
     private endStatus?: AgentEndStatus;
     private activeTurnToolMode?: PaAgentToolMode;
     private readonly providerNoProgressCounts = new Map<string, number>();
+    private readonly hostProgress = new HostProgressLedger();
     private nativeWritingNoProgressCount = 0;
     private invalidIncompleteReportCount = 0;
 
@@ -576,6 +586,9 @@ export class PaAgentLoop {
                 break;
             }
 
+            turnSummary.hasHostProgress = this.hostProgress.record(turnSummary.toolResults);
+            turnSummary.progressEpoch = this.hostProgress.epoch;
+            if (turnSummary.hasHostProgress) this.debug("host_progress", { epoch: this.hostProgress.epoch });
             this.turns.push(turnSummary);
             nextRuntimeInstruction = undefined;
             nextToolMode = undefined;
@@ -1173,7 +1186,7 @@ export class PaAgentLoop {
                 if (chunk.completion === "stop" && hasPendingAnswerText && !sawToolCall) {
                     completedTextAt ??= this.now();
                 }
-                if (chunk.completion === "tool_calls" && nativeCollector?.decode() && this.isNativeWritingCurrent()) {
+                if (chunk.completion === "tool_calls" && nativeCollector?.isCompleteCandidate && this.isNativeWritingCurrent()) {
                     completedOutputAt ??= this.now();
                     // Pure output has no execution/ack phase. Stop consuming the
                     // optional tail now so Host Policy keeps the remaining hard
@@ -1368,9 +1381,13 @@ export class PaAgentLoop {
                 diagnostics.push({ type: "assistant_source_changed" });
             }
         }
-        const nativeWriting = nativeWritingAttempted && toolCalls.length === 1 && terminalStatus === undefined
-            && assistantMessage.providerCompletion === "tool_calls" && !this.isAborted() && this.isNativeWritingCurrent()
-            ? nativeCollector?.decode() : undefined;
+        const nativeWriting = nativeWritingAttempted ? nativeCollector?.acceptForDelivery({
+            exclusiveToolCall: toolCalls.length === 1,
+            providerCompletion: assistantMessage.providerCompletion ?? "unknown",
+            executionReady: terminalStatus === undefined,
+            sourceCurrent: this.isNativeWritingCurrent(),
+            aborted: this.isAborted(),
+        }) : undefined;
         if (nativeWriting && toolCalls.length === 1) {
             toolCalls[0].name = this.options.nativeWriting!.outputName;
             toolCalls[0].input = nativeCollector!.rawArguments;
@@ -1389,7 +1406,7 @@ export class PaAgentLoop {
         this.events.messageEnd(turnId, assistantMessage, {
             transportOutcome,
             ...(nativeWriting ? { nativeWritingContextHandle: nativeContextHandle,
-                nativeWritingValidated: true } : {}),
+                nativeWritingAcceptedReceiptId: nativeWriting.receiptId } : {}),
             timing: {
                 elapsedMs: modelElapsedMs,
                 ...(firstModelChunkElapsedMs !== undefined ? { firstChunkElapsedMs: firstModelChunkElapsedMs } : {}),
@@ -1557,6 +1574,7 @@ export class PaAgentLoop {
             includeInNextPrompt,
             ...(result.sourceRecords ? { sourceRecords: result.sourceRecords } : {}),
             ...(result.contextUsed ? { contextUsed: result.contextUsed } : {}),
+            ...(result.resultFact ? { resultFact: result.resultFact } : {}),
             metadata: {
                 outcome: result.outcome,
                 ...result.metadata,
@@ -1771,8 +1789,14 @@ export class PaAgentLoop {
     }
 
     private providerRecoveryInstruction(summary: PaAgentTurnSummary): string | undefined {
-        const signature = summary.diagnostics.some((diagnostic) => diagnostic.type === "provider_attempt_timeout")
-            ? "provider_attempt_timeout" : "provider_error";
+        const diagnostic = summary.diagnostics.find((entry) => entry.type === "provider_attempt_timeout")
+            ?? summary.diagnostics.find((entry) => entry.type === "provider_error");
+        const providerModel = this.options.providerModelIdentity?.();
+        const signature = JSON.stringify([
+            providerModel?.provider ?? "unknown", providerModel?.model ?? "unknown",
+            diagnostic?.type ?? "provider_error", diagnostic?.category ?? "unknown",
+            this.hostProgress.epoch,
+        ]);
         const count = (this.providerNoProgressCounts.get(signature) ?? 0) + 1;
         this.providerNoProgressCounts.set(signature, count);
         if (count >= 4) return undefined;
@@ -1909,6 +1933,7 @@ export class PaAgentLoop {
     ): Promise<PaAgentModelInput> {
         const prepare = this.options.prepareModelInput;
         if (!prepare) return input;
+        if (input.signal?.aborted) throw createAbortError();
 
         const remaining = this.turnDeadlineRemainingMs(toolMode);
         const deadlineReason = this.usesFinalizationReserve(toolMode)
@@ -1919,31 +1944,14 @@ export class PaAgentLoop {
             throw new ProviderPreparationDeadlineError(deadlineReason);
         }
 
-        const controller = new AbortController();
-        let timedOut = false;
-        let timer: PlatformTimeoutHandle | undefined;
-        let rejectDeadline: (error: ProviderPreparationDeadlineError) => void = () => undefined;
-        const deadlinePromise = new Promise<never>((_resolve, reject) => {
-            rejectDeadline = reject;
-        });
-        const onAbort = () => controller.abort();
-        input.signal?.addEventListener("abort", onAbort, { once: true });
-        if (input.signal?.aborted) controller.abort();
-        if (remaining !== undefined) {
-            timer = setPlatformTimeout(() => {
-                timedOut = true;
-                onDeadline(deadlineReason);
-                rejectDeadline(new ProviderPreparationDeadlineError(deadlineReason));
-                controller.abort();
-            }, remaining);
-        }
-
+        const deadline = new TurnExecutionDeadline(input.signal, remaining ?? Infinity, deadlineReason);
         try {
-            const prepared = await Promise.race([
-                Promise.resolve(prepare({ ...input, signal: controller.signal })),
-                deadlinePromise,
-            ]);
-            if (timedOut) throw new ProviderPreparationDeadlineError(deadlineReason);
+            deadline.throwIfAborted();
+            const prepared = await deadline.race(Promise.resolve().then(() => {
+                deadline.throwIfAborted();
+                return prepare({ ...input, signal: deadline.signal });
+            }));
+            deadline.throwIfAborted();
             return {
                 ...prepared,
                 signal: input.signal,
@@ -1952,12 +1960,14 @@ export class PaAgentLoop {
                     : {}),
             };
         } catch (error) {
-            if (timedOut) throw new ProviderPreparationDeadlineError(deadlineReason);
+            if (deadline.isDeadlineError(error)) {
+                onDeadline(deadlineReason);
+                throw new ProviderPreparationDeadlineError(deadlineReason);
+            }
             throw error;
         } finally {
-            if (timer !== undefined) clearPlatformTimeout(timer);
-            input.signal?.removeEventListener("abort", onAbort);
-            controller.abort();
+            deadline.abort();
+            deadline.dispose();
         }
     }
 
@@ -2092,8 +2102,24 @@ function providerErrorDiagnostic(error: unknown): Record<string, unknown> {
         type: "provider_error",
         message: errorMessage(error),
         retryable: isRetryableProviderTransportError(error),
+        category: providerErrorCategory(error),
         ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
     };
+}
+
+function providerErrorCategory(error: unknown): string {
+    if (!error || typeof error !== "object") return "unknown";
+    const record = error as Record<string, unknown>;
+    const status = numberValue(record.status) ?? numberValue(record.statusCode);
+    if (status === 408) return "request_timeout";
+    if (status === 429) return "rate_limited";
+    if (status !== undefined && status >= 500) return "server_error";
+    const code = stringValue(record.code)
+        ?? stringValue((record.cause as Record<string, unknown> | undefined)?.code);
+    return code !== undefined && new Set([
+        "ECONNRESET", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT",
+        "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_SOCKET",
+    ]).has(code.toUpperCase()) ? "transport_error" : "unknown";
 }
 
 function readRetryAfterMs(error: unknown): number | undefined {

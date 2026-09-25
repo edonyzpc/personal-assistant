@@ -1,17 +1,22 @@
 import type { ChatTurnMemoryMetadata, ChatWritingRecovery } from '../ai-services/chat-types';
 import {
     cloneGenerationInputSnapshot,
+    type GenerationInputSnapshot,
     type GenerationInputInsightsSource,
     type GenerationInputPageletSource,
     type GenerationInputPersonalSource,
     type GenerationInputStyleSource,
     type GenerationInputTaskSource,
 } from '../ai-services/generation-input-snapshot';
+import { generationInputSnapshotInputLineage, resolveWritingVersionInputLineage,
+    type InputLineage } from '../ai-services/input-lineage';
+import type { ChatSourceScope } from '../ai-services/chat-source-scope';
 import { hasForbiddenPersistedTextFields, validateSourceRefPathShape, type PersistedSourceRef } from '../pa/contracts/source-ref';
 import { cloneMessageImages, type MessageImage } from './image-types';
 import type { WritingVersionService } from './writing-versions';
+import type { WritingVersion } from './writing-types';
 
-export interface WritingRecoverySourceReceipt { isCurrent: () => boolean; }
+export interface WritingRecoverySourceReceipt { isCurrent: () => boolean; lineageComplete?: boolean; }
 
 export type WritingRecoveryGenerationSource =
     | { kind: 'task'; source: GenerationInputTaskSource }
@@ -40,6 +45,7 @@ export async function prepareWritingRecoverySources(
     images: readonly MessageImage[],
     conversationId: string,
     metadata?: ChatTurnMemoryMetadata,
+    scope?: ChatSourceScope,
 ): Promise<WritingRecoverySourceReceipt> {
     const generationInput = recovery.generationInput
         ? cloneGenerationInputSnapshot(recovery.generationInput) : undefined;
@@ -50,6 +56,77 @@ export async function prepareWritingRecoverySources(
         if (!isCurrent()) throw new Error('Writing recovery sources changed');
     };
     if (generationInput) {
+        let lineageComplete = generationInput.schemaVersion === 2;
+        const verifiedSources = new Set<string>();
+        const verifiedNotes = new Set<string>();
+        const verifiedImages = new Set<string>();
+        const pendingVersions: Array<{ versionId: string; textHash: string }> = [];
+        const verifySource = async (source: WritingRecoveryGenerationSource) => {
+            const web = source.kind === 'task'
+                && (source.source.kind === 'web-source' || source.source.boundary === 'web');
+            if (scope === 'web' && !web || scope === 'notes' && web) {
+                throw new Error('Writing source outside current scope');
+            }
+            const key = JSON.stringify(source);
+            if (verifiedSources.has(key)) return;
+            guards.push((await host.verifyGenerationSource(source)).isCurrent);
+            verifiedSources.add(key);
+            assertCurrent();
+        };
+        const verifyNote = async (path: string, memory: boolean) => {
+            if (scope === 'web') throw new Error('Writing source outside current scope');
+            if (memory && !host.isMemoryAllowed()) throw new Error('Writing Memory source unavailable');
+            const key = `${memory ? 'memory' : 'note'}:${path}`;
+            if (verifiedNotes.has(key)) return;
+            guards.push((await host.verifyNote({ path }, memory)).isCurrent);
+            verifiedNotes.add(key);
+            assertCurrent();
+        };
+        const verifyImage = async (image: MessageImage) => {
+            const key = `${image.ref.assetId}:${image.ref.contentHash}`;
+            if (verifiedImages.has(key)) return;
+            guards.push((await host.verifyImage(image)).isCurrent);
+            verifiedImages.add(key);
+            assertCurrent();
+        };
+        const verifyLineage = async (lineage: InputLineage) => {
+            if (lineage.completeness !== 'complete') lineageComplete = false;
+            for (const dependency of lineage.dependencies) {
+                if (scope === 'web' && dependency.kind !== 'user-text'
+                    && dependency.kind !== 'attachment' && dependency.kind !== 'web'
+                    || scope === 'notes' && dependency.kind === 'web') {
+                    throw new Error('Writing source outside current scope');
+                }
+                if (dependency.kind === 'vault') {
+                    await verifyNote(dependency.path, dependency.via === 'memory');
+                    if (dependency.via === 'pagelet') lineageComplete = false;
+                } else if (dependency.kind === 'personal') {
+                    await verifySource({ kind: 'personal', source: dependency.source });
+                } else if (dependency.kind === 'insight') {
+                    await verifySource({ kind: 'insights', source: dependency.source });
+                    lineageComplete = false;
+                } else if (dependency.kind === 'writing-style') {
+                    await verifySource({ kind: 'style', source: { state: 'identified',
+                        revisionIds: dependency.revisionIds } });
+                } else if (dependency.kind === 'writing-version') {
+                    pendingVersions.push(dependency);
+                } else if (dependency.kind === 'web') {
+                    await verifySource({ kind: 'task', source: { purpose: 'task_material',
+                        kind: 'web-source', boundary: 'web', dedupKey: dependency.resultKey,
+                        providerId: dependency.providerId,
+                        revision: { state: 'unknown', reason: 'not_captured' } } });
+                } else if (dependency.kind === 'attachment') {
+                    await verifyImage({ ref: dependency.ref, ordinal: 1, label: '' });
+                }
+            }
+        };
+        const verifySnapshot = async (snapshot: GenerationInputSnapshot) => {
+            for (const source of recordedGenerationSources(snapshot)) await verifySource(source);
+            if (snapshot.task.state === 'unknown' || snapshot.personal.state === 'unknown'
+                || snapshot.insights.state !== 'none'
+                || snapshot.style.state === 'unknown' || snapshot.pagelet.state !== 'none') lineageComplete = false;
+            await verifyLineage(generationInputSnapshotInputLineage(snapshot));
+        };
         const expectedImages = generationInput.images.map(image => `${image.ref.assetId}:${image.ref.contentHash}`);
         const actualImages = selectedImages.map(image => `${image.ref.assetId}:${image.ref.contentHash}`);
         if (expectedImages.length !== actualImages.length
@@ -69,27 +146,41 @@ export async function prepareWritingRecoverySources(
                 || parent.textHash !== generationInput.parent.textHash.value) {
                 throw new Error('Writing parent unavailable');
             }
+            pendingVersions.push({ versionId: parent.id, textHash: parent.textHash });
         }
-        const generationSources: WritingRecoveryGenerationSource[] = [
-            ...generationInput.task.sources.map(source => ({ kind: 'task' as const, source })),
-            ...(generationInput.personal.state !== 'none'
-                ? [{ kind: 'personal' as const, source: generationInput.personal }] : []),
-            ...(generationInput.insights.state !== 'none'
-                ? [{ kind: 'insights' as const, source: generationInput.insights }] : []),
-            ...(generationInput.style.state !== 'none'
-                ? [{ kind: 'style' as const, source: generationInput.style }] : []),
-            ...(generationInput.pagelet.state !== 'none'
-                ? [{ kind: 'pagelet' as const, source: generationInput.pagelet }] : []),
-        ];
-        for (const source of generationSources) {
-            guards.push((await host.verifyGenerationSource(source)).isCurrent);
+        await verifySnapshot(generationInput);
+        for (const image of selectedImages) await verifyImage(image);
+        const visitedVersions = new Map<string, string>();
+        while (pendingVersions.length > 0 && visitedVersions.size < 2048) {
+            const expected = pendingVersions.shift()!;
+            const visitedHash = visitedVersions.get(expected.versionId);
+            if (visitedHash) {
+                if (visitedHash !== expected.textHash) lineageComplete = false;
+                continue;
+            }
+            const version: WritingVersion | null = await host.versions?.get(expected.versionId) ?? null;
             assertCurrent();
+            if (!version || version.conversationId !== conversationId || version.textHash !== expected.textHash) {
+                lineageComplete = false;
+                continue;
+            }
+            visitedVersions.set(version.id, expected.textHash);
+            if (version.generationInput) {
+                const snapshot = cloneGenerationInputSnapshot(version.generationInput);
+                await verifySnapshot(snapshot);
+                if (version.parentVersionId && snapshot.parent.state === 'identified'
+                    && snapshot.parent.versionId === version.parentVersionId) {
+                    pendingVersions.push({ versionId: snapshot.parent.versionId,
+                        textHash: snapshot.parent.textHash.value });
+                } else if (version.parentVersionId || snapshot.parent.state !== 'none') lineageComplete = false;
+            } else lineageComplete = false;
+            if ((await resolveWritingVersionInputLineage(version,
+                id => host.versions?.get(id) ?? Promise.resolve(null))).completeness !== 'complete') {
+                lineageComplete = false;
+            }
         }
-        for (const image of selectedImages) {
-            guards.push((await host.verifyImage(image)).isCurrent);
-            assertCurrent();
-        }
-        return { isCurrent };
+        if (pendingVersions.length > 0) lineageComplete = false;
+        return { isCurrent, lineageComplete };
     }
     // Match TaskSourceRun.historySourceRecords: a typed status-only reference
     // must not become material through the legacy path inventory. Capture only
@@ -141,4 +232,18 @@ export async function prepareWritingRecoverySources(
         assertCurrent();
     }
     return { isCurrent };
+}
+
+function recordedGenerationSources(snapshot: GenerationInputSnapshot): WritingRecoveryGenerationSource[] {
+    return [
+        ...snapshot.task.sources.map(source => ({ kind: 'task' as const, source })),
+        ...(snapshot.personal.state !== 'none'
+            ? [{ kind: 'personal' as const, source: snapshot.personal }] : []),
+        ...(snapshot.insights.state !== 'none'
+            ? [{ kind: 'insights' as const, source: snapshot.insights }] : []),
+        ...(snapshot.style.state !== 'none'
+            ? [{ kind: 'style' as const, source: snapshot.style }] : []),
+        ...(snapshot.pagelet.state !== 'none'
+            ? [{ kind: 'pagelet' as const, source: snapshot.pagelet }] : []),
+    ];
 }

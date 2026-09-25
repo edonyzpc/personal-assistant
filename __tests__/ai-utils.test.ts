@@ -17,8 +17,11 @@ import {
     getDashScopeTasksUrl,
     isDashScopeCompatibleBaseURL,
     resolveChatTransport,
+    resolvePaAgentModelBudgetFacts,
     supportsDashScopeThinkingControl,
 } from '../src/ai-services/ai-utils';
+import { PaAgentContextSummarizer } from '../src/ai-services/context/PaAgentContextSummarizer';
+import { writeFileSync } from 'node:fs';
 
 jest.mock('obsidian');
 
@@ -37,6 +40,100 @@ function createPlugin(settings: {
 }
 
 describe('native tool calling capability', () => {
+    it('serializes the documented reserve and summary output cap into actual SDK HTTP bodies', async () => {
+        const originalFetch = globalThis.fetch;
+        const bodies: Array<Record<string, unknown>> = [];
+        globalThis.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            bodies.push(body);
+            const usage = { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 };
+            if (body.stream) {
+                const frame = { id: 'offline', object: 'chat.completion.chunk', created: 0,
+                    model: 'deepseek-v4-pro', choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }] };
+                return new Response(`data: ${JSON.stringify(frame)}\n\ndata: [DONE]\n\n`,
+                    { headers: { 'content-type': 'text/event-stream' } });
+            }
+            const isSummary = Array.isArray(body.messages) && JSON.stringify(body.messages).includes('sourceMessages');
+            const content = isSummary ? JSON.stringify({ goals: [], constraints: [], decisions: [], completed: [],
+                open_questions: [], facts: [{ text: 'Tool evidence.', sourceMessages: [1] }] }) : 'ok';
+            return new Response(JSON.stringify({ id: 'offline', object: 'chat.completion', created: 0,
+                model: 'deepseek-v4-pro', choices: [{ index: 0, message: { role: 'assistant', content },
+                    finish_reason: 'stop' }], usage }), { headers: { 'content-type': 'application/json' } });
+        }) as typeof fetch;
+        try {
+            const settings = { aiProvider: 'qwen', chatModelName: 'deepseek-v4-pro',
+                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' };
+            const aiUtils = new AIUtils({ settings, getAPIToken: async () => 'offline-token', log: () => undefined } as never);
+            const facts = resolvePaAgentModelBudgetFacts({ provider: settings.aiProvider,
+                model: settings.chatModelName, baseURL: settings.baseURL });
+            const answer = await aiUtils.createChatModel(0.8, { transport: 'native',
+                maxTokens: facts.maxTokens });
+            await answer.invoke('offline answer');
+            for await (const _chunk of await answer.stream('offline stream')) { /* consume SDK SSE */ }
+            const source = { role: 'toolResult' as const, id: 'tool', toolCallId: 'call',
+                toolName: 'read_note', timestamp: 0, isError: false,
+                content: { promptText: 'Grounded tool evidence. '.repeat(220), includeInNextPrompt: true } };
+            const summaryOutputCaps: number[] = [];
+            const summary = await new PaAgentContextSummarizer().prepareTool({ source,
+                invoke: async (payload, signal) => {
+                    summaryOutputCaps.push(payload.maxOutputTokens);
+                    const model = await aiUtils.createChatModel(0, { transport: 'native',
+                        maxTokens: payload.maxOutputTokens });
+                    return model.invoke(payload.messages, { signal });
+                } });
+            expect(summary).toBeDefined();
+            expect(bodies).toHaveLength(2 + summaryOutputCaps.length);
+            expect(bodies[0].model).toBe('deepseek-v4-pro');
+            expect(bodies[0].stream).toBe(false);
+            expect(bodies[1].stream).toBe(true);
+            for (const body of bodies.slice(0, 2)) {
+                expect(body.max_tokens ?? body.max_completion_tokens).toBe(facts.outputReserveTokens);
+            }
+            bodies.slice(2).forEach((body, index) => {
+                expect(body.max_tokens ?? body.max_completion_tokens).toBe(summaryOutputCaps[index]);
+            });
+            if (process.env.B149_T11_SUMMARY_BODY_OUTPUT) writeFileSync(process.env.B149_T11_SUMMARY_BODY_OUTPUT,
+                JSON.stringify({ facts, summaryOutputCaps, bodies }, null, 2));
+        } finally { globalThis.fetch = originalFetch; }
+    });
+    it.each([0.8, 0])('rejects an A→B→A model construction before answer/summary dispatch at temperature %s', async temperature => {
+        const originalFetch = globalThis.fetch;
+        const fetchSpy = jest.fn(async () => { throw new Error('Unexpected physical request'); });
+        globalThis.fetch = fetchSpy as typeof fetch;
+        const settings = { aiProvider: 'qwen', chatModelName: 'deepseek-v4-pro',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' };
+        const expectedModelIdentity = { provider: settings.aiProvider, model: settings.chatModelName,
+            baseURL: settings.baseURL };
+        const aiUtils = new AIUtils({ settings, getAPIToken: async () => {
+            settings.chatModelName = expectedModelIdentity.model;
+            settings.baseURL = expectedModelIdentity.baseURL;
+            return 'offline-token';
+        }, log: () => undefined } as never);
+        try {
+            settings.chatModelName = 'smaller-model';
+            settings.baseURL = 'https://other-offline.invalid/v1';
+            await expect(aiUtils.createChatModel(temperature, { transport: 'native',
+                expectedModelIdentity, maxTokens: 393_216 }))
+                .rejects.toThrow('PA Agent model configuration changed during this run');
+            expect(settings.chatModelName).toBe('smaller-model');
+            settings.chatModelName = expectedModelIdentity.model;
+            settings.baseURL = expectedModelIdentity.baseURL;
+            expect(fetchSpy).not.toHaveBeenCalled();
+        } finally { globalThis.fetch = originalFetch; }
+    });
+    it('trusts only the documented DashScope deepseek-v4-pro window and output limit', () => {
+        expect(resolvePaAgentModelBudgetFacts({ provider: 'qwen', model: 'deepseek-v4-pro',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' })).toMatchObject({
+            contextWindowTokens: 1_000_000, outputReserveTokens: 393_216, maxTokens: 393_216,
+            contextWindowSource: 'verified_metadata', outputReserveSource: 'verified_metadata',
+        });
+        expect(resolvePaAgentModelBudgetFacts({ provider: 'qwen', model: 'deepseek-v4-pro',
+            baseURL: 'https://third-party.invalid/v1' })).toEqual({
+            contextWindowSource: 'unknown', outputReserveSource: 'unknown',
+        });
+        expect(resolvePaAgentModelBudgetFacts({ provider: 'qwen', model: 'other',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }).outputReserveTokens).toBeUndefined();
+    });
     it('promotes the official DashScope Function Calling models into the default rollout table', () => {
         expect(DASHSCOPE_NATIVE_TOOL_CALLING_MODELS).toEqual([
             'qwen3.6-*',

@@ -9,13 +9,15 @@ jest.mock('obsidian');
 
 function setup() {
     let current = true;
+    let memoryAllowed = true;
     const path = 'a.md';
     const markdown = '# Plan\n\nLaunch on Monday.';
     const hash = `hash:${markdown}`;
     const chunks = createHeadingAwareMarkdownChunks({ path, markdown, contentHash: hash, created: 10, lastModified: 10 });
     const raw = chunks.map(chunk => ({ score: 0.9, doc: { pageContent: chunk.content,
         metadata: { ...chunk.metadata, path, chunkIndex: chunk.chunkIndex, contentHash: hash, indexVersion: 'heading-aware-v2' } } }));
-    const guard: TaskSourceReadGuard = { isCurrent: () => current, isPathAllowed: candidate => candidate === path,
+    const guard: TaskSourceReadGuard = { isCurrent: () => current, isMemoryAllowed: () => memoryAllowed,
+        isPathAllowed: candidate => candidate === path,
         getNoteSearchScope: () => ({ allowedPaths: [path], excludedPaths: [] }) };
     const readLatest = jest.fn(async (requested: string) => ({ path: requested, markdown, mtime: 10, size: markdown.length }));
     const searchHybrid = jest.fn(async (_query: string, _options?: unknown) => raw);
@@ -31,7 +33,8 @@ function setup() {
     const createChatModel = jest.fn(async (_temperature: number, _options?: unknown) => RunnableLambda.from(invoke));
     const tool = new MemorySearchTool(host as never, { createChatModel,
         cleanMarkdownContent: (text: string) => text, hashContent: async (text: string) => `hash:${text}` } as never);
-    return { tool, guard, invoke, createChatModel, readLatest, searchHybrid, ensureReady, generations, revoke: () => { current = false; } };
+    return { tool, guard, invoke, createChatModel, readLatest, searchHybrid, ensureReady, generations,
+        revoke: () => { current = false; }, revokeMemory: () => { memoryAllowed = false; } };
 }
 
 describe('B-135 scoped Memory search and later projection', () => {
@@ -51,7 +54,8 @@ describe('B-135 scoped Memory search and later projection', () => {
 
     it('rejects a guard without a query scope before readiness, retrieval or provider work', async () => {
         const h = setup();
-        const guard = { isCurrent: h.guard.isCurrent, isPathAllowed: h.guard.isPathAllowed };
+        const guard = { isCurrent: h.guard.isCurrent, isMemoryAllowed: h.guard.isMemoryAllowed,
+            isPathAllowed: h.guard.isPathAllowed };
         await expect(h.tool.search('launch', undefined, undefined, guard)).rejects.toThrow('search scope is unavailable');
         for (const spy of [h.ensureReady, h.searchHybrid, h.readLatest, h.createChatModel]) expect(spy).not.toHaveBeenCalled();
     });
@@ -92,6 +96,23 @@ describe('B-135 scoped Memory search and later projection', () => {
         expect(() => options.onProviderRequestStart()).toThrow('no longer current');
         h.readLatest.mockClear(); h.generations.mockClear();
         await expect(h.tool.revalidateForProvider(result, undefined, null, undefined, h.guard)).rejects.toThrow('no longer current');
+        expect(h.readLatest).not.toHaveBeenCalled();
+        expect(h.generations).not.toHaveBeenCalled();
+    });
+
+    it('rejects physical reranking and later projection when live Memory is revoked', async () => {
+        const h = setup();
+        const result = await h.tool.search('launch', undefined, undefined, h.guard);
+        const options = h.createChatModel.mock.calls[0][1] as { onProviderRequestStart: () => void };
+        h.revokeMemory();
+        expect(h.guard.isCurrent()).toBe(true);
+        expect(() => options.onProviderRequestStart()).toThrow('Memory is no longer available');
+        h.readLatest.mockClear(); h.generations.mockClear();
+        await expect(h.tool.revalidateForProvider(result, undefined, null, undefined, h.guard))
+            .rejects.toThrow('Memory is no longer available');
+        await expect(h.tool.search('later', undefined, undefined, h.guard))
+            .rejects.toThrow('Memory is no longer available');
+        expect(h.searchHybrid).toHaveBeenCalledTimes(1);
         expect(h.readLatest).not.toHaveBeenCalled();
         expect(h.generations).not.toHaveBeenCalled();
     });

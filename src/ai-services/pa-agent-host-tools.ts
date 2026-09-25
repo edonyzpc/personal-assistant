@@ -31,7 +31,7 @@ import {
 } from "./pa-agent-tool-dispatcher";
 import { truncate } from "./chat-tool-execution-helpers";
 import { dedupeSources } from "./pa-agent-history";
-import { createSourceDedupKey } from "./source-store";
+import { cloneSourceRecord, createSourceDedupKey } from "./source-store";
 import { cloneTranscript } from "./context/clone-utils";
 import { createAbortError } from "./chat-utils";
 import {
@@ -54,13 +54,16 @@ import {
 import type { MemoryManagementCurrentUsageInput } from "./memory-management-types";
 import type { MemoryActionHostBinding } from "./memory-action-types";
 import { parseVaultObservationEvidence } from "./vault-observation-evidence";
+import { cloneResultFact, memoryResultFact } from "./pa-agent-result-facts";
 
 const MAX_PREVIEW_CHARS = 1200;
+const UNAVAILABLE_MEMORY_RETRIEVAL_GUIDANCE =
+    "Memory retrieval is currently unavailable; empty results do not establish that no matching notes exist. Do not infer note content.";
 
 export interface PaAgentCapabilityToolExecutorOptions {
     registry: CapabilityRegistry;
     host: AiServiceHost;
-    canReuseWritingContext?: (input: unknown) => boolean;
+    isWritingSelectionCurrent?: (input: unknown) => boolean;
     platform?: AgentRuntimePlatform;
     onBeforeVssSearch?: () => void;
     onToolRunning?: (tool: string, message: string) => void;
@@ -349,6 +352,7 @@ export class MemoryEvidenceRegistry {
         const nextContent: PaToolResultContent = {
             ...message.content,
             promptText: execution.promptText,
+            resultFact: execution.resultFact,
             ...(execution.previewText !== undefined ? { previewText: execution.previewText } : {}),
             sourceRecords,
             contextUsed: execution.contextUsed ?? [],
@@ -491,7 +495,7 @@ function createUnavailableMemoryObservationResult(query: string): MemorySearchRe
         memoryEvidenceState: "unavailable",
         rerankVerdict: "relevant",
         needsMoreEvidence: false,
-        retrievalGuidance: "Memory evidence is currently unavailable; do not infer note content.",
+        retrievalGuidance: UNAVAILABLE_MEMORY_RETRIEVAL_GUIDANCE,
         operationalReason: "final_source_changed",
     };
 }
@@ -514,11 +518,6 @@ export function createPaAgentCapabilityToolExecutor(
     options: PaAgentCapabilityToolExecutorOptions,
 ): PaAgentToolExecutor {
     return {
-        canReuseWritingContext: options.canReuseWritingContext ? (toolCall, context) => {
-            if (toolCall.name !== "get_writing_context") return false;
-            const prepared = options.registry.prepareAndValidate(toolCall.name, toolCall.input, context);
-            return prepared.ok && options.canReuseWritingContext!(prepared.input);
-        } : undefined,
         getCanonicalToolCallKey: (toolCall, context) => {
             const prepared = options.registry.prepareAndValidate(
                 toolCall.name,
@@ -546,6 +545,10 @@ export function createPaAgentCapabilityToolExecutor(
                 : "read_only";
         },
         canReuseSuccessfulResult: (toolCall, context): boolean => {
+            if (toolCall.name === "get_writing_context") {
+                const prepared = options.registry.prepareAndValidate(toolCall.name, toolCall.input, context);
+                return prepared.ok && options.isWritingSelectionCurrent?.(prepared.input) === true;
+            }
             const capability = options.registry.get(toolCall.name);
             // Wrappers may delegate synthetic/test or independently-owned
             // capabilities through this executor. Absence from this registry
@@ -745,6 +748,8 @@ function overwritePendingMemoryExecution(
     if (unavailable.includeInNextPrompt === undefined) delete pending.includeInNextPrompt;
     else pending.includeInNextPrompt = unavailable.includeInNextPrompt;
     pending.sourceRecords = unavailable.sourceRecords?.map((record) => ({ ...record })) ?? [];
+    if (unavailable.resultFact) pending.resultFact = cloneResultFact(unavailable.resultFact);
+    else delete pending.resultFact;
     pending.contextUsed = unavailable.contextUsed?.map((item) => ({
         ...item,
         ...(item.sources ? { sources: item.sources.map((source) => ({ ...source })) } : {}),
@@ -782,12 +787,18 @@ export function chatToolResultToPaAgentToolExecutionResult(
     const promptText = serializeToolObservation(providerResult);
     const sourceRecords = cloneSourceRecords(providerResult.sourceRecords ?? []);
     const contextUsed = buildContextUsed(providerResult, sourceRecords);
+    const resultFact = result.tool === "search_memory" && result.ok
+        ? isProjectedMemoryObservation(providerResult.content)
+            ? memoryResultFact(providerResult.content)
+            : { kind: "unavailable" as const, capability: "search_memory", reason: "invalid_memory_projection" }
+        : providerResult.resultFact;
     return {
         outcome,
         promptText,
         previewText: truncate(result.error ?? promptText, Math.max(0, MAX_PREVIEW_CHARS - 3)),
         sourceRecords,
         contextUsed,
+        ...(resultFact ? { resultFact } : {}),
         metadata: {
             outcome,
             tool: result.tool,
@@ -831,6 +842,16 @@ export function chatToolResultToPaAgentToolExecutionResult(
     };
 }
 
+function isProjectedMemoryObservation(value: unknown): value is MemorySearchObservation {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const observation = value as Partial<MemorySearchObservation>;
+    return (observation.memoryEvidenceState === "evidence"
+        || observation.memoryEvidenceState === "partial"
+        || observation.memoryEvidenceState === "none"
+        || observation.memoryEvidenceState === "unavailable")
+        && Array.isArray(observation.sources);
+}
+
 function projectToolResultForProvider(result: ChatToolResult<unknown>): ChatToolResult<unknown> {
     if (result.tool !== "search_memory" || !result.ok) {
         return result;
@@ -860,7 +881,7 @@ export function projectMemorySearchObservation(result: MemorySearchResult): Memo
     const memoryEvidenceState = projection.lostEvidence
         ? null
         : deriveCoherentMemoryEvidenceState(result, projection.documents.length > 0);
-    if (!memoryEvidenceState) {
+    if (!memoryEvidenceState || memoryEvidenceState === "unavailable") {
         return createUnavailableMemoryObservation(result.query);
     }
     const documents = projection.documents;
@@ -939,7 +960,7 @@ function createUnavailableMemoryObservation(query: string): MemorySearchObservat
         hasAnswerableContent: false,
         memoryEvidenceState: "unavailable",
         rerankVerdict: "relevant",
-        retrievalGuidance: "Memory evidence is currently unavailable; do not infer note content.",
+        retrievalGuidance: UNAVAILABLE_MEMORY_RETRIEVAL_GUIDANCE,
     };
 }
 
@@ -1286,10 +1307,7 @@ function getReadOnlyToolContextInfo(
 }
 
 function cloneSourceRecords(records: readonly SourceRecord[]): SourceRecord[] {
-    return records.map((record) => ({
-        ...record,
-        ...(record.metadata ? { metadata: { ...record.metadata } } : {}),
-    }));
+    return records.map(cloneSourceRecord);
 }
 
 function safeStringify(value: unknown): string {

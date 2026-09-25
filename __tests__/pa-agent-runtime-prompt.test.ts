@@ -1,11 +1,68 @@
 import { describe, expect, it } from "@jest/globals";
+import { ChatService } from "../src/ai-services/chat-service";
+import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
 
 import {
     PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES,
     createOperationsPromptGuidance,
 } from "../src/ai-services/pa-agent-runtime";
 
+jest.mock("obsidian");
+
 describe("PA Agent answer-stream system prompt (#5)", () => {
+    it("sends the note-evidence completion boundary in the actual SDK request", async () => {
+        const host = {
+            settings: {
+                debug: false, aiProvider: "openai", baseURL: "https://b149-offline.invalid/v1",
+                chatModelName: "b149-fixed-model", policyModelName: "", embeddingModelName: "b149-fixed-embedding",
+                shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false, webSearchEnabled: false,
+                memoryEnabled: false, licenseTier: "paid", operationsAgentEnabled: false,
+                operationsProactiveSaveSuggestionsEnabled: false, operationsAuditIncludeContent: false,
+                operationsAuditRetentionDays: 30, statisticsVaultId: "b149-synthetic", retrievalOptimizationFlags: {},
+            },
+            app: {
+                workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
+                vault: { getMarkdownFiles: () => [], getAbstractFileByPath: () => null },
+                metadataCache: { getFileCache: () => null, getCache: () => null },
+            },
+            memorySearch: { ensureReadyForChat: async () => ({ decision: "answer-now" }), searchHybrid: async () => [] },
+            getMemoryEvidenceEpoch: () => "b149-synthetic-source-epoch",
+            getAPIToken: async () => "b149-synthetic-token", log: () => undefined,
+            isOperationsAgentEnabled: false, getMemoryExtractionPromptContext: () => undefined,
+        } as unknown as AiServiceHost;
+        const realFetch = globalThis.fetch;
+        const requests: Array<{ stream?: boolean; messages: Array<{ role: string; content: string }> }> = [];
+        globalThis.fetch = jest.fn(async (_url, init) => {
+            const body = JSON.parse(String(init?.body));
+            requests.push(body);
+            const frame = (delta: unknown, finishReason: string | null = null) => `data: ${JSON.stringify({
+                id: "b149-prompt-fixed", created: 0, model: "b149-fixed-model",
+                object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: finishReason }],
+            })}\n\n`;
+            return body.stream
+                ? new Response(frame({ role: "assistant", content: "依据不足" }) + frame({}, "stop") + "data: [DONE]\n\n",
+                    { headers: { "content-type": "text/event-stream" } })
+                : new Response(JSON.stringify({ id: "b149-prompt-fixed", created: 0, model: "b149-fixed-model",
+                    object: "chat.completion", choices: [{ index: 0,
+                        message: { role: "assistant", content: "依据不足" }, finish_reason: "stop" }] }),
+                    { headers: { "content-type": "application/json" } });
+        }) as typeof fetch;
+        try {
+            await new ChatService(host).streamLLM("根据笔记总结项目决定", jest.fn(), undefined, [], {
+                userText: "根据笔记总结项目决定", memoryMode: "skip-memory",
+                runSourceSelection: { schemaVersion: 1, scope: "notes", selectionId: "prompt-notes", userMessageId: "prompt-user" },
+            });
+        } finally {
+            globalThis.fetch = realFetch;
+        }
+        expect(requests).toHaveLength(1);
+        const system = requests[0].messages.find(message => message.role === "system")?.content;
+        expect(system).toContain("no-match or empty-list result");
+        expect(system).toContain("permitted scope examined");
+        expect(system).toContain("An unavailable or failed retrieval provides no evidence");
+        expect(system).toContain("state which part remains incomplete");
+    });
+
     it("instructs the model to always provide a non-empty query argument to search-style tools", () => {
         // #5 motivation: Qwen-plus models often emit search_memory / webSearch tool calls with
         // an empty or missing `query` parameter, which now hard-fails through SPEC-TCR-04
@@ -44,7 +101,8 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(createOperationsPromptGuidance([])).toContain("Do not modify notes");
         expect(joined).toContain("{available_skills}");
         expect(joined).toContain("{tool_definitions}");
-        expect(joined).toContain("{tool_observations}");
+        expect(joined).toContain("Action history records prior assistant calls");
+        expect(joined).not.toContain("{tool_observations}");
     });
 
     it("describes bound Operations tools as staged proposals, not completed writes", () => {

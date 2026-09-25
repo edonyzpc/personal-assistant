@@ -75,8 +75,13 @@ function normalizeSourceText(value: string | undefined, maxChars: number): strin
 }
 
 export function cloneSourceRecord(record: SourceRecord): SourceRecord {
+    const { metadata, observedRevision, ...fields } = record;
     return {
-        ...record,
-        metadata: record.metadata ? { ...record.metadata } : undefined,
+        ...fields,
+        ...(metadata ? { metadata: { ...metadata } } : {}),
+        ...(observedRevision ? { observedRevision: observedRevision.state === "identified"
+            ? { ...observedRevision, digest: { ...observedRevision.digest },
+                ...(observedRevision.stat ? { stat: { ...observedRevision.stat } } : {}) }
+            : { ...observedRevision } } : {}),
     };
 }

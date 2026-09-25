@@ -5,6 +5,17 @@ import type { PersistedConversation, PersistedTurn } from "./chat-history-store"
 import type { WritingVersionService } from './writing-versions';
 import { cloneWritingVersion, type WritingVersion } from './writing-types';
 import { throwIfAborted } from '../ai-services/chat-utils';
+import { conservativeLegacySourceSelection, isChatSourceScope, newConversationSourceSelection,
+    parseConversationSourceSelection, type ChatSourceScope, type ConversationSourceSelection,
+    type RunSourceSelection } from '../ai-services/chat-source-scope';
+
+let sourceSelectionInstanceSequence = 0;
+
+interface PendingSourceSelection {
+    selection: ConversationSourceSelection;
+    selectionId: string;
+    saveFailed: boolean;
+}
 
 export interface WritingCandidateSnapshot {
     conversationId: string | null;
@@ -39,11 +50,135 @@ export class ConversationPersistence {
     private persistChain: Promise<void> = Promise.resolve();
     private unpersistedFinalizedEntries = new Set<TimelineEntry>();
     private pendingTurnIndexByRunId = new Map<string, number>();
+    private readonly sourceSelectionInstanceId = ++sourceSelectionInstanceSequence;
+    private sourceSelectionSequence = 0;
+    private draftSequence = 0;
+    private sourceSelection: ConversationSourceSelection = newConversationSourceSelection();
+    private sourceSelectionId = this.nextSourceSelectionId();
+    private persistedSourceSelectionRevision: number | undefined;
+    private knownSourceSelectionRevision = 0;
+    private pendingSourceSelectionId: string | null = null;
+    private readonly pendingSourceSelections = new Map<string, PendingSourceSelection>();
+    private readonly sourceSelectionPersistChains = new Map<string, Promise<void>>();
+    private readonly sourceSelectionAttempts = new Map<string, Promise<boolean>>();
+    private sourceSelectionSaveFailed = false;
+    private subscribedManager: ChatHistoryManager | null = null;
+    private unsubscribeSourceSelection: (() => void) | null = null;
 
     constructor(private readonly options: ConversationPersistenceOptions) {}
 
     get activeConversationId(): string | null {
         return this.activeId;
+    }
+
+    get currentSourceSelection(): Pick<ConversationSourceSelection, 'scope' | 'basis'> {
+        return { scope: this.sourceSelection.scope, basis: this.sourceSelection.basis };
+    }
+
+    get isSourceSelectionPending(): boolean { return this.pendingSourceSelectionId !== null; }
+    get didSourceSelectionSaveFail(): boolean { return this.sourceSelectionSaveFailed; }
+
+    /** Synchronous: the run uses this exact choice even if a save is still pending. */
+    captureRunSourceSelection(userMessageId: string): RunSourceSelection {
+        const selection: RunSourceSelection = {
+            schemaVersion: 1,
+            scope: this.sourceSelection.scope,
+            selectionId: this.sourceSelectionId,
+            userMessageId,
+            ...(this.pendingSourceSelectionId === null && this.persistedSourceSelectionRevision !== undefined
+                ? { persistedSelectionRevision: this.persistedSourceSelectionRevision } : {}),
+        };
+        return Object.freeze(selection);
+    }
+
+    /** A future scope control calls this synchronously; durable metadata follows independently of turn writes. */
+    selectSourceScope(scope: ChatSourceScope): Promise<boolean> {
+        if (!isChatSourceScope(scope)) throw new Error('Invalid Chat source scope');
+        if (scope === this.sourceSelection.scope && this.pendingSourceSelectionId === null
+            && this.persistedSourceSelectionRevision !== undefined) return Promise.resolve(true);
+        this.sourceSelectionId = this.nextSourceSelectionId();
+        this.sourceSelection = { schemaVersion: 1, scope,
+            revision: this.knownSourceSelectionRevision, basis: 'user' };
+        this.persistedSourceSelectionRevision = undefined;
+        this.pendingSourceSelectionId = this.sourceSelectionId;
+        this.sourceSelectionSaveFailed = false;
+        if (this.activeId) this.pendingSourceSelections.set(this.activeId, {
+            selection: { ...this.sourceSelection }, selectionId: this.sourceSelectionId, saveFailed: false,
+        });
+        return this.activeId ? this.persistSourceSelection(this.activeId, this.sourceSelectionId, scope) : Promise.resolve(false);
+    }
+
+    retryPendingSourceSelection(): Promise<boolean> {
+        const id = this.activeId, selectionId = this.pendingSourceSelectionId;
+        if (!id || !selectionId) return Promise.resolve(false);
+        return this.persistSourceSelection(id, selectionId, this.sourceSelection.scope);
+    }
+
+    dispose(): void {
+        this.unsubscribeSourceSelection?.();
+        this.unsubscribeSourceSelection = null;
+        this.subscribedManager = null;
+    }
+
+    private nextSourceSelectionId(): string {
+        const owner = this.activeId ?? `draft-${this.draftSequence}`;
+        return `${owner}:selection:${this.sourceSelectionInstanceId}:${++this.sourceSelectionSequence}`;
+    }
+
+    private committedSourceSelectionId(conversationId: string, revision: number): string {
+        return `${conversationId}:selection:revision:${revision}`;
+    }
+
+    private observeSourceSelection(conversationId: string, selection: ConversationSourceSelection): void {
+        if (this.activeId !== conversationId || selection.revision <= this.knownSourceSelectionRevision) return;
+        this.knownSourceSelectionRevision = selection.revision;
+        if (this.activeConversation) this.activeConversation = {
+            ...this.activeConversation, sourceSelection: { ...selection },
+        };
+        // A different view's earlier commit must not overwrite a newer local pending choice.
+        if (this.pendingSourceSelectionId !== null) return;
+        this.sourceSelection = { ...selection };
+        this.sourceSelectionId = this.committedSourceSelectionId(conversationId, selection.revision);
+        this.persistedSourceSelectionRevision = selection.revision;
+    }
+
+    private persistSourceSelection(conversationId: string, selectionId: string, scope: ChatSourceScope): Promise<boolean> {
+        const existing = this.sourceSelectionAttempts.get(selectionId);
+        if (existing) return existing;
+        let committed = false;
+        const previous = this.sourceSelectionPersistChains.get(conversationId) ?? Promise.resolve();
+        const next = previous.catch(() => undefined).then(async () => {
+            const manager = await this.getReadyManager();
+            if (!manager) throw new Error('Chat history unavailable');
+            const selection = await manager.updateConversationSourceSelection(conversationId, scope);
+            if (!selection) throw new Error('Chat conversation no longer exists');
+            committed = true;
+            if (this.pendingSourceSelections.get(conversationId)?.selectionId !== selectionId) return;
+            this.pendingSourceSelections.delete(conversationId);
+            if (this.activeId !== conversationId || this.pendingSourceSelectionId !== selectionId) return;
+            const observed = manager.latestConversationSourceSelection(conversationId);
+            const latest = observed && observed.revision > selection.revision ? observed : selection;
+            this.observeSourceSelection(conversationId, latest);
+            this.sourceSelection = { ...latest };
+            this.sourceSelectionId = latest.revision === selection.revision
+                ? selectionId : this.committedSourceSelectionId(conversationId, latest.revision);
+            this.persistedSourceSelectionRevision = latest.revision;
+            this.pendingSourceSelectionId = null;
+            this.sourceSelectionSaveFailed = false;
+        }).catch(error => {
+            const pending = this.pendingSourceSelections.get(conversationId);
+            if (pending?.selectionId === selectionId) pending.saveFailed = true;
+            if (this.activeId === conversationId && this.pendingSourceSelectionId === selectionId) this.sourceSelectionSaveFailed = true;
+            this.options.log('Failed to persist Chat source selection', error);
+        });
+        this.sourceSelectionPersistChains.set(conversationId, next);
+        const result = next.then(() => committed);
+        this.sourceSelectionAttempts.set(selectionId, result);
+        void result.finally(() => {
+            if (this.sourceSelectionAttempts.get(selectionId) === result) this.sourceSelectionAttempts.delete(selectionId);
+            if (this.sourceSelectionPersistChains.get(conversationId) === next) this.sourceSelectionPersistChains.delete(conversationId);
+        });
+        return result;
     }
 
     async prepareWritingCandidates(versions: Pick<WritingVersionService, 'get'>, input: {
@@ -143,6 +278,13 @@ export class ConversationPersistence {
         this.unpersistedFinalizedEntries.clear();
         this.pendingTurnIndexByRunId.clear();
         this.reservedConversationId = null;
+        this.draftSequence += 1;
+        this.sourceSelection = newConversationSourceSelection();
+        this.sourceSelectionId = this.nextSourceSelectionId();
+        this.persistedSourceSelectionRevision = undefined;
+        this.knownSourceSelectionRevision = 0;
+        this.pendingSourceSelectionId = null;
+        this.sourceSelectionSaveFailed = false;
     }
 
     /**
@@ -166,19 +308,53 @@ export class ConversationPersistence {
         const manager = await this.getReadyManager();
         if (!manager || !this.reservedConversationId) return null;
         const reservedId = this.reservedConversationId;
-        const created = await manager.startConversation(prompt, this.initialImageAnchor, reservedId);
+        const selectionId = this.sourceSelectionId;
+        const created = await manager.startConversation(prompt, this.initialImageAnchor, reservedId, this.sourceSelection);
+        this.adoptCreatedConversation(created, selectionId);
+        return created.id;
+    }
+
+    private adoptCreatedConversation(created: PersistedConversation, startedSelectionId: string): void {
         this.activeConversation = created;
         this.activeId = created.id;
         this.nextTurnIndex = 0;
         this.reservedConversationId = null;
-        return created.id;
+        const committed = parseConversationSourceSelection(created.sourceSelection);
+        if (this.sourceSelectionId === startedSelectionId && committed) {
+            this.sourceSelection = committed;
+            this.persistedSourceSelectionRevision = committed.revision;
+            this.pendingSourceSelectionId = null;
+            this.sourceSelectionSaveFailed = false;
+            this.knownSourceSelectionRevision = committed.revision;
+        } else if (this.pendingSourceSelectionId) {
+            this.pendingSourceSelections.set(created.id, {
+                selection: { ...this.sourceSelection }, selectionId: this.pendingSourceSelectionId,
+                saveFailed: this.sourceSelectionSaveFailed,
+            });
+            void this.retryPendingSourceSelection();
+        }
+    }
+
+    private retainLatestSourceSelection(updated: PersistedConversation): PersistedConversation {
+        const local = parseConversationSourceSelection(this.activeConversation?.sourceSelection);
+        const returned = parseConversationSourceSelection(updated.sourceSelection);
+        return local && (!returned || local.revision > returned.revision)
+            ? { ...updated, sourceSelection: local } : updated;
     }
 
     async getReadyManager(): Promise<ChatHistoryManager | null> {
         const manager = this.options.getManager();
         if (!manager) return null;
         await manager.initialize();
-        return manager.isAvailable() ? manager : null;
+        if (!manager.isAvailable()) return null;
+        if (manager !== this.subscribedManager) {
+            this.unsubscribeSourceSelection?.();
+            this.subscribedManager = manager;
+            this.unsubscribeSourceSelection = manager.subscribeConversationSourceSelection?.((event) => {
+                this.observeSourceSelection(event.conversationId, event.selection);
+            }) ?? null;
+        }
+        return manager;
     }
 
     async listConversations(): Promise<PersistedConversation[] | null> {
@@ -316,6 +492,7 @@ export class ConversationPersistence {
         if (!manager) return;
         try {
             await manager.deleteConversation(conversationId);
+            this.pendingSourceSelections.delete(conversationId);
         } catch (error) {
             this.options.log("Failed to delete chat conversation", error);
         }
@@ -341,8 +518,34 @@ export class ConversationPersistence {
             if (turn.turnIndex > maxTurnIndex) maxTurnIndex = turn.turnIndex;
         }
 
-        this.activeConversation = conversation;
+        const sameConversation = this.activeId === conversation.id;
+        const pending = this.pendingSourceSelections.get(conversation.id);
+        const storedSelection = parseConversationSourceSelection(conversation.sourceSelection);
+        const observedSelection = manager.latestConversationSourceSelection?.(conversation.id);
+        const restoredSelection = observedSelection && (!storedSelection || observedSelection.revision > storedSelection.revision)
+            ? observedSelection : storedSelection;
+        this.activeConversation = { ...conversation,
+            ...(restoredSelection ? { sourceSelection: { ...restoredSelection } } : {}),
+        };
         this.activeId = conversation.id;
+        if (pending) {
+            this.sourceSelection = { ...pending.selection };
+            this.sourceSelectionId = pending.selectionId;
+            this.pendingSourceSelectionId = pending.selectionId;
+            this.persistedSourceSelectionRevision = undefined;
+            this.sourceSelectionSaveFailed = pending.saveFailed;
+        } else {
+            this.sourceSelection = restoredSelection ?? conservativeLegacySourceSelection();
+            this.sourceSelectionId = restoredSelection
+                ? this.committedSourceSelectionId(conversation.id, restoredSelection.revision)
+                : this.nextSourceSelectionId();
+            this.persistedSourceSelectionRevision = restoredSelection?.revision;
+            this.pendingSourceSelectionId = null;
+            this.sourceSelectionSaveFailed = false;
+        }
+        this.knownSourceSelectionRevision = sameConversation && pending
+            ? Math.max(this.knownSourceSelectionRevision, restoredSelection?.revision ?? 0)
+            : restoredSelection?.revision ?? 0;
         this.initialImageAnchor = conversation.imageAnchor ? { ...conversation.imageAnchor } : undefined;
         this.nextTurnIndex = maxTurnIndex + 1;
         this.persistedTurnIndexByEntry = persistedTurnIndexByEntry;
@@ -390,16 +593,13 @@ export class ConversationPersistence {
             let conversation = this.activeConversation;
             let conversationId = this.activeId;
             if (!conversation || !conversationId) {
-                const created = this.initialImageAnchor
-                    ? await manager.startConversation(prompt, this.initialImageAnchor, this.reservedConversationId ?? undefined)
-                    : await manager.startConversation(prompt, undefined, this.reservedConversationId ?? undefined);
+                const startedSelectionId = this.sourceSelectionId;
+                const created = await manager.startConversation(prompt, this.initialImageAnchor,
+                    this.reservedConversationId ?? undefined, this.sourceSelection);
                 if (!isCurrent()) return false;
                 conversation = created;
                 conversationId = created.id;
-                this.activeConversation = conversation;
-                this.activeId = conversationId;
-                this.nextTurnIndex = 0;
-                this.reservedConversationId = null;
+                this.adoptCreatedConversation(created, startedSelectionId);
             }
             const pendingTurnIndex = pendingRunId ? this.pendingTurnIndexByRunId.get(pendingRunId) : undefined;
             const turnIndex = pendingTurnIndex ?? this.nextTurnIndex;
@@ -426,7 +626,7 @@ export class ConversationPersistence {
             // A write already admitted may finish after a view reopens. Keep its
             // durable result without moving the newly hydrated conversation cursor.
             if (isCurrent()) {
-                this.activeConversation = updated;
+                this.activeConversation = this.retainLatestSourceSelection(updated);
                 this.nextTurnIndex = Math.max(this.nextTurnIndex, turnIndex + 1);
             } else if (this.options.getManager() === manager && this.activeId === conversationId && this.activeConversation) {
                 // Reopening this same conversation can hydrate before the admitted
@@ -457,6 +657,7 @@ export class ConversationPersistence {
     }
 
     persistRunningTurn(prompt: string, runId: string, user: ChatMessage): Promise<boolean> {
+        if (this.sourceSelectionSaveFailed && this.pendingSourceSelectionId) void this.retryPendingSourceSelection();
         let persisted = false;
         const next = this.persistChain.catch(() => undefined).then(async () => {
             const manager = await this.getReadyManager();
@@ -464,14 +665,11 @@ export class ConversationPersistence {
             let conversation = this.activeConversation;
             let conversationId = this.activeId;
             if (!conversation || !conversationId) {
-                conversation = this.initialImageAnchor
-                    ? await manager.startConversation(prompt, this.initialImageAnchor, this.reservedConversationId ?? undefined)
-                    : await manager.startConversation(prompt, undefined, this.reservedConversationId ?? undefined);
+                const startedSelectionId = this.sourceSelectionId;
+                conversation = await manager.startConversation(prompt, this.initialImageAnchor,
+                    this.reservedConversationId ?? undefined, this.sourceSelection);
                 conversationId = conversation.id;
-                this.activeConversation = conversation;
-                this.activeId = conversationId;
-                this.nextTurnIndex = 0;
-                this.reservedConversationId = null;
+                this.adoptCreatedConversation(conversation, startedSelectionId);
             }
             const turnIndex = this.nextTurnIndex;
             const entry: TimelineEntry = {
@@ -491,7 +689,7 @@ export class ConversationPersistence {
                 userPrompt: prompt,
                 conversation,
             });
-            this.activeConversation = updated;
+            this.activeConversation = this.retainLatestSourceSelection(updated);
             this.nextTurnIndex = turnIndex + 1;
             this.pendingTurnIndexByRunId.set(runId, turnIndex);
             persisted = true;
@@ -531,7 +729,7 @@ export class ConversationPersistence {
                 userPrompt: input.prompt,
                 conversation,
             });
-            this.activeConversation = updated;
+            this.activeConversation = this.retainLatestSourceSelection(updated);
             this.nextTurnIndex = Math.max(this.nextTurnIndex, turnIndex + 1);
             this.pendingTurnIndexByRunId.delete(input.runId);
             persisted = true;
@@ -581,7 +779,7 @@ export class ConversationPersistence {
             if (!isCurrent()) return;
             const updated = await manager.recordTurn({ conversationId, turnIndex, entry,
                 userPrompt: entry.user.content, conversation });
-            if (isCurrent()) this.activeConversation = updated;
+            if (isCurrent()) this.activeConversation = this.retainLatestSourceSelection(updated);
             persisted = true;
         }).catch((error) => this.options.log('Failed to attach recovered writing version', error));
         this.persistChain = next;

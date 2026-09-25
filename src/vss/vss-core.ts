@@ -2338,6 +2338,8 @@ export class VSS {
             absoluteDeadlineMs?: number;
             /** Run-scoped requestUrl drain barrier for this query embedding only. */
             providerRequestScope?: ProviderRequestOptions["providerRequestScope"];
+            /** Exact Chat source admission before every embedding HTTP attempt. */
+            onProviderRequestStart?: ProviderRequestOptions["onProviderRequestStart"];
             /** Pagelet-only wrapper that admits and immediately invokes query embedding. */
             executeEmbeddingInvoke?: (invoke: () => Promise<number[]>) => Promise<number[]>;
             /** Current-run proof required before a successful Pagelet embedding is cached. */
@@ -2429,6 +2431,9 @@ export class VSS {
             const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions, {
                 ...(options?.providerRequestScope
                     ? { providerRequestScope: options.providerRequestScope }
+                    : {}),
+                ...(options?.onProviderRequestStart
+                    ? { onProviderRequestStart: options.onProviderRequestStart }
                     : {}),
             });
             const invoke = () => embeddings.embedQuery(prompt);

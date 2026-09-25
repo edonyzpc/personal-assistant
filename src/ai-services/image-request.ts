@@ -67,6 +67,7 @@ export class ChatImageRequestScope {
 
     get hasImages(): boolean { return this.authorized.size > 0; }
     get hasSelectedImages(): boolean { return this.selected.size > 0; }
+    get selectedImages(): MessageImage[] { return cloneMessageImages([...this.selected.values()]); }
     get currentImages(): MessageImage[] { return cloneMessageImages(this.options.images ?? []); }
     /** Complete linked material, not a claim that every image was sent/viewed. Never includes the history inventory wholesale. */
     get writingMaterials(): MessageImage[] { return cloneMessageImages(this.associatedImages); }

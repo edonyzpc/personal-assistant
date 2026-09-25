@@ -105,6 +105,7 @@ export interface AgentCapabilityResult {
     status: "ok" | "unavailable" | "failed";
     observation: unknown;
     sourceRecords: SourceRecord[];
+    resultFact?: import("./pa-agent-result-facts").PaAgentResultFact;
     inputSummary: string;
     sources: ChatAgentSource[];
     vaultObservationEvidence?: VaultObservationEvidence;
@@ -236,6 +237,9 @@ export function agentResultToChatToolResult(
         content: result.status === "ok" ? result.observation : null,
         sources: result.sources,
         sourceRecords: result.sourceRecords,
+        resultFact: result.resultFact ?? (result.status === "unavailable"
+            ? { kind: "unavailable", capability: capabilityName, reason: "capability_unavailable" }
+            : undefined),
         vaultObservationEvidence: result.vaultObservationEvidence,
         vaultObservationContractVersion: result.vaultObservationContractVersion,
         memoryManagementEvidence: result.memoryManagementEvidence,

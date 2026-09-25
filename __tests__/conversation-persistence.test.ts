@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import type { ChatHistoryManager } from "../src/chat/chat-history-manager";
-import type { PersistedConversation, PersistedTurn } from "../src/chat/chat-history-store";
+import { ChatHistoryManager } from "../src/chat/chat-history-manager";
+import { MemoryChatHistoryStore, type PersistedConversation, type PersistedTurn } from "../src/chat/chat-history-store";
 import { ConversationPersistence } from "../src/chat/ConversationPersistence";
 import type { TimelineEntry } from "../src/chat/types";
 
@@ -158,7 +158,8 @@ describe("ConversationPersistence", () => {
         await expect(persistence.reserveConversationId("hello")).resolves.toBe("reserved-conversation");
         await expect(persistence.persistFinalizedTurn("hello", historyEntry)).resolves.toBe(true);
 
-        expect(manager.startConversation).toHaveBeenCalledWith("hello", undefined, "reserved-conversation");
+        expect(manager.startConversation).toHaveBeenCalledWith("hello", undefined, "reserved-conversation",
+            { schemaVersion: 1, scope: 'notes', revision: 0, basis: 'new-conversation' });
         expect(manager.reserveConversationId).toHaveBeenCalledTimes(1);
         expect(persistence.activeConversationId).toBe("reserved-conversation");
         persistence.resetActiveConversationState();
@@ -320,5 +321,245 @@ describe("ConversationPersistence", () => {
         expect(setActiveConversationId.mock.calls).toEqual([[null], ["conv-1"]]);
         expect(commit).not.toHaveBeenCalled();
         expect(persistence.activeConversationId).toBe("conv-1");
+    });
+});
+
+describe('B-149 Chat source selection persistence', () => {
+    function setup() {
+        const store = new MemoryChatHistoryStore();
+        let nextId = 0;
+        const manager = new ChatHistoryManager({ store, generateId: () => `scope-${++nextId}` });
+        const log = jest.fn();
+        const create = () => new ConversationPersistence({ getManager: () => manager, log });
+        return { store, manager, create, log };
+    }
+
+    it('starts each draft at notes, retains an early web choice, and restores each conversation separately', async () => {
+        const { store, manager, create } = setup();
+        const view = create();
+        expect(view.currentSourceSelection).toMatchObject({ scope: 'notes', basis: 'new-conversation' });
+        expect(view.captureRunSourceSelection('message-a')).toMatchObject({ scope: 'notes', userMessageId: 'message-a' });
+        expect(await view.selectSourceScope('web')).toBe(false);
+        const firstRun = view.captureRunSourceSelection('message-a');
+        expect(firstRun).toMatchObject({ scope: 'web', userMessageId: 'message-a' });
+        expect(firstRun).not.toHaveProperty('persistedSelectionRevision');
+        await expect(view.persistRunningTurn('first', 'message-a', { role: 'user', content: 'first',
+            runSourceSelection: firstRun })).resolves.toBe(true);
+        const firstId = view.activeConversationId!;
+        expect(await store.getConversation(firstId)).toMatchObject({ sourceSelection: {
+            schemaVersion: 1, scope: 'web', revision: 0, basis: 'user',
+        } });
+        expect((await store.getTurns(firstId))[0].user.runSourceSelection).toEqual(firstRun);
+        expect(view.captureRunSourceSelection('message-b')).toMatchObject({ scope: 'web', persistedSelectionRevision: 0 });
+
+        view.resetActiveConversationState();
+        expect(view.currentSourceSelection.scope).toBe('notes');
+        const second = await manager.startConversation('second');
+        view.hydrateConversation(second, []);
+        expect(view.currentSourceSelection.scope).toBe('notes');
+        view.hydrateConversation((await store.getConversation(firstId))!, await store.getTurns(firstId));
+        expect(view.currentSourceSelection.scope).toBe('web');
+        view.dispose();
+    });
+
+    it('sends from pending memory choice while its metadata save is suspended, then accepts only its real revision', async () => {
+        const { store, manager, create } = setup();
+        await manager.initialize();
+        const initial = await manager.startConversation('first');
+        const view = create();
+        await view.getReadyManager();
+        view.hydrateConversation(initial, []);
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const commit = manager.updateConversationSourceSelection.bind(manager);
+        jest.spyOn(manager, 'updateConversationSourceSelection').mockImplementation(async (id, scope) => {
+            await gate;
+            return commit(id, scope);
+        });
+        const saving = view.selectSourceScope('web');
+        const captured = view.captureRunSourceSelection('message-web');
+        expect(captured).toMatchObject({ scope: 'web', userMessageId: 'message-web' });
+        expect(captured).not.toHaveProperty('persistedSelectionRevision');
+        await expect(view.persistRunningTurn('next', 'message-web', { role: 'user', content: 'next',
+            runSourceSelection: captured })).resolves.toBe(true);
+        expect(await store.getConversation(initial.id)).toMatchObject({ sourceSelection: { scope: 'notes', revision: 0 } });
+        release();
+        await expect(saving).resolves.toBe(true);
+        expect(view.captureRunSourceSelection('message-after')).toMatchObject({ scope: 'web', persistedSelectionRevision: 1 });
+        expect(captured).not.toHaveProperty('persistedSelectionRevision');
+        expect(await store.getConversation(initial.id)).toMatchObject({ sourceSelection: { scope: 'web', revision: 1 } });
+        view.dispose();
+    });
+
+    it('retains a failed choice for the next send and lets two views converge on committed order', async () => {
+        const { store, manager, create } = setup();
+        await manager.initialize();
+        const initial = await manager.startConversation('first');
+        const first = create(), second = create();
+        await first.getReadyManager(); await second.getReadyManager();
+        first.hydrateConversation(initial, []);
+        second.hydrateConversation(initial, []);
+        jest.spyOn(store, 'updateConversationSourceSelection').mockRejectedValueOnce(new Error('save failed'));
+        await expect(first.selectSourceScope('web')).resolves.toBe(false);
+        expect(first.didSourceSelectionSaveFail).toBe(true);
+        expect(first.captureRunSourceSelection('pending')).toMatchObject({ scope: 'web' });
+        expect(first.captureRunSourceSelection('pending')).not.toHaveProperty('persistedSelectionRevision');
+        await expect(first.persistRunningTurn('new question', 'pending', { role: 'user', content: 'new question' }))
+            .resolves.toBe(true);
+        expect((await store.getConversation(initial.id))?.sourceSelection).toMatchObject({ scope: 'web', revision: 1 });
+        expect(first.isSourceSelectionPending).toBe(false);
+        expect(second.currentSourceSelection.scope).toBe('web');
+
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const commit = manager.updateConversationSourceSelection.bind(manager);
+        jest.spyOn(manager, 'updateConversationSourceSelection').mockImplementation(async (id, scope) => {
+            if (scope === 'combined') await gate;
+            return commit(id, scope);
+        });
+        const pendingCombined = first.selectSourceScope('combined');
+        await expect(second.selectSourceScope('notes')).resolves.toBe(true);
+        expect(first.currentSourceSelection.scope).toBe('combined');
+        expect(first.captureRunSourceSelection('still-pending')).not.toHaveProperty('persistedSelectionRevision');
+        release();
+        await expect(pendingCombined).resolves.toBe(true);
+        expect((await store.getConversation(initial.id))?.sourceSelection).toMatchObject({ scope: 'combined', revision: 3 });
+        expect(second.currentSourceSelection.scope).toBe('combined');
+        first.dispose(); second.dispose();
+    });
+
+    it('treats an old conversation without scope as conservative notes while keeping its turns', async () => {
+        const { store, manager, create } = setup();
+        await manager.initialize();
+        const old = { ...conversation, id: 'legacy', sourceSelection: undefined };
+        await store.upsertConversation(old);
+        await store.appendTurn({ ...turns[0], conversationId: 'legacy' });
+        const view = create();
+        await view.getReadyManager();
+        const loaded = await view.loadConversation('legacy');
+        expect(loaded?.turns[0].assistant.content).toBe('hi');
+        view.hydrateConversation(loaded!.conversation, loaded!.turns);
+        expect(view.currentSourceSelection).toMatchObject({ scope: 'notes', basis: 'conservative-fallback' });
+        expect(view.captureRunSourceSelection('new-message')).not.toHaveProperty('persistedSelectionRevision');
+        view.dispose();
+    });
+
+    it('continues after reload as a new run under the current choice without replaying an interrupted run', async () => {
+        const { store, create } = setup();
+        const initial = create();
+        const oldChoice = initial.captureRunSourceSelection('old-message');
+        await expect(initial.persistRunningTurn('old task', 'old-message', { role: 'user', content: 'old task',
+            runSourceSelection: oldChoice })).resolves.toBe(true);
+        const conversationId = initial.activeConversationId!;
+        initial.dispose();
+
+        const reopened = create();
+        await reopened.getReadyManager();
+        const loaded = await reopened.loadConversation(conversationId);
+        const hydrated = reopened.hydrateConversation(loaded!.conversation, loaded!.turns);
+        expect(hydrated?.chatHistory[1].agentExecution?.state).toBe('interrupted');
+        expect(reopened.currentSourceSelection.scope).toBe('notes');
+        await expect(reopened.selectSourceScope('web')).resolves.toBe(true);
+        const next = reopened.captureRunSourceSelection('new-message');
+        expect(next).toMatchObject({ scope: 'web', persistedSelectionRevision: 1,
+            userMessageId: 'new-message' });
+        expect(next.selectionId).not.toBe(oldChoice.selectionId);
+        expect((await store.getTurns(conversationId))).toHaveLength(1);
+        await expect(reopened.persistRunningTurn('new task', 'new-message', { role: 'user', content: 'new task',
+            runSourceSelection: next })).resolves.toBe(true);
+        const saved = await store.getTurns(conversationId);
+        expect(saved.map(turn => turn.user.runSourceSelection?.scope)).toEqual(['notes', 'web']);
+        expect(saved[0].assistant.agentExecution?.state).toBe('running');
+        reopened.dispose();
+    });
+
+    it('retains A pending choice across A→B→A and confines its late receipt to A', async () => {
+        const { store, manager, create } = setup();
+        await manager.initialize();
+        const a = await manager.startConversation('A');
+        const b = await manager.startConversation('B');
+        const view = create();
+        await view.getReadyManager();
+        view.hydrateConversation(a, []);
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const commit = manager.updateConversationSourceSelection.bind(manager);
+        jest.spyOn(manager, 'updateConversationSourceSelection').mockImplementation(async (id, scope) => {
+            if (id === a.id) await gate;
+            return commit(id, scope);
+        });
+        const savingA = view.selectSourceScope('web');
+        const pendingA = view.captureRunSourceSelection('pending-A');
+        view.hydrateConversation(b, []);
+        expect(view.currentSourceSelection.scope).toBe('notes');
+        await expect(view.selectSourceScope('combined')).resolves.toBe(true);
+        expect((await store.getConversation(b.id))?.sourceSelection).toMatchObject({ scope: 'combined', revision: 1 });
+        view.hydrateConversation((await store.getConversation(a.id))!, []);
+        expect(view.captureRunSourceSelection('send-A')).toMatchObject({
+            scope: 'web', selectionId: pendingA.selectionId,
+        });
+        expect(view.captureRunSourceSelection('send-A')).not.toHaveProperty('persistedSelectionRevision');
+        expect(view.isSourceSelectionPending).toBe(true);
+        view.hydrateConversation(b, []);
+        release();
+        await expect(savingA).resolves.toBe(true);
+        expect(view.currentSourceSelection.scope).toBe('combined');
+        view.hydrateConversation((await store.getConversation(a.id))!, []);
+        expect(view.captureRunSourceSelection('after-A')).toMatchObject({ scope: 'web', persistedSelectionRevision: 1 });
+        expect(view.isSourceSelectionPending).toBe(false);
+        view.dispose();
+    });
+
+    it('retains A failed choice and retry identity across A→B→A before the next send', async () => {
+        const { store, manager, create } = setup();
+        await manager.initialize();
+        const a = await manager.startConversation('A');
+        const b = await manager.startConversation('B');
+        const view = create();
+        await view.getReadyManager();
+        view.hydrateConversation(a, []);
+        jest.spyOn(store, 'updateConversationSourceSelection').mockRejectedValueOnce(new Error('save failed'));
+        await expect(view.selectSourceScope('web')).resolves.toBe(false);
+        const failedA = view.captureRunSourceSelection('failed-A');
+        view.hydrateConversation(b, []);
+        view.hydrateConversation((await store.getConversation(a.id))!, []);
+        expect(view.currentSourceSelection.scope).toBe('web');
+        expect(view.captureRunSourceSelection('retry-A').selectionId).toBe(failedA.selectionId);
+        expect(view.captureRunSourceSelection('retry-A')).not.toHaveProperty('persistedSelectionRevision');
+        expect(view.didSourceSelectionSaveFail).toBe(true);
+        expect(view.isSourceSelectionPending).toBe(true);
+        await expect(view.persistRunningTurn('next A', 'retry-A', { role: 'user', content: 'next A' }))
+            .resolves.toBe(true);
+        expect((await store.getConversation(a.id))?.sourceSelection).toMatchObject({ scope: 'web', revision: 1 });
+        view.dispose();
+    });
+
+    it('does not let a rev1 promise overwrite rev2 already observed from another view', async () => {
+        const { store, manager, create } = setup();
+        await manager.initialize();
+        const a = await manager.startConversation('A');
+        const first = create(), second = create();
+        await first.getReadyManager(); await second.getReadyManager();
+        first.hydrateConversation(a, []);
+        second.hydrateConversation(a, []);
+        let releaseOld!: () => void;
+        let signalOldCommitted!: () => void;
+        const oldReturnGate = new Promise<void>(resolve => { releaseOld = resolve; });
+        const oldCommitted = new Promise<void>(resolve => { signalOldCommitted = resolve; });
+        const commit = manager.updateConversationSourceSelection.bind(manager);
+        jest.spyOn(manager, 'updateConversationSourceSelection').mockImplementation(async (id, scope) => {
+            const selection = await commit(id, scope);
+            if (scope === 'web') { signalOldCommitted(); await oldReturnGate; }
+            return selection;
+        });
+        const oldSave = first.selectSourceScope('web');
+        await oldCommitted;
+        await expect(second.selectSourceScope('combined')).resolves.toBe(true);
+        expect((await store.getConversation(a.id))?.sourceSelection).toMatchObject({ scope: 'combined', revision: 2 });
+        releaseOld();
+        await expect(oldSave).resolves.toBe(true);
+        expect(first.currentSourceSelection.scope).toBe('combined');
+        expect(first.captureRunSourceSelection('next')).toMatchObject({ scope: 'combined', persistedSelectionRevision: 2 });
+        first.dispose(); second.dispose();
     });
 });

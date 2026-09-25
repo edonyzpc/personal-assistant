@@ -619,15 +619,9 @@ export class ToolExecutionDispatcher {
     }
 
     private isDuplicateToolCall(toolCall: ParsedBufferedToolCall, key: string, seen: ReadonlySet<string>): boolean {
-        const canReuse = this.config.toolExecutor?.canReuseWritingContext;
-        if (toolCall.name === "get_writing_context" && canReuse) {
-            // A prior attempt is not a reusable receipt: it may have failed,
-            // lost its sources, or been replaced by another successful selection.
-            // Normal admission, schema and execution budgets still apply.
-            if (key !== this.lastSuccessfulWritingContextKey) return false;
-            try { return canReuse.call(this.config.toolExecutor, toolCall, { userInput: this.config.userInput }); }
-            catch { return false; }
-        }
+        // A→B→A needs a fresh preparation even if the old A call succeeded.
+        // The generic successful-result hook below checks the current owner receipt.
+        if (toolCall.name === "get_writing_context" && key !== this.lastSuccessfulWritingContextKey) return false;
         return seen.has(key);
     }
 

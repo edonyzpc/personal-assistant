@@ -9,7 +9,7 @@ import { agentDebugError, agentDebugNow, createAgentDebugCall, observeAgentDebug
 import { createAbortError, throwIfAborted } from "./chat-utils";
 import { truncate } from "./chat-tool-execution-helpers";
 import { normalizeVaultPath } from "../pa/helpers";
-import { assertTaskSourceReadCurrent, type TaskSourceReadGuard } from './task-source-read-guard';
+import { assertTaskSourceMemoryReadCurrent, type TaskSourceReadGuard } from './task-source-read-guard';
 import { createTaskSourceMemoryHost } from './task-source-memory-host';
 import { createHeadingAwareMarkdownChunks } from "../vss/markdown-chunker";
 import { buildGraphBoundarySnapshot } from "../graph/graph-boundary-snapshot";
@@ -127,7 +127,7 @@ interface CoherentMaterializedCandidateSet {
 }
 
 interface PreparedMemoryReranker {
-    invoke(query: string, candidates: MemoryCandidate[]): Promise<RerankOutcome>;
+    invoke(query: string, candidates: MemoryCandidate[], isInputCurrent?: () => Promise<boolean>): Promise<RerankOutcome>;
     dispose(): void;
 }
 
@@ -213,7 +213,12 @@ const MEMORY_SEARCH_INVOCATIONS = new WeakMap<AbortSignal, MemorySearchInvocatio
 export type MemorySearchRequestDiagnostic = (
     stage: "query_rewrite" | "rerank",
 ) => ProviderRequestOptions["onProviderRequestDiagnostic"];
-export type MemorySearchDebugScope = Pick<AgentDebugCallScope, "recorder" | "parentId" | "turnId">;
+export type MemorySearchDebugScope = {
+    recorder?: AgentDebugCallScope['recorder'];
+    usageLedger?: AgentDebugCallScope['usageLedger'];
+    parentId: string;
+    turnId?: string;
+};
 interface MemorySearchProviderRequestOptions extends ProviderRequestOptions {
     providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
     debugScope?: MemorySearchDebugScope;
@@ -364,12 +369,12 @@ export class MemorySearchTool {
             const scoped = this.forTaskSource(guard);
             try {
                 const result = await scoped.search(query, signal, onBeforeVssSearch);
-                assertTaskSourceReadCurrent(scoped.taskSourceReadGuard);
-                assertTaskSourceReadCurrent(guard);
+                assertTaskSourceMemoryReadCurrent(scoped.taskSourceReadGuard);
+                assertTaskSourceMemoryReadCurrent(guard);
                 return result;
             } finally { this.scopedSearches.delete(scoped); scoped.dispose(); }
         }
-        assertTaskSourceReadCurrent(this.taskSourceReadGuard);
+        assertTaskSourceMemoryReadCurrent(this.taskSourceReadGuard);
         throwIfAborted(signal);
         const invocation = signal ? MEMORY_SEARCH_INVOCATIONS.get(signal) : undefined;
         if (invocation?.mode === "relaxed") {
@@ -422,12 +427,12 @@ export class MemorySearchTool {
             const scoped = this.forTaskSource(guard);
             try {
                 const current = await scoped.revalidateForProvider(result, signal, temporalFilter, temporalAudit);
-                assertTaskSourceReadCurrent(scoped.taskSourceReadGuard);
-                assertTaskSourceReadCurrent(guard);
+                assertTaskSourceMemoryReadCurrent(scoped.taskSourceReadGuard);
+                assertTaskSourceMemoryReadCurrent(guard);
                 return current;
             } finally { this.scopedSearches.delete(scoped); scoped.dispose(); }
         }
-        assertTaskSourceReadCurrent(this.taskSourceReadGuard);
+        assertTaskSourceMemoryReadCurrent(this.taskSourceReadGuard);
         throwIfAborted(signal);
         if (temporalAudit) {
             temporalAudit.temporalFilterApplied = temporalFilter ? 1 : 0;
@@ -481,12 +486,13 @@ export class MemorySearchTool {
 
     private forTaskSource(guard: TaskSourceReadGuard): MemorySearchTool {
         if (this.disposed) throw new Error('Memory search is disposed.');
-        assertTaskSourceReadCurrent(guard);
+        assertTaskSourceMemoryReadCurrent(guard);
         const scope = guard.getNoteSearchScope?.();
         if (!scope) throw new Error('Task source search scope is unavailable.');
         const lifetime: TaskSourceReadGuard = {
             isCurrent: () => !this.disposed && guard.isCurrent(),
             isPathAllowed: (path, kind) => !this.disposed && guard.isPathAllowed(path, kind),
+            isMemoryAllowed: () => !this.disposed && guard.isMemoryAllowed?.() === true,
         };
         const scoped = new MemorySearchTool(createTaskSourceMemoryHost(this.host, lifetime, scope), this.aiUtils,
             this.diagnosticSurface, lifetime);
@@ -778,7 +784,9 @@ export class MemorySearchTool {
                     });
                     return createOperationalUnavailableResult(query, "final_source_changed");
                 }
-                rerankOutcome = await preparedReranker.invoke(query, rerankerInput);
+                rerankOutcome = await preparedReranker.invoke(query, rerankerInput,
+                    () => this.isCoherentCandidateSetStillCurrent(
+                        sealedRerankerInput!, signal, invocation?.absoluteDeadlineMs));
             } else {
                 rerankOutcome = createFailOpenOutcome(rerankerInput, "model_unavailable", false);
             }
@@ -897,7 +905,7 @@ export class MemorySearchTool {
             parentId: debugScope.parentId,
             turnId: debugScope.turnId, purpose: "query_rewrite",
             provider: this.host.settings.aiProvider, model: policyModelName, lineage: { unknown: true },
-        }) : undefined;
+        }, debugScope.usageLedger) : undefined;
         const controller = new AbortController();
         const combined = combineAbortSignals(signal ? [signal, controller.signal] : [controller.signal]);
         const timeoutId = setPlatformTimeout(() => controller.abort(), REWRITE_TIMEOUT_MS);
@@ -908,21 +916,24 @@ export class MemorySearchTool {
                 modelName: policyModelName,
                 agentDebugCall: debugCall,
                 isProviderRequestTraceEnabled: () => this.host.settings.debug === true,
-                ...(this.taskSourceReadGuard ? { onProviderRequestStart: () => assertTaskSourceReadCurrent(this.taskSourceReadGuard) } : {}),
+                ...(this.taskSourceReadGuard ? { onProviderRequestStart: () => assertTaskSourceMemoryReadCurrent(this.taskSourceReadGuard) } : {}),
                 onProviderRequestDiagnostic: providerRequestOptions?.providerRequestDiagnostic?.("query_rewrite"),
                 ...(providerRequestOptions?.providerRequestScope
                     ? { providerRequestScope: providerRequestOptions.providerRequestScope }
                     : {}),
             });
             const invoker = async (q: string, s?: AbortSignal) => {
-                assertTaskSourceReadCurrent(this.taskSourceReadGuard);
+                assertTaskSourceMemoryReadCurrent(this.taskSourceReadGuard);
                 const escapedSystemPrompt = REWRITE_SYSTEM_PROMPT.replace(/\{/g, "{{").replace(/\}/g, "}}");
                 const prompt = ChatPromptTemplate.fromMessages([
                     SystemMessagePromptTemplate.fromTemplate(escapedSystemPrompt),
                     HumanMessagePromptTemplate.fromTemplate("{query}"),
                 ]);
                 const response = await prompt.pipe(llm).invoke({ query: q }, { signal: s });
-                observeAgentDebugResponse(debugCall, response);
+                observeAgentDebugResponse(debugCall, response, "replace", "provider-usage", "usage_only");
+                throwIfAborted(s);
+                assertTaskSourceMemoryReadCurrent(this.taskSourceReadGuard);
+                observeAgentDebugResponse(debugCall, response, "replace", "provider-usage", "content_only");
                 return typeof response.content === "string" ? response.content : "";
             };
             const rewritten = await rewriteQueryForSearch(query, invoker, combined.signal);
@@ -949,7 +960,7 @@ export class MemorySearchTool {
             parentId: debugScope.parentId,
             turnId: debugScope.turnId, purpose: "rerank",
             provider: this.host.settings.aiProvider, model: selectedModel.modelName, lineage: { unknown: true },
-        }) : undefined;
+        }, debugScope.usageLedger) : undefined;
         throwIfAborted(signal);
         const controller = new AbortController();
         const combined = combineAbortSignals(signal ? [signal, controller.signal] : [controller.signal]);
@@ -982,6 +993,7 @@ export class MemorySearchTool {
             })
             : undefined;
         let disposed = false;
+        let isProviderInputCurrent: (() => Promise<boolean>) | undefined;
         const dispose = () => {
             if (disposed) return;
             disposed = true;
@@ -1016,7 +1028,14 @@ export class MemorySearchTool {
                     modelName: selectedModel.modelName,
                     agentDebugCall: debugCall,
                     isProviderRequestTraceEnabled: () => this.host.settings.debug === true,
-                    ...(this.taskSourceReadGuard ? { onProviderRequestStart: () => assertTaskSourceReadCurrent(this.taskSourceReadGuard) } : {}),
+                    ...(this.taskSourceReadGuard ? { onProviderRequestStart: () => assertTaskSourceMemoryReadCurrent(this.taskSourceReadGuard) } : {}),
+                    ...(this.taskSourceReadGuard ? { prepareProviderRequest: async () => {
+                        assertTaskSourceMemoryReadCurrent(this.taskSourceReadGuard);
+                        if (!isProviderInputCurrent || !await isProviderInputCurrent()) {
+                            throw new Error('Memory rerank source changed before request.');
+                        }
+                        assertTaskSourceMemoryReadCurrent(this.taskSourceReadGuard);
+                    } } : {}),
                     onProviderRequestDiagnostic: providerRequestOptions?.providerRequestDiagnostic?.("rerank"),
                     ...(providerRequestOptions?.providerRequestScope
                         ? { providerRequestScope: providerRequestOptions.providerRequestScope }
@@ -1044,8 +1063,9 @@ export class MemorySearchTool {
             const chain = prompt.pipe(llm);
             return {
                 dispose,
-                invoke: async (query, candidates) => {
-                    assertTaskSourceReadCurrent(this.taskSourceReadGuard);
+                invoke: async (query, candidates, isInputCurrent) => {
+                    isProviderInputCurrent = isInputCurrent;
+                    assertTaskSourceMemoryReadCurrent(this.taskSourceReadGuard);
                     throwIfAborted(signal);
                     if (candidates.length === 0) return createDeterministicEmptyOutcome();
                     if (controller.signal.aborted) {
@@ -1086,9 +1106,17 @@ export class MemorySearchTool {
                             );
                         }
                         if (providerResult.type === "rejected") throw providerResult.error;
-                        throwIfAborted(signal);
                         const response = providerResult.value;
-                        observeAgentDebugResponse(debugCall, response);
+                        observeAgentDebugResponse(debugCall, response, "replace", "provider-usage", "usage_only");
+                        throwIfAborted(signal);
+                        if (combined.signal.aborted) throw createAbortError();
+                        assertTaskSourceMemoryReadCurrent(this.taskSourceReadGuard);
+                        if (isInputCurrent && !await isInputCurrent()) {
+                            throw new Error('Memory rerank source changed before delivery.');
+                        }
+                        throwIfAborted(signal);
+                        if (combined.signal.aborted) throw createAbortError();
+                        observeAgentDebugResponse(debugCall, response, "replace", "provider-usage", "content_only");
                         observeAgentDebugCall(debugCall, { phase: "consumer_end", status: "completed",
                             timing: { event: "consumer_end", at: agentDebugNow() } });
                         const content = typeof response.content === "string" ? response.content : "";

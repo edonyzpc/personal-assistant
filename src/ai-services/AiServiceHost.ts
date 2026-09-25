@@ -110,6 +110,11 @@ export interface AiServiceHost {
 
     /** Build optional Memory extraction prompt context for PA Agent turns. */
     getMemoryExtractionPromptContext(): Record<string, unknown> | undefined;
+    /** Live governed Personal claim/revision admission for historical input ancestry. */
+    isPersonalSourceCurrent?(source: Extract<import('./generation-input-snapshot').GenerationInputPersonalSource,
+        { state: 'identified' }>): boolean;
+    /** Capture governed style revisions before admitting historical Writing material. */
+    captureWritingStyleSourceValidity?(revisionIds: readonly string[]): Promise<{ isCurrent(): boolean }>;
 
     /** Search/read Memory through a narrow port. */
     readonly memorySearch: MemorySearchPort;

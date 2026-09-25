@@ -136,6 +136,8 @@ export interface OperationsExecutionResult {
     intentId: string;
     state: Extract<OperationsIntentState, "completed" | "partial" | "failed">;
     operations: readonly OperationExecutionResult[];
+    /** Issued only after actual confirm execution, from operation receipts. */
+    resultFact?: import("../pa-agent-result-facts").PaAgentResultFact;
 }
 
 export interface UndoReceipt {

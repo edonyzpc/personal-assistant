@@ -30,7 +30,7 @@ describe('get_writing_context tool boundary', () => {
         const result = await f.capability.execute(input, context);
         expect(result.status).toBe('ok');
         expect(result.sourceRecords).toEqual([]);
-        expect(result.observation).toEqual({ contextHandle: 'run:writing:1', parent: null, images: [],
+        expect(result.observation).toEqual({ contextHandle: 'run:writing:1', parent: null, scene: null, images: [],
             style: { context: 'Approved style', revisionIds: ['style1'] } });
         const budget = (f.prepare.mock.calls as unknown[][])[0][1] as { remainingTextChars: number; remainingMemoryChars: number };
         expect(budget.remainingTextChars).toBeGreaterThan(0);

@@ -5,6 +5,7 @@ import { decodeNativeWritingPreview, decodeWritingPreview } from "./writing-prev
 import { cloneMessageImages, type MessageImage } from "../chat/image-types";
 import { cloneGenerationInputSnapshot, type GenerationInputSnapshot } from "./generation-input-snapshot";
 import { REPORT_TASK_INCOMPLETE } from "./pa-agent-task-outcome";
+import type { PaAgentResultFact } from "./pa-agent-result-facts";
 import type {
     AgentEvent,
     AssistantMessagePart,
@@ -76,7 +77,7 @@ export class CanonicalToLegacyEventAdapter {
     private writingTurnId?: string;
     private writingTransportOutcome: WritingDeliveryDiagnostic["transportOutcome"] = "unknown";
     private nativeArguments = "";
-    private nativeValidated = false;
+    private nativeAcceptedReceiptId?: string;
     private nativeContextHandle?: string;
 
     private get usesNativeWriting(): boolean {
@@ -134,7 +135,7 @@ export class CanonicalToLegacyEventAdapter {
                     this.writingMessageId = event.message.id;
                     this.writingHasTool = false;
                     this.nativeArguments = "";
-                    this.nativeValidated = false;
+                    this.nativeAcceptedReceiptId = undefined;
                     this.emitWritingPreview(event.runId, event.message.id, "");
                 }
                 return;
@@ -182,10 +183,13 @@ export class CanonicalToLegacyEventAdapter {
                         || transport === "wall_clock_exceeded" || transport === "error" ? transport : "unknown";
                     this.writingCandidate = { ...event.message, content: event.message.content.map((part) => ({ ...part })) };
                     if (this.usesNativeWriting) {
-                        this.nativeValidated = this.nativeContextHandle !== undefined && event.metadata?.nativeWritingValidated === true
-                            && event.metadata.nativeWritingContextHandle === this.nativeContextHandle;
+                        this.nativeAcceptedReceiptId = this.nativeContextHandle !== undefined
+                            && event.metadata?.nativeWritingContextHandle === this.nativeContextHandle
+                            && typeof event.metadata.nativeWritingAcceptedReceiptId === "string"
+                            && event.metadata.nativeWritingAcceptedReceiptId.length > 0
+                            ? event.metadata.nativeWritingAcceptedReceiptId : undefined;
                         const calls = event.message.content.filter((part) => part.type === "toolCall");
-                        if (this.nativeValidated && calls.length === 1 && typeof calls[0].input === "string") {
+                        if (this.nativeAcceptedReceiptId && calls.length === 1 && typeof calls[0].input === "string") {
                             this.nativeArguments = calls[0].input.slice(0, this.writing.maxTextChars + 1);
                         }
                         const plainText = calls.length === 0
@@ -271,7 +275,7 @@ export class CanonicalToLegacyEventAdapter {
         // A warning's impact is unknown here. It must not silently become a verified version.
         if (!sourceCurrent) reason = "source_changed";
         else if (event.status !== "completed" || !candidate
-            || (native ? !this.nativeValidated || candidate.stopReason !== "tool_calls" || calls.length !== 1
+            || (native ? !this.nativeAcceptedReceiptId || candidate.stopReason !== "tool_calls" || calls.length !== 1
                 || calls[0].name !== "present_writing" : candidate.stopReason !== "stop" || calls.length > 0)) reason = "incomplete";
         else if (candidate.providerCompletion !== (native ? "tool_calls" : "stop")) reason = "provider_incomplete";
         else {
@@ -321,7 +325,9 @@ export class CanonicalToLegacyEventAdapter {
             return;
         }
         const preamble = native ? candidate!.content.filter((part) => part.type === "text").map((part) => part.text).join("") : "";
-        this.legacyEvents.writingArtifact({ runId: event.runId, requestId: output.requestId,
+        const resultFact: PaAgentResultFact = { kind: "artifact_ready", requestId: output.requestId,
+            receiptId: native ? this.nativeAcceptedReceiptId! : `legacy_writing_${event.runId}_${candidate!.id}` };
+        this.legacyEvents.writingArtifact({ runId: event.runId, requestId: output.requestId, resultFact,
             messageId: candidate!.id, body: output.body, explanation: output.explanation, ...material,
             ...(writing.getSourceValidity ? { isSourceCurrent: writing.getSourceValidity() } : {}),
             ...(preamble ? { preamble } : {}),

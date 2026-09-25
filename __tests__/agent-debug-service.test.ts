@@ -93,6 +93,35 @@ describe('Agent Debug service', () => {
         await service.dispose();
     });
 
+    it('keeps two physical attempts separate from an unattributed logical update', async () => {
+        const { service } = setup(); await service.initialize();
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        recorder.observe({ nodeId: 'call', callId: 'call', kind: 'llm', phase: 'prepare', purpose: 'answer' });
+        for (const [attemptId, totalTokens] of [['A', 4], ['A', 7], ['A', 7], ['B', 3]] as const) {
+            recorder.observe({ nodeId: attemptId, callId: 'call', attemptId, kind: 'attempt',
+                phase: 'usage', purpose: 'answer', usage: { totalTokens, updateKey: 'stream',
+                    aggregation: 'cumulative' } });
+        }
+        recorder.observe({ nodeId: 'call', callId: 'call', kind: 'llm', phase: 'usage', purpose: 'answer',
+            usage: { totalTokens: 10, updateKey: 'invoke', aggregation: 'cumulative' } });
+        const run = (await service.listRuns())[0];
+        expect(run.physicalUsage?.total).toBe(10);
+        expect(run.logicalUsage?.total).toBe(10);
+        expect(run.usage).toMatchObject({ total: 10, complete: false });
+        await service.dispose();
+    });
+
+    it('marks a usage-bearing attempt partial when its consumer closes before EOF', async () => {
+        const { service } = setup(); await service.initialize();
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        recorder.observe({ nodeId: 'A', callId: 'call', attemptId: 'A', kind: 'attempt',
+            phase: 'usage', purpose: 'answer', usage: { totalTokens: 7, complete: true } });
+        recorder.observe({ nodeId: 'A', callId: 'call', attemptId: 'A', kind: 'attempt',
+            phase: 'consumer_end', status: 'partial', missingReason: 'consumer_closed_before_eof' });
+        expect((await service.listRuns())[0].usage).toMatchObject({ total: 7, complete: false });
+        await service.dispose();
+    });
+
     it('invalidates visible content before awaiting deletion and blocks late old details', async () => {
         const { service } = setup(); await service.initialize();
         const recorder = service.startRun({ conversationId: 'c', prompt: 'question', provider: 'p', model: 'm' });

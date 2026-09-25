@@ -252,6 +252,54 @@ describe('chat-only images become shared note attachments', () => {
         expect(h.data.get(imported.asset.originalPath)).toEqual(jpeg());
     });
 
+    it('does not promote a scoped original after revocation between target selection and rename', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        const note = await h.vault.create('Current note.md', 'Existing body');
+        Object.assign(note, { extension: 'md' });
+        let sourceCurrent = true;
+        let targetChosen = false;
+        h.app.fileManager.getAvailablePathForAttachment = jest.fn(async () => {
+            targetChosen = true;
+            return 'attachments/scoped.jpg';
+        });
+        const read = h.vault.readBinary.getMockImplementation()!;
+        h.vault.readBinary.mockImplementation(async file => {
+            const bytes = await read(file);
+            if (targetChosen) sourceCurrent = false;
+            return bytes;
+        });
+        await expect(saveGeneratedImageToNote(h.app, h.service, imported.ref, note, 'scoped_save', () => {
+            if (!sourceCurrent) throw new Error('source changed');
+        })).rejects.toThrow('source changed');
+        expect(targetChosen).toBe(true);
+        expect(sourceCurrent).toBe(false);
+        expect(h.app.fileManager.renameFile).not.toHaveBeenCalled();
+        expect(h.vault.process).not.toHaveBeenCalled();
+        expect(h.data.get(imported.asset.originalPath)).toEqual(jpeg());
+        expect(h.data.has('attachments/scoped.jpg')).toBe(false);
+    });
+
+    it('does not append a scoped generated image when its source is revoked during the original read', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        const note = await h.vault.create('Current note.md', 'Existing body');
+        Object.assign(note, { extension: 'md' });
+        let sourceCurrent = true;
+        const readOriginal = h.service.readOriginal.bind(h.service);
+        jest.spyOn(h.service, 'readOriginal').mockImplementation(async (...args) => {
+            const original = await readOriginal(...args);
+            sourceCurrent = false;
+            return original;
+        });
+        await expect(saveGeneratedImageToNote(h.app, h.service, imported.ref, note,
+            'generated_scoped_output_0', () => {
+                if (!sourceCurrent) throw new Error('image_generation:source_changed');
+            })).rejects.toThrow('image_generation:source_changed');
+        expect(h.app.fileManager.renameFile).not.toHaveBeenCalled();
+        expect(h.vault.process).not.toHaveBeenCalled();
+        expect(await h.vault.read(note)).toBe('Existing body');
+        expect(h.data.get(imported.asset.originalPath)).toEqual(jpeg());
+    });
+
     it('rejects actual HEIC before registration or writes regardless of filename, including vault references', async () => {
         const h = setup();
         const heic = bytes(0, 0, 0, 20, 102, 116, 121, 112, 104, 101, 105, 99, 0, 0, 0, 0, 109, 105, 102, 49);

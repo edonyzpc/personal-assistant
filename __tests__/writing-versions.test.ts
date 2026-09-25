@@ -2,7 +2,7 @@ import { WritingVersionService, type WritingVersionStore } from '../src/chat/wri
 import { cloneWritingVersion, hashWritingText, type WritingVersion } from '../src/chat/writing-types';
 import { hasWritingNoteProvenance } from '../src/chat/writing-note-provenance';
 import type { MessageImage } from '../src/chat/image-types';
-import type { GenerationInputSnapshot } from '../src/ai-services/generation-input-snapshot';
+import type { GenerationInputSnapshotV1, GenerationInputSnapshotV2 } from '../src/ai-services/generation-input-snapshot';
 
 const photo = (id: string): MessageImage => ({ ref: { assetId: id, contentHash: 'a'.repeat(64) }, ordinal: 1, label: `${id}.jpg` });
 function setup() {
@@ -16,7 +16,7 @@ function setup() {
 }
 const input = () => ({ requestId: 'request1', messageId: 'message1', conversationId: 'chat1', turnIndex: 0,
     text: '  海边的风\n保留换行。🙂  ', explanation: '正文以外的说明', images: [photo('one')] });
-const generationInput = (): GenerationInputSnapshot => ({
+const generationInput = (): GenerationInputSnapshotV1 => ({
     schemaVersion: 1, inputPurpose: 'writing', task: { state: 'none', sources: [] },
     personal: { state: 'none' }, insights: { state: 'none' }, style: { state: 'none' }, images: [],
     parent: { state: 'none' }, pagelet: { state: 'none' },
@@ -132,6 +132,14 @@ describe('immutable writing versions', () => {
         expect((await service.get(generated.id))?.generationInput).toEqual(generationInput());
         const edited = await service.edit(generated.id, 'Local edit with receipt', 'receipt-edit');
         expect(edited.generationInput).toEqual(generationInput());
+        const current: GenerationInputSnapshotV2 = { ...generationInput(), schemaVersion: 2,
+            task: { state: 'identified', sources: [{ purpose: 'task_material', kind: 'context-used',
+                boundary: 'read-only-tool', dedupKey: 'note:a', path: 'notes/a.md',
+                revision: { state: 'identified', basis: 'vault_read',
+                    digest: { algorithm: 'sha1', scope: 'whole_file', value: 'a'.repeat(40) } } }] },
+            lineage: { state: 'unknown' } };
+        const v2 = await service.create({ ...input(), requestId: 'v2', messageId: 'v2', generationInput: current });
+        expect((await service.get(v2.id))?.generationInput).toEqual(current);
         (records.get(generated.id) as unknown as { generationInput: unknown }).generationInput = {
             ...generationInput(), rawText: 'forbidden body',
         };

@@ -260,7 +260,9 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
         if (!parsed) {
             return unavailableResult("Invalid WebSearch input.", "invalid input", []);
         }
-        if (!this.isEnabled()) return unavailableResult("WebSearch is disabled.", parsed.query, []);
+        const isAllowed = () => this.isEnabled()
+            && (!context.taskSourceReadGuard || context.taskSourceReadGuard.isWebAllowed?.() === true);
+        if (!isAllowed()) return unavailableResult("WebSearch is disabled.", parsed.query, []);
         const endpoint = this.getEndpoint();
         if (!endpoint || !this.isAllowedEndpoint(endpoint)) {
             return unavailableResult("WebSearch endpoint is not allowed.", parsed.query, []);
@@ -278,7 +280,7 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
         const requestId = `${turnId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
         this.inflightRequests.add(requestId);
         try {
-            const response = await this.runRequestWithAbortAndTimeout(requestId, parsed, context);
+            const response = await this.runRequestWithAbortAndTimeout(requestId, parsed, context, isAllowed);
             if (response === "disabled") {
                 return unavailableResult("WebSearch is disabled.", parsed.query, []);
             }
@@ -306,6 +308,10 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
                     providerId: this.id,
                 },
             ).slice(0, parsed.limit);
+            const rawResultCount = countRawWebResults(response.body);
+            if (sourceRecords.length === 0 && (rawResultCount > 0 || !isNormalEmptyWebSearchResponse(response.body))) {
+                return unavailableResult("WebSearch returned an unreadable result.", parsed.query, []);
+            }
             return {
                 status: "ok",
                 observation: {
@@ -318,6 +324,9 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
                     })),
                 },
                 sourceRecords,
+                resultFact: sourceRecords.length > 0
+                    ? { kind: "evidence", sourceRefs: sourceRecords.map(record => record.url ?? record.dedupKey) }
+                    : { kind: "no_match", search: "web" },
                 inputSummary: this.redactor.redactText(parsed.query),
                 sources: [],
                 omittedCount: countRawWebResults(response.body) - sourceRecords.length,
@@ -331,10 +340,11 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
         requestId: string,
         input: WebSearchInput,
         context: AgentCapabilityContext,
+        isAllowed: () => boolean,
     ): Promise<BuiltinWebSearchHttpResponse | "cancelled" | "disabled" | "failed" | "timeout"> {
         const endpoint = this.getEndpoint();
         if (!endpoint) return "cancelled";
-        if (!this.isEnabled()) return "disabled";
+        if (!isAllowed()) return "disabled";
         const signal = context.signal;
         if (signal?.aborted) {
             this.inflightRequests.delete(requestId);
@@ -377,14 +387,14 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
             }, {
                 signal: requestController.signal,
                 providerRequestScope: context.providerRequestScope,
-                isEnabled: this.isEnabled,
+                isEnabled: isAllowed,
             }).then(
                 (response) => {
                     if (!this.inflightRequests.has(requestId)) {
                         settle("cancelled");
                         return;
                     }
-                    settle(this.isEnabled() ? response : "disabled");
+                    settle(isAllowed() ? response : "disabled");
                 },
                 () => settle("failed"),
             );
@@ -419,6 +429,8 @@ function unavailableResult(
         sourceRecords,
         inputSummary,
         sources: [],
+        resultFact: { kind: "unavailable", capability: BUILTIN_WEB_SEARCH_TOOL_NAME,
+            reason: "web_search_unavailable" },
         unavailableReason: userSafeMessage,
         userSafeMessage,
     };
@@ -548,6 +560,27 @@ function getRawWebResults(body: unknown): Array<Record<string, unknown>> {
 
 function countRawWebResults(body: unknown): number {
     return getRawWebResults(body).length;
+}
+
+/** Only an explicit empty result list proves a normal zero-hit response. */
+function isNormalEmptyWebSearchResponse(body: unknown): boolean {
+    const root = asRecord(body);
+    if (!root || root.isError === true || root.error !== undefined) return false;
+    if (Array.isArray(root.results)) return root.results.length === 0;
+    const data = asRecord(root.data);
+    if (data && Array.isArray(data.results)) return data.results.length === 0;
+    const result = asRecord(root.result);
+    if (result) return isNormalEmptyWebSearchResponse(result);
+    if (Array.isArray(root.content) && root.content.length === 1) {
+        const item = asRecord(root.content[0]);
+        if (item?.type === "text" && typeof item.text === "string") {
+            try {
+                const parsed: unknown = JSON.parse(item.text);
+                return Array.isArray(parsed) ? parsed.length === 0 : isNormalEmptyWebSearchResponse(parsed);
+            } catch { return false; }
+        }
+    }
+    return false;
 }
 
 async function postMcpJsonRpc(

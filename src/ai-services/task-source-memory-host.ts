@@ -2,7 +2,7 @@ import type { GraphBoundarySnapshotSource, ResolvedLinksInput, ResolvedLinkTarge
 import type { MemorySearchPort } from '../memory/MemorySearchPort';
 import { copyNoteSearchScope, type NoteSearchScope } from '../vss/types';
 import type { AiServiceHost } from './AiServiceHost';
-import { assertTaskSourceReadCurrent, isTaskSourcePathAllowed, type TaskSourceReadGuard } from './task-source-read-guard';
+import { assertTaskSourceMemoryReadCurrent, isTaskSourcePathAllowed, type TaskSourceReadGuard } from './task-source-read-guard';
 
 /** One invocation's note-reading boundary; Personal and other host capabilities stay live. */
 export function createTaskSourceMemoryHost(
@@ -19,7 +19,7 @@ export function createTaskSourceMemoryHost(
     const allowedPaths = scope.allowedPaths === null ? null : new Set(scope.allowedPaths);
     const excludedPaths = new Set(scope.excludedPaths);
     const restricted = allowedPaths !== null || excludedPaths.size > 0;
-    const assertCurrent = (): void => assertTaskSourceReadCurrent(guard);
+    const assertCurrent = (): void => assertTaskSourceMemoryReadCurrent(guard);
     const taskAllowsPath = (path: string): boolean => typeof path === 'string' && path.length > 0
         && (allowedPaths === null || allowedPaths.has(path)) && !excludedPaths.has(path)
         && isTaskSourcePathAllowed(guard, path);
@@ -66,7 +66,12 @@ export function createTaskSourceMemoryHost(
         async searchHybrid(query, options) {
             const paths = captureSearchPaths();
             const searchScope = Object.freeze({ allowedPaths: Object.freeze(paths), excludedPaths: scope.excludedPaths });
-            const result = await host.memorySearch.searchHybrid(query, { ...options, noteScope: searchScope });
+            const result = await host.memorySearch.searchHybrid(query, { ...options, noteScope: searchScope,
+                onProviderRequestStart: () => {
+                    assertCurrent();
+                    options?.onProviderRequestStart?.();
+                },
+            });
             assertPaths(paths);
             checkDocuments(result, new Set(paths));
             return result;

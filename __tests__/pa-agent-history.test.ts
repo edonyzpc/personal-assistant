@@ -10,10 +10,47 @@ import {
     type ChatMessage,
     type ChatTurnMemoryMetadata,
     type PaAgentMessage,
+    type SourceRecord,
 } from "../src/ai-services/chat-types";
 import { createContextPagerStateFromChatContextUsed } from "../src/pa/context-pager";
+import { completeInputLineage } from "../src/ai-services/input-lineage";
 
 describe("PA Agent canonical history metadata", () => {
+    it('persists a visible tool observation even when no later assistant message completed', () => {
+        const observation = completeInputLineage([{ kind: 'run-notes-observation', runId: 'run-1',
+            owner: 'vault', sourceEpoch: 'epoch-1' }]);
+        const turn = createPaAgentPersistedTurn({ runId: 'run-1', turnId: 'turn-1', messages: [
+            { role: 'assistant', id: 'call', timestamp: 1,
+                content: [{ type: 'toolCall', id: 'call-1', name: 'search_vault_metadata', input: { query: 'x' } }],
+                inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'user-1' }]) },
+            { role: 'toolResult', id: 'result', toolCallId: 'call-1', toolName: 'search_vault_metadata',
+                isError: false, timestamp: 2, inputLineage: observation,
+                content: { promptText: '{"matches":[]}', includeInNextPrompt: true } },
+        ] as PaAgentMessage[] });
+
+        expect(turn.inputLineage?.dependencies).toContainEqual(observation.dependencies[0]);
+    });
+    it('retains two observed revisions of one path through canonical clone and metadata dedupe', () => {
+        const source = (value: string): SourceRecord => ({
+            kind: 'context-used', dedupKey: 'same-note', sourceBoundary: 'read-only-tool', path: 'notes/a.md',
+            observedRevision: { state: 'identified', basis: 'vault_read',
+                digest: { algorithm: 'sha1', scope: 'whole_file', value } },
+        });
+        const first = source('a'.repeat(40));
+        const second = source('b'.repeat(40));
+        const turn = createPaAgentPersistedTurn({ runId: 'run', turnId: 'turn',
+            sourceRecords: [first], messages: [createToolResultMessage('read-b', 'read_note', {
+                sourceRecords: [first, second],
+            })] });
+        first.observedRevision = { state: 'unknown', reason: 'not_captured' };
+        const metadata = extractCanonicalTurnMetadata(turn);
+        expect(metadata.sourceRecords).toHaveLength(2);
+        expect(metadata.sourceRecords?.map(record => record.observedRevision?.state === 'identified'
+            ? record.observedRevision.digest.value : null)).toEqual(['a'.repeat(40), 'b'.repeat(40)]);
+        expect(readChatHistoryTurnMetadata({ role: 'assistant', content: 'A and B', canonicalTurn: turn })
+            ?.sourceRecords).toEqual(metadata.sourceRecords);
+    });
+
     it("retains only the reduction receipt while canonical sources replace legacy source counts", () => {
         const legacyTrace = createContextPagerStateFromChatContextUsed("legacy", [{
             category: "memory",

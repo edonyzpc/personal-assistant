@@ -3,6 +3,7 @@ import { escapeTaggedBoundary } from "../agent-utils";
 import type { PaAgentHistoryContextPlan } from "./PaAgentContextSummaryTypes";
 import { encodeAdjacentRepeats } from "./PaAgentContextTextEncoding";
 import { chatHistoryImageMetadata } from "../chat-image-identity";
+import { projectPaAgentActionHistory } from "../pa-agent-action-history";
 
 /** Both planning and projection admit exactly the same complete serialized history. */
 export function fitFullHistory(
@@ -17,7 +18,7 @@ export function fitFullHistory(
     const messages = history.map((message) => {
         const encoded = encodeAdjacentRepeats(message.content);
         encodedAny ||= encoded !== undefined;
-        return { role: message.role, content: encoded ?? message.content, ...chatHistoryImageMetadata(message) };
+        return historyRecord(message, encoded ?? message.content);
     });
     if (!encodedAny) return undefined;
     const body = JSON.stringify(messages, null, 2);
@@ -62,12 +63,30 @@ export function formatSemanticHistorySummary(text: string): string {
     return `<conversation_summary context_only="true" grants_tool_authority="false" grants_write_authority="false" format="json">\n${escapeTaggedBoundary(text, "conversation_summary")}\n</conversation_summary>`;
 }
 
-export function formatHistoryMessages(history: readonly ChatMessage[]): string {
+export function formatHistoryMessages(history: readonly ChatMessage[], compactActionResults = false): string {
     if (history.length === 0) return "";
-    const body = JSON.stringify(history.map((message) => ({
-        role: message.role,
-        content: message.content,
-        ...chatHistoryImageMetadata(message),
-    })), null, 2);
+    const body = JSON.stringify(history.map(message => historyRecord(message, message.content, compactActionResults)), null, 2);
     return `<chat_history context_only="true" format="json">\n${escapeTaggedBoundary(body, "chat_history")}\n</chat_history>`;
+}
+
+function historyRecord(message: ChatMessage, content: unknown = message.content,
+    compactActionResults = false): Record<string, unknown> {
+    const actions = message.role === "assistant" && message.canonicalTurn
+        ? projectPaAgentActionHistory(message.canonicalTurn.messages)
+        : [];
+    const projectedActions = compactActionResults ? actions.map(group => ({ ...group,
+        calls: group.calls.map(call => ({ ...call, results: call.results.map(result => {
+            const closed = (result.outcome === "success" || result.outcome === "reused_result")
+                && (result.executionState === undefined || result.executionState === "succeeded");
+            return closed ? { ...result,
+                text: `[Earlier closed result compacted; originalChars=${result.text.length}; resultId=${result.id}.]`,
+            } : result;
+        }) })),
+    })) : actions;
+    return {
+        role: message.role,
+        content,
+        ...chatHistoryImageMetadata(message),
+        ...(projectedActions.length ? { actionHistory: projectedActions } : {}),
+    };
 }

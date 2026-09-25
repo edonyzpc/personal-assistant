@@ -19,10 +19,13 @@ import {
     type PersistedTurn,
 } from "./chat-history-store";
 import { getPlatformCrypto } from "../platform-dom";
+import { newConversationSourceSelection, parseConversationSourceSelection, parseRunSourceSelection,
+    type ChatSourceScope, type ConversationSourceSelection } from "../ai-services/chat-source-scope";
 import { cloneContextReductionReceipt } from "../pa/contracts/context-trace";
 import { cloneChatHostProvenance } from "../ai-services/chat-provenance";
 import { cloneGenerationInputSnapshot } from "../ai-services/generation-input-snapshot";
 import { cloneSourceRecord } from "../ai-services/source-store";
+import { cloneRecordedInputLineage } from "../ai-services/input-lineage";
 import { cloneMessageImages } from "./image-types";
 import {
     assertVaultObservationHistory,
@@ -71,6 +74,22 @@ export class ChatHistoryManager {
     private readonly sourceMutations = new Map<string, number>();
     private pruningSources = 0;
     private readonly sourceObservers = new Map<string, Set<AbortController>>();
+    private readonly sourceSelectionListeners = new Set<(event: {
+        conversationId: string; selection: ConversationSourceSelection;
+    }) => void>();
+    private readonly latestSourceSelections = new Map<string, ConversationSourceSelection>();
+
+    subscribeConversationSourceSelection(listener: (event: {
+        conversationId: string; selection: ConversationSourceSelection;
+    }) => void): () => void {
+        this.sourceSelectionListeners.add(listener);
+        return () => this.sourceSelectionListeners.delete(listener);
+    }
+
+    latestConversationSourceSelection(conversationId: string): ConversationSourceSelection | undefined {
+        const selection = this.latestSourceSelections.get(conversationId);
+        return selection ? { ...selection } : undefined;
+    }
 
     /** Short external-write lease; callers must release it when the write settles. */
     observeSourceLifetime(conversationId: string): { isCurrent: () => boolean; signal: AbortSignal; release: () => void } {
@@ -175,14 +194,32 @@ export class ChatHistoryManager {
         await this.mutateSources(id, async () => {
             await this.store.deleteConversation(id);
         });
+        this.latestSourceSelections.delete(id);
+    }
+
+    /** Selection metadata never enters the source mutation/revocation lane. */
+    async updateConversationSourceSelection(id: string, scope: ChatSourceScope): Promise<ConversationSourceSelection | null> {
+        if (!this.isAvailable()) return null;
+        const selection = await this.store.updateConversationSourceSelection(id, scope);
+        if (!selection) return null;
+        const prior = this.latestSourceSelections.get(id);
+        if (!prior || prior.revision < selection.revision) {
+            this.latestSourceSelections.set(id, { ...selection });
+            for (const listener of this.sourceSelectionListeners) {
+                try { listener({ conversationId: id, selection: { ...selection } }); }
+                catch (error) { this.log('Chat source selection listener failed.', error); }
+            }
+        }
+        return { ...selection };
     }
 
     async startConversation(
         firstUserMessage: string,
         imageAnchor?: PersistedConversation['imageAnchor'],
         reservedId?: string,
+        sourceSelection: ConversationSourceSelection = newConversationSourceSelection(),
     ): Promise<PersistedConversation> {
-        return this.startConversationWithReservedId(firstUserMessage, reservedId, imageAnchor);
+        return this.startConversationWithReservedId(firstUserMessage, reservedId, imageAnchor, sourceSelection);
     }
 
     /** Reserve without writing; only this in-memory caller may later persist that ID. */
@@ -194,6 +231,7 @@ export class ChatHistoryManager {
         firstUserMessage: string,
         reservedId?: string,
         imageAnchor?: PersistedConversation['imageAnchor'],
+        sourceSelection: ConversationSourceSelection = newConversationSourceSelection(),
     ): Promise<PersistedConversation> {
         const id = reservedId?.trim() || this.generateId();
         if (reservedId !== undefined && (id !== reservedId || await this.store.getConversation(id))) {
@@ -208,6 +246,7 @@ export class ChatHistoryManager {
             turnCount: 0,
             preview: derivePreview(firstUserMessage),
             ...(imageAnchor ? { imageAnchor: { ...imageAnchor } } : {}),
+            sourceSelection: parseConversationSourceSelection(sourceSelection) ?? newConversationSourceSelection(),
         };
         if (this.isAvailable()) {
             await this.mutateSources(id, async () => {
@@ -325,6 +364,10 @@ export class ChatHistoryManager {
         turnIndex: number,
     ): PersistedTurn {
         const assistantCanonical = entry.assistant.canonicalTurn;
+        const candidateRunSelection = parseRunSourceSelection(entry.user.runSourceSelection);
+        const runSourceSelection = candidateRunSelection
+            && (!entry.user.hostProvenance || candidateRunSelection.userMessageId === entry.user.hostProvenance.messageId)
+            ? candidateRunSelection : undefined;
         const assistantTurnStatus = assistantCanonical?.status
             ?? (entry.assistant.runtimeWarnings?.some((warning) => warning.type === "user_abort")
                 ? "aborted"
@@ -334,6 +377,9 @@ export class ChatHistoryManager {
             content: entry.user.content,
             ...(entry.user.images ? { images: cloneMessageImages(entry.user.images) } : {}),
             ...(entry.user.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(entry.user.hostProvenance) } : {}),
+            ...(runSourceSelection ? { runSourceSelection } : {}),
+            ...(cloneRecordedInputLineage(entry.user.inputLineage)
+                ? { inputLineage: cloneRecordedInputLineage(entry.user.inputLineage) } : {}),
             ...(entry.user.writingAction !== undefined ? { writingAction: { ...entry.user.writingAction } } : {}),
             ...(entry.user.runtimeWarnings && entry.user.runtimeWarnings.length > 0
                 ? { runtimeWarnings: entry.user.runtimeWarnings.map(cloneRuntimeWarning) }
@@ -350,6 +396,8 @@ export class ChatHistoryManager {
                     ? { generationInput: cloneGenerationInputSnapshot(entry.assistant.writingRecovery.generationInput) } : {}) } } : {}),
             ...(entry.assistant.images ? { images: cloneMessageImages(entry.assistant.images) } : {}),
             ...(entry.assistant.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(entry.assistant.hostProvenance) } : {}),
+            ...(cloneRecordedInputLineage(entry.assistant.inputLineage ?? assistantCanonical?.inputLineage)
+                ? { inputLineage: cloneRecordedInputLineage(entry.assistant.inputLineage ?? assistantCanonical?.inputLineage) } : {}),
             ...(entry.assistant.shareCardEligible !== undefined
                 ? { shareCardEligible: entry.assistant.shareCardEligible }
                 : {}),
@@ -419,11 +467,18 @@ export class ChatHistoryManager {
     }
 
     deserializeTurn(turn: PersistedTurn): RehydratedTurn {
+        const candidateRunSelection = parseRunSourceSelection(turn.user.runSourceSelection);
+        const runSourceSelection = candidateRunSelection
+            && (!turn.user.hostProvenance || candidateRunSelection.userMessageId === turn.user.hostProvenance.messageId)
+            ? candidateRunSelection : undefined;
         const userMessage: ChatMessage = {
             role: "user",
             content: turn.user.content,
             ...(turn.user.images ? { images: cloneMessageImages(turn.user.images) } : {}),
             ...(turn.user.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(turn.user.hostProvenance) } : {}),
+            ...(runSourceSelection ? { runSourceSelection } : {}),
+            ...(cloneRecordedInputLineage(turn.user.inputLineage)
+                ? { inputLineage: cloneRecordedInputLineage(turn.user.inputLineage) } : {}),
             ...(turn.user.writingAction !== undefined ? { writingAction: { ...turn.user.writingAction } } : {}),
             ...(turn.user.runtimeWarnings && turn.user.runtimeWarnings.length > 0
                 ? { runtimeWarnings: turn.user.runtimeWarnings.map(cloneRuntimeWarning) }
@@ -447,6 +502,7 @@ export class ChatHistoryManager {
             memoryManagementEvidence: turn.memoryManagementEvidence ?? memoryMetadata?.memoryManagementEvidence,
             memoryManagementEvidenceInvalid: turn.memoryManagementEvidenceInvalid
                 ?? memoryMetadata?.memoryManagementEvidenceInvalid,
+            inputLineage: turn.assistant.inputLineage ?? memoryMetadata?.inputLineage,
         });
         const assistantMessage: ChatMessage = {
             role: "assistant",
@@ -459,7 +515,10 @@ export class ChatHistoryManager {
                     ? { generationInput: cloneGenerationInputSnapshot(turn.assistant.writingRecovery.generationInput) } : {}) } } : {}),
             ...(turn.assistant.images ? { images: cloneMessageImages(turn.assistant.images) } : {}),
             ...(turn.assistant.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(turn.assistant.hostProvenance) } : {}),
+            ...(cloneRecordedInputLineage(turn.assistant.inputLineage ?? canonicalTurn.inputLineage)
+                ? { inputLineage: cloneRecordedInputLineage(turn.assistant.inputLineage ?? canonicalTurn.inputLineage) } : {}),
             canonicalTurn,
+            ...(runSourceSelection ? { runSourceSelection: { ...runSourceSelection } } : {}),
             ...(turn.assistant.sourceDecision
                 ? { sourceDecision: cloneSourceDecision(turn.assistant.sourceDecision) } : {}),
             ...(turn.assistant.shareCardEligible !== undefined
@@ -528,6 +587,7 @@ function rebuildCanonicalTurn(input: {
     turnIndex: number;
     sourceRecords?: SourceRecord[];
     contextUsed?: PersistedTurn["contextUsed"];
+    inputLineage?: ChatMessage['inputLineage'];
     status: TurnEndStatus;
     vaultObservationEvidence?: VaultObservationEvidence[];
     vaultObservationEvidenceInvalid?: boolean;
@@ -546,6 +606,8 @@ function rebuildCanonicalTurn(input: {
         ...(input.contextUsed && input.contextUsed.length > 0
             ? { contextUsed: input.contextUsed.map(cloneContextUsedItem) }
             : {}),
+        ...(cloneRecordedInputLineage(input.inputLineage)
+            ? { inputLineage: cloneRecordedInputLineage(input.inputLineage) } : {}),
         ...(input.vaultObservationEvidenceInvalid || input.vaultObservationEvidence ? {
             vaultObservationEvidence: input.vaultObservationEvidenceInvalid
                 ? []
@@ -576,6 +638,10 @@ function cloneMemoryMetadata(metadata: ChatTurnMemoryMetadata): ChatTurnMemoryMe
         ...(metadata.sourceRecords
             ? { sourceRecords: metadata.sourceRecords.map(cloneSourceRecord) }
             : {}),
+        ...(parseRunSourceSelection(metadata.runSourceSelection)
+            ? { runSourceSelection: parseRunSourceSelection(metadata.runSourceSelection) } : {}),
+        ...(cloneRecordedInputLineage(metadata.inputLineage)
+            ? { inputLineage: cloneRecordedInputLineage(metadata.inputLineage) } : {}),
         ...(metadata.contextTrace ? { contextTrace: cloneContextTrace(metadata.contextTrace) } : {}),
         ...(metadata.vaultObservationContractVersion === 1 ? cloneEvidenceState(metadata) : {}),
         ...(metadata.memoryManagementContractVersion === 1 ? cloneManagementEvidenceState(metadata) : {}),

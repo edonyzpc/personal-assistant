@@ -16,6 +16,7 @@ import { CapabilityRegistry } from "../src/ai-services/capability-registry";
 import type { AgentNetworkPolicy, ProviderLoadContext } from "../src/ai-services/capability-types";
 import { createProviderRequestScope } from "../src/ai-services/obsidian-fetch";
 import { PolicyEngine } from "../src/ai-services/policy-engine";
+import { TaskSourceConstraintState } from "../src/ai-services/task-source-constraint";
 
 jest.mock("obsidian");
 
@@ -74,6 +75,56 @@ describe("BuiltinWebSearchProvider", () => {
         }, { isEnabled: () => enabled });
         expect(response.status).toBe(403);
         expect(requestUrlMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('checks a scoped Chat read receipt at every MCP physical request', async () => {
+        let liveWeb = true;
+        const state = new TaskSourceConstraintState({ runId: 'web-run', userMessageId: 'user',
+            userText: 'Search the web', noteHandles: new Map(), sourceScope: 'web' });
+        const guard = state.createReadGuard(state.snapshot(), () => undefined, () => true,
+            undefined, undefined, () => liveWeb);
+        const requestUrlMock = requestUrl as unknown as jest.MockedFunction<(request: MockRequestUrlParam) => Promise<unknown>>;
+        requestUrlMock.mockReset();
+        requestUrlMock.mockImplementationOnce(async () => {
+            liveWeb = false;
+            return mockObsidianResponse({ text: JSON.stringify({ jsonrpc: '2.0', id: 'initialize', result: {} }) });
+        });
+        const registry = createPaidCapabilityRegistry();
+        await registry.registerProvider(createProvider({ request: requestBailianWebSearchMcp }), createLoadContext());
+        const result = await registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: 'SCOPED_WEB_SENTINEL' }, {
+            host: createPlugin(), turnId: 'web-run', taskSourceReadGuard: guard,
+        });
+        expect(result.ok).toBe(false);
+        expect(requestUrlMock).toHaveBeenCalledTimes(1);
+        expect(String(requestUrlMock.mock.calls[0]?.[0]?.body)).not.toContain('SCOPED_WEB_SENTINEL');
+    });
+
+    it('does not send a note-derived combined query after the note is revoked during MCP setup', async () => {
+        let sourceCurrent = true;
+        const state = new TaskSourceConstraintState({ runId: 'combined-run', userMessageId: 'user',
+            userText: 'Find related web sources', noteHandles: new Map(), sourceScope: 'combined' });
+        const guard = state.createReadGuard(state.snapshot(), () => undefined, () => sourceCurrent,
+            undefined, undefined, () => true);
+        const requestUrlMock = requestUrl as unknown as jest.MockedFunction<(request: MockRequestUrlParam) => Promise<unknown>>;
+        requestUrlMock.mockReset();
+        requestUrlMock
+            .mockResolvedValueOnce(mockObsidianResponse({ text: JSON.stringify({ jsonrpc: '2.0', id: 'initialize', result: {} }) }))
+            .mockResolvedValueOnce(mockObsidianResponse({ status: 202, text: '' }))
+            .mockImplementationOnce(async () => {
+                sourceCurrent = false;
+                return mockObsidianResponse({ text: JSON.stringify({ jsonrpc: '2.0', id: 'tools-list',
+                    result: { tools: [{ name: 'enhanced_search', inputSchema: { type: 'object',
+                        properties: { query: { type: 'string' } }, required: ['query'] } }] } }) });
+            });
+        const registry = createPaidCapabilityRegistry();
+        await registry.registerProvider(createProvider({ request: requestBailianWebSearchMcp }), createLoadContext());
+        const result = await registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: 'PRIVATE_NOTE_DERIVED_QUERY' }, {
+            host: createPlugin(), turnId: 'combined-run', taskSourceReadGuard: guard,
+        });
+        expect(result.ok).toBe(false);
+        expect(requestUrlMock).toHaveBeenCalledTimes(3);
+        expect(requestUrlMock.mock.calls.every(([request]) => !String(request.body).includes('PRIVATE_NOTE_DERIVED_QUERY')))
+            .toBe(true);
     });
 
     it('rechecks WebSearch after the detached-request barrier before sending a query', async () => {
@@ -200,6 +251,23 @@ describe("BuiltinWebSearchProvider", () => {
                 ok: false,
                 error: "WebSearch call limit reached for this turn.",
             });
+    });
+
+    it("distinguishes a normal empty web result from an unreadable successful HTTP body", async () => {
+        const registry = createPaidCapabilityRegistry();
+        const bodies: unknown[] = [{ results: [] }, {}, { results: [{ url: "obsidian://invalid" }] }];
+        await registry.registerProvider(createProvider({ request: async () => ({ status: 200,
+            body: bodies.shift() }) }), createLoadContext());
+        const context = { host: createPlugin(), turnId: "web-fact" };
+        const normal = await registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "absent" }, context);
+        expect(normal).toMatchObject({ ok: true, resultFact: { kind: "no_match", search: "web" } });
+        const unreadable = await registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "unreadable" }, context);
+        expect(unreadable).toMatchObject({ ok: false, resultFact: { kind: "unavailable",
+            capability: "webSearch" } });
+        const invalidSource = await registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "invalid" }, context);
+        expect(invalidSource).toMatchObject({ ok: false, resultFact: { kind: "unavailable",
+            capability: "webSearch" } });
+        expect(bodies).toHaveLength(0);
     });
 
     it("keeps only the requested number of sources when the MCP returns more", async () => {

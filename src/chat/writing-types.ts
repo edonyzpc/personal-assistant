@@ -51,6 +51,15 @@ const versionSchema = z.object({
 }).strict();
 
 export function cloneWritingVersion(value: unknown): WritingVersion {
+    return cloneWritingVersionFields(value, false);
+}
+
+/** Persisted text remains readable if only its optional source receipt is damaged. */
+export function cloneStoredWritingVersion(value: unknown): WritingVersion {
+    return cloneWritingVersionFields(value, true);
+}
+
+function cloneWritingVersionFields(value: unknown, discardInvalidGenerationInput: boolean): WritingVersion {
     const parsed = versionSchema.parse(value);
     const backgroundSourceRefs = parsed.backgroundSourceRefs.map((source) => {
         if (!validateSourceRefPathShape(source).ok || hasForbiddenPersistedTextFields(source)) throw new Error('Invalid writing source');
@@ -65,8 +74,17 @@ export function cloneWritingVersion(value: unknown): WritingVersion {
         };
     });
     const { generationInput, ...fields } = parsed;
+    let copiedGenerationInput: GenerationInputSnapshot | undefined;
+    if (generationInput !== undefined) {
+        if (discardInvalidGenerationInput) {
+            try { copiedGenerationInput = cloneGenerationInputSnapshot(generationInput); }
+            catch { /* A damaged stored receipt is unknown, not an unreadable Writing body. */ }
+        } else {
+            copiedGenerationInput = cloneGenerationInputSnapshot(generationInput);
+        }
+    }
     return { ...fields, associatedImages: cloneMessageImages(parsed.associatedImages), backgroundSourceRefs,
-        ...(generationInput !== undefined ? { generationInput: cloneGenerationInputSnapshot(generationInput) } : {}) };
+        ...(copiedGenerationInput !== undefined ? { generationInput: copiedGenerationInput } : {}) };
 }
 
 export async function hashWritingText(text: string): Promise<string> {

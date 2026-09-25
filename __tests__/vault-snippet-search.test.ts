@@ -640,6 +640,8 @@ describe("search_vault_snippets multi-match source locating", () => {
         );
         expect(emptyResult.ok).toBe(true);
         expect(emptyResult.content).toMatchObject({ matchCount: 0, matchCountKind: "exact" });
+        expect(emptyResult.resultFact).toMatchObject({ kind: "no_match", search: "snippet",
+            observationId: expect.any(String) });
 
         const missingHost = {
             app: {
@@ -658,6 +660,7 @@ describe("search_vault_snippets multi-match source locating", () => {
             coverage: { state: "partial" },
             unavailableSources: ["vault file read"],
         });
+        expect(missing.resultFact?.kind).not.toBe("no_match");
     });
 
     it("preserves the source vault receiver in the path-filtered host", async () => {

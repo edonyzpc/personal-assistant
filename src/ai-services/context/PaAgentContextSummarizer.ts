@@ -1,5 +1,7 @@
 import type { ChatMessage } from "../chat-types";
-import { chatHistoryImageMetadata, chatImageIdentity } from "../chat-image-identity";
+import { chatHistoryImageMetadata } from "../chat-image-identity";
+import { cloneInputLineage } from "../input-lineage";
+import { readChatHistoryTurnMetadata } from "../pa-agent-history";
 import { TurnExecutionDeadline } from "../agent-runtime-primitives";
 import { createAbortError, throwIfAborted } from "../chat-utils";
 import { planHistoryContext } from "./PaAgentHistoryContextPlan";
@@ -43,7 +45,7 @@ interface Cursor { message: number; offset: number }
 const MAX_REQUEST_CHARS = 16_000;
 const REQUEST_RESERVE_CHARS = 512;
 const MAX_HISTORY_SUMMARY_CHARS = 8_000;
-const MAX_TOOL_SUMMARY_CHARS = 1_500;
+export const MAX_TOOL_SUMMARY_CHARS = 1_500;
 const MAX_TOOL_CACHE_ENTRIES = 8;
 const MIN_SUMMARY_CHARS = JSON.stringify({
     goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
@@ -113,6 +115,8 @@ export class PaAgentContextSummarizer {
         historyBudgetChars: number;
         invoke: PaAgentSummaryInvoke;
         signal?: AbortSignal;
+        /** Runtime transport owns a deadline beginning at the physical dispatch hook. */
+        deadlineManagedByInvoke?: boolean;
     }): Promise<PaAgentHistorySummary | undefined> {
         throwIfAborted(input.signal);
         if (this.disposed) return undefined;
@@ -129,7 +133,7 @@ export class PaAgentContextSummarizer {
             && cached.summary.text.length <= maxChars ? cached : undefined;
         if (reusable?.summary.sourceMessages.length === covered.length) return cloneHistorySummary(reusable.summary);
 
-        return this.runBounded(input.signal, this.options.historyTimeoutMs ?? 1_800_000, async (deadline, generation) => {
+        return this.runBounded(input.signal, async (signal, generation) => {
             const start = reusable?.summary.sourceMessages.length ?? 0;
             const hostDependencyIndexes = new Set<number>(
                 covered.slice(0, start).map((_message, index) => index + 1),
@@ -144,7 +148,8 @@ export class PaAgentContextSummarizer {
                 maxChars,
                 "chat_history",
                 input.invoke,
-                deadline,
+                signal,
+                input.deadlineManagedByInvoke ? Number.POSITIVE_INFINITY : this.options.historyTimeoutMs ?? 1_800_000,
                 covered,
                 hostDependencyIndexes,
             );
@@ -160,6 +165,7 @@ export class PaAgentContextSummarizer {
         maxSummaryChars?: number;
         invoke: PaAgentSummaryInvoke;
         signal?: AbortSignal;
+        deadlineManagedByInvoke?: boolean;
     }): Promise<PaAgentToolSummary | undefined> {
         throwIfAborted(input.signal);
         if (this.disposed || !input.source.content.includeInNextPrompt || !input.source.content.promptText.trim()) return undefined;
@@ -175,10 +181,11 @@ export class PaAgentContextSummarizer {
         if (cached && cached.text.length <= maxChars && isCurrentToolSummary(cached, input.source)) {
             return cloneToolSummary(cached);
         }
-        return this.runBounded(input.signal, this.options.toolTimeoutMs ?? 1_800_000, async (deadline, generation) => {
+        return this.runBounded(input.signal, async (signal, generation) => {
             const structured = await summarizeSources([
                 { index: 1, role: "tool", content: source.content.promptText },
-            ], undefined, maxChars, `tool_result (${source.toolName}; isError=${source.isError})`, input.invoke, deadline);
+            ], undefined, maxChars, `tool_result (${source.toolName}; isError=${source.isError})`, input.invoke,
+            signal, input.deadlineManagedByInvoke ? Number.POSITIVE_INFINITY : this.options.toolTimeoutMs ?? 1_800_000);
             if (!structured || generation !== this.generation || JSON.stringify(input.source) !== key) return undefined;
             const summary: PaAgentToolSummary = { text: JSON.stringify(structured), source };
             // A summary that grows the evidence cannot help the request budget.
@@ -192,45 +199,50 @@ export class PaAgentContextSummarizer {
 
     private async runBounded<T>(
         signal: AbortSignal | undefined,
-        timeoutMs: number,
-        work: (deadline: TurnExecutionDeadline, generation: number) => Promise<T | undefined>,
+        work: (signal: AbortSignal, generation: number) => Promise<T | undefined>,
     ): Promise<T | undefined> {
         const controller = new AbortController();
         const abort = () => controller.abort();
         signal?.addEventListener("abort", abort, { once: true });
         if (signal?.aborted) controller.abort();
-        const deadline = new TurnExecutionDeadline(controller.signal, Math.max(1, timeoutMs), "Context summarization timed out.");
         this.operations.add(controller);
         const generation = this.generation;
         try {
-            deadline.throwIfAborted();
-            const result = await work(deadline, generation);
-            deadline.throwIfAborted();
+            throwIfAborted(controller.signal);
+            const result = await work(controller.signal, generation);
+            throwIfAborted(controller.signal);
             return generation === this.generation && !this.disposed ? result : undefined;
         } catch {
             if (signal?.aborted) throw createAbortError();
             return undefined;
         } finally {
-            deadline.dispose();
             signal?.removeEventListener("abort", abort);
             this.operations.delete(controller);
         }
     }
 }
 
-async function invokeBounded(request: PaAgentSummaryRequest, invoke: PaAgentSummaryInvoke, deadline: TurnExecutionDeadline): Promise<unknown> {
+async function invokeBounded(request: PaAgentSummaryRequest, invoke: PaAgentSummaryInvoke,
+    signal: AbortSignal, timeoutMs: number): Promise<unknown> {
     if (!requestFits(request)) throw new Error("Context summary request exceeds its budget.");
-    const response = await deadline.race(Promise.resolve().then(() => {
+    if (!Number.isFinite(timeoutMs)) {
+        throwIfAborted(signal);
+        return invoke(request, signal);
+    }
+    const deadline = new TurnExecutionDeadline(signal, Math.max(1, timeoutMs), "Context summarization timed out.");
+    try {
+        const response = await deadline.race(Promise.resolve().then(() => {
+            deadline.throwIfAborted();
+            return invoke(request, deadline.signal);
+        }));
         deadline.throwIfAborted();
-        return invoke(request, deadline.signal);
-    }));
-    deadline.throwIfAborted();
-    return response;
+        return response;
+    } finally { deadline.dispose(); }
 }
 
 async function summarizeSources(
     sources: readonly SourceMessage[], previous: StructuredSummary | undefined,
-    maxChars: number, sourceKind: string, invoke: PaAgentSummaryInvoke, deadline: TurnExecutionDeadline,
+    maxChars: number, sourceKind: string, invoke: PaAgentSummaryInvoke, signal: AbortSignal, timeoutMs: number,
     bindingSourceMessages: readonly ChatMessage[] = [],
     hostDependencyIndexes: ReadonlySet<number> = new Set(),
 ): Promise<StructuredSummary | undefined> {
@@ -242,7 +254,7 @@ async function summarizeSources(
     let summary = previous;
     const hostProcessedIndexes = new Set(hostDependencyIndexes);
     while (cursor.message < preparedSources.length) {
-        deadline.throwIfAborted();
+        throwIfAborted(signal);
         const parts = nextSourceParts(preparedSources, cursor, summary, maxChars, sourceKind);
         if (parts.length === 0) return undefined;
         const payload = makeRequest(
@@ -255,7 +267,7 @@ async function summarizeSources(
             hostProcessedIndexes,
         );
         if (!requestFits(payload)) return undefined;
-        const response = await invokeBounded(payload, invoke, deadline);
+        const response = await invokeBounded(payload, invoke, signal, timeoutMs);
         const allowedIndices = new Set<number>(hostProcessedIndexes);
         for (const part of parts) allowedIndices.add(part.index);
         for (const field of FIELDS) for (const item of summary?.[field] ?? []) {
@@ -445,16 +457,28 @@ function emptySummary(): StructuredSummary {
 
 function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 function snapshotHistory(history: readonly ChatMessage[]): ChatMessage[] {
-    return history.map((message) => ({
-        role: message.role,
-        content: message.content,
-        ...chatHistoryImageMetadata(message),
-        ...(message.memoryMetadata ? { memoryMetadata: message.memoryMetadata } : {}),
-    }));
+    return history.map((message) => {
+        let metadata: ChatMessage['memoryMetadata'];
+        try { metadata = readChatHistoryTurnMetadata(message); }
+        catch { metadata = message.memoryMetadata; }
+        const lineage = cloneInputLineage(message.inputLineage ?? metadata?.inputLineage);
+        return {
+            role: message.role,
+            content: message.content,
+            ...chatHistoryImageMetadata(message),
+            ...(message.runSourceSelection ? {
+                runSourceSelection: JSON.parse(JSON.stringify(message.runSourceSelection)) as ChatMessage['runSourceSelection'],
+            } : {}),
+            ...(lineage ? { inputLineage: lineage } : {}),
+            ...(metadata ? { memoryMetadata: JSON.parse(JSON.stringify(metadata)) } : {}),
+            ...(message.canonicalTurn ? {
+                canonicalTurn: JSON.parse(JSON.stringify(message.canonicalTurn)) as ChatMessage['canonicalTurn'],
+            } : {}),
+        };
+    });
 }
 function isPrefix(prefix: readonly ChatMessage[], history: readonly ChatMessage[]): boolean {
-    return prefix.length <= history.length && prefix.every((message, index) => message.role === history[index].role && message.content === history[index].content
-        && chatImageIdentity(message.images) === chatImageIdentity(history[index].images));
+    return prefix.length === 0 || isCurrentHistorySummary({ text: '', sourceMessages: prefix }, history);
 }
 function sameHistory(a: readonly ChatMessage[], b: readonly ChatMessage[]): boolean { return a.length === b.length && isPrefix(a, b); }
 function cloneHistorySummary(summary: PaAgentHistorySummary): PaAgentHistorySummary {

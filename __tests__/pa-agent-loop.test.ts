@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "@jest/globals";
 
 import { RUN_SCOPE_TURN_ID } from "../src/ai-services/agent-runtime-primitives";
+import { AgentRunCoordinator } from "../src/ai-services/agent-run-coordinator";
 import {
     createAgentControlSnapshot,
     createInitialAgentControlSnapshot,
@@ -21,6 +22,63 @@ import { PageletLeadDrivenPolicy } from "../src/pagelet/agent/lead-driven-policy
 import { ProviderAdmissionError } from "../src/ai-services/provider-admission-error";
 
 describe("PaAgentLoop", () => {
+    it.each([
+        { changed: true, expectedStatus: "completed", expectedTurns: 8 },
+        { changed: false, expectedStatus: "incomplete", expectedTurns: 9 },
+    ] as const)("counts provider failures only within the current read-evidence episode (changed: $changed)", async ({
+        changed, expectedStatus, expectedTurns,
+    }) => {
+        let modelTurns = 0;
+        let reads = 0;
+        const result = await new PaAgentLoop({
+            runId: `provider-progress-${changed}`,
+            userInput: "Answer from the inspected notes",
+            maxTurns: 12,
+            model: { stream: async function* () {
+                modelTurns += 1;
+                if (modelTurns % 2 === 1 && modelTurns <= (changed ? 7 : 9)) {
+                    throw Object.assign(new Error("temporary provider failure"), { status: 503 });
+                }
+                if (modelTurns <= (changed ? 6 : 8)) {
+                    yield { type: "toolcall_delta", id: `read-call-${modelTurns}`, name: "read_note",
+                        input: { path: "notes/answer.md", endLine: modelTurns }, index: 0 } as const;
+                    yield { type: "provider_completion", completion: "tool_calls" } as const;
+                    return;
+                }
+                yield { type: "text_delta", text: "Answer from the new readings." } as const;
+                yield { type: "provider_completion", completion: "stop" } as const;
+            } },
+            toolExecutor: { execute: async () => {
+                reads += 1;
+                const contentHash = (changed ? String(reads) : "0").repeat(40);
+                return { outcome: "success", promptText: `read response ${reads}`,
+                    metadata: { vaultObservationContractVersion: 1, vaultObservationEvidence: {
+                        schemaVersion: 1, observationId: `read-${reads}`, tool: "read_note",
+                        fingerprint: { algorithm: "sha1", canonicalizationVersion: 1 },
+                        scope: { allowedPaths: null, excludedPaths: [] },
+                        coverage: { complete: true, truncated: false, endOfPart: true },
+                        items: [{ kind: "read-result", outputDigest: String(reads).repeat(40),
+                            path: "notes/answer.md", contentHash, part: "body",
+                            range: { startLine: 1, endLine: 1, startOffset: 0, endOffset: 10,
+                                partialLine: false } }],
+                    } },
+                };
+            } },
+            hostPolicy: { afterTurn: (summary) => summary.status === "tool_results_ready"
+                ? { action: "continue", reason: "tool_results_ready" }
+                : { action: "stop", status: "completed", reason: "text_present" } },
+        }).run();
+
+        expect(result.turns.map(turn => turn.progressEpoch)).toEqual(changed
+            ? [0, 1, 1, 2, 2, 3, 3, 3]
+            : [0, 1, 1, 1, 1, 1, 1, 1, 1]);
+        expect(result.status).toBe(expectedStatus);
+        expect(result.turns).toHaveLength(expectedTurns);
+        expect(result.turns.filter(turn => turn.status === "error")).toHaveLength(changed ? 4 : 5);
+        expect(reads).toBe(changed ? 3 : 4);
+        if (!changed) expect(result.endPayload).toMatchObject({ reason: "provider_no_progress" });
+    });
+
     it('uses an explicit incomplete report for task status and its user-facing answer', async () => {
         let executed = 0;
         const events: AgentEvent[] = [];
@@ -481,12 +539,14 @@ describe("PaAgentLoop", () => {
 
     it("prepares request-local model input before every logical provider turn", async () => {
         const preparedTurns: number[] = [];
+        const preparationSignals: AbortSignal[] = [];
         const modelInputs: PaAgentModelInput[] = [];
         const loop = new PaAgentLoop({
             runId: "run-request-gate",
             userInput: "use memory",
             prepareModelInput: async (input) => {
                 preparedTurns.push(input.turnIndex);
+                preparationSignals.push(input.signal!);
                 return {
                     ...input,
                     transcript: input.transcript.map((message) => message.role === "toolResult"
@@ -528,6 +588,7 @@ describe("PaAgentLoop", () => {
         await loop.run();
 
         expect(preparedTurns).toEqual([0, 1]);
+        expect(preparationSignals.every((signal) => signal.aborted)).toBe(true);
         expect(modelInputs[1]?.transcript.find((message) => message.role === "toolResult"))
             .toMatchObject({ content: { promptText: "GATED MEMORY" } });
         expect(modelInputs[1]?.prepareForProviderRetry).toEqual(expect.any(Function));
@@ -545,13 +606,7 @@ describe("PaAgentLoop", () => {
                 prepareModelInput: (input) => {
                     if (input.toolMode === "final_answer_only") return Promise.resolve(input);
                     preparationSignal = input.signal;
-                    return new Promise((_resolve, reject) => {
-                        input.signal?.addEventListener("abort", () => {
-                            const error = new Error("provider preparation aborted");
-                            error.name = "AbortError";
-                            reject(error);
-                        }, { once: true });
-                    });
+                    return new Promise(() => undefined);
                 },
                 model: {
                     stream: async function* (input) {
@@ -599,18 +654,7 @@ describe("PaAgentLoop", () => {
         jest.useFakeTimers();
         try {
             const modelInputs: PaAgentModelInput[] = [];
-            const policy = createRequiredCapabilityHostPolicy({
-                userInput: "Use Memory to answer this.",
-                availableCapabilities: new Set<"search_memory">(["search_memory"]),
-                classification: {
-                    items: [{
-                        capability: "search_memory",
-                        confidence: 1,
-                        level: "required",
-                        reason: "explicit Memory request",
-                    }],
-                },
-            });
+            const policy = createRequiredCapabilityHostPolicy();
             const loop = new PaAgentLoop({
                 runId: "run-production-policy-provider-deadline",
                 userInput: "Use Memory to answer this.",
@@ -674,22 +718,11 @@ describe("PaAgentLoop", () => {
         }
     });
 
-    it("applies Required Capability terminal warnings after a Loop-reserved final answer", async () => {
+    it("keeps a Loop-reserved final answer free of predicted requirement warnings", async () => {
         jest.useFakeTimers();
         try {
             const modelInputs: PaAgentModelInput[] = [];
-            const policy = createRequiredCapabilityHostPolicy({
-                userInput: "Use Memory to answer this.",
-                availableCapabilities: new Set<"search_memory">(["search_memory"]),
-                classification: {
-                    items: [{
-                        capability: "search_memory",
-                        confidence: 1,
-                        level: "required",
-                        reason: "explicit Memory request",
-                    }],
-                },
-            });
+            const policy = createRequiredCapabilityHostPolicy();
             const loop = new PaAgentLoop({
                 runId: "run-production-policy-missing-at-reserve",
                 userInput: "Use Memory to answer this.",
@@ -722,44 +755,19 @@ describe("PaAgentLoop", () => {
             expect(modelInputs).toHaveLength(1);
             expect(modelInputs[0]?.toolMode).toBe("final_answer_only");
             expect(result.turns.map((turn) => turn.status)).toEqual(["incomplete", "completed"]);
-            expect(result.status).toBe("completed_with_warning");
-            expect(result.endPayload).toMatchObject({
-                reason: "required_capability_missing",
-                warnings: [expect.objectContaining({
-                    type: "required_capability_missing",
-                    capability: "search_memory",
-                })],
-            });
+            expect(result.status).toBe("completed");
+            expect(result.endPayload?.warnings).toBeUndefined();
         } finally {
             jest.useRealTimers();
         }
     });
 
-    it("carries successful required results from the interrupted turn into terminal policy", async () => {
+    it("carries actual tool results from the interrupted turn without inferred requirement warnings", async () => {
         jest.useFakeTimers();
         try {
             const modelInputs: PaAgentModelInput[] = [];
             const executedTools: string[] = [];
-            const policy = createRequiredCapabilityHostPolicy({
-                userInput: "Compare my notes with the latest web information.",
-                availableCapabilities: new Set(["search_memory", "webSearch"] as const),
-                classification: {
-                    items: [
-                        {
-                            capability: "search_memory",
-                            confidence: 1,
-                            level: "required",
-                            reason: "explicit Memory request",
-                        },
-                        {
-                            capability: "webSearch",
-                            confidence: 1,
-                            level: "required",
-                            reason: "explicit Web request",
-                        },
-                    ],
-                },
-            });
+            const policy = createRequiredCapabilityHostPolicy();
             const loop = new PaAgentLoop({
                 runId: "run-production-policy-partial-tools-at-reserve",
                 userInput: "Compare my notes with the latest web information.",
@@ -825,12 +833,8 @@ describe("PaAgentLoop", () => {
                 expect.objectContaining({ toolName: "search_memory", isError: false }),
                 expect.objectContaining({ toolName: "webSearch", isError: true }),
             ]));
-            expect(result.status).toBe("completed_with_warning");
-            expect(result.endPayload).toMatchObject({
-                reason: "required_capability_failed",
-                warnings: [expect.objectContaining({ capability: "webSearch" })],
-            });
-            expect(result.endPayload?.warnings).toHaveLength(1);
+            expect(result.status).toBe("completed");
+            expect(result.endPayload?.warnings).toBeUndefined();
         } finally {
             jest.useRealTimers();
         }
@@ -846,6 +850,7 @@ describe("PaAgentLoop", () => {
                         outcome: "success" as const,
                         promptText: "Memory evidence before revalidation",
                         metadata: { memoryEvidenceState: "evidence" },
+                        resultFact: { kind: "evidence" as const, sourceRefs: ["A.md"] },
                     };
                 }
                 return await new Promise<{
@@ -858,18 +863,7 @@ describe("PaAgentLoop", () => {
                     }), { once: true });
                 });
             });
-            const policy = createRequiredCapabilityHostPolicy({
-                userInput: "Use Memory to answer this.",
-                availableCapabilities: new Set<"search_memory">(["search_memory"]),
-                classification: {
-                    items: [{
-                        capability: "search_memory",
-                        confidence: 1,
-                        level: "required",
-                        reason: "explicit Memory request",
-                    }],
-                },
-            });
+            const policy = createRequiredCapabilityHostPolicy();
             const loop = new PaAgentLoop({
                 runId: "run-memory-revoked-in-reserved-preparation",
                 userInput: "Use Memory to answer this.",
@@ -887,6 +881,7 @@ describe("PaAgentLoop", () => {
                                     ...message.content.metadata,
                                     memoryEvidenceState: "unavailable",
                                 },
+                                resultFact: { kind: "unavailable", capability: "search_memory", reason: "source_revoked" },
                             },
                         };
                     });
@@ -947,17 +942,18 @@ describe("PaAgentLoop", () => {
                     }),
                 ]),
             });
-            expect(result.status).toBe("completed_with_warning");
-            expect(result.endPayload).toMatchObject({
-                reason: "required_capability_failed",
-                warnings: [expect.objectContaining({ capability: "search_memory" })],
-            });
+            expect(modelInputs[1]?.transcript).toEqual(expect.arrayContaining([
+                expect.objectContaining({ role: "toolResult", toolName: "search_memory",
+                    content: expect.objectContaining({ resultFact: expect.objectContaining({ kind: "unavailable" }) }) }),
+            ]));
+            expect(result.status).toBe("completed");
+            expect(result.endPayload?.warnings).toBeUndefined();
         } finally {
             jest.useRealTimers();
         }
     });
 
-    it("finalizes once with a warning when required Memory is unavailable", async () => {
+    it("returns an unavailable Memory observation without synthesizing a no-match claim", async () => {
         const modelInputs: PaAgentModelInput[] = [];
         const execute = jest.fn(async () => ({
             outcome: "success" as const,
@@ -966,18 +962,7 @@ describe("PaAgentLoop", () => {
                 memoryEvidenceState: "unavailable",
             },
         }));
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Use Memory to answer this.",
-            availableCapabilities: new Set<"search_memory">(["search_memory"]),
-            classification: {
-                items: [{
-                    capability: "search_memory",
-                    confidence: 1,
-                    level: "required",
-                    reason: "explicit Memory request",
-                }],
-            },
-        });
+        const policy = createRequiredCapabilityHostPolicy();
         const loop = new PaAgentLoop({
             runId: "run-required-memory-unavailable",
             userInput: "Use Memory to answer this.",
@@ -1009,17 +994,9 @@ describe("PaAgentLoop", () => {
             undefined,
             "normal",
         ]);
-        expect(result.status).toBe("completed_with_warning");
-        expect(result.endPayload).toMatchObject({
-            reason: "required_capability_failed",
-            warnings: [expect.objectContaining({
-                capability: "search_memory",
-                detail: "Memory from notes was required but failed or was unavailable.",
-                metadata: expect.objectContaining({
-                    failedRequiredToolRetryAttempted: true,
-                }),
-            })],
-        });
+        expect(result.status).toBe("completed");
+        expect(result.turns[0]?.toolResults[0]?.content.metadata?.memoryEvidenceState).toBe("unavailable");
+        expect(result.endPayload?.warnings).toBeUndefined();
     });
 
     it("counts a required Memory none result as a completed search without repeating it", async () => {
@@ -1031,18 +1008,7 @@ describe("PaAgentLoop", () => {
                 memoryEvidenceState: "none",
             },
         }));
-        const policy = createRequiredCapabilityHostPolicy({
-            userInput: "Use Memory to answer this.",
-            availableCapabilities: new Set<"search_memory">(["search_memory"]),
-            classification: {
-                items: [{
-                    capability: "search_memory",
-                    confidence: 1,
-                    level: "required",
-                    reason: "explicit Memory request",
-                }],
-            },
-        });
+        const policy = createRequiredCapabilityHostPolicy();
         const loop = new PaAgentLoop({
             runId: "run-required-memory-none",
             userInput: "Use Memory to answer this.",
@@ -1087,18 +1053,7 @@ describe("PaAgentLoop", () => {
                 outcome: "success" as const,
                 promptText: "Memory observation",
             }));
-            const policy = createRequiredCapabilityHostPolicy({
-                userInput: "Use Memory to answer this.",
-                availableCapabilities: new Set<"search_memory">(["search_memory"]),
-                classification: {
-                    items: [{
-                        capability: "search_memory",
-                        confidence: 1,
-                        level: "required",
-                        reason: "explicit Memory request",
-                    }],
-                },
-            });
+            const policy = createRequiredCapabilityHostPolicy();
             const loop = new PaAgentLoop({
                 runId: "run-production-policy-empty-reserve",
                 userInput: "Use Memory to answer this.",
@@ -1266,6 +1221,113 @@ describe("PaAgentLoop", () => {
 
         expect(result.status).toBe("aborted");
         expect(releaseCount).toBe(1);
+    });
+
+    it.each(["resolve", "reject"] as const)("releases a cancelled prepare's Pagelet lease before late %s", async (lateSettlement) => {
+        const controller = new AbortController();
+        const coordinator = new AgentRunCoordinator();
+        const events: AgentEvent[] = [];
+        let startPreparation: () => void = () => undefined;
+        const preparationStarted = new Promise<void>((resolve) => { startPreparation = resolve; });
+        let resolvePreparation: (input: PaAgentModelInput) => void = () => undefined;
+        let rejectPreparation: (error: Error) => void = () => undefined;
+        const pendingPreparation = new Promise<PaAgentModelInput>((resolve, reject) => {
+            resolvePreparation = resolve;
+            rejectPreparation = reject;
+        });
+        let preparationInput: PaAgentModelInput | undefined;
+        let modelStarts = 0;
+        const runPromise = new PaAgentLoop({
+            runId: "nonresponsive-provider-preparation",
+            userInput: "answer from my notes",
+            signal: controller.signal,
+            turnLeaseProvider: ({ signal }) => coordinator.acquirePageletTurnLease(signal),
+            prepareModelInput: (input) => {
+                preparationInput = input;
+                startPreparation();
+                return pendingPreparation;
+            },
+            model: { stream: async function* () {
+                modelStarts += 1;
+                yield { type: "text_delta", text: "late output" } as const;
+            } },
+            onEvent: (event) => events.push(event),
+        }).run();
+
+        await preparationStarted;
+        controller.abort();
+        let settledBeforeLatePrepare = false;
+        let nextPageletGranted = false;
+        let otherChatGranted = false;
+        const nextPageletPromise = coordinator.acquirePageletTurnLease().then((lease) => {
+            nextPageletGranted = true;
+            return lease;
+        });
+        const otherChatPromise = coordinator.acquireChatLease().then((lease) => {
+            otherChatGranted = true;
+            return lease;
+        });
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+            Promise.all([runPromise.then(() => { settledBeforeLatePrepare = true; }),
+                nextPageletPromise, otherChatPromise]),
+            new Promise<void>((resolve) => { timeout = setTimeout(resolve, 500); }),
+        ]);
+        if (timeout !== undefined) clearTimeout(timeout);
+        const cancelledRunSettledPromptly = settledBeforeLatePrepare;
+        const nextPageletGrantedPromptly = nextPageletGranted;
+        const otherChatGrantedPromptly = otherChatGranted;
+        // Settle the old implementation's pending promise so a red test exits naturally.
+        if (lateSettlement === "resolve") resolvePreparation(preparationInput!);
+        else rejectPreparation(new Error("late preparation failure"));
+        const result = await runPromise;
+        await Promise.resolve();
+
+        const nextPagelet = await nextPageletPromise;
+        const otherChat = await otherChatPromise;
+        nextPagelet.release();
+        otherChat.release();
+        expect(cancelledRunSettledPromptly).toBe(true);
+        expect(nextPageletGrantedPromptly).toBe(true);
+        expect(otherChatGrantedPromptly).toBe(true);
+        expect(result.status).toBe("aborted");
+        expect(modelStarts).toBe(0);
+        expect(result.committedFinalText).toBe("");
+        expect(events.filter((event) => event.type === "agent_end")).toHaveLength(1);
+    });
+
+    it("does not prepare or dispatch after pre-abort or same-tick preparation abort", async () => {
+        const alreadyAborted = new AbortController();
+        alreadyAborted.abort();
+        let prepared = 0;
+        let dispatched = 0;
+        const model = { stream: async function* () {
+            dispatched += 1;
+            yield { type: "text_delta", text: "unexpected" } as const;
+        } };
+        const preAbortedResult = await new PaAgentLoop({
+            runId: "pre-aborted-preparation",
+            userInput: "answer",
+            signal: alreadyAborted.signal,
+            prepareModelInput: async (input) => { prepared += 1; return input; },
+            model,
+        }).run();
+        const sameTick = new AbortController();
+        const sameTickResult = await new PaAgentLoop({
+            runId: "same-tick-preparation-abort",
+            userInput: "answer",
+            signal: sameTick.signal,
+            prepareModelInput: async (input) => {
+                prepared += 1;
+                sameTick.abort();
+                return input;
+            },
+            model,
+        }).run();
+        expect(preAbortedResult.status).toBe("aborted");
+        expect(sameTickResult.status).toBe("aborted");
+        expect(prepared).toBe(1);
+        expect(dispatched).toBe(0);
     });
 
     it("aborts a queued turn lease when the remaining wall clock expires", async () => {
@@ -2586,7 +2648,7 @@ describe("PaAgentLoop", () => {
     });
 
     it.each([false, true])("uses one bounded finalization for blank text after an observation (still blank: %s)", async (stillBlank) => {
-        const policy = createRequiredCapabilityHostPolicy({ userInput: "Answer from context", availableCapabilities: new Set(), classification: { items: [] } });
+        const policy = createRequiredCapabilityHostPolicy();
         const inputs: PaAgentModelInput[] = [];
         const answer = " \n  Exact answer.\n";
         const loop = new PaAgentLoop({ runId: "blank-after-observation", userInput: "Answer from context",

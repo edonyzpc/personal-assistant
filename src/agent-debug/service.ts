@@ -219,17 +219,31 @@ export class AgentDebugService implements AgentDebugPort {
             }
             if (Object.keys(details).length) event.details = details;
             if (observation.kind === 'llm') state.calls.add(observation.callId ?? observation.nodeId);
-            if (observation.kind === 'attempt' && ['failed', 'cancelled', 'unknown'].includes(observation.status ?? '') && !observation.usage) state.unknownAttemptCost = true;
+            if (observation.kind === 'attempt' && ['partial', 'failed', 'cancelled', 'unknown'].includes(observation.status ?? '')) {
+                state.unknownAttemptCost = true;
+            }
             if (observation.usage) {
-                const usageKey = `${observation.callId ?? observation.nodeId}:${observation.usage.updateKey ?? 'usage'}`;
+                const callId = observation.callId ?? observation.nodeId;
+                const purpose = observation.purpose ?? 'unknown';
+                const usageKey = observation.attemptId
+                    ? `physical:${purpose}:${callId}:${observation.attemptId}:${observation.usage.updateKey ?? 'usage'}`
+                    : `logical:${purpose}:${callId}:${observation.usage.updateKey ?? 'usage'}`;
                 const value = this.usage(observation.usage);
                 const previous = state.usage.get(usageKey);
                 const next = observation.usage.aggregation === 'delta' && previous ? this.sumUsage([previous, value]) : value;
                 state.usage.set(usageKey, next); event.usage = next;
-                state.run.usage = this.sumUsage([...state.usage.values()]);
+                const physical = [...state.usage].filter(([key]) => key.startsWith('physical:')).map(([, usage]) => usage);
+                const logical = [...state.usage].filter(([key]) => key.startsWith('logical:')).map(([, usage]) => usage);
+                state.run.physicalUsage = physical.length ? this.sumUsage(physical) : undefined;
+                state.run.logicalUsage = logical.length ? this.sumUsage(logical) : undefined;
+                // A logical total can overlap physical attempts; display one lane only.
+                state.run.usage = state.run.physicalUsage ?? state.run.logicalUsage;
             }
-            if (state.run.usage) state.run.usage.complete = state.run.usage.complete && !state.unknownAttemptCost && [...state.calls]
-                .every(callId => [...state.usage.keys()].some(usageKey => usageKey.startsWith(`${callId}:`)));
+            if (state.run.usage) state.run.usage.complete = state.run.usage.complete
+                && !state.unknownAttemptCost
+                && !(state.run.physicalUsage && state.run.logicalUsage)
+                && [...state.calls].every(callId => [...state.usage.keys()]
+                    .some(usageKey => usageKey.includes(`:${callId}:`)));
             const contents: DebugContent[] = [];
             const lineage = cloneDebugLineage(observation.lineage ? {
                 sourceRefs: [...observation.lineage.sourcePaths ?? []], claimIds: [...observation.lineage.claimIds ?? []],

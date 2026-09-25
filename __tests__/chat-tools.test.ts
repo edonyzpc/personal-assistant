@@ -320,6 +320,29 @@ describe('vault tool path boundaries', () => {
         expect(getFileCache).not.toHaveBeenCalledWith(expect.objectContaining({ path: 'private/secret.md' }));
     });
 
+    it('classifies a completed empty metadata search without exposing an excluded note', async () => {
+        const { host, getFileCache } = createBoundaryHost();
+        const result = await createSearchVaultMetadataTool({ isPathAllowed }).execute(
+            { query: 'nomatchsynthetictoken', limit: 10 }, context(host),
+        );
+
+        expect(result.content?.matches).toEqual([]);
+        expect(result.resultFact).toEqual({ kind: 'no_match', search: 'metadata' });
+        expect(getFileCache).not.toHaveBeenCalledWith(expect.objectContaining({ path: 'private/secret.md' }));
+    });
+
+    it('does not classify missing vault enumeration as a completed empty search', async () => {
+        const { host } = createBoundaryHost();
+        const vault = host.app.vault as { getMarkdownFiles?: () => unknown };
+        vault.getMarkdownFiles = undefined;
+        const result = await createSearchVaultMetadataTool({ isPathAllowed }).execute(
+            { query: 'nomatchsynthetictoken', limit: 10 }, context(host),
+        );
+
+        expect(result.ok).toBe(false);
+        expect(result.resultFact).toBeUndefined();
+    });
+
     it('rejects outline and inspect paths before metadata lookup or file read', async () => {
         const { host, cachedRead, getFileCache } = createBoundaryHost();
         const outline = await createReadNoteOutlineTool({ isPathAllowed }).execute(

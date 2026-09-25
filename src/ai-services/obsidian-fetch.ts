@@ -2,7 +2,8 @@ import { requestUrl, type RequestUrlParam } from 'obsidian';
 import { agentDebugErrorType } from './pa-agent-debug';
 import { prepareProviderAdmission, runProviderAdmission } from './provider-admission-error';
 import { observeAgentDebug, type AgentDebugCallScope } from './agent-debug-port';
-import { agentDebugNow, bindAgentDebugAttempt } from './agent-debug-observation';
+import { agentDebugNow, bindAgentDebugAttempt, markAgentDebugAttemptFailure,
+    markAgentDebugAttemptResponse } from './agent-debug-observation';
 
 type RequestBody = string | ArrayBuffer | undefined;
 
@@ -118,14 +119,18 @@ export function traceProviderDispatch<T extends { status?: number }>(
     const monotonicStartedAt = agentDebugNow();
     const requestId = `http_${startedAt.toString(36)}_${++traceRequestSequence}`;
     const call = observation?.call;
-    if (call) bindAgentDebugAttempt(call, requestId);
     let dispatchObserved = false;
+    let taskReturned = false;
     const emit = (phase: ProviderRequestTrace['phase'], fields: Partial<ProviderRequestTrace> = {}) => {
         if (!isEnabled()) return;
         try { observer?.({ requestId, phase, transport, timestamp: Date.now(), elapsedMs: Date.now() - startedAt, ...fields }); }
         catch { /* Logging is never an admission or execution gate. */ }
     };
     const observeResult = (phase: 'response' | 'error', fields: { status?: number; errorType?: string }) => {
+        if (call) {
+            if (phase === 'response') markAgentDebugAttemptResponse(call, requestId, fields.status);
+            else markAgentDebugAttemptFailure(call, requestId);
+        }
         if (call) observeAgentDebug(call.recorder, () => ({
             nodeId: requestId, parentId: call.callId, kind: "attempt", phase,
             callId: call.callId, attemptId: requestId, turnId: call.turnId,
@@ -139,6 +144,7 @@ export function traceProviderDispatch<T extends { status?: number }>(
         }));
     };
     const onAbort = () => {
+        if (call) markAgentDebugAttemptFailure(call, requestId, true);
         if (call) observeAgentDebug(call.recorder, () => ({
             nodeId: requestId, parentId: call.callId, kind: "attempt", phase: "local_cancelled",
             callId: call.callId, attemptId: requestId, turnId: call.turnId,
@@ -147,6 +153,10 @@ export function traceProviderDispatch<T extends { status?: number }>(
     };
     try {
         const result = task();
+        taskReturned = true;
+        // A synchronous transport setup error never created a physical request.
+        // Bind only after the transport has returned its request promise.
+        if (call) bindAgentDebugAttempt(call, requestId);
         // Attach both handlers before calling an observer which might cancel the caller.
         void result.then(
             response => {
@@ -203,8 +213,10 @@ export function traceProviderDispatch<T extends { status?: number }>(
         return result;
     } catch (error) {
         observation?.signal?.removeEventListener('abort', onAbort);
-        emit('http_error', { errorType: agentDebugErrorType(error) });
-        observeResult('error', { errorType: agentDebugErrorType(error) });
+        if (taskReturned) {
+            emit('http_error', { errorType: agentDebugErrorType(error) });
+            observeResult('error', { errorType: agentDebugErrorType(error) });
+        }
         throw error;
     }
 }
