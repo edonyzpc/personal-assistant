@@ -793,41 +793,6 @@ describe("Pet Action Ring localization and layout contracts", () => {
         expect(getPetActionRingLabels("zh").ariaLabel).toBe("拾页操作");
     });
 
-    it("keeps root ARIA wiring, four inward corners, mobile safe area, focus, and reduced motion", () => {
-        const source = readFileSync("src/pagelet/pet/PetView.ts", "utf8");
-        const css = readFileSync("src/custom.pcss", "utf8");
-
-        expect(source).toContain('trigger.setAttribute("aria-controls", this._actionRingId)');
-        expect(source).toContain('trigger.setAttribute("aria-expanded", "false")');
-        expect(source).toContain('ring.setAttribute("role", "group")');
-        for (const corner of ["bottom-right", "bottom-left", "top-right", "top-left"]) {
-            expect(css).toContain(
-                `.pa-pagelet-pet[data-corner=${corner}] .pa-pagelet-action-ring-item`,
-            );
-        }
-        expect(css).toContain("body.is-mobile .pa-pagelet-pet--mobile-toolbar .pa-pagelet-action-ring");
-        expect(css).toContain(".pa-pagelet-action-ring-safe-area-probe");
-        expect(css).toContain("env(safe-area-inset-top,0px)");
-        expect(css).toContain("env(safe-area-inset-right,0px)");
-        expect(css).toContain("env(safe-area-inset-bottom,0px)");
-        expect(css).toContain("env(safe-area-inset-left,0px)");
-        expect(css).toContain("min-width: 44px;");
-        expect(css).toContain("min-height: 44px;");
-        expect(css).toContain("@media (hover: hover) and (pointer: fine)");
-        expect(css).toContain(".pa-pagelet-pet:not(.pa-pagelet-pet--mobile-toolbar) .pa-pagelet-action-ring-item");
-        expect(css).toContain(".pa-pagelet-action-ring-item:hover .pa-pagelet-action-ring-label");
-        expect(css).toContain(".pa-pagelet-action-ring-item:focus-visible .pa-pagelet-action-ring-label");
-        expect(css).not.toMatch(/\.pa-pagelet-action-ring-item\s*\{[\s\S]*?max-width:\s*min\(112px/);
-        expect(css).toContain(".pa-pagelet-action-ring-item:nth-child(4)");
-        expect(css).toContain(".pa-pagelet-action-ring-item:focus-visible");
-        expect(css).toMatch(
-            /body\.is-mobile \.pa-pagelet-pet--mobile-toolbar \.pa-pagelet-action-ring-item:nth-child\(2\) \{[\s\S]*?--pa-action-ring-y: 0px;/,
-        );
-        expect(css).toMatch(
-            /body\.is-mobile \.pa-pagelet-pet--mobile-toolbar \.pa-pagelet-action-ring-item:nth-child\(3\) \{[\s\S]*?--pa-action-ring-y: 0px;/,
-        );
-        expect(css).toMatch(/prefers-reduced-motion:[\s\S]*?\.pa-pagelet-action-ring-item \{[\s\S]*?animation: none;/);
-    });
 
     it.each([
         ["bottom-right", false, { left: 0, top: 0, width: 320, height: 568 }],

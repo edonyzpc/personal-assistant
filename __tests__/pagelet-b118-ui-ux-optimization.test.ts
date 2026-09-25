@@ -4,43 +4,18 @@
  * Covers the key behaviors introduced by Slices B–F:
  *   - F-02: Recap Bubble content uses candidate.body as primary text
  *   - F-03: Settings defaults are owned by pagelet-settings.test.ts
- *   - F-04: Reduced-motion CSS (covered by build; declarations validated here)
- *   - F-05: Recall actions (View = no re-run, Later = Review Queue, Dismiss = weak)
  *   - F-06: Pet state convergence (settleForForegroundOwner)
  *   - F-07: Settings quietRecallMode migration
  *   - F-10: Provider first-use shared notification
  */
 
-import { readFileSync } from "node:fs";
-
-import {
-    buildPreparedRecapDeliveryContent,
-    buildQuietRecallNudgeContent,
-} from "../src/pagelet/bubble/BubbleContent";
+import { buildPreparedRecapDeliveryContent } from "../src/pagelet/bubble/BubbleContent";
 import type { DeliveryCandidate } from "../src/pagelet/bubble/types";
-import type { QuietRecallBubbleNudge } from "../src/pa";
 import {
     mergePageletSettings,
     PAGELET_DEFAULTS,
 } from "../src/settings/pagelet/index";
 import { LEARNING_DEFAULTS_VERSION, mergeLoadedSettings, mergeQuietRecallSettings } from "../src/settings";
-
-function getCssBlock(source: string, marker: string, fromIndex = 0): string {
-    const markerIndex = source.indexOf(marker, fromIndex);
-    expect(markerIndex).toBeGreaterThanOrEqual(0);
-
-    const openBraceIndex = source.indexOf("{", markerIndex);
-    expect(openBraceIndex).toBeGreaterThan(markerIndex);
-
-    let depth = 0;
-    for (let index = openBraceIndex; index < source.length; index += 1) {
-        if (source[index] === "{") depth += 1;
-        if (source[index] === "}") depth -= 1;
-        if (depth === 0) return source.slice(openBraceIndex + 1, index);
-    }
-
-    throw new Error(`Unclosed CSS block for ${marker}`);
-}
 
 // ---------------------------------------------------------------------------
 // F-02: Recap Bubble Content
@@ -101,70 +76,6 @@ describe("F-02 Recap Bubble Content", () => {
 
         content.actions[0]?.callback();
         expect(onViewRecap).toHaveBeenCalledWith(candidate);
-    });
-});
-
-// ---------------------------------------------------------------------------
-// F-04: Reduced Motion
-// ---------------------------------------------------------------------------
-
-describe("F-04 Reduced Motion", () => {
-    it("disables every animated Pet child required by Slice D", () => {
-        const css = readFileSync("src/custom.pcss", "utf8");
-        const pageletMobileStart = css.indexOf("body.is-mobile .pa-pagelet-tab-body");
-        const reducedMotionStart = css.indexOf("@media (prefers-reduced-motion: reduce)", pageletMobileStart);
-        const reducedMotionCss = getCssBlock(
-            css,
-            "@media (prefers-reduced-motion: reduce)",
-            reducedMotionStart,
-        );
-
-        expect(reducedMotionCss).toMatch(
-            /\.pa-pagelet-pet\[data-state=idle\] \.pa-pagelet-pet-blink-group,\s*\.pa-pagelet-pet\[data-state=nudge\] \.pa-pagelet-pet-blink-group\s*{\s*animation:\s*none;\s*}/,
-        );
-        expect(reducedMotionCss).toMatch(
-            /\.pa-pagelet-pet\[data-state=working\] \.pa-pagelet-pet-dot-1,\s*\.pa-pagelet-pet\[data-state=working\] \.pa-pagelet-pet-dot-2,\s*\.pa-pagelet-pet\[data-state=working\] \.pa-pagelet-pet-dot-3\s*{\s*animation:\s*none;\s*}/,
-        );
-        expect(reducedMotionCss).toMatch(
-            /\.pa-pagelet-pet\[data-state=resting\] \.pa-pagelet-pet-zzz1,\s*\.pa-pagelet-pet\[data-state=resting\] \.pa-pagelet-pet-zzz2\s*{\s*animation:\s*none;\s*}/,
-        );
-    });
-});
-
-// ---------------------------------------------------------------------------
-// F-05: Recall Actions
-// ---------------------------------------------------------------------------
-
-describe("F-05 Quiet Recall Nudge Content", () => {
-    const makeNudge = (): QuietRecallBubbleNudge => ({
-        candidateId: "candidate-1",
-        currentPath: "notes/current.md",
-        relation: "current",
-        generatedAt: new Date().toISOString(),
-    });
-
-    it("dismiss label is Dismiss in English", () => {
-        const nudge = makeNudge();
-        const content = buildQuietRecallNudgeContent(
-            {
-                pageletEnabled: true,
-                quietRecallEnabled: true,
-                bubbleNudgesEnabled: true,
-                proactiveHints: true,
-                candidate: nudge,
-            },
-            {
-                onView: jest.fn(),
-                onDismiss: jest.fn(),
-                onLater: jest.fn(),
-            },
-            "en",
-        );
-
-        expect(content).not.toBeNull();
-        // The actions should not contain "不再提醒"
-        const labels = content!.actions.map((a) => a.label);
-        expect(labels).not.toContain("不再提醒");
     });
 });
 

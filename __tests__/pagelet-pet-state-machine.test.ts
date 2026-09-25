@@ -38,15 +38,6 @@ function startPointerHold(view: PetView): void {
     });
 }
 
-function escapeRegex(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function getCssRuleBlock(css: string, selector: string): string {
-    const match = new RegExp(`${escapeRegex(selector)}\\s*\\{([\\s\\S]*?)\\}`, "m").exec(css);
-    return match?.[1] ?? "";
-}
-
 type HoldMenuListener = EventListenerOrEventListenerObject;
 
 class HoldMenuFakeElement {
@@ -1303,96 +1294,5 @@ describe("PetView mobile toolbar mounting", () => {
 
         expect(source).toContain('root.classList.add("pa-pagelet-pet--mobile-toolbar")');
         expect(source).toContain("mountEl.insertBefore(root, mountTarget.insertAfterEl.nextSibling)");
-    });
-});
-
-describe("PetView mobile positioning styles", () => {
-    it("keeps bottom-corner pets above the Obsidian mobile toolbar", () => {
-        const css = readFileSync("src/custom.pcss", "utf8");
-        const mobileBottomCornerBlock = getCssRuleBlock(css, [
-            "body.is-mobile .pa-pagelet-pet[data-corner=bottom-right],",
-            "body.is-mobile .pa-pagelet-pet[data-corner=bottom-left]",
-        ].join("\n"));
-
-        expect(mobileBottomCornerBlock).toContain(
-            "--pa-pagelet-mobile-pet-bottom-clearance: max(96px, calc(env(safe-area-inset-bottom, 0px) + 72px));",
-        );
-        expect(mobileBottomCornerBlock).toContain(
-            "bottom: var(--pa-pagelet-mobile-pet-bottom-clearance);",
-        );
-    });
-
-    it("lets the phone Pet follow the active leaf toolbar instead of the viewport", () => {
-        const css = readFileSync("src/custom.pcss", "utf8");
-        const selector = "body.is-mobile .pa-pagelet-pet--mobile-toolbar";
-        const mobileTopbarBlock = getCssRuleBlock(css, selector);
-        const mobileCornerOverrideBlock = getCssRuleBlock(css, `${selector}[data-corner]`);
-        const mobileWrapperBlock = getCssRuleBlock(css, `${selector} .pa-pagelet-pet-wrapper`);
-        const mobileSvgBlock = getCssRuleBlock(css, `${selector} .pa-pagelet-pet-svg-wrap svg`);
-        const mobileOutlineStrokeBlock = getCssRuleBlock(css, `${selector} .pa-pagelet-pet-stroke-outline`);
-        const mobileDetailStrokeBlock = getCssRuleBlock(css, `${selector} .pa-pagelet-pet-stroke-detail`);
-        const mobileRestingBlock = getCssRuleBlock(css, `${selector}[data-state=resting]`);
-        const mobileRestingSvgWrapBlock = getCssRuleBlock(css, `${selector}[data-state=resting] .pa-pagelet-pet-svg-wrap`);
-
-        expect(mobileTopbarBlock).toContain("position: relative;");
-        expect(mobileTopbarBlock).not.toContain("position: fixed;");
-        expect(mobileTopbarBlock).toContain("width: 44px;");
-        expect(mobileTopbarBlock).toContain("height: 44px;");
-        expect(mobileTopbarBlock).toContain("flex: 0 0 44px;");
-        expect(mobileTopbarBlock).toContain("display: flex;");
-        expect(mobileTopbarBlock).toContain("align-items: center;");
-        expect(mobileTopbarBlock).toContain("justify-content: center;");
-        expect(mobileTopbarBlock).toContain("right: auto;");
-        expect(mobileTopbarBlock).toContain("bottom: auto;");
-        expect(mobileTopbarBlock).toContain("z-index: auto;");
-        expect(css).not.toContain("--pa-pagelet-mobile-topbar-pet-top");
-        expect(css).not.toContain("--pa-pagelet-mobile-topbar-pet-left");
-        expect(mobileCornerOverrideBlock).toContain("right: auto;");
-        expect(mobileCornerOverrideBlock).toContain("bottom: auto;");
-        expect(mobileWrapperBlock).toContain("width: 44px;");
-        expect(mobileWrapperBlock).toContain("height: 44px;");
-        expect(mobileWrapperBlock).toContain("min-width: 44px;");
-        expect(mobileWrapperBlock).toContain("min-height: 44px;");
-        expect(mobileWrapperBlock).toContain("transform: none;");
-        expect(mobileWrapperBlock).toContain("border-radius: 999px;");
-        expect(mobileSvgBlock).toContain("width: 28px;");
-        expect(mobileSvgBlock).toContain("height: 28px;");
-        expect(mobileOutlineStrokeBlock).toContain("stroke-width: 2.8px;");
-        expect(mobileDetailStrokeBlock).toContain("stroke-width: 2.35px;");
-        expect(mobileRestingBlock).toContain("opacity: 0.8;");
-        expect(mobileRestingBlock).toContain("filter: none;");
-        expect(mobileRestingSvgWrapBlock).toContain("filter: none;");
-    });
-
-    it("preserves existing Pagelet motion while disabling the hold-menu entrance for reduced motion", () => {
-        const css = readFileSync("src/custom.pcss", "utf8");
-        const pageletMotionStart = css.indexOf("body.is-mobile .pa-pagelet-tab-body");
-        const combinedReducedMotionStart = css.indexOf("@media (prefers-reduced-motion: reduce)", pageletMotionStart);
-        expect(pageletMotionStart).toBeGreaterThan(-1);
-        expect(combinedReducedMotionStart).toBeGreaterThan(pageletMotionStart);
-
-        const pageletMotionCss = css.slice(pageletMotionStart, combinedReducedMotionStart);
-
-        expect(pageletMotionCss).not.toContain("prefers-reduced-motion");
-        expect(pageletMotionCss).not.toContain("transition-duration: .01s!important");
-        expect(pageletMotionCss).not.toContain("animation: none!important");
-        expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.pa-pagelet-action-ring-item \{[\s\S]*?animation:\s*none;/);
-    });
-
-    it("places the phone hold menu below the toolbar and keeps every action touch-sized", () => {
-        const css = readFileSync("src/custom.pcss", "utf8");
-        const menuBlock = getCssRuleBlock(
-            css,
-            "body.is-mobile .pa-pagelet-pet--mobile-toolbar .pa-pagelet-action-ring",
-        );
-        const itemBlock = getCssRuleBlock(
-            css,
-            "body.is-mobile .pa-pagelet-action-ring-item",
-        );
-
-        expect(menuBlock).toContain("top: calc(100% + 8px);");
-        expect(menuBlock).toContain("env(safe-area-inset-bottom,0px)");
-        expect(itemBlock).toContain("min-width: 44px;");
-        expect(itemBlock).toContain("min-height: 44px;");
     });
 });

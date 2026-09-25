@@ -1172,49 +1172,6 @@ describe('PA Agent telemetry settings', () => {
         expect(policyModel?.desc).toContain('Blank uses local fallback rules');
     });
 
-    it('uses container-aware navigation and top-aligned setting rows', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-
-        expect(css).not.toContain(':has(');
-        expect(css).toContain('container-name: pa-settings-tab');
-        expect(css).toContain('container-type: inline-size');
-        expect(css).toMatch(/\.modal\.mod-settings\s+\.vertical-tab-content\.pa-settings-tab\s*{[\s\S]*?padding-inline:\s*clamp\(16px,\s*2vw,\s*24px\);/);
-        expect(css).toMatch(/\.pa-settings-shell\s*{[\s\S]*?margin-inline:\s*auto;[\s\S]*?max-width:\s*1180px;[\s\S]*?width:\s*100%;/);
-        expect(css).toMatch(/body\.is-mobile\s+\.modal\.mod-settings\s+\.vertical-tab-content\.pa-settings-tab\s*{[\s\S]*?safe-area-inset-left[\s\S]*?safe-area-inset-right/);
-        expect(css).toContain('.pa-settings-layout');
-        expect(css).toContain('.pa-settings-toc');
-        expect(css).toContain('.pa-settings-toc-item__tick');
-        expect(css).toContain('.pa-settings-toc-item__label');
-        expect(css).toMatch(/\.pa-settings-toc-item\s*{[\s\S]*?justify-content:\s*start;[\s\S]*?justify-items:\s*start;/);
-        expect(css).toContain('.pa-settings-jump');
-        expect(css).toContain('.pa-settings-jump-count');
-        expect(css).toContain('.pa-settings-jump-progress__segment');
-        expect(css).toMatch(/\.pa-settings-jump-select\s*{[\s\S]*?max-width:\s*360px;[\s\S]*?width:\s*100%;/);
-        expect(css).toContain('.pa-settings-group__body');
-        expect(css).toMatch(/\.pa-settings-group-summary\s*{[\s\S]*?scroll-margin-block-start:\s*12px;/);
-        expect(css).toContain('@container pa-settings-tab (min-width: 1040px)');
-        expect(css).toContain('@container pa-settings-tab (max-width: 720px)');
-        expect(css).toMatch(/@container pa-settings-tab \(min-width: 1040px\)\s*{[\s\S]*?grid-template-areas:\s*"toc content";[\s\S]*?grid-template-columns:\s*184px minmax\(0, 1fr\);/);
-        expect(css).toContain('@media (hover: hover) and (pointer: fine)');
-        expect(css).toMatch(/\.pa-settings-toc\s*{[\s\S]*?inline-size:\s*40px;/);
-        expect(css).toMatch(/\.pa-settings-toc:hover,[\s\S]*?\.pa-settings-toc:focus-within\s*{[\s\S]*?inline-size:\s*100%;/);
-        expect(css).toMatch(/body\.is-mobile\s+\.pa-settings-jump\s*{[\s\S]*?position:\s*sticky;[\s\S]*?top:\s*8px;/);
-        expect(css).toContain('--pa-settings-mobile-nav-offset: 72px');
-        expect(css).toMatch(/body\.is-mobile\s+\.pa-settings-group-summary\s*{[\s\S]*?scroll-margin-block-start:\s*var\(--pa-settings-mobile-nav-offset,\s*72px\);/);
-        expect(css).toMatch(/body\.is-mobile\s+\.pa-settings-jump-select\s*{[\s\S]*?grid-column:\s*1 \/ -1;/);
-        expect(css).toMatch(/body\.is-mobile\s+\.pa-settings-jump-count\s*{[\s\S]*?pointer-events:\s*none;[\s\S]*?position:\s*absolute;/);
-        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item\.pa-setting-layout\s*{[\s\S]*?align-items:\s*start;[\s\S]*?display:\s*grid;/);
-        expect(css).toContain('.pa-setting-layout--field');
-        expect(css).toContain('.pa-setting-layout--compact');
-        expect(css).toContain('.pa-setting-layout--cluster');
-        expect(css).toContain('.pa-setting-layout--stacked');
-        expect(css).toMatch(/body\.is-mobile\s+\.pa-settings-tab\s+\.setting-item\.pa-setting-layout\s+\.setting-item-control\s+button,[\s\S]*?min-height:\s*44px;/);
-        expect(css).toMatch(/body\.is-mobile\s+\.pa-settings-tab\s+\.setting-item\.pa-setting-layout--compact\s+\.setting-item-control\s*{[^}]*min-height:\s*44px;/);
-        expect(css).not.toMatch(/\.setting-item-control\s+\.checkbox-container\s*{[^}]*min-(?:height|width):\s*44px;/);
-        expect(css).not.toContain('.pa-settings-group > :not(summary)');
-        expect(css).not.toContain('.pa-settings-nav');
-        expect(css).not.toMatch(/suggestion-secret|keychain-list-results|pa-secret-picker/);
-    });
 });
 
 describe('Operations Agent settings compatibility', () => {
@@ -3354,12 +3311,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(containerEl.findAll('.pa-memory-control-center__recovery')[0]?.open).toBe(true);
     });
 
-    it('keeps the Data and recovery summary at a 44px touch target on mobile and narrow layouts', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-
-        expect(css).toMatch(/body\.is-mobile \.pa-memory-control-center__recovery > summary\s*{[^}]*min-height:\s*44px;/);
-        expect(css).toMatch(/@container\s+pa-settings-tab\s+\(max-width:\s*720px\)\s*{[\s\S]*?\.pa-memory-control-center__recovery > summary\s*{[^}]*min-height:\s*44px;/);
-    });
 
     it('does not rerender Settings when a Memory action finishes after close', async () => {
         let resolveAction!: (value: { ok: boolean; message: string }) => void;

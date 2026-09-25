@@ -34,10 +34,19 @@ describe("B-149 offline runtime eval CLI", () => {
                 },
                 packageLockSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
                 dependencies: { "@langchain/core": expect.any(String), "@langchain/openai": expect.any(String) } });
-            expect(report.sourceIdentity.dirtyInputs).toEqual(expect.arrayContaining([
-                expect.objectContaining({ path: "src/pa/eval/index.ts" }),
-                expect.objectContaining({ path: "src/pa/eval/runtime-cases.ts" }),
-            ]));
+            const identityPaths = [
+                "src/pa/eval/index.ts",
+                "src/pa/eval/runtime-cases.ts",
+                "__tests__/pa-agent-runtime-eval-runner-script.test.ts",
+            ];
+            const gitStatus = spawnSync("git", [
+                "status", "--porcelain=v1", "--untracked-files=all", "--", ...identityPaths,
+            ], { cwd: join(__dirname, ".."), encoding: "utf8" });
+            expect(gitStatus.status).toBe(0);
+            const expectedDirtyInputs = gitStatus.stdout.split(/\r?\n/).filter(Boolean)
+                .map((line) => ({ state: line.slice(0, 2), path: line.slice(3) }));
+            expect(report.sourceIdentity.dirtyInputs.filter((input: { path: string }) =>
+                identityPaths.includes(input.path))).toEqual(expectedDirtyInputs);
         } finally { rmSync(directory, { recursive: true, force: true }); }
     });
 
