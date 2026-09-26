@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-09-24
+Updated: 2026-09-26
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -53,6 +53,8 @@ Updated: 2026-09-24
 | T-004 | Active Package 局部后续任务的 ID 映射成本 | 在后续真实任务反复出现全契约映射负担，并有可定位的新增成本时再评估；先排除完整 namespace 漏写。当前不改 checker、不减追溯/验证门禁；若设计显式局部 scope，必须保持默认全量检查及未知/跨契约 ID 拒绝 | [GOV-001](./development/governance/gov-001-agent-managed-project-lifecycle.md), [Astra 试点结论](./archive/2026/astra-feature-workflow-optimization-validation.md) |
 | T-005 | 图片系统选择器的入口诊断 | 正常受支持图片也稳定复现无法提交，或用户明确要求排查该入口时重启；先区分系统选择器、夹具和 PA 导入链路。当前只观察到故意损坏 PNG 的 Open 禁用，原因未知，不作为已确认 PA 缺陷 | [图片体验验证与限制](./archive/2026/chat-image-experience-validation.md#limits-and-disposition) |
 | T-006 | 图片管理修订的旧应用状态兼容验证 | 2026-09-09 closeout 保留 NOT TESTED：旧 HEIC registry/cache、旧已写 JPEG/缺输出 receipt、未完成迁出在真实应用中未建立独立夹具；相关源码回归已通过。用户要求补齐、兼容/恢复代码改变或拿到独立旧状态时重启；只用合成旧状态，不改真实用户历史，不重复相册/Files/粘贴与共享布局矩阵 | [图片管理修订验证](./archive/2026/chat-image-management-validation.md), [当前恢复契约](./architecture/multimodal-chat-architecture.md#图片管理与保存恢复) |
+| T-007 | Pagelet 取消与临时额度 reservation | admission 接口的人工异步 reserve 反例已显示 abort 后 lease 未被捕获，rollback 未执行；当前默认同步 localStorage 与私有 timer 路径未证实际可达。新增异步存储/调用方、出现真实取消耗额度，或 Owner 单独授权生产修复时，先补真实 caller 反例，再决定最小修复 | [B-150 独立追溯](./archive/2026/b150-test-audit/final-report.md#production-follow-ups), [admission owner](../src/pagelet/provider-call-admission.ts) |
+| T-008 | 已退役 append 与测试专用生产入口清理 | 在单独授权生产清理后，完整核对导出、历史和非测试调用；不得删除仍被 Quick Capture 使用的 confinement，或被生产入口调用的 WithHost renderer。B-150 仅纠正测试证据，不执行此清理 | [B-150 候选边界](./archive/2026/b150-test-audit/final-report.md#production-follow-ups), [GOV-004](./development/governance/gov-004-test-audit-quality-preservation.md) |
 
 ## 维护规则
 

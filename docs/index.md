@@ -14,6 +14,7 @@
 | 记录/继续需求讨论 | [Discovery Registry](./development/discovery/README.md) | 跨会话需求、证据、选项与待决策项 |
 | 查已接受或延期的决定 | [Active Decisions](./product/active-decisions.md) / [Decision Index](./product/decisions/README.md) | repo-local 决策、原因、边界与重启条件 |
 | 查工程治理与 Agent/tooling 规则 | [Engineering Governance](./development/governance/README.md) | docs lifecycle、Agent workflow、checker、CI/release tooling 与工程授权边界 |
+| 查看测试审计设计与依据 | [GOV-004 设计](./development/governance/gov-004-test-audit-quality-preservation.md) / [B-150 验收快照](./archive/2026/b150-test-audit/final-report.md) / [覆盖地图](./archive/2026/b150-test-audit/coverage-map.md) | 当前审计规则与本轮已审、未审及验证边界 |
 | 开始或继续开发 | [Development](./development/README.md) | 文档生命周期、SDD workflow、活跃开发包与验证规则 |
 | 一眼查看正在开发什么 | [Active Registry](./development/active/README.md) | 当前 L2/L3/L2G track 的入口；状态看 Tracker |
 | 复用文档结构 | [Templates](./development/templates/README.md) | Discovery、Decision、Product/Governance contract、Plan、SDD、Tracker、Closeout 模板 |
