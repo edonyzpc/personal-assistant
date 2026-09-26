@@ -290,10 +290,37 @@ describe("ActionExecutor (4-gate orchestration, framework SDD §3.2)", () => {
         expect(cap._executeWriteMock).toHaveBeenCalledTimes(1);
     });
 
-    it("calls buildPreview before Gate 1 and feeds target.path into confinement", async () => {
-        const cap = makeCapability();
-        const exec = createActionExecutor(defaultExecutorOptions());
-        await exec.execute(cap, { foo: 1 }, makeContext());
+    it("validates the extracted target through Gate 1 before building the preview", async () => {
+        const calls: string[] = [];
+        const cap = makeCapability({
+            getTargetPath: () => {
+                calls.push("getTargetPath");
+                return ".pagelet/foo.md";
+            },
+        });
+        const buildPreview = cap.buildPreview;
+        cap.buildPreview = async (input, context) => {
+            calls.push("buildPreview");
+            return buildPreview(input, context);
+        };
+        const fsProbe: FsProbe = {
+            exists: async (path) => {
+                calls.push(`exists:${path}`);
+                return path === ".pagelet";
+            },
+            read: async () => "",
+        };
+        const exec = createActionExecutor(defaultExecutorOptions({ fsProbe }));
+
+        const result = await exec.execute(cap, { foo: 1 }, makeContext());
+
+        expect(result.status).toBe("ok");
+        expect(calls.slice(0, 4)).toEqual([
+            "getTargetPath",
+            "exists:.pagelet",
+            "exists:.pagelet/foo.md",
+            "buildPreview",
+        ]);
         expect(cap._buildPreviewMock).toHaveBeenCalledTimes(1);
     });
 

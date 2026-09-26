@@ -1,46 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-// Import the wasm asset module — Jest resolves this to `__mocks__/wasm-binary-fn.js`
-// (see jest.config.js moduleNameMapper). The mock mirrors lazyBinaryPlugin's emitted shape
-// (sync default getter + named async getter), so these tests validate the consumer-side
-// contract that sqlite-inline-assets.ts depends on. The actual `_b64 = null` GC side effect
-// is exercised in production builds — verified out-of-band via `grep` on dist/main.js.
-import wasmDefault, { getSqliteWasmBinaryAsync } from '@sqliteai/sqlite-wasm/sqlite3.wasm';
-
-describe('wasm binary lazy-getter contract', () => {
-    it('default export is a callable function (not a value)', () => {
-        expect(typeof wasmDefault).toBe('function');
-    });
-
-    it('default export returns a Uint8Array', () => {
-        const bytes = wasmDefault();
-        expect(bytes).toBeInstanceOf(Uint8Array);
-        expect(bytes.length).toBeGreaterThan(0);
-    });
-
-    it('repeated calls return the same Uint8Array reference (memoization)', () => {
-        const a = wasmDefault();
-        const b = wasmDefault();
-        expect(a).toBe(b);
-    });
-
-    it('async getter resolves to a Uint8Array with the same contents as sync getter', async () => {
-        const syncBytes = wasmDefault();
-        const asyncBytes = await getSqliteWasmBinaryAsync();
-        expect(asyncBytes).toBeInstanceOf(Uint8Array);
-        expect(asyncBytes).toEqual(syncBytes);
-    });
-
-    it('concurrent async calls all resolve to the same payload', async () => {
-        const [a, b, c] = await Promise.all([
-            getSqliteWasmBinaryAsync(),
-            getSqliteWasmBinaryAsync(),
-            getSqliteWasmBinaryAsync(),
-        ]);
-        expect(a).toEqual(b);
-        expect(b).toEqual(c);
-    });
-});
+// The consumer uses Jest's WASM fixture here. The production binary getter is
+// exercised through the real esbuild loader in sqlite-binary-build-script.test.ts.
 
 describe('getInlineSqliteWasmUrl URL caching', () => {
     const originalCreateObjectURL = URL.createObjectURL;

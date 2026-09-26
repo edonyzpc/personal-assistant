@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it, jest } from "@jest/globals";
 import type { Vault } from "obsidian";
 import {
     createVSSIndexStateStore,
@@ -96,6 +96,7 @@ describe("VSS local state store", () => {
             startedAt: "2026-08-12T00:00:00.000Z",
         };
         await store.initialize();
+        const transactions = jest.spyOn(fakeIndexedDb.db, "transaction");
 
         await store.replaceRebuildState({
             marker: createMarker({ indexId: "prepared-index" }),
@@ -103,6 +104,9 @@ describe("VSS local state store", () => {
             guard,
         });
 
+        // Inspect before the reads below open their own readonly transactions.
+        expect(transactions).toHaveBeenCalledTimes(1);
+        expect(transactions).toHaveBeenCalledWith("state", "readwrite");
         await expect(store.getMarker()).resolves.toMatchObject({ indexId: "prepared-index" });
         await expect(store.getDirtyJournal()).resolves.toEqual(new Map([
             ["retry.md", { first: 1, last: 2, epoch: 3 }],

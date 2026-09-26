@@ -316,6 +316,10 @@ function createInMemoryMockDb() {
             }
 
             // Count queries
+            if (sql === "SELECT COUNT(*) FROM vss_files") {
+                if (req.resultRows) (req.resultRows as unknown[][]).push([files.size]);
+                return;
+            }
             if (sql.includes("COUNT(*) AS chunk_count") && sql.includes("inventory_bytes")) {
                 const allowed = new Set((req.bind ?? []).map(String));
                 const grouped = new Map<string, { chunkCount: number; inventoryBytes: number }>();
@@ -961,7 +965,7 @@ describe("SPEC-A6 data safety: embedding format round-trip", () => {
         expect(results[0].score).toBeGreaterThan(results[1].score);
     });
 
-    it("search still works after file deletion (cache invalidation)", async () => {
+    it.each(["cold", "warm"] as const)("search still works after file deletion (cache=%s)", async (cache) => {
         const { db } = createInMemoryMockDb();
         const workerScope = setupWorkerScope();
         await initializeWorker(workerScope, db, { dimensions: 3 });
@@ -985,6 +989,15 @@ describe("SPEC-A6 data safety: embedding format round-trip", () => {
             },
         });
 
+        if (cache === "warm") {
+            const warmSearch = await send(workerScope, {
+                id: 20, type: "search", payload: { queryEmbedding: [0.5, 0.5, 0], k: 10 },
+            });
+            expect(warmSearch.ok).toBe(true);
+            const warmResults = warmSearch.result as unknown as Array<{ doc: { metadata: { path: string } } }>;
+            expect(warmResults.map((result) => result.doc.metadata.path).sort()).toEqual(["keep.md", "remove.md"]);
+        }
+
         // Delete a file
         await send(workerScope, {
             id: 3, type: "deleteFile", payload: { path: "remove.md" },
@@ -1001,7 +1014,7 @@ describe("SPEC-A6 data safety: embedding format round-trip", () => {
         expect(results[0].doc.metadata.path).toBe("keep.md");
     });
 
-    it("search returns empty after reset (no stale cached data)", async () => {
+    it.each(["cold", "warm"] as const)("search returns empty after reset (cache=%s)", async (cache) => {
         const { db } = createInMemoryMockDb();
         const workerScope = setupWorkerScope();
         await initializeWorker(workerScope, db, { dimensions: 3 });
@@ -1015,6 +1028,16 @@ describe("SPEC-A6 data safety: embedding format round-trip", () => {
                 embeddings: [[1, 0, 0]],
             },
         });
+
+        if (cache === "warm") {
+            const warmSearch = await send(workerScope, {
+                id: 20, type: "search", payload: { queryEmbedding: [1, 0, 0], k: 10 },
+            });
+            expect(warmSearch).toMatchObject({
+                ok: true,
+                result: [{ doc: { pageContent: "data", metadata: { path: "data.md" } } }],
+            });
+        }
 
         // Reset clears all data
         await send(workerScope, { id: 2, type: "reset", payload: {} });
@@ -1067,6 +1090,7 @@ describe("SPEC-A6 data safety: embedding format round-trip", () => {
             type: "getStats",
             payload: {},
         })).result as VSSIndexStats;
+        expect(before).toMatchObject({ fileCount: 1, chunkCount: 1 });
         const warmSearch = await send(workerScope, {
             id: 3,
             type: "search",
@@ -1240,7 +1264,7 @@ describe("SPEC-A6 data safety: hybrid search integrity", () => {
         }
     });
 
-    it("hybrid search returns fused vector + FTS results", async () => {
+    it("hybrid search preserves vector results when the lexical profile is disabled", async () => {
         const { db } = createInMemoryMockDb();
         const workerScope = setupWorkerScope();
         await initializeWorker(workerScope, db, { dimensions: 3 });
@@ -1276,12 +1300,14 @@ describe("SPEC-A6 data safety: hybrid search integrity", () => {
         });
 
         expect(response.ok).toBe(true);
+        expect(response.result).toMatchObject({
+            lexical: { attempted: false, state: "unavailable", reason: "feature_disabled" },
+        });
         const results = (response.result as unknown as {
             results: Array<{ doc: { metadata: { path: string } } }>;
         }).results;
-        expect(results.length).toBeGreaterThanOrEqual(1);
         const paths = results.map((r) => r.doc.metadata.path);
-        expect(paths).toContain("note1.md");
+        expect(paths).toEqual(["note1.md", "note2.md"]);
     });
 
     it("hybrid search filters vector rows before temporal fusion", async () => {
@@ -2699,7 +2725,7 @@ describe("SPEC-A6 data safety: upsert replaces old data", () => {
         }
     });
 
-    it("upserting the same file replaces old chunks and embeddings", async () => {
+    it.each(["cold", "warm"] as const)("upserting the same file replaces old chunks and embeddings (cache=%s)", async (cache) => {
         const { db, chunks } = createInMemoryMockDb();
         const workerScope = setupWorkerScope();
         await initializeWorker(workerScope, db, { dimensions: 3 });
@@ -2716,6 +2742,16 @@ describe("SPEC-A6 data safety: upsert replaces old data", () => {
         });
 
         const oldChunkCount = chunks.size;
+        expect(oldChunkCount).toBe(1);
+        if (cache === "warm") {
+            const warmSearch = await send(workerScope, {
+                id: 20, type: "search", payload: { queryEmbedding: [1, 0, 0], k: 10 },
+            });
+            expect(warmSearch).toMatchObject({
+                ok: true,
+                result: [{ doc: { pageContent: "old content", metadata: { path: "evolving.md" } } }],
+            });
+        }
 
         // Second upsert with new embedding
         await send(workerScope, {
@@ -2733,16 +2769,17 @@ describe("SPEC-A6 data safety: upsert replaces old data", () => {
 
         // Search should find new embedding direction
         const response = await send(workerScope, {
-            id: 3, type: "search", payload: { queryEmbedding: [0, 0, 1], k: 1 },
+            id: 3, type: "search", payload: { queryEmbedding: [0, 0, 1], k: 10 },
         });
         expect(response.ok).toBe(true);
         const results = response.result as unknown as Array<{ doc: { pageContent: string } }>;
+        expect(results).toHaveLength(1);
         expect(results[0].doc.pageContent).toBe("new content");
     });
 
     it("reloads the vector cache after a lexical write rolls back", async () => {
         const fixture = createInMemoryMockDb();
-        const { db, chunks } = fixture;
+        const { db, chunks, files, lexicalEntries } = fixture;
         const workerScope = setupWorkerScope();
         await initializeWorker(workerScope, db, { dimensions: 3, lexicalProfileEnabled: true });
         const lexicalFileState = {
@@ -2771,12 +2808,20 @@ describe("SPEC-A6 data safety: upsert replaces old data", () => {
                 embeddings: [[1, 0, 0]],
             },
         });
-        await send(workerScope, {
+        const warmSearch = await send(workerScope, {
             id: 2,
             type: "search",
             payload: { queryEmbedding: [1, 0, 0], k: 1 },
         });
+        expect(warmSearch).toMatchObject({
+            ok: true,
+            result: [{ doc: { pageContent: "stable old content", metadata: { path: "stable.md" } } }],
+        });
         const [oldId, oldRow] = [...chunks.entries()][0];
+        const oldFile = { ...files.get("stable.md") };
+        const oldLexicalRows = new Map(lexicalEntries[0]);
+        expect(oldFile).toMatchObject({ contentHash: "old", mtime: 1 });
+        expect(oldLexicalRows.size).toBe(1);
         fixture.failNextLexicalInsert();
 
         const failed = await send(workerScope, {
@@ -2798,16 +2843,17 @@ describe("SPEC-A6 data safety: upsert replaces old data", () => {
         }) as unknown as SqliteWorkerResponse;
         expect(failed).toMatchObject({ ok: false, error: { code: "injected-lexical-failure" } });
 
-        // The in-memory SQL fixture cannot roll back maps, so restore the row as
-        // SQLite would. The subsequent search proves the Worker invalidated its
-        // already-loaded cache and re-read the restored vector.
-        chunks.clear();
-        chunks.set(oldId, oldRow);
+        // Only the Worker's ROLLBACK may restore the fixture. Do not repair the
+        // stored rows in the test before checking the hot cache reload.
+        expect([...chunks.entries()]).toEqual([[oldId, oldRow]]);
+        expect(files.get("stable.md")).toEqual(oldFile);
+        expect(lexicalEntries[0]).toEqual(oldLexicalRows);
         const recovered = await send(workerScope, {
             id: 4,
             type: "search",
             payload: { queryEmbedding: [1, 0, 0], k: 1 },
         });
+        expect(recovered.ok).toBe(true);
         expect(recovered.result).toMatchObject([
             { doc: { pageContent: "stable old content", metadata: { path: "stable.md" } } },
         ]);
@@ -3242,6 +3288,7 @@ describe("OPFS restart continuity metadata", () => {
             type: "getStats",
             payload: {},
         })).result as VSSIndexStats;
+        expect(before).toMatchObject({ fileCount: 1, chunkCount: 1 });
         await send(firstScope, { id: 3, type: "dispose", payload: {} });
 
         jest.resetModules();

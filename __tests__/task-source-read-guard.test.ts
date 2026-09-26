@@ -116,6 +116,12 @@ describe('B-135 per-call read guard', () => {
     it('keeps concurrent calls on one executor bound to their own guard', async () => {
         const a = scoped();
         const b = scoped();
+        const inputs = [execution(a.guard), execution(b.guard)];
+        type GuardObservation = {
+            before: PaAgentToolExecutionInput['taskSourceReadGuard'];
+            after?: PaAgentToolExecutionInput['taskSourceReadGuard'];
+        };
+        const observations = new Map<AbortSignal | undefined, GuardObservation>();
         let release!: () => void;
         const pending = new Promise<void>(resolve => { release = resolve; });
         let ready!: () => void;
@@ -123,18 +129,28 @@ describe('B-135 per-call read guard', () => {
         let calls = 0;
         const definition = createCurrentNoteContextTool();
         definition.execute = async (_input, context) => {
-            expect([a.guard, b.guard]).toContain(context.taskSourceReadGuard);
+            const observation: GuardObservation = { before: context.taskSourceReadGuard };
+            observations.set(context.signal, observation);
             if (++calls === 2) ready();
             await pending;
+            observation.after = context.taskSourceReadGuard;
             return { ok: true, tool: 'get_current_note_context', inputSummary: 'a.md',
                 content: { path: 'a.md', title: 'A', mode: 'metadata' }, sources: [{ path: 'a.md' }] };
         };
         const registry = new CapabilityRegistry(); registry.registerMany(createCoreToolCapabilities([definition]));
         const executor = createPaAgentCapabilityToolExecutor({ registry, host: { settings: {}, log: jest.fn() } as never });
-        const results = Promise.allSettled([executor.execute(execution(a.guard)), executor.execute(execution(b.guard))]);
+        const results = Promise.allSettled(inputs.map(input => executor.execute(input)));
         await started;
         a.invalidate(); release();
         const [first, second] = await results;
+        // Assert outside the capability so its error adapter cannot hide a
+        // wrong guard behind the first call's expected revocation failure.
+        expect(observations.size).toBe(inputs.length);
+        for (const input of inputs) {
+            const observation = observations.get(input.signal);
+            expect(observation?.before).toBe(input.taskSourceReadGuard);
+            expect(observation?.after).toBe(input.taskSourceReadGuard);
+        }
         expect(first.status).toBe('rejected');
         expect(second).toMatchObject({ status: 'fulfilled', value: { outcome: 'success' } });
     });

@@ -413,18 +413,32 @@ describe("validateTargetConfinement (async with FS probe)", () => {
         expect(result).toEqual({ ok: true, normalizedPath: ".pagelet/foo.md" });
     });
 
-    it("skips folder probe when path is at vault root (no slash)", async () => {
-        // edge: a path with no slash means folder=""; probe should not be called for folder
+    it("rejects ./ as a blanket vault-root allowlist before probing files", async () => {
         const cfg: ConfinementConfig = { allowedRoots: ["./"], allowedExtensions: [".md"] };
         const fs = probe({});
-        // candidate has root "./" → normalized "foo.md" → folder=""
         const result = await validateTargetConfinement("./foo.md", cfg, fs);
-        // bypass folder check; collision probe runs (returns false → ok)
-        // outside_allowlist may apply since "foo.md" doesn't start with "./" once normalized
-        // — so this should reject as outside_allowlist (the test ensures we hit that branch
-        // rather than the folder branch).
-        expect(result.ok).toBe(false);
-        if (!result.ok) expect(result.reason).toBe("outside_allowlist");
+
+        expect(result).toMatchObject({ ok: false, reason: "outside_allowlist" });
+        expect(fs._existsMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        {
+            targetExists: false,
+            expected: { ok: true, normalizedPath: "foo.md" },
+        },
+        {
+            targetExists: true,
+            expected: { ok: false, reason: "name_collision", detail: "foo.md" },
+        },
+    ])("probes only the allowed vault-root file (target exists: $targetExists)", async ({ targetExists, expected }) => {
+        const cfg: ConfinementConfig = { allowedRoots: ["foo.md"], allowedExtensions: [".md"] };
+        const fs = probe({ "foo.md": targetExists });
+
+        const result = await validateTargetConfinement("./foo.md", cfg, fs);
+
+        expect(result).toEqual(expected);
+        expect(fs._existsMock.mock.calls).toEqual([["foo.md"]]);
     });
 
     it("short-circuits FS probe when sync validation fails", async () => {
