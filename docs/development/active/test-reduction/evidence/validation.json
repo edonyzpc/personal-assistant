@@ -1,0 +1,606 @@
+{
+  "workItem": "B-151",
+  "baselineHead": "c3c37e07ed3fa277594793a35cc1b662858a3bb5",
+  "scope": "Five test files and documentation only. No production/config/dependency changes, deployment, GLM, commit or push.",
+  "ownerDecisions": {
+    "qualityFirst": true,
+    "twentyPercentIsCommitment": false,
+    "maximumDropPercentagePointsPerMetric": 2
+  },
+  "baseline": {
+    "source": "docs/archive/2026/b150-test-audit/evidence/validation.json",
+    "sourceSha256": "5bf32796aa4e9875cf9ab0603eb892742d42ad0af33b398e78f4ee0e48829a60",
+    "originalRuntimeHashesVerified": 888,
+    "additionalHistoricalDocumentationHashesVerified": 75,
+    "additionalGitAndHistoricalWorkspaceScopeVerified": 18,
+    "supplementalNote": "The 18 fixture JSON/JS identities are supplemental reconciliation, not members of the original frozen manifests. Both recorded Git trees, current bytes, and the historical complete tracked-diff cleanup guard agree.",
+    "supplementalPaths": [
+      "__fixtures__/fts-evidence/calibration-cases.json",
+      "__fixtures__/fts-evidence/cases.json",
+      "__fixtures__/fts-evidence/context-canaries.json",
+      "__fixtures__/fts-ios-runtime/plugin-artifact.js",
+      "__fixtures__/pa-eval/cases/context-pager-pass.json",
+      "__fixtures__/pa-eval/cases/maintenance-apply-pass.json",
+      "__fixtures__/pa-eval/cases/maintenance-review-pass.json",
+      "__fixtures__/pa-eval/cases/memory-governance-pass.json",
+      "__fixtures__/pa-eval/cases/quick-capture-pass.json",
+      "__fixtures__/pa-eval/cases/retrieval-source-pass.json",
+      "__fixtures__/pa-eval/cases/review-queue-pass.json",
+      "__fixtures__/pa-eval/negative-cases/context-pager-wrong-count.json",
+      "__fixtures__/pa-eval/negative-cases/maintenance-hard-delete.json",
+      "__fixtures__/pa-eval/negative-cases/memory-tombstone-leak.json",
+      "__fixtures__/pa-eval/negative-cases/private-source-leakage.json",
+      "__fixtures__/pa-eval/negative-cases/quick-capture-missing-capture-id.json",
+      "__fixtures__/pa-eval/negative-cases/replay-excerpt-leak.json",
+      "__fixtures__/retrieval-smoke/manifest.json"
+    ],
+    "historicalScopeGuard": "/private/tmp/pa-b150-17pvq8dx/cleanup-owned-trees.py:30-34",
+    "historicalCleanupReceipt": "docs/archive/2026/b150-test-audit/evidence/validation.json#cleanup"
+  },
+  "finalGate": {
+    "cwd": "/Users/eddie/code/personal-assistant",
+    "head": "c3c37e07ed3fa277594793a35cc1b662858a3bb5",
+    "nodeVersion": "v22.22.2",
+    "inputManifest": "/private/tmp/pa-b151-n8k0qx5a/evidence/final-inputs.json",
+    "state": "passed",
+    "steps": [
+      {
+        "name": "lint",
+        "command": [
+          "npm",
+          "run",
+          "lint"
+        ],
+        "startedAt": 1790398079.968801,
+        "log": "/private/tmp/pa-b151-n8k0qx5a/evidence/final-lint.log",
+        "exitCode": 0,
+        "naturalExit": true,
+        "elapsedSeconds": 6.157
+      },
+      {
+        "name": "build",
+        "command": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "startedAt": 1790398086.1640918,
+        "log": "/private/tmp/pa-b151-n8k0qx5a/evidence/final-build.log",
+        "exitCode": 0,
+        "naturalExit": true,
+        "elapsedSeconds": 10.616
+      },
+      {
+        "name": "full-coverage",
+        "command": [
+          "npm",
+          "run",
+          "test:all",
+          "--",
+          "--runInBand",
+          "--coverage",
+          "--watchman=false",
+          "--json",
+          "--outputFile=/private/tmp/pa-b151-n8k0qx5a/evidence/final-jest-results.json",
+          "--coverageDirectory=/private/tmp/pa-b151-n8k0qx5a/evidence/final-coverage"
+        ],
+        "startedAt": 1790398096.821357,
+        "log": "/private/tmp/pa-b151-n8k0qx5a/evidence/final-full-coverage.log",
+        "exitCode": 0,
+        "naturalExit": true,
+        "elapsedSeconds": 1465.555
+      },
+      {
+        "name": "docs",
+        "command": [
+          "npm",
+          "run",
+          "docs:check"
+        ],
+        "startedAt": 1790399562.5242722,
+        "log": "/private/tmp/pa-b151-n8k0qx5a/evidence/final-docs.log",
+        "exitCode": 0,
+        "naturalExit": true,
+        "elapsedSeconds": 0.381
+      },
+      {
+        "name": "diff-check",
+        "command": [
+          "git",
+          "diff",
+          "--check"
+        ],
+        "startedAt": 1790399562.960741,
+        "log": "/private/tmp/pa-b151-n8k0qx5a/evidence/final-diff-check.log",
+        "exitCode": 0,
+        "naturalExit": true,
+        "elapsedSeconds": 0.026
+      }
+    ],
+    "buildArtifacts": {
+      "dist/main.js": "3503e50da38bc4919722f72f639322fefa4aa10c9a0fbe6c6426d6cf35111b6b",
+      "dist/styles.css": "8d9b7af9e7360a08a68e3f9795c15e69cc95015f0b19cbe30794be165d9758ea",
+      "dist/manifest.json": "f12e21b0cceb42e7392d21589564725372e95348288774bff8e64e6a704fec5d",
+      "dist/manifest-beta.json": "f12e21b0cceb42e7392d21589564725372e95348288774bff8e64e6a704fec5d",
+      "dist/fts-ios-production-build-provenance.json": "a8bb35c939738e938f54e592d9581001df3f42214efdd58cab898150dc039bb9"
+    },
+    "changedInputs": [],
+    "changedBuildArtifacts": []
+  },
+  "frozenInputCount": 1228,
+  "focused": {
+    "receipt-focused": {
+      "command": [
+        "npm",
+        "run",
+        "test:tooling",
+        "--",
+        "--runInBand",
+        "--watchman=false",
+        "--runTestsByPath",
+        "__tests__/retrieval-evidence-receipt-verify.test.ts",
+        "--json",
+        "--outputFile=/private/tmp/pa-b151-n8k0qx5a/evidence/receipt-focused.json"
+      ],
+      "cwd": "/Users/eddie/code/personal-assistant",
+      "exitCode": 0,
+      "naturalExit": true,
+      "elapsedSeconds": 13.272,
+      "changedInputs": []
+    },
+    "capture-template": {
+      "command": [
+        "npm",
+        "test",
+        "--",
+        "--runInBand",
+        "--watchman=false",
+        "--runTestsByPath",
+        "__tests__/note-template.test.ts",
+        "--json",
+        "--outputFile=/private/tmp/pa-b151-n8k0qx5a/evidence/capture-template.json"
+      ],
+      "cwd": "/Users/eddie/code/personal-assistant",
+      "runtime": {
+        "node": "v22.22.2",
+        "npm": "10.9.7"
+      },
+      "startedAt": "2026-09-26T04:45:57.584923+00:00",
+      "finishedAt": "2026-09-26T04:45:58.285976+00:00",
+      "elapsedSeconds": 0.700932959,
+      "exitCode": 0,
+      "naturalExit": true,
+      "logPath": "/private/tmp/pa-b151-n8k0qx5a/evidence/capture-template.log",
+      "jsonPath": "/private/tmp/pa-b151-n8k0qx5a/evidence/capture-template.json",
+      "frozenInputHashes": "/private/tmp/pa-b151-n8k0qx5a/evidence/capture-inputs-frozen.json"
+    },
+    "capture-lifecycle": {
+      "command": [
+        "npm",
+        "test",
+        "--",
+        "--runInBand",
+        "--watchman=false",
+        "--runTestsByPath",
+        "__tests__/plugin-record-note.test.ts",
+        "--testNamePattern=Quick Capture service lifecycle",
+        "--json",
+        "--outputFile=/private/tmp/pa-b151-n8k0qx5a/evidence/capture-lifecycle.json"
+      ],
+      "cwd": "/Users/eddie/code/personal-assistant",
+      "runtime": {
+        "node": "v22.22.2",
+        "npm": "10.9.7"
+      },
+      "startedAt": "2026-09-26T04:45:58.286337+00:00",
+      "finishedAt": "2026-09-26T04:46:00.731731+00:00",
+      "elapsedSeconds": 2.4454077499999998,
+      "exitCode": 0,
+      "naturalExit": true,
+      "logPath": "/private/tmp/pa-b151-n8k0qx5a/evidence/capture-lifecycle.log",
+      "jsonPath": "/private/tmp/pa-b151-n8k0qx5a/evidence/capture-lifecycle.json",
+      "frozenInputHashes": "/private/tmp/pa-b151-n8k0qx5a/evidence/capture-inputs-frozen.json"
+    },
+    "settings-focused": {
+      "command": [
+        "npm",
+        "test",
+        "--",
+        "--runInBand",
+        "--watchman=false",
+        "--runTestsByPath",
+        "__tests__/settings.test.ts",
+        "__tests__/pagelet-panel-tab-view.test.ts",
+        "--json",
+        "--outputFile=/private/tmp/pa-b151-n8k0qx5a/evidence/settings-focused.json"
+      ],
+      "cwd": "/Users/eddie/code/personal-assistant",
+      "head": "c3c37e07ed3fa277594793a35cc1b662858a3bb5",
+      "nodeVersion": "v22.22.2",
+      "nodeModules": "/Users/eddie/code/personal-assistant/node_modules",
+      "startedAt": "2026-09-26T04:45:15.127939+00:00",
+      "inputs": "/private/tmp/pa-b151-n8k0qx5a/evidence/settings-focused-inputs.json",
+      "inputCount": 566,
+      "log": "/private/tmp/pa-b151-n8k0qx5a/evidence/settings-focused.log",
+      "exitCode": 0,
+      "naturalExit": true,
+      "elapsedSeconds": 2.905,
+      "changedInputs": []
+    },
+    "settings-icon-retained": {
+      "command": [
+        "npm",
+        "test",
+        "--",
+        "--runInBand",
+        "--watchman=false",
+        "--runTestsByPath",
+        "__tests__/pagelet-panel-tab-view.test.ts",
+        "--testNamePattern",
+        "^Pagelet panel and tab view regressions exposes Pagelet detail as a native Obsidian item view$",
+        "--json",
+        "--outputFile=/private/tmp/pa-b151-n8k0qx5a/evidence/settings-icon-retained.json"
+      ],
+      "cwd": "/Users/eddie/code/personal-assistant",
+      "startedAt": "2026-09-26T04:44:27.660427+00:00",
+      "inputs": "/private/tmp/pa-b151-n8k0qx5a/evidence/settings-icon-retained-inputs.json",
+      "log": "/private/tmp/pa-b151-n8k0qx5a/evidence/settings-icon-retained.log",
+      "exitCode": 0,
+      "naturalExit": true,
+      "elapsedSeconds": 1.304,
+      "changedInputs": []
+    }
+  },
+  "reviews": {
+    "receipt": {
+      "author": "root",
+      "reviewer": "audit_design_review",
+      "result": "Passed; all unique assertions retained."
+    },
+    "templateAndCapture": {
+      "author": "capture_audit",
+      "reviewer": "root",
+      "result": "Passed; exact output and service identity protection retained."
+    },
+    "settingsAndPanel": {
+      "author": "memory_audit",
+      "reviewer": "root",
+      "result": "Passed; real normalizer, mobile display, and same-ID SVG registration retained."
+    },
+    "method": {
+      "reviewer": "audit_design_review",
+      "result": "Initial comparison gaps corrected: all source locations compared regardless of aggregate totals; runtime set expanded and reconciled."
+    },
+    "finalAcceptance": {
+      "state": "passed",
+      "reviewer": "audit_design_review",
+      "basis": "Independently recomputed original JSON case multisets and all statement/function/branch positions; confirmed unchanged coverage, 981 input paths, five authorized test changes and unchanged build artifacts.",
+      "limits": "Scoped candidate acceptance, not exhaustive whole-repository audit, performance proof, or device evidence."
+    }
+  },
+  "testComparison": {
+    "baseline": {
+      "success": true,
+      "numTotalTestSuites": 328,
+      "numPassedTestSuites": 328,
+      "numFailedTestSuites": 0,
+      "numPendingTestSuites": 0,
+      "numTotalTests": 8276,
+      "numPassedTests": 8276,
+      "numFailedTests": 0,
+      "numPendingTests": 0,
+      "numTodoTests": 0
+    },
+    "final": {
+      "success": true,
+      "numTotalTestSuites": 328,
+      "numPassedTestSuites": 328,
+      "numFailedTestSuites": 0,
+      "numPendingTestSuites": 0,
+      "numTotalTests": 8265,
+      "numPassedTests": 8265,
+      "numFailedTests": 0,
+      "numPendingTests": 0,
+      "numTodoTests": 0
+    },
+    "removedSuites": [],
+    "addedSuites": [],
+    "netReduction": 11,
+    "caseChanges": [
+      {
+        "path": "__tests__/retrieval-evidence-receipt-verify.test.ts",
+        "baseline": 202,
+        "final": 199,
+        "removed": [
+          "retrieval evidence receipt current-artifact verifier passes a self-contained current-contract fixture without claiming live process currentness",
+          "retrieval evidence receipt current-artifact verifier does not reinterpret a strict v9 receipt merely because the manifest has a compact plan",
+          "retrieval evidence receipt current-artifact verifier does not require unavailable process-memory or heap diagnostics for compact readiness",
+          "retrieval evidence receipt current-artifact verifier accepts a desktop receipt without an external memory binding"
+        ],
+        "added": [
+          "retrieval evidence receipt current-artifact verifier passes a strict v9 fixture with a compact manifest plan and no external memory binding without claiming live currentness"
+        ]
+      },
+      {
+        "path": "__tests__/plugin-record-note.test.ts",
+        "baseline": 409,
+        "final": 408,
+        "removed": [
+          "Quick Capture service lifecycle reuses one service so separate modals share the same append queue"
+        ],
+        "added": []
+      },
+      {
+        "path": "__tests__/note-template.test.ts",
+        "baseline": 30,
+        "final": 28,
+        "removed": [
+          "renderNoteTemplate replaces multiple occurrences of the same placeholder",
+          "buildNoteTemplateContext pads single-digit months and days"
+        ],
+        "added": []
+      },
+      {
+        "path": "__tests__/pagelet-panel-tab-view.test.ts",
+        "baseline": 82,
+        "final": 81,
+        "removed": [
+          "Pagelet panel and tab view regressions registers a quiet compound Pagelet detail tab icon"
+        ],
+        "added": []
+      },
+      {
+        "path": "__tests__/settings.test.ts",
+        "baseline": 232,
+        "final": 228,
+        "removed": [
+          "Phase 4 P1 UX 4g: featured image settings normalizes featured image count undefined to 1",
+          "Phase 4 P1 UX 4g: featured image settings normalizes featured image count \"99\" to 4",
+          "Phase 4 P1 UX mobile platform renders settings display without crashing on mobile",
+          "Phase 4 P1 UX mobile platform does not call getLeaf(\"window\") on mobile"
+        ],
+        "added": []
+      }
+    ],
+    "changedInputs": [
+      "__tests__/note-template.test.ts",
+      "__tests__/pagelet-panel-tab-view.test.ts",
+      "__tests__/plugin-record-note.test.ts",
+      "__tests__/retrieval-evidence-receipt-verify.test.ts",
+      "__tests__/settings.test.ts"
+    ],
+    "inputSetComparison": {
+      "baselineCount": 981,
+      "finalCount": 981,
+      "added": [],
+      "removed": []
+    }
+  },
+  "changedInputHashes": {
+    "__tests__/note-template.test.ts": {
+      "before": "09ef319d75f5bd5635c7453b918ef61bef536a1e379aaf221261293e0dc4183f",
+      "after": "ecc42fd5c337a291f38e6ef0651d073548262a9e6b89618809c90a5f1447ae5a"
+    },
+    "__tests__/pagelet-panel-tab-view.test.ts": {
+      "before": "21d7d9dcc94528c92e39846fba06d95fd7f3bc126d59f2d3d357e146be986a67",
+      "after": "1c6f40b4f4df1d582d5f186598d56499787a31c788aec058d30d23b677f16c30"
+    },
+    "__tests__/plugin-record-note.test.ts": {
+      "before": "8a2a92395e41592b0f09d38084556348e905246814417554403afaf6bd8c28ff",
+      "after": "0921776c8f331eb09c2e9b269f4099f71ee98987570c74c1dac1d90168e518f0"
+    },
+    "__tests__/retrieval-evidence-receipt-verify.test.ts": {
+      "before": "7f5e38b1e49a311f91536c64767cefa5a154d47e860858996e4a7bd5ab548a46",
+      "after": "a6f812c1b49ca72a47f1f56647aa5204ea49b203998b6bfeada027a9c4913e0c"
+    },
+    "__tests__/settings.test.ts": {
+      "before": "4ffc6fa529be80fd4ca26a366b019173cc4b78df0a9dc03d82e60eb80f80c3eb",
+      "after": "856129a6802bfcab4f4c4461765ab3ce42868959fc6b1a8a56ef2083efe6c646"
+    }
+  },
+  "preservedCandidates": {
+    "C-05": "Single H1 and fence without trailing newline differ from the composite Markdown scenario; both retained.",
+    "C-08": "Dynamic settings rebuild classification has no equivalent behavioral replacement; retained."
+  },
+  "coverageComparison": "coverage-comparison.json",
+  "rawEvidenceDirectory": "/private/tmp/pa-b151-n8k0qx5a/evidence",
+  "rawEvidenceIndex": {
+    "baseline-inputs.json": {
+      "sha256": "b8608a8fdafdf8a64320249411042d804259b4ac86ee1b555ec41a640a6e41d7",
+      "bytes": 97828
+    },
+    "baseline-reuse.json": {
+      "sha256": "99ee1ae9447676bc7d91fe10c85e6b6ee5e1bff55fe4558a16ffffcc85739f9b",
+      "bytes": 3360
+    },
+    "settings-focused-receipt.json": {
+      "sha256": "b5f8cda4a9f06b5da6c63ad584f3bb02ab5c20dd1423a011818c69c7a3077718",
+      "bytes": 818
+    },
+    "settings-focused.json": {
+      "sha256": "b3614329646ece1ab4a503741607107c31ef52f0f289d685fb0360d4de13ed3d",
+      "bytes": 137947
+    },
+    "settings-focused-inputs.json": {
+      "sha256": "bbf49a83f7ba2b37cb6b2cd4d8ef8325b35040da76746a039be15383c8580883",
+      "bytes": 61163
+    },
+    "final-jest-results.json": {
+      "sha256": "5ed234c1173277e55b0a3c090bec25b1edca057267019f6191d2a8b0df385f45",
+      "bytes": 30979093
+    },
+    "test-comparison.json": {
+      "sha256": "2b161b0e5db3d4db7c02c0baba97a38e5ca905483486ee336ba08d15a055af66",
+      "bytes": 3328
+    },
+    "receipt-focused-inputs.json": {
+      "sha256": "5b7fe37716cb6a865ebc2dc4f3db2379fb8458406551877bb3d197df168ffd7b",
+      "bytes": 60408
+    },
+    "capture-lifecycle.json": {
+      "sha256": "80563b591a754f9b504f46adbf8832892ddb21b9be576337dc898155c2e2d8dc",
+      "bytes": 194157
+    },
+    "settings-icon-retained-inputs.json": {
+      "sha256": "855a57f2dfbe715ad25ae6caa6f2e811e4ef62db2374820de55b596970588069",
+      "bytes": 61163
+    },
+    "capture-inputs-frozen.json": {
+      "sha256": "9623f8eeab8ec9fa1ec0a847905f0d20fa1170c2084ffb3bf53df47b89d3a645",
+      "bytes": 53470
+    },
+    "supplemental-inputs-reconciliation.json": {
+      "sha256": "1473fcaa5c0e7811e827e784f3a1354098b4e1279bfaf8d9002d260bd7595b1a",
+      "bytes": 22977
+    },
+    "capture-inputs-before.json": {
+      "sha256": "d9ceda9e99ad3f7a6e45fab6cf2d07f213677cffbaf20bc5ee249b6c16822dc2",
+      "bytes": 53470
+    },
+    "settings-icon-retained.json": {
+      "sha256": "0a16b5f038e608bad972d9465e32703887012442bea895d1c2dd6d68f909f43f",
+      "bytes": 37969
+    },
+    "settings-icon-retained-receipt.json": {
+      "sha256": "95f802c9c110a31e5044e25770fde554e41724087cbbd789582d39b458f2a241",
+      "bytes": 755
+    },
+    "receipt-focused-receipt.json": {
+      "sha256": "6577edd2c83c56ba8d68c734a983431008122b13da1bf459a242bca4a5d51619",
+      "bytes": 434
+    },
+    "capture-lifecycle-receipt.json": {
+      "sha256": "795bc2d10fd51ec2663e2f4c0e11b77a90c5f9c038c77d9ebe571014ebece36e",
+      "bytes": 863
+    },
+    "final-receipt.json": {
+      "sha256": "6bc673f5f352de2d91aae223456e83a3fec6c05d97260b2099ec9040f452eb26",
+      "bytes": 2625
+    },
+    "baseline-expanded-inputs.json": {
+      "sha256": "079eb54447f89aa7b90b3a4f974ca64e8e903db5b5bf7fc9d79f884221e3c6e4",
+      "bytes": 111590
+    },
+    "capture-template-receipt.json": {
+      "sha256": "8606cb8e41d5a47102facc6aafa3ebc75e1b82987e9c3f5e893d4a197d5b9e1c",
+      "bytes": 791
+    },
+    "capture-deletion-proof.json": {
+      "sha256": "0a1b379189d7e4de10515b82d41c169fbd515fe1201b88bdec7fafd8b21e92bf",
+      "bytes": 720
+    },
+    "final-inputs.json": {
+      "sha256": "7c3cd68b0afbbea4132952f199d63f10d762160367a31cc71df75d206dd3d462",
+      "bytes": 142094
+    },
+    "coverage-comparison.json": {
+      "sha256": "915d0493ddcaabe1d17953420c347a5dc1035593bddc1d0cd907e6ab34591b7c",
+      "bytes": 1920
+    },
+    "capture-inputs-after.json": {
+      "sha256": "9623f8eeab8ec9fa1ec0a847905f0d20fa1170c2084ffb3bf53df47b89d3a645",
+      "bytes": 53470
+    },
+    "receipt-focused.json": {
+      "sha256": "f935e23c4b5a8b34554bc482d50315bda208afdc5ed0b1e0cff702ff6413de22",
+      "bytes": 96234
+    },
+    "capture-focused-summary.json": {
+      "sha256": "d183c23dcb542f15c050cb955f36db93124e8eea56a1e516fdacf659fc3156c3",
+      "bytes": 4368
+    },
+    "capture-original-counts.json": {
+      "sha256": "f9fd1fb59452f5ae2020c8d58314112e5539391d0c02363ba45f462bf8314a4b",
+      "bytes": 603
+    },
+    "capture-template.json": {
+      "sha256": "d967ec01d5b9c33986602d01d2010397a825276d8861cbd78b30b25d3f873545",
+      "bytes": 13261
+    },
+    "capture-template.log": {
+      "sha256": "c131891fd3d5319d605b251bd1df7437b98318d19fda58d7bf83e455c9405a41",
+      "bytes": 518
+    },
+    "settings-icon-retained.log": {
+      "sha256": "60e6637b4d72e8c9aa3432d9e5fa79342bc21716d719a71e55a8dbcb73a31f10",
+      "bytes": 672
+    },
+    "final-full-coverage.log": {
+      "sha256": "9dc6cff8d893f83f2dbdee45314720c1b647544adb27cdc4ff3cab2bed151b1b",
+      "bytes": 2006872
+    },
+    "final-build.log": {
+      "sha256": "406ee881c4b0acca55980bf0d3c78a48d932558e3c9c7f6eed2d5c3a4e2bf4cc",
+      "bytes": 259
+    },
+    "capture-lifecycle.log": {
+      "sha256": "2efdc636a40a2308c8c2e1f566363118537447bd57c7fecb4af5a0ad542412ea",
+      "bytes": 577
+    },
+    "final-diff-check.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "settings-focused.log": {
+      "sha256": "c9a4123823259f9a642b2656eb563cfc6b23da5e73b328bae457690a408b3a49",
+      "bytes": 581
+    },
+    "final-docs.log": {
+      "sha256": "2c245b3c8a0aebb5df167215be93f8b60b6b869842b29a131b8beff115578fd1",
+      "bytes": 751
+    },
+    "receipt-focused.log": {
+      "sha256": "2edc8df57a07279b44aab7a3f313f48ef2b1e346131e1a30a60c917ae6126039",
+      "bytes": 553
+    },
+    "final-lint.log": {
+      "sha256": "9c2b11da45e04319baa26c8cee23b4a52b715e30dae91c9ebb03ac8c21a6d62a",
+      "bytes": 83
+    },
+    "final-coverage/coverage-final.json": {
+      "sha256": "a6d4c40dd5a6494efd0daa53df7bacb58d62161dc41dd59599ff81abeb6259bc",
+      "bytes": 27272090
+    },
+    "../run-final.py": {
+      "sha256": "60853be7a0f517a4687bbebd93077da4119edeeba1d202188484c3ad493cdaf8",
+      "bytes": 3796
+    },
+    "../compare-final.cjs": {
+      "sha256": "dab59819992fa00d5672621b2757308b7c5667882a5ee05acbcddb3ee1ec1dcb",
+      "bytes": 7713
+    }
+  },
+  "limits": [
+    "Coverage is not assertion validity; retained-protection review is separate.",
+    "No whole-repository per-case redundancy claim.",
+    "SVG registration structure is not browser parsing or Obsidian visual evidence.",
+    "No stable performance improvement claim.",
+    "Original full reports remain in the local raw-evidence directory."
+  ],
+  "postGateDocs": {
+    "commands": [
+      "npm run docs:check",
+      "npm run test:docs -- --runInBand --watchman=false",
+      "git diff --check"
+    ],
+    "naturalExit": true,
+    "exitCode": 0,
+    "documentationFiles": 239,
+    "localLinks": 2848,
+    "knownAdvisoryFindings": 4,
+    "testSuites": 2,
+    "tests": 58,
+    "runtimeInputsUnchanged": true
+  },
+  "resourceDisposition": {
+    "runningProcesses": [],
+    "isolatedWorktreesCreated": [],
+    "appStateChanged": false,
+    "retained": [
+      "raw evidence directory",
+      "current build",
+      "shared node_modules",
+      "uncommitted delivery files"
+    ]
+  }
+}

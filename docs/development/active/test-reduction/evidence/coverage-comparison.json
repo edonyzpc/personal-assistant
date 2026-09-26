@@ -1,0 +1,84 @@
+{
+  "baselineFiles": 436,
+  "finalFiles": 436,
+  "sourceFiles": 420,
+  "missingFiles": [],
+  "addedFiles": [],
+  "totals": {
+    "lines": {
+      "baseline": {
+        "total": 184006,
+        "covered": 167726,
+        "skipped": 0,
+        "pct": 91.15
+      },
+      "final": {
+        "total": 184006,
+        "covered": 167726,
+        "skipped": 0,
+        "pct": 91.15
+      },
+      "baselinePercent": 91.15246241970371,
+      "finalPercent": 91.15246241970371,
+      "deltaPercentagePoints": 0,
+      "withinTwoPercentagePoints": true
+    },
+    "statements": {
+      "baseline": {
+        "total": 184006,
+        "covered": 167726,
+        "skipped": 0,
+        "pct": 91.15
+      },
+      "final": {
+        "total": 184006,
+        "covered": 167726,
+        "skipped": 0,
+        "pct": 91.15
+      },
+      "baselinePercent": 91.15246241970371,
+      "finalPercent": 91.15246241970371,
+      "deltaPercentagePoints": 0,
+      "withinTwoPercentagePoints": true
+    },
+    "functions": {
+      "baseline": {
+        "total": 9926,
+        "covered": 8445,
+        "skipped": 0,
+        "pct": 85.07
+      },
+      "final": {
+        "total": 9926,
+        "covered": 8445,
+        "skipped": 0,
+        "pct": 85.07
+      },
+      "baselinePercent": 85.07958895829135,
+      "finalPercent": 85.07958895829135,
+      "deltaPercentagePoints": 0,
+      "withinTwoPercentagePoints": true
+    },
+    "branches": {
+      "baseline": {
+        "total": 53496,
+        "covered": 44075,
+        "skipped": 0,
+        "pct": 82.38
+      },
+      "final": {
+        "total": 53496,
+        "covered": 44075,
+        "skipped": 0,
+        "pct": 82.38
+      },
+      "baselinePercent": 82.38933752056228,
+      "finalPercent": 82.38933752056228,
+      "deltaPercentagePoints": 0,
+      "withinTwoPercentagePoints": true
+    }
+  },
+  "changedFiles": [],
+  "numericGatePassed": true,
+  "semanticReviewRequired": false
+}

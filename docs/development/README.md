@@ -28,6 +28,7 @@
 - [GOV-002 Master-First Branch And Beta Packaging](./governance/gov-002-master-first-branch-and-beta-packaging.md) — 所有已接受工作先进入 `master`，BRAT beta 仅从精确 `master` 基线包装。
 - [GOV-003 Proportionate Test Design](./governance/gov-003-proportionate-test-design.md) — 以真实回归保护为准精简测试，保持输入隔离、覆盖与发布门禁。
 - [GOV-004 测试审计与质量保护设计](./governance/gov-004-test-audit-quality-preservation.md) — 风险分批审计、契约承接、独立复核与受限隔离变异验证。
+- [GOV-005 质量优先的测试精简](./governance/gov-005-quality-first-test-reduction.md) — 重复执行的保护承接，四项覆盖率各最多下降 2 个百分点。
 
 ## Proposal
 
