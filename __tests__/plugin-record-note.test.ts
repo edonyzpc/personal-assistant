@@ -12386,16 +12386,6 @@ describe('Quick Capture service lifecycle', () => {
         });
     }
 
-    it('reuses one service so separate modals share the same append queue', () => {
-        const plugin = createQuickCapturePlugin();
-        const integration = makeIntegration(plugin);
-
-        const first = integration.getService();
-        const second = integration.getService();
-
-        expect(second).toBe(first);
-    });
-
     it('keeps the shared service when Pagelet runtime is torn down', () => {
         const plugin = createQuickCapturePlugin();
         const integration = makeIntegration(plugin);

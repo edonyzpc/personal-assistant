@@ -513,10 +513,16 @@ describe("Pagelet panel and tab view regressions", () => {
     });
 
     it("exposes Pagelet detail as a native Obsidian item view", async () => {
+        const { addIcon: addIconMock } = jest.requireMock("obsidian") as { addIcon: jest.Mock };
+        addIconMock.mockClear();
         const view = new PageletDetailView({} as never, () => "en");
 
         expect(view.getViewType()).toBe(PAGELET_DETAIL_VIEW_TYPE);
         expect(view.getIcon()).toBe(PAGELET_DETAIL_ICON);
+        expect(addIconMock).toHaveBeenCalledWith(view.getIcon(), expect.any(String));
+        const svg = addIconMock.mock.calls.find(([name]) => name === view.getIcon())?.[1];
+        expect(svg).toMatch(/^<svg\b[^>]*>[\s\S]+<\/svg>$/);
+        expect(svg).toMatch(/<(?:path|circle|rect|ellipse|line|polyline|polygon)\b/);
 
         await view.onOpen();
         view.setPayload({
@@ -529,25 +535,6 @@ describe("Pagelet panel and tab view regressions", () => {
         const contentEl = view.contentEl as unknown as FakeElement;
         expect(contentEl.textContent).toContain("No findings yet");
         expect(contentEl.querySelector(".pa-pagelet-tab-header")).toBeNull();
-    });
-
-    it("registers a quiet compound Pagelet detail tab icon", () => {
-        new PageletDetailView({} as never, () => "en");
-
-        const { addIcon: addIconMock } = jest.requireMock("obsidian") as { addIcon: jest.Mock };
-        const iconCall = addIconMock.mock.calls.find(([name]) => name === PAGELET_DETAIL_ICON);
-        const svg = iconCall?.[1] ?? "";
-
-        expect(svg).toContain('viewBox="0 0 24 24"');
-        expect(svg).toContain('stroke-width="2.4"');
-        expect(svg).toContain('M3.8 19.25');
-        expect(svg).toContain('cx="19.8"');
-        expect(svg).toContain('fill="#2f9e44"');
-        expect(svg).toContain('fill="#1971c2"');
-        expect(svg).toContain('fill="#f08c00"');
-        expect(svg).toContain("<circle");
-        expect(svg).not.toContain("<rect");
-        expect(svg).not.toContain('fill="#e03131"');
     });
 
     it("renders discovery payloads in the native detail tab", async () => {

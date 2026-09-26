@@ -2526,7 +2526,7 @@ function canonicalJson(value: unknown): string {
 }
 
 describe("retrieval evidence receipt current-artifact verifier", () => {
-    it("passes a self-contained current-contract fixture without claiming live process currentness", () => {
+    it("passes a strict v9 fixture with a compact manifest plan and no external memory binding without claiming live currentness", () => {
         const root = createFixtureRoot();
         const { processStatus, result } = runVerifier(root);
 
@@ -2545,6 +2545,8 @@ describe("retrieval evidence receipt current-artifact verifier", () => {
             receipts: {
                 app: {
                     status: "PASS",
+                    profile: "strict-v9",
+                    compactProxy: { status: "NOT_APPLICABLE" },
                     workloadBinding: {
                         status: "PASS",
                         bindingStatus: "PASS",
@@ -2552,10 +2554,6 @@ describe("retrieval evidence receipt current-artifact verifier", () => {
                         boundEpisodeCount: 47,
                         qualificationStatus: "PASS",
                         violationCount: 0,
-                    },
-                    externalMemoryBinding: {
-                        status: "NOT_APPLICABLE",
-                        bindingPresent: false,
                     },
                 },
                 opfs: {
@@ -2583,6 +2581,10 @@ describe("retrieval evidence receipt current-artifact verifier", () => {
             blockers: [],
             failures: [],
             integrityErrors: [],
+        });
+        expect(result.receipts.app.externalMemoryBinding).toEqual({
+            status: "NOT_APPLICABLE",
+            bindingPresent: false,
         });
     });
 
@@ -2625,6 +2627,7 @@ describe("retrieval evidence receipt current-artifact verifier", () => {
             failures: [],
             integrityErrors: [],
         });
+        expect(result.blockers).toEqual(["app_compact_proxy_owner_disposition_required"]);
     });
 
     it("keeps a runner-shaped incomplete compact proxy BLOCKED without an integrity error", () => {
@@ -2720,22 +2723,6 @@ describe("retrieval evidence receipt current-artifact verifier", () => {
             "app_compact_proxy_workload_incomplete",
             "app_compact_proxy_not_ready",
         ]));
-    });
-
-    it("does not reinterpret a strict v9 receipt merely because the manifest has a compact plan", () => {
-        const root = createFixtureRoot();
-        const { processStatus, result } = runVerifier(root);
-
-        expect(processStatus).toBe(0);
-        expect(result.receipts.app).toMatchObject({
-            status: "PASS",
-            profile: "strict-v9",
-            compactProxy: { status: "NOT_APPLICABLE" },
-            workloadBinding: {
-                expectedEpisodeCount: 47,
-                boundEpisodeCount: 47,
-            },
-        });
     });
 
     it("accepts a compact real-iOS runtime whose strong plain Obsidian token has no shell version", () => {
@@ -3478,19 +3465,6 @@ describe("retrieval evidence receipt current-artifact verifier", () => {
         expect(result.integrityErrors).toContain(expectedIntegrityError);
     });
 
-    it("does not require unavailable process-memory or heap diagnostics for compact readiness", () => {
-        const root = createFixtureRoot();
-        upgradeFixtureRootToCompactProxy(root);
-
-        const { result } = runVerifier(root);
-
-        expect(result.integrityErrors).toEqual([]);
-        expect(result.failures).toEqual([]);
-        expect(result.blockers).toEqual([
-            "app_compact_proxy_owner_disposition_required",
-        ]);
-    });
-
     it.each([
         ["contract hash", (binding: Record<string, any>) => {
             binding.contractSha256 = "f".repeat(64);
@@ -3862,18 +3836,6 @@ describe("retrieval evidence receipt current-artifact verifier", () => {
         expect(result.integrityErrors).toContain(
             "app_performance_workload_pass_invariant_invalid",
         );
-    });
-
-    it("accepts a desktop receipt without an external memory binding", () => {
-        const root = createFixtureRoot();
-
-        const { processStatus, result } = runVerifier(root);
-
-        expect(processStatus).toBe(0);
-        expect(result.receipts.app.externalMemoryBinding).toEqual({
-            status: "NOT_APPLICABLE",
-            bindingPresent: false,
-        });
     });
 
     it("blocks an unbound fixed external memory pair instead of treating it as absent", () => {

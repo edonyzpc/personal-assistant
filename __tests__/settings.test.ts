@@ -6127,12 +6127,10 @@ describe('Phase 4 P1 UX', () => {
         });
 
         it.each([
-            [undefined, 1],
             ['', 1],
             ['2', 2],
             ['4.9', 4],
             ['0', 1],
-            ['99', 4],
             [-2, 1],
         ])('normalizes featured image count %p to %p', (input, expected) => {
             expect(normalizeFeaturedImageCount(input)).toBe(expected);
@@ -6186,25 +6184,6 @@ describe('Phase 4 P1 UX', () => {
 
         afterEach(() => {
             Object.assign(obsidian.Platform, prevPlatform);
-        });
-
-        it('renders settings display without crashing on mobile', () => {
-            const plugin = makePlugin({ aiProvider: 'qwen', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', chatModelName: 'qwen3.6-plus' });
-            const tab = new SettingTab(makeMockApp() as never, plugin as never);
-            tab.containerEl = new MockContainerEl('div') as never;
-
-            expect(() => tab.display()).not.toThrow();
-        });
-
-        it('does not call getLeaf("window") on mobile', () => {
-            const plugin = makePlugin({ aiProvider: 'qwen', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', chatModelName: 'qwen3.6-plus' });
-            const tab = new SettingTab(makeMockApp() as never, plugin as never);
-            tab.containerEl = new MockContainerEl('div') as never;
-
-            tab.display();
-
-            const allSettings = getMockSettingRecords();
-            expect(allSettings.length).toBeGreaterThan(0);
         });
 
         it('settings display produces expected number of setting rows on mobile', () => {

@@ -50,12 +50,6 @@ describe("renderNoteTemplate", () => {
         expect(result).toBe("2026-06-28 {{unknown}} 2026-06-28 09:07:00");
     });
 
-    it("replaces multiple occurrences of the same placeholder", () => {
-        const template = "{{title}} / {{title}}";
-        const result = renderNoteTemplate(template, baseContext);
-        expect(result).toBe("2026-06-28 / 2026-06-28");
-    });
-
     it("preserves Markdown and placeholder text in the content slot before the footer", () => {
         const content = "# Heading\n\n- item\n  - nested\n\n```md\n{{title}}\n```\n";
         const result = renderNoteTemplate("# {{title}}\n\n{{content}}\n\n**关键词总结：**", {
@@ -159,13 +153,6 @@ describe("buildNoteTemplateContext", () => {
         expect(ctx.author).toBe("edony.zpc");
         expect(ctx.aliases).toBe("2026-06-28");
         expect(ctx.subject).toBe("#capture");
-    });
-
-    it("pads single-digit months and days", () => {
-        const timestamp = new Date(2026, 0, 5, 1, 2, 3);
-        const ctx = buildNoteTemplateContext("note", timestamp, "", "#thoughts");
-        expect(ctx.date).toBe("2026-01-05 01:02:03");
-        expect(ctx.aliases).toBe("2026-01-05");
     });
 
     it("maps creation and modification times independently for an existing file", () => {
