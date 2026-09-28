@@ -2,7 +2,7 @@
 
 Decision ID: DEC-038
 Status: Accepted
-Updated: 2026-09-19
+Updated: 2026-09-28
 Authority: Owner 于 2026-09-18 逐项确认十项产品选择，随后授权实施及限定合成素材验证；2026-09-19 授权开发分支提交/推送，并要求移动验收通过后收尾。用户已反馈五项 iPhone 手动验收通过；这些授权不扩展到 master 集成或发布。
 Work item: B-133
 
@@ -33,6 +33,10 @@ Work item: B-133
 | D10 统一连接 | Chat 与 Featured Image 共用图片连接与底层接入 | 不建立两套独立图片连接设置；两处参数与保存方式保留 |
 
 ## Decision
+
+2026-09-28 接续：[DEC-044](./dec-044-unified-chat-image-creation.md) 批准统一 CreateImage
+来源与专用提炼、原 Featured command 改为 Chat 快捷入口，局部替代独立 Featured
+编排/自动插入的目标约定，保留有效配置能力。交付状态见 [B-152 Tracker](../../development/active/unified-chat-image-creation/tracker.md)，不改写下述历史验收。
 
 上述产品范围为 Accepted。首次选择 A 对应 D01，后续九次选择 1 依次对应 D02–D10。
 记录确认结果，不把技术草案、接口尚未验证的能力或未讨论的参数默认值标成用户批准。

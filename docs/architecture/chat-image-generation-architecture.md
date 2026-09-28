@@ -1,11 +1,15 @@
 # Chat Image Generation Architecture
 
 Document status: Current
-Updated: 2026-09-19
+Updated: 2026-09-28
 Work item: B-133
 Authority: 已实现的 Chat 图片生成、版本、统一连接、恢复和导出技术契约；源码是具体参数与类型的事实依据。
 Product contract: [DEC-038](../product/decisions/dec-038-chat-image-generation.md) / [Product Spec](../product/specs/pa-chat-image-generation-product-spec.md)
 Validation evidence: [B-133 验收与迁移证据](../archive/2026/b133-chat-image-generation-validation.md)
+
+后续已批准目标见 [DEC-044](../product/decisions/dec-044-unified-chat-image-creation.md) 与
+[B-152 SDD](../development/active/unified-chat-image-creation/sdd.md)。本页仍描述已实现基线；
+统一来源、专用准备及 command 收敛交付后再更新实现段落，不能把设计当作当前能力。
 
 ## Scope And Modules
 

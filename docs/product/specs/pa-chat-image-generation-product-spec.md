@@ -1,12 +1,16 @@
 # PA Chat Image Generation Product Spec
 
 Document status: Approved
-Updated: 2026-09-19
+Updated: 2026-09-28
 Work item: B-133
 Decision: [DEC-038](../decisions/dec-038-chat-image-generation.md)
 Authority: Owner 已确认的 Chat 图片生成与编辑行为、数据边界和验收要求；开发及适用验收已完成，产品契约持续有效。验收收尾不表示已集成 master 或发布。
 
 ## Problem And Product Outcome
+
+后续目标边界：[B-152](./pa-unified-chat-image-creation-product-spec.md) 接续 REQ-06/AC-06
+的独立 Featured 编排/插入和有内容源的描述准备；其余契约继续适用。原验收事实保留，
+B-152 实现状态只由其 Tracker 记录。
 
 用户在 Chat 讨论或写作时可以就地生成、比较与修改视觉素材，完整保留可用结果，
 减少切换外部工具、下载再导入的摩擦。图片创作按需触发，不变成主动配图推送或图库管理负担。

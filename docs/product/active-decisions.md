@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-09-25
+Updated: 2026-09-28
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-044 | 统一 Chat 生图与内容配图 | 单一 CreateImage、明确全文/选区、保留 Featured 专用调用；command 收敛为快捷入口，显式保存 | [Decision](./decisions/dec-044-unified-chat-image-creation.md), [Product Spec](./specs/pa-unified-chat-image-creation-product-spec.md) | 来源、专用描述质量或旧选项无法保全，或拟合并独立提炼调用 |
 | DEC-043 | PA Agent 问答范围与 Runtime 演进 | B-149 已交付我的笔记 / 网络资料 / 综合模式；新会话默认笔记、会话内记忆、图标优先；Host 硬约束实际取材与派生上下文，收紧时来源安全优先，运行中切换下次生效；辅助摘要按 Owner 后续费用优先决定有独立总额 | [Decision](./decisions/dec-043-agent-runtime-evolution-and-source-scope.md), [Product Spec](./specs/pa-agent-runtime-evolution-product-spec.md), [验证记录](../archive/2026/b149-pa-agent-runtime-evolution-validation.md) | 跨范围连续性阻断核心任务、无法证明实际输入边界，或真实资源证据要求改变预算 |
 | DEC-042 | PA Agent 取材边界与可调整计划 | B-146 已本地验收并 closeout：Agent 自主取材并遵循自由语言限制；Host 不以模型声明硬拦普通读取，保留明确权限与高后果保护。显式范围已由 DEC-043/B-149 局部接续，不改写 B-146 交付事实 | [Decision](./decisions/dec-042-agent-task-source-boundary.md), [Product Spec](./specs/pa-agent-task-source-boundary-product-spec.md), [Architecture](../architecture/pa-agent-architecture-plan.md#task-source-and-writing-output), [Validation](../archive/2026/b146-agent-task-source-boundary-validation.md) | 受保护内容、额外外发或独立权限边界发生变化 |
 | DEC-041 | Agent 可视化 Debug 与本机历史 | Chat 阶段轨迹；正文/过滤 Prompt 最多 30 天并按容量淘汰最旧 Run；reasoning 留在会话内，删除联动，附件不复制 | [Decision](./decisions/dec-041-agent-debug-view-and-local-history.md), [设计文档](./specs/pa-agent-debug-view-product-spec.md) | 存储/性能无法满足边界，或需持久 reasoning、媒体本体、同步/导出及全后台覆盖 |
