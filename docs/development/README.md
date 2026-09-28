@@ -22,6 +22,7 @@
 
 - [Discovery Registry](./discovery/README.md) — 需要跨会话讨论、研究或方案选择的活跃主题。
 - [Decision Index](../product/decisions/README.md) — Accepted/Deferred/Rejected/Superseded 的 repo-local 决策入口。
+- [Ghost Blog Publishing 设计与验收](./ghost-blog-publishing-design.md) — B-153 的候选实施设计；未排入 Active，实际启动由 Backlog 接续。
 
 ## Engineering Governance
 

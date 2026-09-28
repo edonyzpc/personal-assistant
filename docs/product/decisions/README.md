@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-045 | Ghost 预览确认发布 | Accepted | Obsidian 主源；首次草稿、更新/恢复临时预览稿、PA 确认与多桌面续接 | [Record](./dec-045-ghost-blog-publishing.md) |
 | DEC-044 | Unified Chat image creation | Accepted | 单一 CreateImage、明确文字来源、保留专用提炼；原 command 成为 Chat 快捷入口 | [Record](./dec-044-unified-chat-image-creation.md) |
 | DEC-043 | PA Agent 问答范围硬约束与 Runtime 演进 | Accepted | B-149 已交付三种显式范围、默认笔记、派生上下文准入、切换取舍与五项架构演进；局部接续 DEC-042 | [Record](./dec-043-agent-runtime-evolution-and-source-scope.md) |
 | DEC-042 | PA Agent task source boundary and revisable plan | Accepted | B-146 已本地验收：Agent 遵循自由语言取材限制、Host 不硬拦普通读取；独立权限和高后果保护保留 | [Record](./dec-042-agent-task-source-boundary.md) |
