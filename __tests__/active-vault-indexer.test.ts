@@ -284,6 +284,9 @@ describe("ActiveVaultIndexer", () => {
     });
 
     it("uses Retrieval Habit Profile only as an AVI near-tie signal", () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date("2026-06-29T12:00:00.000Z"));
+        try {
         const retrievalHabitProfile = {
             enabled: true,
             state: {
@@ -366,6 +369,9 @@ describe("ActiveVaultIndexer", () => {
             "notes/medium.md",
             "projects/pa/weaker.md",
         ]);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("classifies conflict, weak partial, no evidence, and privacy-blocked outcomes explicitly", () => {

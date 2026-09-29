@@ -51,9 +51,10 @@ describe("RetrievalHabitProfileStore", () => {
             enabled: true,
             state: { aggregates: [] },
         };
+        const recordedAt = new Date("2026-06-29T12:00:00.000Z");
         const store = new RetrievalHabitProfileStore({
             settings,
-            now: new Date("2026-06-29T12:00:00.000Z"),
+            now: recordedAt,
         });
         const dismissed = makeCandidate({
             id: "qr-ins-dismissed",
@@ -82,7 +83,7 @@ describe("RetrievalHabitProfileStore", () => {
         ]));
         expect(JSON.stringify(settings.state)).not.toContain(dismissed.id);
 
-        const ranked = applyRetrievalHabitProfileToRecallCandidates([dismissed, similar], settings);
+        const ranked = applyRetrievalHabitProfileToRecallCandidates([dismissed, similar], settings, { now: recordedAt });
         expect(ranked[0].id).toBe(similar.id);
         expect(ranked.find((candidate) => candidate.id === similar.id)?.score).toBe(similar.score);
         expect(ranked.find((candidate) => candidate.id === dismissed.id)?.score).toBeLessThan(dismissed.score);
@@ -329,6 +330,7 @@ describe("RetrievalHabitProfileStore", () => {
             settings,
             now: new Date("2026-06-29T12:00:00.000Z"),
         });
+        const recordedAt = new Date("2026-06-29T12:00:00.000Z");
         await store.recordSignals([
             { signal: "retrieval_lane", key: "lane:structure" },
         ], "accept", [{ path: "Projects/Favored.md", evidenceStrength: "medium" }]);
@@ -356,9 +358,9 @@ describe("RetrievalHabitProfileStore", () => {
             score: 0.5,
         };
 
-        expect(applyRetrievalHabitProfileToEvidence([stronger, favored], settings)[0].sourceRef.path)
+        expect(applyRetrievalHabitProfileToEvidence([stronger, favored], settings, { now: recordedAt })[0].sourceRef.path)
             .toBe("Projects/Stronger.md");
-        expect(applyRetrievalHabitProfileToEvidence([nearTieNeutral, nearTieFavored], settings)[0].sourceRef.path)
+        expect(applyRetrievalHabitProfileToEvidence([nearTieNeutral, nearTieFavored], settings, { now: recordedAt })[0].sourceRef.path)
             .toBe("Projects/Favored.md");
     });
 
