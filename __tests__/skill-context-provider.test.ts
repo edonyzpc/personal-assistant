@@ -192,12 +192,13 @@ describe("SkillContextProvider", () => {
         expect(source).not.toContain(".execute(");
     });
 
-    it("loads all bundled v1 skills and keeps bodies read-only", () => {
-        expect(BUNDLED_SKILL_RESOURCES).toHaveLength(9);
+    it("loads all bundled skills and keeps ordinary read-only skill bodies unchanged in scope", () => {
+        expect(BUNDLED_SKILL_RESOURCES).toHaveLength(10);
         const parsed = BUNDLED_SKILL_RESOURCES.map((resource) =>
             parseAgentSkillMarkdown(resource.content, resource.path));
 
         expect(parsed.map((skill) => skill.metadata.name)).toEqual([
+            "blog2ghost",
             "obsidian-markdown",
             "obsidian-bases",
             "json-canvas",
@@ -210,7 +211,8 @@ describe("SkillContextProvider", () => {
         ]);
         // Templater describes a third-party plugin API with write operations
         // (create_new, cursor_append etc.) — PA itself stays read-only.
-        const readOnlySkills = parsed.filter(s => s.metadata.name !== "obsidian-templater");
+        // Ghost has its own explicit Host-bound domain capability; loading the skill grants no authority.
+        const readOnlySkills = parsed.filter(s => !["obsidian-templater", "blog2ghost"].includes(s.metadata.name));
         for (const skill of readOnlySkills) {
             expect(skill.body).not.toMatch(/\b(create|edit|write|modify|append|delete)\b/i);
         }

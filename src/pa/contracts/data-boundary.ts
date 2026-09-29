@@ -22,6 +22,7 @@ export const DATA_BOUNDARY_REASONS = [
     "excluded_override",
     "one_run_override",
     "unsupported_scope",
+    "ghost_publishing_system_data",
 ] as const;
 
 export type DataBoundaryReason = typeof DATA_BOUNDARY_REASONS[number];
@@ -61,6 +62,16 @@ export interface DataBoundarySourceInput {
     path: string;
     tags?: string[];
     isGenerated?: boolean;
+    /** Hard system marker from PA's Ghost Publishing completion records. */
+    isGhostPublishingSystemData?: boolean;
+}
+
+export const GHOST_PUBLISHING_SYSTEM_FOLDER = "PA System/Ghost Publishing";
+
+export function isGhostPublishingSystemPath(path: string): boolean {
+    const normalized = normalizeVaultPath(path);
+    return normalized === GHOST_PUBLISHING_SYSTEM_FOLDER
+        || normalized.startsWith(`${GHOST_PUBLISHING_SYSTEM_FOLDER}/`);
 }
 
 export interface DataBoundaryOverride {
@@ -101,6 +112,13 @@ export function decideDataBoundaryForSource(
     override?: DataBoundaryOverride,
 ): DataBoundaryDecision {
     const path = normalizeVaultPath(source.path);
+    if (source.isGhostPublishingSystemData || isGhostPublishingSystemPath(path)) {
+        return {
+            decision: "deny",
+            reason: "ghost_publishing_system_data",
+            sourcePath: path,
+        };
+    }
     const excludedTags = new Set(policy.excludedTags.map(normalizeTag).filter(Boolean));
     if (override?.scope === "one-run" && override.sourcePath && normalizeVaultPath(override.sourcePath) === path) {
         return { decision: "allow", reason: "one_run_override", sourcePath: path, override };

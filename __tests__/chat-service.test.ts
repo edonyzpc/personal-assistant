@@ -339,6 +339,69 @@ function expectedFirstTurnToolNames(...additionalToolNames: string[]) {
     return [...approvedFirstTurnToolNames, 'report_task_incomplete', ...additionalToolNames].sort();
 }
 
+async function runTamperedGhostResult(mutation: 'body' | 'url' | 'fact' | 'source') {
+    const targetPath = '0.unsorted/b153/Publishing.md';
+    const plugin = createPlugin({
+        markdownFiles: [{ path: targetPath, basename: 'Publishing' }],
+        fileContents: { [targetPath]: 'Closed status fixture' },
+    });
+    let dispatch = 0;
+    const providerInputs: unknown[] = [];
+    const model = {
+        bindTools: jest.fn(() => model),
+        stream: jest.fn(async function* (input: unknown) {
+            providerInputs.push(input);
+            if (dispatch++ === 0) {
+                yield { tool_call_chunks: [{ index: 0, id: 'ghost-tampered', name: 'prepare_ghost_post',
+                    args: JSON.stringify({ intent: 'prepare', name: 'Publishing' }) }] };
+            } else yield { content: 'The malformed Ghost result is unavailable.' };
+        }),
+    };
+    mockCreateChatModel.mockResolvedValue(model);
+    const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+    const submit = jest.fn<import('../src/ai-services/chat-tool-types').GhostHostBinding['submit']>(
+        async () => ({ status: 'prepared' as const, operationId: 'ghost-operation' }));
+    const originalExecute = CapabilityRegistry.prototype.execute;
+    const executeSpy = jest.spyOn(CapabilityRegistry.prototype, 'execute').mockImplementation(async function (
+        this: CapabilityRegistry, name: string, input: unknown, context: unknown,
+    ) {
+        const result = await originalExecute.call(this, name, input, context as never);
+        if (name !== 'prepare_ghost_post') return result;
+        if (mutation === 'source') {
+            (plugin.app.vault.getAbstractFileByPath as jest.Mock).mockImplementation(() => null);
+            return result;
+        }
+        if (mutation === 'fact') {
+            result.resultFact = { kind: 'unknown', operationId: 'ghost-operation' };
+            return result;
+        }
+        const observation = result.content as Record<string, unknown>;
+        result.content = { ...observation,
+            [mutation === 'body' ? 'body' : 'url']: mutation === 'body'
+                ? 'PRIVATE_BODY_SENTINEL' : 'https://private.invalid/secret' };
+        return result;
+    });
+    let failure: unknown;
+    try {
+        try {
+            await service.streamLLM('@blog2ghost prepare Publishing', jest.fn(), undefined, [], {
+                conversationId: 'ghost-conversation', memoryMode: 'skip-memory',
+                inputLineage: completeInputLineage([
+                    { kind: 'user-text', messageId: 'ghost-user' },
+                    { kind: 'vault', path: targetPath, via: 'note' },
+                ]),
+                runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'ghost-selection',
+                    userMessageId: 'ghost-user' },
+                ghostPublishing: { conversationId: 'ghost-conversation', stableMessageId: 'ghost-message', submit },
+            });
+        } catch (error) { failure = error; }
+    } finally {
+        executeSpy.mockRestore();
+        service.dispose();
+    }
+    return { wire: JSON.stringify(providerInputs[1] ?? null), submitCount: submit.mock.calls.length, failure };
+}
+
 function createRuntime(
     host: ReturnType<typeof createPlugin>,
     nativeToolPlanningInternalGate = false,
@@ -977,7 +1040,7 @@ describe('ChatService.streamLLM integration', () => {
         };
         mockCreateChatModel.mockResolvedValue(model);
         const plugin = createPlugin();
-        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const service = new ChatService(createPlugin() as unknown as ConstructorParameters<typeof ChatService>[0]);
         const submit = jest.fn(async (
             _input: unknown, _sourceCurrent?: () => boolean, _lineage?: unknown, _receipt?: () => boolean,
         ) => ({ taskId: 'attachment-image-task' }));
@@ -1077,6 +1140,137 @@ describe('ChatService.streamLLM integration', () => {
         unrelatedCurrent = false;
         expect(receipt()).toBe(true);
         service.dispose();
+    });
+
+    it.each(['desktop', 'mobile', 'unbound'] as const)('keeps Ghost preparation bound to its explicit desktop request (%s)', async mode => {
+        (Platform as { isDesktop: boolean; isMobile: boolean }).isDesktop = mode !== 'mobile';
+        (Platform as { isDesktop: boolean; isMobile: boolean }).isMobile = mode === 'mobile';
+        let turn = 0;
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: jest.fn(async function* () {
+                if (mode === 'desktop' && turn++ === 0) {
+                    yield { tool_call_chunks: [{ index: 0, id: 'ghost-prepare', name: 'prepare_ghost_post',
+                        args: JSON.stringify({ intent: 'prepare' }) }] };
+                } else yield { content: 'Check the publishing card and preview before continuing.' };
+            }),
+        };
+        mockCreateChatModel.mockResolvedValue(model);
+        const service = new ChatService(createPlugin() as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const submit = jest.fn<import('../src/ai-services/chat-tool-types').GhostHostBinding['submit']>(async (_input, guard, validity) => {
+            expect(guard.isCurrent()).toBe(true);
+            expect(guard.isNoteDomainAllowed?.()).toBe(true);
+            expect(validity()).toBe(true);
+            return { status: 'prepared', operationId: 'ghost-operation' };
+        });
+        const unregister = jest.spyOn(CapabilityRegistry.prototype, 'unregister');
+        try {
+            await service.streamLLM('@blog2ghost prepare the current note', jest.fn(), undefined, [], {
+                conversationId: 'ghost-conversation', memoryMode: 'skip-memory',
+                ...(mode !== 'unbound' ? { ghostPublishing: { conversationId: 'ghost-conversation', stableMessageId: 'ghost-message', submit } } : {}),
+            });
+            const names = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+                .map(tool => tool.function?.name);
+            if (mode === 'desktop') {
+                expect(names).toContain('prepare_ghost_post');
+                expect(submit).toHaveBeenCalledTimes(1);
+                expect(submit.mock.calls[0][0]).toEqual({ intent: 'prepare' });
+                expect(unregister.mock.calls.some(([capability]) => capability.name === 'prepare_ghost_post')).toBe(true);
+            } else {
+                expect(names).not.toContain('prepare_ghost_post');
+                expect(submit).not.toHaveBeenCalled();
+            }
+            const ordinaryModel = createStreamChunksModel([{ content: 'An ordinary answer.' }]);
+            mockCreateChatModel.mockResolvedValue(ordinaryModel);
+            await service.streamLLM('Explain the loaded blog2ghost skill.', jest.fn(), undefined, [], { memoryMode: 'skip-memory' });
+            const ordinaryNames = ((ordinaryModel.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+                .map(tool => tool.function?.name);
+            expect(ordinaryNames).not.toContain('prepare_ghost_post');
+        } finally {
+            unregister.mockRestore();
+            service.dispose();
+        }
+    });
+
+    it.each([
+        { name: 'prepared', receipt: { status: 'prepared', operationId: 'ghost-operation' },
+            expected: ['ghost-operation', 'prepared', 'publication has not been confirmed'] },
+        { name: 'needs attention', receipt: { status: 'needs_attention', operationId: 'ghost-operation' },
+            expected: ['ghost-operation', 'needs_attention', 'Check its publishing card before continuing'] },
+        { name: 'outcome unknown', receipt: { status: 'outcome_unknown', operationId: 'ghost-operation' },
+            expected: ['ghost-operation', 'outcome_unknown', 'needs verification in its publishing card'] },
+        { name: 'target missing', errorCode: 'target-missing',
+            expected: ['unavailable', 'requested note is unavailable', 'exact vault-relative path'] },
+        { name: 'target ambiguous', errorCode: 'target-ambiguous',
+            expected: ['unavailable', 'More than one note matches', 'exact vault-relative path'] },
+        { name: 'target unauthorized', errorCode: 'target-not-requested',
+            expected: ['unavailable', 'host has not authorized this target', 'explicit publishing request'] },
+    ])('projects the closed Ghost %s Host result into the next provider dispatch in one stream', async caseValue => {
+        const targetPath = '0.unsorted/b153/Publishing.md';
+        const plugin = createPlugin({
+            markdownFiles: [{ path: targetPath, basename: 'Publishing' }],
+            fileContents: { [targetPath]: 'Closed status fixture' },
+        });
+        let dispatch = 0;
+        const providerInputs: unknown[] = [];
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: jest.fn(async function* (input: unknown) {
+                providerInputs.push(input);
+                if (dispatch++ === 0) {
+                    yield { tool_call_chunks: [{ index: 0, id: 'ghost-status', name: 'prepare_ghost_post',
+                        args: JSON.stringify({ intent: 'prepare', name: 'Publishing' }) }] };
+                } else {
+                    yield { content: 'Use the checked publishing card.' };
+                }
+            }),
+        };
+        mockCreateChatModel.mockResolvedValue(model);
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const submit = jest.fn<import('../src/ai-services/chat-tool-types').GhostHostBinding['submit']>(async () => {
+            if (caseValue.errorCode) {
+                throw Object.assign(new Error('PRIVATE_TARGET_ERROR'), { code: caseValue.errorCode });
+            }
+            return caseValue.receipt as never;
+        });
+        await service.streamLLM('@blog2ghost prepare Publishing', jest.fn(), undefined, [], {
+            conversationId: 'ghost-conversation', memoryMode: 'skip-memory',
+            inputLineage: completeInputLineage([
+                { kind: 'user-text', messageId: 'ghost-user' },
+                { kind: 'vault', path: targetPath, via: 'note' },
+            ]),
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'ghost-selection',
+                userMessageId: 'ghost-user' },
+            ghostPublishing: { conversationId: 'ghost-conversation', stableMessageId: 'ghost-message', submit },
+        });
+
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(dispatch).toBe(2);
+        const nextProviderInput = JSON.stringify(providerInputs[1]);
+        for (const value of caseValue.expected) expect(nextProviderInput).toContain(value);
+        expect(nextProviderInput).not.toContain('result_unknown');
+        expect(nextProviderInput).not.toContain('No admitted observation');
+        expect(nextProviderInput).not.toContain('PRIVATE_TARGET_ERROR');
+        service.dispose();
+    });
+
+    it.each(['body', 'url', 'fact'] as const)(
+        'rejects a Ghost result whose closed %s contract was tampered with before the next dispatch',
+        async mutation => {
+            const result = await runTamperedGhostResult(mutation);
+            expect(result.submitCount).toBe(1);
+            expect(result.wire).not.toContain('publication has not been confirmed');
+            expect(result.wire).not.toContain('PRIVATE_BODY_SENTINEL');
+            expect(result.wire).not.toContain('private.invalid');
+        },
+    );
+
+    it('does not project an old Ghost status after its admitted source disappears before the next dispatch', async () => {
+        const result = await runTamperedGhostResult('source');
+        expect(result.submitCount).toBe(1);
+        expect(result.wire).not.toContain('ghost-operation');
+        expect(result.wire).not.toContain('publication has not been confirmed');
+        expect(result.failure).toBeDefined();
     });
 
     it('runs host-bound create_image without a vault source declaration and keeps completion asynchronous', async () => {

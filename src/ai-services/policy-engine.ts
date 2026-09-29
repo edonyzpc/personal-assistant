@@ -75,6 +75,15 @@ export class PolicyEngine {
         if (capabilityTier === "paid" && this.licenseTier === "free") {
             return { allowed: false, reason: "premium-required" };
         }
+        const fixedGhostPublishing = capability.permission === "ghost-publishing"
+            && capability.name === "prepare_ghost_post"
+            && capability.kind === "tool" && capability.origin === "core"
+            && capability.providerId === "chat-ghost-publishing"
+            && capability.sourceBoundary === "read-only-tool"
+            && capability.platform === "desktop" && capability.executionMode === "sequential";
+        if ((capability.name === "prepare_ghost_post" || capability.permission === "ghost-publishing") && !fixedGhostPublishing) {
+            return { allowed: false, reason: "Ghost preparation requires its fixed desktop Host capability" };
+        }
 
         if (capability.kind === "action") {
             if ((this.runKind !== "review" && this.runKind !== "chat-with-actions") || !this.allowWrite) {
@@ -107,7 +116,7 @@ export class PolicyEngine {
                 && capability.sourceBoundary === "read-only-tool";
             const ordinaryPermissionAllowed = capability.permission === "read-only"
                 || capability.permission === "network-read";
-            if (!ordinaryPermissionAllowed && !fixedMemoryManagement && !fixedInsightManagement && !fixedImageGeneration) {
+            if (!ordinaryPermissionAllowed && !fixedMemoryManagement && !fixedInsightManagement && !fixedImageGeneration && !fixedGhostPublishing) {
                 return {
                     allowed: false,
                     reason: `permission ${capability.permission} is not allowed for non-action capabilities`,

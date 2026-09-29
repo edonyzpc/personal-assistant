@@ -75,6 +75,7 @@ export interface StreamLLMOptions {
     conversationId?: string;
     /** Per-user-request image authority; omitted when the image service is unavailable. */
     createImage?: import('./chat-tool-types').CreateImageHostBinding;
+    ghostPublishing?: import('./chat-tool-types').GhostHostBinding;
     /** Visible Pagelet evidence to inject into this explicit user turn only. */
     pageletHandoff?: PageletChatHandoffContext;
     onLifecycleEvent?: (event: AgentEvent) => void;
@@ -285,6 +286,7 @@ export class ChatService {
                 runSourceSelection: options.runSourceSelection,
                 conversationId: options.conversationId,
                 createImage: options.createImage,
+                ghostPublishing: options.ghostPublishing,
                 chatHistory,
                 images: options.images,
                 imageAssetService: options.imageAssetService,

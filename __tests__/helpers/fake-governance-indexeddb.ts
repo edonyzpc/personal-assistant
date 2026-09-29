@@ -229,6 +229,15 @@ class FakeGovernanceObjectStore {
         return request as unknown as IDBRequest<IDBValidKey>;
     }
 
+    delete(key: IDBValidKey): IDBRequest<undefined> {
+        const request = new FakeIdbRequest<undefined>(undefined);
+        this.transaction.enqueue((stores) => {
+            stores.get(this.storeName)?.delete(String(key));
+            request.onsuccess?.call(request as unknown as IDBRequest, {} as Event);
+        });
+        return request as unknown as IDBRequest<undefined>;
+    }
+
     clear(): IDBRequest<undefined> {
         const request = new FakeIdbRequest<undefined>(undefined);
         this.transaction.enqueue((stores) => {

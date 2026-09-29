@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, debounce } from "obsidian";
+import { App, Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, debounce } from "obsidian";
 import type { ToggleComponent } from "obsidian";
 import { createSourceScopeSettingState, renderSourceScopeSetting } from "./settings/source-scope-setting";
 
@@ -10,6 +10,8 @@ import type {
 } from "./ai-services/plugin-configuration";
 import type { APITokenCacheState } from "./ai-services/ai-utils";
 import type { ImageGenerationConnection } from "./ai-services/image-generation-connection";
+import { DEFAULT_GHOST_SETTINGS, normalizeGhostSettings, type GhostPublishingConfiguration, type GhostPublishingSettings } from "./ghost-publishing/configuration";
+import { renderGhostPublishingSettings } from "./ghost-publishing/settings-ui";
 import type { AISetupResult } from "./chat/ChatHost";
 import type { ImageAssetService } from "./chat/image-assets";
 import { ImageManagementModal } from "./chat/image-management-modal";
@@ -321,6 +323,8 @@ export interface PluginManagerSettings {
     imageGenerationBaseURL: string;
     imageGenerationConnectionRevision: number;
     imageGenerationFirstUseNoticeShown: boolean;
+    /** Non-secret publishing preferences; each desktop keeps its own Integration key. */
+    ghostPublishing: GhostPublishingSettings;
     /** Separate first-use disclosure for the note-to-image text preparation call. */
     featuredImageTextPreparationNoticeShown: boolean;
     memoryExtractionEnabled: boolean;
@@ -450,6 +454,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     imageGenerationBaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     imageGenerationConnectionRevision: 0,
     imageGenerationFirstUseNoticeShown: false,
+    ghostPublishing: DEFAULT_GHOST_SETTINGS,
     featuredImageTextPreparationNoticeShown: false,
     memoryExtractionEnabled: true,
     learningPreferences: { version: LEARNING_DEFAULTS_VERSION, memoryExtraction: "default", habitLearning: "default" },
@@ -640,6 +645,7 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
         && Number(loadedObject.imageGenerationConnectionRevision) >= 0
         ? Number(loadedObject.imageGenerationConnectionRevision) : 0;
     merged.imageGenerationFirstUseNoticeShown = loadedObject.imageGenerationFirstUseNoticeShown === true;
+    merged.ghostPublishing = normalizeGhostSettings(loadedObject.ghostPublishing);
     merged.featuredImageTextPreparationNoticeShown = loadedObject.featuredImageTextPreparationNoticeShown === true;
     // Current builds use a mock paid entitlement so all paid-capability
     // architecture stays enabled until a real authorization source is wired in.
@@ -1083,6 +1089,7 @@ interface SettingsAIConfigurationHost {
 }
 
 interface SettingsFeatureHost {
+    readonly ghostPublishingConfiguration?: GhostPublishingConfiguration;
     readonly imageAssetService: ImageAssetService | undefined;
     openFeaturedImageOptions(): Modal | null;
     openGraphOptions(): Modal;
@@ -1161,6 +1168,7 @@ export class SettingTab extends PluginSettingTab {
     private settingsScrollRoot: HTMLElement | null = null;
     private settingsScrollHandler: (() => void) | null = null;
     private aiProviderPresetDropdown: { setValue(value: string): unknown } | null = null;
+    private disposeGhostSettings: (() => void) | null = null;
 
     // Set by rebuildQwenOptions(); invoked by Base URL onChange.
     private refreshQwenResponseOptionAvailability: ((baseURL?: string) => void) | null = null;
@@ -1313,6 +1321,8 @@ export class SettingTab extends PluginSettingTab {
     }
 
     display(): void {
+        this.disposeGhostSettings?.();
+        this.disposeGhostSettings = null;
         this.settingsVisible = true;
         const { containerEl } = this;
         const doc = (containerEl as HTMLElement).ownerDocument ?? getPlatformDocument();
@@ -1357,6 +1367,14 @@ export class SettingTab extends PluginSettingTab {
             ] },
             { id: "features", labelKey: "plugin.settings.group.features", sections: [
                 (p) => this.renderChatImagesSection(p),
+                (p) => {
+                    if (!Platform.isDesktop) return;
+                    this.disposeGhostSettings = renderGhostPublishingSettings(
+                        this.createSettingsDetail(p, "plugin.ghost.settings.title", "pa-settings-ghost"),
+                        { isDesktop: () => Platform.isDesktop, getSettings: () => this.plugin.settings.ghostPublishing,
+                            configuration: this.plugin.ghostPublishingConfiguration, t: (key, params) => this.t(key, params) },
+                    );
+                },
                 (p) => {
                     this.pageletPreferencesContainer = p.createDiv();
                     this.renderPageletSection(this.pageletPreferencesContainer);
@@ -1511,6 +1529,8 @@ export class SettingTab extends PluginSettingTab {
     }
 
     hide(): void {
+        this.disposeGhostSettings?.();
+        this.disposeGhostSettings = null;
         this.settingsVisible = false;
         this.featureOptionsModal?.close();
         this.featureOptionsModal = null;

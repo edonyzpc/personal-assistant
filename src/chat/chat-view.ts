@@ -1,6 +1,8 @@
 import { WorkspaceLeaf, MarkdownView, Notice, ItemView, Modal, Platform, setIcon, Component, TFile, type EventRef } from 'obsidian';
 import { ChatService, type AgentEvent, type ChatAgentStatus, type ChatContextUsedItem, type ChatMessage, type ChatTurnMemoryMetadata } from '../ai-services/chat-service';
 import { BUNDLED_SKILL_CATALOG } from '../ai-services/bundled-skill-catalog';
+import { parseGhostCommand } from '../ghost-publishing/entry';
+import { renderGhostPublishingCard } from '../ghost-publishing/card';
 import type { ChatSourceScope } from '../ai-services/chat-source-scope';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
 import { cloneInputLineage, completeInputLineage, generationInputSnapshotInputLineage, resolveWritingVersionInputLineage,
@@ -1140,12 +1142,15 @@ export class LLMView extends ItemView {
         const getActionTriggerMatch = () => {
             if (composing || textArea.selectionStart !== textArea.selectionEnd) return null;
             const prefix = textArea.value.slice(0, textArea.selectionStart);
-            const match = /(?:^|\s)@([a-z]*)$/i.exec(prefix);
+            const match = /(?:^|\s)@([a-z0-9]*)$/i.exec(prefix);
             if (!match) return null;
             const query = match[1].toLowerCase();
             const actions = [
                 ...(this.host.imageGenerationService && 'createimage'.startsWith(query) ? ['CreateImage' as const] : []),
                 ...(this.host.writingVersions && 'writing'.startsWith(query) ? ['Writing' as const] : []),
+                ...(Platform.isDesktop && !Platform.isMobile && this.host.createGhostPublishingBinding
+                    && prefix.slice(0, prefix.length - match[1].length - 1).trim() === ''
+                    && 'blog2ghost'.startsWith(query) ? ['blog2ghost' as const] : []),
             ];
             return actions.length ? { start: prefix.length - match[1].length - 1, end: prefix.length, actions } : null;
         };
@@ -1172,6 +1177,9 @@ export class LLMView extends ItemView {
                             } : {}),
                         });
                         clearSelectedWritingParent();
+                    } else if (action === 'blog2ghost') {
+                        textArea.setRangeText('@blog2ghost ', textArea.selectionStart, textArea.selectionEnd, 'end');
+                        composerDraft.touchText();
                     } else composerDraft.setWritingIntent();
                     hideActionTypeahead();
                     hideSkillTypeahead();
@@ -1183,7 +1191,8 @@ export class LLMView extends ItemView {
                 const button = actionTypeahead.createEl('button', {
                     cls: 'pa-chat-skill-typeahead-item pa-chat-action-typeahead-item',
                     attr: { type: 'button', role: 'option', title: t(action === 'CreateImage'
-                        ? 'plugin.chat.createImage.title' : 'plugin.chat.writing.action') },
+                        ? 'plugin.chat.createImage.title' : action === 'blog2ghost'
+                            ? 'plugin.ghost.card.title' : 'plugin.chat.writing.action') },
                 });
                 button.createSpan({ cls: 'pa-chat-skill-typeahead-name', text: action });
                 button.onclick = choose;
@@ -1885,6 +1894,14 @@ export class LLMView extends ItemView {
         const imageTaskFallbackTarget: ImageTaskCardTarget = { parent: this.responseDiv };
         const imageCardCleanups = new Map<string, Array<() => void>>();
         const imageOperationByTurn = new Map<number, { stableMessageId: string; operationId: string; intent?: ComposerImageIntent; taskIds?: string[] }>();
+        const ghostTargetsByTurn = new Map<number, string>();
+        const ghostCardCleanups = new Set<() => void>();
+        const clearGhostCards = () => {
+            for (const dispose of ghostCardCleanups) dispose();
+            ghostCardCleanups.clear();
+            ghostTargetsByTurn.clear();
+        };
+        this.registerViewTeardown(clearGhostCards);
         let imageTasksConversationId: string | null = null;
         const clearImageTaskCards = () => {
             for (const cleanups of imageCardCleanups.values()) for (const cleanup of cleanups) cleanup();
@@ -4731,7 +4748,19 @@ export class LLMView extends ItemView {
 
         const sendPrompt = async (rawPrompt: string, retryImages?: MessageImage[], retryTurnId?: number, retryWritingParent?: WritingVersion,
             retryWritingMaterialContext?: ChatWritingMaterialContext, retryWritingIntent = false) => {
+            const ghostCommand = parseGhostCommand(rawPrompt);
+            // Resolve the current-note entry synchronously, before any model or persistence await.
+            const ghostCapturedPath = ghostCommand === null ? '' : retryTurnId === undefined
+                ? this.getMarkdownRenderSourcePath() : ghostTargetsByTurn.get(retryTurnId) ?? '';
+            if (ghostCommand !== null && (!Platform.isDesktop || Platform.isMobile)) {
+                showComposerHint(t('plugin.ghost.settings.desktopOnly'));
+                return;
+            }
             const currentDraftBeforeCommand = composerDraft.snapshot(rawPrompt);
+            if (ghostCommand !== null && (currentDraftBeforeCommand.imageIntent || currentDraftBeforeCommand.writingIntent)) {
+                showComposerHint(t('plugin.chat.action.conflict'));
+                return;
+            }
             const commandPrompt = parseCreateImageCommand(rawPrompt);
             const commandHasImageSource = currentDraftBeforeCommand?.imageIntent?.textSource !== undefined;
             if (commandPrompt !== null && !commandPrompt && !commandHasImageSource) {
@@ -4925,6 +4954,7 @@ export class LLMView extends ItemView {
                 activityDetails: [],
                 canonicalLifecycle: createCanonicalLifecycleState(),
             };
+            if (ghostCommand !== null) ghostTargetsByTurn.set(turn.id, ghostCapturedPath);
             if (retryImageOperation) turn.userProvenance!.messageId = retryImageOperation.stableMessageId;
             const stableMessageId = turn.userProvenance!.messageId;
             // Capture before the first persistence/lease await. Later scope edits belong to the next run.
@@ -5098,6 +5128,21 @@ export class LLMView extends ItemView {
                     } catch (error) { this.host.log('Could not load generated image references', error); }
                 }
                 const chosenRefs = explicitImageIntent?.referenceImageRefs.map(imageRefToken) ?? [];
+                const ghostPublishing = ghostCommand !== null && conversationIdForMemoryActions
+                    ? this.host.createGhostPublishingBinding?.({
+                        conversationId: conversationIdForMemoryActions, stableMessageId,
+                        userText: rawPrompt, capturedPath: ghostCapturedPath,
+                        isCurrent: () => isCurrentSession() && Boolean(turn.assistantMessage?.messageDiv.isConnected),
+                        getSourceSelection: () => this.conversationPersistence.captureRunSourceSelection(stableMessageId),
+                        onSession: session => {
+                            const message = turn.assistantMessage;
+                            if (!message || !isCurrentSession() || !message.messageDiv.isConnected) { session.dispose(); return; }
+                            const container = message.messageDiv.createDiv({ cls: 'pa-ghost-publishing-card' });
+                            message.messageDiv.insertBefore(container, message.actionDiv);
+                            const dispose = renderGhostPublishingCard(container, session, key => t(key));
+                            ghostCardCleanups.add(() => { dispose(); container.remove(); });
+                        },
+                    }) : undefined;
                 if (separateImageRequests) {
                     for (let index = 1; index <= imageBudget; index++) {
                         const requestId = index === 1 ? operationId : `${operationId}-sub${index}`;
@@ -5292,12 +5337,15 @@ export class LLMView extends ItemView {
                     ? `\n\n@CreateImage selected. Decide from the user's current request whether this is generation, or only image discussion/prompt writing; call create_image only for an actual generation or edit request. Operation ${explicitImageIntent.operation}, referenceImageRefs ${JSON.stringify(chosenRefs)}${explicitImageIntent.parentVersionId ? `, parentVersionId ${explicitImageIntent.parentVersionId}` : ''}.${explicitImageIntent.textSource ? ' A text source is bound host-side; do not read or widen the source. Call create_image once and the host will independently prepare the exact submitted description.' : ' If the request depends on note text but no text source is selected, ask the user to use the CreateImage source control instead of guessing a note.'}${separateImageRequests ? ` The user requested ${imageBudget} distinct images. Call create_image once per explicitly described image, count 1 each, with subrequestIndex 1 through ${imageBudget}; preserve each image's own description.` : ''} Keep the acknowledgement brief.`
                     : '';
                 if (explicitImageIntent && !createImage) throw new Error('Image creation is unavailable.');
+                const ghostInstructions = ghostPublishing
+                    ? '\n\n@blog2ghost is explicitly selected. Use prepare_ghost_post once for the requested note. If the user explicitly gives a path or note name, pass that locator even if a contextual reference or the captured note appears to be the same target. Omit both locators only when the user asks for the current note and names no other target; never infer the Host-captured target from model context. Never rewrite the article, submit text, supply remote IDs or claim publication. A draft or restoration preview is prepared; only the Host card reports whether preview checks passed. Ghost may already have saved, updated, or reused a draft and may have uploaded required media; do not infer whether this created, updated, reused, uploaded, or pushed anything. The Host result card owns preview checks and final confirmation; first publication is completed in Ghost. If the tool reports a missing, ambiguous, or unauthorized target, ask the user for the exact vault-relative path; do not describe it as outcome-unknown or claim that a card exists.'
+                    : '';
                 const legacyWritingLineage = turn.writingParent && runSourceSelection && this.host.writingVersions
                     ? await resolveWritingVersionInputLineage(turn.writingParent,
                         id => this.host.writingVersions!.get(id)) : undefined;
                 if (!isLiveTurn()) throw new DOMException('Cancelled', 'AbortError');
                 await this.chatService.streamLLM(
-                    `${prompt}${imageInstructions}${selectedInstruction}`,
+                    `${prompt}${imageInstructions}${selectedInstruction}${ghostInstructions}`,
                     (chunk) => {
                         if (!acceptingStreamEvents || !isLiveTurn()) return;
                         if (turn.canonicalLifecycle.active) return;
@@ -5313,6 +5361,7 @@ export class LLMView extends ItemView {
                         conversationId: conversationIdForMemoryActions ?? undefined,
                         images: chatSupportsImages ? turnImages : [],
                         createImage,
+                        ghostPublishing,
                         imageAssetService: this.host.imageAssetService,
                         writingRequest,
                         writingContextHost,
@@ -5599,6 +5648,7 @@ export class LLMView extends ItemView {
             const conversationIdToDelete = this.conversationPersistence.activeConversationId;
             imageTasksConversationId = null;
             imageOperationByTurn.clear();
+            clearGhostCards();
             clearImageTaskCards();
             this.chatHistory = [];
             timelineEntries = [];
@@ -5819,6 +5869,7 @@ export class LLMView extends ItemView {
             }
             imageTasksConversationId = conversation.id;
             imageOperationByTurn.clear();
+            clearGhostCards();
             conversationAnchorFile = undefined;
             composerDraft.clear();
             selectedWritingVersion = undefined;
@@ -5923,6 +5974,7 @@ export class LLMView extends ItemView {
             imageTasksConversationId = null;
             imageOperationByTurn.clear();
             clearImageTaskCards();
+            clearGhostCards();
             this.conversationPersistence.resetActiveConversationState();
             syncSourceScopeControl();
             conversationAnchorFile = undefined;
@@ -5969,6 +6021,7 @@ export class LLMView extends ItemView {
                         this.cancelScheduledScroll();
                         this.chatHistory = [];
                         timelineEntries = [];
+                        clearGhostCards();
                         this.conversationPersistence.resetActiveConversationState();
                         syncSourceScopeControl();
                         conversationAnchorFile = undefined;

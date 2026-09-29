@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "source": "F-01.md",
+  "embedding": {
+    "target": "Embedded.md#Embeddable section",
+    "text": "This section is explicitly embedded by F-01. It contains no real user data."
+  },
+  "exactCode": {
+    "language": "javascript",
+    "text": "const exact = \"tab→\tpipe|quote'back\\slash\";\n/* keep [brackets] {braces} <angle> and — */\nconsole.log(exact, `template ${exact}`);\n"
+  },
+  "mermaid": "flowchart LR\n  A[Obsidian source] --> B{Preview checks}\n  B -- pass --> C[Ready]\n  B -- fail --> D[Blocked]",
+  "math": {
+    "inline": "E = mc^2",
+    "block": "\\int_{0}^{1} x^2 \\,dx = \\frac{1}{3}"
+  },
+  "images": [
+    {
+      "source": "local-image.png",
+      "width": 160,
+      "height": 80,
+      "type": "image/png"
+    },
+    {
+      "source": "http://127.0.0.1:2372/redirect-image.png",
+      "width": 120,
+      "height": 60,
+      "type": "image/png"
+    }
+  ],
+  "mustNotExport": [
+    "pa_sensitive_example"
+  ]
+}

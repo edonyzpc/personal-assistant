@@ -44,6 +44,8 @@ import { GraphOptionsModal, type GraphOptions } from './settings/graph-options-m
 import { FeaturedImageOptionsModal, type FeaturedImageOptionsModalHost } from './settings/featured-image-options-modal';
 import type { FeaturedImageDefaults } from './ai-services/featured-image-options';
 import type { ImageGenerationConnection } from './ai-services/image-generation-connection';
+import { GhostPublishingIntegration } from './ghost-publishing/host-integration';
+import type { GhostPublishingConfiguration } from './ghost-publishing/configuration';
 import { openSettings, openSettingsTab } from './obsidian-internals';
 import { icons } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
@@ -596,6 +598,8 @@ function writeVaultInsightsInjectionNoticeFlag(): void {
 
 
 export class PluginManager extends Plugin {
+    ghostPublishingConfiguration?: GhostPublishingConfiguration;
+    private ghostPublishingIntegration?: GhostPublishingIntegration;
     private createSettingsPersistence(): SettingsPersistence {
         return new SettingsPersistence({
             onSourcePermissionRevoking: () => this.agentDebugIntegration?.sourcePermissionRevoking(),
@@ -1930,6 +1934,23 @@ export class PluginManager extends Plugin {
         void this.ensureLoadedPluginBuildIdentity();
         this.vaultEventBridge.resetStartupEventGate();
         await this.loadSettings();
+        if (Platform.isDesktop && !Platform.isMobile) {
+            const adapter = this.app.vault.adapter as typeof this.app.vault.adapter & { getBasePath?(): string };
+            const vaultPath = adapter.getBasePath?.();
+            if (vaultPath) {
+                this.ghostPublishingIntegration = new GhostPublishingIntegration({
+                    app: this.app, pluginId: this.manifest.id, vaultPath,
+                    getSettings: () => this.settings.ghostPublishing,
+                    saveSettings: next => this.persistPaSettingsSlice(() => this.settings.ghostPublishing,
+                        value => { this.settings.ghostPublishing = value; }, next, true),
+                    isCurrent: () => !this.unloading,
+                    isPathAllowed: path => this.isDataBoundaryAllowedPath(path),
+                    isContentAllowed: (path, markdown) => this.sourceAccess.getLatestDataBoundaryContentBoundary(path, markdown)?.allowed === true,
+                    isWebAllowed: () => this.settings.webSearchEnabled === true,
+                });
+                this.ghostPublishingConfiguration = this.ghostPublishingIntegration.configuration;
+            }
+        }
         void this.cleanupLegacyMobileDebugLog();
 
         // 迁移旧版本设置
@@ -5836,7 +5857,9 @@ export class PluginManager extends Plugin {
     }
 
     private createChatHost(): ChatHost {
-        return this.chatIntegration.createChatHost();
+        const host = this.chatIntegration.createChatHost();
+        host.createGhostPublishingBinding = request => this.ghostPublishingIntegration?.createBinding(request);
+        return host;
     }
 
     private unavailableMemoryPlan() {
@@ -6617,6 +6640,9 @@ export class PluginManager extends Plugin {
 
     private async unloadAsync(): Promise<void> {
         this.unloading = true;
+        this.ghostPublishingIntegration?.dispose();
+        this.ghostPublishingIntegration = undefined;
+        this.ghostPublishingConfiguration = undefined;
         this.agentDebugIntegration?.beginUnload();
         this.pageletIntegration.beginUnload();
         this.metadataUpdater.dispose();

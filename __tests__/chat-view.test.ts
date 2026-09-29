@@ -4409,6 +4409,98 @@ describe('LLMView turn lifecycle', () => {
         await restored.view.onClose();
     });
 
+    it('binds @blog2ghost to the note at submission even when the active tab changes before dispatch', async () => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'ghost-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager, withMarkdownLeaf: true });
+        const createBinding = jest.fn<NonNullable<ChatHost['createGhostPublishingBinding']>>(request => ({
+            conversationId: request.conversationId, stableMessageId: request.stableMessageId,
+            submit: async () => ({ status: 'prepared', operationId: 'synthetic-operation' }),
+        }));
+        Object.assign(plugin, { createGhostPublishingBinding: createBinding });
+        await view.onOpen();
+        view.prefillComposer('@blog2ghost 将当前笔记发布到ghost平台');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        plugin.app.workspace.getActiveFile.mockReturnValue({ path: 'Other.md', basename: 'Other', extension: 'md' });
+        for (let index = 0; index < 5; index++) await flushPromises();
+        expect(createBinding).toHaveBeenCalledTimes(1);
+        expect(createBinding.mock.calls[0][0]).toMatchObject({ capturedPath: '0.unsorted/Dog.md',
+            userText: '@blog2ghost 将当前笔记发布到ghost平台', conversationId: 'ghost-conversation' });
+        expect(streamCalls[0].options.ghostPublishing).toBeDefined();
+        expect(streamCalls[0].options.writingRequest).toBeUndefined();
+        streamCalls[0].resolve();
+        await flushPromises();
+        await view.onClose();
+    });
+
+    it('completes @blog2ghost including its digit, respects composition, and refuses the mobile entry', async () => {
+        const { view, plugin, containerEl } = createView();
+        Object.assign(plugin, { createGhostPublishingBinding: jest.fn() });
+        await view.onOpen();
+        const area = getTextArea(containerEl);
+        area.value = '@blog2';
+        Object.assign(area, { selectionStart: 6, selectionEnd: 6,
+            setRangeText: (replacement: string, start: number, end: number) => {
+                area.value = `${area.value.slice(0, start)}${replacement}${area.value.slice(end)}`;
+                Object.assign(area, { selectionStart: start + replacement.length, selectionEnd: start + replacement.length });
+            } });
+        area.dispatchEvent('input');
+        const actions = getElementByClass(containerEl, 'pa-chat-action-typeahead');
+        expect(actions.hidden).toBe(false);
+        area.dispatchEvent('compositionstart');
+        expect(actions.hidden).toBe(true);
+        area.dispatchEvent('compositionend');
+        area.dispatchEvent('input');
+        getButtonByText(actions, 'blog2ghost').click();
+        expect(area.value).toBe('@blog2ghost ');
+        expect(streamCalls).toHaveLength(0);
+        area.value = '发布当前笔记 @blog2';
+        Object.assign(area, { selectionStart: area.value.length, selectionEnd: area.value.length });
+        area.dispatchEvent('input');
+        expect(actions.hidden).toBe(true);
+        const before = { desktop: Platform.isDesktop, mobile: Platform.isMobile };
+        try {
+            Platform.isDesktop = false; Platform.isMobile = true;
+            area.value = '';
+            area.dispatchEvent('input');
+            view.prefillComposer('@blog2ghost 发布当前笔记');
+            getElementByClass(containerEl, 'send-button-visible').click();
+            await flushPromises();
+            expect(streamCalls).toHaveLength(0);
+            expect(allText(containerEl)).toContain('desktop');
+        } finally { Platform.isDesktop = before.desktop; Platform.isMobile = before.mobile; }
+        await view.onClose();
+    });
+
+    it('retries @blog2ghost with its own captured note after a new conversation shifts active turn ids', async () => {
+        let nextConversation = 0;
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => `ghost-retry-${++nextConversation}` });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager, withMarkdownLeaf: true });
+        const createBinding = jest.fn<NonNullable<ChatHost['createGhostPublishingBinding']>>(request => ({
+            conversationId: request.conversationId, stableMessageId: request.stableMessageId,
+            submit: async () => ({ status: 'prepared', operationId: 'synthetic-operation' }),
+        }));
+        Object.assign(plugin, { createGhostPublishingBinding: createBinding });
+        await view.onOpen();
+        getButtonByText(containerEl, 'New Chat').click();
+        for (let index = 0; index < 5; index++) await flushPromises();
+        for (const [index, path] of ['B.md', 'C.md'].entries()) {
+            plugin.app.workspace.getActiveFile.mockReturnValue({ path, basename: path.slice(0, -3), extension: 'md' });
+            view.prefillComposer('@blog2ghost 发布当前笔记');
+            getElementByClass(containerEl, 'send-button-visible').click();
+            for (let flush = 0; flush < 5; flush++) await flushPromises();
+            if (index === 0) streamCalls[index].resolve();
+            else streamCalls[index].reject(new Error('offline'));
+            for (let flush = 0; flush < 5; flush++) await flushPromises();
+        }
+        plugin.app.workspace.getActiveFile.mockReturnValue({ path: 'Later.md', basename: 'Later', extension: 'md' });
+        getElementByClass(containerEl, 'retry-message-button').click();
+        for (let index = 0; index < 5; index++) await flushPromises();
+        expect(createBinding.mock.calls.map(([request]) => request.capturedPath)).toEqual(['B.md', 'C.md', 'C.md']);
+        streamCalls[2].resolve();
+        await flushPromises();
+        await view.onClose();
+    });
+
     it('keeps @CreateImage selection separate from IME confirmation and #skill completion', async () => {
         const { view, plugin, containerEl } = createView();
         Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined } });

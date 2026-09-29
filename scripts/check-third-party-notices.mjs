@@ -216,8 +216,7 @@ function collectRuntimeNoticeFiles(packagePath) {
     return [];
   }
   return files
-    .filter((fileName) => /^(license|licence|notice|copying|copyright)$/i.test(fileName)
-      || /^(license|licence|notice|copying|copyright)\./i.test(fileName))
+    .filter((fileName) => /^(license|licence|notice|copying|copyright)([-.].*)?$/i.test(fileName))
     .sort((a, b) => a.localeCompare(b));
 }
 

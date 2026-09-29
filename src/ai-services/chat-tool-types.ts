@@ -39,7 +39,7 @@ export interface ChatToolContext {
     createImageRuntime?: CreateImageHostRuntime;
 }
 
-export type ChatToolPermission = "read-only" | "network-read" | "memory-management" | "insight-management" | "image-generation";
+export type ChatToolPermission = "read-only" | "network-read" | "memory-management" | "insight-management" | "image-generation" | "ghost-publishing";
 export type ChatToolCost = "free" | "ai-calls" | "network-calls";
 export type ChatToolFailureBehavior = "recoverable";
 export type ChatToolSourceBoundary = "memory" | "current-note" | "read-only-tool" | "web" | "skill-context";
@@ -148,6 +148,27 @@ export interface CreateImageToolInput {
     /** Stable opaque refs from this request's authorized images or conversation versions. */
     referenceImageRefs: string[];
     parentVersionId?: string;
+}
+
+export interface GhostPostToolInput {
+    intent: "prepare" | "restore";
+    /** Omit both locators to use the note captured by the Chat host at submission. */
+    path?: string;
+    name?: string;
+}
+
+export interface GhostPostToolReceipt {
+    status: "prepared" | "needs_attention" | "outcome_unknown";
+    operationId?: string;
+}
+
+/** Granted only by the Chat host for one explicit publishing request. */
+export interface GhostHostBinding {
+    conversationId: string;
+    stableMessageId: string;
+    /** The domain adapter rechecks these boundaries at each physical read/upload/write. */
+    submit(input: GhostPostToolInput, guard: import("./task-source-read-guard").TaskSourceReadGuard,
+        sourceValidity: () => boolean, signal?: AbortSignal): Promise<GhostPostToolReceipt>;
 }
 
 export interface CreateImageHostRuntime {

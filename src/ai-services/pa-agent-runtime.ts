@@ -60,7 +60,9 @@ import {
     createSearchVaultSnippetsTool,
     createQueryNotesTool,
     createCreateImageTool,
+    createPrepareGhostPostTool,
     type CreateImageHostBinding,
+    type GhostHostBinding,
     type ChatToolRegistryDefinition,
 } from "./chat-tools";
 import {
@@ -221,6 +223,8 @@ export interface PaAgentRunOptions {
     conversationId?: string;
     /** Stable host-only identity and durable dispatch port for one user image request. */
     createImage?: CreateImageHostBinding;
+    /** One explicit Chat publishing request; never inferred from skill content. */
+    ghostPublishing?: GhostHostBinding;
     imageCapability?: { get: () => ChatImageCapability; onSuccess: () => void; onError: (error: unknown) => void };
     memoryMode: MemoryMode;
     /** Visible Pagelet evidence. It is context-only and never grants tool authority. */
@@ -632,6 +636,71 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
         : undefined;
 }
 
+const GHOST_STATUS_MESSAGES = {
+    prepared: "A draft or restoration preview is prepared. Check its publishing card and preview; publication has not been confirmed.",
+    needs_attention: "Preparation needs attention. Check its publishing card before continuing; publication has not been confirmed.",
+    outcome_unknown: "The preparation result needs verification in its publishing card. Do not repeat the request or claim it is published.",
+} as const;
+const GHOST_TARGET_ERRORS = new Set([
+    "More than one note matches. Ask the user to provide an exact vault-relative note path.",
+    "The requested note is unavailable. Ask the user to check its exact vault-relative path.",
+    "The host has not authorized this target. Ask the user for an explicit publishing request naming the intended note.",
+]);
+
+/** B153 publishes only a closed Host status, never article content or remote addresses. */
+function isSafeGhostPublishingStatusObservation(
+    message: Extract<PaAgentMessage, { role: "toolResult" }>,
+    envelope: Record<string, unknown>,
+): boolean {
+    if (message.toolName !== "prepare_ghost_post"
+        || envelope.input !== "prepare" && envelope.input !== "restore") return false;
+    const fact = message.content.resultFact;
+    const metadata = message.content.metadata;
+    const contextRecord = asRecord(message.content.contextUsed?.[0]);
+    if (message.content.sourceRecords?.length || message.content.contextUsed?.length !== 1
+        || metadata?.tool !== message.toolName || metadata.inputSummary !== envelope.input
+        || metadata.sourceRecordCount !== 0) return false;
+
+    if (message.isError) {
+        const error = envelope.error;
+        return metadata.outcome === "recoverable_error" && metadata.ok === false
+            && envelope.status === "unavailable" && typeof error === "string" && GHOST_TARGET_ERRORS.has(error)
+            && metadata.unavailableReason === undefined
+            && message.content.previewText === error
+            && fact?.kind === "unavailable" && fact.capability === message.toolName
+            && fact.reason === "tool_unavailable"
+            && hasOnlyKeys(envelope, ["tool", "status", "input", "error"])
+            && hasOnlyKeys(contextRecord, ["category", "label", "detail", "citationEligible", "statusOnly"])
+            && contextRecord?.category === "tool-unavailable"
+            && contextRecord.label === "Read-only tool unavailable"
+            && contextRecord.detail === error
+            && contextRecord.citationEligible === false && contextRecord.statusOnly === true;
+    }
+
+    if (metadata.outcome !== "success" || metadata.ok !== true || envelope.status !== "ok"
+        || !hasOnlyKeys(envelope, ["tool", "status", "input", "observation"])
+        || message.content.previewText !== message.content.promptText) return false;
+    const observation = asRecord(envelope.observation);
+    if (!observation || !hasOnlyKeys(observation, ["status", "operationId", "message"])
+        || observation.message !== GHOST_STATUS_MESSAGES[observation.status as keyof typeof GHOST_STATUS_MESSAGES]) return false;
+    const operationId = observation.operationId;
+    const validOperationId = typeof operationId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(operationId);
+    if (!hasOnlyKeys(contextRecord, ["category", "label", "detail", "sources", "citationEligible"])
+        || contextRecord?.category !== "read-only-tool" || contextRecord.label !== "Read-only tool"
+        || contextRecord.detail !== "prepare_ghost_post output" || !emptyArray(contextRecord.sources)
+        || contextRecord.citationEligible !== false) return false;
+    if (observation.status === "prepared") {
+        return validOperationId && fact?.kind === "approval_pending" && fact.intentId === operationId;
+    }
+    if (observation.status === "needs_attention") {
+        return (operationId === undefined || validOperationId)
+            && fact?.kind === "unavailable" && fact.capability === message.toolName
+            && fact.reason === "ghost_attention_required";
+    }
+    return observation.status === "outcome_unknown" && validOperationId
+        && fact?.kind === "unknown" && fact.operationId === operationId;
+}
+
 /** Empty searches and standard read-only failures have no path receipts.
  * Admit only owner-classified observations with closed, source-free provider text. */
 function isSafeSourceFreeToolObservation(
@@ -641,6 +710,7 @@ function isSafeSourceFreeToolObservation(
     let envelope: Record<string, unknown> | undefined;
     try { envelope = asRecord(JSON.parse(message.content.promptText)); } catch { return false; }
     if (!envelope || envelope.tool !== message.toolName || typeof envelope.input !== "string") return false;
+    if (message.toolName === "prepare_ghost_post") return isSafeGhostPublishingStatusObservation(message, envelope);
 
     const fact = message.content.resultFact;
     const expectedVaultFailureLabel = SOURCE_FREE_VAULT_FAILURE_LABELS.get(message.toolName);
@@ -1153,6 +1223,7 @@ export class PaAgentRuntime {
         let legacyWritingContextIdentity: string | undefined;
         let writingContextRun: WritingContextRun | undefined;
         let writingContextCapability: AgentCapability | undefined;
+        let ghostPublishingCapability: AgentCapability | undefined;
         let writingContextBudget = { remainingTextChars: 0, remainingMemoryChars: 0 };
         const currentWritingContext = () => {
             try { return writingContextRun?.current(); } catch { return undefined; }
@@ -1553,6 +1624,17 @@ export class PaAgentRuntime {
             imageGenerationCapability.executionMode = "sequential";
             if (!this.toolRegistry.register(imageGenerationCapability)) throw new Error("Image generation capability unavailable");
         }
+        if (options.ghostPublishing && (this.options.runtimePlatform ?? "desktop") === "desktop") {
+            const binding = options.ghostPublishing;
+            if (!options.conversationId || binding.conversationId !== options.conversationId || !binding.stableMessageId) {
+                throw new Error("Ghost publishing host identity is unavailable.");
+            }
+            ghostPublishingCapability = createChatToolCapability(createPrepareGhostPostTool(binding), {
+                providerId: "chat-ghost-publishing", platform: "desktop",
+            });
+            ghostPublishingCapability.executionMode = "sequential";
+            if (!this.toolRegistry.register(ghostPublishingCapability)) throw new Error("Ghost publishing capability unavailable.");
+        }
         if (writingContextHost) {
             const candidates = runSourceSelection ? (await Promise.all(writingContextHost.candidates.map(async candidate => {
                 const lineage = await resolveWritingVersionInputLineage(candidate,
@@ -1643,6 +1725,7 @@ export class PaAgentRuntime {
         if (writingContextCapability) availableMetaToolNames.add(GET_WRITING_CONTEXT);
         if (imageScope?.hasImages) availableMetaToolNames.add(RESOLVE_CHAT_IMAGES);
         if (options.createImage && exportableToolNames.has("create_image")) availableSemanticToolNames.add("create_image");
+        if (ghostPublishingCapability && exportableToolNames.has("prepare_ghost_post")) availableSemanticToolNames.add("prepare_ghost_post");
         if (this.toolRegistry.getDefinition(LOAD_SKILL_TOOL_NAME)) {
             availableMetaToolNames.add(LOAD_SKILL_TOOL_NAME);
         }
@@ -2784,6 +2867,7 @@ export class PaAgentRuntime {
                         && call.name === "manage_saved_insight";
                     return capability !== undefined && (capability === imageCapability
                         || capability === imageGenerationCapability
+                        || capability === ghostPublishingCapability
                         || insightRead
                         || insightAction
                         || capability === writingContextCapability
@@ -3033,11 +3117,13 @@ export class PaAgentRuntime {
                             ?? (records.length ? sourceRecordsInputLineage(records)
                                 : message.content.metadata?.statusOnly === true
                                     ? completeInputLineage()
-                                    : sourceFreeNotesObservation
-                                        ? sourceRun.captureRunNotesObservationLineage(
-                                            message.toolName === 'search_memory' ? 'memory' : 'vault',
-                                            callNotesObservationStateById.get(message.toolCallId)?.sourceEpoch,
-                                            callNotesObservationStateById.get(message.toolCallId)?.memoryEnabled)
+                                        : sourceFreeNotesObservation
+                                        ? message.toolName === 'prepare_ghost_post'
+                                            ? completeInputLineage()
+                                            : sourceRun.captureRunNotesObservationLineage(
+                                                message.toolName === 'search_memory' ? 'memory' : 'vault',
+                                                callNotesObservationStateById.get(message.toolCallId)?.sourceEpoch,
+                                                callNotesObservationStateById.get(message.toolCallId)?.memoryEnabled)
                                         : unknownInputLineage());
                         message.inputLineage = unionInputLineages(
                             callLineageById.get(message.toolCallId), resultLineage);
@@ -3126,6 +3212,7 @@ export class PaAgentRuntime {
             sourceRunActive = false;
             writingContextRun?.dispose();
             if (writingContextCapability) this.toolRegistry.unregister(writingContextCapability);
+            if (ghostPublishingCapability) this.toolRegistry.unregister(ghostPublishingCapability);
             imageScope?.dispose();
             try {
                 const observedFinalizationOutcome = options.signal?.aborted

@@ -6,6 +6,11 @@ export interface BundledSkillCatalogEntry {
 
 export const BUNDLED_SKILL_CATALOG: readonly BundledSkillCatalogEntry[] = [
     {
+        id: "blog2ghost",
+        label: "Ghost publishing",
+        description: "Prepare a selected note, inspect its Ghost preview, and finish publishing on this desktop.",
+    },
+    {
         id: "obsidian-markdown",
         label: "Obsidian Markdown",
         description: "Wikilinks, callouts, embeds, properties, tags, and block references.",

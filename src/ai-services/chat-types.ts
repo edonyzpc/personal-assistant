@@ -696,6 +696,7 @@ export type ChatToolName =
     | "get_writing_context"
     | "resolve_chat_images"
     | "create_image"
+    | "prepare_ghost_post"
     | "search_memory"
     | "get_memory_status"
     | "query_memories"

@@ -9,6 +9,8 @@ import {
 
 import {
     decideDataBoundaryForSource,
+    GHOST_PUBLISHING_SYSTEM_FOLDER,
+    isGhostPublishingSystemPath,
     type DataBoundaryDecision,
 } from "../pa/contracts";
 import { hasWritingNoteProvenance } from "../chat/writing-note-provenance";
@@ -96,9 +98,9 @@ export class SourceAccess {
     }
 
     isVSSFileEligible(file: TFile, markdown?: string): boolean {
-        const normalizedExcludePaths = this.normalizedMemoryExcludePrefixes();
+        const normalizedPath = normalizePath(file.path).replace(/^\.\//, "");
         return file.extension === "md"
-            && !normalizedExcludePaths.some((prefix) => file.path.startsWith(prefix))
+            && !this.isExcludedByMemoryPrefix(normalizedPath)
             && (markdown === undefined
                 ? this.isDataBoundaryAllowedFile(file)
                 : this.getLatestDataBoundaryContentBoundary(file.path, markdown)?.allowed === true);
@@ -113,6 +115,7 @@ export class SourceAccess {
                     path: file.path,
                     tags: this.getDataBoundaryTags(file),
                     isGenerated: this.isGeneratedDataBoundaryFile(file),
+                    isGhostPublishingSystemData: this.isGhostPublishingSystemDataBoundaryFile(file),
                 },
                 this.dependencies.getSettings().dataBoundary,
             );
@@ -133,18 +136,17 @@ export class SourceAccess {
 
     isMemoryProviderPathAllowed(path: string): boolean {
         const normalizedPath = normalizePath(path).replace(/^\.\//, "");
-        const excludedByMemoryPath = this.normalizedMemoryExcludePrefixes()
-            .some((prefix) => normalizedPath.startsWith(prefix));
-        return !excludedByMemoryPath && this.isDataBoundaryAllowedPath(normalizedPath);
+        return !this.isExcludedByMemoryPrefix(normalizedPath) && this.isDataBoundaryAllowedPath(normalizedPath);
     }
 
     isDataBoundaryAllowedFile(file: TFile): boolean {
         return decideDataBoundaryForSource(
-            {
-                path: file.path,
-                tags: this.getDataBoundaryTags(file),
-                isGenerated: this.isGeneratedDataBoundaryFile(file),
-            },
+                {
+                    path: file.path,
+                    tags: this.getDataBoundaryTags(file),
+                    isGenerated: this.isGeneratedDataBoundaryFile(file),
+                    isGhostPublishingSystemData: this.isGhostPublishingSystemDataBoundaryFile(file),
+                },
             this.dependencies.getSettings().dataBoundary,
         ).decision === "allow";
     }
@@ -253,6 +255,7 @@ export class SourceAccess {
                 || (typeof frontmatter.pagelet === "string"
                     && frontmatter.pagelet.trim().toLowerCase() === "true")
                 || hasWritingNoteProvenance(frontmatter);
+            const isGhostPublishingSystemData = frontmatter.pa_system === "ghost-publishing";
             const excludedTags = new Set([
                 "no-ai",
                 ...(consumer === "pagelet" ? ["no-review"] : []),
@@ -263,7 +266,7 @@ export class SourceAccess {
             )));
             const tagDenied = normalizedTags.some((tag) => excludedTags.has(tag));
             const dataBoundaryDecision = decideDataBoundaryForSource(
-                { path, tags: normalizedTags, isGenerated },
+                { path, tags: normalizedTags, isGenerated, isGhostPublishingSystemData },
                 settings.dataBoundary,
             );
             return {
@@ -311,6 +314,13 @@ export class SourceAccess {
             || normalizedPath.startsWith("pagelet-generated/");
     }
 
+    private isGhostPublishingSystemDataBoundaryFile(file: TFile): boolean {
+        const frontmatter = this.dependencies.app.metadataCache?.getFileCache?.(file)
+            ?.frontmatter as Record<string, unknown> | undefined;
+        return frontmatter?.pa_system === "ghost-publishing"
+            || isGhostPublishingSystemPath(file.path);
+    }
+
     getPageletSettingsWithDataBoundary(): PageletSettings {
         const settings = this.dependencies.getSettings();
         const dataBoundaryGeneratedFolders = settings.dataBoundary.generatedNotePolicy === "include-generated"
@@ -322,6 +332,7 @@ export class SourceAccess {
                 ...(settings.pagelet.excludedFolders ?? []),
                 ...(settings.dataBoundary.excludedFolders ?? []),
                 ...dataBoundaryGeneratedFolders,
+                GHOST_PUBLISHING_SYSTEM_FOLDER,
             ]),
             excludedTags: this.uniqueSettingList([
                 ...(settings.pagelet.excludedTags ?? []),
@@ -372,11 +383,7 @@ export class SourceAccess {
     }
 
     getMemoryGraphTopologyEpoch(consumer: SourceConsumer): string {
-        const settings = this.dependencies.getSettings();
-        const vssExcludePrefixes = [...settings.memoryExcludePrefixes]
-            .map((path) => path.trim())
-            .filter(Boolean)
-            .sort();
+        const vssExcludePrefixes = this.allMemoryExcludePrefixes();
         const pageletBoundary = consumer === "pagelet"
             ? (() => {
                 const pageletSettings = this.getPageletSettingsWithDataBoundary();
@@ -436,6 +443,18 @@ export class SourceAccess {
         return this.dependencies.getSettings().memoryExcludePrefixes
             .map((path) => path.trim())
             .filter(Boolean);
+    }
+
+    private allMemoryExcludePrefixes(): string[] {
+        return [...new Set([
+            ...this.normalizedMemoryExcludePrefixes(),
+            GHOST_PUBLISHING_SYSTEM_FOLDER,
+        ])].sort();
+    }
+
+    private isExcludedByMemoryPrefix(normalizedPath: string): boolean {
+        return this.normalizedMemoryExcludePrefixes().some((prefix) => normalizedPath.startsWith(prefix))
+            || isGhostPublishingSystemPath(normalizedPath);
     }
 
     private collectLatestMarkdownBodyTags(markdown: string, tags: Set<string>): void {

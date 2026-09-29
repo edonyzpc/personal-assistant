@@ -40,6 +40,7 @@ export interface AISetupInput {
 }
 
 export interface ChatHost {
+    createGhostPublishingBinding?(request: import('../ghost-publishing/host-integration').GhostChatBindingRequest): import('../ai-services/chat-tool-types').GhostHostBinding | undefined;
     openAgentDebug?(conversationId?: string): void | Promise<void>;
     recordAgentDebugTextCommitted?(runtimeRunId: string): void;
     readonly app: App;

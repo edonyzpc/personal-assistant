@@ -103,6 +103,39 @@ const createOwner = (
 };
 
 describe("SourceAccess", () => {
+    it("hard-excludes Ghost Publishing records by path and explicit system marker", () => {
+        const keep = createFile("notes/keep.md");
+        const record = createFile("PA System/Ghost Publishing/site/note.md");
+        const moved = createFile("moved/record.md", { mtime: 2, size: 4 });
+        const adjacent = createFile("PA System/Ghost Publishing-other/Note.md", { mtime: 3, size: 5 });
+        const { owner } = createOwner([keep, record, moved, adjacent], {
+            dataBoundary: dataBoundary({ generatedNotePolicy: "include-generated" }),
+            metadata: {
+                "moved/record.md": { frontmatter: { pa_system: "ghost-publishing" } },
+            },
+        });
+
+        expect(owner.getVSSFiles()).toEqual([keep, adjacent]);
+        expect(owner.isMemoryProviderPathAllowed(record.path)).toBe(false);
+        expect(owner.isMemoryProviderPathAllowed(moved.path)).toBe(false);
+        expect(owner.isDataBoundaryAllowedPath(record.path)).toBe(false);
+        expect(owner.decideDataBoundaryForPath(moved.path)).toMatchObject({
+            decision: "deny",
+            reason: "ghost_publishing_system_data",
+        });
+        expect(owner.isPageletProviderPathAllowed(record.path)).toBe(false);
+        expect(owner.isPageletProviderPathAllowed(adjacent.path)).toBe(true);
+        expect(owner.getLatestDataBoundaryContentBoundary(
+            moved.path,
+            "---\npa_system: ghost-publishing\n---\n\nsnapshot\n",
+        )?.allowed).toBe(false);
+        expect(owner.getLatestDataBoundaryContentBoundary(
+            "moved/fresh.md",
+            "---\npa_system: ghost-publishing\n---\n\nfresh snapshot\n",
+        )?.allowed).toBe(false);
+        expect(owner.isMemoryProviderPathAllowed(keep.path)).toBe(true);
+    });
+
     it("keeps the Memory prefix exclusion and shared Data Boundary as a union", () => {
         const keep = createFile("notes/keep.md");
         const memoryPrivate = createFile("memory/private.md");

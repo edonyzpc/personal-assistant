@@ -12,8 +12,10 @@ import obsidianDataview from "../../skills/obsidian-dataview/SKILL.md";
 import obsidianDataviewRef from "../../skills/obsidian-dataview/references/dataviewjs-api.md";
 import obsidianTemplater from "../../skills/obsidian-templater/SKILL.md";
 import obsidianTemplaterRef from "../../skills/obsidian-templater/references/templater-modules-api.md";
+import blog2ghost from "../../skills/blog2ghost/SKILL.md";
 
 export const BUNDLED_SKILL_RESOURCES: readonly BundledSkillResource[] = [
+    { path: "skills/blog2ghost/SKILL.md", content: blog2ghost },
     {
         path: "skills/obsidian-markdown/SKILL.md",
         content: obsidianMarkdown,
