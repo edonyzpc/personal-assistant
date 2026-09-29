@@ -36,6 +36,7 @@ import {
     BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT,
     BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
 } from '../src/ai-services/builtin-web-search-provider';
+import { completeInputLineage, unknownInputLineage } from '../src/ai-services/input-lineage';
 
 jest.mock('obsidian');
 
@@ -863,6 +864,221 @@ describe('ChatService.streamLLM integration', () => {
             .toHaveLength(1);
     });
 
+    it('passes actual answer lineage to create_image and keeps its durable source receipt across context reset', async () => {
+        const file = { path: 'notes/image-source.md', name: 'image-source.md', basename: 'image-source',
+            extension: 'md', stat: { mtime: 1, ctime: 1, size: 18 } };
+        const editor = { getValue: jest.fn(() => 'IMAGE_SOURCE_SENTINEL'), getSelection: () => '',
+            lineCount: () => 1, getLine: () => 'IMAGE_SOURCE_SENTINEL', getCursor: () => ({ line: 0, ch: 0 }) };
+        const plugin = createPlugin({ markdownFiles: [file], activeMarkdownView: { file, editor },
+            fileContents: { [file.path]: 'IMAGE_SOURCE_SENTINEL' } });
+        let turn = 0;
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: async function* () {
+                const currentTurn = turn++;
+                if (currentTurn === 0) {
+                    yield { content: '', tool_call_chunks: [{
+                        id: 'read-image-source', index: 0, name: 'get_current_note_context',
+                        args: '{"mode":"full"}',
+                    }] };
+                } else if (currentTurn === 1) {
+                    yield { content: '', tool_call_chunks: [{
+                        id: 'create-from-source', index: 0, name: 'create_image',
+                        args: JSON.stringify({ prompt: 'IMAGE_SOURCE_SENTINEL', operation: 'generate' }),
+                    }] };
+                } else {
+                    yield { content: 'Image request accepted.' };
+                }
+            },
+        };
+        mockCreateChatModel.mockResolvedValue(model);
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const submit = jest.fn(async (
+            _input: unknown, _sourceCurrent?: () => boolean, _lineage?: unknown, _receipt?: () => boolean,
+        ) => ({ taskId: 'scoped-image-task' }));
+        await service.streamLLM('Create an image from this note', jest.fn(), undefined, [], {
+            conversationId: 'conversation-image', memoryMode: 'skip-memory',
+            createImage: { conversationId: 'conversation-image', stableMessageId: 'message-image',
+                operationId: 'operation-image', submit },
+        });
+        expect(submit).toHaveBeenCalledTimes(1);
+        const submitCall = submit.mock.calls[0] as [
+            unknown, (() => boolean) | undefined, unknown, (() => boolean) | undefined,
+        ];
+        const requestLineage = submitCall[2] as { dependencies: unknown[] };
+        expect(requestLineage?.dependencies).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'vault', path: file.path, via: 'note' }),
+        ]));
+        const receipt = submitCall[3]!;
+        expect(receipt()).toBe(true);
+
+        service.resetContext();
+        expect(receipt()).toBe(true);
+        (plugin.app.vault.getAbstractFileByPath as jest.Mock)
+            .mockReturnValue({ ...file, stat: { ...file.stat, mtime: 2 } });
+        expect(receipt()).toBe(false);
+        service.dispose();
+    });
+
+    it.each(['vault source', 'unknown reused prompt'] as const)(
+        'rejects an ineligible first image request in a Web-only run before model dispatch',
+        async kind => {
+            const plugin = createPlugin();
+            const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+            const lineage = kind === 'vault source'
+                ? completeInputLineage([{ kind: 'vault', path: 'notes/private.md', via: 'note' }])
+                : unknownInputLineage();
+            await expect(service.streamLLM('Create an image', jest.fn(), undefined, [], {
+                memoryMode: 'skip-memory',
+                inputLineage: lineage,
+                runSourceSelection: {
+                    schemaVersion: 1, scope: 'web', selectionId: 'web-only',
+                    userMessageId: 'user-image',
+                },
+            })).rejects.toThrow('Image request source scope rejected before provider dispatch');
+            expect(mockCreateChatModel).not.toHaveBeenCalled();
+            service.dispose();
+        },
+    );
+
+    it('keeps actual attachment ancestry in an image receipt even when the request has no input refs', async () => {
+        const attachmentRef = { assetId: 'attachment-one', contentHash: 'a'.repeat(64) };
+        let currentAttachment: typeof attachmentRef | undefined = attachmentRef;
+        const imageAssetService = {
+            verify: jest.fn(async (
+                ref: { assetId: string; contentHash: string },
+                _purpose?: unknown, _admission?: unknown,
+            ) => ({
+                isCurrent: () => currentAttachment === attachmentRef
+                    && ref.assetId === attachmentRef.assetId
+                    && ref.contentHash === attachmentRef.contentHash,
+            })),
+        };
+        const historicalUser: ChatMessage = {
+            role: 'user', content: 'Use source.png as the visual source',
+            hostProvenance: { version: 1, messageId: 'attachment-owner', kind: 'ordinary_user_statement' },
+            images: [{ ref: attachmentRef, label: 'source.png', ordinal: 1 }],
+            inputLineage: completeInputLineage([{ kind: 'attachment',
+                ownerMessageId: 'attachment-owner', ref: attachmentRef }]),
+        };
+        let turn = 0;
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: async function* () {
+                if (turn++ === 0) {
+                    yield { content: '', tool_call_chunks: [{
+                        id: 'create-from-attachment', index: 0, name: 'create_image',
+                        args: JSON.stringify({ prompt: 'DERIVED_FROM_ATTACHMENT', operation: 'generate' }),
+                    }] };
+                } else {
+                    yield { content: 'The image request was accepted.' };
+                }
+            },
+        };
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin();
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const submit = jest.fn(async (
+            _input: unknown, _sourceCurrent?: () => boolean, _lineage?: unknown, _receipt?: () => boolean,
+        ) => ({ taskId: 'attachment-image-task' }));
+        await service.streamLLM('Create an image like the historical attachment', jest.fn(), undefined, [historicalUser], {
+            conversationId: 'conversation-attachment-image', memoryMode: 'skip-memory',
+            runSourceSelection: {
+                schemaVersion: 1, scope: 'notes', selectionId: 'attachment-notes',
+                userMessageId: 'image-user',
+            },
+            imageAssetService: imageAssetService as never,
+            createImage: { conversationId: 'conversation-attachment-image', stableMessageId: 'message-attachment-image',
+                operationId: 'operation-attachment-image', submit },
+        });
+
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect((submit.mock.calls[0][0] as { referenceImageRefs?: string[] }).referenceImageRefs).toEqual([]);
+        const submitCall = submit.mock.calls[0] as [
+            unknown, (() => boolean) | undefined, unknown, (() => boolean) | undefined,
+        ];
+        const lineage = submitCall[2] as { dependencies: unknown[] };
+        expect(lineage.dependencies).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'attachment', ref: attachmentRef }),
+        ]));
+        expect(imageAssetService.verify).toHaveBeenCalledWith(attachmentRef, 'provider', expect.anything());
+        const receipt = submitCall[3]!;
+        expect(receipt()).toBe(true);
+        service.resetContext();
+        expect(receipt()).toBe(true);
+        currentAttachment = undefined;
+        expect(receipt()).toBe(false);
+        currentAttachment = { ...attachmentRef, contentHash: 'b'.repeat(64) };
+        expect(receipt()).toBe(false);
+        service.dispose();
+    });
+
+    it('does not bind a note-only image receipt to unrelated historical attachment validity', async () => {
+        const file = { path: 'notes/note-only.md', name: 'note-only.md', basename: 'note-only',
+            extension: 'md', stat: { mtime: 1, ctime: 1, size: 14 } };
+        const editor = { getValue: jest.fn(() => 'NOTE-ONLY-SENTINEL'), getSelection: () => '',
+            lineCount: () => 1, getLine: () => 'NOTE-ONLY-SENTINEL', getCursor: () => ({ line: 0, ch: 0 }) };
+        const plugin = createPlugin({ markdownFiles: [file], activeMarkdownView: { file, editor },
+            fileContents: { [file.path]: 'NOTE-ONLY-SENTINEL' } });
+        const unrelatedRef = { assetId: 'unrelated-image', contentHash: 'c'.repeat(64) };
+        let unrelatedCurrent = true;
+        const imageAssetService = {
+            verify: jest.fn(async () => ({ isCurrent: () => unrelatedCurrent })),
+        };
+        const history: ChatMessage[] = [{
+            role: 'user', content: 'Earlier unrelated image request',
+            hostProvenance: { version: 1, messageId: 'unrelated-owner', kind: 'ordinary_user_statement' },
+            images: [{ ref: unrelatedRef, label: 'unrelated.png', ordinal: 1 }],
+            inputLineage: completeInputLineage([{ kind: 'attachment',
+                ownerMessageId: 'unrelated-owner', ref: unrelatedRef }]),
+        }];
+        let turn = 0;
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: async function* () {
+                const currentTurn = turn++;
+                if (currentTurn === 0) {
+                    yield { content: '', tool_call_chunks: [{
+                        id: 'read-note-only', index: 0, name: 'get_current_note_context',
+                        args: '{"mode":"full"}',
+                    }] };
+                } else if (currentTurn === 1) {
+                    yield { content: '', tool_call_chunks: [{
+                        id: 'create-note-only', index: 0, name: 'create_image',
+                        args: JSON.stringify({ prompt: 'NOTE-ONLY-SENTINEL', operation: 'generate' }),
+                    }] };
+                } else {
+                    yield { content: 'Image request accepted.' };
+                }
+            },
+        };
+        mockCreateChatModel.mockResolvedValue(model);
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const submit = jest.fn(async (
+            _input: unknown, _sourceCurrent?: () => boolean, _lineage?: unknown, _receipt?: () => boolean,
+        ) => ({ taskId: 'note-only-image-task' }));
+        const noteOnlyLineage = completeInputLineage([{ kind: 'vault', path: file.path, via: 'note' }]);
+        await service.streamLLM('Create an image from this note', jest.fn(), undefined, history, {
+            conversationId: 'conversation-note-only-image', memoryMode: 'skip-memory',
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'notes-image',
+                userMessageId: 'note-image-user' },
+            imageAssetService: imageAssetService as never,
+            createImage: {
+                conversationId: 'conversation-note-only-image', stableMessageId: 'message-note-only',
+                operationId: 'operation-note-only', submit,
+                resolveRequestLineage: () => noteOnlyLineage,
+            },
+        });
+
+        expect(submit).toHaveBeenCalledTimes(1);
+        const receipt = (submit.mock.calls[0] as unknown[])[3] as () => boolean;
+        expect(receipt()).toBe(true);
+        service.resetContext();
+        unrelatedCurrent = false;
+        expect(receipt()).toBe(true);
+        service.dispose();
+    });
+
     it('runs host-bound create_image without a vault source declaration and keeps completion asynchronous', async () => {
         let turn = 0;
         const model = {
@@ -896,9 +1112,13 @@ describe('ChatService.streamLLM integration', () => {
             .map(tool => tool.function?.name);
         expect(exportedToolNames).toContain('create_image');
         expect(submit).toHaveBeenCalledTimes(1);
-        expect(submit).toHaveBeenCalledWith({
+        expect((submit.mock.calls[0] as unknown[])[0]).toEqual({
             prompt: 'Watercolor bookstore', operation: 'generate', count: 1, referenceImageRefs: [],
         });
+        const hostSubmitCall = submit.mock.calls[0] as unknown[];
+        expect(hostSubmitCall[1]).toBeUndefined();
+        expect(hostSubmitCall[2]).toMatchObject({ completeness: 'complete' });
+        expect(hostSubmitCall[3]).toEqual(expect.any(Function));
         expect(events).toEqual(expect.arrayContaining([expect.objectContaining({
             type: 'tool_execution_end', toolName: 'create_image', outcome: 'success',
         })]));

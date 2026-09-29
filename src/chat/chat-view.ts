@@ -4,7 +4,7 @@ import { BUNDLED_SKILL_CATALOG } from '../ai-services/bundled-skill-catalog';
 import type { ChatSourceScope } from '../ai-services/chat-source-scope';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
 import { cloneInputLineage, completeInputLineage, generationInputSnapshotInputLineage, resolveWritingVersionInputLineage,
-    unknownInputLineage } from '../ai-services/input-lineage';
+    unionInputLineages, unknownInputLineage, type InputLineage } from '../ai-services/input-lineage';
 import { PaAgentContextOverflowError } from '../ai-services/context';
 import { isTaskSourceDecisionBoundary, type TaskSourceDecisionKind } from '../ai-services/task-source-history';
 import type {
@@ -66,10 +66,17 @@ import type {
 } from '../ai-services/operations/types';
 import { formatOperationsPreview } from '../ai-services/operations/operations-presentation';
 import { ShareCardModal } from '../share-card/share-card-modal';
-import { ComposerDraft, type ComposerImageIntent, type SentComposerDraft, type ComposerSnapshot } from './composer-draft';
+import {
+    captureComposerImageTextSource,
+    ComposerDraft,
+    type ComposerImageIntent,
+    type ComposerImageTextSource,
+    type SentComposerDraft,
+    type ComposerSnapshot,
+} from './composer-draft';
 import { cloneImageRef, cloneMessageImages, type ImageRef, type MessageImage } from './image-types';
 import type { ImageGenerationTask } from './image-generation-types';
-import type { CreateImageHostBinding, CreateImageToolInput } from '../ai-services/chat-tool-types';
+import type { CreateImageHostBinding, CreateImageHostRuntime, CreateImageToolInput } from '../ai-services/chat-tool-types';
 import { ImageAttachmentDetailModal, renderComposerImageAttachments, renderImageAttachments } from './image-attachment-view';
 import { ImageSourcePickerModal, VaultImagePickerModal } from './image-management-modal';
 import { GeneratedImageNotePickerModal, saveGeneratedImageToNote } from './image-save-to-note';
@@ -142,16 +149,20 @@ function imageRefToken(ref: ImageRef): string {
     return `${ref.assetId}:${ref.contentHash}`;
 }
 
-function requestedImageCount(prompt: string): number {
+function explicitRequestedImageCount(prompt: string): number | undefined {
     const separateOnes = [...prompt.matchAll(/(?:一|1|one)\s*(?:张|幅|个(?:图|图片|照片)|images?|pictures?|photos?)/gi)].length;
     if (separateOnes > 1) return Math.min(separateOnes, 5);
     const match = /([0-9]+|[一二两三四五六七八九十]+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:张|幅|个(?:图|图片|照片)|images?|pictures?|photos?)/i.exec(prompt);
-    if (!match) return 1;
+    if (!match) return undefined;
     const value = match[1].toLowerCase();
     if (/^\d+$/.test(value)) return Math.min(Number(value), 5);
     const known: Record<string, number> = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5,
         one: 1, two: 2, three: 3, four: 4, five: 5 };
     return known[value] ?? 5;
+}
+
+function requestedImageCount(prompt: string): number {
+    return explicitRequestedImageCount(prompt) ?? 1;
 }
 
 function allowsSeparateImageRequests(prompt: string): boolean {
@@ -412,6 +423,24 @@ export class LLMView extends ItemView {
         }
         this.composerTextArea.value = prompt;
         this.composerDraft?.touchText();
+        this.syncComposerControlsForExternalPrefill();
+        this.composerTextArea.focus();
+        return true;
+    }
+
+    prefillImageDraft(text: string, source?: ComposerImageTextSource): boolean {
+        if (this.isStreaming || !this.composerTextArea || !this.composerDraft
+            || !this.syncComposerControlsForExternalPrefill) return false;
+        if (this.composerDraft.hasDraft('')) return false;
+        if (this.composerTextArea.value.trim().length > 0) return false;
+        this.composerTextArea.value = text;
+        this.composerDraft.touchText();
+        this.composerDraft.setImageIntent({
+            operation: 'generate',
+            referenceImageRefs: [],
+            ...(source ? { textSource: source } : {}),
+            ...(this.host.getImageGenerationOptions ? { generationOptions: this.host.getImageGenerationOptions() } : {}),
+        });
         this.syncComposerControlsForExternalPrefill();
         this.composerTextArea.focus();
         return true;
@@ -1044,7 +1073,7 @@ export class LLMView extends ItemView {
             composerHint.setText(message);
             composerHint.hidden = false;
         };
-        const hasActiveMarkdownSelection = () => {
+        const getActiveMarkdownEditorView = () => {
             const workspace = this.app.workspace as {
                 getActiveViewOfType?: <T>(type: new (...args: never[]) => T) => T | null;
                 getMostRecentLeaf?: () => WorkspaceLeaf | null;
@@ -1055,11 +1084,32 @@ export class LLMView extends ItemView {
                 getViewType?: () => string;
             }) | null | undefined;
             const view = activeView ?? (leafView?.getViewType?.() === 'markdown' ? leafView : null);
-            const selection = view?.editor?.getSelection?.();
+            return view?.editor ? { editor: view.editor, view } : null;
+        };
+        const hasActiveMarkdownSelection = () => {
+            const selection = getActiveMarkdownEditorView()?.editor.getSelection?.();
             return typeof selection === 'string' && selection.trim().length > 0;
         };
         const syncSelectionHint = () => {
             selectionHint.hidden = !hasActiveMarkdownSelection();
+        };
+        const findBoundImageSourceEditor = (source: ComposerImageTextSource) => {
+            if (source.file === undefined) return null;
+            const workspace = this.app.workspace as unknown as {
+                getLeavesOfType?: (type: string) => Array<{ view: unknown }>;
+            };
+            const leaves = workspace.getLeavesOfType?.('markdown') ?? [];
+            for (const leaf of leaves) {
+                const view = leaf.view as MarkdownView | null;
+                if (view?.editor && view.file === source.file) return { editor: view.editor, view };
+            }
+            return null;
+        };
+        const captureImageTextSource = (
+            kind: 'note' | 'selection', boundSource?: ComposerImageTextSource,
+        ): ComposerImageTextSource | null => {
+            const target = boundSource ? findBoundImageSourceEditor(boundSource) : getActiveMarkdownEditorView();
+            return target ? captureComposerImageTextSource(target.editor, target.view, kind) : null;
         };
         const selectionHintDocument = getOptionalPlatformDocument();
         const selectionHintEvents = ['selectionchange', 'keyup', 'pointerup', 'focusin'];
@@ -1112,7 +1162,15 @@ export class LLMView extends ItemView {
                     textArea.setRangeText('', current.start, current.end, 'end');
                     composerDraft.touchText();
                     if (action === 'CreateImage') {
-                        composerDraft.setImageIntent({ operation: 'generate', referenceImageRefs: [] });
+                        const selectedSource = captureImageTextSource('selection');
+                        composerDraft.setImageIntent({
+                            operation: 'generate',
+                            referenceImageRefs: [],
+                            ...(selectedSource ? { textSource: selectedSource } : {}),
+                            ...(this.host.getImageGenerationOptions ? {
+                                generationOptions: this.host.getImageGenerationOptions(),
+                            } : {}),
+                        });
                         clearSelectedWritingParent();
                     } else composerDraft.setWritingIntent();
                     hideActionTypeahead();
@@ -1312,8 +1370,9 @@ export class LLMView extends ItemView {
             const generating = isGenerating();
             const commandPrompt = parseCreateImageCommand(textArea.value);
             const writingCommandPrompt = parseWritingCommand(textArea.value);
+            const commandHasImageSource = composerDraft.snapshot(textArea.value).imageIntent?.textSource !== undefined;
             const hasDraft = composerDraft.canSend(textArea.value)
-                && (commandPrompt === null || commandPrompt.length > 0)
+                && (commandPrompt === null || commandPrompt.length > 0 || commandHasImageSource)
                 && (writingCommandPrompt === null || writingCommandPrompt.length > 0);
             const setupIssue = getBlockingAISetupIssue();
             const imagesUnsupported = composerDraft.snapshot(textArea.value).images.length > 0
@@ -1358,9 +1417,127 @@ export class LLMView extends ItemView {
             const imageIntent = draft.imageIntent;
             imageIntentEl.empty();
             imageIntentEl.hidden = !imageIntent;
+            if (!imageIntent && parseCreateImageCommand(textArea.value) !== null) {
+                imageIntentEl.hidden = false;
+                imageIntentEl.createSpan({ text: t('plugin.chat.createImage.title') });
+                imageIntentEl.createSpan({
+                    cls: 'pa-chat-create-image-plain-options',
+                    text: t('plugin.chat.createImage.plainDefaults', {
+                        model: 'wan2.7-image', count: 1,
+                    }),
+                });
+            }
             if (imageIntent) {
                 imageIntentEl.createSpan({ text: t(imageIntent.operation === 'edit'
                     ? 'plugin.chat.createImage.edit' : 'plugin.chat.createImage.title') });
+                const source = imageIntent.textSource;
+                if (source) {
+                    imageIntentEl.createSpan({
+                        cls: 'pa-chat-create-image-source',
+                        text: t(source.kind === 'selection'
+                            ? 'plugin.chat.createImage.source.selection' : 'plugin.chat.createImage.source.note',
+                            { source: source.displayName }),
+                    });
+                    const preview = imageIntentEl.createEl('details', {
+                        cls: 'pa-chat-create-image-source-preview',
+                    });
+                    preview.createEl('summary', { text: t('plugin.chat.createImage.source.preview') });
+                    preview.createDiv({
+                        cls: 'pa-chat-create-image-source-text',
+                        text: source.text.length > 1200
+                            ? `${source.text.slice(0, 1200)}…` : source.text,
+                    });
+                }
+                const sourceBasedRequest = Boolean(source || imageIntent.promptOrigin);
+                if (!sourceBasedRequest) {
+                    imageIntentEl.createSpan({
+                        cls: 'pa-chat-create-image-plain-options',
+                        text: t('plugin.chat.createImage.plainDefaults', {
+                            model: 'wan2.7-image', count: 1,
+                        }),
+                    });
+                }
+                const sourceControls = imageIntentEl.createDiv({ cls: 'pa-chat-create-image-source-controls' });
+                const setSource = (kind: 'note' | 'selection') => {
+                    const next = captureImageTextSource(kind, source);
+                    if (source && next?.path !== source.path) {
+                        showComposerHint(t('plugin.chat.createImage.source.boundNoteUnavailable'));
+                        return;
+                    }
+                    if (!next) {
+                        showComposerHint(t(kind === 'selection'
+                            ? 'plugin.chat.createImage.source.selectionUnavailable' : 'plugin.chat.createImage.source.noteUnavailable'));
+                        return;
+                    }
+                    composerDraft.setImageTextSource(next);
+                    renderImageDraft();
+                    syncComposerControls();
+                };
+                const fullButton = sourceControls.createEl('button', {
+                    text: t('plugin.chat.createImage.source.useNote'),
+                    attr: { type: 'button' },
+                });
+                fullButton.onclick = () => setSource('note');
+                const selectionButton = sourceControls.createEl('button', {
+                    text: t('plugin.chat.createImage.source.useSelection'),
+                    attr: { type: 'button' },
+                });
+                selectionButton.onclick = () => setSource('selection');
+                if (source) {
+                    const removeSource = sourceControls.createEl('button', {
+                        text: t('plugin.chat.createImage.source.remove'),
+                        attr: { type: 'button' },
+                    });
+                    removeSource.onclick = () => {
+                        composerDraft.setImageTextSource(undefined);
+                        renderImageDraft();
+                        syncComposerControls();
+                        textArea.focus();
+                    };
+                }
+                const options = imageIntentEl.createEl('details', { cls: 'pa-chat-create-image-options' });
+                options.hidden = !sourceBasedRequest;
+                const currentOptionsForSummary = imageIntent.generationOptions
+                    ?? this.host.getImageGenerationOptions?.();
+                options.createEl('summary', { text: `${t('plugin.chat.createImage.options')} · ${
+                    currentOptionsForSummary?.model ?? 'wan2.7-image'} · ${currentOptionsForSummary?.count ?? 1}` });
+                const optionRow = options.createDiv({ cls: 'pa-chat-create-image-option-row' });
+                const modelLabel = optionRow.createEl('label', { text: t('plugin.chat.createImage.model') });
+                const modelSelect = modelLabel.createEl('select');
+                for (const value of ['wan2.7-image', 'wan2.7-image-pro'] as const) {
+                    modelSelect.createEl('option', {
+                        text: value,
+                        attr: { value },
+                    });
+                }
+                const currentOptions = imageIntent.generationOptions ?? this.host.getImageGenerationOptions?.();
+                if (currentOptions) {
+                    modelSelect.value = currentOptions.model;
+                    modelSelect.onchange = () => {
+                        const base = imageIntent.generationOptions ?? this.host.getImageGenerationOptions?.();
+                        if (!base) return;
+                        composerDraft.setImageGenerationOptions({
+                            ...base,
+                            model: modelSelect.value === 'wan2.7-image-pro' ? 'wan2.7-image-pro' : 'wan2.7-image',
+                        });
+                        renderImageDraft();
+                    };
+                }
+                const countLabel = optionRow.createEl('label', { text: t('plugin.chat.createImage.count') });
+                const countSelect = countLabel.createEl('select');
+                for (const value of [1, 2, 3, 4] as const) {
+                    countSelect.createEl('option', { text: String(value), attr: { value: String(value) } });
+                }
+                if (currentOptions) {
+                    countSelect.value = String(currentOptions.count);
+                    countSelect.onchange = () => {
+                        const base = imageIntent.generationOptions ?? this.host.getImageGenerationOptions?.();
+                        const value = Number(countSelect.value);
+                        if (!base || (value !== 1 && value !== 2 && value !== 3 && value !== 4)) return;
+                        composerDraft.setImageGenerationOptions({ ...base, count: value });
+                        renderImageDraft();
+                    };
+                }
                 const removeIntent = imageIntentEl.createEl('button', {
                     attr: { type: 'button', title: t('plugin.chat.createImage.removeAction'),
                         'aria-label': t('plugin.chat.createImage.removeAction') },
@@ -1883,7 +2060,7 @@ export class LLMView extends ItemView {
                             void saveGeneratedImageToNote(this.app, images, assetRef, note,
                                 `generated_${task.taskId}_${output.providerOrdinal}`, () => {
                                     if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
-                                }).then(() => {
+                                }, task.request.attachmentPathHint).then(() => {
                                 new Notice(t('plugin.chat.createImage.savedToNote', { note: note.path }));
                             }).catch(error => {
                                 this.host.log('Could not save generated image to note', error);
@@ -1934,9 +2111,26 @@ export class LLMView extends ItemView {
                 }
                 composerDraft.setImageIntent({ operation: task.request.operation,
                     referenceImageRefs: task.request.inputRefs.map(cloneImageRef),
-                    ...(task.request.parentVersionId ? { parentVersionId: task.request.parentVersionId } : {}) });
+                    ...(task.request.parentVersionId ? { parentVersionId: task.request.parentVersionId } : {}),
+                    ...(task.request.promptOrigin ? { promptOrigin: task.request.promptOrigin } : {}),
+                    promptLineage: imageGeneration.getSourceReceipt?.(task.taskId)
+                        ? cloneInputLineage(task.request.inputLineage
+                            ?? task.request.promptOrigin?.inputLineage)
+                            ?? unknownInputLineage()
+                        : unknownInputLineage(),
+                    preparedPrompt: task.request.submittedPrompt,
+                    reusePreparedPrompt: true,
+                    ...(imageGeneration.getSourceReceipt?.(task.taskId) ? {
+                        sourceReceipt: imageGeneration.getSourceReceipt(task.taskId)!,
+                    } : {}),
+                    generationOptions: {
+                        model: task.request.model,
+                        count: task.request.count,
+                        attachmentPathHint: task.request.attachmentPathHint ?? '',
+                    },
+                });
                 clearSelectedWritingParent();
-                textArea.value = task.request.userPrompt;
+                textArea.value = task.request.submittedPrompt;
                 composerDraft.touchText();
                 renderImageDraft();
                 syncComposerControls();
@@ -1944,9 +2138,17 @@ export class LLMView extends ItemView {
             });
             const details = card.createEl('details', { cls: 'pa-chat-image-task-card__details' });
             details.createEl('summary', { text: t('plugin.chat.createImage.details') });
-            details.createDiv({ text: t('plugin.chat.createImage.prompt', { prompt: task.request.userPrompt }) });
+            details.createDiv({ text: t(task.request.promptOrigin?.defaultUserPrompt
+                ? 'plugin.chat.createImage.defaultRequest' : 'plugin.chat.createImage.prompt',
+                { prompt: task.request.userPrompt }) });
             if (canDeliverOutputs) details.createDiv({ text: t('plugin.chat.createImage.submitted',
                 { prompt: task.request.submittedPrompt }) });
+            if (task.request.promptOrigin) details.createDiv({ text: t('plugin.chat.createImage.source.detail', {
+                kind: t(task.request.promptOrigin.kind === 'selection'
+                    ? 'plugin.chat.createImage.source.selectionKind' : 'plugin.chat.createImage.source.noteKind'),
+                source: task.request.promptOrigin.displayName,
+                path: task.request.promptOrigin.path,
+            }) });
             details.createDiv({ text: t('plugin.chat.createImage.modelCount', { model: task.request.model,
                 count: task.request.count, createdAt: task.createdAt }) });
             if (task.request.size) details.createDiv({ text: t('plugin.chat.createImage.size', { size: task.request.size }) });
@@ -2008,6 +2210,7 @@ export class LLMView extends ItemView {
         this.composerTextArea = textArea;
         this.syncComposerControlsForExternalPrefill = () => {
             hideComposerHint();
+            renderImageDraft();
             renderSkillTypeahead();
             syncComposerControls();
         };
@@ -4528,8 +4731,10 @@ export class LLMView extends ItemView {
 
         const sendPrompt = async (rawPrompt: string, retryImages?: MessageImage[], retryTurnId?: number, retryWritingParent?: WritingVersion,
             retryWritingMaterialContext?: ChatWritingMaterialContext, retryWritingIntent = false) => {
+            const currentDraftBeforeCommand = composerDraft.snapshot(rawPrompt);
             const commandPrompt = parseCreateImageCommand(rawPrompt);
-            if (commandPrompt !== null && !commandPrompt) {
+            const commandHasImageSource = currentDraftBeforeCommand?.imageIntent?.textSource !== undefined;
+            if (commandPrompt !== null && !commandPrompt && !commandHasImageSource) {
                 showComposerHint(t('plugin.chat.createImage.promptRequired'));
                 return;
             }
@@ -4538,8 +4743,8 @@ export class LLMView extends ItemView {
                 showComposerHint(t('plugin.chat.writing.promptRequired'));
                 return;
             }
-            const prompt = commandPrompt ?? writingCommandPrompt ?? rawPrompt;
-            const currentDraft = composerDraft.snapshot(rawPrompt);
+            const currentDraft = currentDraftBeforeCommand;
+            let prompt = commandPrompt ?? writingCommandPrompt ?? rawPrompt;
             if (retryImages === undefined && ((commandPrompt !== null && currentDraft.writingIntent)
                 || (writingCommandPrompt !== null && currentDraft.imageIntent))) {
                 showComposerHint(t('plugin.chat.action.conflict'));
@@ -4579,6 +4784,54 @@ export class LLMView extends ItemView {
                 || (this.host.writingOutputProtocol === 'native' && !this.host.prepareWritingStyleForScene))) {
                 showComposerHint(t('plugin.chat.writing.actionUnavailable'));
                 return;
+            }
+            let sourceUserPromptIsDefault = false;
+            let sourceUserRequest = '';
+            const sourceBeforeTake = currentDraft.imageIntent?.textSource;
+            const promptLineageBeforeTake = currentDraft.imageIntent?.promptLineage;
+            const sourceReceiptBeforeTake = currentDraft.imageIntent?.sourceReceipt;
+            const imageOptionsBeforeTake = currentDraft.imageIntent?.generationOptions;
+            const sourceBasedBeforeTake = Boolean(sourceBeforeTake
+                || currentDraft.imageIntent?.promptOrigin || promptLineageBeforeTake);
+            if (sourceBasedBeforeTake && imageOptionsBeforeTake) {
+                if (imageOptionsBeforeTake.model !== 'wan2.7-image'
+                    && imageOptionsBeforeTake.model !== 'wan2.7-image-pro') {
+                    showComposerHint(t('plugin.chat.createImage.invalidModel'));
+                    return;
+                }
+                if (!Number.isSafeInteger(imageOptionsBeforeTake.count)
+                    || imageOptionsBeforeTake.count < 1 || imageOptionsBeforeTake.count > 4) {
+                    showComposerHint(t('plugin.chat.createImage.invalidCount'));
+                    return;
+                }
+            }
+            if (sourceReceiptBeforeTake && !sourceReceiptBeforeTake()) {
+                showComposerHint(t('plugin.chat.createImage.source.changed'));
+                return;
+            }
+            if (sourceBeforeTake) {
+                try {
+                    await this.host.verifyImageTextSource?.(sourceBeforeTake, 'before-send');
+                } catch {
+                    showComposerHint(t('plugin.chat.createImage.source.changed'));
+                    return;
+                }
+                if (this.host.isImageTextSourceCurrent && !this.host.isImageTextSourceCurrent(sourceBeforeTake)) {
+                    showComposerHint(t('plugin.chat.createImage.source.changed'));
+                    return;
+                }
+                sourceUserRequest = prompt;
+                if (!prompt.trim()) {
+                    prompt = t('plugin.chat.createImage.defaultPrompt', { source: sourceBeforeTake.displayName });
+                    sourceUserPromptIsDefault = true;
+                }
+            }
+            if (sourceBeforeTake && imageOptionsBeforeTake) {
+                const statedCount = explicitRequestedImageCount(sourceUserRequest);
+                if (statedCount !== undefined && statedCount !== imageOptionsBeforeTake.count) {
+                    showComposerHint(t('plugin.chat.createImage.countConflict'));
+                    return;
+                }
             }
             const consumeRestoredRetry = retryTurnId !== undefined && restoredTerminalDraft?.turnId === retryTurnId
                 && composerDraft.isUnchanged(restoredTerminalDraft.snapshot) && textArea.value === restoredTerminalDraft.snapshot.text;
@@ -4677,11 +4930,23 @@ export class LLMView extends ItemView {
             // Capture before the first persistence/lease await. Later scope edits belong to the next run.
             const runSourceSelection = this.conversationPersistence.captureRunSourceSelection(stableMessageId);
             turn.runSourceSelection = runSourceSelection;
+            const currentUserLineage = completeInputLineage([{ kind: 'user-text', messageId: stableMessageId },
+                ...turnImages.map(image => ({ kind: 'attachment' as const,
+                    ownerMessageId: stableMessageId, ref: { ...image.ref } }))]);
+            const imageLineageSources = [
+                currentUserLineage,
+                explicitImageIntent?.textSource?.inputLineage,
+                explicitImageIntent?.promptOrigin?.inputLineage,
+                explicitImageIntent?.promptLineage,
+            ].filter((lineage): lineage is InputLineage => lineage !== undefined);
+            const imageFirstRequestLineage = explicitImageIntent
+                && (explicitImageIntent.textSource || explicitImageIntent.promptOrigin
+                    || explicitImageIntent.promptLineage)
+                ? unionInputLineages(...imageLineageSources)
+                : undefined;
             const persistedUserMessage: ChatMessage = {
                 role: 'user', content: prompt,
-                inputLineage: completeInputLineage([{ kind: 'user-text', messageId: stableMessageId },
-                    ...turnImages.map(image => ({ kind: 'attachment' as const,
-                        ownerMessageId: stableMessageId, ref: { ...image.ref } }))]),
+                inputLineage: imageFirstRequestLineage ?? currentUserLineage,
                 runSourceSelection,
                 ...(turnImages.length ? { images: cloneMessageImages(turnImages) } : {}),
                 ...(explicitWritingIntent ? { writingAction: { kind: 'writing' as const,
@@ -4693,7 +4958,13 @@ export class LLMView extends ItemView {
             const operationId = retryImageOperation?.operationId ?? `image-${stableMessageId}`;
             imageOperationByTurn.set(turn.id, { stableMessageId, operationId, intent: explicitImageIntent });
             let acceptedImageTaskId: string | undefined;
-            const imageBudget = requestedImageCount(prompt);
+            const separateImageRequests = Boolean(explicitImageIntent && allowsSeparateImageRequests(prompt));
+            const imageBudget = separateImageRequests
+                ? requestedImageCount(prompt)
+                : explicitImageIntent?.generationOptions
+                    && (explicitImageIntent.textSource || explicitImageIntent.promptOrigin)
+                    ? explicitImageIntent.generationOptions.count
+                    : requestedImageCount(prompt);
             const acceptedImageSubrequests = new Set<number>();
             const operationsCardHandles: OperationsIntentCardHandle[] = [];
             let sawLegacyPartialFailure = false;
@@ -4827,7 +5098,6 @@ export class LLMView extends ItemView {
                     } catch (error) { this.host.log('Could not load generated image references', error); }
                 }
                 const chosenRefs = explicitImageIntent?.referenceImageRefs.map(imageRefToken) ?? [];
-                const separateImageRequests = Boolean(explicitImageIntent && allowsSeparateImageRequests(prompt));
                 if (separateImageRequests) {
                     for (let index = 1; index <= imageBudget; index++) {
                         const requestId = index === 1 ? operationId : `${operationId}-sub${index}`;
@@ -4836,13 +5106,23 @@ export class LLMView extends ItemView {
                 }
                 let usedImageBudget = [...priorImageRequests.values()].reduce((sum, task) => sum + task.request.count, 0);
                 const reservedImageRequests = new Map<string, number>();
+                const preparedImagePromises = new Map<string, Promise<string>>();
+                const imageSubmissionReceipts = new Map<string, Promise<{ taskId: string }>>();
                 const createImage: CreateImageHostBinding | undefined = imageGeneration && conversationIdForMemoryActions ? {
                     conversationId: conversationIdForMemoryActions,
                     stableMessageId,
                     operationId,
-                    submit: async (input: CreateImageToolInput, isSourceCurrent?: () => boolean) => {
-                        if (isSourceCurrent?.() === false) throw new Error('Image prompt sources changed.');
-                        if (!isSameTurn() || !imageGeneration) throw new Error('Image request is no longer current.');
+                    resolveRequestLineage: (_input, agentRequestLineage) => (
+                        explicitImageIntent?.textSource || explicitImageIntent?.promptOrigin
+                            || explicitImageIntent?.promptLineage
+                            ? imageFirstRequestLineage
+                            : agentRequestLineage
+                    ),
+                    submit: async (input: CreateImageToolInput, isSourceCurrent?: () => boolean,
+                        agentRequestLineage?: InputLineage,
+                        durableImageSourceCurrent?: () => boolean,
+                        runtime?: CreateImageHostRuntime) => {
+                        if (!isLiveTurn() || !imageGeneration) throw new Error('Image request is no longer current.');
                         const index = input.subrequestIndex ?? 1;
                         if (index > 1 && (!allowsSeparateImageRequests(prompt) || index > imageBudget)) {
                             throw new Error('Separate image requests were not authorized by this message.');
@@ -4851,12 +5131,44 @@ export class LLMView extends ItemView {
                             throw new Error('Each separately requested image needs its own one-image request.');
                         }
                         const requestOperationId = index === 1 ? operationId : `${operationId}-sub${index}`;
+                        const priorTask = priorImageRequests.get(requestOperationId);
+                        if (priorTask) return { taskId: priorTask.taskId };
+                        const frozenImageConnection = this.host.captureImageGenerationConnection?.() ?? null;
+                        const imageConnectionIsCurrent = () => {
+                            const current = this.host.captureImageGenerationConnection?.() ?? null;
+                            return current === frozenImageConnection
+                                || (current !== null && frozenImageConnection !== null
+                                    && current.mode === frozenImageConnection.mode
+                                    && current.baseURL === frozenImageConnection.baseURL
+                                    && current.credentialSlot === frozenImageConnection.credentialSlot
+                                    && current.revision === frozenImageConnection.revision);
+                        };
+                        const textSource = explicitImageIntent?.textSource;
+                        const promptOrigin = explicitImageIntent?.promptOrigin;
+                        const options = explicitImageIntent?.generationOptions ?? (
+                            textSource || promptOrigin || explicitImageIntent?.promptLineage
+                                ? this.host.getImageGenerationOptions?.() : undefined
+                        );
+                        const count = separateImageRequests
+                            ? 1
+                            : options?.count ?? input.count;
+                        const model = options?.model ?? 'wan2.7-image';
+                        if (model !== 'wan2.7-image' && model !== 'wan2.7-image-pro') {
+                            throw new Error('image_generation:invalid_model');
+                        }
+                        if (!Number.isSafeInteger(count) || count < 1 || count > 4) {
+                            throw new Error(count > 4
+                                ? 'image_generation:count_exceeds_provider_limit' : 'image_generation:invalid_request');
+                        }
+                        const requestLineage = agentRequestLineage ?? (
+                            textSource || promptOrigin || explicitImageIntent?.promptLineage
+                                ? imageFirstRequestLineage : undefined);
                         if (!priorImageRequests.has(requestOperationId) && !reservedImageRequests.has(requestOperationId)) {
-                            if (usedImageBudget + input.count > imageBudget) {
+                            if (usedImageBudget + count > imageBudget) {
                                 throw new Error('Image request exceeds the user\'s stated image count.');
                             }
-                            reservedImageRequests.set(requestOperationId, input.count);
-                            usedImageBudget += input.count;
+                            reservedImageRequests.set(requestOperationId, count);
+                            usedImageBudget += count;
                         }
                         if (explicitImageIntent && input.operation !== explicitImageIntent.operation) {
                             throw new Error('Image operation does not match the selected action.');
@@ -4886,20 +5198,86 @@ export class LLMView extends ItemView {
                                 throw new Error('Image version is outside the current conversation.');
                             }
                         }
-                        if (!isSameTurn()) throw new Error('Image request is no longer current.');
-                        if (this.host.confirmImageGenerationFirstUse && !await this.host.confirmImageGenerationFirstUse()) {
+                        if (!isLiveTurn()) throw new Error('Image request is no longer current.');
+                        const confirmFirstUse = textSource && this.host.confirmFeaturedImageTextPreparationFirstUse
+                            ? this.host.confirmFeaturedImageTextPreparationFirstUse
+                            : this.host.confirmImageGenerationFirstUse;
+                        if (confirmFirstUse && !await confirmFirstUse()) {
                             throw new DOMException('Cancelled', 'AbortError');
                         }
-                        if (!isSameTurn()) throw new Error('Image request is no longer current.');
+                        if (!isLiveTurn()) throw new Error('Image request is no longer current.');
                         const durableConversationId = await this.conversationPersistence.ensureConversationForImageRequest(prompt);
-                        if (durableConversationId !== conversationIdForMemoryActions || !isSameTurn()) {
+                        if (durableConversationId !== conversationIdForMemoryActions || !isLiveTurn()) {
                             throw new Error('Image conversation is unavailable.');
                         }
-                        if (isSourceCurrent?.() === false) throw new Error('Image prompt sources changed.');
-                        const accepted = await imageGeneration.submit({ conversationId: durableConversationId,
-                            stableMessageId, operationId: requestOperationId, userPrompt: prompt, submittedPrompt: input.prompt,
-                            operation: input.operation, count: input.count, inputRefs, ...(parentVersionId ? { parentVersionId } : {}),
-                            ...(isSourceCurrent ? { isSourceCurrent } : {}) });
+                        if (!imageConnectionIsCurrent()) {
+                            throw new Error('image_generation:connection_changed');
+                        }
+                        const sourceStillCurrent = () => isLiveTurn()
+                            && durableImageSourceCurrent?.() !== false
+                            && (!textSource || this.host.isImageTextSourceCurrent?.(textSource) !== false)
+                            && (!promptOrigin || this.host.isImagePromptOriginCurrent?.(promptOrigin) !== false)
+                            && isSourceCurrent?.() !== false;
+                        const acceptedSourceStillCurrent = textSource
+                            ? () => durableImageSourceCurrent?.() !== false
+                                && this.host.isImageTextSourceCurrent?.(textSource) !== false
+                            : promptOrigin
+                                ? () => durableImageSourceCurrent?.() !== false
+                                    && this.host.isImagePromptOriginCurrent?.(promptOrigin) !== false
+                                : () => durableImageSourceCurrent?.() !== false;
+                        if (!sourceStillCurrent()) throw new Error('Image prompt sources changed.');
+                        let submittedPrompt = input.prompt;
+                        if (textSource) {
+                            if (!this.host.prepareFeaturedImagePrompt) {
+                                throw new Error('Image prompt preparation is unavailable.');
+                            }
+                            const preparation = preparedImagePromises.get(requestOperationId) ?? this.host.prepareFeaturedImagePrompt({
+                                sourceText: textSource.text,
+                                userRequest: sourceUserRequest,
+                                ...(separateImageRequests ? {
+                                    imageOrdinal: index, imageTotal: imageBudget,
+                                } : {}),
+                                signal: controller.signal,
+                                isSourceCurrent: () => isLiveTurn()
+                                    && this.host.isImageTextSourceCurrent?.(textSource) !== false,
+                            }, runtime);
+                            preparedImagePromises.set(requestOperationId, preparation);
+                            submittedPrompt = await preparation;
+                            if (!isLiveTurn() || !sourceStillCurrent()) {
+                                throw new Error('Image request is no longer current.');
+                            }
+                            if (!imageConnectionIsCurrent()) {
+                                throw new Error('image_generation:connection_changed');
+                            }
+                        } else if (explicitImageIntent?.reusePreparedPrompt && explicitImageIntent.preparedPrompt) {
+                            submittedPrompt = explicitImageIntent.preparedPrompt;
+                        }
+                        const acceptedReceipt = imageSubmissionReceipts.get(requestOperationId)
+                            ?? imageGeneration.submit({ conversationId: durableConversationId,
+                            stableMessageId, operationId: requestOperationId, userPrompt: prompt, submittedPrompt,
+                            operation: input.operation, count, inputRefs, ...(parentVersionId ? { parentVersionId } : {}),
+                            model,
+                            ...(textSource ? {
+                                promptOrigin: {
+                                    kind: textSource.kind,
+                                    displayName: textSource.displayName,
+                                    path: textSource.path,
+                                    ...(textSource.selection ? { selection: { ...textSource.selection } } : {}),
+                                    inputLineage: textSource.inputLineage,
+                                    ...(sourceUserPromptIsDefault ? { defaultUserPrompt: true } : {}),
+                                },
+                                countExplicitlyAuthorized: true,
+                                attachmentPathHint: options?.attachmentPathHint,
+                            } : explicitImageIntent?.promptOrigin || explicitImageIntent?.promptLineage ? {
+                                promptOrigin: explicitImageIntent.promptOrigin,
+                                countExplicitlyAuthorized: true,
+                                attachmentPathHint: options?.attachmentPathHint,
+                            } : {}),
+                            inputLineage: requestLineage,
+                            ...(requestLineage || durableImageSourceCurrent
+                                ? { isSourceCurrent: acceptedSourceStillCurrent } : {}) });
+                        imageSubmissionReceipts.set(requestOperationId, acceptedReceipt);
+                        const accepted = await acceptedReceipt;
                         acceptedImageTaskId = accepted.taskId;
                         acceptedImageSubrequests.add(index);
                         const operation = imageOperationByTurn.get(turn.id);
@@ -4908,17 +5286,12 @@ export class LLMView extends ItemView {
                     },
                 } : undefined;
                 const imageInstructions = imageGeneration && conversationIdForMemoryActions
-                    ? `\n\nImage creation capability: use create_image only when the user asks to create or edit an image. Available image ref tokens: ${[...authorizedImageRefs.keys()].join(', ') || 'none'}. Available generated versions: ${availableVersions.join(', ') || 'none'}. Refs identify only authorized current-user images and this conversation's saved generations. ${chatSupportsImages ? 'Only this request\'s attached image pixels were sent to the Chat model.' : 'The Chat model has not received image pixels. If the user asks what an attached image shows, explain that you cannot view it; do not guess its content.'} For edits, use the exact parent version when available.`
+                    ? `\n\nImage creation capability: use create_image only when the user asks to create or edit an image. Available image ref tokens: ${[...authorizedImageRefs.keys()].join(', ') || 'none'}. Available generated versions: ${availableVersions.join(', ') || 'none'}. Refs identify only authorized current-user images and this conversation's saved generations. ${chatSupportsImages ? 'Only this request\'s attached image pixels were sent to the Chat model.' : 'The Chat model has not received image pixels. If the user asks what an attached image shows, explain that you cannot view it; do not guess its content.'} For edits, use the exact parent version when available. If the user discusses image ideas, asks only for a prompt, or asks for an image from a note without a selected source, do not call create_image; ask them to use the CreateImage source control.`
                     : '';
                 const selectedInstruction = explicitImageIntent
-                    ? `\n\n@CreateImage selected. Create the image now with operation ${explicitImageIntent.operation}, referenceImageRefs ${JSON.stringify(chosenRefs)}${explicitImageIntent.parentVersionId ? `, parentVersionId ${explicitImageIntent.parentVersionId}` : ''}.${separateImageRequests ? ` The user requested ${imageBudget} distinct images. Call create_image once per explicitly described image, count 1 each, with subrequestIndex 1 through ${imageBudget}; preserve each image's own description.` : ''} Keep the acknowledgement brief.`
+                    ? `\n\n@CreateImage selected. Decide from the user's current request whether this is generation, or only image discussion/prompt writing; call create_image only for an actual generation or edit request. Operation ${explicitImageIntent.operation}, referenceImageRefs ${JSON.stringify(chosenRefs)}${explicitImageIntent.parentVersionId ? `, parentVersionId ${explicitImageIntent.parentVersionId}` : ''}.${explicitImageIntent.textSource ? ' A text source is bound host-side; do not read or widen the source. Call create_image once and the host will independently prepare the exact submitted description.' : ' If the request depends on note text but no text source is selected, ask the user to use the CreateImage source control instead of guessing a note.'}${separateImageRequests ? ` The user requested ${imageBudget} distinct images. Call create_image once per explicitly described image, count 1 each, with subrequestIndex 1 through ${imageBudget}; preserve each image's own description.` : ''} Keep the acknowledgement brief.`
                     : '';
                 if (explicitImageIntent && !createImage) throw new Error('Image creation is unavailable.');
-                if (explicitImageIntent && createImage && !separateImageRequests) {
-                    await createImage.submit({ prompt, operation: explicitImageIntent.operation,
-                        count: requestedImageCount(prompt), referenceImageRefs: chosenRefs,
-                        ...(explicitImageIntent.parentVersionId ? { parentVersionId: explicitImageIntent.parentVersionId } : {}) });
-                }
                 const legacyWritingLineage = turn.writingParent && runSourceSelection && this.host.writingVersions
                     ? await resolveWritingVersionInputLineage(turn.writingParent,
                         id => this.host.writingVersions!.get(id)) : undefined;
@@ -4935,6 +5308,7 @@ export class LLMView extends ItemView {
                     {
                         memoryMode: "auto",
                         userText: prompt,
+                        inputLineage: imageFirstRequestLineage,
                         runSourceSelection,
                         conversationId: conversationIdForMemoryActions ?? undefined,
                         images: chatSupportsImages ? turnImages : [],

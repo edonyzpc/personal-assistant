@@ -1,10 +1,67 @@
 /** View-local ownership for text, images and asynchronous imports. No draft bytes are persisted. */
+import { getFrontMatterInfo, type Editor, type MarkdownView } from 'obsidian';
+
+import { cloneRecordedInputLineage, completeInputLineage, type InputLineage } from '../ai-services/input-lineage';
+import type { ImageGenerationPromptOrigin } from './image-generation-types';
 import { cloneImageRef, type ImageRef } from './image-types';
+
+export interface ComposerImageTextSource {
+    kind: 'note' | 'selection';
+    path: string;
+    displayName: string;
+    text: string;
+    documentText: string;
+    /** Host-only identity; never copied into a durable image task. */
+    file?: unknown;
+    selection?: { from: number; to: number };
+    inputLineage: InputLineage;
+}
+
+export interface ComposerImageGenerationOptions {
+    /** Preserve an invalid legacy model for visible failure instead of normalizing it. */
+    model: string;
+    count: number;
+    attachmentPathHint: string;
+}
 
 export interface ComposerImageIntent {
     operation: 'generate' | 'reference' | 'edit';
     referenceImageRefs: ImageRef[];
     parentVersionId?: string;
+    textSource?: ComposerImageTextSource;
+    promptOrigin?: ImageGenerationPromptOrigin;
+    promptLineage?: InputLineage;
+    preparedPrompt?: string;
+    reusePreparedPrompt?: boolean;
+    sourceReceipt?: () => boolean;
+    generationOptions?: ComposerImageGenerationOptions;
+}
+
+function cloneTextSource(source: ComposerImageTextSource): ComposerImageTextSource {
+    return {
+        kind: source.kind,
+        path: source.path,
+        displayName: source.displayName,
+        text: source.text,
+        documentText: source.documentText,
+        ...(source.file !== undefined ? { file: source.file } : {}),
+        ...(source.selection ? { selection: { ...source.selection } } : {}),
+        inputLineage: cloneRecordedInputLineage(source.inputLineage)!,
+    };
+}
+
+function cloneGenerationOptions(options: ComposerImageGenerationOptions): ComposerImageGenerationOptions {
+    return { model: options.model, count: options.count, attachmentPathHint: options.attachmentPathHint };
+}
+
+function clonePromptOrigin(origin: ImageGenerationPromptOrigin): ImageGenerationPromptOrigin {
+    return {
+        kind: origin.kind,
+        displayName: origin.displayName,
+        path: origin.path,
+        ...(origin.selection ? { selection: { ...origin.selection } } : {}),
+        inputLineage: cloneRecordedInputLineage(origin.inputLineage)!,
+    };
 }
 
 function cloneImageIntent(intent: ComposerImageIntent): ComposerImageIntent {
@@ -12,6 +69,13 @@ function cloneImageIntent(intent: ComposerImageIntent): ComposerImageIntent {
         operation: intent.operation,
         referenceImageRefs: intent.referenceImageRefs.map(cloneImageRef),
         ...(intent.parentVersionId ? { parentVersionId: intent.parentVersionId } : {}),
+        ...(intent.textSource ? { textSource: cloneTextSource(intent.textSource) } : {}),
+        ...(intent.promptOrigin ? { promptOrigin: clonePromptOrigin(intent.promptOrigin) } : {}),
+        ...(intent.promptLineage ? { promptLineage: cloneRecordedInputLineage(intent.promptLineage)! } : {}),
+        ...(intent.preparedPrompt ? { preparedPrompt: intent.preparedPrompt } : {}),
+        ...(intent.reusePreparedPrompt ? { reusePreparedPrompt: true } : {}),
+        ...(intent.sourceReceipt ? { sourceReceipt: intent.sourceReceipt } : {}),
+        ...(intent.generationOptions ? { generationOptions: cloneGenerationOptions(intent.generationOptions) } : {}),
     };
 }
 
@@ -94,6 +158,29 @@ export class ComposerDraft<T> {
         }
     }
 
+    setImageTextSource(source: ComposerImageTextSource | undefined): void {
+        if (this.disposed) throw new Error('Composer is closed');
+        if (!this.imageIntent) throw new Error('No image action is selected');
+        const next = cloneImageIntent(this.imageIntent);
+        if (source) next.textSource = cloneTextSource(source);
+        else delete next.textSource;
+        // A changed or removed source requires new preparation. promptLineage
+        // remains so an app-prefilled derived description cannot be laundered.
+        delete next.promptOrigin;
+        delete next.preparedPrompt;
+        delete next.reusePreparedPrompt;
+        delete next.sourceReceipt;
+        this.imageIntent = next;
+        this.revision += 1;
+    }
+
+    setImageGenerationOptions(options: ComposerImageGenerationOptions): void {
+        if (this.disposed) throw new Error('Composer is closed');
+        if (!this.imageIntent) throw new Error('No image action is selected');
+        this.imageIntent = { ...cloneImageIntent(this.imageIntent), generationOptions: cloneGenerationOptions(options) };
+        this.revision += 1;
+    }
+
     hasDraft(text: string): boolean {
         return text.trim().length > 0 || this.entries.size > 0
             || this.imageIntent !== undefined || this.writingIntent;
@@ -101,7 +188,8 @@ export class ComposerDraft<T> {
 
     canSend(text: string): boolean {
         return !this.disposed && this.hasDraft(text)
-            && (!(this.imageIntent || this.writingIntent) || text.trim().length > 0)
+            && (!(this.imageIntent || this.writingIntent)
+                || text.trim().length > 0 || Boolean(this.imageIntent?.textSource))
             && [...this.entries.values()].every((entry) => entry.status === "ready");
     }
 
@@ -181,4 +269,48 @@ export class ComposerDraft<T> {
             && this.imports.get(handle.entryId)?.signal === handle.signal
             && this.entries.has(handle.entryId);
     }
+}
+
+/** Capture an exact editor source before Chat takes focus; no asynchronous provider reads happen here. */
+export function captureComposerImageTextSource(
+    editor: Editor,
+    view: MarkdownView,
+    kind: 'note' | 'selection',
+): ComposerImageTextSource | null {
+    const file = view.file;
+    if (!file?.path || file.extension !== 'md') return null;
+    if (typeof editor.getValue !== 'function') return null;
+    const documentText = editor.getValue() ?? '';
+    if (kind === 'note') {
+        const text = documentText.slice(getFrontMatterInfo(documentText).contentStart);
+        if (!text.trim()) return null;
+        return {
+            kind,
+            path: file.path,
+            displayName: file.basename || file.path,
+            text,
+            documentText,
+            file,
+            inputLineage: completeInputLineage([{ kind: 'vault', path: file.path, via: 'note' }]),
+        };
+    }
+
+    if (typeof editor.getSelection !== 'function'
+        || typeof editor.posToOffset !== 'function' || typeof editor.getCursor !== 'function') return null;
+    const selection = editor.getSelection() ?? '';
+    if (!selection.trim()) return null;
+    let from = editor.posToOffset(editor.getCursor('from'));
+    let to = editor.posToOffset(editor.getCursor('to'));
+    if (from > to) [from, to] = [to, from];
+    if (documentText.slice(from, to) !== selection) return null;
+    return {
+        kind,
+        path: file.path,
+        displayName: file.basename || file.path,
+        text: selection,
+        documentText,
+        file,
+        selection: { from, to },
+        inputLineage: completeInputLineage([{ kind: 'vault', path: file.path, via: 'note' }]),
+    };
 }

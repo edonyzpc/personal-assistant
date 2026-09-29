@@ -1,4 +1,5 @@
 import { cloneImageRef, type ImageRef } from './image-types';
+import { cloneInputLineage, type InputLineage } from '../ai-services/input-lineage';
 
 export type ImageGenerationState = 'prepared' | 'not_submitted' | 'submitting' | 'submission_unknown'
     | 'running' | 'saving' | 'completed' | 'partial' | 'failed' | 'stopped' | 'expired';
@@ -14,6 +15,16 @@ export interface ImageGenerationOutput {
     height?: number;
     assetRef?: ImageRef;
     recoveryReason?: string;
+}
+
+/** Body-free provenance for a prompt derived from an explicit text source. */
+export interface ImageGenerationPromptOrigin {
+    kind: 'note' | 'selection';
+    displayName: string;
+    path: string;
+    selection?: { from: number; to: number };
+    inputLineage: InputLineage;
+    defaultUserPrompt?: boolean;
 }
 
 export interface ImageGenerationTask {
@@ -36,6 +47,9 @@ export interface ImageGenerationTask {
         size?: string;
         inputRefs: ImageRef[];
         parentVersionId?: string;
+        promptOrigin?: ImageGenerationPromptOrigin;
+        inputLineage?: InputLineage;
+        attachmentPathHint?: string;
     };
     connection: {
         mode: 'inherit-chat' | 'dedicated-wan';
@@ -101,6 +115,28 @@ function prompt(value: unknown): string {
         throw new Error('Invalid image generation prompt.');
     }
     return value;
+}
+
+function promptOrigin(value: unknown): ImageGenerationPromptOrigin {
+    const input = object(value);
+    if (input.kind !== 'note' && input.kind !== 'selection') {
+        throw new Error('Invalid image prompt origin.');
+    }
+    const displayName = text(input.displayName, 512);
+    const path = text(input.path, 4096);
+    const inputLineage = cloneInputLineage(input.inputLineage);
+    if (!inputLineage) throw new Error('Invalid image prompt origin lineage.');
+    const result: ImageGenerationPromptOrigin = { kind: input.kind, displayName, path, inputLineage };
+    if (input.selection !== undefined) {
+        const selection = object(input.selection);
+        result.selection = { from: integer(selection.from, 0), to: integer(selection.to, 0) };
+        if (result.selection.to < result.selection.from) throw new Error('Invalid image prompt selection.');
+    }
+    if (input.defaultUserPrompt !== undefined && typeof input.defaultUserPrompt !== 'boolean') {
+        throw new Error('Invalid image prompt origin request marker.');
+    }
+    if (input.defaultUserPrompt === true) result.defaultUserPrompt = true;
+    return result;
 }
 
 function integer(value: unknown, min = 0, max = Number.MAX_SAFE_INTEGER): number {
@@ -181,6 +217,15 @@ export function cloneImageGenerationTask(value: unknown): ImageGenerationTask {
     };
     if (request.size !== undefined) result.request.size = text(request.size, 64);
     if (request.parentVersionId !== undefined) result.request.parentVersionId = id(request.parentVersionId);
+    if (request.promptOrigin !== undefined) result.request.promptOrigin = promptOrigin(request.promptOrigin);
+    if (request.inputLineage !== undefined) {
+        const inputLineage = cloneInputLineage(request.inputLineage);
+        if (!inputLineage) throw new Error('Invalid image request lineage.');
+        result.request.inputLineage = inputLineage;
+    }
+    if (request.attachmentPathHint !== undefined) {
+        result.request.attachmentPathHint = text(request.attachmentPathHint, 1024);
+    }
     if (input.providerTaskId !== undefined) result.providerTaskId = text(input.providerTaskId, 256);
     if (input.providerRequestId !== undefined) result.providerRequestId = text(input.providerRequestId, 256);
     if (input.lastProviderState !== undefined) result.lastProviderState = text(input.lastProviderState, 128);

@@ -24,7 +24,7 @@ import { PaAgentContextOverflowError } from '../src/ai-services/context';
 import { ChatImageRequestError } from '../src/ai-services/image-capability';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
 import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
-import type { ComposerDraft } from '../src/chat/composer-draft';
+import type { ComposerDraft, ComposerImageTextSource } from '../src/chat/composer-draft';
 import type { ConversationPersistence } from '../src/chat/ConversationPersistence';
 import type { MessageImage } from '../src/chat/image-types';
 import type { GenerationInputSnapshotV1, GenerationInputSnapshotV2 } from '../src/ai-services/generation-input-snapshot';
@@ -776,13 +776,16 @@ function createView(options: {
     let setupIssue = options.setupIssue ?? null;
     let tokenState = options.tokenState ?? 'missing';
     const editor = {
-        getCursor: jest.fn(() => ({ line: 0, ch: 0 })),
+        getCursor: jest.fn((_side?: 'from' | 'to' | 'head' | 'anchor') => ({ line: 0, ch: 0 })),
+        getValue: jest.fn(() => ''),
+        getSelection: jest.fn(() => ''),
+        posToOffset: jest.fn((position: { ch?: number }) => position.ch ?? 0),
         replaceRange: jest.fn(),
     };
     const markdownLeaf = {
         view: new MarkdownView(editor as unknown as ConstructorParameters<typeof MarkdownView>[0]),
     };
-    const markdownFile = { path: '0.unsorted/Dog.md', extension: 'md' };
+    const markdownFile = { path: '0.unsorted/Dog.md', basename: 'Dog', extension: 'md' };
     const app = {
         workspace: {
             getActiveFile: jest.fn(() => options.withMarkdownLeaf ? markdownFile : null),
@@ -800,6 +803,8 @@ function createView(options: {
         },
         vault: {
             getName: jest.fn(() => 'test'),
+            getAbstractFileByPath: jest.fn(() => null),
+            cachedRead: jest.fn(async () => ''),
         },
         setting: {
             open: jest.fn(),
@@ -821,6 +826,16 @@ function createView(options: {
             operationsProactiveSaveSuggestionsEnabled: true,
         },
         chatHistoryManager: options.chatHistoryManager,
+        verifyImageTextSource: jest.fn<NonNullable<ChatHost['verifyImageTextSource']>>(async () => undefined),
+        isImageTextSourceCurrent: jest.fn<NonNullable<ChatHost['isImageTextSourceCurrent']>>(() => true),
+        isImagePromptOriginCurrent: jest.fn<NonNullable<ChatHost['isImagePromptOriginCurrent']>>(() => true),
+        prepareFeaturedImagePrompt: jest.fn<NonNullable<ChatHost['prepareFeaturedImagePrompt']>>(async () => 'PREPARED-DEFAULT'),
+        getImageGenerationOptions: jest.fn(() => ({
+            model: 'wan2.7-image' as const,
+            count: 1 as const,
+            attachmentPathHint: '',
+        })),
+        confirmFeaturedImageTextPreparationFirstUse: jest.fn(async () => true),
         prepareWritingRecoverySources: jest.fn<NonNullable<ChatHost['prepareWritingRecoverySources']>>(async () => ({ isCurrent: () => true })),
         memoryStatus: {
             getMaintenancePlan: jest.fn(async (): Promise<MemoryMaintenancePlan> => ({
@@ -931,6 +946,26 @@ function createView(options: {
         getSettingsChangeListenerCount,
         setAISetupIssue,
         setTokenState: (value: 'unknown' | 'present' | 'missing') => { tokenState = value; },
+    };
+}
+
+function createImageTextSource(overrides: Partial<ComposerImageTextSource> = {}): ComposerImageTextSource {
+    const text = overrides.text ?? 'INSIDE-SELECTION sentinel';
+    const documentText = overrides.documentText ?? `OUTSIDE-SELECTION ${text} OUTSIDE-SELECTION`;
+    const from = overrides.selection?.from ?? documentText.indexOf(text);
+    return {
+        kind: 'selection',
+        path: 'notes/exact-source.md',
+        displayName: 'exact-source',
+        text,
+        documentText,
+        selection: { from, to: from + text.length },
+        inputLineage: {
+            schemaVersion: 1,
+            completeness: 'complete',
+            dependencies: [{ kind: 'vault', path: 'notes/exact-source.md', via: 'note' }],
+        },
+        ...overrides,
     };
 }
 
@@ -3386,6 +3421,9 @@ describe('LLMView turn lifecycle', () => {
             expect(allText(containerEl)).toContain('up to 4 images');
             expect(getTextArea(containerEl).value).toBe(`@CreateImage 请给我${quantity}蓝色猫`);
         } else {
+            await streamCalls[0].options.createImage!.submit({
+                prompt: `请给我${quantity}蓝色猫`, operation: 'generate', count, referenceImageRefs: [],
+            });
             expect(confirmFirstUse).toHaveBeenCalledTimes(1);
             expect(submit).toHaveBeenCalledTimes(1);
             expect(submit.mock.calls[0][0]).toMatchObject({ conversationId: 'image-conversation',
@@ -3419,10 +3457,7 @@ describe('LLMView turn lifecycle', () => {
         const call = streamCalls[0];
         expect(call.options.writingContextHost).toBeUndefined();
         expect(call.options.writingRequest).toBeUndefined();
-        if (!prefix) {
-            expect(await store.getConversation('native-image-conversation')).not.toBeNull();
-            await call.options.createImage!.submit({ prompt: '蓝色纸鹤', operation: 'generate', count: 1, referenceImageRefs: [] });
-        }
+        await call.options.createImage!.submit({ prompt: '蓝色纸鹤', operation: 'generate', count: 1, referenceImageRefs: [] });
         expect(await store.getConversation('native-image-conversation')).not.toBeNull();
         expect(submit).toHaveBeenCalledTimes(1);
         call.onChunk('图片请求已提交。');
@@ -3473,8 +3508,9 @@ describe('LLMView turn lifecycle', () => {
         view.prefillComposer('@CreateImage 一只蓝色纸鹤');
         getElementByClass(containerEl, 'send-button-visible').click();
         for (let i = 0; i < 5; i++) await flushPromises();
-        expect(allText(containerEl)).toContain('compatible Wan image connection');
-        expect(streamCalls).toHaveLength(0);
+        await expect(streamCalls[0].options.createImage!.submit({ prompt: '一只蓝色纸鹤',
+            operation: 'generate', count: 1, referenceImageRefs: [] })).rejects.toThrow('image_generation:connection_unavailable');
+        expect(streamCalls).toHaveLength(1);
         await view.onClose();
     });
 
@@ -3489,6 +3525,8 @@ describe('LLMView turn lifecycle', () => {
         view.prefillComposer('@CreateImage 蓝色纸鹤，白色背景');
         getElementByClass(containerEl, 'send-button-visible').click();
         for (let i = 0; i < 5; i++) await flushPromises();
+        await streamCalls[0].options.createImage!.submit({ prompt: '蓝色纸鹤，白色背景',
+            operation: 'generate', count: 1, referenceImageRefs: [] });
 
         expect(submit).toHaveBeenCalledTimes(1);
         expect(submit).toHaveBeenCalledWith(expect.objectContaining({
@@ -3500,6 +3538,455 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[0].resolve();
         await flushPromises();
         await view.onClose();
+    });
+
+    it('does not force generation when @CreateImage only asks for a prompt', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'prompt-only-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async () => ({ taskId: 'unexpected_prompt_only' }));
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        view.prefillComposer('@CreateImage 只写一段 prompt，不要生成图片');
+        expect(allText(containerEl)).toContain('Plain image defaults: wan2.7-image · 1');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        expect(streamCalls[0].prompt).toContain('Decide from the user\'s current request');
+        expect(streamCalls[0].prompt).not.toContain('Create the image now');
+        expect(submit).not.toHaveBeenCalled();
+        streamCalls[0].resolve();
+        await flushPromises();
+        await view.onClose();
+    });
+
+    it('defers the only CreateImage submission until the Agent returns a distinct description', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'deferred-image-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async (_request?: unknown) => ({ taskId: 'prepared_image_task' }));
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        view.prefillComposer('@CreateImage 为这段文章创作配图');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const call = streamCalls[0];
+        const agentDescription = 'AGENT-PREPARED-SENTINEL: 水彩纸面上的蓝色纸鹤，柔和晨光，白色背景';
+        try {
+            expect(submit).not.toHaveBeenCalled();
+            await call.options.createImage!.submit({ prompt: agentDescription, operation: 'generate',
+                count: 1, referenceImageRefs: [] });
+            expect(submit).toHaveBeenCalledTimes(1);
+            expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+                conversationId: 'deferred-image-conversation', operation: 'generate', count: 1,
+                userPrompt: '为这段文章创作配图', submittedPrompt: agentDescription, inputRefs: [],
+            }));
+        } finally {
+            call.resolve();
+            for (let index = 0; index < 5; index++) await flushPromises();
+            await view.onClose();
+        }
+    });
+
+    it('defers the only CreateImage submission and rejects a late Agent result after cancellation', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'cancelled-image-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async (_request?: unknown) => ({ taskId: 'unexpected_cancelled_task' }));
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        view.prefillComposer('请为这段文章创作一张配图');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const call = streamCalls[0];
+        try {
+            expect(submit).not.toHaveBeenCalled();
+            getElementByClass(containerEl, 'cancel-button').click();
+            expect(call.signal?.aborted).toBe(true);
+            await expect(call.options.createImage!.submit({ prompt: 'LATE-CANCELLED-SENTINEL',
+                operation: 'generate', count: 1, referenceImageRefs: [] })).rejects.toThrow(/no longer current|Cancelled/);
+            expect(submit).not.toHaveBeenCalled();
+        } finally {
+            call.resolve();
+            for (let index = 0; index < 5; index++) await flushPromises();
+            await view.onClose();
+        }
+    });
+
+    it('prepares an empty supplement from a count-titled source without treating its title as instructions', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'prepared-source-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const source = createImageTextSource({ displayName: '一张图的想法' });
+        const submit = jest.fn(async (_request?: unknown) => ({ taskId: 'prepared_source_task' }));
+        let releasePreparation!: (value: string) => void;
+        const preparation = new Promise<string>(resolve => { releasePreparation = resolve; });
+        const prepare = jest.fn((_input: { sourceText: string }) => preparation);
+        const confirmTextPreparationFirstUse = jest.fn(async () => true);
+        const confirmImageFirstUse = jest.fn(async () => true);
+        Object.assign(plugin, {
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: confirmImageFirstUse,
+            confirmFeaturedImageTextPreparationFirstUse: confirmTextPreparationFirstUse,
+            prepareFeaturedImagePrompt: prepare,
+        });
+        await view.onOpen();
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        view.prefillImageDraft('', source);
+        draft.setImageGenerationOptions({ model: 'wan2.7-image-pro', count: 2, attachmentPathHint: '/attachments/ai/' });
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const call = streamCalls[0];
+        try {
+            expect(prepare).not.toHaveBeenCalled();
+            expect(submit).not.toHaveBeenCalled();
+
+            const accepted = call.options.createImage!.submit({
+                prompt: 'WRONG-MAIN-AGENT-CONTEXT-SENTINEL', operation: 'generate', count: 1, referenceImageRefs: [],
+            });
+            await flushPromises();
+            expect(prepare).toHaveBeenCalledTimes(1);
+            expect(confirmTextPreparationFirstUse).toHaveBeenCalledTimes(1);
+            expect(confirmImageFirstUse).not.toHaveBeenCalled();
+            expect(prepare.mock.calls[0][0]).toMatchObject({
+                sourceText: source.text, userRequest: '', signal: call.signal,
+            });
+            expect(prepare.mock.calls[0][0].sourceText).not.toContain('OUTSIDE-SELECTION');
+            expect(submit).not.toHaveBeenCalled();
+
+            releasePreparation('FEATURED-PREPARED-SENTINEL');
+            await expect(accepted).resolves.toEqual({ taskId: 'prepared_source_task' });
+            expect(submit).toHaveBeenCalledTimes(1);
+            expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+                conversationId: 'prepared-source-conversation',
+                userPrompt: expect.stringContaining('一张图的想法'),
+                submittedPrompt: 'FEATURED-PREPARED-SENTINEL',
+                operation: 'generate',
+                count: 2,
+                model: 'wan2.7-image-pro',
+                attachmentPathHint: '/attachments/ai/',
+                countExplicitlyAuthorized: true,
+                promptOrigin: expect.objectContaining({
+                    kind: 'selection',
+                    path: source.path,
+                    selection: source.selection,
+                    defaultUserPrompt: true,
+                }),
+            }));
+            await expect(call.options.createImage!.submit({
+                prompt: 'DUPLICATE-TOOL-SENTINEL', operation: 'generate', count: 1, referenceImageRefs: [],
+            })).resolves.toEqual({ taskId: 'prepared_source_task' });
+            expect(prepare).toHaveBeenCalledTimes(1);
+            expect(submit).toHaveBeenCalledTimes(1);
+            const acceptedReceipt = (submit.mock.calls[0][0] as { isSourceCurrent?: () => boolean }).isSourceCurrent;
+            expect(acceptedReceipt?.()).toBe(true);
+            call.resolve();
+            await flushPromises();
+            expect(acceptedReceipt?.()).toBe(true);
+        } finally {
+            releasePreparation('CLEANUP-PREPARED-SENTINEL');
+            call.resolve();
+            for (let index = 0; index < 5; index++) await flushPromises();
+            await view.onClose();
+        }
+    });
+
+    it('binds a valid Markdown selection when the CreateImage action is selected', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'selection-action-conversation' });
+        const { view, plugin, containerEl, editor, app, markdownLeaf, markdownFile } = createView({
+            withMarkdownLeaf: true,
+            chatHistoryManager: manager,
+        });
+        Object.assign(markdownLeaf.view, { file: markdownFile });
+        const documentText = 'OUTSIDE-ACTION-SELECTION INSIDE-ACTION-SELECTION OUTSIDE-ACTION-SELECTION';
+        editor.getValue.mockReturnValue(documentText);
+        editor.getSelection.mockReturnValue('INSIDE-ACTION-SELECTION');
+        editor.getCursor.mockImplementation((side?: 'from' | 'to' | 'head' | 'anchor') => (
+            side === 'from'
+                ? { line: 0, ch: documentText.indexOf('INSIDE-ACTION-SELECTION') }
+                : { line: 0, ch: documentText.indexOf('INSIDE-ACTION-SELECTION') + 'INSIDE-ACTION-SELECTION'.length }
+        ));
+        editor.posToOffset.mockImplementation((position: { ch?: number }) => position.ch ?? 0);
+        Object.assign(plugin, { imageGenerationService: { list: async () => [],
+            subscribe: () => () => undefined, submit: async () => ({ taskId: 'unexpected' }) } });
+        await view.onOpen();
+        const textArea = getTextArea(containerEl);
+        textArea.value = '@';
+        Object.assign(textArea, { selectionStart: 1, selectionEnd: 1,
+            setRangeText: (replacement: string, start: number, end: number) => {
+                textArea.value = `${textArea.value.slice(0, start)}${replacement}${textArea.value.slice(end)}`;
+                Object.assign(textArea, { selectionStart: start + replacement.length, selectionEnd: start + replacement.length });
+            } });
+        textArea.dispatchEvent('input');
+        getButtonByText(containerEl, 'CreateImage').click();
+
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        const intent = draft.snapshot('').imageIntent;
+        expect(intent?.textSource).toMatchObject({
+            kind: 'selection',
+            path: '0.unsorted/Dog.md',
+            text: 'INSIDE-ACTION-SELECTION',
+            selection: {
+                from: documentText.indexOf('INSIDE-ACTION-SELECTION'),
+                to: documentText.indexOf('INSIDE-ACTION-SELECTION') + 'INSIDE-ACTION-SELECTION'.length,
+            },
+        });
+        expect(draft.canSend('')).toBe(true);
+        const sourceChip = getElementByClass(containerEl, 'pa-chat-create-image-source');
+        expect(allText(sourceChip)).toContain('Source: selection · Dog');
+        expect(allText(containerEl)).toContain('INSIDE-ACTION-SELECTION');
+
+        const otherFile = { path: '0.unsorted/Other.md', basename: 'Other', extension: 'md' };
+        app.workspace.getActiveViewOfType.mockReturnValue({
+            getViewType: () => 'markdown',
+            file: otherFile,
+            editor: {
+                getValue: () => 'UNRELATED-NOTE-BODY',
+                getSelection: () => '',
+            },
+        } as never);
+        getButtonByText(containerEl, 'Use full note').click();
+        expect(draft.snapshot('').imageIntent?.textSource).toMatchObject({
+            kind: 'note',
+            path: '0.unsorted/Dog.md',
+            text: documentText,
+        });
+
+        draft.setImageTextSource(undefined);
+        expect(draft.canSend('')).toBe(false);
+        await view.onClose();
+    });
+
+    it('keeps the captured source after sending even if another note becomes active', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'stable-source-conversation' });
+        const { view, plugin, containerEl, editor } = createView({ chatHistoryManager: manager });
+        const source = createImageTextSource();
+        const prepare = jest.fn(async (_input: { sourceText: string }) => 'STABLE-SOURCE-SENTINEL');
+        Object.assign(plugin, {
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined,
+                submit: async () => ({ taskId: 'stable_source_task' }) },
+            prepareFeaturedImagePrompt: prepare,
+        });
+        await view.onOpen();
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        view.prefillImageDraft('', source);
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        editor.getValue.mockReturnValue('UNRELATED-NEXT-NOTE sentinel');
+        const call = streamCalls[0];
+        try {
+            await call.options.createImage!.submit({ prompt: 'wrong source', operation: 'generate',
+                count: 1, referenceImageRefs: [] });
+            expect(prepare.mock.calls[0]?.[0]).toMatchObject({ sourceText: source.text });
+            expect(JSON.stringify(prepare.mock.calls)).not.toContain('UNRELATED-NEXT-NOTE');
+        } finally {
+            call.resolve();
+            for (let index = 0; index < 5; index++) await flushPromises();
+            await view.onClose();
+        }
+    });
+
+    it('prepares distinct source subrequests with trusted host ordinals and the original request', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'distinct-source-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const source = createImageTextSource();
+        const submit = jest.fn(async (_request?: unknown) => ({ taskId: `distinct_source_task_${submit.mock.calls.length}` }));
+        const prepare = jest.fn(async (input: { imageOrdinal?: number }) => `PREPARED-ITEM-${input.imageOrdinal}`);
+        Object.assign(plugin, {
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            prepareFeaturedImagePrompt: prepare,
+            confirmImageGenerationFirstUse: async () => true,
+        });
+        await view.onOpen();
+        view.prefillImageDraft('一张画蓝色猫，一张画红色狗', source);
+        (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft
+            .setImageGenerationOptions({ model: 'wan2.7-image-pro', count: 2, attachmentPathHint: '' });
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const call = streamCalls[0];
+        try {
+            await call.options.createImage!.submit({ prompt: 'AGENT-ONLY-FIRST-SENTINEL',
+                operation: 'generate', count: 1, referenceImageRefs: [], subrequestIndex: 1 });
+            await call.options.createImage!.submit({ prompt: 'AGENT-ONLY-SECOND-SENTINEL',
+                operation: 'generate', count: 1, referenceImageRefs: [], subrequestIndex: 2 });
+            expect(prepare).toHaveBeenCalledTimes(2);
+            expect(prepare.mock.calls[0][0]).toMatchObject({
+                sourceText: source.text, userRequest: '一张画蓝色猫，一张画红色狗',
+                imageOrdinal: 1, imageTotal: 2,
+            });
+            expect(prepare.mock.calls[1][0]).toMatchObject({
+                sourceText: source.text, userRequest: '一张画蓝色猫，一张画红色狗',
+                imageOrdinal: 2, imageTotal: 2,
+            });
+            expect(JSON.stringify(prepare.mock.calls)).not.toContain('AGENT-ONLY');
+            expect(submit).toHaveBeenNthCalledWith(1, expect.objectContaining({
+                submittedPrompt: 'PREPARED-ITEM-1', count: 1, model: 'wan2.7-image-pro',
+            }));
+            expect(submit).toHaveBeenNthCalledWith(2, expect.objectContaining({
+                submittedPrompt: 'PREPARED-ITEM-2', count: 1, model: 'wan2.7-image-pro',
+            }));
+        } finally {
+            call.resolve();
+            for (let index = 0; index < 5; index++) await flushPromises();
+            await view.onClose();
+        }
+    });
+
+    it.each([
+        ['explicit one versus saved two', '@CreateImage 只生成一张蓝色纸鹤', 2],
+        ['distinct two versus saved one', '@CreateImage 一张蓝色猫，一张红色狗', 1],
+        ['distinct two versus saved three', '@CreateImage 一张蓝色猫，一张红色狗', 3],
+    ] as const)('rejects a count conflict before the first model call: %s', async (_name, prompt, count) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'count-conflict-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async () => ({ taskId: 'unexpected_count_conflict' }));
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined,
+            submit }, confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        view.prefillImageDraft(prompt, createImageTextSource());
+        (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft
+            .setImageGenerationOptions({ model: 'wan2.7-image-pro', count, attachmentPathHint: '' });
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let index = 0; index < 5; index++) await flushPromises();
+
+        expect(streamCalls).toHaveLength(0);
+        expect(submit).not.toHaveBeenCalled();
+        expect(allText(containerEl)).toContain('image count than');
+        expect(getTextArea(containerEl).value).toBe(prompt);
+        await view.onClose();
+    });
+
+    it('does not prepare or submit a source-based image when first-use disclosure is declined', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'declined-first-use-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async () => ({ taskId: 'unexpected_first_use_task' }));
+        const prepare = jest.fn(async () => 'UNEXPECTED-PREPARED');
+        Object.assign(plugin, {
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            prepareFeaturedImagePrompt: prepare,
+            confirmFeaturedImageTextPreparationFirstUse: async () => false,
+        });
+        await view.onOpen();
+        view.prefillImageDraft('', createImageTextSource());
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        try {
+            await expect(streamCalls[0].options.createImage!.submit({ prompt: 'request',
+                operation: 'generate', count: 1, referenceImageRefs: [] })).rejects.toThrow(/Cancelled|AbortError/);
+            expect(prepare).not.toHaveBeenCalled();
+            expect(submit).not.toHaveBeenCalled();
+        } finally {
+            streamCalls[0].resolve();
+            for (let index = 0; index < 5; index++) await flushPromises();
+            await view.onClose();
+        }
+    });
+
+    it('keeps Wan at zero when Featured prompt preparation fails', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'failed-preparation-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const source = createImageTextSource();
+        const submit = jest.fn(async () => ({ taskId: 'unexpected_preparation_task' }));
+        Object.assign(plugin, {
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            prepareFeaturedImagePrompt: async () => { throw new Error('featured_image_prompt:result_too_large'); },
+        });
+        await view.onOpen();
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        view.prefillImageDraft('', source);
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const call = streamCalls[0];
+        try {
+            await expect(call.options.createImage!.submit({ prompt: 'wrong source', operation: 'generate',
+                count: 1, referenceImageRefs: [] })).rejects.toThrow('featured_image_prompt:result_too_large');
+            expect(submit).not.toHaveBeenCalled();
+        } finally {
+            call.resolve();
+            for (let index = 0; index < 5; index++) await flushPromises();
+            await view.onClose();
+        }
+    });
+
+    it('does not submit prepared text after the Wan connection revision changes', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'wan-connection-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const source = createImageTextSource();
+        const submit = jest.fn(async () => ({ taskId: 'unexpected_connection_task' }));
+        let connectionRevision = 7;
+        let releasePreparation!: (value: string) => void;
+        const preparation = new Promise<string>(resolve => { releasePreparation = resolve; });
+        Object.assign(plugin, {
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            prepareFeaturedImagePrompt: () => preparation,
+            captureImageGenerationConnection: () => ({
+                mode: 'dedicated-wan', baseURL: 'https://image.example',
+                synchronousEndpoint: 'unused', asynchronousEndpoint: 'unused', tasksEndpoint: 'unused',
+                credentialSlot: 'image-token', revision: connectionRevision,
+            }),
+        });
+        await view.onOpen();
+        view.prefillImageDraft('', source);
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const call = streamCalls[0];
+        try {
+            const accepted = call.options.createImage!.submit({ prompt: 'request', operation: 'generate',
+                count: 1, referenceImageRefs: [] });
+            await flushPromises();
+            connectionRevision = 8;
+            releasePreparation('PREPARED-AFTER-CONNECTION-CHANGE');
+            await expect(accepted).rejects.toThrow('image_generation:connection_changed');
+            expect(submit).not.toHaveBeenCalled();
+        } finally {
+            releasePreparation('CLEANUP-PREPARED');
+            call.resolve();
+            for (let index = 0; index < 5; index++) await flushPromises();
+            await view.onClose();
+        }
+    });
+
+    it('does not submit a source-based result that arrives after cancellation', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'cancelled-preparation-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const source = createImageTextSource();
+        const submit = jest.fn(async () => ({ taskId: 'unexpected_cancelled_preparation' }));
+        let releasePreparation!: (value: string) => void;
+        const preparation = new Promise<string>(resolve => { releasePreparation = resolve; });
+        Object.assign(plugin, {
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            prepareFeaturedImagePrompt: () => preparation,
+        });
+        await view.onOpen();
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        view.prefillImageDraft('', source);
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const call = streamCalls[0];
+        try {
+            const accepted = call.options.createImage!.submit({ prompt: 'late source', operation: 'generate',
+                count: 1, referenceImageRefs: [] });
+            await flushPromises();
+            getElementByClass(containerEl, 'cancel-button').click();
+            releasePreparation('LATE-CANCELLED-PREPARED-SENTINEL');
+            await expect(accepted).rejects.toThrow('Image request is no longer current.');
+            expect(submit).not.toHaveBeenCalled();
+        } finally {
+            releasePreparation('CLEANUP-CANCELLED-SENTINEL');
+            call.resolve();
+            for (let index = 0; index < 5; index++) await flushPromises();
+            await view.onClose();
+        }
     });
 
     it('passes only the explicitly selected reference image to @CreateImage', async () => {
@@ -3520,6 +4007,10 @@ describe('LLMView turn lifecycle', () => {
         editor.dispatchEvent('input');
         getElementByClass(containerEl, 'send-button-visible').click();
         for (let i = 0; i < 5; i++) await flushPromises();
+        await streamCalls[0].options.createImage!.submit({
+            prompt: '参考这张图的配色，画一只纸鹤', operation: 'reference', count: 1,
+            referenceImageRefs: [`${selected.ref.assetId}:${selected.ref.contentHash}`],
+        });
 
         expect(submit).toHaveBeenCalledTimes(1);
         expect(submit).toHaveBeenCalledWith(expect.objectContaining({ operation: 'reference', count: 1,
@@ -3552,10 +4043,11 @@ describe('LLMView turn lifecycle', () => {
             referenceImageRefs: [], subrequestIndex: 2 });
         expect(submit).toHaveBeenCalledTimes(2);
         expect(submit).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            submittedPrompt: '蓝色猫', count: 1, operation: 'generate',
+            submittedPrompt: '蓝色猫', count: 1, operation: 'generate', model: 'wan2.7-image',
         }));
         expect(submit).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            submittedPrompt: '红色狗', count: 1, operationId: expect.stringContaining('-sub2'),
+            submittedPrompt: '红色狗', count: 1, model: 'wan2.7-image',
+            operationId: expect.stringContaining('-sub2'),
         }));
         await expect(binding.submit({ prompt: '绿色鸟', operation: 'generate', count: 1,
             referenceImageRefs: [], subrequestIndex: 3 })).rejects.toThrow('not authorized');
@@ -3621,6 +4113,8 @@ describe('LLMView turn lifecycle', () => {
         view.prefillComposer('@CreateImage 蓝色纸鹤');
         getElementByClass(containerEl, 'send-button-visible').click();
         for (let i = 0; i < 5; i++) await flushPromises();
+        await streamCalls[0].options.createImage!.submit({ prompt: '蓝色纸鹤',
+            operation: 'generate', count: 1, referenceImageRefs: [] });
         expect(submit).toHaveBeenCalledTimes(1);
         streamCalls[0].onChunk('Image request is running.');
         streamCalls[0].resolve();
@@ -3671,6 +4165,82 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[1].resolve();
         for (let i = 0; i < 5; i++) await flushPromises();
         expect(editor.value).toBe(draftBeforeCompletion);
+        await view.onClose();
+    });
+
+    it('regenerates from the prior submitted prompt and preserves its source lineage', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'regenerate-image-conversation' });
+        await manager.initialize();
+        await manager.startConversation('Create a featured image');
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const inputLineage = {
+            schemaVersion: 1 as const,
+            completeness: 'complete' as const,
+            dependencies: [{ kind: 'vault' as const, path: 'notes/original.md', via: 'note' as const }],
+        };
+        const task: ImageGenerationTask = {
+            schemaVersion: 1, taskId: 'regenerate_source_task', operationId: 'old_operation',
+            conversationId: 'regenerate-image-conversation', stableMessageId: 'old_message',
+            createdAt: '2026-09-18T00:00:00.000Z', updatedAt: '2026-09-18T00:00:00.000Z', revision: 1,
+            request: {
+                userPrompt: 'Create a featured image', submittedPrompt: 'PRIOR-SUBMITTED-SENTINEL',
+                operation: 'generate', model: 'wan2.7-image-pro', count: 2, inputRefs: [],
+                attachmentPathHint: 'attachments/ai',
+                inputLineage: completeInputLineage([
+                    { kind: 'user-text', messageId: 'old_message' },
+                    { kind: 'vault', path: 'notes/original.md', via: 'note' },
+                ]),
+                promptOrigin: { kind: 'selection', displayName: 'original.md', path: 'notes/original.md',
+                    selection: { from: 4, to: 18 }, inputLineage },
+            },
+            connection: { mode: 'inherit-chat', endpointIdentity: 'https://dashscope.aliyuncs.com',
+                credentialSlot: 'chat', revision: 0 },
+            state: 'completed', outputs: [],
+        };
+        const submit = jest.fn(async (_request?: unknown) => ({ taskId: 'regenerated_task' }));
+        const prepare = jest.fn(async () => 'UNEXPECTED-REPREPARATION');
+        Object.assign(plugin, { imageGenerationService: {
+            list: async () => [task], subscribe: () => () => undefined, submit,
+            getSourceReceipt: () => () => true,
+        }, prepareFeaturedImagePrompt: prepare, confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        for (let index = 0; index < 5 && !getButtonsByText(containerEl, 'Regenerate').length; index++) {
+            await flushPromises();
+        }
+        getButtonByText(containerEl, 'Regenerate').click();
+        const textArea = getTextArea(containerEl);
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        const intent = draft.snapshot(textArea.value).imageIntent;
+        expect(textArea.value).toBe('PRIOR-SUBMITTED-SENTINEL');
+        expect(intent).toMatchObject({
+            preparedPrompt: 'PRIOR-SUBMITTED-SENTINEL',
+            reusePreparedPrompt: true,
+            promptOrigin: task.request.promptOrigin,
+            generationOptions: { model: 'wan2.7-image-pro', count: 2, attachmentPathHint: 'attachments/ai' },
+        });
+
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        await streamCalls[0].options.createImage!.submit({ prompt: 'agent rephrasing',
+            operation: 'generate', count: 1, referenceImageRefs: [] });
+        expect(prepare).not.toHaveBeenCalled();
+        expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+            userPrompt: 'PRIOR-SUBMITTED-SENTINEL',
+            submittedPrompt: 'PRIOR-SUBMITTED-SENTINEL',
+            model: 'wan2.7-image-pro',
+            count: 2,
+            promptOrigin: task.request.promptOrigin,
+        }));
+        expect((submit.mock.calls[0][0] as { inputLineage?: { completeness: string; dependencies: unknown[] } }).inputLineage)
+            .toMatchObject({ completeness: 'complete' });
+        expect((submit.mock.calls[0][0] as { inputLineage?: { dependencies: unknown[] } }).inputLineage?.dependencies)
+            .toEqual(expect.arrayContaining(task.request.inputLineage!.dependencies));
+        const regenerateReceipt = (submit.mock.calls[0][0] as { isSourceCurrent?: () => boolean }).isSourceCurrent;
+        expect(regenerateReceipt?.()).toBe(true);
+        streamCalls[0].resolve();
+        await flushPromises();
+        expect(regenerateReceipt?.()).toBe(true);
         await view.onClose();
     });
 
@@ -3734,6 +4304,8 @@ describe('LLMView turn lifecycle', () => {
             view.prefillComposer('@CreateImage 一只蓝色纸鹤');
             getElementByClass(containerEl, 'send-button-visible').click();
             for (let i = 0; i < 5; i++) await flushPromises();
+            await streamCalls[0].options.createImage!.submit({ prompt: '一只蓝色纸鹤',
+                operation: 'generate', count: 1, referenceImageRefs: [] });
             task = { ...task!, state: 'completed', revision: 2, outputs: [{ outputId: 'output_0', providerOrdinal: 0,
                 saveState: 'saved', assetRef: { assetId: 'scoped_image', contentHash: 'a'.repeat(64) } }] };
             notifyTask?.(task);
@@ -3807,6 +4379,9 @@ describe('LLMView turn lifecycle', () => {
         await first.view.onOpen();
         first.view.prefillComposer('@CreateImage 蓝色纸鹤');
         getElementByClass(first.containerEl, 'send-button-visible').click();
+        await flushPromises();
+        await streamCalls[0].options.createImage!.submit({ prompt: '蓝色纸鹤',
+            operation: 'generate', count: 1, referenceImageRefs: [] });
         for (let i = 0; i < 10 && !storedTask; i++) await flushPromises();
         expect(storedTask).toBeDefined();
         await storedTask;
@@ -5505,7 +6080,7 @@ describe('LLMView turn lifecycle', () => {
         getTextArea(containerEl).value = 'draw a graph';
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
-        app.workspace.getActiveFile.mockReturnValue({ path: '0.unsorted/Cat.md', extension: 'md' });
+        app.workspace.getActiveFile.mockReturnValue({ path: '0.unsorted/Cat.md', basename: 'Cat', extension: 'md' });
 
         streamCalls[0].onChunk(content);
         streamCalls[0].resolve();
@@ -5793,7 +6368,7 @@ describe('LLMView turn lifecycle', () => {
         getTextArea(containerEl).value = 'broken graph';
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
-        app.workspace.getActiveFile.mockReturnValue({ path: '0.unsorted/Cat.md', extension: 'md' });
+        app.workspace.getActiveFile.mockReturnValue({ path: '0.unsorted/Cat.md', basename: 'Cat', extension: 'md' });
         streamCalls[0].onChunk(content);
         await flushPromises();
         await flushPromises();

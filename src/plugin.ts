@@ -6,7 +6,7 @@ import { getApi } from "obsidian-callout-manager";
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
 import { AgentDebugPluginIntegration } from './agent-debug/plugin-integration';
 import { AgentDebugView, AGENT_DEBUG_VIEW_TYPE } from './agent-debug/view';
-import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
+import { AssistantHelper } from "./ai";
 import {
     AIUtils,
     type AIReadinessScope,
@@ -1067,6 +1067,9 @@ export class PluginManager extends Plugin {
         getImageToken: async (mode) => mode === "dedicated-wan"
             ? this.getConfiguredImageAPITokenSecret()
             : await this.getAPIToken(),
+        getProviderConfigurationRevision: () => this.aiProviderConfigurationRevision,
+        getTokenRevision: () => this.aiTokenRevision,
+        hasActiveAIProviderCredentialTransition: () => this.hasActiveAIProviderCredentialTransition(),
         showImageSyncNotice: (receipt) => new Notice(this.t("plugin.chat.images.sync", {
             directory: receipt.directory,
         }), 12000),
@@ -1081,6 +1084,7 @@ export class PluginManager extends Plugin {
             getAIReadiness: (scope) => this.getAIReadiness(scope),
             refreshAPITokenPresence: () => this.refreshAPITokenPresence(),
             confirmImageGenerationFirstUse: () => this.confirmImageGenerationFirstUse(),
+            confirmFeaturedImageTextPreparationFirstUse: () => this.confirmFeaturedImageTextPreparationFirstUse(),
             rememberWritingStyle: (versionId, scene) => this.rememberWritingStyle(versionId, scene),
             readWritingStyleReferences: (revisionIds, signal) => this.getWritingStyleService()
                 ?.readReferences(revisionIds, signal) ?? Promise.resolve([]),
@@ -1445,27 +1449,17 @@ export class PluginManager extends Plugin {
     private readonly aiActions = new AIActions({
         ensureAIConfigured: () => this.ensureAIConfigured(),
         getImageGenerationConnection: () => this.getImageGenerationConnection(),
-        getProviderConnection: () => ({
-            aiProvider: this.settings.aiProvider,
-            baseURL: this.settings.baseURL,
-            chatModelName: this.settings.chatModelName,
-            embeddingModelName: this.settings.embeddingModelName,
-        }),
         getFeaturedImageDefaults: () => ({
             featuredImageModel: this.settings.featuredImageModel,
             numFeaturedImages: this.settings.numFeaturedImages,
             featuredImagePath: this.settings.featuredImagePath,
         }),
-        isUnloading: () => this.unloading,
-        hasActiveAIProviderCredentialTransition: () => this.hasActiveAIProviderCredentialTransition(),
-        getProviderConfigurationRevision: () => this.aiProviderConfigurationRevision,
-        getTokenRevision: () => this.aiTokenRevision,
-        getFileByPath: (path) => this.app.vault.getAbstractFileByPath(path),
-        getConfiguredImageAPITokenSecret: () => this.getConfiguredImageAPITokenSecret(),
-        getAPIToken: () => this.getAPIToken(),
         saveFeaturedImageDefaults: (options) => this.saveFeaturedImageDefaults(options),
         createSummaryHelper: (editor, view) => new AssistantHelper(this, editor, view),
-        createFeaturedImageHelper: (editor, view) => new AssistantFeaturedImageHelper(this.app, this, editor, view),
+        openChatImageDraft: async source => {
+            const chatView = await this.activeChatView();
+            return chatView?.prefillImageDraft('', source) ?? false;
+        },
         openSharedFeatureModal: (host) => this.openSharedFeatureModal(host),
         log: (message, ...args) => this.log(message, ...args),
     });
@@ -8209,8 +8203,8 @@ export class PluginManager extends Plugin {
         await this.settingsPersistence.saveGraphOptions(options);
     }
 
-    openFeaturedImageOptions(editor?: Editor, view?: MarkdownView): Modal | null {
-        return this.aiActions.openFeaturedImageOptions(editor, view);
+    openFeaturedImageOptions(): Modal | null {
+        return this.aiActions.openFeaturedImageOptions();
     }
 
     private openSharedFeatureModal(host: FeaturedImageOptionsModalHost): Modal {
@@ -9115,6 +9109,27 @@ export class PluginManager extends Plugin {
         await this.enqueueSettingsWrite(async () => {
             if (this.unloading) throw new Error('Plugin is unloading');
             await this.saveSettingsData({ ...this.settings, imageGenerationFirstUseNoticeShown: true });
+            this.settings.imageGenerationFirstUseNoticeShown = true;
+        });
+        return true;
+    }
+
+    private async confirmFeaturedImageTextPreparationFirstUse(): Promise<boolean> {
+        if (this.settings.featuredImageTextPreparationNoticeShown) return true;
+        const approved = await confirmUserAction(this.app, {
+            title: this.t('plugin.featuredImageTextPreparation.firstUseTitle'),
+            message: this.t('plugin.featuredImageTextPreparation.firstUseMessage'),
+            confirmText: this.t('plugin.featuredImageTextPreparation.firstUseConfirm'),
+        });
+        if (!approved) return false;
+        await this.enqueueSettingsWrite(async () => {
+            if (this.unloading) throw new Error('Plugin is unloading');
+            await this.saveSettingsData({
+                ...this.settings,
+                featuredImageTextPreparationNoticeShown: true,
+                imageGenerationFirstUseNoticeShown: true,
+            });
+            this.settings.featuredImageTextPreparationNoticeShown = true;
             this.settings.imageGenerationFirstUseNoticeShown = true;
         });
         return true;

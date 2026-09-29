@@ -42,7 +42,7 @@ describe("B-133 create_image host binding", () => {
         const first = await tool.execute(tool.validateInput(request), {} as ChatToolContext);
         const second = await tool.execute(tool.validateInput({ ...request, prompt: "Try a different scene" }), {} as ChatToolContext);
         expect(submit).toHaveBeenCalledTimes(1);
-        expect(submit).toHaveBeenCalledWith(request);
+        expect((submit.mock.calls[0] as unknown[])[0]).toEqual(request);
         expect(first.content).toEqual({ status: "accepted", taskId: "task-1" });
         expect(second.content).toEqual({
             status: "already_accepted", taskId: "task-1",
@@ -69,7 +69,8 @@ describe("B-133 create_image host binding", () => {
 
         const result = await tool.execute(tool.validateInput(request), context);
         expect(result.ok).toBe(true);
-        expect(submit).toHaveBeenCalledWith(request, expect.any(Function));
+        expect((submit.mock.calls[0] as unknown[])[0]).toEqual(request);
+        expect((submit.mock.calls[0] as unknown[])[1]).toEqual(expect.any(Function));
         expect(receipt?.()).toBe(true);
         sourceCurrent = false;
         expect(receipt?.()).toBe(false);
@@ -121,6 +122,17 @@ describe("B-133 create_image host binding", () => {
         const result = await tool.execute(tool.validateInput(request), {} as ChatToolContext);
         expect(result.error).toMatch(/compatible Wan connection/);
         expect(result.error).not.toMatch(/Check its card/);
+    });
+
+    it("explains unusable description preparation without implying Wan acceptance", async () => {
+        const tool = createCreateImageTool({ conversationId: "conversation-1", stableMessageId: "message-1",
+            operationId: "operation-1", submit: async () => {
+                throw new Error("featured_image_prompt:nontext_result");
+            } });
+        const result = await tool.execute(tool.validateInput(request), {} as ChatToolContext);
+        expect(result.error).toMatch(/no usable image description/);
+        expect(result.error).toMatch(/Wan was not called/);
+        expect(result.error).not.toMatch(/Check its card|accepted|unknown/i);
     });
 
     it("asks the user to choose a supported count instead of silently making fewer images", async () => {

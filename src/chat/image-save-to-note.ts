@@ -1,4 +1,5 @@
-import { Modal, TFile, type App } from 'obsidian';
+import { Modal, TFile, normalizePath, type App } from 'obsidian';
+import { getFeaturedImageSavePath, normalizeFeaturedImageFolderPath } from '../ai-services/featured-image-path';
 import { getPluginUiLanguage, makePluginTranslator } from '../locales/plugin';
 import type { ImageAssetService } from './image-assets';
 import type { ImageRef } from './image-types';
@@ -34,7 +35,8 @@ export class GeneratedImageNotePickerModal extends Modal {
 
 /** Promote a generated original once, then append a Markdown embed to the chosen note. */
 export async function saveGeneratedImageToNote(app: App, images: ImageAssetService,
-    ref: ImageRef, note: TFile, operationId: string, assertSourceCurrent?: () => void): Promise<void> {
+    ref: ImageRef, note: TFile, operationId: string, assertSourceCurrent?: () => void,
+    attachmentPathHint?: string): Promise<void> {
     const requireNote = () => {
         assertSourceCurrent?.();
         if (note.extension !== 'md' || app.vault.getAbstractFileByPath(note.path) !== note) {
@@ -48,14 +50,29 @@ export async function saveGeneratedImageToNote(app: App, images: ImageAssetServi
     if (asset.source === 'imported') {
         const filename = imagePath.split('/').pop();
         if (!filename) throw new Error('Generated image has no filename.');
-        const result = await images.promoteToNote(ref, { sourcePath: imagePath, operationId,
-            ...(assertSourceCurrent ? { isCurrent: () => { assertSourceCurrent(); return true; } } : {}),
-            targetPath: async () => {
-                requireNote();
+        const resolveTargetPath = async () => {
+            requireNote();
+            if (!attachmentPathHint?.trim()) {
                 const path = await app.fileManager.getAvailablePathForAttachment(filename, note.path);
                 requireNote();
                 return path;
-            } });
+            }
+            const folderPath = normalizeFeaturedImageFolderPath(attachmentPathHint);
+            const base = getFeaturedImageSavePath(folderPath, filename);
+            let target = base;
+            let ordinal = 1;
+            while (app.vault.getAbstractFileByPath(target)) {
+                const extension = filename.includes('.') ? `.${filename.split('.').pop()}` : '';
+                const stem = extension ? filename.slice(0, -extension.length) : filename;
+                ordinal += 1;
+                target = normalizePath(`${folderPath ? `${folderPath}/` : ''}${stem}-${operationId}-${ordinal}${extension}`);
+            }
+            requireNote();
+            return target;
+        };
+        const result = await images.promoteToNote(ref, { sourcePath: imagePath, operationId,
+            ...(assertSourceCurrent ? { isCurrent: () => { assertSourceCurrent(); return true; } } : {}),
+            targetPath: resolveTargetPath });
         imagePath = result.path;
     }
     requireNote();

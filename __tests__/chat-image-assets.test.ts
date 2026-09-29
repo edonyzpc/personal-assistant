@@ -61,6 +61,7 @@ function setup(store = new MemoryChatHistoryStore()) {
             sourceHash: await imageSourceHash(input), processorVersion: PROCESSOR_VERSION, policyFingerprint: imagePolicyFingerprint(options.purpose) })),
         dispose: jest.fn(async () => undefined),
     };
+    let deniedPath: string | undefined;
     const app = { vault, fileManager: {
         getAvailablePathForAttachment: jest.fn(async (name: string, _anchor: string) => `attachments/${name}`),
         generateMarkdownLink: (file: TFile) => `[[${file.path}]]`,
@@ -72,8 +73,14 @@ function setup(store = new MemoryChatHistoryStore()) {
             listeners.get('rename')?.(file, oldPath);
         }),
     } } as unknown as App;
-    const service = new ImageAssetService(app, store, { processor });
-    return { service, store, data, entries, listeners, vault, processor, app };
+    const service = new ImageAssetService(app, store, {
+        processor,
+        isPathAllowed: path => path !== deniedPath,
+    });
+    return {
+        service, store, data, entries, listeners, vault, processor, app,
+        setDeniedPath: (path: string | undefined) => { deniedPath = path; },
+    };
 }
 
 async function holdImageQueue(h: ReturnType<typeof setup>) {
@@ -250,6 +257,38 @@ describe('chat-only images become shared note attachments', () => {
             .rejects.toThrow('Selected note');
         expect(h.app.fileManager.renameFile).not.toHaveBeenCalled();
         expect(h.data.get(imported.asset.originalPath)).toEqual(jpeg());
+    });
+
+    it('uses the configured formal attachment directory without falling back silently', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        const filename = imported.asset.originalPath.split('/').pop();
+        const note = await h.vault.create('Current note.md', 'Existing body');
+        Object.assign(note, { extension: 'md' });
+        (h.app.fileManager.getAvailablePathForAttachment as jest.Mock).mockClear();
+        await saveGeneratedImageToNote(h.app, h.service, imported.ref, note,
+            'generated_task_output_0', undefined, '/attachments/formal/');
+        expect(h.vault.createFolder).toHaveBeenCalledWith('attachments/formal');
+        expect(h.app.fileManager.getAvailablePathForAttachment).not.toHaveBeenCalled();
+        const saved = (await h.service.readOriginal(imported.ref)).asset;
+        expect(saved.originalPath).toBe(`attachments/formal/${filename}`);
+        expect(await h.vault.read(note)).toBe(`Existing body\n\n![[${saved.originalPath}]]\n`);
+    });
+
+    it('rejects a disallowed formal directory before any target mutation', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        const note = await h.vault.create('Current note.md', 'Existing body');
+        Object.assign(note, { extension: 'md' });
+        h.setDeniedPath(`attachments/denied/${imported.asset.originalPath.split('/').pop()}`);
+        h.vault.createFolder.mockClear();
+        (h.app.fileManager.renameFile as jest.Mock).mockClear();
+        h.vault.process.mockClear();
+
+        await expect(saveGeneratedImageToNote(h.app, h.service, imported.ref, note,
+            'generated_task_output_0', undefined, '/attachments/denied/')).rejects.toThrow('image_assets:path_not_allowed');
+        expect(h.vault.createFolder).not.toHaveBeenCalled();
+        expect(h.app.fileManager.renameFile).not.toHaveBeenCalled();
+        expect(h.vault.process).not.toHaveBeenCalled();
+        expect(h.entries.has('attachments/denied')).toBe(false);
     });
 
     it('does not promote a scoped original after revocation between target selection and rename', async () => {

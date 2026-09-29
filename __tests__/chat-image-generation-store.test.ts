@@ -3,7 +3,7 @@ import {
     CHAT_HISTORY_IDB_VERSION, IndexedDbChatHistoryStore, MemoryChatHistoryStore,
     type ChatHistoryStore,
 } from '../src/chat/chat-history-store';
-import type { GeneratedImageVersion, ImageGenerationTask } from '../src/chat/image-generation-types';
+import { cloneImageGenerationTask, type GeneratedImageVersion, type ImageGenerationTask } from '../src/chat/image-generation-types';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 
 const now = '2026-09-18T12:00:00.000Z';
@@ -158,6 +158,41 @@ describe.each(['memory', 'indexeddb'] as const)('image generation task store (%s
             updatedAt: now, turnCount: 0, preview: '' });
         return { store, factory };
     }
+
+    it('keeps optional prompt provenance while preserving schema-version one records', () => {
+        const oldRecord = task();
+        expect(cloneImageGenerationTask(oldRecord)).toEqual(oldRecord);
+
+        const inputLineage = {
+            schemaVersion: 1 as const,
+            completeness: 'complete' as const,
+            dependencies: [{ kind: 'vault' as const, path: 'notes/source.md', via: 'note' as const }],
+        };
+        const sourced = task({
+            request: {
+                ...task().request,
+                model: 'wan2.7-image-pro',
+                attachmentPathHint: 'attachments/ai',
+                promptOrigin: {
+                    kind: 'selection',
+                    displayName: 'source.md',
+                    path: 'notes/source.md',
+                    selection: { from: 4, to: 18 },
+                    inputLineage,
+                },
+            },
+        });
+        const cloned = cloneImageGenerationTask(sourced);
+        expect(cloned.request.promptOrigin).toEqual(sourced.request.promptOrigin);
+        expect(cloned.request.attachmentPathHint).toBe('attachments/ai');
+        (inputLineage.dependencies[0] as { path: string }).path = 'notes/changed.md';
+        expect((cloned.request.promptOrigin?.inputLineage.dependencies[0] as { path: string }).path)
+            .toBe('notes/source.md');
+        expect(() => cloneImageGenerationTask({
+            ...sourced,
+            request: { ...sourced.request, promptOrigin: { ...sourced.request.promptOrigin!, inputLineage: {} } },
+        })).toThrow('Invalid image prompt origin lineage.');
+    });
 
     it('forgets only the task owned by a deleted message', async () => {
         const { store } = await open();

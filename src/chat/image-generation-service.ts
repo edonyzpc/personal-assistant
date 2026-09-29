@@ -3,10 +3,12 @@ import { WanImageProvider, WanImageProviderError, type WanImageTask } from '../a
 import { inspectImage } from './image-format';
 import { prepareWanImageInput } from './image-generation-input';
 import { imageSourceHash } from './image-policy';
+import { cloneInputLineage } from '../ai-services/input-lineage';
 import type { ChatHistoryStore } from './chat-history-store';
 import type { ImageAssetService } from './image-assets';
 import { cloneImageRef, type ImageRef, type ImageSyncReceipt } from './image-types';
-import type { GeneratedImageVersion, ImageGenerationTask } from './image-generation-types';
+import type { GeneratedImageVersion, ImageGenerationPromptOrigin, ImageGenerationTask } from './image-generation-types';
+import { normalizeFeaturedImageFolderPath } from '../ai-services/featured-image-path';
 
 const MAX_RESULT_BYTES = 20 * 1024 * 1024;
 const POLL_DELAY_MS = 3_000;
@@ -25,6 +27,12 @@ export interface ImageGenerationSubmitInput {
     count: number;
     inputRefs: ImageRef[];
     parentVersionId?: string;
+    model?: string;
+    promptOrigin?: ImageGenerationPromptOrigin;
+    inputLineage?: import('./image-generation-types').ImageGenerationTask['request']['inputLineage'];
+    attachmentPathHint?: string;
+    /** A visible per-draft count selector is explicit user authorization for this request. */
+    countExplicitlyAuthorized?: boolean;
     /** Never persisted; scoped PA Chat source admission for the derived prompt. */
     isSourceCurrent?: () => boolean;
 }
@@ -94,6 +102,11 @@ export class ImageGenerationService {
         return this.options.store.getImageGenerationTask(taskId);
     }
 
+    /** Return the still-live in-memory source receipt captured with an accepted task. */
+    getSourceReceipt(taskId: string): (() => boolean) | undefined {
+        return this.sourceReceipts.get(taskId);
+    }
+
     async getVersion(versionId: string): Promise<GeneratedImageVersion | null> {
         const version = await this.options.store.getGeneratedImageVersion(versionId);
         if (!version) return null;
@@ -129,19 +142,25 @@ export class ImageGenerationService {
         if (!await this.options.store.getConversation(input.conversationId)) {
             throw new Error('image_generation:conversation_unavailable');
         }
-        if (Number.isInteger(input.count) && input.count > 4) {
-            throw new Error('image_generation:count_exceeds_provider_limit');
+        const model = input.model ?? 'wan2.7-image';
+        if (model !== 'wan2.7-image' && model !== 'wan2.7-image-pro') {
+            throw new Error('image_generation:invalid_model');
+        }
+        const count = input.count;
+        if (!Number.isSafeInteger(count) || count < 1 || count > 4) {
+            throw new Error(count > 4
+                ? 'image_generation:count_exceeds_provider_limit' : 'image_generation:invalid_request');
         }
         if (!input.userPrompt.trim() || !input.submittedPrompt.trim() || Array.from(input.submittedPrompt).length > 5000
-            || !Number.isInteger(input.count) || input.count < 1 || input.inputRefs.length > 8) {
+            || input.inputRefs.length > 8) {
             throw new Error('image_generation:invalid_request');
         }
-        if (input.count > 1) {
-            const word = COUNT_WORDS[input.count - 2];
-            const english = ENGLISH_COUNTS[input.count - 2];
+        if (count > 1 && !input.countExplicitlyAuthorized) {
+            const word = COUNT_WORDS[count - 2];
+            const english = ENGLISH_COUNTS[count - 2];
             const explicit = new RegExp(`(?:${input.count}|${word})\\s*(?:张|幅|个|幅图|张图)|(?:${input.count}|${english})\\s*(?:images?|pictures?|photos?)`, 'i');
             const separateOnes = [...input.userPrompt.matchAll(/(?:一|1|one)\s*(?:张|幅|个(?:图|图片|照片)|images?|pictures?|photos?)/gi)].length;
-            if (!explicit.test(input.userPrompt) && separateOnes !== input.count) {
+            if (!explicit.test(input.userPrompt) && separateOnes !== count) {
                 throw new Error('image_generation:count_needs_confirmation');
             }
         }
@@ -160,9 +179,14 @@ export class ImageGenerationService {
             conversationId: input.conversationId, stableMessageId: input.stableMessageId,
             createdAt: now, updatedAt: now, revision: 0,
             request: { userPrompt: input.userPrompt, submittedPrompt: input.submittedPrompt,
-                operation: input.operation, model: 'wan2.7-image', count: input.count,
+                operation: input.operation, model, count,
                 size: '2K', inputRefs: input.inputRefs.map(cloneImageRef),
-                ...(input.parentVersionId ? { parentVersionId: input.parentVersionId } : {}) },
+                ...(input.parentVersionId ? { parentVersionId: input.parentVersionId } : {}),
+                            ...(input.promptOrigin ? { promptOrigin: input.promptOrigin } : {}),
+                            ...(input.inputLineage ? { inputLineage: cloneInputLineage(input.inputLineage) } : {}),
+                ...(input.attachmentPathHint ? {
+                    attachmentPathHint: normalizeFeaturedImageFolderPath(input.attachmentPathHint),
+                } : {}) },
             connection: { mode: connection.mode, endpointIdentity: connection.baseURL,
                 credentialSlot: connection.credentialSlot, revision: connection.revision },
             state: 'prepared', outputs: [],
@@ -398,7 +422,11 @@ export class ImageGenerationService {
                 let submitted: WanImageTask;
                 try {
                     if (!this.isSourceCurrent(taskId, task)) throw new Error('image_generation:source_changed');
-                    submitted = await provider.submit({ model: 'wan2.7-image', prompt: task.request.submittedPrompt,
+                    if (task.request.model !== 'wan2.7-image' && task.request.model !== 'wan2.7-image-pro') {
+                        throw new Error('image_generation:invalid_model');
+                    }
+                    submitted = await provider.submit({ model: task.request.model,
+                        prompt: task.request.submittedPrompt,
                         count: task.request.count, size: '2K', referenceImages: images });
                 } catch (error) {
                     const sourceChanged = error instanceof Error && error.message === 'image_generation:source_changed';

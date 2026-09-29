@@ -57,6 +57,9 @@ export function installChatPluginIntegration(plugin: any): void {
         getImageToken: async (mode) => mode === "dedicated-wan"
             ? plugin.getConfiguredImageAPITokenSecret?.() ?? null
             : await plugin.getAPIToken(),
+        getProviderConfigurationRevision: () => 0,
+        getTokenRevision: () => 0,
+        hasActiveAIProviderCredentialTransition: () => false,
         showImageSyncNotice: () => undefined,
         createOperationsSession: () => plugin.getOperationsService().createSession({ surface: "chat" }),
         createAiServiceHost: () => plugin.createAiServiceHost("chat"),

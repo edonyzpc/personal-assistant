@@ -4,7 +4,7 @@ import type { ParsedBufferedToolCall } from '../src/ai-services/pa-agent-types';
 import type { TaskSourceConstraint } from '../src/ai-services/task-source-constraint';
 import type { ChatMessage, PaAgentMessage } from '../src/ai-services/chat-types';
 import { createTaskSourceConstrainedExecutor } from '../src/ai-services/task-source-executor';
-import { completeInputLineage, toGenerationInputLineage } from '../src/ai-services/input-lineage';
+import { completeInputLineage, toGenerationInputLineage, unknownInputLineage } from '../src/ai-services/input-lineage';
 import {
     MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS,
     MAX_TASK_SOURCE_NOTE_HANDLES,
@@ -212,6 +212,49 @@ describe('Task source run host', () => {
         expect(directory.isCurrent()).toBe(true);
         h.files.delete(h.a.path);
         expect(directory.isCurrent()).toBe(false);
+    });
+
+    it('keeps an accepted image source receipt valid across Chat context reset until its file identity changes', () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, runSourceSelection: {
+            schemaVersion: 1, scope: 'notes', selectionId: 'image-run', userMessageId: h.host.userMessageId,
+        } });
+        const lineage = completeInputLineage([
+            { kind: 'user-text', messageId: h.host.userMessageId },
+            { kind: 'vault', path: h.a.path, via: 'note' },
+        ]);
+        const receipt = run.captureImageTaskSourceValidity(lineage);
+        expect(receipt()).toBe(true);
+
+        h.setCurrent(false);
+        expect(run.captureLineageSourceValidity(lineage)()).toBe(false);
+        expect(receipt()).toBe(true);
+
+        h.files.delete(h.a.path);
+        expect(receipt()).toBe(false);
+        const replacement = { path: h.a.path };
+        h.files.set(h.a.path, replacement);
+        expect(receipt()).toBe(false);
+    });
+
+    it('rejects a Web-only image lineage before capture and keeps unknown Regenerate proof ineligible', () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, runSourceSelection: {
+            schemaVersion: 1, scope: 'web', selectionId: 'image-web-run', userMessageId: h.host.userMessageId,
+        } });
+        const notesLineage = completeInputLineage([
+            { kind: 'user-text', messageId: h.host.userMessageId },
+            { kind: 'vault', path: h.a.path, via: 'note' },
+        ]);
+        expect(run.admitsLineage(notesLineage)).toBe(false);
+        expect(run.captureImageTaskSourceValidity(notesLineage)()).toBe(false);
+
+        const unknownLineage = unknownInputLineage([
+            { kind: 'user-text', messageId: h.host.userMessageId },
+        ]);
+        expect(run.admitsLineage(unknownLineage)).toBe(false);
+        expect(run.captureImageTaskSourceValidity(unknownLineage)).toBeDefined();
+        expect(run.captureImageTaskSourceValidity(unknownLineage)()).toBe(false);
     });
 
     it('keeps a pure user-text web instruction current when the optional Web capability is off', () => {

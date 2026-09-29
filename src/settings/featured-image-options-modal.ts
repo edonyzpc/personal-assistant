@@ -1,26 +1,15 @@
-import { Modal, Notice, type App } from 'obsidian';
+import { Modal, type App } from 'obsidian';
 import { normalizeFeaturedImageCount, normalizeFeaturedImageModel } from '../settings';
 import { getPluginUiLanguage, makePluginTranslator } from '../locales/plugin';
-import {
-    freezeFeaturedImageRunOptions,
-    type FeaturedImageDefaults,
-    type FeaturedImageRunAdmission,
-    type FeaturedImageRunOptions,
-} from '../ai-services/featured-image-options';
+import type { FeaturedImageDefaults } from '../ai-services/featured-image-options';
 
 export type FeaturedImageOptionsModalHost = {
+    readonly mode: 'edit';
     readonly defaults: FeaturedImageDefaults;
     saveDefaults(defaults: FeaturedImageDefaults): Promise<void>;
-} & ({
-    readonly mode: 'edit';
-} | {
-    readonly mode: 'generate';
-    readonly sourceName: string;
-    prepareRun(): FeaturedImageRunAdmission | null;
-    generate(options: FeaturedImageRunOptions): Promise<void>;
-});
+};
 
-/** One local draft surface shared by Settings and the existing image command. */
+/** Edit stored defaults; request-specific choices now belong to the Chat draft. */
 export class FeaturedImageOptionsModal extends Modal {
     private closed = true;
     private busy = false;
@@ -38,10 +27,6 @@ export class FeaturedImageOptionsModal extends Modal {
         this.contentEl.empty();
         this.contentEl.addClass('pa-featured-image-options');
         this.titleEl.setText(t('plugin.settings.featuredImage.options.title'));
-        if (host.mode === 'generate') {
-            this.contentEl.createEl('p', { cls: 'pa-featured-image-options__source',
-                text: t('plugin.settings.featuredImage.options.source', { name: host.sourceName }) });
-        }
 
         const fields = this.contentEl.createEl('fieldset', { cls: 'pa-featured-image-options__fields' });
         fields.createEl('legend', { cls: 'pa-sr-only', text: t('plugin.settings.featuredImage.options.title') });
@@ -51,9 +36,7 @@ export class FeaturedImageOptionsModal extends Modal {
         for (const [value, key] of [
             ['wan2.7-image', 'plugin.settings.featuredImage.model.balanced'],
             ['wan2.7-image-pro', 'plugin.settings.featuredImage.model.quality'],
-        ] as const) {
-            model.createEl('option', { text: t(key), attr: { value } });
-        }
+        ] as const) model.createEl('option', { text: t(key), attr: { value } });
         model.value = normalizeFeaturedImageModel(host.defaults.featuredImageModel);
         fields.createEl('p', { cls: 'pa-featured-image-options__hint', text: t('plugin.settings.featuredImage.model.desc') });
 
@@ -76,27 +59,21 @@ export class FeaturedImageOptionsModal extends Modal {
         const actions = this.contentEl.createDiv({ cls: 'pa-featured-image-options__actions' });
         const cancel = actions.createEl('button', { text: t('plugin.settings.featuredImage.options.cancel'), attr: { type: 'button' } });
         cancel.onclick = () => this.close();
-        const submit = actions.createEl('button', { cls: 'mod-cta', attr: { type: 'button' },
-            text: t(host.mode === 'generate' ? 'plugin.settings.featuredImage.options.generate' : 'plugin.settings.featuredImage.options.save') });
-        submit.onclick = async () => {
+        const save = actions.createEl('button', { cls: 'mod-cta', attr: { type: 'button' },
+            text: t('plugin.settings.featuredImage.options.save') });
+        save.onclick = async () => {
             if (this.closed || this.busy || epoch !== this.renderEpoch) return;
-            const defaults: FeaturedImageDefaults = Object.freeze({
-                featuredImageModel: normalizeFeaturedImageModel(model.value),
-                numFeaturedImages: normalizeFeaturedImageCount(count.value),
-                featuredImagePath: path.value,
-            });
-            const admission = host.mode === 'generate' ? host.prepareRun() : null;
-            if (host.mode === 'generate' && (!admission || !admission.isCurrent())) {
-                status.setText(t('plugin.settings.featuredImage.options.changed'));
-                return;
-            }
             this.busy = true;
             fields.disabled = true;
-            submit.disabled = true;
+            save.disabled = true;
             this.contentEl.setAttribute('aria-busy', 'true');
             status.setText(t('plugin.settings.featuredImage.options.saving'));
             try {
-                await host.saveDefaults(defaults);
+                await host.saveDefaults({
+                    featuredImageModel: normalizeFeaturedImageModel(model.value),
+                    numFeaturedImages: normalizeFeaturedImageCount(count.value),
+                    featuredImagePath: path.value,
+                });
             } catch {
                 if (!this.closed && epoch === this.renderEpoch) {
                     status.setText(t('plugin.settings.featuredImage.options.saveFailed'));
@@ -106,23 +83,12 @@ export class FeaturedImageOptionsModal extends Modal {
                 this.busy = false;
                 if (!this.closed && epoch === this.renderEpoch) {
                     fields.disabled = false;
-                    submit.disabled = false;
+                    save.disabled = false;
                     this.contentEl.setAttribute('aria-busy', 'false');
                 }
             }
             if (this.closed || epoch !== this.renderEpoch) return;
-            if (host.mode === 'generate' && admission) {
-                if (!admission.isCurrent()) {
-                    status.setText(t('plugin.settings.featuredImage.options.savedChanged'));
-                    return;
-                }
-                const options = freezeFeaturedImageRunOptions({ ...defaults, ...admission });
-                this.close();
-                try { await host.generate(options); }
-                catch { new Notice(t('plugin.ai.notice.featuredFailed'), 5000); }
-            } else {
-                this.close();
-            }
+            this.close();
         };
         model.focus();
     }

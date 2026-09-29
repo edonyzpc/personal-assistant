@@ -87,11 +87,16 @@ describe('image generation service admission and recovery', () => {
             providerFactory: () => new WanImageProvider({ baseURL, apiKey: 'synthetic-token', request: physicalRequest }),
         });
         try {
-            const { taskId } = await service.submit({ ...input, submittedPrompt: 'EXPLICIT_USER_PROMPT_SENTINEL' });
+            const { taskId } = await service.submit({ ...input, model: 'wan2.7-image-pro',
+                submittedPrompt: 'FEATURED-DEFERRED-PREPARED-SENTINEL' });
             await settle(async () => physicalRequest.mock.calls.some(([request]) => request?.method === 'POST'));
             expect((await service.get(taskId))?.requiresSourceReceipt).toBeUndefined();
-            expect(String(physicalRequest.mock.calls.find(([request]) => request?.method === 'POST')?.[0]?.body))
-                .toContain('EXPLICIT_USER_PROMPT_SENTINEL');
+            const body = JSON.parse(String(physicalRequest.mock.calls
+                .find(([request]) => request?.method === 'POST')?.[0]?.body));
+            expect(body).toMatchObject({
+                model: 'wan2.7-image-pro',
+                input: { messages: [{ role: 'user', content: [{ text: 'FEATURED-DEFERRED-PREPARED-SENTINEL' }] }] },
+            });
         } finally { service.dispose(); }
     });
 
@@ -186,7 +191,7 @@ describe('image generation service admission and recovery', () => {
             return { taskId: 'wan_one', status: 'PENDING' as const, imageUrls: [] };
         }), query: jest.fn(async () => ({ taskId: 'wan_one', status: 'PENDING' as const, imageUrls: [] })),
         cancel: jest.fn(async () => ({ cancellationAccepted: true })) };
-        const service = makeService(store, provider);
+        const service = makeService(store, provider as Pick<WanImageProvider, 'submit' | 'query' | 'cancel'>);
         const accepted = await service.submit(input);
         expect(accepted.taskId).toBeTruthy();
         await settle(async () => (await service.get(accepted.taskId))?.state === 'running');
@@ -195,6 +200,72 @@ describe('image generation service admission and recovery', () => {
         await service.submit(input);
         expect(provider.submit).toHaveBeenCalledTimes(1);
         service.dispose();
+    });
+
+    it('uses the selected model, visible count, source provenance, and save-path hint', async () => {
+        const store = await readyStore();
+        const provider = { submit: jest.fn(async (_input: unknown) => ({ taskId: 'wan_selected_model', status: 'PENDING' as const, imageUrls: [] })),
+            query: jest.fn(async () => ({ taskId: 'wan_selected_model', status: 'PENDING' as const, imageUrls: [] })),
+            cancel: jest.fn(async () => ({ cancellationAccepted: true })) };
+        const service = makeService(store, provider as Pick<WanImageProvider, 'submit' | 'query' | 'cancel'>);
+        const inputLineage = {
+            schemaVersion: 1 as const,
+            completeness: 'complete' as const,
+            dependencies: [{ kind: 'vault' as const, path: 'notes/source.md', via: 'note' as const }],
+        };
+        try {
+            const { taskId } = await service.submit({
+                ...input,
+                operationId: 'operation_selected_model',
+                userPrompt: 'Create a featured image',
+                submittedPrompt: 'FEATURED-PREPARED-SENTINEL',
+                count: 3,
+                model: 'wan2.7-image-pro',
+                attachmentPathHint: '/attachments/ai/',
+                countExplicitlyAuthorized: true,
+                promptOrigin: {
+                    kind: 'selection',
+                    displayName: 'source.md',
+                    path: 'notes/source.md',
+                    selection: { from: 4, to: 18 },
+                    inputLineage,
+                },
+            });
+            await settle(async () => (await service.get(taskId))?.state === 'running');
+            expect(provider.submit).toHaveBeenCalledWith(expect.objectContaining({
+                model: 'wan2.7-image-pro',
+                prompt: 'FEATURED-PREPARED-SENTINEL',
+                count: 3,
+                size: '2K',
+            }));
+            const task = await service.get(taskId);
+            expect(task?.request).toMatchObject({
+                model: 'wan2.7-image-pro',
+                count: 3,
+                attachmentPathHint: 'attachments/ai',
+                promptOrigin: {
+                    kind: 'selection',
+                    path: 'notes/source.md',
+                    selection: { from: 4, to: 18 },
+                },
+            });
+        } finally { service.dispose(); }
+    });
+
+    it('rejects invalid effective model and count without provider dispatch', async () => {
+        const store = await readyStore();
+        const provider = { submit: jest.fn(async (_input: unknown) => ({ taskId: 'unexpected', status: 'PENDING' as const, imageUrls: [] })),
+            query: jest.fn(), cancel: jest.fn() };
+        const service = makeService(store, provider as Pick<WanImageProvider, 'submit' | 'query' | 'cancel'>);
+        try {
+            await expect(service.submit({ ...input, operationId: 'invalid_model', model: 'invalid-model' }))
+                .rejects.toThrow('image_generation:invalid_model');
+            await expect(service.submit({ ...input, operationId: 'count_eight', count: 8 }))
+                .rejects.toThrow('image_generation:count_exceeds_provider_limit');
+            await expect(service.submit({ ...input, operationId: 'count_fraction', count: 1.5 }))
+                .rejects.toThrow('image_generation:invalid_request');
+            expect(provider.submit).not.toHaveBeenCalled();
+        } finally { service.dispose(); }
     });
 
     it('does not restore a deleted chat from a late provider result', async () => {

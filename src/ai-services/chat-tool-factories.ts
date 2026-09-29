@@ -1864,9 +1864,9 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
         outputBudgetChars: 400,
         requiresConfirmation: false,
         failureBehavior: "recoverable",
-        statusMessageText: "Starting image creation",
+        statusMessageText: "Preparing image request",
         sourceBoundary: "read-only-tool",
-        statusMessage: () => "Starting image creation",
+        statusMessage: () => "Preparing image request",
         validateInput: (raw) => {
             if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("create_image input must be an object.");
             const value = raw as Record<string, unknown>;
@@ -1907,8 +1907,11 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
             const prior = submitted.get(index);
             const alreadySubmitted = prior !== undefined;
             const isSourceCurrent = context.taskSourceReadGuard?.captureSourceValidity?.();
+            const requestLineage = binding.resolveRequestLineage?.(input, context.imageRequestLineage)
+                ?? context.imageRequestLineage;
             const entry = prior ?? { input, receipt: Promise.resolve().then(() => isSourceCurrent
-                ? binding.submit(input, isSourceCurrent) : binding.submit(input)) };
+                ? binding.submit(input, isSourceCurrent, requestLineage, undefined, context.createImageRuntime)
+                : binding.submit(input, undefined, requestLineage, undefined, context.createImageRuntime)) };
             if (!prior) submitted.set(index, entry);
             const inputSummary = `${entry.input.operation}; count:${entry.input.count}`;
             try {
@@ -1924,7 +1927,23 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
                     sources: [] };
             } catch (error) {
                 const reason = error instanceof Error ? error.message : '';
-                const message = reason.includes('image_generation:connection_unavailable')
+                const featuredPromptReason = /^featured_image_prompt:(input_too_large|empty_result|nontext_result|result_too_large|source_changed|connection_changed|cancelled|timeout)$/
+                    .exec(reason)?.[1];
+                const message = featuredPromptReason
+                    ? featuredPromptReason === 'input_too_large'
+                        ? 'Image description preparation failed because the selected text is too large. Wan was not called; ask the user to choose a smaller exact range.'
+                    : featuredPromptReason === 'result_too_large'
+                        ? 'Image description preparation failed because the prepared description is too long for Wan. Wan was not called; ask the user to simplify their request and do not submit the original note.'
+                    : featuredPromptReason === 'nontext_result'
+                        ? 'The text model returned no usable image description. Wan was not called; ask the user for a clearer request.'
+                    : featuredPromptReason === 'empty_result'
+                        ? 'The text model returned an empty image description. Wan was not called; ask the user for a clearer request.'
+                    : featuredPromptReason === 'source_changed' || featuredPromptReason === 'connection_changed'
+                        ? 'Image description preparation stopped because its source or AI connection changed. Wan was not called.'
+                    : featuredPromptReason === 'timeout'
+                        ? 'Image description preparation timed out. Wan was not called.'
+                    : 'Image description preparation was cancelled. Wan was not called.'
+                    : reason.includes('image_generation:connection_unavailable')
                     ? 'Image generation needs a compatible Wan connection in Settings.'
                     : reason.includes('image_generation:credential_unavailable')
                         ? 'The image service key is unavailable. Check the image connection settings.'

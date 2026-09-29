@@ -51,7 +51,7 @@ export interface AgentDebugObservation {
     parentId?: string;
     kind: AgentDebugNodeKind;
     phase: string;
-    purpose?: "answer" | "context_summary" | "query_rewrite" | "rerank";
+    purpose?: "answer" | "context_summary" | "query_rewrite" | "rerank" | "image_preparation";
     status?: AgentDebugNodeStatus;
     runtimeRunId?: string;
     turnId?: string;
@@ -104,7 +104,7 @@ export interface AgentDebugCallScope {
     callId: string;
     parentId: string;
     turnId?: string;
-    purpose: "answer" | "context_summary" | "query_rewrite" | "rerank";
+    purpose: "answer" | "context_summary" | "query_rewrite" | "rerank" | "image_preparation";
     provider?: string;
     model?: string;
     lineage?: AgentDebugLineage;

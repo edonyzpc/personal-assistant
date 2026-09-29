@@ -12,6 +12,9 @@
  */
 
 import type { AiServiceHost } from "./AiServiceHost";
+import type { InputLineage } from "./input-lineage";
+import type { AgentDebugRunRecorder } from "./agent-debug-port";
+import type { PaAgentRunUsageLedger } from "./agent-usage-ledger";
 import type {
     ChatToolName,
     ChatToolResult,
@@ -30,6 +33,10 @@ export interface ChatToolContext {
     currentMemoryUsage?: () => import("./memory-management-types").MemoryManagementCurrentUsageInput | undefined;
     /** Host-only authority for the one live PA Agent request issuing a Memory action. */
     memoryActionRequest?: import("./memory-action-types").MemoryActionHostBinding;
+    /** Actual physical Chat projection lineage for the executing answer turn. */
+    imageRequestLineage?: InputLineage;
+    /** Existing Debug/usage ownership for a host-side image preparation model call. */
+    createImageRuntime?: CreateImageHostRuntime;
 }
 
 export type ChatToolPermission = "read-only" | "network-read" | "memory-management" | "insight-management" | "image-generation";
@@ -143,12 +150,23 @@ export interface CreateImageToolInput {
     parentVersionId?: string;
 }
 
+export interface CreateImageHostRuntime {
+    recorder?: AgentDebugRunRecorder;
+    usageLedger?: PaAgentRunUsageLedger;
+    parentId: string;
+    turnId?: string;
+}
+
 export interface CreateImageHostBinding {
     conversationId: string;
     stableMessageId: string;
     operationId: string;
     /** Revalidates refs, user cost budget and the durable operation before paid dispatch. */
-    submit(input: CreateImageToolInput, isSourceCurrent?: () => boolean): Promise<{ taskId: string }>;
+    submit(input: CreateImageToolInput, isSourceCurrent?: () => boolean,
+        requestLineage?: InputLineage, imageSourceCurrent?: () => boolean,
+        runtime?: CreateImageHostRuntime): Promise<{ taskId: string }>;
+    /** Host-selected actual lineage for this image request; never model-writable. */
+    resolveRequestLineage?(input: CreateImageToolInput, agentRequestLineage: InputLineage | undefined): InputLineage | undefined;
 }
 
 /**

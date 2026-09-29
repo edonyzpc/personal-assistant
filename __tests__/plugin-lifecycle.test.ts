@@ -3,9 +3,8 @@ import { debounce, ItemView, MarkdownView, Modal, Notice, TFile, type App, type 
 import { getApi } from "obsidian-callout-manager";
 import { setPlatformMobile, resetPlatform } from "./helpers/platform-mock";
 import { DomStubNode, findAllByTag } from './helpers/dom-stub';
-import { AssistantFeaturedImageHelper, AssistantHelper } from '../src/ai';
+import { AssistantHelper } from '../src/ai';
 import { pluginT } from '../src/locales/plugin';
-import type { FeaturedImageRunOptions } from '../src/ai-services/featured-image-options';
 import { MetadataUpdater, type MetadataUpdaterDependencies } from '../src/plugin/metadata-updater';
 import { CalloutIntegration } from '../src/plugin/callout-integration';
 import { MemoryStatusNotifier } from '../src/plugin/memory-status';
@@ -40,9 +39,7 @@ jest.mock("../src/share-card/share-card-modal", () => ({
     ShareCardModal: class {},
     closeAllShareCardModals: jest.fn(),
 }));
-jest.mock("../src/ai", () => ({ AssistantFeaturedImageHelper: class {
-    async generate(_options: unknown) {}
-}, AssistantHelper: class {} }));
+jest.mock("../src/ai", () => ({ AssistantHelper: class {} }));
 jest.mock("../src/vss", () => ({ VSS: class {} }));
 jest.mock("../src/memory-manager", () => ({ MemoryManager: class { startAutoMaintenance() {} } }));
 jest.mock("../src/modal", () => ({ PluginControlModal: class {} }));
@@ -89,32 +86,14 @@ function attachAIActions(plugin: unknown): void {
     target.aiActions = new AIActions({
         ensureAIConfigured: () => target.ensureAIConfigured(),
         getImageGenerationConnection: () => target.getImageGenerationConnection(),
-        getProviderConnection: () => ({
-            aiProvider: target.settings.aiProvider,
-            baseURL: target.settings.baseURL,
-            chatModelName: target.settings.chatModelName,
-            embeddingModelName: target.settings.embeddingModelName,
-        }),
         getFeaturedImageDefaults: () => ({
             featuredImageModel: target.settings.featuredImageModel,
             numFeaturedImages: target.settings.numFeaturedImages,
             featuredImagePath: target.settings.featuredImagePath,
         }),
-        isUnloading: () => target.unloading,
-        hasActiveAIProviderCredentialTransition: () => target.hasActiveAIProviderCredentialTransition(),
-        getProviderConfigurationRevision: () => target.aiProviderConfigurationRevision,
-        getTokenRevision: () => target.aiTokenRevision,
-        getFileByPath: (path) => target.app.vault.getAbstractFileByPath(path),
-        getConfiguredImageAPITokenSecret: () => target.getConfiguredImageAPITokenSecret(),
-        getAPIToken: () => target.getAPIToken(),
         saveFeaturedImageDefaults: (options) => target.saveFeaturedImageDefaults(options),
         createSummaryHelper: (editor, view) => new AssistantHelper(target as unknown as PluginManager, editor, view),
-        createFeaturedImageHelper: (editor, view) => new AssistantFeaturedImageHelper(
-            target.app,
-            target as unknown as PluginManager,
-            editor,
-            view,
-        ),
+        openChatImageDraft: async () => false,
         openSharedFeatureModal: (host) => (target as unknown as {
             openSharedFeatureModal(host: FeaturedImageOptionsModalHost): Modal;
         }).openSharedFeatureModal(host),
@@ -920,10 +899,9 @@ describe('B-106 feature and permission Plugin integration', () => {
         expect(secretStorage.getSecret).not.toHaveBeenCalled();
     });
 
-    it('opens and cancels both featured image modes without token reads or helper work', async () => {
+    it('opens and closes the featured image defaults editor without token reads', async () => {
         const { plugin, secretStorage } = await fixture();
         modalDom();
-        const generate = jest.spyOn(AssistantFeaturedImageHelper.prototype, 'generate');
         const firstGraphModal = plugin.openGraphOptions();
         const closeFirstGraphModal = jest.spyOn(firstGraphModal, 'close');
         const defaultsModal = plugin.openFeaturedImageOptions()!;
@@ -931,85 +909,24 @@ describe('B-106 feature and permission Plugin integration', () => {
         const closeDefaultsModal = jest.spyOn(defaultsModal, 'close');
         plugin.openGraphOptions();
         expect(closeDefaultsModal.mock.calls.length).toBeGreaterThanOrEqual(1);
-        const { editor, view, file } = bindNote(plugin);
-        const generateModal = plugin.openFeaturedImageOptions(editor, view)!;
-        await click(generateModal, 'plugin.settings.featuredImage.options.cancel');
-        expect(secretStorage.getSecret).not.toHaveBeenCalled();
-        expect(generate).not.toHaveBeenCalled();
-    });
-
-    it('rejects a command target without a file rather than opening the defaults editor', async () => {
-        const { plugin, secretStorage } = await fixture();
-        modalDom();
-        const { editor, view } = bindNote(plugin);
-        Object.assign(view, { file: null });
-        expect(plugin.openFeaturedImageOptions(editor, view)).toBeNull();
-        expect(Modal.prototype.open).not.toHaveBeenCalled();
         expect(secretStorage.getSecret).not.toHaveBeenCalled();
     });
 
-    it('does not invoke the helper after failed default persistence and preserves the displayed draft', async () => {
+    it('does not overwrite image defaults after failed persistence', async () => {
         const { plugin, adapter } = await fixture();
         modalDom();
-        const { editor, view } = bindNote(plugin);
-        const generate = jest.spyOn(AssistantFeaturedImageHelper.prototype, 'generate');
-        const modal = plugin.openFeaturedImageOptions(editor, view)!;
+        const modal = plugin.openFeaturedImageOptions()!;
         nodes(modal, 'select')[1].value = '3';
         adapter.process.mockRejectedValueOnce(new Error('disk unavailable'));
-        await click(modal, 'plugin.settings.featuredImage.options.generate');
-        expect(generate).not.toHaveBeenCalled();
+        await click(modal, 'plugin.settings.featuredImage.options.save');
         expect(plugin.settings.numFeaturedImages).toBe(1);
         expect(nodes(modal, 'select')[1].value).toBe('3');
     });
 
-    it.each(['provider', 'token', 'file', 'editor', 'detached', 'credential-transition'] as const)(
-        'captures %s identity before saving and prevents a later mixed featured-image run', async (change) => {
-        const { plugin, state, adapter } = await fixture();
-        modalDom();
-        const { editor, view, file, lookup } = bindNote(plugin);
-        const generate = jest.spyOn(AssistantFeaturedImageHelper.prototype, 'generate');
-        const entered = deferred();
-        const writing = deferred();
-        const process = adapter.process.getMockImplementation()!;
-        adapter.process.mockImplementationOnce(async (...args: unknown[]) => { entered.resolve(); await writing.promise; return process(...args); });
-        const modal = plugin.openFeaturedImageOptions(editor, view)!;
-        const submit = click(modal, 'plugin.settings.featuredImage.options.generate');
-        await entered.promise;
-        if (change === 'provider') state.aiProviderConfigurationRevision = (state.aiProviderConfigurationRevision ?? 0) + 1;
-        if (change === 'token') state.aiTokenRevision = (state.aiTokenRevision ?? 0) + 1;
-        if (change === 'file') lookup.mockReturnValue(Object.assign(new TFile(), { path: file.path }));
-        if (change === 'editor') Object.assign(view, { editor: {} });
-        if (change === 'detached') Object.assign(view, { containerEl: { isConnected: false } });
-        if (change === 'credential-transition') state.aiProviderCredentialTransitionCount = 1;
-        writing.resolve();
-        await submit;
-        expect(generate).not.toHaveBeenCalled();
-        expect(nodes(modal, 'p').some((node) => node.textContent === pluginT('plugin.settings.featuredImage.options.savedChanged'))).toBe(true);
-    });
-
-    it('hands off the bound note and freezes run defaults independently of subsequent default edits', async () => {
-        const { plugin, state } = await fixture();
-        modalDom();
-        const { editor, view } = bindNote(plugin);
-        const generate = jest.spyOn(AssistantFeaturedImageHelper.prototype, 'generate');
-        const modal = plugin.openFeaturedImageOptions(editor, view)!;
-        nodes(modal, 'select')[1].value = '3';
-        await click(modal, 'plugin.settings.featuredImage.options.generate');
-        expect(generate).toHaveBeenCalledTimes(1);
-        const options = generate.mock.calls[0][0] as FeaturedImageRunOptions;
-        expect(options.isCurrent()).toBe(true);
-        await plugin.saveFeaturedImageDefaults({ featuredImageModel: 'wan2.7-image-pro', numFeaturedImages: 4, featuredImagePath: 'changed' });
-        expect(options.numFeaturedImages).toBe(3);
-        expect(options.featuredImagePath).toBe('');
-        expect(options.isCurrent()).toBe(true);
-        state.aiTokenRevision = (state.aiTokenRevision ?? 0) + 1;
-        expect(options.isCurrent()).toBe(false);
-    });
-
-    it('registers context-sensitive commands that use the same graph and image modal entrypoints', async () => {
+    it('registers context-sensitive commands while Featured images open Chat instead of a modal', async () => {
         const { plugin, secretStorage } = await fixture();
         modalDom();
-        const { editor, view, file } = bindNote(plugin);
+        const { editor, view } = bindNote(plugin);
         const commands = new Map<string, Command>();
         const registrationComplete = new Error('requested commands registered');
         const shellElement = { addClass: jest.fn(), addEventListener: jest.fn(), setAttribute: jest.fn(), onClickEvent: jest.fn() };
@@ -1042,7 +959,7 @@ describe('B-106 feature and permission Plugin integration', () => {
         Object.assign(plugin.app, { metadataCache: { on: jest.fn(() => ({})) } });
         await expect(plugin.onload()).rejects.toBe(registrationComplete);
         const graphEntry = jest.spyOn(plugin, 'openGraphOptions');
-        const imageEntry = jest.spyOn(plugin, 'openFeaturedImageOptions');
+        const imageEntry = jest.spyOn((plugin as unknown as { aiActions: AIActions }).aiActions, 'checkFeaturedImage');
         const activeView = jest.fn<(viewType: typeof ItemView) => ItemView | null>(() => null);
         Object.assign(plugin.app.workspace, { getActiveViewOfType: activeView });
         const graph = commands.get('pa-graph-options')!;
@@ -1057,13 +974,10 @@ describe('B-106 feature and permission Plugin integration', () => {
         expect(image.editorCheckCallback?.(true, editor, view)).toBe(true);
         expect(view instanceof MarkdownView).toBe(true);
         expect(plugin.getImageGenerationConnection()).not.toBeNull();
-        expect(imageEntry).not.toHaveBeenCalled();
+        expect(imageEntry).toHaveBeenCalledTimes(1);
         image.editorCheckCallback?.(false, editor, view);
-        expect(imageEntry).not.toHaveBeenCalled();
-        const activeModal = (plugin as unknown as { activeFeatureOptionsModal: Modal }).activeFeatureOptionsModal;
-        expect(nodes(activeModal, 'p').some((node) => (
-            node.textContent === pluginT('plugin.settings.featuredImage.options.source', 'en', { name: file.basename })
-        ))).toBe(true);
+        await Promise.resolve();
+        expect(imageEntry).toHaveBeenCalledTimes(2);
         expect(secretStorage.getSecret).not.toHaveBeenCalled();
         plugin.settings.aiProvider = 'openai';
         expect(image.editorCheckCallback?.(true, editor, view)).toBe(false);

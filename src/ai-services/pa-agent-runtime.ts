@@ -202,6 +202,8 @@ export interface PaAgentRunOptions {
     prompt: string;
     /** Exact user-authored text before Chat appends capability instructions. */
     userText?: string;
+    /** Host-provided actual lineage for an app-prefilled or explicitly sourced first request. */
+    inputLineage?: import('./input-lineage').InputLineage;
     /** Chat-only Host snapshot; omission preserves standalone caller behavior. */
     runSourceSelection?: import('./chat-source-scope').RunSourceSelection;
     chatHistory?: ChatMessage[];
@@ -1357,7 +1359,11 @@ export class PaAgentRuntime {
             isCurrent: sourceRun.isCurrent,
         };
         const providerRequestScope = createProviderRequestScope();
-        const currentUserLineage = completeInputLineage([
+        const explicitUserLineage = cloneInputLineage(options.inputLineage);
+        if (explicitUserLineage && !sourceRun.admitsLineage(explicitUserLineage)) {
+            throw new Error('Image request source scope rejected before provider dispatch.');
+        }
+        const currentUserLineage = explicitUserLineage ?? completeInputLineage([
             { kind: 'user-text', messageId: userMessageId },
             ...(options.images ?? []).map(image => ({ kind: 'attachment' as const,
                 ownerMessageId: userMessageId, ref: { ...image.ref } })),
@@ -1370,7 +1376,6 @@ export class PaAgentRuntime {
         }>();
         const callAttachmentValidityById = new Map<string, () => boolean>();
         const captureAttachmentSourceValidity = async (lineage: InputLineage, signal?: AbortSignal): Promise<() => boolean> => {
-            if (!runSourceSelection) return () => true;
             const refs = [...new Map(lineage.dependencies.flatMap(dependency => dependency.kind === 'attachment'
                 ? [[`${dependency.ref.assetId}:${dependency.ref.contentHash}`, dependency.ref] as const] : [])).values()];
             if (!refs.length) return () => true;
@@ -1527,7 +1532,24 @@ export class PaAgentRuntime {
                 || !options.createImage.stableMessageId || !options.createImage.operationId) {
                 throw new Error("Image generation host identity is unavailable.");
             }
-            imageGenerationCapability = createChatToolCapability(createCreateImageTool(options.createImage), { providerId: "chat-image-generation" });
+            const hostImageBinding = options.createImage;
+            const scopedImageBinding: typeof hostImageBinding = {
+                ...hostImageBinding,
+                submit: async (input, isSourceCurrent, requestLineage, _imageSourceCurrent, runtime) => {
+                    const lineage = requestLineage ?? hostImageBinding.resolveRequestLineage?.(input, undefined);
+                    if (!lineage || !sourceRun.admitsLineage(lineage)) {
+                        throw new Error(!lineage
+                            ? 'Image request actual lineage is missing.'
+                            : 'Image request source scope rejected.');
+                    }
+                    const attachmentValidity = await captureAttachmentSourceValidity(lineage);
+                    const sourceLineageCurrent = sourceRun.captureImageTaskSourceValidity(lineage);
+                    const imageSourceCurrent = () => sourceLineageCurrent()
+                        && (!attachmentValidity || attachmentValidity());
+                    return await hostImageBinding.submit(input, isSourceCurrent, lineage, imageSourceCurrent, runtime);
+                },
+            };
+            imageGenerationCapability = createChatToolCapability(createCreateImageTool(scopedImageBinding), { providerId: "chat-image-generation" });
             imageGenerationCapability.executionMode = "sequential";
             if (!this.toolRegistry.register(imageGenerationCapability)) throw new Error("Image generation capability unavailable");
         }
@@ -2662,6 +2684,12 @@ export class PaAgentRuntime {
             getMemoryDebugScope: (turnId, toolCallId) => ({
                 recorder: debugRecorder, usageLedger,
                 parentId: `${turnId}:tool:${toolCallId}`, turnId,
+            }),
+            getImageRequestLineage: turnId => cloneInputLineage(answerLineageByTurn.get(turnId ?? '')),
+            getCreateImageRuntime: turnId => ({
+                recorder: debugRecorder, usageLedger,
+                parentId: turnId ?? `${runId}:image-preparation`,
+                turnId,
             }),
             currentMemoryUsage,
             memoryActionRequest,

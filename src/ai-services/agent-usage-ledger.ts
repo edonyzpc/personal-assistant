@@ -1,6 +1,7 @@
 import type { AgentDebugUsage } from './agent-debug-port';
 
-export type AgentUsagePurpose = 'answer' | 'context_summary' | 'query_rewrite' | 'rerank';
+export type AgentUsagePurpose = 'answer' | 'context_summary' | 'query_rewrite' | 'rerank'
+    | 'image_preparation';
 
 interface UsageEntry {
     callId: string;

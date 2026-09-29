@@ -500,6 +500,45 @@ export class TaskSourceRun {
     };
 
     /**
+     * Image-task-only receipt. Capture while this Chat run is current, then
+     * verify the frozen scope and real file identities independently of the
+     * Chat context epoch so an already accepted Wan task remains plugin-owned.
+     */
+    readonly captureImageTaskSourceValidity = (lineage: InputLineage | undefined): (() => boolean) => {
+        if (!this.isCurrent() || !this.admitsLineage(lineage)) return () => false;
+        const capturedLineage = cloneInputLineage(lineage);
+        if (!capturedLineage || capturedLineage.completeness !== 'complete') return () => false;
+        const scope = this.runSourceSelection?.scope;
+        const constraint = this.state.snapshot();
+        const vaultSources = new Map(capturedLineage.dependencies.flatMap(dependency => {
+            if (dependency.kind !== 'vault') return [];
+            const noteId = this.resolveNoteId(dependency.path);
+            const file = this.getFileByPath(dependency.path) as VaultFileLike | undefined;
+            return [[dependency.path, { noteId, file }] as const];
+        }));
+        return () => {
+            try {
+                if (this.state.snapshot() !== constraint) return false;
+                return admitsInputLineage(capturedLineage, scope ?? 'combined', {
+                    ...this.lineageAdmission,
+                    isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint),
+                    isVaultAllowed: (path, via) => {
+                        if (via === 'memory' && !this.isMemoryAllowed()) return false;
+                        const source = vaultSources.get(path);
+                        return source?.noteId !== undefined && source.file !== undefined
+                            && this.getFileByPath(path) === source.file && source.file.path === path
+                            && this.isPathAllowed?.(path) !== false
+                            && this.state.allows({ kind: 'note', noteId: source.noteId }, constraint);
+                    },
+                    isWebAllowed: () => this.isWebAllowed() && this.state.allows({ kind: 'web' }, constraint),
+                });
+            } catch {
+                return false;
+            }
+        };
+    };
+
+    /**
      * Call for note paths actually visible in the admitted transcript
      * after source revalidation, never for plans, guard probes or raw tool results.
      * The directory is budgeted separately; original tool results stay unchanged.

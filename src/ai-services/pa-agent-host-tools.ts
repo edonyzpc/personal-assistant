@@ -79,6 +79,8 @@ export interface PaAgentCapabilityToolExecutorOptions {
     memoryPreparationOwnerSignal?: AbortSignal;
     currentMemoryUsage?: () => MemoryManagementCurrentUsageInput | undefined;
     memoryActionRequest?: MemoryActionHostBinding;
+    getImageRequestLineage?: (turnId?: string) => import("./input-lineage").InputLineage | undefined;
+    getCreateImageRuntime?: (turnId?: string) => import("./chat-tool-types").CreateImageHostRuntime | undefined;
     revalidateMemorySearch?: (
         result: MemorySearchResult,
         signal?: AbortSignal,
@@ -610,6 +612,8 @@ export function createPaAgentCapabilityToolExecutor(
                         platform: options.platform ?? "desktop",
                         currentMemoryUsage: options.currentMemoryUsage,
                         memoryActionRequest: options.memoryActionRequest,
+                        imageRequestLineage: options.getImageRequestLineage?.(input.turnId),
+                        createImageRuntime: options.getCreateImageRuntime?.(input.turnId),
                         ...(!hidden && options.onBeforeVssSearch
                             ? { onBeforeVssSearch: options.onBeforeVssSearch }
                             : {}),

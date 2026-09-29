@@ -321,6 +321,8 @@ export interface PluginManagerSettings {
     imageGenerationBaseURL: string;
     imageGenerationConnectionRevision: number;
     imageGenerationFirstUseNoticeShown: boolean;
+    /** Separate first-use disclosure for the note-to-image text preparation call. */
+    featuredImageTextPreparationNoticeShown: boolean;
     memoryExtractionEnabled: boolean;
     learningPreferences?: LearningPreferences;
     memoryExtractionNoticeDismissed: boolean;
@@ -448,6 +450,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     imageGenerationBaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     imageGenerationConnectionRevision: 0,
     imageGenerationFirstUseNoticeShown: false,
+    featuredImageTextPreparationNoticeShown: false,
     memoryExtractionEnabled: true,
     learningPreferences: { version: LEARNING_DEFAULTS_VERSION, memoryExtraction: "default", habitLearning: "default" },
     memoryExtractionNoticeDismissed: false,
@@ -637,6 +640,7 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
         && Number(loadedObject.imageGenerationConnectionRevision) >= 0
         ? Number(loadedObject.imageGenerationConnectionRevision) : 0;
     merged.imageGenerationFirstUseNoticeShown = loadedObject.imageGenerationFirstUseNoticeShown === true;
+    merged.featuredImageTextPreparationNoticeShown = loadedObject.featuredImageTextPreparationNoticeShown === true;
     // Current builds use a mock paid entitlement so all paid-capability
     // architecture stays enabled until a real authorization source is wired in.
     // Do not trust persisted data.json for this field.

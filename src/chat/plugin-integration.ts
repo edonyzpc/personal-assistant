@@ -1,4 +1,4 @@
-import { TFile, type App } from "obsidian";
+import { TFile, getFrontMatterInfo, type App } from "obsidian";
 
 import { decideDataBoundaryForSource } from "../pa/contracts";
 import { ImageProcessor } from "./image-processor";
@@ -11,6 +11,9 @@ import { WritingSaveAction } from "./writing-save-action";
 import { WritingStyleService } from "./writing-style-service";
 import { prepareWritingRecoverySources } from "./writing-recovery-sources";
 import { ChatService } from "../ai-services/chat-service";
+import { prepareFeaturedImagePrompt } from "../ai-services/prepare-featured-image-prompt";
+import { normalizeFeaturedImageFolderPath } from "../ai-services/featured-image-path";
+import { normalizeFeaturedImageCount, normalizeFeaturedImageModel } from "../settings";
 import { MemoryGovernanceCoordinator } from "../pa/memory-governance-coordinator";
 import type { ImageGenerationConnection } from "../ai-services/image-generation-connection";
 import type { OperationsSession } from "../ai-services/operations";
@@ -23,6 +26,7 @@ import type {
     ChatWritingStyleResult,
 } from "../ai-services/chat-types";
 import type { MessageImage } from "./image-types";
+import type { ComposerImageGenerationOptions, ComposerImageTextSource } from "./composer-draft";
 import type { WritingRecoverySourceReceipt } from "./writing-recovery-sources";
 import type { ChatSourceScope } from "../ai-services/chat-source-scope";
 import type { WritingScene } from "./writing-types";
@@ -45,6 +49,7 @@ export interface ChatHostActions {
     getAIReadiness(scope?: Parameters<NonNullable<ChatHost["getAIReadiness"]>>[0]): ReturnType<NonNullable<ChatHost["getAIReadiness"]>>;
     refreshAPITokenPresence(): ReturnType<NonNullable<ChatHost["refreshAPITokenPresence"]>>;
     confirmImageGenerationFirstUse(): Promise<boolean>;
+    confirmFeaturedImageTextPreparationFirstUse?(): Promise<boolean>;
     rememberWritingStyle(versionId: string, scene: WritingScene): Promise<void>;
     readWritingStyleReferences: NonNullable<ChatHost["readWritingStyleReferences"]>;
     onWritingReferencesChanged(listener: () => void): () => void;
@@ -86,6 +91,9 @@ export interface ChatPluginIntegrationDependencies {
     source: ChatPluginSourceCapability;
     getImageGenerationConnection(): ImageGenerationConnection | null;
     getImageToken(mode: ImageGenerationConnection["mode"]): Promise<string | null>;
+    getProviderConfigurationRevision(): number;
+    getTokenRevision(): number;
+    hasActiveAIProviderCredentialTransition(): boolean;
     showImageSyncNotice(receipt: { directory: string }): void;
     createOperationsSession(): OperationsSession;
     createAiServiceHost(): ConstructorParameters<typeof ChatService>[0];
@@ -181,6 +189,51 @@ export class ChatPluginIntegration {
             this.dependencies.createAiServiceHost(),
             this.dependencies.createOperationsSession(),
         );
+    }
+
+    private imageTextSourceFile(source: { path: string }): TFile | null {
+        const file = this.dependencies.app.vault.getAbstractFileByPath(source.path);
+        return file instanceof TFile && file.extension === 'md'
+            && this.dependencies.source.isDataBoundaryAllowedFile(file) ? file : null;
+    }
+
+    async verifyImageTextSource(source: ComposerImageTextSource): Promise<void> {
+        const file = this.imageTextSourceFile(source);
+        if (!file || (source.file !== undefined && file !== source.file)) {
+            throw new Error('image_generation:source_changed');
+        }
+        const documentText = await this.dependencies.app.vault.cachedRead(file);
+        if (documentText !== source.documentText) throw new Error('image_generation:source_changed');
+        if (source.kind === 'selection') {
+            if (source.selection && documentText.slice(source.selection.from, source.selection.to) !== source.text) {
+                throw new Error('image_generation:source_changed');
+            }
+        } else if (documentText.slice(getFrontMatterInfo(documentText).contentStart) !== source.text) {
+            throw new Error('image_generation:source_changed');
+        }
+    }
+
+    isImageTextSourceCurrent(source: ComposerImageTextSource): boolean {
+        const file = this.imageTextSourceFile(source);
+        return this.dependencies.isChatRuntimeCurrent() && file !== null
+            && (source.file === undefined || file === source.file);
+    }
+
+    isImagePromptOriginCurrent(origin: { path: string }): boolean {
+        return this.dependencies.isChatRuntimeCurrent() && this.imageTextSourceFile(origin) !== null;
+    }
+
+    getImageGenerationOptions(): ComposerImageGenerationOptions {
+        const settings = this.dependencies.getSettings();
+        return {
+            model: normalizeFeaturedImageModel(settings.featuredImageModel),
+            count: normalizeFeaturedImageCount(settings.numFeaturedImages) as 1 | 2 | 3 | 4,
+            attachmentPathHint: normalizeFeaturedImageFolderPath(settings.featuredImagePath),
+        };
+    }
+
+    captureImageGenerationConnection() {
+        return this.dependencies.getImageGenerationConnection();
     }
 
     getHistoryManager(): ChatHistoryManager | undefined {
@@ -314,6 +367,33 @@ export class ChatPluginIntegration {
             imageAssetService: this.imageAssetService,
             imageGenerationService: this.imageGenerationService,
             confirmImageGenerationFirstUse: () => actions.confirmImageGenerationFirstUse(),
+            ...(actions.confirmFeaturedImageTextPreparationFirstUse ? {
+                confirmFeaturedImageTextPreparationFirstUse: () => actions.confirmFeaturedImageTextPreparationFirstUse!(),
+            } : {}),
+            verifyImageTextSource: (source, phase) => {
+                if (phase !== 'before-send') throw new Error('Unsupported image source verification phase.');
+                return this.verifyImageTextSource(source);
+            },
+            isImageTextSourceCurrent: source => this.isImageTextSourceCurrent(source),
+            isImagePromptOriginCurrent: origin => this.isImagePromptOriginCurrent(origin),
+            prepareFeaturedImagePrompt: (input, runtime) => {
+                const providerRevision = this.dependencies.getProviderConfigurationRevision();
+                const tokenRevision = this.dependencies.getTokenRevision();
+                return prepareFeaturedImagePrompt(
+                    this.dependencies.createAiServiceHost(),
+                    {
+                        ...input,
+                        isSourceCurrent: () => this.dependencies.isChatRuntimeCurrent() && input.isSourceCurrent(),
+                        isConnectionCurrent: () => !this.dependencies.hasActiveAIProviderCredentialTransition()
+                            && this.dependencies.getProviderConfigurationRevision() === providerRevision
+                            && this.dependencies.getTokenRevision() === tokenRevision
+                            && this.dependencies.isChatRuntimeCurrent(),
+                    },
+                    runtime,
+                );
+            },
+            captureImageGenerationConnection: () => this.captureImageGenerationConnection(),
+            getImageGenerationOptions: () => this.getImageGenerationOptions(),
             writingVersions: this.writingVersions,
             writingOutputProtocol: "native",
             writingSave: this.writingSave,

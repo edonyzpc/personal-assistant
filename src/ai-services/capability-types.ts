@@ -99,6 +99,8 @@ export interface AgentCapabilityContext {
     onToolRunning?: (tool: string, message: string) => void;
     currentMemoryUsage?: () => MemoryManagementCurrentUsageInput | undefined;
     memoryActionRequest?: import("./memory-action-types").MemoryActionHostBinding;
+    imageRequestLineage?: import("./input-lineage").InputLineage;
+    createImageRuntime?: import("./chat-tool-types").CreateImageHostRuntime;
 }
 
 export interface AgentCapabilityResult {

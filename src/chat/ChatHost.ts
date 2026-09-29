@@ -16,8 +16,12 @@ import type { WritingStyleReference, WritingStyleService } from './writing-style
 import type { ChatWritingStylePreparation, ChatWritingStyleResult } from '../ai-services/chat-types';
 import type { ChatTurnMemoryMetadata, ChatWritingRecovery } from '../ai-services/chat-types';
 import type { MessageImage } from './image-types';
+import type { ComposerImageGenerationOptions, ComposerImageTextSource } from './composer-draft';
+import type { ImageGenerationPromptOrigin } from './image-generation-types';
 import type { WritingRecoverySourceReceipt } from './writing-recovery-sources';
 import type { ChatSourceScope } from '../ai-services/chat-source-scope';
+import type { PrepareFeaturedImagePromptInput,
+    PrepareFeaturedImagePromptRuntime } from '../ai-services/prepare-featured-image-prompt';
 
 export type AISetupFailureCode =
     | "invalid_configuration"
@@ -58,6 +62,14 @@ export interface ChatHost {
     readonly imageAssetService?: ImageAssetService;
     readonly imageGenerationService?: ImageGenerationService;
     confirmImageGenerationFirstUse?(): Promise<boolean>;
+    confirmFeaturedImageTextPreparationFirstUse?(): Promise<boolean>;
+    verifyImageTextSource?(source: ComposerImageTextSource, phase: 'before-send'): Promise<void>;
+    isImageTextSourceCurrent?(source: ComposerImageTextSource): boolean;
+    isImagePromptOriginCurrent?(origin: ImageGenerationPromptOrigin): boolean;
+    prepareFeaturedImagePrompt?(input: PrepareFeaturedImagePromptInput,
+        runtime?: PrepareFeaturedImagePromptRuntime): Promise<string>;
+    captureImageGenerationConnection?(): import('../ai-services/image-generation-connection').ImageGenerationConnection | null;
+    getImageGenerationOptions?(): ComposerImageGenerationOptions;
     readonly writingVersions?: WritingVersionService;
     /** Host compatibility candidate; set only for the validated native rollout. */
     readonly writingOutputProtocol?: 'native';

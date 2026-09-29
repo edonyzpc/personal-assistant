@@ -1,6 +1,20 @@
-import { ComposerDraft } from "../src/chat/composer-draft";
+import { ComposerDraft, type ComposerImageTextSource } from "../src/chat/composer-draft";
 
 describe("image composer ownership", () => {
+    const source: ComposerImageTextSource = {
+        kind: "selection",
+        path: "notes/source.md",
+        displayName: "source",
+        text: "INSIDE-SELECTION",
+        documentText: "OUTSIDE-SELECTION INSIDE-SELECTION OUTSIDE-SELECTION",
+        selection: { from: 20, to: 37 },
+        inputLineage: {
+            schemaVersion: 1,
+            completeness: "complete",
+            dependencies: [{ kind: "vault", path: "notes/source.md", via: "note" }],
+        },
+    };
+
     test("image-only, pending and failed imports protect handoff but only ready inputs can send", () => {
         const draft = new ComposerDraft<string>();
         const empty = draft.snapshot("");
@@ -75,6 +89,20 @@ describe("image composer ownership", () => {
         expect(draft.snapshot("Make the sky darker").imageIntent).toEqual(intent);
         draft.clearImageIntent();
         expect(draft.snapshot("Make the sky darker").imageIntent).toBeUndefined();
+    });
+
+    test("an exact text source permits an empty supplement and is cloned with the image intent", () => {
+        const draft = new ComposerDraft<string>();
+        const mutableSource = { ...source, text: "MUTABLE", inputLineage: { ...source.inputLineage } };
+        draft.setImageIntent({ operation: "generate", referenceImageRefs: [], textSource: mutableSource });
+        expect(draft.canSend("")).toBe(true);
+        const snapshot = draft.snapshot("");
+        expect(snapshot.imageIntent?.textSource?.text).toBe("MUTABLE");
+        mutableSource.text = "CHANGED";
+        expect(snapshot.imageIntent?.textSource?.text).toBe("MUTABLE");
+        const sent = draft.take("")!;
+        expect(sent.snapshot.imageIntent?.textSource?.selection).toEqual({ from: 20, to: 37 });
+        expect(draft.canSend("")).toBe(false);
     });
 
     test("writing is an explicit single-use action that survives only an untouched failed send", () => {

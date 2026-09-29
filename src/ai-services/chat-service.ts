@@ -55,6 +55,8 @@ export function getBailianWebSearchEndpointForBaseURL(baseURL: string): string {
 export interface StreamLLMOptions {
     /** Exact user-authored text before this call's app-owned prompt additions. */
     userText?: string;
+    /** Host-owned actual lineage when visible text is app-prefilled from an image task. */
+    inputLineage?: import('./input-lineage').InputLineage;
     /** Immutable Host choice captured with the exact Chat user message. */
     runSourceSelection?: import('./chat-source-scope').RunSourceSelection;
     images?: import('../chat/image-types').MessageImage[];
@@ -279,6 +281,7 @@ export class ChatService {
                 onUsageAccounting: options.onUsageAccounting,
                 prompt,
                 userText: options.userText,
+                inputLineage: options.inputLineage,
                 runSourceSelection: options.runSourceSelection,
                 conversationId: options.conversationId,
                 createImage: options.createImage,

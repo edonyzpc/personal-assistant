@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
-import type { App } from "obsidian";
+import { TFile, type App } from "obsidian";
 
 const mockHistoryManagerConstructor = jest.fn();
 const mockImageAssetConstructor = jest.fn();
@@ -97,13 +97,19 @@ function createSettings(vaultId: string): PluginManagerSettings {
     return {
         statisticsVaultId: vaultId,
         dataBoundary: { mode: "all_notes", folderPath: "", tag: "" },
+        featuredImageModel: "wan2.7-image-pro",
+        numFeaturedImages: 3,
+        featuredImagePath: "/attachments/ai/",
     } as unknown as PluginManagerSettings;
 }
 
 function createHarness() {
+    const file = Object.assign(new TFile(), { path: "notes/current.md", extension: "md" });
+    let documentText = "---\ntitle: source\n---\nSOURCE-BODY";
     const app = {
         vault: {
-            getAbstractFileByPath: jest.fn(() => null),
+            getAbstractFileByPath: jest.fn(() => file),
+            cachedRead: jest.fn(async () => documentText),
         },
     } as unknown as App;
     let settings = createSettings("vault-a");
@@ -125,6 +131,9 @@ function createHarness() {
         },
         getImageGenerationConnection: () => null,
         getImageToken: async () => null,
+        getProviderConfigurationRevision: () => 1,
+        getTokenRevision: () => 2,
+        hasActiveAIProviderCredentialTransition: () => false,
         showImageSyncNotice: jest.fn(),
         createOperationsSession: () => {
             const session = { id: `session-${sessions.length + 1}` };
@@ -183,6 +192,8 @@ function createHarness() {
         setOwnerCurrent: (value: boolean) => { ownerCurrent = value; },
         setRuntimeEnabled: (value: boolean) => { runtimeEnabled = value; },
         setCanManage: (value: boolean) => { canManage = value; },
+        setDocumentText: (value: string) => { documentText = value; },
+        sourceFile: file,
     };
 }
 
@@ -196,6 +207,43 @@ describe("ChatPluginIntegration", () => {
         mockWritingStyleConstructor.mockClear();
         mockChatServiceConstructor.mockClear();
         mockCreateChatHistoryStore.mockReset();
+    });
+
+    it("admits an exact text source before send and exposes normalized request defaults", async () => {
+        const harness = createHarness();
+        const documentText = "---\ntitle: source\n---\nSOURCE-BODY";
+        const source = {
+            kind: "note" as const,
+            path: "notes/current.md",
+            displayName: "current",
+            text: "SOURCE-BODY",
+            documentText,
+            file: harness.sourceFile,
+            inputLineage: {
+                schemaVersion: 1 as const,
+                completeness: "complete" as const,
+                dependencies: [{ kind: "vault" as const, path: "notes/current.md", via: "note" as const }],
+            },
+        };
+        const host = harness.owner.createChatHost();
+        await expect(host.verifyImageTextSource?.(source, "before-send")).resolves.toBeUndefined();
+        expect(host.isImageTextSourceCurrent?.(source)).toBe(true);
+        expect(harness.owner.isImagePromptOriginCurrent({ path: source.path })).toBe(true);
+        harness.setDocumentText(`${documentText}\nchanged`);
+        await expect(harness.owner.verifyImageTextSource(source))
+            .rejects.toThrow("image_generation:source_changed");
+        expect(harness.owner.isImageTextSourceCurrent(source)).toBe(true);
+        harness.setDocumentText(documentText);
+        (harness.app.vault.getAbstractFileByPath as jest.Mock).mockReturnValue(null);
+        expect(harness.owner.isImageTextSourceCurrent(source)).toBe(false);
+        expect(harness.owner.isImagePromptOriginCurrent({ path: source.path })).toBe(false);
+        (harness.app.vault.getAbstractFileByPath as jest.Mock).mockReturnValue({ path: source.path });
+        await expect(harness.owner.verifyImageTextSource(source)).rejects.toThrow("image_generation:source_changed");
+        expect(host.getImageGenerationOptions?.()).toEqual({
+            model: "wan2.7-image-pro",
+            count: 3,
+            attachmentPathHint: "attachments/ai",
+        });
     });
 
     it("constructs the shared Chat resources from one store and snapshots each host", () => {
