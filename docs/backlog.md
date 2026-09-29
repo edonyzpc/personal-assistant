@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-09-28
+Updated: 2026-09-29
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -8,7 +8,6 @@ Updated: 2026-09-28
 
 | ID | 事项 | 当前边界 | 下一步 | 依据 |
 | --- | --- | --- | --- | --- |
-| B-153 | Obsidian 笔记到 Ghost 的预览确认发布 | 产品范围已确认；桌面、多桌面续接、真实 Ghost 临时预览稿和最近更新恢复；当前只落设计，未启动实施 | 获得实现授权且 Next 排期可用后建立 Active Package，先验证渲染探针、Lexical 转换与同步，再按 GPT/GLM 切片实施 | User request 2026-09-28；[DEC-045](./product/decisions/dec-045-ghost-blog-publishing.md)、[Product Spec](./product/specs/pa-ghost-blog-publishing-product-spec.md)、[设计与验收](./development/ghost-blog-publishing-design.md) |
 | B-002 | Pagelet source-bound async result 完整体验 | Typed outcome 与 interim stale-result 修复已存在；统一 in-memory result store 与 Pet/Bubble ready-state 仍需按当前代码复核 | 先做 code-to-plan reconciliation，再为剩余 slice 建新 SDD；不要重复已实现部分 | [Historical plan](./archive/pagelet-async-result-plan.md) |
 | B-003 | Android VSS 真机验证 | Desktop 与 iOS 有证据，Android parity 未验证 | 在物理 Android 设备验证 SQLite/WASM Memory backend 后再更新 README 声明 | [README note](../README.md#mobile-vss-validation-note) |
 | B-004 | PA Agent telemetry baseline | Instrumentation 与 runbook 就绪，尚无 post-ship aggregate sample | 在明确 opt-in 后采集至少 7 天内容无关的聚合数据，再用于功能优先级判断 | [Runbook](./operations/pa-agent-telemetry-baseline.md) |

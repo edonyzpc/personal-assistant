@@ -1,30 +1,34 @@
 # Ghost Blog Publishing — 实施设计与验收
 
-Document status: Draft
-Updated: 2026-09-28
+Document status: Approved
+Updated: 2026-09-29
 Work item: B-153
-Authority: 对已批准产品范围的 source-verified 设计；拟新增接口均为 Proposed，未实现部分不能视为当前能力。
+Authority: 对已批准产品范围、源码和 T-01 可行性证据的实施设计；实际交付与验证状态以 owning Tracker 为准。
 Product spec: [Ghost Blog Publishing](../product/specs/pa-ghost-blog-publishing-product-spec.md)
 Decision: [DEC-045](../product/decisions/dec-045-ghost-blog-publishing.md)
 
-当前授权止于设计。仓库已有 Planned package，本项保留在 [Backlog](../backlog.md#下一步可执行)，
-不新增第二个 Planned Tracker、不改变其他任务排期。实现获得授权且排期允许后，将本文移入
-`active/ghost-blog-publishing/sdd.md`，建立最小 Feature Home + Tracker；把下方任务与验证映射
-移入 Tracker，而不是维护两套状态。本文兼作设计入口，不另造 Plan、调查报告或验收平台。
+本技术设计由 [B-153 Feature Home](./active/ghost-blog-publishing/README.md) 引用，保留原路径，
+不复制第二份 SDD。产品范围不变；详细任务与验证方法见 [开发测试方案](./active/ghost-blog-publishing/plan.md)，
+执行状态、证据和接续只记 [Tracker](./active/ghost-blog-publishing/tracker.md)。
+Owner 已授权完整开发测试和本机隔离 Ghost 合成测试。T-01 技术选择由 GPT 核定；
+真实产品行为仍按 Tracker 验收，不把设计 Approved 当作运行时通过。
 
 ## Current Source Baseline
 
-2026-09-28 核对基线 `791a1ff6`；开始实施时复核受影响文件，不把 HEAD 当完整输入身份证明。
+下表起于 2026-09-28 的 `791a1ff6`，2026-09-29 在 `10635c6` 补查了 Skill/Chat、Host、
+来源 guard、设置和结果事实接线；具体路径与 owner tests 见开发测试方案。此为只读源码事实，
+不是运行时验证。实施前只复核发生变化的相关输入，不把 HEAD 当完整输入身份证明。
 
 | 已有模块 | 可复用事实 / 必要变化 |
 | --- | --- |
-| [bundled-skills](../../src/ai-services/bundled-skills.ts)、[SkillContextProvider](../../src/ai-services/skill-context-provider.ts) | `load_skill` 加载指引，不执行脚本；新增 `skills/blog2ghost/SKILL.md` 与 catalog 注册即可承载指引 |
-| [Chat](../../src/chat/chat-view.ts)、[skill-router](../../src/ai-services/skill-router.ts) | 技能 typeahead 当前匹配 `#`；目标需接受 `@blog2ghost`，保持已有 `#skill` 和 `@CreateImage` 等动作行为 |
-| [PolicyEngine](../../src/ai-services/policy-engine.ts)、[capability-types](../../src/ai-services/capability-types.ts)、[host tools](../../src/ai-services/pa-agent-host-tools.ts) | 非读取工具已有固定领域 Host 准入模式；不能给所有 Skill/network-read 放开网络写入 |
-| [SourceAccess](../../src/plugin/source-access.ts)、[TaskSourceReadGuard](../../src/ai-services/task-source-read-guard.ts) | 宿主检查来源，`isCurrent`/`isPathAllowed` 覆盖实际读取与外发；生成状态不能成为检索来源 |
+| [bundled-skills](../../src/ai-services/bundled-skills.ts)、[catalog](../../src/ai-services/bundled-skill-catalog.ts)、[SkillContextProvider](../../src/ai-services/skill-context-provider.ts) | `load_skill` 加载指引，不执行脚本；新增 `skills/blog2ghost/SKILL.md` 与 catalog 注册承载指引 |
+| [Chat](../../src/chat/chat-view.ts)、[skill-router](../../src/ai-services/skill-router.ts) | Chat 的 `getSkillTriggerMatch` 匹配 `#`，`getActionTriggerMatch` 匹配 `@CreateImage` / `@Writing`；增加 `@blog2ghost` 时保留这些入口与 IME，skill-router 负责 Skill 解析/上下文 |
+| [tool factories](../../src/ai-services/chat-tool-factories.ts)、[adapter](../../src/ai-services/capability-adapter.ts)、[registry](../../src/ai-services/capability-registry.ts)、[PolicyEngine](../../src/ai-services/policy-engine.ts)、[host tools](../../src/ai-services/pa-agent-host-tools.ts) | 新领域需完整工厂→adapter→registry→Host 接线及 context 类型；非读取工具按固定领域准入，不能给所有 Skill/network-read 放开网络写入 |
+| [SourceAccess](../../src/plugin/source-access.ts)、[TaskSourceReadGuard](../../src/ai-services/task-source-read-guard.ts) | `isCurrent`/`isPathAllowed`、`isNoteDomainAllowed` 与 `captureSourceValidity` 支持当前来源准入；发布必须取得必要 guard，不能借缺省放行；生成状态不能成为检索来源 |
+| [result facts](../../src/ai-services/pa-agent-result-facts.ts)、[required capability policy](../../src/ai-services/pa-agent-required-capability-policy.ts) | 需加入领域结果的真实语义，准备草稿不能被报告成已发布，结果不明和清理待办须独立表达 |
 | [plugin configuration](../../src/ai-services/plugin-configuration.ts)、[settings persistence](../../src/plugin/settings-persistence.ts) | 已用 `app.secretStorage` 与串行设置写入；Ghost 单独 secret ID，不复用 AI token 或同步明文 |
 | [Obsidian transport](../../src/ai-services/obsidian-fetch.ts) | 现有 `requestUrl` 封装面向提供方；可复用小型网络/错误处理 helper，不把 CMS 凭据装进 AI 请求 |
-| Obsidian 1.12.3 类型、[platform helpers](../../src/platform-dom.ts) | 可用 `MetadataCache.getFirstLinkpathDest`、`resolveSubpath`、`FileManager.processFrontMatter`、SecretStorage；没有已验证的跨站点渲染探针 |
+| Obsidian 1.12.3 类型、[platform helpers](../../src/platform-dom.ts) | 可用 `MetadataCache.getFirstLinkpathDest`、`resolveSubpath`、`FileManager.processFrontMatter`、SecretStorage；类型基线不等于原生 Web viewer 检查接口的公开兼容承诺，实测范围见第 6 节 |
 
 ### External Evidence
 
@@ -40,7 +44,7 @@ Decision: [DEC-045](../product/decisions/dec-045-ghost-blog-publishing.md)
   草稿先保存；已发布 `/p/{uuid}/` 转正式 URL。需要临时稿才能保留旧版在线并预览新版。
 - [Send to Ghost 参考实现](https://github.com/Southpaw1496/obsidian-send-to-ghost/blob/f8877bb432fd38606c748f523ba05239fe07cc32/src/methods/publishPost.ts)：
   当前笔记 Markdown 转 HTML 后 POST；没有本设计所需的绑定更新、图片搬运和渲染验证。
-- 本次只读查看 edony.ink dashboard：全站 footer 有 Prism 1.29 按需加载，header 有旧脚本兼容 shim；
+- 2026-09-28 只读查看 edony.ink dashboard：全站 footer 有 Prism 1.29 按需加载，header 有旧脚本兼容 shim；
   全站 injection 未见 Mermaid/数学库。个别文章有 Mermaid/MathJax，不能据此推定全部文章均覆盖。
   这是当次配置观察，不是永久兼容承诺；实现时从实际页面/合法只读配置重新识别，不保存凭据。
 
@@ -53,14 +57,20 @@ flowchart LR
     C --> D{文章状态}
     D -->|未发布| E[保存原草稿]
     D -->|已发布更新或恢复| F[保存 PA 临时预览草稿]
-    E --> G[真实 Ghost 渲染检查与预览链接]
+    E --> G[原生 Web viewer 打开 Ghost Preview 并检查]
     F --> G
     G -->|首次发布| H[用户在 Ghost Publish]
     G -->|更新或恢复| I[用户在 PA 确认指定版本]
     I --> J[重验版本后 PUT 原文章]
-    J --> K[核实结果并保存基线与恢复快照]
+    H --> K[核实结果并保存已完成基线与恢复快照]
+    J --> K
     K --> L[清理本次 PA 临时稿]
+    K --> M[已完成记录随 vault 同步]
+    M --> N[其他桌面可发起一次新更新]
 ```
+
+一次操作的准备、检查、确认及结果核实在同一桌面完成；跨桌面只复用已完成记录。
+同步不是流程驱动事件，用户在另一桌面显式发起新更新时才读取记录和远端实际状态。
 
 ### Interfaces And Ownership
 
@@ -72,8 +82,8 @@ flowchart LR
 | Source/export | 唯一来源 + 发布选项 → 完整导出树、依赖清单、需要的渲染能力；直接读受准入保护的原始内容，不用可能截断的 `read_note` 文本充当全篇 |
 | Ghost client | 固定站点请求 → 类型化结果；JWT 仅在 Host 内生成，短期有效；区分失败与结果不明；不接收模型给出的任意 URL、HTTP 方法或密钥 |
 | Publishing service | `prepare` / `prepareRestore` / `refresh` / `confirm` → 领域状态；处理单文串行、版本检查、写回与恢复；确认方法仅供 Host UI 调用 |
-| State store | 每篇绑定、当前基线、一个待确认版本、最近一次恢复快照；原子替换本地文件、校验关联与 schema，不建通用事件库 |
-| Desktop preview | 临时/原草稿链接 + 渲染预期 → verified / failed / unavailable；运行固定检查，不依赖 LLM 看网页判断是否成功 |
+| State store | 区分随 vault 同步的已完成记录与本机进行中操作；持久化、校验关联与 schema，缺必要数据暂停，不建同步状态机或任务交接协议 |
+| Desktop preview | Ghost 原生 Preview 链接 + 渲染预期 → 原生 Web viewer 标签页与 verified / failed / unavailable；同页固定检查，不另建预览页面、不依赖 LLM 判断 |
 | Chat/Settings 接线 | 选择来源、连接配置、状态卡、预览链接、确认/继续/恢复入口；沿用 Chat 生命周期与 locale/CSS 约定 |
 
 Proposed 工具 `prepare_ghost_post` 只接受笔记定位和准备意图，采用固定
@@ -92,7 +102,8 @@ Proposed 工具 `prepare_ghost_post` 只接受笔记定位和准备意图，采�
   `title/tags/feature_image/custom_excerpt`；缺字段=不管理，null 或约定空值=明确清空。
   标题缺省回到文件名；不猜摘要、封面、标签或剔除正文 H1。正式 slug/作者/访问范围沿用远端。
 - 采用确定性 Markdown token/AST 转换，拟新增 `markdown-it` 作为直接依赖；不以 Obsidian
-  插件渲染后的 DOM 反推文章，不执行 Dataview/Templater。具体依赖版本与 license 在 T-01 锁定。
+  插件渲染后的 DOM 反推文章，不执行 Dataview/Templater。固定 `markdown-it@15.0.2`（MIT），
+  类型依赖 `@types/markdown-it@14.2.0`（MIT）；T-02 更新 lock/notices 并验证现有构建兼容性。
 - 常规段落、标题、列表、引用、链接、图片、代码映射 Ghost 原生 Lexical 节点；复杂表格、
   Mermaid/数学可用有界 HTML card。节点 schema 按目标 Ghost 实证固定；不把整篇塞 HTML card，
   不将 `source=html` 有损导入当默认正确性保证。只对确实需要的语法加转换器。
@@ -101,6 +112,9 @@ Proposed 工具 `prepare_ghost_post` 只接受笔记定位和准备意图，采�
 - 保存源块与导出块的对应信息。后续仅在源块未变且远端语义一致、对应唯一时保留远端排版；
   重复块无法对应或远端内容实质改变时暂停并解释。可重新生成全篇覆盖预览，但须用户明确选择；
   不在首版开发通用三方合并编辑器。恢复已获批直接覆盖，不走这项格式合并逻辑。
+- 内容比较用于转换完整性、格式保留及远端冲突判断，不用作跨桌面接续门槛。忽略纯展示
+  样式，但保留文字/结构顺序、链接目标、图片身份及代码/公式/Mermaid 原文；代码空白不能
+  一律归一化。本地图片与上传 URL 按可靠资源对应关系识别，不能只比较 Markdown 或 HTML 字符串。
 
 ### 2. 图片与注入
 
@@ -113,48 +127,89 @@ Proposed 工具 `prepare_ghost_post` 只接受笔记定位和准备意图，采�
 - 按导出树选择固定、版本锁定的 Prism/Mermaid/数学 recipe。优先复用已兼容全站/文章能力；
   缺失才在 `codeinjection_head/foot` 的 PA 标记区域补充。管理区含 recipe 版本和 hash，
   其余人工内容逐字保留；管理区被人工改动、版本冲突或无法确认加载顺序时暂停处理。
+- T-01 固定配方基线为 Prism 1.30.0、Mermaid 12.0.0、KaTeX 0.18.9（均 MIT）。Prism 按
+  实际语言及依赖顺序加载，JavaScript 包含 core→clike→javascript；Mermaid 的
+  `dist/mermaid.min.js` 是 classic global bundle，不能当 ESM default import；使用 strict
+  安全级别并显式渲染。KaTeX 区分 inline/display。固定 CDN 版本与文件 SRI，不加载任意
+  笔记提供的脚本。该配方是缺失能力时的补充，不覆盖或重复加载已兼容的站点库。
+- Integration 配置读取采用最小合法范围和白名单（版本、主题、全站注入的必要画像）；
+  不读取/记录全量 private settings。配置权限不足或画像未知时用实际页面核对，不能把
+  全局对象、加载回调或 HTTP 200 当成高亮/图表/公式通过。
 - HTML/脚本只在 Ghost 页面或隔离网页环境执行，不在 Obsidian 主 DOM/Node 环境执行。
   笔记中的任意脚本不作为指令或自动部署来源；未知可执行内容不能静默放进文章。
 
-### 3. 文章身份与多桌面状态
+### 3. 文章身份、已完成记录与本机操作
 
 Proposed 最小 note binding：`note_uid`、`site`、`post_id`、`post_url`，归于 `pa_ghost`。
 `note_uid` 在首次远端创建前固定；Ghost 返回 ID 后即写回，URL/状态以远端实际结果校准。
 机器属性写回用 `processFrontMatter` 串行处理，并验证正文未变；不能覆盖同期编辑。
 网络成功但属性写回失败时保留已知 ID，继续时补写，不能重新 POST。
 
-Proposed 同步存储为 vault 普通 Markdown 文件
+每次发布、更新或恢复由同一桌面完成，支持该桌面重启后显式继续。完成后其他桌面可对
+同一文章发起新更新，文章不永久绑定设备；首版不支持进行中操作的跨桌面接续。
+
+Proposed 已完成记录存储为 vault 普通 Markdown 文件
 `PA System/Ghost Publishing/<site-id>/<note-uid>.md`，内部为带 schemaVersion 的结构化数据，
-便于现有 vault 同步携带；不用仅设备可用的 OPFS、localStorage、Chat history 作权威。
+由用户现有 vault 同步携带；一份文件承载同一次已核实完成的基线与恢复记录，原子替换。
+远端结果不明或仍待确认时，不发布为新的已完成记录；同一桌面根据本机记录继续核实或补写。
 这是技术默认路径，不增加文件管理 UI；创建前查占用，不能覆盖用户同名文件。
 文件带明确 PA 系统标记，接入 SourceAccess 的系统数据排除，不能因某个 consumer 允许生成笔记
 而把快照送入 Memory/普通检索。Host 状态读取使用专用 store，不借此扩大 note source scope。
 
 每篇只保留以下有用途的数据，不建立无限历史：
 
-| 数据 | 用途 / 保留范围 |
-| --- | --- |
-| binding + remote identity | 站点 canonical admin origin、post ID、稳定 slug、已知状态及原笔记身份 |
-| baseline | 上次源快照、导出映射、实际 Ghost 受管字段与内容 hash；支持格式保留及远端变化判断 |
-| prepared | 候选 ID、来源依赖 hash、远端基线版本、完整提交内容 hash、profile/recipe hash、预览稿身份 |
-| lastUndo | 最近一次成功 PA 更新前的受管内容/字段、对应来源 manifest；恢复只覆盖这次管理范围 |
-| pending operation | 发起前记录的 operation ID、目标、阶段和预期 hash；用于未知结果核对，而非通用任务平台 |
+| 数据 | 保存范围 | 用途 / 保留范围 |
+| --- | --- | --- |
+| binding + remote identity | 关联随笔记；已完成远端身份归入发布记录 | 站点 canonical admin origin、post ID、稳定 slug、原笔记身份；移动/重命名仍定位同一文章 |
+| completed baseline | 随 vault 同步 | 最近一次已完成的源快照、导出/资源映射、实际 Ghost 受管内容与字段、远端版本及 hash；支持下一次更新与排版保留 |
+| lastUndo | 随已完成记录同步 | 最近一次成功 PA 更新前的受管内容/字段、对应来源 manifest；恢复只覆盖这次管理范围 |
+| prepared | 仅本机 | 候选 ID、来源依赖 hash、远端基线版本、提交内容 hash、profile/recipe hash、预览稿身份与检查结果；重启后重新检查和确认 |
+| pending operation / cleanup | 仅本机 | 写入前记录的 operation ID、目标、预期结果及未完成结果核实/清理；用于同桌面恢复，不向另一桌面交接 |
 
-本机串行处理同一 binding。两台桌面顺序续接无需重绑；同步未完成、文件冲突或远端版本不符时
-先恢复/重新准备。复制 `note_uid` 后出现多个笔记候选时暂停，不能按最先搜索到的文件覆盖。
-同步的是发布状态，不同步凭据和确认授权；在另一桌面重新打开候选并确认，不能重放设备 A 的点击。
-持久化候选与来源 manifest 不是权限。重启或换桌面继续时，Host 根据本次用户选择、当前来源范围和
-Data Boundary 建立新的来源准入，逐项核对主笔记、嵌入、图片及恢复 manifest；不能复用旧 Chat 的
-内存回调。Ghost 写路径要求有效准入，缺失或无法建立即停止，不能借可选 guard 的默认放行继续。
-首版不承诺离线同时首次创建的全局 exactly-once；用 Ghost 归属标记和远端核对识别重复/不明结果，
-不唯一则停止提交，不引入云锁或后台同步服务掩盖平台限制。
+本机记录使用经实际 Obsidian restart 验证的 IndexedDB，复用项目已有的 vault scope 方式；
+DB 名为 `personal-assistant-ghost-publishing-v1-<scope-hash>`，scope 由现有 plugin/vault
+身份及本地存储路径产生，store 为 `operations`，操作键含 site/note/operation 身份。
+不新建跨设备 ID 注册或锁。首次使用可创建数据库；已有操作丢失、读取失败或 schema 未知
+时不能当作“从未发送”，须结合 binding/精确远端标记核实，不 reset 或盲目重发。
+不能假定普通插件 `data.json`
+不会被用户同步，也不能将候选或进行中请求混入上述 vault 文件。具体本机存储接线由 T-01
+固定为上述 IndexedDB，不另建同步服务。确认授权不持久复用，重启后一律重新确认。
+
+已完成记录固定为带 `pa_system: ghost-publishing`、schema/身份标记的 Markdown，正文一个
+结构化 JSON block，包含完整且有界的 binding/completed/baseline/可选 lastUndo；实际 schema
+必须验证嵌套字段及来源 manifest，不能只验证 hash 或顶层对象存在。首次发布无 lastUndo。
+Desktop 文件适配器采用同目录临时文件写入、无覆盖创建、原子 rename 替换；先验证原文件归属、
+schema/身份及预期修订，失败保留旧文件和本机待补写事实。沿用 Vault 事件发现最终文件，
+不为此建立文件同步管理器。路径与明确系统标记都必须接入来源硬排除，移动文件或
+generated-note 允许策略不能把发布快照变成普通检索/Memory 来源。
+
+本机串行处理同一 binding。A 完整发布并保存记录、现有 vault 同步后，B 才据此开始一次
+新更新；B 读取必要记录与远端实际版本，按普通更新流程核对差异，不接续 A 的候选/执行进度。
+当前笔记相对线上旧版的修改是正常输入，不要求二者内容相同，也不以此推断同步是否完成。
+缺必要已完成记录、记录损坏或存在同步冲突时，提示先完成同步/处理冲突后重试，不自动修复
+或重建历史；只阻止依赖缺失数据的操作。远端变化按既有冲突规则处理，不能刷新版本后盲写。
+
+发现可识别的其他桌面未完成草稿时保留现场、引导回原桌面完成，不接管/覆盖/删除。若已完成
+记录能确认对应提交成功，遗留临时稿只作为清理待办，不能误报提交失败或重复更新。
+实现中以 Ghost 校验过的 `created_at` 与已完成记录的远端 `updatedAt` 作保守分界：仅
+draft 且创建时间严格更早的候选视为被后续已完成版本取代；它不能再沿用旧原文版本/基线
+提交，但仍留在原处，不接管或清理。后来人工编辑导致的 `updated_at` 变化不重新建立在途
+所有权。时间缺失、非法、相等或更晚均不能据此放行；不用本机核实时间判断。绑定查询必须
+取得完整的有界结果，超过单次上限或分页不完整就停止，不能忽略第一页旧稿后假定不存在
+其他在途稿。未知 POST 的精确 operation marker 查询仍使用两条即歧义的规则。
+复制 `note_uid` 出现多个笔记候选时暂停，不能按最先找到的文件覆盖。无需设备注册、设备锁、
+同步监听或任务交接协议；首版不承诺离线同时首次创建的全局 exactly-once。
+
+已完成记录和本机记录均不是权限。重启继续或换桌面开始新操作时，Host 根据本次用户选择、
+当前来源范围和 Data Boundary 建立新的准入，核对主笔记、嵌入、图片及恢复 manifest；
+不能复用旧 Chat 的内存回调，也不能借可选 guard 默认放行。凭据与确认授权不随 vault 同步。
 
 ### 4. Prepare / Confirm / Restore
 
 状态由一个领域 service 管理：`preparing → ready → committing → succeeded`，另有
 `needs_attention`、`outcome_unknown`；清理待办与提交结果分开，避免清理失败触发重复发布。
 
-1. 创建候选前重验来源/连接；读取原文最新版本、当前 status、受管/非受管字段。
+1. 在本次操作桌面创建候选前重验来源/连接及必要已完成记录；读取原文最新版本、当前 status、受管/非受管字段。
    原文为 draft 时更新原草稿；published 时创建/复用 `#pa-ghost-preview-<note_uid>` 标记的
    临时草稿。另存 originalPostId；不能将临时 ID 写入笔记正式关联。
 2. 用「远端保留值 + 本次管理值」形成一份完整候选，临时稿与最终提交都从它派生。
@@ -163,24 +218,35 @@ Data Boundary 建立新的来源准入，逐项核对主笔记、嵌入、图片
    内部标记不能改变公开标签/主标签或进入展示。无法等价的主题行为明确列为验证限制。
    保持 draft，不带 newsletter 参数。使用 Ghost 返回的 UUID 构造 `/p/{uuid}/` 预览链接。
    临时 slug 与正式 slug 不同，不承诺所有依赖 URL 的自定义脚本天然一致；测试需覆盖实际主题。
-3. 图像、代码字符、Mermaid 和公式检查通过才进入 ready。结果卡包含标题、站点、操作类型、
-   预览入口和简短注意事项；不把这些全文 payload/预览密钥链接回传模型。
+3. 原生 Web viewer 打开对应 Ghost Preview，图像、代码字符、Mermaid 和公式检查通过才
+   进入 ready。结果卡包含标题、站点、操作类型、预览入口和简短注意事项，并引导在当前
+   桌面完成本次确认；不把这些全文 payload/预览密钥链接回传模型。
 4. 新文用户在 Ghost Publish；PA 下次显式 refresh 读取正式状态，形成已发布 baseline。
    若用户在 Ghost 改了格式，采用实际远端版本核对语义/映射；不能只把旧候选标作最终版本。
+   原桌面核实并保存已完成记录后，其他桌面才能用它发起新更新；不将「草稿已保存」当作发布完成。
 5. 更新/恢复的确认绑定 prepared ID/hash，不接受聊天里一个脱离候选的“是”作为永久授权。
    提交前重读来源依赖、连接/站点画像、临时稿与原文章。任一相关版本变动，旧确认失效，
    准备新预览；用户在临时稿中的手工调整必须先被读取、校验、纳入新候选，不能预览 B 却提交 A。
 6. 在写入前持久化实际远端 pre-update snapshot。PUT 只发送本次管理字段和匹配的 `updated_at`，
    保持原 published 状态、ID/slug/作者/未管理字段；tags/authors 是替换关系时必须保留未管理值。
-   成功后 GET 核对内容与状态再更新 baseline/lastUndo；渲染复核失败如实报告已上线，不自动反向写入。
+   成功后 GET 核对内容与状态再原子更新 completed baseline/lastUndo。远端成功但记录写回
+   失败时保留本机结果、提示待补齐记录，不能重发 PUT；渲染复核失败如实报告已上线，不自动反向写入。
 7. Restore 以 lastUndo 为目标，生成同样的临时预览；确认后直接覆盖对应内容/字段和 PA 管理的注入区。
    不展示额外差异页、不自动合并后续内容；不改 Obsidian 当前正文，不清除现在的人工注入区。
    仅提供最近一次 PA 更新的恢复，不做无限撤销/重做；恢复成功后消费本次恢复入口。
 
 ### 5. 网络失败与资源生命周期
 
-- Admin origin、站点身份与密钥在 Host 固定；跨 origin 重定向不能转发 JWT。图片请求使用无凭据
-  transport。日志/错误移除鉴权、完整 payload、预览 token，密钥只存在 SecretStorage。
+- Admin origin、站点身份与密钥在 Host 固定；桌面 Host 在平台检查后加载 `node:http` /
+  `node:https`，使用不自动跟随重定向的小型请求实现。Admin 的 3xx 停止并提示核对站点地址，
+  不自动重新发送携带 JWT 的请求；已发送写入的结果仍按未知结果规则核实。外部图片下载
+  使用独立无凭据请求，有限跳数内逐跳检查地址，不带 Ghost/AI 鉴权或浏览器 cookie；
+  向目标 Ghost Admin 上传图片则使用该站点的鉴权请求。日志/错误移除鉴权、完整 payload、
+  预览 token，密钥只存在 SecretStorage。移动端不加载或执行桌面网络模块。
+- 上述选择基于实际 test vault 的只读比较：在 `app://obsidian.md` 中，对同一本机 Ghost
+  site 地址，renderer `fetch` 返回 Failed to fetch，Node 请求返回 HTTP 200。只使用无效合成
+  令牌且未读取响应正文；这证明基础 transport 可用性，不代表鉴权、重定向或写入已验收。
+  不用 `requestUrl` 或 renderer `fetch` 的未核实重定向行为作为 Admin JWT 边界，也不增加网络代理服务。
 - Ghost 创建没有在本次核查中证实可依赖的通用 idempotency key。POST 发送前存 operation 标记，
   写入 Ghost 内部归属标签；未知结果按精确标记查远端，唯一且内容相符才接续，多条/不可核实则暂停。
   不能将 timeout/AbortSignal 当成服务端未执行，也不能直接再次创建或自动重发 PUT。
@@ -192,70 +258,65 @@ Data Boundary 建立新的来源准入，逐项核对主笔记、嵌入、图片
 - 组件关闭卸载监听器/探针和计时器；关闭预览不删除远端草稿，不让旧组件完成回调更新新会话。
   插件禁用不触发任何远端清理/下线，也不删除同步快照。
 
-### 6. 真实渲染检查与兼容性
+### 6. 原生 Preview、固定检查与兼容性
 
-**必须先验证的技术点**：Obsidian 公共 API 没有已确认可直接读取外部浏览器 DOM 的接口。
-仅打开系统浏览器、抓静态 HTML、Prism 全局对象存在，均不能证明 Mermaid/公式已渲染。
+保存草稿后直接使用 Ghost 的 Preview 链接，在 Obsidian 原生 Web viewer 标签页打开或复用；
+固定检查读取同一页面的图片尺寸、代码原文/高亮状态、Mermaid SVG 或错误、数学输出及数量。
+系统浏览器保留为人工查看入口。不另建预览页面、独立浏览器或复杂会话管理，不引入远程
+浏览器服务、Playwright 运行时或第二个 AI Agent。仅打开链接或全局对象存在不能证明渲染成功。
 
-Proposed DesktopPreviewProbe：在桌面宿主允许的隔离网页容器加载 Ghost preview，使用固定诊断
-读取图片加载尺寸、代码原文/高亮状态、Mermaid SVG 或错误、数学输出和对应元素数量。
-优先验证 Electron webview 的可用性；禁用 Node、共享 Obsidian 会话/preload 和任意宿主桥接，
-只允许固定页面地址/固定探针。不引入远程浏览器服务、Playwright 运行时或第二个 AI Agent。
-若该方式不被实际宿主支持，T-01 返回证据并暂停受影响实施，不能改成“用户看过=自动检查通过”。
+2026-09-29 在 repo-local `test/` vault、Obsidian 1.14.2（installer 1.13.7）验证了
+原生 Web viewer 与本机 Ghost 6.65.0 / Source 主题的合成文章；尚未部署 B-153 运行时：
 
-Probe 结果绑定 candidate hash、页面 URL、recipe/profile 和当次加载；能力加载失败与语言不支持
-分开处理。人工预览仍存在：系统浏览器中检查实际观感，PA 内置/Obsidian 网页入口检查可用性。
-Ghost 临时稿不会天然执行所有以正式 slug 为条件的主题行为；URL 依赖是明确验证项。
-升级主题/全站脚本后重新识别画像和准备预览，不自动修改全站设置。
+- `WorkspaceLeaf.setViewState` 打开并复用 `webviewer`，同一 leaf 内取得底层 `webview` 后，
+  `executeJavaScript` 能返回固定页面检查结果；通过页面链接输入跳转后可读回不同 URL。
+- 正常图片读取到 `120 × 60`，故意缺图返回 `0 × 0`；代码字符完整，动态生成 SVG 数量为 1，
+  原生 MathML 有非零布局尺寸。页面中的 `require`、`process`、`app` 均为 `undefined`，
+  没有配置 preload 或启用 Node integration；这只是基础能力证据，不是完整安全审计。
+- 原生容器使用 vault 级持久化网页会话。接受其正常浏览行为，不要求为每次预览另造空白会话；
+  PA 不读取/导出浏览器凭据，不将 Admin API 密钥或任意宿主桥接注入页面，正式写入仍走 Host API。
+- 取内部 `webview` 不是专用公开 Obsidian 接口，实施时需能力检测与生命周期处理；本次未验证
+  所有 Obsidian/主题版本，不能推广为跨桌面或产品全链路验收。
+- 真实 Ghost 原生 Lexical 保存/读回保留可编辑段落、代码等普通节点；综合原生页面含两张
+  真实上传图片、代码原文与高亮、Mermaid、行内及块公式、表格。错误样例缺图和 Mermaid
+  语法错误被识别；Mermaid 错误也可能生成 SVG，须检查错误标记/状态和有效图表，不能只数 SVG。
+- 复用标签的导航须走实际支持的原生导航能力，不能对尚未完成的导航调用旧页面 reload。
+  该版本原生 view 的 `navigate` 会同步地址并在成功后显示 webview；能力检测失败则 unavailable。
+  核对实际 URL、当前可见 webview/非 error 模式和此次加载，不能读取隐藏旧页冒充成功。
+  Ghost 图片可能懒加载，固定检查应等待预期图片真实加载/解码（可触发其正常加载），
+  不能把未进入视口误判为缺图，也不能忽略尚未加载的图片就返回 ready。检查必须有界超时。
+
+Proposed DesktopPreviewProbe 只执行固定诊断、核对预期地址与候选；网页/笔记内容不能提供
+待执行脚本。结果绑定 candidate hash、页面 URL、recipe/profile 和当次加载，跳转/重载/
+候选变化使旧结果失效，关闭或卸载释放观察与回调。能力不可用时明确报告 unavailable，不能
+用人工看过或系统浏览器打开成功替代自动检查通过。核心 Web viewer 未开启时给出开启指引；
+不擅自长期改动用户开关。测试临时开启后恢复。每个具体格式按导出预期核对，不要求所有文章加载所有库。
+
+Ghost 临时稿不会天然执行所有以正式 slug 为条件的主题行为；URL 依赖仍需在实际主题验证。
+升级主题/全站脚本后重新识别画像和准备预览，不自动修改全站设置。自动检查保证具体内容/
+资源结果，人工查看负责整体观感，不承诺逐像素一致或把当前预览可见等同于正式访问范围。
 
 ## GPT / GLM Implementation Handoff
 
-沿用 [GPT-6/GLM 工作流](./workflows/gpt6-glm-delivery-workflow.md) 与
-[任务模板](./templates/glm-worker-task.md)。GPT 持有契约、派工和独立验收；GLM 用单独 CLI，
-一个 writer 连续完成获派切片、测试、自查。此处没有启动 worker，预检/工具可用性未声称通过。
+具体顺序、每张任务卡的输入/范围/停点、工作树与本机预检字段统一见
+[开发测试方案](./active/ghost-blog-publishing/plan.md#phases)，执行状态与原始证据统一见
+[Tracker](./active/ghost-blog-publishing/tracker.md)。不在技术设计复制第二套任务状态或派工清单。
 
-| 切片 | 模式与允许范围 | 终点 / 依赖 |
-| --- | --- | --- |
-| T-01 最小可行性检查 | `understand` 加明确授权的合成 prototype：确认 Ghost Lexical 节点、Integration key 可读权限、预览字段清单、渲染探针和同步文件在两桌面可用；只动获派 scratch/fixture | 返回真实结果与失败原因。GPT 固定 schema、recipe、probe 和 store 接线后才批准生产设计；不搭完整新平台 |
-| T-02 完整垂直实现 | 一个 GLM `deliver` 上下文：先 source/export 与 client/store，再 service/准备-确认-恢复，最后 Skill/Chat/Settings 接线；只动 `src/ghost-publishing/`、必要既有接线、skill、locale/CSS 与对应 tests/依赖 | 全部 REQ/AC 的运行时实现、focused checks 与自查报告；不能改产品范围、Tracker 或擅用 edony.ink 试发布 |
-| T-03 集中集成与验收 | GLM 对冻结输入执行一次完整 gate/deploy，GPT 独立检查 diff、原始证据和实际桌面交互；有问题交同一 writer 修复 | 所有必需 AC 通过才标 Validated；未测、失败、环境缺失分开记录，不自动 commit/closeout/release |
-
-每次派工补齐模板的实际字段：绝对工作树与基线/dirty 归属、目标接收树、准确读集、允许文件、
-已核对 provider/model/CLI 配置、测试站点/实际 vault、输出目录和资源归属。不能把本设计的
-相对建议路径直接当作机器已配置的运行环境。新 worktree 不自动包含本次未提交文档，派工前显式携带。
-
-首个 dispatch 的不可变约束：已确认的 10 项 REQ/AC、API-only 正式写入、临时草稿预览、原 ID/URL、
-SecretStorage、本地正文不改、无 newsletter/全站设置/旧文接管；不能将模型输出当正文或确认。
-负例来自下面矩阵，不另造泛化测试平台。GLM 缺桌面工具时，由 GPT 补实际 UI 证据，不以 CLI 成功代替。
+不可变设计边界：完整 REQ/AC、API-only 正式写入、原生临时草稿预览、原 ID/URL、
+SecretStorage、本地正文不改、无 newsletter/全站设置/旧文接管；模型输出不是正文或确认。
+每次操作同桌面完成，仅完成记录跨桌面复用。GPT 批准设计和独立验收，GLM 限定实现，
+不得因 worker 没有桌面工具而用 CLI 内部方法调用冒充真实 UI。
 
 ## Validation Matrix
 
-优先使用一篇合成综合文章与少量独立失败变体，不将格式 × 主题 × 设备 × 网络状态做笛卡尔积。
-自动化按行为归并为 resolver/export、workflow/store/client、permission/UI 三组；具体 suite 名在实施时建立，
-本设计不假装已有测试文件。每组覆盖的风险不同，不在多层重复同一组字符串/快照断言。
-
-| REQ / AC | 变化 → 最低充分证据 | 通过条件 | 重跑/扩展触发 |
-| --- | --- | --- | --- |
-| B-153/REQ-01 / B-153/AC-01；B-153/REQ-04 / B-153/AC-04 | 定位/依赖解析的 focused tests；真实三入口各一次 | 唯一目标、嵌入范围、普通链接降级；歧义/排除/循环不外发；活动标签切换无误绑 | 解析规则、来源 guard、mention/入口改变 |
-| B-153/REQ-02 / B-153/AC-02；B-153/REQ-03 / B-153/AC-03 | AST/块映射语义断言；一篇 Ghost 综合夹具 + 桌面真实渲染 | 原文/代码精确保留，普通块可编辑；未变格式保留、冲突停下；SVG/数学/图像实际呈现，人工 injection/全站配置未改 | compiler、schema、recipe、主题或探针改变 |
-| B-153/REQ-05 / B-153/AC-05；B-153/REQ-06 / B-153/AC-06 | 图像复用与失败、字段三态参数化 focused；真实夹具含本地图与网络图及已有标签 | 引用正确、资源失败阻止就绪；清空/缺省正确，预览与提交的标签顺序等渲染字段一致；URL/作者/权限保持，无凭据/内部字段泄露 | 上传、redirect、字段归属或连接实现改变 |
-| B-153/REQ-07 / B-153/AC-07；B-153/REQ-09 / B-153/AC-09 | 状态机集成：prepare/取消/确认；真实测试站新文与更新各一次 | 预览前后原线上内容不变，确认才 PUT；人工临时稿变动使候选失效；无邮件，打开链接两入口可用 | service、确认卡、站点写入路径改变 |
-| B-153/REQ-08 / B-153/AC-08；B-153/REQ-09 / B-153/AC-09 | 重载/缺快照/复制身份/远端冲突 focused；两台桌面一次真实顺序续接 | 同 ID/URL、无需旧 Chat；重建来源准入，缺准入/基线暂停，撤销来源后不外发；响应丢失先核对、重复确认不重复提交，不靠 mock 声称跨设备通过 | store、同步布局、来源准入、恢复或 Ghost 冲突语义改变 |
-| B-153/REQ-10 / B-153/AC-10 | 恢复与精确清理 focused；真实站点一次更新→恢复循环 | 预览旧版再覆盖，笔记不变；误归属/人工接管不删除，清理失败不重提原文 | snapshot、managed 字段或清理逻辑改变 |
-
-### 最小执行门禁
-
-- 本次 docs-only：`npm run docs:check`、`git diff --check` 与既有 `npm run test:docs -- --runInBand`。
-  不加检查文案字面值的测试，不跑插件 build、全量运行时测试或 Obsidian smoke。
-- T-01：合成数据与定向 API/渲染证据；不把 prototype 成功当完整交付。使用明确配置的 Ghost 测试站，
-  不自动访问真实笔记、不向 edony.ink 创建/发布测试文章。新增外部写入目标需在派工时获得授权。
-- T-02：最近的 source suites，权限接线覆盖既有 PolicyEngine/host 调用路径，`git diff --check`；
-  需要真实行为时先部署当前切片并按 AGENTS 门禁执行，不能把必需阶段 app gate 都留到最后。
-- T-03：一个执行者对冻结输入运行 `make deploy`（含 lint/build/full Jest），另补 docs 与
-  AGENTS 的 DOM/community source scan。通过后不再重复单独 lint/build/full Jest；输入变化才重验。
-  本任务不加覆盖率百分比、全主题矩阵、多模型评测、性能基准或移动实机门禁。
-- GPT 独立验收检查完整 diff、关键断言及原始命令/自然退出、部署身份、真实 Ghost 与桌面观察。
-  两台真实桌面续接缺失就保留 AC-08 未验证；无需所有 OS 组合。只补缺失/不可信的证据。
+完整风险映射、通过条件、重跑触发、准确命令及 app 操作见
+[Plan 的 Validation Strategy](./active/ghost-blog-publishing/plan.md#validation-strategy)；
+全部 REQ/AC 的结果映射见 [Tracker Work](./active/ghost-blog-publishing/tracker.md#work)。
+一篇合成综合文章覆盖主流程，自动化在 exporter、workflow、host-ui 的 owner 层验证失败矩阵；
+真实站点只做必要代表路径。Owner于2026-09-29明确选择本轮以同机`test`/`test2`独立vault
+完成AC-08，分别配置凭据、不共享本机进度，只复制源与完成记录模拟同步；真实双桌面同步留后续补验，不阻塞本轮。
+mobile 普通编辑、入口限制和布局用 CLI mobile 模式；只有 iOS 独有依赖才追加对应真机检查，
+不把模拟或本地合成 Web viewer 证据写成真实 Ghost、两桌面或 iOS 真机通过。
 
 ## Compatibility, Rollback And Design Gates
 
@@ -264,7 +325,8 @@ SecretStorage、本地正文不改、无 newsletter/全站设置/旧文接管；
 - 发布状态 schema 未知或损坏时停止写入，保留数据；不 reset store。连接/站点改变使已准备确认失效。
   当前配置管理器可复用，Ghost 凭据与 AI 连接分开；不假定 SecretStorage 会自动跨桌面同步。
 - 移动端可以编辑带关联的笔记，不能调用发布工具；不为首版加载桌面探针、Electron 或写入依赖。
-- 渲染容器隔离与宿主可用性、Lexical schema 和多桌面同步文件三项由 T-01 给出真实证据；
-  是实现前检查点，不是新增产品选择，也不是已通过门禁。失败不得以静默降级满足 AC。
-- 技术方案 Draft；产品范围已按 DEC-045 获批。完成 T-01 后 GPT 根据证据收敛设计、标记 Approved，
-  仍须已有明确实现授权才可进入 T-02。此次没有运行 GLM、请求密钥或修改 Ghost。
+- T-01 已固定真实 Ghost 渲染、Lexical schema 和本机持久化技术选择；不替代生产实现的
+  来源准入、并发/网络恢复、格式保留、UI 或独立环境证据。完成后在另一独立vault发起新更新
+  在T-03 S-04验收；本轮双vault模拟与后续真实跨设备同步证据分别记录，失败不得静默降级。
+- 技术设计 Approved 与 Owner 既有实现授权共同允许进入 T-02；仍保留 K-02 写入前检查点、
+  完整 gate 与实际 app 验收。首版未新增生产站点、邮件、Git 或发布授权。
