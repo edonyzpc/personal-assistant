@@ -104,14 +104,18 @@ flowchart TD
 | ImageGenerationService / codec | 真实模型和参数、可选来源元数据、既有生命周期 |
 | 图片卡 / save-to-note | 实际描述、再生成 lineage、明确保存目标和正式附件目录 |
 
-Proposed 持久字段只加可选 `request.promptOrigin`（kind、显示名/path、必要选区位置、
-既有 InputLineage）及正式附件目录提示。无正文/预览/闭包/凭据。clone/validator 必须
+Proposed 持久字段增加可选 `request.inputLineage`（所有派生描述的真实输入来源）、
+`request.promptOrigin`（显式文字来源的 kind、显示名/path、必要选区位置与既有 InputLineage）
+及正式附件目录提示。无正文/预览/闭包/凭据。clone/validator 必须
 实际保留并校验字段；旧 schemaVersion 1 缺字段可读，不新增对象仓库或迁移原图片。
 
 重新生成预填上次 submittedPrompt、refs/选项及派生 lineage，标明「沿用上次描述」，
 新 operationId，不读当前笔记、不再次提炼。换源才重新准备。旧记录无来源证明仍可
 查看/导出；再生成遵守现有来源准入，必要时重选源/提供独立描述，不能把应用预填的
 派生文字当作用户新输入而消除其 lineage。
+来源准入发生在新一轮首次文字模型外发前；普通 Agent 描述从既有实际请求 lineage
+接线，专用准备只记录其确切素材和本轮用户补充。缺失/unknown 证明保持原状态，
+不借克隆补成 complete。来源 receipt 沿用 TaskSourceRun，内存快照保留原文件身份。
 
 ## Lifecycle And Cleanup
 
@@ -184,4 +188,4 @@ Wan 图即可核实链路，不为每个来源/模型/平台重复付费。先�
 - Product authority: DEC-044；用户已批准产品方案与本次文档工作。
 - Detailed design: GPT 于 2026-09-28 完成源码接线和风险映射核对；Proposed 名称为待实现接口。
 - Approved on: 2026-09-28，依据已确认产品范围的设计审批；不代表运行时实现获准或验收完成。
-- Authorized implementation scope: 尚未启动实现；明确实施授权后按 Tracker 分派 GLM。
+- Authorized implementation scope: 用户于 2026-09-29 授权按 B-152 完成全部开发测试；执行进度、证据和接收以 Tracker 为准，Git/发布另行授权。

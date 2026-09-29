@@ -90,4 +90,4 @@ Chat 选择 CreateImage → 检查来源与本次选项 → 可选补充要求 �
 
 - [Feature Home](../../development/active/unified-chat-image-creation/README.md) / [Tracker](../../development/active/unified-chat-image-creation/tracker.md)
 - 继承 [B-133](./pa-chat-image-generation-product-spec.md) 和[当前图片架构](../../architecture/chat-image-generation-architecture.md)，仅按 DEC-044 局部接续。
-- 当前授权为文档；实现、付费验证、Git 交付和发布按实际后续授权执行。
+- 用户已授权按本方案完成开发测试；具体执行和证据见 Tracker，Git 交付和发布按实际后续授权执行。

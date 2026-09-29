@@ -1,15 +1,15 @@
 # Chat Image Generation Architecture
 
 Document status: Current
-Updated: 2026-09-28
-Work item: B-133
+Updated: 2026-09-29
+Work item: B-133 / B-152
 Authority: 已实现的 Chat 图片生成、版本、统一连接、恢复和导出技术契约；源码是具体参数与类型的事实依据。
 Product contract: [DEC-038](../product/decisions/dec-038-chat-image-generation.md) / [Product Spec](../product/specs/pa-chat-image-generation-product-spec.md)
 Validation evidence: [B-133 验收与迁移证据](../archive/2026/b133-chat-image-generation-validation.md)
 
-后续已批准目标见 [DEC-044](../product/decisions/dec-044-unified-chat-image-creation.md) 与
-[B-152 SDD](../development/active/unified-chat-image-creation/sdd.md)。本页仍描述已实现基线；
-统一来源、专用准备及 command 收敛交付后再更新实现段落，不能把设计当作当前能力。
+统一入口与明确来源遵循 [DEC-044](../product/decisions/dec-044-unified-chat-image-creation.md)、
+[B-152 Product Spec](../product/specs/pa-unified-chat-image-creation-product-spec.md)；
+交付与验收记录见 [B-152 Tracker](../development/active/unified-chat-image-creation/tracker.md)。
 
 ## Scope And Modules
 
@@ -28,26 +28,40 @@ Validation evidence: [B-133 验收与迁移证据](../archive/2026/b133-chat-ima
 | 持久任务与恢复 | [ImageGenerationService](../../src/chat/image-generation-service.ts) | durable claim、有限查询/保存恢复、停止；不依赖当前可见 Chat |
 | 存储与版本 | [ChatHistoryStore](../../src/chat/chat-history-store.ts)、[generation types](../../src/chat/image-generation-types.ts) | 本设备任务、操作去重及一输出一版本；校验实际记录，不能只增加 TS 字段 |
 | 输入处理、原件与笔记保存 | [input](../../src/chat/image-generation-input.ts)、[ImageAssetService](../../src/chat/image-assets.ts)、[save-to-note](../../src/chat/image-save-to-note.ts) | 原件不改，处理外发副本；用户每次选择笔记后迁移并插入 |
-| Featured Image | [service](../../src/ai-services/service.ts)、[options](../../src/ai-services/featured-image-options.ts) | 共用图片连接，保留同步调用、各自参数和笔记插入守卫 |
+| Featured 专用文字准备 | [prepare](../../src/ai-services/prepare-featured-image-prompt.ts)、[prompt](../../src/ai-services/featured-image-prompt.ts) | 独立文字模型调用，沿用原专用指导；输入仅确切来源、原始补充和宿主子项序号 |
+| Featured command | [AI actions](../../src/plugin/ai-actions.ts)、[plugin integration](../../src/chat/plugin-integration.ts) | 只预填 Chat 草稿；复用专用默认选项，保留旧设置，不另起同步生成/自动插图链 |
 
 ```mermaid
 flowchart TD
-  A[用户发送文字和主动选择的图片] --> B{显式单请求或 Agent 规划}
-  B --> C[宿主校验消息身份 来源与数量]
-  C --> D[持久任务登记]
+  A[CreateImage 或 Featured command 预填草稿] --> B[用户检查来源与本次选项并发送]
+  B --> C[主 Agent 调用 create_image]
+  C --> V[宿主校验身份 来源 数量与连接]
+  V --> P{已绑定文字来源}
+  P -->|全文或选区| Q[原 Featured 专用指导独立提炼]
+  P -->|普通图片描述| R[实际图片描述]
+  Q --> R
+  R --> D[持久任务登记]
   D --> E[输入预检与 durable submission claim]
   E --> F[Wan 异步任务]
   F --> G[查询 保存原件 登记版本]
   G --> H[只更新原会话任务卡]
-  I[Featured Image 笔记编排] --> J[统一图片连接]
-  E --> J
-  I --> K[原有笔记目标与插入守卫]
+  H --> I[用户另行选择保存目标]
+  I --> J[权限和路径校验后保存并插入]
 ```
 
 ## Entry, Parameters And Cost
 
 `@CreateImage` 候选或完整标记设置单次结构化意图；选择入口和“修改这张”只准备草稿，
-发送后才提交。保留 `#skill` 和 IME 行为；空标记不生成，错误恢复不覆盖新草稿。
+发送后才提交。来源可为普通描述、全文或选区；来源卡支持预览、全文/选区切换和移除。
+有确切来源时补充要求可空；普通描述为空且没有图片材料时不能发送。保留 `#skill`
+和 IME 行为；空标记不生成，错误恢复不覆盖新草稿。
+
+编辑器来源在切入 Chat 前捕获，发送时验证文件身份和内容快照。选区只传确切文字，
+不补上下文、全文或新活动页。来源范围切换仍针对已绑定笔记；活动页已变时要求重新
+打开原笔记。来源正文只用于本次执行，持久任务不保存全文快照。
+
+原 Featured command 是当前笔记的快捷预填入口，已有非空草稿时提示先处理草稿，
+不覆盖用户输入。命令不直接调用旧同步 helper，也不自动把图片写回原笔记。
 明确自然语言交给主 Agent 决定是否使用 `create_image`，写 prompt、配图讨论、普通
 看图和仅添加图片不构成生成请求；歧义先澄清，不增加关键词分类器来规划任务。
 
@@ -62,16 +76,22 @@ referenceImageRefs、parentVersionId。conversationId、stableMessageId、operat
 宿主只准入当前主动图片和当前会话有效生成版本，抑制/撤回结果不能再作为新发送来源。
 有 parent 时核对同会话和确切输出 ref；目标不明确不能选择另一张相似图片替代。
 
-显式单一目标可直接提交，不强制额外 prompt 优化模型轮。分别描述“一张猫、一张狗”
-时交由 Agent 为每项准备 prompt、count=1 和稳定子请求序号；宿主共享本消息总量
-约束、拒绝合并不同目标和越界新增，未全部受理时报告实际数量。同主题多候选可使用
-一次多张请求。重复工具调用或变更 tool-call ID 仍复用已受理操作；主动再生成是新身份。
+所有入口先经过主 Agent，再由同一个 `create_image` 宿主提交；不在 Chat 模型运行前
+抢先登记原始问题。全文/选区请求还必须完成独立 Featured 文字准备，沿用原专用提示词，
+传入冻结素材及用户原始补充；不把主 Agent 的派生描述或历史当成原始补充。
+准备复用本轮取消信号、来源/连接守卫、模型预算、Debug 与 usage 记录。输出必须是有效
+文字，空白、非文字、超限或失败均在 Wan 前终止，不机械截断或退回原问题。
 
-当前 Chat 服务采用 `wan2.7-image`、`2K`，默认一张，实际服务/适配器允许范围由源码
-验证，超量提示调整而非静默少给或拆成额外批次。Featured 保留自身模型、数量、路径，
-包括已有 `wan2.7-image-pro` 的适用能力。早期草案的比例/模型输入面板、优先原比例和
-全局单任务并发是工程建议，不能据此宣称当前存在相应 UI 或调度器。变更这些行为先核对
-实际需求、provider 能力及成本，不为假想扩展搭框架。
+分别描述“一张猫、一张狗”时，宿主共享本消息总量，使用稳定子请求序号；来源型请求
+的专用准备也接收宿主给定的序号/总数。拒绝合并不同目标和越界新增，未全部受理时
+报告实际数量。同主题多候选可使用一次多张请求。相同操作的准备和提交均去重，
+变更 tool-call ID 仍复用已受理操作；主动再生成是新身份。
+
+普通生图采用 `wan2.7-image`、`2K`、默认一张；全文/选区草稿沿用旧 Featured 的模型、
+数量和附件目录默认值，显示本次可修改的模型/数量，修改不重置全局设置。服务实际使用
+任务模型，包括 `wan2.7-image-pro`；参数不合法或原始补充与可见数量冲突时明确拒绝，
+不静默归一化、少给或拆成额外批次。去掉文字来源后回到普通默认值。
+本次没有比例/分辨率面板或全局单任务调度器；`2K` 请求不保证提示词中的横向比例。
 
 首次说明实际图片接收方、文字/所选图片外发、API 成本、原图不变与本地存储；正常明确
 请求不额外重复确认。生成图的画面不自动成为用户现实经历或长期风格授权。
@@ -86,8 +106,9 @@ referenceImageRefs、parentVersionId。conversationId、stableMessageId、operat
 当前连接/凭据，不持久化旧 token。图片槽 scope 经既有 `getVaultApiTokenId` 规范化与长度
 限制，保持合法并与 Chat 槽隔离；修改图片设置不触发无关 Memory 连接副作用。
 
-Chat 异步 POST 与 Featured 同步端点共用受控连接识别；保持两入口各自编排，不把 Chat
-恢复扩展成 Featured 重启后自动插入笔记。迁移默认继承现有兼容连接，不导出旧密钥、
+两入口统一使用 Chat 异步图片服务与受控连接识别，原 Featured 同步执行链已退役。
+专用文字准备使用配置的文字模型；准备开始前冻结图片连接 revision，真正提交前再次
+核对，期间换连接/凭据不能向新连接发图。迁移默认继承现有兼容连接，不导出旧密钥、
 不重置 Featured 模型/数量/路径。代码识别端点不等于所有地区/账号已经真实调用通过。
 
 物理 submit 不做未知受理自动重试，不暗换模型或 provider。query 可以有限退避，取消
@@ -104,6 +125,17 @@ Chat IndexedDB version 3 在既有库增加 `imageGenerationTasks` 与 `generate
 输出记录保存状态、expectedContentHash 及稳定 assetRef，不复制图片字节进 JSON。
 `GeneratedImageVersion` 对应一张确切输出，保存 parentVersionId、inputRefs、model 和
 submittedPrompt；完整字段/校验以 generation types 为准。
+
+任务可选 `promptOrigin` 保存来源类型、文件身份描述与 selection 范围，`inputLineage`
+保存实际依赖；codec 校验并保留这些字段，旧记录缺少字段仍可读取。`userPrompt` 与
+`submittedPrompt` 分别表示用户原始要求和实际提交描述。卡片详情展示二者及来源。
+Regenerate 预填已提交描述并沿用来源依赖，不重新读取新活动页或运行旧专用准备；
+新一轮外发前仍校验原依赖，unknown lineage 不得洗成完整来源。
+
+准备期间的取消/失效和已受理任务的后台寿命分开：图片任务使用独立的长期来源 receipt，
+不因文字轮结束或 Chat contextEpoch 变化失效。receipt 只绑定实际图片 lineage，保留
+文件对象身份、冻结 scope、动态权限以及原附件的内容/权限凭据；真正删除、替换、撤销
+仍停止后续外发。普通 Chat 与 Writing receipt 的生命周期不因此放宽。
 
 卡片由 conversationId/stableMessageId 投影，不依赖会变动的 turn index，也不在 Chat
 消息中重复存任务 refs。图片先受理而文字轮失败时，重开仍能从任务表恢复原提示和卡片。
@@ -176,6 +208,8 @@ Chat 每张图提供放大、复制、下载、编辑和详情，成功项不被
 Markdown link API 与 `Vault.process` 插入图片；同目标重试不重复插入，正文只是提及
 同名链接不算已有嵌入。文件位置改变不破坏原 Chat 稳定引用。删除 Chat 不删正式附件，
 生成元数据删除后不再承诺编辑版本链；同步说明依据实际状态，不以目录名保证不外传。
+来源笔记不等于保存目标；Featured 附件目录只是路径建议。目标与目录的路径/权限检查
+必须在 mkdir、迁移或正文修改前完成，选择器回调不先创建目录。
 
 图片结果位于所属助手消息的正文之后、消息工具栏之前。任务更新保持已有顺序；
 成功图去掉双层卡片边框和重复状态文字，保留完整比例。独立图片容器内左下为编辑、
@@ -190,6 +224,12 @@ Markdown link API 与 `Vault.process` 插入图片；同目标重试不重复插
 区分 source、真实 Wan、Desktop、CLI mobile simulator 与用户 iPhone 手动证据。
 该 iPhone 的正常生成/保存/放大、文件导出哈希、取消、Chat/备忘录粘贴和本机历史重开
 已由用户反馈通过；不外推其他设备、OS 版本或移动重定向故障注入。
+
+B-152 在 test vault 验证了两个 Desktop 入口、选区焦点/绑定、已有草稿保护、详情、
+显式保存与再生成，以及 CLI mobile simulator 新控件。两次合成文字提炼中一次接一张
+真实 Wan 图，准备结果、POST 和任务 submittedPrompt 全等；选区准备未含选区外标记。
+完整 Jest 329 suites / 8257 tests 通过，部署身份与构建一致。模型效果边界与原始证据
+保留在 B-152 Tracker；模拟器不代表真机键盘或全部机型，也不保证随机图像严格满足比例。
 
 后续先用最近的 focused tests，再补发生变化的 app 路径；共享高影响变更执行所需
 lint/build/full gate，复用身份相同的有效证据。默认 Desktop + CLI mobile simulator，
