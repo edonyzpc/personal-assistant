@@ -2396,15 +2396,27 @@ describe('LLMView turn lifecycle', () => {
             this.contentEl = modalRoot as unknown as HTMLElement;
             this.onOpen();
         });
-        getElementByClass(containerEl, 'pa-chat-writing-action').click();
-        for (let i = 0; i < 8; i++) await flushPromises();
-        expect(openModal).toHaveBeenCalledTimes(1);
-        expect(openedModal).toBeInstanceOf(WritingVersionModal);
-        expect(modalRoot.children.length).toBeGreaterThan(0);
-        expect(getButtonByText(modalRoot, 'Save as a note')).toBeDefined();
-        openModal.mockRestore();
-        expect(await store.getTurns('history-failure-conversation')).toEqual([]);
-        expect(notices.slice(previousNoticeCount).some((notice) => String(notice.message).includes('chat history could not be saved'))).toBe(true);
+        const renderModal = jest.spyOn(
+            WritingVersionModal.prototype as unknown as { render: () => Promise<void> },
+            'render',
+        );
+        try {
+            getElementByClass(containerEl, 'pa-chat-writing-action').click();
+            expect(openModal).toHaveBeenCalledTimes(1);
+            expect(openedModal).toBeInstanceOf(WritingVersionModal);
+            const rendering = renderModal.mock.results.at(-1)?.value;
+            expect(rendering).toBeInstanceOf(Promise);
+            await rendering;
+            expect(modalRoot.children.length).toBeGreaterThan(0);
+            expect(getButtonByText(modalRoot, 'Save as a note')).toBeDefined();
+            expect(await store.getTurns('history-failure-conversation')).toEqual([]);
+            expect(notices.slice(previousNoticeCount).some((notice) => String(notice.message).includes('chat history could not be saved'))).toBe(true);
+        } finally {
+            if (openedModal) openedModal.onClose();
+            renderModal.mockRestore();
+            openModal.mockRestore();
+            versions.dispose();
+        }
     });
 
     it('keeps only copy guidance when Writing version creation fails', async () => {
@@ -4683,11 +4695,22 @@ describe('LLMView turn lifecycle', () => {
         const parent = (await versions.list('explicit-writing-parent'))[0];
         expect(parent).toBeDefined();
         const opened: WritingVersionModal[] = [];
+        const modalRoot = new MockElement('div');
+        Object.assign(plugin.app.vault, { on: jest.fn(() => ({})), offref: jest.fn() });
+        const renderModal = jest.spyOn(
+            WritingVersionModal.prototype as unknown as { render: () => Promise<void> },
+            'render',
+        );
         const open = jest.spyOn(WritingVersionModal.prototype, 'open').mockImplementation(function (this: WritingVersionModal) {
             opened.push(this);
+            this.contentEl = modalRoot as unknown as HTMLElement;
+            this.onOpen();
         });
         try {
             getElementByClass(containerEl, 'pa-chat-writing-action').click();
+            const rendering = renderModal.mock.results.at(-1)?.value;
+            expect(rendering).toBeInstanceOf(Promise);
+            await rendering;
             const modalHost = (opened[0] as unknown as { host: { onSelect: (version: WritingVersion) => void } }).host;
             modalHost.onSelect(parent!);
             const chip = getElementByClass(containerEl, 'pa-chat-writing-intent');
@@ -4697,11 +4720,13 @@ describe('LLMView turn lifecycle', () => {
             expect(view.prefillComposer('@Writing 另写一封邀请函')).toBe(true);
             expect(getButtonByClass(containerEl, 'send-button-visible').disabled).toBe(false);
             getElementByClass(containerEl, 'send-button-visible').click();
-            for (let i = 0; i < 20 && streamCalls.length < 2; i++) await flushPromises();
+            await waitForStreamCallCount(streamCalls, 2);
             expect(streamCalls[1].options.writingContextHost?.selectedParentVersionId).toBeUndefined();
             streamCalls[1].resolve();
-            await flushPromises();
+            await waitForTurnCompletion(view);
         } finally {
+            for (const modal of opened) modal.onClose();
+            renderModal.mockRestore();
             open.mockRestore();
             versions.dispose();
         }
