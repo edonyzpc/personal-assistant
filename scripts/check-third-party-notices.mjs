@@ -103,6 +103,13 @@ const bundledResourceNoticeByPath = new Map([
     },
   ],
   [
+    "skills/blog2ghost/SKILL.md",
+    {
+      license: "AGPL-3.0-only",
+      provenance: "Project-authored bundled skill resource.",
+    },
+  ],
+  [
     "skills/obsidian-dataview/SKILL.md",
     {
       license: "AGPL-3.0-only",

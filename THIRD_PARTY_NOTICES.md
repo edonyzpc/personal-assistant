@@ -48,6 +48,7 @@ runtime and is licensed with the project source. Reference attribution:
 | `skills/pa-callout-cleanup/SKILL.md` | `AGPL-3.0-only` | Project-authored bundled skill resource. |
 | `skills/pa-vault-link-health/SKILL.md` | `AGPL-3.0-only` | Project-authored bundled skill resource. |
 | `skills/pa-plugin-config-review/SKILL.md` | `AGPL-3.0-only` | Project-authored bundled skill resource. |
+| `skills/blog2ghost/SKILL.md` | `AGPL-3.0-only` | Project-authored bundled skill resource. |
 | `skills/obsidian-dataview/SKILL.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
 | `skills/obsidian-dataview/references/dataviewjs-api.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
 | `skills/obsidian-templater/SKILL.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
