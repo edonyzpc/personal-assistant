@@ -2,7 +2,7 @@
 
 Document status: Current
 Delivery status: Validated
-Updated: 2026-09-29
+Updated: 2026-09-30
 Work item: B-153
 Authority: 本 track 的唯一执行状态、finding、验证证据与跨会话接续。
 Product spec: [Product Spec](../../../product/specs/pa-ghost-blog-publishing-product-spec.md)
@@ -11,13 +11,15 @@ SDD: [实施设计](../../ghost-blog-publishing-design.md)
 
 ## Current Snapshot
 
-- Current phase: T01–03全部完成，GPT独立验收通过。最终r27自然exit0，platform/lint/production build、344 suites /8465 tests通过，1471输入前后不变；同一最终构建已在实际test/test2加载并完成受影响复验及S04。SHA `8d22614c8758b9f2df2349e6d47ff9f60069dac60f061aa0fed2cc3cce6cedc3`。REQ/AC01–10按本轮批准标准全部有证据，状态Validated，不表示已提交或发布。
-- Next action: 本轮开发测试无剩余阻塞。Owner于2026-09-29明确授权将本轮代码修改推送到远端master；按运行时/测试与设计/验收文档分组提交，并以固定完整SHA推送、实时核对远端。正式closeout与release仍按独立授权执行；真实双桌面同步为非阻塞补验。r26中止gate只作为superseded，r24无有效full gate；不将中断运行计为通过。
+- Current phase: T01–03产品开发与实际app验收完成，GPT独立接受。最终r27自然exit0，platform/lint/production build、344 suites /8465 tests通过，1471输入前后不变；实际test/test2加载同一构建并完成复验及S04，SHA `8d22614c8758b9f2df2349e6d47ff9f60069dac60f061aa0fed2cc3cce6cedc3`。REQ/AC01–10有获批标准的历史证据；T04来源、体积及Writing等待修复已由实际完整CI接受，当前状态Validated。
+- Next action: 本轮CI修复完成。`6facc3b`对应[CI run 36667459680](https://github.com/edonyzpc/personal-assistant/actions/runs/36667459680)的完整validate job为success，包含platform/notices/lint/build/Test/Audit；不将前轮失败或跳过步骤算作PASS。正式closeout与release仍按独立授权执行；真实双桌面同步为非阻塞补验。r26中止gate只作为superseded，r24无有效full gate；不将中断运行计为通过。
 - Git delivery: 运行时、测试、依赖与notices共78文件已提交为`dae07050ba890655916f18b8fa6ade74273e0c88`；11份B-153文档随本记录单独提交。交付前实时远端master仍为基线`10635c68913a95e9b25ced7375e21a1030880791`；1102项非文档输入与r27完整gate逐项一致，9个gate外受控符号链接未变化，styles与最终构建一致，无新增未验收输入，复用既有运行时及app证据。推送结果以本次操作回执与实时远端SHA核对为准，不由文档预先宣称成功。
+- CI followup delivery: 来源登记`9130f778235060049f6362428d6d83c04fd1db57`、10MiB预算`61e39d1cf1eb003c36e99bf359a38ded093c1fee`及Writing测试等待`6facc3b99dc6ea4207ad2d135d1f2434818ddea3`均按既有授权固定SHA推送至master，并由实时远端核对。最终source SHA的完整CI已通过；本记录与GOV-003另行提交，不改变已验证运行时输入。
 - Blocker / decision needed: 无未决核心产品选择或外发授权缺口。Owner明确批准本轮AC08改为同机独立test/test2；真实双桌面同步留作后续补验，不阻塞本轮完成。test2独立配置Ghost凭据，不复制A的本机进度/Chat；先缺完成记录拒绝，再仅复制完成记录与源文件执行新更新。仍使用同一loopback Ghost/图片站点；不将双vault证据称为真实跨设备同步。接收树无node_modules时复用worker中同一exported deployCurrent、指定repositoryRoot完成构建身份验证；无手工跳过检查。外发不含个人vault、真实文章、秘密或无关项目。
 - Last verified behavior: 最终r27初始Chat含图片＋双链请求直接成功，无Prepare again；确认前线上不变，更新和恢复均保持原ID/URL/人工排版/未管理字段，本地正文不回写，精确临时稿清理。恢复终态仅Open Ghost editor。test2缺记录时明确提示同步，真实client写入调用0且远端6篇不变；仅复制完成记录后，B改正文、预览并确认，成功更新同一文章并保存自己的完成记录，A正文未变化。
 - Planning baseline: `10635c6`；开始本轮时已有 6 份 B-153 文档修改。规划沿用并保留这些修改，未改变运行时代码。
 - Delivery tree: 接收树 `/mnt/code/personal-assistant`；隔离实施树 `/home/admin/.codex/worktrees/b153-ghost-publishing/personal-assistant`，基线 `10635c6`。已显式复制并逐字核对 11 份未提交 B-153 文档；原树修改保留，manifest 在本次运行目录 `contract-inputs.json`。
+- Evidence availability: 2026-09-30检查时，T01–03原临时目录`/tmp/pa-b153-run-aiw9x3xb`已不存在；下文原始app路径属于历史验收记录，不能声称当前仍可读取或作为新增检查的原始证据。T04各CI补验目录当前可读取；本轮保留来源、预算、测试修复的原始日志和输入hash，并用实际远端完整CI核对最终输入。
 - App target: A=`/mnt/code/personal-assistant/test`；经Owner批准新增B=`/tmp/pa-b153-run-aiw9x3xb/test2`。部署先核对CLI路径与实际onload构建。隔离worker树make deploy不等于实际app部署；安全接收核对输入与production assets/provenance，再复用同一deployCurrent指定repositoryRoot和实际destination。B仅复制3份合成源文件及白名单AI设置、生成独立vault ID；Ghost单独配置，未复制本机进度或Chat。不使用个人vault/正式站点作为测试目标。
 - Worker identity: 本机 CLI `0.157.1`，profile `pa-glm`，ZAI / `https://open.bigmodel.cn/api/v1` / Responses，请求 `glm-5.3`、reasoning `max`、direct bearer（不读取或输出密钥），服务端实际型号未知。调用覆盖 catalog 为 `/home/admin/.codex/pa-glm-models.json`，sha256 `43648c8a26a33d2dcd61a12a5c64e65d8d310dce0f5de91be7962e0a30236e5c`；选定模型条目与 repo 完全相同。原 profile 的 Mac catalog 路径未修改；显式覆盖 ZAI / glm-5.3 / max，关闭 memories 及两个无关 MCP。认证、只读、scratch 创建/修改与断言 0→1→0 的自然退出已核对，预检全部通过。不可使用 `--ignore-user-config`：实测该参数也跳过 profile，错误路由被拒绝（400），未执行工具；已恢复上述明确路由。
 - Owned temporary resources: 本次 `/tmp/pa-b153-run-aiw9x3xb` 保存任务单、events/result/stderr、scratch 及尚不可执行的 T-02 派工草案；上述 managed worktree 保留交付物。GPT 新建 `host-setup/`，含 Ghost 6.65.0 原包、解包后的 `ghost/`、本次依赖/cache 和独立 Node 22.23.1 `runtime/`；未修改系统默认 Node 或 PA package/lock。安装进程均已退出；T-01/r2 继续使用这些资源。GPT 创建 app 本地合成数据库 `pa-b153-t01-aiw9x3xb`，验收后精确删除；仅 test 单窗口重启，前后均 markdown/mobile=false。之后临时启用原生 Web viewer，创建 leaf `b8183556772c23ea`，原 leaf `7fc44d1da800e58e`；原 core 开关=false，恢复信息存 `host-native-preview-state.json`，T-01 app 检查结束后恢复。worker 新建资源随创建记录，未验收前不清理。
@@ -34,6 +36,7 @@ SDD: [实施设计](../../ghost-blog-publishing-design.md)
 | T-01 | 原生 Ghost 预览、转换与两种存储的最小可行性 | [x] | GPT 接受r3＋Host补验，技术设计Approved；生产schema/权限/恢复由T02–03另行验证 |
 | T-02 | 同一 GLM writer 完成导出、受控写入/恢复及 Host/UI 接线 | [x] | K02、实际diff/反例及最终r27完整gate已独立验收；交付文件安全接收 |
 | T-03 | 冻结输入、集中完整门禁、Desktop/mobile/独立双vault验收 | [x] | S01–05完成，r27受影响入口/更新/恢复及S04通过，CLI mobile复用未变证据；真实跨设备同步未声称通过 |
+| T-04 | master CI第三方来源、打包审计及Writing测试补验 | [x] | notices、10MiB预算及一个Writing测试文件的修复均独立验收；318 tests定向通过。`6facc3b`已固定SHA推送，实际CI `36667459680`完整validate job success，Test和Audit均success |
 
 任务卡和静态验证方法唯一放在 Plan；下面只记录逐项执行结果，避免复制方案。
 
@@ -98,6 +101,9 @@ Plan 报告原选择、具体失败、备选及取舍；不自行削减 AC。
 | F-34 | P2 | 初始Chat图片更新被拒绝；r25精确binary准入后，含普通双链仍context-revoked | 保留精确owner/path/revision准入；link receipt单独追踪Markdown/link revision，不能用note-only权限重检图片 | r26准确context-revoked红→绿及动态权限/revision负例；r27首次名称入口、S04首次路径入口直接成功，无重新准备 | Closed；r27 gate＋app |
 | F-35 | P2 | 已完成恢复的卡片仍提供Prepare again/Check preview，但对应临时稿已删除且undo已消费 | completed-restore终态仅保留Open Ghost editor，不复活缓存canRestore | 最终controller/full gate；r27-restore-card.json终态按钮精确为Open Ghost editor，undo已消费 | Closed；r27 gate＋app |
 | F-36 | P2 | 独立test2缺记录正确拒绝，但提示只说记录缺失/变化，未指引先同步vault | EN/ZH既有sync错误追加先与完成发布的桌面同步、再准备；不改状态或流程 | s04-final-missing-card.json显示先同步指引；forward-only实际client写入0，钩子已恢复，远端6篇逐项不变 | Closed；r27 gate＋app |
+| F-37 | P2（CI） | 新打包blog2ghost缺checker来源元数据及notices声明，master CI提前失败 | 沿用项目自编资源的AGPL-3.0-only及来源说明，补两处一致登记；保持检查规则 | `/tmp/pa-b153-ci-notices-echn0pg8`；原检查exit1唯一missing provenance；修复后41 runtime/13 bundled、语法、再生成稳定性与diff检查均exit0，1472输入仅两处许可路径变化；远端CI `36662542981`该步骤success | Closed；本地＋实际CI |
+| F-38 | P2（CI / budget） | Audit bundle gzip=3056716，超过既有2988442预算68274字节；同一production产物可本地复现 | 官方browser入口诊断反而增6172 gzip字节；Owner于2026-09-30明确批准提高至10MiB（10485760字节）。只改默认budget和注释，保持原审计逻辑 | 原始audit及CI `36662542981`；前基线2959107、B153新增97609 gzip字节。诊断及预算两目录保留原始证据；实际主接收树audit PASS，显式3056715预算仍exit1、五例tooling PASS；源产物SHA不变。前轮CI `36664860246`的Audit跳过，最终CI `36667459680`实际Audit success | Closed；本地＋实际CI |
+| F-39 | P2（CI / test） | CI `36664860246`的chat-view两例失败：未等到Save as a note按钮，第二次streamCalls尚不存在；用户提供准确断言和栈 | 固定8/20次flush改为真实render Promise、既有请求数量及回合完成等待，finally恢复spy/关闭modal/释放版本服务；不改生产行为、原断言或既有时间上限 | `/tmp/pa-b153-ci-writing-mvbkg_zo`；318 tests自然exit0，1472输入仅一个测试变化，GLM自然exit0且PID消失；GPT检查真实diff和原始命令，主接收文件与worker逐字一致。`6facc3b`已推送，CI `36667459680`完整Test及validate job success | Closed；本地＋实际CI |
 
 T-03当前真实app证据：`/tmp/pa-b153-run-aiw9x3xb/t03-app/`。`loaded-build.json`确认r11实际加载指纹；
 S-05的`mobile-entry-r2.json`及`mobile-desktop-required-r2.png`为真实输入值核对后点击Ask，显示desktop-only且无用户回合/发布配置，
@@ -210,6 +216,11 @@ ghostPublishingIntegration不存在。`dev:mobile off`后只读确认mobile=fals
 
 | Date | Requirement / AC | Check | Result | Evidence / residual risk |
 | --- | --- | --- | --- | --- |
+| 2026-09-30 | T-04 / F-37 来源登记风险 | 登记遗漏→两处metadata→`npm run check:third-party-notices`与声明再生成稳定性→41 runtime/13 bundled且exit0、生成字节不变→metadata/import/generator变化时重跑；另node语法与diff检查 | 本地及远端notices PASS；原目标失败exit1，修复及再生成后均exit0 | `/tmp/pa-b153-ci-notices-echn0pg8`的report、repair.diff、原始检查日志及events；GLM自然exit0，GPT逐项核对真实diff、原始命令退出与1472输入，唯一两文件八行，接收文件与worker逐字一致。`9130f77`远端CI `36662542981`的platform/notices/lint/build/Test均success；只剩Audit bundle失败，不能记整job PASS |
+| 2026-09-30 | T-04 / F-38 固定体积预算 | gzip超限→一次官方入口/构建贡献比较→若等价缩减则应满足原预算，否则返回数字及Owner决策；功能/资源/门限不自行改动 | 只读调查完成，自然exit0；无生产修改 | `/tmp/pa-b153-ci-size-9roaw4ns`；同参数标准build与既有main SHA完全相同；官方browser候选增6172 gzip字节，未实施；前基线2959107、新增97609。只写本轮诊断，没有通用拆包/lazyload或解析器替换 |
+| 2026-09-30 | T-04 / F-38 Owner批准的预算调整 | 明确10MiB授权→只改默认数值及说明→实际bundle默认audit PASS、显式3056715预算拒绝exit1、既有audit tooling五例/语法/diff PASS→其他审计逻辑与产物SHA不变→脚本/相关产物变化时重跑 | 本地全部通过，worker自然exit0；CI Test失败，审计被跳过 | `/tmp/pa-b153-ci-budget-7efacc3z`；Owner直接答复“提高到10MiB”，非2.95MiB建议。默认audit exit0/10485760，负例exit1，五例tooling 1 suite/5 tests PASS；首轮spawnSync EPERM经权限批准后同命令自然通过，不改测试。GPT核对唯一脚本diff、原始退出及输入，并在实际主树audit再次PASS；main/notices/deps未变。`61e39d1`对应CI `36664860246`的platform/notices/lint/build success，Test failure，Audit skipped；不能记整job PASS |
+| 2026-09-30 | T-04 / F-39 两项Writing等待 | 用户CI红灯→真实render/request/turn等待及finally清理→`npm test -- --runInBand __tests__/chat-view.test.ts`→保留原正文/版本/按钮/notice/parent断言，整suite自然exit0且唯一测试路径变化→相关测试或runtime/config/deps变更时重跑 | 本地1 suite /318 tests自然exit0，GPT接受；实际完整CI PASS | `/tmp/pa-b153-ci-writing-mvbkg_zo`；原CI失败摘录、task.diff、原始focused日志/events/exit及acceptance.json均保留。同一ZAI/glm-5.3/max自然exit0且PID消失；1472输入仅测试文件变化，SHA `36e9c6f9c6facdeebee9338a9236f855ce9863cf8aa9119fddb5ca090e961583`与主接收树相同，生产源码/产物/预算/notices不变。`6facc3b99dc6ea4207ad2d135d1f2434818ddea3`固定SHA推送并由实时ls-remote确认 |
+| 2026-09-30 | T-04 最终完整CI与资源终态 | 远端精确source SHA→原始run/jobs JSON→workflow及validate success、Test和Audit实际success→最终source提交与CI head_sha一致→运行时/测试/配置/依赖变化时失效 | PASS；T04/F37–39关闭 | [CI run 36667459680](https://github.com/edonyzpc/personal-assistant/actions/runs/36667459680) / `6facc3b99dc6ea4207ad2d135d1f2434818ddea3`；`remote-ci-writing-{run,jobs}.json`与`ci-acceptance.json`。本轮四次GLM进程均自然exit0且PID不存在，未改app/vault；诊断基线副本已精确清理，必要日志及含accepted dirty源码/共享依赖的worktree保留，不强制删除。文档补录不改变上述输入 |
 | 2026-09-29 | T-02/r11接续 | 旧CLI及worker cwd下gate/Jest/build进程已不存在，11份契约同步、89个修改路径hash，明确F21修订任务 | 已启动，handle `36689`，待交付/验收 | `t02-r11-task.md`、`t02-r11/handoff.json`及events/stderr。同一ZAI/glm-5.3/max上下文，不重复其他已接受修复；实际app仅准备，产品代码未部署 |
 | 2026-09-29 | T-02/r10补验、独立F21复核 | action-context owner；GPT实际代码与断言核对；中断gate状态核对 | 13 tests自然exit0，F19/F20/F22覆盖接受；F21未接受，r10 exit1中断 | `t02-r10/logs/action-context-final.log`；`gpt-interruption.json`、`superseded-gates.json`。错误help路径已保留至mistaken-help-gate；build完成但Jest被中断，不声明完整PASS。helper帮助安全性修正仅在任务临时目录，产品修复仍交GLM |
 | 2026-09-29 | T-02/r10 接续 | r9终态及PID消失、11份契约同步、89个修改输入hash；同一CLI thread配置 | 已启动，handle `72258`，待交付/验收 | `t02-r10-task.md`、`t02-r10/handoff.json`及events/stderr；worker已确认停止反向red并只补F19/F20/F22，未重做产品调查。GPT仅管理权威文档和实际app准备，不与worker并发写源码 |

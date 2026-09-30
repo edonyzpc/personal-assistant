@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-003
-Updated: 2026-09-25
+Updated: 2026-09-30
 Work item: B-142
 Authority: 测试精简与执行优化的设计约束；不改变 PA runtime、用户行为或 GOV-002 发布资格。
 
@@ -108,6 +108,15 @@ Owner 同时要求试跑四 worker，常规 CI 与最终版本标签 CI 改用
 531.055 秒。四 worker 在本次样本中更快，但不同 runner 的波动仍在，不能据此
 推断稳定加速幅度；后续 CI 若出现串扰或资源失败，应复核并行数。最终 tag 工作流
 须在实际版本标签上独立验证，此处的 PR 证据不替代发布门禁。
+
+2026-09-30，B-153 的来源登记修复后，[master CI run 36662542981](https://github.com/edonyzpc/personal-assistant/actions/runs/36662542981)
+的完整测试通过，bundle 审计发现当前产物 gzip 为 3,056,716 字节，超过此前
+2.85 MiB 预算 68,274 字节。
+同参数比较的官方 MarkdownIt browser 入口反而增加 6,172 gzip 字节，未采用该候选。
+Owner 明确选择“提高到10MiB”，当前默认 bundle 硬上限因此调整为
+10 MiB（10,485,760 字节）。超限拒绝、显式预算参数及 Node 引用、动态 script、字体
+和完整 license 检查继续沿用现有规则；B-153 的执行与验证结果见
+[owning Tracker](../active/ghost-blog-publishing/tracker.md)。
 
 ## Traceability
 
