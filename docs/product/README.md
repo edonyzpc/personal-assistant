@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [Note Change Review](./specs/pa-note-change-review-product-spec.md) — B-154：按笔记最终差异、Chat/tab 审阅与 Operations 审计退役。
 - [PA Agent 问答范围与 Runtime 演进](./specs/pa-agent-runtime-evolution-product-spec.md) — B-149 已交付：我的笔记 / 网络资料 / 综合模式、上下文硬边界与五项架构演进；产品决定见 DEC-043。
 - [PA Agent Task Source Boundary](./specs/pa-agent-task-source-boundary-product-spec.md) — B-146 已按后续产品决定完成本地验收：Agent 自主取材、Host 保留明确运行保护；事实质量改进另见 B-148。
 - [PA Agent Debug View 与本机历史设计](./specs/pa-agent-debug-view-product-spec.md)

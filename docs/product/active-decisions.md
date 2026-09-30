@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-09-29
+Updated: 2026-09-30
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-046 | 笔记最终差异与双入口审阅 | 按笔记初末态、Chat 紧凑差异与手动 tab、整批确认、上下字词高亮；Operations 不再持久审计，不扫描或清理旧目录 | [Decision](./decisions/dec-046-note-change-review-and-audit-retirement.md), [Product Spec](./specs/pa-note-change-review-product-spec.md) | 审阅方式不足以核对改动，或 Owner 重新要求局部接受/持久历史 |
 | DEC-045 | Ghost 预览确认发布 | Ghost 原生 Preview；每次发布/更新/恢复同桌面完成，完成记录同步后可换桌面新更新；不接续异机未完成任务，保留最近更新恢复 | [Decision](./decisions/dec-045-ghost-blog-publishing.md), [Product Spec](./specs/pa-ghost-blog-publishing-product-spec.md) | 真实渲染、转换或完成记录同步不能满足既定体验，或需要扩大平台/发布范围 |
 | DEC-044 | 统一 Chat 生图与内容配图 | 单一 CreateImage、明确全文/选区、保留 Featured 专用调用；command 收敛为快捷入口，显式保存 | [Decision](./decisions/dec-044-unified-chat-image-creation.md), [Product Spec](./specs/pa-unified-chat-image-creation-product-spec.md) | 来源、专用描述质量或旧选项无法保全，或拟合并独立提炼调用 |
 | DEC-043 | PA Agent 问答范围与 Runtime 演进 | B-149 已交付我的笔记 / 网络资料 / 综合模式；新会话默认笔记、会话内记忆、图标优先；Host 硬约束实际取材与派生上下文，收紧时来源安全优先，运行中切换下次生效；辅助摘要按 Owner 后续费用优先决定有独立总额 | [Decision](./decisions/dec-043-agent-runtime-evolution-and-source-scope.md), [Product Spec](./specs/pa-agent-runtime-evolution-product-spec.md), [验证记录](../archive/2026/b149-pa-agent-runtime-evolution-validation.md) | 跨范围连续性阻断核心任务、无法证明实际输入边界，或真实资源证据要求改变预算 |
@@ -37,7 +38,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 | DEC-004 | Quiet Recall 候选来自整个 vault，使用打开笔记、保存后自然间隙与快捷键等低打扰触发 | 回忆自己的内容，不制造待处理队列 | [Quiet Recall Spec](./specs/pa-quiet-recall-insight-timing-product-spec.md) | Dogfood 证明触发负担高于返回价值 |
 | DEC-005 | 长期提取默认开启，Memory 按 effect/risk 自动处理并可检查、纠正、撤销 | DEC-033 的 2026-09-09 修订保留独立关闭/暂停与首次透明说明；不采用逐条 clickworker 确认，显式风格和高后果动作仍按原权限治理 | [Decision Record](./decisions/dec-005-memory-governance.md), [DEC-033](./decisions/dec-033-simple-settings-and-unified-defaults.md), [Memory Control Center](./specs/pa-memory-control-center-product-spec.md) | 真实安全事件或用户研究否定当前治理模型 |
 | DEC-009 | Pagelet 保持安静、可忽略的 Pet/Bubble/Review delivery 模型 | 不把独立 AI 功能按钮和队列重新堆回 surface | [Pagelet Product Design](./pagelet-product-design.md) | 当前 delivery 无法满足真实 Capture/Recall 需求 |
-| DEC-014 | Operations Agent 仅开放 per-vault opt-in 的有界 Chat / Pagelet 写入 | 仅四个 core tools、inline 确认、stale-safe、Undo、content-free audit；Pagelet 只直接执行单文件确定性动作，复杂动作带完整上下文进入 Chat；额外写入仍关闭 | [Decision Record](./decisions/dec-014-defer-operations-agent.md), [Step 2 SDD](../development/proposals/operations-agent/operations-agent-step2-sdd.md), [Step 3 SDD](../development/proposals/operations-agent/operations-agent-step3-sdd.md) | 真实 dogfood/安全证据要求缩窄，或 owner 评估额外写入 |
+| DEC-014 | Operations Agent 的有界 Chat / Pagelet 写入 | 四个 core tools、明确确认、stale-safe、Undo；Pagelet 单文件确定性动作边界保留；规划准入见当前 Agent 架构，审阅与审计由 DEC-046 局部接续 | [Decision Record](./decisions/dec-014-defer-operations-agent.md), [DEC-046](./decisions/dec-046-note-change-review-and-audit-retirement.md), [当前架构](../architecture/pa-agent-architecture-plan.md#operations-agent-providers) | 真实 dogfood/安全证据要求缩窄，或 owner 评估额外写入 |
 | DEC-017 | Scope Recap 默认进行有界后台准备 | provider 配置后提前准备高意图 scope，使用户点击即得；首次通知按 DEC-023，用户 opt-out、独立预算、非 whole-vault 与只读 derived artifact 边界继续有效 | [Decision Record](./decisions/dec-017-default-background-recap-preparation.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md), [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md) | 成本、资源、隐私或低价值 dogfood 信号证明默认开启负担更高 |
 | DEC-018 | Scope Recap 仅在高价值时主动轻提示 | 新的、fresh、当前 scope 相关且至少有两篇来源支撑的具体洞察才触发一次 Pet nudge；泛化摘要、重复/失败/低质量结果保持静默，其他提示类型不随之默认开启 | [Decision Record](./decisions/dec-018-quality-gated-scope-recap-hints.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md) | 提示干扰高于价值、质量门长期不触发或统一提示策略证明更优 |
 | DEC-019 | Scope Recap 失败时采用分层诚实降级 | 后台失败/空/低质量结果不制造 ready 或 nudge，也不覆盖仍有效 artifact；主动打开时优先显示有效旧洞察，否则即时显示不冒充 insight 的本地范围方向与重试 | [Decision Record](./decisions/dec-019-honest-layered-recap-fallback.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md) | 本地概览被误解为洞察、没有定向价值或 artifact freshness 产生误报 |

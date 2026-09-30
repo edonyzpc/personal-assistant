@@ -6,6 +6,15 @@ Updated: 2026-08-01
 Authority: Owner 于 2026-08-01 授权 B-101 Step 2 与 Step 3；两步均已交付，本记录限定 Operations Agent 的用户开放与 write/action 边界。
 Work item: B-101
 
+## 2026-09-30 Scoped Successor
+
+[DEC-046](./dec-046-note-change-review-and-audit-retirement.md) 接续本文第 3 条的 Chat
+审阅呈现与第 5 条的持久审计要求：目标是按笔记最终差异、Chat/tab 双入口与彻底停止
+Operations 审计落盘，且不处理旧 audit 目录。下文保留原决定来源，不代表这些被接续
+条款继续约束新设计。当前边界以 [Product Spec](../specs/pa-note-change-review-product-spec.md)
+为准，本地验收见 [B-154 验证记录](../../archive/2026/b154-note-change-review-validation.md)；
+不能把本地验收当作 Git 集成或发布，其他写入保护继续有效。
+
 ## Context
 
 DEC-014 原先在 action runtime、prompt、Settings 与确认边界不完整时延期 Operations Agent。B-101 Step 2/3 均已交付：`OPERATIONS_AGENT_RUNTIME_ENABLED=true` 只表示当前 build 具备该能力，不是用户授权；持久化的 `operationsAgentEnabled` 仍默认为 `false`，必须在每个 vault 显式 opt in。

@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-09-29
+Updated: 2026-09-30
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-046 | 笔记最终差异审阅与 Operations 审计退役 | Accepted | Chat 紧凑差异、手动完整审阅 tab、整批确认；停写审计且不处理旧目录 | [Record](./dec-046-note-change-review-and-audit-retirement.md) |
 | DEC-045 | Ghost 预览确认发布 | Accepted | Obsidian 主源；原生 Preview、PA 确认；每次操作同桌面完成，完成后可换桌面发起新更新 | [Record](./dec-045-ghost-blog-publishing.md) |
 | DEC-044 | Unified Chat image creation | Accepted | 单一 CreateImage、明确文字来源、保留专用提炼；原 command 成为 Chat 快捷入口 | [Record](./dec-044-unified-chat-image-creation.md) |
 | DEC-043 | PA Agent 问答范围硬约束与 Runtime 演进 | Accepted | B-149 已交付三种显式范围、默认笔记、派生上下文准入、切换取舍与五项架构演进；局部接续 DEC-042 | [Record](./dec-043-agent-runtime-evolution-and-source-scope.md) |

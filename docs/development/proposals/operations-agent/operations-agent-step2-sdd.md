@@ -10,6 +10,12 @@ Authority: [Owner decision record](../proposal-review-response-2026-07-28.md) an
 Restart condition: Step 2 closed on 2026-08-01; reopen only for a confirmed Step 2 regression. Step 3 was separately authorized, delivered, and closed under its own SDD; every write capability outside the four core tools still requires a new owner decision.
 Handoff: [Implementation Handoff Brief](../implementation-handoff.md)
 
+Successor contract: [DEC-046](../../../product/decisions/dec-046-note-change-review-and-audit-retirement.md)
+局部接续本文的 Chat 预览和持久审计目标。新设计按笔记审阅最终差异，停止 Operations
+审计且不探测或清理旧 audit；本文保留原实现设计证据，不要求 B-154 恢复已退役功能。
+当前实现边界见 [Product Spec](../../../product/specs/pa-note-change-review-product-spec.md)，
+本地验证见 [B-154 验证记录](../../../archive/2026/b154-note-change-review-validation.md)。
+
 ## 1. Outcome And Scope
 
 Step 2 makes one bounded product flow functional:

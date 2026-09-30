@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-09-25
+Updated: 2026-09-30
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -249,7 +249,53 @@ other calls, and an invalid report receives bounded correction under the run bud
 
 `OPERATIONS_AGENT_RUNTIME_ENABLED=true` is a build-availability gate, not user consent. With a live controller and eligible policy, the same main Agent may propose exactly `vault_create`, `vault_append`, `vault_process`, and `frontmatter_update` according to the user's goal; the old persisted `operationsAgentEnabled` value no longer gates planning or admission. There is no separate local write-intent classifier, old append/selection action, or fifth write tool.
 
-Calls from one assistant tool phase stage one immutable intent and show one inline Chat preview; no write occurs until explicit confirmation. Existing-note changes revalidate their frozen baseline inside `vault.process()`, create rechecks collisions, Undo fails closed after drift, and audit is content-free by default.
+Calls from one assistant tool phase stage one immutable intent. Chat groups that
+intent by normalized note path and shows the first frozen baseline to the last
+planned result, while retaining the controller's original operation order. The
+compact diff states its omissions; the user can open one reusable full-review
+tab per batch. Chat and the tab share one in-memory review session and permit
+whole-batch confirmation or cancellation. No write occurs merely by opening or
+reviewing a tab.
+
+`operations-review-model.ts` projects immutable snapshots without executing or
+reordering operations. It uses bounded line-level Myers diff and Unicode-safe
+character refinement; exhausted work budgets fall back to complete deletion and
+insertion of the affected span, never truncated bodies. Raw Markdown, whitespace
+and line endings remain inspectable. `operations-review-session.ts` is a pure
+UI state adapter in the Operations module, with the existing controller as the
+sole write owner. React components, ItemView and the router live in
+`src/chat/operations-review/`; Chat mounts one batch model so preview budgets and
+the leading omission message apply across notes.
+
+Existing-note changes revalidate their frozen baseline inside `vault.process()`,
+create rechecks collisions, and Undo fails closed after drift. Actual operation
+and Undo receipts determine both interfaces' result feedback, matched first by
+receipt ID and then by operation ID. The shared adapter guards in-flight actions
+and late callbacks after source invalidation, releases models and subscriptions,
+and does not restore disposed capabilities. Closing a review
+tab only hides it; source Chat termination/switch, expiry and plugin unload
+invalidate its capability. Workspace state stores only an opaque review ID,
+without note bodies or authority that survives reload.
+
+The vertical review wraps long lines and paths without dropping text. Desktop
+actions are 36px high and mobile actions are 44px. The mobile footer and trailing
+content padding reserve Obsidian's `--mobile-toolbar-height` so the core floating
+navigation cannot cover the actions or the final line; the parent layout already
+reserves the safe area. No native measuring logic or new observer is required.
+The shared text formatter retains Pagelet's API while keeping both changed sides
+complete.
+
+Operations audit persistence and its settings are removed. The service does not
+probe, read, create, write, scan or clean any old audit directory; historical
+files remain under the owner's management. Retired setting names remain only in
+the exact stripping list and cannot enable recording; loading old settings does
+not trigger a save solely to remove these keys. In-memory Undo and other systems'
+separate history/logging contracts remain unchanged. See
+[DEC-046](../product/decisions/dec-046-note-change-review-and-audit-retirement.md)
+and the [Product Spec](../product/specs/pa-note-change-review-product-spec.md).
+The [B-154 validation record](../archive/2026/b154-note-change-review-validation.md)
+retains local acceptance, build identity and device-evidence limits; it does not
+prove Git integration or release.
 
 The delivered Step 3 integration reuses the plugin-owned Operations provider
 with isolated Chat/Pagelet sessions. A user-opened, source-backed Pagelet Panel
