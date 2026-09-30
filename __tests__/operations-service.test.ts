@@ -1,10 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
 import type { ProviderLoadContext } from "../src/ai-services/capability-types";
-import type {
-    AuditWriteResult,
-    OperationsAuditStore,
-} from "../src/ai-services/operations/operations-audit-store";
 import { OperationsControllerError } from "../src/ai-services/operations/operations-intent-controller";
 import { formatOperationsPreview } from "../src/ai-services/operations/operations-presentation";
 import {
@@ -61,14 +57,6 @@ function providerContext(enabled = true): ProviderLoadContext {
     };
 }
 
-function makeAuditStore(
-    result: AuditWriteResult = { ok: true, path: "audit.json" },
-): OperationsAuditStore {
-    return {
-        write: jest.fn(async () => result),
-    } as unknown as OperationsAuditStore;
-}
-
 function appendInput(path: string, content: string) {
     return {
         runId: "run-1",
@@ -108,7 +96,6 @@ describe("OperationsService", () => {
             trashFile: async () => undefined,
             isOperationsAgentEnabled: () => enabled,
             isPathAllowed: (path) => path.startsWith("notes/"),
-            auditStore: makeAuditStore(),
         });
         const chat = service.createSession({ surface: "chat", markSelfWrite: chatSelfWrite });
         const pagelet = service.createSession({ surface: "pagelet", markSelfWrite: pageletSelfWrite });
@@ -148,7 +135,6 @@ describe("OperationsService", () => {
             vault,
             trashFile: async () => undefined,
             isOperationsAgentEnabled: () => false,
-            auditStore: makeAuditStore(),
         });
         const session = service.createSession({ surface: "pagelet" });
 
@@ -172,7 +158,6 @@ describe("OperationsService", () => {
             vault,
             trashFile: async () => undefined,
             isOperationsAgentEnabled: () => enabled,
-            auditStore: makeAuditStore(),
         });
         const session = service.createSession({ surface: "pagelet" });
         const events: OperationsControllerEvent[] = [];
@@ -194,7 +179,6 @@ describe("OperationsService", () => {
             vault,
             trashFile: async () => undefined,
             isOperationsAgentEnabled: () => enabled,
-            auditStore: makeAuditStore(),
         });
         const session = service.createSession({ surface: "chat" });
         const events: OperationsControllerEvent[] = [];
@@ -211,18 +195,15 @@ describe("OperationsService", () => {
         service.dispose();
     });
 
-    it("shares Data Boundary and audit logging across sessions", async () => {
+    it("shares the Data Boundary across sessions without audit storage", async () => {
         const vault = new MemoryVault();
         vault.files.set("notes/a.md", "A");
         vault.files.set("private.md", "Private");
-        const log = jest.fn();
         const service = new OperationsService({
             vault,
             trashFile: async () => undefined,
             isOperationsAgentEnabled: () => true,
             isPathAllowed: (path) => path.startsWith("notes/"),
-            auditStore: makeAuditStore({ ok: false, error: "audit disk unavailable" }),
-            log,
         });
         const chat = service.createSession({ surface: "chat" });
         const pagelet = service.createSession({ surface: "pagelet" });
@@ -233,10 +214,7 @@ describe("OperationsService", () => {
         const intent = await pagelet.stage(appendInput("notes/a.md", "ok"));
         await pagelet.confirm(intent.id);
 
-        expect(log).toHaveBeenCalledWith(
-            "Operations audit record unavailable",
-            expect.objectContaining({ surface: "pagelet", path: "notes/a.md" }),
-        );
+        expect(vault.adapter.exists).not.toHaveBeenCalledWith(".obsidian/plugins/personal-assistant/audit");
         service.dispose();
     });
 
@@ -247,7 +225,6 @@ describe("OperationsService", () => {
             vault,
             trashFile: async () => undefined,
             isOperationsAgentEnabled: () => true,
-            auditStore: makeAuditStore(),
         });
         const session = service.createSession({ surface: "chat" });
         service.dispose();
@@ -291,7 +268,9 @@ describe("formatOperationsPreview", () => {
         }))).toBe("Before\nBefore value\n\nAfter\nAfter value");
     });
 
-    it("bounds long before/after previews", () => {
+    it("keeps complete replacement ranges while bounding only unchanged context", () => {
+        const before = `OLD-START-${"O".repeat(1_800)}-OLD-END`;
+        const after = `NEW-START-${"N".repeat(1_800)}-NEW-END`;
         const preview = formatOperationsPreview(operation({
             name: "vault_process",
             input: {
@@ -299,12 +278,34 @@ describe("formatOperationsPreview", () => {
                 operation: "replace",
                 params: { search: "A", replace: "B" },
             },
-            expectedBefore: "A".repeat(2_000),
-            expectedAfter: "B".repeat(2_000),
+            expectedBefore: before,
+            expectedAfter: after,
         }));
 
-        expect(preview.length).toBeLessThanOrEqual(1_602);
-        expect(preview).toMatch(/\n…$/);
+        expect(preview).toContain("OLD-START-");
+        expect(preview).toContain("-OLD-END");
+        expect(preview).toContain("NEW-START-");
+        expect(preview).toContain("-NEW-END");
+        expect(preview).not.toContain("…");
+    });
+
+    it("keeps replacement text visible when Before exceeds the legacy preview limit", () => {
+        const before = `unchanged prefix\n${"B".repeat(1_800)}\nunchanged suffix`;
+        const after = "unchanged prefix\nNEW-START replacement that must remain reachable NEW-END\nunchanged suffix";
+        const preview = formatOperationsPreview(operation({
+            name: "vault_process",
+            input: {
+                path: "notes/a.md",
+                operation: "replace",
+                params: { search: before, replace: after },
+            },
+            expectedBefore: before,
+            expectedAfter: after,
+        }));
+
+        expect(preview).toContain("After");
+        expect(preview).toContain("NEW-START");
+        expect(preview).toContain("NEW-END");
     });
 });
 

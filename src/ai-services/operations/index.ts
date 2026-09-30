@@ -8,5 +8,6 @@ export * from "./operations-presentation";
 export * from "./operations-tool-executor";
 export * from "./operations-intent-controller";
 export * from "./operations-undo-store";
-export * from "./operations-audit-store";
+export * from "./operations-review-model";
+export * from "./operations-review-session";
 export * from "./save-suggestion-policy";

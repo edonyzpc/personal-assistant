@@ -11,6 +11,7 @@ import { PageletOperationsPluginIntegration } from "../../src/pagelet/plugin-ope
 import { PageletFeatureIntegration } from "../../src/pagelet/plugin-integration";
 import { PageletOrchestrator } from "../../src/pagelet/orchestrator";
 import { ChatPluginIntegration } from "../../src/chat/plugin-integration";
+import { OperationsReviewRouter } from "../../src/chat/operations-review/OperationsReviewRouter";
 import { hashWritingText } from "../../src/chat/writing-types";
 import { DEFAULT_SETTINGS } from "../../src/settings";
 import { confirmUserAction } from "../../src/confirm";
@@ -163,6 +164,7 @@ export function createPluginHarness(options: PluginHarnessOptions = {}): PluginH
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const plugin = Object.create(PluginManager.prototype) as any;
+    plugin.operationsReviewRouter = new OperationsReviewRouter();
     plugin.settingsPersistence = plugin.createSettingsPersistence();
     plugin.aiConfiguration = plugin.createAIConfiguration();
     plugin.governanceStorage = plugin.createGovernanceStorage();

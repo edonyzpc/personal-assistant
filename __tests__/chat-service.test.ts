@@ -259,8 +259,6 @@ function createPlugin(overrides: {
             memoryEnabled: true,
             operationsAgentEnabled: overrides.operationsAgentEnabled ?? false,
             operationsProactiveSaveSuggestionsEnabled: true,
-            operationsAuditIncludeContent: false,
-            operationsAuditRetentionDays: 30,
             statisticsVaultId: 'test-vault',
             ...(overrides.skillContextEnabled === undefined ? {} : { skillContextEnabled: overrides.skillContextEnabled }),
             ...(overrides.enabledSkillIds === undefined ? {} : { enabledSkillIds: overrides.enabledSkillIds }),
@@ -2937,7 +2935,7 @@ describe('ChatService.streamLLM integration', () => {
                 stageIntent(input: {
                     runId: string;
                     turnId: string;
-                    operations: Array<{ toolCallId: string; name: 'vault_create'; input: unknown }>;
+                    operations: Array<{ toolCallId: string; name: 'vault_create' | 'vault_append'; input: unknown }>;
                 }): Promise<OperationsIntent>;
             };
         }).operationsSession;
@@ -2958,54 +2956,82 @@ describe('ChatService.streamLLM integration', () => {
         expect(() => service.cancelOperationsIntent(intent.id)).toThrow('cancelled');
     });
 
-    it('logs an audit retention warning without note content', async () => {
+    it('constructs the fallback Operations service without touching historical audit paths', async () => {
         const plugin = createPlugin({ operationsAgentEnabled: true });
         const vault = plugin.app.vault as typeof plugin.app.vault & {
             adapter: {
                 exists: jest.Mock<(path: string) => Promise<boolean>>;
                 mkdir: jest.Mock<(path: string) => Promise<void>>;
                 write: jest.Mock<(path: string, content: string) => Promise<void>>;
+                read: jest.Mock<(path: string) => Promise<string>>;
+                list: jest.Mock<(path: string) => Promise<{ files: string[]; folders: string[] }>>;
+                remove: jest.Mock<(path: string) => Promise<void>>;
             };
-            create: jest.Mock<(path: string, content: string) => Promise<{ path: string }>>;
+            process: jest.Mock<(file: { path: string }, transform: (current: string) => string) => Promise<string>>;
         };
+        const adapterCalls: Array<{ method: string; path: string }> = [];
         vault.adapter = {
-            exists: jest.fn(async (path: string) => path === '0.unsorted'),
-            mkdir: jest.fn(async () => undefined),
-            write: jest.fn(async () => undefined),
+            exists: jest.fn(async (path: string) => {
+                adapterCalls.push({ method: 'exists', path });
+                return path === 'notes';
+            }),
+            mkdir: jest.fn(async (path: string) => {
+                adapterCalls.push({ method: 'mkdir', path });
+            }),
+            write: jest.fn(async (path: string) => {
+                adapterCalls.push({ method: 'write', path });
+            }),
+            read: jest.fn(async (path: string) => {
+                adapterCalls.push({ method: 'read', path });
+                return path === 'notes/review.md' ? 'before' : '';
+            }),
+            list: jest.fn(async (path: string) => {
+                adapterCalls.push({ method: 'list', path });
+                return { files: [], folders: [] };
+            }),
+            remove: jest.fn(async (path: string) => {
+                adapterCalls.push({ method: 'remove', path });
+            }),
         };
         vault.getAbstractFileByPath.mockImplementation((path: string) =>
-            path === '0.unsorted' ? { path, children: [] } : null);
-        vault.create = jest.fn(async (path: string) => ({ path }));
+            path === 'notes/review.md' ? { path, extension: 'md' } : null);
+        let currentNoteText = 'before';
+        vault.cachedRead.mockImplementation(async () => currentNoteText);
+        vault.process = jest.fn(async (_file, transform) => {
+            currentNoteText = transform(currentNoteText);
+            return currentNoteText;
+        });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
         const session = (service as unknown as {
             operationsSession: {
                 stageIntent(input: {
                     runId: string;
                     turnId: string;
-                    operations: Array<{ toolCallId: string; name: 'vault_create'; input: unknown }>;
+                    operations: Array<{ toolCallId: string; name: 'vault_create' | 'vault_append'; input: unknown }>;
                 }): Promise<OperationsIntent>;
             };
         }).operationsSession;
         const intent = await session.stageIntent({
-            runId: 'run-retention-warning',
-            turnId: 'turn-retention-warning',
+            runId: 'run-fallback-audit-retirement',
+            turnId: 'turn-fallback-audit-retirement',
             operations: [{
-                toolCallId: 'call-retention-warning',
-                name: 'vault_create',
-                input: { path: '0.unsorted/audit-warning.md', content: 'PRIVATE_NOTE_CONTENT' },
+                toolCallId: 'call-fallback-audit-retirement',
+                name: 'vault_append',
+                input: { path: 'notes/review.md', content: '\nafter' },
             }],
         });
 
-        await expect(service.confirmOperationsIntent(intent.id)).resolves.toMatchObject({ state: 'completed' });
+        const execution = await service.confirmOperationsIntent(intent.id);
+        expect(execution.state).toBe('completed');
+        const receiptId = execution.operations.find((result) => result.receiptId)?.receiptId;
+        expect(receiptId).toBeDefined();
+        expect(await service.undoOperations([receiptId!])).toEqual([
+            expect.objectContaining({ status: 'undone' }),
+        ]);
+        service.dispose();
 
-        const warningCall = (plugin.log as jest.Mock).mock.calls.find(
-            ([message]) => message === 'Operations audit retention cleanup incomplete',
-        );
-        expect(warningCall?.[1]).toMatchObject({
-            path: '0.unsorted/audit-warning.md',
-            warning: 'Audit retention cleanup is unavailable.',
-        });
-        expect(JSON.stringify(warningCall)).not.toContain('PRIVATE_NOTE_CONTENT');
+        const auditPath = '.obsidian/plugins/personal-assistant/audit';
+        expect(adapterCalls.filter(({ path }) => path === auditPath || path.startsWith(`${auditPath}/`))).toEqual([]);
     });
 
     it('passes a Chinese no-web instruction to the Agent while WebSearch remains available', async () => {

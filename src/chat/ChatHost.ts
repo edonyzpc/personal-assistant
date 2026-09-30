@@ -22,6 +22,7 @@ import type { WritingRecoverySourceReceipt } from './writing-recovery-sources';
 import type { ChatSourceScope } from '../ai-services/chat-source-scope';
 import type { PrepareFeaturedImagePromptInput,
     PrepareFeaturedImagePromptRuntime } from '../ai-services/prepare-featured-image-prompt';
+import type { OperationsReviewSession } from '../ai-services/operations/operations-review-session';
 
 export type AISetupFailureCode =
     | "invalid_configuration"
@@ -86,6 +87,9 @@ export interface ChatHost {
     prepareWritingStyleForScene?: WritingStyleService['prepare'];
     readonly memoryStatus: MemoryStatusPort;
     createChatService(): ChatService;
+    registerOperationsReviewSession?(session: OperationsReviewSession): void;
+    openOperationsReview?(reviewId: string): void | Promise<void>;
+    invalidateOperationsReviewSession?(reviewId: string): void;
     onSettingsChanged(listener: () => void | Promise<void>): () => void;
     scheduleMemoryExtractionAfterChatTurn(conversationId: string, turnCount: number): void;
     openMemorySettings?(claimId?: string): void;

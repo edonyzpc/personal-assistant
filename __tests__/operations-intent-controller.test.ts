@@ -5,10 +5,6 @@ import {
 import { MAX_OPERATION_RESULT_GROWTH_CHARS } from "../src/ai-services/operations/input-validation";
 import { OperationsUndoStore } from "../src/ai-services/operations/operations-undo-store";
 import type {
-    AuditWriteResult,
-    OperationsAuditStore,
-} from "../src/ai-services/operations/operations-audit-store";
-import type {
     OperationsControllerEvent,
     OperationsToolCall,
     OperationsVault,
@@ -72,17 +68,6 @@ function makeController(
         createId: () => `id-${++id}`,
         ...options,
     });
-}
-
-function makeAuditStore(result: AuditWriteResult = { ok: true, path: "audit.json" }): {
-    store: OperationsAuditStore;
-    write: jest.Mock<Promise<AuditWriteResult>, [unknown]>;
-} {
-    const write = jest.fn(async (_input: unknown) => result);
-    return {
-        store: { write } as unknown as OperationsAuditStore,
-        write,
-    };
 }
 
 describe("OperationsIntentController", () => {
@@ -268,14 +253,12 @@ describe("OperationsIntentController", () => {
         controller.dispose();
     });
 
-    it("checks Data Boundary before preview and again before execute without auditing a denied target", async () => {
+    it("checks Data Boundary before preview and again before execute without audit-path access", async () => {
         const vault = new MemoryVault();
         vault.files.set("notes/a.md", "before");
         let allowed = false;
-        const audit = makeAuditStore();
         const controller = makeController(vault, {
             isPathAllowed: () => allowed,
-            auditStore: audit.store,
         });
         await expect(controller.stageIntent({
             runId: "run",
@@ -297,18 +280,16 @@ describe("OperationsIntentController", () => {
         const result = await controller.executeIntent(intent.id);
         expect(result.operations[0]).toMatchObject({ status: "failed", failureCategory: "boundary_denied" });
         expect(vault.files.get("notes/a.md")).toBe("before");
-        expect(audit.write).not.toHaveBeenCalled();
+        expect(vault.adapter.exists).not.toHaveBeenCalledWith(".obsidian/plugins/personal-assistant/audit");
         controller.dispose();
     });
 
-    it("does not audit an Undo target denied by the current Data Boundary", async () => {
+    it("rejects an Undo target denied by the current Data Boundary", async () => {
         const vault = new MemoryVault();
         vault.files.set("notes/a.md", "before");
         let allowed = true;
-        const audit = makeAuditStore();
         const controller = makeController(vault, {
             isPathAllowed: () => allowed,
-            auditStore: audit.store,
         });
         const intent = await controller.stageIntent({
             runId: "run",
@@ -319,15 +300,11 @@ describe("OperationsIntentController", () => {
         });
         const execution = await controller.executeIntent(intent.id);
         const receiptId = execution.operations[0]!.receiptId!;
-        expect(audit.write).toHaveBeenCalledTimes(1);
-        audit.write.mockClear();
-
         allowed = false;
         expect(await controller.undo(receiptId)).toMatchObject({
             status: "failed",
             failureCategory: "boundary_denied",
         });
-        expect(audit.write).not.toHaveBeenCalled();
         expect(vault.files.get("notes/a.md")).toBe("before\nafter");
         controller.dispose();
     });
@@ -479,78 +456,6 @@ describe("OperationsIntentController", () => {
             }],
         })).rejects.toMatchObject({ category: "transform_failed" });
         expect(controller.listPendingIntents()).toEqual([]);
-        controller.dispose();
-    });
-
-    it("propagates audit retention warnings separately from current-write success", async () => {
-        const vault = new MemoryVault();
-        vault.files.set("notes/a.md", "before");
-        const audit = makeAuditStore({
-            ok: true,
-            path: "audit.json",
-            retentionWarning: "cleanup failed",
-        });
-        const controller = makeController(vault, { auditStore: audit.store });
-        const intent = await controller.stageIntent({
-            runId: "run",
-            turnId: "turn",
-            operations: [
-                { toolCallId: "call", name: "vault_append", input: { path: "notes/a.md", content: "after" } },
-            ],
-        });
-
-        const result = await controller.executeIntent(intent.id);
-
-        expect(result.operations[0]).toMatchObject({
-            status: "succeeded",
-            auditStatus: "written",
-            auditRetentionWarning: "cleanup failed",
-        });
-        controller.dispose();
-    });
-
-    it("omits planned content from content-enabled audit records when execution or Undo fails", async () => {
-        const vault = new MemoryVault();
-        vault.files.set("notes/a.md", "before");
-        const audit = makeAuditStore();
-        const controller = makeController(vault, { auditStore: audit.store });
-        const staleIntent = await controller.stageIntent({
-            runId: "run-stale",
-            turnId: "turn-stale",
-            operations: [
-                { toolCallId: "call-stale", name: "vault_append", input: { path: "notes/a.md", content: "planned" } },
-            ],
-        });
-        vault.files.set("notes/a.md", "user edit");
-
-        await controller.executeIntent(staleIntent.id);
-
-        const staleAudit = audit.write.mock.calls[0]![0] as Record<string, unknown>;
-        expect(staleAudit).not.toHaveProperty("before");
-        expect(staleAudit).not.toHaveProperty("after");
-
-        audit.write.mockClear();
-        const successfulIntent = await controller.stageIntent({
-            runId: "run-success",
-            turnId: "turn-success",
-            operations: [
-                { toolCallId: "call-success", name: "vault_append", input: { path: "notes/a.md", content: "written" } },
-            ],
-        });
-        const execution = await controller.executeIntent(successfulIntent.id);
-        expect(audit.write.mock.calls[0]![0]).toMatchObject({
-            before: "user edit",
-            after: "user edit\nwritten",
-        });
-        const receiptId = execution.operations[0]!.receiptId!;
-        vault.files.set("notes/a.md", "later edit");
-        audit.write.mockClear();
-
-        await controller.undo(receiptId);
-
-        const undoAudit = audit.write.mock.calls[0]![0] as Record<string, unknown>;
-        expect(undoAudit).not.toHaveProperty("before");
-        expect(undoAudit).not.toHaveProperty("after");
         controller.dispose();
     });
 
@@ -819,14 +724,13 @@ describe("Operations task source reads", () => {
         }
     });
 
-    it("does not retain the read guard in proposals, preview, audit or Undo and keeps confirmation independent", async () => {
+    it("does not retain the read guard in proposals, preview, or Undo and keeps confirmation independent", async () => {
         const vault = new MemoryVault();
         vault.files.set("notes/a.md", "before");
         let current = true;
         const guard = { marker: "host-only-guard-marker", isCurrent: () => current, isPathAllowed: () => true };
-        const audit = makeAuditStore();
         const events: OperationsControllerEvent[] = [];
-        const controller = makeController(vault, { auditStore: audit.store, onEvent: event => events.push(event) });
+        const controller = makeController(vault, { onEvent: event => events.push(event) });
         try {
             const intent = await controller.stageIntent({
                 runId: "run", turnId: "turn", taskSourceReadGuard: guard,
@@ -839,7 +743,7 @@ describe("Operations task source reads", () => {
             const result = await controller.executeIntent(intent.id);
             expect(result.state).toBe("completed");
             expect(vault.files.get("notes/a.md")).toBe("before\nafter");
-            expect(JSON.stringify(audit.write.mock.calls)).not.toContain(guard.marker);
+            expect(JSON.stringify(events)).not.toContain(guard.marker);
             const undone = await controller.undoCompleted(result);
             expect(undone[0]?.status).toBe("undone");
             expect(vault.files.get("notes/a.md")).toBe("before");

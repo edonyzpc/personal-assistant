@@ -1175,15 +1175,19 @@ describe('PA Agent telemetry settings', () => {
 });
 
 describe('Operations Agent settings compatibility', () => {
-    it('preserves the raw legacy field without changing its persisted value', () => {
+    it('ignores retired legacy audit controls without creating replacement settings', () => {
         expect(DEFAULT_SETTINGS.operationsAgentEnabled).toBe(false);
         expect(mergeLoadedSettings({ operationsAgentEnabled: true }).operationsAgentEnabled).toBe(true);
         expect(mergeLoadedSettings({ operationsAgentEnabled: false }).operationsAgentEnabled).toBe(false);
-        expect(mergeLoadedSettings({ operationsAuditRetentionDays: 90 }).operationsAuditRetentionDays).toBe(90);
-        expect(mergeLoadedSettings({ operationsAuditRetentionDays: 31 }).operationsAuditRetentionDays).toBe(30);
+        const merged = mergeLoadedSettings({
+            operationsAuditIncludeContent: true,
+            operationsAuditRetentionDays: 90,
+        });
+        expect(merged).not.toHaveProperty('operationsAuditIncludeContent');
+        expect(merged).not.toHaveProperty('operationsAuditRetentionDays');
     });
 
-    it('renders suggestion and audit controls without the retired legacy opt-in switch', () => {
+    it('renders the suggestion control without retired audit controls', () => {
         const plugin = makePlugin({ operationsAgentEnabled: true });
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
@@ -1192,11 +1196,9 @@ describe('Operations Agent settings compatibility', () => {
 
         const names = getMockSettingRecords().map((record) => record.name);
         expect(names).not.toContain('Save Chat and Pagelet suggestions to notes (Beta)');
-        expect(names).toEqual(expect.arrayContaining([
-            'Suggest saving useful conclusions',
-            'Include note content in write audit',
-            'Write audit retention',
-        ]));
+        expect(names).toContain('Suggest saving useful conclusions');
+        expect(names).not.toContain('Include note content in write audit');
+        expect(names).not.toContain('Write audit retention');
     });
 });
 

@@ -111,7 +111,6 @@ export type OperationsFailureCategory =
     | "cancelled"
     | "already_executed"
     | "fs_error"
-    | "audit_error"
     | "undo_unavailable"
     | "unknown";
 
@@ -126,10 +125,6 @@ export interface OperationExecutionResult {
     failureCategory?: OperationsFailureCategory;
     message?: string;
     receiptId?: string;
-    auditStatus?: "written" | "failed";
-    auditError?: string;
-    /** Retention cleanup failed even though the current audit write may have succeeded. */
-    auditRetentionWarning?: string;
 }
 
 export interface OperationsExecutionResult {
@@ -161,41 +156,6 @@ export interface UndoResult {
     status: UndoStatus;
     failureCategory?: OperationsFailureCategory;
     message?: string;
-    auditStatus?: "written" | "failed";
-    auditError?: string;
-    /** Retention cleanup failed even though the current audit write may have succeeded. */
-    auditRetentionWarning?: string;
-}
-
-export type ContentFreeAuditStatus =
-    | "succeeded"
-    | "failed"
-    | "stale"
-    | "undone"
-    | "undo_failed";
-
-export interface ContentFreeAuditRecord {
-    version: 1;
-    operationId: string;
-    intentId: string;
-    tool: CoreWriteToolName | "undo";
-    targetPath: string;
-    status: ContentFreeAuditStatus;
-    startedAt: string;
-    completedAt: string;
-    errorCategory?: string;
-}
-
-export interface ContentAuditRecord extends ContentFreeAuditRecord {
-    before: string | null;
-    after: string | null;
-}
-
-export type OperationsAuditRecord = ContentFreeAuditRecord | ContentAuditRecord;
-
-export interface OperationsAuditWriteInput extends ContentFreeAuditRecord {
-    before?: string | null;
-    after?: string | null;
 }
 
 export interface OperationsVaultFile {

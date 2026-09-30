@@ -4,7 +4,6 @@ import type {
     VaultAppendInput,
 } from "./types";
 
-const OPERATIONS_PREVIEW_MAX_CHARS = 1_600;
 
 export interface OperationsPreviewFormatter {
     formatFrontmatterSet?: (key: string, serializedValue: string) => string;
@@ -56,16 +55,11 @@ function formatOperationsBeforeAfterPreview(before: string, after: string): stri
         const end = Math.min(value.length, changedEnd + contextChars);
         return `${start > 0 ? "…" : ""}${value.slice(start, end)}${end < value.length ? "…" : ""}`;
     };
-    return truncateOperationsPreview([
+    return [
         "Before",
         excerpt(before),
         "",
         "After",
         excerpt(after),
-    ].join("\n"));
-}
-
-function truncateOperationsPreview(value: string): string {
-    if (value.length <= OPERATIONS_PREVIEW_MAX_CHARS) return value;
-    return `${value.slice(0, OPERATIONS_PREVIEW_MAX_CHARS)}\n…`;
+    ].join("\n");
 }

@@ -344,10 +344,6 @@ export interface PluginManagerSettings {
     operationsAgentEnabled: boolean;
     /** Offer at most one quiet save suggestion in a qualifying conversation. */
     operationsProactiveSaveSuggestionsEnabled: boolean;
-    /** Explicit privacy opt-in for before/after content in Operations audit files. */
-    operationsAuditIncludeContent: boolean;
-    /** Operations audit retention window. */
-    operationsAuditRetentionDays: 30 | 90;
     /** Low-friction raw note capture. AI post-processing stays disabled until its slice is complete. */
     quickCapture: QuickCaptureSettings;
     /** Shared Data Boundary policy for source selection and provider disclosure. */
@@ -468,8 +464,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     vssCacheExcludePath: [LEGACY_CONFIG_DIR],
     operationsAgentEnabled: false,
     operationsProactiveSaveSuggestionsEnabled: true,
-    operationsAuditIncludeContent: false,
-    operationsAuditRetentionDays: 30,
     quickCapture: { ...QUICK_CAPTURE_DEFAULTS },
     dataBoundary: {
         excludedFolders: [...DATA_BOUNDARY_DEFAULTS.excludedFolders],
@@ -559,6 +553,10 @@ export function normalizeConfirmedMemoryCount(value: unknown): number {
 const DEPRECATED_SIMPLE_SETTINGS_KEYS = [
     "memoryAutoCheckBeforeChat", "skillContextEnabled", "enabledSkillIds",
 ] as const;
+const RETIRED_OPERATIONS_AUDIT_SETTINGS_KEYS = [
+    "operationsAuditIncludeContent",
+    "operationsAuditRetentionDays",
+] as const;
 const DEPRECATED_PAGELET_SETTINGS_KEYS = ["preloadEnabled", "deepDiscoverEnabled"] as const;
 
 export function hasDeprecatedSimpleSettingsFields(value: unknown): boolean {
@@ -590,7 +588,8 @@ export function omitDeprecatedSimpleSettingsFields<T extends object>(settings: T
  * shallow-normalized so malformed data.json values cannot crash settings render.
  */
 export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
-    const loadedObject = omitDeprecatedSimpleSettingsFields(isRecord(loaded) ? loaded : {});
+    const loadedWithoutRetiredAudit = omitRetiredOperationsAuditSettingsFields(isRecord(loaded) ? loaded : {});
+    const loadedObject = omitDeprecatedSimpleSettingsFields(loadedWithoutRetiredAudit);
     const loadedPagelet = isRecord(loadedObject.pagelet) ? loadedObject.pagelet : {};
     const merged = Object.assign({}, DEFAULT_SETTINGS, loadedObject) as PluginManagerSettings;
     const loadedLocalGraph = isRecord(loadedObject.localGraph)
@@ -656,8 +655,6 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
         typeof loadedObject.operationsProactiveSaveSuggestionsEnabled === "boolean"
             ? loadedObject.operationsProactiveSaveSuggestionsEnabled
             : DEFAULT_SETTINGS.operationsProactiveSaveSuggestionsEnabled;
-    merged.operationsAuditIncludeContent = loadedObject.operationsAuditIncludeContent === true;
-    merged.operationsAuditRetentionDays = loadedObject.operationsAuditRetentionDays === 90 ? 90 : 30;
     // Pagelet has its own per-field normalizer (8 fields, mixed types).
     // Delegating keeps the legacy merge focused on settings that predate
     // Pagelet and avoids polluting this file with Pagelet-specific bounds.
@@ -706,6 +703,12 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
         && merged.memoryExtractionEnabled
         && loadedObject.memoryExtractionIncludeVaultInsights === true;
     return merged;
+}
+
+function omitRetiredOperationsAuditSettingsFields<T extends object>(settings: T): T {
+    const canonical = { ...settings } as T & Record<string, unknown>;
+    for (const key of RETIRED_OPERATIONS_AUDIT_SETTINGS_KEYS) delete canonical[key];
+    return canonical;
 }
 
 export function mergeLearningPreferences(value: unknown): LearningPreferences {
@@ -1397,7 +1400,6 @@ export class SettingTab extends PluginSettingTab {
                     this.pageletSourceExclusionsContainer = body.createDiv();
                 },
                 (p) => this.renderMemoryExclusions(this.createSettingsDetail(p, "plugin.settings.simple.memoryExclusions")),
-                (p) => this.renderOperationsAgentSection(p),
                 (p) => this.renderPrivacySharingSection(this.createSettingsDetail(p, "plugin.settings.simple.sharing")),
                 (p) => {
                     const body = this.createSettingsDetail(p, "plugin.settings.simple.saveFormat", "pa-settings-save-format", "appearance");
@@ -4324,28 +4326,6 @@ export class SettingTab extends PluginSettingTab {
             isCurrent: () => this.settingsVisible && generation === this.memoryControlCenterGeneration,
             log: (error) => this.log("Failed to save source scope", error),
         });
-    }
-
-    private renderOperationsAgentSection(parentEl: HTMLElement): void {
-        const plugin = this.plugin;
-        const audit = this.createSettingsDetail(parentEl, "plugin.settings.operationsAgent.auditContent.name");
-        new Setting(audit)
-            .setName(this.t("plugin.settings.operationsAgent.auditContent.name"))
-            .setDesc(this.t("plugin.settings.operationsAgent.auditContent.desc"))
-            .addToggle((toggle) => this.configurePermissionToggle("operationsAuditIncludeContent", toggle,
-                () => plugin.settings.operationsAuditIncludeContent,
-                (value) => plugin.saveSettingsPermissions({ operationsAuditIncludeContent: value })));
-        new Setting(audit)
-            .setName(this.t("plugin.settings.operationsAgent.auditRetention.name"))
-            .setDesc(this.t("plugin.settings.operationsAgent.auditRetention.desc"))
-            .addDropdown((dropdown) => {
-                dropdown
-                    .addOption("30", this.t("plugin.settings.operationsAgent.auditRetention.30"))
-                    .addOption("90", this.t("plugin.settings.operationsAgent.auditRetention.90"));
-                this.configurePermissionControl("operationsAuditRetentionDays", dropdown,
-                    () => String(plugin.settings.operationsAuditRetentionDays),
-                    (value) => plugin.saveSettingsPermissions({ operationsAuditRetentionDays: value === "90" ? 90 : 30 }));
-            });
     }
 
     private renderSaveSuggestionPreference(parentEl: HTMLElement): void {

@@ -430,6 +430,7 @@ import type {
 } from '../src/pa';
 import { addPaRelatedLink } from '../src/pa/frontmatter-link';
 import { installChatPluginIntegration } from './helpers/plugin-harness';
+import { OperationsReviewRouter } from '../src/chat/operations-review/OperationsReviewRouter';
 import {
     InMemoryMemoryGovernanceBackend,
     InMemoryMemoryGovernanceRepository,
@@ -479,6 +480,7 @@ const installPluginShellOwners = (plugin: any) => { // eslint-disable-line @type
         viewHost: jest.fn(() => ({})), beginUnload: jest.fn(), dispose: jest.fn(async () => undefined),
     };
     plugin.register = jest.fn();
+    plugin.operationsReviewRouter = new OperationsReviewRouter();
     plugin.settingsPersistence = plugin.createSettingsPersistence();
     plugin.aiConfiguration = plugin.createAIConfiguration();
     plugin.governanceStorage = plugin.createGovernanceStorage();
@@ -1378,7 +1380,8 @@ describe('plugin startup view registration', () => {
             expect(registerView).toHaveBeenCalledWith('llm-view', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('pa-pagelet-detail-view', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('pa-agent-debug-view', expect.any(Function));
-            expect(registerView).toHaveBeenCalledTimes(5);
+            expect(registerView).toHaveBeenCalledWith('pa-operations-review-view', expect.any(Function));
+            expect(registerView).toHaveBeenCalledTimes(6);
             const commandIds = plugin.addCommand.mock.calls
                 .map(([command]: [RegisteredPluginCommand]) => command.id);
             expect(commandIds.indexOf('startup-recording')).toBe(0);
@@ -1590,6 +1593,10 @@ describe('plugin startup view registration', () => {
             expect(registerView.mock.invocationCallOrder[0]).toBeLessThan(
                 onLayoutReady.mock.invocationCallOrder[0],
             );
+            expect(registerView.mock.calls.find(([viewType]) => viewType === 'pa-operations-review-view')).toBeDefined();
+            expect(
+                registerView.mock.calls.find(([viewType]) => viewType === 'pa-operations-review-view')![1],
+            ).toEqual(expect.any(Function));
 
             for (const handler of vaultDeleteHandlers) {
                 await handler({ path: 'attachments/image.png', extension: 'png' });
@@ -1610,7 +1617,7 @@ describe('plugin startup view registration', () => {
                 'init-vss',
             ]);
             expect(plugin.calloutIntegration.initialize).toHaveBeenCalledTimes(1);
-            expect(registerView).toHaveBeenCalledTimes(5);
+            expect(registerView).toHaveBeenCalledTimes(6);
         } finally {
             initializeStats.mockRestore();
             getEditorExtensions.mockRestore();

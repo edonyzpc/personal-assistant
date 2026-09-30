@@ -6,7 +6,6 @@ import {
     isCoreWriteToolName,
     validateCoreWriteInput,
 } from "./input-validation";
-import type { AuditWriteResult, OperationsAuditStore } from "./operations-audit-store";
 import { OperationsUndoStore } from "./operations-undo-store";
 import type {
     CoreWriteInput,
@@ -64,7 +63,6 @@ export class StaleTargetError extends OperationsControllerError {
 export interface OperationsIntentControllerOptions {
     vault: OperationsVault;
     trashFile: (file: OperationsVaultFile) => Promise<void>;
-    auditStore?: OperationsAuditStore;
     undoStore?: OperationsUndoStore;
     isPathAllowed?: (path: string) => boolean;
     markSelfWrite?: (path: string) => void;
@@ -87,7 +85,6 @@ interface VirtualTarget {
 export class OperationsIntentController {
     private readonly vault: OperationsVault;
     private readonly trashFile: (file: OperationsVaultFile) => Promise<void>;
-    private readonly auditStore?: OperationsAuditStore;
     private readonly undoStore: OperationsUndoStore;
     private readonly isPathAllowed?: (path: string) => boolean;
     private readonly markSelfWrite?: (path: string) => void;
@@ -106,7 +103,6 @@ export class OperationsIntentController {
     constructor(options: OperationsIntentControllerOptions) {
         this.vault = options.vault;
         this.trashFile = options.trashFile;
-        this.auditStore = options.auditStore;
         this.undoStore = options.undoStore ?? new OperationsUndoStore({ now: options.now });
         this.isPathAllowed = options.isPathAllowed;
         this.markSelfWrite = options.markSelfWrite;
@@ -348,7 +344,6 @@ export class OperationsIntentController {
         }
 
         const receipt = lookup.receipt;
-        const startedAt = toIso(this.now());
         let result: UndoResult;
         try {
             this.assertPathAllowed(receipt.path);
@@ -373,23 +368,6 @@ export class OperationsIntentController {
             };
         }
 
-        const audit = result.failureCategory === "boundary_denied"
-            ? undefined
-            : await this.writeAudit({
-                version: 1,
-                operationId: receipt.operationId,
-                intentId: receipt.intentId,
-                tool: "undo",
-                targetPath: receipt.path,
-                status: result.status === "undone" ? "undone" : "undo_failed",
-                startedAt,
-                completedAt: toIso(this.now()),
-                ...(result.failureCategory ? { errorCategory: result.failureCategory } : {}),
-                ...(result.status === "undone"
-                    ? { before: receipt.expectedAfter, after: receipt.before }
-                    : {}),
-            });
-        attachAuditResult(result, audit);
         this.emit({ type: "undo-result", result });
         return result;
     }
@@ -445,7 +423,6 @@ export class OperationsIntentController {
         operation: PreparedOperation,
         lifecycleEpoch: number,
     ): Promise<OperationExecutionResult> {
-        const startedAt = toIso(this.now());
         let result: OperationExecutionResult;
         try {
             this.assertExecutionActive(lifecycleEpoch);
@@ -488,24 +465,7 @@ export class OperationsIntentController {
             };
         }
 
-        const audit = result.failureCategory === "boundary_denied"
-            ? undefined
-            : await this.writeAudit({
-                version: 1,
-                operationId: operation.id,
-                intentId: intent.id,
-                tool: operation.name,
-                targetPath: operation.path,
-                status: result.status === "succeeded" ? "succeeded" : result.status === "stale" ? "stale" : "failed",
-                startedAt,
-                completedAt: toIso(this.now()),
-                ...(result.failureCategory ? { errorCategory: result.failureCategory } : {}),
-                ...(result.status === "succeeded"
-                    ? { before: operation.expectedBefore, after: operation.expectedAfter }
-                    : {}),
-            });
         this.assertExecutionActive(lifecycleEpoch);
-        attachAuditResult(result, audit);
         return result;
     }
 
@@ -659,11 +619,6 @@ export class OperationsIntentController {
         this.expirationTimers.delete(intentId);
     }
 
-    private async writeAudit(input: Parameters<OperationsAuditStore["write"]>[0]): Promise<AuditWriteResult | undefined> {
-        if (!this.auditStore) return undefined;
-        return await this.auditStore.write(input);
-    }
-
     private emit(event: OperationsControllerEvent): void {
         for (const listener of this.listeners) {
             try {
@@ -739,19 +694,6 @@ function normalizeExecutionError(error: unknown): OperationsControllerError {
     return new OperationsControllerError("fs_error", safeError(error, "Vault operation failed."));
 }
 
-function attachAuditResult(
-    result: OperationExecutionResult | UndoResult,
-    audit: AuditWriteResult | undefined,
-): void {
-    if (!audit) return;
-    if (audit.retentionWarning) result.auditRetentionWarning = audit.retentionWarning;
-    if (audit.ok) result.auditStatus = "written";
-    else {
-        result.auditStatus = "failed";
-        result.auditError = audit.error ?? "Audit record could not be written.";
-    }
-}
-
 function assertExpectedAfterGrowth(expectedBefore: string | null, expectedAfter: string): void {
     const beforeLength = expectedBefore?.length ?? 0;
     const growth = expectedAfter.length - beforeLength;
@@ -783,10 +725,6 @@ function countPreparedGeneratedCharacters(
         process.params.replace,
         process.params.occurrence ?? "first",
     ).generatedChars;
-}
-
-function toIso(timestamp: number): string {
-    return new Date(timestamp).toISOString();
 }
 
 function safeError(error: unknown, fallback: string): string {

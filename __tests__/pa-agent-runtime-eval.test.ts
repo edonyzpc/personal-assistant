@@ -59,7 +59,6 @@ function hostFor(evalCase: PaRuntimeEvalCase, isForcedSearchFailure: () => boole
             policyModelName: "", embeddingModelName: "b149-fixed-embedding", shareAnonymousCapabilityUsage: false,
             qwenThinkingEnabled: false, webSearchEnabled: Boolean(evalCase.webEvidence), memoryEnabled: false, licenseTier: "paid",
             operationsAgentEnabled: false, operationsProactiveSaveSuggestionsEnabled: false,
-            operationsAuditIncludeContent: false, operationsAuditRetentionDays: 30,
             statisticsVaultId: "b149-synthetic", retrievalOptimizationFlags: {},
         },
         app: {

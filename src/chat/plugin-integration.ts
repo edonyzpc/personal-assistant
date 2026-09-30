@@ -11,6 +11,7 @@ import { WritingSaveAction } from "./writing-save-action";
 import { WritingStyleService } from "./writing-style-service";
 import { prepareWritingRecoverySources } from "./writing-recovery-sources";
 import { ChatService } from "../ai-services/chat-service";
+import type { OperationsReviewSession } from "../ai-services/operations/operations-review-session";
 import { prepareFeaturedImagePrompt } from "../ai-services/prepare-featured-image-prompt";
 import { normalizeFeaturedImageFolderPath } from "../ai-services/featured-image-path";
 import { normalizeFeaturedImageCount, normalizeFeaturedImageModel } from "../settings";
@@ -96,6 +97,9 @@ export interface ChatPluginIntegrationDependencies {
     hasActiveAIProviderCredentialTransition(): boolean;
     showImageSyncNotice(receipt: { directory: string }): void;
     createOperationsSession(): OperationsSession;
+    registerOperationsReviewSession?(session: OperationsReviewSession): void;
+    openOperationsReview?(reviewId: string): void | Promise<void>;
+    invalidateOperationsReviewSession?(reviewId: string): void;
     createAiServiceHost(): ConstructorParameters<typeof ChatService>[0];
     hostActions: ChatHostActions;
     writingStyleRuntime: WritingStyleRuntimeDependencies;
@@ -408,6 +412,15 @@ export class ChatPluginIntegration {
             prepareWritingStyleForScene: actions.prepareWritingStyleForScene,
             memoryStatus: actions.createMemoryStatus(),
             createChatService: () => this.createChatService(),
+            ...(this.dependencies.registerOperationsReviewSession ? {
+                registerOperationsReviewSession: (session) => this.dependencies.registerOperationsReviewSession?.(session),
+            } : {}),
+            ...(this.dependencies.openOperationsReview ? {
+                openOperationsReview: (reviewId) => this.dependencies.openOperationsReview?.(reviewId),
+            } : {}),
+            ...(this.dependencies.invalidateOperationsReviewSession ? {
+                invalidateOperationsReviewSession: (reviewId) => this.dependencies.invalidateOperationsReviewSession?.(reviewId),
+            } : {}),
             onSettingsChanged: (listener) => actions.onSettingsChanged(listener),
             scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) =>
                 actions.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount),

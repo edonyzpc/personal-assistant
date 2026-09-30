@@ -138,6 +138,22 @@ describe("B-143 settings persistence owner", () => {
         expect(owner.currentSettings.dataBoundary.excludedFolders).toEqual(["private", "archive"]);
     });
 
+    it("ignores retired Operations audit keys without saving just to remove them", async () => {
+        const saveData = jest.fn(async () => undefined);
+        const owner = createOwner({
+            operationsAgentEnabled: true,
+            operationsAuditIncludeContent: true,
+            operationsAuditRetentionDays: 90,
+        }, { saveData });
+
+        await owner.loadSettings();
+
+        expect(owner.currentSettings.operationsAgentEnabled).toBe(true);
+        expect(owner.currentSettings).not.toHaveProperty("operationsAuditIncludeContent");
+        expect(owner.currentSettings).not.toHaveProperty("operationsAuditRetentionDays");
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
     it("drains required transactions and writes admitted while draining to a fixed point", async () => {
         const owner = createOwner({ author: "queue" });
         await owner.loadSettings();

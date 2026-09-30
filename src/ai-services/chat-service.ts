@@ -121,14 +121,9 @@ export class ChatService {
                 await host.app.fileManager.trashFile(file as unknown as TAbstractFile);
             },
             isOperationsAgentEnabled: () => host.isOperationsAgentEnabled,
-            audit: {
-                includeContent: () => host.settings.operationsAuditIncludeContent,
-                retentionDays: () => host.settings.operationsAuditRetentionDays,
-            },
             ...(host.isDataBoundaryAllowedPath
                 ? { isPathAllowed: (path: string) => host.isDataBoundaryAllowedPath?.(path) === true }
                 : {}),
-            log: (message, ...args) => host.log(message, ...args),
         });
         this.ownedOperationsService = service;
         this.operationsSession = service.createSession({ surface: "chat-fallback" });
@@ -148,6 +143,10 @@ export class ChatService {
 
     async undoOperations(receiptIds: readonly string[]): Promise<UndoResult[]> {
         return await this.operationsSession.undoMany(receiptIds);
+    }
+
+    subscribeOperations(listener: (event: OperationsControllerEvent) => void): () => void {
+        return this.operationsSession.subscribe(listener);
     }
 
     dispose(): void {

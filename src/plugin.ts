@@ -4,6 +4,8 @@ import { type Command, type MarkdownFileInfo, type TAbstractFile, Component, Edi
 import { getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
+import { OperationsReviewRouter, OPERATIONS_REVIEW_VIEW_TYPE } from './chat/operations-review/OperationsReviewRouter';
+import { OperationsReviewView } from './chat/operations-review/OperationsReviewView';
 import { AgentDebugPluginIntegration } from './agent-debug/plugin-integration';
 import { AgentDebugView, AGENT_DEBUG_VIEW_TYPE } from './agent-debug/view';
 import { AssistantHelper } from "./ai";
@@ -1078,6 +1080,9 @@ export class PluginManager extends Plugin {
             directory: receipt.directory,
         }), 12000),
         createOperationsSession: () => this.getOperationsService().createSession({ surface: "chat" }),
+        registerOperationsReviewSession: (session) => this.operationsReviewRouter.register(session),
+        openOperationsReview: (reviewId) => this.operationsReviewRouter.open(reviewId, this.app.workspace),
+        invalidateOperationsReviewSession: (reviewId) => this.operationsReviewRouter.invalidate(reviewId),
         createAiServiceHost: () => this.createAiServiceHost("chat"),
         hostActions: {
             openAgentDebug: (conversationId) => this.openAgentDebug(conversationId),
@@ -1490,6 +1495,7 @@ export class PluginManager extends Plugin {
     private readonly agentRunCoordinator = new AgentRunCoordinator();
     /** Shared provider/policy composition root; mutable intent state stays per surface. */
     private operationsService: OperationsService | null = null;
+    private readonly operationsReviewRouter = new OperationsReviewRouter();
     get chatHistoryStore(): ChatHistoryStore | undefined {
         return this.chatIntegration.getHistoryStore();
     }
@@ -2051,6 +2057,10 @@ export class PluginManager extends Plugin {
             {
                 viewType: STAT_PREVIEW_TYPE,
                 createView: (leaf) => { return new Stat(this.app, this, leaf); },
+            },
+            {
+                viewType: OPERATIONS_REVIEW_VIEW_TYPE,
+                createView: (leaf) => new OperationsReviewView(leaf, this.operationsReviewRouter),
             },
             {
                 viewType: VIEW_TYPE_LLM,
@@ -5552,12 +5562,7 @@ export class PluginManager extends Plugin {
                 await this.app.fileManager.trashFile(file as unknown as TAbstractFile);
             },
             isOperationsAgentEnabled: () => this.isOperationsAgentEnabled,
-            audit: {
-                includeContent: () => this.settings.operationsAuditIncludeContent,
-                retentionDays: () => this.settings.operationsAuditRetentionDays,
-            },
             isPathAllowed: (path) => this.isDataBoundaryAllowedPath(path),
-            log: (message, ...args) => this.log(message, ...args),
         });
         return this.operationsService;
     }
@@ -6684,6 +6689,7 @@ export class PluginManager extends Plugin {
             }
             this.operationsService = null;
         }
+        this.operationsReviewRouter.dispose();
         this.pageletIntegration.finishUnloadAfterSharedService();
         this.reviewQueueStore = null;
         this.savedInsightStore = null;

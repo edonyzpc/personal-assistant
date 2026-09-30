@@ -76,6 +76,25 @@ const mockCancelPendingOperations = jest.fn<() => void>();
 const mockUndoOperations = jest.fn<(receiptIds: readonly string[]) => Promise<UndoResult[]>>();
 const mockDisposeChatService = jest.fn<() => void>();
 const mockResetChatContext = jest.fn<() => void>();
+const mockUnmountOperationsDiff = jest.fn();
+jest.mock('react-dom/client', () => {
+    const ReactDOMServer = require('react-dom/server') as {
+        renderToStaticMarkup: (element: unknown) => string;
+    };
+    return {
+        createRoot: jest.fn((container: unknown) => {
+            const target = container as { setText?: (text: string) => void };
+            return {
+                render: (element: unknown) => {
+                    target.setText?.(ReactDOMServer.renderToStaticMarkup(element));
+                },
+                unmount: () => {
+                    mockUnmountOperationsDiff();
+                },
+            };
+        }),
+    };
+});
 jest.mock('../src/ai-services/chat-service', () => ({
     ChatService: jest.fn().mockImplementation(() => ({
         streamLLM: mockStreamLLM,
@@ -87,6 +106,19 @@ jest.mock('../src/ai-services/chat-service', () => ({
         resetContext: mockResetChatContext,
     })),
 }));
+
+jest.mock('../src/chat/operations-review/mount', () => {
+    const actual = jest.requireActual('../src/chat/operations-review/mount') as {
+        mountOperationsDiff: (container: never, options: never) => () => void;
+    };
+    return {
+        mountOperationsDiff: jest.fn((container: never, options: never) =>
+            actual.mountOperationsDiff(container, options)),
+    };
+});
+const mountOperationsDiffMock = jest.requireMock('../src/chat/operations-review/mount') as {
+    mountOperationsDiff: jest.Mock;
+};
 
 jest.mock('../src/share-card/share-card-modal', () => {
     const mockOpen = jest.fn();
@@ -826,6 +858,9 @@ function createView(options: {
             operationsProactiveSaveSuggestionsEnabled: true,
         },
         chatHistoryManager: options.chatHistoryManager,
+        registerOperationsReviewSession: jest.fn(),
+        openOperationsReview: jest.fn(async (_reviewId: string) => undefined),
+        invalidateOperationsReviewSession: jest.fn(),
         verifyImageTextSource: jest.fn<NonNullable<ChatHost['verifyImageTextSource']>>(async () => undefined),
         isImageTextSourceCurrent: jest.fn<NonNullable<ChatHost['isImageTextSourceCurrent']>>(() => true),
         isImagePromptOriginCurrent: jest.fn<NonNullable<ChatHost['isImagePromptOriginCurrent']>>(() => true),
@@ -4849,7 +4884,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('prepares a complete removable Pagelet attachment without sending and consumes it after one successful Ask', async () => {
-        const { view, containerEl } = createView({ operationsEnabled: true });
+        const { view, containerEl, plugin } = createView({ operationsEnabled: true });
         await view.onOpen();
         const context = createPageletHandoffContext();
 
@@ -5250,7 +5285,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('keeps an Operations preview inline and inert until the model turn finishes, then supports confirm and Undo', async () => {
-        const { view, containerEl } = createView({ operationsEnabled: true });
+        const { view, containerEl, plugin } = createView({ operationsEnabled: true });
         await view.onOpen();
         const operation: PreparedOperation = {
             id: 'operation_1',
@@ -5284,8 +5319,6 @@ describe('LLMView turn lifecycle', () => {
                 path: operation.path,
                 status: 'succeeded',
                 receiptId: 'receipt_1',
-                auditStatus: 'written',
-                auditRetentionWarning: 'cleanup unavailable',
             }],
         });
         mockUndoOperations.mockResolvedValue([{
@@ -5293,8 +5326,6 @@ describe('LLMView turn lifecycle', () => {
             operationId: operation.id,
             path: operation.path,
             status: 'undone',
-            auditStatus: 'written',
-            auditRetentionWarning: 'cleanup unavailable',
         }]);
 
         getTextArea(containerEl).value = 'Save this decision';
@@ -5309,6 +5340,16 @@ describe('LLMView turn lifecycle', () => {
         expect(mockConfirmOperationsIntent).not.toHaveBeenCalled();
         expect(allText(card)).toContain('0.unsorted/decision.md');
         expect(allText(card)).toContain('Keep the quiet default.');
+        const openReviewButton = getButtonByText(card, 'Open full review');
+        openReviewButton.click();
+        expect(plugin.registerOperationsReviewSession).toHaveBeenCalledTimes(1);
+        const registerReviewSession = plugin.registerOperationsReviewSession as jest.MockedFunction<
+            (session: { reviewId: string }) => void
+        >;
+        const registeredSession = registerReviewSession.mock.calls[0]?.[0];
+        expect(plugin.openOperationsReview).toHaveBeenCalledWith(
+            registeredSession.reviewId,
+        );
 
         call.resolve();
         await flushPromises();
@@ -5321,14 +5362,110 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         expect(mockConfirmOperationsIntent).toHaveBeenCalledWith(intent.id);
         expect(allText(card)).toContain('Changes applied.');
-        expect(allText(card)).toContain('older audit files may not have been cleaned up');
 
         const undoButton = getButtonByText(card, 'Undo');
         expect(undoButton.hidden).toBe(false);
         await undoButton.click();
         await flushPromises();
         expect(mockUndoOperations).toHaveBeenCalledWith(['receipt_1']);
-        expect(allText(card)).toContain('Undone; older audit files may not have been cleaned up');
+        expect(allText(card)).toContain('Undone');
+    });
+
+    it('shows a full-review route failure without writing the pending proposal', async () => {
+        const { view, containerEl, plugin } = createView({ operationsEnabled: true });
+        await view.onOpen();
+        const openOperationsReview = plugin.openOperationsReview as jest.MockedFunction<
+            (_reviewId: string) => Promise<void>
+        >;
+        openOperationsReview.mockRejectedValueOnce(new Error('route unavailable'));
+        const operation: PreparedOperation = {
+            id: 'operation_open_failed',
+            toolCallId: 'call_open_failed',
+            name: 'vault_append',
+            input: { path: 'notes/open-failed.md', content: '\nnot written' },
+            path: 'notes/open-failed.md',
+            expectedBefore: 'before',
+            expectedAfter: 'before\nnot written',
+        };
+        const intent: OperationsIntent = {
+            id: 'intent_open_failed',
+            runId: 'run_open_failed',
+            turnId: 'turn_open_failed',
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 60_000,
+            operations: [operation],
+            state: 'pending',
+        };
+
+        getTextArea(containerEl).value = 'Prepare route failure';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onOperationsIntentStaged?.(intent);
+        const card = getElementByClass(containerEl, 'pa-operations-intent-card');
+        const confirmButton = getButtonByText(card, 'Confirm changes');
+        getButtonByText(card, 'Open full review').click();
+        await flushPromises();
+
+        expect(plugin.openOperationsReview).toHaveBeenCalledTimes(1);
+        expect(allText(card)).toContain('route unavailable');
+        expect(confirmButton.disabled).toBe(true);
+        expect(mockConfirmOperationsIntent).not.toHaveBeenCalledWith(intent.id);
+        streamCalls[0].resolve();
+        await flushPromises();
+    });
+
+    it('mounts one batch-wide compact Operations diff and reports hidden notes', async () => {
+        mountOperationsDiffMock.mountOperationsDiff.mockClear();
+        const { view, containerEl } = createView({ operationsEnabled: true });
+        await view.onOpen();
+        const beforeLines = Array.from({ length: 7 }, (_value, index) => `before-${index + 1}`);
+        const afterLines = Array.from({ length: 7 }, (_value, index) => `after-${index + 1}`);
+        const before = beforeLines.join('\n');
+        const after = afterLines.join('\n');
+        const operations: PreparedOperation[] = ['one', 'two', 'three'].map(name => ({
+            id: `operation-bulk-${name}`,
+            toolCallId: `call-bulk-${name}`,
+            name: 'vault_process' as const,
+            input: {
+                path: `notes/bulk-${name}.md`,
+                operation: 'replace' as const,
+                params: { search: before, replace: after },
+            },
+            path: `notes/bulk-${name}.md`,
+            expectedBefore: before,
+            expectedAfter: after,
+        }));
+        const intent: OperationsIntent = {
+            id: 'intent-bulk',
+            runId: 'run-bulk',
+            turnId: 'turn-bulk',
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 60_000,
+            operations,
+            state: 'pending',
+        };
+
+        getTextArea(containerEl).value = 'Prepare many changes';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onOperationsIntentStaged?.(intent);
+
+        expect(mountOperationsDiffMock.mountOperationsDiff).toHaveBeenCalledTimes(1);
+        const mountOptions = mountOperationsDiffMock.mountOperationsDiff.mock.calls[0]![1] as {
+            model: { groups: Array<{ path: string }> };
+        };
+        expect(mountOptions.model.groups).toHaveLength(3);
+        const preview = getElementByClass(
+            getElementByClass(containerEl, 'pa-operations-intent-card'),
+            'pa-operations-intent-card__preview',
+        );
+        expect(preview.textContent).toContain('notes/bulk-one.md');
+        expect(preview.textContent).toContain('notes/bulk-two.md');
+        expect(preview.textContent).not.toContain('notes/bulk-three.md');
+        expect(preview.textContent).toContain('18 changes are not shown');
+
+        streamCalls[0].resolve();
+        await flushPromises();
     });
 
     it('submits one visible save request from a qualifying vault-backed conclusion', async () => {
@@ -5506,6 +5643,68 @@ describe('LLMView turn lifecycle', () => {
             'Set status: "<script>alert(1)</script>"',
             'Remove legacy',
         ].join('\n'));
+    });
+
+    it('keeps Operations review controls reachable on desktop and mobile layouts', () => {
+        const css = readFileSync('src/custom.pcss', 'utf8');
+        expect(getCssRuleBlock(css, '.pa-operations-diff__full-controls > button'))
+            .toContain('min-height: 36px');
+        expect(getCssRuleBlock(css, 'body.is-mobile .pa-operations-diff__full-controls > button'))
+            .toContain('min-height: 44px');
+        expect(getCssRuleBlock(css, '.pa-operations-review-view__actions'))
+            .toContain('position: sticky');
+    });
+
+    it('cleans an Operations card once on source reset and not again when the whole view closes', async () => {
+        mockUnmountOperationsDiff.mockClear();
+        mountOperationsDiffMock.mountOperationsDiff.mockClear();
+        const { view, containerEl } = createView({ operationsEnabled: true });
+        await view.onOpen();
+        const operation: PreparedOperation = {
+            id: 'operation_cleanup',
+            toolCallId: 'call_cleanup',
+            name: 'vault_append',
+            input: { path: 'notes/cleanup.md', content: '\ncleanup' },
+            path: 'notes/cleanup.md',
+            expectedBefore: 'before',
+            expectedAfter: 'before\ncleanup',
+        };
+        const intent: OperationsIntent = {
+            id: 'intent_cleanup',
+            runId: 'run_cleanup',
+            turnId: 'turn_cleanup',
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 60_000,
+            operations: [operation],
+            state: 'pending',
+        };
+
+        getTextArea(containerEl).value = 'Prepare cleanup';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onOperationsIntentStaged?.(intent);
+        streamCalls[0].onChunk('Review this proposal.');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(mountOperationsDiffMock.mountOperationsDiff).toHaveBeenCalledTimes(1);
+        const teardown = (view as unknown as {
+            viewTeardownCallbacks: Set<() => void>;
+        }).viewTeardownCallbacks;
+        const teardownCountAfterCard = teardown.size;
+
+        getButtonByText(containerEl, 'Clear Chat').click();
+        await flushPromises();
+        await flushPromises();
+
+        expect(mockUnmountOperationsDiff).toHaveBeenCalledTimes(1);
+        expect(teardown.size).toBe(teardownCountAfterCard - 1);
+        expect(getElementsByClass(containerEl, 'pa-operations-intent-card')).toHaveLength(0);
+
+        await view.onClose();
+        expect(mockUnmountOperationsDiff).toHaveBeenCalledTimes(1);
+        expect(teardown.size).toBe(0);
     });
 
     afterEach(() => {

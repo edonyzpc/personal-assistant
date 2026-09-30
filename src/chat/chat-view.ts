@@ -61,12 +61,12 @@ import {
 } from '../ai-services/operations/save-suggestion-policy';
 import type {
     OperationExecutionResult,
-    OperationsExecutionResult,
     OperationsIntent,
-    PreparedOperation,
     UndoResult,
 } from '../ai-services/operations/types';
+import { OperationsReviewSession } from '../ai-services/operations/operations-review-session';
 import { formatOperationsPreview } from '../ai-services/operations/operations-presentation';
+import { mountOperationsDiff } from './operations-review/mount';
 import { ShareCardModal } from '../share-card/share-card-modal';
 import {
     captureComposerImageTextSource,
@@ -411,6 +411,7 @@ export class LLMView extends ItemView {
     private viewTeardownCallbacks = new Set<() => void>();
     private roleIdenticonSessionSeed = createChatRoleIdenticonSessionSeed();
     private readonly operationsSuggestionStateByConversation = new Map<string, OperationsSaveSuggestionState>();
+    private readonly operationsReviewSessions = new Map<string, OperationsReviewSession>();
 
     get isStreaming(): boolean {
         return this.abortController !== null;
@@ -520,8 +521,11 @@ export class LLMView extends ItemView {
         this.markdownRenderOwners.clear();
     }
 
-    private registerViewTeardown(callback: () => void): void {
+    private registerViewTeardown(callback: () => void): () => void {
         this.viewTeardownCallbacks.add(callback);
+        return () => {
+            this.viewTeardownCallbacks.delete(callback);
+        };
     }
 
     private runViewTeardownCallbacks(): void {
@@ -3302,6 +3306,8 @@ export class LLMView extends ItemView {
         const pendingOperationsIntentIds = new Set<string>();
         const pendingOperationsCardHandles = new Map<string, OperationsIntentCardHandle>();
         const discardPendingOperations = () => {
+            for (const session of [...this.operationsReviewSessions.values()]) session.discard();
+            this.operationsReviewSessions.clear();
             for (const handle of [...pendingOperationsCardHandles.values()]) handle.discard();
             pendingOperationsCardHandles.clear();
             pendingOperationsIntentIds.clear();
@@ -3312,7 +3318,25 @@ export class LLMView extends ItemView {
             intent: OperationsIntent,
         ): OperationsIntentCardHandle | undefined => {
             if (!isCurrentSession() || rendered.messageDiv.parentElement !== this.responseDiv) return undefined;
+            const intentId = intent.id;
             pendingOperationsIntentIds.add(intent.id);
+
+            const reviewSession = new OperationsReviewSession({
+                intent,
+                controller: {
+                    confirm: async (intentId) => await this.chatService.confirmOperationsIntent(intentId),
+                    cancel: (intentId) => this.chatService.cancelOperationsIntent(intentId),
+                    undoMany: async (receiptIds) => await this.chatService.undoOperations(receiptIds),
+                    ...(this.chatService.subscribeOperations ? {
+                        subscribe: (listener) => this.chatService.subscribeOperations?.(listener),
+                    } : {}),
+                },
+                sessionIdentity: sessionId,
+                isSourceCurrent: () => isCurrentSession(),
+                onInvalidate: (reviewId) => this.host.invalidateOperationsReviewSession?.(reviewId),
+            });
+            this.operationsReviewSessions.set(intentId, reviewSession);
+            this.host.registerOperationsReviewSession?.(reviewSession);
 
             const card = rendered.messageDiv.createDiv({
                 cls: 'pa-operations-intent-card',
@@ -3334,232 +3358,208 @@ export class LLMView extends ItemView {
             });
             const list = card.createDiv({ cls: 'pa-operations-intent-card__list' });
             const rows = new Map<string, {
+                row: HTMLElement;
                 status: HTMLElement;
                 undo: HTMLButtonElement;
             }>();
-            const operationLabel = (operation: PreparedOperation) => {
-                switch (operation.name) {
-                    case 'vault_create': return t('plugin.chat.operations.intent.create');
-                    case 'vault_append': return t('plugin.chat.operations.intent.append');
-                    case 'vault_process': return t('plugin.chat.operations.intent.edit');
-                    case 'frontmatter_update': return t('plugin.chat.operations.intent.properties');
+            const diffUnmounters: Array<() => void> = [];
+            const initialModel = reviewSession.getSnapshot().model;
+            if (initialModel) {
+                const preview = list.createDiv({ cls: 'pa-operations-intent-card__preview' });
+                diffUnmounters.push(mountOperationsDiff(preview, {
+                    model: initialModel,
+                    mode: 'compact',
+                }));
+                for (const operation of intent.operations) {
+                    const row = list.createDiv({ cls: 'pa-operations-intent-card__operation' });
+                    row.hidden = true;
+                    const rowHeader = row.createDiv({ cls: 'pa-operations-intent-card__operation-header' });
+                    rowHeader.createEl('code', {
+                        cls: 'pa-operations-intent-card__path',
+                        text: operation.path,
+                    });
+                    const rowFooter = row.createDiv({ cls: 'pa-operations-intent-card__operation-footer' });
+                    const resultStatus = rowFooter.createSpan({
+                        cls: 'pa-operations-intent-card__operation-status',
+                        attr: { 'aria-live': 'polite' },
+                    });
+                    resultStatus.hidden = true;
+                    const undoButton = rowFooter.createEl('button', {
+                        cls: 'pa-operations-intent-card__undo',
+                        text: t('plugin.chat.operations.intent.undo'),
+                        attr: { type: 'button' },
+                    });
+                    undoButton.hidden = true;
+                    rows.set(operation.id, { row, status: resultStatus, undo: undoButton });
                 }
-            };
-            for (const operation of intent.operations) {
-                const row = list.createDiv({ cls: 'pa-operations-intent-card__operation' });
-                const rowHeader = row.createDiv({ cls: 'pa-operations-intent-card__operation-header' });
-                rowHeader.createSpan({
-                    cls: 'pa-operations-intent-card__operation-kind',
-                    text: operationLabel(operation),
-                });
-                rowHeader.createEl('code', {
-                    cls: 'pa-operations-intent-card__path',
-                    text: operation.path,
-                });
-                row.createEl('pre', {
-                    cls: 'pa-operations-intent-card__preview',
-                    text: formatOperationsPreview(operation),
-                });
-                const rowFooter = row.createDiv({ cls: 'pa-operations-intent-card__operation-footer' });
-                const resultStatus = rowFooter.createSpan({
-                    cls: 'pa-operations-intent-card__operation-status',
-                    attr: { 'aria-live': 'polite' },
-                });
-                resultStatus.hidden = true;
-                const undoButton = rowFooter.createEl('button', {
-                    cls: 'pa-operations-intent-card__undo',
-                    text: t('plugin.chat.operations.intent.undo'),
-                    attr: { type: 'button' },
-                });
-                undoButton.hidden = true;
-                rows.set(operation.id, { status: resultStatus, undo: undoButton });
             }
 
             const actions = card.createDiv({ cls: 'pa-operations-intent-card__actions' });
             const confirmButton = actions.createEl('button', {
-                cls: 'mod-cta',
+                cls: 'pa-operations-review-primary-button',
                 text: t('plugin.chat.operations.intent.confirm'),
                 attr: { type: 'button' },
             });
             const cancelIntentButton = actions.createEl('button', {
+                cls: 'pa-operations-review-secondary-button',
                 text: t('plugin.chat.operations.intent.cancel'),
                 attr: { type: 'button' },
             });
+            const openReviewButton = actions.createEl('button', {
+                cls: 'pa-operations-review-secondary-button',
+                text: t('plugin.chat.operations.review.open'),
+                attr: { type: 'button' },
+            });
             const undoAllButton = actions.createEl('button', {
+                cls: 'pa-operations-review-secondary-button',
                 text: t('plugin.chat.operations.intent.undoAll'),
                 attr: { type: 'button' },
             });
             undoAllButton.hidden = true;
             confirmButton.disabled = true;
+            const openReviewError = card.createDiv({
+                cls: 'pa-operations-review-error',
+                attr: { role: 'alert' },
+            });
+            openReviewError.hidden = true;
 
-            const activeReceipts = new Map<string, string>();
-            const setDecisionButtonsDisabled = (disabled: boolean) => {
-                confirmButton.disabled = disabled;
-                cancelIntentButton.disabled = disabled;
-            };
             const completePendingState = () => {
-                pendingOperationsIntentIds.delete(intent.id);
-                pendingOperationsCardHandles.delete(intent.id);
-                clearPlatformTimeout(expiryTimer);
+                pendingOperationsIntentIds.delete(intentId);
+                pendingOperationsCardHandles.delete(intentId);
             };
-            const updateUndoAllVisibility = () => {
-                undoAllButton.hidden = activeReceipts.size === 0;
+            let cardCleaned = false;
+            let unregisterCardTeardown: () => void = () => undefined;
+            let unsubscribeReviewSession: (() => void) | null = null;
+            const cleanupCard = () => {
+                if (cardCleaned) return;
+                cardCleaned = true;
+                status.setText(t('plugin.chat.operations.review.unavailable'));
+                confirmButton.disabled = true;
+                cancelIntentButton.disabled = true;
+                undoAllButton.disabled = true;
+                openReviewButton.disabled = true;
+                confirmButton.hidden = true;
+                cancelIntentButton.hidden = true;
+                undoAllButton.hidden = true;
+                openReviewError.hidden = true;
+                for (const unmount of diffUnmounters) unmount();
+                diffUnmounters.length = 0;
+                unsubscribeReviewSession?.();
+                reviewSession.invalidate('unavailable');
+                this.operationsReviewSessions.delete(intentId);
+                completePendingState();
+                unregisterCardTeardown();
             };
+            unregisterCardTeardown = this.registerViewTeardown(cleanupCard);
             const resultText = (result: OperationExecutionResult) => {
-                if (result.status === 'succeeded') {
-                    return result.auditStatus === 'failed'
-                        ? t('plugin.chat.operations.intent.succeededAuditFailed')
-                        : result.auditRetentionWarning
-                            ? t('plugin.chat.operations.intent.succeededAuditRetentionWarning')
-                        : t('plugin.chat.operations.intent.succeeded');
-                }
+                if (result.status === 'succeeded') return t('plugin.chat.operations.intent.succeeded');
                 if (result.status === 'stale') return t('plugin.chat.operations.intent.stale');
                 if (result.status === 'skipped') return t('plugin.chat.operations.intent.skipped');
                 return result.message || t('plugin.chat.operations.intent.failed');
             };
-            const renderExecutionResult = (result: OperationExecutionResult) => {
-                const row = rows.get(result.operationId);
-                if (!row) return;
-                row.status.hidden = false;
-                row.status.setText(resultText(result));
-                row.status.dataset.status = result.status;
-                if (!result.receiptId) return;
-                activeReceipts.set(result.receiptId, result.operationId);
-                row.undo.hidden = false;
-                row.undo.onclick = async () => {
-                    if (row.undo.disabled) return;
-                    row.undo.disabled = true;
-                    try {
-                        const [undoResult] = await this.chatService.undoOperations([result.receiptId!]);
-                        if (!isCurrentSession() || !card.parentElement || !undoResult) return;
-                        renderUndoResult(undoResult);
-                    } catch (error) {
-                        if (!isCurrentSession() || !card.parentElement) return;
-                        renderUndoResult({
-                            receiptId: result.receiptId!,
-                            operationId: result.operationId,
-                            status: 'failed',
-                            message: error instanceof Error ? error.message : t('plugin.chat.operations.intent.undoFailed'),
-                        });
-                    }
-                };
+            const undoText = (result: UndoResult) => result.status === 'undone'
+                ? t('plugin.chat.operations.intent.undone')
+                : result.message || t('plugin.chat.operations.intent.undoFailed');
+            const statusText = (status: string) => {
+                if (status === 'executing') return t('plugin.chat.operations.intent.executing');
+                if (status === 'completed') return t('plugin.chat.operations.intent.completed');
+                if (status === 'partial') return t('plugin.chat.operations.intent.partial');
+                if (status === 'failed') return t('plugin.chat.operations.intent.failed');
+                if (status === 'cancelled') return t('plugin.chat.operations.intent.cancelled');
+                if (status === 'discarded') return t('plugin.chat.operations.intent.discarded');
+                if (status === 'expired') return t('plugin.chat.operations.intent.expired');
+                if (status === 'unavailable') return t('plugin.chat.operations.review.unavailable');
+                return t('plugin.chat.operations.intent.pending');
             };
-            const renderUndoResult = (undoResult: UndoResult) => {
-                const operationId = undoResult.operationId ?? activeReceipts.get(undoResult.receiptId);
-                const row = operationId ? rows.get(operationId) : undefined;
-                if (row) {
-                    row.status.hidden = false;
-                    row.status.dataset.status = undoResult.status;
-                    row.status.setText(undoResult.status === 'undone'
-                        ? undoResult.auditStatus === 'failed'
-                            ? t('plugin.chat.operations.intent.undoneAuditFailed')
-                            : undoResult.auditRetentionWarning
-                                ? t('plugin.chat.operations.intent.undoneAuditRetentionWarning')
-                                : t('plugin.chat.operations.intent.undone')
-                        : undoResult.message || t('plugin.chat.operations.intent.undoFailed'));
-                    row.undo.hidden = true;
+            const renderSnapshot = () => {
+                const snapshot = reviewSession.getSnapshot();
+                if (!snapshot.model) {
+                    cleanupCard();
+                    return;
                 }
-                activeReceipts.delete(undoResult.receiptId);
-                updateUndoAllVisibility();
-            };
+                status.setText(statusText(snapshot.status));
+                const pendingVisible = snapshot.status === 'pending';
+                confirmButton.hidden = !pendingVisible;
+                cancelIntentButton.hidden = !pendingVisible;
+                confirmButton.disabled = !reviewSession.canConfirm();
+                cancelIntentButton.disabled = !reviewSession.canCancel();
+                undoAllButton.hidden = !reviewSession.canUndo();
+                undoAllButton.disabled = snapshot.actionInFlight !== null;
+                openReviewButton.disabled = !this.host.openOperationsReview;
+                if (!pendingVisible) completePendingState();
 
-            confirmButton.onclick = async () => {
-                if (confirmButton.disabled) return;
-                setDecisionButtonsDisabled(true);
-                status.setText(t('plugin.chat.operations.intent.executing'));
-                completePendingState();
-                try {
-                    const result: OperationsExecutionResult = await this.chatService.confirmOperationsIntent(intent.id);
-                    if (!isCurrentSession() || !card.parentElement) return;
-                    for (const operationResult of result.operations) renderExecutionResult(operationResult);
-                    status.setText(result.state === 'completed'
-                        ? t('plugin.chat.operations.intent.completed')
-                        : result.state === 'partial'
-                            ? t('plugin.chat.operations.intent.partial')
-                            : t('plugin.chat.operations.intent.failed'));
-                    confirmButton.hidden = true;
-                    cancelIntentButton.hidden = true;
-                    updateUndoAllVisibility();
-                } catch (error) {
-                    if (!isCurrentSession() || !card.parentElement) return;
-                    status.setText(error instanceof Error ? error.message : t('plugin.chat.operations.intent.failed'));
-                    confirmButton.hidden = true;
-                    cancelIntentButton.hidden = true;
+                const undoByReceipt = new Map(snapshot.undoResults.map(result => [result.receiptId, result]));
+                const undoByOperation = new Map(snapshot.undoResults.map(result => [
+                    result.operationId,
+                    result,
+                ]));
+                for (const result of snapshot.operationResults) {
+                    const row = rows.get(result.operationId);
+                    if (!row) continue;
+                    row.row.hidden = false;
+                    row.status.hidden = false;
+                    row.status.setText(resultText(result));
+                    row.status.dataset.status = result.status;
+                    row.undo.hidden = !result.receiptId;
+                    row.undo.disabled = !reviewSession.canUndo() || snapshot.actionInFlight !== null;
+                    const receiptId = result.receiptId;
+                    const undoResult = (receiptId ? undoByReceipt.get(receiptId) : undefined)
+                        ?? undoByOperation.get(result.operationId);
+                    if (!receiptId && !undoResult) continue;
+                    if (undoResult) {
+                        row.status.setText(undoText(undoResult));
+                        row.status.dataset.status = undoResult.status;
+                        row.undo.hidden = true;
+                    }
+                    row.undo.onclick = () => {
+                        if (row.undo.disabled || !receiptId) return;
+                        void reviewSession.undo([receiptId]);
+                    };
                 }
+            };
+            unsubscribeReviewSession = reviewSession.subscribe(renderSnapshot);
+            renderSnapshot();
+
+            confirmButton.onclick = () => {
+                if (cardCleaned || confirmButton.disabled) return;
+                void reviewSession.confirm();
             };
             cancelIntentButton.onclick = () => {
-                if (cancelIntentButton.disabled) return;
-                setDecisionButtonsDisabled(true);
-                completePendingState();
-                try {
-                    this.chatService.cancelOperationsIntent(intent.id);
-                    status.setText(t('plugin.chat.operations.intent.cancelled'));
-                } catch (error) {
-                    status.setText(error instanceof Error ? error.message : t('plugin.chat.operations.intent.cancelled'));
-                }
-                confirmButton.hidden = true;
-                cancelIntentButton.hidden = true;
+                if (cardCleaned || cancelIntentButton.disabled) return;
+                reviewSession.cancel();
             };
-            undoAllButton.onclick = async () => {
-                if (undoAllButton.disabled || activeReceipts.size === 0) return;
-                undoAllButton.disabled = true;
-                const receipts = [...activeReceipts.entries()];
+            openReviewButton.onclick = async () => {
+                if (cardCleaned || openReviewButton.disabled) return;
+                openReviewButton.disabled = true;
+                openReviewError.hidden = true;
                 try {
-                    const results = await this.chatService.undoOperations(receipts.map(([receiptId]) => receiptId));
-                    if (!isCurrentSession() || !card.parentElement) return;
-                    for (const result of results) renderUndoResult(result);
+                    await this.host.openOperationsReview?.(reviewSession.reviewId);
                 } catch (error) {
-                    if (!isCurrentSession() || !card.parentElement) return;
-                    for (const [receiptId, operationId] of receipts) {
-                        renderUndoResult({
-                            receiptId,
-                            operationId,
-                            status: 'failed',
-                            message: error instanceof Error ? error.message : t('plugin.chat.operations.intent.undoFailed'),
-                        });
-                    }
+                    openReviewError.setText(error instanceof Error && error.message
+                        ? error.message
+                        : t('plugin.chat.operations.review.openFailed'));
+                    openReviewError.hidden = false;
                 } finally {
-                    undoAllButton.disabled = false;
+                    if (!cardCleaned) openReviewButton.disabled = !this.host.openOperationsReview;
                 }
             };
-
-            const expiresIn = Math.max(0, intent.expiresAt - Date.now());
-            const expiryTimer = setPlatformTimeout(() => {
-                if (!pendingOperationsIntentIds.delete(intent.id)) return;
-                pendingOperationsCardHandles.delete(intent.id);
-                try {
-                    this.chatService.cancelOperationsIntent(intent.id);
-                } catch {
-                    // The controller may have expired the same intent first.
-                }
-                setDecisionButtonsDisabled(true);
-                confirmButton.hidden = true;
-                cancelIntentButton.hidden = true;
-                status.setText(t('plugin.chat.operations.intent.expired'));
-            }, expiresIn);
-            (expiryTimer as unknown as { unref?: () => void }).unref?.();
-            this.registerViewTeardown(() => clearPlatformTimeout(expiryTimer));
+            undoAllButton.onclick = () => {
+                if (cardCleaned || undoAllButton.disabled) return;
+                void reviewSession.undoAll();
+            };
             scrollToBottom({ force: true });
             const handle: OperationsIntentCardHandle = {
                 activate: () => {
-                    if (!pendingOperationsIntentIds.has(intent.id)) return;
-                    confirmButton.disabled = false;
+                    if (cardCleaned || !pendingOperationsIntentIds.has(intentId)) return;
+                    reviewSession.activate();
                 },
                 discard: () => {
-                    if (!pendingOperationsIntentIds.has(intent.id)) return;
-                    setDecisionButtonsDisabled(true);
+                    if (cardCleaned || !pendingOperationsIntentIds.has(intentId)) return;
+                    reviewSession.discard();
                     completePendingState();
-                    try {
-                        this.chatService.cancelOperationsIntent(intent.id);
-                    } catch {
-                        // Missing or expired intents are already fail-closed.
-                    }
-                    confirmButton.hidden = true;
-                    cancelIntentButton.hidden = true;
-                    status.setText(t('plugin.chat.operations.intent.discarded'));
                 },
             };
-            pendingOperationsCardHandles.set(intent.id, handle);
+            pendingOperationsCardHandles.set(intentId, handle);
             return handle;
         };
 

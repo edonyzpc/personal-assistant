@@ -79,8 +79,6 @@ export function createAiServiceHost(
         memoryEnabled: true,
         operationsAgentEnabled: false,
         operationsProactiveSaveSuggestionsEnabled: true,
-        operationsAuditIncludeContent: false,
-        operationsAuditRetentionDays: 30,
         statisticsVaultId: "test-vault",
         ...settingsOverrides,
     };
