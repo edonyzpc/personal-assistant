@@ -2,6 +2,7 @@ import { stableHash } from "../pa/helpers";
 import { buildGhostPublishingFields } from "./fields";
 import { buildRecipeInjection } from "./recipe";
 import { loadGhostSourceTree } from "./source-loader";
+import { prepareMainBodyForExport } from "./source-cleanup";
 import { convertMarkdownToLexical } from "./markdown-exporter";
 import type {
     GhostExportResult,
@@ -32,12 +33,19 @@ export interface PrepareGhostExportOptions {
 export async function prepareGhostExport(options: PrepareGhostExportOptions): Promise<GhostExportResult> {
     const source = await loadGhostSourceTree(options.targetPath, options.host, options.guard);
     const fields = buildGhostPublishingFields(source.frontmatter, source.targetPath);
-    const conversion = {
+    const preparedBody = prepareMainBodyForExport({
         markdown: source.markdown,
+        sourceMap: source.sourceMap,
+        sourcePath: source.targetPath,
+        fields,
+    });
+    const conversion = {
+        markdown: preparedBody.markdown,
         sourceMap: source.sourceMap,
         sourcePath: source.targetPath,
         host: options.host,
         fields,
+        fieldOrigins: { featureImage: preparedBody.featureImageOrigin },
         wikiLinks: options.wikiLinks,
     };
     let converted = convertMarkdownToLexical(conversion);

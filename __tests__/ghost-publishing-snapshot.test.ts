@@ -60,6 +60,37 @@ describe("Ghost candidate snapshots", () => {
         expect(() => ghostContentFromPost({ ...remote, visibility: "tiers" })).toThrow("unsupported-remote");
     });
 
+    it("persists independent SEO metadata, managed writes, restore, and old checksum records", async () => {
+        const generated = await candidate(undefined, {
+            ghost: { custom_excerpt: "Generated summary", meta_description: "Generated SEO description" },
+        });
+        expect(generated.content).toMatchObject({
+            custom_excerpt: "Generated summary",
+            meta_description: "Generated SEO description",
+        });
+        expect(generated.managedFields).toEqual(expect.arrayContaining(["custom_excerpt", "meta_description"]));
+        expect(ghostPreviewWrite(generated, "#pa-ghost-preview-note")).toMatchObject({
+            custom_excerpt: "Generated summary",
+            meta_description: "Generated SEO description",
+        });
+        expect(ghostManagedWrite(generated)).toEqual(expect.objectContaining({
+            custom_excerpt: "Generated summary",
+            meta_description: "Generated SEO description",
+        }));
+
+        const remote = post(generated, {
+            custom_excerpt: "Remote summary",
+            meta_description: "Remote SEO",
+            feature_image_alt: "Unmanaged alt",
+        });
+        const restored = prepareGhostRestore(generated, remote, profile);
+        expect(restored.content).toMatchObject({
+            custom_excerpt: "Generated summary",
+            meta_description: "Generated SEO description",
+            feature_image_alt: "Unmanaged alt",
+        });
+    });
+
     it("retains actual remote formatting only for unchanged blocks, including a uniquely renamed main note", async () => {
         const initial = await candidate();
         const lexical = JSON.parse(initial.content.lexical);

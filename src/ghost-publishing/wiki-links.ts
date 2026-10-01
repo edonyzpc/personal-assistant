@@ -1,4 +1,5 @@
 import type { GhostBindingHost } from "./binding";
+import { ghostBindingIdentity, ghostBindingProperties } from "./binding-properties";
 import { canonicalGhostSite } from "./configuration";
 import { ghostBindingSchema, parseCompletedRecord, type GhostCompletedRecord } from "./state-schema";
 import type { GhostPublishingHost, GhostPublishingSourceGuard, WikiLinkOccurrence, WikiLinkTarget } from "./types";
@@ -50,9 +51,8 @@ export async function resolveGhostWikiLinks(links: readonly WikiLinkOccurrence[]
         // As in the binding adapter, this is an identity-only metadata inventory.
         // It never reads other notes' bodies or completed publication records.
         for (const file of host.vault.getMarkdownFiles()) {
-            const binding = host.metadataCache.getFileCache(file)?.frontmatter?.pa_ghost;
-            if (binding && typeof binding === "object" && !Array.isArray(binding)
-                && (binding as Record<string, unknown>).note_uid === uid) paths.add(file.path);
+            const identity = ghostBindingIdentity(host.metadataCache.getFileCache(file)?.frontmatter);
+            if (identity === uid) paths.add(file.path);
         }
         assertCore();
         return [...paths].sort();
@@ -113,10 +113,12 @@ export async function resolveGhostWikiLinks(links: readonly WikiLinkOccurrence[]
                 try {
                     const info = host.getFrontMatterInfo(markdown);
                     const frontmatter = info.exists ? host.parseYaml(info.frontmatter) as Record<string, unknown> : undefined;
-                    const value = frontmatter?.pa_ghost;
-                    if (value && typeof value === "object" && !Array.isArray(value)) raw = value as Record<string, unknown>;
+                    if (frontmatter) {
+                        const properties = ghostBindingProperties(frontmatter);
+                        if (properties.status === "bound") raw = properties.value;
+                    }
                 } catch { /* Damaged Properties cannot establish publication. */ }
-                if (raw && Object.keys(raw).every((key) => ["note_uid", "site", "post_id", "post_url"].includes(key))) {
+                if (raw) {
                     const binding = ghostBindingSchema.safeParse({ noteUid: raw.note_uid, siteId, site: raw.site,
                         postId: raw.post_id, postUrl: raw.post_url });
                     if (binding.success && binding.data.site === site && options.readCompletedRecord && options.getCompletedRecordRevision) {

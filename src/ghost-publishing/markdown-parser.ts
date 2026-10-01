@@ -18,6 +18,11 @@ interface CapturedLines {
     offsets: number[];
 }
 
+interface NormalizedSource {
+    text: string;
+    rawOffsets: number[];
+}
+
 type InlineRule = (state: StateInline, silent: boolean) => boolean;
 type BlockRule = (state: StateBlock, startLine: number, endLine: number, silent?: boolean) => boolean;
 type InternalRule = { name: string; fn: InlineRule | BlockRule; alt: string[]; enabled?: boolean };
@@ -76,6 +81,27 @@ function wrapNativeImageRule(original: { fn: InlineRule }): InlineRule {
                     } satisfies ImageSourceMeta;
                     break;
                 }
+            }
+        }
+        return consumed;
+    };
+}
+
+function wrapNativeCodeInlineRule(original: { fn: InlineRule }): InlineRule {
+    return (state, silent) => {
+        const rawStart = state.pos;
+        const tokenCountBefore = state.tokens.length;
+        const consumed = original.fn(state, silent);
+        if (consumed && !silent && state.pos > rawStart) {
+            for (let index = state.tokens.length - 1; index >= tokenCountBefore; index -= 1) {
+                const token = state.tokens[index];
+                if (token?.type !== "code_inline") continue;
+                token.meta = {
+                    ...((token.meta as object | null | undefined) ?? {}),
+                    rawStart,
+                    rawEnd: state.pos,
+                };
+                break;
             }
         }
         return consumed;
@@ -270,6 +296,79 @@ function wrapCapturedBlockRule(original: { fn: BlockRule }): BlockRule {
 
 type MarkdownItInstance = ReturnType<typeof MarkdownIt>;
 
+function normalizeSourceOffsets(text: string): NormalizedSource {
+    let normalized = "";
+    const rawOffsets: number[] = [];
+    let raw = 0;
+    while (raw < text.length) {
+        rawOffsets.push(raw);
+        if (text[raw] === "\r") {
+            normalized += "\n";
+            raw += text[raw + 1] === "\n" ? 2 : 1;
+        } else {
+            normalized += text[raw];
+            raw += 1;
+        }
+    }
+    rawOffsets.push(text.length);
+    return { text: normalized, rawOffsets };
+}
+
+function translateOffset(normalized: number, rawOffsets: number[]): number {
+    if (!Number.isInteger(normalized) || normalized < 0 || normalized >= rawOffsets.length) {
+        throw new Error("Unable to map normalized Markdown offset to its source snapshot.");
+    }
+    return rawOffsets[normalized];
+}
+
+function translateTokenSourcePositions(tokens: Token[], rawOffsets: number[]): void {
+    for (const token of tokens) {
+        const meta = token.meta as {
+            rawStart?: unknown;
+            rawEnd?: unknown;
+            sourceOffsets?: unknown;
+            sourceCandidates?: unknown;
+        } | null | undefined;
+        if (token.type === "inline") {
+            if (meta && Array.isArray(meta.sourceOffsets)) {
+                meta.sourceOffsets = meta.sourceOffsets.map(offset => translateOffset(Number(offset), rawOffsets));
+            }
+            if (meta && Array.isArray(meta.sourceCandidates)) {
+                meta.sourceCandidates = meta.sourceCandidates.map(offset => translateOffset(Number(offset), rawOffsets));
+            }
+            // Child ranges remain relative to inline.content; mapInlineRangeToSource
+            // combines them with the inline token's absolute source offsets.
+            continue;
+        }
+        if (meta && typeof meta === "object") {
+            if (typeof meta.rawStart === "number" && typeof meta.rawEnd === "number") {
+                meta.rawStart = translateOffset(meta.rawStart, rawOffsets);
+                meta.rawEnd = translateOffset(meta.rawEnd, rawOffsets);
+            }
+            if (Array.isArray(meta.sourceOffsets)) {
+                meta.sourceOffsets = meta.sourceOffsets.map(offset => translateOffset(Number(offset), rawOffsets));
+            }
+            if (Array.isArray(meta.sourceCandidates)) {
+                meta.sourceCandidates = meta.sourceCandidates.map(offset => translateOffset(Number(offset), rawOffsets));
+            }
+        }
+    }
+}
+
+export function parseGhostMarkdown(markdownIt: MarkdownItInstance, text: string): Token[] {
+    const normalized = normalizeSourceOffsets(text);
+    const tokens = markdownIt.parse(normalized.text, {});
+    translateTokenSourcePositions(tokens, normalized.rawOffsets);
+    return tokens;
+}
+
+export function parseGhostInlineMarkdown(markdownIt: MarkdownItInstance, text: string): Token[] {
+    const normalized = normalizeSourceOffsets(text);
+    const tokens = markdownIt.parseInline(normalized.text, {});
+    translateTokenSourcePositions(tokens, normalized.rawOffsets);
+    return tokens;
+}
+
 export function installGhostSourceRanges(markdownIt: MarkdownItInstance): void {
     installGhostInlineRules(markdownIt);
 
@@ -307,6 +406,12 @@ export function installGhostInlineRules(markdownIt: MarkdownItInstance): void {
         "image",
         wrapNativeImageRule({ fn: nativeImageRule.fn as InlineRule }),
         { alt: nativeImageRule.alt },
+    );
+    const nativeCodeInlineRule = getNamedRule(markdownIt, "backticks");
+    markdownIt.inline.ruler.at(
+        "backticks",
+        wrapNativeCodeInlineRule({ fn: nativeCodeInlineRule.fn as InlineRule }),
+        { alt: nativeCodeInlineRule.alt },
     );
 }
 

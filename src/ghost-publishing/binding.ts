@@ -1,4 +1,9 @@
 import type { GhostPublishingSourceFile, GhostPublishingSourceGuard } from "./types";
+import {
+    ghostBindingIdentity,
+    ghostBindingProperties,
+    writeNativeBindingProperties,
+} from "./binding-properties";
 
 export interface GhostNoteBinding {
     note_uid: string;
@@ -62,12 +67,11 @@ interface Admission {
 
 interface NoteSnapshot extends GhostResolvedNote {
     body: string;
+    native: boolean;
 }
 
 const IDENTITY = /^[a-zA-Z0-9_-]{1,128}$/;
 const POST_ID = /^[a-f\d]{24}$/i;
-const BINDING_KEYS = new Set(["note_uid", "site", "post_id", "post_url"]);
-
 function record(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === "object" && !Array.isArray(value)
         ? value as Record<string, unknown> : null;
@@ -124,7 +128,7 @@ export class GhostNoteBindingAdapter {
             validateSelection(target);
             const admission = this.admission(guard);
             const before = await this.resolveCurrent(target, admission);
-            if (before.binding) return this.result(before, false);
+            if (before.binding && before.native) return this.result(before, false);
             let noteUid: string;
             try {
                 noteUid = this.options.createNoteUid?.() ?? globalThis.crypto.randomUUID();
@@ -132,7 +136,7 @@ export class GhostNoteBindingAdapter {
                 throw new GhostBindingError("invalid-binding");
             }
             if (!IDENTITY.test(noteUid)) throw new GhostBindingError("invalid-binding");
-            const desired: GhostNoteBinding = { note_uid: noteUid, site: this.site };
+            const desired: GhostNoteBinding = before.binding ?? { note_uid: noteUid, site: this.site };
             return this.write(before, desired, admission);
         });
     }
@@ -157,7 +161,7 @@ export class GhostNoteBindingAdapter {
                 note_uid: before.binding.note_uid, site: this.site,
                 post_id: remoteIdentity.postId, post_url: postUrl,
             };
-            if (sameBinding(before.binding, desired)) return this.result(before, false);
+            if (before.native && sameBinding(before.binding, desired)) return this.result(before, false);
             return this.write(before, desired, admission);
         });
     }
@@ -194,11 +198,10 @@ export class GhostNoteBindingAdapter {
     }
 
     private binding(frontmatter: Record<string, unknown>): GhostNoteBinding | null {
-        if (!Object.prototype.hasOwnProperty.call(frontmatter, "pa_ghost")) return null;
-        const value = record(frontmatter.pa_ghost);
-        if (!value || Object.keys(value).some((key) => !BINDING_KEYS.has(key))
-            || typeof value.note_uid !== "string" || !IDENTITY.test(value.note_uid)
-            || typeof value.site !== "string") throw new GhostBindingError("invalid-binding");
+        const properties = ghostBindingProperties(frontmatter);
+        if (properties.status === "none") return null;
+        if (properties.status === "invalid" || !IDENTITY.test(properties.value.note_uid)) throw new GhostBindingError("invalid-binding");
+        const value = properties.value;
         const site = canonicalUrl(value.site, true);
         if (site !== this.site) throw new GhostBindingError("site-mismatch");
         const result: GhostNoteBinding = { note_uid: value.note_uid, site };
@@ -206,28 +209,33 @@ export class GhostNoteBindingAdapter {
         const hasPostUrl = Object.prototype.hasOwnProperty.call(value, "post_url");
         if (hasPostId !== hasPostUrl) throw new GhostBindingError("invalid-binding");
         if (hasPostId) {
-            if (typeof value.post_id !== "string" || !POST_ID.test(value.post_id)
-                || typeof value.post_url !== "string") throw new GhostBindingError("invalid-binding");
-            result.post_id = value.post_id;
-            result.post_url = canonicalUrl(value.post_url, false);
+            const postId = value.post_id!;
+            const postUrl = value.post_url!;
+            if (!POST_ID.test(postId)) throw new GhostBindingError("invalid-binding");
+            result.post_id = postId;
+            result.post_url = canonicalUrl(postUrl, false);
         }
         return result;
     }
 
-    private parse(markdown: string): { binding: GhostNoteBinding | null; body: string } {
+    private parse(markdown: string): { binding: GhostNoteBinding | null; body: string; native: boolean } {
         try {
             const info = this.host.getFrontMatterInfo(markdown);
             if (!info.exists) {
                 // An unterminated Properties block must not be mistaken for an unbound note.
                 if (/^\uFEFF?---[\t ]*(?:\r?\n|$)/u.test(markdown)) throw new GhostBindingError("invalid-frontmatter");
-                return { binding: null, body: markdown };
+                return { binding: null, body: markdown, native: false };
             }
             if (!Number.isInteger(info.contentStart) || info.contentStart < 0 || info.contentStart > markdown.length) {
                 throw new GhostBindingError("invalid-frontmatter");
             }
             const frontmatter = info.frontmatter.trim() ? record(this.host.parseYaml(info.frontmatter)) : {};
             if (!frontmatter) throw new GhostBindingError("invalid-frontmatter");
-            return { binding: this.binding(frontmatter), body: markdown.slice(info.contentStart) };
+            return {
+                binding: this.binding(frontmatter),
+                body: markdown.slice(info.contentStart),
+                native: typeof frontmatter.pa_ghost === "string",
+            };
         } catch (error) {
             if (error instanceof GhostBindingError) throw error;
             throw new GhostBindingError("invalid-frontmatter");
@@ -241,7 +249,7 @@ export class GhostNoteBindingAdapter {
             for (const file of this.host.vault.getMarkdownFiles()) {
                 // This is an identity-only metadata scan, never a vault-wide source/body read.
                 const frontmatter = this.host.metadataCache.getFileCache(file)?.frontmatter;
-                if (record(frontmatter?.pa_ghost)?.note_uid === noteUid) candidates.set(file.path, file);
+                if (frontmatter && ghostBindingIdentity(frontmatter) === noteUid) candidates.set(file.path, file);
             }
             admission.assert();
             return [...candidates.values()];
@@ -290,7 +298,7 @@ export class GhostNoteBindingAdapter {
             throw new GhostBindingError("source-changed");
         }
         const parsed = this.parse(markdown);
-        return { file, path, binding: parsed.binding, body: parsed.body, changed: false };
+        return { file, path, binding: parsed.binding, body: parsed.body, native: parsed.native, changed: false };
     }
 
     private async write(before: NoteSnapshot, desired: GhostNoteBinding, admission: Admission): Promise<GhostResolvedNote> {
@@ -307,7 +315,7 @@ export class GhostNoteBindingAdapter {
                 if (!sameBinding(current, before.binding)) throw new GhostBindingError("identity-mismatch");
                 this.assertUnique(desired.note_uid, before.file, admission);
                 // Obsidian atomically updates only Properties; the latest body and other keys survive.
-                frontmatter.pa_ghost = { ...desired };
+                writeNativeBindingProperties(frontmatter, desired);
             });
         } catch (error) {
             if (error instanceof GhostBindingError) throw error;

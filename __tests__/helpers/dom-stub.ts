@@ -61,6 +61,7 @@ export class DomStubNode {
     disabled = false;
     hidden = false;
     value = "";
+    type = "";
     private readonly _listeners = new Map<string, DomStubListener[]>();
     private _textValue = "";
 

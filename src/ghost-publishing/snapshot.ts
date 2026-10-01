@@ -73,6 +73,7 @@ export function ghostContentFromPost(post: GhostPost, ignoredMarkers: readonly s
         authors: post.authors.map(({ id }) => ({ id })), visibility: post.visibility,
         feature_image: post.feature_image, feature_image_alt: post.feature_image_alt,
         feature_image_caption: post.feature_image_caption, custom_excerpt: post.custom_excerpt,
+        meta_description: post.meta_description,
         custom_template: post.custom_template, published_at: post.published_at,
         codeinjection_head: post.codeinjection_head, codeinjection_foot: post.codeinjection_foot,
     });
@@ -86,6 +87,7 @@ function emptyContent(visibility: GhostVisibility): GhostStoredContent {
         title: "", lexical: JSON.stringify({ root: { type: "root", version: 1, children: [] } }),
         tags: [], authors: [], visibility, feature_image: null, feature_image_alt: null,
         feature_image_caption: null, custom_excerpt: null, custom_template: null, published_at: null,
+        meta_description: null,
         codeinjection_head: null, codeinjection_foot: null,
     };
 }
@@ -160,13 +162,15 @@ export function prepareGhostSnapshot(options: PrepareGhostSnapshotOptions): Ghos
         managedFields.push("feature_image");
     }
     if (fields.custom_excerpt !== undefined) { content.custom_excerpt = fields.custom_excerpt; managedFields.push("custom_excerpt"); }
+    if (fields.meta_description !== undefined) { content.meta_description = fields.meta_description; managedFields.push("meta_description"); }
     const injection = buildRecipeInjection(exported.capabilities, {
         ...profile, manualHeadInjection: content.codeinjection_head ?? "", manualFootInjection: content.codeinjection_foot ?? "",
     });
     content.codeinjection_head = injection.head;
     content.codeinjection_foot = injection.foot;
     return snapshot({ content, managedFields, source: exported.sourceManifest, blocks, resources,
-        profile, recipe: injection.selection, warnings: exported.warnings.map(({ code, path, line }) => ({ code, path, line })) });
+        profile, recipe: injection.selection, warnings: exported.warnings.map(({ code, path, line }) => ({ code, path, line })),
+        ...(fields.slug !== undefined ? { slug: fields.slug } : {}) });
 }
 
 export function ghostPreviewWrite(candidate: GhostSnapshot, marker: string): GhostPostWrite {

@@ -116,25 +116,126 @@ describe("Ghost note binding adapter", () => {
         const api = adapter(f.host);
         const initial = await api.ensureNoteUid({ path: "note.md" }, guard());
         expect(initial).toMatchObject({ path: "note.md", binding: binding(), changed: true });
-        expect(properties(f.files[0])).toEqual({ ...other, pa_ghost: binding() });
+        expect(properties(f.files[0])).toEqual({
+            ...other,
+            pa_ghost: UID,
+            pa_ghost_site: SITE,
+        });
         expect(noteBody(f.files[0])).toBe(BODY);
         expect(f.cache.get(f.files[0])?.pa_ghost).toBeUndefined();
 
         f.state.writeFails = true;
         await expect(api.writeBinding({ path: "note.md", noteUid: UID }, { postId: POST_ID, postUrl: POST_URL }, guard()))
             .rejects.toMatchObject({ code: "write-failed" });
-        expect(properties(f.files[0]).pa_ghost).toEqual(binding());
+        expect(properties(f.files[0])).toEqual({
+            ...other, pa_ghost: UID, pa_ghost_site: SITE,
+        });
         f.state.writeFails = false;
         const repaired = await api.writeBinding({ path: "note.md", noteUid: UID }, { postId: POST_ID, postUrl: POST_URL }, guard());
         expect(repaired.binding).toEqual(binding({ post_id: POST_ID, post_url: POST_URL }));
-        expect(properties(f.files[0])).toEqual({ ...other, pa_ghost: repaired.binding });
+        expect(properties(f.files[0])).toEqual({
+            ...other,
+            pa_ghost: UID,
+            pa_ghost_site: SITE,
+            pa_ghost_post_id: POST_ID,
+            pa_ghost_post_url: POST_URL,
+        });
         expect(noteBody(f.files[0])).toBe(BODY);
         expect(await api.ensureNoteUid({ path: "note.md" }, guard())).toMatchObject({ changed: false, binding: repaired.binding });
         expect(await api.writeBinding({ path: "note.md", noteUid: UID }, { postId: POST_ID, postUrl: POST_URL }, guard()))
             .toMatchObject({ changed: false });
         expect(f.state.writes).toBe(2);
         expect(f.state.processCalls).toBe(3);
-        expect(Object.keys(properties(f.files[0]).pa_ghost as object).sort()).toEqual(["note_uid", "post_id", "post_url", "site"]);
+        expect(properties(f.files[0])).toEqual({
+            ...other,
+            pa_ghost: UID,
+            pa_ghost_site: SITE,
+            pa_ghost_post_id: POST_ID,
+            pa_ghost_post_url: POST_URL,
+        });
+    });
+
+    it("reads native Text properties, migrates old objects atomically, and rejects mixed identities", async () => {
+        const native = fixture([{ path: "note.md", properties: {
+            pa_ghost: UID, pa_ghost_site: SITE, keep: "value",
+        } }]);
+        const nativeApi = adapter(native.host);
+        const resolved = await nativeApi.resolve({ path: "note.md" }, guard());
+        expect(resolved).toMatchObject({ binding: binding(), changed: false });
+        await expect(nativeApi.ensureNoteUid({ path: "note.md" }, guard())).resolves.toMatchObject({ changed: false });
+        expect(native.state.processCalls).toBe(0);
+
+        const old = fixture([{ path: "note.md", properties: {
+            pa_ghost: binding({ post_id: POST_ID, post_url: POST_URL }), keep: "value",
+        } }]);
+        const oldApi = adapter(old.host);
+        const migrated = await oldApi.ensureNoteUid({ path: "note.md" }, guard());
+        expect(migrated.binding).toEqual(binding({ post_id: POST_ID, post_url: POST_URL }));
+        expect(old.state.processCalls).toBe(1);
+        expect(properties(old.files[0])).toEqual({
+            pa_ghost: UID,
+            pa_ghost_site: SITE,
+            pa_ghost_post_id: POST_ID,
+            pa_ghost_post_url: POST_URL,
+            keep: "value",
+        });
+        expect(noteBody(old.files[0])).toBe(BODY);
+
+        const exact = fixture([{ path: "note.md", properties: {
+            pa_ghost: binding(), pa_ghost_site: SITE,
+        } }]);
+        await expect(adapter(exact.host).ensureNoteUid({ path: "note.md" }, guard()))
+            .rejects.toMatchObject({ code: "invalid-binding" });
+        expect(exact.state.processCalls).toBe(0);
+
+        const mixed = fixture([{ path: "note.md", properties: {
+            pa_ghost: binding(), pa_ghost_site: "https://another.example/",
+        } }]);
+        await expect(adapter(mixed.host).ensureNoteUid({ path: "note.md" }, guard()))
+            .rejects.toMatchObject({ code: "invalid-binding" });
+        expect(mixed.state.processCalls).toBe(0);
+
+        const partial = fixture([{ path: "note.md", properties: { pa_ghost_site: SITE } }]);
+        await expect(adapter(partial.host).ensureNoteUid({ path: "note.md" }, guard()))
+            .rejects.toMatchObject({ code: "invalid-binding" });
+        expect(partial.state.processCalls).toBe(0);
+
+        const numeric = fixture([{ path: "note.md", properties: {
+            pa_ghost: UID, pa_ghost_site: SITE, pa_ghost_post_id: Number(POST_ID), pa_ghost_post_url: POST_URL,
+        } }]);
+        await expect(adapter(numeric.host).ensureNoteUid({ path: "note.md" }, guard()))
+            .rejects.toMatchObject({ code: "invalid-binding" });
+        expect(numeric.state.processCalls).toBe(0);
+
+        const duplicate = fixture([
+            { path: "native.md", properties: { pa_ghost: UID, pa_ghost_site: SITE } },
+            { path: "legacy.md", properties: { pa_ghost: binding() } },
+        ]);
+        await expect(adapter(duplicate.host).resolve({ path: "native.md" }, guard()))
+            .rejects.toMatchObject({ code: "duplicate-identity" });
+    });
+
+    it("inventories malformed same-UID copies before strict target parsing without writing", async () => {
+        const cases = [
+            {
+                target: { pa_ghost: UID, pa_ghost_site: SITE },
+                copy: { pa_ghost: UID },
+            },
+            {
+                target: { pa_ghost: binding() },
+                copy: { pa_ghost: { ...binding(), future_schema: true } },
+            },
+        ];
+        for (const identityCase of cases) {
+            const f = fixture([
+                { path: "target.md", properties: identityCase.target },
+                { path: "copy.md", properties: identityCase.copy },
+            ]);
+            await expect(adapter(f.host).ensureNoteUid({ path: "target.md" }, guard()))
+                .rejects.toMatchObject({ code: "duplicate-identity" });
+            expect(f.state.processCalls).toBe(0);
+            expect(f.state.writes).toBe(0);
+        }
     });
 
     it("requires desktop and a fresh guard, and blocks revocation after read and inside processFrontMatter before any mutation", async () => {
@@ -243,7 +344,9 @@ describe("Ghost note binding adapter", () => {
         await expect(adapter(bodyChange.host).ensureNoteUid({ path: "note.md" }, guard()))
             .rejects.toMatchObject({ code: "source-changed" });
         expect(noteBody(bodyChange.files[0])).toBe(concurrentBody);
-        expect(properties(bodyChange.files[0])).toEqual({ keep: "latest", pa_ghost: binding() });
+        expect(properties(bodyChange.files[0])).toEqual({
+            keep: "latest", pa_ghost: UID, pa_ghost_site: SITE,
+        });
         expect(bodyChange.state.writes).toBe(1);
     });
 });

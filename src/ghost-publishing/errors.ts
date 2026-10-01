@@ -11,6 +11,8 @@ export type GhostExportErrorCode =
     | "unsupported-syntax"
     | "unknown-executable-content"
     | "resource-not-found"
+    | "comment-unclosed"
+    | "cover-ambiguous"
     | "recipe-region-conflict";
 
 export class GhostExportError extends Error {

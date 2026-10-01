@@ -9235,6 +9235,7 @@ body.is-mobile .pa-share-card-print-style-option {
 }
 .pa-chat-view .pa-ghost-publishing-card {
     min-width: 0;
+    container-type: inline-size;
     margin: 12px 0;
     padding: 12px;
     border: 1px solid var(--background-modifier-border);
@@ -9242,9 +9243,41 @@ body.is-mobile .pa-share-card-print-style-option {
     overflow-wrap: anywhere;
 }
 .pa-chat-view .pa-ghost-publishing-card .setting-item-control {
-    justify-content: flex-start;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
+}
+
+.pa-chat-view .pa-ghost-publishing-card .pa-ghost-card-actions {
+    align-items: stretch;
+}
+
+.pa-chat-view .pa-ghost-publishing-card .pa-ghost-card-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 0;
+    padding-inline: 8px;
+    white-space: normal;
+}
+
+.pa-chat-view .pa-ghost-publishing-card .pa-ghost-card-action__icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+}
+
+.pa-chat-view .pa-ghost-publishing-card .pa-ghost-card-action__label {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+@container (max-width: 640px) {
+    .pa-chat-view .pa-ghost-publishing-card .pa-ghost-card-action__label {
+        display: none;
+    }
 }
 .pa-chat-view .pa-ghost-publishing-card button {
     min-height: 36px;

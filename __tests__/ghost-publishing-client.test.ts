@@ -28,6 +28,7 @@ function post(overrides: Partial<GhostPost> = {}): GhostPost {
         authors: [{ id: KEY_ID, name: "Author", slug: "author" }], visibility: "public",
         custom_template: null, feature_image: null, feature_image_alt: null,
         feature_image_caption: null, custom_excerpt: null,
+        meta_description: null,
         codeinjection_head: null, codeinjection_foot: null, published_at: null,
         ...overrides,
     };
@@ -98,6 +99,7 @@ describe("Ghost Admin desktop requests", () => {
             tags: [{ name: "Primary" }, { name: MARKER, visibility: "internal" }],
             authors: [{ id: KEY_ID, email: "private@example.com" }],
             feature_image_alt: "Cover alt", feature_image_caption: "Cover caption",
+            meta_description: "Independent SEO description",
             newsletter: "forbidden", email_only: true, id: SECOND_ID, updated_at: "forged",
         } as unknown as GhostPostWrite;
         const result = await client(`${site}/blog/`).createDraft(fields, gate());
@@ -112,6 +114,7 @@ describe("Ghost Admin desktop requests", () => {
             title: "Article", lexical: LEXICAL, status: "draft",
             tags: [{ name: "Primary" }, { name: MARKER, visibility: "internal" }],
             authors: [{ id: KEY_ID }], feature_image_alt: "Cover alt", feature_image_caption: "Cover caption",
+            meta_description: "Independent SEO description",
         }] });
         const token = request.headers.authorization?.replace(/^Ghost /, "") ?? "";
         const [encodedHeader, encodedPayload, signature] = token.split(".");
@@ -221,6 +224,37 @@ describe("Ghost Admin desktop requests", () => {
         expect(await failure(ghost.findPostsByMarker(MARKER, gate(), true)))
             .toMatchObject({ code: "invalid-response", outcome: "failed" });
         expect(limits).toEqual(["100", "100"]);
+    });
+
+    it("sends readable versioned role markers through the real client filter", async () => {
+        const markers = [
+            `#PA Draft ${POST_ID}`,
+            `#PA Note ${SECOND_ID}`,
+            `#PA Preview ${SECOND_ID}`,
+            "#pa-ghost-op-valid_uid",
+            `#pa-ghost-preview-${"a".repeat(128)}`,
+        ];
+        for (const marker of markers) {
+            const requests: GhostTransportRequest[] = [];
+            const transport: GhostTransport = async request => {
+                requests.push(request);
+                return {
+                    status: 200,
+                    headers: {},
+                    body: Buffer.from(JSON.stringify({
+                        posts: [post({ tags: [{ name: marker, visibility: "internal" }] })],
+                        meta: { pagination: { total: 1 } },
+                    })),
+                };
+            };
+            const ghost = client("https://ghost.example", { transport });
+            const result = await ghost.findPostsByMarker(marker, gate(), true);
+            expect(result).toHaveLength(1);
+            expect(result[0].tags[0]?.name).toBe(marker);
+            expect(requests).toHaveLength(1);
+            const filter = new URL(requests[0].url).searchParams.get("filter");
+            expect(filter).toBe(`tags.name:'${marker}'+status:[draft,published,scheduled,sent]`);
+        }
     });
 
     it.each([

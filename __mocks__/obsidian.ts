@@ -168,6 +168,7 @@ export const MarkdownRenderer = {
 };
 
 export const setIcon = jest.fn();
+export const setTooltip = jest.fn();
 export const addIcon = jest.fn();
 
 type MockAdapter = {

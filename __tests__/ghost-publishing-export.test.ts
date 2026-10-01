@@ -520,24 +520,552 @@ describe("Ghost publishing deterministic export", () => {
         expect(ghostFieldsForCandidate(unmanaged)).toEqual({ title: "Note" });
 
         const cleared = buildGhostPublishingFields({
-            ghost: { tags: null, feature_image: "", custom_excerpt: null },
+            ghost: { tags: null, feature_image: "", custom_excerpt: null, meta_description: "" },
         }, "Note.md");
         expect(ghostFieldsForCandidate(cleared)).toEqual({
             title: "Note",
             tags: null,
             feature_image: null,
             custom_excerpt: null,
+            meta_description: null,
         });
 
         const managed = buildGhostPublishingFields({
-            ghost: { tags: ["Z", "A"], feature_image: "cover.png", custom_excerpt: "Exact" },
+            ghost: { tags: ["Z", "A"], feature_image: "cover.png", custom_excerpt: "Exact", meta_description: "SEO exact" },
         }, "Note.md");
         expect(ghostFieldsForCandidate(managed)).toEqual({
             title: "Note",
             tags: ["Z", "A"],
             feature_image: "cover.png",
             custom_excerpt: "Exact",
+            meta_description: "SEO exact",
         });
+
+        const ordinary = buildGhostPublishingFields({
+            excerpt: "Ordinary excerpt",
+            feature_image: "",
+        }, "Note.md");
+        expect(ordinary.customExcerpt).toEqual({ mode: "manage", value: "Ordinary excerpt" });
+        expect(ordinary.featureImage).toEqual({ mode: "unmanaged" });
+        expect(ordinary.metaDescription).toEqual({ mode: "unmanaged" });
+
+        const exact = "x".repeat(300);
+        expect(buildGhostPublishingFields({ excerpt: exact }, "Note.md").customExcerpt)
+            .toEqual({ mode: "manage", value: exact });
+        expect(() => buildGhostPublishingFields({ excerpt: "x".repeat(301) }, "Note.md"))
+            .toThrow(GhostExportError);
+
+        expect(() => buildGhostPublishingFields({
+            ghost: { custom_excerpt: "x".repeat(301), meta_description: "y".repeat(501) },
+        }, "Note.md")).toThrow(GhostExportError);
+
+        expect(buildGhostPublishingFields({ ghost_slug: "stable-url" }, "Note.md").slug)
+            .toEqual({ mode: "manage", value: "stable-url" });
+        expect(buildGhostPublishingFields({ ghost: { slug: "legacy-url" } }, "Note.md").slug)
+            .toEqual({ mode: "manage", value: "legacy-url" });
+        expect(buildGhostPublishingFields({ ghost_slug: "same", ghost: { slug: "same" } }, "Note.md").slug)
+            .toEqual({ mode: "manage", value: "same" });
+        expect(() => buildGhostPublishingFields({ ghost_slug: "one", ghost: { slug: "two" } }, "Note.md"))
+            .toThrow(GhostExportError);
+        for (const value of ["", null, "/post", "https://ghost.example/post", "UPPER", "double--dash", "trailing-", "a".repeat(81)]) {
+            expect(() => buildGhostPublishingFields({ ghost_slug: value }, "Note.md")).toThrow(GhostExportError);
+        }
+    });
+
+    it("cleans comments, the matching main H1, and the admitted PA cover block before export", async () => {
+        const main = [
+            "---",
+            "ghost:",
+            "  title: Synthetic article",
+            "feature_image: \"\"",
+            "excerpt: \"\"",
+            "---",
+            ">[!personal-assistant]- Featured Images",
+            "> ![[images/cover.png|480]]",
+            "%%",
+            "![[Hidden.md]] ![hidden](hidden.png)",
+            "%%",
+            "",
+            "Visible `inline %% stays` text.",
+            "",
+            "# Synthetic article",
+            "",
+            "Ordinary paragraph.",
+            "",
+            "```text",
+            "fenced %% stays",
+            "```",
+            "",
+            "    indented %% stays",
+            "",
+            "# Distinct later H1",
+            "",
+            "![[Embedded note]]",
+            "",
+            "# Synthetic article",
+            "",
+            "Final paragraph.",
+        ].join("\n");
+        const embedded = [
+            "%% ![[Hidden-embed.md]] %%",
+            "# Synthetic article",
+            "",
+            "Embedded visible paragraph.",
+        ].join("\n");
+        const files = [
+            fakeFile("Main.md", main),
+            fakeFile("Embedded note.md", embedded),
+            fakeFile("images/cover.png", "cover-bytes"),
+        ];
+        const host = createHost(files);
+        const result = await prepareGhostExport({ targetPath: "Main.md", host, guard: allowAllGuard(), siteProfile: profile });
+        const serialized = JSON.stringify(result.lexical);
+
+        expect(serialized).not.toContain("personal-assistant");
+        expect(serialized).not.toContain("Featured Images");
+        expect(serialized).not.toContain("Hidden.md");
+        expect(serialized).not.toContain("hidden.png");
+        expect(serialized).toContain("inline %% stays");
+        expect(serialized).toContain("fenced %% stays");
+        expect(serialized).toContain("indented %% stays");
+        expect(serialized.match(/Synthetic article/g)).toHaveLength(3);
+        expect(serialized).toContain("Distinct later H1");
+        expect(serialized).toContain("Embedded visible paragraph.");
+        expect(result.fields.featureImage).toMatchObject({ mode: "manage", value: "pending-resource://resource-1" });
+        expect(result.resources).toHaveLength(1);
+        expect(result.resources[0]).toMatchObject({ source: "images/cover.png", resolvedPath: "images/cover.png" });
+        expect(result.resources[0].occurrences).toEqual([{ path: "Main.md", line: 6, field: "feature_image" }]);
+        expect(result.sourceManifest.dependencies.map((dependency) => dependency.path)).toEqual(["Main.md", "Embedded note.md"]);
+        const rawDependencyHash = async (value: string) => Array.from(
+            new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))),
+            byte => byte.toString(16).padStart(2, "0"),
+        ).join("");
+        expect(result.sourceManifest.dependencies.map((dependency) => dependency.contentHash)).toEqual([
+            await rawDependencyHash(main.slice(main.indexOf("---\n", 4) + 4)),
+            await rawDependencyHash(embedded),
+        ]);
+        expect(files.map((file) => file.content)).toEqual([main, embedded, "cover-bytes"]);
+    });
+
+    it("rejects an unclosed comment before hidden references are read or exported", async () => {
+        const host = createHost([
+            fakeFile("Main.md", "%% ![[Hidden.md]]\n\nVisible"),
+        ]);
+        await expect(prepareGhostExport({ targetPath: "Main.md", host, guard: allowAllGuard(), siteProfile: profile }))
+            .rejects.toMatchObject({ code: "comment-unclosed" });
+        expect(host.vault.read({ path: "Hidden.md", extension: "md" })).resolves.toBe("");
+    });
+
+    it("protects each actual inline-code range even when its text repeats a hidden comment", async () => {
+        const hidden = "%% ![[Hidden.md]] %%";
+        const prefix = Array.from({ length: 24 }, (_, index) => `Paragraph ${index}\r\n`).join("") + "\r\n";
+        const main = [
+            prefix + hidden + " and `" + hidden + "`.",
+            "",
+            "Repeated `duplicate` and `duplicate` code.",
+            "",
+            "Normalized `first",
+            "second` code.",
+        ].join("\r\n");
+        const files = [
+            fakeFile("Main.md", main),
+            fakeFile("Hidden.md", "---\n---\nHIDDEN SECRET BODY"),
+        ];
+        const base = createHost(files);
+        const read = jest.fn(base.vault.read);
+        const host: GhostPublishingHost = { ...base, vault: { ...base.vault, read } };
+
+        const result = await prepareGhostExport({ targetPath: "Main.md", host, guard: allowAllGuard(), siteProfile: profile });
+
+        expect(read.mock.calls.map(([file]) => file.path)).toEqual(["Main.md"]);
+        expect(result.sourceManifest.dependencies).toHaveLength(1);
+        expect(JSON.stringify(result.lexical)).toContain(hidden);
+        expect(JSON.stringify(result.lexical)).toContain("duplicate");
+        expect(JSON.stringify(result.lexical)).toContain("first second");
+        expect(JSON.stringify(result.lexical)).not.toContain("HIDDEN SECRET BODY");
+        expect(files.map((file) => file.content)).toEqual([main, "---\n---\nHIDDEN SECRET BODY"]);
+    });
+
+    it("does not mistake legal inline code after blank CRLF lines for an unclosed comment", async () => {
+        const result = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile("Main.md", "Intro\r\n\r\n\r\n\r\n`%% secret %%`\r\n\r\nVisible")]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(JSON.stringify(result.lexical)).toContain("%% secret %%");
+        expect(JSON.stringify(result.lexical)).toContain("Visible");
+    });
+
+    it("maps bare-CR lines for comments, covers, and source identities", async () => {
+        const result = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([
+                fakeFile("Main.md", "Intro\r\r`%% secret %%`\r\r>[!personal-assistant]+ Featured Images\r> ![[cover.png]]"),
+                fakeFile("cover.png", "cover"),
+            ]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(JSON.stringify(result.lexical)).toContain("%% secret %%");
+        expect(JSON.stringify(result.lexical)).not.toContain("Featured Images");
+        expect(result.resources).toHaveLength(1);
+        expect(result.resources[0]).toMatchObject({ source: "cover.png", resolvedPath: "cover.png" });
+        expect(result.resources[0].occurrences).toEqual([{ path: "Main.md", line: 4, field: "feature_image" }]);
+    });
+
+    it("removes comments without turning following visible syntax into indented code", async () => {
+        const image = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile("Main.md", "%% internal %% ![visible](cover.png)"), fakeFile("cover.png", "cover")]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(image.lexical.root.children).toHaveLength(1);
+        expect(image.lexical.root.children[0]).toMatchObject({ type: "image" });
+        expect(image.resources).toHaveLength(1);
+        expect(image.resources[0]).toMatchObject({ source: "cover.png" });
+
+        const embed = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([
+                fakeFile("Main.md", "%% internal %% ![[Visible.md]]"),
+                fakeFile("Visible.md", "Visible embedded body"),
+            ]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(JSON.stringify(embed.lexical)).toContain("Visible embedded body");
+        expect(embed.sourceManifest.dependencies.map((dependency) => dependency.path)).toEqual(["Main.md", "Visible.md"]);
+    });
+
+    it("allows code-like text inside a closed comment while protecting real code outside it", async () => {
+        const result = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile(
+                "Main.md",
+                "`%% inline code %%`\n\n```text\nfenced %% code %%\n```\n\n%% secret\n```text\nsecret %%\n\nVisible",
+            )]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        const serialized = JSON.stringify(result.lexical);
+        expect(serialized).toContain("inline code");
+        expect(serialized).toContain("fenced %% code %%");
+        expect(serialized).toContain("Visible");
+        expect(serialized).not.toContain("secret");
+
+        await expect(prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile("Main.md", "`code`\n\n%% genuinely unclosed")]),
+            guard: allowAllGuard(), siteProfile: profile,
+        })).rejects.toMatchObject({ code: "comment-unclosed" });
+    });
+
+    it("ignores fence syntax inside comments without protecting later real comments", async () => {
+        const main = "%%\n```\n%%\n%% ![[Hidden.md]] %%";
+        const files = [fakeFile("Main.md", main), fakeFile("Hidden.md", "HIDDEN SECRET BODY")];
+        const base = createHost(files);
+        const read = jest.fn(base.vault.read);
+        const host: GhostPublishingHost = { ...base, vault: { ...base.vault, read } };
+
+        const result = await prepareGhostExport({ targetPath: "Main.md", host, guard: allowAllGuard(), siteProfile: profile });
+
+        expect(read.mock.calls.map(([file]) => file.path)).toEqual(["Main.md"]);
+        expect(result.sourceManifest.dependencies).toHaveLength(1);
+        expect(JSON.stringify(result.lexical)).not.toContain("Hidden.md");
+        expect(JSON.stringify(result.lexical)).not.toContain("HIDDEN SECRET BODY");
+    });
+
+    it("maps bare-CR fenced code and later comments without reading hidden notes", async () => {
+        const main = "Intro\r\r```text\rliteral %% stays\r```\r\r%% ![[Hidden.md]] %%\rVisible";
+        const files = [fakeFile("Main.md", main), fakeFile("Hidden.md", "HIDDEN SECRET BODY")];
+        const base = createHost(files);
+        const read = jest.fn(base.vault.read);
+        const host: GhostPublishingHost = { ...base, vault: { ...base.vault, read } };
+
+        const result = await prepareGhostExport({ targetPath: "Main.md", host, guard: allowAllGuard(), siteProfile: profile });
+
+        expect(read.mock.calls.map(([file]) => file.path)).toEqual(["Main.md"]);
+        expect(result.sourceManifest.dependencies).toHaveLength(1);
+        expect(JSON.stringify(result.lexical)).toContain("literal %% stays");
+        expect(JSON.stringify(result.lexical)).toContain("Visible");
+        expect(JSON.stringify(result.lexical)).not.toContain("Hidden.md");
+        expect(JSON.stringify(result.lexical)).not.toContain("HIDDEN SECRET BODY");
+    });
+
+    it("uses Markdown-it code boundaries for unmatched backtick syntax", async () => {
+        const prepareWithHidden = async (main: string) => {
+            const files = [fakeFile("Main.md", main), fakeFile("Hidden.md", "HIDDEN SECRET BODY")];
+            const base = createHost(files);
+            const read = jest.fn(base.vault.read);
+            const host: GhostPublishingHost = { ...base, vault: { ...base.vault, read } };
+            const result = await prepareGhostExport({ targetPath: "Main.md", host, guard: allowAllGuard(), siteProfile: profile });
+            return { result, reads: read.mock.calls.map(([file]) => file.path) };
+        };
+
+        const backticks = await prepareWithHidden("`` %% ![[Hidden.md]] %% ```");
+        expect(backticks.reads).toEqual(["Main.md"]);
+        expect(backticks.result.sourceManifest.dependencies).toHaveLength(1);
+        expect(JSON.stringify(backticks.result.lexical)).toContain("``  ```");
+        expect(JSON.stringify(backticks.result.lexical)).not.toContain("Hidden.md");
+        expect(JSON.stringify(backticks.result.lexical)).not.toContain("HIDDEN SECRET BODY");
+    });
+
+    it("uses Markdown-it code boundaries for non-closing tilde fence content", async () => {
+        const files = [fakeFile("Main.md", "~~~\n~~~ x\n~~~\n%% ![[Hidden.md]] %%"), fakeFile("Hidden.md", "HIDDEN SECRET BODY")];
+        const base = createHost(files);
+        const read = jest.fn(base.vault.read);
+        const host: GhostPublishingHost = { ...base, vault: { ...base.vault, read } };
+        const result = await prepareGhostExport({ targetPath: "Main.md", host, guard: allowAllGuard(), siteProfile: profile });
+        expect(read.mock.calls.map(([file]) => file.path)).toEqual(["Main.md"]);
+        expect(result.sourceManifest.dependencies).toHaveLength(1);
+        expect(JSON.stringify(result.lexical)).toContain("~~~ x");
+        expect(JSON.stringify(result.lexical)).not.toContain("Hidden.md");
+        expect(JSON.stringify(result.lexical)).not.toContain("HIDDEN SECRET BODY");
+    });
+
+    it("preserves Markdown-it fenced code inside quotes and lists", async () => {
+        const result = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile(
+                "Main.md",
+                "> ~~~text\n> %% literal %%\n> ~~~\n\n- Item\n  ~~~js\n  code %% stays\n  ~~~",
+            )]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        const serialized = JSON.stringify(result.lexical);
+        expect(serialized).toContain("%% literal %%");
+        expect(serialized).toContain("code %% stays");
+    });
+
+    it("removes only a matching H1 that is the first visible main root block", async () => {
+        const exportTitle = async (body: string) => {
+            const result = await prepareGhostExport({
+                targetPath: "Main.md",
+                host: createHost([fakeFile("Main.md", `---\nghost:\n  title: Main\n---\n${body}`)]),
+                guard: allowAllGuard(), siteProfile: profile,
+            });
+            return JSON.stringify(result.lexical);
+        };
+
+        expect(await exportTitle("Intro paragraph.\n\n# Main\n\nLater")).toContain("Intro paragraph.");
+        expect(await exportTitle("Intro paragraph.\n\n# Main\n\nLater")).toContain("Main");
+        expect(await exportTitle("> # Main\n\nOrdinary quote")).toContain("Main");
+        expect(await exportTitle("> # Main\n\nOrdinary quote")).toContain("Ordinary quote");
+        expect(await exportTitle("%% hidden %%\n# Main\n\nAfter")).not.toContain("Main");
+    });
+
+    it("preserves physical CRLF offsets while removing the management block and repeated H1", async () => {
+        const main = [
+            "---",
+            "ghost:",
+            "  title: Main",
+            "---",
+            ">[!personal-assistant]+ Featured Images",
+            "> ![[cover.png]]",
+            "",
+            "# Main",
+            "",
+            "![ordinary](ordinary.png)",
+        ].join("\r\n");
+        const result = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile("Main.md", main), fakeFile("cover.png", "cover"), fakeFile("ordinary.png", "ordinary")]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        const serialized = JSON.stringify(result.lexical);
+        expect(serialized).not.toContain("Featured Images");
+        expect(serialized).not.toContain("Main");
+        expect(serialized).toContain("\"alt\":\"ordinary\"");
+        expect(result.resources.map((resource) => resource.source)).toEqual(["cover.png", "ordinary.png"]);
+        expect(result.resources[0].occurrences).toEqual([{ path: "Main.md", line: 4, field: "feature_image" }]);
+    });
+
+    it("does not treat an embedded PA callout inside an ordinary main quote as main cover management", async () => {
+        const result = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([
+                fakeFile("Main.md", "> Intro\n> ![[Embed.md]]"),
+                fakeFile("Embed.md", ">[!personal-assistant]+ Featured Images\n> ![[embed-cover.png]]\n\nEmbedded body"),
+                fakeFile("embed-cover.png", "embedded"),
+            ]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        const serialized = JSON.stringify(result.lexical);
+        expect(serialized).toContain("Intro");
+        expect(serialized).toContain("Embedded body");
+        expect(result.fields.featureImage).toEqual({ mode: "unmanaged" });
+        expect(result.resources).toHaveLength(1);
+        expect(result.resources[0]).toMatchObject({ source: "embed-cover.png", resolvedPath: "embed-cover.png" });
+        expect(result.resources[0].occurrences).toEqual([{ path: "Embed.md", line: 1 }]);
+    });
+
+    it("rejects multiple main management cover candidates before resolving either image", async () => {
+        const main = [
+            ">[!personal-assistant]+ Featured Images",
+            "> ![[one.png]]",
+            "",
+            ">[!personal-assistant]- 题图",
+            "> ![[two.png]]",
+            "",
+            "# Main",
+        ].join("\n");
+        const base = createHost([fakeFile("Main.md", main), fakeFile("one.png", "one"), fakeFile("two.png", "two")]);
+        const resolved = jest.fn(base.metadataCache?.getFirstLinkpathDest);
+        const host: GhostPublishingHost = {
+            ...base,
+            metadataCache: base.metadataCache ? { ...base.metadataCache, getFirstLinkpathDest: resolved } : undefined,
+        };
+        await expect(prepareGhostExport({ targetPath: "Main.md", host, guard: allowAllGuard(), siteProfile: profile }))
+            .rejects.toMatchObject({ code: "cover-ambiguous" });
+        expect(resolved).not.toHaveBeenCalled();
+    });
+
+    it("keeps feature-image provenance on the main source when the article starts with an embed", async () => {
+        const files = [
+            fakeFile("Main.md", "![[nested/Intro.md]]\n\n>[!personal-assistant]+ Featured Images\n> ![[cover.png]]"),
+            fakeFile("nested/Intro.md", "Intro body"),
+            fakeFile("nested/cover.png", "nested cover"),
+            fakeFile("cover.png", "main cover"),
+        ];
+        const host = createHost(files);
+        const inferred = await prepareGhostExport({ targetPath: "Main.md", host, guard: allowAllGuard(), siteProfile: profile });
+        expect(inferred.fields.featureImage).toMatchObject({ mode: "manage", value: "pending-resource://resource-1" });
+        expect(inferred.resources).toHaveLength(1);
+        expect(inferred.resources[0]).toMatchObject({ source: "cover.png", resolvedPath: "cover.png" });
+        expect(inferred.resources[0].occurrences).toEqual([{ path: "Main.md", line: 2, field: "feature_image" }]);
+
+        const explicit = await prepareGhostExport({
+            targetPath: "Explicit.md",
+            host: createHost([
+                fakeFile("Explicit.md", "---\nghost:\n  feature_image: explicit-cover.png\n---\n![[nested/Intro.md]]"),
+                fakeFile("nested/Intro.md", "Intro body"),
+                fakeFile("nested/explicit-cover.png", "wrong"),
+                fakeFile("explicit-cover.png", "right"),
+            ]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(explicit.resources).toHaveLength(1);
+        expect(explicit.resources[0]).toMatchObject({ source: "explicit-cover.png", resolvedPath: "explicit-cover.png" });
+        expect(explicit.resources[0].occurrences).toEqual([{ path: "Explicit.md", line: 0, field: "feature_image" }]);
+    });
+
+    it("keeps main cover provenance after a long CRLF embedded introduction", async () => {
+        const nestedIntro = Array.from({ length: 100 }, (_, index) => `Nested ${index}`).join("\r\n");
+        const result = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([
+                fakeFile("Main.md", "![[nested/Intro.md]]\r\n\r\n> [!personal-assistant]- Featured Images\r\n> ![[cover.png]]\r\n\r\nBody"),
+                fakeFile("nested/Intro.md", nestedIntro),
+                fakeFile("nested/cover.png", "wrong nested cover"),
+                fakeFile("cover.png", "right root cover"),
+            ]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(result.fields.featureImage).toMatchObject({ mode: "manage", value: "pending-resource://resource-1" });
+        expect(result.resources).toHaveLength(1);
+        expect(result.resources[0]).toMatchObject({ source: "cover.png", resolvedPath: "cover.png" });
+        expect(result.resources[0].occurrences).toEqual([{ path: "Main.md", line: 2, field: "feature_image" }]);
+        expect(JSON.stringify(result.lexical)).not.toContain("Featured Images");
+        expect(JSON.stringify(result.lexical)).toContain("Nested 99");
+        expect(JSON.stringify(result.lexical)).toContain("Body");
+    });
+
+    it("keeps distinct raw hashes for equal-length hidden-comment dependency variants", async () => {
+        const rawDependencyHash = async (hidden: string) => {
+            const loaded = await loadGhostSourceTree("Main.md", createHost([
+                fakeFile("Main.md", "![[Embed.md]]"),
+                fakeFile("Embed.md", `${hidden} Visible body`),
+            ]), allowAllGuard());
+            return loaded.dependencies[1]?.contentHash;
+        };
+        const first = await rawDependencyHash("%% alpha %%");
+        const second = await rawDependencyHash("%% betas %%");
+        expect(first).not.toBe(second);
+        expect(first).toMatch(/^[a-f0-9]{64}$/);
+        expect(second).toMatch(/^[a-f0-9]{64}$/);
+    });
+
+    it("uses explicit cover priority and rejects an ambiguous PA cover block", async () => {
+        const body = (cover: string) => [
+            `>[!personal-assistant]+ ${cover}`,
+            "> ![[images/cover.png|480]]",
+            "",
+            "# Managed title",
+        ].join("\n");
+        const explicit = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile("Main.md", `---\nghost:\n  feature_image: explicit.png\n---\n${body("题图")}`), fakeFile("explicit.png", "explicit")]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(explicit.fields.featureImage).toMatchObject({ mode: "manage", value: "pending-resource://resource-1" });
+        expect(explicit.resources[0]).toMatchObject({ source: "explicit.png" });
+
+        const cleared = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile("Main.md", `---\nghost:\n  feature_image: null\n---\n${body("Featured Images")}`), fakeFile("images/cover.png", "cover")]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(cleared.fields.featureImage).toEqual({ mode: "clear" });
+        expect(cleared.resources).toEqual([]);
+
+        const ordinary = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile("Main.md", `---\nfeature_image: ordinary.png\n---\n${body("Featured Images")}`), fakeFile("ordinary.png", "ordinary")]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(ordinary.fields.featureImage).toMatchObject({ mode: "manage", value: "pending-resource://resource-1" });
+        expect(ordinary.resources[0]).toMatchObject({ source: "ordinary.png" });
+
+        await expect(prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile("Main.md", `>[!personal-assistant]+ Featured Images\n> ![[one.png]]\n> ![[two.png]]`), fakeFile("one.png", "one"), fakeFile("two.png", "two")]),
+            guard: allowAllGuard(), siteProfile: profile,
+        })).rejects.toMatchObject({ code: "cover-ambiguous" });
+    });
+
+    it("lets explicit and ordinary covers override ambiguous management images", async () => {
+        const body = [
+            ">[!personal-assistant]+ Featured Images",
+            "> ![[one.png]]",
+            "",
+            ">[!personal-assistant]- 题图",
+            "> ![[two.png]]",
+            "",
+            "# Managed title",
+        ].join("\n");
+        const explicit = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([
+                fakeFile("Main.md", `---\nghost:\n  feature_image: explicit.png\n---\n${body}`),
+                fakeFile("one.png", "one"), fakeFile("two.png", "two"), fakeFile("explicit.png", "explicit"),
+            ]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(explicit.fields.featureImage).toMatchObject({ mode: "manage", value: "pending-resource://resource-1" });
+        expect(explicit.resources.map((resource) => resource.source)).toEqual(["explicit.png"]);
+        expect(JSON.stringify(explicit.lexical)).not.toContain("Featured Images");
+        expect(JSON.stringify(explicit.lexical)).not.toContain("题图");
+
+        const cleared = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([
+                fakeFile("Main.md", `---\nghost:\n  feature_image: null\n---\n${body}`),
+                fakeFile("one.png", "one"), fakeFile("two.png", "two"),
+            ]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(cleared.fields.featureImage).toEqual({ mode: "clear" });
+        expect(cleared.resources).toEqual([]);
+        expect(JSON.stringify(cleared.lexical)).not.toContain("Featured Images");
+
+        const ordinary = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([
+                fakeFile("Main.md", `---\nfeature_image: ordinary.png\n---\n${body}`),
+                fakeFile("one.png", "one"), fakeFile("two.png", "two"), fakeFile("ordinary.png", "ordinary"),
+            ]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(ordinary.fields.featureImage).toMatchObject({ mode: "manage", value: "pending-resource://resource-1" });
+        expect(ordinary.resources.map((resource) => resource.source)).toEqual(["ordinary.png"]);
+        expect(JSON.stringify(ordinary.lexical)).not.toContain("题图");
     });
 
     it("expands an explicit block embed without its internal block marker", async () => {

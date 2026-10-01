@@ -14,6 +14,8 @@ const webUrl = z.string().url().refine((value) => {
     return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
 });
 const nullableText = z.string().nullable();
+const requestedSlug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(80);
+const verifiedRemoteSlug = z.string().min(1);
 
 function validLexical(value: string): boolean {
     try {
@@ -41,13 +43,14 @@ export const ghostContentSchema = z.object({
     feature_image_alt: nullableText,
     feature_image_caption: nullableText,
     custom_excerpt: nullableText,
+    meta_description: nullableText.optional(),
     custom_template: nullableText,
     codeinjection_head: nullableText,
     codeinjection_foot: nullableText,
     published_at: date.nullable(),
 }).strict();
 
-export const managedGhostFields = ["title", "lexical", "tags", "feature_image", "custom_excerpt", "codeinjection_head", "codeinjection_foot", "visibility"] as const;
+export const managedGhostFields = ["title", "lexical", "tags", "feature_image", "custom_excerpt", "meta_description", "codeinjection_head", "codeinjection_foot", "visibility"] as const;
 const sourceSchema = z.object({
     targetPath: notePath,
     dependencies: z.array(z.object({
@@ -88,6 +91,7 @@ export const ghostResourceSchema = z.object({
 }).strict();
 
 export const ghostSnapshotSchema = z.object({
+    slug: requestedSlug.optional(),
     content: ghostContentSchema,
     managedFields: z.array(z.enum(managedGhostFields)).min(1),
     source: sourceSchema, blocks: z.array(blockSchema).max(100_000), resources: z.array(ghostResourceSchema).max(10_000),
@@ -116,10 +120,14 @@ const operationBodySchema = z.object({
     schemaVersion: z.literal(1), operationId: identity, revision: z.number().int().positive(),
     siteId: identity, site: webUrl, noteUid: identity, kind: z.enum(["create", "update", "restore"]),
     state: z.enum(["prepared", "ready", "pending", "outcome_unknown", "succeeded_remote_pending_record", "cleanup_pending", "terminal"]),
+    markerVersion: z.literal(2).optional(),
+    slugCandidate: requestedSlug.optional(),
+    resolvedSlug: verifiedRemoteSlug.optional(),
     candidate: ghostSnapshotSchema, baselineRevision: z.number().int().positive().nullable(),
     /** Current source is checked separately when the candidate restores historical material. */
     currentSource: sourceSchema.optional(),
     currentIntentHash: sha256Digest.optional(),
+    currentNonSlugIntentHash: sha256Digest.optional(),
     baselineChecksum: digest.optional(),
     visibilityChange: z.object({ from: z.enum(["public", "members", "paid"]), to: z.enum(["public", "members", "paid"]) }).strict().optional(),
     target: z.object({
@@ -128,8 +136,13 @@ const operationBodySchema = z.object({
         postStatus: z.enum(["draft", "published"]).optional(),
     }).strict(),
     pending: z.object({
-        kind: z.enum(["resource_upload", "create_draft", "save_preview", "final_put", "cleanup"]),
+        kind: z.enum(["resource_upload", "create_draft", "save_preview", "final_put", "change_draft_slug", "cleanup"]),
         marker: z.string(), targetId: identity.optional(), payloadHash: sha256Digest,
+        slug: requestedSlug.optional(),
+        beforeVersion: date.optional(),
+        beforeUrl: webUrl.optional(),
+        beforePublishedAt: date.nullable().optional(),
+        nonSlugHash: sha256Digest.optional(),
         resource: ghostResourceSchema.optional(),
     }).strict().optional(),
     preUpdate: ghostSnapshotSchema.optional(), verified: verifiedSchema.optional(),
@@ -191,6 +204,9 @@ export function parseLocalOperation(value: unknown): GhostLocalOperation {
     if (!hasChecksum(operation) || operation.siteId !== operation.candidate.profile.siteId
         || (operation.preUpdate && operation.siteId !== operation.preUpdate.profile.siteId)
         || (["pending", "outcome_unknown"].includes(operation.state) && !operation.pending)
+        || (operation.pending?.kind === "change_draft_slug" && (!operation.pending.slug || !operation.pending.targetId
+            || !operation.pending.beforeVersion || !operation.pending.beforeUrl
+            || operation.pending.beforePublishedAt === undefined || !operation.pending.nonSlugHash))
         || (operation.state === "cleanup_pending" && (!operation.verified || !operation.completedRecord || !operation.cleanup))
         || (operation.state === "succeeded_remote_pending_record" && (!operation.verified || !operation.completedRecord))) {
         throw new GhostStateError("invalid-state");

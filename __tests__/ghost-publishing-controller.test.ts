@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 import type { App } from "obsidian";
+import { setIcon, setTooltip } from "obsidian";
 import { GhostPublishingController, type GhostActionAuthority, type GhostControllerRequest, type GhostPublishingSession, type GhostCardState } from "../src/ghost-publishing/controller";
 import { renderGhostPublishingCard } from "../src/ghost-publishing/card";
 import type { GhostActionContextOptions } from "../src/ghost-publishing/action-context";
@@ -18,6 +19,7 @@ const mockRecordRead = jest.fn<NonNullable<GhostActionContextOptions["readComple
 const mockService = {
     prepare: jest.fn<(...args: any[]) => Promise<GhostLocalOperation>>(),
     reprepare: jest.fn<(...args: any[]) => Promise<GhostLocalOperation>>(),
+    changeDraftUrl: jest.fn<(...args: any[]) => Promise<GhostLocalOperation>>(),
     refresh: jest.fn<(...args: any[]) => Promise<GhostLocalOperation>>(),
     checkPreview: jest.fn<(...args: any[]) => Promise<unknown>>(),
     confirm: jest.fn<(...args: any[]) => Promise<GhostLocalOperation>>(),
@@ -27,6 +29,8 @@ const mockCreateContext = jest.fn<(options: GhostActionContextOptions) => Promis
 const mockReadPost = jest.fn(async (_id: string) => ({ uuid: "11111111-1111-1111-1111-111111111111" }));
 const mockServiceConstructor = jest.fn();
 let mockPreviewStatus: "passed" | "failed" | "unavailable" = "passed";
+const mockSetIcon = setIcon as unknown as jest.Mock;
+const mockSetTooltip = setTooltip as unknown as jest.Mock;
 jest.mock("../src/ghost-publishing/action-context", () => ({ createGhostActionContext: (options: GhostActionContextOptions) => mockCreateContext(options) }));
 jest.mock("../src/ghost-publishing/service", () => ({ GhostPublishingService: function () { mockServiceConstructor(); return mockService; } }));
 jest.mock("../src/ghost-publishing/client", () => ({ GhostClient: function () { return { readPost: mockReadPost }; } }));
@@ -106,9 +110,10 @@ beforeEach(() => {
     mockPreviewStatus = "passed";
     mockList.mockImplementation(async () => mockOperations);
     mockCreateContext.mockReset();
-    for (const value of [mockService.prepare, mockService.reprepare, mockService.refresh, mockService.checkPreview, mockService.confirm]) value.mockReset();
+    for (const value of [mockService.prepare, mockService.reprepare, mockService.changeDraftUrl, mockService.refresh, mockService.checkPreview, mockService.confirm]) value.mockReset();
     mockService.prepare.mockImplementation(async () => { const value = op(); mockOperations = [value]; return value; });
     mockService.reprepare.mockImplementation(async () => mockOperations[0]);
+    mockService.changeDraftUrl.mockImplementation(async () => mockOperations[0]);
     mockService.refresh.mockImplementation(async () => mockOperations[0]);
     mockService.checkPreview.mockImplementation(async (_uid, _id, _context, probe) => {
         const receipt = await probe(mockOperations[0], "hash-one");
@@ -152,6 +157,30 @@ describe("Ghost controller and human action card", () => {
         }
     });
 
+    it("maps new source-cleanup and metadata rejection causes to actionable card guidance", async () => {
+        const cases = [
+            ["comment-unclosed", "plugin.ghost.card.error.commentUnclosed"],
+            ["cover-ambiguous", "plugin.ghost.card.error.coverChoice"],
+            ["metadata-unavailable", "plugin.ghost.card.error.metadata"],
+            ["metadata-invalid", "plugin.ghost.card.error.metadata"],
+            ["provider_failure", "plugin.ghost.card.error.metadata"],
+            ["input_too_large", "plugin.ghost.card.error.metadata"],
+            ["source_changed", "plugin.ghost.card.error.source"],
+            ["connection_changed", "plugin.ghost.card.error.connection"],
+            ["source-revoked", "plugin.ghost.card.error.source"],
+            ["connection-changed", "plugin.ghost.card.error.connection"],
+            ["cancelled", "plugin.ghost.card.error.source"],
+        ] as const;
+        for (const [code, expected] of cases) {
+            mockService.prepare.mockImplementationOnce(() => {
+                throw Object.assign(new Error(code), { code });
+            });
+            const f = fixture();
+            await f.controller.prepare(f.request);
+            expect(f.session().getState().errorKey).toBe(expected);
+        }
+    });
+
     it("never confirms first-draft publication and keeps successful cleanup-pending results successful", async () => {
         mockService.prepare.mockImplementation(async () => { const value = op("create"); mockOperations = [value]; return value; });
         const f = fixture();
@@ -160,6 +189,11 @@ describe("Ghost controller and human action card", () => {
         expect(f.session().getState().status).toBe("awaiting-publish");
         expect(f.session().getState().actions).not.toContain("confirm");
         expect(f.session().getState().actions).toContain("check-published");
+        await f.session().run("regenerate-metadata");
+        const regenerateCall = mockService.reprepare.mock.calls.at(-1)!;
+        expect(regenerateCall.slice(0, 2)).toEqual(["note-one", "op-one"]);
+        expect(f.contexts).toContain(regenerateCall[2]);
+        expect(regenerateCall[3]).toEqual({ regenerateMetadata: true });
         await f.session().run("open-editor");
         expect(f.openExternal).toHaveBeenCalledWith(`https://ghost.example/ghost/#/editor/post/${"b".repeat(24)}`);
         expect(f.session().getState().status).toBe("awaiting-publish");
@@ -229,6 +263,7 @@ describe("Ghost controller and human action card", () => {
 
         class CardNode extends DomStubNode {
             ownerDocument = document;
+            type = "";
             replaceChildren(...children: CardNode[]) { this.textContent = ""; children.forEach((child) => this.appendChild(child)); }
         }
         const document = { createElement: (tag: string) => new CardNode(tag), createTextNode: (text: string) => new CardNode("#text") };
@@ -327,6 +362,7 @@ describe("Ghost controller and human action card", () => {
     it("requires a second replacement confirmation and an independent visibility checkbox, and cleans up subscriptions", async () => {
         class CardNode extends DomStubNode {
             ownerDocument = document;
+            type = "";
             replaceChildren(...children: CardNode[]) { this.textContent = ""; children.forEach((child) => this.appendChild(child)); }
         }
         const document = { createElement: (tag: string) => new CardNode(tag), createTextNode: (text: string) => { const node = new CardNode("#text"); node.textContent = text; return node; } };
@@ -340,10 +376,14 @@ describe("Ghost controller and human action card", () => {
         const session: GhostPublishingSession = { getState: () => state, subscribe: (listener) => { rerender = listener; return unsubscribe; }, run, dispose: jest.fn() };
         const dispose = renderGhostPublishingCard(container as unknown as HTMLElement, session, (key) => key);
         const all = (node: DomStubNode): DomStubNode[] => [node, ...node.children.flatMap(all)];
-        const byLabel = (suffix: string) => all(container).find((node) => node.tag === "button" && node.textContent === `plugin.ghost.card.${suffix}`)!;
+        const byLabel = (suffix: string) => all(container).find((node) =>
+            node.tag === "button" && node.getAttribute("aria-label") === `plugin.ghost.card.${suffix}`)!;
         expect(all(container).some((node) => node.textContent.includes("op-one"))).toBe(false);
         expect(all(container).some((node) => node.textContent === "plugin.ghost.card.warning.unpublished-wiki-link")).toBe(true);
         expect(byLabel("action.confirm").disabled).toBe(true);
+        expect(byLabel("action.confirm").type).toBe("button");
+        expect(byLabel("action.confirm").getAttribute("aria-label")).toBe("plugin.ghost.card.action.confirm");
+        expect(all(byLabel("action.confirm")).some((node) => node.classNames.includes("pa-ghost-card-action__label"))).toBe(true);
         const checkbox = all(container).find((node) => node.tag === "input")!;
         checkbox.checked = true;
         checkbox.dispatch("change");
@@ -361,5 +401,44 @@ describe("Ghost controller and human action card", () => {
         expect(unsubscribe).toHaveBeenCalledTimes(1);
         expect(session.dispose).toHaveBeenCalledTimes(1);
         expect(container.children).toHaveLength(0);
+    });
+
+    it("renders compact icon actions with full accessible names and dispatches explicit metadata regeneration", async () => {
+        class CardNode extends DomStubNode {
+            ownerDocument = document;
+            type = "";
+            replaceChildren(...children: CardNode[]) { this.textContent = ""; children.forEach((child) => this.appendChild(child)); }
+        }
+        const document = { createElement: (tag: string) => new CardNode(tag), createTextNode: (text: string) => { const node = new CardNode("#text"); node.textContent = text; return node; } };
+        const container = new CardNode("div");
+        const all = (node: DomStubNode): DomStubNode[] => [node, ...node.children.flatMap(all)];
+        const state: GhostCardState = { title: "Note", site: "https://ghost.example/", operationId: "op-one", status: "awaiting-publish", busy: false,
+            actions: ["reprepare", "regenerate-metadata", "check-published", "open-editor", "open-browser"] };
+        let rerender = () => {};
+        const session: GhostPublishingSession = {
+            getState: () => state, subscribe: listener => { rerender = listener; return () => undefined; },
+            run: jest.fn<GhostPublishingSession["run"]>().mockResolvedValue(), dispose: jest.fn(),
+        };
+        mockSetIcon.mockClear();
+        mockSetTooltip.mockClear();
+        const dispose = renderGhostPublishingCard(container as unknown as HTMLElement, session, (key) => key);
+        const buttons = all(container).filter((node) => node.tag === "button");
+        expect(buttons).toHaveLength(5);
+        expect(buttons[0].getAttribute("aria-label")).toBe("plugin.ghost.card.action.reprepare");
+        expect(buttons[1].getAttribute("aria-label")).toBe("plugin.ghost.card.action.regenerate-metadata");
+        expect(buttons.every((button) => button.type === "button")).toBe(true);
+        expect(buttons.every((button) => all(button).some((node) => node.classNames.includes("pa-ghost-card-action__icon")))).toBe(true);
+        expect(buttons.every((button) => all(button).some((node) => node.classNames.includes("pa-ghost-card-action__label")))).toBe(true);
+        expect(mockSetIcon).toHaveBeenCalledWith(expect.anything(), "sparkles");
+        expect(mockSetTooltip).toHaveBeenCalledWith(expect.anything(), "plugin.ghost.card.action.regenerate-metadata");
+        buttons[1].dispatch("click");
+        expect(session.run).toHaveBeenCalledWith("regenerate-metadata", { visibilityConfirmed: false, replacementConfirmed: false });
+        state.busy = true;
+        rerender();
+        const busyButton = all(container).find((node) => node.tag === "button"
+            && node.getAttribute("aria-label") === "plugin.ghost.card.action.check-published")!;
+        expect(busyButton.disabled).toBe(true);
+        expect(session.run).toHaveBeenCalledTimes(1);
+        dispose();
     });
 });

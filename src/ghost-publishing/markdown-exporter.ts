@@ -2,7 +2,9 @@ import MarkdownIt, { type StateBlock, type StateInline, type Token } from "markd
 import { stableHash } from "../pa/helpers";
 import { lexicalSemanticSignature } from "./lexical-content";
 import { GhostExportError } from "./errors";
-import { GHOST_EMBED_TOKEN, installGhostInlineRules, installGhostSourceRanges } from "./markdown-parser";
+import {
+    GHOST_EMBED_TOKEN, installGhostInlineRules, installGhostSourceRanges, parseGhostInlineMarkdown, parseGhostMarkdown,
+} from "./markdown-parser";
 import { getTokenSourceRange, mapInlineRangeToSource } from "./source-position";
 import type {
     ExportBlock,
@@ -31,6 +33,10 @@ interface MarkdownExportContext {
     wikiLinks: Record<string, WikiLinkTarget>;
     wikiLinkOccurrences: WikiLinkOccurrence[];
     blockSourceRanges: Array<{ startLine: number; endLine: number }>;
+}
+
+interface FieldResourceOrigins {
+    featureImage?: { path: string; line: number };
 }
 
 export interface MarkdownExportOutput {
@@ -123,7 +129,7 @@ function renderInlineMarkdown(
     installFootnoteRules(markdownIt);
     installGhostInlineRules(markdownIt);
     markdownIt.inline.ruler.before("link", WIKI_TOKEN, wikiLinkRule);
-    return markdownIt.parseInline(value, {})
+    return parseGhostInlineMarkdown(markdownIt, value)
         .filter((token) => token.type === "inline")
         .map((token) => inlineHtml(token, context, line, sourceOffset))
         .join("");
@@ -246,13 +252,16 @@ function addResource(
     title?: string,
     field?: "feature_image",
     sourceOffset?: number,
+    explicitOwnerPath?: string,
 ): string {
     const trimmedSource = source.trim();
     const owner = sourceOffset === undefined
         ? sourceSpanForLine(context, line)
         : sourceSpanForOffset(context, sourceOffset);
-    const ownerPath = owner?.path ?? context.sourcePath;
-    const originalLine = owner && sourceOffset !== undefined
+    const ownerPath = explicitOwnerPath ?? owner?.path ?? context.sourcePath;
+    const originalLine = explicitOwnerPath !== undefined
+        ? line
+        : owner && sourceOffset !== undefined
         ? owner.sourceLine + (context.expandedMarkdown.slice(owner.start, sourceOffset).match(/\n/g)?.length ?? 0)
         : owner?.sourceLine ?? line;
     let resolvedPath: string | undefined;
@@ -895,6 +904,7 @@ export function convertMarkdownToLexical(options: {
     host: GhostPublishingHost;
     fields: GhostPublishingFields;
     wikiLinks?: Record<string, WikiLinkTarget>;
+    fieldOrigins?: FieldResourceOrigins;
 }): MarkdownExportOutput {
     const context: MarkdownExportContext = {
         host: options.host,
@@ -912,13 +922,16 @@ export function convertMarkdownToLexical(options: {
     };
     const fieldResourceReferences: { featureImage?: string } = {};
     if (options.fields.featureImage.mode === "manage" && options.fields.featureImage.value) {
+        const origin = options.fieldOrigins?.featureImage;
         fieldResourceReferences.featureImage = addResource(
             context,
             options.fields.featureImage.value,
             "Feature image",
-            0,
+            origin?.line ?? 0,
             undefined,
             "feature_image",
+            undefined,
+            origin?.path,
         );
     }
 
@@ -931,7 +944,7 @@ export function convertMarkdownToLexical(options: {
     installFootnoteRules(markdownIt);
     installGhostSourceRanges(markdownIt);
     markdownIt.inline.ruler.before("link", WIKI_TOKEN, wikiLinkRule);
-    const tokens = markdownIt.parse(options.markdown, {});
+    const tokens = parseGhostMarkdown(markdownIt, options.markdown);
     const nodes = convertRange(tokens, 0, tokens.length, context, true);
     const blocks: ExportBlock[] = nodes.map((node, nodeIndex) => {
         const range = context.blockSourceRanges[nodeIndex] ?? { startLine: 0, endLine: 1 };
@@ -939,7 +952,7 @@ export function convertMarkdownToLexical(options: {
         const endLine = range.endLine;
         const span = sourceSpan(context, startLine, endLine);
         const sourceText = options.markdown
-            .split(/\r?\n/)
+            .split(/\r\n|\r|\n/)
             .slice(startLine, Math.max(endLine, startLine + 1))
             .join("\n");
         return {

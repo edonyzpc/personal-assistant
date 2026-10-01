@@ -7,6 +7,7 @@ import { prepareGhostExport } from "../src/ghost-publishing/exporter";
 import {
     decodeCompletedRecord, encodeCompletedRecord, ghostOperationKey, ghostRecordPath,
     GhostStateError, parseLocalOperation, sealCompletedRecord, sealLocalOperation,
+    ghostStateHash,
     type GhostSnapshot,
 } from "../src/ghost-publishing/state-schema";
 import { ghostDatabaseName, GhostCompletedRecordStore, GhostOperationStore } from "../src/ghost-publishing/state-store";
@@ -80,6 +81,18 @@ describe("Ghost publishing durable state", () => {
         expect(() => sealLocalOperation({ ...local, state: "cleanup_pending" })).toThrow(GhostStateError);
         expect(() => sealLocalOperation({ ...local, candidate: { ...snapshot(), blocks: [{ ...snapshot().blocks[0], sourceDependencyIndex: 5 }] } })).toThrow(GhostStateError);
         expect(() => sealCompletedRecord({ ...record, baseline: { ...snapshot(), content: { ...snapshot().content, lexical: '{"root":{"type":"root","version":1,"children":[{"type":"paragraph"}]}}' } } })).toThrow(GhostStateError);
+    });
+
+    it("reads a beta.17 record without inserting an SEO field or changing its checksum", () => {
+        const old = completed();
+        const checksum = old.checksum;
+        expect(old.baseline.content).not.toHaveProperty("meta_description");
+        const parsed = JSON.parse(JSON.stringify(old)) as typeof old;
+        expect(parsed.baseline.content).not.toHaveProperty("meta_description");
+        expect(parsed.checksum).toBe(checksum);
+        const { checksum: _removed, ...body } = parsed;
+        expect(ghostStateHash(body)).toBe(checksum);
+        expect(decodeCompletedRecord(encodeCompletedRecord(old), "test-site", "note-1")).toEqual(old);
     });
 
     it("reads committed IndexedDB data from a new instance, rolls back failed commits, and rejects stale/overlapping operations", async () => {

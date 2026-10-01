@@ -1,6 +1,6 @@
 import { getFrontMatterInfo, parseYaml, resolveSubpath, TFile, type App, type CachedMetadata } from "obsidian";
 import { getVaultConfigDir } from "../obsidian-paths";
-import { createGhostActionContext, type GhostActionHost } from "./action-context";
+import { createGhostActionContext, type GhostActionContextOptions, type GhostActionHost } from "./action-context";
 import { GhostClient } from "./client";
 import { GhostPublishingConfiguration, type GhostConnection } from "./configuration";
 import { GhostNativePreviewAdapter, ghostPreviewExpectations, ghostPreviewUrl, type GhostPreviewDiagnostics, type GhostPreviewHost } from "./preview";
@@ -11,7 +11,7 @@ import type { GhostNoteSelection } from "./binding";
 import type { GhostPublishingSourceGuard } from "./types";
 
 export interface GhostActionAuthority { guard: GhostPublishingSourceGuard; sourceValidity(): boolean; signal?: AbortSignal }
-export type GhostCardAction = "continue" | "reprepare" | "replace-all" | "check-preview" | "confirm" | "check-published"
+export type GhostCardAction = "continue" | "reprepare" | "change-draft-url" | "regenerate-metadata" | "replace-all" | "check-preview" | "confirm" | "check-published"
     | "restore" | "open-editor" | "open-browser";
 export interface GhostCardState {
     title: string; site: string; operationId?: string;
@@ -39,6 +39,7 @@ export interface GhostControllerOptions {
     isContentAllowed(path: string, markdown: string): boolean;
     /** Desktop Host external opener; window.open can be captured by the core Web viewer. */
     openExternal(url: string): void | Promise<void>;
+    generateMetadata?: GhostActionContextOptions["generateMetadata"];
 }
 export interface GhostControllerRequest {
     path: string; intent: "prepare" | "restore"; authority: GhostActionAuthority;
@@ -56,14 +57,19 @@ function errorKey(error: unknown): string {
     const code = errorCode(error);
     if (["desktop-required", "unsupported-platform"].includes(code)) return `${KEY}error.platform`;
     if (["not-configured", "invalid-key", "invalid-credentials", "invalid-settings"].includes(code)) return `${KEY}error.configuration`;
-    if (["connection-changed", "changing", "site-mismatch"].includes(code)) return `${KEY}error.connection`;
-    if (["guard-revoked", "source-revoked", "source-changed", "context-revoked", "gate-rejected", "cancelled", "web-denied"].includes(code)) return `${KEY}error.source`;
+    if (["connection-changed", "connection_changed", "changing", "site-mismatch"].includes(code)) return `${KEY}error.connection`;
+    if (["guard-revoked", "source-revoked", "source-changed", "source_changed", "context-revoked", "gate-rejected", "cancelled", "web-denied"].includes(code)) return `${KEY}error.source`;
     if (["content-conflict", "remote-conflict", "duplicate-identity", "post-mismatch", "other-desktop"].includes(code)) return `${KEY}error.conflict`;
     if (["sync-required", "missing-baseline", "restore-unavailable"].includes(code)) return `${KEY}error.sync`;
     if (["resource-changed", "resource-unavailable", "unsupported-image", "resource-too-large", "read-failed"].includes(code)) return `${KEY}error.resource`;
     if (["confirmation-required", "preview-required"].includes(code)) return `${KEY}error.confirmation`;
     if (["storage-unavailable", "record-conflict", "operation-conflict", "invalid-state"].includes(code)) return `${KEY}error.storage`;
     if (code === "record-pending") return `${KEY}error.record`;
+    if (code === "comment-unclosed") return `${KEY}error.commentUnclosed`;
+    if (code === "cover-ambiguous") return `${KEY}error.coverChoice`;
+    if (["metadata-unavailable", "metadata-invalid", "provider_failure", "input_too_large", "invalid_result"].includes(code)) {
+        return `${KEY}error.metadata`;
+    }
     return `${KEY}error.generic`;
 }
 interface Runtime { client: GhostClient; service: GhostPublishingService; operations: GhostOperationStore; records: GhostCompletedRecordStore }
@@ -169,7 +175,8 @@ export class GhostPublishingController {
                     return runtime.records.read(siteId, noteUid);
                 },
                 getCompletedRecordRevision: recordRevision,
-                defaultVisibility: connection.defaultVisibility, signal: abort.signal, replacement: replaceAll ? "replace-all" : "preserve-matching" });
+                defaultVisibility: connection.defaultVisibility, signal: abort.signal, replacement: replaceAll ? "replace-all" : "preserve-matching",
+                generateMetadata: this.options.generateMetadata });
             return { ...created, release };
         } catch (error) { release(); throw error; }
     }
@@ -309,6 +316,10 @@ class PublishingSession implements GhostPublishingSession {
             if (operation?.state === "succeeded_remote_pending_record") actions.push("continue");
             else {
                 actions.push("reprepare");
+                if (operation?.kind !== "restore") actions.push("regenerate-metadata");
+                if (operation?.kind !== "restore" && operation?.target.postId && operation.target.postStatus === "draft") {
+                    actions.push("change-draft-url");
+                }
                 if (operation?.target.previewId) {
                     actions.push("check-preview");
                     if ((operation.kind === "create" || operation.target.postStatus === "draft") && diagnostics.status === "passed") actions.push("check-published");
@@ -377,6 +388,23 @@ class PublishingSession implements GhostPublishingSession {
                     this.operation = this.operation && isGhostPublicationActive(this.operation)
                         ? await this.runtime.service.reprepare(this.selection.noteUid, this.operation.operationId, scope.context)
                         : await this.runtime.service.prepare(this.selection.noteUid, scope.postId, scope.context, this.request.intent === "restore");
+                    await this.checkPreview(scope);
+                } else if (action === "regenerate-metadata") {
+                    if (!this.operation) throw failure("operation-missing");
+                    this.operation = await this.runtime.service.reprepare(
+                        this.selection.noteUid,
+                        this.operation.operationId,
+                        scope.context,
+                        { regenerateMetadata: true },
+                    );
+                    await this.checkPreview(scope);
+                } else if (action === "change-draft-url") {
+                    if (!this.operation) throw failure("operation-missing");
+                    this.operation = await this.runtime.service.changeDraftUrl(
+                        this.selection.noteUid,
+                        this.operation.operationId,
+                        scope.context,
+                    );
                     await this.checkPreview(scope);
                 } else if (action === "restore") {
                     this.operation = await this.runtime.service.prepare(this.selection.noteUid, scope.postId, scope.context, true);

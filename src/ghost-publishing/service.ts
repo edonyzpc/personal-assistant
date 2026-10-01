@@ -1,4 +1,4 @@
-import { GhostClientError, type GhostClient, type GhostPost, type GhostRequestGate } from "./client";
+import { GhostClientError, type GhostClient, type GhostPost, type GhostPostWrite, type GhostRequestGate } from "./client";
 import {
     acceptGhostFormatting, GhostCandidateError, ghostContentFromPost, ghostManagedContentMatches, ghostManagedWrite,
     ghostPayloadHash, ghostPreviewWrite, ghostRenderingMatches, materializeGhostSnapshot, preserveGhostPreviewFormatting,
@@ -7,6 +7,7 @@ import {
     isGhostPublicationActive, sealCompletedRecord, sealLocalOperation, type GhostCompletedRecord, type GhostLocalOperation,
     type GhostSnapshot, type GhostStoredResource,
 } from "./state-schema";
+import { findPostsBySourceMarkers, ghostOperationMarkers } from "./markers";
 import type { GhostCompletedRecordStore, GhostOperationStore } from "./state-store";
 
 type PublishingClient = Pick<GhostClient, "readPost" | "findPostsByMarker" | "createDraft" | "updatePost" | "deleteDraft" | "uploadImage">;
@@ -24,13 +25,26 @@ export interface GhostActionContext {
     gate: GhostRequestGate;
     /** Recheck current source, historical restore sources, resources and connection/profile. */
     validate(operation: GhostLocalOperation, purpose?: "candidate" | "reconcile" | "completed"): Promise<void>;
-    prepare(remote: GhostPost | null, completed: GhostCompletedRecord | null, kind: GhostLocalOperation["kind"], previous?: GhostSnapshot): Promise<{
+    prepare(
+        remote: GhostPost | null,
+        completed: GhostCompletedRecord | null,
+        kind: GhostLocalOperation["kind"],
+        previous?: GhostSnapshot,
+        options?: { regenerateMetadata?: boolean },
+    ): Promise<{
         candidate: GhostSnapshot;
         currentSource: GhostSnapshot["source"];
         currentIntentHash: string;
+        currentNonSlugIntentHash?: string;
         images: GhostPreparedImage[];
+        slugCandidate?: string;
         /** Set only for the user's explicit full-replacement action, never a model argument. */
         replacePreview?: boolean;
+    }>;
+    /** Explicit draft-URL action source/AI preparation. Existing article content is not rewritten. */
+    prepareDraftSlug(operation: GhostLocalOperation): Promise<{
+        slug: string;
+        currentIntentHash: string;
     }>;
     readImage(resource: GhostStoredResource): Promise<GhostPreparedImage>;
     /** Uses the guarded note binding adapter; failure must preserve this operation's known ID. */
@@ -75,11 +89,8 @@ export class GhostPublishingService {
 
     private now(): string { return this.options.now?.() ?? new Date().toISOString(); }
     private id(): string { return this.options.newId?.() ?? globalThis.crypto.randomUUID(); }
-    private bindingMarker(noteUid: string, create: boolean): string {
-        return `#pa-ghost-${create ? "op" : "preview"}-${noteUid}`;
-    }
     private markers(operation: GhostLocalOperation): string[] {
-        return [`#pa-ghost-op-${operation.operationId}`, this.bindingMarker(operation.noteUid, operation.kind === "create")];
+        return ghostOperationMarkers(operation);
     }
     private async serial<T>(noteUid: string, context: GhostActionContext, action: () => Promise<T>): Promise<T> {
         if (!this.options.isDesktop()) throw new GhostWorkflowError("desktop-required");
@@ -142,7 +153,7 @@ export class GhostPublishingService {
             if (remote && (remote.status !== "published" && remote.status !== "draft"
                 || record && remote.url !== record.binding.postUrl)) throw new GhostWorkflowError("remote-conflict");
             const kind = restore ? "restore" : remote ? "update" : "create";
-            const previousDrafts = await this.options.client.findPostsByMarker(this.bindingMarker(noteUid, !remote), context.gate, true);
+            const previousDrafts = await findPostsBySourceMarkers({ client: this.options.client, noteUid, gate: context.gate });
             const unfinished = previousDrafts.filter((post) => {
                 if (post.id === knownId) return false;
                 if (locals.some((local) => !isGhostPublicationActive(local) && local.completedRecord && local.cleanup?.postId === post.id)) return false;
@@ -158,6 +169,9 @@ export class GhostPublishingService {
             let operation = sealLocalOperation({
                 schemaVersion: 1, revision: 1, operationId: this.id(), siteId: this.options.siteId, site: this.options.site, noteUid,
                 kind, state: "prepared", candidate: prepared.candidate, currentSource: prepared.currentSource, currentIntentHash: prepared.currentIntentHash,
+                currentNonSlugIntentHash: prepared.currentNonSlugIntentHash,
+                markerVersion: 2,
+                ...(kind === "create" && prepared.slugCandidate ? { slugCandidate: prepared.slugCandidate } : {}),
                 baselineRevision: record?.revision ?? null, baselineChecksum: record?.checksum,
                 ...(remote && remote.visibility !== prepared.candidate.content.visibility ? {
                     visibilityChange: { from: remote.visibility as "public" | "members" | "paid", to: prepared.candidate.content.visibility as "public" | "members" | "paid" },
@@ -173,7 +187,12 @@ export class GhostPublishingService {
     }
 
     /** An explicit fresh preparation after edits; pending writes must be reconciled first. */
-    async reprepare(noteUid: string, operationId: string, context: GhostActionContext): Promise<GhostLocalOperation> {
+    async reprepare(
+        noteUid: string,
+        operationId: string,
+        context: GhostActionContext,
+        options?: { regenerateMetadata?: boolean },
+    ): Promise<GhostLocalOperation> {
         return this.serial(noteUid, context, async () => {
             this.confirmations.delete(operationId);
             let operation = await this.load(noteUid, operationId);
@@ -190,7 +209,13 @@ export class GhostPublishingService {
             }
             const preparationRemote = original && operation.target.postStatus === "draft"
                 ? { ...original, tags: original.tags.filter((tag) => !this.markers(operation).includes(tag.name)) } : original;
-            const prepared = await context.prepare(preparationRemote, record, operation.kind, operation.candidate);
+            const prepared = await context.prepare(
+                preparationRemote,
+                record,
+                operation.kind,
+                operation.candidate,
+                { regenerateMetadata: options?.regenerateMetadata === true },
+            );
             let candidate = prepared.candidate;
             if (preview) candidate = preserveGhostPreviewFormatting(candidate, operation.candidate, preview, this.markers(operation), prepared.replacePreview);
             const resources = candidate.resources.map((resource) => {
@@ -199,6 +224,8 @@ export class GhostPublishingService {
             });
             operation = await this.save(operation, {
                 state: "prepared", pending: undefined, candidate: { ...candidate, resources }, currentSource: prepared.currentSource, currentIntentHash: prepared.currentIntentHash,
+                currentNonSlugIntentHash: prepared.currentNonSlugIntentHash,
+                slugCandidate: undefined,
                 target: { ...operation.target, ...(original ? { postVersion: original.updated_at } : {}),
                     ...(preview ? { previewVersion: preview.updated_at } : {}), previewHash: undefined },
                 visibilityChange: original && original.visibility !== candidate.content.visibility
@@ -208,6 +235,107 @@ export class GhostPublishingService {
             operation = await this.uploadResources(operation, context, prepared.images);
             return this.savePreview(operation, context);
         });
+    }
+
+    /** Explicit URL replacement for the known original draft. No other field is written. */
+    async changeDraftUrl(noteUid: string, operationId: string, context: GhostActionContext): Promise<GhostLocalOperation> {
+        return this.serial(noteUid, context, async () => {
+            this.confirmations.delete(operationId);
+            const operation = await this.load(noteUid, operationId);
+            if (!["prepared", "ready"].includes(operation.state)) throw new GhostWorkflowError("result-unknown");
+            if (!operation.target.postId || operation.target.postStatus !== "draft" || operation.kind === "restore") {
+                throw new GhostWorkflowError("remote-conflict");
+            }
+            const record = await this.options.records.read(operation.siteId, noteUid);
+            if ((record?.checksum ?? undefined) !== operation.baselineChecksum) throw new GhostWorkflowError("sync-required");
+            await context.validate(operation, "reconcile");
+            const before = await this.options.client.readPost(operation.target.postId, context.gate);
+            this.assertExactDraft(operation, before);
+            const prepared = await context.prepareDraftSlug(operation);
+            const current = await this.options.client.readPost(operation.target.postId, context.gate);
+            this.assertExactDraft(operation, current);
+            if (current.updated_at !== before.updated_at || current.url !== before.url || current.slug === prepared.slug) {
+                throw new GhostWorkflowError("remote-conflict");
+            }
+            const fields: GhostPostWrite = { slug: prepared.slug };
+            const pending = {
+                kind: "change_draft_slug" as const,
+                marker: this.markers(operation)[0],
+                targetId: current.id,
+                payloadHash: await ghostPayloadHash(fields),
+                slug: prepared.slug,
+                beforeVersion: current.updated_at,
+                beforeUrl: current.url,
+                beforePublishedAt: current.published_at,
+                nonSlugHash: await this.draftSlugFactsHash(current),
+            };
+            // The explicit action admits only a changed slug intention. The Host has
+            // already compared every other source/field intention against preparation.
+            const admitted = await this.save(operation, { currentIntentHash: prepared.currentIntentHash });
+            const result = await this.persistWrite(admitted, pending, context,
+                (gate) => this.options.client.updatePost(current.id, current.updated_at, fields, gate));
+            return this.adoptDraftSlugResult(result.operation, result.post, context);
+        });
+    }
+
+    private assertExactDraft(operation: GhostLocalOperation, post: GhostPost): void {
+        if (post.id !== operation.target.postId || post.status !== "draft"
+            || post.url !== operation.target.postUrl || post.updated_at !== operation.target.postVersion
+            || !this.markers(operation).every((marker) => post.tags.some((tag) => tag.name === marker))) {
+            throw new GhostWorkflowError("remote-conflict");
+        }
+    }
+
+    private async draftSlugFactsHash(post: GhostPost, publishedAt = post.published_at): Promise<string> {
+        const unchanged: Partial<GhostPost> = { ...post };
+        delete unchanged.slug;
+        delete unchanged.url;
+        delete unchanged.updated_at;
+        delete unchanged.status;
+        delete unchanged.published_at;
+        return ghostPayloadHash({ ...unchanged, published_at: publishedAt });
+    }
+
+    private async adoptDraftSlugResult(operation: GhostLocalOperation, post: GhostPost, context: GhostActionContext): Promise<GhostLocalOperation> {
+        const pending = operation.pending;
+        const requested = pending?.slug;
+        const suffix = requested && post.slug.startsWith(`${requested}-`) ? post.slug.slice(requested.length + 1) : "";
+        const matchesSlug = post.slug === requested || /^[1-9]\d*$/.test(suffix) && Number(suffix) >= 2;
+        // Ghost keeps draft URLs at /p/<uuid>/ when their publication slug changes.
+        // Accept that exact unchanged preview; other unchanged URLs remain unverified.
+        const url = new URL(post.url);
+        const stableDraftPreview = post.status === "draft" && post.url === pending?.beforeUrl
+            && url.pathname === new URL(`p/${post.uuid}/`, this.options.site).pathname
+            && !url.search && !url.hash;
+        if (pending?.kind !== "change_draft_slug" || !pending.beforeVersion || !pending.beforeUrl
+            || pending.beforePublishedAt === undefined || !pending.nonSlugHash || !matchesSlug
+            || post.id !== pending.targetId || post.id !== operation.target.postId
+            || !["draft", "published"].includes(post.status) || post.url === pending.beforeUrl && !stableDraftPreview
+            || Date.parse(post.updated_at) <= Date.parse(pending.beforeVersion)
+            || !this.markers(operation).every((marker) => post.tags.some((tag) => tag.name === marker))
+            || await this.draftSlugFactsHash(post, post.status === "published" ? pending.beforePublishedAt : post.published_at) !== pending.nonSlugHash) {
+            throw new GhostWorkflowError("result-unknown");
+        }
+        // Manual publication may follow an accepted slug-only PUT. It is a
+        // read-only completion fact only after the exact request has been verified.
+        if (post.status === "published") {
+            if (!ghostManagedContentMatches(operation.candidate, post, this.markers(operation))) throw new GhostWorkflowError("result-unknown");
+            return this.complete(operation, post, context);
+        }
+        const current = await this.save(operation, {
+            state: "prepared",
+            pending: undefined,
+            resolvedSlug: post.slug,
+            slugCandidate: undefined,
+            target: {
+                ...operation.target,
+                postUrl: post.url,
+                postVersion: post.updated_at,
+                ...(operation.target.previewId === post.id ? { previewVersion: post.updated_at, previewHash: undefined } : {}),
+            },
+        });
+        await context.bind(post);
+        return current;
     }
 
     private async uploadResources(operation: GhostLocalOperation, context: GhostActionContext, prepared: GhostPreparedImage[] = []): Promise<GhostLocalOperation> {
@@ -234,6 +362,7 @@ export class GhostPublishingService {
     private async savePreview(operation: GhostLocalOperation, context: GhostActionContext): Promise<GhostLocalOperation> {
         const markers = this.markers(operation);
         const fields = ghostPreviewWrite(operation.candidate, markers[0]);
+        if (operation.kind === "create" && operation.slugCandidate) fields.slug = operation.slugCandidate;
         fields.tags?.push({ name: markers[1], visibility: "internal" });
         const isOriginalDraft = operation.target.postStatus === "draft";
         const targetId = operation.target.previewId ?? (isOriginalDraft ? operation.target.postId : undefined);
@@ -254,11 +383,13 @@ export class GhostPublishingService {
         let current = await this.save(operation, { state: "prepared", pending: undefined, target: {
             ...operation.target, ...(isOriginal ? { postId: post.id, postUrl: post.url, postVersion: post.updated_at, postStatus: "draft" as const } : {}),
             previewId: post.id, previewUuid: post.uuid, previewVersion: post.updated_at,
-        } });
-        if (isOriginal) await context.bind(post);
+        }, ...(isOriginal && operation.kind === "create" ? { resolvedSlug: post.slug } : {}) });
         if (!ghostRenderingMatches(current.candidate, post, this.markers(current), current.kind === "create")) throw new GhostWorkflowError("remote-conflict");
         current = await this.save(current, { candidate: acceptGhostFormatting(current.candidate, post, this.markers(current)),
             target: { ...current.target, previewHash: await ghostPayloadHash(ghostContentFromPost(post, this.markers(current))) } });
+        // Keep the verified server formatting (including its initial author) if
+        // note-property persistence fails. A continuation still compares it exactly.
+        if (isOriginal) await context.bind(post);
         return current;
     }
 
@@ -359,6 +490,10 @@ export class GhostPublishingService {
             if (operation.state === "terminal") return operation;
             if (operation.state === "pending" || operation.state === "outcome_unknown") {
                 const pending = operation.pending!;
+                if (pending.kind === "change_draft_slug") {
+                    const post = await this.options.client.readPost(pending.targetId!, this.gate(operation, context, undefined, "reconcile"));
+                    return this.adoptDraftSlugResult(operation, post, context);
+                }
                 if (pending.kind === "resource_upload") throw new GhostWorkflowError("resource-result-unknown");
                 if (pending.kind === "cleanup") return this.cleanup(operation, context);
                 if (pending.kind === "final_put") {

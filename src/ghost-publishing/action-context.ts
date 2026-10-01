@@ -1,7 +1,9 @@
 import { stableStringify } from "../ai-services/agent-utils";
 import { GhostNoteBindingAdapter, type GhostBindingHost, type GhostNoteSelection } from "./binding";
-import type { GhostClient, GhostRequestGate, GhostVisibility } from "./client";
+import type { GhostClient, GhostPost, GhostRequestGate, GhostVisibility } from "./client";
 import { prepareGhostExport } from "./exporter";
+import { GHOST_CUSTOM_EXCERPT_MAX, GHOST_META_DESCRIPTION_MAX } from "./fields";
+import { isValidGhostSlug } from "./slug";
 import { resolveGhostWikiLinks, type GhostWikiLinkRecordAccess, type GhostWikiLinkReceipt } from "./wiki-links";
 import type { FormatReplacementMode } from "./format-preservation";
 import { prepareGhostResource, type GhostResourceOptions } from "./resources";
@@ -12,6 +14,21 @@ import type { ExportResourcePlan, GhostExportResult, GhostPublishingHost, GhostP
     GhostPublishingSourceGuard, SitePublishingProfile, WikiLinkTarget } from "./types";
 
 export type GhostActionHost = GhostBindingHost & GhostPublishingHost & GhostResourceOptions["host"];
+
+export interface GhostMetadataGeneratorInput {
+    title: string;
+    articleText: string;
+    needed: { customExcerpt: boolean; metaDescription: boolean; slug: boolean };
+    signal: AbortSignal;
+    isSourceCurrent(): boolean;
+    isConnectionCurrent?(): boolean;
+}
+
+export type GhostMetadataGenerator = (input: GhostMetadataGeneratorInput) => Promise<{
+    customExcerpt?: string;
+    metaDescription?: string;
+    slug?: string;
+}>;
 
 export interface GhostActionContextOptions extends GhostWikiLinkRecordAccess {
     /** Captured at the explicit entry point; never re-read from the active editor. */
@@ -36,12 +53,14 @@ export interface GhostActionContextOptions extends GhostWikiLinkRecordAccess {
     signal?: AbortSignal;
     replacement?: FormatReplacementMode;
     wikiLinks?: Record<string, WikiLinkTarget>;
+    generateMetadata?: GhostMetadataGenerator;
     createNoteUid?(): string;
 }
 
 export class GhostActionContextError extends Error {
     constructor(readonly code: "desktop-required" | "cancelled" | "source-revoked" | "source-changed"
-        | "connection-changed" | "invalid-operation" | "resource-changed" | "restore-unavailable" | "source-unavailable") {
+        | "connection-changed" | "invalid-operation" | "resource-changed" | "restore-unavailable" | "source-unavailable"
+        | "metadata-unavailable" | "metadata-invalid") {
         super(`Ghost publishing context: ${code}.`);
         this.name = "GhostActionContextError";
     }
@@ -50,14 +69,17 @@ export class GhostActionContextError extends Error {
 function fail(code: GhostActionContextError["code"]): never { throw new GhostActionContextError(code); }
 function copy<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 function same(left: unknown, right: unknown): boolean { return stableStringify(left) === stableStringify(right); }
+function abortSignalOf(value?: AbortSignal): AbortSignal { return value ?? new AbortController().signal; }
 
 function sourceIdentity(source: GhostSnapshot["source"]): unknown {
     return { targetPath: source.targetPath, dependencies: source.dependencies.map(({ mtime: _mtime, size: _size, ...dependency }) => dependency) };
 }
 
 /** Includes effective frontmatter and exact image/link intentions, not pa_ghost or source line offsets. */
-async function intentHash(exported: GhostExportResult): Promise<string> {
-    return ghostPayloadHash({ source: sourceIdentity(exported.sourceManifest), fields: exported.fields, lexical: exported.lexical,
+async function intentHash(exported: GhostExportResult, excludeSlug = false): Promise<string> {
+    const otherFields: Partial<GhostExportResult["fields"]> = { ...exported.fields };
+    delete otherFields.slug;
+    return ghostPayloadHash({ source: sourceIdentity(exported.sourceManifest), fields: excludeSlug ? otherFields : exported.fields, lexical: exported.lexical,
         resources: exported.resources.map((resource) => ({ ...resource,
             occurrences: resource.occurrences.map(({ line: _line, ...occurrence }) => occurrence),
         })) });
@@ -71,9 +93,38 @@ function sameBytes(left: GhostStoredResource, right: GhostStoredResource): boole
     return left.byteHash === right.byteHash && left.byteLength === right.byteLength && left.mimeType === right.mimeType;
 }
 
+function lexicalPlainText(node: unknown): string {
+    if (!node || typeof node !== "object") return "";
+    const value = node as {
+        type?: string;
+        text?: unknown;
+        code?: unknown;
+        html?: unknown;
+        children?: unknown;
+    };
+    if (value.type === "extended-text" && typeof value.text === "string") return value.text;
+    if (value.type === "codeblock" && typeof value.code === "string") return `\n${value.code}\n`;
+    if (value.type === "image") return "\n[Image]\n";
+    if (value.type === "linebreak") return "\n";
+    const children = Array.isArray(value.children) ? value.children.map(lexicalPlainText).join("") : "";
+    if (value.type === "paragraph" || value.type === "extended-heading" || value.type === "listitem") return `${children}\n`;
+    if (value.type === "html" && typeof value.html === "string") return `\n${value.html}\n`;
+    return children;
+}
+
+function previousMetadataValue(
+    previous: GhostSnapshot | undefined,
+    field: "custom_excerpt" | "meta_description",
+): string | undefined {
+    if (!previous?.managedFields.includes(field)) return undefined;
+    const value = previous.content[field];
+    return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
 interface CapturedSource {
     exported: GhostExportResult;
     intent: string;
+    nonSlugIntent: string;
     revisions: Map<string, string | number>;
     resourceAdmissions: Map<string, { resourcePath: string; ownerPaths: string[] }>;
     links?: GhostWikiLinkReceipt;
@@ -200,6 +251,7 @@ export async function createGhostActionContext(options: GhostActionContextOption
                 return links.targets;
             } });
         const intent = await intentHash(exported);
+        const nonSlugIntent = await intentHash(exported, true);
         assertRevisions(revisions);
         links?.assertCurrent();
         const resourceAdmissions = new Map(exported.resources.flatMap((resource) => {
@@ -209,7 +261,7 @@ export async function createGhostActionContext(options: GhostActionContextOption
                 resourcePath: resource.resolvedPath, ownerPaths,
             }] as const] : [];
         }));
-        return { exported, revisions, resourceAdmissions, intent, links };
+        return { exported, revisions, resourceAdmissions, intent, nonSlugIntent, links };
     }
     let accepted: CapturedSource | undefined;
     let originalIntent: string | undefined;
@@ -324,13 +376,129 @@ export async function createGhostActionContext(options: GhostActionContextOption
         const markdown = await trackedHost(revisions).vault.read(resolved.file);
         const info = host.getFrontMatterInfo(markdown);
         const frontmatter = info.exists ? host.parseYaml(info.frontmatter) as Record<string, unknown> : {};
-        const intent = await ghostPayloadHash({ body: markdown.slice(info.contentStart), ghost: frontmatter.ghost ?? null });
+        const intent = await ghostPayloadHash({ body: markdown.slice(info.contentStart), ghost: frontmatter.ghost ?? null,
+            ghost_slug: frontmatter.ghost_slug ?? null, excerpt: frontmatter.excerpt ?? null,
+            feature_image: frontmatter.feature_image ?? null });
         assertRevisions(revisions);
         return { intent, revisions };
     }
+    async function prepareDraftSlug(operation: GhostLocalOperation): Promise<{ slug: string; currentIntentHash: string }> {
+        assertActive();
+        const fresh = await capture();
+        if (!operation.currentSource || !same(sourceIdentity(operation.currentSource), sourceIdentity(fresh.exported.sourceManifest))) {
+            fail("source-changed");
+        }
+        const unchangedIntent = operation.currentNonSlugIntentHash
+            ? operation.currentNonSlugIntentHash === fresh.nonSlugIntent
+            : operation.currentIntentHash === fresh.intent;
+        if (!unchangedIntent) fail("source-changed");
+        const accept = (slug: string): { slug: string; currentIntentHash: string } => {
+            assertCaptured(fresh);
+            accepted = fresh;
+            originalIntent = fresh.intent;
+            return { slug, currentIntentHash: fresh.intent };
+        };
+        const exported = fresh.exported;
+        if (exported.fields.slug.mode === "manage" && typeof exported.fields.slug.value === "string") {
+            return accept(exported.fields.slug.value);
+        }
+        if (!options.generateMetadata) fail("metadata-unavailable");
+        const articleText = lexicalPlainText(exported.lexical.root).trim();
+        if (!articleText || exported.fields.title.mode !== "manage" || typeof exported.fields.title.value !== "string") {
+            fail("metadata-invalid");
+        }
+        assertCaptured(fresh);
+        const generated = await options.generateMetadata({
+            title: exported.fields.title.value,
+            articleText,
+            needed: { customExcerpt: false, metaDescription: false, slug: true },
+            signal: abortSignalOf(options.signal),
+            isSourceCurrent: () => {
+                try { assertCaptured(fresh); return true; } catch { return false; }
+            },
+            isConnectionCurrent: () => {
+                try { assertCore(); return true; } catch { return false; }
+            },
+        });
+        assertCaptured(fresh);
+        if (typeof generated.slug !== "string" || !isValidGhostSlug(generated.slug)) fail("metadata-invalid");
+        return accept(generated.slug);
+    }
+    async function prepareMetadata(
+        source: CapturedSource,
+        remote: GhostPost | null,
+        previous: GhostSnapshot | undefined,
+        regenerate: boolean,
+    ): Promise<void> {
+        const exported = source.exported;
+        if (exported.fields.title.mode !== "manage" || typeof exported.fields.title.value !== "string") {
+            fail("invalid-operation");
+        }
+        const preserve = (field: "customExcerpt" | "metaDescription", remoteValue: string | null | undefined): void => {
+            if (exported.fields[field].mode !== "unmanaged") return;
+            const value = regenerate
+                ? undefined
+                : previousMetadataValue(previous, field === "customExcerpt" ? "custom_excerpt" : "meta_description")
+                    ?? (typeof remoteValue === "string" && remoteValue.trim() !== "" ? remoteValue : undefined);
+            if (value !== undefined) exported.fields[field] = { mode: "manage", value };
+        };
+        preserve("customExcerpt", remote?.custom_excerpt);
+        preserve("metaDescription", remote?.meta_description);
+        // URLs are chosen when a new article is first created. Manual ghost_slug is
+        // already present; an existing remote URL is never changed by ordinary prepare.
+        if (remote) exported.fields.slug = { mode: "unmanaged" };
+        if (!remote && exported.fields.slug.mode === "unmanaged" && previous?.slug) {
+            exported.fields.slug = { mode: "manage", value: previous.slug };
+        }
+        const needed = {
+            customExcerpt: exported.fields.customExcerpt.mode === "unmanaged",
+            metaDescription: exported.fields.metaDescription.mode === "unmanaged",
+            slug: remote === null && exported.fields.slug.mode === "unmanaged",
+        };
+        if (!needed.customExcerpt && !needed.metaDescription && !needed.slug) return;
+        if (!options.generateMetadata) fail("metadata-unavailable");
+        for (const resource of source.exported.resources) {
+            if (resource.kind === "remote") {
+                assertWeb();
+                continue;
+            }
+            const admission = resource.resolvedPath ? source.resourceAdmissions.get(resource.resolvedPath) : undefined;
+            if (resource.resolvedPath && options.isResourcePathAllowed
+                && (!admission || options.isResourcePathAllowed(resource.resolvedPath, admission.ownerPaths[0]) !== true)) {
+                fail("source-revoked");
+            }
+        }
+        const articleText = lexicalPlainText(exported.lexical.root).trim();
+        if (!articleText) fail("metadata-invalid");
+        assertCaptured(source);
+        const generated = await options.generateMetadata({
+            title: exported.fields.title.value,
+            articleText,
+            needed,
+            signal: abortSignalOf(options.signal),
+            isSourceCurrent: () => {
+                try { assertCaptured(source); return true; } catch { return false; }
+            },
+            isConnectionCurrent: () => {
+                try { assertCore(); return true; } catch { return false; }
+            },
+        });
+        assertCaptured(source);
+        const assign = (field: "customExcerpt" | "metaDescription", value: string | undefined, maxLength: number): void => {
+            if (!needed[field]) return;
+            if (typeof value !== "string" || !value.trim() || Array.from(value).length > maxLength) fail("metadata-invalid");
+            exported.fields[field] = { mode: "manage", value };
+        };
+        assign("customExcerpt", generated.customExcerpt, GHOST_CUSTOM_EXCERPT_MAX);
+        assign("metaDescription", generated.metaDescription, GHOST_META_DESCRIPTION_MAX);
+        if (needed.slug) {
+            if (typeof generated.slug !== "string" || !isValidGhostSlug(generated.slug)) fail("metadata-invalid");
+            exported.fields.slug = { mode: "manage", value: generated.slug };
+        }
+    }
     const context: GhostActionContext = {
         gate: { signal, assertCurrent: assertActive, beforeSend: async () => assertActive() },
-        prepare: async (remote, completed, kind, previous) => {
+        prepare: async (remote, completed, kind, previous, prepareOptions) => {
             assertActive();
             const fresh = await current();
             if (completed && (completed.binding.siteId !== siteId || completed.binding.site !== adapter.site
@@ -347,6 +515,7 @@ export async function createGhostActionContext(options: GhostActionContextOption
                 historicalRevisions = new Map();
                 historicalResourceAdmissions = new Map();
                 historicalWeb = false;
+                await prepareMetadata(fresh, remote ?? null, previous, prepareOptions?.regenerateMetadata === true);
                 for (const plan of fresh.exported.resources) {
                     const image = await readResource(plan, fresh);
                     images.set(plan.id, image);
@@ -359,7 +528,9 @@ export async function createGhostActionContext(options: GhostActionContextOption
             assertCaptured(fresh);
             accepted = fresh;
             originalIntent ??= fresh.intent;
-            return { candidate, currentSource: fresh.exported.sourceManifest, currentIntentHash: fresh.intent, images: prepared,
+            return { candidate, currentSource: fresh.exported.sourceManifest, currentIntentHash: fresh.intent,
+                currentNonSlugIntentHash: fresh.nonSlugIntent, images: prepared,
+                slugCandidate: fresh.exported.fields.slug.mode === "manage" ? fresh.exported.fields.slug.value : undefined,
                 replacePreview: replacement === "replace-all" };
         },
         validate: async (operation: GhostLocalOperation, purpose = "candidate") => {
@@ -424,6 +595,7 @@ export async function createGhostActionContext(options: GhostActionContextOption
             assertCaptured(accepted);
             return { ...image, metadata: { ...image.metadata }, bytes: new Uint8Array(image.bytes) };
         },
+        prepareDraftSlug,
         bind: async (post) => {
             assertActive();
             const before = await bindingIntent();

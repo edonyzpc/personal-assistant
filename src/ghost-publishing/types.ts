@@ -92,9 +92,11 @@ export interface ManagedFieldValue<T> {
 
 export interface GhostPublishingFields {
     title: ManagedFieldValue<string>;
+    slug: ManagedFieldValue<string>;
     tags: ManagedFieldValue<string[]>;
     featureImage: ManagedFieldValue<string>;
     customExcerpt: ManagedFieldValue<string>;
+    metaDescription: ManagedFieldValue<string>;
 }
 
 export type ResourceKind = "local" | "remote" | "unresolved";

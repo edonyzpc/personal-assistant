@@ -4,7 +4,7 @@ import type { RunSourceSelection } from "../ai-services/chat-source-scope";
 import { TaskSourceConstraintState } from "../ai-services/task-source-constraint";
 import { getVaultConfigDir } from "../obsidian-paths";
 import { GhostPublishingConfiguration, type GhostPublishingSettings } from "./configuration";
-import { GhostPublishingController, type GhostActionAuthority, type GhostPublishingSession } from "./controller";
+import { GhostPublishingController, type GhostActionAuthority, type GhostControllerOptions, type GhostPublishingSession } from "./controller";
 import { parseGhostCommand, resolveGhostRequestedNote } from "./entry";
 
 export interface GhostChatBindingRequest {
@@ -34,8 +34,9 @@ export class GhostPublishingIntegration {
         saveSettings(settings: GhostPublishingSettings): Promise<void>;
         isCurrent(): boolean;
         isPathAllowed(path: string): boolean;
-        isContentAllowed(path: string, markdown: string): boolean;
-        isWebAllowed(): boolean;
+    isContentAllowed(path: string, markdown: string): boolean;
+    isWebAllowed(): boolean;
+    generateMetadata?: GhostControllerOptions["generateMetadata"];
     }) {
         const { app, vaultPath, pluginId } = dependencies;
         const isDesktop = () => Platform.isDesktop && !Platform.isMobile && !this.disposed && dependencies.isCurrent();
@@ -64,6 +65,7 @@ export class GhostPublishingIntegration {
             isContentAllowed: dependencies.isContentAllowed,
             openExternal,
             isCurrent: () => !this.disposed && dependencies.isCurrent(),
+            generateMetadata: dependencies.generateMetadata,
             isWebViewerEnabled: () => {
                 const internal = app as unknown as { internalPlugins?: {
                     getPluginById?(id: string): { enabled?: boolean } | undefined;

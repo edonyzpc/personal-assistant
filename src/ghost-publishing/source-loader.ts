@@ -1,5 +1,6 @@
 import { GhostExportError } from "./errors";
-import { createGhostMarkdownIt, GHOST_EMBED_TOKEN } from "./markdown-parser";
+import { createGhostMarkdownIt, GHOST_EMBED_TOKEN, parseGhostMarkdown } from "./markdown-parser";
+import { cleanObsidianComments } from "./source-cleanup";
 import { mapInlineRangeToSource } from "./source-position";
 import type {
     GhostPublishingHost,
@@ -18,6 +19,8 @@ interface LoadedFile {
     file: GhostPublishingSourceFile;
     markdown: string;
     body: string;
+    cleanBody: string;
+    cleanOffsets: number[];
     frontmatter: Record<string, unknown>;
     frontmatterLines: number;
     bodyHash: string;
@@ -27,7 +30,9 @@ interface SourceSelection {
     start: number;
     end: number;
     text: string;
+    rawText: string;
     sourceLine: number;
+    spans: Array<Omit<SourceMapSpan, "dependencyIndex" | "path">>;
 }
 
 interface ExpansionResult {
@@ -76,7 +81,7 @@ function isImagePath(path: string): boolean {
 function lineOffsets(value: string): number[] {
     const offsets = [0];
     for (let index = 0; index < value.length; index += 1) {
-        if (value[index] === "\n") offsets.push(index + 1);
+        if (isRawNewlineStart(value, index)) offsets.push(index + 1);
     }
     return offsets;
 }
@@ -90,7 +95,7 @@ function sourceLineAt(text: string, spans: SourceMapSpan[], position: number): n
     const span = spans.find((candidate) => position >= candidate.start && position < candidate.end)
         ?? [...spans].reverse().find((candidate) => candidate.start <= position);
     if (!span) return 0;
-    return span.sourceLine + (text.slice(span.start, position).match(/\n/g)?.length ?? 0);
+    return span.sourceLine + countRawNewlines(text.slice(span.start, position));
 }
 
 function assertGuardCurrent(
@@ -190,14 +195,97 @@ async function loadFile(
         throw new GhostExportError("source-changed", `Source changed during read: ${file.path}`, file.path);
     }
     const parsed = parseFrontmatter(markdown, host);
+    const cleaned = cleanObsidianComments(parsed.body, file.path);
     return {
         file,
         markdown,
         body: parsed.body,
+        cleanBody: cleaned.text,
+        cleanOffsets: cleaned.sourceOffsets,
         frontmatter: parsed.frontmatter,
         frontmatterLines: parsed.frontmatterLines,
         bodyHash: await sha256(parsed.body),
     };
+}
+
+function lineStarts(value: string): number[] {
+    const result = [0];
+    for (let index = 0; index < value.length; index += 1) {
+        if (isRawNewlineStart(value, index)) result.push(index + 1);
+    }
+    return result;
+}
+
+function isRawNewlineStart(value: string, index: number): boolean {
+    return value[index] === "\n" || (value[index] === "\r" && value[index + 1] !== "\n");
+}
+
+function countRawNewlines(value: string): number {
+    let count = 0;
+    for (let index = 0; index < value.length; index += 1) {
+        if (isRawNewlineStart(value, index)) count += 1;
+    }
+    return count;
+}
+
+function lineAtOffset(value: string, offset: number): number {
+    const starts = lineStarts(value);
+    let result = 0;
+    while (result + 1 < starts.length && starts[result + 1] <= offset) result += 1;
+    return result;
+}
+
+function rawRangeForCleanRange(loaded: LoadedFile, start: number, end: number): { start: number; end: number } {
+    if (end <= start) return { start: loaded.body.length, end: loaded.body.length };
+    const rawStart = loaded.cleanOffsets[start] ?? loaded.body.length;
+    const lastRaw = loaded.cleanOffsets[end - 1] ?? rawStart;
+    return { start: rawStart, end: Math.max(rawStart + 1, lastRaw + 1) };
+}
+
+function cleanOffsetForRawOffset(loaded: LoadedFile, rawOffset: number): number {
+    let result = 0;
+    while (result < loaded.cleanOffsets.length && loaded.cleanOffsets[result] < rawOffset) result += 1;
+    return result;
+}
+
+function cleanLineForRawLine(loaded: LoadedFile, rawLine: number): number {
+    const starts = lineStarts(loaded.cleanBody);
+    let result = 0;
+    while (result + 1 < starts.length) {
+        const nextRawLine = lineAtOffset(loaded.body, loaded.cleanOffsets[starts[result + 1]] ?? loaded.body.length);
+        if (nextRawLine > rawLine) break;
+        result += 1;
+    }
+    return result;
+}
+
+function selectionSpans(loaded: LoadedFile, start: number, end: number): Array<Omit<SourceMapSpan, "dependencyIndex" | "path">> {
+    const result: Array<Omit<SourceMapSpan, "dependencyIndex" | "path">> = [];
+    let segmentStart: number | undefined;
+    let previousRaw = -2;
+    for (let offset = start; offset < end; offset += 1) {
+        const raw = loaded.cleanOffsets[offset];
+        if (raw === undefined) break;
+        if (segmentStart === undefined || raw !== previousRaw + 1) {
+            if (segmentStart !== undefined) {
+                result.push({
+                    start: segmentStart,
+                    end: offset,
+                    sourceLine: loaded.frontmatterLines + lineAtOffset(loaded.body, loaded.cleanOffsets[segmentStart] ?? 0),
+                });
+            }
+            segmentStart = offset;
+        }
+        previousRaw = raw;
+    }
+    if (segmentStart !== undefined) {
+        result.push({
+            start: segmentStart,
+            end,
+            sourceLine: loaded.frontmatterLines + lineAtOffset(loaded.body, loaded.cleanOffsets[segmentStart] ?? 0),
+        });
+    }
+    return result;
 }
 
 function positionToBodyOffset(loaded: LoadedFile, line: number, col: number): number {
@@ -206,11 +294,27 @@ function positionToBodyOffset(loaded: LoadedFile, line: number, col: number): nu
 }
 
 function resolveWholeSelection(loaded: LoadedFile): SourceSelection {
+    const spans = selectionSpans(loaded, 0, loaded.cleanBody.length);
     return {
         start: 0,
-        end: loaded.body.length,
-        text: loaded.body,
-        sourceLine: loaded.frontmatterLines,
+        end: loaded.cleanBody.length,
+        text: loaded.cleanBody,
+        rawText: loaded.body,
+        sourceLine: loaded.frontmatterLines + (spans[0]?.sourceLine ?? 0),
+        spans,
+    };
+}
+
+function selectionFromCleanRange(loaded: LoadedFile, start: number, end: number): SourceSelection {
+    const raw = rawRangeForCleanRange(loaded, start, end);
+    const spans = selectionSpans(loaded, start, end);
+    return {
+        start,
+        end,
+        text: loaded.cleanBody.slice(start, end),
+        rawText: loaded.body.slice(raw.start, raw.end),
+        sourceLine: loaded.frontmatterLines + (spans[0]?.sourceLine ?? lineAtOffset(loaded.body, raw.start)),
+        spans,
     };
 }
 
@@ -219,14 +323,14 @@ function resolveHeadingSelection(
     loaded: LoadedFile,
     heading: string,
 ): SourceSelection {
-    const lines = loaded.body.split(/\r?\n/);
+    const lines = loaded.cleanBody.split(/\r\n|\r|\n/);
     interface SnapshotHeading {
         line: number;
         endLine: number;
         level: number;
         text: string;
     }
-    const tokens = markdownIt.parse(loaded.body, {});
+    const tokens = parseGhostMarkdown(markdownIt, loaded.cleanBody);
     const headings: SnapshotHeading[] = [];
     for (let index = 0; index < tokens.length; index += 1) {
         const token = tokens[index];
@@ -255,7 +359,13 @@ function resolveHeadingSelection(
     const metadataLine = resolved?.type === "heading"
         ? resolved.start.line - loaded.frontmatterLines
         : undefined;
-    const matching = headings.filter((candidate) => candidate.text.toLowerCase() === wanted);
+    const matching = headings.filter((candidate) => {
+        if (candidate.text.toLowerCase() !== wanted) return false;
+        if (metadataLine === undefined) return true;
+        const cleanStart = offsetAtLine(loaded.cleanBody, candidate.line);
+        const rawLine = lineAtOffset(loaded.body, loaded.cleanOffsets[cleanStart] ?? loaded.body.length);
+        return rawLine === metadataLine;
+    });
     const headingSnapshot = metadataLine === undefined
         ? matching[0]
         : matching.find((candidate) => candidate.line === metadataLine) ?? matching[0];
@@ -264,13 +374,14 @@ function resolveHeadingSelection(
     }
     const headingIndex = headingSnapshot.line;
     const endIndex = headingSnapshot.endLine;
-    const start = offsetAtLine(loaded.body, headingIndex);
-    const end = endIndex < lines.length ? offsetAtLine(loaded.body, endIndex) : loaded.body.length;
+    const start = offsetAtLine(loaded.cleanBody, headingIndex);
+    const end = endIndex < lines.length ? offsetAtLine(loaded.cleanBody, endIndex) : loaded.cleanBody.length;
+    const selection = selectionFromCleanRange(loaded, start, end);
     return {
-        start,
-        end,
-        text: loaded.body.slice(start, end).replace(/\s+$/, ""),
-        sourceLine: loaded.frontmatterLines + headingIndex,
+        ...selection,
+        text: selection.text.replace(/\s+$/, ""),
+        rawText: selection.rawText.replace(/\s+$/, ""),
+        sourceLine: loaded.frontmatterLines + lineAtOffset(loaded.body, rawRangeForCleanRange(loaded, start, start).start),
     };
 }
 
@@ -286,7 +397,7 @@ function resolveBlockSelection(
     loaded: LoadedFile,
     blockId: string,
 ): SourceSelection {
-    const lines = loaded.body.split(/\r?\n/);
+    const lines = loaded.cleanBody.split(/\r\n|\r|\n/);
     const marker = `^${blockId}`;
     let index = lines.findIndex((line) => line.trimEnd().endsWith(marker));
     let endIndex = index + 1;
@@ -294,9 +405,9 @@ function resolveBlockSelection(
     const cache = host.metadataCache?.getFileCache?.(loaded.file);
     const resolved = host.resolveSubpath?.(cache ?? {}, `#^${blockId}`);
     if (resolved?.type === "block") {
-        const candidate = resolved.start.line - loaded.frontmatterLines;
+        const candidate = cleanLineForRawLine(loaded, resolved.start.line - loaded.frontmatterLines);
         const resolvedEnd = resolved.end
-            ? resolved.end.line - loaded.frontmatterLines
+            ? cleanLineForRawLine(loaded, resolved.end.line - loaded.frontmatterLines)
             : lines.length;
         const snapshotRange = lines.slice(candidate, Math.max(candidate + 1, resolvedEnd + 1)).join("\n");
         if (candidate >= 0
@@ -304,13 +415,14 @@ function resolveBlockSelection(
             && snapshotRange.includes(marker)) {
             index = candidate;
             if (resolved.end) {
-                const start = offsetAtLine(loaded.body, index);
-                const end = Math.max(start + 1, positionToBodyOffset(loaded, resolved.end.line, resolved.end.col));
+                const start = offsetAtLine(loaded.cleanBody, index);
+                const rawEnd = positionToBodyOffset(loaded, resolved.end.line, resolved.end.col);
+                const end = Math.max(start + 1, cleanOffsetForRawOffset(loaded, rawEnd));
+                const selection = selectionFromCleanRange(loaded, start, end);
                 return {
-                    start,
-                    end,
-                    text: stripBlockMarker(loaded.body.slice(start, end), blockId),
-                    sourceLine: loaded.frontmatterLines + index,
+                    ...selection,
+                    text: stripBlockMarker(selection.text, blockId),
+                    rawText: stripBlockMarker(selection.rawText, blockId),
                 };
             }
             endIndex = candidate + 1;
@@ -320,13 +432,13 @@ function resolveBlockSelection(
         throw new GhostExportError("embed-subpath-not-found", `Block not found: #^${blockId}`, loaded.file.path);
     }
     while (endIndex < lines.length && lines[endIndex]?.trim() !== "") endIndex += 1;
-    const start = offsetAtLine(loaded.body, index);
-    const end = endIndex < lines.length ? offsetAtLine(loaded.body, endIndex) : loaded.body.length;
+    const start = offsetAtLine(loaded.cleanBody, index);
+    const end = endIndex < lines.length ? offsetAtLine(loaded.cleanBody, endIndex) : loaded.cleanBody.length;
+    const selection = selectionFromCleanRange(loaded, start, end);
     return {
-        start,
-        end,
-        text: stripBlockMarker(loaded.body.slice(start, end), blockId),
-        sourceLine: loaded.frontmatterLines + index,
+        ...selection,
+        text: stripBlockMarker(selection.text, blockId),
+        rawText: stripBlockMarker(selection.rawText, blockId),
     };
 }
 
@@ -342,7 +454,7 @@ function resolveSelection(
 }
 
 function firstNoteEmbed(text: string): EmbedMatch | null {
-    const tokens = markdownIt.parse(text, {});
+    const tokens = parseGhostMarkdown(markdownIt, text);
     for (const token of tokens) {
         if (token.type !== "inline") continue;
         for (const child of token.children ?? []) {
@@ -487,13 +599,14 @@ async function expandSelection(
     expansionCache: Map<string, ExpansionResult>,
 ): Promise<ExpansionResult> {
     let text = selection.text;
-    let spans: SourceMapSpan[] = [{
-        start: 0,
-        end: text.length,
+    const replacementBase = selection.spans[0]?.start ?? 0;
+    let spans: SourceMapSpan[] = selection.spans.map(span => ({
+        ...span,
+        start: span.start - replacementBase,
+        end: span.end - replacementBase,
         path: loaded.file.path,
         dependencyIndex,
-        sourceLine: selection.sourceLine,
-    }];
+    }));
     let match = firstNoteEmbed(text);
     while (match) {
         const originalSourceLine = sourceLineAt(text, spans, match.start);
@@ -541,7 +654,7 @@ async function expandSelection(
                 childDependencyIndex,
                 expansionCache,
             );
-            dependencies[childDependencyIndex].contentHash = await sha256(childExpansion.text);
+            dependencies[childDependencyIndex].contentHash = await sha256(childSelection.rawText);
             expansionCache.set(cacheKey, childExpansion);
         }
         const replaced = replaceRange(text, spans, match.start, match.end, childExpansion.text, childExpansion.spans);

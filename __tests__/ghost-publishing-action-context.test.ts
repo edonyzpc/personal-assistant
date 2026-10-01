@@ -1,11 +1,13 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { createPrepareGhostPostTool, type ChatToolContext } from "../src/ai-services/chat-tools";
 import { TaskSourceRun } from "../src/ai-services/task-source-run";
-import { createGhostActionContext, type GhostActionContextOptions, type GhostActionHost } from "../src/ghost-publishing/action-context";
-import type { GhostPost, GhostRequestGate } from "../src/ghost-publishing/client";
+import { createGhostActionContext, type GhostActionContextOptions, type GhostActionHost, type GhostMetadataGenerator } from "../src/ghost-publishing/action-context";
+import type { GhostPost, GhostPostWrite, GhostRequestGate } from "../src/ghost-publishing/client";
 import { acceptGhostFormatting, materializeGhostSnapshot } from "../src/ghost-publishing/snapshot";
 import { sealCompletedRecord, sealLocalOperation, type GhostLocalOperation, type GhostSnapshot } from "../src/ghost-publishing/state-schema";
-import type { GhostActionContext } from "../src/ghost-publishing/service";
+import { GhostPublishingService, type GhostActionContext } from "../src/ghost-publishing/service";
+import { GhostOperationStore } from "../src/ghost-publishing/state-store";
+import { FakeGovernanceIndexedDbFactory } from "./helpers/fake-governance-indexeddb";
 import type { GhostPublishingSourceFile, SitePublishingProfile } from "../src/ghost-publishing/types";
 
 const SITE = "https://ghost.example/";
@@ -66,6 +68,11 @@ function fixture(content = "Current paragraph.") {
         gate.assertCurrent();
         return { bytes, mimeType: "image/png" };
     });
+    const generateMetadata = jest.fn<GhostMetadataGenerator>(async input => ({
+        ...(input.needed.customExcerpt ? { customExcerpt: "Generated article summary" } : {}),
+        ...(input.needed.metaDescription ? { metaDescription: "Generated independent SEO description" } : {}),
+        ...(input.needed.slug ? { slug: "generated-article-url" } : {}),
+    }));
     const options: GhostActionContextOptions = {
         selection: { path: "Article.md" }, host, client: { downloadImage }, isDesktop: () => state.desktop,
         guard: { isCurrent: () => state.current, isPathAllowed: (path) => path !== state.denied,
@@ -73,16 +80,17 @@ function fixture(content = "Current paragraph.") {
         sourceValidity: () => state.receipt, siteId: "site-a", siteUrl: SITE,
         getConnectionIdentity: () => state.connection, getProfile: () => state.profile,
         getSourceRevision: (path) => files.find((file) => file.path === path)?.revision ?? "missing",
-        defaultVisibility: "public", signal: controller.signal, createNoteUid: () => UID,
+        defaultVisibility: "public", signal: controller.signal, createNoteUid: () => UID, generateMetadata,
     };
-    return { files, state, controller, replace, read, readBinary, processFrontMatter, downloadImage, options };
+    return { files, state, controller, replace, read, readBinary, processFrontMatter, downloadImage, generateMetadata, options };
 }
 
 type Prepared = Awaited<ReturnType<GhostActionContext["prepare"]>>;
 function operation(prepared: Prepared, kind: GhostLocalOperation["kind"] = "create"): GhostLocalOperation {
     return sealLocalOperation({ schemaVersion: 1, revision: 1, operationId: "op-one", siteId: "site-a", site: SITE,
         noteUid: UID, kind, state: "prepared", candidate: prepared.candidate, currentSource: prepared.currentSource,
-        currentIntentHash: prepared.currentIntentHash, baselineRevision: null, target: {}, confirmation: null, updatedAt: NOW });
+        currentIntentHash: prepared.currentIntentHash, currentNonSlugIntentHash: prepared.currentNonSlugIntentHash,
+        baselineRevision: null, target: {}, confirmation: null, updatedAt: NOW });
 }
 function post(candidate: GhostSnapshot): GhostPost {
     return { ...candidate.content, id: POST, uuid: "11111111-1111-1111-1111-111111111111", status: "published", updated_at: NOW,
@@ -92,6 +100,46 @@ function completed(baseline: GhostSnapshot, lastUndo?: GhostSnapshot) {
     return sealCompletedRecord({ schemaVersion: 1, revision: 1,
         binding: { noteUid: UID, siteId: "site-a", site: SITE, postId: POST, postUrl: `${SITE}article/` },
         completed: { postId: POST, postUrl: `${SITE}article/`, updatedAt: NOW, status: "published", verifiedAt: NOW }, baseline, lastUndo });
+}
+
+async function hostDraftFixture() {
+    const f = fixture("Unchanged article body.");
+    const operations = new GhostOperationStore({ dbName: "host-draft-url-test", isDesktop: () => true,
+        indexedDb: new FakeGovernanceIndexedDbFactory() as unknown as IDBFactory });
+    let remote!: GhostPost;
+    let version = 0;
+    const nextVersion = () => new Date(Date.parse(NOW) + ++version * 1000).toISOString();
+    const writes: GhostPostWrite[] = [];
+    const send = async (gate: GhostRequestGate) => { await gate.beforeSend(); gate.assertCurrent(); };
+    const client = {
+        findPostsByMarker: async (_marker: string, gate: GhostRequestGate) => { await send(gate); return []; },
+        readPost: async (_id: string, gate: GhostRequestGate) => { await send(gate); return structuredClone(remote); },
+        createDraft: async (fields: GhostPostWrite, gate: GhostRequestGate) => {
+            await send(gate);
+            const [pending] = await operations.list("site-a", UID);
+            remote = { ...post(pending.candidate), ...fields, status: "draft", updated_at: nextVersion(),
+                slug: fields.slug!, url: `${SITE}${fields.slug}/`,
+                tags: (fields.tags ?? []).map(tag => ({ ...tag, name: tag.name! })),
+            };
+            return structuredClone(remote);
+        },
+        updatePost: async (_id: string, expectedVersion: string, fields: GhostPostWrite, gate: GhostRequestGate) => {
+            await send(gate);
+            expect(expectedVersion).toBe(remote.updated_at);
+            writes.push(structuredClone(fields));
+            remote = { ...remote, ...fields, tags: remote.tags, updated_at: nextVersion(),
+                slug: fields.slug ?? remote.slug, url: fields.slug ? `${SITE}${fields.slug}/` : remote.url };
+            return structuredClone(remote);
+        },
+        deleteDraft: async () => undefined,
+        uploadImage: async () => { throw new Error("This fixture has no image"); },
+    };
+    const service = new GhostPublishingService({ siteId: "site-a", site: SITE, isDesktop: () => true,
+        client, operations, records: { read: async () => null, write: async () => undefined },
+        newId: () => "host-draft-url-op", now: nextVersion });
+    const action = await createGhostActionContext(f.options);
+    const prepared = await service.prepare(UID, undefined, action.context);
+    return { f, service, operations, prepared, writes, get remote() { return remote; } };
 }
 
 describe("Ghost Host action context", () => {
@@ -189,6 +237,138 @@ describe("Ghost Host action context", () => {
         expect(unverified.candidate.warnings?.[0].code).toBe("unpublished-wiki-link");
     });
 
+    it("generates missing Ghost metadata once with manual and remote precedence", async () => {
+        const f = fixture("A full synthetic article body.");
+        const action = await createGhostActionContext(f.options);
+        const prepared = await action.context.prepare(null, null, "create");
+        expect(prepared.candidate.content).toMatchObject({
+            custom_excerpt: "Generated article summary",
+            meta_description: "Generated independent SEO description",
+        });
+        expect(f.generateMetadata).toHaveBeenCalledTimes(1);
+        expect(f.generateMetadata.mock.calls[0][0].articleText).toContain("A full synthetic article body.");
+        expect(f.generateMetadata.mock.calls[0][0].needed).toEqual({
+            customExcerpt: true, metaDescription: true, slug: true,
+        });
+        expect(prepared.slugCandidate).toBe("generated-article-url");
+
+        await action.context.prepare(null, null, "create", prepared.candidate);
+        expect(f.generateMetadata).toHaveBeenCalledTimes(1);
+        const resumed = await createGhostActionContext(f.options);
+        await resumed.context.prepare(null, null, "create", prepared.candidate);
+        expect(f.generateMetadata).toHaveBeenCalledTimes(1);
+
+        const remoteSeed = await (await createGhostActionContext(f.options)).context.prepare(null, null, "create");
+        const remote = post(remoteSeed.candidate);
+        remote.custom_excerpt = "Remote summary";
+        remote.meta_description = "Remote SEO";
+        const remoteBaseline = {
+            ...remoteSeed.candidate,
+            content: {
+                ...remoteSeed.candidate.content,
+                custom_excerpt: "Remote summary",
+                meta_description: "Remote SEO",
+            },
+        };
+        const remoteAction = await createGhostActionContext(f.options);
+        f.generateMetadata.mockClear();
+        await remoteAction.context.prepare(remote, null, "update", remoteBaseline);
+        expect(f.generateMetadata).not.toHaveBeenCalled();
+
+        const manual = fixture("Manual excerpt article.");
+        manual.replace(manual.files[0], "Manual excerpt article.", { excerpt: "Manual excerpt", ghost_slug: "manual-article-url" });
+        const manualAction = await createGhostActionContext(manual.options);
+        const manualPrepared = await manualAction.context.prepare(null, null, "create");
+        expect(manualPrepared.candidate.content).toMatchObject({
+            custom_excerpt: "Manual excerpt",
+            meta_description: "Generated independent SEO description",
+        });
+        expect(manual.generateMetadata).toHaveBeenCalledTimes(1);
+        expect(manual.generateMetadata.mock.calls[0][0].needed).toEqual({
+            customExcerpt: false, metaDescription: true, slug: false,
+        });
+
+        const cleared = fixture("Explicitly cleared metadata.");
+        cleared.replace(cleared.files[0], "Explicitly cleared metadata.", {
+            ghost: { custom_excerpt: null, meta_description: "" },
+        });
+        const clearedAction = await createGhostActionContext(cleared.options);
+        const clearedPrepared = await clearedAction.context.prepare(null, null, "create");
+        expect(clearedPrepared.candidate.content).toMatchObject({
+            custom_excerpt: null, meta_description: null,
+        });
+        expect(cleared.generateMetadata).toHaveBeenCalledTimes(1);
+        expect(cleared.generateMetadata.mock.calls[0][0].needed).toEqual({
+            customExcerpt: false, metaDescription: false, slug: true,
+        });
+
+        const regenerate = await createGhostActionContext(f.options);
+        f.generateMetadata.mockClear();
+        await regenerate.context.prepare(null, null, "create", prepared.candidate, { regenerateMetadata: true });
+        expect(f.generateMetadata).toHaveBeenCalledTimes(1);
+
+        const failure = fixture("Failure stops the candidate.");
+        failure.generateMetadata.mockRejectedValueOnce(new Error("provider unavailable"));
+        await expect((await createGhostActionContext(failure.options)).context.prepare(null, null, "create"))
+            .rejects.toThrow("provider unavailable");
+    });
+
+    it("prepares an explicit draft URL from manual input or one slug-only model request", async () => {
+        const manual = fixture("Manual URL article.");
+        manual.replace(manual.files[0], "Manual URL article.", { ghost_slug: "manual-draft-url" });
+        const manualAction = await createGhostActionContext(manual.options);
+        await expect(manualAction.context.prepareDraftSlug(operation(
+            await manualAction.context.prepare(null, null, "create"),
+        ))).resolves.toEqual({ slug: "manual-draft-url", currentIntentHash: expect.any(String) });
+        expect(manual.generateMetadata).toHaveBeenCalledTimes(1);
+
+        const generated = fixture("Generated URL article.");
+        const generatedAction = await createGhostActionContext(generated.options);
+        const prepared = await generatedAction.context.prepare(null, null, "create");
+        generated.generateMetadata.mockClear();
+        await expect(generatedAction.context.prepareDraftSlug(operation(prepared))).resolves.toMatchObject({
+            slug: "generated-article-url",
+        });
+        expect(generated.generateMetadata).toHaveBeenCalledTimes(1);
+        expect(generated.generateMetadata.mock.calls[0][0].needed).toEqual({
+            customExcerpt: false, metaDescription: false, slug: true,
+        });
+    });
+
+    it("admits a manual slug added after preparation through the real Host and service gate", async () => {
+        const app = await hostDraftFixture();
+        const before = structuredClone(app.remote);
+        app.f.replace(app.f.files[0], body(app.f.files[0]), { ...properties(app.f.files[0]), ghost_slug: "manual-after-preparation" });
+        const action = await createGhostActionContext(app.f.options);
+        const changed = await app.service.changeDraftUrl(UID, app.prepared.operationId, action.context);
+        expect(app.writes).toEqual([{ slug: "manual-after-preparation" }]);
+        expect(app.remote.id).toBe(before.id);
+        expect(app.remote.lexical).toBe(before.lexical);
+        expect(app.remote.custom_excerpt).toBe(before.custom_excerpt);
+        expect(app.remote.tags).toEqual(before.tags);
+        expect(changed.target.postUrl).toBe(`${SITE}manual-after-preparation/`);
+        expect(properties(app.f.files[0]).pa_ghost_post_url).toBe(changed.target.postUrl);
+        expect(app.f.generateMetadata).toHaveBeenCalledTimes(1);
+        app.operations.close();
+    });
+
+    it("rejects a simultaneous body or other publishing-field edit before a draft URL PUT", async () => {
+        for (const changeBody of [true, false]) {
+            const app = await hostDraftFixture();
+            app.f.replace(app.f.files[0], changeBody ? "Changed body." : body(app.f.files[0]), {
+                ...properties(app.f.files[0]), ghost_slug: "manual-after-preparation",
+                ...(!changeBody ? { excerpt: "Changed excerpt intention" } : {}),
+            });
+            const action = await createGhostActionContext(app.f.options);
+            await expect(app.service.changeDraftUrl(UID, app.prepared.operationId, action.context))
+                .rejects.toMatchObject({ code: "source-changed" });
+            expect(app.writes).toHaveLength(0);
+            expect(app.f.generateMetadata).toHaveBeenCalledTimes(1);
+            expect(app.remote.slug).toBe("generated-article-url");
+            app.operations.close();
+        }
+    });
+
     it("rejects permission or completed-record changes while a linked record read is pending", async () => {
         const revoked = await linkedFixture();
         revoked.readRecord.mockImplementation(async () => { await Promise.resolve(); revoked.state.denied = "Embed.md"; return revoked.record; });
@@ -246,7 +426,9 @@ describe("Ghost Host action context", () => {
         const f = fixture("Current paragraph.\n\n![[Embed.md]]");
         const action = await createGhostActionContext(f.options);
         expect(action.noteUid).toBe(UID);
-        expect(properties(f.files[0]).pa_ghost).toEqual({ note_uid: UID, site: SITE });
+        expect(properties(f.files[0])).toEqual({
+            pa_ghost: UID, pa_ghost_site: SITE,
+        });
         expect(f.processFrontMatter).toHaveBeenCalledTimes(1);
         const prepared = await action.context.prepare(null, null, "create");
         expect(prepared.candidate.content.lexical).toContain("Embedded paragraph.");
@@ -372,8 +554,10 @@ describe("Ghost Host action context", () => {
         const now = await currentAction.context.prepare(null, null, "create");
         const record = completed(now.candidate, history);
         f.readBinary.mockClear();
+        f.generateMetadata.mockClear();
         const restore = await currentAction.context.prepare(post(now.candidate), record, "restore");
         expect(restore.candidate.content.lexical).toContain("Historical paragraph.");
+        expect(f.generateMetadata).not.toHaveBeenCalled();
         expect(restore.currentSource.dependencies[0].contentHash).not.toBe(restore.candidate.source.dependencies[0].contentHash);
         const saved = operation(restore, "restore");
         await expect(currentAction.context.validate(saved)).resolves.toBeUndefined();
@@ -434,6 +618,150 @@ describe("Ghost Host action context", () => {
         expect(JSON.stringify(nodes[1])).toContain("Changed locally.");
     });
 
+    it("rejects metadata generation when source, Ghost connection, or image permission changes", async () => {
+        const source = fixture("Article awaiting metadata.");
+        let finish!: (value: { customExcerpt: string; metaDescription: string }) => void;
+        source.generateMetadata.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        const sourceAction = await createGhostActionContext(source.options);
+        const sourcePreparation = sourceAction.context.prepare(null, null, "create");
+        await waitForMetadataCall(() => typeof finish === "function");
+        source.files[0].revision++;
+        finish({ customExcerpt: "late", metaDescription: "late" });
+        await expect(sourcePreparation).rejects.toMatchObject({ code: "source-changed" });
+
+        const connection = fixture("Article awaiting metadata.");
+        finish = undefined as never;
+        connection.generateMetadata.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        const connectionAction = await createGhostActionContext(connection.options);
+        const connectionPreparation = connectionAction.context.prepare(null, null, "create");
+        await waitForMetadataCall(() => typeof finish === "function");
+        connection.state.connection = "config-1-key-ref-revision-2";
+        finish({ customExcerpt: "late", metaDescription: "late" });
+        await expect(connectionPreparation).rejects.toMatchObject({ code: "connection-changed" });
+
+        const permission = fixture("![cover](cover.png)");
+        permission.options.isResourcePathAllowed = () => false;
+        const permissionAction = await createGhostActionContext(permission.options);
+        await expect(permissionAction.context.prepare(null, null, "create"))
+            .rejects.toMatchObject({ code: "source-revoked" });
+        expect(permission.generateMetadata).not.toHaveBeenCalled();
+    });
+
+    it("gates the physical metadata request on fresh embed admission and revision checks", async () => {
+        interface FreshMetadataFixture {
+            files: File[];
+            state: { denied: string };
+            read: { mock: { calls: Array<[GhostPublishingSourceFile]> } };
+            options: GhostActionContextOptions;
+        }
+        const runCase = async (change: (fixture: FreshMetadataFixture) => void) => {
+            const f = fixture("Article awaiting metadata.\n\n![[Embed.md]]") as FreshMetadataFixture;
+            const invoke = jest.fn(async () => ({
+                customExcerpt: "late summary",
+                metaDescription: "late SEO description",
+            }));
+            let sendModel!: () => void;
+            f.options.generateMetadata = input => new Promise((resolve, reject) => {
+                sendModel = () => {
+                    try {
+                        if (input.isSourceCurrent() !== true) throw new Error("fresh source admission failed");
+                        resolve(invoke());
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
+            });
+            const action = await createGhostActionContext(f.options);
+            const preparation = action.context.prepare(null, null, "create");
+            await waitForMetadataCall(() => typeof sendModel === "function");
+            expect(f.read.mock.calls.some(([file]) => file.path === "Embed.md")).toBe(true);
+            change(f);
+            sendModel();
+            await expect(preparation).rejects.toThrow("fresh source admission failed");
+            expect(invoke).not.toHaveBeenCalled();
+        };
+
+        await runCase(f => { f.files[1].revision++; });
+        await runCase(f => { f.state.denied = "Embed.md"; });
+    });
+
+    it("keeps raw hidden-comment dependency identity across a fresh context", async () => {
+        const f = fixture("Main body.\n\n![[Embed.md]]");
+        const initialAction = await createGhostActionContext(f.options);
+        const initial = await initialAction.context.prepare(null, null, "create");
+        const saved = operation(initial);
+        const embedded = f.files[1];
+        embedded.text = text("%% one hidden variant %% Embedded paragraph.");
+        // Preserve the fixture revision and stat: only raw admitted bytes change.
+        embedded.revision = 1;
+        embedded.stat = { mtime: 1, size: 100 };
+        const freshAction = await createGhostActionContext(f.options);
+        await expect(freshAction.context.validate(saved)).rejects.toMatchObject({ code: "source-changed" });
+    });
+
+    it("rejects ambiguous PA covers before a cover binary is read", async () => {
+        const f = fixture([
+            ">[!personal-assistant]+ Featured Images",
+            "> ![[cover.png]]",
+            "",
+            ">[!personal-assistant]- 题图",
+            "> ![[second-cover.png]]",
+        ].join("\n"));
+        f.files.push({ ...f.files[2], path: "second-cover.png", bytes: new Uint8Array([2]) });
+        const action = await createGhostActionContext(f.options);
+        await expect(action.context.prepare(null, null, "create")).rejects.toMatchObject({ code: "cover-ambiguous" });
+        expect(f.readBinary).not.toHaveBeenCalled();
+    });
+
+    it("does not read unused management images when a higher-priority cover exists", async () => {
+        const body = "Visible article body.\n\n>[!personal-assistant]+ Featured Images\n> ![[one.png]]\n\n>[!personal-assistant]- 题图\n> ![[two.png]]";
+        const prepareCover = async (frontmatter: Record<string, unknown>, selected: string) => {
+            const f = fixture(body);
+            f.replace(f.files[0], body, frontmatter);
+            f.files.push(
+                { ...f.files[2], path: "one.png", bytes: new Uint8Array([1]) },
+                { ...f.files[2], path: "two.png", bytes: new Uint8Array([2]) },
+                { ...f.files[2], path: selected, bytes: new Uint8Array([3]) },
+            );
+            const action = await createGhostActionContext(f.options);
+            const prepared = await action.context.prepare(null, null, "create");
+            return { f, prepared };
+        };
+
+        const explicit = await prepareCover({ ghost: { feature_image: "explicit.png" } }, "explicit.png");
+        expect(explicit.prepared.candidate.resources.map((resource) => resource.source)).toEqual(["explicit.png"]);
+        expect(explicit.f.readBinary.mock.calls.map(([file]) => file.path)).toEqual(["explicit.png"]);
+
+        const ordinary = await prepareCover({ feature_image: "ordinary.png" }, "ordinary.png");
+        expect(ordinary.prepared.candidate.resources.map((resource) => resource.source)).toEqual(["ordinary.png"]);
+        expect(ordinary.f.readBinary.mock.calls.map(([file]) => file.path)).toEqual(["ordinary.png"]);
+
+        const cleared = await prepareCover({ ghost: { feature_image: null } }, "unused.png");
+        expect(cleared.prepared.candidate.resources).toEqual([]);
+        expect(cleared.f.readBinary).not.toHaveBeenCalled();
+    });
+
+    it("reads only the main cover after a long CRLF embedded introduction", async () => {
+        const f = fixture("![[nested/Intro.md]]\n\n>[!personal-assistant]- Featured Images\n> ![[cover.png]]");
+        f.files.push(
+            {
+                ...f.files[2], path: "nested/Intro.md", name: "Intro.md", basename: "Intro", extension: "md",
+                text: text(Array.from({ length: 100 }, (_, index) => `Nested ${index}`).join("\r\n")), bytes: new Uint8Array(),
+            },
+            { ...f.files[2], path: "nested/cover.png", bytes: new Uint8Array([2]) },
+        );
+        f.files[2].stat = { mtime: 1, size: 10 };
+        f.options.host.metadataCache!.getFirstLinkpathDest = (link, sourcePath) => {
+            const resolved = sourcePath === "nested/Intro.md" ? `nested/${link}` : link;
+            return f.files.find(file => file.path === resolved || file.path === `${resolved}.md`) ?? null;
+        };
+        const action = await createGhostActionContext(f.options);
+        const prepared = await action.context.prepare(null, null, "create");
+        expect(prepared.candidate.resources).toHaveLength(1);
+        expect(prepared.candidate.resources[0]).toMatchObject({ source: "cover.png", resolvedPath: "cover.png" });
+        expect(f.readBinary.mock.calls.map(([file]) => file.path)).toEqual(["cover.png"]);
+    });
+
     it("maps only the uniquely bound historical main path after the note is renamed", async () => {
         const f = fixture("Historical paragraph.\n\n![[Embed.md]]");
         const oldAction = await createGhostActionContext(f.options);
@@ -480,3 +808,12 @@ describe("Ghost Host action context", () => {
         }
     });
 });
+
+function flushPromises(): Promise<void> {
+    return new Promise(resolve => setImmediate(resolve));
+}
+
+async function waitForMetadataCall(predicate: () => boolean): Promise<void> {
+    for (let attempt = 0; attempt < 50 && !predicate(); attempt += 1) await flushPromises();
+    if (!predicate()) throw new Error("Metadata generator was not admitted.");
+}

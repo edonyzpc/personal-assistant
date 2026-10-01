@@ -48,6 +48,7 @@ import type { FeaturedImageDefaults } from './ai-services/featured-image-options
 import type { ImageGenerationConnection } from './ai-services/image-generation-connection';
 import { GhostPublishingIntegration } from './ghost-publishing/host-integration';
 import type { GhostPublishingConfiguration } from './ghost-publishing/configuration';
+import { prepareGhostMetadata } from './ai-services/ghost-metadata';
 import { openSettings, openSettingsTab } from './obsidian-internals';
 import { icons } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
@@ -1953,6 +1954,11 @@ export class PluginManager extends Plugin {
                     isPathAllowed: path => this.isDataBoundaryAllowedPath(path),
                     isContentAllowed: (path, markdown) => this.sourceAccess.getLatestDataBoundaryContentBoundary(path, markdown)?.allowed === true,
                     isWebAllowed: () => this.settings.webSearchEnabled === true,
+                    generateMetadata: input => prepareGhostMetadata({
+                        getSettings: () => this.settings,
+                        getAPIToken: () => this.getAPIToken(),
+                        log: (message, detail) => this.log(message, detail),
+                    }, input),
                 });
                 this.ghostPublishingConfiguration = this.ghostPublishingIntegration.configuration;
             }

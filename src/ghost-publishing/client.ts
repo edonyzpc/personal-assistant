@@ -1,4 +1,5 @@
 import type { GhostDesktopTransport } from "./desktop-transport";
+import { GHOST_INTERNAL_MARKER } from "./markers";
 
 export type GhostPostStatus = "draft" | "published" | "scheduled" | "sent";
 export type GhostVisibility = "public" | "members" | "paid" | "tiers";
@@ -35,6 +36,7 @@ export interface GhostPost {
     feature_image_alt: string | null;
     feature_image_caption: string | null;
     custom_excerpt: string | null;
+    meta_description?: string | null;
     codeinjection_head: string | null;
     codeinjection_foot: string | null;
     published_at: string | null;
@@ -54,6 +56,7 @@ export interface GhostPostWrite {
     feature_image_alt?: string | null;
     feature_image_caption?: string | null;
     custom_excerpt?: string | null;
+    meta_description?: string | null;
     codeinjection_head?: string | null;
     codeinjection_foot?: string | null;
     published_at?: string | null;
@@ -129,13 +132,13 @@ export interface GhostDownloadedImage {
 
 const POST_ID = /^[a-f\d]{24}$/i;
 const POST_UUID = /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i;
-const INTERNAL_MARKER = /^#pa-ghost-(?:op|preview)-[a-z\d-]{1,100}$/i;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_IMAGE_REDIRECTS = 3;
 const NULLABLE_FIELDS = [
     "custom_template", "feature_image", "feature_image_alt", "feature_image_caption",
     "custom_excerpt", "codeinjection_head", "codeinjection_foot", "published_at",
+    "meta_description",
 ] as const;
 
 function invalidInput(): never {
@@ -289,7 +292,8 @@ function parsePost(raw: unknown): GhostPost {
         lexical: value.lexical, visibility: value.visibility, tags, authors,
         custom_template: nullable.custom_template, feature_image: nullable.feature_image,
         feature_image_alt: nullable.feature_image_alt, feature_image_caption: nullable.feature_image_caption,
-        custom_excerpt: nullable.custom_excerpt, codeinjection_head: nullable.codeinjection_head,
+        custom_excerpt: nullable.custom_excerpt, meta_description: nullable.meta_description,
+        codeinjection_head: nullable.codeinjection_head,
         codeinjection_foot: nullable.codeinjection_foot, published_at: nullable.published_at,
     };
 }
@@ -319,7 +323,7 @@ export class GhostClient {
     }
 
     async findPostsByMarker(marker: string, gate: GhostRequestGate, requireComplete = false): Promise<GhostPost[]> {
-        if (!INTERNAL_MARKER.test(marker)) invalidInput();
+        if (!GHOST_INTERNAL_MARKER.test(marker)) invalidInput();
         const limit = requireComplete ? 100 : 2;
         const query = new URLSearchParams({
             filter: `tags.name:'${marker}'+status:[draft,published,scheduled,sent]`,
