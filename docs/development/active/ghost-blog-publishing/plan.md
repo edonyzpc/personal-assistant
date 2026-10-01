@@ -135,6 +135,37 @@ GPT 先独立读契约、实际 diff、关键断言和原始退出结果，再�
 安排一次有界独立只读复核，不给每个小文件增加 reviewer。修复回到同一 GLM，更新任务修订。
 接收树、部署和原始验证输入需一致；迁移后相同输入复用原证据，变化只补受影响项。
 
+### T-05 — beta.17 反馈实现与验证
+
+Owner 2026-10-01 批准 REQ/AC-11–13。一个 GLM writer 对明确范围连续补回归、实现与自查；
+GPT 维护契约和 Tracker、独立读 diff 与原始证据，在实际 repo test vault 补原生 UI 验收。
+来源使用合成笔记，不发送 anthelion 私人笔记或凭据到 worker，不修改真实 Ghost。
+
+| REQ/AC 或风险 | 变化 | 最低充分证据 | 通过条件 | 扩展/重跑触发 |
+| --- | --- | --- | --- | --- |
+| 11 / 隐藏内容与引用 | 注释、首标题、PA 题图导出 | source-loader/export/资源 focused 回归；综合合成夹具 | 只删除指定管理内容；隐藏引用不读取，普通正文/代码保留，原笔记不变 | parser、来源映射或资源规则改变 |
+| 12 / 字段与 AI 边界 | 人工/远端优先，缺失生成、主动再生成 | metadata/action-context/service/client/snapshot/state 回归 | 同候选/确认/恢复；取消、来源/配置变化失败封闭；旧记录校验不变 | 提供方、schema、持久化或生命周期改变 |
+| 13 / 交互与空间 | 四列与图标切换、提示/键盘 | card focused 行为测试，真实 test 宽/窄卡片交互 | 四个按钮同排，无溢出，提示/禁用/dispatch正确 | card DOM/CSS/action 改变 |
+| 共享发布回归 | 最终冻结输入集中 gate | 接收树 make deploy、DOM源码扫描、docs:check、diff check | lint/build/full Jest自然通过；test实际加载对应资产 | gate中输入变化或新增具体风险 |
+
+本轮 stop point 是验证后的本地修改，Git交付/版本发布/个人vault部署各自另行授权。
+
+### T-06 — 英文 URL、内部标签与原生关联属性
+
+沿用已批准的 T-05 交付树；REQ/AC-14–16 为增量范围。新文章自动生成英文
+URL、已有草稿显式更换、已发布 URL 保持，Owner 2026-10-01 已明确选择。
+
+| REQ/AC 或风险 | 变化 | 最低充分证据 | 通过条件 | 扩展/重跑触发 |
+| --- | --- | --- | --- | --- |
+| 14 / URL 与并发 | slug 解析/AI、草稿单字段 PUT、持久化核实、卡片入口 | metadata/fields/action-context/service/client/state/controller focused 回归，真实 test 卡片与本机 Ghost | 新建英文、人工优先；显式同 ID 更换只写 slug；发布/冲突/不明拒绝盲写；AI 请求复用 | 来源、schema、发送/恢复或 action 改变 |
+| 15 / 操作归属 | 可读内部标签及旧标识兼容 | service/client/state 的超时、跨桌面、完整分页与歧义回归；真实 Ghost 设置 | 保留全 ID 和其他标签，旧操作 checksum 不变，未完成稿仍唯一核实 | 标记解析、查找或持久化改变 |
+| 16 / 原生属性与身份 | 四个文本属性、按需原子迁移、缓存/双链接线 | binding/action-context/wiki-links/workflow 回归；原适配器独立反例；真实 Properties | 同 UID/ID、无额外 POST，四个 Text；正文/同期编辑保护；跨格式复制拒绝 | 写回、解析、缓存或身份准入改变 |
+| 共享发布回归 | 最终输入冻结与真实部署 | 接收树集中一次 make deploy、DOM 源码扫描、docs:check/diff check | lint/build/full Jest 自然通过；真实 test 加载同一资产并观察新入口 | 新改动、失败或输入不一致 |
+
+GLM 原承担实现与 focused/static 验证；提供方周/月额度耗尽后，Owner 于2026-10-01明确授权
+GPT 接手本轮实现及验收，原 writer 停笔后由独立只读 reviewer 补查。只使用合成 test 笔记、本机
+Ghost 和任务所需源码；不修改 anthelion、真实 Ghost、用户凭据，不自行 Git 交付或发布版本。
+
 ## Validation Strategy
 
 ### F-01 — 一篇综合夹具与少量失败变体

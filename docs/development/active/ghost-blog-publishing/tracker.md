@@ -2,7 +2,7 @@
 
 Document status: Current
 Delivery status: Validated
-Updated: 2026-09-30
+Updated: 2026-10-01
 Work item: B-153
 Authority: 本 track 的唯一执行状态、finding、验证证据与跨会话接续。
 Product spec: [Product Spec](../../../product/specs/pa-ghost-blog-publishing-product-spec.md)
@@ -10,6 +10,27 @@ Plan: [开发测试方案](./plan.md)
 SDD: [实施设计](../../ghost-blog-publishing-design.md)
 
 ## Current Snapshot
+
+- T-06 增量范围已批准：B-153/REQ/AC-14–16 英文 URL、可读内部标签、四个原生 Text 关联属性。Owner 明确选择新文章自动生成、已有草稿显式更换、已发布 URL 保持；2026-10-01 验收后明确授权“将当前代码修改提交到远程master”。该授权覆盖本轮已验收代码及对应文档的签名提交和推送，不包含 closeout、release 或个人 vault 部署。
+- Delivery / stop: T-05/T-06 的39个 runtime/tests/styles/locales 文件已签名提交为 `dbb24ad7af7e2a6f20a321224ea80b8163cda283`，五份配套文档同轮单独签名提交，按 Owner 后续授权交付到远程 master；实际推送和远端一致性以 Git 回执核对，不预先宣称推送成功。临时 managed worktree 已保存可恢复快照并归档。实际部署和 app 验收仅 repo `test`，使用本机 Ghost 合成草稿；未修改 anthelion 或真实 Ghost。
+- Worker / resources: 同一 CLI thread `01a0f648-e894-70b1-bc9a-0d6ff50f4a0f`，CLI0.155.1、pa-glm/ZAI Responses/glm-5.3/max 与 catalog 已核对，服务端型号未知，复用同机已通过工具/鉴权预检。任务证据根 `.../T/pa-b153-url-properties-wmhi_n2t`；r2 worker 只开放 `t06-r2/`，不开放 app/秘密/私人来源。
+- Current action: Owner 授权 GPT 接手后已完成 T-06；最终完整门禁351 suites/8562 tests自然通过，真实 Text 属性、同ID草稿URL动作/重载核实和旧绑定迁移均通过。必要证据保留，临时 app/服务/工作树清理完成；本轮执行明确授权的 master Git 交付，closeout 和 release 仍未授权。
+- Validation mapping: B-153/REQ-14 / B-153/AC-14→slug/单字段 PUT/恢复→metadata、action-context、service、client、state、controller focused＋真实入口→同 ID/其余字段不变、发布/409/未知保护；B-153/REQ-15 / B-153/AC-15→角色 marker/旧兼容→service/client/state→全 ID、完整唯一查询、旧 checksum；B-153/REQ-16 / B-153/AC-16→adapter/cache/wiki-links→binding/action-context/workflow＋旧适配器反例＋真实 Properties→同身份/无额外 POST/四个 Text。来源、持久化、action 变化重跑对应 focused；最终冻结后集中 make deploy/DOM scan/docs/diff gate，实际加载身份与新入口由 GPT 核验。
+- Git validation mapping: 已验收输入→限定 stage/签名提交/普通 master push→与最终 gate 逐路径 hash 比对、docs:check、diff check、提交签名和实际远端 SHA→输入不变、无夹带修改、签名有效且 local/origin/live master 一致；运行时输入变化或远端新增提交时重新评估受影响 gate，不重复未失效的 full build/Jest/app 验收。
+
+### Previous Accepted Slice — T-05
+
+- T-05 beta.17 反馈已独立验收：B-153/REQ/AC-11–13 的正文整理、题图字段、AI 摘要/独立 SEO 描述和四列响应式卡片均完成。Owner 2026-10-01 的批准已落实到 DEC-045/Product Spec/SDD 和本地实现。
+- Delivery / stop: 基线 `f6797a09f979785337488760e287f3f7ab6b9143`；接收树为当前 repo，运行时和测试仍为未提交修改。本轮停在本地实现与验证；未 push、closeout 或 release，未修改 anthelion beta.17 或真实 Ghost 草稿。实际部署目标仅 `/Users/eddie/code/personal-assistant/test`。
+- GLM delivery: 一个 writer 沿用同一 CLI thread `01a0f648-e894-70b1-bc9a-0d6ff50f4a0f`，实际配置 ZAI Responses / glm-5.3 / max；服务端型号未知。r1–r4 的独立反例先后返修，r5 复用既有 Markdown-it/token/raw range 完成安全清理；r6 修正真实可达布局，r7 修正布局验收测试。各修订的任务、原始 events/result 和失败日志保留，不把自报或局部绿灯当独立接受。
+- Final gate: `gate-r7/result.json` 对应自然 exit0 的 `make deploy`，冻结 1124 个输入且前后无变化；platform guard、lint、production build/typecheck、351 suites /8539 tests 全部通过。实际 test 插件重新加载的 main.js SHA 为 `f4311d1e1af5c7d704adf13c28feafe47ad852c6e4c1bf57c1780ee470802ae2`，styles.css SHA 为 `5a3eb3adf7f98a2126b42ae12af8d419862012a15bee51e1bcbba16921148226`。
+- Native acceptance: 合成笔记经过真实 Host/controller/export/client 和本机官方 Ghost 6.65.0 草稿；顶部封面、独立摘要/SEO、清理后的正文均已观察。test 原生宽/中/窄卡片的首排四列、文字/图标、提示、键盘、忙碌禁用和实际操作通过。Chat 工具选择为受控输入，不声明正常 Agent 决策全流程、真实站点发布或 iOS 验证；未点击 Ghost Publish。
+- AI boundary: 当前配置文本 AI 只接收 299 字符的已准入合成文章；初次生成后重复准备和插件重载复用候选。主动再生成的两次不合规结果被拒绝并保留原稿，下一次生成成功；不承诺模型每次返回可用结果。
+- Evidence / cleanup: 本次日志目录 `/var/folders/d3/cfzbwrqj243f6fwv83756yq40000gn/T/pa-b153-beta17-goeojb7y` 和三份持久验收截图保留。test 原会话、空白主窗、侧栏宽度 567.765625、Ghost 空配置及关闭的 Web viewer 已恢复；原有数据库全部保留。合成夹具已入可恢复废纸篓；仅本次会话/操作数据库/合成凭据已移除，本机服务和 owned 浏览器标签不再运行。隔离 Ghost 包/运行时已回收，managed worktree 已以可恢复快照归档，共享依赖和 GLM 配置保留。
+
+## Previous Slice Snapshot (T-01–04, historical)
+
+以下为前轮交付记录，其平台、目录、构建与验收结论不适用于 T-05 的新输入。
 
 - Current phase: T01–03产品开发与实际app验收完成，GPT独立接受。最终r27自然exit0，platform/lint/production build、344 suites /8465 tests通过，1471输入前后不变；实际test/test2加载同一构建并完成复验及S04，SHA `8d22614c8758b9f2df2349e6d47ff9f60069dac60f061aa0fed2cc3cce6cedc3`。REQ/AC01–10有获批标准的历史证据；T04来源、体积及Writing等待修复已由实际完整CI接受，当前状态Validated。
 - Next action: 本轮CI修复完成。`6facc3b`对应[CI run 36667459680](https://github.com/edonyzpc/personal-assistant/actions/runs/36667459680)的完整validate job为success，包含platform/notices/lint/build/Test/Audit；不将前轮失败或跳过步骤算作PASS。正式closeout与release仍按独立授权执行；真实双桌面同步为非阻塞补验。r26中止gate只作为superseded，r24无有效full gate；不将中断运行计为通过。
@@ -37,6 +58,8 @@ SDD: [实施设计](../../ghost-blog-publishing-design.md)
 | T-02 | 同一 GLM writer 完成导出、受控写入/恢复及 Host/UI 接线 | [x] | K02、实际diff/反例及最终r27完整gate已独立验收；交付文件安全接收 |
 | T-03 | 冻结输入、集中完整门禁、Desktop/mobile/独立双vault验收 | [x] | S01–05完成，r27受影响入口/更新/恢复及S04通过，CLI mobile复用未变证据；真实跨设备同步未声称通过 |
 | T-04 | master CI第三方来源、打包审计及Writing测试补验 | [x] | notices、10MiB预算及一个Writing测试文件的修复均独立验收；318 tests定向通过。`6facc3b`已固定SHA推送，实际CI `36667459680`完整validate job success，Test和Audit均success |
+| T-05 | beta.17 正文清理、题图字段、AI 摘要/SEO 与四列响应式卡片 | [x] | GPT 独立接受最终实现；gate-r7 351 suites /8539 tests、真实 test 与本机 Ghost 合成草稿验收通过，测试状态已恢复；后续 master 交付见 Current Snapshot，未发版 |
+| T-06 | 英文 URL、可读内部标签、原生关联属性 | [x] | GPT 接手完成，F06-01–07关闭；最终完整gate与真实test/本机Ghost合成验收通过；后续 master 交付见 Current Snapshot |
 
 任务卡和静态验证方法唯一放在 Plan；下面只记录逐项执行结果，避免复制方案。
 
@@ -113,6 +136,120 @@ Writing选中；`mobile-legacy-settings.json`含CreateImage选中/移除、#obsi
 该早期证据时尚无关联；其后关联编辑已补齐，见S-05关联补验，当前已恢复desktop。
 
 ## Validation Log
+
+### T-05/T-06 — master Git delivery
+
+- Owner 在本地验收完成后明确授权提交到远程 master。交付范围为本轮 runtime/tests/styles/locales 与五份配套契约/Tracker，保持已有签名配置和正常 Git hooks；不改个人 vault、不切 beta、不发布版本、不执行文档 closeout。
+- 提交前逐项复核最终 `gate/inputs-after.json` 的1127个非文档输入：变化0；四项 dist 资产与最终 gate hash 均一致，tracked styles.css 与已验收构建一致。因此复用351 suites/8562 tests、production build 和实际 test/本机 Ghost 验收；本次仅补文档与 Git 交付检查。
+- 实际 fetch 后 root/origin/FETCH_HEAD 均为基线 `f6797a09f979785337488760e287f3f7ab6b9143`，无额外远端提交。限定 stage 的39个文件与接受副本 hash 全部一致，正常 `git commit -S` 得到 `dbb24ad7af7e2a6f20a321224ea80b8163cda283`；`git verify-commit` 显示 Good signature。对应五份文档保持独立提交；原始回执和文档检查保留在任务证据根 `git-delivery/`，推送后再核对 local/origin/live master。
+
+### T-06 — 英文 URL、标识与原生属性
+
+- Task r1：`pa-b153-url-properties-wmhi_n2t/t06-r1/task.md`，同 writer/resume；接受的 T-05 源码/测试和五份更新契约已逐字同步，worktree HEAD `23b85da1480cd6ff8f3081110f657d7403b6d02f`。398 个相关输入保留 baseline/hash，仅任务目录向 worker 开放；node_modules 指向 root 的共享依赖，本任务只认领该 symlink。
+- 原适配器独立反例：`identity/old-binding-probe-result.json` 绑定原源码 SHA `c8655415c9041e3226d732f736e7a96f986bd4dc944ef02b28903f3789261ceb`，native scalar 读为 `invalid-binding`，UID 生成/写回调用均0，旧版本不会将其误判为未绑定。
+- Docs 初检缺少显式新增 traceability ID，补齐后自然 exit0；四条既有 Memory 架构 advisory 未扩大范围处理。
+- Owned app resources：新增 `test/0.unsorted/b153-t06-wmhi_n2t/` 一篇合成笔记，旧 UID `19da2657-5391-421e-b644-23d40c0ecf14`；原 body/frontmatter hash 记在 `app/owned-fixture.json`。当前 app 是 repo test、Obsidian1.14.2；保存原布局、conversation `6b43da5e-32dc-480a-be06-3d983f22474c` 和 IndexedDB 清单。官方 Ghost6.65.0 / Node22.23.1 仅监听127.0.0.1:2376，mail=stub，任务临时目录专用依赖。初始化脚本误把 session 成功的 text/plain201 解析成 JSON，第一份数据库保留，已按 Content-Type 完成合成账户/集成；此为测试脚本故障，不是 PA 结果。CUA 临时 IAB tab1 仅该 localhost；未发 Ghost Publish。
+- R1 independent review finding F06-01 (P1，尚未接受)：UID inventory 完整解析绑定后才提取 ID，遗漏“同 UID 但缺 site/伴随冲突”的另一份笔记，造成复制身份准入回退。必须对合法 UID 保守查重、对实际目标完整校验；新增跨格式畸形副本反例后再验收。Review-only lane 不改代码；等待同 GLM writer 停笔后集中返工。
+- R1 stop：`t06-r1/exit.json` natural exit1，原始 events turn.failed=rate limit exceeded，恢复19:20:34；不是完整实现/验证通过。`24-tsc-iteration4.log` 中 snapshot nullable slug 与可选 string schema 类型不匹配，待修正。Owner 分工选择 pending；现有 GLM 源码冻结供独立 review。
+- R1 independent review F06-02 (P1，尚未接受)：新角色 marker 未接入 client INTERNAL_MARKER whitelist，真实 service 首次 `#PA Note` 查询即 invalid-input/not-sent，准备回调和网络发送0；mock-only service 绿灯不能覆盖真实 client。
+- R1 independent review F06-03 (P1，尚未接受)：resolvedSlug 使用新输入80字符/ASCII限制，Ghost 碰撞后缀使合法80字符请求的实际返回82字符，adoptPreview seal invalid-state，远端已有稿但本地仍 pending；旧 pending 的长拼音/非ASCII实际 slug 同样无法 refresh。请求格式与已接收远端事实需分开校验，保留原 checksum 和防重复行为。
+- R1 independent review F06-04 (P2，尚未接受)：URL 单字段 PUT 响应丢失后，同 ID 草稿被人工改为不同 URL/标题，refresh 未核对 pending.slug 或写前非 slug 事实即清 pending/bind，并返回 prepared；POST/PUT 均未重复，但错误把人工变化当请求成功。保留所需写前事实，结果不符合请求及服务器合法变换时保持 unknown；该 lane 已以自然流程收敛反例，停止扩审。
+- 停笔 review 最终输入：service `fe0892187c8efb90a99a4d5d73d58021447084b943218c97c3860e8d0e0a7a56`；client `055a7aa7737a6ad5af014a063d0f02163cd97b167c5e57311433a9821f4b2cf2`；state schema `368278ffa58582ee94bda8116bbbd8751aa5796217e2078d3feea03baed3e1c3`；binding `04997e1abdf788f50f5547a987f1f8ff18630deed9265573918ffcf376495406`。两条只读 lane 的原函数探针与输入 hash 已返回，零代码写入；不能代替 focused/full gate/native验收。
+- Blocked 状态恢复：`app/blocked-restoration-receipt.json` 九项核对通过，原 main empty leaf、聊天、Ghost/AI 配置、webviewer、mobile、IndexedDB 清单与合成笔记原 hash 均保持；CUA 确认 test 窗口恢复 New tab，task-owned IAB 已关闭，本机 Ghost PID7186 精确身份检查后 SIGTERM，自然 exit0。未接收、未部署 T-06。隔离源码、合成笔记、本机数据/依赖与原始验收证据保留供接续，未清扫共享依赖或其他任务。
+- R2 恢复授权：Owner 2026-10-01 明确要求 GLM 恢复继续，同机 CLI/provider/model/catalog 及共享依赖目标未变；r1 natural exit1 已确认。只同步最新五份契约，保留 worktree 当前未接受代码，r2 使用独有输出目录；GPT 不接管运行时实现，原数据范围/本地终点不变。
+- R2 终态与分工变更：`t06-r2/exit.json` natural exit1、无最终报告，原因变为周/月额度，未在重置前重复调用。`stopped-delta.json` 保存9个新增变化路径和401项输入；原 Jest 日志含真实目标红灯，真实 client marker及碰撞后缀各1测试通过，F06-04两测试仍失败，F06-01未有修复后运行及最终类型/full gate通过证据。shell tee/printf包装退出0不等于测试通过，按日志EXIT与Jest原断言核对。Owner 随后明确授权 GPT 本轮接手；仅在该授权后接收/修改运行时，保留原验收标准和数据范围。
+- GPT 接手实现：`t06-gpt/reception.json` 核对 root 未改变的接收基线、worker 停笔身份后接收24个限定源码/测试路径。补全 slug-only pending 写前事实与严格核实；保守的 non-slug 源意图 hash 只准入单独 ghost_slug 改动，普通字段/正文变动仍拒绝；原 optional/checksum 兼容保持。
+- 新增返修 F06-05 (P2)：独立真实 client/service 内存探针确认合法 UID 含 underscore 或101+字符时，旧marker回退白名单拒绝整次准备；旧分支改为schema相同安全identity字符与128长度，保留全ID及filter注入拒绝。focused client自然exit0，最终marker SHA `23377ef998e6a5b0ad1859fa779e28ddadf266b05a726cd9bf8fd60ab0a7e3ef`。
+- 新增返修 F06-06 (P2)：原函数真实回归表明首次 Ghost 作者已自动分配、绑定写回失败时，候选格式尚未存储，refresh 误拒绝已知草稿。改为存已知ID→严格匹配/存格式与预览hash→bind，未放宽后续比较；红灯 `ghost-final-1.log`，恢复绿灯 `ghost-final-2.log`，POST保持1。
+- 当前 source gate：`ghost-final-2.log` 自然exit0，16 source suites /233 tests；`tsc-3.log` 自然exit0，DOM rg无匹配(exit1视为PASS)，diff check通过。首次client监听EPERM为sandbox环境故障，实际授权本机端口后通过；legacy回归首次缺import的失败与产品红灯分开记录。metadata旧禁“URL”单词断言与新需求冲突，保留原来源/秘密负例，改为要求合法英文slug提示。完整build/full Jest/部署与原生验收仍待完成。
+- 终态独立 review：两条零写入 lane 未发现剩余P1/P2。身份/元数据 lane 核对5个畸形副本与2个wiki歧义零写入；恢复/并发 lane 核对11个service、5个Host准入和3个UID边界，40个输入前后hash一致。原review完成后 full gate 的 lint 拒绝unused解构，修正为等价clone/delete；首次类型声明缺Partial也已修正。两次失败证据完整保留在`gate/lint-failed`、`gate/type-failed`，随后冻结终态重新运行；不将已显示测试数量当自然退出或部署完成。
+- 原生补验 F06-07 (P2)：`gate/pre-native-fix` full gate自然exit0、351 suites/8559 tests，1127输入不变并部署。真实test初次合成入口的test hook错误使用不在用户原文的显式path，产品正确拒绝；改为current-note locator后，经真实Host/配置AI创建一篇同UID草稿，四个属性转换成功。真实Ghost6.65.0的slug-only PUT只有slug+updated_at变化，草稿API `/p/<uuid>/` URL不变，原adopt误报unknown；`app/url-first-native-result.json`保存单次PUT及字段差异，未盲目重复发送。
+- F06-07修复：只准入与实际UUID和站点基路径一致、无query/hash的稳定draft预览URL；仍严格匹配ID、请求slug/合法后缀、版本前进、归属及非slug facts。两条回归先red，修复后Ghost16 suites/235 tests通过，再补UUID不匹配拒绝测试；独立review零写入确认窄修复与lint语义。冻结当前源码重新full gate，旧完整门禁不冒充新终态。
+- GPT最终接受：`gate/result.json` natural exit0，351 suites/8562 tests、lint/type/production build/实际test部署均通过，1127输入前后不变。`app/loaded-build-final.json`与资产SHA `417638107e7de7a1a88f3c311ad21ccc845105c7df3d736a61c53017cd1cac20`一致，DOM源码扫描无匹配；所有确认F06-01–07关闭，未削减原验收或未知结果保护。
+- 真实原生验收：初始中文合成文章自动生成`ai-agent-auto-work-time-management`，配置qwen/deepseek-v4-pro的一次真实文本AI请求同时给出中文excerpt、独立SEO描述及英文slug；只发送已准入合成正文。CUA实际New Chat、准备、URL取消/确认、新入口、重载后Continue核实和Prepare again均操作并观察。工具选择为受控hook，不将此证明扩展为正常Agent选工具或本轮正式Publish；Web viewer原为关闭，未把浏览器预览算native preview通过，T-05已有预览证据未变。
+- 同稿/迁移证据：`app/native-url-success.json`、`native-recovery-state.json`和`final-acceptance.json`证明本机Ghost始终只有1篇归属草稿，ID `6abe502d007c31361d7a1006`不变；显式两次PUT均只含slug，最终`ai-agent-time-and-human-judgment`，其他远端字段和笔记body原SHA不变，AI累计1次。`native-text-types.json`实际打开site/post_url的原生铅笔编辑控件，四个属性全Text/可编辑/无警告；`native-legacy-bound-migration.json`通过已有UID/ID旧对象→四Text的实际Prepare again，无新POST/AI调用。最终原生错误捕获为空，debug/mobile恢复关闭；两张合成UI截图保留。
+- 环境收尾：`app/restoration-verified.json`14项全PASS，原empty leaf/active ID、会话、Ghost/AI设置、core Web viewer、mobile、侧栏宽度和数据库清单均恢复，hook/合成secret已清。合成笔记和空目录移到可恢复垃圾箱，任务会话/操作先保存副本后精确移除。首次清理保护条件发现实际DB为新建`86d69ee3`而非原`a0eec508`，在任何删除前停止；比对验收前清单和唯一任务行后仅清空/删除新DB，原DB保持。任务IAB已关闭；Ghost PID13853核对精确命令后SIGTERM，natural exit0。managed worktree应用归档已确认`archived_worktree`，仅移除任务node_modules symlink、保留root共享依赖；root仍为master原HEAD `f6797a0`，无Git交付。专用Ghost运行依赖删除，源码/版本清单、合成DB、原始日志、截图和恢复副本保留为复现/审查证据；当前build和test部署资产保留。
+
+### T-05 validation plan — beta.17 feedback
+
+| Requirement / acceptance | Change | Minimum evidence / command | Pass condition | Rerun trigger |
+| --- | --- | --- | --- | --- |
+| B-153/REQ-11 / B-153/AC-11 | 注释、首标题及 PA 题图映射 | source-loader/export/resources focused + 合成草稿检查 | 管理内容不导出，代码/正文/原笔记保留，隐藏引用不读取，封面字段正确 | parser/来源映射/资源规则变化 |
+| B-153/REQ-12 / B-153/AC-12 | AI 元数据与 SEO 字段生命周期 | metadata/action-context/service/client/snapshot/state focused | 人工/远端/清空优先、重复不调用AI、主动再生成、撤销/来源有效性与旧记录校验正确 | provider/schema/持久化/候选生命周期变化 |
+| B-153/REQ-13 / B-153/AC-13 | 四列按钮和窄版图标 | card focused + test 原生 1100/650/360 侧栏真实交互 | 实际最大卡片宽度可显示文字；中/窄版图标，首四项同排，提示/键盘/禁用/dispatch正确，无溢出 | DOM/CSS/action/父布局尺寸变化 |
+
+完整门禁由接收树冻结输入后执行一次 `make deploy`，另补源码 DOM 扫描、docs:check 和
+diff check；先前门禁不复用到本次新运行时。Owner 已明确授权本次必要项目源码、测试和
+设计契约发送到 ZAI/GLM；排除私人 vault、截图、密钥与真实 Ghost 数据。
+
+- 2026-10-01：修订后的 `npm run docs:check` 自然 exit0，254 Markdown /3017 local links；4 条既有 Memory 文档索引提示仍为 advisory。该检查只证明契约链接与追溯完整，不证明新增运行时行为。
+
+#### T-05 independent review / r1 (not accepted)
+
+两个 GPT 只读 reviewer 分别检查 AC-11 来源整理与 AC-12 元数据生命周期；未写文件、未发真实请求、未执行 full gate。原函数内存反例证明如下问题，返修任务在本次目录 `t05-r2-task.md`，继续同一 GLM context；不将 r1 focused green 当成独立接受。
+
+| Finding / risk | Evidence / trigger | Status |
+| --- | --- | --- |
+| P1 注释与行内代码重复文本 | `indexOf` 保护了注释的首份文本；实际读取 Hidden.md，隐藏正文进入 Lexical | Closed，r5；实际 token/raw range、单调清理和重分类；独立消费者代码/注释矩阵隐藏读取为0，代码文字保留 |
+| P1 元数据发送前遗漏本次嵌入 | generator 等待时独立撤销 Embed 准入或改 revision，回调仍 true，最终才拒绝候选 | Closed，r2＋最终 gate；独立原函数内存探针变化回调false / 模拟invoke0，未变化true/invoke1；不是实际提供方撤权请求证据 |
+| P2 非首块/引用 H1 被删除 | Intro 后相同 H1、普通 quote 内相同 H1 均被删除；现有新增测试也编码错误预期 | Closed；仅清理后主文首个可见根 H1 且同标题才移除，后续/引用/嵌入保留；真实 Ghost 草稿验证 main 无重复、embedded H1 存在 |
+| P2 CRLF 题图块残留 | LF 同一夹具可去除，CRLF 分割与物理行不对应，题图管理块及图片留在正文 | Closed，r5；LF/CRLF/bare CR raw origins 与 token 范围统一，独立矩阵及 focused 通过 |
+| P2 普通引用/嵌入被误当主题图 | 在外 quote 任意位置搜索 PA 标题，主 quote 内 embed 的题图会被提升，周围正文被删 | Closed；仅主笔记根 PA 管理块，来源归属先于展开；普通/嵌入引用及图片保留 |
+| P2 多个主笔记题图块未拒绝 | 两块分别含不同图片时选首图、第二块泄漏正文 | Closed；无更高优先级时歧义拒绝；显式/普通封面/清空覆盖不读取无用候选；独立消费者读取0 |
+| P2 主笔记封面来源被首个 embed 取代 | 开头嵌入 nested/Intro，后面的主 cover.png 被解析为 nested/cover.png | Closed；保留原始路径和物理行 origins，题图始终按主笔记 owner 解析；最终 source tests 通过 |
+| 原始来源身份/配置/错误提示补验 | 嵌入等长隐藏注释 hash 未变化；AI settings 对象替换 fence、新错误 actionable 文案、普通 excerpt 的300字符上限 | Closed；raw source hash、live settings 身份/发送前后门、300/500 上限及 EN/ZH 可处理错误有定向回归；实际不合规 AI 结果拒绝并提示重试 |
+
+本轮三份合成夹具的原始身份存 `app/owned-fixtures.json`，实际验收后均移入可恢复废纸篓；
+正文/属性除自有 pa_ghost 关联外逐字不变，见 `app/source-preservation.json`。仅 test 使用，
+未发送给 GLM。Ghost 包安装的旧 peer 声明和 headers 直连失败日志保留；最终用官方同版本
+本地 headers 安装成功，不修改系统 Node 或 PA dependencies；验收后已回收独占安装及凭据。
+
+#### T-05 final acceptance — r5/r6/r7
+
+- r5 的最终清理复用现有 Markdown-it 与 raw token 范围，保留单调 raw origins，注释移除后
+  重新分类代码；不维护第二份近似 Markdown 语法。独立只读复核确认不等长 backtick、非法
+  tilde closer、引用代码 fence、隐藏 fake fence 以及 LF/CRLF/bare CR 不造成隐藏读取或误删。
+  action-context 来源/配置/权限门、元数据三态和旧记录 checksum/restore 的实际增量也已核对。
+- r6 原生测量发现父 assistant 最大宽度760、实际卡片730/内容704，原760查询让宽版文字
+  永远不可达；仅将图标查询调整至640。`gate-r6` 是布局测试仍编码760的真实失败，保留原始
+  退出与日志，不算 PASS。r7 测试从实际父/卡片 CSS 计算704并断言文字区间可达、360在图标
+  区间；恢复760产生目标红灯，640绿灯，不把修后的具体阈值写成镜像断言。r7仅改该测试。
+- 最终 `gate-r7/make-deploy.log` / `result.json`：自然 exit0，193.7秒，1124输入前后不变，
+  351 suites /8539 tests PASS；包含 lint、production build/typecheck、全量 Jest 和 test 部署。
+  Jest 有延迟退出提示，最终自然结束，未使用 forceExit。root 33 个非文档改动已接收；
+  `cleanup-receiver-identity.json` 的唯一 worker 差异为最终接收树重新生成的 styles.css。
+  manifest SHA 为 `f12e21b0cceb42e7392d21589564725372e95348288774bff8e64e6a704fec5d`。
+- 收尾 `gate-r7/docs-final.log` / `final-supplemental.json`：docs:check exit0，254 Markdown /
+  3017 local links，4条既有 Memory 索引提示仍为 advisory；diff check exit0，DOM源码扫描
+  exit1无匹配。1124个冻结运行时/测试/工具输入仍无变化，文档补录不扩大运行时验收声明。
+- AC-11：`app/ghost-field-and-body-proof.json` 的实际 Ghost GET/草稿检查全部为真：封面只在
+  顶部 feature_image，PA 管理块/隐藏内容/主重复 H1 不在正文，代码 %% 和嵌入 H1 保留。
+  只创建/复用本地合成草稿，原 Coming soon ID/updated_at 保持；未点击 Publish。
+- AC-12：`app/generation-observations.json`、`model-shape.json` 与实际编辑器 Excerpt/Meta data
+  观察证明同语言且独立的摘要/搜索描述；输入299字符均无隐藏内容。共4次 metadata调用：
+  初次成功，主动再生成两次不合规被拒绝，第四次成功。已捕获的第三次 invalid_result 期间
+  旧远端正文/元数据不变且预览失效；未捕获第二次原始错误细节，不猜原因。原始模型全文未留存。
+  `app/after-reload-proof.json` 证明重载后真实 Prepare again 复用同operation，calls仍4，
+  原生预览passed；人工/清空优先、缓存、撤销SEO和旧格式兼容由实际 focused/full suites 证明。
+- AC-13：最终 `app/card-1100-4-1790846158938.json`、`card-650-4-1790846224122.json`、
+  `card-360-4-1790846314449.json` 对应原生卡片730/592/314宽；首四项同一Y、四列等宽、
+  六项的其余按钮在第二排，无横向溢出。宽版全文换行，中/窄版图标，完整 tooltip/aria 保留。
+  实际 Shift+Tab/Return 触发再生成并禁用全部动作；实际重新准备、Check preview 和
+  Open Ghost editor 已操作。`app/external-opener-proof.json` 记录真实桌面 opener 的精确本地
+  编辑器URL；Chrome到达登录页，已登录 IAB 的编辑器顶部封面/字段另行观察，不混称登录证据。
+- 持久截图位于 `.codex/visualizations/2026/10/01/01a0f622-c61f-7201-9e8a-40cff05ffe55/`
+  （用户目录下）：`blog2ghost-wide.png`、`blog2ghost-medium.png`、`blog2ghost-narrow.png`。
+  原生运行来自实际最终构建。受控 ChatService 路由只替代本次 marker 的 Agent 工具选择，
+  Host/controller/source/resource/client/metadata/provider/persistence/card 为真实路径；
+  不将此证据扩张为普通 Agent 全流程、真实站点上线、生产数据恢复或本轮 iOS 验证。
+- 清理：`app/restoration.json` 全部核对通过，原会话ID、空白主leaf、右栏567.765625、
+  Ghost空配置、Web viewer=false、原有数据库均恢复；本轮操作库/会话/合成SecretStorage项
+  不存在，三个合成夹具已入废纸篓。真实 Obsidian 显示原会话和 New tab；owned浏览器标签已不在。
+  `host-setup/cleanup.json` 证明2371无监听、原PID2848已不存在及独占包/数据库/凭据回收；
+  清理时原server句柄已关闭，终止退出码未知，不声称server自然退出。worker依赖仅移除指向
+  root的符号链接，共享node_modules保留；managed worktree已归档，可恢复attachment
+  `01a0f6d5-a3ab-7522-8aae-5511104d0cb7`。GLM原始证据、验收日志/截图和稳定配置保留。
+
 
 ### 最终验收：r27 / S01–05
 
@@ -296,7 +433,7 @@ fixture/config/依赖身份、原始日志位置；适用时记录构建/部署�
 
 ## Closeout Readiness
 
-- [x] 所有 REQ/AC 与实际行为一致，required gate 和 GPT review 完成。
-- [x] 已证实P0/P1/P2 finding已修复；F28未复现观察保留且无猜测性豁免，未验证项未冒充通过。
-- [x] 原始证据和交付物已安全接收，临时服务与app状态已处置，保留项及理由见上。
+- [x] T-06 的 REQ/AC 与实际行为一致，required gate 和 GPT review 完成；T-05 既有接受证据仍有效。
+- [x] T-06 的已证实 P1/P2 finding 修复并验收；T-05 F28 未复现观察仍保留，未验证项未冒充通过。
+- [x] T-06 原始证据和交付物安全接收；临时服务、app和工作树已清理，必要审查/复现证据与本地交付物保留，理由见上。
 - [ ] 获得 closeout 授权后吸收稳定结果，过程文件默认 delete-after-absorption；仅保留仍被引用的独有证据。

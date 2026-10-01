@@ -1,14 +1,14 @@
 # Ghost Blog Publishing — 实施设计与验收
 
 Document status: Approved
-Updated: 2026-09-29
+Updated: 2026-10-01
 Work item: B-153
 Authority: 对已批准产品范围、源码和 T-01 可行性证据的实施设计；实际交付与验证状态以 owning Tracker 为准。
 Product spec: [Ghost Blog Publishing](../product/specs/pa-ghost-blog-publishing-product-spec.md)
 Decision: [DEC-045](../product/decisions/dec-045-ghost-blog-publishing.md)
 
 本技术设计由 [B-153 Feature Home](./active/ghost-blog-publishing/README.md) 引用，保留原路径，
-不复制第二份 SDD。产品范围不变；详细任务与验证方法见 [开发测试方案](./active/ghost-blog-publishing/plan.md)，
+不复制第二份 SDD。2026-10-01 beta.17 反馈修订见来源/字段小节；详细任务与验证方法见 [开发测试方案](./active/ghost-blog-publishing/plan.md)，
 执行状态、证据和接续只记 [Tracker](./active/ghost-blog-publishing/tracker.md)。
 Owner 已授权完整开发测试和本机隔离 Ghost 合成测试。T-01 技术选择由 GPT 核定；
 真实产品行为仍按 Tracker 验收，不把设计 Approved 当作运行时通过。
@@ -98,9 +98,46 @@ Proposed 工具 `prepare_ghost_post` 只接受笔记定位和准备意图，采�
 - 当前笔记在 Chat 提交时捕获，不能在异步执行时重新拿活动标签。路径精确匹配；名称按
   Obsidian 解析规则且必须唯一。正文使用完整快照，嵌入递归按整篇/heading/block 限定，
   记录每个依赖的路径、内容 hash 和来源准入；发现循环/排除/缺失即停止外发。
-- Proposed `ghost` frontmatter 管发布选项，`pa_ghost` 只管机器关联。发布选项包含
-  `title/tags/feature_image/custom_excerpt`；缺字段=不管理，null 或约定空值=明确清空。
-  标题缺省回到文件名；不猜摘要、封面、标签或剔除正文 H1。正式 slug/作者/访问范围沿用远端。
+- `ghost` frontmatter 管发布选项，`pa_ghost` 及其文本伴随属性只管机器关联。发布选项包含
+  `title/tags/feature_image/custom_excerpt/meta_description`；null 或约定空值=明确清空且不自动补齐。
+  标题缺省回到文件名；发布标签不猜测。封面先取显式配置，再取普通非空 `feature_image`，
+  最后识别主笔记 `[!personal-assistant]` 的 `Featured Images` / `题图` 管理块中的唯一图片。
+  识别成功后不导出该管理块；多候选拒绝，普通正文/嵌入图片不自动选为封面。
+  注释在每个准入来源展开引用前处理；使用理解代码段的解析规则，保留行定位与原始依赖 hash，
+  未闭合注释失败封闭。只去掉主笔记首个可见块且文本与发布标题一致的 H1。
+  作者/访问范围沿用远端，已发布 slug 不变；草稿 URL 的显式操作见下文。
+  不回写整理后的正文或 AI 元数据到原笔记。
+- AI 元数据只接收已经准入、展开并排除注释/管理块后的文章，复用 `AIUtils.createChatModel`
+  与现有 token 预算/取消/来源及提供方配置有效性检查；不把 Ghost key、预览地址或任意 vault
+  内容放进模型输入。人工 `ghost.custom_excerpt` / 普通非空 `excerpt` 优先，
+  `ghost.meta_description` 管 SEO 描述；其次保留远端已有字段，只对仍缺的字段生成一次。
+  增加主动重新生成入口，替换候选需重新预览；普通 prepare/重试/更新/恢复不重复调用模型。
+  结果以有界结构校验并进入相同 candidate hash、managedFields、远端冲突和 lastUndo 机制。
+  新持久字段对旧记录可选，不通过补默认值改变已签校验和；旧格式读取与恢复有回归。
+- 新文章 slug 使用顶层 Text 属性 `ghost_slug`，兼容 `ghost.slug`；两者同时存在且不同则拒绝。
+  人工值和 AI 结果均须为 1–80 字符的小写 ASCII 单词/数字，以单个连字符分隔；空值、URL、
+  路径、拼音自动回退和未经验证的结果不发送。英文是 slug 的语言要求，摘要/SEO 仍用文章语言。
+  缺失 slug 与缺失元数据在同一次配置文本 AI 调用中生成；候选持久保存请求值，首次创建
+  接受 Ghost 实际返回值（含冲突后缀）。普通重试/重启、标题变化和摘要再生成不重新生成 URL。
+  手工配置只在首次创建或明确更换草稿 URL 时生效，不把新增属性当自动改 URL 的授权。
+- 卡片增加「更换草稿 URL」动作，仅针对已知 ID、仍为 draft 的原始文章，恢复/已发布文章
+  的专用临时预览稿不适用。复用 serial、当前 source/provider admission、updated_at 和 durable
+  pending/reconcile。生成前读原稿，发送前重新核对其状态、版本与精确归属，只 PUT slug。
+  可选 non-slug 源意图 hash 允许明确更换动作准入单独的 `ghost_slug` 变化；正文或其他
+  发布字段变化仍须重新准备。pending 保存请求 slug、写前版本/URL/发布日期及非 slug
+  事实 hash；响应丢失后只读同 ID，须匹配请求或数字冲突后缀及其他字段，才能核实成功。
+  请求值限制不用于已核实的远端旧地址。首次草稿已知 ID 与验证后的格式先保存，再写回
+  笔记关联，避免本地写回失败造成重复建稿或丢失恢复基线。
+  成功采用同 ID 的实际 URL、写回关联、失效旧预览凭证；其他正文、封面、摘要、SEO、作者、
+  标签和访问范围不能由该动作覆盖。
+  草稿 API 的 `/p/<uuid>/` 预览链接在 slug 改变后仍可保持；只接受与实际文章 UUID、站点
+  基路径一致且无 query/hash 的这一稳定链接，仍核对请求 slug、版本前进和非 slug 事实。
+  未完成请求保存所需 slug/原版本与核实事实（可选 schema
+  字段不更改旧 checksum）；响应丢失时读取同 ID 核实，不能借此 POST、重发或修改已发布文章。
+  版本/内容冲突、并发 Publish、来源或配置变化暂停；不增加通用 URL 事务框架。
+- 卡片复用现有 DOM 构建和 action dispatch，CSS 放在 `src/custom.pcss`。
+  操作区采用最多四列布局，按卡片宽度切换文字/图标；按钮保留 tooltip、aria-label、键盘、
+  busy/disabled 和确认状态。不得注入运行时 style 或 HTML，不改预览通过条件。
 - 采用确定性 Markdown token/AST 转换，拟新增 `markdown-it` 作为直接依赖；不以 Obsidian
   插件渲染后的 DOM 反推文章，不执行 Dataview/Templater。固定 `markdown-it@15.0.2`（MIT），
   类型依赖 `@types/markdown-it@14.2.0`（MIT）；T-02 更新 lock/notices 并验证现有构建兼容性。
@@ -140,10 +177,25 @@ Proposed 工具 `prepare_ghost_post` 只接受笔记定位和准备意图，采�
 
 ### 3. 文章身份、已完成记录与本机操作
 
-Proposed 最小 note binding：`note_uid`、`site`、`post_id`、`post_url`，归于 `pa_ghost`。
-`note_uid` 在首次远端创建前固定；Ghost 返回 ID 后即写回，URL/状态以远端实际结果校准。
+最小逻辑 binding 保持 `note_uid/site/post_id/post_url`，原生 frontmatter 写入四个 Text：
+`pa_ghost`=原 note UID、`pa_ghost_site`=站点、`pa_ghost_post_id`=文章 ID、
+`pa_ghost_post_url`=实际文章 URL；尚未绑定时只写前两项，文章 ID/URL 必须成对。
+数值形状的 ID 仍写为字符串。`note_uid` 在首次远端创建前固定；Ghost 返回 ID 后即写回。
+旧 `pa_ghost` 对象仍支持读取，下一次明确准备/写回时原子迁移；伴随属性如存在须与旧对象
+完全一致，否则拒绝，不推测丢失字段。无主 UID 的部分属性、畸形类型、跨站或 ID/URL 不成对
+均失败封闭。保留 `pa_ghost` 字段名使 beta.17 原适配器遇到新字符串明确拒绝，而非误判为
+未绑定并重新生成 UID。无需新的版本属性或全 vault 迁移。
+binding adapter、MetadataCache 唯一性与双链目标读取共享新旧格式语义；迁移不能丢失复制 UID
+检测、改名/移动或缓存延迟保护。机器属性不进入正文、普通发布字段或 AI 意图。
 机器属性写回用 `processFrontMatter` 串行处理，并验证正文未变；不能覆盖同期编辑。
 网络成功但属性写回失败时保留已知 ID，继续时补写，不能重新 POST。
+
+新操作写入 markerVersion=2，用 `#PA Draft <完整 operationId>`、`#PA Note <完整 noteUid>`
+（原始草稿）和 `#PA Preview <完整 noteUid>`（专用临时稿）标明角色；不截短唯一 ID。
+未带版本的旧操作继续按原 `#pa-ghost-op/preview-…` 名称核实，不注入默认值改变 checksum。
+笔记归属查询同时查新旧标识，完整性要求不降低，按 post ID 去重，歧义停止；各 marker 名称
+由同一个受限 helper 生成/识别，所有发送、readback、清理和跨桌面保护保持一致。新 draft
+不删除已有标签，旧 Ghost 标签不自动批量改名或更新全局实体；其他人工标签保留。
 
 每次发布、更新或恢复由同一桌面完成，支持该桌面重启后显式继续。完成后其他桌面可对
 同一文章发起新更新，文章不永久绑定设备；首版不支持进行中操作的跨桌面接续。
