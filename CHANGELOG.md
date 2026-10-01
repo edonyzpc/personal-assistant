@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.17](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.16...2.10.0-beta.17) (2026-10-01)
+
+### Features
+- chat: unify image creation with bound sources and featured prompts
+- ghost: add desktop note publishing and recovery
+- operations: add batch note review and retire audit persistence
+
+### Fix
+- licenses: register bundled blog2ghost provenance
+
+### Improvements
+- audit: set approved 10 MiB bundle budget
+
+### Docs
+- close out B-150 test audit
+- record B-151 test reduction validation
+- add reusable test optimization workflow
+- design B-152 unified chat image creation
+- design B-153 Ghost blog publishing
+- record B-152 implementation and independent acceptance
+- ghost: record publishing design and acceptance
+- ghost: record CI followup acceptance
+- operations: record B-154 contracts and acceptance
+
+### Tests
+- strengthen B-150 regression coverage
+- remove redundant B-151 test cases
+- make retrieval habit fixtures independent of wall clock
+- chat: wait for writing lifecycle readiness
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
