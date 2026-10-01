@@ -1502,6 +1502,23 @@ describe("B-140 T-07 vault observation physical integration", () => {
             if (path === "notes/b.md") reads.b += 1;
             return await originalCachedRead(file);
         };
+        const physicalPreparations = { summary: 0, answer: 0 };
+        f.afterModelCreated(isSummary => {
+            const options = f.modelSpecifications.at(-1)!.options as {
+                prepareProviderRequest?: (signal?: AbortSignal | null) => Promise<void>;
+            };
+            const originalPrepare = options.prepareProviderRequest;
+            if (!originalPrepare) throw new Error("model did not expose physical preparation");
+            options.prepareProviderRequest = async signal => {
+                const readsBeforePrepare = reads.a;
+                await originalPrepare(signal);
+                if (isSummary) physicalPreparations.summary += 1;
+                else {
+                    physicalPreparations.answer += 1;
+                    expect(reads.a).toBe(readsBeforePrepare);
+                }
+            };
+        });
 
         await f.run({ images: undefined, prompt: "Continue", historyBudgetChars: 1200, chatHistory: installed.history });
 
@@ -1512,14 +1529,8 @@ describe("B-140 T-07 vault observation physical integration", () => {
         const answer = f.requests.at(-1);
         expect(answer?.stream).toBe(true);
         expect(requestText(answer!)).toContain("Keep only the first summary dependency.");
-        const summary = f.modelSpecifications.find(specification => specification.isSummary);
-        const answerModel = f.modelSpecifications.find(specification => !specification.isSummary);
-        await expect((summary!.options.prepareProviderRequest as () => Promise<void>)())
-            .resolves.toBeUndefined();
-        const readsBeforeAnswerHook = reads.a;
-        await expect((answerModel!.options.prepareProviderRequest as () => Promise<void>)())
-            .resolves.toBeUndefined();
-        expect(reads.a).toBe(readsBeforeAnswerHook);
+        expect(physicalPreparations.summary).toBeGreaterThanOrEqual(2);
+        expect(physicalPreparations.answer).toBeGreaterThan(0);
     });
 
     it("keeps the captured answer snapshot when its source is edited before physical preparation", async () => {

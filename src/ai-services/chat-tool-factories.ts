@@ -48,6 +48,7 @@ import { createSourceDedupKey } from "./source-store";
 import { memoryResultFact } from "./pa-agent-result-facts";
 import { getPlatformCrypto } from "../platform-dom";
 import { assertTaskSourceReadCurrent, isTaskSourcePathAllowed, type TaskSourceReadGuard } from "./task-source-read-guard";
+import { createCooperativeTask } from "./cooperative-task";
 import {
     CANVAS_MAX_READ_BYTES,
     CURRENT_NOTE_CONTENT_BUDGET_CHARS,
@@ -84,11 +85,16 @@ import {
     fileToRecentNote,
     findCurrentMarkdownView,
     findMarkdownFileByPath,
-    findVaultFileByPath,
+    findMarkdownFileByPathCooperatively,
+    findVaultFileByPathCooperatively,
     getFileTitle,
     getHeadingSectionOrNearbyText,
     getLineCount,
-    getMarkdownFiles,
+    getMarkdownFilesCooperatively,
+    getMetadataLinkFactsCooperatively,
+    evaluateBacklinksForPathCooperatively,
+    type CooperativeCheckpoint,
+    type MarkdownFileLike,
     getMetadataCache,
     getOptionalMetadataCache,
     NoteStructureCacheMismatchError,
@@ -96,7 +102,7 @@ import {
     getUtf8ByteLength,
     readVaultFile,
     readVaultFileWithBudget,
-    scoreMetadataMatch,
+    scoreMetadataMatchCooperatively,
     truncate,
 } from "./chat-tool-execution-helpers";
 import {
@@ -133,7 +139,7 @@ import {
     buildSnippetObservationEvidence,
     createVaultObservationId,
     projectInspectCache,
-    projectInspectLinkFactsFromBacklinkEvaluation,
+    projectInspectLinkFactsFromBacklinkEvaluationAsync,
     type InspectBacklinkEvidenceFacts,
     type VaultObservationScope,
 } from "./vault-observation-evidence";
@@ -613,19 +619,30 @@ export function createSearchVaultMetadataTool(
         validateInput: validateSearchVaultMetadataInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
+            const checkpoint = createReadCheckpoint(context);
             const metadataCache = getMetadataCache(context.host);
             const querySignals = buildMetadataQuerySignals(input.query);
-            const markdownFiles = context.host.app.vault.getMarkdownFiles?.();
-            if (!Array.isArray(markdownFiles)) {
+            const scanEpoch = context.host.getTaskSourceAuthorityEpoch?.();
+            if (typeof context.host.app.vault.getMarkdownFiles !== "function") {
                 return createToolFailureResult("search_vault_metadata", input.query,
                     "Vault note enumeration is unavailable.");
             }
-            const matches = markdownFiles
-                .filter((file) => isAllowedPath(file.path, options.isPathAllowed))
-                .map((file) => scoreMetadataMatch(file, metadataCache.getFileCache?.(file), querySignals))
-                .filter((match): match is VaultMetadataMatch => match !== null)
-                .sort((a, b) => b.score - a.score || (b.mtime ?? 0) - (a.mtime ?? 0) || a.path.localeCompare(b.path))
-                .slice(0, input.limit);
+            const markdownFiles = await getMarkdownFilesCooperatively(context.host, checkpoint);
+            const compare = (a: VaultMetadataMatch, b: VaultMetadataMatch) =>
+                b.score - a.score || (b.mtime ?? 0) - (a.mtime ?? 0) || a.path.localeCompare(b.path);
+            const matches: VaultMetadataMatch[] = [];
+            for (const file of markdownFiles) {
+                await checkpoint();
+                if (!isAllowedPath(file.path, options.isPathAllowed)) continue;
+                const calculation = createCooperativeTask(context.signal);
+                const match = await scoreMetadataMatchCooperatively(file, metadataCache.getFileCache?.(file), querySignals,
+                    async () => { await calculation.checkpoint(); });
+                if (!match) continue;
+                insertLimitedMatch(matches, match, compare, input.limit);
+            }
+            if (scanEpoch !== undefined && scanEpoch !== context.host.getTaskSourceAuthorityEpoch?.()) {
+                return createToolFailureResult("search_vault_metadata", input.query, "Note sources changed during metadata search; retry.");
+            }
 
             return {
                 ok: true,
@@ -680,18 +697,22 @@ export function createListRecentNotesTool(
         validateInput: validateListRecentNotesInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
+            const checkpoint = createReadCheckpoint(context);
             const statKey = input.order === "created" ? "ctime" : "mtime";
-            const notes = getMarkdownFiles(context.host)
-                .filter((file) => isAllowedPath(file.path, options.isPathAllowed))
-                .map((file) => {
-                    assertTaskSourceReadCurrent(context.taskSourceReadGuard);
-                    if (!isTaskSourcePathAllowed(context.taskSourceReadGuard, file.path)) {
-                        throw new Error("Recent note is outside the permitted task scope.");
-                    }
-                    return fileToRecentNote(file);
-                })
-                .sort((a, b) => (b[statKey] ?? 0) - (a[statKey] ?? 0) || a.path.localeCompare(b.path))
-                .slice(0, input.limit);
+            const scanEpoch = context.host.getTaskSourceAuthorityEpoch?.();
+            const notes: ReturnType<typeof fileToRecentNote>[] = [];
+            for (const file of await getMarkdownFilesCooperatively(context.host, checkpoint)) {
+                await checkpoint();
+                if (!isAllowedPath(file.path, options.isPathAllowed)) continue;
+                if (!isTaskSourcePathAllowed(context.taskSourceReadGuard, file.path)) {
+                    throw new Error("Recent note is outside the permitted task scope.");
+                }
+                insertLimitedMatch(notes, fileToRecentNote(file),
+                    (a, b) => (b[statKey] ?? 0) - (a[statKey] ?? 0) || a.path.localeCompare(b.path), input.limit);
+            }
+            if (scanEpoch !== undefined && scanEpoch !== context.host.getTaskSourceAuthorityEpoch?.()) {
+                return createToolFailureResult("list_recent_notes", `${input.order}:${input.limit}`, "Note sources changed during recent-note search; retry.");
+            }
 
             return {
                 ok: true,
@@ -751,7 +772,7 @@ export function createReadNoteOutlineTool(
                     "Requested Markdown note was not available in the permitted vault scope.",
                 );
             }
-            const file = findMarkdownFileByPath(context.host, normalizedPath);
+            const file = await findMarkdownFileByPathCooperatively(context.host, normalizedPath, createReadCheckpoint(context));
             if (!file) {
                 return createToolFailureResult(
                     "read_note_outline",
@@ -850,7 +871,7 @@ export function createReadNoteTool(
                 );
             }
 
-            const file = findMarkdownFileByPath(context.host, sourcePath);
+            const file = await findMarkdownFileByPathCooperatively(context.host, sourcePath, createReadCheckpoint(context));
             if (!file || file.path !== sourcePath) {
                 return createToolFailureResult(
                     "read_note",
@@ -958,6 +979,7 @@ export function createReadNoteTool(
                 });
                 assertReadNoteSourceCurrent(context, sourcePath, file, stat, options);
                 const evidence = await buildReadObservationEvidence({
+                    signal: context.signal,
                     observationId: createVaultObservationId(`read-note-${++nextVaultObservationInstance}`),
                     scope: observationScope(context),
                     output: segment.content,
@@ -1094,6 +1116,7 @@ export function createQueryNotesTool(
                     instancePrefix,
                     identities,
                     signal: context.signal,
+                    checkpoint: createReadCheckpoint(context),
                     dependencyPaths,
                     isPathReadable: path => isAllowedPath(path, options.isPathAllowed)
                         && isTaskSourcePathAllowed(context.taskSourceReadGuard, path),
@@ -1104,6 +1127,7 @@ export function createQueryNotesTool(
                     onMetadataDependency: path => dependencyPaths.add(path),
                 });
                 const evidence = await buildQueryObservationEvidence({
+                    signal: context.signal,
                     observationId: createVaultObservationId(`query-notes-${++nextVaultObservationInstance}`),
                     scope: observationScope(context),
                     output: result.content,
@@ -1229,6 +1253,7 @@ export function createInspectObsidianNoteTool(
         validateInput: validateInspectObsidianNoteInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
+            const checkpoint = createReadCheckpoint(context);
             const host = options.isPathAllowed
                 ? createPathFilteredHost(context.host, options.isPathAllowed)
                 : context.host;
@@ -1256,7 +1281,7 @@ export function createInspectObsidianNoteTool(
                 );
             }
             const file = normalizedPath
-                ? findMarkdownFileByPath(host, normalizedPath)
+                ? await findMarkdownFileByPathCooperatively(host, normalizedPath, checkpoint)
                 : activeFile;
             if (!file) {
                 return createToolFailureResult(
@@ -1273,7 +1298,13 @@ export function createInspectObsidianNoteTool(
             const fileStat = captureReadNoteStat(file);
             const primaryPath = file.path;
 
-            const metadataCache = getOptionalMetadataCache(host);
+            const structureEpoch = host.getTaskSourceAuthorityEpoch?.();
+            const originalMetadata = getOptionalMetadataCache(host);
+            const metadataCache = originalMetadata ? {
+                getFileCache: originalMetadata.getFileCache?.bind(originalMetadata),
+                resolvedLinks: await getMetadataLinkFactsCooperatively(originalMetadata, "resolvedLinks", checkpoint),
+                unresolvedLinks: await getMetadataLinkFactsCooperatively(originalMetadata, "unresolvedLinks", checkpoint),
+            } : undefined;
             const cache = metadataCache?.getFileCache?.(file);
             const canReadNoteBody = canReadVaultFiles(host);
             const cacheKnown = cache !== null && cache !== undefined;
@@ -1304,6 +1335,12 @@ export function createInspectObsidianNoteTool(
                 ? ["metadata cache"]
                 : [];
             const dependencyPaths = new Set<string>();
+            const preparedBacklinks = await evaluateBacklinksForPathCooperatively(
+                file.path, metadataCache?.resolvedLinks, checkpoint, path => dependencyPaths.add(path),
+            );
+            if (structureEpoch !== undefined && structureEpoch !== host.getTaskSourceAuthorityEpoch?.()) {
+                return createToolFailureResult("inspect_obsidian_note", file.path, "Note sources changed during structure inspection; retry.");
+            }
             let backlinkEvaluation: InspectBacklinkEvidenceFacts | undefined;
             let structure: InspectObsidianNoteOutput;
             try {
@@ -1316,6 +1353,7 @@ export function createInspectObsidianNoteTool(
                         : [],
                     omittedCount: bodyRequired && (readResult.truncated || readResult.skippedForSize) ? 1 : 0,
                     onSourceRead: path => dependencyPaths.add(path),
+                    backlinkEvaluation: preparedBacklinks,
                     bodyRead,
                     bodyRequired,
                     captureBacklinkEvaluation: facts => {
@@ -1364,12 +1402,18 @@ export function createInspectObsidianNoteTool(
             }
             const frozenCacheProjection = projectInspectCache(cache);
             if (!backlinkEvaluation) throw new Error("inspect_obsidian_note did not capture its backlink scan domain.");
-            const frozenLinkFacts = projectInspectLinkFactsFromBacklinkEvaluation(
+            const frozenLinkFacts = await projectInspectLinkFactsFromBacklinkEvaluationAsync(
                 file.path,
                 backlinkEvaluation,
                 metadataCache,
+                undefined,
+                context.signal,
             );
+            if (structureEpoch !== undefined && structureEpoch !== host.getTaskSourceAuthorityEpoch?.()) {
+                return createToolFailureResult("inspect_obsidian_note", file.path, "Note sources changed during structure evidence projection; retry.");
+            }
             const evidence = await buildInspectObservationEvidence({
+                signal: context.signal,
                 observationId: createVaultObservationId(`inspect-note-${++nextVaultObservationInstance}`),
                 scope: observationScope(context),
                 output: coverageRestoredResult.content,
@@ -1418,7 +1462,7 @@ export function createReadCanvasSummaryTool(): ChatToolDefinition<ReadCanvasSumm
         validateInput: validateReadCanvasSummaryInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const file = findVaultFileByPath(context.host, input.path);
+            const file = await findVaultFileByPathCooperatively(context.host, input.path, createReadCheckpoint(context));
             if (!file || !file.path.toLowerCase().endsWith(".canvas")) {
                 return createToolFailureResult("read_canvas_summary", input.path, "Requested Canvas file was not found.");
             }
@@ -1549,6 +1593,7 @@ export function createSearchVaultSnippetsTool(
                     instancePrefix,
                     identities,
                     signal: context.signal,
+                    checkpoint: createReadCheckpoint(context),
                     dependencyPaths,
                     isPathReadable: path => isAllowedPath(path, options.isPathAllowed)
                         && isTaskSourcePathAllowed(context.taskSourceReadGuard, path),
@@ -1558,6 +1603,7 @@ export function createSearchVaultSnippetsTool(
                     },
                 });
                 const evidence = await buildSnippetObservationEvidence({
+                    signal: context.signal,
                     observationId: createVaultObservationId(`vault-snippets-${++nextVaultObservationInstance}`),
                     scope: observationScope(context),
                     output: result.content,
@@ -1606,6 +1652,7 @@ function withTaskSourceReadBoundary<Input, Output>(
         execute: async (input, context) => {
             const guard = context.taskSourceReadGuard;
             if (!guard) return execute(input, context);
+            await guard.checkpoint?.(context.signal);
             assertTaskSourceReadCurrent(guard);
             const admittedPaths = new Set<string>();
             const host = createPathFilteredHost(context.host,
@@ -1615,8 +1662,11 @@ function withTaskSourceReadBoundary<Input, Output>(
                     return allowed;
                 }, guard, options.failClosedMarkdownEnumeration);
             const result = await execute(input, { ...context, host });
+            await guard.checkpoint?.(context.signal);
             assertTaskSourceReadCurrent(guard);
+            const checkpoint = createReadCheckpoint(context);
             for (const path of admittedPaths) {
+                await checkpoint();
                 if (!isAllowedPath(path, options.isPathAllowed) || !isTaskSourcePathAllowed(guard, path)) {
                     throw new Error("Task source path is no longer permitted.");
                 }
@@ -1627,6 +1677,25 @@ function withTaskSourceReadBoundary<Input, Output>(
             return result;
         },
     };
+}
+
+function createReadCheckpoint(context: ChatToolContext): CooperativeCheckpoint {
+    const task = createCooperativeTask(context.signal);
+    return async () => {
+        const guard = context.taskSourceReadGuard;
+        // A dirty authority epoch needs a fresh proof; it does not itself revoke a saved read snapshot.
+        if (guard && !guard.isCurrent()) await guard.checkpoint?.(context.signal);
+        assertTaskSourceReadCurrent(guard);
+        if (await task.checkpoint()) await guard?.checkpoint?.(context.signal);
+        assertTaskSourceReadCurrent(guard);
+    };
+}
+
+function insertLimitedMatch<T>(matches: T[], match: T, compare: (left: T, right: T) => number, limit: number): void {
+    const position = matches.findIndex(existing => compare(match, existing) < 0);
+    if (position >= 0) matches.splice(position, 0, match);
+    else if (matches.length < limit) matches.push(match);
+    if (matches.length > limit) matches.pop();
 }
 
 function normalizeBoundaryPath(path: string): string | undefined {
@@ -1678,6 +1747,7 @@ function createPathFilteredHost(
     };
     const filteredVault: {
         getMarkdownFiles: () => Array<{ path: string }>;
+        getMarkdownFilesCooperatively: (checkpoint: CooperativeCheckpoint) => Promise<MarkdownFileLike[]>;
         getAbstractFileByPath: (path: string) => unknown;
         cachedRead?: (file: { path: string }) => Promise<string>;
     } = {
@@ -1690,6 +1760,20 @@ function createPathFilteredHost(
                 .filter((file) => isAllowedPath(file.path, isPathAllowed));
             assertTaskSourceReadCurrent(guard);
             return files;
+        },
+        getMarkdownFilesCooperatively: async (checkpoint) => {
+            assertTaskSourceReadCurrent(guard);
+            if (typeof sourceVault.getMarkdownFiles !== "function" && failClosedMarkdownEnumeration) {
+                throw new QueryNotesUnavailableError("Vault getMarkdownFiles is unavailable.");
+            }
+            const files = await getMarkdownFilesCooperatively(host, checkpoint);
+            const permitted: MarkdownFileLike[] = [];
+            for (const file of files) {
+                await checkpoint();
+                if (isAllowedPath(file.path, isPathAllowed)) permitted.push(file);
+            }
+            assertTaskSourceReadCurrent(guard);
+            return permitted;
         },
         getAbstractFileByPath: (path: string) => {
             assertTaskSourceReadCurrent(guard);
@@ -1705,12 +1789,14 @@ function createPathFilteredHost(
     if (typeof sourceVault.cachedRead === "function") {
         filteredVault.cachedRead = async (file: { path: string }) => {
             try {
+                await guard?.checkpoint?.();
                 assertAllowed(file.path);
                 const cachedRead = sourceVault.cachedRead;
                 if (typeof cachedRead !== "function") {
                     throw new Error("Vault cachedRead is unavailable.");
                 }
                 const content = await cachedRead.call(sourceVault, file);
+                await guard?.checkpoint?.();
                 if (typeof content !== "string") {
                     throw new Error("Vault cachedRead did not return a string.");
                 }
@@ -1732,6 +1818,22 @@ function createPathFilteredHost(
     const metadata = getOptionalMetadataCache(host);
     if (metadata) {
         const filteredMetadata = Object.create(metadata) as typeof metadata;
+        Object.defineProperty(filteredMetadata, "getLinkFactsCooperatively", { value: async (
+            name: "resolvedLinks" | "unresolvedLinks", checkpoint: CooperativeCheckpoint,
+        ) => {
+            const source = await getMetadataLinkFactsCooperatively(metadata, name, checkpoint);
+            if (!source) return source;
+            const links: Record<string, Record<string, number>> = Object.create(null);
+            for (const path of Object.keys(source)) {
+                await checkpoint();
+                if (!isAllowedPath(path, isPathAllowed)) continue;
+                Object.defineProperty(links, path, {
+                    enumerable: true,
+                    get: () => { assertAllowed(path); return source[path]; },
+                });
+            }
+            return links;
+        } });
         if (typeof metadata.getFileCache === "function") {
             Object.defineProperty(filteredMetadata, "getFileCache", { value: (file: Parameters<NonNullable<typeof metadata.getFileCache>>[0]) => {
                 assertAllowed(file.path);
@@ -1804,8 +1906,12 @@ export function createListVaultTagsTool(): ChatToolDefinition<ListVaultTagsInput
         validateInput: validateListVaultTagsInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
+            const scanEpoch = context.host.getTaskSourceAuthorityEpoch?.();
             const dependencyPaths = new Set<string>();
-            const result = await listVaultTags(context.host, input.limit, context.signal, path => dependencyPaths.add(path));
+            const result = await listVaultTags(context.host, input.limit, context.signal, path => dependencyPaths.add(path), createReadCheckpoint(context));
+            if (scanEpoch !== undefined && scanEpoch !== context.host.getTaskSourceAuthorityEpoch?.()) {
+                return createToolFailureResult("list_vault_tags", `limit:${input.limit}`, "Note sources changed during tag search; retry.");
+            }
             return {
                 ok: true,
                 tool: "list_vault_tags",

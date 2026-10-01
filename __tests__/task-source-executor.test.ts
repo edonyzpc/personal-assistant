@@ -28,6 +28,34 @@ function setup(base: PaAgentToolExecutor = { execute: jest.fn() }) {
 }
 
 describe('Task source Host batch admission', () => {
+    it('keeps reads closed until asynchronous admission and uses its cheap fence per path', async () => {
+        const h = setup();
+        let epoch = 1;
+        const fullValidity = jest.fn(() => true);
+        const prepare = jest.fn(async () => {
+            const admittedEpoch = epoch;
+            return { isCurrent: () => epoch === admittedEpoch, sourceValidity: fullValidity };
+        });
+        const executor = createTaskSourceConstrainedExecutor({ baseExecutor: { execute: jest.fn() }, state: h.state,
+            resolveHostNoteId: path => h.ids.get(path), isHostCurrent: () => true,
+            prepareInputSourceAdmission: prepare,
+            resolveReadPlan: () => ({ reads: [{ kind: 'note', noteId: 'note-a' }] }) });
+        const admitted = executor.preflightBatch!({ runId: 'run', turnId: 'turn', turnIndex: 0,
+            userInput, toolCalls: [call('read', 'read_note')] });
+        if (!admitted || !('kind' in admitted)) throw new Error('expected admission');
+        const guard = admitted.taskSourceReadGuard!;
+        expect(guard.isCurrent()).toBe(false);
+        expect(guard.isPathAllowed('a.md')).toBe(false);
+        await guard.checkpoint!();
+        for (let index = 0; index < 100; index++) expect(guard.isPathAllowed('a.md')).toBe(true);
+        expect(prepare).toHaveBeenCalledTimes(1);
+        expect(fullValidity).not.toHaveBeenCalled();
+        expect(guard.captureSourceValidity!()()).toBe(true);
+        epoch += 1;
+        expect(guard.isCurrent()).toBe(false);
+        await guard.checkpoint!();
+        expect(guard.isCurrent()).toBe(true);
+    });
     it('admits an ordinary read without a model declaration and binds real identities', () => {
         const h = setup();
         const admitted = h.preflight([call('read', 'read_note')]);

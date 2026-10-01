@@ -118,6 +118,25 @@ function paths(result: QueryNotesOutput): string[] {
 }
 
 describe('createQueryNotesTool', () => {
+    it('rejects a native snapshot whose epoch changes after an earlier candidate was read', async () => {
+        const files = Array.from({ length: 200 }, (_, index) => makeFile(`notes/${String(index).padStart(3, '0')}.md`));
+        const caches = new Map(files.map(file => [file.path, { tags: [{ tag: '#project' }] }]));
+        const f = setup(files, caches);
+        let epoch = 0;
+        f.context.host.getTaskSourceAuthorityEpoch = () => String(epoch);
+        f.cache.mockImplementationOnce((file) => {
+            setTimeout(() => { caches.set(file.path, { tags: [{ tag: '#changed' }] }); epoch++; }, 0);
+            return { tags: [{ tag: '#project' }] };
+        });
+
+        const result = await f.invoke({ tags: ['#project'], limit: 10 });
+
+        expect(epoch).toBe(1);
+        expect(result.ok).toBe(false);
+        expect(result.content).toBeNull();
+        expect(result.error).toContain('sources changed');
+    });
+
     it('combines exact path/folder, all-of tags, and strict property conditions', async () => {
         const files = [
             makeFile('notes/a.md', { ctime: 100, mtime: 200 }),

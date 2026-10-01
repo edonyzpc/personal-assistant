@@ -1,5 +1,5 @@
 import { stableStringify } from "./agent-utils";
-import { assertTaskSourceReadCurrent, type TaskSourceReadGuard } from "./task-source-read-guard";
+import { assertTaskSourceReadCurrent, checkpointTaskSourceRead, type TaskSourceReadGuard } from "./task-source-read-guard";
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import {
     toolConstraintsFromAgentControlSnapshot,
@@ -126,6 +126,8 @@ export class ToolExecutionDispatcher {
                         throw new Error("Batch preflight must be synchronous.");
                     }
                     if (result && "kind" in result && result.kind === "admitted") {
+                        const stoppedBy = await this.prepareSourceAdmission(result.taskSourceReadGuard);
+                        if (stoppedBy) return { toolResults: [], diagnostics: [], stoppedBy };
                         const admitted = this.validatePreflightAdmission(result, parsedToolCalls);
                         readGuard = admitted.taskSourceReadGuard;
                     } else {
@@ -173,6 +175,8 @@ export class ToolExecutionDispatcher {
                 turnControlSnapshot,
                 readGuard,
             );
+            const stoppedBy = await this.prepareSourceAdmission(readGuard);
+            if (stoppedBy) return { toolResults: [], diagnostics: preparation.diagnostics, stoppedBy };
             assertTaskSourceReadCurrent(readGuard);
             dispatch = this.resolveBatchExecutionMode(parsedToolCalls);
             assertTaskSourceReadCurrent(readGuard);
@@ -228,6 +232,31 @@ export class ToolExecutionDispatcher {
             throw new Error("Retired task-source controls cannot be admitted.");
         }
         return { kind: "admitted", taskSourceReadGuard: guard };
+    }
+
+    /** Source preparation shares the existing tool/run clocks and linked cancellation. */
+    private async prepareSourceAdmission(readGuard?: TaskSourceReadGuard): Promise<"aborted" | "wall_clock_exceeded" | undefined> {
+        if (!readGuard?.checkpoint) { assertTaskSourceReadCurrent(readGuard); return undefined; }
+        const controller = new AbortController();
+        const interrupt = this.createToolInterruptPromise(controller);
+        const preparation = Promise.resolve().then(async () => {
+            await checkpointTaskSourceRead(readGuard, controller.signal);
+            return { type: 'source_admitted' as const };
+        }).catch(error => ({ type: 'source_rejected' as const, error }));
+        try {
+            const result = await Promise.race([preparation, interrupt.promise]);
+            if (result.type === 'aborted' || result.type === 'abort_timeout') return 'aborted';
+            if (result.type === 'wall_clock_exceeded') return 'wall_clock_exceeded';
+            if (result.type === 'source_rejected') throw result.error;
+            if (result.type !== 'source_admitted') throw new Error('Task source preparation did not complete.');
+            if (this.config.isAborted()) return 'aborted';
+            if (this.config.isWallClockExceeded()) return 'wall_clock_exceeded';
+            assertTaskSourceReadCurrent(readGuard);
+            return undefined;
+        } finally {
+            interrupt.cleanup();
+            controller.abort();
+        }
     }
 
     private rejectPreflightBatch(
@@ -788,7 +817,8 @@ export class ToolExecutionDispatcher {
         }
 
         const interrupt = this.createToolInterruptPromise(controller, timeoutMs);
-        const executionPromise: Promise<ToolExecutionRaceResult> = Promise.resolve().then(() => {
+        const executionPromise: Promise<ToolExecutionRaceResult> = Promise.resolve().then(async () => {
+            await checkpointTaskSourceRead(readGuard, controller.signal);
             assertTaskSourceReadCurrent(readGuard);
             return this.config.toolExecutor!.execute({
                 runId: this.config.runId,

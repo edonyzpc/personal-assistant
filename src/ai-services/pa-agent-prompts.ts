@@ -7,7 +7,9 @@ import type { ChatMessage, PaAgentMessage } from "./chat-types";
 import { actionHistoryMessages, canProjectNativeActionHistory, projectPaAgentActionHistory,
     type PaAgentActionGroup } from "./pa-agent-action-history";
 import type { PaAgentProjectedHistory } from "./context/PaAgentContextProjector";
-import { estimateApproximateTokens } from "../token-estimate";
+import { countTokenCharacters, estimateApproximateTokens } from "../token-estimate";
+import { createCooperativeTask } from './cooperative-task';
+import { stringifyContextAsync } from './context/PaAgentContextSerialization';
 
 const MAX_CHAT_HISTORY_CHARS = 60_000;
 
@@ -120,6 +122,105 @@ export function measurePaAgentRequestEnvelope(input: Record<string, string>, bou
     };
 }
 
+/** Same request estimate, with serialization and character counting yielding to native input. */
+export async function measurePaAgentRequestEnvelopeAsync(input: Record<string, string>, boundSchemas: readonly unknown[],
+    messages?: readonly BaseMessage[], signal?: AbortSignal): Promise<PaAgentRequestEnvelopeEstimate> {
+    const task = createCooperativeTask(signal);
+    const system = renderTemplate(PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES.join('\n'), 'f-string', input);
+    const active = new Set<object>();
+    const sanitizeImages = async (value: unknown, key = ''): Promise<unknown> => {
+        await task.checkpoint();
+        if (value && typeof value === 'object' && typeof (value as { toJSON?: unknown }).toJSON === 'function') {
+            value = (value as { toJSON(key: string): unknown }).toJSON(key);
+        }
+        if (typeof value === 'string') return value.startsWith('data:image/') ? '[attached-image]' : value;
+        if (!value || typeof value !== 'object') return value;
+        if (value instanceof Number || value instanceof String || value instanceof Boolean) return value.valueOf();
+        if (active.has(value)) throw new TypeError('Converting circular structure to JSON');
+        active.add(value);
+        if (Array.isArray(value)) {
+            const result: unknown[] = [];
+            for (let index = 0; index < value.length; index++) result.push(await sanitizeImages(value[index], String(index)));
+            active.delete(value);
+            return result;
+        }
+        const result = Object.create(null) as Record<string, unknown>;
+        for (const name of Object.keys(value)) result[name] = await sanitizeImages((value as Record<string, unknown>)[name], name);
+        active.delete(value);
+        return result;
+    };
+    const dictionaries: unknown[] = [];
+    let images = 0;
+    for (const message of messages ?? []) {
+        await task.checkpoint();
+        dictionaries.push(await sanitizeImages(message.toDict()));
+        if (Array.isArray(message.content)) for (const part of message.content) {
+            await task.checkpoint();
+            if (part.type === 'image_url') images++;
+        }
+    }
+    const body = messages ? await stringifyContextAsync(dictionaries, signal) ?? 'null'
+        : renderTemplate(PA_AGENT_HUMAN_PROMPT_TEMPLATE, 'f-string', input);
+    const schemas = await stringifyContextAsync(boundSchemas, signal) ?? 'null';
+    return {
+        promptChars: system.length + body.length + images * PA_AGENT_IMAGE_RESERVE_CHARS + schemas.length
+            + PA_AGENT_REQUEST_SAFETY_RESERVE_CHARS,
+        estimatedPromptTokens: await estimatePaAgentTextTokensAsync(system, signal)
+            + await estimatePaAgentTextTokensAsync(body, signal) + await estimatePaAgentTextTokensAsync(schemas, signal)
+            + images * PA_AGENT_IMAGE_RESERVE_CHARS,
+        estimateMethod: images ? 'cjk_text_schema_image_reserve' : 'cjk_text_and_serialized_schema',
+        imageCount: images,
+    };
+}
+
+/** Accumulate slices before rounding, preserving the synchronous estimate exactly. */
+export async function estimatePaAgentTextTokensAsync(text: string, signal?: AbortSignal): Promise<number> {
+    const task = createCooperativeTask(signal);
+    let cjk = 0, other = 0;
+    for (let start = 0; start < text.length;) {
+        await task.checkpoint();
+        let end = Math.min(text.length, start + 16_384);
+        if (end < text.length && text.charCodeAt(end - 1) >= 0xd800 && text.charCodeAt(end - 1) <= 0xdbff) end--;
+        const counts = countTokenCharacters(text.slice(start, end));
+        cjk += counts.cjk;
+        other += counts.other;
+        start = end;
+    }
+    return cjk + Math.ceil(other / 4);
+}
+
+export async function buildPaAgentFinalMessagesAsync(input: string, actionHistory: readonly PaAgentActionGroup[],
+    requestedMode: 'native' | 'compat', imageMessage?: HumanMessage,
+    history?: PaAgentProjectedHistory, currentInput = input, signal?: AbortSignal): Promise<BaseMessage[]> {
+    const task = createCooperativeTask(signal);
+    const mode = resolvePaAgentMessageMode(requestedMode, actionHistory, history);
+    const priorActions = mode === 'native' && history?.sourceMessages.some(message => message.role === 'assistant'
+        && message.canonicalTurn?.messages.some(part => part.role === 'assistant'
+            && part.content.some(item => item.type === 'toolCall')));
+    const messages: BaseMessage[] = [];
+    if (priorActions) for (const message of history!.sourceMessages) {
+        await task.checkpoint();
+        if (message.role === 'user') { messages.push(new HumanMessage(message.content)); continue; }
+        if (message.canonicalTurn) for (const group of projectPaAgentActionHistory(message.canonicalTurn.messages)) {
+            await task.checkpoint();
+            messages.push(...actionHistoryMessages([group], 'native'));
+        }
+        if (message.content) messages.push(new AIMessage(message.content));
+    }
+    let userMessage = imageMessage ?? new HumanMessage(input);
+    if (priorActions) {
+        userMessage = imageMessage && Array.isArray(imageMessage.content)
+            ? new HumanMessage({ content: [{ type: 'text', text: currentInput }, ...imageMessage.content.slice(1)] })
+            : new HumanMessage(currentInput);
+    }
+    messages.push(userMessage);
+    for (const group of actionHistory) {
+        await task.checkpoint();
+        messages.push(...actionHistoryMessages([group], mode));
+    }
+    return messages;
+}
+
 export function createPaAgentAnswerStreamPrompt(_multimodal = false) {
     return ChatPromptTemplate.fromMessages([
         SystemMessagePromptTemplate.fromTemplate(PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES.join("\n")),
@@ -205,6 +306,19 @@ export function formatToolObservations(
         return `<untrusted ${attrs}>\n${safeObservation}\n</untrusted>`;
     });
     return blocks.join("\n\n");
+}
+
+export async function formatToolObservationsAsync(transcript: readonly PaAgentMessage[], turnIndex: number,
+    signal?: AbortSignal): Promise<string> {
+    const task = createCooperativeTask(signal);
+    const blocks: string[] = [];
+    for (const message of transcript) {
+        await task.checkpoint();
+        if (message.role !== 'toolResult' || !message.content.includeInNextPrompt) continue;
+        const attrs = `source="tool:${escapeAttributeValue(message.toolName)}" turn="${turnIndex}" index="${blocks.length + 1}" is_error="${message.isError}"`;
+        blocks.push(`<untrusted ${attrs}>\n${escapeUntrustedBoundary(message.content.promptText ?? '')}\n</untrusted>`);
+    }
+    return blocks.length ? blocks.join('\n\n') : 'None';
 }
 
 function escapeUntrustedBoundary(value: string): string {

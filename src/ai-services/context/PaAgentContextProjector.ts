@@ -5,9 +5,10 @@ import {
 } from "../pagelet-handoff";
 import { escapeTaggedBoundary } from "../agent-utils";
 import { sanitizeUserProfileMarkdownForPrompt } from "../memory-extraction/type-a-extractor";
-import { groupChatTurns, PaAgentContextCompactor } from "./PaAgentContextCompactor";
-import { fitFullHistory, formatHistoryMessages, formatSemanticHistorySummary } from "./PaAgentHistoryContextPlan";
-import { isCurrentHistorySummary, type PaAgentContextSummaries } from "./PaAgentContextSummaryTypes";
+import { groupChatTurnsSteps, PaAgentContextCompactor } from "./PaAgentContextCompactor";
+import { fitFullHistorySteps, formatHistoryMessagesSteps, formatSemanticHistorySummary } from "./PaAgentHistoryContextPlan";
+import { finishContextSteps } from './clone-utils';
+import { isCurrentHistorySummarySteps, type PaAgentContextSummaries } from "./PaAgentContextSummaryTypes";
 import type { GenerationInputBackgroundSources } from "../generation-input-snapshot";
 
 export const MEMORY_CONTEXT_MAX_CHARS = 6_000;
@@ -70,7 +71,12 @@ export class PaAgentContextProjector {
 
     projectUserInput(options: PaAgentProjectedInputOptions): { input: string; currentInput: string;
         history: PaAgentProjectedHistory } {
-        const history = this.projectHistory(
+        return finishContextSteps(this.projectUserInputSteps(options));
+    }
+
+    *projectUserInputSteps(options: PaAgentProjectedInputOptions): Generator<void,
+        { input: string; currentInput: string; history: PaAgentProjectedHistory }, void> {
+        const history = yield* this.projectHistorySteps(
             options.chatHistory,
             options.maxHistoryChars,
             options.maxHistorySummaryChars,
@@ -97,15 +103,15 @@ export class PaAgentContextProjector {
         }));
     }
 
-    private projectHistory(
+    private *projectHistorySteps(
         history: ChatMessage[] = [],
         maxHistoryChars: number,
         maxHistorySummaryChars = 2400,
         summaries?: PaAgentContextSummaries,
         allowLossless = true,
-    ): PaAgentProjectedHistory {
+    ): Generator<void, PaAgentProjectedHistory, void> {
         const budget = Math.max(0, maxHistoryChars);
-        const fullHistory = fitFullHistory(history, budget, allowLossless);
+        const fullHistory = yield* fitFullHistorySteps(history, budget, allowLossless);
         if (fullHistory) {
             return withHistorySources({
                 text: fullHistory.text,
@@ -123,13 +129,13 @@ export class PaAgentContextProjector {
         if (history.some(message => message.canonicalTurn?.messages.some(part =>
             part.role === "assistant" && part.content.some(item => item.type === "toolCall")))) {
             const semantic = summaries?.history?.text.trim()
-                && isCurrentHistorySummary(summaries.history, history) ? summaries.history : undefined;
+                && (yield* isCurrentHistorySummarySteps(summaries.history, history)) ? summaries.history : undefined;
             const summaryText = semantic ? formatSemanticHistorySummary(semantic.text) : "";
             const summarizedPrefixCount = semantic?.sourceMessages.length ?? 0;
             const firstUser = history.findIndex(message => message.role === "user");
             const turns = firstUser < 0 ? [history] : [
                 ...(firstUser > 0 ? [history.slice(0, firstUser)] : []),
-                ...groupChatTurns(history.slice(firstUser)),
+                ...(yield* groupChatTurnsSteps(history.slice(firstUser))),
             ];
             let consumed = 0;
             const turnEnds = turns.map(turn => (consumed += turn.length));
@@ -137,17 +143,23 @@ export class PaAgentContextProjector {
                 message.canonicalTurn?.messages.some(part => part.role === "assistant"
                     && part.content.some(item => item.type === "toolCall"))) ? [index] : []));
             const retainedIndices = new Set(protectedIndices);
-            const retained = () => turns.flatMap((turn, index) => retainedIndices.has(index) ? turn : []);
-            const formatRetained = (compactResults: boolean) => [summaryText,
-                formatHistoryMessages(retained(), compactResults)].filter(Boolean).join("\n\n");
-            let compactActionResults = formatRetained(false).length > budget;
+            const formatRetained = function* (compactResults: boolean): Generator<void, string, void> {
+                const retained: ChatMessage[] = [];
+                for (const [index, turn] of turns.entries()) {
+                    yield;
+                    if (retainedIndices.has(index)) retained.push(...turn);
+                }
+                return [summaryText, yield* formatHistoryMessagesSteps(retained, compactResults)].filter(Boolean).join("\n\n");
+            };
+            let compactActionResults = (yield* formatRetained(false)).length > budget;
             let ordinaryTurnLimitReached = false;
             for (let index = turns.length - 1; index >= 0; index--) {
+                yield;
                 if (protectedIndices.has(index) || turnEnds[index] <= summarizedPrefixCount
                     || ordinaryTurnLimitReached) continue;
                 retainedIndices.add(index);
-                if (formatRetained(compactActionResults).length > budget) {
-                    if (!compactActionResults && formatRetained(true).length <= budget) {
+                if ((yield* formatRetained(compactActionResults)).length > budget) {
+                    if (!compactActionResults && (yield* formatRetained(true)).length <= budget) {
                         compactActionResults = true;
                     } else {
                         retainedIndices.delete(index);
@@ -155,10 +167,11 @@ export class PaAgentContextProjector {
                     }
                 }
             }
-            const text = formatRetained(compactActionResults);
+            const text = yield* formatRetained(compactActionResults);
             const retainedMessageIndices = new Set<number>();
             let start = 0;
             for (const [index, turn] of turns.entries()) {
+                yield;
                 if (retainedIndices.has(index)) for (let offset = 0; offset < turn.length; offset++) {
                     retainedMessageIndices.add(start + offset);
                 }
@@ -172,11 +185,11 @@ export class PaAgentContextProjector {
         }
 
         const semantic = summaries?.history;
-        if (semantic?.text.trim() && isCurrentHistorySummary(semantic, history)) {
+        if (semantic?.text.trim() && (yield* isCurrentHistorySummarySteps(semantic, history))) {
             const summaryText = formatSemanticHistorySummary(semantic.text);
             const coveredMessages = semantic.sourceMessages.length;
             const remaining = history.slice(coveredMessages);
-            const tail = this.projectHistory(
+            const tail = yield* this.projectHistorySteps(
                 remaining,
                 Math.max(0, budget - summaryText.length - (remaining.length > 0 ? 2 : 0)),
                 maxHistorySummaryChars,
@@ -198,33 +211,35 @@ export class PaAgentContextProjector {
 
         // Keep complete recent exchanges as a contiguous suffix. Count the
         // actual JSON, escaping and sandbox wrapper rather than raw contents.
-        const turns = groupChatTurns(history).filter((turn) =>
+        const turns = (yield* groupChatTurnsSteps(history)).filter((turn) =>
             turn.some((message) => message.role === "assistant"));
         let recentHistory: ChatMessage[] = [];
         let olderTurnCount = turns.length;
         for (let index = turns.length - 1; index >= 0; index--) {
+            yield;
             const candidate = [...turns[index], ...recentHistory];
-            if (formatHistoryMessages(candidate).length > budget) break;
+            if ((yield* formatHistoryMessagesSteps(candidate)).length > budget) break;
             recentHistory = candidate;
             olderTurnCount = index;
         }
 
         const olderHistory = turns.slice(0, olderTurnCount).flat();
         let summaryLimit = Math.min(Math.max(0, maxHistorySummaryChars), budget);
-        let compacted = this.compactor.compactChatHistory(olderHistory, {
+        let compacted = yield* this.compactor.compactChatHistorySteps(olderHistory, {
             recentTurns: 0,
             maxSummaryChars: summaryLimit,
         });
-        let text = formatProjectedHistory(compacted.summary, recentHistory);
+        let text = yield* formatProjectedHistorySteps(compacted.summary, recentHistory);
         // The digest is expendable before any chosen recent raw turn. Rebuild
         // whole lines to retain valid boundaries even when escaping expands it.
         while (compacted.summary && text.length > budget) {
+            yield;
             summaryLimit = Math.max(0, summaryLimit - (text.length - budget));
-            compacted = this.compactor.compactChatHistory(olderHistory, {
+            compacted = yield* this.compactor.compactChatHistorySteps(olderHistory, {
                 recentTurns: 0,
                 maxSummaryChars: summaryLimit,
             });
-            text = formatProjectedHistory(compacted.summary, recentHistory);
+            text = yield* formatProjectedHistorySteps(compacted.summary, recentHistory);
         }
         return withHistorySources({
             text,
@@ -248,11 +263,11 @@ function withHistorySources(
     return history as PaAgentProjectedHistory;
 }
 
-function formatProjectedHistory(summary: string, history: ChatMessage[]): string {
+function* formatProjectedHistorySteps(summary: string, history: ChatMessage[]): Generator<void, string, void> {
     const summaryText = summary
         ? `<compaction_summary context_only="true">\n${escapeTaggedBoundary(summary, "compaction_summary")}\n</compaction_summary>`
         : "";
-    const recentText = formatHistoryMessages(history);
+    const recentText = yield* formatHistoryMessagesSteps(history);
     return [summaryText, recentText].filter(Boolean).join("\n\n");
 }
 

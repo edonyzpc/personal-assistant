@@ -34,16 +34,19 @@ import {
 import type { RetrievalDiagnosticEventInput } from "./retrieval-diagnostics";
 import {
     createPaAgentAnswerStreamPrompt,
-    buildPaAgentFinalMessages,
+    buildPaAgentFinalMessagesAsync,
     createOperationsPromptGuidance,
     formatCanonicalHostContext,
     formatSkillCatalog,
     formatToolObservations,
+    formatToolObservationsAsync,
     measurePaAgentRequestChars,
-    measurePaAgentRequestEnvelope,
+    measurePaAgentRequestEnvelopeAsync,
+    estimatePaAgentTextTokensAsync,
     type PaAgentRequestEnvelopeEstimate,
 } from "./pa-agent-prompts";
-import { estimateApproximateTokens } from '../token-estimate';
+import { canonicalContextJsonAsync, stringifyContextAsync } from './context/PaAgentContextSerialization';
+import { createCooperativeTask } from './cooperative-task';
 import type { PaAgentActionGroup } from "./pa-agent-action-history";
 import { ChatOpenAI } from "@langchain/openai";
 import {
@@ -1389,6 +1392,7 @@ export class PaAgentRuntime {
             revalidateVaultObservation: this.host.revalidateVaultObservation?.bind(this.host),
             isPathAllowed: path => this.host.isDataBoundaryAllowedPath?.(path) !== false,
             getMemoryEvidenceEpoch: this.host.getMemoryEvidenceEpoch?.bind(this.host),
+            getTaskSourceAuthorityEpoch: this.host.getTaskSourceAuthorityEpoch?.bind(this.host),
         });
         if (runSourceSelection && options.writingContext) {
             const parentLineage = cloneInputLineage(options.writingContext.inputLineage);
@@ -1406,7 +1410,7 @@ export class PaAgentRuntime {
                     ?? readChatHistoryTurnMetadata(message)?.inputLineage));
             }
         }
-        const admittedImageHistory = sourceRun.projectHistory(options.chatHistory ?? []);
+        const admittedImageHistory = await sourceRun.projectHistoryAsync(options.chatHistory ?? [], options.signal);
         const admittedImageKeys = new Set([...(options.images ?? []),
             ...admittedImageHistory.flatMap(message => message.images ?? [])]
             .map(image => `${image.ref.assetId}:${image.ref.contentHash}`));
@@ -1757,7 +1761,7 @@ export class PaAgentRuntime {
         const contextSummarizer = this.contextSummarizer;
         let runSummaries: PaAgentContextSummaries = {};
         let actionProjectionMode: "native" | "compat" = "compat";
-        const snapshotHistory = (): ChatMessage[] => sourceRun.projectHistory(options.chatHistory ?? []).map(message => {
+        const snapshotHistory = async (signal?: AbortSignal): Promise<ChatMessage[]> => (await sourceRun.projectHistoryAsync(options.chatHistory ?? [], signal)).map(message => {
             const metadata = readChatHistoryTurnMetadata(message);
             const inputLineage = historyInputLineage(message);
             return { role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
@@ -1815,15 +1819,15 @@ export class PaAgentRuntime {
                 writingPreparationInstruction(),
             ]),
         });
-        const buildCanonicalModelInput = (
+        const buildCanonicalModelInput = async (
             input: PaAgentModelInput,
             toolDefinitions?: ChatToolRegistryDefinition[],
             boundSchemas?: ChatToolProviderSchema[],
-            history: ChatMessage[] | undefined = sourceRun.projectHistory(options.chatHistory ?? []),
+            history?: ChatMessage[],
             directory?: ContextInstructionReceipt,
         ) =>
             this.buildPaAgentCanonicalModelInput(
-                { ...projectionOptions(), chatHistory: history },
+                { ...projectionOptions(), chatHistory: history ?? await sourceRun.projectHistoryAsync(options.chatHistory ?? [], input.signal) },
                 withImageContext(input, directory),
                 toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
                 toolDefinitions,
@@ -1833,16 +1837,16 @@ export class PaAgentRuntime {
                 actionProjectionMode,
                 modelBudgetFacts,
             );
-        const previewCanonicalModelInput = (
+        const previewCanonicalModelInput = async (
             input: PaAgentModelInput,
             toolDefinitions: ChatToolRegistryDefinition[],
             boundSchemas: ChatToolProviderSchema[],
-        ) => this.projectPaAgentCanonicalModelInput(
-            { ...projectionOptions(), chatHistory: sourceRun.projectHistory(options.chatHistory ?? []) }, withImageContext(input),
+        ) => (await this.projectPaAgentCanonicalModelInput(
+            { ...projectionOptions(), chatHistory: await sourceRun.projectHistoryAsync(options.chatHistory ?? [], input.signal) }, withImageContext(input),
             toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
             toolDefinitions, injectedContext, boundSchemas,
             runSummaries, actionProjectionMode, modelBudgetFacts,
-        ).projection;
+        )).projection;
         const readInjectedContext = readAdmittedInjectedContext;
         const formatBackground = (context: PaAgentInjectedContext | undefined) => formatInjectedContext({
             ...context, pageletHandoff: undefined, writingStyleContext: undefined,
@@ -1867,8 +1871,8 @@ export class PaAgentRuntime {
                 throw new ProviderAdmissionError(new Error("Personal context changed before provider dispatch"));
             }
         };
-        const availableStyleBudget = (input: PaAgentModelInput, definitions: ChatToolRegistryDefinition[], schemas: ChatToolProviderSchema[]) => {
-            const baseline = previewCanonicalModelInput(input, definitions, schemas);
+        const availableStyleBudget = async (input: PaAgentModelInput, definitions: ChatToolRegistryDefinition[], schemas: ChatToolProviderSchema[]) => {
+            const baseline = await previewCanonicalModelInput(input, definitions, schemas);
             return {
                 remainingTextChars: Math.max(0, Math.min(
                     baseline.budget.maxPromptChars - baseline.budget.promptChars - 2,
@@ -1889,6 +1893,7 @@ export class PaAgentRuntime {
             sourceHistoryJson: string;
             isSourceCurrent: () => boolean;
             managementProjection?: MemoryManagementProjection;
+            prepareInputCurrent?: (signal?: AbortSignal) => Promise<void>;
             assertInputCurrent?: () => void;
         }
         const assertManagementBindingCurrent = async (binding: AnswerVaultBinding | undefined): Promise<void> => {
@@ -1911,6 +1916,17 @@ export class PaAgentRuntime {
         const stableProviderJson = (value: unknown): string => {
             try { return JSON.stringify(value) ?? "undefined"; } catch { return "[unserializable]"; }
         };
+        const stableProviderJsonAsync = async (value: unknown, signal?: AbortSignal): Promise<string> => {
+            try { return await stringifyContextAsync(value, signal) ?? 'undefined'; }
+            catch (error) { if (isAbortError(error)) throw error; return '[unserializable]'; }
+        };
+        const assertTranscriptCurrentAsync = async (transcript: readonly PaAgentMessage[], signal?: AbortSignal): Promise<void> => {
+            const projected = await sourceRun.projectTranscriptAsync(transcript, signal);
+            if (!sourceRun.isCurrent() || projected.length !== transcript.length
+                || projected.some((message, index) => message !== transcript[index])) {
+                throw new Error('Task material changed before provider dispatch');
+            }
+        };
         const buildProviderInput = async (
             input: PaAgentModelInput,
             definitions: ChatToolRegistryDefinition[],
@@ -1928,7 +1944,7 @@ export class PaAgentRuntime {
             preparedBackground = formatBackground(injectedContext);
             preparedBackgroundSourceCurrent = backgroundSourceCurrent;
             if (writingStyle) {
-                const budget = availableStyleBudget(input, definitions, schemas);
+                const budget = await availableStyleBudget(input, definitions, schemas);
                 if (writingStyle.context.length <= Math.min(WRITING_STYLE_MAX_CONTEXT_CHARS, budget.remainingTextChars, budget.remainingMemoryChars)) {
                     injectedContext = { ...injectedContext, writingStyleContext: writingStyle.context };
                 } else {
@@ -1936,7 +1952,7 @@ export class PaAgentRuntime {
                 }
             }
             let directoryReceipt = sourceRun.captureContextInstruction();
-            let { providerInput: result, projection } = buildCanonicalModelInput(
+            let { providerInput: result, projection } = await buildCanonicalModelInput(
                 input,
                 definitions,
                 schemas,
@@ -1950,13 +1966,13 @@ export class PaAgentRuntime {
                 actualHistorySources,
                 input.signal,
             );
-            if (stableJson(physicalVaultProjection.transcript) !== stableJson(actualToolSources)
-                || stableJson(physicalVaultProjection.history) !== stableJson(actualHistorySources)) {
+            if (await canonicalContextJsonAsync(physicalVaultProjection.transcript, input.signal) !== await canonicalContextJsonAsync(actualToolSources, input.signal)
+                || await canonicalContextJsonAsync(physicalVaultProjection.history, input.signal) !== await canonicalContextJsonAsync(actualHistorySources, input.signal)) {
                 // Revalidation can replace source observations while the request is
                 // being assembled. Rebuild from the newer physical material; never
                 // reuse the old projection's admission for the new payload.
                 directoryReceipt = sourceRun.captureContextInstruction();
-                const rebuilt = buildCanonicalModelInput(
+                const rebuilt = await buildCanonicalModelInput(
                     input,
                     definitions,
                     schemas,
@@ -1972,8 +1988,8 @@ export class PaAgentRuntime {
                     actualHistorySources,
                     input.signal,
                 );
-                if (stableJson(physicalVaultProjection.transcript) !== stableJson(actualToolSources)
-                    || stableJson(physicalVaultProjection.history) !== stableJson(actualHistorySources)) {
+                if (await canonicalContextJsonAsync(physicalVaultProjection.transcript, input.signal) !== await canonicalContextJsonAsync(actualToolSources, input.signal)
+                    || await canonicalContextJsonAsync(physicalVaultProjection.history, input.signal) !== await canonicalContextJsonAsync(actualHistorySources, input.signal)) {
                     throw new Error("Vault observation projection changed before provider dispatch");
                 }
             }
@@ -2014,7 +2030,7 @@ export class PaAgentRuntime {
                 ...(injectedContext?.pageletHandoff
                     ? [unknownInputLineage()] : []),
             );
-            if (!sourceRun.admitsLineage(requestLineage)) {
+            if (!await sourceRun.admitsLineageAsync(requestLineage, input.signal)) {
                 throw new Error('Answer input lineage is outside the current task source scope');
             }
             const isAttachmentSourceCurrent = await captureAttachmentSourceValidity(requestLineage, input.signal);
@@ -2053,35 +2069,57 @@ export class PaAgentRuntime {
             const answerVaultBinding: AnswerVaultBinding = {
                 projection: physicalVaultProjection,
                 providerInput: result,
-                serializedInput: stableProviderJson(result),
+                serializedInput: await stableProviderJsonAsync(result, input.signal),
                 actualToolSources,
                 actualHistorySources,
                 sourceHistoryJson,
                 isSourceCurrent: isDeliveredSourceCurrent,
                 ...(managementProjection ? { managementProjection } : {}),
             };
-            const assertInputCurrent = () => {
+            let preparedInputAdmission: Awaited<ReturnType<TaskSourceRun['prepareLineageAdmission']>> | undefined;
+            const prepareInputCurrent = async (signal?: AbortSignal) => {
                 assertWritingInputCurrent?.();
                 try {
-                    if (!sourceRun.admitsLineage(requestLineage)) {
-                        throw new Error('Answer input lineage changed before provider dispatch');
-                    }
                     if (!isAttachmentSourceCurrent()) {
                         throw new Error('Answer attachment source changed before provider dispatch');
                     }
-                    sourceRun.assertTranscriptCurrent(taskTranscript);
+                    await assertTranscriptCurrentAsync(taskTranscript, signal);
                     assertHistoryInputCurrent();
                     if (!directoryReceipt.isAttemptCurrent()) {
                         throw new Error('Published note directory changed before provider dispatch');
                     }
-                    if (stableProviderJson(snapshotHistory()) !== sourceHistoryJson) {
+                    if (await stableProviderJsonAsync(await snapshotHistory(signal), signal) !== sourceHistoryJson) {
                         throw new Error("Chat history changed before provider dispatch");
                     }
+                    if (await stableProviderJsonAsync(answerVaultBinding.providerInput, signal) !== answerVaultBinding.serializedInput) {
+                        throw new Error('Vault observation projection changed before provider dispatch');
+                    }
+                    // Keep the fixed payload; ordinary edits only require another authorization seal.
+                    // Bound retries so continuous changes still fail closed in the existing owner budget.
+                    const sealingTask = createCooperativeTask(signal);
+                    for (let attempt = 0; attempt < 3; attempt++) {
+                        preparedInputAdmission = await sourceRun.prepareLineageAdmission(requestLineage, signal);
+                        await answerVaultBinding.projection.binding.assertCurrentAsync?.(signal);
+                        if (preparedInputAdmission.isCurrent()) {
+                            answerVaultBinding.projection.binding.assertCurrent();
+                            return;
+                        }
+                        if (attempt < 2) await sealingTask.checkpoint(true);
+                    }
+                    throw new Error('Answer input continued changing during preparation');
                 } catch (error) { rejectStaleProjection(error); }
+            };
+            const assertInputCurrent = () => {
+                assertWritingInputCurrent?.();
+                if (!preparedInputAdmission?.isCurrent() || !isAttachmentSourceCurrent()
+                    || !directoryReceipt.isAttemptCurrent()) {
+                    rejectStaleProjection(new Error('Answer input changed before provider dispatch'));
+                }
                 assertAnswerVaultCurrent(answerVaultBinding);
             };
+            answerVaultBinding.prepareInputCurrent = prepareInputCurrent;
             answerVaultBinding.assertInputCurrent = assertInputCurrent;
-            if (writingContextRun) writingContextBudget = availableStyleBudget(input, definitions, schemas);
+            if (writingContextRun) writingContextBudget = await availableStyleBudget(input, definitions, schemas);
             if (options.writingRequest) {
                 const context = currentWritingContext();
                 const assertSourceValidity = sourceRun.captureSourceValidity(actualToolSources, actualHistorySources);
@@ -2168,12 +2206,12 @@ export class PaAgentRuntime {
                 };
             }
             if (imageScope?.hasImages) {
-                result.messages = buildPaAgentFinalMessages(projection.input, projection.actionHistory,
+                result.messages = await buildPaAgentFinalMessagesAsync(projection.input, projection.actionHistory,
                     actionProjectionMode, imageScope.message(projection.input, input.signal),
-                    projection.history, projection.currentInput);
+                    projection.history, projection.currentInput, input.signal);
             }
-            const actualEnvelope = measurePaAgentRequestEnvelope(result as Record<string, string>, schemas,
-                result.messages as import("@langchain/core/messages").BaseMessage[]);
+            const actualEnvelope = await measurePaAgentRequestEnvelopeAsync(result as Record<string, string>, schemas,
+                result.messages as import("@langchain/core/messages").BaseMessage[], input.signal);
             const actualMaxChars = maxPromptChars;
             if (actualEnvelope.promptChars > actualMaxChars
                 || (maxInputTokens !== undefined
@@ -2181,10 +2219,11 @@ export class PaAgentRuntime {
                 throw new PaAgentContextOverflowError(actualEnvelope.promptChars, actualMaxChars);
             }
             assertProviderInputCurrent(input.signal);
-            answerVaultBinding.serializedInput = stableProviderJson(result);
+            answerVaultBinding.serializedInput = await stableProviderJsonAsync(result, input.signal);
             answerVaultBinding.promptEstimate = actualEnvelope;
             physicalVaultProjection.serializedInput = answerVaultBinding.serializedInput;
             answerVaultBinding.providerInput = result;
+            await prepareInputCurrent(input.signal);
             answerSourceValidity = answerVaultBinding.isSourceCurrent;
             return { providerInput: result, vaultBinding: answerVaultBinding };
         };
@@ -2198,7 +2237,7 @@ export class PaAgentRuntime {
                 && runSourceSelection?.scope !== 'web') {
                 injectedContext = readInjectedContext();
                 writingStyle = undefined;
-                const { remainingTextChars, remainingMemoryChars } = availableStyleBudget(prepared, definitions, schemas);
+                const { remainingTextChars, remainingMemoryChars } = await availableStyleBudget(prepared, definitions, schemas);
                 const style = await options.prepareWritingStyle({ remainingTextChars, remainingMemoryChars, signal: input.signal });
                 const styleIsCurrent = typeof style.isCurrent === "function" && style.isCurrent();
                 if (style.context && !styleIsCurrent) throw new ChatImageRequestError("request_changed");
@@ -2211,7 +2250,7 @@ export class PaAgentRuntime {
                 // Style source reads may suspend after Memory's preflight.
                 prepared = input.prepareForProviderRetry ? await input.prepareForProviderRetry() : input;
             }
-            const sourceHistory = snapshotHistory();
+            const sourceHistory = await snapshotHistory(prepared.signal);
             const managementProjection = await prepareManagementProjection(prepared.transcript, sourceHistory);
             const vaultObservationProjection = await sourceRun.prepareVaultObservationProjection(
                 managementProjection.transcript,
@@ -2221,7 +2260,7 @@ export class PaAgentRuntime {
             return await buildProviderInput({
                 ...prepared,
                 transcript: vaultObservationProjection.transcript,
-            }, definitions, schemas, vaultObservationProjection, stableProviderJson(sourceHistory), managementProjection);
+            }, definitions, schemas, vaultObservationProjection, await stableProviderJsonAsync(sourceHistory, input.signal), managementProjection);
         };
         const debugModelIdentity = () => ({ provider: this.host.settings.aiProvider, model: this.host.settings.chatModelName });
         const model: PaAgentModel = {
@@ -2284,6 +2323,7 @@ export class PaAgentRuntime {
                                 try { await attempt.binding.projection.binding.prepare(signal); }
                                 catch (error) { rejectStaleProjection(error); }
                                 await assertManagementBindingCurrent(attempt.binding);
+                                await attempt.binding.prepareInputCurrent?.(signal ?? undefined);
                                 assertAnswerVaultCurrent(attempt.binding);
                             }, { turnId: input.turnId, stage: 'answer' });
                         },
@@ -2360,7 +2400,7 @@ export class PaAgentRuntime {
                     ? await traceAgentPhase(debug, 'input_revalidation', () => input.prepareForProviderRetry!(), { turnId: input.turnId })
                     : input;
                 injectedContext = readInjectedContext();
-                const preview = previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
+                const preview = await previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
                 const summaryToolIds = preview.outcome.admission === 'local_overflow'
                     ? providerInput.transcript.filter((message): message is PaAgentToolSummarySource =>
                         message.role === 'toolResult' && message.content.includeInNextPrompt
@@ -2409,6 +2449,8 @@ export class PaAgentRuntime {
                             managementSource?: PaAgentToolSummarySource;
                             serializedManagementSource?: string;
                             managementProjection?: MemoryManagementProjection;
+                            admission?: Awaited<ReturnType<TaskSourceRun['prepareLineageAdmission']>>;
+                            estimatedPromptTokens?: number;
                         }
                         const summaryVaultState: { binding?: SummaryVaultBinding } = {};
                         const budgetActivity = auxiliarySummaryBudget.begin(summaryCall.callId, payload.maxOutputTokens);
@@ -2422,7 +2464,7 @@ export class PaAgentRuntime {
                             agentDebugCall: summaryCall,
                             prepareProviderRequest: async prepareSignal => {
                                 if (!summaryVaultState.binding) throw new Error("Summary vault observation projection is not bound");
-                                if (!sourceRun.admitsLineage(summaryVaultState.binding.lineage)) {
+                                if (!await sourceRun.admitsLineageAsync(summaryVaultState.binding.lineage, prepareSignal ?? undefined)) {
                                     throw new Error('Context summary lineage changed before dispatch');
                                 }
                                 if (!summaryVaultState.binding.isAttachmentSourceCurrent()) {
@@ -2437,37 +2479,50 @@ export class PaAgentRuntime {
                                     }
                                 }
                                 await summaryVaultState.binding.managementProjection?.binding.prepare(prepareSignal);
-                                if (stableProviderJson(payload.messages) !== summaryVaultState.binding.serializedInput
-                                    || stableProviderJson(payload.bindingSources ?? []) !== stableProviderJson(summaryVaultState.binding.expectedSources)) {
+                                if (summarySource) await assertTranscriptCurrentAsync([summarySource], prepareSignal ?? undefined);
+                                const boundHistory = summaryVaultState.binding.historySources;
+                                const indexes = summaryVaultState.binding.historySourceIndexes;
+                                if (boundHistory && indexes) {
+                                    const currentHistory = await sourceRun.projectHistoryAsync(options.chatHistory ?? [], prepareSignal ?? undefined);
+                                    boundHistory.forEach((message, index) => {
+                                        const current = currentHistory[indexes[index]! - 1];
+                                        if (!current || !isCurrentHistorySummary({ text: '', sourceMessages: [message] }, [current])) {
+                                            throw new Error('Context summary source changed before dispatch');
+                                        }
+                                    });
+                                }
+                                if (await stableProviderJsonAsync(payload.messages, prepareSignal ?? undefined) !== summaryVaultState.binding.serializedInput
+                                    || await stableProviderJsonAsync(payload.bindingSources ?? [], prepareSignal ?? undefined)
+                                        !== await stableProviderJsonAsync(summaryVaultState.binding.expectedSources, prepareSignal ?? undefined)) {
                                     throw new Error("Summary vault observation projection changed before dispatch");
                                 }
+                                const sealingTask = createCooperativeTask(prepareSignal ?? undefined);
+                                for (let attempt = 0; attempt < 3; attempt++) {
+                                    summaryVaultState.binding.admission = await sourceRun.prepareLineageAdmission(
+                                        summaryVaultState.binding.lineage, prepareSignal ?? undefined);
+                                    await summaryVaultState.binding.projection.binding.assertCurrentAsync?.(prepareSignal ?? undefined);
+                                    if (summaryVaultState.binding.admission.isCurrent()) {
+                                        summaryVaultState.binding.projection.binding.assertCurrent();
+                                        return;
+                                    }
+                                    if (attempt < 2) await sealingTask.checkpoint(true);
+                                }
+                                throw new Error('Context summary sources continued changing during preparation');
                             },
                             onProviderRequestStart: () => {
                                 assertRequestCurrent(signal);
                                 if (!summaryVaultState.binding) throw new Error("Summary vault observation projection is not bound");
-                                if (!sourceRun.admitsLineage(summaryVaultState.binding.lineage)) {
+                                if (!summaryVaultState.binding.admission?.isCurrent()) {
                                     throw new Error('Context summary lineage changed before physical dispatch');
                                 }
                                 if (!summaryVaultState.binding.isAttachmentSourceCurrent()) {
                                     throw new Error('Context summary attachment source changed before physical dispatch');
                                 }
-                                if (summarySource) sourceRun.assertTranscriptCurrent([summarySource]);
                                 if (summarySource) writingContextRun?.captureTranscriptValidity([summarySource])();
-                                const boundHistory = summaryVaultState.binding.historySources;
-                                const boundHistoryIndexes = summaryVaultState.binding.historySourceIndexes;
-                                if (boundHistory && boundHistoryIndexes) {
-                                    const currentHistory = sourceRun.projectHistory(options.chatHistory ?? []);
-                                    boundHistory.forEach((message, index) => {
-                                        const current = currentHistory[boundHistoryIndexes[index]! - 1];
-                                        if (
-                                            !current
-                                            || !isCurrentHistorySummary({ text: "", sourceMessages: [message] }, [current])
-                                        ) throw new Error("Context summary source changed before dispatch");
-                                    });
-                                }
                                 summaryVaultState.binding.projection.binding.assertCurrent();
                                 summaryVaultState.binding.managementProjection?.binding.assertCurrent();
-                                const estimatedPromptTokens = estimateApproximateTokens(JSON.stringify(payload.messages));
+                                const estimatedPromptTokens = summaryVaultState.binding.estimatedPromptTokens;
+                                if (estimatedPromptTokens === undefined) throw new Error('Context summary budget is not prepared');
                                 summaryCall.promptEstimate = {
                                     tokens: estimatedPromptTokens,
                                     method: 'cjk_json_messages',
@@ -2486,11 +2541,11 @@ export class PaAgentRuntime {
                             // Optional summary work uses its own cancellation scope. Do not
                             // mutate the Loop's retry input or fail-close the entire run on
                             // a summary timeout. The registry rejects aborted/late projections.
-                            let refreshed = sourceRun.projectTranscript(
-                                await projectManagementObservations([cloneMessage(source)]),
+                            let refreshed = await sourceRun.projectTranscriptAsync(
+                                await projectManagementObservations([cloneMessage(source)]), signal,
                             );
-                            refreshed = sourceRun.projectTranscript(
-                                await memoryEvidenceRegistry.prepareTranscript(refreshed, signal),
+                            refreshed = await sourceRun.projectTranscriptAsync(
+                                await memoryEvidenceRegistry.prepareTranscript(refreshed, signal), signal,
                             );
                             if (writingContextRun) refreshed = await writingContextRun.projectTranscript(refreshed, signal);
                             const current = refreshed.find((message) => message.id === source.id);
@@ -2551,7 +2606,7 @@ export class PaAgentRuntime {
                             ...(summarySource ? [cloneInputLineage(summarySource.inputLineage)] : []),
                             ...bindingHistorySources.map(historyInputLineage),
                         );
-                        if (!sourceRun.admitsLineage(summaryLineage)) {
+                        if (!await sourceRun.admitsLineageAsync(summaryLineage, signal)) {
                             throw new Error('Context summary sources are outside the current scope');
                         }
                         const isAttachmentSourceCurrent = await captureAttachmentSourceValidity(summaryLineage, signal);
@@ -2559,7 +2614,7 @@ export class PaAgentRuntime {
                             projection: summaryVaultProjection,
                             lineage: summaryLineage,
                             isAttachmentSourceCurrent,
-                            serializedInput: stableProviderJson(payload.messages),
+                            serializedInput: await stableProviderJsonAsync(payload.messages, signal),
                             expectedSources,
                             historySources: bindingHistorySources,
                             historySourceIndexes: suppliedSources.map(source => source.index),
@@ -2568,10 +2623,13 @@ export class PaAgentRuntime {
                                 serializedManagementSource: stableJson(summarySource),
                             } : {}),
                             managementProjection: summaryManagementProjection,
+                            admission: await sourceRun.prepareLineageAdmission(summaryLineage, signal),
                         };
-                        if (JSON.stringify(payload.messages).length + 2048 > MAX_PA_AGENT_PROMPT_CHARS) {
+                        if (summaryVaultState.binding.serializedInput.length + 2048 > MAX_PA_AGENT_PROMPT_CHARS) {
                             throw new Error("Context summary request exceeds local budget");
                         }
+                        summaryVaultState.binding.estimatedPromptTokens = await estimatePaAgentTextTokensAsync(
+                            summaryVaultState.binding.serializedInput, signal);
                         modelCalls++;
                         const response = await summaryModel.invoke(payload.messages, { signal: summaryAttemptClock.signal });
                         // The provider has already returned this usage. Record it even if
@@ -2607,7 +2665,7 @@ export class PaAgentRuntime {
                     try {
                         const outerManagementProjection = await prepareManagementProjection(
                             providerInput.transcript,
-                            snapshotHistory(),
+                            await snapshotHistory(preparation.signal),
                         );
                         providerInput = {
                             ...providerInput,
@@ -2634,7 +2692,7 @@ export class PaAgentRuntime {
                         runSummaries = { history, tools };
                         for (const id of summaryToolIds) {
                             preparation.throwIfAborted();
-                            if (previewCanonicalModelInput(providerInput, toolDefinitions, schemas).outcome.admission === 'fit') break;
+                            if ((await previewCanonicalModelInput(providerInput, toolDefinitions, schemas)).outcome.admission === 'fit') break;
                             const current = providerInput.transcript.find((message) => message.id === id);
                             if (current?.role !== "toolResult" || !current.content.includeInNextPrompt) continue;
                             // Registry revalidation can mutate live transcript references.
@@ -2832,22 +2890,29 @@ export class PaAgentRuntime {
                     : {}),
             })
             : baseToolExecutor;
+        const batchSourceInputs = new WeakMap<object, { lineage: InputLineage; attachmentCallIds: string[] }>();
         const toolExecutor = createTaskSourceConstrainedExecutor({
             baseExecutor: materialToolExecutor, state: sourceRun.state,
             resolveHostNoteId: sourceRun.resolveNoteId,
             isHostCurrent: sourceRun.isCurrent,
             isWebAllowed: sourceRun.isWebReadAllowed,
             isMemoryAllowed: sourceRun.isMemoryReadAllowed,
-            isInputCurrent: calls => calls.every(call => sourceRun.admitsLineage(callLineageById.get(call.id))),
-            captureInputSourceValidity: calls => {
-                const lineage = unionInputLineages(...calls.map(call => callLineageById.get(call.id)));
-                if (!runSourceSelection || !lineage.dependencies.some(dependency => dependency.kind !== 'user-text')) {
-                    return undefined;
+            prepareInputSourceAdmission: async (calls, signal) => {
+                let input = batchSourceInputs.get(calls);
+                if (!input) {
+                    const lineages = calls.map(call => callLineageById.get(call.id));
+                    input = { lineage: unionInputLineages(...lineages),
+                        attachmentCallIds: calls.filter((_call, index) => lineages[index]?.dependencies.some(
+                            dependency => dependency.kind === 'attachment')).map(call => call.id) };
+                    batchSourceInputs.set(calls, input);
                 }
-                const sourceValidity = sourceRun.captureLineageSourceValidity(lineage);
-                const attachmentChecks = calls.filter(call => callLineageById.get(call.id)?.dependencies.some(
-                    dependency => dependency.kind === 'attachment')).map(call => callAttachmentValidityById.get(call.id));
-                return () => sourceValidity() && attachmentChecks.every(check => check?.() === true);
+                const admission = await sourceRun.prepareLineageAdmission(input.lineage, signal);
+                const attachmentCallIds = input.attachmentCallIds;
+                const attachmentsCurrent = () => attachmentCallIds.every(id => callAttachmentValidityById.get(id)?.() === true);
+                return {
+                    isCurrent: () => admission.isCurrent() && attachmentsCurrent(),
+                    sourceValidity: () => admission.sourceValidity() && attachmentsCurrent(),
+                };
             },
             resolveNoteSearchScope: sourceRun.resolveNoteSearchScope,
             resolveReadPlans: calls => {
@@ -2921,8 +2986,8 @@ export class PaAgentRuntime {
                 input.signal?.addEventListener("abort", failClosedOnAbort, { once: true });
                 if (input.signal?.aborted) failClosedOnAbort();
                 try {
-                    let transcript = sourceRun.projectTranscript(await traceAgentPhase(debug, 'memory_evidence_prepare',
-                        () => memoryEvidenceRegistry.prepareTranscript(input.transcript, input.signal), { turnId: input.turnId }));
+                    let transcript = await sourceRun.projectTranscriptAsync(await traceAgentPhase(debug, 'memory_evidence_prepare',
+                        () => memoryEvidenceRegistry.prepareTranscript(input.transcript, input.signal), { turnId: input.turnId }), input.signal);
                     if (writingContextRun) transcript = await writingContextRun.projectTranscript(transcript, input.signal);
                     const primaryVaultProjection = await traceAgentPhase(debug, 'vault_evidence_prepare',
                         () => sourceRun.prepareVaultObservationProjection(transcript, [], input.signal), { turnId: input.turnId });
@@ -3319,7 +3384,7 @@ export class PaAgentRuntime {
         }
     }
 
-    private buildPaAgentCanonicalModelInput(
+    private async buildPaAgentCanonicalModelInput(
         options: PaAgentStreamOptions,
         input: PaAgentModelInput,
         toolUseConstraints?: PaAgentToolUseConstraints,
@@ -3330,7 +3395,7 @@ export class PaAgentRuntime {
         actionMode: "native" | "compat" = "compat",
         modelBudgetFacts?: PaAgentModelBudgetFacts,
     ) {
-        const { projection, operationsGuidance } = this.projectPaAgentCanonicalModelInput(
+        const { projection, operationsGuidance } = await this.projectPaAgentCanonicalModelInput(
             options, input, toolUseConstraints, toolDefinitions, injectedContext, boundSchemas, summaries, actionMode,
             modelBudgetFacts,
         );
@@ -3351,15 +3416,15 @@ export class PaAgentRuntime {
                 tool_definitions: projection.toolDefinitions,
                 tool_observations: projection.toolObservations,
                 operations_guidance: operationsGuidance,
-                messages: buildPaAgentFinalMessages(projection.input, projection.actionHistory,
-                    actionMode, undefined, projection.history, projection.currentInput),
+                messages: await buildPaAgentFinalMessagesAsync(projection.input, projection.actionHistory,
+                    actionMode, undefined, projection.history, projection.currentInput, input.signal),
                 __context_projection_diagnostic: JSON.stringify(projection.diagnostics),
             } as Record<string, unknown>,
             projection,
         };
     }
 
-    private projectPaAgentCanonicalModelInput(
+    private async projectPaAgentCanonicalModelInput(
         options: PaAgentStreamOptions,
         input: PaAgentModelInput,
         toolUseConstraints?: PaAgentToolUseConstraints,
@@ -3391,7 +3456,7 @@ export class PaAgentRuntime {
             toolDefinitionsText += `\nPure output declaration (not a source or action): ${JSON.stringify(nativeWritingOutputSchema(nativeWritingRequest, nativeContextHandle).function)}`;
         }
         const operationsGuidance = createOperationsPromptGuidance(toolDefinitions ?? []);
-        const projection = this.contextManager.forPrompt({
+        const projection = await this.contextManager.forPromptAsync({
             prompt: options.prompt,
             chatHistory: isOperationsStagedAcknowledgement(input.runtimeInstruction)
                 ? undefined
@@ -3413,15 +3478,16 @@ export class PaAgentRuntime {
             modelBudgetFacts,
             maxObservationChars: this.options.answerStreamMaxObservationChars ?? 64_000,
             formatToolObservations,
-            measurePromptEnvelope: (parts) => measurePaAgentRequestEnvelope({
+            formatToolObservationsAsync: (transcript, turnIndex) => formatToolObservationsAsync(transcript, turnIndex, input.signal),
+            measurePromptEnvelopeAsync: async (parts) => measurePaAgentRequestEnvelopeAsync({
                 input: parts.input,
                 available_skills: parts.availableSkills,
                 tool_definitions: parts.toolDefinitions,
                 tool_observations: parts.toolObservations,
                 operations_guidance: operationsGuidance,
-            }, boundSchemas, buildPaAgentFinalMessages(parts.input, parts.actionHistory,
-                actionMode, undefined, parts.history, parts.currentInput)),
-        });
+            }, boundSchemas, await buildPaAgentFinalMessagesAsync(parts.input, parts.actionHistory,
+                actionMode, undefined, parts.history, parts.currentInput, input.signal), input.signal),
+        }, input.signal);
         return { projection, operationsGuidance };
     }
 

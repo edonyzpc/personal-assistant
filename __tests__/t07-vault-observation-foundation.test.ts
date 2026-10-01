@@ -478,6 +478,76 @@ describe("T-07 query evidence foundation", () => {
         expect(() => projection.binding.assertCurrent()).toThrow("authorization changed before dispatch");
     });
 
+    it('reseals read snapshots after ordinary edits during initial, dispatch and current preparation', async () => {
+        const file = makeFile('A.md');
+        const fixture = queryFixture([file], new Map([['A.md', {}]]));
+        const result = await fixture.invoke({ sort: { field: 'path', direction: 'asc' }, limit: 20 });
+        const transcript = Array.from({ length: 80 }, (_, index) => ({ ...queryMessage(result), id: `snapshot-${index}` }));
+        let authority = 1;
+        let armEdit = true;
+        let edits = 0;
+        let pathChecks = 0;
+        const projection = await prepareVaultObservationProjection({ transcript, history: [],
+            validationMode: 'read_snapshot', getAuthorityEpoch: () => String(authority),
+            revalidate: async () => { throw new Error('ordinary edits must not reread a returned snapshot'); },
+            isPathAllowed: path => {
+                if (path === 'A.md') {
+                    pathChecks++;
+                    if (armEdit) {
+                        armEdit = false;
+                        setTimeout(() => {
+                            file.stat.mtime = (file.stat.mtime ?? 0) + 1;
+                            authority++;
+                            edits++;
+                        }, 0);
+                    }
+                }
+                return true;
+            } });
+        expect(edits).toBe(1);
+        expect(() => projection.binding.assertCurrent()).not.toThrow();
+        const initialChecks = pathChecks;
+        armEdit = true;
+        await projection.binding.prepare();
+        expect(edits).toBe(2);
+        expect(pathChecks).toBeGreaterThan(initialChecks + 1);
+        expect(() => projection.binding.assertCurrent()).not.toThrow();
+        const dispatchChecks = pathChecks;
+        armEdit = true;
+        await projection.binding.assertCurrentAsync!();
+        expect(edits).toBe(3);
+        expect(pathChecks).toBeGreaterThan(dispatchChecks + 1);
+        expect(() => projection.binding.assertCurrent()).not.toThrow();
+        for (const message of projection.transcript) {
+            expect(message.role === 'toolResult' && message.content.promptText).toContain('A.md');
+        }
+    });
+
+    it('rejects a read-snapshot fence when an earlier checked source is revoked during a later slice', async () => {
+        const fixture = queryFixture([makeFile('notes/a.md'), makeFile('notes/b.md')], new Map());
+        const result = await fixture.invoke({ sort: { field: 'path', direction: 'asc' }, limit: 2 });
+        let authority = 'authority-1';
+        let revoked = false;
+        let armed = false;
+        let scheduled = false;
+        const projection = await prepareVaultObservationProjection({
+            transcript: Array.from({ length: 80 }, () => queryMessage(result)), history: [],
+            validationMode: 'read_snapshot', getAuthorityEpoch: () => authority,
+            revalidate: async () => { throw new Error('ordinary snapshots must not re-read'); },
+            isPathAllowed: path => {
+                if (armed && !scheduled && path === 'notes/a.md') {
+                    scheduled = true;
+                    setTimeout(() => { revoked = true; authority = 'authority-2'; }, 0);
+                }
+                return path !== 'notes/a.md' || !revoked;
+            },
+        });
+        armed = true;
+        await expect(projection.binding.prepare()).rejects.toThrow('authorization changed before dispatch');
+        expect(revoked).toBe(true);
+        expect(() => projection.binding.assertCurrent()).toThrow('authorization changed before dispatch');
+    });
+
     it("rejects physical admission after an exact-zero query aggregate changes", async () => {
         const caches = new Map([["notes/empty.md", { frontmatter: { status: "inactive" } }]]);
         const fixture = queryFixture([makeFile("notes/empty.md")], caches);

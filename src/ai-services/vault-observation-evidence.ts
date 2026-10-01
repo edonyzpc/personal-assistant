@@ -25,7 +25,7 @@ import {
 import {
     captureVaultSnippetStat,
     createVaultSnippetMatcher,
-    enumerateScopedFiles,
+    enumerateScopedFilesCooperatively,
     getVaultSnippetSearchPartViews,
 } from "./vault-snippet-search-tool-helpers";
 import {
@@ -44,8 +44,10 @@ import {
     SNIPPET_MAX_FILES,
 } from "./chat-tool-constants";
 import { canonicalizeQueryNotesInput, validateQueryNotesInput } from "./chat-tool-guards";
-import { getKnownFileSize } from "./chat-tool-execution-helpers";
+import { getKnownFileSize, getMarkdownFilesCooperatively } from "./chat-tool-execution-helpers";
 import { throwIfAborted } from "./chat-utils";
+import { createCooperativeTask, sortCooperatively } from './cooperative-task';
+import { canonicalContextJsonAsync, cloneCanonicalContextJsonAsync } from './context/PaAgentContextSerialization';
 
 export const VAULT_OBSERVATION_CONTRACT_VERSION = 1;
 export const MAX_VAULT_OBSERVATION_ENVELOPE_UTF8_BYTES = 128_000;
@@ -191,8 +193,10 @@ export type VaultObservationEvidenceParseResult =
     | { ok: true; evidence: VaultObservationEvidence }
     | { ok: false; reason: string };
 
-export async function hashObservationValue(value: unknown): Promise<string> {
-    return await computeContentHash(stableJson(value));
+export async function hashObservationValue(value: unknown, signal?: AbortSignal): Promise<string> {
+    const canonical = await canonicalContextJsonAsync(value, signal);
+    throwIfAborted(signal);
+    return await computeContentHash(canonical, signal);
 }
 
 export function stableJson(value: unknown): string {
@@ -219,6 +223,7 @@ export function buildReadObservationEvidence(options: {
     scope: VaultObservationScope;
     output: ReadNoteOutput;
     partitionContent: string;
+    signal?: AbortSignal;
 }): Promise<ReadVaultObservationEvidence> {
     return withEnvelopeBudget(async () => ({
         schemaVersion: 1,
@@ -233,13 +238,13 @@ export function buildReadObservationEvidence(options: {
         },
         items: [{
             kind: "read-result",
-            outputDigest: await hashObservationValue(options.output),
+            outputDigest: await hashObservationValue(options.output, options.signal),
             path: options.output.path,
-            contentHash: await computeContentHash(options.partitionContent),
+            contentHash: await computeContentHash(options.partitionContent, options.signal),
             part: options.output.part,
             range: { ...options.output.range },
         }],
-    })) as Promise<ReadVaultObservationEvidence>;
+    }), options.signal) as Promise<ReadVaultObservationEvidence>;
 }
 
 export async function buildQueryObservationEvidence(options: {
@@ -249,6 +254,7 @@ export async function buildQueryObservationEvidence(options: {
     candidatePaths: readonly string[];
     metadataSnapshots: readonly unknown[];
     matchMetadataSnapshots?: readonly unknown[];
+    signal?: AbortSignal;
 }): Promise<QueryVaultObservationEvidence> {
     const evidence: QueryVaultObservationEvidence = {
         schemaVersion: 1,
@@ -260,8 +266,8 @@ export async function buildQueryObservationEvidence(options: {
         aggregate: {
             kind: "query",
             query: options.output.query as QueryNotesInput,
-            candidateSetDigest: await hashObservationValue(options.candidatePaths),
-            metadataSetDigest: await hashObservationValue(options.metadataSnapshots),
+            candidateSetDigest: await hashObservationValue(options.candidatePaths, options.signal),
+            metadataSetDigest: await hashObservationValue(options.metadataSnapshots, options.signal),
             evaluatedCandidates: options.output.coverage.evaluatedCandidates,
             completeCandidateSet: options.output.coverage.state === "complete"
                 && !options.output.coverage.candidateCapExceeded,
@@ -270,14 +276,14 @@ export async function buildQueryObservationEvidence(options: {
         items: await Promise.all(options.output.matches.map(async (match, index) => ({
             kind: "query-match" as const,
             index,
-            outputDigest: await hashObservationValue(match),
+            outputDigest: await hashObservationValue(match, options.signal),
             path: match.path,
             metadataDigest: await hashObservationValue(
-                (options.matchMetadataSnapshots ?? options.metadataSnapshots)[index] ?? null,
+                (options.matchMetadataSnapshots ?? options.metadataSnapshots)[index] ?? null, options.signal,
             ),
         }))),
     };
-    await assertEnvelopeBudget(evidence);
+    await assertEnvelopeBudget(evidence, options.signal);
     return evidence;
 }
 
@@ -287,6 +293,7 @@ export async function buildSnippetObservationEvidence(options: {
     output: VaultSnippetSearchOutput;
     candidatePaths: readonly string[];
     scannedVersions: readonly unknown[];
+    signal?: AbortSignal;
 }): Promise<SnippetVaultObservationEvidence> {
     const evidence: SnippetVaultObservationEvidence = {
         schemaVersion: 1,
@@ -301,21 +308,21 @@ export async function buildSnippetObservationEvidence(options: {
             ...(options.output.scope === undefined ? {} : { scope: options.output.scope }),
             part: options.output.part,
             caseSensitive: options.output.caseSensitive,
-            candidateSetDigest: await hashObservationValue(options.candidatePaths),
-            scannedVersionDigest: await hashObservationValue(options.scannedVersions),
+            candidateSetDigest: await hashObservationValue(options.candidatePaths, options.signal),
+            scannedVersionDigest: await hashObservationValue(options.scannedVersions, options.signal),
             evaluatedCandidates: options.output.coverage.evaluatedCandidates,
         },
         items: await Promise.all(options.output.matches.map(async (match, index) => ({
             kind: "snippet-match" as const,
             index,
-            outputDigest: await hashObservationValue(match),
+            outputDigest: await hashObservationValue(match, options.signal),
             path: match.path,
             contentHash: match.sourceVersion,
             part: match.part,
             range: { ...match.range },
         }))),
     };
-    await assertEnvelopeBudget(evidence);
+    await assertEnvelopeBudget(evidence, options.signal);
     return evidence;
 }
 
@@ -326,15 +333,16 @@ export async function buildInspectObservationEvidence(options: {
     cacheProjection: unknown;
     linkFacts: unknown;
     bodyContent?: string;
+    signal?: AbortSignal;
 }): Promise<InspectVaultObservationEvidence> {
     const coverage = options.output.coverage;
     if (!coverage) throw new Error("inspect_obsidian_note new-contract result has no coverage.");
     const [outputDigest, cacheProjectionDigest, linkFactsDigest, bodyHash] = await Promise.all([
-        hashObservationValue(options.output),
-        hashObservationValue(options.cacheProjection),
-        hashObservationValue(options.linkFacts),
+        hashObservationValue(options.output, options.signal),
+        hashObservationValue(options.cacheProjection, options.signal),
+        hashObservationValue(options.linkFacts, options.signal),
         coverage.bodyRead && options.bodyContent !== undefined
-            ? computeContentHash(options.bodyContent)
+            ? computeContentHash(options.bodyContent, options.signal)
             : Promise.resolve(undefined),
     ]);
     const evidence: InspectVaultObservationEvidence = {
@@ -354,7 +362,7 @@ export async function buildInspectObservationEvidence(options: {
             ...(bodyHash === undefined ? {} : { bodyHash }),
         }],
     };
-    await assertEnvelopeBudget(evidence);
+    await assertEnvelopeBudget(evidence, options.signal);
     return evidence;
 }
 
@@ -401,15 +409,27 @@ function deepCloneEvidence(value: VaultObservationEvidence): VaultObservationEvi
     return JSON.parse(stableJson(value)) as VaultObservationEvidence;
 }
 
-async function withEnvelopeBudget<T extends VaultObservationEvidence>(build: () => Promise<T>): Promise<T> {
+async function withEnvelopeBudget<T extends VaultObservationEvidence>(build: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const evidence = await build();
-    await assertEnvelopeBudget(evidence);
+    await assertEnvelopeBudget(evidence, signal);
     return evidence;
 }
 
-async function assertEnvelopeBudget(value: unknown): Promise<void> {
-    if (byteCountForJson(value) > MAX_VAULT_OBSERVATION_ENVELOPE_UTF8_BYTES) {
-        throw new Error("Vault observation evidence exceeds its envelope budget.");
+async function assertEnvelopeBudget(value: unknown, signal?: AbortSignal): Promise<void> {
+    const json = await canonicalContextJsonAsync(value, signal);
+    const encoder = new TextEncoder();
+    const task = createCooperativeTask(signal);
+    let bytes = 0;
+    for (let offset = 0; offset < json.length;) {
+        await task.checkpoint();
+        // Canonical JSON escapes lone surrogates, and its valid pairs must stay together.
+        let end = Math.min(offset + 16_384, json.length);
+        if (end < json.length && json.charCodeAt(end - 1) >= 0xd800 && json.charCodeAt(end - 1) <= 0xdbff) end--;
+        bytes += encoder.encode(json.slice(offset, end)).length;
+        if (bytes > MAX_VAULT_OBSERVATION_ENVELOPE_UTF8_BYTES) {
+            throw new Error("Vault observation evidence exceeds its envelope budget.");
+        }
+        offset = end;
     }
 }
 
@@ -906,11 +926,61 @@ export interface InspectBacklinkEvidenceFacts {
     backlinks: readonly string[];
 }
 
+export async function projectInspectLinkFactsFromBacklinkEvaluationAsync(
+    path: string,
+    facts: InspectBacklinkEvidenceFacts,
+    metadataCache: Parameters<typeof projectInspectLinkFacts>[1],
+    isPathAllowed: (path: string) => boolean = () => true,
+    signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+    const task = createCooperativeTask(signal);
+    const checkpoint = async () => { await task.checkpoint(); };
+    const filterTargets = async (targets: Record<string, number> | undefined): Promise<string[]> => {
+        const keys = await sortCooperatively(Object.keys(targets ?? {}), compareObservationPaths, checkpoint);
+        const result: string[] = [];
+        for (const key of keys) {
+            await checkpoint();
+            if (isPathAllowed(key) && result.length < INSPECT_NOTE_MAX_LINKS) result.push(key);
+        }
+        return result;
+    };
+    return { path, scannedSources: facts.scannedSources, evaluatedSources: facts.evaluatedSources,
+        scanCapExceeded: facts.capExceeded,
+        backlinks: await sortCooperatively(facts.backlinks, compareObservationPaths, checkpoint),
+        outgoing: await filterTargets(metadataCache?.resolvedLinks?.[path]),
+        unresolvedTargets: await filterTargets(metadataCache?.unresolvedLinks?.[path]) };
+}
+
+async function projectInspectLinkFactsAsync(
+    path: string,
+    metadataCache: Parameters<typeof projectInspectLinkFacts>[1],
+    isPathAllowed: (path: string) => boolean,
+    signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+    const task = createCooperativeTask(signal);
+    const sourcePaths: string[] = [];
+    const resolved = metadataCache?.resolvedLinks ?? {};
+    for (const source of Object.keys(resolved)) {
+        await task.checkpoint();
+        if (isPathAllowed(source)) sourcePaths.push(source);
+    }
+    const scannedSources = sourcePaths.slice(0, INSPECT_NOTE_MAX_BACKLINK_SOURCES);
+    const backlinks: string[] = [];
+    for (const source of scannedSources) {
+        await task.checkpoint();
+        if (resolved[source] !== undefined && path in resolved[source] && isPathAllowed(path)) backlinks.push(source);
+    }
+    return await projectInspectLinkFactsFromBacklinkEvaluationAsync(path,
+        { scannedSources, evaluatedSources: scannedSources.length, capExceeded: sourcePaths.length > scannedSources.length, backlinks },
+        metadataCache, isPathAllowed, signal);
+}
+
 export async function revalidateVaultObservationFromApp(
     host: AiServiceHost,
     evidence: VaultObservationEvidence,
     options: VaultObservationRevalidationOptions = {},
 ): Promise<VaultObservationRevalidation> {
+    const task = createCooperativeTask(options.signal);
     throwIfAborted(options.signal);
     const scopeAllows = (path: string): boolean => {
         if (evidence.scope.allowedPaths !== null && !evidence.scope.allowedPaths.includes(path)) return false;
@@ -931,14 +1001,18 @@ export async function revalidateVaultObservationFromApp(
         if (typeof vault.getMarkdownFiles !== "function") {
             throw new Error("Vault markdown enumeration is unavailable.");
         }
-        const files = vault.getMarkdownFiles();
+        const files = await getMarkdownFilesCooperatively(host, async () => { await task.checkpoint(); });
         if (!Array.isArray(files)) throw new Error("Vault markdown enumeration is unavailable.");
-        const scoped = files.filter((file): file is { path: string; stat?: { ctime?: unknown; mtime?: unknown } } =>
-            Boolean(file && typeof file === "object" && typeof (file as { path?: unknown }).path === "string")
-            && scopeAllows((file as { path: string }).path)
-            && isInStaticQueryScope((file as { path: string }).path, evidence.aggregate.query))
-            .sort((left, right) => compareObservationPaths(left.path, right.path));
-        const candidatePaths = scoped.map(file => file.path);
+        const permitted: Array<{ path: string; stat?: { ctime?: unknown; mtime?: unknown } }> = [];
+        for (const file of files) {
+            await task.checkpoint();
+            if (file && typeof file === 'object' && typeof file.path === 'string'
+                && scopeAllows(file.path) && isInStaticQueryScope(file.path, evidence.aggregate.query)) permitted.push(file);
+        }
+        const scoped = await sortCooperatively(permitted, (left, right) => compareObservationPaths(left.path, right.path),
+            async () => { await task.checkpoint(); });
+        const candidatePaths: string[] = [];
+        for (const file of scoped) { await task.checkpoint(); candidatePaths.push(file.path); }
         const needsMetadataCache = Boolean(
             evidence.aggregate.query.tags?.length
             || (evidence.aggregate.query.properties ?? []).some(property => property.operator !== undefined)
@@ -955,6 +1029,7 @@ export async function revalidateVaultObservationFromApp(
         const snapshotByPath = new Map<string, QueryNotesPublicSnapshot>();
         const projectionBudget = createSnapshotProjectionBudget(QUERY_NOTES_PROJECTION_MAX_UTF8_BYTES);
         for (const file of evaluated) {
+            await task.checkpoint();
             throwIfAborted(options.signal);
             const cache = needsMetadataCache ? metadataCache?.getFileCache?.(file) : undefined;
             const snapshot = projectQueryMetadata(file, cache, evidence.aggregate.query);
@@ -962,14 +1037,14 @@ export async function revalidateVaultObservationFromApp(
             snapshots.push(snapshot);
             snapshotByPath.set(file.path, snapshot);
         }
-        const aggregateCurrent = await hashObservationValue(candidatePaths) === evidence.aggregate.candidateSetDigest
-            && await hashObservationValue(snapshots) === evidence.aggregate.metadataSetDigest
+        const aggregateCurrent = await hashObservationValue(candidatePaths, options.signal) === evidence.aggregate.candidateSetDigest
+            && await hashObservationValue(snapshots, options.signal) === evidence.aggregate.metadataSetDigest
             && snapshots.length === evidence.aggregate.evaluatedCandidates;
         const validItemIndexes: number[] = [];
         for (const [index, item] of evidence.items.entries()) {
             const snapshot = snapshotByPath.get(item.path);
             if (snapshot === undefined) continue;
-            const digest = await hashObservationValue(snapshot);
+            const digest = await hashObservationValue(snapshot, options.signal);
             if (digest === item.metadataDigest) validItemIndexes.push(index);
         }
         return { observationId: evidence.observationId, validItemIndexes, aggregateCurrent };
@@ -984,13 +1059,13 @@ export async function revalidateVaultObservationFromApp(
             return { observationId: evidence.observationId, validItemIndexes: [], aggregateCurrent: false };
         }
         const cache = metadataCache?.getFileCache?.(file);
-        const cacheCurrent = await hashObservationValue(projectInspectCache(cache)) === item.cacheProjectionDigest;
-        const linksCurrent = await hashObservationValue(projectInspectLinkFacts(item.path, metadataCache, scopeAllows))
+        const cacheCurrent = await hashObservationValue(projectInspectCache(cache), options.signal) === item.cacheProjectionDigest;
+        const linksCurrent = await hashObservationValue(await projectInspectLinkFactsAsync(item.path, metadataCache, scopeAllows, options.signal), options.signal)
             === item.linkFactsDigest;
         let bodyCurrent = !item.bodyHash;
         if (item.bodyHash) {
             const content = vault.cachedRead ? await vault.cachedRead(file) : undefined;
-            bodyCurrent = typeof content === "string" && await computeContentHash(content) === item.bodyHash;
+            bodyCurrent = typeof content === "string" && await computeContentHash(content, options.signal) === item.bodyHash;
         }
         const current = cacheCurrent && linksCurrent && bodyCurrent;
         return {
@@ -1006,7 +1081,7 @@ export async function revalidateVaultObservationFromApp(
     }
     const content = await vault.cachedRead(file);
     const partition = getReadNotePartView(content, item.part).text;
-    const current = await computeContentHash(partition) === item.contentHash;
+    const current = await computeContentHash(partition, options.signal) === item.contentHash;
     return {
         observationId: evidence.observationId,
         validItemIndexes: current ? [0] : [],
@@ -1020,14 +1095,21 @@ async function revalidateSnippetObservation(
     scopeAllows: (path: string) => boolean,
     signal?: AbortSignal,
 ): Promise<VaultObservationRevalidation> {
-    const files = enumerateScopedFiles(host, evidence.aggregate.scope, scopeAllows);
-    const candidatePaths = files.map(file => file.path);
+    const task = createCooperativeTask(signal);
+    const candidates = await enumerateScopedFilesCooperatively(host, evidence.aggregate.scope, async () => { await task.checkpoint(); });
+    const files: typeof candidates = [];
+    const candidatePaths: string[] = [];
+    for (const file of candidates) {
+        await task.checkpoint();
+        if (scopeAllows(file.path)) { files.push(file); candidatePaths.push(file.path); }
+    }
     const scannedVersions: Array<{ path: string; state: string; contentHash?: string }> = [];
     const currentContent = new Map<string, string>();
     let readNotes = 0;
     let readBytes = 0;
     let evaluatedBytes = 0;
     for (const file of files.slice(0, SNIPPET_MAX_CANDIDATE_FILES)) {
+        await task.checkpoint();
         throwIfAborted(signal);
         const stat = captureVaultSnippetStat(file);
         const capture = (state: "read" | "unknown-size" | "skipped-size", contentHash?: string) => {
@@ -1069,15 +1151,15 @@ async function revalidateSnippetObservation(
         }
         evaluatedBytes += bytes;
         currentContent.set(file.path, content);
-        capture("read", await computeContentHash(content));
+        capture("read", await computeContentHash(content, signal));
     }
-    const aggregateCurrent = await hashObservationValue(candidatePaths) === evidence.aggregate.candidateSetDigest
-        && await hashObservationValue(scannedVersions) === evidence.aggregate.scannedVersionDigest
+    const aggregateCurrent = await hashObservationValue(candidatePaths, signal) === evidence.aggregate.candidateSetDigest
+        && await hashObservationValue(scannedVersions, signal) === evidence.aggregate.scannedVersionDigest
         && scannedVersions.length === evidence.aggregate.evaluatedCandidates;
     const validItemIndexes: number[] = [];
     for (const [index, item] of evidence.items.entries()) {
         const content = currentContent.get(item.path);
-        if (content === undefined || await computeContentHash(content) !== item.contentHash) continue;
+        if (content === undefined || await computeContentHash(content, signal) !== item.contentHash) continue;
         if (!snippetMatchIsAtRange(content, evidence.aggregate, item)) continue;
         validItemIndexes.push(index);
     }
@@ -1113,6 +1195,7 @@ function compareObservationPaths(left: string, right: string): number {
 export interface VaultObservationPhysicalBinding {
     prepare(signal?: AbortSignal | null): Promise<void>;
     assertCurrent(): void;
+    assertCurrentAsync?(signal?: AbortSignal | null): Promise<void>;
 }
 
 export interface VaultObservationProjectionOptions {
@@ -1120,6 +1203,8 @@ export interface VaultObservationProjectionOptions {
     history: readonly ChatMessage[];
     revalidate: (evidence: VaultObservationEvidence, options?: VaultObservationRevalidationOptions) => Promise<VaultObservationRevalidation>;
     getEpoch?: () => string;
+    /** Reliable authorization/identity revision; ordinary content edits alone do not withdraw a read snapshot. */
+    getAuthorityEpoch?: () => string;
     isPathAllowed?: (path: string) => boolean;
     signal?: AbortSignal;
     /**
@@ -1141,20 +1226,32 @@ export interface VaultObservationProjection {
 }
 
 export async function prepareVaultObservationProjection(options: VaultObservationProjectionOptions): Promise<VaultObservationProjection> {
-    const transcript = options.transcript.map(cloneProjectionMessage);
-    const history = options.history.map(message => ({ ...message }));
-    const toolEntries = collectToolEvidence(transcript);
-    const historyEntries = collectHistoryEvidence(history);
+    const task = createCooperativeTask(options.signal);
+    const transcript: PaAgentMessage[] = [];
+    for (const message of options.transcript) {
+        await task.checkpoint();
+        transcript.push(await cloneProjectionMessageAsync(message, options.signal));
+    }
+    const history: ChatMessage[] = [];
+    for (const message of options.history) {
+        await task.checkpoint();
+        history.push({ ...message });
+    }
+    const toolEntries = await collectToolEvidenceAsync(transcript, options.signal);
+    const historyEntries = await collectHistoryEvidenceAsync(history, options.signal);
     const hasContractMaterial = toolEntries.some(entry => entry.contract)
         || historyEntries.some(entry => entry.contract)
         || transcript.some(message => message.role === "toolResult" && message.content.metadata?.vaultObservationContractVersion === 1)
         || history.some(message => evidenceState(message).contract);
     let boundEpoch: string | undefined;
     let currentBoundEpoch: string | undefined;
+    let currentAuthorityEpoch: string | undefined;
     let revalidations: VaultObservationRevalidation[] = [];
     if (hasContractMaterial) {
         if (options.validationMode === "read_snapshot") {
-            revalidations = snapshotRevalidationGroup(toolEntries, historyEntries, options);
+            const snapshot = await snapshotRevalidationWithStableAuthority(toolEntries, historyEntries, options);
+            revalidations = snapshot.results;
+            currentAuthorityEpoch = snapshot.authorityEpoch;
         } else {
             const startEpoch = sealEpoch(options);
             revalidations = await revalidateGroup(toolEntries, historyEntries, options);
@@ -1173,12 +1270,29 @@ export async function prepareVaultObservationProjection(options: VaultObservatio
     }
     const validByObservation = new Map<string, VaultObservationRevalidation>();
     for (const result of revalidations) validByObservation.set(result.observationId, result);
-    await projectTranscriptObservations(transcript, validByObservation);
-    projectHistoryObservations(history, validByObservation);
-    const boundToolEntries = collectToolEvidence(transcript);
-    const boundHistoryEntries = collectHistoryEvidence(history);
-    const fixedPayload = hasContractMaterial ? stableJson({ transcript, history }) : undefined;
-    const payloadDigest = fixedPayload === undefined ? undefined : await computeContentHash(fixedPayload);
+    await projectTranscriptObservations(transcript, validByObservation, options.signal);
+    await projectHistoryObservationsAsync(history, validByObservation, options.signal);
+    const boundToolEntries = await collectToolEvidenceAsync(transcript, options.signal);
+    const boundHistoryEntries = await collectHistoryEvidenceAsync(history, options.signal);
+    const fixedPayload = hasContractMaterial ? await canonicalContextJsonAsync({ transcript, history }, options.signal) : undefined;
+    const payloadDigest = fixedPayload === undefined ? undefined : await computeContentHash(fixedPayload, options.signal);
+    const assertSnapshotProjection = async (results: readonly VaultObservationRevalidation[], signal?: AbortSignal) => {
+        throwIfAborted(signal);
+        throwIfAborted(options.signal);
+        if (!await boundResultsStillSupportProjectionAsync(boundToolEntries, boundHistoryEntries, results, signal)
+            || await canonicalContextJsonAsync({ transcript, history }, signal) !== fixedPayload) {
+            throw new Error("Vault observation authorization changed before dispatch.");
+        }
+        throwIfAborted(options.signal);
+    };
+    // Projection/serialization can yield after the first check. Seal the retained
+    // snapshot again if an intervening ordinary edit changed the host revision.
+    if (hasContractMaterial && options.validationMode === "read_snapshot" && options.getAuthorityEpoch
+        && options.getAuthorityEpoch() !== currentAuthorityEpoch) {
+        const snapshot = await snapshotRevalidationWithStableAuthority(boundToolEntries, boundHistoryEntries,
+            options, results => assertSnapshotProjection(results, options.signal));
+        currentAuthorityEpoch = snapshot.authorityEpoch;
+    }
     return {
         transcript,
         history,
@@ -1190,11 +1304,14 @@ export async function prepareVaultObservationProjection(options: VaultObservatio
                 throwIfAborted(options.signal);
                 if (!hasContractMaterial) return;
                 if (options.validationMode === "read_snapshot") {
-                    const results = snapshotRevalidationGroup(boundToolEntries, boundHistoryEntries, options);
-                    if (stableJson({ transcript, history }) !== fixedPayload
-                        || !boundResultsStillSupportProjection(boundToolEntries, boundHistoryEntries, results)) {
-                        throw new Error("Vault observation authorization changed before dispatch.");
-                    }
+                    const prepareOptions = { ...options, signal: signal ?? options.signal };
+                    const snapshot = await withAbortSignals(
+                        snapshotRevalidationWithStableAuthority(boundToolEntries, boundHistoryEntries, prepareOptions,
+                            results => assertSnapshotProjection(results, prepareOptions.signal)),
+                        [signal, options.signal],
+                    );
+                    throwIfAborted(options.signal);
+                    currentAuthorityEpoch = snapshot.authorityEpoch;
                     return;
                 }
                 if (boundEpoch === undefined) return;
@@ -1205,15 +1322,22 @@ export async function prepareVaultObservationProjection(options: VaultObservatio
                 );
                 throwIfAborted(signal ?? undefined);
                 throwIfAborted(options.signal);
-                if (sealEpoch(options) !== prepareStartEpoch
-                    || stableJson({ transcript, history }) !== fixedPayload
-                    || !boundResultsStillSupportProjection(boundToolEntries, boundHistoryEntries, results)) {
+                if (await canonicalContextJsonAsync({ transcript, history }, signal ?? options.signal) !== fixedPayload
+                    || !await boundResultsStillSupportProjectionAsync(boundToolEntries, boundHistoryEntries, results, signal ?? options.signal)
+                    || sealEpoch(options) !== prepareStartEpoch) {
                     throw new Error("Vault observation evidence changed before dispatch.");
                 }
                 currentBoundEpoch = prepareStartEpoch;
             },
             assertCurrent() {
+                if (!hasContractMaterial) return;
                 if (options.validationMode === "read_snapshot") {
+                    if (options.getAuthorityEpoch) {
+                        if (currentAuthorityEpoch === undefined || options.getAuthorityEpoch() !== currentAuthorityEpoch) {
+                            throw new Error("Vault observation authorization changed before dispatch.");
+                        }
+                        return;
+                    }
                     if (!snapshotPathsAllowed(boundToolEntries, boundHistoryEntries, options)) {
                         throw new Error("Vault observation authorization changed before dispatch.");
                     }
@@ -1223,30 +1347,71 @@ export async function prepareVaultObservationProjection(options: VaultObservatio
                     throw new Error("Vault observation evidence changed before dispatch.");
                 }
             },
+            async assertCurrentAsync(signal) {
+                throwIfAborted(signal ?? options.signal);
+                throwIfAborted(options.signal);
+                if (!hasContractMaterial) return;
+                if (options.validationMode !== 'read_snapshot') {
+                    this.assertCurrent();
+                    return;
+                }
+                const prepareOptions = { ...options, signal: signal ?? options.signal };
+                const snapshot = await withAbortSignals(snapshotRevalidationWithStableAuthority(
+                    boundToolEntries, boundHistoryEntries, prepareOptions,
+                    results => assertSnapshotProjection(results, prepareOptions.signal),
+                ), [signal, options.signal]);
+                currentAuthorityEpoch = snapshot.authorityEpoch;
+            },
         },
     };
 }
 
-function snapshotRevalidationGroup(
+async function snapshotRevalidationWithStableAuthority(
     toolEntries: readonly EvidenceEntry[],
     historyEntries: readonly EvidenceEntry[],
     options: VaultObservationProjectionOptions,
-): VaultObservationRevalidation[] {
+    assertProjection?: (results: readonly VaultObservationRevalidation[]) => Promise<void>,
+): Promise<{ results: VaultObservationRevalidation[]; authorityEpoch: string | undefined }> {
+    const task = createCooperativeTask(options.signal);
+    // An authority revision can include ordinary edits. Recheck permissions,
+    // but cap retries and let cancellation/deadlines run between attempts.
+    for (let attempt = 0; attempt < 3; attempt++) {
+        await task.checkpoint(attempt > 0);
+        const authorityEpoch = options.getAuthorityEpoch?.();
+        const results = await snapshotRevalidationGroupAsync(toolEntries, historyEntries, options);
+        await assertProjection?.(results);
+        throwIfAborted(options.signal);
+        if (authorityEpoch === options.getAuthorityEpoch?.()) return { results, authorityEpoch };
+    }
+    throw new Error("Vault observation authorization changed before dispatch.");
+}
+
+async function snapshotRevalidationGroupAsync(
+    toolEntries: readonly EvidenceEntry[],
+    historyEntries: readonly EvidenceEntry[],
+    options: VaultObservationProjectionOptions,
+): Promise<VaultObservationRevalidation[]> {
+    const task = createCooperativeTask(options.signal);
     const unique = new Map<string, VaultObservationEvidence>();
     for (const entry of [...toolEntries, ...historyEntries]) {
+        await task.checkpoint();
         if (!entry.evidence || unique.has(entry.evidence.observationId)) continue;
         unique.set(entry.evidence.observationId, entry.evidence);
     }
-    return [...unique.values()].map((evidence) => {
-        const validItemIndexes = evidence.items.flatMap((item, index) => (
-            options.isPathAllowed?.(item.path) === false ? [] : [index]
-        ));
-        return {
+    const results: VaultObservationRevalidation[] = [];
+    for (const evidence of unique.values()) {
+        const validItemIndexes: number[] = [];
+        for (const [index, item] of evidence.items.entries()) {
+            await task.checkpoint();
+            if (options.isPathAllowed?.(item.path) !== false) validItemIndexes.push(index);
+        }
+        results.push({
             observationId: evidence.observationId,
             validItemIndexes,
             aggregateCurrent: validItemIndexes.length === evidence.items.length,
-        };
-    });
+        });
+    }
+    return results;
 }
 
 function snapshotPathsAllowed(
@@ -1267,14 +1432,21 @@ interface EvidenceEntry {
     invalid?: boolean;
 }
 
-function boundResultsStillSupportProjection(
+async function boundResultsStillSupportProjectionAsync(
     toolEntries: readonly EvidenceEntry[],
     historyEntries: readonly EvidenceEntry[],
     results: readonly VaultObservationRevalidation[],
-): boolean {
-    const byObservation = new Map(results.map(result => [result.observationId, result]));
+    signal?: AbortSignal,
+): Promise<boolean> {
+    const task = createCooperativeTask(signal);
+    const byObservation = new Map<string, VaultObservationRevalidation>();
+    for (const result of results) {
+        await task.checkpoint();
+        byObservation.set(result.observationId, result);
+    }
     const byEntry = new Map<string, { evidence: VaultObservationEvidence; aggregateRequired: boolean }>();
     for (const entry of [...toolEntries, ...historyEntries]) {
+        await task.checkpoint();
         if (!entry.evidence) continue;
         const existing = byEntry.get(entry.evidence.observationId);
         byEntry.set(entry.evidence.observationId, {
@@ -1283,15 +1455,18 @@ function boundResultsStillSupportProjection(
         });
     }
     if (byEntry.size === 0) return false;
-    return [...byEntry.values()].every(({ evidence, aggregateRequired }) => {
+    for (const { evidence, aggregateRequired } of byEntry.values()) {
+        await task.checkpoint();
         const result = byObservation.get(evidence.observationId);
+        const indexes = new Set(result?.validItemIndexes);
         if (result === undefined
             || result.validItemIndexes.length !== evidence.items.length
-            || evidence.items.some((_item, index) => !result.validItemIndexes.includes(index))) {
+            || evidence.items.some((_item, index) => !indexes.has(index))) {
             return false;
         }
-        return result.aggregateCurrent || !aggregateRequired;
-    });
+        if (!result.aggregateCurrent && aggregateRequired) return false;
+    }
+    return true;
 }
 
 async function withAbortSignals<T>(promise: Promise<T>, signals: ReadonlyArray<AbortSignal | null | undefined>): Promise<T> {
@@ -1321,7 +1496,7 @@ async function withAbortSignals<T>(promise: Promise<T>, signals: ReadonlyArray<A
     });
 }
 
-function cloneProjectionMessage(message: PaAgentMessage): PaAgentMessage {
+async function cloneProjectionMessageAsync(message: PaAgentMessage, signal?: AbortSignal): Promise<PaAgentMessage> {
     if (message.role !== "toolResult") return message;
     const metadata = message.content.metadata;
     if (metadata?.vaultObservationContractVersion === 1) {
@@ -1342,12 +1517,18 @@ function cloneProjectionMessage(message: PaAgentMessage): PaAgentMessage {
             };
         }
     }
+    const sourceRecords: NonNullable<Extract<PaAgentMessage, { role: 'toolResult' }>['content']['sourceRecords']> = [];
+    const task = createCooperativeTask(signal);
+    for (const record of message.content.sourceRecords ?? []) {
+        await task.checkpoint();
+        sourceRecords.push(cloneSourceRecord(record));
+    }
     return {
         ...message,
         content: {
             ...message.content,
-            sourceRecords: message.content.sourceRecords?.map(cloneSourceRecord),
-            metadata: metadata ? JSON.parse(stableJson(metadata)) as Record<string, unknown> : undefined,
+            sourceRecords: message.content.sourceRecords === undefined ? undefined : sourceRecords,
+            metadata: metadata ? await cloneCanonicalContextJsonAsync(metadata, signal) as Record<string, unknown> : undefined,
         },
     };
 }
@@ -1367,21 +1548,36 @@ function collectToolEvidence(transcript: readonly PaAgentMessage[]): EvidenceEnt
     });
 }
 
-function collectHistoryEvidence(history: readonly ChatMessage[]): EvidenceEntry[] {
-    return history.flatMap((message): EvidenceEntry[] => {
+async function collectToolEvidenceAsync(transcript: readonly PaAgentMessage[], signal?: AbortSignal): Promise<EvidenceEntry[]> {
+    const task = createCooperativeTask(signal);
+    const entries: EvidenceEntry[] = [];
+    for (const message of transcript) {
+        await task.checkpoint();
+        entries.push(...collectToolEvidence([message]));
+    }
+    return entries;
+}
+
+async function collectHistoryEvidenceAsync(history: readonly ChatMessage[], signal?: AbortSignal): Promise<EvidenceEntry[]> {
+    const task = createCooperativeTask(signal);
+    const entries: EvidenceEntry[] = [];
+    for (const message of history) {
+        await task.checkpoint();
         const state = evidenceState(message);
-        if (!state.contract) return [];
-        return state.evidence.map(evidence => {
+        if (!state.contract) continue;
+        for (const evidence of state.evidence) {
+            await task.checkpoint();
             const parsed = parseVaultObservationEvidence(evidence);
-            return {
+            entries.push({
                 contract: true as const,
                 ...(parsed.ok ? { evidence: parsed.evidence } : { invalid: true }),
                 // History summaries are derived free text without a narrow
                 // payload proof. Retained aggregate facts must stay aggregate-current.
                 aggregateRequired: true,
-            };
-        });
-    });
+            });
+        }
+    }
+    return entries;
 }
 
 function observationCarriesAggregatePromise(promptText: string): boolean {
@@ -1424,13 +1620,16 @@ async function revalidateGroup(
     historyEntries: readonly EvidenceEntry[],
     options: VaultObservationProjectionOptions,
 ): Promise<VaultObservationRevalidation[]> {
+    const task = createCooperativeTask(options.signal);
     const unique = new Map<string, VaultObservationEvidence>();
     for (const entry of [...toolEntries, ...historyEntries]) {
+        await task.checkpoint();
         if (!entry.evidence || unique.has(entry.evidence.observationId)) continue;
         unique.set(entry.evidence.observationId, entry.evidence);
     }
     const results: VaultObservationRevalidation[] = [];
     for (const evidence of unique.values()) {
+        await task.checkpoint();
         results.push(await options.revalidate(evidence, {
             signal: options.signal,
             isPathAllowed: options.isPathAllowed,
@@ -1447,8 +1646,11 @@ function sealEpoch(options: VaultObservationProjectionOptions): string {
 async function projectTranscriptObservations(
     transcript: PaAgentMessage[],
     revalidations: ReadonlyMap<string, VaultObservationRevalidation>,
+    signal?: AbortSignal,
 ): Promise<void> {
+    const task = createCooperativeTask(signal);
     for (const message of transcript) {
+        await task.checkpoint();
         if (message.role !== "toolResult" || message.content.metadata?.vaultObservationContractVersion !== 1) continue;
         const parsed = parseVaultObservationEvidence(message.content.metadata.vaultObservationEvidence);
         if (!parsed.ok || parsed.evidence.tool !== message.toolName) {
@@ -1456,21 +1658,28 @@ async function projectTranscriptObservations(
             continue;
         }
         const result = revalidations.get(parsed.evidence.observationId);
-        if (!result || !(await projectStructuredObservation(message, parsed.evidence, result))) {
+        if (!result || !(await projectStructuredObservation(message, parsed.evidence, result, signal))) {
             withdrawToolObservation(message);
         }
     }
 }
 
-function projectHistoryObservations(
+async function projectHistoryObservationsAsync(
     history: ChatMessage[],
     revalidations: ReadonlyMap<string, VaultObservationRevalidation>,
-): void {
+    signal?: AbortSignal,
+): Promise<void> {
+    const task = createCooperativeTask(signal);
     for (let index = history.length - 1; index >= 0; index -= 1) {
+        await task.checkpoint();
         const message = history[index];
         const state = evidenceState(message);
         if (!state.contract) continue;
-        const evidence = state.evidence.map(value => parseVaultObservationEvidence(value));
+        const evidence: VaultObservationEvidenceParseResult[] = [];
+        for (const value of state.evidence) {
+            await task.checkpoint();
+            evidence.push(parseVaultObservationEvidence(value));
+        }
         if (state.invalid || !state.hasEvidenceArray || state.evidence.length === 0
             || evidence.some(parsed => !parsed.ok) || evidence.some(parsed => {
             if (!parsed.ok) return true;
@@ -1487,6 +1696,7 @@ async function projectStructuredObservation(
     message: Extract<PaAgentMessage, { role: "toolResult" }>,
     evidence: VaultObservationEvidence,
     result: VaultObservationRevalidation,
+    signal?: AbortSignal,
 ): Promise<boolean> {
     let envelope: { tool?: unknown; status?: unknown; observation?: Record<string, unknown> };
     try {
@@ -1505,7 +1715,7 @@ async function projectStructuredObservation(
     if (evidence.tool !== "query_notes" && evidence.tool !== "search_vault_snippets") {
         return result.validItemIndexes.length === evidence.items.length
             && result.aggregateCurrent === true
-            && await hashObservationValue(observation) === evidence.items[0].outputDigest;
+            && await hashObservationValue(observation, signal) === evidence.items[0].outputDigest;
     }
     const matches = observation.matches as unknown[];
     if (!Array.isArray(matches)) return false;
@@ -1515,7 +1725,7 @@ async function projectStructuredObservation(
         if (!match || typeof match !== "object" || Array.isArray(match)) return false;
         const matchRecord = match as Record<string, unknown>;
         if (matchRecord.path !== item.path) return false;
-        const digest = await hashObservationValue(match);
+        const digest = await hashObservationValue(match, signal);
         if (digest !== item.outputDigest) return false;
     }
     const retainedIndexes = new Set(result.validItemIndexes);
@@ -1548,7 +1758,7 @@ async function projectStructuredObservation(
     });
     message.content.metadata = {
         ...message.content.metadata,
-        vaultObservationEvidence: await rebindStructuredEvidence(evidence, observation, result, originalMatches),
+        vaultObservationEvidence: await rebindStructuredEvidence(evidence, observation, result, originalMatches, signal),
         vaultObservationContractVersion: 1,
     };
     synchronizeProjectedSearchFact(message, evidence, retainedIndexes);
@@ -1576,10 +1786,11 @@ async function rebindStructuredEvidence(
     observation: Record<string, unknown>,
     result: VaultObservationRevalidation,
     originalMatches: readonly unknown[],
+    signal?: AbortSignal,
 ): Promise<VaultObservationEvidence> {
     const retained = new Set(result.validItemIndexes);
     if (evidence.tool === "query_notes") {
-        const copy = JSON.parse(stableJson(evidence)) as Extract<typeof evidence, { tool: "query_notes" }>;
+        const copy = await cloneCanonicalContextJsonAsync(evidence, signal) as Extract<typeof evidence, { tool: "query_notes" }>;
         const originalItems = copy.items;
         copy.items = [];
         for (const [index, item] of originalItems.entries()) {
@@ -1587,7 +1798,7 @@ async function rebindStructuredEvidence(
             copy.items.push({
                 ...item,
                 index: copy.items.length,
-                outputDigest: await hashObservationValue(originalMatches[index]),
+                outputDigest: await hashObservationValue(originalMatches[index], signal),
             });
         }
         copy.coverage = {
@@ -1598,7 +1809,7 @@ async function rebindStructuredEvidence(
         copy.aggregate.projectionComplete = false;
         return copy;
     }
-    const copy = JSON.parse(stableJson(evidence)) as Extract<typeof evidence, { tool: "search_vault_snippets" }>;
+    const copy = await cloneCanonicalContextJsonAsync(evidence, signal) as Extract<typeof evidence, { tool: "search_vault_snippets" }>;
     const originalItems = copy.items;
     copy.items = [];
     for (const [index, item] of originalItems.entries()) {
@@ -1606,7 +1817,7 @@ async function rebindStructuredEvidence(
         copy.items.push({
                 ...item,
                 index: copy.items.length,
-            outputDigest: await hashObservationValue(originalMatches[index]),
+            outputDigest: await hashObservationValue(originalMatches[index], signal),
         });
     }
     copy.coverage = {

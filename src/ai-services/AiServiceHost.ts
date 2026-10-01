@@ -143,6 +143,9 @@ export interface AiServiceHost {
      */
     getMemoryEvidenceEpoch?(): string;
 
+    /** Live authority/identity fence for sealing cooperatively validated input ancestry. */
+    getTaskSourceAuthorityEpoch?(): string;
+
     /** Whether a vault path may be used as Memory evidence under current privacy settings. */
     isDataBoundaryAllowedPath?(path: string): boolean;
 

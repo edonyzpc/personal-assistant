@@ -6,6 +6,14 @@ import { PaAgentContextHygiene } from "./PaAgentContextHygiene";
 import { PaAgentContextProjector, type PaAgentInjectedContext } from "./PaAgentContextProjector";
 import type { PaAgentContextSummaries } from "./PaAgentContextSummaryTypes";
 import { projectPaAgentActionHistory, type PaAgentActionGroup } from "../pa-agent-action-history";
+import { createCooperativeTask } from '../cooperative-task';
+import { stringifyContextAsync } from './PaAgentContextSerialization';
+
+export interface PaAgentContextEnvelope {
+    promptChars: number;
+    estimatedPromptTokens: number;
+    estimateMethod: "cjk_text_and_serialized_schema" | "cjk_text_schema_image_reserve";
+}
 
 export interface PaAgentContextManagerInput {
     prompt: string;
@@ -22,13 +30,11 @@ export interface PaAgentContextManagerInput {
     maxPromptChars?: number;
     maxObservationChars: number;
     formatToolObservations: (transcript: readonly PaAgentMessage[], turnIndex: number) => string;
+    formatToolObservationsAsync?: (transcript: readonly PaAgentMessage[], turnIndex: number) => Promise<string>;
     /** Runtime owns actual template/schema formatting; the reducer remains provider-free. */
     measurePromptChars?: (parts: PaAgentContextParts) => number;
-    measurePromptEnvelope?: (parts: PaAgentContextParts) => {
-        promptChars: number;
-        estimatedPromptTokens: number;
-        estimateMethod: "cjk_text_and_serialized_schema" | "cjk_text_schema_image_reserve";
-    };
+    measurePromptEnvelope?: (parts: PaAgentContextParts) => PaAgentContextEnvelope;
+    measurePromptEnvelopeAsync?: (parts: PaAgentContextParts) => Promise<PaAgentContextEnvelope>;
     modelBudgetFacts?: PaAgentModelBudgetFacts;
 }
 
@@ -62,6 +68,18 @@ export interface PaAgentContextProjection extends PaAgentContextParts {
     history: import('./PaAgentContextProjector').PaAgentProjectedHistory;
 }
 
+interface ContextMeasurement {
+    transcript: readonly PaAgentMessage[];
+    projected: { input: string; currentInput: string; history: PaAgentContextParts['history'] };
+}
+interface MeasuredContext { parts: PaAgentContextParts; budget: PaAgentContextBudgetSnapshot }
+
+function* contextWork<T>(steps: Generator<void, T, void>): Generator<void, T, unknown> {
+    let next = steps.next();
+    while (!next.done) { yield; next = steps.next(); }
+    return next.value;
+}
+
 export class PaAgentContextManager {
     private readonly hygiene: PaAgentContextHygiene;
     private readonly compactor: PaAgentContextCompactor;
@@ -85,17 +103,73 @@ export class PaAgentContextManager {
     }
 
     forPrompt(input: PaAgentContextManagerInput): PaAgentContextProjection {
-        const hygiene = this.hygiene.clean(input.transcript);
-        let micro = this.compactor.microCompact(hygiene.transcript, {
+        const steps = this.forPromptSteps(input);
+        let next = steps.next();
+        while (!next.done) next = steps.next(next.value ? this.measure(input, next.value) : undefined);
+        return next.value;
+    }
+
+    async forPromptAsync(input: PaAgentContextManagerInput, signal?: AbortSignal): Promise<PaAgentContextProjection> {
+        const task = createCooperativeTask(signal);
+        await task.checkpoint();
+        const steps = this.forPromptSteps(input);
+        let next = steps.next();
+        while (!next.done) {
+            await task.checkpoint();
+            const measured = next.value ? await this.measureAsync(input, next.value, signal) : undefined;
+            next = steps.next(measured);
+        }
+        return next.value;
+    }
+
+    private parts(input: PaAgentContextManagerInput, request: ContextMeasurement,
+        toolObservations: string): PaAgentContextParts {
+        return { ...request.projected, availableSkills: input.availableSkills,
+            toolDefinitions: input.toolDefinitions, toolObservations,
+            actionHistory: projectPaAgentActionHistory(request.transcript) };
+    }
+
+    private measured(input: PaAgentContextManagerInput, parts: PaAgentContextParts,
+        envelope: PaAgentContextEnvelope | undefined, actionHistoryChars: number): MeasuredContext {
+        return { parts, budget: this.budget.snapshot({
+            ...parts, maxPromptChars: input.maxPromptChars, maxObservationChars: input.maxObservationChars,
+            localEnvelopeChars: envelope?.promptChars ?? input.measurePromptChars?.(parts),
+            localEnvelopeEstimatedTokens: envelope?.estimatedPromptTokens,
+            localEnvelopeEstimateMethod: envelope?.estimateMethod,
+            modelBudgetFacts: input.modelBudgetFacts, actionHistoryChars,
+        }) };
+    }
+
+    private measure(input: PaAgentContextManagerInput, request: ContextMeasurement): MeasuredContext {
+        const parts = this.parts(input, request, input.formatToolObservations(request.transcript, input.turnIndex));
+        return this.measured(input, parts, input.measurePromptEnvelope?.(parts), JSON.stringify(parts.actionHistory).length);
+    }
+
+    private async measureAsync(input: PaAgentContextManagerInput, request: ContextMeasurement,
+        signal?: AbortSignal): Promise<MeasuredContext> {
+        const observations = input.formatToolObservationsAsync
+            ? await input.formatToolObservationsAsync(request.transcript, input.turnIndex)
+            : input.formatToolObservations(request.transcript, input.turnIndex);
+        const parts = this.parts(input, request, observations);
+        const envelope = input.measurePromptEnvelopeAsync
+            ? await input.measurePromptEnvelopeAsync(parts) : input.measurePromptEnvelope?.(parts);
+        const actionHistory = await stringifyContextAsync(parts.actionHistory, signal);
+        return this.measured(input, parts, envelope, actionHistory!.length);
+    }
+
+    private *forPromptSteps(input: PaAgentContextManagerInput): Generator<void | ContextMeasurement,
+        PaAgentContextProjection, unknown> {
+        const hygiene = yield* contextWork(this.hygiene.cleanSteps(input.transcript));
+        let micro = yield* contextWork(this.compactor.microCompactSteps(hygiene.transcript, {
             maxObservationChars: input.maxObservationChars,
             allowRecentHardTruncation: false,
             summaries: input.summaries,
             canonicalTranscript: hygiene.transcript,
-        });
+        }));
         let historyBudget = input.maxHistoryChars;
         let summaryBudget: number | undefined;
         let rebuilds = 0;
-        const projectHistory = () => this.projector.projectUserInput({
+        const projectHistory = () => this.projector.projectUserInputSteps({
             prompt: input.prompt,
             chatHistory: input.chatHistory,
             hostContext: input.hostContext,
@@ -105,52 +179,37 @@ export class PaAgentContextManager {
             maxHistorySummaryChars: summaryBudget,
             summaries: input.summaries,
         });
-        let projected = projectHistory();
+        let projected = yield* contextWork(projectHistory());
         let parts: PaAgentContextParts;
-        const measure = () => {
-            parts = {
-                input: projected.input,
-                currentInput: projected.currentInput,
-                history: projected.history,
-                availableSkills: input.availableSkills,
-                toolDefinitions: input.toolDefinitions,
-                toolObservations: input.formatToolObservations(micro.transcript, input.turnIndex),
-                actionHistory: projectPaAgentActionHistory(micro.transcript),
-            };
-            const envelope = input.measurePromptEnvelope?.(parts);
-            return this.budget.snapshot({
-                ...parts,
-                maxPromptChars: input.maxPromptChars,
-                maxObservationChars: input.maxObservationChars,
-                localEnvelopeChars: envelope?.promptChars ?? input.measurePromptChars?.(parts),
-                localEnvelopeEstimatedTokens: envelope?.estimatedPromptTokens,
-                localEnvelopeEstimateMethod: envelope?.estimateMethod,
-                modelBudgetFacts: input.modelBudgetFacts,
-                actionHistoryChars: JSON.stringify(parts.actionHistory).length,
-            });
+        const measure = function* (): Generator<ContextMeasurement, PaAgentContextBudgetSnapshot, unknown> {
+            const measured = (yield { transcript: micro.transcript, projected }) as MeasuredContext;
+            parts = measured.parts;
+            return measured.budget;
         };
-        let budget = measure();
+        let budget = yield* measure();
         const firstPromptChars = budget.promptChars;
         const observationChars = () => micro.transcript.reduce((sum, message) => (
             sum + (message.role === "toolResult" && message.content.includeInNextPrompt
                 ? message.content.promptText.length : 0)
         ), 0);
-        const reduceTools = (maxChars: number, allowRecentHardTruncation: boolean) => {
-            micro = this.compactor.microCompact(micro.transcript, {
+        const compactor = this.compactor;
+        const reduceTools = function* (maxChars: number, allowRecentHardTruncation: boolean): Generator<
+            void | ContextMeasurement, void, unknown> {
+            micro = yield* contextWork(compactor.microCompactSteps(micro.transcript, {
                 maxObservationChars: maxChars,
                 triggerRatio: 0,
                 targetRatio: 0,
                 allowRecentHardTruncation,
                 summaries: input.summaries,
                 canonicalTranscript: hygiene.transcript,
-            });
+            }));
             rebuilds++;
-            budget = measure();
+            budget = yield* measure();
         };
         // The lane cap includes escaping and wrappers, not just raw observation text.
         // Two passes are bounded; irreducible markers remain for final fail-closed admission.
         for (let pass = 0; pass < 2 && budget.toolObservationChars > input.maxObservationChars; pass++) {
-            reduceTools(Math.max(0, observationChars() - (budget.toolObservationChars - input.maxObservationChars)), false);
+            yield* reduceTools(Math.max(0, observationChars() - (budget.toolObservationChars - input.maxObservationChars)), false);
         }
         const excess = () => {
             const charExcess = Math.max(0, budget.promptChars - budget.maxPromptChars);
@@ -162,28 +221,28 @@ export class PaAgentContextManager {
         };
         if (excess() > 0) {
             // One ordered stronger projection. Reuse clones, never rewrite the canonical inputs.
-            reduceTools(Math.max(input.maxObservationChars, observationChars()), false);
-            if (excess() > 0) reduceTools(Math.max(0, observationChars() - excess()), false);
+            yield* reduceTools(Math.max(input.maxObservationChars, observationChars()), false);
+            if (excess() > 0) yield* reduceTools(Math.max(0, observationChars() - excess()), false);
             if (excess() > 0 && projected.history.summaryChars > 0) {
                 summaryBudget = Math.max(0, projected.history.summaryChars - excess());
-                projected = projectHistory();
+                projected = yield* contextWork(projectHistory());
                 rebuilds++;
-                budget = measure();
+                budget = yield* measure();
             }
             if (excess() > 0 && projected.history.summaryChars > 0) {
                 summaryBudget = 0;
-                projected = projectHistory();
+                projected = yield* contextWork(projectHistory());
                 rebuilds++;
-                budget = measure();
+                budget = yield* measure();
             }
             if (excess() > 0 && projected.history.text.length > 0) {
                 summaryBudget = 0;
                 historyBudget = Math.max(0, projected.history.text.length - excess());
-                projected = projectHistory();
+                projected = yield* contextWork(projectHistory());
                 rebuilds++;
-                budget = measure();
+                budget = yield* measure();
             }
-            if (excess() > 0) reduceTools(Math.max(0, observationChars() - excess()), false);
+            if (excess() > 0) yield* reduceTools(Math.max(0, observationChars() - excess()), false);
         }
         const finalToolResults = micro.transcript.filter((message) => message.role === "toolResult");
         const toolResultsCompacted = finalToolResults.filter((message) => message.content.metadata?.compacted === true).length;

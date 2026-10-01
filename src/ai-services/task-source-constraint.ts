@@ -70,6 +70,8 @@ export class TaskSourceConstraintState {
         isWebAllowed?: () => boolean,
         isMemoryAllowed?: () => boolean,
         captureSourceValidity?: () => boolean,
+        checkpoint?: (signal?: AbortSignal) => Promise<void>,
+        captureSourceReceipt?: () => (() => boolean),
     ): TaskSourceReadGuard {
         const current = () => {
             try {
@@ -79,12 +81,14 @@ export class TaskSourceConstraintState {
         };
         return Object.freeze({
             isCurrent: current,
+            ...(checkpoint ? { checkpoint } : {}),
             isWebAllowed: () => current() && this.allows({ kind: 'web' }, constraint)
                 && isWebAllowed?.() !== false,
             isMemoryAllowed: () => current() && this.sourceScope !== 'web'
                 && isMemoryAllowed?.() !== false,
             isNoteDomainAllowed: () => current() && this.sourceScope !== 'web',
-            ...(captureSourceValidity ? { captureSourceValidity: () => captureSourceValidity } : {}),
+            ...(captureSourceReceipt ? { captureSourceValidity: captureSourceReceipt }
+                : captureSourceValidity ? { captureSourceValidity: () => captureSourceValidity } : {}),
             isPathAllowed: (path: string, kind = 'task_material') => {
                 if (!current()) return false;
                 if (kind === 'output_target_exists' && isOutputTargetAllowed) return isOutputTargetAllowed(path);

@@ -21,6 +21,8 @@ import { parseRunSourceSelection, type RunSourceSelection } from './chat-source-
 import { admitsInputLineage, cloneInputLineage, completeInputLineage,
     unknownInputLineage, type InputDependency, type InputLineage,
     type InputLineageAdmission } from './input-lineage';
+import { createCooperativeTask } from './cooperative-task';
+import { throwIfAborted } from './chat-utils';
 
 export const MAX_TASK_SOURCE_NOTE_HANDLES = 32;
 export const MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS = 8000;
@@ -49,6 +51,7 @@ export interface TaskSourceRunHost {
     revalidateVaultObservation?: AiServiceHost['revalidateVaultObservation'];
     isPathAllowed?: (path: string) => boolean;
     getMemoryEvidenceEpoch?: () => string;
+    getTaskSourceAuthorityEpoch?: () => string;
 }
 
 /** One run's host facts and read planning; no note contents or permissions live here. */
@@ -69,7 +72,10 @@ export class TaskSourceRun {
     private readonly revalidateVaultObservation: AiServiceHost['revalidateVaultObservation'];
     private readonly isPathAllowed: ((path: string) => boolean) | undefined;
     private readonly getMemoryEvidenceEpoch: (() => string) | undefined;
+    private readonly getTaskSourceAuthorityEpoch: (() => string) | undefined;
     private readonly hostSourcesAreCurrent: () => boolean;
+    private readonly ownedLineages = new WeakMap<InputLineage, InputLineage>();
+    private readonly ownedHistoryLineages = new WeakMap<ChatMessage, InputLineage | undefined>();
 
     constructor(host: TaskSourceRunHost) {
         const { runId, userMessageId, userText, workspace } = host;
@@ -95,6 +101,7 @@ export class TaskSourceRun {
         this.revalidateVaultObservation = host.revalidateVaultObservation?.bind(host);
         this.isPathAllowed = host.isPathAllowed?.bind(host);
         this.getMemoryEvidenceEpoch = host.getMemoryEvidenceEpoch?.bind(host);
+        this.getTaskSourceAuthorityEpoch = host.getTaskSourceAuthorityEpoch?.bind(host);
         this.identities = new TaskSourceNoteIdentities({
             runId,
             workspace,
@@ -253,6 +260,7 @@ export class TaskSourceRun {
                 throw new Error('Vault observation live revalidation is unavailable');
             }),
             getEpoch: this.getMemoryEvidenceEpoch,
+            getAuthorityEpoch: this.getTaskSourceAuthorityEpoch,
             isPathAllowed: path => this.isPathAllowed?.(path) ?? true,
             signal,
             validationMode: 'read_snapshot',
@@ -315,6 +323,72 @@ export class TaskSourceRun {
                 },
             }];
         });
+    };
+
+    /** Preserve the complete two-pass call/result projection across cooperative slices. */
+    readonly projectTranscriptAsync = async (
+        transcript: readonly PaAgentMessage[], signal?: AbortSignal,
+    ): Promise<PaAgentMessage[]> => {
+        throwIfAborted(signal);
+        if (!this.getTaskSourceAuthorityEpoch) return this.projectTranscript(transcript);
+        const messages = [...transcript];
+        const constraint = this.state.snapshot();
+        const task = createCooperativeTask(signal);
+        while (this.isCurrent() && this.state.isCurrent(constraint)) {
+            const epoch = this.currentAuthorityEpoch();
+            if (epoch === undefined) return this.projectTranscript(messages);
+            const disallowedCalls = new Set<string>();
+            for (const message of messages) {
+                await task.checkpoint();
+                if (this.runSourceSelection && message.role === 'assistant'
+                    && !await this.admitsLineageAsync(message.inputLineage, signal)) {
+                    for (const part of message.content) {
+                        await task.checkpoint();
+                        if (part.type === 'toolCall' && part.id) disallowedCalls.add(part.id);
+                    }
+                }
+            }
+            const projected: PaAgentMessage[] = [];
+            for (const message of messages) {
+                await task.checkpoint();
+                if (this.runSourceSelection && message.role !== 'user'
+                    && (!await this.admitsLineageAsync(message.inputLineage, signal)
+                        || (message.role === 'toolResult' && disallowedCalls.has(message.toolCallId)))) continue;
+                if (message.role !== 'toolResult' || message.toolName === 'search_memory'
+                    || !message.content.includeInNextPrompt) {
+                    projected.push(message);
+                    continue;
+                }
+                let hasSources = false;
+                let admitted = this.isCurrent();
+                for (const record of message.content.sourceRecords ?? []) {
+                    await task.checkpoint();
+                    if (record.sourceBoundary !== 'current-note' && record.sourceBoundary !== 'read-only-tool'
+                        && record.sourceBoundary !== 'vault' && record.sourceBoundary !== 'web') continue;
+                    hasSources = true;
+                    if (!admitted) continue;
+                    if (record.sourceBoundary === 'web') admitted = this.state.allows({ kind: 'web' }, constraint);
+                    else {
+                        const noteId = record.path ? this.resolveNoteId(record.path) : undefined;
+                        admitted = noteId !== undefined && this.state.allows({ kind: 'note', noteId }, constraint);
+                    }
+                }
+                if (!hasSources || (admitted && this.isCurrent() && this.state.isCurrent(constraint))) {
+                    projected.push(message);
+                    continue;
+                }
+                projected.push({ ...message, content: {
+                    promptText: 'Earlier task material is no longer available under the current source boundary. Do not use its earlier contents.',
+                    includeInNextPrompt: true,
+                    metadata: { outcome: 'source_unavailable', statusOnly: true },
+                } });
+            }
+            if (!this.isCurrent() || !this.state.isCurrent(constraint)) break;
+            if (epoch === this.currentAuthorityEpoch()) return projected;
+            await task.checkpoint(true);
+        }
+        throwIfAborted(signal);
+        throw new Error('Task source scope changed during transcript projection');
     };
 
     /** A physical retry must not send a previously serialized, now-invalid result. */
@@ -440,6 +514,81 @@ export class TaskSourceRun {
         });
     };
 
+    /** Project history with the same legacy and scope rules, then seal the whole pass. */
+    readonly projectHistoryAsync = async (
+        history: readonly ChatMessage[], signal?: AbortSignal,
+    ): Promise<ChatMessage[]> => {
+        throwIfAborted(signal);
+        if (!this.getTaskSourceAuthorityEpoch) return this.projectHistory(history);
+        const messages = [...history];
+        const constraint = this.state.snapshot();
+        const task = createCooperativeTask(signal);
+        while (this.isCurrent() && this.state.isCurrent(constraint)) {
+            const epoch = this.currentAuthorityEpoch();
+            if (epoch === undefined) return this.projectHistory(messages);
+            const projected: ChatMessage[] = [];
+            for (const message of messages) {
+                await task.checkpoint();
+                if (!this.ownedHistoryLineages.has(message)) {
+                    const captured = historyInputLineage(message);
+                    if (captured) this.ownedLineages.set(captured, captured);
+                    this.ownedHistoryLineages.set(message, captured);
+                }
+                const lineage = this.ownedHistoryLineages.get(message);
+                if (this.runSourceSelection) {
+                    let onlyUserOrAttachment = lineage?.completeness === 'complete';
+                    if (this.runSourceSelection.scope === 'web' && message.role === 'assistant' && onlyUserOrAttachment) {
+                        for (const dependency of lineage!.dependencies) {
+                            await task.checkpoint();
+                            if (dependency.kind !== 'user-text' && dependency.kind !== 'attachment') {
+                                onlyUserOrAttachment = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (this.runSourceSelection.scope === 'web' && message.role === 'assistant'
+                        && onlyUserOrAttachment
+                        && hasLegacySourceFreeNotesObservation(message)) continue;
+                    if (await this.admitsLineageAsync(lineage, signal)) projected.push(message);
+                    continue;
+                }
+                if (lineage?.dependencies.some(dependency => dependency.kind === 'run-notes-observation')) {
+                    if (await this.admitsLineageAsync(lineage, signal)) projected.push(message);
+                    continue;
+                }
+                if (message.role !== 'assistant') {
+                    projected.push(message);
+                    continue;
+                }
+                const paths = historySourceRecords(message);
+                if (!paths.length) {
+                    projected.push(message);
+                    continue;
+                }
+                let admitted = this.isCurrent();
+                for (const record of paths) {
+                    await task.checkpoint();
+                    if (!admitted) continue;
+                    if ((record.sourceBoundary === 'memory' || record.kind === 'memory-reference') && !this.isMemoryAllowed()) {
+                        admitted = false;
+                        continue;
+                    }
+                    if (record.sourceBoundary === 'web') admitted = !constraint || this.state.allows({ kind: 'web' }, constraint);
+                    else {
+                        const noteId = record.path ? this.resolveNoteId(record.path) : undefined;
+                        admitted = noteId !== undefined && (!constraint || this.state.allows({ kind: 'note', noteId }, constraint));
+                    }
+                }
+                if (admitted && this.isCurrent() && this.state.isCurrent(constraint)) projected.push(message);
+            }
+            if (!this.isCurrent() || !this.state.isCurrent(constraint)) break;
+            if (epoch === this.currentAuthorityEpoch()) return projected;
+            await task.checkpoint(true);
+        }
+        throwIfAborted(signal);
+        throw new Error('Task source scope changed during history projection');
+    };
+
     /** Scope checks apply to represented Host ancestry, not citation text. */
     readonly admitsLineage = (lineage: InputLineage | undefined): boolean => {
         const scope = this.runSourceSelection?.scope;
@@ -459,6 +608,119 @@ export class TaskSourceRun {
             isWebAllowed: () => this.isWebAllowed() && this.state.allows({ kind: 'web' }, constraint),
         });
         return allowed && this.isCurrent() && this.state.snapshot() === constraint;
+    };
+
+    /** Invalidates a proof, not the source snapshot itself. */
+    readonly currentAuthorityEpoch = (): string | undefined => {
+        try { return this.getTaskSourceAuthorityEpoch?.(); } catch { return undefined; }
+    };
+
+    private ownedLineage(lineage: InputLineage | undefined): InputLineage | undefined {
+        if (!lineage) return undefined;
+        const owned = this.ownedLineages.get(lineage);
+        if (owned) return owned;
+        const captured = cloneInputLineage(lineage);
+        if (captured) this.ownedLineages.set(lineage, captured);
+        if (captured) this.ownedLineages.set(captured, captured);
+        return captured;
+    }
+
+    /** Complete admission sliced by dependency and sealed against authority changes. */
+    readonly admitsLineageAsync = async (lineage: InputLineage | undefined, signal?: AbortSignal): Promise<boolean> => {
+        throwIfAborted(signal);
+        const owned = this.ownedLineage(lineage);
+        // Unknown Hosts keep the original complete check, never a cached true.
+        if (!this.getTaskSourceAuthorityEpoch) return this.admitsLineage(owned);
+        const scope = this.runSourceSelection?.scope;
+        const dependencies = owned?.dependencies;
+        const hasObservation = dependencies?.some(dependency => dependency.kind === 'run-notes-observation') === true;
+        if (!scope && !hasObservation) return this.isCurrent();
+        if (!owned || !dependencies || owned.completeness !== 'complete') return false;
+        const constraint = this.state.snapshot();
+        const admission: InputLineageAdmission = {
+            ...this.lineageAdmission,
+            isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint),
+            isVaultAllowed: (path, via) => {
+                if (via === 'memory' && !this.isMemoryAllowed()) return false;
+                const noteId = this.resolveNoteId(path);
+                return noteId !== undefined && this.isPathAllowed?.(path) !== false
+                    && this.state.allows({ kind: 'note', noteId }, constraint);
+            },
+            isWebAllowed: () => this.isWebAllowed() && this.state.allows({ kind: 'web' }, constraint),
+        };
+        const task = createCooperativeTask(signal);
+        while (this.isCurrent() && this.state.snapshot() === constraint) {
+            const epoch = this.currentAuthorityEpoch();
+            if (!epoch) return this.admitsLineage(owned);
+            let admitted = true;
+            for (const dependency of dependencies) {
+                await task.checkpoint();
+                if (!this.isCurrent() || this.state.snapshot() !== constraint) return false;
+                if (!admitsInputLineage({ schemaVersion: 1, completeness: 'complete',
+                    dependencies: [dependency] }, scope ?? 'combined', admission)) { admitted = false; break; }
+            }
+            if (this.currentAuthorityEpoch() === epoch) return admitted && this.isCurrent();
+            // Ordinary edits may change the observation fence but do not revoke
+            // an earlier read snapshot. Reprove, using the caller's same budget.
+            await task.checkpoint(true);
+        }
+        throwIfAborted(signal);
+        return false;
+    };
+
+    /** Execution proof is cheap; the independent source-only receipt remains a full check. */
+    readonly prepareLineageAdmission = async (lineage: InputLineage | undefined, signal?: AbortSignal): Promise<{
+        isCurrent(): boolean; sourceValidity(): boolean;
+    }> => {
+        throwIfAborted(signal);
+        const owned = this.ownedLineage(lineage);
+        const scope = this.runSourceSelection?.scope;
+        const constraint = this.state.snapshot();
+        const task = createCooperativeTask(signal);
+        const needsLineage = !!scope || owned?.dependencies.some(dependency => dependency.kind === 'run-notes-observation') === true;
+        if (!this.getTaskSourceAuthorityEpoch) {
+            if (!this.admitsLineage(owned)) throw new Error('Task source input ancestry is no longer current.');
+            const sourceValidity = this.captureLineageSourceValidity(owned);
+            return { isCurrent: () => this.isCurrent() && this.admitsLineage(owned), sourceValidity };
+        }
+        while (this.isCurrent() && this.state.snapshot() === constraint) {
+            const epoch = this.currentAuthorityEpoch();
+            if (!epoch) throw new Error('Task source authority fence is unavailable.');
+            if (!await this.admitsLineageAsync(owned, signal)) {
+                throw new Error('Task source input ancestry is no longer current.');
+            }
+            const vaultSources = new Map<string, { noteId: string | undefined; file: VaultFileLike | undefined }>();
+            for (const dependency of needsLineage ? owned?.dependencies ?? [] : []) {
+                await task.checkpoint();
+                if (dependency.kind !== 'vault') continue;
+                vaultSources.set(dependency.path, { noteId: this.resolveNoteId(dependency.path),
+                    file: this.getFileByPath(dependency.path) as VaultFileLike | undefined });
+            }
+            if (this.currentAuthorityEpoch() !== epoch) { await task.checkpoint(true); continue; }
+            const sourceValidity = !needsLineage ? () => this.hostSourcesAreCurrent() : () => {
+                try {
+                    if (!this.hostSourcesAreCurrent() || this.state.snapshot() !== constraint) return false;
+                    return admitsInputLineage(owned, scope ?? 'combined', {
+                        ...this.lineageAdmission,
+                        isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint),
+                        isVaultAllowed: (path, via) => {
+                            if (via === 'memory' && !this.isMemoryAllowed()) return false;
+                            const source = vaultSources.get(path);
+                            return source?.noteId !== undefined && source.file !== undefined
+                                && this.identities.pathForNoteId(source.noteId) === path
+                                && this.getFileByPath(path) === source.file && source.file.path === path
+                                && this.isPathAllowed?.(path) !== false
+                                && this.state.allows({ kind: 'note', noteId: source.noteId }, constraint);
+                        },
+                        isWebAllowed: () => this.isWebAllowed() && this.state.allows({ kind: 'web' }, constraint),
+                    }) && this.state.snapshot() === constraint;
+                } catch { return false; }
+            };
+            return { isCurrent: () => this.isCurrent() && this.state.snapshot() === constraint
+                && this.currentAuthorityEpoch() === epoch, sourceValidity };
+        }
+        throwIfAborted(signal);
+        throw new Error('Task source admission is no longer current.');
     };
 
     /** Capture a scoped parent while the run is live; the returned guard checks source authority after cleanup. */

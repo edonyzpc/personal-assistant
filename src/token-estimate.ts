@@ -1,6 +1,12 @@
 /** Approximation only; provider usage is the measurement authority. */
 export function estimateApproximateTokens(text: string): number {
-    if (!text) return 0;
+    const { cjk, other } = countTokenCharacters(text);
+    return cjk + Math.ceil(other / 4);
+}
+
+/** Counts may be accumulated across text slices before applying the final rounding. */
+export function countTokenCharacters(text: string): { cjk: number; other: number } {
+    if (typeof text !== 'string') return { cjk: 0, other: 0 };
     let cjk = 0;
     let other = 0;
     for (const character of text) {
@@ -14,5 +20,5 @@ export function estimateApproximateTokens(text: string): number {
             || (code >= 0x2B820 && code <= 0x2CEAF)) cjk++;
         else other++;
     }
-    return cjk + Math.ceil(other / 4);
+    return { cjk, other };
 }

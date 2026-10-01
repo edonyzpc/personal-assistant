@@ -3,6 +3,8 @@ export type TaskSourceReadKind = 'task_material' | 'output_target_exists';
 /** Per-call host boundary. Never accepted from tool arguments or serialized to a provider. */
 export interface TaskSourceReadGuard {
     isCurrent(): boolean;
+    /** Complete ancestry validation at I/O and cooperative boundaries. */
+    checkpoint?(signal?: AbortSignal): Promise<void>;
     isPathAllowed(path: string, kind?: TaskSourceReadKind): boolean;
     /** Exact live domain admission for physical auxiliary requests. */
     isWebAllowed?(): boolean;
@@ -28,6 +30,11 @@ export function assertTaskSourceNoteDomainCurrent(guard: TaskSourceReadGuard | u
 
 export function assertTaskSourceReadCurrent(guard: TaskSourceReadGuard | undefined): void {
     if (guard && !guard.isCurrent()) throw new Error('Task source scope is no longer current.');
+}
+
+export async function checkpointTaskSourceRead(guard: TaskSourceReadGuard | undefined, signal?: AbortSignal): Promise<void> {
+    await guard?.checkpoint?.(signal);
+    assertTaskSourceReadCurrent(guard);
 }
 
 export function isTaskSourcePathAllowed(

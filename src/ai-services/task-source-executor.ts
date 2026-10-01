@@ -1,6 +1,7 @@
 import type { PaAgentToolExecutor, PaAgentToolExecutionResult, ParsedBufferedToolCall } from './pa-agent-types';
 import type { TaskMaterialRead, TaskSourceConstraint, TaskSourceConstraintState } from './task-source-constraint';
 import type { NoteSearchScope } from '../vss/types';
+import { throwIfAborted } from './chat-utils';
 
 const RETIRED_SOURCE_CONTROLS = new Set(['declare_source_scope', 'request_source_decision']);
 
@@ -20,6 +21,10 @@ interface TaskSourceExecutorHost {
     isMemoryAllowed?(): boolean;
     isInputCurrent?(calls: readonly ParsedBufferedToolCall[]): boolean;
     captureInputSourceValidity?(calls: readonly ParsedBufferedToolCall[]): (() => boolean) | undefined;
+    prepareInputSourceAdmission?(calls: readonly ParsedBufferedToolCall[], signal?: AbortSignal): Promise<{
+        isCurrent(): boolean;
+        sourceValidity(): boolean;
+    }>;
     resolveNoteSearchScope?(constraint: TaskSourceConstraint): NoteSearchScope;
 }
 
@@ -88,6 +93,20 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
             }
             const sourceValidity = options.captureInputSourceValidity?.(input.toolCalls);
             if (sourceValidity && !sourceValidity()) return rejectScope('source_run_changed');
+            let preparedAdmission: { isCurrent(): boolean; sourceValidity(): boolean } | undefined;
+            const checkpoint = options.prepareInputSourceAdmission ? async (signal?: AbortSignal) => {
+                throwIfAborted(signal);
+                if (!isInputCurrent() || !options.state.isCurrent(constraint)) {
+                    throw new Error('Task source admission is no longer current.');
+                }
+                // The strict authority epoch seals the whole lineage. A cooperative
+                // yield only needs a new proof when that authority has changed.
+                if (preparedAdmission?.isCurrent()) return;
+                preparedAdmission = await options.prepareInputSourceAdmission!(input.toolCalls, signal);
+                if (!isInputCurrent() || !options.state.isCurrent(constraint) || !preparedAdmission.isCurrent()) {
+                    throw new Error('Task source admission changed during preparation.');
+                }
+            } : undefined;
             return { kind: 'admitted',
                 taskSourceReadGuard: options.state.createReadGuard(
                     constraint, options.resolveHostNoteId, isInputCurrent,
@@ -95,7 +114,9 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
                     options.resolveNoteSearchScope ? () => options.resolveNoteSearchScope!(constraint) : undefined,
                     options.isWebAllowed,
                     options.isMemoryAllowed,
-                    sourceValidity,
+                    options.prepareInputSourceAdmission ? () => preparedAdmission?.isCurrent() === true : sourceValidity,
+                    checkpoint,
+                    options.prepareInputSourceAdmission ? () => preparedAdmission?.sourceValidity ?? (() => false) : undefined,
                 ) };
         },
     };

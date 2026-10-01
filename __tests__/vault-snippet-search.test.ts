@@ -68,6 +68,21 @@ async function execute(host: never, input: Record<string, unknown>) {
 }
 
 describe("search_vault_snippets multi-match source locating", () => {
+    it("checks each read file directly without enumerating the vault again", async () => {
+        const fileContents = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`notes/${index}.md`, "needle"]));
+        const f = createHost({ markdownFiles: Object.keys(fileContents).map(path => ({ path })), fileContents });
+        const vault = (f.host as unknown as { app: { vault: { getMarkdownFiles: () => VaultFile[] } } }).app.vault;
+        const enumerate = jest.fn(vault.getMarkdownFiles);
+        vault.getMarkdownFiles = enumerate;
+
+        const result = await execute(f.host, { query: "needle", limit: 20 });
+
+        expect(result.matchCount).toBe(12);
+        expect(f.cachedRead).toHaveBeenCalledTimes(12);
+        // Initial candidate snapshot and two whole-source-set checks, independent of body read count.
+        expect(enumerate).toHaveBeenCalledTimes(3);
+    });
+
     it("keeps original UTF-16 offsets and line/column ranges for NFKC-sensitive text", async () => {
         const content = `${"ﬃ".repeat(120)}\nneedle`;
         const { host } = createHost({

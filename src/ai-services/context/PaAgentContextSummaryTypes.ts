@@ -5,6 +5,7 @@ import { cloneInputLineage } from "../input-lineage";
 import { projectPaAgentActionHistory } from "../pa-agent-action-history";
 import { parseRunSourceSelection } from '../chat-source-scope';
 import { extractCanonicalTurnMetadata, readChatHistoryTurnMetadata } from '../pa-agent-history';
+import { finishContextSteps, prepareContextSteps } from './clone-utils';
 
 /** Request-only derived state. Never serialized to Chat history or Memory. */
 export interface PaAgentHistorySummary {
@@ -39,12 +40,24 @@ export interface PaAgentHistoryContextPlan {
 }
 
 export function isCurrentHistorySummary(summary: PaAgentHistorySummary, history: readonly ChatMessage[]): boolean {
-    return summary.sourceMessages.length > 0
-        && summary.sourceMessages.length <= history.length
-        && summary.sourceMessages.every((message, index) =>
-            message.role === history[index].role && message.content === history[index].content
-                && chatImageIdentity(message.images) === chatImageIdentity(history[index].images)
-                && historyEvidenceIdentity(message) === historyEvidenceIdentity(history[index]));
+    return finishContextSteps(isCurrentHistorySummarySteps(summary, history));
+}
+
+export async function isCurrentHistorySummaryAsync(summary: PaAgentHistorySummary, history: readonly ChatMessage[],
+    signal?: AbortSignal): Promise<boolean> {
+    return await prepareContextSteps(isCurrentHistorySummarySteps(summary, history), signal);
+}
+
+export function* isCurrentHistorySummarySteps(summary: PaAgentHistorySummary,
+    history: readonly ChatMessage[]): Generator<void, boolean, void> {
+    if (summary.sourceMessages.length === 0 || summary.sourceMessages.length > history.length) return false;
+    for (const [index, message] of summary.sourceMessages.entries()) {
+        yield;
+        if (message.role !== history[index].role || message.content !== history[index].content
+            || chatImageIdentity(message.images) !== chatImageIdentity(history[index].images)
+            || historyEvidenceIdentity(message) !== historyEvidenceIdentity(history[index])) return false;
+    }
+    return true;
 }
 
 export function isCurrentToolSummary(summary: PaAgentToolSummary, message: PaAgentToolSummarySource): boolean {

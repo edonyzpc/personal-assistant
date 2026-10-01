@@ -4,10 +4,13 @@ import { cloneInputLineage } from "../input-lineage";
 import { readChatHistoryTurnMetadata } from "../pa-agent-history";
 import { TurnExecutionDeadline } from "../agent-runtime-primitives";
 import { createAbortError, throwIfAborted } from "../chat-utils";
-import { planHistoryContext } from "./PaAgentHistoryContextPlan";
-import { encodeAdjacentRepeats, type RepeatedSourceContent } from "./PaAgentContextTextEncoding";
+import { planHistoryContextSteps } from "./PaAgentHistoryContextPlan";
+import { encodeAdjacentRepeatsSteps, type RepeatedSourceContent } from "./PaAgentContextTextEncoding";
+import { prepareContextSteps } from './clone-utils';
+import { stringifyContextAsync, stringifyContextSteps, cloneContextJsonAsync } from './PaAgentContextSerialization';
+import { createCooperativeTask } from '../cooperative-task';
 import {
-    isCurrentHistorySummary,
+    isCurrentHistorySummaryAsync,
     isCurrentToolSummary,
     type PaAgentSummaryBindingSource,
     type PaAgentHistorySummary,
@@ -120,28 +123,40 @@ export class PaAgentContextSummarizer {
     }): Promise<PaAgentHistorySummary | undefined> {
         throwIfAborted(input.signal);
         if (this.disposed) return undefined;
-        const snapshot = snapshotHistory(input.history);
-        if (this.lastHistory && !isPrefix(this.lastHistory, snapshot)) this.reset();
+        const snapshotGeneration = this.generation;
+        const snapshot = await snapshotHistoryAsync(input.history, input.signal);
+        if (this.disposed || snapshotGeneration !== this.generation) return undefined;
+        if (this.lastHistory && !await isPrefixAsync(this.lastHistory, snapshot, input.signal)) this.reset();
+        const preparationGeneration = this.generation;
         this.lastHistory = snapshot;
-        const plan = planHistoryContext(snapshot, input.historyBudgetChars, MAX_HISTORY_SUMMARY_CHARS);
+        const plan = await prepareContextSteps(planHistoryContextSteps(snapshot, input.historyBudgetChars, MAX_HISTORY_SUMMARY_CHARS), input.signal);
+        if (this.disposed || preparationGeneration !== this.generation) return undefined;
         if (plan.mode === "full" || plan.coveredMessages <= 0 || plan.summaryMaxChars <= 0) return undefined;
         const maxChars = Math.min(MAX_HISTORY_SUMMARY_CHARS, plan.summaryMaxChars);
         if (maxChars < MIN_SUMMARY_CHARS) return undefined;
         const covered = snapshot.slice(0, plan.coveredMessages);
         const cached = this.historyCache;
-        const reusable = cached && isCurrentHistorySummary(cached.summary, covered)
+        const reusable = cached && await isCurrentHistorySummaryAsync(cached.summary, covered, input.signal)
             && cached.summary.text.length <= maxChars ? cached : undefined;
-        if (reusable?.summary.sourceMessages.length === covered.length) return cloneHistorySummary(reusable.summary);
+        if (this.disposed || preparationGeneration !== this.generation) return undefined;
+        if (reusable?.summary.sourceMessages.length === covered.length) {
+            const result = await cloneHistorySummaryAsync(reusable.summary, input.signal);
+            return !this.disposed && preparationGeneration === this.generation ? result : undefined;
+        }
 
         return this.runBounded(input.signal, async (signal, generation) => {
             const start = reusable?.summary.sourceMessages.length ?? 0;
             const hostDependencyIndexes = new Set<number>(
                 covered.slice(0, start).map((_message, index) => index + 1),
             );
-            const sources = covered.slice(start).map((message, index): SourceMessage => ({
-                index: start + index + 1, role: message.role, content: providerHistoryContent(message),
-                hostMessage: message,
-            }));
+            const sources: SourceMessage[] = [];
+            const task = createCooperativeTask(signal);
+            for (let index = start; index < covered.length; index++) {
+                await task.checkpoint();
+                const message = covered[index];
+                sources.push({ index: index + 1, role: message.role,
+                    content: await prepareContextSteps(providerHistoryContentSteps(message), signal), hostMessage: message });
+            }
             const structured = await summarizeSources(
                 sources,
                 reusable?.structured,
@@ -153,10 +168,10 @@ export class PaAgentContextSummarizer {
                 covered,
                 hostDependencyIndexes,
             );
-            if (!structured || generation !== this.generation || !sameHistory(snapshot, input.history)) return undefined;
+            if (!structured || generation !== this.generation || !await sameHistoryAsync(snapshot, input.history, signal)) return undefined;
             const summary: PaAgentHistorySummary = { text: JSON.stringify(structured), sourceMessages: covered };
             this.historyCache = { summary, structured };
-            return cloneHistorySummary(summary);
+            return await cloneHistorySummaryAsync(summary, signal);
         });
     }
 
@@ -173,27 +188,30 @@ export class PaAgentContextSummarizer {
         if (!Number.isFinite(maxChars) || maxChars < MIN_SUMMARY_CHARS) return undefined;
         let key: string;
         let source: PaAgentToolSummarySource;
+        const preparationGeneration = this.generation;
         try {
-            key = JSON.stringify(input.source);
-            source = JSON.parse(key) as PaAgentToolSummarySource;
-        } catch { return undefined; }
+            key = (await stringifyContextAsync(input.source, input.signal))!;
+            source = await cloneContextJsonAsync(input.source, input.signal) as PaAgentToolSummarySource;
+        } catch { throwIfAborted(input.signal); return undefined; }
+        if (this.disposed || preparationGeneration !== this.generation) return undefined;
         const cached = this.toolCache.get(key);
         if (cached && cached.text.length <= maxChars && isCurrentToolSummary(cached, input.source)) {
-            return cloneToolSummary(cached);
+            const result = await cloneToolSummaryAsync(cached, input.signal);
+            return !this.disposed && preparationGeneration === this.generation ? result : undefined;
         }
         return this.runBounded(input.signal, async (signal, generation) => {
             const structured = await summarizeSources([
                 { index: 1, role: "tool", content: source.content.promptText },
             ], undefined, maxChars, `tool_result (${source.toolName}; isError=${source.isError})`, input.invoke,
             signal, input.deadlineManagedByInvoke ? Number.POSITIVE_INFINITY : this.options.toolTimeoutMs ?? 1_800_000);
-            if (!structured || generation !== this.generation || JSON.stringify(input.source) !== key) return undefined;
+            if (!structured || generation !== this.generation || await stringifyContextAsync(input.source, signal) !== key) return undefined;
             const summary: PaAgentToolSummary = { text: JSON.stringify(structured), source };
             // A summary that grows the evidence cannot help the request budget.
             if (summary.text.length >= source.content.promptText.length) return undefined;
             this.toolCache.delete(key);
             this.toolCache.set(key, summary);
             while (this.toolCache.size > MAX_TOOL_CACHE_ENTRIES) this.toolCache.delete(this.toolCache.keys().next().value!);
-            return cloneToolSummary(summary);
+            return await cloneToolSummaryAsync(summary, signal);
         });
     }
 
@@ -247,17 +265,18 @@ async function summarizeSources(
     hostDependencyIndexes: ReadonlySet<number> = new Set(),
 ): Promise<StructuredSummary | undefined> {
     // Encode each complete source once. Oversize sources retain raw slices below.
-    const preparedSources = sources.map((source): PreparedSourceMessage => ({
-        ...source, encodedContent: encodeAdjacentRepeats(source.content),
-    }));
+    const preparedSources: PreparedSourceMessage[] = [];
+    for (const source of sources) {
+        preparedSources.push({ ...source, encodedContent: await prepareContextSteps(encodeAdjacentRepeatsSteps(source.content), signal) });
+    }
     const cursor: Cursor = { message: 0, offset: 0 };
     let summary = previous;
     const hostProcessedIndexes = new Set(hostDependencyIndexes);
     while (cursor.message < preparedSources.length) {
         throwIfAborted(signal);
-        const parts = nextSourceParts(preparedSources, cursor, summary, maxChars, sourceKind);
+        const parts = await prepareContextSteps(nextSourcePartsSteps(preparedSources, cursor, summary, maxChars, sourceKind), signal);
         if (parts.length === 0) return undefined;
-        const payload = makeRequest(
+        const payload = await prepareContextSteps(makeRequestSteps(
             parts,
             summary,
             maxChars,
@@ -265,7 +284,7 @@ async function summarizeSources(
             sources,
             bindingSourceMessages,
             hostProcessedIndexes,
-        );
+        ), signal);
         if (!requestFits(payload)) return undefined;
         const response = await invokeBounded(payload, invoke, signal, timeoutMs);
         const allowedIndices = new Set<number>(hostProcessedIndexes);
@@ -283,7 +302,7 @@ async function summarizeSources(
     return hasSummaryItems(summary) ? summary : undefined;
 }
 
-function makeRequest(
+function* makeRequestSteps(
     parts: SourcePart[],
     previous: StructuredSummary | undefined,
     maxChars: number,
@@ -291,7 +310,7 @@ function makeRequest(
     sources: readonly SourceMessage[],
     providedBindingSourceMessages: readonly ChatMessage[],
     hostDependencyIndexes: ReadonlySet<number> = new Set(),
-): PaAgentSummaryRequest {
+): Generator<void, PaAgentSummaryRequest, void> {
     const bindingSourceMessages = providedBindingSourceMessages;
     const hasBindingSourceMessages = bindingSourceMessages.length > 0;
     const dependencyIndexes = new Set<number>(parts.map(part => part.index));
@@ -303,33 +322,36 @@ function makeRequest(
             }
         }
     }
-    const bindingMessagesByIndex = new Map(bindingSourceMessages.map((message, index) => [index + 1, message]));
-    const bindingSources: PaAgentSummaryBindingSource[] = [...dependencyIndexes]
-        .sort((left, right) => left - right)
-        .map(index => {
+    const bindingMessagesByIndex = new Map<number, ChatMessage>();
+    for (const [index, message] of bindingSourceMessages.entries()) { yield; bindingMessagesByIndex.set(index + 1, message); }
+    const sourcesByIndex = new Map<number, SourceMessage>();
+    for (const source of sources) { yield; sourcesByIndex.set(source.index, source); }
+    const bindingSources: PaAgentSummaryBindingSource[] = [];
+    for (const index of [...dependencyIndexes].sort((left, right) => left - right)) {
+            yield;
             const message = bindingMessagesByIndex.get(index);
-            const source = sources.find(candidate => candidate.index === index);
+            const source = sourcesByIndex.get(index);
             if (hasBindingSourceMessages ? !message : !source) {
                 throw new Error("Context summary binding source is unavailable");
             }
-            return {
+            bindingSources.push({
                 index,
                 role: source?.role ?? message!.role,
-                content: source?.content ?? providerHistoryContent(message!),
-            };
-        });
+                content: source?.content ?? (yield* providerHistoryContentSteps(message!)),
+            });
+    }
     const boundSourceMessages = hasBindingSourceMessages
         ? bindingSources.map(source => bindingMessagesByIndex.get(source.index)!)
         : [];
     const request: PaAgentSummaryRequest = {
         messages: [
             { role: "system", content: `${SYSTEM_PROMPT}\nThe entire compact JSON output must be at most ${maxChars} characters.` },
-            { role: "user", content: JSON.stringify({
+            { role: "user", content: (yield* stringifyContextSteps({
                 sourceKind, phase: "rolling", previousSummary: previous ?? null,
                 sourceMessages: parts.map(({ index, role, content, encodedContent, start, end }) => ({
                     index, role, content: encodedContent ?? content, start, end,
                 })),
-            }, null, 2) },
+            }, 2))! },
         ],
         maxOutputTokens: outputTokenLimit(maxChars),
     };
@@ -354,13 +376,13 @@ function makeRequest(
     return request;
 }
 
-function providerHistoryContent(message: ChatMessage): string {
+function* providerHistoryContentSteps(message: ChatMessage): Generator<void, string, void> {
     return message.images?.length
-        ? JSON.stringify({
+        ? (yield* stringifyContextSteps({
             text: message.content,
             ...chatHistoryImageMetadata(message),
             imageAvailability: "reference_only_not_pixels",
-        })
+        }))!
         : message.content;
 }
 
@@ -371,15 +393,18 @@ function requestFits(request: PaAgentSummaryRequest): boolean {
 }
 
 /** Prefer whole exchanges. Split a single oversize exchange only when it cannot fit alone. */
-function nextSourceParts(sources: readonly PreparedSourceMessage[], cursor: Cursor, previous: StructuredSummary | undefined, maxChars: number, sourceKind: string): SourcePart[] {
+function* nextSourcePartsSteps(sources: readonly PreparedSourceMessage[], cursor: Cursor, previous: StructuredSummary | undefined, maxChars: number, sourceKind: string): Generator<void, SourcePart[], void> {
     const parts: SourcePart[] = [];
-    const fits = (candidate: SourcePart[]) => requestFits(makeRequest(candidate, previous, maxChars, sourceKind, sources, []));
+    const fits = function* (candidate: SourcePart[]): Generator<void, boolean, void> {
+        return requestFits(yield* makeRequestSteps(candidate, previous, maxChars, sourceKind, sources, []));
+    };
     while (cursor.message < sources.length) {
+        yield;
         if (cursor.offset === 0) {
             let end = cursor.message + 1;
             while (end < sources.length && sources[end].role === "assistant") end++;
             const exchange = sources.slice(cursor.message, end).map((message) => ({ ...message, start: 0, end: message.content.length }));
-        if (fits([...parts, ...exchange])) {
+        if (yield* fits([...parts, ...exchange])) {
                 parts.push(...exchange);
                 cursor.message = end;
                 continue;
@@ -390,7 +415,7 @@ function nextSourceParts(sources: readonly PreparedSourceMessage[], cursor: Curs
         const start = cursor.offset;
         const whole = { ...message, content: message.content.slice(start),
             encodedContent: start === 0 ? message.encodedContent : undefined, start, end: message.content.length };
-        if (fits([...parts, whole])) {
+        if (yield* fits([...parts, whole])) {
             parts.push(whole);
             cursor.message++;
             cursor.offset = 0;
@@ -400,17 +425,18 @@ function nextSourceParts(sources: readonly PreparedSourceMessage[], cursor: Curs
         let low = start;
         let high = message.content.length;
         while (low < high) {
+            yield;
             const middle = Math.ceil((low + high) / 2);
             // Raw-only prefixes keep request size monotonic for binary search.
             const part = { ...message, content: message.content.slice(start, middle), encodedContent: undefined, start, end: middle };
-            if (fits([part])) low = middle;
+            if (yield* fits([part])) low = middle;
             else high = middle - 1;
         }
         let end = low;
         if (end > start && /[\uD800-\uDBFF]/u.test(message.content.charAt(end - 1))) end--;
         if (end <= start) return [];
         const part = { ...message, content: message.content.slice(start, end), encodedContent: undefined, start, end };
-        if (!fits([part])) return [];
+        if (!(yield* fits([part]))) return [];
         parts.push(part);
         cursor.offset = end;
         if (end === message.content.length) { cursor.message++; cursor.offset = 0; }
@@ -456,34 +482,40 @@ function emptySummary(): StructuredSummary {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
-function snapshotHistory(history: readonly ChatMessage[]): ChatMessage[] {
-    return history.map((message) => {
+async function snapshotHistoryAsync(history: readonly ChatMessage[], signal?: AbortSignal): Promise<ChatMessage[]> {
+    const task = createCooperativeTask(signal);
+    const snapshots: ChatMessage[] = [];
+    for (const message of history) {
+        await task.checkpoint();
         let metadata: ChatMessage['memoryMetadata'];
         try { metadata = readChatHistoryTurnMetadata(message); }
         catch { metadata = message.memoryMetadata; }
         const lineage = cloneInputLineage(message.inputLineage ?? metadata?.inputLineage);
-        return {
+        snapshots.push({
             role: message.role,
             content: message.content,
             ...chatHistoryImageMetadata(message),
             ...(message.runSourceSelection ? {
-                runSourceSelection: JSON.parse(JSON.stringify(message.runSourceSelection)) as ChatMessage['runSourceSelection'],
+                runSourceSelection: await cloneContextJsonAsync(message.runSourceSelection, signal) as ChatMessage['runSourceSelection'],
             } : {}),
             ...(lineage ? { inputLineage: lineage } : {}),
-            ...(metadata ? { memoryMetadata: JSON.parse(JSON.stringify(metadata)) } : {}),
+            ...(metadata ? { memoryMetadata: await cloneContextJsonAsync(metadata, signal) as ChatMessage['memoryMetadata'] } : {}),
             ...(message.canonicalTurn ? {
-                canonicalTurn: JSON.parse(JSON.stringify(message.canonicalTurn)) as ChatMessage['canonicalTurn'],
+                canonicalTurn: await cloneContextJsonAsync(message.canonicalTurn, signal) as ChatMessage['canonicalTurn'],
             } : {}),
-        };
-    });
+        });
+    }
+    return snapshots;
 }
-function isPrefix(prefix: readonly ChatMessage[], history: readonly ChatMessage[]): boolean {
-    return prefix.length === 0 || isCurrentHistorySummary({ text: '', sourceMessages: prefix }, history);
+async function isPrefixAsync(prefix: readonly ChatMessage[], history: readonly ChatMessage[], signal?: AbortSignal): Promise<boolean> {
+    return prefix.length === 0 || await isCurrentHistorySummaryAsync({ text: '', sourceMessages: prefix }, history, signal);
 }
-function sameHistory(a: readonly ChatMessage[], b: readonly ChatMessage[]): boolean { return a.length === b.length && isPrefix(a, b); }
-function cloneHistorySummary(summary: PaAgentHistorySummary): PaAgentHistorySummary {
-    return { text: summary.text, sourceMessages: snapshotHistory(summary.sourceMessages) };
+async function sameHistoryAsync(a: readonly ChatMessage[], b: readonly ChatMessage[], signal?: AbortSignal): Promise<boolean> {
+    return a.length === b.length && await isPrefixAsync(a, b, signal);
 }
-function cloneToolSummary(summary: PaAgentToolSummary): PaAgentToolSummary {
-    return { text: summary.text, source: JSON.parse(JSON.stringify(summary.source)) as PaAgentToolSummarySource };
+async function cloneHistorySummaryAsync(summary: PaAgentHistorySummary, signal?: AbortSignal): Promise<PaAgentHistorySummary> {
+    return { text: summary.text, sourceMessages: await snapshotHistoryAsync(summary.sourceMessages, signal) };
+}
+async function cloneToolSummaryAsync(summary: PaAgentToolSummary, signal?: AbortSignal): Promise<PaAgentToolSummary> {
+    return { text: summary.text, source: await cloneContextJsonAsync(summary.source, signal) as PaAgentToolSummarySource };
 }

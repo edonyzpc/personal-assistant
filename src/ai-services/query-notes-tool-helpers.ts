@@ -5,6 +5,9 @@ import {
     getOptionalMetadataCache,
     getUtf8ByteLength,
     getVault,
+    getMarkdownFilesCooperatively,
+    sortCooperatively,
+    type CooperativeCheckpoint,
 } from "./chat-tool-execution-helpers";
 import type {
     QueryNotesCoverage,
@@ -21,6 +24,7 @@ import {
 import { canonicalizeQueryNotesInput } from "./chat-tool-guards";
 import { throwIfAborted } from "./chat-utils";
 import { computeContentHash } from "../vss-helpers";
+import { createCooperativeTask } from "./cooperative-task";
 
 export class QueryNotesUnavailableError extends Error {}
 export class QueryNotesCursorExpiredError extends Error {}
@@ -36,6 +40,7 @@ export interface QueryNotesExecutionOptions {
     assertCurrent?: () => void;
     onMetadataDependency?: (path: string) => void;
     dependencyPaths?: Set<string>;
+    checkpoint?: CooperativeCheckpoint;
 }
 
 export interface QueryNotesExecutionResult {
@@ -158,10 +163,15 @@ export async function executeQueryNotes(
     options: QueryNotesExecutionOptions,
 ): Promise<QueryNotesExecutionResult> {
     const { input, signal } = options;
+    const task = createCooperativeTask(signal);
+    const checkpoint = options.checkpoint ?? (async () => { await task.checkpoint(); });
+    const calculationCheckpoint = async () => { await task.checkpoint(); };
+    options = { ...options, checkpoint };
     throwIfAborted(signal);
     options.assertCurrent?.();
 
     const queryDigest = await computeContentHash(canonicalizeQueryNotesInput(input));
+    await checkpoint();
     throwIfAborted(signal);
     options.assertCurrent?.();
     const cursor = input.cursor ? decodeQueryNotesCursor(input.cursor) : null;
@@ -176,6 +186,7 @@ export async function executeQueryNotes(
 
     if (complete) {
         snapshotDigest = await computeContentHash(canonicalSnapshot);
+        await checkpoint();
         throwIfAborted(signal);
         options.assertCurrent?.();
         const rebuilt = await evaluateQueryNotes(options);
@@ -193,14 +204,18 @@ export async function executeQueryNotes(
         throw new QueryNotesCursorExpiredError("query_notes can no longer verify the cursor's complete snapshot.");
     }
 
-    const knownMatches = evaluation.items.filter(item => item.match === true);
+    const knownMatches: QueryNotesEvaluatedItem[] = [];
+    for (const item of evaluation.items) {
+        await calculationCheckpoint();
+        if (item.match === true) knownMatches.push(item);
+    }
     const requestedSort = input.sort;
     const actualSort = complete ? requestedSort : { field: "path" as const, direction: "asc" as const };
-    const orderedMatches = [...knownMatches].sort((left, right) => compareQueryNotesItems(
+    const orderedMatches = await sortCooperatively(knownMatches, (left, right) => compareQueryNotesItems(
         left,
         right,
         complete ? requestedSort : actualSort,
-    ));
+    ), calculationCheckpoint);
 
     let nextIndex = 0;
     if (cursor) {
@@ -277,6 +292,7 @@ export async function executeQueryNotes(
     if (JSON.stringify(content).length > QUERY_NOTES_RESULT_JSON_BUDGET_CHARS) {
         throw new QueryNotesResultBudgetUnavailableError("query_notes result exceeds its output budget.");
     }
+    await checkpoint();
     throwIfAborted(signal);
     options.assertCurrent?.();
 
@@ -366,12 +382,16 @@ export function projectQueryMetadata(
 
 async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<QueryNotesEvaluation> {
     const { input, signal } = options;
+    const epoch = options.host.getTaskSourceAuthorityEpoch?.();
+    const checkpoint = options.checkpoint!;
+    const task = createCooperativeTask(signal);
+    const calculationCheckpoint = async () => { await task.checkpoint(); };
     const vault = getVault(options.host);
     if (typeof vault.getMarkdownFiles !== "function") {
         throw new QueryNotesUnavailableError("Vault getMarkdownFiles is unavailable.");
     }
     throwIfAborted(signal);
-    const files = vault.getMarkdownFiles();
+    const files = await getMarkdownFilesCooperatively(options.host, checkpoint);
     if (!Array.isArray(files)) throw new QueryNotesUnavailableError("Vault getMarkdownFiles returned an invalid result.");
 
     const neededStatFields = new Set<string>();
@@ -402,19 +422,16 @@ async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<
     const permittedFiles: MarkdownFileLike[] = [];
     let scannedPermittedNotes = 0;
     for (const file of files) {
+        await checkpoint();
         throwIfAborted(signal);
         options.assertCurrent?.();
         if (!file || typeof file.path !== "string" || !file.path) continue;
         if (options.isPathReadable && !options.isPathReadable(file.path)) continue;
         permittedFiles.push(file);
         scannedPermittedNotes += 1;
-        if (scannedPermittedNotes % 64 === 0) {
-            await Promise.resolve();
-            throwIfAborted(signal);
-            options.assertCurrent?.();
-        }
     }
-    permittedFiles.sort((left, right) => comparePaths(left.path, right.path));
+    const orderedFiles = await sortCooperatively(permittedFiles, (left, right) => comparePaths(left.path, right.path), calculationCheckpoint);
+    await checkpoint();
 
     const items: QueryNotesEvaluatedItem[] = [];
     let candidateCapExceeded = false;
@@ -422,14 +439,11 @@ async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<
     let hasUnknownEvaluation = false;
     const projectionBudget = createSnapshotProjectionBudget(QUERY_NOTES_PROJECTION_MAX_UTF8_BYTES);
 
-    outer: for (const file of permittedFiles) {
+    outer: for (const file of orderedFiles) {
+        // The native epoch permits cooperative reads. Legacy hosts keep one metadata seal atomic.
+        if (epoch !== undefined) await checkpoint();
         throwIfAborted(signal);
         options.assertCurrent?.();
-        if (scannedPermittedNotes % 64 === 0) {
-            await Promise.resolve();
-            throwIfAborted(signal);
-            options.assertCurrent?.();
-        }
         if (!isInStaticQueryScope(file.path, input)) continue;
         if (input.path === undefined && items.length >= QUERY_NOTES_MAX_CANDIDATES) {
             candidateCapExceeded = true;
@@ -457,7 +471,8 @@ async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<
             } else {
                 frontmatter = cache.frontmatter;
                 if (input.tags?.length) {
-                    tags = captureTagsSnapshot(cache as QueryNotesTagCache, cacheKnown);
+                    tags = epoch === undefined ? captureTagsSnapshot(cache as QueryNotesTagCache, cacheKnown)
+                        : await finishProjectionCooperatively(captureTagsSnapshotSteps(cache as QueryNotesTagCache, cacheKnown), calculationCheckpoint);
                 }
             }
         }
@@ -472,12 +487,9 @@ async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<
         }
 
         for (const key of sortedPropertyKeys) {
-            propertySnapshots[key] = capturePropertySnapshot(
-                frontmatter,
-                key,
-                cacheKnown,
-                neededProperties.get(key)!,
-            );
+            const steps = capturePropertySnapshotSteps(frontmatter, key, cacheKnown, neededProperties.get(key)!);
+            propertySnapshots[key] = epoch === undefined ? finishProjection(steps)
+                : await finishProjectionCooperatively(steps, calculationCheckpoint);
         }
 
         for (const condition of input.properties ?? []) {
@@ -533,6 +545,16 @@ async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<
 
     throwIfAborted(signal);
     options.assertCurrent?.();
+    const candidatePaths: string[] = [];
+    for (const file of orderedFiles) {
+        if (epoch !== undefined) await checkpoint();
+        if (isInStaticQueryScope(file.path, input)) candidatePaths.push(file.path);
+    }
+    if (epoch !== undefined) {
+        if (epoch !== options.host.getTaskSourceAuthorityEpoch?.()) {
+            throw new QueryNotesCursorExpiredError("query_notes sources changed while the snapshot was being verified.");
+        }
+    }
     return {
         snapshot: {
             version: 1,
@@ -541,9 +563,7 @@ async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<
             candidates: projectionBudget.candidates,
         },
         items,
-        candidatePaths: permittedFiles
-            .filter(file => isInStaticQueryScope(file.path, input))
-            .map(file => file.path),
+        candidatePaths,
         scannedPermittedNotes,
         candidateCapExceeded,
         projectionBudgetExceeded,
@@ -566,6 +586,12 @@ function capturePropertySnapshot(
     cacheKnown: boolean,
     usage: PropertyUsage,
 ): PropertySnapshot {
+    return finishProjection(capturePropertySnapshotSteps(frontmatter, key, cacheKnown, usage));
+}
+
+function* capturePropertySnapshotSteps(
+    frontmatter: Record<string, unknown> | null | undefined, key: string, cacheKnown: boolean, usage: PropertyUsage,
+): Generator<void, PropertySnapshot> {
     if (!cacheKnown) return { state: "unknown" };
     if (!frontmatter || typeof frontmatter !== "object"
         || !Object.prototype.hasOwnProperty.call(frontmatter, key)) {
@@ -580,7 +606,7 @@ function capturePropertySnapshot(
 
     const actual = frontmatter[key]!;
     if (usage.contains && Array.isArray(actual)) {
-        const captured = captureBoundedScalarArray(actual, RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES);
+        const captured = yield* captureBoundedScalarArraySteps(actual, RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES);
         return captured ? { state: "value", value: captured.value } : { state: "oversized" };
     }
     if (!isJsonScalar(actual)) return { state: "incompatible" };
@@ -599,8 +625,12 @@ function captureTagsSnapshot(
     cache: QueryNotesTagCache,
     cacheKnown: boolean,
 ): TagSnapshot {
+    return finishProjection(captureTagsSnapshotSteps(cache, cacheKnown));
+}
+
+function* captureTagsSnapshotSteps(cache: QueryNotesTagCache, cacheKnown: boolean): Generator<void, TagSnapshot> {
     if (!cacheKnown) return { state: "unknown" };
-    if (hasObviouslyOversizedTagInput(cache, RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES)) {
+    if (yield* hasObviouslyOversizedTagInputSteps(cache, RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES)) {
         return { state: "oversized" };
     }
     if (typeof getAllTags !== "function") {
@@ -617,7 +647,7 @@ function captureTagsSnapshot(
     if ((rawTags ?? []).length > RELEVANT_METADATA_MAX_ARRAY_ENTRIES) {
         return { state: "oversized" };
     }
-    const captured = captureBoundedScalarArray(rawTags ?? [], RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES);
+    const captured = yield* captureBoundedScalarArraySteps(rawTags ?? [], RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES);
     return captured ? { state: "value", value: captured.value } : { state: "oversized" };
 }
 
@@ -647,13 +677,16 @@ function evaluatePropertyCondition(
     return false;
 }
 
-function hasObviouslyOversizedTagInput(
+function* hasObviouslyOversizedTagInputSteps(
     cache: QueryNotesTagCache,
     maxBytes: number,
-): boolean {
+): Generator<void, boolean> {
     if (Array.isArray(cache.tags)) {
         if (cache.tags.length > RELEVANT_METADATA_MAX_ARRAY_ENTRIES) return true;
-        if (cache.tags.some(entry => typeof entry.tag === "string" && entry.tag.length > maxBytes)) return true;
+        for (const entry of cache.tags) {
+            yield;
+            if (typeof entry.tag === "string" && entry.tag.length > maxBytes) return true;
+        }
     }
     const frontmatter = cache.frontmatter;
     if (!frontmatter || typeof frontmatter !== "object") return false;
@@ -661,7 +694,7 @@ function hasObviouslyOversizedTagInput(
         const value = frontmatter[key];
         if (Array.isArray(value)) {
             if (value.length > RELEVANT_METADATA_MAX_ARRAY_ENTRIES) return true;
-            if (value.some(entry => typeof entry === "string" && entry.length > maxBytes)) return true;
+            for (const entry of value) { yield; if (typeof entry === "string" && entry.length > maxBytes) return true; }
             continue;
         }
         if (typeof value === "string" && value.length > maxBytes) return true;
@@ -761,14 +794,15 @@ function isValidCalendarDate(value: string): boolean {
     return day <= daysInMonth;
 }
 
-function captureBoundedScalarArray(
+function* captureBoundedScalarArraySteps(
     value: readonly unknown[],
     maxBytes: number,
-): { value: unknown[]; bytes: number } | null {
+): Generator<void, { value: unknown[]; bytes: number } | null> {
     if (value.length > RELEVANT_METADATA_MAX_ARRAY_ENTRIES) return null;
     let bytes = 2;
     const normalized: QueryNotesPropertyValue[] = [];
     for (const entry of value) {
+        yield;
         // Non-scalar entries cannot satisfy the strict scalar member semantics;
         // they are intentionally ignored instead of recursively materialized.
         if (!isJsonScalar(entry)) continue;
@@ -781,6 +815,20 @@ function captureBoundedScalarArray(
         normalized.push(entry);
     }
     return { value: normalized, bytes };
+}
+
+function finishProjection<Output>(steps: Generator<void, Output>): Output {
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    return step.value;
+}
+
+async function finishProjectionCooperatively<Output>(
+    steps: Generator<void, Output>, checkpoint: CooperativeCheckpoint,
+): Promise<Output> {
+    let step = steps.next();
+    while (!step.done) { await checkpoint(); step = steps.next(); }
+    return step.value;
 }
 
 export function createSnapshotProjectionBudget(maxBytes: number): {

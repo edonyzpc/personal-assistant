@@ -23,6 +23,8 @@ import {
 import type { AiServiceHost } from "./AiServiceHost";
 import type { ChatAgentSource } from "./chat-types";
 import { throwIfAborted } from "./chat-utils";
+import { createCooperativeTask, sortCooperatively } from "./cooperative-task";
+export { sortCooperatively } from "./cooperative-task";
 import {
     CANVAS_MAX_DANGLING_EDGES,
     CANVAS_MAX_DUPLICATE_IDS,
@@ -50,7 +52,6 @@ import {
     CURRENT_NOTE_OUTLINE_SCAN_LINES,
     TAG_REPRESENTATIVE_PATHS,
     TAGS_SCAN_MAX_FILES,
-    TAGS_SCAN_YIELD_INTERVAL,
     VAULT_FILE_READ_UNAVAILABLE_SOURCE,
 } from "./chat-tool-constants";
 
@@ -97,6 +98,8 @@ export interface MarkdownViewLike {
 
 export interface VaultLike {
     getMarkdownFiles?: () => MarkdownFileLike[];
+    /** Host-only scoped enumeration; allows filtering without monopolizing the renderer. */
+    getMarkdownFilesCooperatively?: (checkpoint: CooperativeCheckpoint) => Promise<MarkdownFileLike[]>;
     getAbstractFileByPath?: (path: string) => unknown;
     cachedRead?: (file: VaultFileLike) => Promise<string>;
 }
@@ -105,6 +108,7 @@ export interface MetadataCacheLike {
     getFileCache?: (file: MarkdownFileLike) => FileCacheLike | null | undefined;
     resolvedLinks?: Record<string, Record<string, number>>;
     unresolvedLinks?: Record<string, Record<string, number>>;
+    getLinkFactsCooperatively?: (name: "resolvedLinks" | "unresolvedLinks", checkpoint: CooperativeCheckpoint) => Promise<Record<string, Record<string, number>> | undefined>;
 }
 
 export interface CachePositionLike {
@@ -205,6 +209,30 @@ export function getOptionalMetadataCache(host: AiServiceHost): MetadataCacheLike
 
 export function getMarkdownFiles(host: AiServiceHost): MarkdownFileLike[] {
     return getVault(host).getMarkdownFiles?.() ?? [];
+}
+
+export type CooperativeCheckpoint = () => Promise<void>;
+
+export async function getMarkdownFilesCooperatively(
+    host: AiServiceHost,
+    checkpoint: CooperativeCheckpoint,
+): Promise<MarkdownFileLike[]> {
+    const vault = getVault(host);
+    if (vault.getMarkdownFilesCooperatively) return vault.getMarkdownFilesCooperatively(checkpoint);
+    const files = vault.getMarkdownFiles?.();
+    if (!Array.isArray(files)) throw new Error("Vault getMarkdownFiles is unavailable or invalid.");
+    await checkpoint();
+    return files;
+}
+
+export async function getMetadataLinkFactsCooperatively(
+    metadata: MetadataCacheLike | undefined,
+    name: "resolvedLinks" | "unresolvedLinks",
+    checkpoint: CooperativeCheckpoint,
+): Promise<Record<string, Record<string, number>> | undefined> {
+    if (metadata?.getLinkFactsCooperatively) return metadata.getLinkFactsCooperatively(name, checkpoint);
+    await checkpoint();
+    return metadata?.[name];
 }
 
 export async function readVaultFile(host: AiServiceHost, file: VaultFileLike): Promise<string> {
@@ -310,19 +338,40 @@ export function getUnavailableNoteStructureSources(
 }
 
 export function findMarkdownFileByPath(host: AiServiceHost, path: string): MarkdownFileLike | null {
-    const byPath = getVault(host).getAbstractFileByPath?.(path);
-    if (isMarkdownFileLike(byPath)) {
-        return byPath;
+    const vault = getVault(host);
+    if (typeof vault.getAbstractFileByPath === "function") {
+        const byPath = vault.getAbstractFileByPath(path);
+        return isMarkdownFileLike(byPath) ? byPath : null;
     }
     return getMarkdownFiles(host).find((file) => file.path === path) ?? null;
 }
 
 export function findVaultFileByPath(host: AiServiceHost, path: string): VaultFileLike | null {
-    const byPath = getVault(host).getAbstractFileByPath?.(path);
-    if (isVaultFileLike(byPath)) {
-        return byPath;
+    const vault = getVault(host);
+    if (typeof vault.getAbstractFileByPath === "function") {
+        const byPath = vault.getAbstractFileByPath(path);
+        return isVaultFileLike(byPath) ? byPath : null;
     }
     return getMarkdownFiles(host).find((file) => file.path === path) ?? null;
+}
+
+export async function findVaultFileByPathCooperatively(
+    host: AiServiceHost, path: string, checkpoint: CooperativeCheckpoint,
+): Promise<VaultFileLike | null> {
+    const vault = getVault(host);
+    if (typeof vault.getAbstractFileByPath === "function") return findVaultFileByPath(host, path);
+    for (const file of await getMarkdownFilesCooperatively(host, checkpoint)) {
+        await checkpoint();
+        if (file.path === path) return file;
+    }
+    return null;
+}
+
+export async function findMarkdownFileByPathCooperatively(
+    host: AiServiceHost, path: string, checkpoint: CooperativeCheckpoint,
+): Promise<MarkdownFileLike | null> {
+    const file = await findVaultFileByPathCooperatively(host, path, checkpoint);
+    return isMarkdownFileLike(file) ? file : null;
 }
 
 export function isVaultFileLike(value: unknown): value is VaultFileLike {
@@ -453,6 +502,122 @@ export function scoreMetadataMatch(
     };
 }
 
+export async function scoreMetadataMatchCooperatively(
+    file: MarkdownFileLike,
+    cache: FileCacheLike | null | undefined,
+    query: MetadataQuerySignals,
+    checkpoint: CooperativeCheckpoint,
+): Promise<VaultMetadataMatch | null> {
+    const title = getFileTitle(file);
+    const pathText = normalizeSearchText(file.path), titleText = normalizeSearchText(title);
+    const tags = await collectCacheTagsCooperatively(cache, checkpoint);
+    const normalizedTags: string[] = [];
+    for (const tag of tags) { await checkpoint(); normalizedTags.push(normalizeSearchText(tag)); }
+    const sourceFrontmatter = cache?.frontmatter && typeof cache.frontmatter === "object" ? cache.frontmatter : undefined;
+    const frontmatter = await previewFrontmatterCooperatively(sourceFrontmatter, checkpoint);
+    const frontmatterMatches = query.tokens.map(() => false);
+    for (const key of Object.keys(sourceFrontmatter ?? {})) {
+        await checkpoint();
+        const keyText = normalizeSearchText(key);
+        for (let index = 0; index < query.tokens.length; index++) {
+            if (keyText.includes(query.tokens[index]!)) frontmatterMatches[index] = true;
+        }
+        // Search tokens contain no comma or whitespace, so they cannot cross the
+        // ", " separators used by renderFrontmatterValue. Search each scalar directly.
+        for await (const scalar of iterateFrontmatterScalars(sourceFrontmatter![key], checkpoint)) {
+            const text = normalizeSearchText(scalar);
+            for (let index = 0; index < query.tokens.length; index++) {
+                await checkpoint();
+                if (text.includes(query.tokens[index]!)) frontmatterMatches[index] = true;
+            }
+        }
+    }
+    let score = (pathText.includes(query.normalizedQuery) ? 8 : 0)
+        + (titleText.includes(query.normalizedQuery) ? 6 : 0);
+    for (let index = 0; index < query.tokens.length; index++) {
+        await checkpoint();
+        const token = query.tokens[index]!;
+        const inTitle = titleText.includes(token), inPath = pathText.includes(token);
+        let inTag = false;
+        for (const tag of normalizedTags) {
+            await checkpoint();
+            if (tag.includes(token)) { inTag = true; break; }
+        }
+        const inFrontmatter = frontmatterMatches[index]!;
+        score += (inTitle ? 4 : 0) + (inPath ? 3 : 0) + (inTag ? 3 : 0)
+            + (inFrontmatter ? 2 : 0) + (inTitle || inPath || inTag || inFrontmatter ? 1 : 0);
+    }
+    return score > 0 ? { path: file.path, title, score, tags, frontmatter,
+        mtime: file.stat?.mtime, ctime: file.stat?.ctime } : null;
+}
+
+async function* iterateFrontmatterScalars(value: unknown, checkpoint: CooperativeCheckpoint): AsyncGenerator<string> {
+    const stack: Array<{ values: readonly unknown[]; index: number; array?: object }> = [{ values: [value], index: 0 }];
+    const active = new Set<object>();
+    while (stack.length) {
+        await checkpoint();
+        const frame = stack[stack.length - 1]!;
+        if (frame.index >= frame.values.length) {
+            if (frame.array) active.delete(frame.array);
+            stack.pop();
+            continue;
+        }
+        const item = frame.values[frame.index++];
+        if (Array.isArray(item)) {
+            if (active.has(item)) throw new Error("Frontmatter contains a cyclic array.");
+            active.add(item);
+            stack.push({ values: item, index: 0, array: item });
+        } else if (typeof item === "string" && item.length) yield item;
+        else if (typeof item === "number" || typeof item === "boolean") yield String(item);
+    }
+}
+
+export async function collectCacheTagsCooperatively(
+    cache: FileCacheLike | null | undefined,
+    checkpoint: CooperativeCheckpoint,
+): Promise<string[]> {
+    const tags = new Set<string>();
+    const addTag = (tag: string) => { const normalized = normalizeTagName(tag); if (normalized) tags.add(normalized); };
+    for (const entry of Array.isArray(cache?.tags) ? cache.tags : []) {
+        await checkpoint();
+        if (typeof entry.tag === "string") addTag(entry.tag);
+    }
+    // Frontmatter tag arrays recursively accept strings only, unlike metadata values.
+    const active = new Set<object>();
+    const visit = async (value: unknown): Promise<void> => {
+        await checkpoint();
+        if (Array.isArray(value)) {
+            if (active.has(value)) throw new Error("Frontmatter contains a cyclic tag array.");
+            active.add(value);
+            try { for (const child of value) await visit(child); }
+            finally { active.delete(value); }
+        }
+        else if (typeof value === "string") {
+            for (const match of value.matchAll(/[^\s,]+/g)) { await checkpoint(); addTag(match[0]); }
+        }
+    };
+    await visit(cache?.frontmatter?.tags);
+    await visit(cache?.frontmatter?.tag);
+    return [...tags];
+}
+
+async function previewFrontmatterCooperatively(
+    frontmatter: Record<string, unknown> | undefined,
+    checkpoint: CooperativeCheckpoint,
+): Promise<Record<string, string>> {
+    const preview: Record<string, string> = {};
+    for (const key of Object.keys(frontmatter ?? {}).slice(0, FRONTMATTER_PREVIEW_MAX_KEYS)) {
+        let rendered = "";
+        for await (const scalar of iterateFrontmatterScalars(frontmatter![key], checkpoint)) {
+            const separator = rendered.length ? ", " : "";
+            rendered += separator + scalar.slice(0, FRONTMATTER_VALUE_MAX_CHARS + 1);
+            if (rendered.length > FRONTMATTER_VALUE_MAX_CHARS) break;
+        }
+        if (rendered) preview[key] = truncate(rendered, FRONTMATTER_VALUE_MAX_CHARS);
+    }
+    return preview;
+}
+
 export function collectCacheTags(cache: FileCacheLike | null | undefined): string[] {
     return mergeUnique([
         ...normalizeInlineTags(cache?.tags),
@@ -571,6 +736,7 @@ export function buildNoteStructureSummary(
             capExceeded: boolean;
             backlinks: string[];
         }) => void;
+        backlinkEvaluation?: BacklinkEvaluation;
     } = {},
 ): InspectObsidianNoteOutput {
     let omittedCount = options.omittedCount ?? 0;
@@ -629,7 +795,7 @@ export function buildNoteStructureSummary(
         ...embeds,
         ...Object.keys(metadataCache?.resolvedLinks?.[file.path] ?? {}),
     ]), INSPECT_NOTE_MAX_LINKS, countOmitted);
-    const backlinkEvaluation = evaluateBacklinksForPath(
+    const backlinkEvaluation = options.backlinkEvaluation ?? evaluateBacklinksForPath(
         file.path,
         metadataCache?.resolvedLinks,
         options.onSourceRead,
@@ -1131,11 +1297,36 @@ export function findBacklinksForPath(
     return evaluateBacklinksForPath(targetPath, resolvedLinks, onSourceRead).paths;
 }
 
-interface BacklinkEvaluation {
+export interface BacklinkEvaluation {
     paths: string[];
     scannedSources: string[];
     evaluatedSources: number;
     capExceeded: boolean;
+}
+
+export async function evaluateBacklinksForPathCooperatively(
+    targetPath: string,
+    resolvedLinks: Record<string, Record<string, number>> | undefined,
+    checkpoint: CooperativeCheckpoint,
+    onSourceRead?: (path: string) => void,
+): Promise<BacklinkEvaluation> {
+    if (!resolvedLinks) return { paths: [], scannedSources: [], evaluatedSources: 0, capExceeded: false };
+    const paths: string[] = [], scannedSources: string[] = [];
+    let capExceeded = false;
+    for (const sourcePath of Object.keys(resolvedLinks)) {
+        await checkpoint();
+        if (scannedSources.length >= INSPECT_NOTE_MAX_BACKLINK_SOURCES) { capExceeded = true; break; }
+        onSourceRead?.(sourcePath);
+        scannedSources.push(sourcePath);
+        const targets = resolvedLinks[sourcePath];
+        if (targets && typeof targets === "object" && targetPath in targets) paths.push(sourcePath);
+    }
+    return {
+        paths: await sortCooperatively(paths, (left, right) => left.localeCompare(right), checkpoint),
+        scannedSources,
+        evaluatedSources: scannedSources.length,
+        capExceeded,
+    };
 }
 
 function evaluateBacklinksForPath(
@@ -1322,6 +1513,7 @@ export async function listVaultTags(
     limit: number,
     signal?: AbortSignal,
     onSourceRead?: (path: string) => void,
+    suppliedCheckpoint?: CooperativeCheckpoint,
 ): Promise<VaultTagsOutput> {
     const metadataCache = getOptionalMetadataCache(host);
     if (!metadataCache || typeof metadataCache.getFileCache !== "function") {
@@ -1332,24 +1524,21 @@ export async function listVaultTags(
         };
     }
 
-    const files = getMarkdownFiles(host);
+    const task = createCooperativeTask(signal);
+    const checkpoint = suppliedCheckpoint ?? (async () => { await task.checkpoint(); });
+    const files = await getMarkdownFilesCooperatively(host, checkpoint);
     const byTag = new Map<string, { count: number; representativePaths: string[] }>();
     let scannedFiles = 0;
     for (const file of files) {
         if (scannedFiles >= TAGS_SCAN_MAX_FILES) break;
-        // P0-B: cooperative cancellation + main-thread yield every TAGS_SCAN_YIELD_INTERVAL files.
-        // metadataCache.getFileCache is synchronous and the vault can hold thousands of markdown files;
-        // without periodic abort checks and microtask yields, a large tag scan stalls UI rendering and
-        // ignores user abort until the full scan finishes.
-        if (scannedFiles % TAGS_SCAN_YIELD_INTERVAL === 0 && scannedFiles > 0) {
-            throwIfAborted(signal);
-            await Promise.resolve();
-        }
+        await checkpoint();
         scannedFiles++;
         const cache = metadataCache.getFileCache(file);
         onSourceRead?.(file.path);
-        const tags = collectCacheTags(cache);
+        const calculation = createCooperativeTask(signal);
+        const tags = await collectCacheTagsCooperatively(cache, async () => { await calculation.checkpoint(); });
         for (const tag of tags) {
+            await checkpoint();
             const displayTag = tag.startsWith("#") ? tag : `#${tag}`;
             const entry = byTag.get(displayTag) ?? { count: 0, representativePaths: [] };
             entry.count++;
@@ -1361,9 +1550,12 @@ export async function listVaultTags(
     }
     throwIfAborted(signal);
     const skippedFiles = Math.max(0, files.length - scannedFiles);
-    const allTags = [...byTag.entries()]
-        .map(([tag, entry]) => ({ tag, count: entry.count, representativePaths: entry.representativePaths }))
-        .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+    const tagEntries: Array<{ tag: string; count: number; representativePaths: string[] }> = [];
+    for (const [tag, entry] of byTag) {
+        await checkpoint();
+        tagEntries.push({ tag, count: entry.count, representativePaths: entry.representativePaths });
+    }
+    const allTags = await sortCooperatively(tagEntries, (a, b) => b.count - a.count || a.tag.localeCompare(b.tag), checkpoint);
     const tags = allTags.slice(0, limit);
     return {
         kind: "vault-tags",

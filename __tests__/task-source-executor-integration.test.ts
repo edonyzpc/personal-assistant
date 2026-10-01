@@ -6,6 +6,34 @@ import type { PaAgentToolExecutor } from '../src/ai-services/pa-agent-types';
 jest.mock('obsidian');
 
 describe('action wrapper batch preflight forwarding', () => {
+    it.each(['cancel', 'deadline'] as const)('interrupts pending source preparation on %s before any tool preparation', async reason => {
+        const controller = new AbortController();
+        let checkpointSignal: AbortSignal | undefined;
+        let finishLate: (() => void) | undefined;
+        const execute = jest.fn(async () => ({ outcome: 'success' as const, promptText: 'must not read' }));
+        const prepareBatch = jest.fn(async () => undefined);
+        const loop = new PaAgentLoop({ runId: 'source-preparation-stop', userInput: 'read', maxTurns: 1,
+            signal: controller.signal, maxWallClockMs: reason === 'deadline' ? 10 : 1000,
+            finalizationReserveMs: 0, toolTimeoutMs: 1000,
+            toolExecutor: { execute, prepareBatch, preflightBatch: () => ({ kind: 'admitted', taskSourceReadGuard: {
+                isCurrent: () => true, isPathAllowed: () => true,
+                checkpoint: async signal => {
+                    checkpointSignal = signal;
+                    if (reason === 'cancel') setTimeout(() => controller.abort(), 0);
+                    await new Promise<void>(resolve => { finishLate = resolve; });
+                },
+            } }) },
+            model: { stream: async function* () {
+                yield { type: 'toolcall_delta', id: 'read-a', name: 'read_note', input: { path: 'a.md' }, index: 0 } as const;
+            } } });
+        const result = await loop.run();
+        expect(result.status).toBe(reason === 'cancel' ? 'aborted' : 'incomplete');
+        expect(checkpointSignal?.aborted).toBe(true);
+        finishLate?.();
+        await Promise.resolve();
+        expect(prepareBatch).not.toHaveBeenCalled();
+        expect(execute).not.toHaveBeenCalled();
+    });
     it.each(['operations', 'write-action'] as const)('%s forwards a batch rejection before preparing any action', async wrapper => {
         const execute = jest.fn(async () => ({ outcome: 'success' as const, promptText: 'must not read' }));
         const prepareBatch = jest.fn(async () => undefined);

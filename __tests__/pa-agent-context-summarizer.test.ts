@@ -202,11 +202,25 @@ describe("PaAgentContextSummarizer", () => {
         jest.useFakeTimers();
         try {
             const source = tool(Array.from({ length: 2500 }, (_, index) => `Distinct evidence ${index}. `).join(''));
-            const invoke = jest.fn<PaAgentSummaryInvoke>().mockImplementation(async request => {
+            const requests: Array<{ request: PaAgentSummaryRequest; resolve: (value: unknown) => void }> = [];
+            const invoke = jest.fn<PaAgentSummaryInvoke>().mockImplementation(request => new Promise(resolve => {
+                requests.push({ request, resolve });
+            }));
+            let settled = false;
+            const pending = new PaAgentContextSummarizer().prepareTool({ source, invoke });
+            void pending.finally(() => { settled = true; });
+            while (!settled) {
+                // Only advance preparation slices until a physical request exists.
+                for (let step = 0; step < 2_000 && requests.length === 0 && !settled; step++) {
+                    await jest.advanceTimersByTimeAsync(1);
+                }
+                if (settled) break;
+                expect(requests.length).toBeGreaterThan(0);
+                const current = requests.shift()!;
                 await jest.advanceTimersByTimeAsync(20 * 60_000);
-                return respond(request, new AbortController().signal);
-            });
-            const result = await new PaAgentContextSummarizer().prepareTool({ source, invoke });
+                current.resolve(await respond(current.request, new AbortController().signal));
+            }
+            const result = await pending;
             expect(invoke.mock.calls.length).toBeGreaterThanOrEqual(2);
             expect(result).toBeDefined();
         } finally { jest.useRealTimers(); }
@@ -571,7 +585,10 @@ describe("PaAgentContextSummarizer", () => {
     it("times out an uncooperative provider and releases timers", async () => {
         jest.useFakeTimers();
         const coordinator = new PaAgentContextSummarizer({ historyTimeoutMs: 25 });
-        const pending = coordinator.prepareHistory({ history: history(), historyBudgetChars: 3_000, invoke: async () => new Promise(() => undefined) });
+        const invoke = jest.fn<PaAgentSummaryInvoke>(async () => new Promise(() => undefined));
+        const pending = coordinator.prepareHistory({ history: history(), historyBudgetChars: 3_000, invoke });
+        for (let step = 0; step < 2_000 && invoke.mock.calls.length === 0; step++) await jest.advanceTimersByTimeAsync(1);
+        expect(invoke).toHaveBeenCalledTimes(1);
         await jest.advanceTimersByTimeAsync(26);
         expect(await pending).toBeUndefined();
         expect(jest.getTimerCount()).toBe(0);
@@ -581,10 +598,13 @@ describe("PaAgentContextSummarizer", () => {
         jest.useFakeTimers();
         const controller = new AbortController();
         const removeListener = jest.spyOn(controller.signal, "removeEventListener");
+        const invoke = jest.fn<PaAgentSummaryInvoke>(async () => new Promise(() => undefined));
         const pending = new PaAgentContextSummarizer().prepareHistory({
-            history: history(), historyBudgetChars: 3_000, signal: controller.signal, invoke: async () => new Promise(() => undefined),
+            history: history(), historyBudgetChars: 3_000, signal: controller.signal, invoke,
         });
         const rejection = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+        for (let step = 0; step < 2_000 && invoke.mock.calls.length === 0; step++) await jest.advanceTimersByTimeAsync(1);
+        expect(invoke).toHaveBeenCalledTimes(1);
         controller.abort();
         await rejection;
         expect(jest.getTimerCount()).toBe(0);

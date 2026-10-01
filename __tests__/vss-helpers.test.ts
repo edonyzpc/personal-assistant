@@ -1,4 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
+import { createHash } from 'node:crypto';
 import { computeContentHash, selectFlushCandidates, DirtyTimestamps } from '../src/vss-helpers';
 
 describe('computeContentHash', () => {
@@ -13,6 +14,21 @@ describe('computeContentHash', () => {
         const a = await computeContentHash('hello');
         const b = await computeContentHash('world');
         expect(a).not.toBe(b);
+    });
+
+    it('preserves UTF-8 digest across chunk boundaries, including surrogate pairs and lone surrogates', async () => {
+        const input = ('x'.repeat(16_383) + '😀笔记\ud800\n').repeat(90);
+        let inputHandled = false;
+        setTimeout(() => { inputHandled = true; }, 0);
+        expect(await computeContentHash(input)).toBe(createHash('sha1').update(input).digest('hex'));
+        expect(inputHandled).toBe(true);
+    });
+
+    it('observes caller cancellation while encoding a large input', async () => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 0);
+        await expect(computeContentHash('笔记😀'.repeat(300_000), controller.signal))
+            .rejects.toMatchObject({ name: 'AbortError' });
     });
 });
 
@@ -43,4 +59,3 @@ describe('selectFlushCandidates', () => {
         expect(candidates).toContain('busy.md');
     });
 });
-

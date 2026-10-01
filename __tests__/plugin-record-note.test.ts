@@ -1261,6 +1261,7 @@ describe('plugin startup view registration', () => {
             startupOrder.push('init-vss');
             return {};
         });
+        const registerVaultEventDispatch = jest.spyOn(plugin, 'registerVaultEventDispatch');
         plugin.registerView = registerView;
         plugin.updateMemoryStatusBar = jest.fn(async () => undefined);
         plugin.memoryStatusNotifier = { schedule: jest.fn() };
@@ -1361,7 +1362,7 @@ describe('plugin startup view registration', () => {
                 registerView.mock.invocationCallOrder[0],
             );
             expect(plugin.initVss.mock.invocationCallOrder[0]).toBeLessThan(
-                plugin.registerEvent.mock.invocationCallOrder[0],
+                registerVaultEventDispatch.mock.invocationCallOrder[0],
             );
             expect(mockStatsManagerConstructor.mock.invocationCallOrder[0]).toBeLessThan(
                 plugin.registerEditorExtension.mock.invocationCallOrder[0],
@@ -11325,6 +11326,9 @@ describe('B-135 legacy Personal without extraction', () => {
         const { plugin, read } = createReaderHarness();
         const order: string[] = [];
         const startupReached = new Error('stop after profile initialization');
+        plugin.app.vault.on = jest.fn(() => ({}));
+        plugin.app.metadataCache = { on: jest.fn(() => ({})) };
+        plugin.registerEvent = jest.fn();
         plugin.ensureLoadedPluginBuildIdentity = jest.fn(async () => undefined);
         plugin.loadSettings = jest.fn(async () => { order.push('settings'); });
         plugin.cleanupLegacyMobileDebugLog = jest.fn();

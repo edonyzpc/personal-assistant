@@ -29,10 +29,13 @@ import {
     getKnownFileSize,
     getUtf8ByteLength,
     readVaultFile,
+    sortCooperatively,
+    type CooperativeCheckpoint,
 } from "./chat-tool-execution-helpers";
 import type { AiServiceHost } from "./AiServiceHost";
 import type { MarkdownFileLike } from "./chat-tool-execution-helpers";
 import { throwIfAborted } from "./chat-utils";
+import { createCooperativeTask } from "./cooperative-task";
 
 export class VaultSnippetSearchUnavailableError extends Error { }
 export class VaultSnippetCursorExpiredError extends Error { }
@@ -107,6 +110,7 @@ export interface ExecuteVaultSnippetSearchOptions {
     dependencyPaths: Set<string>;
     isPathReadable: (path: string) => boolean;
     assertCurrent: () => void;
+    checkpoint?: CooperativeCheckpoint;
 }
 
 export interface ExecuteVaultSnippetSearchResult {
@@ -122,11 +126,18 @@ export async function executeVaultSnippetSearch(
     options: ExecuteVaultSnippetSearchOptions,
 ): Promise<ExecuteVaultSnippetSearchResult> {
     const { input, host, signal } = options;
+    const task = createCooperativeTask(signal);
+    const checkpoint = options.checkpoint ?? (async () => { await task.checkpoint(); });
+    const calculationCheckpoint = async () => { await task.checkpoint(); };
     const part = input.part ?? "all";
     const caseSensitive = input.caseSensitive ?? false;
-    const scopedFiles = enumerateScopedFiles(host, input.scope);
-    const files = scopedFiles.filter(file => options.isPathReadable(file.path));
-    if (input.scope && files.length === 0 && !hasScopedFile(host, input.scope)) {
+    const scopedFiles = await enumerateScopedFilesCooperatively(host, input.scope, checkpoint);
+    const files: MarkdownFileLike[] = [];
+    for (const file of scopedFiles) {
+        await checkpoint();
+        if (options.isPathReadable(file.path)) files.push(file);
+    }
+    if (input.scope && files.length === 0 && !await hasScopedFile(host, input.scope, checkpoint)) {
         const unsupportedScope = isUnsupportedSnippetFileScope(host, input.scope);
         return {
             content: {
@@ -183,11 +194,11 @@ export async function executeVaultSnippetSearch(
     }
 
     const matcher = createLiteralMatcher(input.query, caseSensitive);
-    const sourceIdentities: VaultSnippetSourceIdentityCapture[] = files.map(file => ({
-        file,
-        path: file.path,
-        identity: options.identities.identity(file),
-    }));
+    const sourceIdentities: VaultSnippetSourceIdentityCapture[] = [];
+    for (const file of files) {
+        await checkpoint();
+        sourceIdentities.push({ file, path: file.path, identity: options.identities.identity(file) });
+    }
     const snapshot: VaultSnippetSnapshotItem[] = [];
     const sourceCaptures: Array<{
         file: MarkdownFileLike;
@@ -209,6 +220,7 @@ export async function executeVaultSnippetSearch(
     let unknownFileSize = false;
 
     for (const file of files) {
+        await checkpoint();
         throwIfAborted(signal);
         options.assertCurrent();
         if (consideredFiles >= SNIPPET_MAX_CANDIDATE_FILES) {
@@ -272,6 +284,7 @@ export async function executeVaultSnippetSearch(
         }
 
         const content = await readVaultFile(host, file);
+        await checkpoint();
         throwIfAborted(signal);
         options.assertCurrent();
         assertFileCurrent(options, file, stat);
@@ -289,16 +302,18 @@ export async function executeVaultSnippetSearch(
 
         evaluatedBytes += actualBytes;
         const contentHash = await computeContentHash(content);
+        await checkpoint();
         throwIfAborted(signal);
         options.assertCurrent();
         assertFileCurrent(options, file, stat);
         captureSource("read", contentHash);
 
-        const lineSpans = buildLineSpans(content);
+        const lineSpans = await buildLineSpans(content, calculationCheckpoint);
         for (const partView of getSearchPartViews(content, part)) {
             matcher.lastIndex = 0;
             let match = matcher.exec(partView.text);
             while (match) {
+                await calculationCheckpoint();
                 const originalStart = partView.start + match.index;
                 const originalEnd = originalStart + match[0].length;
                 if (matchCount >= pageStartIndex && pageMatches.length < input.limit) {
@@ -319,10 +334,12 @@ export async function executeVaultSnippetSearch(
         }
     }
 
+    await checkpoint();
     throwIfAborted(signal);
     options.assertCurrent();
-    assertSourceSetCurrent(options, sourceIdentities, sourceCaptures, input.scope);
+    await assertSourceSetCurrent(options, sourceIdentities, sourceCaptures, input.scope, checkpoint);
     for (const path of options.dependencyPaths) {
+        await checkpoint();
         if (!options.isPathReadable(path)) {
             throw new VaultSnippetSourcesChangedError("Task source path is no longer permitted.");
         }
@@ -331,9 +348,10 @@ export async function executeVaultSnippetSearch(
     const scanComplete = !candidateCapExceeded && !fileCapExceeded && !byteCapExceeded
         && !unknownFileSize && skippedFiles === 0;
     const snapshotDigest = await hashJsonValue(snapshot);
+    await checkpoint();
     throwIfAborted(signal);
     options.assertCurrent();
-    assertSourceSetCurrent(options, sourceIdentities, sourceCaptures, input.scope);
+    await assertSourceSetCurrent(options, sourceIdentities, sourceCaptures, input.scope, checkpoint);
     if (cursor && cursor.snapshot !== snapshotDigest) {
         throw new VaultSnippetCursorExpiredError("search_vault_snippets cursor snapshot is no longer current.");
     }
@@ -446,12 +464,49 @@ export function enumerateScopedFiles(
     return [...byPath.values()].sort((left, right) => comparePaths(left.path, right.path));
 }
 
-function hasScopedFile(host: AiServiceHost, scope: string): boolean {
+export async function enumerateScopedFilesCooperatively(
+    host: AiServiceHost,
+    scope: string | undefined,
+    checkpoint: CooperativeCheckpoint,
+): Promise<MarkdownFileLike[]> {
+    const epoch = host.getTaskSourceAuthorityEpoch?.();
+    const vault = host.app.vault as unknown as {
+        getMarkdownFiles?: () => unknown;
+        getMarkdownFilesCooperatively?: (checkpoint: CooperativeCheckpoint) => Promise<unknown>;
+    };
+    let files: unknown;
+    if (typeof vault.getMarkdownFilesCooperatively === "function") {
+        files = await vault.getMarkdownFilesCooperatively(checkpoint);
+    } else {
+        if (typeof vault.getMarkdownFiles !== "function") {
+            throw new VaultSnippetSearchUnavailableError("Vault getMarkdownFiles is unavailable.");
+        }
+        // Preserve native failures for the adapter's standard, sanitized envelope.
+        files = vault.getMarkdownFiles();
+        await checkpoint();
+    }
+    if (!Array.isArray(files)) {
+        throw new VaultSnippetSearchUnavailableError("Vault getMarkdownFiles returned an invalid file list.");
+    }
+    const byPath = new Map<string, MarkdownFileLike>();
+    for (const file of files) {
+        await checkpoint();
+        if (!file || typeof file !== "object" || typeof file.path !== "string") continue;
+        if (isFileWithinScope(file.path, scope) && !byPath.has(file.path)) byPath.set(file.path, file);
+    }
+    const result = await sortCooperatively([...byPath.values()], (left, right) => comparePaths(left.path, right.path), checkpoint);
+    if (epoch !== undefined && epoch !== host.getTaskSourceAuthorityEpoch?.()) {
+        throw new VaultSnippetSourcesChangedError("Note sources changed while snippet candidates were being enumerated.");
+    }
+    return result;
+}
+
+async function hasScopedFile(host: AiServiceHost, scope: string, checkpoint: CooperativeCheckpoint): Promise<boolean> {
     if (scope.toLowerCase().endsWith(".md")) {
         const file = host.app.vault.getAbstractFileByPath?.(scope);
         return Boolean(file && typeof file === "object" && typeof (file as MarkdownFileLike).path === "string");
     }
-    return enumerateScopedFiles(host, scope).length > 0;
+    return (await enumerateScopedFilesCooperatively(host, scope, checkpoint)).length > 0;
 }
 
 function isUnsupportedSnippetFileScope(host: AiServiceHost, scope: string): boolean {
@@ -494,7 +549,7 @@ function assertFileCurrent(
     if (!options.isPathReadable(file.path)) {
         throw new VaultSnippetSourcesChangedError("Task source path is no longer permitted.");
     }
-    const current = enumerateScopedFiles(options.host, undefined).find(candidate => candidate.path === file.path);
+    const current = options.host.app.vault.getAbstractFileByPath?.(file.path) as MarkdownFileLike | null | undefined;
     const currentStat = current ? captureStat(current) : null;
     if (current !== file || current?.path !== file.path || !currentStat
         || currentStat.mtime !== stat.mtime || currentStat.size !== stat.size) {
@@ -502,7 +557,7 @@ function assertFileCurrent(
     }
 }
 
-function assertSourceSetCurrent(
+async function assertSourceSetCurrent(
     options: ExecuteVaultSnippetSearchOptions,
     identities: ReadonlyArray<VaultSnippetSourceIdentityCapture>,
     captures: ReadonlyArray<{
@@ -511,12 +566,17 @@ function assertSourceSetCurrent(
         stat: VaultSnippetFileStat | null;
     }>,
     scope: string | undefined,
-): void {
-    const currentFiles = enumerateScopedFiles(options.host, scope);
+    checkpoint: CooperativeCheckpoint,
+): Promise<void> {
+    const epoch = options.host.getTaskSourceAuthorityEpoch?.();
+    // Legacy hosts have no event fence: keep their final seal atomic. Native Host always supplies an epoch.
+    const currentFiles = epoch === undefined ? enumerateScopedFiles(options.host, scope)
+        : await enumerateScopedFilesCooperatively(options.host, scope, checkpoint);
     if (currentFiles.length !== identities.length) {
         throw new VaultSnippetSourcesChangedError("The permitted note集合 changed while snippets were being searched.");
     }
     for (let index = 0; index < identities.length; index++) {
+        if (epoch !== undefined) await checkpoint();
         const expected = identities[index]!;
         const actual = currentFiles[index]!;
         if (
@@ -528,8 +588,14 @@ function assertSourceSetCurrent(
         }
     }
 
+    const currentByPath = new Map<string, MarkdownFileLike>();
+    for (const file of currentFiles) {
+        if (epoch !== undefined) await checkpoint();
+        currentByPath.set(file.path, file);
+    }
     for (const expected of captures) {
-        const actual = currentFiles.find(candidate => candidate.path === expected.path);
+        if (epoch !== undefined) await checkpoint();
+        const actual = currentByPath.get(expected.path);
         if (!actual) {
             throw new VaultSnippetSourcesChangedError("Note sources changed while snippets were being searched.");
         }
@@ -544,6 +610,9 @@ function assertSourceSetCurrent(
         ) {
             throw new VaultSnippetSourcesChangedError("Note sources changed while snippets were being searched.");
         }
+    }
+    if (epoch !== undefined && epoch !== options.host.getTaskSourceAuthorityEpoch?.()) {
+        throw new VaultSnippetSourcesChangedError("Note sources changed while the snippet snapshot was being verified.");
     }
 }
 
@@ -599,13 +668,14 @@ function getSearchPartViews(content: string, requestedPart: SearchVaultSnippetPa
     ];
 }
 
-function buildLineSpans(content: string): VaultSnippetLineSpan[] {
+async function buildLineSpans(content: string, checkpoint: CooperativeCheckpoint): Promise<VaultSnippetLineSpan[]> {
     const spans: VaultSnippetLineSpan[] = [];
     const lineBreak = /\r\n|\r|\n/g;
     let start = 0;
     let line = 1;
     let match: RegExpExecArray | null;
     while ((match = lineBreak.exec(content)) !== null) {
+        await checkpoint();
         spans.push({ start, endIncludingBreak: match.index + match[0].length, line });
         start = spans[spans.length - 1]!.endIncludingBreak;
         line++;
@@ -619,10 +689,17 @@ function describeRange(
     start: number,
     end: number,
 ): VaultSnippetRange {
-    const startSpan = lineSpans.find(span => start < span.endIncludingBreak)
-        ?? lineSpans[lineSpans.length - 1]!;
-    const endSpan = lineSpans.find(span => end <= span.endIncludingBreak)
-        ?? lineSpans[lineSpans.length - 1]!;
+    const findSpan = (offset: number, inclusive: boolean) => {
+        let low = 0, high = lineSpans.length - 1;
+        while (low < high) {
+            const mid = Math.floor((low + high) / 2);
+            if (inclusive ? offset <= lineSpans[mid]!.endIncludingBreak : offset < lineSpans[mid]!.endIncludingBreak) high = mid;
+            else low = mid + 1;
+        }
+        return lineSpans[low]!;
+    };
+    const startSpan = findSpan(start, false);
+    const endSpan = findSpan(end, true);
     return {
         startOffset: start,
         endOffset: end,

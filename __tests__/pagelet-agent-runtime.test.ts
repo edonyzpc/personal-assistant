@@ -57,6 +57,22 @@ import type {
 
 jest.mock('obsidian');
 
+async function waitForCooperativePhase(ready: () => boolean, phase: string): Promise<void> {
+    for (let step = 0; step < 1_000 && !ready(); step += 1) {
+        await jest.advanceTimersByTimeAsync(0);
+        // Sinon schedules a zero-delay timer created during a tick at now + 1.
+        if (!ready()) await jest.advanceTimersByTimeAsync(1);
+    }
+    if (!ready()) throw new Error(`Pagelet fixture did not reach ${phase}.`);
+}
+
+async function settleCooperativeRun<T>(pending: Promise<T>): Promise<T> {
+    let settled = false;
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    await waitForCooperativePhase(() => settled, 'run completion');
+    return pending;
+}
+
 const vaultReadEvidence = (observationId: string, path: string, outputDigest: string, contentHash: string) => ({
     schemaVersion: 1,
     observationId,
@@ -1948,32 +1964,42 @@ describe('Pagelet agent runtime', () => {
             isPathAllowed: (path) => path.startsWith('notes/'),
             now: () => 2_000,
         });
+        let pending: ReturnType<typeof controller.run> | undefined;
+        try {
+            pending = controller.run({
+                path: dualLeadAnchor.path,
+                triggerReason: 'explicit',
+                force: true,
+                signal: abortController.signal,
+            });
+            const result = await settleCooperativeRun(pending);
 
-        const result = await controller.run({
-            path: dualLeadAnchor.path,
-            triggerReason: 'explicit',
-            force: true,
-            signal: abortController.signal,
-        });
-
-        expect(result).toMatchObject({
-            status: 'quiet',
-            reason: 'aborted',
-            metrics: { modelTurns: 3, toolCalls: 4 },
-            runtimeCompletion: {
-                loopStatus: 'aborted',
-                finalTextState: 'empty',
-                insightDraftCount: 0,
-            },
-        });
-        expect(modelInputs).toHaveLength(3);
-        expect(observedRun).toBeDefined();
-        expect(observedRun?.loopResult.status).toBe('aborted');
-        expect(observedRun?.finalText).toBe('');
-        expect(observedRun?.insightDrafts).toEqual([]);
-        expect(observedRun?.recovery?.stageValidationSubreason).toBe('aborted');
-        jest.clearAllTimers();
-        jest.useRealTimers();
+            expect(result).toMatchObject({
+                status: 'quiet',
+                reason: 'aborted',
+                metrics: { modelTurns: 3, toolCalls: 4 },
+                runtimeCompletion: {
+                    loopStatus: 'aborted',
+                    finalTextState: 'empty',
+                    insightDraftCount: 0,
+                },
+            });
+            expect(modelInputs).toHaveLength(3);
+            expect(observedRun).toBeDefined();
+            expect(observedRun?.loopResult.status).toBe('aborted');
+            expect(observedRun?.finalText).toBe('');
+            expect(observedRun?.insightDrafts).toEqual([]);
+            expect(observedRun?.recovery?.stageValidationSubreason).toBe('aborted');
+        } finally {
+            abortController.abort();
+            controller.dispose();
+            try {
+                if (pending) await settleCooperativeRun(pending.catch(() => undefined));
+            } finally {
+                jest.clearAllTimers();
+                jest.useRealTimers();
+            }
+        }
     });
 
     it.each([
@@ -1996,20 +2022,30 @@ describe('Pagelet agent runtime', () => {
             },
         });
 
-        const result = await runtime.run({
-            anchor: dualLeadAnchor,
-            triggerReason: 'explicit',
-            runId: `pagelet-abort-stage-window-${abortTurn}`,
-            signal: abortController.signal,
-        });
+        let pending: ReturnType<typeof runtime.run> | undefined;
+        try {
+            pending = runtime.run({
+                anchor: dualLeadAnchor,
+                triggerReason: 'explicit',
+                runId: `pagelet-abort-stage-window-${abortTurn}`,
+                signal: abortController.signal,
+            });
+            const result = await settleCooperativeRun(pending);
 
-        expect(result.loopResult.status).toBe('aborted');
-        expect(modelInputs).toHaveLength(expectedModelTurns);
-        expect(result.metrics.toolCalls).toBe(expectedToolCalls);
-        expect(result.finalText).toBe('');
-        expect(result.insightDrafts).toEqual([]);
-        jest.clearAllTimers();
-        jest.useRealTimers();
+            expect(result.loopResult.status).toBe('aborted');
+            expect(modelInputs).toHaveLength(expectedModelTurns);
+            expect(result.metrics.toolCalls).toBe(expectedToolCalls);
+            expect(result.finalText).toBe('');
+            expect(result.insightDrafts).toEqual([]);
+        } finally {
+            abortController.abort();
+            try {
+                if (pending) await settleCooperativeRun(pending.catch(() => undefined));
+            } finally {
+                jest.clearAllTimers();
+                jest.useRealTimers();
+            }
+        }
     });
 
     it.each([
@@ -2888,11 +2924,11 @@ describe('Pagelet agent runtime', () => {
 
     it('lets a buffered provider response outlive the incremental idle window', async () => {
         jest.useFakeTimers();
+        const abortController = new AbortController();
+        let pending: Promise<unknown> | undefined;
+        let releaseResponse: (() => void) | undefined;
         try {
-            let markStreamStarted!: () => void;
-            const streamStarted = new Promise<void>((resolve) => {
-                markStreamStarted = resolve;
-            });
+            let streamStarted = false;
             const runtime = createPageletAgentRuntime({
                 host: createHost(),
                 isPathAllowed: () => true,
@@ -2906,9 +2942,10 @@ describe('Pagelet agent runtime', () => {
                 providerResponseDelivery: 'buffered',
                 createModel: () => ({
                     stream: async function* () {
-                        markStreamStarted();
+                        streamStarted = true;
                         await new Promise<void>((resolve) => {
-                            setTimeout(resolve, 61_000);
+                            const timer = setTimeout(resolve, 61_000);
+                            releaseResponse = () => { clearTimeout(timer); resolve(); };
                         });
                         yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
                     },
@@ -2916,27 +2953,38 @@ describe('Pagelet agent runtime', () => {
             });
 
             let settled = false;
-            const pending = runtime.run({ anchor, triggerReason: 'explicit' }).finally(() => {
+            const run = runtime.run({ anchor, triggerReason: 'explicit', signal: abortController.signal }).finally(() => {
                 settled = true;
             });
-            await streamStarted;
+            pending = run;
+            await waitForCooperativePhase(() => streamStarted, 'buffered provider start');
             await jest.advanceTimersByTimeAsync(60_000);
             expect(settled).toBe(false);
             await jest.advanceTimersByTimeAsync(1_000);
 
-            const result = await pending;
+            const result = await settleCooperativeRun(run);
             expect(result.finalText).toBe('NO_INSIGHT');
             expect(result.loopResult.status).toBe('completed');
             expect(result.loopResult.turns.flatMap((turn) => turn.diagnostics)).not.toContainEqual(
                 expect.objectContaining({ type: 'assistant_idle_timeout' }),
             );
         } finally {
-            jest.useRealTimers();
+            abortController.abort();
+            releaseResponse?.();
+            try {
+                if (pending) await settleCooperativeRun(pending.catch(() => undefined));
+            } finally {
+                jest.clearAllTimers();
+                jest.useRealTimers();
+            }
         }
     });
 
     it('lets one dispatched buffered response run past the retired 180-second reserve without a warning', async () => {
         jest.useFakeTimers();
+        const abortController = new AbortController();
+        let pending: Promise<unknown> | undefined;
+        let releaseResponse: (() => void) | undefined;
         try {
             const diagnostics = new RetrievalDiagnosticsController(
                 () => 0,
@@ -2964,18 +3012,23 @@ describe('Pagelet agent runtime', () => {
                         modelInputs.push(input);
                         providerSignal = input.signal;
                         input.notifyProviderRequestStarted?.();
-                        await new Promise<void>((resolve) => setTimeout(resolve, 151_000));
+                        await new Promise<void>((resolve) => {
+                            const timer = setTimeout(resolve, 151_000);
+                            releaseResponse = () => { clearTimeout(timer); resolve(); };
+                        });
                         yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
                     },
                 }),
             });
 
-            const pending = runtime.run({ anchor, triggerReason: 'explicit' });
+            const run = runtime.run({ anchor, triggerReason: 'explicit', signal: abortController.signal });
+            pending = run;
+            await waitForCooperativePhase(() => modelInputs.length === 1, 'buffered provider dispatch');
             await jest.advanceTimersByTimeAsync(150_000);
             expect(providerSignal?.aborted).toBe(false);
             expect(modelInputs).toHaveLength(1);
             await jest.advanceTimersByTimeAsync(1_000);
-            const result = await pending;
+            const result = await settleCooperativeRun(run);
 
             expect(result.finalText).toBe('NO_INSIGHT');
             expect(result.loopResult.status).toBe('completed');
@@ -2989,7 +3042,14 @@ describe('Pagelet agent runtime', () => {
                 expect.objectContaining({ outcome: 'skipped', reason: 'reserve_not_entered' }),
             ]);
         } finally {
-            jest.useRealTimers();
+            abortController.abort();
+            releaseResponse?.();
+            try {
+                if (pending) await settleCooperativeRun(pending.catch(() => undefined));
+            } finally {
+                jest.clearAllTimers();
+                jest.useRealTimers();
+            }
         }
     });
 

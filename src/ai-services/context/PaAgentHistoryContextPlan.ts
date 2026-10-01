@@ -1,7 +1,9 @@
 import type { ChatMessage } from "../chat-types";
 import { escapeTaggedBoundary } from "../agent-utils";
 import type { PaAgentHistoryContextPlan } from "./PaAgentContextSummaryTypes";
-import { encodeAdjacentRepeats } from "./PaAgentContextTextEncoding";
+import { encodeAdjacentRepeatsSteps } from "./PaAgentContextTextEncoding";
+import { finishContextSteps } from './clone-utils';
+import { stringifyContextSteps } from './PaAgentContextSerialization';
 import { chatHistoryImageMetadata } from "../chat-image-identity";
 import { projectPaAgentActionHistory } from "../pa-agent-action-history";
 
@@ -11,18 +13,26 @@ export function fitFullHistory(
     budget: number,
     allowLossless = true,
 ): { text: string; losslesslyEncoded: boolean } | undefined {
-    const raw = formatHistoryMessages(history);
+    return finishContextSteps(fitFullHistorySteps(history, budget, allowLossless));
+}
+
+export function* fitFullHistorySteps(
+    history: readonly ChatMessage[], budget: number, allowLossless = true,
+): Generator<void, { text: string; losslesslyEncoded: boolean } | undefined, void> {
+    const raw = yield* formatHistoryMessagesSteps(history);
     if (raw.length <= budget) return { text: raw, losslesslyEncoded: false };
     if (!allowLossless) return undefined;
     let encodedAny = false;
-    const messages = history.map((message) => {
-        const encoded = encodeAdjacentRepeats(message.content);
+    const messages: Record<string, unknown>[] = [];
+    for (const message of history) {
+        yield;
+        const encoded = yield* encodeAdjacentRepeatsSteps(message.content);
         encodedAny ||= encoded !== undefined;
-        return historyRecord(message, encoded ?? message.content);
-    });
+        messages.push(historyRecord(message, encoded ?? message.content));
+    }
     if (!encodedAny) return undefined;
-    const body = JSON.stringify(messages, null, 2);
-    const escaped = body.replace(/<\/chat_history/gi, (boundary) => escapeTaggedBoundary(boundary, boundary.slice(2)));
+    const body = (yield* stringifyContextSteps(messages, 2))!;
+    const escaped = yield* escapeHistorySteps(body, true);
     const text = `<chat_history context_only="true" format="json">\n${escaped}\n</chat_history>`;
     return text.length <= budget ? { text, losslesslyEncoded: true } : undefined;
 }
@@ -33,9 +43,15 @@ export function planHistoryContext(
     budget: number,
     summaryMaxChars = 8000,
 ): PaAgentHistoryContextPlan {
+    return finishContextSteps(planHistoryContextSteps(history, budget, summaryMaxChars));
+}
+
+export function* planHistoryContextSteps(
+    history: readonly ChatMessage[] | undefined, budget: number, summaryMaxChars = 8000,
+): Generator<void, PaAgentHistoryContextPlan, void> {
     const messages = history ?? [];
     const maxChars = Math.max(0, Math.floor(budget));
-    if (fitFullHistory(messages, maxChars)) {
+    if (yield* fitFullHistorySteps(messages, maxChars)) {
         return { mode: "full", coveredMessages: 0, summaryMaxChars: 0 };
     }
     const summaryWrapperChars = formatSemanticHistorySummary("").length;
@@ -50,9 +66,10 @@ export function planHistoryContext(
     // A giant latest turn can instead be covered by the semantic prefix.
     let turnEnd = messages.length;
     for (let index = messages.length - 1; index >= 0; index--) {
+        yield;
         if (messages[index].role !== "user") continue;
         if (!messages.slice(index, turnEnd).some((message) => message.role === "assistant")) break;
-        if (formatHistoryMessages(messages.slice(index)).length > recentBudget) break;
+        if ((yield* formatHistoryMessagesSteps(messages.slice(index))).length > recentBudget) break;
         coveredMessages = index;
         turnEnd = index;
     }
@@ -64,9 +81,40 @@ export function formatSemanticHistorySummary(text: string): string {
 }
 
 export function formatHistoryMessages(history: readonly ChatMessage[], compactActionResults = false): string {
+    return finishContextSteps(formatHistoryMessagesSteps(history, compactActionResults));
+}
+
+export function* formatHistoryMessagesSteps(
+    history: readonly ChatMessage[], compactActionResults = false,
+): Generator<void, string, void> {
     if (history.length === 0) return "";
-    const body = JSON.stringify(history.map(message => historyRecord(message, message.content, compactActionResults)), null, 2);
-    return `<chat_history context_only="true" format="json">\n${escapeTaggedBoundary(body, "chat_history")}\n</chat_history>`;
+    const records: Record<string, unknown>[] = [];
+    for (const message of history) {
+        yield;
+        records.push(historyRecord(message, message.content, compactActionResults));
+    }
+    const body = (yield* stringifyContextSteps(records, 2))!;
+    const escaped = yield* escapeHistorySteps(body);
+    return `<chat_history context_only="true" format="json">\n${escaped}\n</chat_history>`;
+}
+
+function* escapeHistorySteps(body: string, preserveCase = false): Generator<void, string, void> {
+    const chunks: string[] = [];
+    for (let start = 0; start < body.length;) {
+        yield;
+        let end = Math.min(body.length, start + 16_384);
+        // Keep a possible closing-tag prefix in this chunk rather than split its match.
+        if (end < body.length) {
+            const boundary = body.lastIndexOf('<', end - 1);
+            if (boundary >= start && end - boundary < '</chat_history'.length) end = boundary > start ? boundary : end;
+        }
+        const chunk = body.slice(start, end);
+        chunks.push(preserveCase
+            ? chunk.replace(/<\/chat_history/gi, boundary => escapeTaggedBoundary(boundary, boundary.slice(2)))
+            : escapeTaggedBoundary(chunk, 'chat_history'));
+        start = end;
+    }
+    return chunks.join('');
 }
 
 function historyRecord(message: ChatMessage, content: unknown = message.content,

@@ -7,6 +7,10 @@ const MAX_REPEAT_SEGMENTS = 128;
 
 /** Linear scan; only adjacent identical sentence/line pieces share a repeat count. */
 export function encodeAdjacentRepeats(content: string): RepeatedSourceContent | undefined {
+    return finishContextSteps(encodeAdjacentRepeatsSteps(content));
+}
+
+export function* encodeAdjacentRepeatsSteps(content: string): Generator<void, RepeatedSourceContent | undefined, void> {
     const segments: RepeatedSourceContent["segments"] = [];
     let literalStart = 0;
     let runStart = 0;
@@ -22,20 +26,28 @@ export function encodeAdjacentRepeats(content: string): RepeatedSourceContent | 
         return segments.length <= MAX_REPEAT_SEGMENTS;
     };
     for (let start = 0; start < content.length;) {
+        yield;
         let end = start;
         while (end < content.length) {
+            if ((end & 1023) === 0) yield;
             const code = content.charCodeAt(end++);
             if (code === 13 || code === 10) {
                 if (code === 13 && content.charCodeAt(end) === 10) end++;
                 break;
             }
             if (isSentenceBoundary(code)) {
-                while (isSentenceBoundary(content.charCodeAt(end))) end++;
+                while (isSentenceBoundary(content.charCodeAt(end))) {
+                    if ((end & 1023) === 0) yield;
+                    end++;
+                }
                 break;
             }
         }
         // Preserve all separator bytes/code units, including CRLF and blank lines.
-        while (end < content.length && /\s/u.test(content.charAt(end))) end++;
+        while (end < content.length && /\s/u.test(content.charAt(end))) {
+            if ((end & 1023) === 0) yield;
+            end++;
+        }
         const text = content.slice(start, end);
         if (count > 0 && text === runText) {
             count++;
@@ -55,10 +67,16 @@ export function encodeAdjacentRepeats(content: string): RepeatedSourceContent | 
     const encoded: RepeatedSourceContent = { encoding: "adjacent-repeats-v1", segments };
     // Content is JSON inside the user message and escaped again in the full request.
     // All surrounding request fields are identical, so this is its exact size delta.
-    return JSON.stringify(JSON.stringify(encoded)).length < JSON.stringify(JSON.stringify(content)).length ? encoded : undefined;
+    const encodedJson = yield* stringifyContextSteps(encoded);
+    const contentJson = yield* stringifyContextSteps(content);
+    const encodedRequest = yield* stringifyContextSteps(encodedJson);
+    const contentRequest = yield* stringifyContextSteps(contentJson);
+    return encodedRequest!.length < contentRequest!.length ? encoded : undefined;
 }
 
 function isSentenceBoundary(code: number): boolean {
     return code === 46 || code === 33 || code === 63
         || code === 0x3002 || code === 0xff01 || code === 0xff1f;
 }
+import { finishContextSteps } from './clone-utils';
+import { stringifyContextSteps } from './PaAgentContextSerialization';

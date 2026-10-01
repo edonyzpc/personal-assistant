@@ -1,5 +1,5 @@
 import type { PaAgentMessage } from "../chat-types";
-import { cloneMessage } from "./clone-utils";
+import { cloneMessage, finishContextSteps } from "./clone-utils";
 
 const STATUS_ONLY_OUTCOMES = new Set(["duplicate_skipped", "policy_rejected"]);
 
@@ -12,8 +12,13 @@ export interface PaAgentContextHygieneResult {
 
 export class PaAgentContextHygiene {
     clean(transcript: readonly PaAgentMessage[]): PaAgentContextHygieneResult {
+        return finishContextSteps(this.cleanSteps(transcript));
+    }
+
+    *cleanSteps(transcript: readonly PaAgentMessage[]): Generator<void, PaAgentContextHygieneResult, void> {
         const toolCallIds = new Set<string>();
         for (const message of transcript) {
+            yield;
             if (message.role !== "assistant") continue;
             for (const part of message.content) {
                 if (part.type === "toolCall" && part.id) {
@@ -28,6 +33,7 @@ export class PaAgentContextHygiene {
         const cleaned: PaAgentMessage[] = [];
 
         for (const message of transcript) {
+            yield;
             if (message.role === "assistant" && message.content.length === 0) {
                 removedEmptyAssistantMessages++;
                 continue;

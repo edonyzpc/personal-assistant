@@ -835,6 +835,9 @@ describe("iOS DashScope chat transport", () => {
 
     it("drains a timed-out Memory reranker before the same PA run dispatches its next answer turn", async () => {
         jest.useFakeTimers();
+        const controller = new AbortController();
+        let runtime: PaAgentRuntime | undefined;
+        let releaseReranker: (() => void) | undefined;
         try {
             Platform.isDesktop = false;
             Platform.isMobile = true;
@@ -884,10 +887,21 @@ describe("iOS DashScope chat transport", () => {
             const rerankerRequest = new Promise<unknown>((resolve) => {
                 completeReranker = resolve;
             });
-            let markRerankerStarted!: () => void;
-            const rerankerStarted = new Promise<void>((resolve) => {
-                markRerankerStarted = resolve;
-            });
+            let rerankerStarted = false;
+            releaseReranker = () => completeReranker(responseFixture(JSON.stringify({
+                id: "chatcmpl-reranker-late",
+                object: "chat.completion",
+                created: 2,
+                model: "deepseek-v4-pro",
+                choices: [{
+                    index: 0,
+                    message: {
+                        role: "assistant",
+                        content: '{"verdict":"relevant","ranking":[0],"needsMoreEvidence":false}',
+                    },
+                    finish_reason: "stop",
+                }],
+            }), "application/json"));
             mockedRequestUrl
                 .mockResolvedValueOnce(responseFixture(sse(
                     completionChunk({
@@ -903,7 +917,7 @@ describe("iOS DashScope chat transport", () => {
                     completionChunk({}, "tool_calls"),
                 ), "text/event-stream"))
                 .mockImplementationOnce(() => {
-                    markRerankerStarted();
+                    rerankerStarted = true;
                     return rerankerRequest;
                 })
                 .mockResolvedValueOnce(responseFixture(sse(
@@ -915,7 +929,7 @@ describe("iOS DashScope chat transport", () => {
                     }),
                 ), "text/event-stream"));
 
-            const runtime = new PaAgentRuntime(host as never, aiUtils, {
+            runtime = new PaAgentRuntime(host as never, aiUtils, {
                 runtimePlatform: "mobile",
                 providerResponseDelivery: "buffered",
                 skillContextProvider: null,
@@ -925,28 +939,28 @@ describe("iOS DashScope chat transport", () => {
             const pending = runtime.streamTurn({
                 prompt: "Search my notes for memory",
                 memoryMode: "use-memory",
+                signal: controller.signal,
             });
+            let finished = false;
+            let failure: unknown;
+            void pending.then(() => { finished = true; }, error => { finished = true; failure = error; });
+            const advancePreparationUntil = async (ready: () => boolean) => {
+                // Advance cooperative preparation slices, not the physical timeout.
+                for (let step = 0; step < 2_000 && !ready() && !finished; step++) {
+                    await jest.advanceTimersByTimeAsync(1);
+                }
+                if (!ready() && failure) throw failure;
+                expect(ready()).toBe(true);
+            };
 
-            await rerankerStarted;
+            await advancePreparationUntil(() => rerankerStarted);
             await jest.advanceTimersByTimeAsync(30_000);
             await flushMicrotasks(40);
             expect(mockedRequestUrl).toHaveBeenCalledTimes(2);
 
-            completeReranker(responseFixture(JSON.stringify({
-                id: "chatcmpl-reranker-late",
-                object: "chat.completion",
-                created: 2,
-                model: "deepseek-v4-pro",
-                choices: [{
-                    index: 0,
-                    message: {
-                        role: "assistant",
-                        content: '{"verdict":"relevant","ranking":[0],"needsMoreEvidence":false}',
-                    },
-                    finish_reason: "stop",
-                }],
-            }), "application/json"));
-
+            releaseReranker();
+            await advancePreparationUntil(() => mockedRequestUrl.mock.calls.length === 3);
+            await advancePreparationUntil(() => finished);
             await pending;
             expect(mockedRequestUrl).toHaveBeenCalledTimes(3);
             const requests = mockedRequestUrl.mock.calls.map(([request]) => (
@@ -959,9 +973,15 @@ describe("iOS DashScope chat transport", () => {
             expect(new Set(physical.map((event) => event.runId)).size).toBe(1);
             expect(new Set(physical.map((event) => event.attemptId)).size).toBe(3);
             expect(physical[1].turnId).toBe(physical[0].turnId);
-            runtime.dispose();
         } finally {
-            jest.useRealTimers();
+            try {
+                controller.abort();
+                releaseReranker?.();
+                runtime?.dispose();
+                await flushMicrotasks(40);
+            } finally {
+                jest.useRealTimers();
+            }
         }
     });
 

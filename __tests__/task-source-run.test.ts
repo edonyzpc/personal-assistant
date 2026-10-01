@@ -70,6 +70,54 @@ function executorFor(run: TaskSourceRun, userInput = userText) {
 }
 
 describe('Task source run host', () => {
+    it.each(['notes', 'web', 'combined'] as const)('keeps cooperative admission equivalent to the complete %s admission', async scope => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, getTaskSourceAuthorityEpoch: () => 'authority-1',
+            runSourceSelection: { schemaVersion: 1, scope, selectionId: 'scope-1', userMessageId: h.host.userMessageId } });
+        const lineages = [undefined, unknownInputLineage(), completeInputLineage(),
+            completeInputLineage([{ kind: 'user-text', messageId: 'user-1' }]),
+            completeInputLineage([{ kind: 'vault', path: h.a.path, via: 'note' }]),
+            completeInputLineage([{ kind: 'vault', path: h.b.path, via: 'memory' }]),
+            completeInputLineage([{ kind: 'web', providerId: 'web', resultKey: 'result-1' }]),
+            completeInputLineage([{ kind: 'vault', path: h.a.path, via: 'note' },
+                { kind: 'web', providerId: 'web', resultKey: 'result-1' }])];
+        for (const lineage of lineages) expect(await run.admitsLineageAsync(lineage)).toBe(run.admitsLineage(lineage));
+        h.setMemoryAllowed(false);
+        for (const lineage of lineages) expect(await run.admitsLineageAsync(lineage)).toBe(run.admitsLineage(lineage));
+    });
+
+    it('rechecks an earlier dependency revoked while cooperative admission yields', async () => {
+        const h = fixture();
+        const paths = Array.from({ length: 500 }, (_, index) => `notes/source-${index}.md`);
+        for (const path of paths) h.files.set(path, { path });
+        let epoch = 1;
+        const denied = new Set<string>();
+        const run = new TaskSourceRun({ ...h.host, getTaskSourceAuthorityEpoch: () => String(epoch),
+            isPathAllowed: path => !denied.has(path),
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'scope-1', userMessageId: h.host.userMessageId } });
+        const lineage = completeInputLineage(paths.map(path => ({ kind: 'vault', path, via: 'note' })));
+        setTimeout(() => { denied.add(paths[0]!); epoch += 1; }, 0);
+        await expect(run.prepareLineageAdmission(lineage)).rejects.toThrow('ancestry');
+        expect(run.admitsLineage(lineage)).toBe(false);
+    });
+
+    it('reproves an ordinary edit without withdrawing the earlier read snapshot', async () => {
+        const h = fixture();
+        const paths = Array.from({ length: 100 }, (_, index) => `notes/source-${index}.md`);
+        for (const path of paths) h.files.set(path, { path });
+        let epoch = 1;
+        const run = new TaskSourceRun({ ...h.host, getTaskSourceAuthorityEpoch: () => String(epoch),
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'scope-1', userMessageId: h.host.userMessageId } });
+        const lineage = completeInputLineage(paths.map(path => ({ kind: 'vault', path, via: 'note' })));
+        setTimeout(() => { epoch += 1; }, 0);
+        const proof = await run.prepareLineageAdmission(lineage);
+        expect(proof.isCurrent()).toBe(true);
+        expect(proof.sourceValidity()).toBe(true);
+        epoch += 1;
+        expect(proof.isCurrent()).toBe(false);
+        expect(proof.sourceValidity()).toBe(true);
+        expect((await run.prepareLineageAdmission(lineage)).isCurrent()).toBe(true);
+    });
     it('keeps only source-compatible history in a selected Chat run without erasing the display records', () => {
         const h = fixture();
         const history = [
@@ -324,9 +372,9 @@ describe('Task source run host', () => {
         },
     );
 
-    it('drops a mixed assistant call together with a web result that echoed its private query', () => {
+    it('drops a mixed assistant call together with an independently admitted web result that echoed its private query', async () => {
         const h = fixture();
-        const run = new TaskSourceRun({ ...h.host, runSourceSelection: {
+        const run = new TaskSourceRun({ ...h.host, getTaskSourceAuthorityEpoch: () => 'authority-1', runSourceSelection: {
             schemaVersion: 1, scope: 'web', selectionId: 'web-run', userMessageId: h.host.userMessageId,
         } });
         const mixed = completeInputLineage([
@@ -337,11 +385,54 @@ describe('Task source run host', () => {
             inputLineage: mixed,
             content: [{ type: 'toolCall', id: 'call-web', name: 'search_web', input: { query: 'PRIVATE_QUERY' } }] };
         const result: PaAgentMessage = { role: 'toolResult', id: 'result', timestamp: 2,
-            toolCallId: 'call-web', toolName: 'search_web', isError: false, inputLineage: mixed,
+            toolCallId: 'call-web', toolName: 'search_web', isError: false,
+            inputLineage: completeInputLineage([{ kind: 'web', providerId: 'web', resultKey: 'hit' }]),
             content: { includeInNextPrompt: true, promptText: 'PRIVATE_QUERY; PUBLIC_RESULT' } };
         expect(run.projectTranscript([assistant, result])).toEqual([]);
+        expect(await run.projectTranscriptAsync([assistant, result])).toEqual(run.projectTranscript([assistant, result]));
         expect(assistant.content).toHaveLength(1);
         expect(result.content.promptText).toContain('PRIVATE_QUERY');
+    });
+
+    it.each(['notes', 'web', 'combined'] as const)('keeps cooperative %s history projection equivalent to the original scope rules', async scope => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, getTaskSourceAuthorityEpoch: () => 'authority-1',
+            isWebAllowed: () => true, runSourceSelection: { schemaVersion: 1, scope,
+                selectionId: 'scope-1', userMessageId: h.host.userMessageId } });
+        const note = { kind: 'vault' as const, path: h.a.path, via: 'note' as const };
+        const web = { kind: 'web' as const, providerId: 'web', resultKey: 'hit' };
+        const history: ChatMessage[] = [
+            { role: 'user', content: 'USER', inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'user-1' }]) },
+            { role: 'assistant', content: 'UNKNOWN' },
+            { role: 'assistant', content: 'NOTE', inputLineage: completeInputLineage([note]) },
+            { role: 'assistant', content: 'WEB', inputLineage: completeInputLineage([web]) },
+            { role: 'assistant', content: 'MIXED', inputLineage: completeInputLineage([note, web]) },
+        ];
+        expect(await run.projectHistoryAsync(history)).toEqual(run.projectHistory(history));
+        h.files.delete(h.a.path);
+        expect(await run.projectHistoryAsync(history)).toEqual(run.projectHistory(history));
+    });
+
+    it('reprojects an earlier transcript source revoked while a later source list yields', async () => {
+        const h = fixture();
+        let epoch = 1;
+        const run = new TaskSourceRun({ ...h.host, getTaskSourceAuthorityEpoch: () => String(epoch) });
+        const first: PaAgentMessage = { role: 'toolResult', id: 'first', toolCallId: 'first-call',
+            toolName: 'read_note', timestamp: 1, isError: false, content: {
+                promptText: 'EARLIER_PRIVATE_TEXT', includeInNextPrompt: true,
+                sourceRecords: [{ kind: 'context-used', dedupKey: 'a', path: h.a.path, sourceBoundary: 'vault' }],
+            } };
+        const later: PaAgentMessage = { role: 'toolResult', id: 'later', toolCallId: 'later-call',
+            toolName: 'query_notes', timestamp: 2, isError: false, content: {
+                promptText: 'OTHER_VALID_TEXT', includeInNextPrompt: true,
+                sourceRecords: Array.from({ length: 100 }, (_, index) => ({ kind: 'context-used' as const,
+                    dedupKey: `b-${index}`, path: h.b.path, sourceBoundary: 'vault' as const })),
+            } };
+        setTimeout(() => { h.files.delete(h.a.path); epoch += 1; }, 0);
+        const projected = await run.projectTranscriptAsync([first, later]);
+        expect(projected).toEqual(run.projectTranscript([first, later]));
+        expect(projected[0]?.role === 'toolResult' && projected[0].content.promptText).not.toContain('EARLIER_PRIVATE_TEXT');
+        expect(first.content.promptText).toBe('EARLIER_PRIVATE_TEXT');
     });
 
     it('retains governed Personal history only while its claim revision remains live', () => {

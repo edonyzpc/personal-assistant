@@ -601,13 +601,38 @@ function writeVaultInsightsInjectionNoticeFlag(): void {
 
 
 export class PluginManager extends Plugin {
+    private taskSourceAuthorityRevision = 0;
+    private advanceTaskSourceAuthority(): void {
+        this.taskSourceAuthorityRevision += 1;
+    }
+
+    private getTaskSourceAuthorityEpoch(): string {
+        const snapshot = this.getGovernedMemoryProjectionSnapshot();
+        return [this.taskSourceAuthorityRevision,
+            this.getMemoryGraphTopologyEpoch('chat'),
+            this.settings.memoryEnabled, this.settings.webSearchEnabled,
+            this.settings.dataBoundary?.sourceRevocationEpoch ?? '',
+            snapshot?.state.commitSequence ?? -1,
+            this.deviceMemoryCacheRefreshTargetSequence,
+        ].join(':');
+    }
+
     ghostPublishingConfiguration?: GhostPublishingConfiguration;
     private ghostPublishingIntegration?: GhostPublishingIntegration;
     private createSettingsPersistence(): SettingsPersistence {
         return new SettingsPersistence({
-            onSourcePermissionRevoking: () => this.agentDebugIntegration?.sourcePermissionRevoking(),
-            onSourcePermissionCommitted: () => this.agentDebugIntegration?.sourcePermissionCommitted(),
-            onSourcePermissionFailed: () => this.agentDebugIntegration?.sourcePermissionFailed(),
+            onSourcePermissionRevoking: () => {
+                this.advanceTaskSourceAuthority();
+                this.agentDebugIntegration?.sourcePermissionRevoking();
+            },
+            onSourcePermissionCommitted: () => {
+                this.advanceTaskSourceAuthority();
+                this.agentDebugIntegration?.sourcePermissionCommitted();
+            },
+            onSourcePermissionFailed: () => {
+                this.advanceTaskSourceAuthority();
+                this.agentDebugIntegration?.sourcePermissionFailed();
+            },
             loadData: () => this.loadData(),
             saveData: (data) => this.saveData(data),
             getAdapter: () => this.app.vault.adapter,
@@ -1938,6 +1963,14 @@ export class PluginManager extends Plugin {
     }
 
     async onload() {
+        const invalidateSourceProof = () => this.advanceTaskSourceAuthority();
+        this.registerEvent(this.app.vault.on('create', invalidateSourceProof));
+        this.registerEvent(this.app.vault.on('modify', invalidateSourceProof));
+        this.registerEvent(this.app.vault.on('delete', invalidateSourceProof));
+        this.registerEvent(this.app.vault.on('rename', invalidateSourceProof));
+        this.registerEvent(this.app.metadataCache.on('changed', invalidateSourceProof));
+        this.registerEvent(this.app.metadataCache.on('resolved', invalidateSourceProof));
+        this.register(this.onSettingsChanged(invalidateSourceProof));
         void this.ensureLoadedPluginBuildIdentity();
         this.vaultEventBridge.resetStartupEventGate();
         await this.loadSettings();
@@ -5483,6 +5516,7 @@ export class PluginManager extends Plugin {
                 log: (message, metadata) => this.log(message, metadata),
             }),
             getMemoryEvidenceEpoch: () => this.getMemoryGraphTopologyEpoch("chat"),
+            getTaskSourceAuthorityEpoch: () => this.getTaskSourceAuthorityEpoch(),
             getGraphBoundarySnapshotSource: () => this.createMemoryGraphBoundarySnapshotSource("chat"),
             isDataBoundaryAllowedPath: (path) => this.isMemoryProviderPathAllowed(path),
             readLatestMemorySource: (path, signal) => this.captureLatestMemorySource(

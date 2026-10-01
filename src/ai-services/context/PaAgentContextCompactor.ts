@@ -1,5 +1,5 @@
 import type { ChatMessage, PaAgentMessage } from "../chat-types";
-import { cloneMessage, cloneTranscript } from "./clone-utils";
+import { cloneMessage, cloneTranscriptSteps, finishContextSteps } from "./clone-utils";
 import { escapeTaggedBoundary } from "../agent-utils";
 import { isCurrentToolSummary, type PaAgentContextSummaries, type PaAgentToolSummary } from "./PaAgentContextSummaryTypes";
 
@@ -40,15 +40,28 @@ export class PaAgentContextCompactor {
         transcript: readonly PaAgentMessage[],
         options: PaAgentMicroCompactionOptions,
     ): PaAgentMicroCompactionResult {
+        return finishContextSteps(this.microCompactSteps(transcript, options));
+    }
+
+    *microCompactSteps(
+        transcript: readonly PaAgentMessage[],
+        options: PaAgentMicroCompactionOptions,
+    ): Generator<void, PaAgentMicroCompactionResult, void> {
         const maxObservationChars = Math.max(0, options.maxObservationChars);
         const triggerRatio = options.triggerRatio ?? DEFAULT_TRIGGER_RATIO;
         const targetRatio = options.targetRatio ?? DEFAULT_TARGET_RATIO;
         const protectedRecentTurns = Math.max(0, options.protectedRecentTurns ?? DEFAULT_PROTECTED_RECENT_TURNS);
-        const originalObservationChars = totalObservationChars(transcript);
+        let originalObservationChars = 0;
+        for (const message of transcript) {
+            yield;
+            if (message.role === "toolResult" && message.content.includeInNextPrompt) {
+                originalObservationChars += message.content.promptText.length;
+            }
+        }
         if (originalObservationChars <= maxObservationChars * triggerRatio
             && originalObservationChars <= maxObservationChars) {
             return {
-                transcript: cloneTranscript(transcript),
+                transcript: yield* cloneTranscriptSteps(transcript),
                 compactedToolResults: 0,
                 hardTruncatedToolResults: 0,
                 originalObservationChars,
@@ -59,6 +72,7 @@ export class PaAgentContextCompactor {
         const cycleByCallId = new Map<string, number>();
         let cycleCount = 0;
         for (const message of transcript) {
+            yield;
             if (message.role !== "assistant") continue;
             for (const part of message.content) {
                 if (part.type === "toolCall" && part.id) cycleByCallId.set(part.id, cycleCount);
@@ -70,6 +84,7 @@ export class PaAgentContextCompactor {
             (cycleByCallId.get(message.toolCallId) ?? cycleCount) >= protectedStartCycle;
         const currentSummaries = new Map<string, PaAgentToolSummary>();
         for (const message of options.canonicalTranscript ?? transcript) {
+            yield;
             if (message.role !== "toolResult") continue;
             const summary = options.summaries?.tools?.get(message.id);
             if (summary?.text.trim() && isCurrentToolSummary(summary, message)) {
@@ -79,7 +94,7 @@ export class PaAgentContextCompactor {
         let currentChars = originalObservationChars;
         let compactedToolResults = 0;
         let hardTruncatedToolResults = 0;
-        const compacted = transcript.map((message): PaAgentMessage => {
+        const compactOne = (message: PaAgentMessage): PaAgentMessage => {
             if (message.role !== "toolResult") return cloneMessage(message);
             const cloned = cloneToolResultMessage(message);
             if (isRecent(cloned)) {
@@ -114,9 +129,15 @@ export class PaAgentContextCompactor {
                     },
                 },
             };
-        });
+        };
+        const compacted: PaAgentMessage[] = [];
+        for (const message of transcript) {
+            yield;
+            compacted.push(compactOne(message));
+        }
 
         for (let index = 0; index < compacted.length && currentChars > maxObservationChars; index++) {
+            yield;
             let message = compacted[index];
             if (message.role !== "toolResult") continue;
             if (options.allowRecentHardTruncation === false && isRecent(message)) continue;
@@ -179,10 +200,17 @@ export class PaAgentContextCompactor {
         history: readonly ChatMessage[] | undefined,
         options: { recentTurns?: number; maxSummaryChars?: number } = {},
     ): PaAgentHistoryCompactionResult {
+        return finishContextSteps(this.compactChatHistorySteps(history, options));
+    }
+
+    *compactChatHistorySteps(
+        history: readonly ChatMessage[] | undefined,
+        options: { recentTurns?: number; maxSummaryChars?: number } = {},
+    ): Generator<void, PaAgentHistoryCompactionResult, void> {
         if (!history || history.length === 0) {
             return { summary: "", recentHistory: [], compactedCount: 0 };
         }
-        const turns = groupChatTurns(history);
+        const turns = yield* groupChatTurnsSteps(history);
         const recentTurns = Math.max(0, options.recentTurns ?? DEFAULT_RECENT_HISTORY_TURNS);
         const older = turns.slice(0, Math.max(0, turns.length - recentTurns));
         const recent = recentTurns > 0 ? turns.slice(-recentTurns).flat() : [];
@@ -195,6 +223,7 @@ export class PaAgentContextCompactor {
         // Select a suffix of the old turns so an older claim never displaces its
         // more recent correction merely because it appeared first in history.
         for (let index = older.length - 1; index >= 0; index--) {
+            yield;
             const turn = older[index];
             const user = turn.find((message) => message.role === "user")?.content ?? "";
             const assistant = turn.find((message) => message.role === "assistant")?.content ?? "";
@@ -264,17 +293,15 @@ function truncateToolResultPromptText(
     return marker;
 }
 
-function totalObservationChars(transcript: readonly PaAgentMessage[]): number {
-    return transcript.reduce((total, message) => {
-        if (message.role !== "toolResult" || !message.content.includeInNextPrompt) return total;
-        return total + message.content.promptText.length;
-    }, 0);
+export function groupChatTurns(history: readonly ChatMessage[]): ChatMessage[][] {
+    return finishContextSteps(groupChatTurnsSteps(history));
 }
 
-export function groupChatTurns(history: readonly ChatMessage[]): ChatMessage[][] {
+export function* groupChatTurnsSteps(history: readonly ChatMessage[]): Generator<void, ChatMessage[][], void> {
     const turns: ChatMessage[][] = [];
     let current: ChatMessage[] | null = null;
     for (const message of history) {
+        yield;
         if (message.role === "user") {
             if (current) turns.push(current);
             current = [message];

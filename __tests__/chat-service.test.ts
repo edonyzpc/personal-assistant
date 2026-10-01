@@ -36,7 +36,7 @@ import {
     BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT,
     BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
 } from '../src/ai-services/builtin-web-search-provider';
-import { completeInputLineage, unknownInputLineage } from '../src/ai-services/input-lineage';
+import { completeInputLineage, unknownInputLineage, type InputLineage } from '../src/ai-services/input-lineage';
 
 jest.mock('obsidian');
 
@@ -167,6 +167,22 @@ async function flushMicrotasks(times = 6) {
     for (let index = 0; index < times; index++) {
         await Promise.resolve();
     }
+}
+
+async function advanceFakeClockToStage(stage: Promise<unknown>, run: Promise<unknown>): Promise<void> {
+    let stageReached = false;
+    let runFinished = false;
+    void stage.then(() => { stageReached = true; }, () => { stageReached = true; });
+    void run.then(() => { runFinished = true; }, () => { runFinished = true; });
+    for (let step = 0; step < 1_000 && !stageReached; step++) {
+        if (runFinished) {
+            await run;
+            throw new Error('The runtime ended before the expected test stage.');
+        }
+        await jest.advanceTimersByTimeAsync(1);
+    }
+    if (!stageReached) throw new Error('The test clock did not reach the expected runtime stage.');
+    await stage;
 }
 
 async function waitForEvent(
@@ -1308,9 +1324,12 @@ describe('ChatService.streamLLM integration', () => {
             prompt: 'Watercolor bookstore', operation: 'generate', count: 1, referenceImageRefs: [],
         });
         const hostSubmitCall = submit.mock.calls[0] as unknown[];
-        expect(hostSubmitCall[1]).toBeUndefined();
+        expect(hostSubmitCall[1]).toEqual(expect.any(Function));
+        expect((hostSubmitCall[1] as () => boolean)()).toBe(true);
         expect(hostSubmitCall[2]).toMatchObject({ completeness: 'complete' });
+        expect((hostSubmitCall[2] as InputLineage).dependencies.some(dependency => dependency.kind === 'vault')).toBe(false);
         expect(hostSubmitCall[3]).toEqual(expect.any(Function));
+        expect((hostSubmitCall[3] as () => boolean)()).toBe(true);
         expect(events).toEqual(expect.arrayContaining([expect.objectContaining({
             type: 'tool_execution_end', toolName: 'create_image', outcome: 'success',
         })]));
@@ -1645,7 +1664,7 @@ describe('ChatService.streamLLM integration', () => {
                 memoryMode: 'auto',
                 onLifecycleEvent: (event) => lifecycleEvents.push(event),
             });
-            await acknowledgementStarted;
+            await advanceFakeClockToStage(acknowledgementStarted, run);
             expect(streamCall).toBe(2);
 
             await jest.advanceTimersByTimeAsync(70);
@@ -1820,7 +1839,7 @@ describe('ChatService.streamLLM integration', () => {
                 memoryMode: 'auto',
                 onLifecycleEvent: (event) => lifecycleEvents.push(event),
             });
-            await acknowledgementStarted;
+            await advanceFakeClockToStage(acknowledgementStarted, run);
 
             await jest.advanceTimersByTimeAsync(70);
             expect(acknowledgementSignal?.aborted).toBe(false);
@@ -2404,10 +2423,10 @@ describe('ChatService.streamLLM integration', () => {
             memoryTool.search = jest.fn(async () => initial);
             memoryTool.revalidateForProvider = jest.fn(async (result: MemorySearchResult) => result);
             const run = runtime.streamTurn({ prompt: 'Use Memory for launch.', memoryMode: 'auto', onEvent: jest.fn() });
-            await answerStarted;
+            await advanceFakeClockToStage(answerStarted, run);
             expect(memoryTool.revalidateForProvider).not.toHaveBeenCalled();
             releaseAnswer();
-            await run;
+            await advanceFakeClockToStage(run, run);
 
             expect(answerInputs).toHaveLength(2);
             expect(answerModel.invoke).toHaveBeenCalledTimes(1);
