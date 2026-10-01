@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-09-30
+Updated: 2026-10-01
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-047 | Agent 非阻塞执行 | 原生 UI、编辑和保存优先；分层来源准入、有界工作；快照与撤销保持；GPT 本次完成设计实施 | [Decision](./decisions/dec-047-agent-responsive-execution.md), [Product Spec](./specs/pa-agent-responsive-execution-product-spec.md) | 实际仍有不可分割纯计算阻塞 renderer 时，仅隔离该计算 |
 | DEC-046 | 笔记最终差异与双入口审阅 | 按笔记初末态、Chat 紧凑差异与手动 tab、整批确认、上下字词高亮；Operations 不再持久审计，不扫描或清理旧目录 | [Decision](./decisions/dec-046-note-change-review-and-audit-retirement.md), [Product Spec](./specs/pa-note-change-review-product-spec.md) | 审阅方式不足以核对改动，或 Owner 重新要求局部接受/持久历史 |
 | DEC-045 | Ghost 预览确认发布 | Ghost 原生 Preview；每次发布/更新/恢复同桌面完成，完成记录同步后可换桌面新更新；不接续异机未完成任务，保留最近更新恢复 | [Decision](./decisions/dec-045-ghost-blog-publishing.md), [Product Spec](./specs/pa-ghost-blog-publishing-product-spec.md) | 真实渲染、转换或完成记录同步不能满足既定体验，或需要扩大平台/发布范围 |
 | DEC-044 | 统一 Chat 生图与内容配图 | 单一 CreateImage、明确全文/选区、保留 Featured 专用调用；command 收敛为快捷入口，显式保存 | [Decision](./decisions/dec-044-unified-chat-image-creation.md), [Product Spec](./specs/pa-unified-chat-image-creation-product-spec.md) | 来源、专用描述质量或旧选项无法保全，或拟合并独立提炼调用 |

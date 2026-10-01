@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-09-30
+Updated: 2026-10-01
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-047 | Agent 执行不能阻塞 Obsidian 原生操作 | Accepted | 分层来源准入、有界 renderer 工作、保留来源撤销与已读快照；最低充分桌面/mobile 验证 | [Record](./dec-047-agent-responsive-execution.md) |
 | DEC-046 | 笔记最终差异审阅与 Operations 审计退役 | Accepted | Chat 紧凑差异、手动完整审阅 tab、整批确认；停写审计且不处理旧目录 | [Record](./dec-046-note-change-review-and-audit-retirement.md) |
 | DEC-045 | Ghost 预览确认发布 | Accepted | Obsidian 主源；原生 Preview、PA 确认；每次操作同桌面完成，完成后可换桌面发起新更新 | [Record](./dec-045-ghost-blog-publishing.md) |
 | DEC-044 | Unified Chat image creation | Accepted | 单一 CreateImage、明确文字来源、保留专用提炼；原 command 成为 Chat 快捷入口 | [Record](./dec-044-unified-chat-image-creation.md) |
