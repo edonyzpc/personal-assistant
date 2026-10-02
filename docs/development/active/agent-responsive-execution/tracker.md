@@ -1,7 +1,7 @@
 # Agent 响应性 Development Tracker
 
 Document status: Current
-Delivery status: Validated
+Delivery status: Validating
 Updated: 2026-10-02
 Work item: B-155
 Authority: 本 track 的唯一执行状态、finding、验证证据与 closeout readiness。
@@ -10,14 +10,14 @@ SDD: [Software Design](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: 完整设计、实现、独立复核与 desktop/mobile simulator 验收完成。
-- Next action: Owner 2026-10-02 已授权 master push 与 beta 发布；等待本次测试夹具修正的完整 CI 后进入 beta.18 包装与发布。保留完整设计，不自动 closeout。
+- Current phase: 原完整设计、实现与 desktop/mobile 验收完成；beta gate 暴露覆盖率下重复解析及时钟夹具问题，最小修正正在最终验证。
+- Next action: Owner 2026-10-02 已授权 master push 与 beta 发布；修正后 exact-master 完整 CI 通过，再包装 beta.18，并从 BRAT 实际安装验证 desktop/mobile。保留完整设计，不自动 closeout。
 - Blocker / decision needed: 无产品决策；GLM 周限额，Owner 已授权 GPT 完整实施。早期自动审批的集成/竞态证据问题已补实测、独立复核并通过，接线已落地。
 - Last verified behavior: 真实 query factory 500 ancestry × 500 候选的多次切片只完整准入一次，dirty 后再准入；真实 SDK 撤销拒绝、普通编辑保留快照；desktop/mobile 实际检索成功、准备时编辑可落盘、tab/原生命令/Stop 正常。
 - Delivery tree: 基于主树 09c2961 的 managed worktree 已安全接收全部任务 diff 到主仓库；后续修正仅在主仓库，保留无关改动。
 - Actual app target: 主仓库 `test/`，不改真实 `anthelion` vault。
 - Owned resources: managed worktree 已可恢复归档，主树依赖保留；无运行中的任务 probe。三轮合成 fixture 均按唯一 marker 清理，最终 test 回到 16 篇基线、零自有会话/标签、原会话恢复、Host/fetch/Memory 恢复、mobile simulator 关闭。`/private/tmp/pa-responsive-*.log/json/cjs` 中本任务原始日志及 probe 脚本保留为验收证据；未清扫其它任务的文件。
-- Stop point: Validated implementation；按 Owner 明确授权完成 master push、beta.18 发布及对应 BRAT smoke，保留用户要求的完整设计，不自动 closeout。
+- Stop point: 按 Owner 明确授权完成 master push、beta.18 发布及对应 BRAT smoke，保留用户要求的完整设计，不自动 closeout。
 
 ## Work
 
@@ -41,6 +41,7 @@ SDD: [Software Design](./sdd.md)
 | B-155/REQ-01 / B-155/AC-01 | renderer 分块 | 当前构建部署到 test 后 desktop 原生编辑/tab/命令/停止；CLI mobile simulator 对应操作 | PA 准备进行时原生动作可完成，记录实际保存与停止 | 部署构建或相关 UI/runtime 变动 |
 | B-155/REQ-06 / B-155/AC-06 | 共用 gate | docs:check、diff:check、DOM scan；复用 enclosing make deploy 检查 | 各证据范围、自然退出、输入身份明确 | 输入变化或实际发现遗漏 |
 | B-155/REQ-05..06 / CI 调度夹具 | 真实 timer polling、分场景 eval、来源集成确定性调度计时 | 四 affected suites；时间预算直接回归；最终 exact-master 四 worker coverage CI | 500 来源、撤销/编辑、完整 12 场景及跨场景证据保持；默认 timeout 与覆盖率门槛不变 | fixture 或调度行为变化 |
+| B-155/REQ-03,05..06 / 已验证来源重复解析 | owned 标量 dependency 直接执行同一权限谓词；对象型仍保留 parser 副本；虚拟 reserve 匹配虚拟 timer | run / actual SDK / real query / writing preview focused；malformed 与 callback throw 反例；lint/build/完整 CI；BRAT desktop/mobile 最小 runtime smoke | strict 外部解析、scope/epoch/abort/独立 receipt 不变，500 与默认 5s 保留；完整检查和实际发布资产均通过 | 源码、夹具变化或 CI / app 新失败 |
 
 不增加耗时阈值单测、全域性能基准、额外 provider 调用或真机 iOS gate。自动化次数/让出证明与原生操作证明承担不同问题。
 
@@ -55,7 +56,8 @@ SDD: [Software Design](./sdd.md)
 | F-05 | P2 | 新 snippet 枚举包装 native 异常破坏标准失败来源分类 | 原样交给既有 adapter 脱敏；保留 API 缺失及非数组业务契约 | E-06 与 snippet focused PASS | Fixed |
 | F-06 | P2 | 普通编辑使不同准备段的 epoch 票据相互失效 | 固定 payload 先准备，末尾集中、有界重验授权；实际撤销仍拒绝 | SDK 500 依赖三场景与 snapshot 52 项回归 PASS | Fixed |
 | F-07 | P1 | 实际 factory 每次 yield 后 executor 无条件重建 500 来源证明；准入耗时再触发下一次 yield，仍反馈放大 | executor 先检查 attempt abort/run/scope；严格票据有效即复用，首次/dirty 才完整准备；独立 receipt 不变 | 真实 factory 多候选次数回归及重新 app smoke | Fixed |
-| F-08 | P2 | coverage CI 下多轮/500 来源集成累积 timer 空等并超过默认 5s；setImmediate polling 可能先于 timer 准入耗尽 | eval 按场景独立默认 deadline；来源集成固定 performance 计时，推进测试 timer 保留 item 上限及撤销；E-10 小步推进 timer 保留真实 WebCrypto 完成机会；真实 macrotask、abort、8ms 预算独立直接验证。poll 使用 timer phase。无生产改动、未延长 timeout | affected suites 54 项通过；完整 exact-master CI 由 beta 发布 gate 核验，远程 run 状态不在此重复维护 | Fixed |
+| F-08 | P2 | 多轮 eval / polling 与测试时钟不匹配；SDK 来源 suite 仍在覆盖率 CI 超时 | 已修 eval 和 polling；reserved writing 的 Date.now 及 timer 使用同一虚拟时间；SDK afterEach 终止并等待自有 run，防止超时污染；默认 timeout / production deadline 不变 | focused 通过；最终 exact-master CI 待验，早期 timer 修正不能独立解释 SDK 超时 | In validation |
+| F-09 | P2 | owned lineage 已严格解析，async 却对每个标量 dependency 再进行 single-lineage Zod 解析 | 复用同一权限谓词，仅 user-text/vault/web 使用已验证 DTO；对象型保留原副本；外部严格 parser 和 source-only 完整检查不变 | 独立 diff 复核与 136 focused PASS；CI 最终结果待验，不以 CPU profile 单独声称 Linux 根因已解决 | In validation |
 
 ## Validation Log
 
@@ -89,6 +91,10 @@ SDD: [Software Design](./sdd.md)
 | 2026-10-02 | F-08 / B-155/REQ-05..06 | 标准 source focused、lint、docs、diff | 四 suites / 54 tests PASS，natural exit 0；lint/docs/diff PASS | `/private/tmp/pa-beta18-fixture-focused.log`、`/private/tmp/pa-beta18-fixture-lint.log`、`/private/tmp/pa-beta18-fixture-docs.log`；生产源码未变，既有 desktop/mobile 行为证据保持；随后 CI 36956186903 的 E-10 与来源集成仍超时，该夹具修正不足，未发布 |
 | 2026-10-02 | F-08 / B-155/REQ-05..06 | timer idle 的进一步夹具修正 | 四 suites / 54 tests PASS，natural exit 0 | `/private/tmp/pa-beta18-timer-final.json`；500 来源正常/撤销/编辑 0.407/0.183/0.401s；E-10 0.262s，八轮恢复及无进展控制原断言保持。Jest runAllTimers 会在 WebCrypto pending 时误跳到远期 deadline，E-10 改为有界 1ms 推进；没有放宽生产 deadline、默认 test timeout、覆盖率或请求 cap。测试计时不作性能证据 |
 | 2026-10-02 | F-08 / B-155/REQ-05..06 | CI 36957506236 与最后的 SDK timer driver | CI 354 suites / 8608 tests PASS，500 来源 suite 的三场景仍超时；修正后四 suites / 54 tests PASS，natural exit 0 | 原始 `/private/tmp/pa-beta18-third-master-ci-failed.log`；SDK 的一次性 runAllTimers 可能在原生异步 I/O 尚未完成时提前结束，后续新 timer 无驱动。改成有界、小步推进直到整轮 settled，夹具 read 明确跨真实 setImmediate；500 来源保留，正常/编辑额外断言实际工具回执 isError=false；撤销仍 cachedRead=0 且旧私有历史剔除。`/private/tmp/pa-beta18-sdk-driver-final.json`。未发布失败构建 |
+
+| 2026-10-02 | F-08..09 / B-155/REQ-03,05..06 | CI 36960573234 的一次性阶段诊断 | 未通过，不发布 | `/private/tmp/pa-beta18-stage-ci-failed.log`：unchanged 在 3s 时 tick=23、prepare=completed=3、request=1、read=1、pendingTimers=1；首请求/读取已完成，不能称前置死锁。首超时后仍运行并污染后续 fake timer。另有 reserved writing 的虚拟 Date.now 与真实 deadline 先于请求触发。诊断代码已移除。CPU profile 指向重复 strict parse，但不足以单独证明 Linux 耗时根因 |
+| 2026-10-02 | F-09 / B-155/REQ-03,05 | 标量权限谓词及独立只读复核 | 4 suites / 136 tests PASS，natural exit 0；lint/type/diff/DOM PASS | `/private/tmp/pa-beta18-scalar-focused.json`；2 malformed＋1 callback throw 反例；外部严格解析、对象副本、fallback、epoch、abort、receipt 保留。生产改变需最终完整 CI 与发布资产 app smoke，旧源码实测不替代新资产检查 |
+| 2026-10-02 | F-08..09 / B-155/REQ-05..06 | 更正 coverage CLI 参数后的限定文件检查 | 4 suites / 136 行为断言 PASS；局部覆盖率未满足全局门槛，natural exit 1 | `/private/tmp/pa-beta18-scalar-targeted-coverage.json`：正常/撤销/编辑 959/206/806ms，不作性能 SLA。误用 coverageReporters variadic 参数的前次运行意外选了全仓且未先 build，353 suites 通过、2 artifact suites 因过期 provenance 失败；`/private/tmp/pa-beta18-scalar-focused-coverage.json` 明确非完整 gate，不以此制造绿色 |
 
 ## Acceptance Boundary
 

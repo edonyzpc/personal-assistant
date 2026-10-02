@@ -108,6 +108,8 @@ flowchart TD
 
 完整 input lineage 由 Host 构建、冻结并验证。不得按 citation chips 缩小真实 ancestry，也不得把 unknown 变为 complete。schema 解析、union、克隆、逐依赖授权分别在异步准备阶段执行，不能在每个候选路径重做。
 
+`ownedLineage` 严格解析后的标量来源（user-text/vault/web）直接执行共用权限谓词，不逐项重建 single-lineage 再解析。对象型来源仍通过原 parser 获得隔离副本再交给 Host callback；外部输入严格解析、未知拒绝、epoch 重验、取消与独立 source-only receipt 的完整检查保持不变。
+
 ### 3.2 路径层
 
 guard 的普通 `isCurrent()`只检查本次运行、约束和已封票据的廉价失效状态。`isPathAllowed(path)`实时检查**该路径**及其当前文件身份/权限。检查单篇 current 时直接使用 `getAbstractFileByPath(path)`与捕获对象比较，不重扫库。
