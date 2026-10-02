@@ -88,6 +88,7 @@ SDD: [Software Design](./sdd.md)
 | 2026-10-02 | F-08 / B-155/REQ-05..06 | affected 四 suites 带 coverage 运行 | 54 项行为断言 PASS；局部覆盖率未满足全局门槛，command exit 1，不当作完整 gate | `/private/tmp/pa-beta18-fixed-focused.json`；500 来源正常/编辑 2.030/2.105s；12 场景及 aggregate 均独立默认 deadline，无改生产逻辑；完整 exact-master CI 待验 |
 | 2026-10-02 | F-08 / B-155/REQ-05..06 | 标准 source focused、lint、docs、diff | 四 suites / 54 tests PASS，natural exit 0；lint/docs/diff PASS | `/private/tmp/pa-beta18-fixture-focused.log`、`/private/tmp/pa-beta18-fixture-lint.log`、`/private/tmp/pa-beta18-fixture-docs.log`；生产源码未变，既有 desktop/mobile 行为证据保持；随后 CI 36956186903 的 E-10 与来源集成仍超时，该夹具修正不足，未发布 |
 | 2026-10-02 | F-08 / B-155/REQ-05..06 | timer idle 的进一步夹具修正 | 四 suites / 54 tests PASS，natural exit 0 | `/private/tmp/pa-beta18-timer-final.json`；500 来源正常/撤销/编辑 0.407/0.183/0.401s；E-10 0.262s，八轮恢复及无进展控制原断言保持。Jest runAllTimers 会在 WebCrypto pending 时误跳到远期 deadline，E-10 改为有界 1ms 推进；没有放宽生产 deadline、默认 test timeout、覆盖率或请求 cap。测试计时不作性能证据 |
+| 2026-10-02 | F-08 / B-155/REQ-05..06 | CI 36957506236 与最后的 SDK timer driver | CI 354 suites / 8608 tests PASS，500 来源 suite 的三场景仍超时；修正后四 suites / 54 tests PASS，natural exit 0 | 原始 `/private/tmp/pa-beta18-third-master-ci-failed.log`；SDK 的一次性 runAllTimers 可能在原生异步 I/O 尚未完成时提前结束，后续新 timer 无驱动。改成有界、小步推进直到整轮 settled，夹具 read 明确跨真实 setImmediate；500 来源保留，正常/编辑额外断言实际工具回执 isError=false；撤销仍 cachedRead=0 且旧私有历史剔除。`/private/tmp/pa-beta18-sdk-driver-final.json`。未发布失败构建 |
 
 ## Acceptance Boundary
 
