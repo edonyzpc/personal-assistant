@@ -14,7 +14,6 @@ import { AIUtils } from '../src/ai-services/ai-utils';
 import { getFeaturedImagePrompt } from '../src/ai-services/featured-image-prompt';
 import {
     prepareFeaturedImagePrompt,
-    FeaturedImagePromptPreparationError,
 } from '../src/ai-services/prepare-featured-image-prompt';
 import { PaAgentRunUsageLedger } from '../src/ai-services/agent-usage-ledger';
 
@@ -56,31 +55,39 @@ describe('prepareFeaturedImagePrompt', () => {
         })).resolves.toBe('PREPARED-IMAGE-SENTINEL');
 
         const messages = invoke.mock.calls[0]![0];
+        expect(createChatModel).toHaveBeenCalledTimes(1);
+        expect(invoke).toHaveBeenCalledTimes(1);
+        expect(messages).toHaveLength(2);
         expect(messages[0].content).toBe(getFeaturedImagePrompt());
         expect(messages[1].content).toContain('用户本轮要求：');
         expect(messages[1].content).toContain('不要文字，偏水彩');
         expect(messages[1].content).toContain('文字内容：');
         expect(messages[1].content).toContain('INSIDE-SELECTION sentinel');
         expect(messages[1].content).not.toContain('OUTSIDE-SELECTION sentinel');
-        expect(sourceCurrent.mock.calls.every(Boolean)).toBe(true);
+        expect(sourceCurrent).toHaveBeenCalled();
     });
 
-    it('rejects oversized source or result without a model call', async () => {
+    it('rejects oversized input before creating a model', async () => {
         await expect(prepareFeaturedImagePrompt(host, {
             sourceText: 'x'.repeat(120_001),
             userRequest: '',
             signal: new AbortController().signal,
             isSourceCurrent: () => true,
-        })).rejects.toBeInstanceOf(FeaturedImagePromptPreparationError);
+        })).rejects.toMatchObject({ code: 'input_too_large' });
         expect(createChatModel).not.toHaveBeenCalled();
+    });
 
-        createChatModel.mockResolvedValueOnce({ invoke: async () => ({ content: 'x'.repeat(5_001) }) });
+    it('rejects an oversized result after exactly one model invocation', async () => {
+        const invoke = jest.fn<PreparedModelInvoke>(async () => ({ content: 'x'.repeat(5_001) }));
+        createChatModel.mockResolvedValueOnce({ invoke });
         await expect(prepareFeaturedImagePrompt(host, {
             sourceText: 'source',
             userRequest: '',
             signal: new AbortController().signal,
             isSourceCurrent: () => true,
         })).rejects.toMatchObject({ code: 'result_too_large' });
+        expect(createChatModel).toHaveBeenCalledTimes(1);
+        expect(invoke).toHaveBeenCalledTimes(1);
     });
 
     it('uses the configured deepseek envelope instead of an arbitrary 120k source cap', async () => {
@@ -99,20 +106,20 @@ describe('prepareFeaturedImagePrompt', () => {
     });
 
     it.each([
-        null,
-        { refusal: 'I will not answer' },
-        [{ type: 'refusal', refusal: 'no' }],
-        [{ type: 'text', text: 'usable', refusal: 'contradictory refusal' }],
+        ['null content', null],
+        ['refusal object', { refusal: 'I will not answer' }],
+        ['refusal part', [{ type: 'refusal', refusal: 'no' }]],
+        ['text carrying a refusal', [{ type: 'text', text: 'usable', refusal: 'contradictory refusal' }]],
     ] as const)(
-        'rejects nontext model output without serializing it',
-        async content => {
+        'rejects %s without serializing it as an image description',
+        async (_name, content) => {
             createChatModel.mockResolvedValueOnce({ invoke: async () => ({ content }) });
             await expect(prepareFeaturedImagePrompt(host, {
                 sourceText: 'source',
                 userRequest: '',
                 signal: new AbortController().signal,
                 isSourceCurrent: () => true,
-        })).rejects.toMatchObject({ code: 'nontext_result' });
+            })).rejects.toMatchObject({ code: 'nontext_result' });
         },
     );
 
@@ -152,11 +159,22 @@ describe('prepareFeaturedImagePrompt', () => {
         ]);
     });
 
-    it('checks cancellation and source authority before and after the physical request', async () => {
+    it('rejects an already stale source before creating a model', async () => {
+        await expect(prepareFeaturedImagePrompt(host, {
+            sourceText: 'source',
+            userRequest: '',
+            signal: new AbortController().signal,
+            isSourceCurrent: () => false,
+        })).rejects.toMatchObject({ code: 'source_changed' });
+        expect(createChatModel).not.toHaveBeenCalled();
+    });
+
+    it('reports cancellation when a pending provider request rejects after Stop', async () => {
         const controller = new AbortController();
-        let rejectRequest: ((value: unknown) => void) | undefined;
+        const started = deferred<void>();
+        const request = deferred<{ content: unknown }>();
         createChatModel.mockResolvedValueOnce({
-            invoke: () => new Promise((_resolve, reject) => { rejectRequest = reject; }),
+            invoke: () => { started.resolve(); return request.promise; },
         });
         const preparation = prepareFeaturedImagePrompt(host, {
             sourceText: 'source',
@@ -164,38 +182,63 @@ describe('prepareFeaturedImagePrompt', () => {
             signal: controller.signal,
             isSourceCurrent: () => true,
         });
-        await flushPromises();
+        await started.promise;
         controller.abort();
-        rejectRequest?.(new Error('transport stopped'));
+        request.reject(new Error('transport stopped'));
         await expect(preparation).rejects.toMatchObject({ code: 'cancelled' });
-
-        createChatModel.mockResolvedValueOnce({ invoke: async () => ({ content: 'late result' }) });
-        await expect(prepareFeaturedImagePrompt(host, {
-            sourceText: 'source',
-            userRequest: '',
-            signal: new AbortController().signal,
-            isSourceCurrent: () => false,
-        })).rejects.toMatchObject({ code: 'source_changed' });
         expect(createChatModel).toHaveBeenCalledTimes(1);
     });
 
+    it.each([
+        ['source revocation', 'source_changed'],
+        ['Stop', 'cancelled'],
+    ] as const)('rejects a resolved description after %s during the physical request', async (change, code) => {
+        const controller = new AbortController();
+        const started = deferred<void>();
+        const request = deferred<{ content: unknown }>();
+        let sourceCurrent = true;
+        const invoke = jest.fn<PreparedModelInvoke>(() => {
+            started.resolve();
+            return request.promise;
+        });
+        createChatModel.mockResolvedValueOnce({ invoke });
+        const preparation = prepareFeaturedImagePrompt(host, {
+            sourceText: 'source',
+            userRequest: '',
+            signal: controller.signal,
+            isSourceCurrent: () => sourceCurrent,
+        });
+        await started.promise;
+        if (change === 'Stop') controller.abort();
+        else sourceCurrent = false;
+        request.resolve({ content: 'late result' });
+        await expect(preparation).rejects.toMatchObject({ code });
+        expect(createChatModel).toHaveBeenCalledTimes(1);
+        expect(invoke).toHaveBeenCalledTimes(1);
+    });
+
     it('rejects a late result after the text provider connection changes', async () => {
-        let finishRequest!: (value: { content: string }) => void;
-        const request = new Promise<{ content: string }>(resolve => { finishRequest = resolve; });
-        createChatModel.mockResolvedValueOnce({ invoke: async () => request });
+        const started = deferred<void>();
+        const request = deferred<{ content: unknown }>();
+        createChatModel.mockResolvedValueOnce({
+            invoke: () => { started.resolve(); return request.promise; },
+        });
         const preparation = prepareFeaturedImagePrompt(host, {
             sourceText: 'source',
             userRequest: '',
             signal: new AbortController().signal,
             isSourceCurrent: () => true,
         });
-        await flushPromises();
+        await started.promise;
         host.settings.chatModelName = 'changed-model';
-        finishRequest({ content: 'late result' });
+        request.resolve({ content: 'late result' });
         await expect(preparation).rejects.toMatchObject({ code: 'connection_changed' });
     });
 });
 
-function flushPromises() {
-    return new Promise<void>(resolve => setImmediate(resolve));
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+    return { promise, resolve, reject };
 }

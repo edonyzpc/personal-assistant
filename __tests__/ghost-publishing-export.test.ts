@@ -555,8 +555,14 @@ describe("Ghost publishing deterministic export", () => {
         expect(() => buildGhostPublishingFields({ excerpt: "x".repeat(301) }, "Note.md"))
             .toThrow(GhostExportError);
 
+        expect(buildGhostPublishingFields({
+            ghost: { custom_excerpt: "x".repeat(300), meta_description: "y".repeat(500) },
+        }, "Note.md").metaDescription).toEqual({ mode: "manage", value: "y".repeat(500) });
         expect(() => buildGhostPublishingFields({
-            ghost: { custom_excerpt: "x".repeat(301), meta_description: "y".repeat(501) },
+            ghost: { custom_excerpt: "x".repeat(301), meta_description: "y".repeat(500) },
+        }, "Note.md")).toThrow(GhostExportError);
+        expect(() => buildGhostPublishingFields({
+            ghost: { custom_excerpt: "x".repeat(300), meta_description: "y".repeat(501) },
         }, "Note.md")).toThrow(GhostExportError);
 
         expect(buildGhostPublishingFields({ ghost_slug: "stable-url" }, "Note.md").slug)
@@ -650,10 +656,12 @@ describe("Ghost publishing deterministic export", () => {
     it("rejects an unclosed comment before hidden references are read or exported", async () => {
         const host = createHost([
             fakeFile("Main.md", "%% ![[Hidden.md]]\n\nVisible"),
+            fakeFile("Hidden.md", "HIDDEN SECRET BODY"),
         ]);
+        const read = jest.spyOn(host.vault, "read");
         await expect(prepareGhostExport({ targetPath: "Main.md", host, guard: allowAllGuard(), siteProfile: profile }))
             .rejects.toMatchObject({ code: "comment-unclosed" });
-        expect(host.vault.read({ path: "Hidden.md", extension: "md" })).resolves.toBe("");
+        expect(read.mock.calls.map(([file]) => file.path)).toEqual(["Main.md"]);
     });
 
     it("protects each actual inline-code range even when its text repeats a hidden comment", async () => {
@@ -844,10 +852,12 @@ describe("Ghost publishing deterministic export", () => {
             return JSON.stringify(result.lexical);
         };
 
-        expect(await exportTitle("Intro paragraph.\n\n# Main\n\nLater")).toContain("Intro paragraph.");
-        expect(await exportTitle("Intro paragraph.\n\n# Main\n\nLater")).toContain("Main");
-        expect(await exportTitle("> # Main\n\nOrdinary quote")).toContain("Main");
-        expect(await exportTitle("> # Main\n\nOrdinary quote")).toContain("Ordinary quote");
+        const laterHeading = await exportTitle("Intro paragraph.\n\n# Main\n\nLater");
+        expect(laterHeading).toContain("Intro paragraph.");
+        expect(laterHeading).toContain("Main");
+        const quotedHeading = await exportTitle("> # Main\n\nOrdinary quote");
+        expect(quotedHeading).toContain("Main");
+        expect(quotedHeading).toContain("Ordinary quote");
         expect(await exportTitle("%% hidden %%\n# Main\n\nAfter")).not.toContain("Main");
     });
 

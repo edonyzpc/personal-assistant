@@ -10,10 +10,11 @@ import {
 import { projectOperationsReviewResultRows } from "../src/chat/operations-review/OperationsReviewPanel";
 import type { OperationsReviewSnapshot } from "../src/ai-services/operations/operations-review-session";
 import type { OperationExecutionResult, UndoResult } from "../src/ai-services/operations/types";
-import type {
-    OperationsReviewDiffLine,
-    OperationsReviewFileGroup,
-    OperationsReviewModel,
+import {
+    createOperationsReviewModel,
+    type OperationsReviewDiffLine,
+    type OperationsReviewFileGroup,
+    type OperationsReviewModel,
 } from "../src/ai-services/operations/operations-review-model";
 
 function row(id: string, kind: OperationsReviewDiffLine["kind"], text: string): OperationsReviewDiffLine {
@@ -29,35 +30,39 @@ function row(id: string, kind: OperationsReviewDiffLine["kind"], text: string): 
 }
 
 function group(id: string, changeCount: number, firstBlockChanges = changeCount): OperationsReviewFileGroup {
-    const lines = Array.from({ length: firstBlockChanges }, (_value, index) => row(
+    const changedLines = Array.from({ length: changeCount }, (_value, index) => row(
         `${id}-${index + 1}`,
         index % 2 === 0 ? "delete" : "insert",
         `${id}-${index + 1}`,
     ));
-    return {
-        id,
-        path: `notes/${id}.md`,
-        normalizedPath: `notes/${id}.md`,
-        before: id,
-        after: id,
-        beforeExists: true,
-        created: false,
-        netZeroTextChange: false,
-        operationIds: [id],
-        operations: [],
-        changeCount,
-        diffDegraded: false,
-        lines,
-        blocks: firstBlockChanges
-            ? [{
-                id: `${id}-block`,
-                startIndex: 0,
-                endIndex: firstBlockChanges - 1,
-                contextBefore: 0,
-                contextAfter: 0,
-            }]
-            : [],
-    };
+    const hasLaterBlock = firstBlockChanges > 0 && firstBlockChanges < changeCount;
+    const lines = hasLaterBlock
+        ? [
+            ...changedLines.slice(0, firstBlockChanges),
+            ...Array.from({ length: 8 }, (_value, index) => row(`${id}-gap-${index}`, "context", `unchanged ${index}`)),
+            ...changedLines.slice(firstBlockChanges),
+        ]
+        : changedLines;
+    const before = lines.filter(line => line.kind !== "insert").map(line => `${line.text}\n`).join("");
+    const after = lines.filter(line => line.kind !== "delete").map(line => `${line.text}\n`).join("");
+    const path = `notes/${id}.md`;
+    return createOperationsReviewModel({
+        id: `intent-${id}`,
+        runId: "run",
+        turnId: "turn",
+        createdAt: 1,
+        expiresAt: 2,
+        state: "pending",
+        operations: [{
+            id,
+            toolCallId: `call-${id}`,
+            name: "vault_process",
+            input: { path, operation: "replace", params: { search: before, replace: after } },
+            path,
+            expectedBefore: before,
+            expectedAfter: after,
+        }],
+    }).groups[0]!;
 }
 
 describe("OperationsDiff presentation calculations", () => {

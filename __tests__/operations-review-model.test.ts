@@ -44,11 +44,12 @@ describe("OperationsReviewModel", () => {
         const model = createOperationsReviewModel(intent([
             operation("a1", "notes/A.md", "A0", "A1"),
             operation("b1", "notes/B.md", "B0", "B1"),
-            operation("a2", "notes/A.md", "A1", "A2"),
-            operation("a3", "notes/A.md", "A2", "A3"),
+            operation("a2", "./notes//A.md/", "A1", "A2"),
+            operation("a3", "notes\\A.md", "A2", "A3"),
         ]));
 
         expect(model.groups.map(group => group.normalizedPath)).toEqual(["notes/A.md", "notes/B.md"]);
+        expect(model.groups.map(group => group.operationIds)).toEqual([["a1", "a2", "a3"], ["b1"]]);
         expect(model.groups[0]).toMatchObject({
             before: "A0",
             after: "A3",

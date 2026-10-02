@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it, jest } from "@jest/globals";
 import { GhostClientError, type GhostPost, type GhostPostWrite, type GhostRequestGate } from "../src/ghost-publishing/client";
 import { prepareGhostExport } from "../src/ghost-publishing/exporter";
 import { GhostPublishingService, type GhostActionContext } from "../src/ghost-publishing/service";
@@ -526,14 +526,47 @@ describe("Ghost persistent publishing service", () => {
         expect(writes[0].fields).not.toHaveProperty("newsletter");
     });
 
-    it("rejects an image-bearing update before any durable write when final source admission fails", async () => {
-        const app = await setup(true);
-        app.setImage();
-        app.setAllowed(false);
-        await expect(app.service.prepare(noteUid, originalId, app.context)).rejects.toThrow("Scope revoked");
-        expect(await app.operations.list(profile.siteId, noteUid)).toEqual([]);
-        expect(app.calls.filter(({ method }) => ["UPLOAD", "POST", "PUT", "DELETE"].includes(method))).toEqual([]);
-    });
+    it.each(["before preparation", "after preparation"] as const)(
+        "rejects an image-bearing update before any durable write when source is revoked %s",
+        async phase => {
+            const app = await setup(true);
+            app.setImage();
+            const originalPrepare = app.context.prepare;
+            let preparedCandidate: GhostSnapshot | undefined;
+            const prepare = jest.spyOn(app.context, "prepare").mockImplementation(async (...args) => {
+                const prepared = await originalPrepare(...args);
+                preparedCandidate = prepared.candidate;
+                return prepared;
+            });
+            const originalValidate = app.context.validate;
+            const validate = jest.spyOn(app.context, "validate").mockImplementation(async (...args) => {
+                if (phase === "after preparation") app.setAllowed(false);
+                return originalValidate(...args);
+            });
+            const save = jest.spyOn(app.operations, "save");
+            if (phase === "before preparation") app.setAllowed(false);
+            try {
+                await expect(app.service.prepare(noteUid, originalId, app.context)).rejects.toThrow("Scope revoked");
+                if (phase === "after preparation") {
+                    expect(prepare).toHaveBeenCalledTimes(1);
+                    expect(preparedCandidate).toMatchObject({
+                        content: { feature_image: "pending-resource://image-1" },
+                        resources: [expect.objectContaining({ id: "image-1" })],
+                    });
+                    expect(validate).toHaveBeenCalledTimes(1);
+                } else {
+                    expect(prepare).not.toHaveBeenCalled();
+                    expect(validate).not.toHaveBeenCalled();
+                    expect(app.calls).toEqual([]);
+                }
+                expect(save).not.toHaveBeenCalled();
+                expect(await app.operations.list(profile.siteId, noteUid)).toEqual([]);
+                expect(app.calls.filter(({ method }) => ["UPLOAD", "POST", "PUT", "DELETE"].includes(method))).toEqual([]);
+            } finally {
+                app.operations.close();
+            }
+        },
+    );
 
     it("re-prepares changed source in the same local operation and requires a new ticket", async () => {
         const app = await setup(true);

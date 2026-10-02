@@ -244,7 +244,7 @@ describe("OperationsReviewSession", () => {
         const seen: string[] = [];
         session.subscribe(snapshot => seen.push(snapshot.status));
         session.activate();
-        await session.confirm();
+        const result = await controller.executeIntent(intent.id);
 
         expect(events.map(event => event.type)).toEqual(expect.arrayContaining([
             "intent-state-changed",
@@ -252,6 +252,17 @@ describe("OperationsReviewSession", () => {
             "intent-result",
         ]));
         expect(seen).toEqual(expect.arrayContaining(["executing", "completed"]));
+        expect(session.getSnapshot()).toMatchObject({
+            status: "completed",
+            execution: result,
+            operationResults: [expect.objectContaining({
+                operationId: intent.operations[0]!.id,
+                status: "succeeded",
+                receiptId: expect.any(String),
+            })],
+        });
+        expect(session.getSnapshot().operationResults).toEqual(result.operations);
+        expect(vault.files.get("notes/a.md")).toBe("before\nafter");
         controller.dispose();
     });
 

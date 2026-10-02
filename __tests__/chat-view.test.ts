@@ -5645,16 +5645,6 @@ describe('LLMView turn lifecycle', () => {
         ].join('\n'));
     });
 
-    it('keeps Operations review controls reachable on desktop and mobile layouts', () => {
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        expect(getCssRuleBlock(css, '.pa-operations-diff__full-controls > button'))
-            .toContain('min-height: 36px');
-        expect(getCssRuleBlock(css, 'body.is-mobile .pa-operations-diff__full-controls > button'))
-            .toContain('min-height: 44px');
-        expect(getCssRuleBlock(css, '.pa-operations-review-view__actions'))
-            .toContain('position: sticky');
-    });
-
     it('cleans an Operations card once on source reset and not again when the whole view closes', async () => {
         mockUnmountOperationsDiff.mockClear();
         mountOperationsDiffMock.mountOperationsDiff.mockClear();

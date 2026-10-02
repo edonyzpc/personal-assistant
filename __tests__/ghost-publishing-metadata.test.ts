@@ -98,7 +98,6 @@ describe("prepareGhostMetadata", () => {
         ["extra keys", JSON.stringify({ customExcerpt: "x", metaDescription: "y", secret: "z" })],
         ["oversized excerpt", JSON.stringify({ customExcerpt: "x".repeat(301), metaDescription: "y" })],
         ["oversized SEO", JSON.stringify({ customExcerpt: "x", metaDescription: "y".repeat(501) })],
-        ["invalid slug", JSON.stringify({ customExcerpt: "x", metaDescription: "y", slug: "Not_A_Valid_Slug" })],
     ] as const)("rejects %s without accepting unreliable output", async (_name, content) => {
         createChatModel.mockResolvedValueOnce({ invoke: async () => ({ content }) });
         await expect(prepareGhostMetadata(host, input())).rejects.toMatchObject({
@@ -106,9 +105,12 @@ describe("prepareGhostMetadata", () => {
         });
     });
 
-    it("rejects an invalid generated slug without accepting the result", async () => {
+    it.each([
+        ["URL", "https://ghost.example/not-a-slug"],
+        ["uppercase and underscores", "Not_A_Valid_Slug"],
+    ] as const)("rejects %s as a generated slug without accepting the result", async (_name, slug) => {
         createChatModel.mockResolvedValueOnce({ invoke: async () => ({
-            content: JSON.stringify({ slug: "https://ghost.example/not-a-slug" }),
+            content: JSON.stringify({ slug }),
         }) });
         await expect(prepareGhostMetadata(host, input({
             needed: { customExcerpt: false, metaDescription: false, slug: true },
