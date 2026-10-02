@@ -55,7 +55,7 @@ SDD: [Software Design](./sdd.md)
 | F-05 | P2 | 新 snippet 枚举包装 native 异常破坏标准失败来源分类 | 原样交给既有 adapter 脱敏；保留 API 缺失及非数组业务契约 | E-06 与 snippet focused PASS | Fixed |
 | F-06 | P2 | 普通编辑使不同准备段的 epoch 票据相互失效 | 固定 payload 先准备，末尾集中、有界重验授权；实际撤销仍拒绝 | SDK 500 依赖三场景与 snapshot 52 项回归 PASS | Fixed |
 | F-07 | P1 | 实际 factory 每次 yield 后 executor 无条件重建 500 来源证明；准入耗时再触发下一次 yield，仍反馈放大 | executor 先检查 attempt abort/run/scope；严格票据有效即复用，首次/dirty 才完整准备；独立 receipt 不变 | 真实 factory 多候选次数回归及重新 app smoke | Fixed |
-| F-08 | P2 | master 首次 coverage CI 的 12 场景聚合测试与 500 来源用例默认 5s 超时；setImmediate polling 可能先于 timer 准入耗尽 | eval 按场景独立默认 deadline；来源语义集成固定 performance 计时，保留真实 timer 与 item 上限，独立验证 8ms 时间预算；poll 使用 timer phase。无生产改动、未延长 timeout | affected suites 54 项通过；完整 exact-master CI 由 beta 发布 gate 核验，远程 run 状态不在此重复维护 | Fixed |
+| F-08 | P2 | coverage CI 下多轮/500 来源集成累积 timer 空等并超过默认 5s；setImmediate polling 可能先于 timer 准入耗尽 | eval 按场景独立默认 deadline；来源集成固定 performance 计时，推进测试 timer 保留 item 上限及撤销；E-10 小步推进 timer 保留真实 WebCrypto 完成机会；真实 macrotask、abort、8ms 预算独立直接验证。poll 使用 timer phase。无生产改动、未延长 timeout | affected suites 54 项通过；完整 exact-master CI 由 beta 发布 gate 核验，远程 run 状态不在此重复维护 | Fixed |
 
 ## Validation Log
 
@@ -86,7 +86,8 @@ SDD: [Software Design](./sdd.md)
 
 | 2026-10-02 | Owner master push / beta 授权 | 首次 master CI 36954401673 与本地四 worker coverage 原始复现 | CI 3 suites / 4 tests 失败；本地 355 suites / 8598 tests PASS，natural exit 0 | `/private/tmp/pa-beta18-master-ci-failed.log`、`/private/tmp/pa-beta18-full-coverage.json`；本地聚合 eval 4.781s、正常/编辑来源集成 3.818/3.608s。CI 超时未被视为通过；beta 尚未包装或发布 |
 | 2026-10-02 | F-08 / B-155/REQ-05..06 | affected 四 suites 带 coverage 运行 | 54 项行为断言 PASS；局部覆盖率未满足全局门槛，command exit 1，不当作完整 gate | `/private/tmp/pa-beta18-fixed-focused.json`；500 来源正常/编辑 2.030/2.105s；12 场景及 aggregate 均独立默认 deadline，无改生产逻辑；完整 exact-master CI 待验 |
-| 2026-10-02 | F-08 / B-155/REQ-05..06 | 标准 source focused、lint、docs、diff | 四 suites / 54 tests PASS，natural exit 0；lint/docs/diff PASS | `/private/tmp/pa-beta18-fixture-focused.log`、`/private/tmp/pa-beta18-fixture-lint.log`、`/private/tmp/pa-beta18-fixture-docs.log`；生产源码未变，既有 desktop/mobile 行为证据保持；需新 master 完整 coverage CI |
+| 2026-10-02 | F-08 / B-155/REQ-05..06 | 标准 source focused、lint、docs、diff | 四 suites / 54 tests PASS，natural exit 0；lint/docs/diff PASS | `/private/tmp/pa-beta18-fixture-focused.log`、`/private/tmp/pa-beta18-fixture-lint.log`、`/private/tmp/pa-beta18-fixture-docs.log`；生产源码未变，既有 desktop/mobile 行为证据保持；随后 CI 36956186903 的 E-10 与来源集成仍超时，该夹具修正不足，未发布 |
+| 2026-10-02 | F-08 / B-155/REQ-05..06 | timer idle 的进一步夹具修正 | 四 suites / 54 tests PASS，natural exit 0 | `/private/tmp/pa-beta18-timer-final.json`；500 来源正常/撤销/编辑 0.407/0.183/0.401s；E-10 0.262s，八轮恢复及无进展控制原断言保持。Jest runAllTimers 会在 WebCrypto pending 时误跳到远期 deadline，E-10 改为有界 1ms 推进；没有放宽生产 deadline、默认 test timeout、覆盖率或请求 cap。测试计时不作性能证据 |
 
 ## Acceptance Boundary
 
