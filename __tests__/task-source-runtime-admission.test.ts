@@ -119,6 +119,8 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
     const phaseTiming = (phase: string) => {
         const started = Date.now();
         const startHeapMiB = process.memoryUsage().heapUsed / 2 ** 20;
+        const asyncStorageSlots = Object.getOwnPropertySymbols(Promise.resolve())
+            .filter(symbol => symbol.description === 'kResourceStore').length;
         const cpu = process.cpuUsage();
         return () => {
             const used = process.cpuUsage(cpu);
@@ -127,7 +129,8 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
             process.stderr.write('PA_SDK_PHASE ' + JSON.stringify({ change, phase, node: process.version,
                 pid: process.pid, worker: process.env.JEST_WORKER_ID, wallMs: Date.now() - started,
                 userMs: used.user / 1000, systemMs: used.system / 1000,
-                startHeapMiB, gcCount: collections.length, gcMs: collections.reduce((sum, entry) => sum + entry.duration, 0),
+                startHeapMiB, asyncStorageSlots, gcCount: collections.length,
+                gcMs: collections.reduce((sum, entry) => sum + entry.duration, 0),
                 heapMiB: process.memoryUsage().heapUsed / 2 ** 20,
                 requests: requests.length, reads: read.mock.calls.length, prepares: mockPreparations }) + '\n');
         };

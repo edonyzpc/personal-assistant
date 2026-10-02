@@ -11,7 +11,7 @@ SDD: [Software Design](./sdd.md)
 ## Current Snapshot
 
 - Current phase: CI 36971604883 中 354 suites / 8616 tests 通过，仅 SDK 正常/编辑的工具响应阶段触发默认 5s。E-10 修复有效；本地通过而 GitHub 超时的因果尚未查明，不能归因于平台硬限制。
-- Next action: GitHub cold-cache SDK＋eval 与六 suite 缩小复现均通过，后者正常响应 wall=1956ms、已观测 GC=88ms；没有复现全量失败，不能确认累积 heap 是主因。保持相同 500 来源，仅对正常工具响应阶段采样 CPU，在一次完整 CI 取得实际失败栈；不继续随意扩充局部复现。结束后删除临时观测。65 来源缩减提案已撤回并另存 patch，待根因证据后再判断。Owner 已授权 master push 与 beta；exact-master 完整 CI 通过后包装 beta.18，并从 BRAT 实际安装验证 desktop/mobile。保留完整设计，不自动 closeout。
+- Next action: GitHub cold-cache SDK＋eval 与六 suite 缩小复现均通过，后者正常响应 wall=1956ms、已观测 GC=88ms；没有复现全量失败，不能确认累积 heap 是主因。更具体的机制假设：Jest 每 suite 创建 testNameStorage 并对普通 test 启用，VM 结束未 disable；Node 对新 Promise 遍历进程级 enabled ALS storageList。LangChain 也可能贡献，但不能把总槽数当作 LangChain 数。完整采样 36975656966 已取消并以补充 slots 数的运行替代，避免结束后再重复；保持相同500来源，采样实际慢阶段与新 Promise 的 kResourceStore symbol 数（只读键数、不读 store），验证跨suite累积；不随意扩充用例。结束后删除临时观测。65 来源缩减提案已撤回并另存 patch，待根因证据后再判断。Owner 已授权 master push 与 beta；exact-master 完整 CI 通过后包装 beta.18，并从 BRAT 实际安装验证 desktop/mobile。保留完整设计，不自动 closeout。
 - Blocker / decision needed: 无产品决策；GLM 周限额，Owner 已授权 GPT 完整实施。早期自动审批的集成/竞态证据问题已补实测、独立复核并通过，接线已落地。
 - Last verified behavior: 真实 query factory 500 ancestry × 500 候选的多次切片只完整准入一次，dirty 后再准入；真实 SDK 撤销拒绝、普通编辑保留快照；desktop/mobile 实际检索成功、准备时编辑可落盘、tab/原生命令/Stop 正常。
 - Delivery tree: 基于主树 09c2961 的 managed worktree 已安全接收全部任务 diff 到主仓库；后续修正仅在主仓库，保留无关改动。
