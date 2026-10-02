@@ -4,6 +4,7 @@ import type { TaskSourceRunHost } from '../src/ai-services/task-source-run';
 import type { InputLineage } from '../src/ai-services/input-lineage';
 import { completeInputLineage } from '../src/ai-services/input-lineage';
 import { createAbortError } from '../src/ai-services/chat-utils';
+import { PerformanceObserver, type PerformanceEntry } from 'node:perf_hooks';
 
 jest.mock('obsidian');
 
@@ -111,14 +112,21 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
     let pump: Promise<void> | undefined;
     let cleanupPromise: Promise<void> | undefined;
     // Temporary boundary timing for the local/GitHub discrepancy investigation.
+    const gcEntries: PerformanceEntry[] = [];
+    const gcObserver = new PerformanceObserver(list => gcEntries.push(...list.getEntries()));
+    gcObserver.observe({ entryTypes: ['gc'] });
     const phaseTiming = (phase: string) => {
         const started = Date.now();
+        const startHeapMiB = process.memoryUsage().heapUsed / 2 ** 20;
         const cpu = process.cpuUsage();
         return () => {
             const used = process.cpuUsage(cpu);
+            gcEntries.push(...gcObserver.takeRecords());
+            const collections = gcEntries.filter(entry => performance.timeOrigin + entry.startTime >= started);
             process.stderr.write('PA_SDK_PHASE ' + JSON.stringify({ change, phase, node: process.version,
                 pid: process.pid, worker: process.env.JEST_WORKER_ID, wallMs: Date.now() - started,
                 userMs: used.user / 1000, systemMs: used.system / 1000,
+                startHeapMiB, gcCount: collections.length, gcMs: collections.reduce((sum, entry) => sum + entry.duration, 0),
                 heapMiB: process.memoryUsage().heapUsed / 2 ** 20,
                 requests: requests.length, reads: read.mock.calls.length, prepares: mockPreparations }) + '\n');
         };
@@ -128,6 +136,7 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
         controller.abort();
         await running?.catch(() => undefined);
         await pump?.catch(() => undefined);
+        gcObserver.disconnect();
         jest.useRealTimers(); clock.mockRestore(); globalThis.fetch = originalFetch;
     })();
     const start = () => {

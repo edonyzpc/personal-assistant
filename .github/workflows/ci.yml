@@ -61,8 +61,8 @@ jobs:
         run: npm run lint
       # Temporary scoped diagnosis. Its coverage floor is intentionally kept;
       # this run is diagnostic evidence, never a substitute for the full Test.
-      - name: Diagnose SDK phase timing
-        run: npm run test:all -- --maxWorkers=2 --coverage --no-cache --runTestsByPath __tests__/task-source-runtime-admission.test.ts __tests__/pa-agent-runtime-eval.test.ts --reporters=default --logHeapUsage --json --outputFile=/tmp/pa-ci-tests.json --coverageReporters=json-summary
+      - name: Diagnose SDK after worker reuse
+        run: npm run test:all -- --maxWorkers=2 --coverage --no-cache --runTestsByPath __tests__/chat-view.test.ts __tests__/settings.test.ts __tests__/pagelet-agent-runtime.test.ts __tests__/vss.test.ts __tests__/task-source-runtime-admission.test.ts __tests__/pa-agent-runtime-eval.test.ts --reporters=default --logHeapUsage --json --outputFile=/tmp/pa-ci-tests.json --coverageReporters=json-summary
       - name: Build
         if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
         run: npm run build
