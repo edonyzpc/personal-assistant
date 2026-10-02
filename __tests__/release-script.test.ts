@@ -124,8 +124,30 @@ describe("scripts/release.mjs", () => {
             expect(steps[lintIndex].run).toBe("npm run lint");
             expect(steps[buildIndex].run).toMatch(/^npm run build(?: --if-present)?$/u);
             expect(steps[testIndex].run).toBe(testCommand);
-            expect(steps[testIndex].if).toBe(steps[buildIndex].if);
-            expect(steps[lintIndex].if).toBe(steps[buildIndex].if);
+            if (job === "validate") {
+                expect(steps[testIndex].if).toBe(steps[buildIndex].if);
+                expect(steps[lintIndex].if).toBe(steps[buildIndex].if);
+            } else {
+                const fullCondition = "steps.source-ci.outputs.reuse_source_ci != 'true'";
+                expect(steps[lintIndex].if).toBe(fullCondition);
+                expect(steps[testIndex].if).toBe(fullCondition);
+                expect(steps[buildIndex].if).toBeUndefined();
+                const artifactIndex = steps.findIndex((step: { name: string }) => step.name === "Test release artifacts");
+                expect(artifactIndex).toBeGreaterThan(buildIndex);
+                expect(steps[artifactIndex]).toMatchObject({
+                    if: "steps.source-ci.outputs.reuse_source_ci == 'true'",
+                    run: "npm run test:artifacts -- --runInBand",
+                });
+                for (const name of ["Install dependencies", "Check third-party notices", "Check release documentation",
+                    "Verify built manifest version", "Audit bundle", "Stage release assets", "Generate artifact attestations",
+                    "Create GitHub Release"]) {
+                    const matchingSteps = steps.filter((step: { name: string }) => step.name === name);
+                    expect(matchingSteps).toHaveLength(1);
+                    expect(matchingSteps[0].if).toBeUndefined();
+                }
+                const gate = steps.find((step: { name: string }) => step.name === "Check beta source CI");
+                expect(gate).toMatchObject({ id: "source-ci", run: "node scripts/check-beta-tag-ci.mjs" });
+            }
         }
         expectSnippetsInOrder(releaseScript, [
             'run("npm", ["run", "lint"]);',

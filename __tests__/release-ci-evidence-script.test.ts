@@ -34,14 +34,15 @@ function fixture() {
 
 type Scenario = ReturnType<typeof fixture>;
 
-function check(input: Scenario) {
+function check(input: Scenario, verifiedMasterAncestor = false) {
     // Only this Node process is real. All git/gh calls go through this strict fake,
     // which fails on any unrecognized command and has no network/process capability.
     const script = `
         import { findVerifiedMasterCi } from ${JSON.stringify(helperUrl)};
         const input = JSON.parse(process.env.RELEASE_CI_TEST_INPUT);
         const calls = [];
-        const result = findVerifiedMasterCi({ sourceCommit: input.sourceCommit, capture(command, args) {
+        const result = findVerifiedMasterCi({ sourceCommit: input.sourceCommit,
+          verifiedMasterAncestor: input.verifiedMasterAncestor, capture(command, args) {
             const index = calls.length;
             calls.push([command, args]);
             if (index === input.failAt) throw new Error('timeout/network unavailable');
@@ -60,11 +61,24 @@ function check(input: Scenario) {
     `;
     return JSON.parse(execFileSync(process.execPath, ["--input-type=module", "--eval", script], {
         encoding: "utf8", timeout: 5000,
-        env: { ...process.env, GH_REPO: "unrelated/override", GH_HOST: "unrelated.example", RELEASE_CI_TEST_INPUT: JSON.stringify(input) },
+        env: { ...process.env, GH_REPO: "unrelated/override", GH_HOST: "unrelated.example",
+            RELEASE_CI_TEST_INPUT: JSON.stringify({ ...input, verifiedMasterAncestor }) },
     })) as { result: { verified: boolean; reason?: string; runId?: number; url?: string; sourceCommit?: string }; calls: [string, string[]][] };
 }
 
 describe("release master CI evidence", () => {
+    it("checks the exact parent CI without live equality only after the tag caller proves master ancestry", () => {
+        const input = fixture();
+        input.master = `${"b".repeat(40)}\trefs/heads/master`;
+        expect(check(input).result.verified).toBe(false);
+        const { result, calls } = check(input, true);
+        expect(result).toMatchObject({ verified: true, sourceCommit });
+        expect(calls).toHaveLength(4);
+        expect(calls.some(([command, args]) => command === "git" && args[0] === "ls-remote")).toBe(false);
+        input.finalRunOverrides = { run_attempt: 3 };
+        expect(check(input, true).result.verified).toBe(false);
+    });
+
     it.each([
         "git@github.com:example/personal-assistant.git",
         "ssh://git@github.com/example/personal-assistant.git",

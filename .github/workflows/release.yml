@@ -6,6 +6,7 @@ on:
       - "*"
 
 permissions:
+  actions: read
   contents: write
   id-token: write
   attestations: write
@@ -99,13 +100,23 @@ jobs:
         run: npm run check:third-party-notices
       - name: Check release documentation
         run: npm run docs:check:release
+      - name: Check beta source CI
+        id: source-ci
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/check-beta-tag-ci.mjs
       - name: Lint
+        if: steps.source-ci.outputs.reuse_source_ci != 'true'
         run: npm run lint
       - name: Build
         run: npm run build --if-present
       - name: Test
+        if: steps.source-ci.outputs.reuse_source_ci != 'true'
         # Match master CI's coverage worker budget.
         run: npm run test:all -- --maxWorkers=2 --coverage
+      - name: Test release artifacts
+        if: steps.source-ci.outputs.reuse_source_ci == 'true'
+        run: npm run test:artifacts -- --runInBand
       - name: Verify built manifest version
         run: |
           node -e '

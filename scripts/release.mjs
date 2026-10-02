@@ -197,7 +197,7 @@ function runReleaseChecks(targetVersion, options, sourceCommit) {
   }
 
   console.log(`Release validation: reusing master CI ${evidence.url} for ${sourceCommit}.`);
-  console.log("Final tag CI will still build, test with coverage and audit the versioned release.");
+  console.log("Final beta tag CI will build and audit the versioned release, using artifact tests with verified source CI or full coverage checks otherwise.");
   run("git", ["diff", "--check"]);
   run("npm", ["run", "check:third-party-notices"]);
   run("npm", ["run", "docs:check:release"]);

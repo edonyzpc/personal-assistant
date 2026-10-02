@@ -20,11 +20,13 @@ function matchesRunIdentity(run, repository, sourceCommit) {
 }
 
 /**
- * Find completed full CI evidence for the exact live master commit.
+ * Find completed full CI evidence for the exact master source commit.
+ * Local preparation requires live master equality by default. Tag validation
+ * may reuse a parent whose membership in fetched master history it already proved.
  * capture is a synchronous, timeout-bounded command runner supplied by the caller.
  * This helper never writes state and treats unavailable evidence as a full-check fallback.
  */
-export function findVerifiedMasterCi({ sourceCommit, capture }) {
+export function findVerifiedMasterCi({ sourceCommit, capture, verifiedMasterAncestor = false }) {
   const unavailable = reason => ({ verified: false, reason });
   if (!/^[a-f0-9]{40}$/.test(sourceCommit ?? '')) return unavailable('Invalid source commit');
 
@@ -33,9 +35,11 @@ export function findVerifiedMasterCi({ sourceCommit, capture }) {
     const repository = githubRepository(capture('git', ['remote', 'get-url', 'origin']));
     if (!repository) return unavailable('Origin is not a supported github.com repository URL');
 
-    stage = 'live master lookup';
-    const master = capture('git', ['ls-remote', '--heads', 'origin', 'refs/heads/master']).trim();
-    if (master !== `${sourceCommit}\trefs/heads/master`) return unavailable('Live origin/master does not match the source commit');
+    if (!verifiedMasterAncestor) {
+      stage = 'live master lookup';
+      const master = capture('git', ['ls-remote', '--heads', 'origin', 'refs/heads/master']).trim();
+      if (master !== `${sourceCommit}\trefs/heads/master`) return unavailable('Live origin/master does not match the source commit');
+    }
 
     const api = endpoint => JSON.parse(capture('gh', ['api', '--hostname', 'github.com', endpoint]));
     stage = 'latest master CI lookup';
