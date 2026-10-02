@@ -89,17 +89,21 @@ describe('source admission in the actual provider/runtime loop', () => {
                 { headers: { 'content-type': 'text/event-stream' } });
         }) as typeof fetch;
         // This integration proves source authority, not CPU speed under V8
-        // coverage. Keep real timers and item-bounded yields; elapsed-time
-        // admission is exercised independently in cooperative-task.test.ts.
+        // coverage. Advance timers without accumulating idle delay, preserving
+        // item-bounded yields and the scheduled revocation. Real macrotasks and
+        // elapsed-time admission have independent cooperative-task tests.
         const clock = jest.spyOn(performance, 'now').mockReturnValue(0);
+        jest.useFakeTimers({ doNotFake: ['Date', 'performance', 'nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask'] });
         try {
-            await new ChatService(host).streamLLM('根据笔记读取资料', jest.fn(), undefined, [{ role: 'assistant',
+            const running = new ChatService(host).streamLLM('根据笔记读取资料', jest.fn(), undefined, [{ role: 'assistant',
                 content: 'Synthetic private history', inputLineage: completeInputLineage(files.map(file => ({
                     kind: 'vault', path: file.path, via: 'note' }))) }], {
                 userText: '根据笔记读取资料', memoryMode: 'skip-memory', runSourceSelection: { schemaVersion: 1,
                     scope: 'notes', selectionId: 'scope', userMessageId: 'user' },
             });
-        } finally { clock.mockRestore(); globalThis.fetch = originalFetch; }
+            await jest.runAllTimersAsync();
+            await running;
+        } finally { jest.useRealTimers(); clock.mockRestore(); globalThis.fetch = originalFetch; }
         expect(mockPreparations).toBeGreaterThan(0);
         expect(requests).toHaveLength(2);
         expect(read).toHaveBeenCalledTimes(revoke ? 0 : 1);

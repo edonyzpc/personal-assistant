@@ -472,73 +472,92 @@ describe("B-149 runtime task baseline", () => {
         // Each goal has its own normal test deadline. The evidence artifact and
         // cross-case assertions still cover the complete, ordered matrix.
         it.each(PA_RUNTIME_EVAL_CASES)("runs $id", async evalCase => {
-            active = evalCase; activeArm = "main"; activeToolName = null; caseRequestIndex = 0;
-            const host = hostFor(evalCase, () => evalCase.offline === "recovery" && activeToolName === "search_vault_snippets");
-            const webProvider = evalCase.webEvidence ? new BuiltinWebSearchProvider({
-                policy: createBailianWebSearchNetworkPolicy(), apiKey: "b149-synthetic-token",
-                request: async request => {
-                    webRequests.push({ caseId: evalCase.id, endpoint: request.endpoint, body: request.body });
-                    const separator = evalCase.webEvidence!.indexOf(": ");
-                    return { status: 200, body: { results: [{ title: `Synthetic ${evalCase.id}`,
-                        url: evalCase.webEvidence!.slice(0, separator),
-                        snippet: evalCase.webEvidence!.slice(separator + 2) }] } };
-                },
-                isEnabled: () => host.settings.webSearchEnabled,
-            }) : undefined;
-            const runtimeOptions = webProvider ? { additionalCapabilityProviders: [webProvider] } : undefined;
-            if (evalCase.id === "E-11") {
-                let entered!: () => void;
-                let release!: () => void;
-                const enteredPromise = new Promise<void>(resolve => { entered = resolve; });
-                const heldPreparation = new Promise<void>(resolve => { release = resolve; });
-                const originalPrepare = vaultEvidence.prepareVaultObservationProjection;
-                const prepareSpy = jest.spyOn(vaultEvidence, "prepareVaultObservationProjection")
-                    .mockImplementation(async input => {
-                        if (active?.id === "E-11") { entered(); await heldPreparation; }
-                        return originalPrepare(input);
+            // E-10 checks eight recovery turns plus the no-progress control;
+            // accumulated timer idle time is not part of its semantic contract.
+            const advanceTimers = evalCase.id === "E-10";
+            if (advanceTimers) jest.useFakeTimers({ doNotFake: ["Date", "performance", "nextTick",
+                "setImmediate", "clearImmediate", "queueMicrotask"] });
+            const finishRuntime = async (running: ReturnType<typeof runPaRuntimeEvalCase>) => {
+                if (!advanceTimers) return await running;
+                let settled = false;
+                void running.then(() => { settled = true; }, () => { settled = true; });
+                // WebCrypto still completes on the real event loop. Do not jump
+                // straight to a distant tool deadline while its I/O is pending.
+                for (let tick = 0; tick < 10_000 && !settled; tick++) await jest.advanceTimersByTimeAsync(1);
+                expect(settled).toBe(true);
+                return await running;
+            };
+            try {
+                active = evalCase; activeArm = "main"; activeToolName = null; caseRequestIndex = 0;
+                const host = hostFor(evalCase, () => evalCase.offline === "recovery" && activeToolName === "search_vault_snippets");
+                const webProvider = evalCase.webEvidence ? new BuiltinWebSearchProvider({
+                    policy: createBailianWebSearchNetworkPolicy(), apiKey: "b149-synthetic-token",
+                    request: async request => {
+                        webRequests.push({ caseId: evalCase.id, endpoint: request.endpoint, body: request.body });
+                        const separator = evalCase.webEvidence!.indexOf(": ");
+                        return { status: 200, body: { results: [{ title: `Synthetic ${evalCase.id}`,
+                            url: evalCase.webEvidence!.slice(0, separator),
+                            snippet: evalCase.webEvidence!.slice(separator + 2) }] } };
+                    },
+                    isEnabled: () => host.settings.webSearchEnabled,
+                }) : undefined;
+                const runtimeOptions = webProvider ? { additionalCapabilityProviders: [webProvider] } : undefined;
+                if (evalCase.id === "E-11") {
+                    let entered!: () => void;
+                    let release!: () => void;
+                    const enteredPromise = new Promise<void>(resolve => { entered = resolve; });
+                    const heldPreparation = new Promise<void>(resolve => { release = resolve; });
+                    const originalPrepare = vaultEvidence.prepareVaultObservationProjection;
+                    const prepareSpy = jest.spyOn(vaultEvidence, "prepareVaultObservationProjection")
+                        .mockImplementation(async input => {
+                            if (active?.id === "E-11") { entered(); await heldPreparation; }
+                            return originalPrepare(input);
+                        });
+                    const controller = new AbortController();
+                    const coordinator = new AgentRunCoordinator();
+                    const running = runPaRuntimeEvalCase(evalCase, host, new AIUtils(host), {
+                        signal: controller.signal, turnLeaseProvider: ({ signal }) => coordinator.acquireChatLease(signal),
                     });
-                const controller = new AbortController();
-                const coordinator = new AgentRunCoordinator();
-                const running = runPaRuntimeEvalCase(evalCase, host, new AIUtils(host), {
-                    signal: controller.signal, turnLeaseProvider: ({ signal }) => coordinator.acquireChatLease(signal),
-                });
-                try {
-                    const enteredBeforeTimeout = await Promise.race([enteredPromise.then(() => true),
-                        new Promise<boolean>(resolve => setTimeout(() => resolve(false), 200))]);
-                    controller.abort();
-                    const cancelSettledBeforeRelease = await Promise.race([running.then(() => true),
-                        new Promise<boolean>(resolve => setTimeout(() => resolve(false), 40))]);
-                    const queuedController = new AbortController();
-                    const secondLease = coordinator.acquireChatLease(queuedController.signal).then(lease => {
-                        lease.release(); return true;
-                    }, () => false);
-                    const secondLeaseAvailableBeforeRelease = await Promise.race([secondLease,
-                        new Promise<boolean>(resolve => setTimeout(() => resolve(false), 40))]);
-                    queuedController.abort();
-                    probes.e11 = { enteredBeforeTimeout, cancelSettledBeforeRelease, secondLeaseAvailableBeforeRelease };
-                } finally { controller.abort(); release(); prepareSpy.mockRestore(); }
-                actual.push(await running);
-                probes.e11 = { ...(probes.e11 as Record<string, unknown>),
-                    requestsAfterLateRelease: requests.filter(request => request.caseId === "E-11").length,
-                    committedAfterLateRelease: Boolean(actual[actual.length - 1].answer),
-                    terminalAfterLateRelease: actual[actual.length - 1].terminalStatus };
-            } else {
-                actual.push(await runPaRuntimeEvalCase(evalCase, host, new AIUtils(host), { runtimeOptions }));
-            }
-            const result = actual[actual.length - 1];
-            evidenceFailures[evalCase.id] = validatePaRuntimeEvalEvidence(evalCase, result,
-                requests.filter(request => request.caseId === evalCase.id && request.arm === "main").map(request => request.body));
-            if (evalCase.id === "E-10") {
-                activeArm = "no_progress"; caseRequestIndex = 0;
-                const controlHost = hostFor(evalCase, () => activeToolName === "search_vault_snippets");
-                probes.e10NoProgress = await runPaRuntimeEvalCase(evalCase, controlHost, new AIUtils(controlHost));
-                const alternatingResults = result.toolResults.map(toolResult => ({
-                    name: toolResult.name, isError: toolResult.isError,
-                    sourcePaths: toolResult.sourcePaths,
-                }));
-                probes.e10Alternating = { terminalStatus: result.terminalStatus, toolResults: alternatingResults,
-                    modelRequestCount: requests.filter(request => request.caseId === "E-10" && request.arm === "main").length };
-            }
+                    try {
+                        const enteredBeforeTimeout = await Promise.race([enteredPromise.then(() => true),
+                            new Promise<boolean>(resolve => setTimeout(() => resolve(false), 200))]);
+                        controller.abort();
+                        const cancelSettledBeforeRelease = await Promise.race([running.then(() => true),
+                            new Promise<boolean>(resolve => setTimeout(() => resolve(false), 40))]);
+                        const queuedController = new AbortController();
+                        const secondLease = coordinator.acquireChatLease(queuedController.signal).then(lease => {
+                            lease.release(); return true;
+                        }, () => false);
+                        const secondLeaseAvailableBeforeRelease = await Promise.race([secondLease,
+                            new Promise<boolean>(resolve => setTimeout(() => resolve(false), 40))]);
+                        queuedController.abort();
+                        probes.e11 = { enteredBeforeTimeout, cancelSettledBeforeRelease, secondLeaseAvailableBeforeRelease };
+                    } finally { controller.abort(); release(); prepareSpy.mockRestore(); }
+                    actual.push(await running);
+                    probes.e11 = { ...(probes.e11 as Record<string, unknown>),
+                        requestsAfterLateRelease: requests.filter(request => request.caseId === "E-11").length,
+                        committedAfterLateRelease: Boolean(actual[actual.length - 1].answer),
+                        terminalAfterLateRelease: actual[actual.length - 1].terminalStatus };
+                } else {
+                    const running = runPaRuntimeEvalCase(evalCase, host, new AIUtils(host), { runtimeOptions });
+                    actual.push(await finishRuntime(running));
+                }
+                const result = actual[actual.length - 1];
+                evidenceFailures[evalCase.id] = validatePaRuntimeEvalEvidence(evalCase, result,
+                    requests.filter(request => request.caseId === evalCase.id && request.arm === "main").map(request => request.body));
+                if (evalCase.id === "E-10") {
+                    activeArm = "no_progress"; caseRequestIndex = 0;
+                    const controlHost = hostFor(evalCase, () => activeToolName === "search_vault_snippets");
+                    const control = runPaRuntimeEvalCase(evalCase, controlHost, new AIUtils(controlHost));
+                    probes.e10NoProgress = await finishRuntime(control);
+                    const alternatingResults = result.toolResults.map(toolResult => ({
+                        name: toolResult.name, isError: toolResult.isError,
+                        sourcePaths: toolResult.sourcePaths,
+                    }));
+                    probes.e10Alternating = { terminalStatus: result.terminalStatus, toolResults: alternatingResults,
+                        modelRequestCount: requests.filter(request => request.caseId === "E-10" && request.arm === "main").length };
+                }
+            } finally { if (advanceTimers) jest.useRealTimers(); }
         });
 
         it("preserves the complete matrix and its cross-case evidence", () => {
@@ -571,7 +590,7 @@ describe("B-149 runtime task baseline", () => {
                 fixtureHash, provider: "openai-compatible-synthetic", model: "b149-fixed-model",
                 modelParameters: { answerTemperature: 0.8, sdkMaxRetries: 0, transport: "native-fetch-fixed-http" },
                 capabilitySettings: { webSearchEnabled: "true for E-02/E-03/E-08 only", memoryEnabled: false, skillContextProvider: null },
-                interpretation: "Runtime status is not a semantic pass. Scripted model replies prove runtime/SDK/transport and event propagation, not autonomous model quality. First useful result requires human rubric; first visible output is only a mechanical timestamp. E-12 produces an unsaved writing artifact; no save receipt exists.",
+                interpretation: "Runtime status is not a semantic pass. Scripted model replies prove runtime/SDK/transport and event propagation, not autonomous model quality. First useful result requires human rubric; first visible output is only a mechanical timestamp. E-10 advances test timers; its timings are not performance evidence. E-12 produces an unsaved writing artifact; no save receipt exists.",
                 physicalRequestLimit: maximum, physicalRequestsAttempted: budget.count(),
                 requestAttemptPurposeAssociation: "HTTP body-to-attempt join remains unknown in this offline fixture; the run-local usage ledger records actual attempt IDs without order-based attribution",
                 cases: PA_RUNTIME_EVAL_CASES, actual, evidenceFailures, probes, requests, webRequests }, null, 2));
