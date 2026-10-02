@@ -111,8 +111,8 @@ describe("scripts/release.mjs", () => {
         // Read step structure so adding a safe CI condition does not require
         // mirroring whitespace or line placement in the test.
         for (const [workflow, job, testCommand] of [
-            [ciWorkflow, "validate", "npm run test:all -- --maxWorkers=4 --coverage"],
-            [releaseWorkflow, "build", "npm run test:all -- --maxWorkers=4 --coverage"],
+            [ciWorkflow, "validate", "/usr/bin/time -v npm run test:all -- --maxWorkers=2 --coverage --logHeapUsage --json --outputFile=/tmp/pa-ci-tests.json"],
+            [releaseWorkflow, "build", "npm run test:all -- --maxWorkers=2 --coverage"],
         ]) {
             const steps = loadYaml(workflow).jobs[job].steps;
             const lintIndex = steps.findIndex((step: { name: string }) => step.name === "Lint");

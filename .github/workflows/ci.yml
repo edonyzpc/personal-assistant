@@ -64,7 +64,31 @@ jobs:
         run: npm run build
       - name: Test
         if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
-        run: npm run test:all -- --maxWorkers=4 --coverage
+        # Leave CPU and memory headroom for coverage and native SDK I/O.
+        run: /usr/bin/time -v npm run test:all -- --maxWorkers=2 --coverage --logHeapUsage --json --outputFile=/tmp/pa-ci-tests.json
+      - name: Report test resource evidence
+        if: ${{ always() && (steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs') }}
+        run: |
+          node <<'NODE'
+          const os = require('node:os');
+          const fs = require('node:fs');
+          console.log(JSON.stringify({ availableCpu: os.availableParallelism(), cpu: os.cpus()[0]?.model,
+            totalMemoryGiB: +(os.totalmem() / 2 ** 30).toFixed(2), workers: 2 }));
+          for (const path of ['/sys/fs/cgroup/cpu.max', '/sys/fs/cgroup/memory.max']) {
+            if (fs.existsSync(path)) console.log(`${path}: ${fs.readFileSync(path, 'utf8').trim()}`);
+          }
+          const path = '/tmp/pa-ci-tests.json';
+          if (fs.existsSync(path)) {
+            const results = JSON.parse(fs.readFileSync(path, 'utf8'));
+            for (const suite of results.testResults ?? []) {
+              if (!/(task-source-runtime-admission|pa-agent-runtime-eval)\.test\.ts$/.test(suite.name)) continue;
+              console.log(JSON.stringify({ suite: suite.name.split('/').pop(), status: suite.status,
+                durationMs: suite.endTime - suite.startTime, tests: suite.assertionResults.map(test => ({
+                  name: test.fullName, status: test.status, durationMs: test.duration,
+                })) }));
+            }
+          }
+          NODE
       - name: Audit bundle
         if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
         run: npm run audit:bundle
