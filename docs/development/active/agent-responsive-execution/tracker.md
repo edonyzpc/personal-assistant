@@ -11,13 +11,13 @@ SDD: [Software Design](./sdd.md)
 ## Current Snapshot
 
 - Current phase: 完整设计、实现、独立复核与 desktop/mobile simulator 验收完成。
-- Next action: 无剩余实施或验收工作；Owner 2026-10-02 已授权本地 master 提交。保留完整设计，push/release/closeout 仍为独立指令。
+- Next action: Owner 2026-10-02 已授权 master push 与 beta 发布；等待本次测试夹具修正的完整 CI 后进入 beta.18 包装与发布。保留完整设计，不自动 closeout。
 - Blocker / decision needed: 无产品决策；GLM 周限额，Owner 已授权 GPT 完整实施。早期自动审批的集成/竞态证据问题已补实测、独立复核并通过，接线已落地。
 - Last verified behavior: 真实 query factory 500 ancestry × 500 候选的多次切片只完整准入一次，dirty 后再准入；真实 SDK 撤销拒绝、普通编辑保留快照；desktop/mobile 实际检索成功、准备时编辑可落盘、tab/原生命令/Stop 正常。
 - Delivery tree: 基于主树 09c2961 的 managed worktree 已安全接收全部任务 diff 到主仓库；后续修正仅在主仓库，保留无关改动。
 - Actual app target: 主仓库 `test/`，不改真实 `anthelion` vault。
 - Owned resources: managed worktree 已可恢复归档，主树依赖保留；无运行中的任务 probe。三轮合成 fixture 均按唯一 marker 清理，最终 test 回到 16 篇基线、零自有会话/标签、原会话恢复、Host/fetch/Memory 恢复、mobile simulator 关闭。`/private/tmp/pa-responsive-*.log/json/cjs` 中本任务原始日志及 probe 脚本保留为验收证据；未清扫其它任务的文件。
-- Stop point: Validated implementation 与本轮明确授权的本地 master 签名提交；保留用户要求的完整设计，不自动 push、release 或 closeout。
+- Stop point: Validated implementation；按 Owner 明确授权完成 master push、beta.18 发布及对应 BRAT smoke，保留用户要求的完整设计，不自动 closeout。
 
 ## Work
 
@@ -40,6 +40,7 @@ SDD: [Software Design](./sdd.md)
 | B-155/REQ-05 / B-155/AC-05 | async 检索/投影保持算法 | 既有工具、context、observation 回归；统一 lint/build/full Jest | 已有语义与正常打包通过 | 结果格式/排序/预算/配置变动 |
 | B-155/REQ-01 / B-155/AC-01 | renderer 分块 | 当前构建部署到 test 后 desktop 原生编辑/tab/命令/停止；CLI mobile simulator 对应操作 | PA 准备进行时原生动作可完成，记录实际保存与停止 | 部署构建或相关 UI/runtime 变动 |
 | B-155/REQ-06 / B-155/AC-06 | 共用 gate | docs:check、diff:check、DOM scan；复用 enclosing make deploy 检查 | 各证据范围、自然退出、输入身份明确 | 输入变化或实际发现遗漏 |
+| B-155/REQ-05..06 / CI 调度夹具 | 真实 timer polling、分场景 eval、来源集成确定性调度计时 | 四 affected suites；时间预算直接回归；最终 exact-master 四 worker coverage CI | 500 来源、撤销/编辑、完整 12 场景及跨场景证据保持；默认 timeout 与覆盖率门槛不变 | fixture 或调度行为变化 |
 
 不增加耗时阈值单测、全域性能基准、额外 provider 调用或真机 iOS gate。自动化次数/让出证明与原生操作证明承担不同问题。
 
@@ -54,6 +55,7 @@ SDD: [Software Design](./sdd.md)
 | F-05 | P2 | 新 snippet 枚举包装 native 异常破坏标准失败来源分类 | 原样交给既有 adapter 脱敏；保留 API 缺失及非数组业务契约 | E-06 与 snippet focused PASS | Fixed |
 | F-06 | P2 | 普通编辑使不同准备段的 epoch 票据相互失效 | 固定 payload 先准备，末尾集中、有界重验授权；实际撤销仍拒绝 | SDK 500 依赖三场景与 snapshot 52 项回归 PASS | Fixed |
 | F-07 | P1 | 实际 factory 每次 yield 后 executor 无条件重建 500 来源证明；准入耗时再触发下一次 yield，仍反馈放大 | executor 先检查 attempt abort/run/scope；严格票据有效即复用，首次/dirty 才完整准备；独立 receipt 不变 | 真实 factory 多候选次数回归及重新 app smoke | Fixed |
+| F-08 | P2 | master 首次 coverage CI 的 12 场景聚合测试与 500 来源用例默认 5s 超时；setImmediate polling 可能先于 timer 准入耗尽 | eval 按场景独立默认 deadline；来源语义集成固定 performance 计时，保留真实 timer 与 item 上限，独立验证 8ms 时间预算；poll 使用 timer phase。无生产改动、未延长 timeout | affected suites 54 项通过；完整 exact-master CI 由 beta 发布 gate 核验，远程 run 状态不在此重复维护 | Fixed |
 
 ## Validation Log
 
@@ -81,6 +83,10 @@ SDD: [Software Design](./sdd.md)
 | 2026-10-02 | B-155/REQ-06 / B-155/AC-06 | 环境与数据恢复 | PASS | simulator on/off 会重载并清除临时 JS 控制；desktop 资料先按已记录 marker 核实回收，再建立独立 mobile fixture，未使用丢失的控制作证。`/private/tmp/pa-responsive-desktop-reload-cleanup.json`、`/private/tmp/pa-responsive-mobile-cleanup.json`、`/private/tmp/pa-responsive-final-app-restored.json`、`/private/tmp/pa-responsive-final-ui-restored.json`：每轮 505 自有路径、会话清理；最终 16 篇、零自有会话/标签、原会话恢复、Memory/Host/fetch 恢复、isMobile=false、标准资产一致 |
 | 2026-10-02 | B-155/REQ-06 / B-155/AC-06 | 交付树安全回收 | PASS | worktree 49 个任务路径全部在主树，5 个差异均为已验证的后续主树修正；唯一 ignored 项为共享 node_modules。archive_worktree 完成，list_artifacts 确认为 archived_worktree；当前主树源码与冻结 959 输入仍一致。没有主树 commit/push/release |
 | 2026-10-02 | Owner 本轮 master 提交授权 | 本地 master 签名交付 | Runtime/tests 已提交并验签 PASS；设计与验收文档随本次独立提交交付 | `f2e7245d8307f662489f656c557b452eea589a8c`：45 runtime/test 文件，Good signature。冻结 959 输入仍一致，复用完整 8598 项及原生验收证据；未 push/release/closeout |
+
+| 2026-10-02 | Owner master push / beta 授权 | 首次 master CI 36954401673 与本地四 worker coverage 原始复现 | CI 3 suites / 4 tests 失败；本地 355 suites / 8598 tests PASS，natural exit 0 | `/private/tmp/pa-beta18-master-ci-failed.log`、`/private/tmp/pa-beta18-full-coverage.json`；本地聚合 eval 4.781s、正常/编辑来源集成 3.818/3.608s。CI 超时未被视为通过；beta 尚未包装或发布 |
+| 2026-10-02 | F-08 / B-155/REQ-05..06 | affected 四 suites 带 coverage 运行 | 54 项行为断言 PASS；局部覆盖率未满足全局门槛，command exit 1，不当作完整 gate | `/private/tmp/pa-beta18-fixed-focused.json`；500 来源正常/编辑 2.030/2.105s；12 场景及 aggregate 均独立默认 deadline，无改生产逻辑；完整 exact-master CI 待验 |
+| 2026-10-02 | F-08 / B-155/REQ-05..06 | 标准 source focused、lint、docs、diff | 四 suites / 54 tests PASS，natural exit 0；lint/docs/diff PASS | `/private/tmp/pa-beta18-fixture-focused.log`、`/private/tmp/pa-beta18-fixture-lint.log`、`/private/tmp/pa-beta18-fixture-docs.log`；生产源码未变，既有 desktop/mobile 行为证据保持；需新 master 完整 coverage CI |
 
 ## Acceptance Boundary
 
