@@ -4,8 +4,6 @@ import type { TaskSourceRunHost } from '../src/ai-services/task-source-run';
 import type { InputLineage } from '../src/ai-services/input-lineage';
 import { completeInputLineage } from '../src/ai-services/input-lineage';
 import { createAbortError } from '../src/ai-services/chat-utils';
-import { PerformanceObserver, type PerformanceEntry } from 'node:perf_hooks';
-import { Session } from 'node:inspector';
 
 jest.mock('obsidian');
 
@@ -112,35 +110,11 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
     let closed = false;
     let pump: Promise<void> | undefined;
     let cleanupPromise: Promise<void> | undefined;
-    // Temporary boundary timing for the local/GitHub discrepancy investigation.
-    const gcEntries: PerformanceEntry[] = [];
-    const gcObserver = new PerformanceObserver(list => gcEntries.push(...list.getEntries()));
-    gcObserver.observe({ entryTypes: ['gc'] });
-    const phaseTiming = (phase: string) => {
-        const started = Date.now();
-        const startHeapMiB = process.memoryUsage().heapUsed / 2 ** 20;
-        const asyncStorageSlots = Object.getOwnPropertySymbols(Promise.resolve())
-            .filter(symbol => symbol.description === 'kResourceStore').length;
-        const cpu = process.cpuUsage();
-        return () => {
-            const used = process.cpuUsage(cpu);
-            gcEntries.push(...gcObserver.takeRecords());
-            const collections = gcEntries.filter(entry => performance.timeOrigin + entry.startTime >= started);
-            process.stderr.write('PA_SDK_PHASE ' + JSON.stringify({ change, phase, node: process.version,
-                pid: process.pid, worker: process.env.JEST_WORKER_ID, wallMs: Date.now() - started,
-                userMs: used.user / 1000, systemMs: used.system / 1000,
-                startHeapMiB, asyncStorageSlots, gcCount: collections.length,
-                gcMs: collections.reduce((sum, entry) => sum + entry.duration, 0),
-                heapMiB: process.memoryUsage().heapUsed / 2 ** 20,
-                requests: requests.length, reads: read.mock.calls.length, prepares: mockPreparations }) + '\n');
-        };
-    };
     const cleanup = () => cleanupPromise ??= (async () => {
         closed = true;
         controller.abort();
         await running?.catch(() => undefined);
         await pump?.catch(() => undefined);
-        gcObserver.disconnect();
         jest.useRealTimers(); clock.mockRestore(); globalThis.fetch = originalFetch;
     })();
     const start = () => {
@@ -160,86 +134,46 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
         expect(predicate()).toBe(true);
     })();
     const firstRequest = async () => {
-        const report = phaseTiming('first-request');
-        try {
-            start();
-            await driveUntil(() => requests.length === 1);
-            expect(mockPreparations).toBeGreaterThan(0);
-            expect(requests).toHaveLength(1);
-            expect(read).not.toHaveBeenCalled();
-            expect(releaseFirstResponse).toBeDefined();
-        } finally {
-            report();
-        }
-    };
-    // Keep profiler setup/teardown in hooks, outside the measured test deadline.
-    const profiler = change === 'unchanged' ? new Session() : undefined;
-    const startProfiling = async () => {
-        if (profiler) {
-            profiler.connect();
-            await new Promise<void>((resolve, reject) => profiler.post('Profiler.enable', error => error ? reject(error) : resolve()));
-            await new Promise<void>((resolve, reject) => profiler.post('Profiler.start', error => error ? reject(error) : resolve()));
-        }
-    };
-    const stopProfiling = async () => {
-        if (!profiler) return;
-        const { profile } = await new Promise<import('node:inspector').Profiler.StopReturnType>((resolve, reject) =>
-            profiler.post('Profiler.stop', (error, result) => error ? reject(error) : resolve(result)));
-        profiler.disconnect();
-        const sampledMs = new Map<number, number>();
-        for (let index = 0; index < (profile.samples?.length ?? 0); index++) {
-            const id = profile.samples![index];
-            sampledMs.set(id, (sampledMs.get(id) ?? 0) + profile.timeDeltas![index] / 1000);
-        }
-        const top = profile.nodes.map(node => ({ function: node.callFrame.functionName,
-            url: node.callFrame.url, line: node.callFrame.lineNumber + 1,
-            sampledMs: sampledMs.get(node.id) ?? 0 })).sort((a, b) => b.sampledMs - a.sampledMs).slice(0, 20);
-        process.stderr.write('PA_SDK_CPU ' + JSON.stringify(top) + '\n');
+        start();
+        await driveUntil(() => requests.length === 1);
+        expect(mockPreparations).toBeGreaterThan(0);
+        expect(requests).toHaveLength(1);
+        expect(read).not.toHaveBeenCalled();
+        expect(releaseFirstResponse).toBeDefined();
     };
     const finish = async () => {
-        const report = phaseTiming('tool-response');
-        try {
-            if (!running || !releaseFirstResponse || closed) throw new Error('First source request is not paused');
-            releaseFirstResponse();
-            await driveUntil(() => settled);
-            await running;
-            expect(mockPreparations).toBeGreaterThan(0);
-            expect(requests).toHaveLength(2);
-            expect(read).toHaveBeenCalledTimes(revoke ? 0 : 1);
-            if (!revoke) {
-                const messages = (requests[1] as { messages: Array<{ role: string; content: string }> }).messages;
-                const observation = messages.find(message => message.role === 'tool');
-                expect(observation).toBeDefined();
-                expect(JSON.parse(observation!.content.split('\n')[0]).isError).toBe(false);
-            }
-            if (revoke) expect(JSON.stringify(requests[1])).not.toContain('Synthetic private history');
-            if (change === 'ordinary-edit') {
-                expect(mockOrdinaryEditApplied).toBe(true);
-                for (const request of requests) expect(JSON.stringify(request)).toContain('Synthetic private history');
-            }
-        } finally {
-            report();
+        if (!running || !releaseFirstResponse || closed) throw new Error('First source request is not paused');
+        releaseFirstResponse();
+        await driveUntil(() => settled);
+        await running;
+        expect(mockPreparations).toBeGreaterThan(0);
+        expect(requests).toHaveLength(2);
+        expect(read).toHaveBeenCalledTimes(revoke ? 0 : 1);
+        if (!revoke) {
+            const messages = (requests[1] as { messages: Array<{ role: string; content: string }> }).messages;
+            const observation = messages.find(message => message.role === 'tool');
+            expect(observation).toBeDefined();
+            expect(JSON.parse(observation!.content.split('\n')[0]).isError).toBe(false);
+        }
+        if (revoke) expect(JSON.stringify(requests[1])).not.toContain('Synthetic private history');
+        if (change === 'ordinary-edit') {
+            expect(mockOrdinaryEditApplied).toBe(true);
+            for (const request of requests) expect(JSON.stringify(request)).toContain('Synthetic private history');
         }
     };
-    return { firstRequest, finish, cleanup, startProfiling, stopProfiling };
+    return { firstRequest, finish, cleanup };
 }
 
 describe.each(['unchanged', 'revoked', 'ordinary-edit'] as const)('source admission in one continuous actual SDK run: %s', change => {
     let scenario: ReturnType<typeof createScenario>;
     let firstStageVerified = false;
     let phasePassed = false;
-    let responsePhase = false;
     beforeAll(() => { scenario = createScenario(change); });
-    beforeEach(async () => {
-        phasePassed = false;
-        responsePhase = firstStageVerified;
-        if (responsePhase) await scenario.startProfiling();
-    });
+    beforeEach(() => { phasePassed = false; });
     afterEach(async () => {
         // A Jest timeout does not enter the interrupted body's finally. Abort
         // and await both the run and its driver before another phase can start.
         if (!phasePassed) await scenario.cleanup();
-        if (responsePhase) await scenario.stopProfiling();
     });
     afterAll(async () => { await scenario.cleanup(); });
 
