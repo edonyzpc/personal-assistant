@@ -81,11 +81,20 @@ Avoid leaving `[~]` in historical evidence rows after the overall track is compl
 
 For risky paths, keep fallback behavior working before enabling the new path by default.
 
+When a phase has a concrete uncertainty across modules, a platform adapter, or
+a business flow, use the smallest probe through the real factory or call chain
+to answer it before expanding implementation or running the expensive gate.
+Local mocks cannot settle that integration question. Repeated counterexamples
+from the same mechanism call for revisiting that mechanism before another
+patch; record the finding in the existing Tracker. This checkpoint does not
+replace the phase's required tests or deployed Obsidian smoke.
+
 ## Review Loop
 
 Use subagents for every phase review when available.
 
-Recommended review split:
+Choose review responsibilities for the phase's actual risks; the following
+split is a reference, not four mandatory roles for each small slice:
 
 - Runtime/architecture reviewer: call path, lifecycle, fallback, source boundaries.
 - Product/safety reviewer: user-visible behavior, privacy, permission, trust model.

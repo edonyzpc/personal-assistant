@@ -31,6 +31,14 @@ If the app is running but sandboxed CLI calls still fail, request approval to re
 
 Prefer plugin reload after deployment. Use a vault reload only when plugin reload cannot clear stale state; avoid app restart unless both fail.
 
+Before any smoke reload or mode change, record the actual `dev:debug` and
+mobile-emulation states using a supported status query or verified app state.
+Check the installed CLI's help before treating a mode command as a read-only
+query. PA's `settings.debug` is not proof of the CLI debug state. If a state
+cannot be determined reliably, leave that mode unchanged and record the
+dependent check as blocked; do not infer an initial `off` state. Record the
+corresponding explicit `on` or `off` restoration commands with the baseline.
+
 ## Fast Runtime Path
 
 ```bash
@@ -88,28 +96,30 @@ Screenshots and mobile emulation:
 obsidian vault=test dev:screenshot path=/private/tmp/personal-assistant-smoke.png
 obsidian vault=test dev:mobile on
 # observe the affected path
-obsidian vault=test dev:mobile off
 ```
 
-Always restore mobile emulation to off, even after failure or interruption.
+Restore mobile emulation to its recorded initial state, including after failure
+or interruption. A mode change can reload the app; capture evidence before
+restoring mobile, then restore debug after the reload and verify both states.
 
 ## Fresh Debug Capture
 
 Clear both buffers before the action. Toggling `dev:debug` alone does not clear them.
 
 ```bash
-obsidian vault=test dev:debug off
 obsidian vault=test dev:errors clear
 obsidian vault=test dev:console clear
 obsidian vault=test dev:debug on
 # run the action under test
 obsidian vault=test dev:console limit=120
 obsidian vault=test dev:errors
-obsidian vault=test dev:debug off
-obsidian vault=test dev:mobile off
 ```
 
-Run this sequence serially. In a `FAIL`, `BLOCKED`, timeout, or interrupted path, still run the final debug/mobile cleanup as best effort. Record low-risk Obsidian/app noise separately from plugin errors.
+Run this sequence serially, then execute the recorded restoration commands.
+In a `FAIL`, `BLOCKED`, timeout, or interrupted path, still restore known
+initial states as best effort and record the observed result. Unknown initial
+states or failed restoration are not cleanup PASS. Record low-risk
+Obsidian/app noise separately from plugin errors.
 
 ## UI Evidence Mismatch
 
@@ -159,4 +169,4 @@ Record:
 - Fresh console/error output.
 - DOM/runtime artifacts relevant to the changed surface.
 - Provider/model/prompt only when provider-backed smoke ran.
-- Final debug/mobile cleanup state.
+- Initial and restored debug/mobile states, including restoration failures.

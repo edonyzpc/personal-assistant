@@ -26,6 +26,7 @@
 
 ## Engineering Governance
 
+- [GOV-006 Lean Delivery And Beta Validation](./governance/gov-006-lean-delivery-and-beta-validation.md) — 验证复用、GLM恢复与beta流水线规则；[最终验证](./governance/gov-006-lean-delivery-and-beta-validation.md#final-validation-and-limits)。
 - [Governance Registry](./governance/README.md) — repo docs lifecycle、Agent workflow、checker、CI/release tooling 与工程授权边界；不定义 PA runtime 或用户产品行为。
 - [GOV-002 Master-First Branch And Beta Packaging](./governance/gov-002-master-first-branch-and-beta-packaging.md) — 所有已接受工作先进入 `master`，BRAT beta 仅从精确 `master` 基线包装。
 - [GOV-003 Proportionate Test Design](./governance/gov-003-proportionate-test-design.md) — 以真实回归保护为准精简测试，保持输入隔离、覆盖与发布门禁。

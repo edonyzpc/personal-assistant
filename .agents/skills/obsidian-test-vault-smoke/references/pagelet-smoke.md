@@ -94,9 +94,11 @@ obsidian vault=test files folder=.pagelet ext=md
 obsidian vault=test read path=.pagelet/<new-review-note>.md
 obsidian vault=test dev:console limit=200
 obsidian vault=test dev:errors
-obsidian vault=test dev:debug off
-obsidian vault=test dev:mobile off
 ```
+
+Then restore the debug/mobile states recorded before smoke, following
+[CLI runtime smoke](cli-runtime.md#setup-and-targeting). Do not assume they
+were initially off; capture evidence before any restoration reload.
 
 ## Provider and Data Boundaries
 

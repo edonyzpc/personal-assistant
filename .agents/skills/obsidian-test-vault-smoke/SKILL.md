@@ -69,6 +69,9 @@ build identity alone does not prove tests passed.
 
 1. Inspect `git status --short`, relevant diffs, and affected surfaces.
 2. Freeze the observable target and classify the runtime delta.
+   Before changing app modes or reloading for smoke, record the actual CLI
+   debug and mobile-emulation states and the commands needed to restore them;
+   see [CLI runtime smoke](references/cli-runtime.md#setup-and-targeting).
 3. Select the deployment path below and complete or reuse its checks together
    with the remaining Local Validation Gate checks from `AGENTS.md`.
 4. Select the smoke tier.
@@ -91,12 +94,11 @@ obsidian vault=test plugin id=personal-assistant
    - For Pagelet work, read both CLI runtime smoke and [Pagelet smoke](references/pagelet-smoke.md).
 8. For historical fixtures, regression expectations, and prior evidence, consult the current [Pagelet smoke checklist](../../../docs/development/validation/pagelet-smoke-checklist.md). Treat its verification log as provenance, not current-run evidence.
 9. Record concrete `PASS`, `FAIL`, `BLOCKED`, or `SKIP` outcomes.
-10. Always restore debug/mobile state, including after failure or interruption:
-
-```bash
-obsidian vault=test dev:debug off
-obsidian vault=test dev:mobile off
-```
+10. Restore the recorded debug/mobile states after success, failure, or
+    interruption; `off` is correct only when that was the initial state.
+    Restore mobile first if it triggers a reload, then restore and verify debug.
+    Report an unknown initial state or failed restoration without claiming
+    cleanup PASS.
 
 ## Safety Boundaries
 
@@ -136,8 +138,8 @@ UI/UX smoke:
 - UX findings: `<UX-P0/UX-P1/UX-P2 or none>`
 
 Cleanup:
-- Debug off: PASS/FAIL
-- Mobile emulation off: PASS/FAIL
+- Initial debug/mobile states: `<observed states or unknown>`
+- Restored debug/mobile states: `<observed states; PASS/FAIL/BLOCKED>`
 
 Hosted community scan:
 - Authorized and run / not authorized and not run / BLOCKED

@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-003
-Updated: 2026-09-30
+Updated: 2026-10-02
 Work item: B-142
 Authority: 测试精简与执行优化的设计约束；不改变 PA runtime、用户行为或 GOV-002 发布资格。
 
@@ -18,7 +18,8 @@ Bootstrap source: Owner 于 2026-09-19 要求调查发布测试耗时与重复�
 集成负责文件/CLI/构建身份，实机负责宿主能力和交互。
 
 [GOV-002](./gov-002-master-first-branch-and-beta-packaging.md) 的 build-before-full-test、
-完整 coverage、beta exact-master CI 复用与最终 tag 独立验证继续生效。
+完整 coverage、beta 精确来源 CI 复用与最终 tag 产物验证继续生效。正常仅包装 beta
+可复用 parent 的成功完整 master CI；缺失或无效证据回退完整验证，stable 仍完整。
 
 ## Requirements
 
@@ -44,6 +45,23 @@ Bootstrap source: Owner 于 2026-09-19 要求调查发布测试耗时与重复�
 - 不开展全仓固定比例删减；首批候选和重型 harness 的边界见 SDD。
 - 不改变 coverage 频率/工具、结果复用政策或 release source；外部源码传输仍须任务级
   明确授权。
+
+## Current Validation Rules — 2026-10-02
+
+上文 B-142 范围与下文交付记录保留当时事实。当前常规 CI、stable tag 与 beta 的
+完整回退路径使用 `--maxWorkers=2 --coverage`；本地完整验证使用 `--runInBand`。
+正常 beta 的功能验收在 master 完成，tag 复用精确 parent 的成功完整 master CI，
+只补版本化 build、artifact、发布与法律检查；不重复部署或功能 UI smoke。安装/
+资产布局、插件 ID、platform 变化，具体下载/加载/升级故障或明确要求才触发对应
+smoke。此规则替代历史上 beta tag 无条件完整测试的要求，不改变 coverage 门槛。
+
+当前同范围ZAI派工沿用[GOV-001](./gov-001-agent-managed-project-lifecycle.md#gpt-6--glm-delivery-allocation)的持续授权；上文B-142的任务级授权描述是历史交付范围。
+
+异步测试先区分行为与时间预算：来源、取消和结果集成用例保留真实调度，但可控制
+`performance.now` 排除 CPU/coverage 波动；时间预算由独立受控时钟用例验证。
+等待须匹配生产 timer/macrotask 阶段或实际完成事件，不能用无关轮转次数代替。
+每个场景清理时钟 spy，并在使用 fake timers 后恢复真实 timers。复用现有 helper，
+不建立新 framework，不为这些措辞增加只匹配模板或源码字面的低价值测试。
 
 ## Acceptance Criteria
 

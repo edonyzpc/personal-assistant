@@ -36,6 +36,11 @@ Sources:
   regular-CI/documentation work and do not block publication.
 - Stable changelog generation ignores prerelease tags by default, so the stable
   release notes still cover the full change range from the previous stable tag.
+- Beta publication follows completed functionality acceptance on `master`.
+  Normal packaging reuses successful full master CI for the exact source parent;
+  tag CI builds and checks artifacts, packaging, release docs and legal assets.
+  Missing or invalid evidence falls back to the full gate; stable remains full.
+  This replaces the former full-test and app-smoke default for every beta.
 
 ## Version Pattern
 
@@ -66,19 +71,23 @@ git status --short
 git fetch origin master
 git switch master
 git pull --ff-only
-git status --short
-git rev-parse master
-git rev-parse origin/master
-git tag --list 2.8.4
+git rev-list --left-right --count master...origin/master
 ```
 
 If `git status --short` is not empty, stop before switching or creating the
 beta branch. Commit, stash, clean, or explicitly confirm the intended dirty
 worktree scope first.
 
-The local and remote `master` hashes must also match before beta publication.
-If local `master` is ahead, stop until pushing `master` is explicitly authorized;
-do not use the beta push as a substitute for integrating the source branch.
+Require both counts to be zero before creating the beta branch. If local
+`master` is ahead, stop preparation until pushing it is explicitly authorized
+and the refs match; any other mismatch also stops preparation. A successful
+`git pull --ff-only` alone does not exclude local commits ahead of origin.
+
+Keep this single preparation check: `make release` verifies local `HEAD == master`
+but treats live master mismatch as unavailable CI evidence and runs full local
+checks; `make publish` performs the live synchronization hard gate later. Trust
+the scripts' remaining baseline-tag, source-parent, version and packaging
+checks without manually repeating them. A beta push does not integrate master.
 
 If a work branch is involved, prove no accepted commit remains outside
 `master` before packaging. For example:
@@ -98,17 +107,17 @@ do not run an extra full gate first. The branch name must match the target versi
 ```bash
 git switch master
 git switch -c beta/2.9.0-beta.1
-git rev-parse master
-git rev-parse HEAD
 ```
 
-The two hashes must match before `make release`. The release script enforces
-this invariant and rejects any beta-only code/docs commit.
+The release script enforces `HEAD == master` and rejects any beta-only
+code/docs commit.
 
 Run the release command once. It first looks for a successful full master CI
 for the exact source SHA, then falls back to full local checks if evidence is
 unavailable. Reuse keeps local diff/notice/release-doc checks and the independent
-final-tag full gate. See [CI reuse conditions](./release-process.md#beta-preparation-reuse-exact-master-ci).
+final-tag build/packaging/artifact checks. Tag CI independently verifies full
+master CI for the exact source parent; missing or invalid evidence uses the
+full gate. See [CI reuse conditions](./release-process.md#beta-preparation-reuse-exact-master-ci).
 
 ```bash
 make release-dry-run VERSION=2.9.0-beta.1
@@ -122,25 +131,8 @@ For a deliberately local full gate, use
 Publish only after the beta scope and validation evidence are accepted:
 
 ```bash
-git status --short
-git branch --show-current
-node -p "require('./package.json').version"
-git rev-parse 2.9.0-beta.1^{}
-git rev-parse HEAD
-git rev-parse HEAD^
-git rev-parse master
 make publish VERSION=2.9.0-beta.1
 ```
-
-Expected before publish:
-
-- `git status --short` is empty.
-- The current branch is `beta/2.9.0-beta.1`.
-- `package.json` version is `2.9.0-beta.1`.
-- `git rev-parse 2.9.0-beta.1^{}` equals `git rev-parse HEAD`.
-- `git rev-parse HEAD^` equals `git rev-parse master`, with exactly one commit
-  present on beta but not on `master`.
-- `git rev-parse master` equals `git rev-parse origin/master`.
 
 The publish script enforces the clean worktree, expected branch, matching
 package/manifest versions, tag-to-HEAD, direct master parent, generated release
@@ -194,7 +186,12 @@ The default completion check downloads only `manifest.json`. Downloading all
 assets for local hashes or `node --check` is optional for an explicit request
 or a concrete download/package incident; the release workflow already builds,
 audits and attests the published assets. Always wait for download completion
-before reading or validating a file. This does not replace BRAT/app smoke.
+before reading or validating a file. Asset verification proves publication;
+claim BRAT installation validation only when the triggered smoke below ran.
+
+Reuse a normal successful push receipt. Recheck remote refs only when the
+result is ambiguous, another change may have raced, or the next action needs
+current remote state; the scripts and workflow retain their own live checks.
 
 Report timing as local preparation, remote tag gate and post-publish checks.
 Do not add polling/sleep durations to the tests they overlap. Report meaningful
@@ -224,14 +221,16 @@ to avoid GitHub API rate limits.
 
 ## Smoke Gate
 
-For every BRAT beta build, record at least:
+Normal packaging beta uses the completed master functionality acceptance and
+GitHub Release verification. Do not repeat local deployment, Obsidian/BRAT
+Chat or Memory/Pagelet interactions, or mobile smoke merely to publish it.
 
-- GitHub Release verification output.
-- Desktop Obsidian install or update through BRAT.
-- Plugin enable, reload, and basic Settings open.
-- One Chat path and one Memory/Pagelet path relevant to the beta scope.
-- Mobile BRAT install or update when the beta touches mobile-visible UI,
-  storage, or platform behavior.
+Run targeted install/app/device smoke only for installation or asset layout,
+plugin ID or platform changes; a concrete download, load or upgrade failure;
+or an explicit request. Select evidence for that trigger: BRAT install/update,
+enable/reload and Settings for an installation change; the affected interaction
+for a load/runtime issue; mobile only for the affected platform or request.
+New runtime fixes complete their master functionality acceptance before release.
 
 Do not claim BRAT validation unless the plugin was installed or updated through
 BRAT from the published GitHub Release.
@@ -246,8 +245,13 @@ let `make release` validate or reuse that source:
 git fetch origin master
 git switch master
 git pull --ff-only
-git rev-parse master
-git rev-parse origin/master
+git rev-list --left-right --count master...origin/master
+```
+
+Continue only when both counts are zero and the worktree is clean, as in the
+preparation flow above. Run only the release stages already authorized:
+
+```bash
 git switch -c beta/2.9.0-beta.3
 make release-dry-run VERSION=2.9.0-beta.3
 make release VERSION=2.9.0-beta.3

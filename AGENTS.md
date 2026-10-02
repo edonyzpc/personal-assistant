@@ -65,7 +65,27 @@ Use this file as the project README for coding agents. Keep changes aligned with
   GPT-6 checks actual diffs and evidence before marking a task done.
 - Verify the actual provider/model and available tools. Never describe another
   model as GLM, assume desktop tools are inherited by a CLI worker, or silently
-  fall back to GPT-6 implementation. Existing specialist roles remain available
+  change delivery ownership. The owner authorizes necessary PA source, tests,
+  contracts and redacted tool results to the configured `pa-glm` / ZAI endpoint;
+  reuse this authorization for the same scope, including revisions and resume.
+  Exclude private vaults, secrets, sensitive raw logs and unrelated workspaces.
+  A new provider/endpoint or expanded data scope requires a user decision.
+  Weekly quota exhaustion transfers implementation to GPT immediately. For a
+  five-hour quota window, wait only when the reported reset is within one hour
+  of the first block; otherwise GPT takes over. If reset is unknown, inspect
+  available quota information once, then transfer if it remains unknown.
+  Stop the old writer before takeover, preserve its diff/evidence/corrections,
+  and do not switch back mid-task. Follow workflow section 5 for bounded resume;
+  authentication, protocol and tool failures are separate diagnoses.
+  After GPT takeover, release gates, data/permission changes, migrations and
+  cross-module behavior require a different read-only reviewer (GPT is fine);
+  the writer handles fixes. Low-risk wording, local styling and narrow
+  contract-restoring fixes may use writer self-review plus required tests or
+  interaction evidence; label this self-review, not independent review.
+  Repeated rework, unclear scope or conflicting evidence requires independent
+  review. Record the risk, writer, review mode and reviewer when applicable in
+  the existing Tracker/task record; other required gates remain in force.
+  Existing specialist roles remain available
   for their scoped work; they do not replace GLM delivery or GPT-6 acceptance.
 - Default clear low-risk tasks to one GLM writer and one continuous delivery
   context; do not repeat GPT investigation or require separate understand/red
@@ -260,8 +280,12 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
   do not defer a phase's gate to the end of the whole feature.
 - Record reusable evidence with command/scope, result and natural exit,
   relevant source/tests/fixtures/config/dependencies, and required environment
-  or build identity. Verify those inputs before reuse; HEAD alone is not
-  enough with uncommitted changes. Invalidate affected evidence when inputs
+  or build identity. Use a targeted diff from the tested baseline and account
+  for relevant uncommitted changes; do not default to whole-repo hash manifests
+  or repeated HEAD/SHA comparisons. Stage, commit, push and unrelated docs do
+  not invalidate passing tests; commit identity is not test-input identity.
+  Trust successful project automation for invariants it already checked.
+  Invalidate affected evidence when inputs
   change; shared behavior/config/dependencies may require a broad rerun.
   Docs-only edits do not invalidate runtime proof unless they change its
   requirements or validation rules. Unknown input identity means no reuse.
@@ -339,6 +363,13 @@ under the Local Deployment conditions when those checks already passed.
 
 ## Architecture Rules
 
+- Don't add error handling for scenarios that can't happen. Trust internal
+  code and framework guarantees. Only validate at system boundaries.
+  Boundaries include user/provider input, persisted or synced state, files,
+  network and external processes, deployment, and concurrent/cross-tree
+  handoff. An internal function call is not itself a boundary. Preserve
+  handling for demonstrated failures, cancellation, revocation and races;
+  do not invent impossible states or silently swallow broken invariants.
 - Prefer existing module boundaries, platform APIs, and project helpers over new
   parallel abstractions. Add foundational utilities, dependencies, or abstractions for
   a current verified need, and explain why existing capabilities do not fit.
@@ -490,15 +521,23 @@ under the Local Deployment conditions when those checks already passed.
   Beta preparation reuses only exact synchronized master CI with a successful
   full `validate` job; missing or invalid evidence falls back to full local
   checks. It retains cheap local diff/notice/release-doc checks. Stable defaults
-  to full local checks; `RELEASE_LOCAL_CHECKS=1` forces them for beta. Final tag
-  CI always builds and runs full coverage before publication. Do not run an
+  to full local checks; `RELEASE_LOCAL_CHECKS=1` forces them for beta. A normal
+  beta tag reuses full successful master CI for its exact packaging parent
+  after proving the commit only changes generated packaging. It still installs,
+  builds the tagged assets and runs artifact/legal/release checks; missing or
+  invalid evidence falls back to full lint/tests/coverage. Stable tag CI keeps
+  full checks. Do not run an
   extra full gate before this command or treat `SKIP_CHECKS` as CI reuse.
   The command updates release metadata and creates the release commit/tag.
 - After beta publish, verify successful tag workflow, non-draft prerelease,
   all six assets and the downloaded manifest version. Full asset downloads,
   hashes and local JS syntax checks are diagnostic/explicit-request work.
-  Wait for downloads to finish before checking files; BRAT/device smoke is
-  separate evidence.
+  Wait for downloads to finish before checking files. Beta packaging reuses
+  completed feature acceptance; do not repeat deploy/Obsidian/BRAT/device smoke
+  by default. Trigger installation smoke for changed runtime asset layout or
+  packaging/install behavior, plugin identity/platform changes, a concrete
+  load/update/download failure,
+  or an explicit request. Only claim BRAT/app testing when actually observed.
 - Do not delete, rewrite, or move release tags unless explicitly requested.
 - Do not publish, push tags, or create GitHub Releases unless the user clearly asked to publish or confirmed the action in the current turn.
 
@@ -512,6 +551,12 @@ under the Local Deployment conditions when those checks already passed.
   - targeted `git diff -- <path>`
 - Stage only intended files. Do not include unrelated user edits.
 - Never revert user changes unless explicitly requested.
+- A successful push receipt for the explicit destination proves that push was
+  accepted. Query remote refs again only for an ambiguous result, a concurrent
+  change/rewrite, or when the next operation needs current remote state. Verify
+  required signatures once per immutable commit/tag and reuse the result.
+  Release scripts own their source/ref/version/asset checks; do not repeat
+  those checks manually after successful automation without a concrete risk.
 - Avoid destructive git operations such as `git reset --hard` or `git checkout --` unless the user explicitly asks.
 - If `.git/index.lock` or other git writes are blocked by the environment, request approval for the git operation instead of working around it.
 

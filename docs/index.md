@@ -55,3 +55,5 @@
 
 测试精简与执行优化的边界见 [GOV-003 Proportionate Test Design](./development/governance/gov-003-proportionate-test-design.md)。
 本轮质量优先精简见 [GOV-005](./development/governance/gov-005-quality-first-test-reduction.md) 与 [执行记录](./development/active/test-reduction/tracker.md)。
+
+流程与beta验证规则及B-156最终验证见[GOV-006](./development/governance/gov-006-lean-delivery-and-beta-validation.md)。

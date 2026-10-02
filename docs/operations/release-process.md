@@ -39,6 +39,14 @@ Set `SKIP_CHECKS=1` or pass `--skip-checks` only when checks have already been r
 
 ### Beta Preparation: Reuse Exact Master CI
 
+Before creating the beta branch, refresh master and require
+`git rev-list --left-right --count master...origin/master` to report two zero
+counts, as in the [beta preparation flow](./brat-beta-testing.md#create-a-brat-beta-release).
+This is the one synchronization check preparation must retain: `make release`
+only enforces the local source identity and falls back to local checks for a
+live master mismatch; `make publish` rejects that mismatch later. Stop before
+branch creation if master is not synchronized; pushing master needs authority.
+
 Ordinary `make release VERSION=x.y.z-beta.N` automatically checks the GitHub
 repository identified by `origin` (github.com SSH or HTTPS URLs). Reuse requires:
 
@@ -71,18 +79,43 @@ is not the CI reuse mechanism. Dry-run performs neither network lookup nor
 validation. Stable releases retain full local validation by default.
 
 Reused CI proves source validation on the CI runner; it does not validate this
-machine's installed dependencies or old `dist/`. Final tag CI still installs
-dependencies, builds the versioned assets, runs full coverage and audits them
-before publishing. Do not run another full gate before `make release` merely
-to prepare the beta branch, and do not redeploy a stale local build on the basis
-of this CI evidence.
+machine's installed dependencies or old `dist/`. Do not run another full gate
+before or after `make release` without changed inputs or a concrete failure.
+Normal beta packaging does not require a local deployment or repeated app smoke.
+
+### Beta Tag: Reuse The Accepted Source
+
+Beta publication starts after functionality has been accepted on master. The
+tag workflow verifies that the release commit contains only the generated
+packaging changes, then looks for successful full master push CI for its exact
+parent SHA in the same repository. The current run/attempt and required full
+validation steps must qualify as above; docs-only, skipped, failed, incomplete
+or stale evidence does not qualify. A normal master advance is allowed while
+the source parent remains in master history.
+
+With valid evidence, the beta tag installs dependencies, builds the versioned
+assets, runs `npm run test:artifacts -- --runInBand`, and retains notice,
+release-doc, metadata, bundle audit and asset checks. It reuses source lint and
+full Jest/coverage instead of repeating them. Missing or invalid evidence,
+unavailable API data or unequal source inputs takes the full lint/build/Jest
+coverage path. Invalid source or packaging identity rejects the release.
+Stable tags always use the full path. These rules replace the earlier default
+of complete tests on every beta tag; coverage thresholds remain unchanged.
+
+The final tag always builds its own assets. A pre-version-bump local build is
+not release evidence. BRAT/app/device checks are triggered by installation or
+asset layout, plugin ID or platform changes, a concrete download/load/upgrade
+failure, or an explicit request. New runtime fixes return to master acceptance
+before packaging; ordinary beta publication does not repeat that acceptance.
 
 ## Release Gate Levels
 
 Routine open-source client releases should stay lightweight. Every release
-keeps the automated package/license, notice, release-critical documentation,
-test, lint, build, and bundle audit checks green. Dependency changes also require regenerating third-party notices
-with `npm run generate:third-party-notices`.
+keeps source validation evidence plus automated package/license, notice,
+release-critical documentation, versioned build and bundle checks green.
+Normal beta tags reuse accepted source lint/full-test evidence and run artifact
+checks; stable and beta fallback paths run full tests. Dependency changes also
+require regenerating third-party notices with `npm run generate:third-party-notices`.
 
 `npm run docs:check:release` verifies only public/release-critical documents and
 their direct local links. It does not inspect Backlog, Discovery, Active Package,
@@ -109,8 +142,9 @@ future service gate into ordinary plugin release preparation.
 | Source behavior, including tests under `src/` | `npm test -- --runInBand` | No |
 | Scripts, offline fixture and documentation contracts | `npm run test:tooling -- --runInBand` | No |
 | Current-bundle receipt and runtime probe contracts | `npm run test:artifacts -- --runInBand` | Yes |
-| Complete regular CI coverage | `npm run test:all -- --maxWorkers=4 --coverage` | Yes |
-| Complete versioned-tag CI coverage | `npm run test:all -- --maxWorkers=4 --coverage` | Yes |
+| Complete regular CI coverage | `npm run test:all -- --maxWorkers=2 --coverage` | Yes |
+| Accepted-source beta tag artifacts | `npm run test:artifacts -- --runInBand` | Yes |
+| Stable tag or beta fallback coverage | `npm run test:all -- --maxWorkers=2 --coverage` | Yes |
 | Complete local release-preparation coverage | `npm run test:all -- --runInBand --coverage` | Yes |
 | Documentation checker and skill contracts | `npm run test:docs -- --runInBand` | No |
 
@@ -142,13 +176,10 @@ external worker/WASM assets are removed after a successful copy. When both
 deployments are authorized together, `make deploy deploy-icloud` shares one
 full validation run.
 
-The tag release workflow always rebuilds and runs complete coverage against the
-final versioned tag, using two Jest workers. A pre-version-bump local build cannot substitute for those
-release assets. This optimization does not authorize publishing or change the
-release gates.
-
-Beta preparation can reuse exact-master CI as above. This changes where source
-validation is obtained, not the final tag gate or the coverage thresholds.
+The tag release workflow always rebuilds the final versioned assets. Accepted
+source beta tags use artifact checks; stable and beta fallback tags run full
+coverage with two Jest workers. This does not authorize publishing or weaken
+the source, packaging or coverage requirements.
 
 ## Changelog
 
@@ -170,6 +201,12 @@ make changelog VERSION=1.6.6
 ## Publishing
 
 `make publish VERSION=x.y.z` pushes both the current branch and the local release tag to `origin`, then uses `gh run watch --exit-status` to wait for `.github/workflows/release.yml`.
+
+Use the release/publish scripts' successful checks and command receipts. Do not
+manually repeat each Git/ref/version check they already perform. Reuse a normal
+successful push receipt; inspect remote refs again only for an ambiguous result,
+concurrent change, or a next action that needs current remote state. The scripts'
+own live preflight and the workflow's source checks still run.
 
 Before pushing, `scripts/publish-release.mjs` verifies:
 
@@ -226,8 +263,8 @@ Key constraints:
   commit/tag. Do not merge beta release commits back to `master`; beta feedback
   fixes land on `master` before a new beta branch/version is created.
 - Before prerelease publish, local `master` must equal `origin/master`; the
-  GitHub workflow rejects a prerelease whose release parent is not the current
-  remote `master` commit.
+  publish script verifies this live. The tag workflow allows normal later master
+  advances while the verified release parent remains in remote master history.
 - Use prerelease tags such as `2.9.0-beta.1`. The tag, GitHub Release title,
   and released `manifest.json` version must match.
 - The release workflow marks tags containing `-` as GitHub prereleases.

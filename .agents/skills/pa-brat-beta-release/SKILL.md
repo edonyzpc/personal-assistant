@@ -69,15 +69,21 @@ When asked to prepare a beta:
    - `git fetch origin master`
    - `git switch master`
    - `git pull --ff-only`
-   - verify `git rev-parse master` equals `git rev-parse origin/master`
+   - `git rev-list --left-right --count master...origin/master`
+   Require both counts to be zero before creating the packaging branch. This
+   one preparation check is necessary: `make release` treats a live master
+   mismatch as unavailable CI evidence and falls back to local checks; only
+   `make publish` rejects it. A successful `git pull --ff-only` alone does not
+   exclude local commits ahead of origin.
    - do not run another full gate here: `make release` obtains exact-master CI
      evidence or runs the full local fallback after the packaging branch is ready
-   If local `master` is ahead, publishing beta must stop until the user
+   If local `master` is ahead, beta preparation must stop until the user
    explicitly authorizes pushing `master` and the two refs match.
+   Rely on release/publish scripts for their remaining source/ref/version
+   checks instead of repeating them manually.
 4. Choose the next prerelease version, usually `<next-stable>-beta.N`.
 5. Create the packaging branch from the exact current `master` HEAD:
    - `git switch -c beta/<target-version>`
-   - verify `git rev-parse HEAD` equals `git rev-parse master`
 6. Run or recommend:
    - `make release-dry-run VERSION=<target-version>`
    - `make release VERSION=<target-version>` only when the user asked to create
@@ -105,46 +111,38 @@ forces full local checks for diagnosis. Stable defaults remain unchanged;
 dry-run does not query CI or execute checks. Do not use `SKIP_CHECKS` as a
 substitute for this evidence check.
 
-The final tag workflow still installs dependencies, builds, runs full coverage
-and audits the versioned assets. Reused master CI does not prove this machine's
-node_modules or old dist is valid for deployment. Do not add another full
-test/build before `make release`, after it, or while waiting on tag CI without
-new changed inputs or a concrete failure.
+Beta publication follows completed functionality acceptance on master. For
+normal generated packaging, tag CI independently reuses successful full master
+push CI for the exact release parent, with the same repository/current attempt
+and required full steps above. Normal master advances are allowed while that
+parent remains in master history. It installs dependencies, builds versioned
+assets, runs artifact tests, and retains metadata, notice, release-doc, bundle
+audit and asset checks; it does not repeat source lint/full Jest/coverage.
+Missing, invalid, failed, docs-only, incomplete or unavailable evidence falls
+back to the full gate; invalid source/packaging identity rejects publication.
+Stable remains full. This replaces the earlier always-full beta tag rule.
+
+Reused CI does not prove this machine's node_modules or old dist is valid for
+deployment. Do not add another test/build before or after `make release`, or
+while waiting on tag CI, without changed inputs or a concrete failure. Normal
+beta packaging does not require redeployment or repeated functionality smoke.
 
 `scripts/release.mjs` enforces both the matching `beta/<target-version>` name and
 the pre-release `HEAD == master` source invariant.
 
 ## Publish Preflight
 
-Before `make publish VERSION=<target-version>`, verify:
-
-```bash
-git status --short
-git branch --show-current
-node -p "require('./package.json').version"
-git rev-parse <target-version>^{}
-git rev-parse HEAD
-git rev-parse HEAD^
-git rev-parse master
-```
-
-Expected:
-
-- `git status --short` is empty.
-- For prereleases, the current branch is exactly `beta/<target-version>`.
-- For stable releases, the current branch is exactly `master`.
-- `package.json` version equals `<target-version>`.
-- `git rev-parse <target-version>^{}` equals `git rev-parse HEAD`.
-- For prereleases, `HEAD^` equals `master` and the release commit is the only
-  commit present on beta but not on `master`.
-- `master` equals `origin/master`; otherwise the remote workflow will reject the
-  prerelease source even if local checks pass.
-
-`scripts/publish-release.mjs` also checks package/manifest versions, the exact
-generated packaging-file set and commit subject, queries live `origin/master`,
-then pushes the beta branch + tag atomically. If `master` advances normally
+Use `make publish VERSION=<target-version>` after accepted scope and validation.
+Trust its clean-worktree, branch, tag/HEAD, source-parent, version and packaging
+checks instead of manually repeating each SHA/ref/version query.
+`scripts/publish-release.mjs` queries live `origin/master`, then pushes the beta
+branch + tag atomically. If `master` advances normally
 after the live preflight, the workflow accepts the verified source parent as an
 ancestor; divergent/rewritten master history is rejected.
+
+Reuse a normal successful push receipt. Recheck remote refs only for an
+ambiguous result, concurrent change, or a next action that needs current remote
+state. Script/workflow live preflight remains required.
 
 ## Publish Verification
 
@@ -184,14 +182,16 @@ BRAT URL.
 Do not claim BRAT validation unless the plugin was installed or updated through
 BRAT from the published GitHub Release.
 
-Minimum evidence:
+Normal packaging beta reuses completed master functionality acceptance and
+verifies the Release/assets. Do not automatically deploy or repeat Obsidian,
+BRAT Chat/Memory/Pagelet, or mobile smoke.
 
-- GitHub Release object and asset verification.
-- Desktop Obsidian install/update through BRAT.
-- Plugin enable/reload and Settings open.
-- One Chat path and one Memory/Pagelet path relevant to the beta scope.
-- Mobile BRAT install/update when the change touches mobile-visible UI,
-  storage, or platform behavior.
+Trigger targeted install/app/device smoke only for installation or asset
+layout, plugin ID or platform changes; a concrete download/load/upgrade failure;
+or an explicit request. Choose BRAT install/update and enable/reload/Settings
+for installation changes, the affected action for a load/runtime issue, and
+mobile only for the affected platform or request. New runtime fixes return to
+master functionality acceptance before packaging.
 
 For app smoke, use `obsidian-test-vault-smoke`; for iOS, use
 `obsidian-ios-real-device-smoke`.

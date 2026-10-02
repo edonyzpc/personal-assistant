@@ -120,26 +120,24 @@ substitute: `make release` must run its own whitespace, notices, coverage test,
 release-critical docs, lint, build, and bundle-audit checks. Full lifecycle
 `docs:check` findings are reported separately and do not block publication.
 
-Verify:
+Trust the successful release command's version, commit/tag and worktree checks.
+Retain the one association it cannot prove: the release commit's parent must
+equal the hosted Community scan's recorded `source_head`:
 
 ```bash
-git log --oneline -1
-git tag --list <target-version>
-git rev-parse <target-version>^{}
-git rev-parse HEAD
 git rev-parse HEAD^
-git status --short
 ```
 
-Require the tag to point to `HEAD`, the worktree to be clean, and the release
-commit parent to equal the scanned `source_head`.
+Stop if that parent differs from the scanned `source_head`; a scan of another
+commit is not evidence for this release. Recheck other state only after a
+concurrent change, an ambiguous command result or a concrete failure.
 
 Stop here for `local-release`.
 
 ## Publish And Verify
 
-For `publish`, recheck the clean worktree, `master`, package version, and tag at
-`HEAD`, then run:
+For an authorized `publish`, run the command and rely on its current clean-tree,
+branch, version and tag preflight rather than duplicating those checks:
 
 ```bash
 make publish VERSION=<target-version>

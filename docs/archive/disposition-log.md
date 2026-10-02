@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-09-30
+Updated: 2026-10-02
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-10-02 | `docs/development/active/lean-delivery/**` | deleted-after-absorption | [Current GOV-006与最终验证](../development/governance/gov-006-lean-delivery-and-beta-validation.md), AGENTS、GOV-001/002/003、当前workflow/skills、release tooling/tests、[Backlog T-009](../backlog.md#触发型评估) | 用户明确授权B-156 closeout及当前修改master提交/推送；T-01至T-05、全部REQ/AC与独立审查已完成。当前合同能够容纳紧凑验证与限制，不另建archive或保留完整包。Feature Home/Tracker/SDD删除，原过程本轮未提交，不声称已有Git保存原始内容。异步退出提示按条件重启定位，4项既有docs advisory保留；未授权版本发布或其他旧package收尾。 |
 | 2026-09-30 | `docs/development/active/note-change-review/**` | deleted-after-absorption | [DEC-046](../product/decisions/dec-046-note-change-review-and-audit-retirement.md), [B-154 Product Spec](../product/specs/pa-note-change-review-product-spec.md), [Operations architecture](../architecture/pa-agent-architecture-plan.md#operations-agent-providers), [B-154 validation](./2026/b154-note-change-review-validation.md), current source and regression tests | Owner 授权文档收尾；10/10 AC 本地独立验收、12 个发现全部关闭，无未完成实现项转入 Backlog。稳定行为与工程职责吸收，审计零访问、真实 Desktop/CLI mobile、检查复用和构建身份的独有证据紧凑保留；Feature Home/Plan/SDD/Tracker 删除，未提交的过程包不声称可从已有 Git 历史恢复。仅部署 test；Git/发布未授权，旧 audit 完全由 Owner 管理。 |
 | 2026-09-26 | `docs/development/active/test-audit/**` | deleted-after-absorption | [GOV-004](../development/governance/gov-004-test-audit-quality-preservation.md), [B-150 验收](./2026/b150-test-audit/final-report.md), [职责地图](./2026/b150-test-audit/coverage-map.md), [Backlog T-007/T-008](../backlog.md#触发型评估) | Owner 授权文档收尾并保留设计、地图与关键证据；稳定规则和 REQ/AC 留在 Current GOV-004，11 项裁决、8 项反证、最终验收及未审边界压缩保留。地图归档、两份证据 JSON 原字节迁移；Feature Home/Tracker 吸收后删除，过程包未提交，不声称可从旧 Git 历史恢复。生产候选按 Backlog 启动条件另行处理；本轮未提交、推送、部署或发布。 |
 | 2026-09-25 | `docs/development/active/pa-agent-runtime-evolution/**` | deleted-after-absorption | [DEC-043](../product/decisions/dec-043-agent-runtime-evolution-and-source-scope.md), [B-149 Product Spec](../product/specs/pa-agent-runtime-evolution-product-spec.md), [PA Agent Architecture](../architecture/pa-agent-architecture-plan.md), [Runtime lifecycle](../architecture/pa-agent-runtime-lifecycle-plan.md), [B-149 validation](./2026/b149-pa-agent-runtime-evolution-validation.md) | Owner 授权 closeout；13/13 AC 已完成本地验收，稳定范围、事实、辅助预算及 E-05 不确定推断边界已吸收。逐例真实模型、最终部署/桌面/移动模拟器和未知成本的独有证据保留；Feature Home、Plan、SDD、Tracker 删除，原过程可从提交 `3a7c518a` 恢复。无未完成实现项转入 Backlog。Git 集成、beta 发布及 BRAT 安装分别核验。 |
