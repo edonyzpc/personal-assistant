@@ -172,6 +172,38 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ~~~
 
+## Bundled Loader Source Provenance
+
+| Resource | License | Provenance |
+| --- | --- | --- |
+| `src/ui/loaders.ts` | `MIT` | Quantum, Dot Pulse, Mirage and Ping adapted from ldrs 1.1.7; Copyright (c) 2022 Griffin Johnston. |
+
+Animation styles are in `src/custom.pcss`. License source: `licenses/ldrs-MIT.txt`.
+
+~~~text
+MIT License
+
+Copyright (c) 2022 Griffin Johnston
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+~~~
+
 ## Runtime Dependency Inventory
 
 | Package | Version | License | Lockfile path |
@@ -195,7 +227,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 | `js-tiktoken` | `1.0.21` | `MIT` | `node_modules/js-tiktoken` |
 | `js-tokens` | `4.0.0` | `MIT` | `node_modules/js-tokens` |
 | `langsmith` | `0.7.1` | `MIT` | `node_modules/langsmith` |
-| `ldrs` | `1.1.7` | `MIT` | `node_modules/ldrs` |
 | `linkify-it` | `6.1.0` | `MIT` | `node_modules/linkify-it` |
 | `loose-envify` | `1.4.0` | `MIT` | `node_modules/loose-envify` |
 | `markdown-it` | `15.0.2` | `MIT` | `node_modules/markdown-it` |
@@ -931,36 +962,6 @@ THE SOFTWARE.
 MIT License
 
 Copyright (c) 2023 LangChain
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-~~~
-
-### ldrs@1.1.7
-
-- License: `MIT`
-- Lockfile path: `node_modules/ldrs`
-- Source file: `node_modules/ldrs/LICENSE`
-
-~~~text
-MIT License
-
-Copyright (c) 2022 Griffin Johnston
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

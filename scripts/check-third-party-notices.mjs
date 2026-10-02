@@ -47,6 +47,13 @@ const externalRuntimeNoticeSources = new Map([
 
 const bundledResourceNoticeByPath = new Map([
   [
+    "src/ui/loaders.ts",
+    {
+      license: "MIT",
+      provenance: "Quantum, Dot Pulse, Mirage and Ping adapted from ldrs 1.1.7; Copyright (c) 2022 Griffin Johnston.",
+    },
+  ],
+  [
     shareCardFontManifest.subset.outputPath,
     {
       license: "OFL-1.1",
@@ -212,6 +219,7 @@ function collectBundledResourcePaths() {
     resourcePaths.add(match[1]);
   }
   resourcePaths.add(shareCardFontManifest.subset.outputPath);
+  resourcePaths.add("src/ui/loaders.ts");
   return [...resourcePaths].sort();
 }
 
@@ -264,6 +272,14 @@ const bundledResourcePaths = collectBundledResourcePaths();
 const { rows: noticeRows, duplicates: duplicateNoticeRows } = parseNoticeRows(notices);
 const { rows: bundledResourceRows, duplicates: duplicateBundledResourceRows } = parseBundledResourceRows(notices);
 const errors = [];
+if (!existsSync("licenses/ldrs-MIT.txt")) {
+  errors.push("Bundled ldrs MIT license is missing: licenses/ldrs-MIT.txt");
+} else {
+  const loaderLicense = readFileSync("licenses/ldrs-MIT.txt", "utf8").trim();
+  if (!loaderLicense.includes("Copyright (c) 2022 Griffin Johnston") || !notices.includes(loaderLicense)) {
+    errors.push("THIRD_PARTY_NOTICES.md must preserve the bundled ldrs MIT license text.");
+  }
+}
 const expectedRows = new Set();
 const expectedBundledResourceRows = new Set();
 

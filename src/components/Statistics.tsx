@@ -64,38 +64,7 @@ function CompositionProgress({ label, value, max, colorClass }: CompositionProgr
 	);
 }
 
-const DashboardChart = lazy(async () => {
-	const chartModule = await import("chart.js");
-	const reactChart = await import("react-chartjs-2");
-	const {
-		Chart: ChartJS,
-		BarController,
-		LineController,
-		Title,
-		Tooltip,
-		Legend,
-		BarElement,
-		LineElement,
-		LinearScale,
-		PointElement,
-		CategoryScale,
-		Filler,
-	} = chartModule;
-	ChartJS.register(
-		BarController,
-		LineController,
-		Title,
-		Tooltip,
-		Legend,
-		BarElement,
-		LineElement,
-		LinearScale,
-		PointElement,
-		CategoryScale,
-		Filler
-	);
-	return { default: reactChart.Chart };
-});
+const DashboardChart = lazy(() => import('./statistics-chart'));
 
 const tabs: { id: StatisticsView; labelKey: string }[] = [
 	{ id: "overview", labelKey: "plugin.statistics.tab.overview" },

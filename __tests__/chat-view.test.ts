@@ -6715,7 +6715,9 @@ describe('LLMView turn lifecycle', () => {
         const thinkingRole = getElementByClass(containerEl, 'thinking-status-role');
         const thinkingLoader = getElementByClass(thinkingRole, 'pa-chat-role-loader-thinking');
         expect(thinkingRole.children[0]).toBe(thinkingLoader);
-        expect(walk(containerEl, (el) => el.tagName === 'l-quantum')).not.toBeNull();
+        const quantum = getElementByClass(thinkingLoader, 'pa-loader-quantum');
+        expect(getElementsByClass(quantum, 'pa-loader-particle')).toHaveLength(13);
+        expect(walk(containerEl, (el) => el.tagName === 'l-quantum')).toBeNull();
         const responseDiv = getResponseDiv(view);
         const thinkingStatus = getElementByClass(responseDiv, 'thinking-status');
         const assistantMessage = getElementByClass(responseDiv, 'assistant');

@@ -187,6 +187,19 @@ function bundledBinaryResourceMarkdown() {
   ].join("\n");
 }
 
+function bundledLoaderResourceMarkdown() {
+  const licenseText = readFileSync("licenses/ldrs-MIT.txt", "utf8").trim();
+  return [
+    "## Bundled Loader Source Provenance", "",
+    "| Resource | License | Provenance |",
+    "| --- | --- | --- |",
+    "| `src/ui/loaders.ts` | `MIT` | Quantum, Dot Pulse, Mirage and Ping adapted from ldrs 1.1.7; Copyright (c) 2022 Griffin Johnston. |",
+    "",
+    "Animation styles are in `src/custom.pcss`. License source: `licenses/ldrs-MIT.txt`.",
+    "", "~~~text", licenseText, "~~~", "",
+  ].join("\n");
+}
+
 function runtimeLicenseNoticeMarkdown(inventory) {
   const sections = [
     "## Runtime License Notices",
@@ -249,6 +262,7 @@ const next = [
   prefix,
   "",
   bundledBinaryResourceMarkdown(),
+  bundledLoaderResourceMarkdown(),
   runtimeInventoryMarkdown(inventory),
   runtimeLicenseNoticeMarkdown(inventory),
 ].join("\n");

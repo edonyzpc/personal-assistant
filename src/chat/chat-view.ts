@@ -39,13 +39,13 @@ import {
     type ChatRoleIdenticonModel,
 } from './role-identicons';
 import { MobileInputAdapter } from './MobileInputAdapter';
+import { createQuantumLoader } from '../ui/loaders';
 import { getPluginUiLanguage, makePluginTranslator, pluginT } from '../locales/plugin';
 import { createContextPagerStateFromChatContextUsed, mergeContextReductionFromMetrics } from '../pa/context-pager';
 import type { ContextReductionReceipt } from '../pa/contracts/context-trace';
 import {
     cancelPlatformAnimationFrame,
     clearPlatformTimeout,
-    getPlatformCustomElements,
     getOptionalPlatformDocument,
     getOptionalPlatformWindow,
     getPlatformPerformance,
@@ -357,20 +357,6 @@ const MEMORY_CHIP_STATE_CLASSES = [
 ];
 export { CHAT_MENU_IDLE_CLOSE_MS } from './menu-helpers';
 
-let ldrsLoadersRequested = false;
-
-function ensureChatLoadersRegistered(log?: (message: string, error?: unknown) => void): void {
-    if (ldrsLoadersRequested) return;
-    if (!getPlatformCustomElements()) return;
-
-    ldrsLoadersRequested = true;
-    void Promise.all([
-        import('ldrs/quantum'),
-    ]).catch((error) => {
-        ldrsLoadersRequested = false;
-        log?.('Could not load chat waiting animations', error);
-    });
-}
 
 
 
@@ -559,7 +545,6 @@ export class LLMView extends ItemView {
         this.registerViewTeardown(() => composerDraft.dispose());
         this.resetRoleIdenticonSessionSeed();
         const t = makePluginTranslator(getPluginUiLanguage());
-        ensureChatLoadersRegistered((message, error) => this.host.log(message, error));
         const { containerEl } = this;
         containerEl.empty();
         containerEl.classList.add('llm-view');
@@ -1752,18 +1737,11 @@ export class LLMView extends ItemView {
                 cls: `pa-chat-role-loader pa-chat-role-loader-${kind}`,
                 attr: { 'aria-hidden': 'true' },
             });
-            wrapper.createEl('l-quantum' as keyof HTMLElementTagNameMap, {
-                cls: 'pa-chat-role-loader-element',
-                attr: {
-                    size: '16',
-                    speed: '1.75',
-                    color: 'currentColor',
-                },
+            createQuantumLoader(wrapper, {
+                size: 16,
+                speed: 1.75,
+                color: 'currentColor',
             });
-            const fallback = wrapper.createSpan({ cls: 'pa-chat-role-loader-fallback' });
-            fallback.createSpan({ text: '' });
-            fallback.createSpan({ text: '' });
-            fallback.createSpan({ text: '' });
             return wrapper;
         };
         const createSvgChild = (parent: Element, tagName: string): Element => {

@@ -1,7 +1,9 @@
 /* Copyright 2023 edonyzpc */
 
 import { App, Notice, normalizePath, request } from 'obsidian';
-import { gt, prerelease, valid } from "semver";
+import gt from "semver/functions/gt";
+import prerelease from "semver/functions/prerelease";
+import valid from "semver/functions/valid";
 import type { PluginManagerSettings } from "./settings";
 import type { ObsidianManifest, Manifest, UpdateStatus, ThemeReleaseFiles } from "./types/manifest";
 import { ProgressBar, type ProgressBarHost } from "./progress-bar";
