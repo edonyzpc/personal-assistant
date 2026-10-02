@@ -5,6 +5,7 @@ import type { InputLineage } from '../src/ai-services/input-lineage';
 import { completeInputLineage } from '../src/ai-services/input-lineage';
 import { createAbortError } from '../src/ai-services/chat-utils';
 import { PerformanceObserver, type PerformanceEntry } from 'node:perf_hooks';
+import { Session } from 'node:inspector';
 
 jest.mock('obsidian');
 
@@ -168,6 +169,30 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
             report();
         }
     };
+    // Keep profiler setup/teardown in hooks, outside the measured test deadline.
+    const profiler = change === 'unchanged' ? new Session() : undefined;
+    const startProfiling = async () => {
+        if (profiler) {
+            profiler.connect();
+            await new Promise<void>((resolve, reject) => profiler.post('Profiler.enable', error => error ? reject(error) : resolve()));
+            await new Promise<void>((resolve, reject) => profiler.post('Profiler.start', error => error ? reject(error) : resolve()));
+        }
+    };
+    const stopProfiling = async () => {
+        if (!profiler) return;
+        const { profile } = await new Promise<import('node:inspector').Profiler.StopReturnType>((resolve, reject) =>
+            profiler.post('Profiler.stop', (error, result) => error ? reject(error) : resolve(result)));
+        profiler.disconnect();
+        const sampledMs = new Map<number, number>();
+        for (let index = 0; index < (profile.samples?.length ?? 0); index++) {
+            const id = profile.samples![index];
+            sampledMs.set(id, (sampledMs.get(id) ?? 0) + profile.timeDeltas![index] / 1000);
+        }
+        const top = profile.nodes.map(node => ({ function: node.callFrame.functionName,
+            url: node.callFrame.url, line: node.callFrame.lineNumber + 1,
+            sampledMs: sampledMs.get(node.id) ?? 0 })).sort((a, b) => b.sampledMs - a.sampledMs).slice(0, 20);
+        process.stderr.write('PA_SDK_CPU ' + JSON.stringify(top) + '\n');
+    };
     const finish = async () => {
         const report = phaseTiming('tool-response');
         try {
@@ -193,19 +218,25 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
             report();
         }
     };
-    return { firstRequest, finish, cleanup };
+    return { firstRequest, finish, cleanup, startProfiling, stopProfiling };
 }
 
 describe.each(['unchanged', 'revoked', 'ordinary-edit'] as const)('source admission in one continuous actual SDK run: %s', change => {
     let scenario: ReturnType<typeof createScenario>;
     let firstStageVerified = false;
     let phasePassed = false;
+    let responsePhase = false;
     beforeAll(() => { scenario = createScenario(change); });
-    beforeEach(() => { phasePassed = false; });
+    beforeEach(async () => {
+        phasePassed = false;
+        responsePhase = firstStageVerified;
+        if (responsePhase) await scenario.startProfiling();
+    });
     afterEach(async () => {
         // A Jest timeout does not enter the interrupted body's finally. Abort
         // and await both the run and its driver before another phase can start.
         if (!phasePassed) await scenario.cleanup();
+        if (responsePhase) await scenario.stopProfiling();
     });
     afterAll(async () => { await scenario.cleanup(); });
 

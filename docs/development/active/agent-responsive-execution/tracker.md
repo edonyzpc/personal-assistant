@@ -11,7 +11,7 @@ SDD: [Software Design](./sdd.md)
 ## Current Snapshot
 
 - Current phase: CI 36971604883 中 354 suites / 8616 tests 通过，仅 SDK 正常/编辑的工具响应阶段触发默认 5s。E-10 修复有效；本地通过而 GitHub 超时的因果尚未查明，不能归因于平台硬限制。
-- Next action: GitHub cold-cache SDK＋eval 30 断言也通过；正常响应 wall/CPU=2339/2824ms，普通编辑=1913/2069ms，主要是计算。用四个既有重型 suite 先运行的六 suite 最小复现，记录 SDK 起始 heap 与实际 GC 时长，区分 worker 累积和并行计算竞争；该局部诊断不替代完整 gate，结束后删除临时观测。65 来源缩减提案已撤回并另存 patch，待根因证据后再判断。Owner 已授权 master push 与 beta；exact-master 完整 CI 通过后包装 beta.18，并从 BRAT 实际安装验证 desktop/mobile。保留完整设计，不自动 closeout。
+- Next action: GitHub cold-cache SDK＋eval 与六 suite 缩小复现均通过，后者正常响应 wall=1956ms、已观测 GC=88ms；没有复现全量失败，不能确认累积 heap 是主因。保持相同 500 来源，仅对正常工具响应阶段采样 CPU，在一次完整 CI 取得实际失败栈；不继续随意扩充局部复现。结束后删除临时观测。65 来源缩减提案已撤回并另存 patch，待根因证据后再判断。Owner 已授权 master push 与 beta；exact-master 完整 CI 通过后包装 beta.18，并从 BRAT 实际安装验证 desktop/mobile。保留完整设计，不自动 closeout。
 - Blocker / decision needed: 无产品决策；GLM 周限额，Owner 已授权 GPT 完整实施。早期自动审批的集成/竞态证据问题已补实测、独立复核并通过，接线已落地。
 - Last verified behavior: 真实 query factory 500 ancestry × 500 候选的多次切片只完整准入一次，dirty 后再准入；真实 SDK 撤销拒绝、普通编辑保留快照；desktop/mobile 实际检索成功、准备时编辑可落盘、tab/原生命令/Stop 正常。
 - Delivery tree: 基于主树 09c2961 的 managed worktree 已安全接收全部任务 diff 到主仓库；后续修正仅在主仓库，保留无关改动。
@@ -108,6 +108,7 @@ SDD: [Software Design](./sdd.md)
 | 2026-10-02 | Owner 最小测试修复 / F-08 | 三 affected source suites、类型/lint/docs/diff、独立只读复核 | 106 tests PASS，natural exit 0；静态检查 PASS；无具体 review 缺口 | `/private/tmp/pa-beta18-dedup-source-tests.log`（SDK/run 82）、`/private/tmp/pa-beta18-e10-final-source.log`（E10 24）；去两处每 prepare 对拍，已有普通 edit unit 增加 legacy true/edit-true/delete-false。E-10 两臂各自取消/等待 run+driver、恢复 timer，Jest 顺序与幂等 cleanup 保证 slot 置空，无额外身份防御。500 三场景、actual12、8+4、共享50、所有 aggregate/E11 断言不变；生产代码、5s、coverage 不变，无新增框架/故障注入或 app gate。冻结后一次完整 CI 待验 |
 | 2026-10-02 | Owner 本地/GitHub 差异追因 / F-08 | CI 36971604883，master 16554672 | 354 suites / 8616 tests PASS；仅 SDK 两个工具响应阶段 5014/5012ms 超时；不发布 | `/private/tmp/pa-beta18-test-repair-ci-full.log`；E-10 main/control 2059/303ms PASS，SDK 首请求 1974/1685/1582ms，撤销响应 244ms。全仓 760.43s，最大 RSS 2751708KiB（非所有 worker 总峰值），未见 OOM/平台强杀。同一基线本地两 suite coverage 30 断言 PASS、2.521s，SDK 响应 575/39/516ms；局部 global coverage 不足自然 exit 1。范围、cache、Node patch、硬件仍有变量，不能据此断言具体根因。 |
 | 2026-10-02 | Owner 本地/GitHub 差异追因 / F-08 | 临时 CI 36974550776：cold-cache、coverage、2 workers、显式 default reporter，仅 SDK＋eval | 本地/GitHub 均 30 断言 PASS；局部 global coverage 不足，各自然 exit 1；不是完整 gate | `/private/tmp/pa-sdk-local-cold-phase-default.log`、`/private/tmp/pa-sdk-phase-gh-full.log`；正常响应本地 wall/CPU=605/776ms、GitHub=2339/2824ms；编辑=534/583ms 对 1913/2069ms；撤销=41/49ms 对142/160ms。SDK 均 worker=2，5/5/6 prepare、2 request、1/0/1 read 相同。CPU 含进程辅助线程，证明不是主要空等，未量化 GC。GitHub SDK 末 heap343MB，完整失败轮538MB且执行前已跑约8分钟；其它 worker 输出 heap 曾到1900MB，不能以这些不同进程的末值直接证明 GC 因果。本地自动 AgentReporter 隐藏 PASS console/heap，是日志差异，显式 default 后仍通过。 |
+| 2026-10-02 | Owner 本地/GitHub 差异追因 / F-08 | 临时 CI 36975030496：六 suite 先运行重型 UI/VSS，再 SDK，记录 heap/GC | 本地/GitHub 均 828 断言 PASS；局部覆盖率不足自然 exit 1；未复现全量超时 | `/private/tmp/pa-sdk-local-worker-reuse.log`、`/private/tmp/pa-sdk-worker-reuse-gh-full.log`；GitHub 正常响应 wall/CPU=1956/2306ms，已观测 GC 49次/88ms，编辑1751/1944ms、49次/92ms；SDK首段起始heap174MB、末455MB。process CPU含辅助线程、GC事件仅代表已观测时长，不能由此排除全量特有的资源竞争或后台回收；不再把heap增长直接当作已证实原因。 |
 
 ## Acceptance Boundary
 
