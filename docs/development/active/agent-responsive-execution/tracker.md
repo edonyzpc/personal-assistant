@@ -56,7 +56,7 @@ SDD: [Software Design](./sdd.md)
 | F-05 | P2 | 新 snippet 枚举包装 native 异常破坏标准失败来源分类 | 原样交给既有 adapter 脱敏；保留 API 缺失及非数组业务契约 | E-06 与 snippet focused PASS | Fixed |
 | F-06 | P2 | 普通编辑使不同准备段的 epoch 票据相互失效 | 固定 payload 先准备，末尾集中、有界重验授权；实际撤销仍拒绝 | SDK 500 依赖三场景与 snapshot 52 项回归 PASS | Fixed |
 | F-07 | P1 | 实际 factory 每次 yield 后 executor 无条件重建 500 来源证明；准入耗时再触发下一次 yield，仍反馈放大 | executor 先检查 attempt abort/run/scope；严格票据有效即复用，首次/dirty 才完整准备；独立 receipt 不变 | 真实 factory 多候选次数回归及重新 app smoke | Fixed |
-| F-08 | P2 | 多轮 eval / polling 与测试时钟不匹配；SDK 来源 suite 仍在覆盖率 CI 超时 | 已修 eval 和 polling；reserved writing 的 Date.now 及 timer 使用同一虚拟时间；SDK afterEach 终止并等待自有 run，防止超时污染；默认 timeout / production deadline 不变 | focused 通过；最终 exact-master CI 待验，早期 timer 修正不能独立解释 SDK 超时 | In validation |
+| F-08 | P2 | 多轮 eval / polling 与测试时钟不匹配；完整两轮 SDK 来源测试仍在覆盖率 CI 超时 | 已修 eval/polling/reserved writing；连续 SDK run 按首次物理请求与工具后完成分成两个默认 5s 测试阶段，不重置历史/权限/生产预算；failed phase 的 afterEach 终止并等待 run＋timer driver；不再将整轮总 5s 当成功能合同 | focused 通过；最终 exact-master CI 待验；分阶段改变测试边界，不证明总耗时改善 | In validation |
 | F-09 | P2 | owned lineage 已严格解析，async 却对每个标量 dependency 再进行 single-lineage Zod 解析 | 复用同一权限谓词，仅 user-text/vault/web 使用已验证 DTO；对象型保留原副本；外部严格 parser 和 source-only 完整检查不变 | 独立 diff 复核与 136 focused PASS；CI 最终结果待验，不以 CPU profile 单独声称 Linux 根因已解决 | In validation |
 
 ## Validation Log
@@ -95,6 +95,9 @@ SDD: [Software Design](./sdd.md)
 | 2026-10-02 | F-08..09 / B-155/REQ-03,05..06 | CI 36960573234 的一次性阶段诊断 | 未通过，不发布 | `/private/tmp/pa-beta18-stage-ci-failed.log`：unchanged 在 3s 时 tick=23、prepare=completed=3、request=1、read=1、pendingTimers=1；首请求/读取已完成，不能称前置死锁。首超时后仍运行并污染后续 fake timer。另有 reserved writing 的虚拟 Date.now 与真实 deadline 先于请求触发。诊断代码已移除。CPU profile 指向重复 strict parse，但不足以单独证明 Linux 耗时根因 |
 | 2026-10-02 | F-09 / B-155/REQ-03,05 | 标量权限谓词及独立只读复核 | 4 suites / 136 tests PASS，natural exit 0；lint/type/diff/DOM PASS | `/private/tmp/pa-beta18-scalar-focused.json`；2 malformed＋1 callback throw 反例；外部严格解析、对象副本、fallback、epoch、abort、receipt 保留。生产改变需最终完整 CI 与发布资产 app smoke，旧源码实测不替代新资产检查 |
 | 2026-10-02 | F-08..09 / B-155/REQ-05..06 | 更正 coverage CLI 参数后的限定文件检查 | 4 suites / 136 行为断言 PASS；局部覆盖率未满足全局门槛，natural exit 1 | `/private/tmp/pa-beta18-scalar-targeted-coverage.json`：正常/撤销/编辑 959/206/806ms，不作性能 SLA。误用 coverageReporters variadic 参数的前次运行意外选了全仓且未先 build，353 suites 通过、2 artifact suites 因过期 provenance 失败；`/private/tmp/pa-beta18-scalar-focused-coverage.json` 明确非完整 gate，不以此制造绿色 |
+
+| 2026-10-02 | F-08..09 / B-155/REQ-03,05..06 | CI 36961802941 与连续 SDK 请求边界夹具 | CI 354 suites / 8612 tests PASS；仅正常/普通编辑两轮总默认 5s 超时，不发布 | `/private/tmp/pa-beta18-scalar-master-ci-failed.log`；撤销与 writing 恢复，afterEach 取消后没有旧 timer 污染。夹具分成同一 run 的两阶段，离线 first fetch 记录后先暂停响应；阶段1 request=1/read=0，阶段2释放同一响应并保留全部原断言。第一阶段未通过则取消并等待 run＋driver；阶段2明确拒绝未验证的前置状态。每段默认 5s，500 与生产 deadline 不变；不再证明整轮总 5s，SDD 不设耗时 unit SLA |
+| 2026-10-02 | F-08 / B-155/REQ-03,05 | SDK 两阶段源码 / coverage 局部检查与独立边界复核 | 6 项 PASS；source natural exit 0，focused coverage 因全局门槛 exit 1 | `/private/tmp/pa-beta18-phased-sdk.json`、`/private/tmp/pa-beta18-phased-sdk-coverage.json`；持久 request 数组与 plain counters 跨阶段保留，clearMocks 不影响 first read=0 后第二阶段实际读次数；full CI 仍待验，不能用 focused 替代 |
 
 ## Acceptance Boundary
 
