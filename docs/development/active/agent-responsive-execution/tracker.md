@@ -1,7 +1,7 @@
 # Agent 响应性 Development Tracker
 
 Document status: Current
-Delivery status: Validating
+Delivery status: Validated
 Updated: 2026-10-02
 Work item: B-155
 Authority: 本 track 的唯一执行状态、finding、验证证据与 closeout readiness。
@@ -10,13 +10,13 @@ SDD: [Software Design](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: CI 36976281261 已证实根因：Jest 30.3 的每 suite testNameStorage 未 disable，实际 SDK worker 积累97个 enabled ALS；每 Promise 初始化传播到全部实例。正常阶段5.012s中，CPU profile top20仅 ALS init/propagate 已计2.530s，已观测GC334ms，不能再把主要原因称为平台硬限制或GC停顿。
-- Next action: 官方jest30.1.3＋globals30.1.2最终本地gate已通过：lint/build、完整coverage355 suites/8618 tests自然exit0、docs/diff/DOM；SDK在最后运行，正常/编辑响应577/560ms。500来源、6阶段、默认5s和全部断言保持，生产依赖零变动，冻结diff身份一致。提交推送exact-master完整CI；通过后按Owner既有授权包装beta.18并实际BRAT desktop/mobile smoke。首轮沙箱EPERM已明确superseded，保留完整设计，不自动closeout。
+- Current phase: 根因修复、master 完整 CI、beta.18 发布及实际 BRAT desktop/mobile smoke 已完成。Jest30.3 每 suite 启用 testNameStorage 却不 disable，复用 worker 的 Promise 初始化传播成本累积；失败 worker 实测97个总 enabled native ALS，不能把全部实例都归因于 Jest。官方30.1.3＋globals30.1.2避开普通 test 的该路径，保留500来源、6阶段、默认5s、全部断言及coverage门槛。
+- Next action: 本次授权范围无剩余实现、发布或验收项；保留完整设计，不自动closeout。发布源为完整CI通过的master b886251e，最终证据文档单独提交到master，不重做未变运行输入的全量gate。
 - Blocker / decision needed: 无产品决策；GLM 周限额，Owner 已授权 GPT 完整实施。早期自动审批的集成/竞态证据问题已补实测、独立复核并通过，接线已落地。
-- Last verified behavior: 真实 query factory 500 ancestry × 500 候选的多次切片只完整准入一次，dirty 后再准入；真实 SDK 撤销拒绝、普通编辑保留快照；desktop/mobile 实际检索成功、准备时编辑可落盘、tab/原生命令/Stop 正常。
+- Last verified behavior: 真实 query factory 500 ancestry × 500 候选的多次切片只完整准入一次，dirty 后再准入；真实 SDK 撤销拒绝、普通编辑保留快照。既有准备期间编辑/保存/tab/原生命令/Stop证据保留；当前已发布beta.18在desktop与CLI mobile simulator分别完成真实SDK的inspect/query/snippet，4次来源准备/准入/物理请求均对应，工具全部success且最终回答可见。
 - Delivery tree: 基于主树 09c2961 的 managed worktree 已安全接收全部任务 diff 到主仓库；后续修正仅在主仓库，保留无关改动。
 - Actual app target: 主仓库 `test/`，不改真实 `anthelion` vault。
-- Owned resources: managed worktree 已可恢复归档，主树依赖保留；无运行中的任务 probe。三轮合成 fixture 均按唯一 marker 清理，最终 test 回到 16 篇基线、零自有会话/标签、原会话恢复、Host/fetch/Memory 恢复、mobile simulator 关闭。`/private/tmp/pa-responsive-*.log/json/cjs` 中本任务原始日志及 probe 脚本保留为验收证据；未清扫其它任务的文件。
+- Owned resources: managed worktree 已可恢复归档，主树依赖保留；无运行中的任务probe。所有本次合成fixture与会话均按唯一marker清理，最终test回到16篇基线、原会话恢复、Host/fetch/Memory恢复、mobile simulator关闭、临时全局probe移除。BRAT安装的beta.18与版本pin按本次发布验收保留。`/private/tmp/pa-responsive-*`、`pa-sdk-*`、`pa-jest-pin-*`、`pa-beta18-*`的本任务原始日志及probe脚本保留为证据；未清扫其它任务资源。
 - Stop point: 按 Owner 明确授权完成 master push、beta.18 发布及对应 BRAT smoke，保留用户要求的完整设计，不自动 closeout。
 
 ## Work
@@ -27,8 +27,8 @@ SDD: [Software Design](./sdd.md)
 | T-02 | B-155/REQ-02 / B-155/AC-02 | 批次准入、直接单篇查询、分块检索 | [x] | 真实 factory 次数回归；原生 inspect/query/snippet 成功 |
 | T-03 | B-155/REQ-03 / B-155/AC-03 | 撤销、身份、快照及派生来源 | [x] | Source/SDK/observation 回归与独立复核 |
 | T-04 | B-155/REQ-04 / B-155/AC-04 | 准备取消、迟到结果、独立回执 | [x] | Dispatcher/runtime 回归；实际 Stop，准备取消后无下一物理请求 |
-| T-05 | B-155/REQ-05 / B-155/AC-05 | 既有语义与包装 | [x] | 最终 lint/build/full 355 suites / 8598 tests PASS；标准资产一致 |
-| T-06 | B-155/REQ-06 / B-155/AC-06 | 共享 gate 与适用 app smoke | [x] | 输入冻结、docs/diff/DOM、desktop/CLI mobile simulator，环境恢复 |
+| T-05 | B-155/REQ-05 / B-155/AC-05 | 既有语义与包装 | [x] | 最终本地、exact-master CI、beta tag CI均355 suites / 8618 tests与coverage PASS；发布资产实际安装一致 |
+| T-06 | B-155/REQ-06 / B-155/AC-06 | 共享 gate 与适用 app smoke | [x] | 输入冻结、docs/diff/DOM、当前BRAT发布资产desktop/CLI mobile simulator工具链成功与环境恢复；原生准备期间交互证据按未变调度/UI输入复用 |
 
 ## Validation Planning And Reuse
 
@@ -60,9 +60,9 @@ SDD: [Software Design](./sdd.md)
 | F-05 | P2 | 新 snippet 枚举包装 native 异常破坏标准失败来源分类 | 原样交给既有 adapter 脱敏；保留 API 缺失及非数组业务契约 | E-06 与 snippet focused PASS | Fixed |
 | F-06 | P2 | 普通编辑使不同准备段的 epoch 票据相互失效 | 固定 payload 先准备，末尾集中、有界重验授权；实际撤销仍拒绝 | SDK 500 依赖三场景与 snapshot 52 项回归 PASS | Fixed |
 | F-07 | P1 | 实际 factory 每次 yield 后 executor 无条件重建 500 来源证明；准入耗时再触发下一次 yield，仍反馈放大 | executor 先检查 attempt abort/run/scope；严格票据有效即复用，首次/dirty 才完整准备；独立 receipt 不变 | 真实 factory 多候选次数回归及重新 app smoke | Fixed |
-| F-08 | P2 | 多轮 eval / polling 与测试时钟不匹配；SDK 集成重复对拍增加成本，E-10 timeout 后运行未结束 | SDK 仅承担真实接线，等价对拍集中到已有 unit；500 连续 run 保留两阶段；E-10 main8/control4 独立测试，共享 cap/aggregate；afterEach 取消并等待 run＋driver 再恢复 timer，closed fence 阻止晚写 | 106 focused、类型/lint/docs/diff 与独立复核通过；最终 exact-master CI 待验 | In validation |
-| F-09 | P2 | owned lineage 已严格解析，async 却对每个标量 dependency 再进行 single-lineage Zod 解析 | 复用同一权限谓词，仅 user-text/vault/web 使用已验证 DTO；对象型保留原副本；外部严格 parser 和 source-only 完整检查不变 | 独立 diff 复核与 136 focused PASS；CI 最终结果待验，不以 CPU profile 单独声称 Linux 根因已解决 | In validation |
-| F-10 | P2 | Jest30.3为每suite启用ALS但不disable，复用worker积累97个上下文；大量Promise初始化传播放大SDK CPU，默认5s超时 | 固定官方jest30.1.3 / globals30.1.2：普通test不启用此ALS；30.2与30.5.2均仍有该路径，不盲升版本。保留500及原deadline，删除诊断，产品代码不变 | 源码链、真实GH97槽/profile及同机受控对照已证实；最终本地完整coverage355/8618 PASS，exact-master CI待验 | In validation |
+| F-08 | P2 | 多轮 eval / polling 与测试时钟不匹配；SDK 集成重复对拍增加成本，E-10 timeout 后运行未结束 | SDK 仅承担真实接线，等价对拍集中到已有 unit；500 连续 run 保留两阶段；E-10 main8/control4 独立测试，共享 cap/aggregate；afterEach 取消并等待 run＋driver 再恢复 timer，closed fence 阻止晚写 | 106 focused、类型/lint/docs/diff、独立复核；最终本地、exact-master与beta tag完整355/8618/coverage PASS | Fixed |
+| F-09 | P2 | owned lineage 已严格解析，async 却对每个标量 dependency 再进行 single-lineage Zod 解析 | 复用同一权限谓词，仅 user-text/vault/web 使用已验证 DTO；对象型保留原副本；外部严格 parser 和 source-only 完整检查不变 | 独立diff复核、136 focused、最终完整CI与实际BRAT desktop/mobile工具链PASS；F-10另有因果证据，不以此优化单独解释Linux超时 | Fixed |
+| F-10 | P2 | Jest30.3每suite启用ALS但不disable；失败worker实测97个总enabled native ALS，Promise初始化传播放大SDK CPU，默认5s超时 | 固定官方jest30.1.3 / globals30.1.2：普通test不启用此ALS；30.2与30.5.2均仍有该路径，不盲升版本。保留500及原deadline，删除诊断，产品代码不变 | 源码链、真实GH97槽/profile及同机受控对照；最终本地、exact-master、beta tag完整355/8618/coverage PASS；GH正常/编辑响应1792/1629ms | Fixed |
 
 ## Validation Log
 
@@ -117,11 +117,16 @@ SDD: [Software Design](./sdd.md)
 | 2026-10-02 | F-10 / 最小候选修复 | SDK/eval/cooperative 3 source suites；最终lock的干净npm ci；独立依赖/断言复核 | 33 tests PASS，natural exit0；npm ci自然exit0；无具体review缺口 | `/private/tmp/pa-jest-pin-focused.log`、`/private/tmp/pa-jest-pin-clean-install.log`；npm自动hoist的产品semver提升已撤回，原生产依赖全部逐条一致，仅dev树变动。SDK逐字恢复16554672，无减500/放5s/改断言；关键family按真实解析路径mismatch0、ts-jest peer兼容。focused早于最终semver收窄，最终完整gate仍须覆盖最终lock；不把此focused当完整PASS。 |
 | 2026-10-02 | F-10 / 本地最终gate环境修正 | lint/build/full coverage | lint/build PASS；沙箱full被明确停止，exit143、superseded，不计通过 | `/private/tmp/pa-jest-pin-{lint,build,full}.log`；Ghost回环服务器listen EPERM，属于本机执行权限错误，不是SDK超时。以允许回环服务器的权限重跑full，复用未变输入的lint/build；没有改变测试代码或降低门槛。 |
 | 2026-10-02 | Owner 本地/GitHub差异解释边界 | 已保存旧本地full与当前cold pair证据，只读、零新测试 | 旧本地full355/8598 PASS，SDK正常3818ms/编辑3608ms；当前cold pair正常605ms/GH2339ms | `/private/tmp/pa-beta18-full-coverage.{log,json}`；旧SDK在108.346s启动，此前所有worker合计349 suite结束，不能称本地提前跑，也不能换算该worker槽数。旧full缺PID/slots/CPU且夹具版本不同，无法精确拆分各因素；环境整体速度差与已证实ALS累积共同解释阈值差异，97是总enabled native ALS而非全数Jest实例。 |
-| 2026-10-02 | F-10 / 最终本地共享gate | npm run test:all -- --runInBand --coverage --reporters=default --json；复用lint/build；docs/diff/DOM | PASS：355 suites/8618 tests、coverage门槛，natural exit0；静态检查PASS | `/private/tmp/pa-jest-pin-final-full.{log,json}`（775.351s）、`/private/tmp/pa-jest-pin-{lint,build}.log`、`/private/tmp/pa-jest-pin-final-docs.log`；SDK全仓最后运行，正常/撤销/编辑响应577/46/560ms，首请求195/137/130ms。冻结diff SHA256 6fe9dfb79b4e5fa8368d19da6faeec553e841c6da4772db71356ff9aefe0a508始末一致；没有forceExit、timeout/coverage放宽或新增测试矩阵。exact-master CI仍独立待验。 |
+| 2026-10-02 | F-10 / 最终本地共享gate | npm run test:all -- --runInBand --coverage --reporters=default --json；复用lint/build；docs/diff/DOM | PASS：355 suites/8618 tests、coverage门槛，natural exit0；静态检查PASS | `/private/tmp/pa-jest-pin-final-full.{log,json}`（775.351s）、`/private/tmp/pa-jest-pin-{lint,build}.log`、`/private/tmp/pa-jest-pin-final-docs.log`；SDK全仓最后运行，正常/撤销/编辑响应577/46/560ms，首请求195/137/130ms。冻结diff SHA256 6fe9dfb79b4e5fa8368d19da6faeec553e841c6da4772db71356ff9aefe0a508始末一致；没有forceExit、timeout/coverage放宽或新增测试矩阵。其后exact-master CI独立验证，见下行。 |
+| 2026-10-02 | F-08..10 / Owner master push授权 | 签名commit10e6cc35、证据commitb886251e；exact-master CI36980277921 | PASS，master push、attempt1完整validate成功；355 suites/8618 tests/coverage，natural exit0 | [master CI](https://github.com/edonyzpc/personal-assistant/actions/runs/36980277921)、`/private/tmp/pa-jest-pin-final-gh.log`；lint/build/test/audit成功。全量554.746s，SDK正常/撤销/编辑响应1792/130/1629ms；实际4CPU/AMD EPYC7763/15.61GiB，maxRSS2478560KiB为单进程最高值。主要消除SDK超时，全量仍约9分钟，不声称整体大幅加速。 |
+| 2026-10-02 | B-155/REQ-05..06 / Owner beta发布授权 | exact-master b886251e生成beta.18；make release / make publish | PASS，两个命令natural exit0；packaging commit84af0bd0 Good signature，parent精确b886；标准annotated tag，非签名tag | `/private/tmp/pa-beta18-final-{dry-run,release,publish}.log`；beta分支仅生成包装commit，无重写发布ref；[beta tag CI36981550465](https://github.com/edonyzpc/personal-assistant/actions/runs/36981550465)完整355/8618/coverage PASS，692.562s；[Release](https://github.com/edonyzpc/personal-assistant/releases/tag/2.10.0-beta.18) draft=false/prerelease=true，6项资产。 |
+| 2026-10-02 | B-155/REQ-05..06 / BRAT实际安装 | 现有BRAT更新器安装发布beta.18并pin18；核对资产 | PASS，plugin enabled、version2.10.0-beta.18；安装main.js/styles.css SHA256逐字节匹配发布digest，manifest语义相等 | `/private/tmp/pa-beta18-final-assets.json`、`/private/tmp/pa-beta18-final-manifest/manifest.json`；main.js d28c7ac7668df11ae453c737240e1db81fcdb9cdc529bf7917a3e3e1143b6ee7，styles.css 5a3eb3adf7f98a2126b42ae12af8d419862012a15bee51e1bcbba16921148226；BRAT只复用已有配置，不读取/录入secret值。 |
+| 2026-10-02 | F-09 / B-155/REQ-03,05..06 | 当前发布资产desktop与CLI mobile simulator最小runtime smoke | PASS，两平台各4准备/4准入/4合成物理请求；inspect/query/snippet全部success、isError=false，最终回答实际可见、active=false | `/private/tmp/pa-beta18-native-{desktop,mobile}-pass.log`、`/private/tmp/pa-beta18-{desktop,mobile}-pass.png`；desktop实际点击New Chat/输入/Ask，mobile用户授权CLI simulator实际DOM入口。合成provider保留真实SDK/来源hooks，不证明收费provider网络或iOS专属能力。复用未变调度/UI的既有500来源准备期间编辑/保存/tab/命令/Stop证据；本行普通链路完成不单独冒充全部响应性证明。 |
+| 2026-10-02 | B-155/REQ-06 / 最终状态恢复 | 自有marker会话及笔记清理、原会话加载、plugin重载、simulator关闭 | PASS，test16篇基线、fixture不存在、原会话6b43da5e恢复、Memory=false、mobile=false、临时probe移除；BRAT beta.18/pin18保留 | `/private/tmp/pa-beta18-native-final-restored.log`；Host/fetch按所有权恢复并重载，dev:errors没有捕获记录。此前hidden窗口的运行停在请求前且已取消/清理，不计PASS，也未据此认定产品死锁；用户恢复前台后重新实测通过。原始证据保留，无额外测试矩阵/全量重跑。 |
 
 ## Acceptance Boundary
 
-GPT 在 Owner 授权的完整设计实现范围内独立验收。全部 T-01..06 完成，无未处置 P1/P2 或必要产品决策。Validated 表示此构建与上述合成资料/平台的证据门通过，不表示任意硬件/资源压力下的硬实时保证、真实 provider 性能、真实 vault 已更新、master 已提交/推送或版本已发布。
+GPT 在 Owner 授权的完整设计实现范围内独立验收。全部 T-01..06 完成，无未处置 P1/P2 或必要产品决策。Validated 表示上述构建、合成资料与适用平台的证据门通过；master提交/推送、beta.18发布与BRAT安装另有上列实际证据。不表示任意硬件/资源压力下的硬实时保证、真实provider性能或真实anthelion vault已更新。
 
 原故障的约 2470 万项是量级估算；当前次数回归证明该乘法结构已消除，不把它转换成未经测量的速度倍数。
 
@@ -131,4 +136,4 @@ GPT 在 Owner 授权的完整设计实现范围内独立验收。全部 T-01..06
 - [x] Required review/smoke evidence 已记录。
 - [x] 无剩余实施或验收项需要移入 Backlog。
 - [x] 稳定结论已吸收到 current contract/tests。
-- [x] 用户要求的完整 SDD 保留；执行停在 Validated 与 Owner 明确授权的本地 master 提交，没有自动 closeout/push/release。
+- [x] 用户要求的完整SDD保留；已按Owner明确授权完成master提交/推送、beta.18发布及实际安装验收，执行停在Validated，不自动closeout或归档设计文档。
