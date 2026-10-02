@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-09-29
+Updated: 2026-10-02
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -8,6 +8,7 @@ Updated: 2026-09-29
 
 | ID | 事项 | 当前边界 | 下一步 | 依据 |
 | --- | --- | --- | --- | --- |
+| B-157 | Agent context 连续性与执行事实保全 | 已完成源码审查与脱敏故障分析；来源过滤、压缩和状态刷新有独立缺口，尚未授权实现 | Owner 选择实施后按统一事实投影方案修复并验证 Image/Writing/Ghost/Operations，保持来源与动作权限 | [Discovery 与优化方案](./development/discovery/context-reliability-and-action-continuity.md) |
 | B-002 | Pagelet source-bound async result 完整体验 | Typed outcome 与 interim stale-result 修复已存在；统一 in-memory result store 与 Pet/Bubble ready-state 仍需按当前代码复核 | 先做 code-to-plan reconciliation，再为剩余 slice 建新 SDD；不要重复已实现部分 | [Historical plan](./archive/pagelet-async-result-plan.md) |
 | B-003 | Android VSS 真机验证 | Desktop 与 iOS 有证据，Android parity 未验证 | 在物理 Android 设备验证 SQLite/WASM Memory backend 后再更新 README 声明 | [README note](../README.md#mobile-vss-validation-note) |
 | B-004 | PA Agent telemetry baseline | Instrumentation 与 runbook 就绪，尚无 post-ship aggregate sample | 在明确 opt-in 后采集至少 7 天内容无关的聚合数据，再用于功能优先级判断 | [Runbook](./operations/pa-agent-telemetry-baseline.md) |
@@ -55,6 +56,7 @@ Updated: 2026-09-29
 | T-006 | 图片管理修订的旧应用状态兼容验证 | 2026-09-09 closeout 保留 NOT TESTED：旧 HEIC registry/cache、旧已写 JPEG/缺输出 receipt、未完成迁出在真实应用中未建立独立夹具；相关源码回归已通过。用户要求补齐、兼容/恢复代码改变或拿到独立旧状态时重启；只用合成旧状态，不改真实用户历史，不重复相册/Files/粘贴与共享布局矩阵 | [图片管理修订验证](./archive/2026/chat-image-management-validation.md), [当前恢复契约](./architecture/multimodal-chat-architecture.md#图片管理与保存恢复) |
 | T-007 | Pagelet 取消与临时额度 reservation | admission 接口的人工异步 reserve 反例已显示 abort 后 lease 未被捕获，rollback 未执行；当前默认同步 localStorage 与私有 timer 路径未证实际可达。新增异步存储/调用方、出现真实取消耗额度，或 Owner 单独授权生产修复时，先补真实 caller 反例，再决定最小修复 | [B-150 独立追溯](./archive/2026/b150-test-audit/final-report.md#production-follow-ups), [admission owner](../src/pagelet/provider-call-admission.ts) |
 | T-008 | 已退役 append 与测试专用生产入口清理 | 在单独授权生产清理后，完整核对导出、历史和非测试调用；不得删除仍被 Quick Capture 使用的 confinement，或被生产入口调用的 WithHost renderer。B-150 仅纠正测试证据，不执行此清理 | [B-150 候选边界](./archive/2026/b150-test-audit/final-report.md#production-follow-ups), [GOV-004](./development/governance/gov-004-test-audit-quality-preservation.md) |
+| T-009 | 全量Jest异步清理提示定位 | 下次测试基础设施维护、自然退出失败或测试进程持续存活时，以`--detectOpenHandles`定位受影响suite；当前357 suites/8655 tests自然exit0，本次3个tooling suites的92 tests诊断无未释放资源报告。保留真实退出证据，不用forceExit或弱化测试消除提示 | [B-156验证与限制](./development/governance/gov-006-lean-delivery-and-beta-validation.md#final-validation-and-limits) |
 
 ## 维护规则
 
