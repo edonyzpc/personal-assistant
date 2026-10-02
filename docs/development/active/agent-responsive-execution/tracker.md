@@ -10,8 +10,8 @@ SDD: [Software Design](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: 测试职责整理已完成：SDK 去除重复 legacy 对拍，已有 unit 保留有效/edit/delete 对照，E-10 独立 8+4 轮并清理 timeout 后的 run/driver；106 focused 与静态检查通过，最终完整 CI 待验。
-- Next action: 冻结测试修复输入，提交并推送 master，运行一次完整 coverage CI。Owner 已授权 master push 与 beta；exact-master 完整 CI 通过后包装 beta.18，并从 BRAT 实际安装验证 desktop/mobile。保留完整设计，不自动 closeout。
+- Current phase: CI 36971604883 中 354 suites / 8616 tests 通过，仅 SDK 正常/编辑的工具响应阶段触发默认 5s。E-10 修复有效；本地通过而 GitHub 超时的因果尚未查明，不能归因于平台硬限制。
+- Next action: 在相同 500 来源夹具上暂时记录真实 wall/CPU 时间，GitHub 仅运行 SDK＋eval 两个 cold-cache coverage suite，对比本地同命令；该局部诊断不替代完整 gate，结束后删除临时观测。65 来源缩减提案已撤回并另存 patch，待根因证据后再判断。Owner 已授权 master push 与 beta；exact-master 完整 CI 通过后包装 beta.18，并从 BRAT 实际安装验证 desktop/mobile。保留完整设计，不自动 closeout。
 - Blocker / decision needed: 无产品决策；GLM 周限额，Owner 已授权 GPT 完整实施。早期自动审批的集成/竞态证据问题已补实测、独立复核并通过，接线已落地。
 - Last verified behavior: 真实 query factory 500 ancestry × 500 候选的多次切片只完整准入一次，dirty 后再准入；真实 SDK 撤销拒绝、普通编辑保留快照；desktop/mobile 实际检索成功、准备时编辑可落盘、tab/原生命令/Stop 正常。
 - Delivery tree: 基于主树 09c2961 的 managed worktree 已安全接收全部任务 diff 到主仓库；后续修正仅在主仓库，保留无关改动。
@@ -43,6 +43,7 @@ SDD: [Software Design](./sdd.md)
 | B-155/REQ-05..06 / CI 调度夹具 | 真实 timer polling、分场景 eval、来源集成确定性调度计时 | 四 affected suites；时间预算直接回归；最终 exact-master 完整 coverage CI | 500 来源、撤销/编辑、完整 12 场景及跨场景证据保持；默认 timeout 与覆盖率门槛不变 | fixture 或调度行为变化 |
 | CI 覆盖率资源竞争 / Owner 资源复审 | CI 与 release 同步 2 workers；保留全量、V8 coverage、5s 及现有断言 | workflow tooling contracts；一次 exact-master 全量 CI，输出实际 CPU/内存、time 统计、worker heap 与重型 case 时长 | Test 自然退出 0 且完整 coverage 门槛通过；诊断输出不覆盖失败；资源指标只作为诊断，不是产品性能合同 | 仍失败则重新审视测试分层与重复对拍，不盲目提高 timeout 或再开全量重试 |
 | Owner 最小测试修复 / F-08 | SDK 去重复 oracle；已有 unit 承担有效/edit/delete 对拍；E-10 main/control 分独立 run 并清理已发生的超时 late-write | 三 affected source suites、type/lint/docs/diff；冻结后一次完整 exact-master CI | 500 三场景、12 主场景、8+4 轮、共享 50 请求及 aggregate 断言不变；默认 5s、coverage 和生产代码不变 | 仅新失败或实际缺口追加诊断；不加故障注入测试、通用 helper 框架或内部防御 |
+| Owner 本地/GitHub 差异追因 | 临时两阶段 wall/CPU 观测；两 suite cold-cache coverage 对照 | 相同夹具和命令的本地/GitHub 日志，包含实际 worker/PID、wall/CPU、prepare/request/read 数 | 分清计算与等待；局部全局覆盖率不足仍自然 exit 1，不伪造完整 CI；观测结束删临时代码 | 只对实测差异选下一项诊断，不重复全仓或预先缩小夹具掩盖原因 |
 | B-155/REQ-03,05..06 / 已验证来源重复解析 | owned 标量 dependency 直接执行同一权限谓词；对象型仍保留 parser 副本；虚拟 reserve 匹配虚拟 timer | run / actual SDK / real query / writing preview focused；malformed 与 callback throw 反例；lint/build/完整 CI；BRAT desktop/mobile 最小 runtime smoke | strict 外部解析、scope/epoch/abort/独立 receipt 不变，500 与默认 5s 保留；完整检查和实际发布资产均通过 | 源码、夹具变化或 CI / app 新失败 |
 
 不增加耗时阈值单测、全域性能基准、额外 provider 调用或真机 iOS gate。自动化次数/让出证明与原生操作证明承担不同问题。
@@ -105,6 +106,7 @@ SDD: [Software Design](./sdd.md)
 | 2026-10-02 | CI 覆盖率资源预算 / Owner 复审 | CI 36966858602，冻结相同源码/夹具，只降 4→2 workers 并输出资源 | 354 suites / 8615 tests PASS；仅 SDK 正常/普通编辑第二阶段两项超时，natural exit 1；不发布 | `/private/tmp/pa-beta18-resource-ci-full.log`；实际 availableCpu=4，AMD EPYC 7763，memory=15.61GiB；GNU time 245% CPU、最大 RSS 2428448KiB（不是所有 worker 总峰值），SDK suite heap=790MB，未见 OOM/平台强杀。E-10=2659ms PASS；SDK 首请求正常2037/编辑2349ms，第二段5012/5007ms超时，撤销第二段284ms PASS。全量618.131s，比前轮435.013s长；低并发有助 E-10，但不足以解决 SDK 重复工作，不认定平台硬限制为主因 |
 | 2026-10-02 | SDK / eval 测试职责复审 | 原始测试与独立只读复核 | 设计结论，尚未实施 | SDK wrapper 每次 prepare 额外 `admitsLineage`＋`sourceValidity`/legacy capture 完整对拍，主要重复正常 true；撤销 prepare 抛错时不对拍 false。scope/mixed/unknown 等价、500 yield 撤销和真实 query sealed 复用已有底层覆盖。后续最小整理：SDK 保留 500 与真实接线断言，回执 true/edit-true/revoke-false 用小 fixture 验证；E-10 8+4 保留，但分独立 run test，幂等取消并等待 run/driver 后再还原 timer，禁止 timeout 后晚写 aggregate。不加框架、不扩大 runner、暂不提高 timeout，不以全量盲重试代替分析 |
 | 2026-10-02 | Owner 最小测试修复 / F-08 | 三 affected source suites、类型/lint/docs/diff、独立只读复核 | 106 tests PASS，natural exit 0；静态检查 PASS；无具体 review 缺口 | `/private/tmp/pa-beta18-dedup-source-tests.log`（SDK/run 82）、`/private/tmp/pa-beta18-e10-final-source.log`（E10 24）；去两处每 prepare 对拍，已有普通 edit unit 增加 legacy true/edit-true/delete-false。E-10 两臂各自取消/等待 run+driver、恢复 timer，Jest 顺序与幂等 cleanup 保证 slot 置空，无额外身份防御。500 三场景、actual12、8+4、共享50、所有 aggregate/E11 断言不变；生产代码、5s、coverage 不变，无新增框架/故障注入或 app gate。冻结后一次完整 CI 待验 |
+| 2026-10-02 | Owner 本地/GitHub 差异追因 / F-08 | CI 36971604883，master 16554672 | 354 suites / 8616 tests PASS；仅 SDK 两个工具响应阶段 5014/5012ms 超时；不发布 | `/private/tmp/pa-beta18-test-repair-ci-full.log`；E-10 main/control 2059/303ms PASS，SDK 首请求 1974/1685/1582ms，撤销响应 244ms。全仓 760.43s，最大 RSS 2751708KiB（非所有 worker 总峰值），未见 OOM/平台强杀。同一基线本地两 suite coverage 30 断言 PASS、2.521s，SDK 响应 575/39/516ms；局部 global coverage 不足自然 exit 1。范围、cache、Node patch、硬件仍有变量，不能据此断言具体根因。 |
 
 ## Acceptance Boundary
 

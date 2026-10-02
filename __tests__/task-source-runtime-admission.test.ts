@@ -110,6 +110,19 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
     let closed = false;
     let pump: Promise<void> | undefined;
     let cleanupPromise: Promise<void> | undefined;
+    // Temporary boundary timing for the local/GitHub discrepancy investigation.
+    const phaseTiming = (phase: string) => {
+        const started = Date.now();
+        const cpu = process.cpuUsage();
+        return () => {
+            const used = process.cpuUsage(cpu);
+            process.stderr.write('PA_SDK_PHASE ' + JSON.stringify({ change, phase, node: process.version,
+                pid: process.pid, worker: process.env.JEST_WORKER_ID, wallMs: Date.now() - started,
+                userMs: used.user / 1000, systemMs: used.system / 1000,
+                heapMiB: process.memoryUsage().heapUsed / 2 ** 20,
+                requests: requests.length, reads: read.mock.calls.length, prepares: mockPreparations }) + '\n');
+        };
+    };
     const cleanup = () => cleanupPromise ??= (async () => {
         closed = true;
         controller.abort();
@@ -134,31 +147,41 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
         expect(predicate()).toBe(true);
     })();
     const firstRequest = async () => {
-        start();
-        await driveUntil(() => requests.length === 1);
-        expect(mockPreparations).toBeGreaterThan(0);
-        expect(requests).toHaveLength(1);
-        expect(read).not.toHaveBeenCalled();
-        expect(releaseFirstResponse).toBeDefined();
+        const report = phaseTiming('first-request');
+        try {
+            start();
+            await driveUntil(() => requests.length === 1);
+            expect(mockPreparations).toBeGreaterThan(0);
+            expect(requests).toHaveLength(1);
+            expect(read).not.toHaveBeenCalled();
+            expect(releaseFirstResponse).toBeDefined();
+        } finally {
+            report();
+        }
     };
     const finish = async () => {
-        if (!running || !releaseFirstResponse || closed) throw new Error('First source request is not paused');
-        releaseFirstResponse();
-        await driveUntil(() => settled);
-        await running;
-        expect(mockPreparations).toBeGreaterThan(0);
-        expect(requests).toHaveLength(2);
-        expect(read).toHaveBeenCalledTimes(revoke ? 0 : 1);
-        if (!revoke) {
-            const messages = (requests[1] as { messages: Array<{ role: string; content: string }> }).messages;
-            const observation = messages.find(message => message.role === 'tool');
-            expect(observation).toBeDefined();
-            expect(JSON.parse(observation!.content.split('\n')[0]).isError).toBe(false);
-        }
-        if (revoke) expect(JSON.stringify(requests[1])).not.toContain('Synthetic private history');
-        if (change === 'ordinary-edit') {
-            expect(mockOrdinaryEditApplied).toBe(true);
-            for (const request of requests) expect(JSON.stringify(request)).toContain('Synthetic private history');
+        const report = phaseTiming('tool-response');
+        try {
+            if (!running || !releaseFirstResponse || closed) throw new Error('First source request is not paused');
+            releaseFirstResponse();
+            await driveUntil(() => settled);
+            await running;
+            expect(mockPreparations).toBeGreaterThan(0);
+            expect(requests).toHaveLength(2);
+            expect(read).toHaveBeenCalledTimes(revoke ? 0 : 1);
+            if (!revoke) {
+                const messages = (requests[1] as { messages: Array<{ role: string; content: string }> }).messages;
+                const observation = messages.find(message => message.role === 'tool');
+                expect(observation).toBeDefined();
+                expect(JSON.parse(observation!.content.split('\n')[0]).isError).toBe(false);
+            }
+            if (revoke) expect(JSON.stringify(requests[1])).not.toContain('Synthetic private history');
+            if (change === 'ordinary-edit') {
+                expect(mockOrdinaryEditApplied).toBe(true);
+                for (const request of requests) expect(JSON.stringify(request)).toContain('Synthetic private history');
+            }
+        } finally {
+            report();
         }
     };
     return { firstRequest, finish, cleanup };
