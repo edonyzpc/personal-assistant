@@ -172,6 +172,24 @@ function expectGovernedStyleWasSent(f: Awaited<ReturnType<typeof fixture>>): voi
     expect(f.prepared[0].revisionIds).toEqual([f.remembered.revisionId]);
 }
 
+async function runReservedFixture(f: Awaited<ReturnType<typeof fixture>>): Promise<void> {
+    // These cases control Date.now to enter the 300ms finalization reserve.
+    // Drive its matching timers too; coverage CPU time is not that virtual deadline.
+    jest.useFakeTimers({ doNotFake: ['Date', 'performance', 'nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask'] });
+    let settled = false;
+    const running = f.run();
+    void running.then(() => { settled = true; }, () => { settled = true; });
+    try {
+        for (let tick = 0; tick < 1_000 && !settled; tick++) await jest.advanceTimersByTimeAsync(1);
+        expect(settled).toBe(true);
+        await running;
+    } finally {
+        f.controller.abort();
+        await running.catch(() => undefined);
+        jest.useRealTimers();
+    }
+}
+
 describe('writing preview with a governed style through the production runtime', () => {
     it.each([false, true])('withdraws revoked style content even when cancellation interrupts completion (native=%s)', async (native) => {
         const f = await fixture('cancel-forget', false, native);
@@ -208,7 +226,7 @@ describe('writing preview with a governed style through the production runtime',
             let now = 0;
             jest.spyOn(Date, 'now').mockImplementation(() => now);
             const f = await fixture('tail-error', false, true, true, { enterReserve: () => { now = 750; }, extraCall });
-            await f.run();
+            await runReservedFixture(f);
             expect(f.providerInputs).toHaveLength(1);
             expect(f.schemaBatches.at(-1)?.map(schema => (schema as { function: { name: string } }).function.name))
                 .toEqual(['report_task_incomplete', 'present_writing']);
@@ -221,7 +239,7 @@ describe('writing preview with a governed style through the production runtime',
         let now = 0;
         jest.spyOn(Date, 'now').mockImplementation(() => now);
         const f = await fixture('tail-error', false, true, true, { enterReserve: () => { now = 750; } });
-        await f.run();
+        await runReservedFixture(f);
         expect(f.providerInputs).toHaveLength(1);
         expect(f.schemaBatches.at(-1)?.map(schema => (schema as { function: { name: string } }).function.name))
             .toEqual(['report_task_incomplete', 'present_writing']);

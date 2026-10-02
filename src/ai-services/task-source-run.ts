@@ -18,7 +18,7 @@ import type { GenerationInputTaskSourceV2, GenerationInputIdentityState } from '
 import { cloneSourceRecord } from './source-store';
 import { extractTaskSourcePathMentions } from './task-source-user-boundary';
 import { parseRunSourceSelection, type RunSourceSelection } from './chat-source-scope';
-import { admitsInputLineage, cloneInputLineage, completeInputLineage,
+import { admitsInputLineage, admitsValidatedInputDependency, cloneInputLineage, completeInputLineage,
     unknownInputLineage, type InputDependency, type InputLineage,
     type InputLineageAdmission } from './input-lineage';
 import { createCooperativeTask } from './cooperative-task';
@@ -656,8 +656,14 @@ export class TaskSourceRun {
             for (const dependency of dependencies) {
                 await task.checkpoint();
                 if (!this.isCurrent() || this.state.snapshot() !== constraint) return false;
-                if (!admitsInputLineage({ schemaVersion: 1, completeness: 'complete',
-                    dependencies: [dependency] }, scope ?? 'combined', admission)) { admitted = false; break; }
+                // ownedLineage already strictly parsed these scalar DTOs. Object
+                // callbacks retain the original parser's isolated nested copies.
+                const scalar = dependency.kind === 'vault' || dependency.kind === 'web' || dependency.kind === 'user-text';
+                const allowed = scalar
+                    ? admitsValidatedInputDependency(dependency, scope ?? 'combined', admission)
+                    : admitsInputLineage({ schemaVersion: 1, completeness: 'complete',
+                        dependencies: [dependency] }, scope ?? 'combined', admission);
+                if (!allowed) { admitted = false; break; }
             }
             if (this.currentAuthorityEpoch() === epoch) return admitted && this.isCurrent();
             // Ordinary edits may change the observation fence but do not revoke

@@ -4,7 +4,7 @@ import type { ParsedBufferedToolCall } from '../src/ai-services/pa-agent-types';
 import type { TaskSourceConstraint } from '../src/ai-services/task-source-constraint';
 import type { ChatMessage, PaAgentMessage } from '../src/ai-services/chat-types';
 import { createTaskSourceConstrainedExecutor } from '../src/ai-services/task-source-executor';
-import { completeInputLineage, toGenerationInputLineage, unknownInputLineage } from '../src/ai-services/input-lineage';
+import { completeInputLineage, toGenerationInputLineage, unknownInputLineage, type InputLineage } from '../src/ai-services/input-lineage';
 import {
     MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS,
     MAX_TASK_SOURCE_NOTE_HANDLES,
@@ -84,6 +84,27 @@ describe('Task source run host', () => {
         for (const lineage of lineages) expect(await run.admitsLineageAsync(lineage)).toBe(run.admitsLineage(lineage));
         h.setMemoryAllowed(false);
         for (const lineage of lineages) expect(await run.admitsLineageAsync(lineage)).toBe(run.admitsLineage(lineage));
+    });
+
+    it.each([
+        { kind: 'vault', path: 'notes/a.md', via: 'note', extra: true },
+        { kind: 'forged-source', path: 'notes/a.md' },
+    ])('rejects malformed ancestry before scalar admission: $kind', async dependency => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, getTaskSourceAuthorityEpoch: () => 'authority-1',
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'scope-1', userMessageId: h.host.userMessageId } });
+        const lineage = { schemaVersion: 1, completeness: 'complete', dependencies: [dependency] } as InputLineage;
+        expect(await run.admitsLineageAsync(lineage)).toBe(false);
+    });
+
+    it('rejects scalar ancestry when its authority callback throws', async () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, getTaskSourceAuthorityEpoch: () => 'authority-1',
+            isPathAllowed: () => { throw new Error('Authority unavailable'); },
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'scope-1', userMessageId: h.host.userMessageId } });
+        const lineage = completeInputLineage([{ kind: 'vault', path: h.a.path, via: 'note' }]);
+        expect(await run.admitsLineageAsync(lineage)).toBe(false);
+        expect(run.admitsLineage(lineage)).toBe(false);
     });
 
     it('rechecks an earlier dependency revoked while cooperative admission yields', async () => {

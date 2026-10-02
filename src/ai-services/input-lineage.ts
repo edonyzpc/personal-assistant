@@ -114,22 +114,26 @@ export interface InputLineageAdmission {
 export function admitsInputLineage(value: unknown, scope: ChatSourceScope, admission: InputLineageAdmission): boolean {
     const lineage = parseInputLineage(value);
     if (!lineage || lineage.completeness !== 'complete') return false;
+    return lineage.dependencies.every(dependency => admitsValidatedInputDependency(dependency, scope, admission));
+}
+
+/** Internal admission predicate; callers must first strictly parse and own the dependency DTO. */
+export function admitsValidatedInputDependency(dependency: InputDependency, scope: ChatSourceScope, admission: InputLineageAdmission): boolean {
     try {
-        return lineage.dependencies.every(dependency => {
-            switch (dependency.kind) {
-                case 'user-text': return true;
-                case 'attachment': return admission.isAttachmentAllowed?.(dependency.ref) === true;
-                case 'vault': return scope !== 'web' && admission.isVaultAllowed(dependency.path, dependency.via);
-                case 'run-notes-observation': return scope !== 'web'
-                    && admission.isRunNotesObservationAllowed?.(dependency) === true;
-                case 'personal': return scope !== 'web' && admission.isPersonalAllowed?.(dependency.source) === true;
-                case 'insight': return scope !== 'web' && admission.isInsightAllowed?.(dependency.source) === true;
-                case 'writing-style': return scope !== 'web' && admission.isWritingStyleAllowed?.(dependency.revisionIds) === true;
-                case 'writing-version': return scope !== 'web'
-                    && admission.isWritingVersionAllowed?.(dependency.versionId, dependency.textHash) === true;
-                case 'web': return scope !== 'notes' && admission.isWebAllowed(dependency.providerId, dependency.resultKey);
-            }
-        });
+        switch (dependency.kind) {
+            case 'user-text': return true;
+            case 'attachment': return admission.isAttachmentAllowed?.(dependency.ref) === true;
+            case 'vault': return scope !== 'web' && admission.isVaultAllowed(dependency.path, dependency.via);
+            case 'run-notes-observation': return scope !== 'web'
+                && admission.isRunNotesObservationAllowed?.(dependency) === true;
+            case 'personal': return scope !== 'web' && admission.isPersonalAllowed?.(dependency.source) === true;
+            case 'insight': return scope !== 'web' && admission.isInsightAllowed?.(dependency.source) === true;
+            case 'writing-style': return scope !== 'web' && admission.isWritingStyleAllowed?.(dependency.revisionIds) === true;
+            case 'writing-version': return scope !== 'web'
+                && admission.isWritingVersionAllowed?.(dependency.versionId, dependency.textHash) === true;
+            case 'web': return scope !== 'notes' && admission.isWebAllowed(dependency.providerId, dependency.resultKey);
+        }
+        return false;
     } catch { return false; }
 }
 
