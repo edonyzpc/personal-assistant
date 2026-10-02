@@ -8,10 +8,13 @@ jest.mock('obsidian');
 
 let mockAuthority = 1;
 let mockPreparations = 0;
+let mockCompletedPreparations = 0;
 let mockProviderRequests = 0;
 let mockRevoke: (() => void) | undefined;
 let mockOrdinaryEdit: (() => void) | undefined;
 let mockOrdinaryEditApplied = false;
+const nativeSetTimeout = setTimeout;
+const nativeClearTimeout = clearTimeout;
 // Exercise the actual SDK/runtime connection and compare the completed receipt
 // with the original complete source validator. No real provider is contacted.
 jest.mock('../src/ai-services/task-source-run', () => {
@@ -27,6 +30,7 @@ jest.mock('../src/ai-services/task-source-run', () => {
                     const revoke = mockRevoke; mockRevoke = undefined; setTimeout(revoke, 0);
                 }
                 const receipt = await original(lineage, signal);
+                mockCompletedPreparations += 1;
                 expect(receipt.sourceValidity()).toBe(this.captureLineageSourceValidity(lineage)());
                 if (mockOrdinaryEdit && mockProviderRequests === 0) {
                     const edit = mockOrdinaryEdit; mockOrdinaryEdit = undefined; edit();
@@ -45,6 +49,7 @@ describe('source admission in the actual provider/runtime loop', () => {
         const revoke = change === 'revoked';
         mockAuthority = 1;
         mockPreparations = 0;
+        mockCompletedPreparations = 0;
         mockProviderRequests = 0;
         mockRevoke = undefined;
         mockOrdinaryEdit = undefined;
@@ -98,6 +103,12 @@ describe('source admission in the actual provider/runtime loop', () => {
         // elapsed-time admission have independent cooperative-task tests.
         const clock = jest.spyOn(performance, 'now').mockReturnValue(0);
         jest.useFakeTimers({ doNotFake: ['Date', 'performance', 'nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask'] });
+        let tick = 0;
+        const diagnostic = process.env.CI ? nativeSetTimeout(() => {
+            console.warn('Source admission progress', { change, tick, preparations: mockPreparations,
+                completedPreparations: mockCompletedPreparations, requests: requests.length,
+                reads: read.mock.calls.length, pendingTimers: jest.getTimerCount() });
+        }, 3_000) : undefined;
         try {
             const running = new ChatService(host).streamLLM('根据笔记读取资料', jest.fn(), undefined, [{ role: 'assistant',
                 content: 'Synthetic private history', inputLineage: completeInputLineage(files.map(file => ({
@@ -109,10 +120,13 @@ describe('source admission in the actual provider/runtime loop', () => {
             void running.then(() => { settled = true; }, () => { settled = true; });
             // A one-shot drain can finish before native SDK/WebCrypto I/O
             // schedules the next slice. Drive until the whole run settles.
-            for (let tick = 0; tick < 1_000 && !settled; tick++) await jest.advanceTimersByTimeAsync(10);
+            for (; tick < 1_000 && !settled; tick++) await jest.advanceTimersByTimeAsync(10);
             expect(settled).toBe(true);
             await running;
-        } finally { jest.useRealTimers(); clock.mockRestore(); globalThis.fetch = originalFetch; }
+        } finally {
+            if (diagnostic) nativeClearTimeout(diagnostic);
+            jest.useRealTimers(); clock.mockRestore(); globalThis.fetch = originalFetch;
+        }
         expect(mockPreparations).toBeGreaterThan(0);
         expect(requests).toHaveLength(2);
         expect(read).toHaveBeenCalledTimes(revoke ? 0 : 1);
