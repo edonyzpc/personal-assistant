@@ -88,6 +88,10 @@ describe('source admission in the actual provider/runtime loop', () => {
             return new Response(frame(delta, null) + frame({}, first ? 'tool_calls' : 'stop') + 'data: [DONE]\n\n',
                 { headers: { 'content-type': 'text/event-stream' } });
         }) as typeof fetch;
+        // This integration proves source authority, not CPU speed under V8
+        // coverage. Keep real timers and item-bounded yields; elapsed-time
+        // admission is exercised independently in cooperative-task.test.ts.
+        const clock = jest.spyOn(performance, 'now').mockReturnValue(0);
         try {
             await new ChatService(host).streamLLM('根据笔记读取资料', jest.fn(), undefined, [{ role: 'assistant',
                 content: 'Synthetic private history', inputLineage: completeInputLineage(files.map(file => ({
@@ -95,7 +99,7 @@ describe('source admission in the actual provider/runtime loop', () => {
                 userText: '根据笔记读取资料', memoryMode: 'skip-memory', runSourceSelection: { schemaVersion: 1,
                     scope: 'notes', selectionId: 'scope', userMessageId: 'user' },
             });
-        } finally { globalThis.fetch = originalFetch; }
+        } finally { clock.mockRestore(); globalThis.fetch = originalFetch; }
         expect(mockPreparations).toBeGreaterThan(0);
         expect(requests).toHaveLength(2);
         expect(read).toHaveBeenCalledTimes(revoke ? 0 : 1);

@@ -810,7 +810,9 @@ describe("Ghost Host action context", () => {
 });
 
 function flushPromises(): Promise<void> {
-    return new Promise(resolve => setImmediate(resolve));
+    // Preparation now yields through timers. Repeated setImmediate turns can
+    // exhaust this poll before Node admits the next timer phase.
+    return new Promise(resolve => setTimeout(resolve, 0));
 }
 
 async function waitForMetadataCall(predicate: () => boolean): Promise<void> {

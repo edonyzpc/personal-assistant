@@ -435,20 +435,23 @@ describe("B-149 runtime task baseline", () => {
             .toEqual(["E-02", "E-03", "E-08"]);
     });
 
-    it("runs the actual PA runtime and ChatOpenAI SDK against fixed offline HTTP responses", async () => {
+    describe("actual PA runtime and ChatOpenAI SDK with fixed offline HTTP responses", () => {
         const requests: PhysicalRequest[] = [];
         const webRequests: Array<{ caseId: string; endpoint: string; body: Record<string, unknown> }> = [];
         let active: PaRuntimeEvalCase | undefined;
         let activeArm: "main" | "no_progress" = "main";
         let activeToolName: string | null = null;
         let caseRequestIndex = 0;
-        const originalCreate = AIUtils.prototype.createChatModel;
-        jest.spyOn(AIUtils.prototype, "createChatModel").mockImplementation(async function (this: AIUtils, ...args) {
-            const configured = await originalCreate.apply(this, args);
-            return new ChatOpenAI({ model: configured.model, apiKey: "b149-synthetic-token",
-                configuration: { ...configured.clientConfig, maxRetries: 0 }, temperature: configured.temperature,
-                maxRetries: 0, ...(args[1]?.maxTokens ? { maxTokens: args[1].maxTokens } : {}),
+        beforeAll(() => {
+            const originalCreate = AIUtils.prototype.createChatModel;
+            jest.spyOn(AIUtils.prototype, "createChatModel").mockImplementation(async function (this: AIUtils, ...args) {
+                const configured = await originalCreate.apply(this, args);
+                return new ChatOpenAI({ model: configured.model, apiKey: "b149-synthetic-token",
+                    configuration: { ...configured.clientConfig, maxRetries: 0 }, temperature: configured.temperature,
+                    maxRetries: 0, ...(args[1]?.maxTokens ? { maxTokens: args[1].maxTokens } : {}),
+                });
             });
+            globalThis.fetch = budget.fetch;
         });
         const fixedFetch = jest.fn(async (url: string | URL | Request, init?: RequestInit) => {
             if (!active || String(url) !== "https://b149-offline.invalid/v1/chat/completions") {
@@ -463,11 +466,12 @@ describe("B-149 runtime task baseline", () => {
         }) as typeof fetch;
         const maximum = Number(process.env.B149_RUNTIME_EVAL_MAX_REQUESTS ?? "50");
         const budget = createPaRuntimeEvalRequestBudget(fixedFetch, maximum);
-        globalThis.fetch = budget.fetch;
-        const actual = [];
+        const actual: Awaited<ReturnType<typeof runPaRuntimeEvalCase>>[] = [];
         const evidenceFailures: Record<string, string[]> = {};
         const probes: Record<string, unknown> = {};
-        for (const evalCase of PA_RUNTIME_EVAL_CASES) {
+        // Each goal has its own normal test deadline. The evidence artifact and
+        // cross-case assertions still cover the complete, ordered matrix.
+        it.each(PA_RUNTIME_EVAL_CASES)("runs $id", async evalCase => {
             active = evalCase; activeArm = "main"; activeToolName = null; caseRequestIndex = 0;
             const host = hostFor(evalCase, () => evalCase.offline === "recovery" && activeToolName === "search_vault_snippets");
             const webProvider = evalCase.webEvidence ? new BuiltinWebSearchProvider({
@@ -535,71 +539,73 @@ describe("B-149 runtime task baseline", () => {
                 probes.e10Alternating = { terminalStatus: result.terminalStatus, toolResults: alternatingResults,
                     modelRequestCount: requests.filter(request => request.caseId === "E-10" && request.arm === "main").length };
             }
-        }
-        active = undefined;
-        const e09Case = PA_RUNTIME_EVAL_CASES.find(item => item.id === "E-09")!;
-        const actionPairs = (e09Case.history ?? []).flatMap(message => message.canonicalTurn?.messages ?? [])
-            .filter(message => message.role === "assistant" && message.content.some(part => part.type === "toolCall"))
-            .map(message => message.role === "assistant" ? message.content.find(part => part.type === "toolCall") : undefined);
-        const resultPairs = (e09Case.history ?? []).flatMap(message => message.canonicalTurn?.messages ?? [])
-            .filter(message => message.role === "toolResult");
-        const e09Messages = requests.filter(request => request.caseId === "E-09").flatMap(request => request.body.messages);
-        const frozenInputs = actionPairs.map(part => part && part.type === "toolCall" ? part.input : undefined);
-        const sdkCalls = e09Messages.flatMap(message => message.role === "assistant" ? message.tool_calls ?? [] : []);
-        const sdkHasBothCanonicalInputs = frozenInputs.every(input => sdkCalls.some(call => {
-            try { return JSON.stringify(JSON.parse(call.function.arguments)) === JSON.stringify(input); }
-            catch { return false; }
-        }));
-        const sdkHasPairedToolMessages = resultPairs.every(result => result.role === "toolResult"
-            && e09Messages.some(message => message.role === "tool" && message.tool_call_id === result.toolCallId
-                && String(message.content).includes(result.id)));
-        probes.e09 = { frozenInputs, frozenResultTexts: resultPairs.map(message => message.role === "toolResult"
-            ? message.content.promptText : ""), frozenCallIds: resultPairs.map(message => message.role === "toolResult"
-            ? message.toolCallId : ""), sdkHasBothCanonicalInputs, sdkHasPairedToolMessages };
-        if (!sdkHasBothCanonicalInputs || !sdkHasPairedToolMessages) {
-            evidenceFailures["E-09"].push("Canonical action/result pairs were not preserved as paired SDK messages.");
-        }
-        const fixtureHash = createHash("sha256").update(JSON.stringify(PA_RUNTIME_EVAL_CASES)).digest("hex");
-        const output = process.env.B149_RUNTIME_EVAL_OUTPUT;
-        if (output) writeFileSync(output, JSON.stringify({ schemaVersion: 1, layer: "offline-real-runtime-fixed-http",
-            fixtureHash, provider: "openai-compatible-synthetic", model: "b149-fixed-model",
-            modelParameters: { answerTemperature: 0.8, sdkMaxRetries: 0, transport: "native-fetch-fixed-http" },
-            capabilitySettings: { webSearchEnabled: "true for E-02/E-03/E-08 only", memoryEnabled: false, skillContextProvider: null },
-            interpretation: "Runtime status is not a semantic pass. Scripted model replies prove runtime/SDK/transport and event propagation, not autonomous model quality. First useful result requires human rubric; first visible output is only a mechanical timestamp. E-12 produces an unsaved writing artifact; no save receipt exists.",
-            physicalRequestLimit: maximum, physicalRequestsAttempted: budget.count(),
-            requestAttemptPurposeAssociation: "HTTP body-to-attempt join remains unknown in this offline fixture; the run-local usage ledger records actual attempt IDs without order-based attribution",
-            cases: PA_RUNTIME_EVAL_CASES, actual, evidenceFailures, probes, requests, webRequests }, null, 2));
-        expect(actual).toHaveLength(12);
-        expect(actual.filter(item => item.status === "cancelled").map(item => item.caseId)).toEqual(["E-11"]);
-        expect(actual.filter(item => item.status === "failed")).toEqual([]);
-        expect(actual.filter(item => item.status === "incomplete")).toEqual([]);
-        expect(evidenceFailures["E-01"]).toEqual([]);
-        expect(evidenceFailures["E-02"]).toEqual([]);
-        expect(evidenceFailures["E-03"]).toEqual([]);
-        expect(evidenceFailures["E-08"]).toEqual([]);
-        const enabledTools = (caseId: string) => requests.find(request => request.caseId === caseId)?.body.tools
-            ?.map((tool: any) => tool.function?.name) ?? [];
-        expect(enabledTools("E-02")).toContain("webSearch");
-        expect(enabledTools("E-02")).not.toContain("read_note");
-        expect(enabledTools("E-03")).toEqual(expect.arrayContaining(["read_note", "webSearch"]));
-        expect(enabledTools("E-08")).toContain("webSearch");
-        expect(enabledTools("E-08")).not.toContain("read_note");
-        const e08Requests = requests.filter(request => request.caseId === "E-08").map(request => request.body);
-        expect(e08Requests.length).toBeGreaterThan(1);
-        expect(e08Requests.every(body => !JSON.stringify(body).includes("OLD_PRIVATE_BUDGET_71"))).toBe(true);
-        expect(JSON.stringify(e08Requests.slice(1))).toContain("WEB_B_UNKNOWN");
-        expect(actual.find(item => item.caseId === "E-08")?.sourceUrls)
-            .toContain("https://example.invalid/plan-b");
-        expect(evidenceFailures["E-10"]).toEqual([]);
-        expect(probes.e10Alternating).toMatchObject({ terminalStatus: "completed", modelRequestCount: 8, toolResults: [
-            { name: "search_vault_snippets", isError: true }, { name: "read_note", isError: false },
-            { name: "search_vault_snippets", isError: true }, { name: "read_note", isError: false },
-            { name: "search_vault_snippets", isError: true }, { name: "read_note", isError: false },
-            { name: "search_vault_snippets", isError: true },
-        ] });
-        expect(actual.find(item => item.caseId === "E-10")).toMatchObject({
-            status: "completed",
-            sourcePaths: ["synthetic/jay-approval.md", "synthetic/jay-revision.md", "synthetic/jay-confirmation.md"],
+        });
+
+        it("preserves the complete matrix and its cross-case evidence", () => {
+            active = undefined;
+            const e09Case = PA_RUNTIME_EVAL_CASES.find(item => item.id === "E-09")!;
+            const actionPairs = (e09Case.history ?? []).flatMap(message => message.canonicalTurn?.messages ?? [])
+                .filter(message => message.role === "assistant" && message.content.some(part => part.type === "toolCall"))
+                .map(message => message.role === "assistant" ? message.content.find(part => part.type === "toolCall") : undefined);
+            const resultPairs = (e09Case.history ?? []).flatMap(message => message.canonicalTurn?.messages ?? [])
+                .filter(message => message.role === "toolResult");
+            const e09Messages = requests.filter(request => request.caseId === "E-09").flatMap(request => request.body.messages);
+            const frozenInputs = actionPairs.map(part => part && part.type === "toolCall" ? part.input : undefined);
+            const sdkCalls = e09Messages.flatMap(message => message.role === "assistant" ? message.tool_calls ?? [] : []);
+            const sdkHasBothCanonicalInputs = frozenInputs.every(input => sdkCalls.some(call => {
+                try { return JSON.stringify(JSON.parse(call.function.arguments)) === JSON.stringify(input); }
+                catch { return false; }
+            }));
+            const sdkHasPairedToolMessages = resultPairs.every(result => result.role === "toolResult"
+                && e09Messages.some(message => message.role === "tool" && message.tool_call_id === result.toolCallId
+                    && String(message.content).includes(result.id)));
+            probes.e09 = { frozenInputs, frozenResultTexts: resultPairs.map(message => message.role === "toolResult"
+                ? message.content.promptText : ""), frozenCallIds: resultPairs.map(message => message.role === "toolResult"
+                ? message.toolCallId : ""), sdkHasBothCanonicalInputs, sdkHasPairedToolMessages };
+            if (!sdkHasBothCanonicalInputs || !sdkHasPairedToolMessages) {
+                evidenceFailures["E-09"].push("Canonical action/result pairs were not preserved as paired SDK messages.");
+            }
+            const fixtureHash = createHash("sha256").update(JSON.stringify(PA_RUNTIME_EVAL_CASES)).digest("hex");
+            const output = process.env.B149_RUNTIME_EVAL_OUTPUT;
+            if (output) writeFileSync(output, JSON.stringify({ schemaVersion: 1, layer: "offline-real-runtime-fixed-http",
+                fixtureHash, provider: "openai-compatible-synthetic", model: "b149-fixed-model",
+                modelParameters: { answerTemperature: 0.8, sdkMaxRetries: 0, transport: "native-fetch-fixed-http" },
+                capabilitySettings: { webSearchEnabled: "true for E-02/E-03/E-08 only", memoryEnabled: false, skillContextProvider: null },
+                interpretation: "Runtime status is not a semantic pass. Scripted model replies prove runtime/SDK/transport and event propagation, not autonomous model quality. First useful result requires human rubric; first visible output is only a mechanical timestamp. E-12 produces an unsaved writing artifact; no save receipt exists.",
+                physicalRequestLimit: maximum, physicalRequestsAttempted: budget.count(),
+                requestAttemptPurposeAssociation: "HTTP body-to-attempt join remains unknown in this offline fixture; the run-local usage ledger records actual attempt IDs without order-based attribution",
+                cases: PA_RUNTIME_EVAL_CASES, actual, evidenceFailures, probes, requests, webRequests }, null, 2));
+            expect(actual).toHaveLength(12);
+            expect(actual.filter(item => item.status === "cancelled").map(item => item.caseId)).toEqual(["E-11"]);
+            expect(actual.filter(item => item.status === "failed")).toEqual([]);
+            expect(actual.filter(item => item.status === "incomplete")).toEqual([]);
+            expect(evidenceFailures["E-01"]).toEqual([]);
+            expect(evidenceFailures["E-02"]).toEqual([]);
+            expect(evidenceFailures["E-03"]).toEqual([]);
+            expect(evidenceFailures["E-08"]).toEqual([]);
+            const enabledTools = (caseId: string) => requests.find(request => request.caseId === caseId)?.body.tools
+                ?.map((tool: any) => tool.function?.name) ?? [];
+            expect(enabledTools("E-02")).toContain("webSearch");
+            expect(enabledTools("E-02")).not.toContain("read_note");
+            expect(enabledTools("E-03")).toEqual(expect.arrayContaining(["read_note", "webSearch"]));
+            expect(enabledTools("E-08")).toContain("webSearch");
+            expect(enabledTools("E-08")).not.toContain("read_note");
+            const e08Requests = requests.filter(request => request.caseId === "E-08").map(request => request.body);
+            expect(e08Requests.length).toBeGreaterThan(1);
+            expect(e08Requests.every(body => !JSON.stringify(body).includes("OLD_PRIVATE_BUDGET_71"))).toBe(true);
+            expect(JSON.stringify(e08Requests.slice(1))).toContain("WEB_B_UNKNOWN");
+            expect(actual.find(item => item.caseId === "E-08")?.sourceUrls)
+                .toContain("https://example.invalid/plan-b");
+            expect(evidenceFailures["E-10"]).toEqual([]);
+            expect(probes.e10Alternating).toMatchObject({ terminalStatus: "completed", modelRequestCount: 8, toolResults: [
+                { name: "search_vault_snippets", isError: true }, { name: "read_note", isError: false },
+                { name: "search_vault_snippets", isError: true }, { name: "read_note", isError: false },
+                { name: "search_vault_snippets", isError: true }, { name: "read_note", isError: false },
+                { name: "search_vault_snippets", isError: true },
+            ] });
+            expect(actual.find(item => item.caseId === "E-10")).toMatchObject({
+                status: "completed",
+                sourcePaths: ["synthetic/jay-approval.md", "synthetic/jay-revision.md", "synthetic/jay-confirmation.md"],
         });
         expect((probes.e10NoProgress as { terminalStatus: string; toolResults: Array<{ isError: boolean }> }))
             .toMatchObject({ terminalStatus: "incomplete", toolResults: [
@@ -634,5 +640,6 @@ describe("B-149 runtime task baseline", () => {
         expect(validatePaRuntimeEvalEvidence(e06Case, { ...e06Actual,
             toolResults: e06Actual.toolResults.map(result => ({ ...result, isError: false })) }, []))
             .toEqual(expect.arrayContaining([expect.stringContaining("Missing recorded tool error")]));
+        });
     });
 });

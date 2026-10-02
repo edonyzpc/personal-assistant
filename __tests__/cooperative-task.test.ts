@@ -1,6 +1,17 @@
 import { createCooperativeTask } from '../src/ai-services/cooperative-task';
 
 describe('cooperative task', () => {
+    it('yields on the elapsed budget before reaching the item limit', async () => {
+        const clock = jest.spyOn(performance, 'now').mockReturnValue(0);
+        try {
+            const task = createCooperativeTask();
+            expect(await task.checkpoint()).toBe(false);
+            clock.mockReturnValue(8);
+            expect(await task.checkpoint()).toBe(true);
+            expect(await task.checkpoint()).toBe(false);
+        } finally { clock.mockRestore(); }
+    });
+
     it('allows an input macrotask before a long loop completes', async () => {
         let inputHandled = false;
         const input = new Promise<void>(resolve => setTimeout(() => {
