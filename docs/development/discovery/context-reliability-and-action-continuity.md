@@ -53,6 +53,8 @@ F-02 还影响只读证据：审查中的内存探针构造成功 query_notes �
 
 本轮未运行上述测试、build 或部署；现有测试的覆盖结论来自阅读，不是本轮 PASS 声明。
 
+详细规划时补充核对了持久化边界：`chat-history-manager.ts` 保存时有意去掉 canonical.messages，重开时 messages 为空；Operations 的 terminalStates/Undo 也主要在内存，未提供可重载完成结果查询。它们是实施输入限制，不等于单独证明重复执行。跨重开保留需要扩展现有历史的最小安全状态字段与真实 Host 后续结果接线，不能仅改内存投影，也不能原样保存完整 canonical 或 Undo 正文。
+
 ## Candidate Requirements
 
 - **B-157/REQ-01 — 已发生事实可用。** 已获准的历史调用与真实执行事实保持关联；不存在“旧要求仍在，已提交事实因无正文来源被误判未知”的非必要不对称。任务已接受、产物就绪、已保存、等待确认、部分完成和未知结果分别表达。
@@ -98,6 +100,8 @@ F-02 还影响只读证据：审查中的内存探针构造成功 query_notes �
 
 ## Implementation Slices And Validation
 
+详细任务依赖、候选 AC、逐项测试设计、准确命令/分组、模型与 app 验收见 [B-157 开发与测试计划](./context-reliability-and-action-continuity/plan.md)。该计划由 Owner 于 2026-10-02 要求制定；运行时代码实施仍未授权。
+
 以下是进入实施后的顺序与退出条件，不表示已开始开发。复杂状态/来源设计需要一个轻量 Active Package 统一维护 Tracker；不再为每个命令建一份计划。
 
 | Slice | REQ / 风险 → 改动 | 最小充分证据 / 方法 | 通过条件 | 重跑或扩展触发 |
@@ -120,6 +124,7 @@ F-02 还影响只读证据：审查中的内存探针构造成功 query_notes �
 | Date | Authority / participants | Conclusion | Still open |
 | --- | --- | --- | --- |
 | 2026-10-02 | Owner 与审查 agents | 根因优先归于 context 信息丢失；给定错误上下文，Host 执行合法 create_image 调用符合现有职责。Owner 要求覆盖 Writing、blog2ghost 等命令建立根本优化方案 | 推荐方案的实施尚未授权；其他命令实际重复行为及修复后模型行为未验证 |
+| 2026-10-02 | Owner 与规划 agents | 按 B-157 方案制定详细开发测试计划，补充最小安全状态落盘、Operations 后续结果与现有评测 harness 适配任务 | 本次只规划；实现、模型/app 验证与 Git/release 不由计划文档授予 |
 
 ## Decision Needed
 
