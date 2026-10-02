@@ -10,8 +10,8 @@ SDD: [Software Design](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: 原完整设计、实现与 desktop/mobile 验收完成；beta gate 暴露覆盖率下重复解析及时钟夹具问题，最小修正正在最终验证。
-- Next action: Owner 2026-10-02 已授权 master push 与 beta 发布；修正后 exact-master 完整 CI 通过，再包装 beta.18，并从 BRAT 实际安装验证 desktop/mobile。保留完整设计，不自动 closeout。
+- Current phase: 原完整设计、实现与 desktop/mobile 验收完成；beta gate 的受控资源检查确认两 worker 下 E-10 恢复，但 500 来源 SDK 的正常/普通编辑阶段仍超时；完整 CI 尚未通过。
+- Next action: 先整理测试职责：移除 SDK wrapper 重复 legacy 对拍，将回执等价放在小型底层状态测试；保留 500、三场景、真实请求/读取/历史证据。E-10 两个独立 run 可分 test 并补超时清理，保留 8+4 轮及共享上限。Owner 已授权 master push 与 beta；最终 exact-master 完整 CI 通过后包装 beta.18，并从 BRAT 实际安装验证 desktop/mobile。保留完整设计，不自动 closeout。
 - Blocker / decision needed: 无产品决策；GLM 周限额，Owner 已授权 GPT 完整实施。早期自动审批的集成/竞态证据问题已补实测、独立复核并通过，接线已落地。
 - Last verified behavior: 真实 query factory 500 ancestry × 500 候选的多次切片只完整准入一次，dirty 后再准入；真实 SDK 撤销拒绝、普通编辑保留快照；desktop/mobile 实际检索成功、准备时编辑可落盘、tab/原生命令/Stop 正常。
 - Delivery tree: 基于主树 09c2961 的 managed worktree 已安全接收全部任务 diff 到主仓库；后续修正仅在主仓库，保留无关改动。
@@ -101,6 +101,8 @@ SDD: [Software Design](./sdd.md)
 | 2026-10-02 | F-08 / B-155/REQ-03,05 | SDK 两阶段源码 / coverage 局部检查与独立边界复核 | 6 项 PASS；source natural exit 0，focused coverage 因全局门槛 exit 1 | `/private/tmp/pa-beta18-phased-sdk.json`、`/private/tmp/pa-beta18-phased-sdk-coverage.json`；持久 request 数组与 plain counters 跨阶段保留，clearMocks 不影响 first read=0 后第二阶段实际读次数；full CI 仍待验，不能用 focused 替代 |
 | 2026-10-02 | F-08 / Owner CI 资源复审 | CI 36963141250 | 353 suites / 8613 tests PASS；SDK 第二阶段两场景与 E-10/aggregate 共 4 项失败，不发布 | `/private/tmp/pa-beta18-phased-master-ci-failed.log`；第一阶段/撤销通过，分阶段仍不能解决重型阶段的 5s 超时；E-10 超时导致 aggregate 缺项。失败为 Jest timeout，未见 OOM/runner 强杀；公开 Ubuntu runner 标称 4 CPU/16GB，但本轮缺实际资源峰值，不认定平台限流。冻结源码/夹具，下一次仅用 2 workers 与资源输出验证竞争假设；不实施已考虑的 15s timeout |
 | 2026-10-02 | CI 覆盖率资源预算 | workflow / release CI evidence / classifier tooling contracts 与 docs/diff | 3 suites / 97 tests PASS，natural exit 0；docs/diff PASS | `/private/tmp/pa-beta18-ci-resource-contracts.log`、`/private/tmp/pa-beta18-ci-resource-docs.log`；只改两份 workflow 与对应命令合同，源码/重型夹具冻结；完整两 worker CI 待验 |
+| 2026-10-02 | CI 覆盖率资源预算 / Owner 复审 | CI 36966858602，冻结相同源码/夹具，只降 4→2 workers 并输出资源 | 354 suites / 8615 tests PASS；仅 SDK 正常/普通编辑第二阶段两项超时，natural exit 1；不发布 | `/private/tmp/pa-beta18-resource-ci-full.log`；实际 availableCpu=4，AMD EPYC 7763，memory=15.61GiB；GNU time 245% CPU、最大 RSS 2428448KiB（不是所有 worker 总峰值），SDK suite heap=790MB，未见 OOM/平台强杀。E-10=2659ms PASS；SDK 首请求正常2037/编辑2349ms，第二段5012/5007ms超时，撤销第二段284ms PASS。全量618.131s，比前轮435.013s长；低并发有助 E-10，但不足以解决 SDK 重复工作，不认定平台硬限制为主因 |
+| 2026-10-02 | SDK / eval 测试职责复审 | 原始测试与独立只读复核 | 设计结论，尚未实施 | SDK wrapper 每次 prepare 额外 `admitsLineage`＋`sourceValidity`/legacy capture 完整对拍，主要重复正常 true；撤销 prepare 抛错时不对拍 false。scope/mixed/unknown 等价、500 yield 撤销和真实 query sealed 复用已有底层覆盖。后续最小整理：SDK 保留 500 与真实接线断言，回执 true/edit-true/revoke-false 用小 fixture 验证；E-10 8+4 保留，但分独立 run test，幂等取消并等待 run/driver 后再还原 timer，禁止 timeout 后晚写 aggregate。不加框架、不扩大 runner、暂不提高 timeout，不以全量盲重试代替分析 |
 
 ## Acceptance Boundary
 
