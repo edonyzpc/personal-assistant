@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.18](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.17...2.10.0-beta.18) (2026-10-02)
+
+### Features
+- ghost: refine draft export and native metadata
+
+### Fix
+- agent: keep Obsidian responsive during source processing
+- agent: reuse validated scalar source admission
+- tests: pin Jest to avoid async context accumulation
+
+### Improvements
+- leave headroom for coverage workers and report test costs
+
+### Docs
+- ghost: record beta feedback contracts and acceptance
+- agent: record responsive execution design and acceptance
+- agent: record coverage CI fixture correction
+- agent: record timer fixture evidence and limits
+- agent: record late timer driver correction
+- agent: record release gate diagnosis and scalar fix
+- agent: clarify source SDK phase validation boundary
+- record CI resource review and controlled validation
+- explain measured CI failures and test responsibility gaps
+- record focused test repair and final CI gate
+- record Jest timeout root cause and validation
+
+### Tests
+- agent: make cooperative runtime fixtures deterministic
+- agent: advance idle timers in source integration fixtures
+- agent: keep SDK timers driven across native I/O
+- agent: expose stalled source admission stage in CI
+- agent: validate continuous SDK runs by request phase
+- remove duplicate source checks and separate recovery runs
+- ci: measure SDK phase CPU and wall time
+- ci: isolate worker reuse in SDK timing probe
+- ci: sample SDK response in the full run
+- ci: count retained async storage in SDK probe
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
