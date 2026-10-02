@@ -122,7 +122,7 @@ describe('Task source run host', () => {
         expect(run.admitsLineage(lineage)).toBe(false);
     });
 
-    it('reproves an ordinary edit without withdrawing the earlier read snapshot', async () => {
+    it('preserves source receipts through an ordinary edit and invalidates them on deletion', async () => {
         const h = fixture();
         const paths = Array.from({ length: 100 }, (_, index) => `notes/source-${index}.md`);
         for (const path of paths) h.files.set(path, { path });
@@ -132,12 +132,19 @@ describe('Task source run host', () => {
         const lineage = completeInputLineage(paths.map(path => ({ kind: 'vault', path, via: 'note' })));
         setTimeout(() => { epoch += 1; }, 0);
         const proof = await run.prepareLineageAdmission(lineage);
+        const legacySourceValidity = run.captureLineageSourceValidity(lineage);
         expect(proof.isCurrent()).toBe(true);
         expect(proof.sourceValidity()).toBe(true);
+        expect(legacySourceValidity()).toBe(true);
         epoch += 1;
         expect(proof.isCurrent()).toBe(false);
         expect(proof.sourceValidity()).toBe(true);
+        expect(legacySourceValidity()).toBe(true);
         expect((await run.prepareLineageAdmission(lineage)).isCurrent()).toBe(true);
+        h.files.delete(paths[0]);
+        epoch += 1;
+        expect(proof.sourceValidity()).toBe(false);
+        expect(legacySourceValidity()).toBe(false);
     });
     it('keeps only source-compatible history in a selected Chat run without erasing the display records', () => {
         const h = fixture();

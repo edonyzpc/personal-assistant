@@ -13,8 +13,8 @@ let mockProviderRequests = 0;
 let mockRevoke: (() => void) | undefined;
 let mockOrdinaryEdit: (() => void) | undefined;
 let mockOrdinaryEditApplied = false;
-// Exercise the actual SDK/runtime connection and compare the completed receipt
-// with the original complete source validator. No real provider is contacted.
+// Exercise actual SDK dispatch, reads and history. Rule equivalence is covered
+// by task-source-run tests; this integration contacts no real provider.
 jest.mock('../src/ai-services/task-source-run', () => {
     const actual = jest.requireActual<typeof import('../src/ai-services/task-source-run')>('../src/ai-services/task-source-run');
     return { ...actual, TaskSourceRun: class extends actual.TaskSourceRun {
@@ -22,13 +22,11 @@ jest.mock('../src/ai-services/task-source-run', () => {
             super(host);
             const original = this.prepareLineageAdmission;
             Object.defineProperty(this, 'prepareLineageAdmission', { value: async (lineage: InputLineage | undefined, signal?: AbortSignal) => {
-                expect(this.admitsLineage(lineage)).toBe(true);
                 mockPreparations += 1;
                 if (mockRevoke && mockProviderRequests > 0) {
                     const revoke = mockRevoke; mockRevoke = undefined; setTimeout(revoke, 0);
                 }
                 const receipt = await original(lineage, signal);
-                expect(receipt.sourceValidity()).toBe(this.captureLineageSourceValidity(lineage)());
                 if (mockOrdinaryEdit && mockProviderRequests === 0) {
                     const edit = mockOrdinaryEdit; mockOrdinaryEdit = undefined; edit();
                     mockOrdinaryEditApplied = true;
