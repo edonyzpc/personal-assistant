@@ -54,7 +54,11 @@ describe('source admission in the actual provider/runtime loop', () => {
             stat: { mtime: 1, ctime: 1, size: 12 } }));
         const byPath = new Map(files.map(file => [file.path, file]));
         const denied = new Set<string>();
-        const read = jest.fn(async () => 'Synthetic note');
+        const read = jest.fn(async () => {
+            // Vault I/O may finish after the currently queued timers drained.
+            await new Promise<void>(resolve => setImmediate(resolve));
+            return 'Synthetic note';
+        });
         if (revoke) mockRevoke = () => { denied.add(files[0].path); mockAuthority += 1; };
         if (change === 'ordinary-edit') mockOrdinaryEdit = () => { mockAuthority += 1; };
         const host = { settings: { debug: false, aiProvider: 'openai', baseURL: 'https://source-admission.invalid/v1',
@@ -101,12 +105,23 @@ describe('source admission in the actual provider/runtime loop', () => {
                 userText: '根据笔记读取资料', memoryMode: 'skip-memory', runSourceSelection: { schemaVersion: 1,
                     scope: 'notes', selectionId: 'scope', userMessageId: 'user' },
             });
-            await jest.runAllTimersAsync();
+            let settled = false;
+            void running.then(() => { settled = true; }, () => { settled = true; });
+            // A one-shot drain can finish before native SDK/WebCrypto I/O
+            // schedules the next slice. Drive until the whole run settles.
+            for (let tick = 0; tick < 1_000 && !settled; tick++) await jest.advanceTimersByTimeAsync(10);
+            expect(settled).toBe(true);
             await running;
         } finally { jest.useRealTimers(); clock.mockRestore(); globalThis.fetch = originalFetch; }
         expect(mockPreparations).toBeGreaterThan(0);
         expect(requests).toHaveLength(2);
         expect(read).toHaveBeenCalledTimes(revoke ? 0 : 1);
+        if (!revoke) {
+            const messages = (requests[1] as { messages: Array<{ role: string; content: string }> }).messages;
+            const observation = messages.find(message => message.role === 'tool');
+            expect(observation).toBeDefined();
+            expect(JSON.parse(observation!.content.split('\n')[0]).isError).toBe(false);
+        }
         if (revoke) expect(JSON.stringify(requests[1])).not.toContain('Synthetic private history');
         if (change === 'ordinary-edit') {
             expect(mockOrdinaryEditApplied).toBe(true);
