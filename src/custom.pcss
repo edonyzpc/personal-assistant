@@ -643,6 +643,8 @@ body.is-mobile .pa-chat-history-modal-shell {
 	--pa-chat-keyboard-accessory-clearance: 0px;
 	--pa-chat-keyboard-offset: 0px;
 	--pa-chat-composer-height: 0px;
+	--pa-chat-control-height: 28px;
+	--pa-chat-control-font-size: var(--font-ui-smaller);
 	--pa-chat-button-icon-size: 14px;
 	--pa-chat-keyboard-motion: 180ms cubic-bezier(0.22, 1, 0.36, 1);
 	box-sizing: border-box;
@@ -657,8 +659,38 @@ body.is-mobile .pa-chat-history-modal-shell {
 }
 
 body.is-mobile .llm-view {
+	--pa-chat-control-height: 44px;
 	--pa-chat-button-icon-size: 12px;
 	padding-bottom: 0;
+}
+
+/* Keep conversation controls at UI scale, independent of message text size. */
+.pa-chat-view button {
+	font-size: var(--pa-chat-control-font-size);
+	line-height: 1.25;
+}
+
+.pa-chat-view :is(
+	.pa-chat-source-decision-actions,
+	.pa-operations-save-suggestion__actions,
+	.pa-operations-intent-card__actions,
+	.pa-chat-create-image-intent,
+	.pa-chat-writing-intent,
+	.pa-ghost-publishing-card,
+	.pa-chat-image-task-card__actions,
+	.pa-chat-image-task-card__output-actions
+) button,
+.pa-chat-view .pa-operations-intent-card__undo,
+.pa-chat-view .pa-chat-empty-chip {
+	box-sizing: border-box;
+	min-height: var(--pa-chat-control-height);
+	height: auto;
+	max-width: 100%;
+	padding: 4px 8px;
+	font-size: var(--pa-chat-control-font-size);
+	line-height: 1.25;
+	white-space: normal;
+	overflow-wrap: anywhere;
 }
 
 /* ── Chat view host containers ──
@@ -1006,7 +1038,7 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 
 .pa-chat-view .pa-chat-source-decision-actions button {
 	max-width: 100%;
-	min-height: 36px;
+	min-height: var(--pa-chat-control-height);
 	white-space: normal;
 }
 
@@ -2261,8 +2293,8 @@ body.is-mobile .llm-buttons {
 }
 
 .llm-buttons button.cancel-button {
-	width: 30px;
-	height: 30px;
+	width: 28px;
+	height: 28px;
 	padding: 0;
 	border-radius: 7px;
 	font-weight: bold;
@@ -2324,14 +2356,14 @@ body.is-mobile .llm-buttons {
 
 .pa-chat-icon-button,
 .llm-buttons button.pa-chat-icon-button {
-	width: 30px;
-	height: 30px;
+	width: 28px;
+	height: 28px;
 	padding: 0;
 	border-radius: 7px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	flex: 0 0 30px;
+	flex: 0 0 28px;
 	font-size: 0;
 }
 
@@ -2354,9 +2386,9 @@ body.is-mobile .llm-buttons {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	flex: 0 0 30px;
-	width: 30px;
-	height: 30px;
+	flex: 0 0 28px;
+	width: 28px;
+	height: 28px;
 	padding: 0;
 	border-radius: 7px;
 	border: 1px solid var(--background-modifier-border);
@@ -2841,7 +2873,7 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button::before {
 
 body.is-mobile .pa-chat-empty-chip {
 	min-height: 44px;
-	padding: 10px 14px;
+	padding: 4px 8px;
 }
 
 body.is-mobile .pa-chat-setup-token-input {
@@ -7946,7 +7978,7 @@ body.is-mobile .pa-insights-viewer > button {
 
 .pa-chat-view .pa-operations-save-suggestion {
     margin: 0.65rem 0 0.25rem;
-    padding: 0.75rem;
+    padding: 0.6rem;
     border: 1px solid var(--background-modifier-border);
     border-radius: var(--radius-m);
     background: var(--background-secondary);
@@ -7954,23 +7986,30 @@ body.is-mobile .pa-insights-viewer > button {
 
 .pa-chat-view .pa-operations-save-suggestion__text {
     color: var(--text-normal);
+    font-size: var(--font-ui-small);
     line-height: 1.45;
 }
 
 .pa-chat-view .pa-operations-save-suggestion__actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-top: 0.65rem;
+    gap: 6px;
+    margin-top: 8px;
 }
 
 .pa-chat-view .pa-operations-save-suggestion__actions > button {
-    min-height: 44px;
-    padding-inline: 0.85rem;
+    min-height: var(--pa-chat-control-height);
+    padding-inline: 8px;
+}
+
+.pa-chat-view .pa-operations-save-suggestion__actions > button[hidden] {
+    display: none;
 }
 
 .pa-chat-view .pa-operations-save-suggestion__status {
     color: var(--text-muted);
+    flex-basis: 100%;
+    font-size: var(--font-ui-smaller);
     line-height: 1.45;
 }
 
@@ -8072,16 +8111,14 @@ body.is-mobile .pa-insights-viewer > button {
 
 .pa-chat-view .pa-operations-intent-card__actions > button,
 .pa-chat-view .pa-operations-intent-card__undo {
-	min-height: 44px;
-	padding-inline: 0.85rem;
+	min-height: var(--pa-chat-control-height);
+	padding-inline: 8px;
 }
 
 body.is-mobile .pa-chat-view .pa-operations-intent-card__actions > button {
 	flex: 1 1 auto;
 }
 
-.pa-chat-view .pa-operations-intent-card__actions > button,
-.pa-chat-view .pa-operations-intent-card__undo,
 .pa-operations-review-view__actions > button,
 .pa-operations-review-view__nav > button,
 .pa-operations-diff__block-nav > button,
@@ -9501,8 +9538,8 @@ body.is-mobile .pa-share-card-print-style-option {
 }
 .pa-chat-view .pa-chat-create-image-intent button,
 .pa-chat-view .pa-chat-writing-intent button {
-    min-width: 32px;
-    min-height: 32px;
+    min-width: var(--pa-chat-control-height);
+    min-height: var(--pa-chat-control-height);
 }
 .pa-chat-view .pa-chat-create-image-source,
 .pa-chat-view .pa-chat-create-image-plain-options,
@@ -9595,7 +9632,7 @@ body.is-mobile .pa-share-card-print-style-option {
     }
 }
 .pa-chat-view .pa-ghost-publishing-card button {
-    min-height: 36px;
+    min-height: var(--pa-chat-control-height);
     height: auto;
     max-width: 100%;
     white-space: normal;
@@ -9626,7 +9663,7 @@ body.is-mobile .pa-share-card-print-style-option {
 }
 .pa-chat-view .pa-chat-image-task-card__actions button,
 .pa-chat-view .pa-chat-image-task-card__output-actions button {
-    min-height: 36px;
+    min-height: var(--pa-chat-control-height);
     display: inline-flex;
     align-items: center;
     gap: 5px;
