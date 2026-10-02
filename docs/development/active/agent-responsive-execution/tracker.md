@@ -40,7 +40,8 @@ SDD: [Software Design](./sdd.md)
 | B-155/REQ-05 / B-155/AC-05 | async 检索/投影保持算法 | 既有工具、context、observation 回归；统一 lint/build/full Jest | 已有语义与正常打包通过 | 结果格式/排序/预算/配置变动 |
 | B-155/REQ-01 / B-155/AC-01 | renderer 分块 | 当前构建部署到 test 后 desktop 原生编辑/tab/命令/停止；CLI mobile simulator 对应操作 | PA 准备进行时原生动作可完成，记录实际保存与停止 | 部署构建或相关 UI/runtime 变动 |
 | B-155/REQ-06 / B-155/AC-06 | 共用 gate | docs:check、diff:check、DOM scan；复用 enclosing make deploy 检查 | 各证据范围、自然退出、输入身份明确 | 输入变化或实际发现遗漏 |
-| B-155/REQ-05..06 / CI 调度夹具 | 真实 timer polling、分场景 eval、来源集成确定性调度计时 | 四 affected suites；时间预算直接回归；最终 exact-master 四 worker coverage CI | 500 来源、撤销/编辑、完整 12 场景及跨场景证据保持；默认 timeout 与覆盖率门槛不变 | fixture 或调度行为变化 |
+| B-155/REQ-05..06 / CI 调度夹具 | 真实 timer polling、分场景 eval、来源集成确定性调度计时 | 四 affected suites；时间预算直接回归；最终 exact-master 完整 coverage CI | 500 来源、撤销/编辑、完整 12 场景及跨场景证据保持；默认 timeout 与覆盖率门槛不变 | fixture 或调度行为变化 |
+| CI 覆盖率资源竞争 / Owner 资源复审 | CI 与 release 同步 2 workers；保留全量、V8 coverage、5s 及现有断言 | workflow tooling contracts；一次 exact-master 全量 CI，输出实际 CPU/内存、time 统计、worker heap 与重型 case 时长 | Test 自然退出 0 且完整 coverage 门槛通过；诊断输出不覆盖失败；资源指标只作为诊断，不是产品性能合同 | 仍失败则重新审视测试分层与重复对拍，不盲目提高 timeout 或再开全量重试 |
 | B-155/REQ-03,05..06 / 已验证来源重复解析 | owned 标量 dependency 直接执行同一权限谓词；对象型仍保留 parser 副本；虚拟 reserve 匹配虚拟 timer | run / actual SDK / real query / writing preview focused；malformed 与 callback throw 反例；lint/build/完整 CI；BRAT desktop/mobile 最小 runtime smoke | strict 外部解析、scope/epoch/abort/独立 receipt 不变，500 与默认 5s 保留；完整检查和实际发布资产均通过 | 源码、夹具变化或 CI / app 新失败 |
 
 不增加耗时阈值单测、全域性能基准、额外 provider 调用或真机 iOS gate。自动化次数/让出证明与原生操作证明承担不同问题。
@@ -98,6 +99,8 @@ SDD: [Software Design](./sdd.md)
 
 | 2026-10-02 | F-08..09 / B-155/REQ-03,05..06 | CI 36961802941 与连续 SDK 请求边界夹具 | CI 354 suites / 8612 tests PASS；仅正常/普通编辑两轮总默认 5s 超时，不发布 | `/private/tmp/pa-beta18-scalar-master-ci-failed.log`；撤销与 writing 恢复，afterEach 取消后没有旧 timer 污染。夹具分成同一 run 的两阶段，离线 first fetch 记录后先暂停响应；阶段1 request=1/read=0，阶段2释放同一响应并保留全部原断言。第一阶段未通过则取消并等待 run＋driver；阶段2明确拒绝未验证的前置状态。每段默认 5s，500 与生产 deadline 不变；不再证明整轮总 5s，SDD 不设耗时 unit SLA |
 | 2026-10-02 | F-08 / B-155/REQ-03,05 | SDK 两阶段源码 / coverage 局部检查与独立边界复核 | 6 项 PASS；source natural exit 0，focused coverage 因全局门槛 exit 1 | `/private/tmp/pa-beta18-phased-sdk.json`、`/private/tmp/pa-beta18-phased-sdk-coverage.json`；持久 request 数组与 plain counters 跨阶段保留，clearMocks 不影响 first read=0 后第二阶段实际读次数；full CI 仍待验，不能用 focused 替代 |
+| 2026-10-02 | F-08 / Owner CI 资源复审 | CI 36963141250 | 353 suites / 8613 tests PASS；SDK 第二阶段两场景与 E-10/aggregate 共 4 项失败，不发布 | `/private/tmp/pa-beta18-phased-master-ci-failed.log`；第一阶段/撤销通过，分阶段仍不能解决重型阶段的 5s 超时；E-10 超时导致 aggregate 缺项。失败为 Jest timeout，未见 OOM/runner 强杀；公开 Ubuntu runner 标称 4 CPU/16GB，但本轮缺实际资源峰值，不认定平台限流。冻结源码/夹具，下一次仅用 2 workers 与资源输出验证竞争假设；不实施已考虑的 15s timeout |
+| 2026-10-02 | CI 覆盖率资源预算 | workflow / release CI evidence / classifier tooling contracts 与 docs/diff | 3 suites / 97 tests PASS，natural exit 0；docs/diff PASS | `/private/tmp/pa-beta18-ci-resource-contracts.log`、`/private/tmp/pa-beta18-ci-resource-docs.log`；只改两份 workflow 与对应命令合同，源码/重型夹具冻结；完整两 worker CI 待验 |
 
 ## Acceptance Boundary
 
