@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-048 | Context 保留合法执行事实 | 四域统一获准状态、现有会话最小落盘与压缩摘要；不扩大权限或新增 ledger | [Decision](./decisions/dec-048-action-facts-and-context-continuity.md), [Product Spec](./specs/pa-action-continuity-product-spec.md) | 需要新存储层、扩大来源或动作权限时先交 Owner 决定 |
 | DEC-047 | Agent 非阻塞执行 | 原生 UI、编辑和保存优先；分层来源准入、有界工作；快照与撤销保持；GPT 本次完成设计实施 | [Decision](./decisions/dec-047-agent-responsive-execution.md), [Product Spec](./specs/pa-agent-responsive-execution-product-spec.md) | 实际仍有不可分割纯计算阻塞 renderer 时，仅隔离该计算 |
 | DEC-046 | 笔记最终差异与双入口审阅 | 按笔记初末态、Chat 紧凑差异与手动 tab、整批确认、上下字词高亮；Operations 不再持久审计，不扫描或清理旧目录 | [Decision](./decisions/dec-046-note-change-review-and-audit-retirement.md), [Product Spec](./specs/pa-note-change-review-product-spec.md) | 审阅方式不足以核对改动，或 Owner 重新要求局部接受/持久历史 |
 | DEC-045 | Ghost 预览确认发布 | Ghost 原生 Preview；每次发布/更新/恢复同桌面完成，完成记录同步后可换桌面新更新；不接续异机未完成任务，保留最近更新恢复 | [Decision](./decisions/dec-045-ghost-blog-publishing.md), [Product Spec](./specs/pa-ghost-blog-publishing-product-spec.md) | 真实渲染、转换或完成记录同步不能满足既定体验，或需要扩大平台/发布范围 |

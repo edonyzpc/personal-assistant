@@ -8,7 +8,7 @@ Updated: 2026-10-02
 
 | ID | 事项 | 当前边界 | 下一步 | 依据 |
 | --- | --- | --- | --- | --- |
-| B-157 | Agent context 连续性与执行事实保全 | 已完成源码审查、脱敏故障分析与详细开发测试规划；尚未授权实现 | 授权后按统一事实投影方案及任务/验收矩阵修复 Image/Writing/Ghost/Operations，保持来源与动作权限 | [Discovery](./development/discovery/context-reliability-and-action-continuity.md)、[开发测试计划](./development/discovery/context-reliability-and-action-continuity/plan.md) |
+| B-157 | Agent context 连续性与执行事实保全 | Owner 已授权按完整方案及计划实施；执行状态以 Tracker 为准 | 按统一事实投影及完整验收矩阵修复四域，保持来源与动作权限 | [Feature Home](./development/active/context-reliability-and-action-continuity/README.md)、[Discovery](./development/discovery/context-reliability-and-action-continuity.md) |
 | B-002 | Pagelet source-bound async result 完整体验 | Typed outcome 与 interim stale-result 修复已存在；统一 in-memory result store 与 Pet/Bubble ready-state 仍需按当前代码复核 | 先做 code-to-plan reconciliation，再为剩余 slice 建新 SDD；不要重复已实现部分 | [Historical plan](./archive/pagelet-async-result-plan.md) |
 | B-003 | Android VSS 真机验证 | Desktop 与 iOS 有证据，Android parity 未验证 | 在物理 Android 设备验证 SQLite/WASM Memory backend 后再更新 README 声明 | [README note](../README.md#mobile-vss-validation-note) |
 | B-004 | PA Agent telemetry baseline | Instrumentation 与 runbook 就绪，尚无 post-ship aggregate sample | 在明确 opt-in 后采集至少 7 天内容无关的聚合数据，再用于功能优先级判断 | [Runbook](./operations/pa-agent-telemetry-baseline.md) |

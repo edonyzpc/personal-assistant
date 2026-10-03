@@ -1,9 +1,9 @@
 # B-157 开发与测试计划
 
-Document status: Draft
-Updated: 2026-10-02
+Document status: Approved
+Updated: 2026-10-03
 Work item: B-157
-Authority: Owner 要求依据 B-157 方案制定的开发任务、测试设计、依赖、验收与回滚计划；仅规划，不构成实施、模型调用、部署或 Git/release 授权。
+Authority: Owner 已明确授权按 B-157 完整方案及本计划完成全部任务；实施、合成模型评测与 test-vault 验证在该范围内，Git/release 未授权。执行状态以 Active Package Tracker 为准。
 Design: [B-157 Discovery 与优化方案](../context-reliability-and-action-continuity.md)
 Current contracts: [Context Product Spec](../../../product/specs/pa-context-management-product-spec.md)、[Agent Runtime Product Spec](../../../product/specs/pa-agent-runtime-evolution-product-spec.md)、[DEC-043](../../../product/decisions/dec-043-agent-runtime-evolution-and-source-scope.md)
 
@@ -24,7 +24,7 @@ Current contracts: [Context Product Spec](../../../product/specs/pa-context-mana
 
 非目标：新 task ledger、Agent SDK、长期 Memory/摘要存储、持久化原始 canonical/推理/日志、持久化 Undo 的笔记 before/after 正文、自动重放未知动作、跨设备同步、真实 Ghost 发布或付费生图认证、正式 vault 部署与发布。已有防重复、授权和取消保护保留，但不能拿它们代替 context 正确性。
 
-计划完成后仍停留在 Discovery。实施获授权时再建立最小 Feature Home/Tracker；复杂存储、来源与生命周期设计需在执行前形成必要的 source-verified SDD。Tracker 届时成为唯一执行状态与验证权威，本文件只保留任务和验收设计。
+Owner 已授权完整实施，现有 [Feature Home](../../active/context-reliability-and-action-continuity/README.md)、[Tracker](../../active/context-reliability-and-action-continuity/tracker.md) 与 source-verified SDD 承接执行。Tracker 是唯一执行状态与验证权威，本文件只保留任务和验收设计。
 
 ## 2. 当前源码、存储限制与实施输入
 
@@ -45,7 +45,7 @@ Operations 后续事件应记录为真实 Host/领域状态更新，不伪造成
 
 多动作 intent 的 applied/partial/Undo 按实际 action/receipt 关联保留；撤销一个 receipt 不代表整个 batch 已 undone。真实动作成功但状态落盘失败时，当前会话可使用仍可验证的内存执行事实并标明未可靠保存；重开后缺可信 receipt 则 unknown/失联，不能沿用可确认 pending，也不能为补记录再次执行。running placeholder/finalize 的旧 snapshot 不得覆盖已经记录的领域新状态。
 
-实施前 T01 核对工作树。当前存在其他任务的 docs/release 及 `src/custom.pcss`/`styles.css` 改动，均不属于 B-157；不能覆盖、清理或未经归属核对纳入构建证据。隔离工作树不会自动带入本次未提交的 B-157 文档，派工时须显式带入并核对。未知测试输入身份不得复用 PASS。
+实施前 T01 核对工作树及改动归属；其他任务的源码、文档和未跟踪文件不能覆盖、清理或未经归属核对纳入构建证据。隔离工作树不会自动带入未提交的 B-157 文档，派工时须显式带入并核对。实际初态与资源记录见 Tracker；未知测试输入身份不得复用 PASS。
 
 ## 3. 开发任务与依赖
 
@@ -134,7 +134,7 @@ flowchart TD
 
 ## 5. 测试命令、阶段门与证据复用
 
-以下是实施后的拟执行命令。本轮不运行 runtime suites、构建、模型或 app。source 命令不依赖 dist；改了哪个接线就选择对应组，不能每次把所有 focused 组重跑。
+以下是完整实施的验证命令，执行结果记录于 Tracker。source 命令不依赖 dist；改了哪个接线就选择对应组，不能每次把所有 focused 组重跑。
 
 **G1：回执、准入、持久化。** T02–T04 使用这些已存在的 source suites；更改 cooperative/physical admission 时追加 `task-source-runtime-admission`，更改 Writing 共享准入时追加 `writing-context-runtime`。
 
@@ -192,11 +192,15 @@ B-149 live script 固定 `B149-runtime-eval/cases.json`、fixture hash、12 个 
 
 评测最小集为四域 × 三种续问 × 两臂，即 24 个对照 episodes；episode 是会话样例，不是物理请求数。每个样例只用达到目标状态所需的前序轮次，再提出：解释当前问题、明确新任务/既有合法续接、结果未知需要核实。将预算压力分配到其中有代表性的样例，另有一个三次摘要更新 episode；不再把所有域与所有预算/模式做笛卡尔积。实际预算值从源码与本次 fixture 投影读取，避免恰巧不触发压缩。
 
+摘要压力保留原三次用户修正，并允许随后两次普通非写核对，使仍在完整最近turn中的修正自然进入后续摘要。核对只询问当前方案及原操作状态，复用既有容量材料，不再次提示目标答案、增加授权、清缓存或重试失败轮。须逐实际source index证明各次修正分次进入被接受摘要，独立检查至少三次有意义的摘要承接及最终最新决定；不能以binding变化、不同文本、aux数或预设覆盖前缀替代语义验证。旧失败轨迹保留，新增轮次、harness身份与物理请求数据实记录。
+
 两臂使用同一实际 provider/model、相同材料/工具与当前用户原文，保持相同 provider 总窗口与输出预留。reference 是完整获准事实表达，在总窗口内给予足以 fit 的 history lane allocation；candidate 使用正常或受控压力的 allocation 触发实际压缩，分别记录 lane 预算、原历史大小与缩减结果。不能让两臂沿 fit-first 走相同路径后声称完成了压缩对照，也不由不同 lane 预算推断性能提升。完整 reference 无法放进总窗口时仅作为离线事实 oracle，该样例不能声明完整原文模型对照通过，应缩减为仍触发候选压缩的合成材料重新建立可达对照。任何 arm 都不关闭范围/预算保护。保存失败样例和新假设后的修订，不反复重试挑选成功回答；真实行为失败先定位请求事实/领域状态/模型解释哪层不符。
 
 未决操作的明确续接仍遵守原确认流程：Ghost 发布和 Operations 应用通过实际确认边界；模型不能凭“继续”历史绕过卡片权限。未知样例允许合法核实，缺核实能力时如实说明，不能伪造“已检查”或再次提交。评测工具必须可调用，零真实副作用由记录型端口保证，不能先把工具移除再判零重做 PASS。
 
 每个 episode 证据：合法 fixture 与历史身份、最新 user 原文、实际 final provider input（包括 fact/summary/fallback）、回答、工具尝试与记录型提交计数、各目标已做/未做的判断、实际请求数/可归属 usage、取消/错误/限制、独立 reviewer verdict。摘要 JSON 合法、script recorded_for_review、预算 fit 均不等于语义 PASS。基线失败是问题证据，候选须全部满足本场景约束；不承诺任意模型零错误。
+
+2026-10-03 Owner 验收澄清：历史动作后无实际执行的继续／重做询问为非阻塞的后续体验优化，原 Writing 裁定后续明确扩展至四域。解释不重做以实际调用及副作用轨迹判定，将纯文字提示、未证实过程细节、核心执行状态错报与明确新任务的交付错误分别记录；按实际影响判断，避免过严验证和实现。不把讨论要求转为作品要求，不因内部explanation字段为空否定其它既有分离载体已交付的解释，也不豁免真实重放、未知被确定说成成功／未发生或明确成品缺失。当前观察缺行与历史效果未知须分别表达；不为区分二者另造删除竞态或强制核实流程。旧 NoOffer verdict 保留，当前分类以 Product Spec 的最新裁定为准；分类纠正复用冻结报告，不追加模型请求或为措辞堆叠新执行规则。
 
 ### C27/C28 的 test-vault 交互步骤
 
@@ -226,7 +230,7 @@ B-149 live script 固定 `B149-runtime-eval/cases.json`、fixture hash、12 个 
 | gate 输入被并发改动 | T12 冻结相关输入，实际 diff/构建部署核验 | 完成或停止旧 gate，标记 superseded；修复后重跑受影响项，不声称 mixed-state PASS |
 | provider/app/工具不可用 | 使用准确失败命令/错误，第二次同因失败换诊断；继续独立工作 | 对应证据保持未验证，不假成功；健康长测试不按诊断截止中止；不擅自改 provider 或目标 vault |
 
-Stop points：本次停在计划与文档验证；实施授权前不启动 writer、测试 provider、build/deploy 或修改产品 delivered 状态。实施期 T02/T04 若出现无法兼容现有隐私/存储/模型范围的偏离，只暂停依赖它的步骤并交 Owner 判断。代码与验收完成也不自动 commit/push、关闭 package 或发布。
+Stop points：Owner 后续完整实施授权已覆盖本计划的开发与验证。T02/T04 若出现无法兼容现有隐私/存储/模型范围的偏离，只暂停依赖它的步骤并交 Owner 判断。代码与验收完成不自动 commit/push、关闭 package 或发布。
 
 ## 8. 本计划的核验清单
 

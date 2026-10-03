@@ -8,6 +8,7 @@ Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governa
 
 | Track | Work item | Feature Home | Tracker |
 | --- | --- | --- | --- |
+| Context action continuity | B-157 | [Feature Home](./context-reliability-and-action-continuity/README.md) | [Tracker](./context-reliability-and-action-continuity/tracker.md) |
 | Agent responsive execution | B-155 | [Feature Home](./agent-responsive-execution/README.md) | [Tracker](./agent-responsive-execution/tracker.md) |
 | Ghost Blog Publishing | B-153 | [Feature Home](./ghost-blog-publishing/README.md) | [Tracker](./ghost-blog-publishing/tracker.md) |
 | Unified Chat image creation | B-152 | [Feature Home](./unified-chat-image-creation/README.md) | [Tracker](./unified-chat-image-creation/tracker.md) |
