@@ -134,6 +134,11 @@ export class GhostPublishingIntegration {
         };
     }
 
+    readContextReceipt(operationId: string): Promise<ReturnType<GhostPublishingSession['getContextReceipt']>> {
+        return this.controller.readContextReceipt(operationId);
+    }
+    clearContextPersistence(conversationId: string): void { this.controller.clearContextPersistence(conversationId); }
+
     dispose(): void {
         this.disposed = true;
         for (const event of this.events) this.dependencies.app.vault.offref(event);

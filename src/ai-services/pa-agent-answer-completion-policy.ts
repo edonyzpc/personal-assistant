@@ -3,6 +3,8 @@ import type {
 } from "./pa-agent-loop";
 import { HostProgressLedger, appliedInsightReceipt, preparedWritingContextSelection } from "./pa-agent-progress";
 import { parseVaultObservationEvidence } from "./vault-observation-evidence";
+import { isChatToolFailureReason } from './chat-types';
+import { validateSourceRefPathShape } from '../pa/contracts/source-ref';
 
 export type AnswerCompletionToolMode = "normal" | "final_answer_only";
 
@@ -323,8 +325,9 @@ function recoverFromFailure(
         tool: result.toolName,
         outcome: result.content.metadata?.outcome ?? "unknown",
         executionState: result.content.metadata?.executionState ?? "unknown",
-    })).sort((left, right) => `${left.tool}:${left.outcome}:${left.executionState}`
-        .localeCompare(`${right.tool}:${right.outcome}:${right.executionState}`))]);
+        cause: failureCause(result),
+        resource: failedReadResource(summary, result),
+    })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))]);
     const count = (ledger.equivalentNoProgressCounts.get(signature) ?? 0) + 1;
     ledger.equivalentNoProgressCounts.set(signature, count);
     const names = [...new Set(toolNames)].join(", ") || "the attempted tool";
@@ -358,6 +361,28 @@ function recoverFromFailure(
         toolMode: "normal",
         runtimeInstruction: `${names} returned a recoverable observation. Inspect its actual outcome and allowed recovery actions. Retry the same read-only call only when the failure is temporary, otherwise correct the input or choose another currently allowed path. If a side effect is partial or acceptance is unknown, verify or continue only the remaining parts; do not submit it again blindly.`,
     };
+}
+
+function failureCause(result: PaAgentTurnSummary['toolResults'][number]): string {
+    const metadata = result.content.metadata;
+    if (isChatToolFailureReason(metadata?.failureReason)) return metadata.failureReason;
+    if (metadata?.reason === 'tool_timeout') return 'timeout';
+    if (metadata?.reason === 'tool_exception') return 'tool_exception';
+    return 'unknown';
+}
+
+function failedReadResource(summary: PaAgentTurnSummary, result: PaAgentTurnSummary['toolResults'][number]): string | null {
+    // A different admitted note/part is a recovery alternative. Ranges, cursors,
+    // call IDs and arbitrary argument changes cannot reset a failure episode.
+    if (result.toolName !== 'read_note' || result.content.metadata?.retrySafety !== 'read_only'
+        || result.content.metadata?.outcome !== 'recoverable_error'
+        || !isChatToolFailureReason(result.content.metadata?.failureReason)) return null;
+    const call = summary.toolCalls.find(call => call.type === 'toolCall' && call.id === result.toolCallId);
+    if (call?.type !== 'toolCall' || !call.input || typeof call.input !== 'object') return null;
+    const input = call.input as Record<string, unknown>;
+    if (!validateSourceRefPathShape({ path: input.path }).ok) return null;
+    const path = (input.path as string).trim().split(/[\\/]/).filter(segment => segment && segment !== '.').join('/');
+    return JSON.stringify({ path, part: input.part === 'properties' ? 'properties' : 'body' });
 }
 
 export function buildAnswerFinalizationInstruction(

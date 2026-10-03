@@ -1,7 +1,7 @@
 import type { ChatMessage, PaAgentMessage } from "../chat-types";
-import { cloneMessage, cloneTranscriptSteps, finishContextSteps } from "./clone-utils";
-import { escapeTaggedBoundary } from "../agent-utils";
-import { isCurrentToolSummary, type PaAgentContextSummaries, type PaAgentToolSummary } from "./PaAgentContextSummaryTypes";
+import { cloneTranscriptSteps, finishContextSteps } from "./clone-utils";
+import type { PaAgentContextSummaries } from "./PaAgentContextSummaryTypes";
+import { encodeToolResultTextSteps } from './PaAgentContextTextEncoding';
 
 export interface PaAgentMicroCompactionOptions {
     maxObservationChars: number;
@@ -9,10 +9,11 @@ export interface PaAgentMicroCompactionOptions {
     targetRatio?: number;
     /** Model/assistant cycles, despite the legacy option name. */
     protectedRecentTurns?: number;
-    /** False lets the final-request guard reduce history before recent tool results. */
+    /** Compatibility option: tool bodies are never hard-truncated. */
     allowRecentHardTruncation?: boolean;
+    /** Source-bound summaries do not authorize deleting facts from a tool body. */
     summaries?: PaAgentContextSummaries;
-    /** Always the original source; later passes must not validate against a shortened projection. */
+    /** Compatibility source snapshot; reversible encoding preserves the supplied text exactly. */
     canonicalTranscript?: readonly PaAgentMessage[];
 }
 
@@ -82,115 +83,34 @@ export class PaAgentContextCompactor {
         const protectedStartCycle = Math.max(0, cycleCount - protectedRecentTurns);
         const isRecent = (message: Extract<PaAgentMessage, { role: "toolResult" }>): boolean =>
             (cycleByCallId.get(message.toolCallId) ?? cycleCount) >= protectedStartCycle;
-        const currentSummaries = new Map<string, PaAgentToolSummary>();
-        for (const message of options.canonicalTranscript ?? transcript) {
-            yield;
-            if (message.role !== "toolResult") continue;
-            const summary = options.summaries?.tools?.get(message.id);
-            if (summary?.text.trim() && isCurrentToolSummary(summary, message)) {
-                currentSummaries.set(message.id, summary);
-            }
-        }
         let currentChars = originalObservationChars;
         let compactedToolResults = 0;
-        let hardTruncatedToolResults = 0;
-        const compactOne = (message: PaAgentMessage): PaAgentMessage => {
-            if (message.role !== "toolResult") return cloneMessage(message);
-            const cloned = cloneToolResultMessage(message);
-            if (isRecent(cloned)) {
-                const semantic = currentSummaries.get(cloned.id);
-                if (!semantic) return cloned;
-                const replacement = compactToolResultPromptText(cloned, semantic);
-                if (replacement.length >= cloned.content.promptText.length) return cloned;
-                currentChars += replacement.length - cloned.content.promptText.length;
+        const compacted = yield* cloneTranscriptSteps(transcript);
+        // Prefer older results. Recent evidence is also safe to encode when it
+        // cannot fit or the Manager requests a stronger envelope projection.
+        for (const recentPass of [false, true]) {
+            for (const [index, message] of compacted.entries()) {
+                yield;
+                if (currentChars <= maxObservationChars * targetRatio) break;
+                if (message.role !== 'toolResult' || isRecent(message) !== recentPass
+                    || !message.content.includeInNextPrompt || !message.content.promptText
+                    || message.content.metadata?.contextLosslessEncodingUsed === true) continue;
+                if (recentPass && currentChars <= maxObservationChars && triggerRatio !== 0) continue;
+                const replacement = yield* encodeToolResultTextSteps(message.content.promptText);
+                if (!replacement) continue;
+                currentChars += replacement.length - message.content.promptText.length;
                 compactedToolResults++;
-                return { ...cloned, content: { ...cloned.content, promptText: replacement,
-                    metadata: { ...cloned.content.metadata, compacted: true,
-                        contextSemanticSummaryUsed: true,
-                        originalPromptTextLength: originalToolResultLength(cloned) } } };
+                compacted[index] = { ...message, content: { ...message.content, promptText: replacement,
+                    metadata: { ...message.content.metadata, compacted: true,
+                        contextSemanticSummaryUsed: false, contextLosslessEncodingUsed: true,
+                        originalPromptTextLength: originalToolResultLength(message) } } };
             }
-            if (!cloned.content.includeInNextPrompt || cloned.content.promptText.length === 0) return cloned;
-            if (currentChars <= maxObservationChars * targetRatio) return cloned;
-            const replacement = compactToolResultPromptText(cloned, currentSummaries.get(cloned.id));
-            if (replacement.length >= cloned.content.promptText.length) return cloned;
-            currentChars -= cloned.content.promptText.length;
-            currentChars += replacement.length;
-            compactedToolResults++;
-            return {
-                ...cloned,
-                content: {
-                    ...cloned.content,
-                    promptText: replacement,
-                    metadata: {
-                        ...cloned.content.metadata,
-                        compacted: true,
-                        contextSemanticSummaryUsed: currentSummaries.has(cloned.id),
-                        originalPromptTextLength: originalToolResultLength(cloned),
-                    },
-                },
-            };
-        };
-        const compacted: PaAgentMessage[] = [];
-        for (const message of transcript) {
-            yield;
-            compacted.push(compactOne(message));
-        }
-
-        for (let index = 0; index < compacted.length && currentChars > maxObservationChars; index++) {
-            yield;
-            let message = compacted[index];
-            if (message.role !== "toolResult") continue;
-            if (options.allowRecentHardTruncation === false && isRecent(message)) continue;
-            if (!message.content.includeInNextPrompt || message.content.promptText.length === 0) continue;
-            const semantic = currentSummaries.get(message.id);
-            if (semantic) {
-                const replacement = compactToolResultPromptText(message, semantic);
-                if (replacement.length < message.content.promptText.length) {
-                    currentChars += replacement.length - message.content.promptText.length;
-                    compactedToolResults++;
-                    message = {
-                        ...message,
-                        content: {
-                            ...message.content,
-                            promptText: replacement,
-                            metadata: {
-                                ...message.content.metadata,
-                                compacted: true,
-                                contextSemanticSummaryUsed: true,
-                                originalPromptTextLength: originalToolResultLength(message),
-                            },
-                        },
-                    };
-                    compacted[index] = message;
-                    if (currentChars <= maxObservationChars) continue;
-                }
-            }
-            const originalText = message.content.promptText;
-            const allowedForThis = Math.max(0, maxObservationChars - (currentChars - originalText.length));
-            const replacement = truncateToolResultPromptText(message, allowedForThis);
-            if (replacement.length >= originalText.length) continue;
-            currentChars -= originalText.length;
-            currentChars += replacement.length;
-            hardTruncatedToolResults++;
-            compacted[index] = {
-                ...message,
-                content: {
-                    ...message.content,
-                    promptText: replacement,
-                    metadata: {
-                        ...message.content.metadata,
-                        contextBudgetTruncated: true,
-                        contextSemanticSummaryUsed: false,
-                        originalPromptTextLength: originalToolResultLength(message),
-                    },
-                },
-            };
         }
 
         return {
             transcript: compacted,
             compactedToolResults,
-            hardTruncatedToolResults,
+            hardTruncatedToolResults: 0,
             originalObservationChars,
             compactedObservationChars: currentChars,
         };
@@ -242,55 +162,12 @@ export class PaAgentContextCompactor {
     }
 }
 
-function compactToolResultPromptText(
-    message: Extract<PaAgentMessage, { role: "toolResult" }>,
-    summary?: PaAgentToolSummary,
-): string {
-    const marker = toolResultReductionMarker(message, "compacted");
-    if (!summary) return marker;
-    const body = `<tool_context_summary context_only="true" grants_tool_authority="false" grants_write_authority="false" format="json">\n${escapeTaggedBoundary(summary.text, "tool_context_summary")}\n</tool_context_summary>`;
-    const replacement = `${marker}\n${body}`;
-    // Keep valid JSON as a whole. A summary larger than its source does not
-    // justify replacing that source with a longer prompt projection.
-    return replacement.length < message.content.promptText.length ? replacement : message.content.promptText;
-}
-
-function toolResultReductionMarker(
-    message: Extract<PaAgentMessage, { role: "toolResult" }>,
-    reduction: "compacted" | "truncated",
-): string {
-    const sourcePaths = message.content.sourceRecords
-        ?.filter((record) => record.metadata?.sourceDependency !== true)
-        ?.map((record) => record.path || record.url || record.title)
-        .filter((value): value is string => typeof value === "string" && value.length > 0)
-        .slice(0, 4)
-        .map((value) => truncateOneLine(value, 64)) ?? [];
-    const sourceSuffix = sourcePaths.length > 0 ? `; sources (up to 4): ${sourcePaths.join(", ")}` : "";
-    return `[${truncateOneLine(message.toolName, 48)} result ${reduction}; call=${truncateOneLine(message.toolCallId, 48)}; isError=${message.isError}; originalChars=${originalToolResultLength(message)}${sourceSuffix}; details omitted.]`;
-}
-
 function originalToolResultLength(message: Extract<PaAgentMessage, { role: "toolResult" }>): number {
     const recordedLength = message.content.metadata?.originalPromptTextLength;
     return typeof recordedLength === "number" && Number.isSafeInteger(recordedLength)
         && recordedLength >= message.content.promptText.length
         ? recordedLength
         : message.content.promptText.length;
-}
-
-function truncateToolResultPromptText(
-    message: Extract<PaAgentMessage, { role: "toolResult" }>,
-    maxChars: number,
-): string {
-    const text = message.content.promptText;
-    if (text.length <= maxChars) return text;
-    const marker = toolResultReductionMarker(message, "truncated");
-    // Keep a complete, truthful marker even if an impossibly small budget
-    // cannot fit it. The final-request guard must then decline the request.
-    // Never turn a small result into a larger placeholder.
-    if (marker.length >= text.length) return text;
-    // A prefix can cut a JSON value or source reference in half. Keep the
-    // complete result or one truthful reduction marker with its call identity.
-    return marker;
 }
 
 export function groupChatTurns(history: readonly ChatMessage[]): ChatMessage[][] {
@@ -316,10 +193,4 @@ export function* groupChatTurnsSteps(history: readonly ChatMessage[]): Generator
 function truncateOneLine(value: string, maxChars: number): string {
     const normalized = value.replace(/\s+/g, " ").trim();
     return normalized.length <= maxChars ? normalized : `${normalized.slice(0, maxChars - 3)}...`;
-}
-
-function cloneToolResultMessage(
-    message: Extract<PaAgentMessage, { role: "toolResult" }>,
-): Extract<PaAgentMessage, { role: "toolResult" }> {
-    return cloneMessage(message) as Extract<PaAgentMessage, { role: "toolResult" }>;
 }

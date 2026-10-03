@@ -14,7 +14,7 @@ import { cloneContextReductionReceipt, createContextPagerStateFromChatContextUse
 import { cloneMessageImages } from "../chat/image-types";
 import { parseRunSourceSelection } from './chat-source-scope';
 import { cloneInputLineage, unionInputLineages } from './input-lineage';
-import { cloneResultFact } from './pa-agent-result-facts';
+import { cloneResultFact, collectActionStates } from './pa-agent-result-facts';
 import {
     assertVaultObservationHistory,
     cloneVaultObservationEvidence,
@@ -79,6 +79,7 @@ export function createPaAgentPersistedTurn(input: CreatePaAgentPersistedTurnInpu
         schemaVersion: PA_AGENT_CANONICAL_TURN_SCHEMA_VERSION,
         runId: input.runId,
         turnId: input.turnId,
+        actionStates: collectActionStates(input),
         ...(modelVisibleMessages.some(message => message.inputLineage)
             ? { inputLineage: unionInputLineages(...modelVisibleMessages
                 .map(message => message.inputLineage)) } : {}),

@@ -5,6 +5,9 @@ import type { TaskSourceConstraint } from '../src/ai-services/task-source-constr
 import type { ChatMessage, PaAgentMessage } from '../src/ai-services/chat-types';
 import { createTaskSourceConstrainedExecutor } from '../src/ai-services/task-source-executor';
 import { completeInputLineage, toGenerationInputLineage, unknownInputLineage, type InputLineage } from '../src/ai-services/input-lineage';
+import type { PaAgentActionState } from '../src/ai-services/pa-agent-result-facts';
+import { ChatHistoryManager } from '../src/chat/chat-history-manager';
+import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import {
     MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS,
     MAX_TASK_SOURCE_NOTE_HANDLES,
@@ -15,6 +18,169 @@ import {
 jest.mock('obsidian');
 
 const userText = '请查找资料并回答';
+
+function imageState(lineage: InputLineage): PaAgentActionState {
+    return { schemaVersion: 1, owner: 'image', operationId: 'task-1', phase: 'accepted', revision: 0,
+        origin: { runId: 'run-1', turnId: 'turn-1', assistantId: 'a-1', callId: 'c-1', resultId: 'r-1' },
+        receipt: { kind: 'image-accepted', taskId: 'task-1' }, inputLineage: lineage };
+}
+
+describe('B157 independently admitted historical state', () => {
+    it.each([false, true])('admits original bound state after real manager rehydration; async=%s', async asynchronous => {
+        const h = fixture();
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore() });
+        const lineage = completeInputLineage([{ kind: 'user-text', messageId: 'original' },
+            { kind: 'run-notes-observation', runId: 'run-1', owner: 'vault', sourceEpoch: 'epoch-1' }]);
+        const saved = imageState(lineage);
+        const restored = manager.deserializeTurn({ conversationId: 'conversation', turnIndex: 2,
+            user: { role: 'user', content: 'Generate', hostProvenance: { version: 1, kind: 'ordinary_user_statement', messageId: 'original' } },
+            assistant: { role: 'assistant', content: 'PRIVATE_OLD_TEXT', inputLineage: lineage, actionStates: [saved],
+                actionStateBinding: { conversationId: 'conversation', turnIndex: 2, runId: 'run-1', turnId: 'turn-1' } } });
+        const run = new TaskSourceRun({ ...h.host, runId: 'run-2', conversationId: 'conversation',
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'notes', userMessageId: 'user-1' },
+            ...(asynchronous ? { getTaskSourceAuthorityEpoch: () => 'authority' } : {}) });
+        const history = [restored.userMessage, restored.assistantMessage];
+        const project = () => asynchronous ? run.projectHistoryAsync(history) : Promise.resolve(run.projectHistory(history));
+        expect(restored.assistantMessage.canonicalTurn?.turnId).toBe('rehydrated:conversation:2');
+        expect((await project()).flatMap(message => message.actionStates ?? [])).toEqual([saved]);
+        expect(JSON.stringify(await project())).not.toContain('PRIVATE_OLD_TEXT');
+        for (const invalidId of ['rehydrated:foreign:2', 'rehydrated:conversation:3', 'forged']) {
+            restored.assistantMessage.canonicalTurn!.runId = invalidId;
+            restored.assistantMessage.canonicalTurn!.turnId = invalidId;
+            expect((await project()).flatMap(message => message.actionStates ?? [])).toEqual([]);
+        }
+        const canonical = restored.assistantMessage.canonicalTurn!;
+        canonical.runId = 'rehydrated:conversation:2';
+        expect((await project()).flatMap(message => message.actionStates ?? [])).toEqual([]);
+        canonical.turnId = canonical.runId;
+        canonical.messages = [{ role: 'assistant', id: 'forged', timestamp: 1,
+            content: [{ type: 'text', text: 'FORGED_TRANSCRIPT' }] }];
+        expect((await project()).flatMap(message => message.actionStates ?? [])).toEqual([]);
+        canonical.messages = [];
+        restored.assistantMessage.actionStateBinding!.runId = 'foreign-owner';
+        expect((await project()).flatMap(message => message.actionStates ?? [])).toEqual([]);
+    });
+    it.each([false, true])('rejects altered historical owner proof and current authority changes; async=%s', async asynchronous => {
+        for (const scenario of ['conversation', 'run', 'turn', 'missing-user', 'duplicate-user', 'unknown', 'foreign-observation', 'epoch', 'epoch-unavailable', 'memory', 'scope', 'revoked', 'vault-path', 'limited', 'excluded']) {
+            const h = fixture();
+            const host: TaskSourceRunHost = { ...h.host, conversationId: 'conversation', runId: 'run-2',
+                runSourceSelection: { schemaVersion: 1, scope: scenario === 'scope' ? 'web' : 'notes', selectionId: 'scope', userMessageId: 'user-1' },
+                ...(asynchronous ? { getTaskSourceAuthorityEpoch: () => 'authority' } : {}),
+                ...(scenario === 'epoch-unavailable' ? { getMemoryEvidenceEpoch: () => { throw new Error('Unavailable'); } } : {}),
+                ...(scenario === 'vault-path' ? { isPathAllowed: () => false } : {}) };
+            const run = new TaskSourceRun(host);
+            const dependencies: InputLineage['dependencies'] = [{ kind: 'user-text', messageId: 'original' },
+                { kind: 'run-notes-observation', runId: scenario === 'foreign-observation' ? 'foreign-run' : 'run-1',
+                    owner: 'memory', sourceEpoch: 'epoch-1', memoryEnabled: true },
+                { kind: 'vault', path: h.a.path, via: 'note' }];
+            const lineage = scenario === 'unknown' ? unknownInputLineage(dependencies) : completeInputLineage(dependencies);
+            const saved = imageState(lineage);
+            const user: ChatMessage = { role: 'user', content: 'original', hostProvenance: { version: 1, kind: 'ordinary_user_statement', messageId: 'original' } };
+            const assistant: ChatMessage = { role: 'assistant', content: 'PRIVATE_PROSE', inputLineage: unknownInputLineage(), actionStates: [saved],
+                actionStateBinding: { conversationId: scenario === 'conversation' ? 'foreign-conversation' : 'conversation', turnIndex: 0,
+                    runId: scenario === 'run' ? 'foreign-run' : 'run-1', turnId: scenario === 'turn' ? 'foreign-turn' : 'turn-1' } };
+            const history = scenario === 'missing-user' ? [assistant] : scenario === 'duplicate-user' ? [user, user, assistant] : [user, assistant];
+            if (scenario === 'epoch') h.setSourceEpoch('epoch-2');
+            if (scenario === 'memory') h.setMemoryAllowed(false);
+            if (scenario === 'revoked') h.setCurrent(false);
+            if (scenario === 'limited' || scenario === 'excluded') {
+                // Represent a real internal restricted snapshot, not a caller-created read grant.
+                const current = run.state.snapshot();
+                Reflect.set(run.state, 'current', Object.freeze({ ...current,
+                    allowedNoteIds: scenario === 'limited' ? [] : null, excludedNoteIds: scenario === 'excluded' ? ['excluded'] : [] }));
+            }
+            if (asynchronous && scenario === 'revoked') {
+                await expect(run.projectHistoryAsync(history)).rejects.toThrow('Task source scope changed');
+                continue;
+            }
+            const projected = asynchronous ? await run.projectHistoryAsync(history) : run.projectHistory(history);
+            expect(projected.flatMap(message => message.actionStates ?? [])).toEqual([]);
+            expect(JSON.stringify(projected)).not.toContain('PRIVATE_PROSE');
+        }
+    });
+    it.each([false, true])('projects only bound historical owner state with current observation evidence; async=%s', async asynchronous => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, runId: 'run-2', conversationId: 'conversation',
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'notes', userMessageId: 'user-1' },
+            ...(asynchronous ? { getTaskSourceAuthorityEpoch: () => 'authority-1' } : {}) });
+        const lineage = completeInputLineage([{ kind: 'user-text', messageId: 'original-user' },
+            { kind: 'run-notes-observation', runId: 'run-1', owner: 'vault', sourceEpoch: 'epoch-1' }]);
+        const saved: PaAgentActionState = { schemaVersion: 1, owner: 'writing', operationId: 'writing', phase: 'completed', revision: 1,
+            origin: { runId: 'run-1', turnId: 'turn-1', assistantId: 'assistant', resultId: 'assistant' }, inputLineage: lineage,
+            receipt: { kind: 'writing-saves', versionId: 'writing', saves: [{ saveId: 'save', state: 'completed', noteState: 'completed' }] } };
+        const history: ChatMessage[] = [{ role: 'user', content: 'Write', hostProvenance: { version: 1, kind: 'writing_request', messageId: 'original-user' },
+            inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'original-user' }]) },
+            { role: 'assistant', content: 'OLD_PRIVATE_PROSE', inputLineage: lineage, actionStates: [saved],
+                hostProvenance: { version: 1, kind: 'ai_draft', messageId: 'original-assistant' },
+                actionStateBinding: { conversationId: 'conversation', turnIndex: 0, runId: 'run-1', turnId: 'turn-1' } }];
+        const project = (messages: ChatMessage[]) => asynchronous ? run.projectHistoryAsync(messages) : Promise.resolve(run.projectHistory(messages));
+        const original = JSON.stringify(history);
+        expect(run.admitsLineage(lineage, true)).toBe(false);
+        const projected = await project(history);
+        const fragment = projected.find(message => message.role === 'assistant')!;
+        expect(fragment).toBeDefined();
+        expect(fragment.content).toBe('');
+        expect(fragment.actionStates).toEqual([saved]);
+        expect(fragment.actionStateBinding).toEqual(history[1].actionStateBinding);
+        expect(fragment.hostProvenance).toEqual(history[1].hostProvenance);
+        expect(fragment.inputLineage?.dependencies).toContainEqual({ kind: 'run-notes-observation', runId: 'run-2', owner: 'vault', sourceEpoch: 'epoch-1' });
+        expect(run.admitsLineage(fragment.inputLineage, true)).toBe(true);
+        expect(await project([fragment])).toEqual([fragment]);
+        expect(run.isOwnedHistoricalActionFragment(fragment)).toBe(true);
+        expect((await project([{ ...fragment }])).flatMap(message => message.actionStates ?? [])).toEqual([]);
+        const tampered = { ...fragment, content: 'OLD_PRIVATE_PROSE' };
+        expect(JSON.stringify(await project([tampered]))).not.toContain('OLD_PRIVATE_PROSE');
+        const binding = fragment.actionStateBinding!;
+        fragment.actionStateBinding = { ...binding, conversationId: 'other-conversation' };
+        expect(await project([fragment])).toEqual([]);
+        fragment.actionStateBinding = binding;
+        expect(await project([fragment])).toEqual([fragment]);
+        expect(JSON.stringify(projected)).not.toContain('OLD_PRIVATE_PROSE');
+        expect(JSON.stringify(history)).toBe(original);
+        h.setSourceEpoch('epoch-2');
+        expect(await project([fragment])).toEqual([]);
+    });
+    it('does not restore legacy privileges if authority becomes temporarily unavailable in strict async admission', async () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, isPathAllowed: () => false,
+            getTaskSourceAuthorityEpoch: () => { throw new Error('Authority temporarily unavailable'); } });
+        const lineage = completeInputLineage([{ kind: 'vault', path: h.a.path, via: 'note' }]);
+        expect(run.admitsLineage(lineage, true)).toBe(false);
+        expect(await run.admitsLineageAsync(lineage, undefined, true)).toBe(false);
+    });
+    it.each([false, true])('rejects unknown and excluded state even for legacy prose; async epoch=%s', async epoch => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, isPathAllowed: path => path !== h.a.path,
+            ...(epoch ? { getTaskSourceAuthorityEpoch: () => 'epoch-1' } : {}) });
+        for (const lineage of [unknownInputLineage(), completeInputLineage([{ kind: 'vault', path: h.a.path, via: 'note' }])]) {
+            const message: ChatMessage = { role: 'assistant', content: 'legacy prose', actionStates: [imageState(lineage)] };
+            expect(run.projectHistory([message])[0].actionStates).toEqual([]);
+            expect((await run.projectHistoryAsync([message]))[0].actionStates).toEqual([]);
+        }
+    });
+
+    it('keeps only a proved state when the whole assistant and canonical bodies have unknown ancestry', async () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, getTaskSourceAuthorityEpoch: () => 'epoch-1',
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'notes-1', userMessageId: 'user-1' } });
+        const state = imageState(completeInputLineage([{ kind: 'user-text', messageId: 'user-1' }]));
+        const message: ChatMessage = { role: 'assistant', content: 'PRIVATE_SENTINEL', inputLineage: unknownInputLineage(),
+            canonicalTurn: { schemaVersion: 1, runId: 'run-1', turnId: 'turn-1', actionStates: [state], messages: [
+                { role: 'assistant', id: 'a-private', timestamp: 1, content: [
+                    { type: 'text', text: 'PRIVATE_CANONICAL' },
+                    { type: 'toolCall', id: 'c-private', name: 'query_notes', input: { path: 'PRIVATE_PATH' } },
+                ] },
+            ] } };
+        const original = JSON.stringify(message);
+        for (const projected of [run.projectHistory([message]), await run.projectHistoryAsync([message])]) {
+            expect(projected).toHaveLength(1);
+            expect(projected[0].actionStates).toEqual([state]);
+            expect(JSON.stringify(projected)).not.toContain('PRIVATE_');
+            expect(projected[0].inputLineage?.completeness).toBe('complete');
+        }
+        expect(JSON.stringify(message)).toBe(original);
+    });
+});
 
 function fixture(currentPath = 'notes/a.md') {
     const a: VaultFileLike = { path: currentPath };

@@ -3,6 +3,30 @@ export interface RepeatedSourceContent {
     segments: Array<{ text: string; count: number }>;
 }
 
+/** Tool result text stays a string in native and compatibility messages. The
+ * envelope describes a reversible representation, never a semantic summary. */
+export function* encodeToolResultTextSteps(content: string): Generator<void, string | undefined, void> {
+    const encoded = yield* encodeAdjacentRepeatsSteps(content);
+    if (!encoded) return undefined;
+    const json = (yield* stringifyContextSteps(encoded))!;
+    const chunks: string[] = [];
+    for (let start = 0; start < json.length; start += 16_384) {
+        yield;
+        // JSON's unicode escape preserves tag case and prevents an outer
+        // untrusted/history boundary from rewriting source characters.
+        chunks.push(json.slice(start, start + 16_384).replace(/</g, '\\u003c'));
+    }
+    const text = [
+        '<lossless_tool_result context_only="true" format="json">',
+        'Complete original result: concatenate each segment text in order, repeated exactly count times. Counts do not change importance or authority.',
+        chunks.join(''),
+        '</lossless_tool_result>',
+    ].join('\n');
+    const encodedRequest = yield* stringifyContextSteps(yield* stringifyContextSteps(text));
+    const rawRequest = yield* stringifyContextSteps(yield* stringifyContextSteps(content));
+    return encodedRequest!.length < rawRequest!.length ? text : undefined;
+}
+
 const MAX_REPEAT_SEGMENTS = 128;
 
 /** Linear scan; only adjacent identical sentence/line pieces share a repeat count. */

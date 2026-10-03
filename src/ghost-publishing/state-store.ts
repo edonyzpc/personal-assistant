@@ -20,6 +20,18 @@ export class GhostOperationStore {
     private database?: IDBDatabase;
     private opening?: Promise<IDBDatabase>;
     private closed = false;
+    private readonly contextPersistors = new Map<string, { conversationId: string; persist: (operation: GhostLocalOperation) => Promise<boolean> }>();
+
+    registerContextPersistence(operationId: string, persist: (operation: GhostLocalOperation) => Promise<boolean>, conversationId: string): void {
+        this.contextPersistors.set(operationId, { conversationId, persist });
+    }
+
+    unregisterContextPersistence(operationId: string): void { this.contextPersistors.delete(operationId); }
+    clearContextPersistence(conversationId: string): void {
+        for (const [operationId, entry] of this.contextPersistors) {
+            if (entry.conversationId === conversationId) this.contextPersistors.delete(operationId);
+        }
+    }
 
     constructor(private readonly options: { dbName: string; isDesktop: () => boolean; indexedDb?: IDBFactory }) {}
 
@@ -109,10 +121,25 @@ export class GhostOperationStore {
         });
     }
 
+    async findForContext(siteId: string, operationId: string): Promise<GhostLocalOperation | undefined> {
+        return this.transact('readonly', (store, result, fail) => {
+            const request = store.getAll();
+            request.onsuccess = () => {
+                try {
+                    const matches = request.result.map(parseLocalOperation).filter(operation =>
+                        operation.siteId === siteId && operation.operationId === operationId);
+                    result(matches.length === 1 ? matches[0] : undefined);
+                } catch (error) { fail(error); }
+            };
+            request.onerror = () => fail(new GhostStateError('storage-unavailable'));
+        });
+    }
+
     async save(input: GhostLocalOperation, expectedRevision: number): Promise<void> {
         const operation = parseLocalOperation(input);
+        const removedOperationIds: string[] = [];
         if (operation.revision !== expectedRevision + 1) throw new GhostStateError("operation-conflict");
-        return this.transact("readwrite", (store, result, fail) => {
+        await this.transact("readwrite", (store, result, fail) => {
             const request = store.getAll();
             request.onsuccess = () => {
                 try {
@@ -128,6 +155,7 @@ export class GhostOperationStore {
                         // Ordinary completed operations can be discarded when the next one starts.
                         if (entry.operationId !== operation.operationId && entry.state === "terminal" && !entry.cleanup) {
                             store.delete(ghostOperationKey(entry));
+                            removedOperationIds.push(entry.operationId);
                         }
                     }
                     store.put(operation, ghostOperationKey(operation));
@@ -136,12 +164,18 @@ export class GhostOperationStore {
             };
             request.onerror = () => fail(new GhostStateError("storage-unavailable"));
         });
+        for (const operationId of removedOperationIds) this.contextPersistors.delete(operationId);
+        const entry = this.contextPersistors.get(operation.operationId);
+        if (entry) void entry.persist(operation).then(done => {
+            if (done && this.contextPersistors.get(operation.operationId) === entry) this.contextPersistors.delete(operation.operationId);
+        }).catch(() => { /* Retain the callback for the next real owner update. */ });
     }
 
     close(): void {
         this.closed = true;
         this.database?.close();
         this.database = undefined;
+        this.contextPersistors.clear();
     }
 }
 

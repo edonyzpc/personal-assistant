@@ -14,6 +14,8 @@ import {
 import { cloneSaveReceipt, assertSaveReceiptUpdate, type SaveReceipt } from "./save-receipt-types";
 import { cloneSourceRecord } from "../ai-services/source-store";
 import { cloneRecordedInputLineage } from "../ai-services/input-lineage";
+import { cloneActionStates, cloneActionStateBinding, boundActionStates,
+    type PaAgentActionState, type PaAgentActionStateBinding } from '../ai-services/pa-agent-result-facts';
 import {
     assertVaultObservationHistory,
     cloneVaultObservationEvidence,
@@ -82,6 +84,8 @@ export interface PersistedConversation {
 }
 
 export interface PersistedChatMessage {
+    actionStates?: PaAgentActionState[];
+    actionStateBinding?: PaAgentActionStateBinding;
     role: "user" | "assistant";
     content: string;
     shareCardEligible?: boolean;
@@ -131,11 +135,16 @@ export interface ChatHistoryStore {
     renameConversationImageAnchors(oldPath: string, newPath: string): Promise<void>;
 
     getTurns(conversationId: string): Promise<PersistedTurn[]>;
+    /** Patches an existing turn atomically; does not create a conversation, turn, or action. */
+    updateActionStates(binding: PaAgentActionStateBinding,
+        transform: (states: PaAgentActionState[]) => PaAgentActionState[]): Promise<PaAgentActionState[] | undefined>;
     appendTurn(turn: PersistedTurn): Promise<void>;
     appendTurnAndUpdateConversation(
         turn: PersistedTurn,
         conversation: PersistedConversation,
     ): Promise<void>;
+    /** Revises the original existing turn; missing/replaced records are never recreated. */
+    reviseTurn(turn: PersistedTurn, updatedAt: string): Promise<PersistedConversation | null>;
     deleteTurn(conversationId: string, turnIndex: number): Promise<void>;
     deleteTurnsForConversation(conversationId: string): Promise<void>;
 
@@ -321,8 +330,23 @@ export class MemoryChatHistoryStore extends ChatDebugDeletionNotifications imple
         this.commitTurn(turn);
     }
 
+    async updateActionStates(binding: PaAgentActionStateBinding,
+        transform: (states: PaAgentActionState[]) => PaAgentActionState[]): Promise<PaAgentActionState[] | undefined> {
+        const key = buildTurnRecordKey(binding.conversationId, binding.turnIndex);
+        const turn = this.turns.get(key);
+        if (!turn || !sameActionStateBinding(turn.assistant.actionStateBinding, binding)) return undefined;
+        const current = boundActionStates(turn.assistant.actionStates, binding, binding.conversationId, binding.turnIndex);
+        const states = mergeLatestActionStates(current, transform(cloneActionStates(current)));
+        if (!states.every(state => state.origin.runId === binding.runId && state.origin.turnId === binding.turnId)) {
+            throw new Error('Action state belongs to a different turn.');
+        }
+        this.turns.set(key, { ...turn, assistant: { ...turn.assistant, actionStates: states } });
+        return cloneActionStates(states);
+    }
+
     private commitTurn(turn: PersistedTurn): void {
         const copy = cloneTurn(turn);
+        preserveLatestActionStates(copy, this.turns.get(buildTurnRecordKey(turn.conversationId, turn.turnIndex)));
         assertTurnWritingVersions(copy, (id) => this.writingVersions.get(id));
         const assets = applyTurnAssetOwners([...this.assets.values()], copy);
         for (const asset of assets) this.assets.set(asset.id, asset);
@@ -336,6 +360,17 @@ export class MemoryChatHistoryStore extends ChatDebugDeletionNotifications imple
         const copy = preserveConversationAnchor(conversation, this.conversations.get(conversation.id));
         this.commitTurn(turn);
         this.conversations.set(copy.id, copy);
+    }
+
+    async reviseTurn(turn: PersistedTurn, updatedAt: string): Promise<PersistedConversation | null> {
+        const copy = cloneTurn(turn);
+        const conversation = this.conversations.get(copy.conversationId);
+        const previous = this.turns.get(buildTurnRecordKey(copy.conversationId, copy.turnIndex));
+        if (!conversation || !previous || !sameOriginalTurn(copy, previous)) return null;
+        this.commitTurn(copy);
+        const updated = { ...conversation, updatedAt };
+        this.conversations.set(updated.id, updated);
+        return cloneConversation(updated);
     }
 
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
@@ -677,6 +712,25 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
         await this.writeTransaction([TURNS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE], (transaction) => this.writeTurn(transaction, copy));
     }
 
+    async updateActionStates(binding: PaAgentActionStateBinding,
+        transform: (states: PaAgentActionState[]) => PaAgentActionState[]): Promise<PaAgentActionState[] | undefined> {
+        let result: PaAgentActionState[] | undefined;
+        await this.writeTransaction([TURNS_STORE], async transaction => {
+            const store = transaction.objectStore(TURNS_STORE);
+            const key = buildTurnRecordKey(binding.conversationId, binding.turnIndex);
+            const record = await requestToPromise<TurnRecord | undefined>(store.get(key));
+            if (!record || !sameActionStateBinding(record.turn.assistant.actionStateBinding, binding)) return;
+            const current = boundActionStates(record.turn.assistant.actionStates, binding, binding.conversationId, binding.turnIndex);
+            const states = mergeLatestActionStates(current, transform(cloneActionStates(current)));
+            if (!states.every(state => state.origin.runId === binding.runId && state.origin.turnId === binding.turnId)) {
+                throw new Error('Action state belongs to a different turn.');
+            }
+            store.put({ key, turn: { ...record.turn, assistant: { ...record.turn.assistant, actionStates: states } } } satisfies TurnRecord);
+            result = cloneActionStates(states);
+        });
+        return result;
+    }
+
     async appendTurnAndUpdateConversation(
         turn: PersistedTurn,
         conversation: PersistedConversation,
@@ -689,6 +743,22 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
             const previous = await requestToPromise<PersistedConversation | undefined>(store.get(conversationCopy.id));
             store.put(preserveConversationAnchor(conversationCopy, previous));
         });
+    }
+
+    async reviseTurn(turn: PersistedTurn, updatedAt: string): Promise<PersistedConversation | null> {
+        const copy = cloneTurn(turn);
+        let updated: PersistedConversation | null = null;
+        await this.writeTransaction([TURNS_STORE, CONVERSATIONS_STORE, ASSETS_STORE, WRITING_VERSIONS_STORE], async transaction => {
+            const conversationStore = transaction.objectStore(CONVERSATIONS_STORE);
+            const conversation = await requestToPromise<PersistedConversation | undefined>(conversationStore.get(copy.conversationId));
+            const previous = await requestToPromise<TurnRecord | undefined>(transaction.objectStore(TURNS_STORE)
+                .get(buildTurnRecordKey(copy.conversationId, copy.turnIndex)));
+            if (!conversation || !previous || !sameOriginalTurn(copy, previous.turn)) return;
+            await this.writeTurn(transaction, copy);
+            updated = { ...conversation, updatedAt };
+            conversationStore.put(updated);
+        });
+        return updated ? cloneConversation(updated) : null;
     }
 
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
@@ -1078,6 +1148,9 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
         }
     }
     private async writeTurn(transaction: IDBTransaction, turn: PersistedTurn): Promise<void> {
+        const turnStore = transaction.objectStore(TURNS_STORE);
+        const prior = await requestToPromise<TurnRecord | undefined>(turnStore.get(buildTurnRecordKey(turn.conversationId, turn.turnIndex)));
+        preserveLatestActionStates(turn, prior?.turn);
         const versions = new Map<string, WritingVersion>();
         for (const message of [turn.user, turn.assistant]) for (const id of [message.writingVersionId,
             message.writingRecovery?.parentVersionId, message.writingAction?.parentVersionId]) if (id) {
@@ -1088,7 +1161,7 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
         const store = transaction.objectStore(ASSETS_STORE);
         const assets = (await requestToPromise<unknown[]>(store.getAll())).map(cloneImageAsset);
         for (const asset of applyTurnAssetOwners(assets, turn)) store.put(asset);
-        transaction.objectStore(TURNS_STORE).put({ key: buildTurnRecordKey(turn.conversationId, turn.turnIndex), turn } satisfies TurnRecord);
+        turnStore.put({ key: buildTurnRecordKey(turn.conversationId, turn.turnIndex), turn } satisfies TurnRecord);
     }
     private async addOwners(transaction: IDBTransaction, refs: ImageRef[], owner: ImageAssetOwner): Promise<void> {
         const assets = transaction.objectStore(ASSETS_STORE);
@@ -1152,6 +1225,10 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
 }
 
 export class UnavailableChatHistoryStore implements ChatHistoryStore {
+    async updateActionStates(_binding: PaAgentActionStateBinding,
+        _transform: (states: PaAgentActionState[]) => PaAgentActionState[]): Promise<PaAgentActionState[] | undefined> {
+        return undefined;
+    }
     private readonly error = new Error(
         "Chat history is unavailable because local app storage is not available.",
     );
@@ -1196,6 +1273,10 @@ export class UnavailableChatHistoryStore implements ChatHistoryStore {
         _turn: PersistedTurn,
         _conversation: PersistedConversation,
     ): Promise<void> {
+        throw this.error;
+    }
+
+    async reviseTurn(_turn: PersistedTurn, _updatedAt: string): Promise<PersistedConversation | null> {
         throw this.error;
     }
 
@@ -1434,12 +1515,60 @@ function renameConversationAnchor(conversation: PersistedConversation, oldPath: 
     return copy;
 }
 
+function sameActionStateBinding(value: unknown, expected: PaAgentActionStateBinding): boolean {
+    const binding = cloneActionStateBinding(value);
+    return !!binding && binding.conversationId === expected.conversationId && binding.turnIndex === expected.turnIndex
+        && binding.runId === expected.runId && binding.turnId === expected.turnId;
+}
+
+function sameOriginalTurn(incoming: PersistedTurn, previous: PersistedTurn): boolean {
+    const binding = cloneActionStateBinding(incoming.assistant.actionStateBinding);
+    const priorBinding = cloneActionStateBinding(previous.assistant.actionStateBinding);
+    if (priorBinding && (!binding || !sameActionStateBinding(priorBinding, binding))) return false;
+    const messageId = incoming.user.hostProvenance?.messageId;
+    const priorMessageId = previous.user.hostProvenance?.messageId;
+    if (messageId || priorMessageId) return messageId === priorMessageId;
+    // Legacy turns have no stable request identity. They may revise the same
+    // user turn, but cannot replace another request occupying its index.
+    return incoming.user.content === previous.user.content;
+}
+
+function mergeLatestActionStates(current: readonly PaAgentActionState[], incoming: readonly PaAgentActionState[]): PaAgentActionState[] {
+    const parsed = cloneActionStates(incoming);
+    if (parsed.length !== incoming.length) throw new Error('Invalid action state update.');
+    const key = (state: PaAgentActionState) => JSON.stringify([state.owner, state.operationId, state.origin]);
+    const states = new Map(cloneActionStates(current).map(state => [key(state), state]));
+    for (const state of parsed) {
+        const previous = states.get(key(state));
+        if (previous && state.revision < previous.revision) continue;
+        if (previous && state.revision === previous.revision && JSON.stringify(previous) !== JSON.stringify(state)) {
+            throw new Error('Conflicting action state revision.');
+        }
+        states.set(key(state), state);
+    }
+    const merged = cloneActionStates([...states.values()]);
+    if (merged.length !== states.size) throw new Error('Action state history exceeds its storage limit.');
+    return merged;
+}
+
+/** A late placeholder/finalize snapshot cannot replace a newer proven domain update. */
+function preserveLatestActionStates(turn: PersistedTurn, previous: PersistedTurn | undefined): void {
+    const binding = cloneActionStateBinding(turn.assistant.actionStateBinding);
+    if (!binding || !previous || !sameActionStateBinding(previous.assistant.actionStateBinding, binding)) return;
+    turn.assistant.actionStates = mergeLatestActionStates(
+        boundActionStates(previous.assistant.actionStates, binding, turn.conversationId, turn.turnIndex),
+        boundActionStates(turn.assistant.actionStates, binding, turn.conversationId, turn.turnIndex));
+}
+
 function cloneTurn(turn: PersistedTurn, discardInvalidGenerationInput = false): PersistedTurn {
+    const assistant = cloneMessage(turn.assistant, discardInvalidGenerationInput);
+    if (assistant.actionStates !== undefined) assistant.actionStates = boundActionStates(
+        assistant.actionStates, assistant.actionStateBinding, turn.conversationId, turn.turnIndex);
     return {
         conversationId: turn.conversationId,
         turnIndex: turn.turnIndex,
         user: cloneMessage(turn.user, discardInvalidGenerationInput),
-        assistant: cloneMessage(turn.assistant, discardInvalidGenerationInput),
+        assistant,
         ...(turn.memoryMetadata ? { memoryMetadata: cloneMemoryMetadata(turn.memoryMetadata) } : {}),
         ...(turn.vaultObservationContractVersion === 1 ? cloneVaultEvidenceState(turn) : {}),
         ...(turn.memoryManagementContractVersion === 1 ? cloneManagementEvidenceState(turn) : {}),
@@ -1455,6 +1584,9 @@ function cloneMessage(message: PersistedChatMessage, discardInvalidGenerationInp
     return {
         role: message.role,
         content: message.content,
+        ...(message.actionStates !== undefined ? { actionStates: cloneActionStates(message.actionStates) } : {}),
+        ...(cloneActionStateBinding(message.actionStateBinding)
+            ? { actionStateBinding: cloneActionStateBinding(message.actionStateBinding) } : {}),
         ...(message.shareCardEligible !== undefined
             ? { shareCardEligible: message.shareCardEligible }
             : {}),

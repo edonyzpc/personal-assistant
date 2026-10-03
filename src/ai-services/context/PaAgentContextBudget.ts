@@ -34,6 +34,7 @@ export interface PaAgentProviderUsage {
 
 export interface PaAgentBudgetInput {
     input: string;
+    currentProtocol?: string;
     availableSkills: string;
     toolDefinitions: string;
     toolObservations: string;
@@ -71,6 +72,7 @@ export class PaAgentContextBudget {
 
     snapshot(input: PaAgentBudgetInput): PaAgentContextBudgetSnapshot {
         const promptChars = input.localEnvelopeChars ?? (input.input.length
+            + (input.currentProtocol?.length ?? 0)
             + input.availableSkills.length
             + input.toolDefinitions.length
             + input.toolObservations.length);

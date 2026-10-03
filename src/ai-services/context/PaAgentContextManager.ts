@@ -22,6 +22,7 @@ export interface PaAgentContextManagerInput {
     turnIndex: number;
     hostContext?: string;
     runtimeInstruction?: string;
+    currentProtocol?: string;
     injectedContext?: PaAgentInjectedContext;
     summaries?: PaAgentContextSummaries;
     availableSkills: string;
@@ -41,6 +42,8 @@ export interface PaAgentContextManagerInput {
 export interface PaAgentContextParts {
     input: string;
     currentInput: string;
+    currentContext: string;
+    currentProtocol: string;
     history: import('./PaAgentContextProjector').PaAgentProjectedHistory;
     availableSkills: string;
     toolDefinitions: string;
@@ -70,7 +73,7 @@ export interface PaAgentContextProjection extends PaAgentContextParts {
 
 interface ContextMeasurement {
     transcript: readonly PaAgentMessage[];
-    projected: { input: string; currentInput: string; history: PaAgentContextParts['history'] };
+    projected: Pick<PaAgentContextParts, 'input' | 'currentInput' | 'currentContext' | 'currentProtocol' | 'history'>;
 }
 interface MeasuredContext { parts: PaAgentContextParts; budget: PaAgentContextBudgetSnapshot }
 
@@ -174,6 +177,7 @@ export class PaAgentContextManager {
             chatHistory: input.chatHistory,
             hostContext: input.hostContext,
             runtimeInstruction: input.runtimeInstruction,
+            currentProtocol: input.currentProtocol,
             injectedContext: input.injectedContext,
             maxHistoryChars: historyBudget,
             maxHistorySummaryChars: summaryBudget,
@@ -250,16 +254,19 @@ export class PaAgentContextManager {
         const unverifiedToolReduction = finalToolResults.some((message) =>
             message.content.metadata?.contextBudgetTruncated === true
             || (message.content.metadata?.compacted === true
-                && message.content.metadata.contextSemanticSummaryUsed !== true));
+                && message.content.metadata.contextSemanticSummaryUsed !== true
+                && message.content.metadata.contextLosslessEncodingUsed !== true));
         const outcome: PaAgentContextOutcome = {
             historyCompressed: projected.history.historyCompressed,
             toolResultsCompacted,
             toolResultsHardTruncated,
-            budgetLimited: toolResultsHardTruncated > 0 || projected.history.omittedCount > 0,
+            budgetLimited: toolResultsHardTruncated > 0 || projected.history.omittedCount > 0
+                || projected.history.historyBudgetLimited === true,
             // The legacy digest clips user text and can omit whole turns. It is
             // never evidence that an earlier necessary constraint survived.
             admission: projected.history.omittedCount === 0 && projected.history.summaryChars === 0
                 && !unverifiedToolReduction
+                && projected.history.historyBudgetLimited !== true
                 && !budget.configurationOverflow && excess() === 0
                 && budget.toolObservationChars <= input.maxObservationChars ? "fit" : "local_overflow",
         };

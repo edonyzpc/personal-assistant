@@ -26,6 +26,7 @@ import { cloneChatHostProvenance } from "../ai-services/chat-provenance";
 import { cloneGenerationInputSnapshot } from "../ai-services/generation-input-snapshot";
 import { cloneSourceRecord } from "../ai-services/source-store";
 import { cloneRecordedInputLineage } from "../ai-services/input-lineage";
+import { cloneActionStateBinding, boundActionStates, type PaAgentActionState } from '../ai-services/pa-agent-result-facts';
 import { cloneMessageImages } from "./image-types";
 import {
     assertVaultObservationHistory,
@@ -179,6 +180,58 @@ export class ChatHistoryManager {
         return this.store.getTurns(conversationId);
     }
 
+    /** Domain events may update their original persisted turn after its UI is closed.
+     * The store transaction validates binding and never creates a missing turn. */
+    async updateActionStates(conversationId: string, runId: string, turnId: string,
+        transform: (states: PaAgentActionState[]) => PaAgentActionState[]): Promise<PaAgentActionState[] | undefined> {
+        if (!this.isAvailable()) throw new Error('Chat history is unavailable for an action state update.');
+        const lease = this.observeSourceLifetime(conversationId);
+        try {
+            const turns = await this.store.getTurns(conversationId);
+            const turn = turns.find(candidate => candidate.assistant.actionStateBinding?.runId === runId
+                && candidate.assistant.actionStateBinding.turnId === turnId);
+            if (!lease.isCurrent()) throw new Error('Conversation changed before action state update.');
+            if (!turn) return undefined;
+            const binding = cloneActionStateBinding(turn.assistant.actionStateBinding);
+            if (!binding || binding.conversationId !== conversationId || binding.turnIndex !== turn.turnIndex) return undefined;
+            const updated = await this.store.updateActionStates(binding, current => {
+                if (!lease.isCurrent()) throw new Error('Conversation changed before action state update.');
+                return transform(current);
+            });
+            if (!lease.isCurrent()) throw new Error('Conversation changed during action state update.');
+            return updated;
+        } finally { lease.release(); }
+    }
+
+    /** A domain event's iteration id may differ from the final canonical turn.
+     * Locate the unique already-recorded operation, never invent a new binding. */
+    async updateActionStatesForOperation(conversationId: string, runId: string,
+        owner: PaAgentActionState['owner'], operationId: string,
+        transform: (states: PaAgentActionState[]) => PaAgentActionState[]): Promise<PaAgentActionState[] | undefined> {
+        if (!this.isAvailable()) throw new Error('Chat history is unavailable for an action state update.');
+        const lease = this.observeSourceLifetime(conversationId);
+        try {
+            const matches = (await this.store.getTurns(conversationId)).filter(turn => {
+                const binding = cloneActionStateBinding(turn.assistant.actionStateBinding);
+                return binding?.conversationId === conversationId && binding.turnIndex === turn.turnIndex
+                    && binding.runId === runId && turn.assistant.actionStates?.some(state =>
+                        state.owner === owner && state.operationId === operationId && state.origin.runId === runId);
+            });
+            if (!lease.isCurrent()) throw new Error('Conversation changed before action state update.');
+            if (matches.length > 1) throw new Error('Historical action identity is ambiguous.');
+            if (matches.length === 0) return undefined;
+            const binding = cloneActionStateBinding(matches[0].assistant.actionStateBinding)!;
+            const updated = await this.store.updateActionStates(binding, states => {
+                if (!lease.isCurrent()) throw new Error('Conversation changed before action state update.');
+                if (!states.some(state => state.owner === owner && state.operationId === operationId
+                    && state.origin.runId === runId)) return states;
+                return transform(states);
+            });
+            if (!lease.isCurrent()) throw new Error('Conversation changed during action state update.');
+            return updated;
+        } finally { lease.release(); }
+    }
+
     async getActiveConversationId(): Promise<string | null> {
         if (!this.isAvailable()) return null;
         return this.store.getActiveConversationId();
@@ -285,6 +338,12 @@ export class ChatHistoryManager {
         return this.prune();
     }
 
+    async reviseTurn(input: Parameters<ChatHistoryManager['recordTurn']>[0]): Promise<PersistedConversation | null> {
+        if (!this.isAvailable()) throw new Error('Chat history is unavailable for an existing turn revision.');
+        const turn = this.serializeTurn(input.entry, input.conversationId, input.turnIndex);
+        return this.mutateSources(input.conversationId, () => this.store.reviseTurn(turn, this.toIso(this.now())));
+    }
+
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
         if (!this.isAvailable()) return;
         await this.mutateSources(conversationId, async () => {
@@ -364,6 +423,11 @@ export class ChatHistoryManager {
         turnIndex: number,
     ): PersistedTurn {
         const assistantCanonical = entry.assistant.canonicalTurn;
+        const actionStateBinding = cloneActionStateBinding(entry.assistant.actionStateBinding)
+            ?? (assistantCanonical ? { conversationId, turnIndex,
+                runId: assistantCanonical.runId, turnId: assistantCanonical.turnId } : undefined);
+        const actionStates = boundActionStates(entry.assistant.actionStates ?? assistantCanonical?.actionStates,
+            actionStateBinding, conversationId, turnIndex);
         const candidateRunSelection = parseRunSourceSelection(entry.user.runSourceSelection);
         const runSourceSelection = candidateRunSelection
             && (!entry.user.hostProvenance || candidateRunSelection.userMessageId === entry.user.hostProvenance.messageId)
@@ -390,6 +454,7 @@ export class ChatHistoryManager {
         const assistantMessage: PersistedChatMessage = {
             role: "assistant",
             content: entry.assistant.content,
+            ...(actionStateBinding ? { actionStateBinding, ...(actionStates.length ? { actionStates } : {}) } : {}),
             ...(entry.assistant.writingVersionId !== undefined ? { writingVersionId: entry.assistant.writingVersionId } : {}),
             ...(entry.assistant.writingRecovery !== undefined ? { writingRecovery: { ...entry.assistant.writingRecovery,
                 ...(entry.assistant.writingRecovery.generationInput
@@ -506,6 +571,11 @@ export class ChatHistoryManager {
         });
         const assistantMessage: ChatMessage = {
             role: "assistant",
+            ...(turn.assistant.actionStates !== undefined
+                ? { actionStates: boundActionStates(turn.assistant.actionStates, turn.assistant.actionStateBinding,
+                    turn.conversationId, turn.turnIndex) } : {}),
+            ...(cloneActionStateBinding(turn.assistant.actionStateBinding)
+                ? { actionStateBinding: cloneActionStateBinding(turn.assistant.actionStateBinding) } : {}),
             content: interruptedExecution && !turn.assistant.content.trim()
                 ? "This task was interrupted before it finished. Continue it to resume safely."
                 : turn.assistant.content,

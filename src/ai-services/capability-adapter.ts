@@ -28,10 +28,11 @@ import {
     sanitizeToolErrorMessage,
     summarizeInvalidToolInput,
 } from "./chat-tool-registry";
-import { createToolFailureResult } from "./chat-tool-execution-helpers";
+import { ChatToolFailureError, createToolFailureResult } from "./chat-tool-execution-helpers";
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 import { getErrorType } from "./agent-utils";
 import type { ChatAgentSource, ObservedSourceRevision } from "./chat-types";
+import { isChatToolFailureReason } from './chat-types';
 import { createSourceDedupKey } from "./source-store";
 import { parseObservedSourceRevision } from "./generation-input-snapshot";
 import { parseMemoryManagementEvidence } from "./memory-management-evidence";
@@ -117,6 +118,7 @@ export function chatToolResultToAgentCapabilityResult(
         sourceRecords: [...visibleRecords, ...dependencyRecords],
         resultFact: result.ok ? result.resultFact
             : { kind: "unavailable", capability: definition.name, reason: "tool_unavailable" },
+        ...(!result.ok && isChatToolFailureReason(result.failureReason) ? { failureReason: result.failureReason } : {}),
         ...(evidence.ok && evidence.evidence.tool === definition.name ? {
             vaultObservationEvidence: evidence.evidence,
             vaultObservationContractVersion: 1 as const,
@@ -407,6 +409,7 @@ export function createChatToolCapability<Input, Output>(
                     definition.name,
                     "execution failed",
                     "Read-only tool was unavailable.",
+                    error instanceof ChatToolFailureError ? error.failureReason : 'adapter_error',
                 );
             }
         },

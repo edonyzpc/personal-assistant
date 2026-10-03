@@ -42,6 +42,13 @@ export interface AISetupInput {
 
 export interface ChatHost {
     createGhostPublishingBinding?(request: import('../ghost-publishing/host-integration').GhostChatBindingRequest): import('../ai-services/chat-tool-types').GhostHostBinding | undefined;
+    readGhostContextReceipt?(operationId: string): Promise<{
+        operationId: string;
+        revision: number;
+        state: import('../ghost-publishing/state-schema').GhostLocalOperation['state'];
+        verified: boolean;
+    } | undefined>;
+    clearGhostContextPersistence?(conversationId: string): void;
     openAgentDebug?(conversationId?: string): void | Promise<void>;
     recordAgentDebugTextCommitted?(runtimeRunId: string): void;
     readonly app: App;

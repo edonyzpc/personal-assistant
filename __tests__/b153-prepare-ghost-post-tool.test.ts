@@ -102,6 +102,40 @@ describe("B-153 fixed Ghost preparation capability", () => {
         expect(submit).toHaveBeenCalledTimes(1);
     });
 
+    it("retains an owned attention-required operation as unresolved without resubmitting", async () => {
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "needs_attention", operationId: "attention-operation" }));
+        const app = fixture(submit);
+        const result = await app.tool.execute({ intent: "prepare" }, app.context);
+        expect(result.ok).toBe(true);
+        expect(result.resultFact).toEqual({ kind: "unknown", operationId: "attention-operation" });
+        expect(result.content).toMatchObject({ status: "needs_attention", operationId: "attention-operation" });
+        expect(JSON.stringify(result)).not.toContain('"status":"prepared"');
+        expect(JSON.stringify(result)).not.toContain('"status":"published"');
+        expect(await app.tool.execute({ intent: "prepare" }, app.context)).toEqual(result);
+        expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not invent an operation identity when attention is required before ownership exists", async () => {
+        const app = fixture(async () => ({ status: "needs_attention" }));
+        const result = await app.tool.execute({ intent: "prepare" }, app.context);
+        expect(result.ok).toBe(true);
+        expect(result.resultFact).toEqual({ kind: "unavailable", capability: "prepare_ghost_post", reason: "ghost_attention_required" });
+        expect(result.content).not.toHaveProperty('operationId');
+    });
+
+    it("does not retain an attention-required receipt after its captured source is revoked", async () => {
+        let revoke = () => {};
+        const app = fixture(async () => {
+            revoke();
+            return { status: "needs_attention", operationId: "attention-operation" };
+        });
+        revoke = app.revokeInherited;
+        const result = await app.tool.execute({ intent: "prepare" }, app.context);
+        expect(result.ok).toBe(false);
+        expect(result.resultFact).toBeUndefined();
+        expect(result.content).toBeNull();
+    });
+
     it("rejects a receipt containing a URL as its opaque identity", async () => {
         const app = fixture(async () => ({ status: "prepared", operationId: "https://private.invalid/token" }));
         const result = await app.tool.execute({ intent: "prepare" }, app.context);

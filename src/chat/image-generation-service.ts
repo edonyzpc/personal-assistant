@@ -85,6 +85,7 @@ export class ImageGenerationService {
     private readonly failures = new Map<string, number>();
     private readonly sourceReceipts = new Map<string, () => boolean>();
     private readonly listeners = new Set<(task: ImageGenerationTask) => void>();
+    private readonly contextPersistors = new Map<string, { conversationId: string; persist: (task: ImageGenerationTask) => Promise<void> }>();
     private disposed = false;
 
     constructor(private readonly options: ImageGenerationServiceOptions) {}
@@ -93,6 +94,19 @@ export class ImageGenerationService {
         this.listeners.add(listener);
         return () => this.listeners.delete(listener);
     }
+
+    registerContextPersistence(taskId: string, persist: (task: ImageGenerationTask) => Promise<void>, conversationId: string): void {
+        this.contextPersistors.set(taskId, { conversationId, persist });
+    }
+
+    clearContextPersistence(conversationId: string): void {
+        for (const [taskId, entry] of this.contextPersistors) {
+            if (entry.conversationId === conversationId) this.contextPersistors.delete(taskId);
+        }
+    }
+
+    unregisterContextPersistence(taskId: string): void { this.contextPersistors.delete(taskId); }
+    hasContextPersistence(taskId: string): boolean { return this.contextPersistors.has(taskId); }
 
     list(conversationId: string): Promise<ImageGenerationTask[]> {
         return this.options.store.listImageGenerationTasks(conversationId);
@@ -259,6 +273,9 @@ export class ImageGenerationService {
         const task = await this.get(taskId);
         if (!task) return;
         await this.suppress(taskId);
+        for (const related of await this.list(task.conversationId)) {
+            if (related.stableMessageId === task.stableMessageId) this.contextPersistors.delete(related.taskId);
+        }
         await this.options.store.deleteImageGenerationTasks(task.conversationId, task.stableMessageId);
     }
 
@@ -302,6 +319,7 @@ export class ImageGenerationService {
         for (const taskId of this.timers.keys()) this.clearTimer(taskId);
         this.sourceReceipts.clear();
         this.listeners.clear();
+        this.contextPersistors.clear();
     }
 
     private now(): number { return this.options.now?.() ?? Date.now(); }
@@ -309,6 +327,11 @@ export class ImageGenerationService {
     private emit(task: ImageGenerationTask): void {
         if (this.disposed) return;
         for (const listener of this.listeners) listener(task);
+        const entry = this.contextPersistors.get(task.taskId);
+        if (entry) void entry.persist(task).then(() => {
+            if (['completed', 'failed', 'stopped', 'expired'].includes(task.state)
+                && this.contextPersistors.get(task.taskId) === entry) this.contextPersistors.delete(task.taskId);
+        }).catch(error => this.options.log?.('Could not persist image context state', error));
     }
 
     private clearTimer(taskId: string): void {

@@ -140,6 +140,41 @@ async function legacyReceipt(h: Awaited<ReturnType<typeof setup>>, written = fal
 }
 
 describe('frozen writing save and crash recovery', () => {
+    it('keeps the terminal observer for retry after context persistence fails with a live listener', async () => {
+        const h = await setup();
+        const persist = jest.fn().mockRejectedValueOnce(new Error('disk unavailable')).mockResolvedValue(true);
+        const listener = jest.fn();
+        h.action.subscribeState(listener);
+        h.action.registerContextPersistence(h.version.id, persist, 'conv_1');
+        const prepared = await h.action.prepare({ writingVersionId: h.version.id, targetNotePath: 'notes/retry-observer.md' });
+        await h.action.execute(prepared.operationId);
+        await Promise.resolve();
+        await h.action.retry(prepared.operationId);
+        await Promise.resolve();
+        expect(listener).toHaveBeenCalledTimes(2);
+        expect(persist).toHaveBeenCalledTimes(2);
+        await h.action.retry(prepared.operationId);
+        expect(persist).toHaveBeenCalledTimes(2);
+        await h.action.dispose();
+    });
+    it('notifies only the saved version and releases terminal or deleted conversation observers', async () => {
+        const h = await setup();
+        const saved = jest.fn(async () => true);
+        const unrelated = jest.fn(async () => true);
+        h.action.registerContextPersistence(h.version.id, saved, 'conv_1');
+        h.action.registerContextPersistence('unrelated', unrelated, 'conv_2');
+        const prepared = await h.action.prepare({ writingVersionId: h.version.id, targetNotePath: 'notes/observer.md' });
+        await h.action.execute(prepared.operationId);
+        await Promise.resolve();
+        await h.action.retry(prepared.operationId);
+        expect(saved).toHaveBeenCalledTimes(1);
+        expect(unrelated).not.toHaveBeenCalled();
+        h.action.registerContextPersistence(h.version.id, saved, 'conv_1');
+        h.action.clearContextPersistence('conv_1');
+        await h.action.retry(prepared.operationId);
+        expect(saved).toHaveBeenCalledTimes(1);
+        await h.action.dispose();
+    });
     it('prepares without writes, then creates generated-marked exact text before resolving relative attachments', async () => {
         const h = await setup();
         const prepared = await h.action.prepare({ writingVersionId: h.version.id, targetNotePath: 'notes/saved.md' });

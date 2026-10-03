@@ -567,7 +567,7 @@ describe('B-135 production source handling', () => {
         }
     });
 
-    it.each(['answer', 'summary'] as const)('rejects a %s SDK retry containing a Vault result after same-path replacement', async stage => {
+    it.each(['answer', 'overflow'] as const)('protects a Vault result at the %s dispatch boundary', async stage => {
         const prompt = '读取当前笔记';
         let liveFile = { path: 'A.md', extension: 'md' };
         let revokedAt = -1;
@@ -584,12 +584,23 @@ describe('B-135 production source handling', () => {
             return { text: body.stream ? 'Source unavailable' : JSON.stringify({
                 goals: [], constraints: [], decisions: [], completed: [], open_questions: [], facts: [],
             }) };
-        }, stage === 'summary' ? { answerStreamMaxObservationChars: 1200 } : {}, 1);
+        }, stage === 'overflow' ? { answerStreamMaxObservationChars: 1200 } : {}, 1);
         const captured = liveFile;
         jest.spyOn(f.host.app.workspace, 'getActiveViewOfType').mockReturnValue({ file: captured,
             editor: { getValue: () => 'SERIALIZED_VAULT_SECRET ' + 'material '.repeat(900), getSelection: () => '', lineCount: () => 1,
                 getLine: () => 'SERIALIZED_VAULT_SECRET', getCursor: () => ({ line: 0, ch: 0 }) } } as never);
         jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation(() => liveFile as never);
+        if (stage === 'overflow') {
+            // Necessary tool text cannot be replaced by a free-form summary.
+            // If its lossless representation cannot fit, no second request
+            // containing a partial or summarized result is admitted.
+            await expect(f.run({ images: undefined, prompt })).rejects.toThrow('context_local_overflow');
+            expect(f.requests).toHaveLength(1);
+            expect(requestText(f.requests[0])).not.toContain('SERIALIZED_VAULT_SECRET');
+            expect(f.sdkAttempts.filter(attempt => attempt.retryCount === '1')).toEqual([]);
+            expect(revokedAt).toBe(-1);
+            return;
+        }
         await f.run({ images: undefined, prompt });
         expect(revokedAt).toBeGreaterThan(0);
         expect(requestText(f.requests[revokedAt])).toContain('SERIALIZED_VAULT_SECRET');
@@ -890,10 +901,17 @@ function repeatedSummaryPreparation(calls: number, preserveCoveredSource: boolea
             const source = input.history[0];
             const payload: PaAgentSummaryRequest = {
                 messages: [{ role: 'system', content: 'Summarize the bound source as JSON.' },
-                    { role: 'user', content: JSON.stringify({ sourceMessages: [1] }) }],
+                    { role: 'user', content: JSON.stringify({ sourceKind: 'chat_history', phase: 'rolling',
+                        previousSummary: null, sourceMessages: [
+                            { index: 1, role: source.role, start: 0, end: source.content.length, content: source.content },
+                        ] }) },
+                    { role: 'user', content: JSON.stringify({ sourceKind: 'retained_action_facts',
+                        purpose: 'read_only_reference', retainedActionFacts: [] }) }],
                 maxOutputTokens: 256,
                 bindingSources: [{ index: 1, role: source.role, content: source.content }],
                 bindingSourceMessages: [source],
+                bindingCoveredMessageCount: 1,
+                bindingProtectedSourceIndexes: [],
             };
             for (let index = 0; index < calls; index++) {
                 await input.invoke(payload, input.signal ?? new AbortController().signal);
@@ -1167,7 +1185,10 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
     it("sends image-only current input as real image blocks, with no image bytes in canonical events or diagnostics", async () => {
         const f = fixture([{}]); await f.run({ prompt: "" });
         expect(f.requests).toHaveLength(1); expect(pixels(f.requests[0])).toEqual([{ type: "image_url", image_url: { url: "data:image/jpeg;base64,/9j/" } }]);
-        expect(f.observed[0][1]._getType()).toBe("human"); expect(f.observed[0][1].content).toHaveLength(2);
+        const currentImages = f.observed[0].filter(message => message._getType() === "human" && Array.isArray(message.content));
+        expect(currentImages).toHaveLength(1);
+        expect(currentImages[0].content).toHaveLength(2);
+        expect(currentImages[0].content[0]).toEqual({ type: "text", text: "User input:\n" });
         expect(JSON.stringify([f.events, f.lifecycle, f.host.log.mock.calls])).not.toMatch(/data:image|base64|synthetic-fixture-token/);
         expect(f.lifecycle.some((event) => event.type === "message_end" && event.message.role === "user" && event.message.images?.[0].ref.assetId === "image-1")).toBe(true);
         expect(f.release).toHaveBeenCalledTimes(1);
@@ -1450,10 +1471,13 @@ describe("B-140 T-07 vault observation physical integration", () => {
         }, {}, 1);
         const installed = await installReadHistory(
             f,
-            "A_LONG_HISTORY_SUMMARY_SOURCE " + "detail ".repeat(400),
-            "B_INDEPENDENT_HISTORY_CHOICE " + "detail ".repeat(400),
+            // Overflow the history lane while keeping the complete first exchange
+            // in one summary request, where the retry must bind both vault sources.
+            "A_LONG_HISTORY_SUMMARY_SOURCE " + "detail ".repeat(250),
+            "B_INDEPENDENT_HISTORY_CHOICE " + "detail ".repeat(250),
         );
         contents = installed.contents;
+        expect(installed.history.reduce((chars, message) => chars + message.content.length, 0)).toBeGreaterThan(1200);
 
         await f.run({ images: undefined, prompt: "Continue", historyBudgetChars: 1200, chatHistory: installed.history });
         const summary = f.modelSpecifications.find(specification => specification.isSummary);
@@ -1465,6 +1489,15 @@ describe("B-140 T-07 vault observation physical integration", () => {
         expect(summary!.options.prepareProviderRequest).not.toBe(answer!.options.prepareProviderRequest);
         expect(f.requests[0].stream).toBe(false);
         expect(requestText(f.requests[0])).toContain("A_LONG_HISTORY_SUMMARY_SOURCE");
+        expect(requestText(f.requests[0])).toContain("B_INDEPENDENT_HISTORY_CHOICE");
+        expect(f.requests[0].messages.map(message => message.role)).toEqual(['system', 'user', 'user']);
+        expect(JSON.parse(f.requests[0].messages[2].content as string)).toEqual({
+            sourceKind: 'retained_action_facts', purpose: 'read_only_reference', retainedActionFacts: [],
+        });
+        const firstSources = JSON.parse(f.requests[0].messages[1].content as string).sourceMessages;
+        expect(firstSources).toEqual(installed.history.map((message, index) => ({
+            index: index + 1, role: message.role, content: message.content, start: 0, end: message.content.length,
+        })));
         expect(f.sdkAttempts.filter(attempt => attempt.retryCount === "1")).toEqual([
             { stream: false, retryCount: "1" },
         ]);
@@ -1489,9 +1522,12 @@ describe("B-140 T-07 vault observation physical integration", () => {
         }, {}, 1);
         const installed = await installReadHistory(
             f,
-            "A_HIDDEN_AFTER_CHANGE " + "detail ".repeat(400),
-            "B_INDEPENDENT_HISTORY_CHOICE " + "detail ".repeat(400),
+            // sourceMessages:[2] must refer to A in this complete first exchange,
+            // before the retry and the later budget-hidden answer preparation.
+            "A_HIDDEN_AFTER_CHANGE " + "detail ".repeat(250),
+            "B_INDEPENDENT_HISTORY_CHOICE " + "detail ".repeat(250),
         );
+        expect(installed.history.reduce((chars, message) => chars + message.content.length, 0)).toBeGreaterThan(1200);
         const reads = { a: 0, b: 0 };
         let sourceChanged = false;
         const vault = f.host.app.vault as { cachedRead: (file: unknown) => Promise<string> };
@@ -1524,6 +1560,15 @@ describe("B-140 T-07 vault observation physical integration", () => {
 
         expect(f.requests[0]?.stream).toBe(false);
         expect(requestText(f.requests[0]!)).toContain("A_HIDDEN_AFTER_CHANGE");
+        expect(requestText(f.requests[0]!)).toContain("B_INDEPENDENT_HISTORY_CHOICE");
+        expect(f.requests[0].messages.map(message => message.role)).toEqual(['system', 'user', 'user']);
+        expect(JSON.parse(f.requests[0].messages[2].content as string)).toEqual({
+            sourceKind: 'retained_action_facts', purpose: 'read_only_reference', retainedActionFacts: [],
+        });
+        const firstSources = JSON.parse(f.requests[0].messages[1].content as string).sourceMessages;
+        expect(firstSources).toEqual(installed.history.map((message, index) => ({
+            index: index + 1, role: message.role, content: message.content, start: 0, end: message.content.length,
+        })));
         expect(f.requests.slice(1).some(request => requestText(request).includes("A_HIDDEN_AFTER_CHANGE"))).toBe(true);
         expect(f.requests.slice(1).every(request => !requestText(request).includes("A_HIDDEN_AFTER_CHANGE CHANGED"))).toBe(true);
         const answer = f.requests.at(-1);

@@ -5,6 +5,7 @@ import { parseGhostCommand } from '../ghost-publishing/entry';
 import { renderGhostPublishingCard } from '../ghost-publishing/card';
 import type { ChatSourceScope } from '../ai-services/chat-source-scope';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
+import { cloneActionStates, markGhostStatusUnavailable, refreshGhostActionState, refreshImageActionState, refreshWritingSaveStates } from '../ai-services/pa-agent-result-facts';
 import { cloneInputLineage, completeInputLineage, generationInputSnapshotInputLineage, resolveWritingVersionInputLineage,
     unionInputLineages, unknownInputLineage, type InputLineage } from '../ai-services/input-lineage';
 import { PaAgentContextOverflowError } from '../ai-services/context';
@@ -474,10 +475,10 @@ export class LLMView extends ItemView {
             this.host.log(message, ...args);
         });
         this.conversationPersistence = new ConversationPersistence({
-            getManager: () => this.getChatHistoryManager(),
-            log: (message, error) => this.host.log(message, error),
+            getManager: () => host.chatHistoryManager,
+            log: (message, error) => host.log(message, error),
             scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) => {
-                this.host.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount);
+                host.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount);
             },
         });
     }
@@ -1878,10 +1879,12 @@ export class LLMView extends ItemView {
         const imageOperationByTurn = new Map<number, { stableMessageId: string; operationId: string; intent?: ComposerImageIntent; taskIds?: string[] }>();
         const ghostTargetsByTurn = new Map<number, string>();
         const ghostCardCleanups = new Set<() => void>();
+        const ghostSessions = new Map<string, import('../ghost-publishing/controller').GhostPublishingSession>();
         const clearGhostCards = () => {
             for (const dispose of ghostCardCleanups) dispose();
             ghostCardCleanups.clear();
             ghostTargetsByTurn.clear();
+            ghostSessions.clear();
         };
         this.registerViewTeardown(clearGhostCards);
         let imageTasksConversationId: string | null = null;
@@ -2166,9 +2169,163 @@ export class LLMView extends ItemView {
                 for (const task of tasks) renderImageTaskCard(task);
             } catch (error) { this.host.log('Could not load image tasks', error); }
         };
+        const refreshImageHistoryState = async (task: ImageGenerationTask) => {
+            if (!isCurrentSession() || task.conversationId !== this.conversationPersistence.activeConversationId) return;
+            for (const entry of timelineEntries) {
+                if (entry.kind !== 'history' || entry.user.hostProvenance?.messageId !== task.stableMessageId) continue;
+                const states = cloneActionStates(entry.assistant.actionStates ?? entry.assistant.canonicalTurn?.actionStates);
+                const matching = states.find(state => state.owner === 'image' && state.operationId === task.taskId);
+                const imageTerminal = ['completed', 'failed', 'stopped', 'expired'].includes(task.state);
+                if (matching && imageGeneration && !imageTerminal) {
+                    const conversationId = task.conversationId;
+                    const stableMessageId = task.stableMessageId;
+                    const persistence = this.conversationPersistence;
+                    const { runId, turnId } = matching.origin;
+                    imageGeneration.registerContextPersistence(task.taskId, async nextTask => {
+                        await persistence.updateActionStates(conversationId, runId, turnId,
+                            current => current.map(state => refreshImageActionState(state, nextTask, conversationId, stableMessageId) ?? state));
+                    }, conversationId);
+                }
+                let changed = false;
+                const refreshed = states.map(state => {
+                    const next = refreshImageActionState(state, task, task.conversationId, task.stableMessageId);
+                    if (next && JSON.stringify(next) !== JSON.stringify(state)) { changed = true; return next; }
+                    return state;
+                });
+                if (!changed) {
+                    if (this.conversationPersistence.needsFinalizedTurnRevision(entry)) {
+                        await this.conversationPersistence.reviseFinalizedTurn(entry, async () => {});
+                    }
+                    if (matching && imageTerminal && imageGeneration?.hasContextPersistence(task.taskId)) {
+                        await this.conversationPersistence.updateActionStatesForOperation(task.conversationId, matching.origin.runId, 'image', task.taskId,
+                            current => current.map(state => refreshImageActionState(state, task, task.conversationId, task.stableMessageId) ?? state));
+                        imageGeneration?.unregisterContextPersistence(task.taskId);
+                    }
+                    continue;
+                }
+                entry.assistant.actionStates = refreshed;
+                if (entry.assistant.canonicalTurn) entry.assistant.canonicalTurn.actionStates = refreshed;
+                await this.conversationPersistence.reviseFinalizedTurn(entry, async () => {});
+            }
+        };
+        const refreshOperationsHistoryState = async () => {
+            if (!isCurrentSession()) return;
+            for (const entry of timelineEntries) {
+                if (entry.kind !== 'history') continue;
+                const states = cloneActionStates(entry.assistant.actionStates ?? entry.assistant.canonicalTurn?.actionStates);
+                const refreshed = states.map(state => this.chatService.refreshOperationsActionState(state));
+                if (JSON.stringify(refreshed) === JSON.stringify(states)) {
+                    if (this.conversationPersistence.needsFinalizedTurnRevision(entry)) {
+                        await this.conversationPersistence.reviseFinalizedTurn(entry, async () => {});
+                    }
+                    continue;
+                }
+                entry.assistant.actionStates = refreshed;
+                if (entry.assistant.canonicalTurn) entry.assistant.canonicalTurn.actionStates = refreshed;
+                await this.conversationPersistence.reviseFinalizedTurn(entry, async () => {});
+            }
+        };
+        const refreshWritingHistoryState = async () => {
+            if (!this.host.writingSave || !isCurrentSession()) return;
+            const conversationId = this.conversationPersistence.activeConversationId;
+            let receipts: import('./save-receipt-types').SaveReceipt[];
+            try { receipts = await this.host.writingSave.listReceipts(); }
+            catch (error) { this.host.log('Could not read Writing save state', error); return; }
+            if (!isCurrentSession() || conversationId !== this.conversationPersistence.activeConversationId) return;
+            for (const entry of timelineEntries) {
+                if (entry.kind !== 'history') continue;
+                const states = cloneActionStates(entry.assistant.actionStates ?? entry.assistant.canonicalTurn?.actionStates);
+                const refreshed = states.map(state => {
+                    const matches = receipts.filter(receipt => receipt.writingVersionId === state.operationId);
+                    const writingTerminal = matches.length > 0 && matches.every(receipt => receipt.state === 'completed');
+                    if (state.owner === 'writing' && conversationId && this.host.writingSave && !writingTerminal) {
+                        const save = this.host.writingSave;
+                        const persistence = this.conversationPersistence;
+                        const { runId, turnId } = state.origin;
+                        const versionId = state.operationId;
+                        save.registerContextPersistence(versionId, async () => {
+                            const latest = await save.listReceipts(versionId);
+                            await persistence.updateActionStates(conversationId, runId, turnId,
+                                current => current.map(candidate => refreshWritingSaveStates(candidate, latest) ?? candidate));
+                            return latest.length > 0 && latest.every(receipt => receipt.state === 'completed');
+                        }, conversationId);
+                    }
+                    return refreshWritingSaveStates(state, matches) ?? state;
+                });
+                if (JSON.stringify(refreshed) === JSON.stringify(states)) {
+                    if (this.conversationPersistence.needsFinalizedTurnRevision(entry)) {
+                        await this.conversationPersistence.reviseFinalizedTurn(entry, async () => {});
+                    }
+                    if (conversationId) for (const state of refreshed) {
+                        if (state.owner !== 'writing' || state.phase !== 'completed'
+                            || !this.host.writingSave?.hasContextPersistence(state.operationId)) continue;
+                        const latest = receipts.filter(receipt => receipt.writingVersionId === state.operationId);
+                        await this.conversationPersistence.updateActionStatesForOperation(conversationId, state.origin.runId, 'writing', state.operationId,
+                            current => current.map(candidate => refreshWritingSaveStates(candidate, latest) ?? candidate));
+                        this.host.writingSave?.unregisterContextPersistence(state.operationId);
+                    }
+                    continue;
+                }
+                entry.assistant.actionStates = refreshed;
+                if (entry.assistant.canonicalTurn) entry.assistant.canonicalTurn.actionStates = refreshed;
+                await this.conversationPersistence.reviseFinalizedTurn(entry, async () => {});
+            }
+        };
+        const refreshGhostHistoryState = async () => {
+            if (!isCurrentSession()) return;
+            const conversationId = this.conversationPersistence.activeConversationId;
+            for (const entry of timelineEntries) {
+                if (entry.kind !== 'history' || !entry.user.hostProvenance) continue;
+                const states = cloneActionStates(entry.assistant.actionStates ?? entry.assistant.canonicalTurn?.actionStates);
+                const sessionReceipt = ghostSessions.get(entry.user.hostProvenance.messageId)?.getContextReceipt?.();
+                const refreshed = [];
+                for (const state of states) {
+                    if (state.owner === 'ghost' && conversationId) {
+                        const session = ghostSessions.get(entry.user.hostProvenance.messageId);
+                        const persistence = this.conversationPersistence;
+                        const runId = state.origin.runId;
+                        const operationId = state.operationId;
+                        if (state.phase !== 'completed') session?.registerContextPersistence?.(async receipt => {
+                            const updated = await persistence.updateActionStatesForOperation(conversationId, runId, 'ghost', operationId,
+                                current => current.map(candidate => refreshGhostActionState(candidate, receipt) ?? candidate));
+                            return !updated || updated.some(candidate => candidate.owner === 'ghost'
+                                && candidate.operationId === operationId && candidate.phase === 'completed');
+                        }, conversationId);
+                    }
+                    let receipt = state.owner === 'ghost' ? sessionReceipt : undefined;
+                    let readFailed = false;
+                    if (state.owner === 'ghost' && !receipt) {
+                        try { receipt = await this.host.readGhostContextReceipt?.(state.operationId); }
+                        catch (error) { readFailed = true; this.host.log('Could not read Ghost context state', error); }
+                    }
+                    if (!isCurrentSession() || conversationId !== this.conversationPersistence.activeConversationId) return;
+                    refreshed.push(receipt ? refreshGhostActionState(state, receipt) ?? state
+                        : state.owner === 'ghost' ? markGhostStatusUnavailable(state,
+                            readFailed || !this.host.readGhostContextReceipt ? 'status_read_unavailable' : 'operation_not_found') : state);
+                }
+                if (JSON.stringify(refreshed) === JSON.stringify(states)) {
+                    if (this.conversationPersistence.needsFinalizedTurnRevision(entry)) {
+                        await this.conversationPersistence.reviseFinalizedTurn(entry, async () => {});
+                    }
+                    continue;
+                }
+                entry.assistant.actionStates = refreshed;
+                if (entry.assistant.canonicalTurn) entry.assistant.canonicalTurn.actionStates = refreshed;
+                await this.conversationPersistence.reviseFinalizedTurn(entry, async () => {});
+            }
+        };
+        this.registerViewTeardown(this.chatService.subscribeOperations(() => {
+            void refreshOperationsHistoryState().catch(error => this.host.log('Could not refresh Operations history state', error));
+        }));
+        if (this.host.writingSave) {
+            this.registerViewTeardown(this.host.writingSave.subscribeState(() => {
+                void refreshWritingHistoryState().catch(error => this.host.log('Could not refresh Writing history state', error));
+            }));
+        }
         if (imageGeneration) {
             const unsubscribe = imageGeneration.subscribe(task => {
                 if (task.conversationId === imageTasksConversationId) renderImageTaskCard(task);
+                void refreshImageHistoryState(task).catch(error => this.host.log('Could not refresh image history state', error));
             });
             this.registerViewTeardown(unsubscribe);
         }
@@ -3065,8 +3222,30 @@ export class LLMView extends ItemView {
         const writingModalHost = (): WritingModalHost | undefined => {
             const versions = this.host.writingVersions;
             if (!versions) return undefined;
+            const save = this.host.writingSave;
+            const persistence = this.conversationPersistence;
+            const conversationId = persistence.activeConversationId;
+            // Snapshot only finite owner bindings when opening the Writing UI. The save
+            // confirmation can outlive this View without retaining messages or the View.
+            const bindings = new Map<string, string>();
+            for (const entry of timelineEntries) {
+                if (entry.kind !== 'history') continue;
+                for (const state of entry.assistant.actionStates ?? entry.assistant.canonicalTurn?.actionStates ?? []) {
+                    if (state.owner === 'writing') bindings.set(state.operationId, state.origin.runId);
+                }
+            }
             return {
                 versions, save: this.host.writingSave,
+                onSaveStart: versionId => {
+                    const runId = bindings.get(versionId);
+                    if (!save || !conversationId || !runId) return;
+                    save.registerContextPersistence(versionId, async () => {
+                        const latest = await save.listReceipts(versionId);
+                        const updated = await persistence.updateActionStatesForOperation(conversationId, runId, 'writing', versionId,
+                            states => states.map(state => refreshWritingSaveStates(state, latest) ?? state));
+                        return !updated || (latest.length > 0 && latest.every(receipt => receipt.state === 'completed'));
+                    }, conversationId);
+                },
                 readStyleReferences: this.host.readWritingStyleReferences?.bind(this.host),
                 onReferencesChanged: (listener) => this.host.onWritingReferencesChanged?.(listener) ?? this.host.onSettingsChanged(listener),
                 rememberStyle: this.host.rememberWritingStyle
@@ -3567,6 +3746,11 @@ export class LLMView extends ItemView {
             renderTimeline();
             for (const entry of removedEntries) {
                 void this.conversationPersistence.deletePersistedTurnForEntry(entry);
+                if (entry.kind === 'history') for (const state of entry.assistant.actionStates ?? entry.assistant.canonicalTurn?.actionStates ?? []) {
+                    if (state.owner === 'image') imageGeneration?.unregisterContextPersistence(state.operationId);
+                    if (state.owner === 'writing') this.host.writingSave?.unregisterContextPersistence(state.operationId);
+                    if (state.owner === 'ghost' && entry.user.hostProvenance) ghostSessions.get(entry.user.hostProvenance.messageId)?.unregisterContextPersistence?.();
+                }
             }
             new Notice(t("plugin.chat.notice.messageDeleted"));
         };
@@ -4649,13 +4833,35 @@ export class LLMView extends ItemView {
                     }, () => isCurrent() && artifact.isSourceCurrent?.() !== false);
                     createdWritingVersion = version;
                     assistantMessage.writingVersionId = version.id;
+                    if (canonicalTurn) {
+                        const lineage = cloneInputLineage(assistantMessage.inputLineage);
+                        if (lineage) {
+                            const states = cloneActionStates([...(canonicalTurn.actionStates ?? []), {
+                                schemaVersion: 1, owner: 'writing', operationId: version.id, phase: 'ready', revision: 0,
+                                origin: { runId: canonicalTurn.runId, turnId: canonicalTurn.turnId,
+                                    assistantId: artifact.messageId, resultId: artifact.messageId },
+                                inputLineage: lineage, receipt: { kind: 'writing-version', versionId: version.id },
+                            }]);
+                            canonicalTurn.actionStates = states;
+                            assistantMessage.actionStates = states;
+                        }
+                    }
                 } : undefined,
                 turn.userProvenance?.messageId,
             );
             if (createdWritingVersion && isCurrentSession()) {
                 selectedWritingVersion = createdWritingVersion;
                 selectedWritingParentExplicit = false;
+                await refreshWritingHistoryState();
             }
+            if (imageGeneration && canonicalTurn?.actionStates?.some(state => state.owner === 'image')) {
+                for (const state of canonicalTurn.actionStates) {
+                    if (state.owner !== 'image') continue;
+                    const task = await imageGeneration.get(state.operationId);
+                    if (task) await refreshImageHistoryState(task);
+                }
+            }
+            if (canonicalTurn?.actionStates?.some(state => state.owner === 'ghost')) await refreshGhostHistoryState();
             if (turn.writingRequestId && !persisted && isCurrentSession()) {
                 new Notice(t(createdWritingVersion
                     ? 'plugin.chat.writing.historyUnavailable'
@@ -4906,6 +5112,16 @@ export class LLMView extends ItemView {
             let acceptingStreamEvents = true;
             const isLiveTurn = () => this.isCurrentTurn(sessionId, turnId, controller);
             const isSameTurn = () => this.isCurrentTurn(sessionId, turnId, controller, { includeCancelled: true });
+            const historyConversationId = this.conversationPersistence.activeConversationId;
+            await refreshOperationsHistoryState();
+            await refreshWritingHistoryState();
+            await refreshGhostHistoryState();
+            if (imageGeneration && historyConversationId) {
+                try {
+                    for (const task of await imageGeneration.list(historyConversationId)) await refreshImageHistoryState(task);
+                } catch (error) { this.host.log('Could not refresh image history state', error); }
+                if (!isCurrentSession() || this.conversationPersistence.activeConversationId !== historyConversationId) return;
+            }
             const modelHistory = this.chatHistory.map((message) => ({ ...message }));
             const turnPageletHandoff = this.pendingPageletHandoff;
             const previousResult = this.result;
@@ -5118,6 +5334,11 @@ export class LLMView extends ItemView {
                             const container = message.messageDiv.createDiv({ cls: 'pa-ghost-publishing-card' });
                             message.messageDiv.insertBefore(container, message.actionDiv);
                             const dispose = renderGhostPublishingCard(container, session, key => t(key));
+                            ghostSessions.set(stableMessageId, session);
+                            const unsubscribeState = session.subscribe(() => {
+                                void refreshGhostHistoryState().catch(error => this.host.log('Could not refresh Ghost history state', error));
+                            });
+                            ghostCardCleanups.add(unsubscribeState);
                             ghostCardCleanups.add(() => { dispose(); container.remove(); });
                         },
                     }) : undefined;
@@ -5356,6 +5577,15 @@ export class LLMView extends ItemView {
                         pageletHandoff: turnPageletHandoff ?? undefined,
                         onOperationsIntentStaged: (intent) => {
                             if (!acceptingStreamEvents || !isLiveTurn() || !turn.assistantMessage) return;
+                            if (conversationIdForMemoryActions) {
+                                const conversationId = conversationIdForMemoryActions;
+                                const persistence = this.conversationPersistence;
+                                const service = this.chatService;
+                                service.registerOperationsContextPersistence(intent.id, async () => {
+                                    await persistence.updateActionStatesForOperation(conversationId, intent.runId, 'operations', intent.id,
+                                        states => states.map(state => service.refreshOperationsActionState(state)));
+                                });
+                            }
                             const handle = renderOperationsIntentCard(turn.assistantMessage, intent);
                             if (handle) operationsCardHandles.push(handle);
                         },
@@ -5646,6 +5876,9 @@ export class LLMView extends ItemView {
             renderEmptyState();
             if (conversationIdToDelete) {
                 await this.conversationPersistence.deleteConversation(conversationIdToDelete);
+                imageGeneration?.clearContextPersistence(conversationIdToDelete);
+                this.host.writingSave?.clearContextPersistence(conversationIdToDelete);
+                this.host.clearGhostContextPersistence?.(conversationIdToDelete);
             } else {
                 await this.conversationPersistence.clearActiveConversationPointer();
             }
@@ -6058,6 +6291,9 @@ export class LLMView extends ItemView {
                     if (!confirmed) return;
                     if (!isCurrentSession()) return;
                     await manager.deleteConversation(selection.conversationId);
+                    imageGeneration?.clearContextPersistence(selection.conversationId);
+                    this.host.writingSave?.clearContextPersistence(selection.conversationId);
+                    this.host.clearGhostContextPersistence?.(selection.conversationId);
                     if (!isCurrentSession()) return;
                     if (selection.conversationId === this.conversationPersistence.activeConversationId) {
                         await startNewConversation();

@@ -43,6 +43,41 @@ const png = Uint8Array.from(Buffer.from(
     'base64')).buffer;
 
 describe('image generation service admission and recovery', () => {
+    it('retains a terminal callback after failed context persistence while UI listeners run first', async () => {
+        const store = await readyStore();
+        const service = makeService(store, { submit: jest.fn(), query: jest.fn(), cancel: jest.fn() } as unknown as WanImageProvider);
+        const { taskId } = await service.submit(input);
+        const order: string[] = [];
+        service.subscribe(() => { order.push('ui'); });
+        const persist = jest.fn(async () => {
+            order.push('persist');
+            if (persist.mock.calls.length === 1) throw new Error('conversation disk unavailable');
+        });
+        service.registerContextPersistence(taskId, persist, input.conversationId);
+        await service.stop(taskId); await Promise.resolve();
+        await service.suppress(taskId); await Promise.resolve();
+        expect(persist).toHaveBeenCalledTimes(2);
+        expect(order).toEqual(['ui', 'persist', 'ui', 'persist']);
+        await service.dispose();
+    });
+    it('releases completed stop observers and explicitly clears deleted conversation registrations', async () => {
+        const store = await readyStore();
+        const service = makeService(store, { submit: jest.fn(), query: jest.fn(), cancel: jest.fn() } as unknown as WanImageProvider);
+        const { taskId } = await service.submit(input);
+        const persist = jest.fn(async () => {});
+        service.registerContextPersistence(taskId, persist, input.conversationId);
+        await service.stop(taskId);
+        await Promise.resolve();
+        const notifications = persist.mock.calls.length;
+        expect(notifications).toBeGreaterThan(0);
+        await service.stop(taskId);
+        expect(persist).toHaveBeenCalledTimes(notifications);
+        service.registerContextPersistence(taskId, persist, input.conversationId);
+        service.clearContextPersistence(input.conversationId);
+        await service.stop(taskId);
+        expect(persist).toHaveBeenCalledTimes(notifications);
+        await service.dispose();
+    });
     it('does not send a queued scoped prompt to Wan after its source receipt is revoked', async () => {
         const store = await readyStore();
         let releaseToken!: () => void;

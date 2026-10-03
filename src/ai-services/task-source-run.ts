@@ -18,17 +18,19 @@ import type { GenerationInputTaskSourceV2, GenerationInputIdentityState } from '
 import { cloneSourceRecord } from './source-store';
 import { extractTaskSourcePathMentions } from './task-source-user-boundary';
 import { parseRunSourceSelection, type RunSourceSelection } from './chat-source-scope';
-import { admitsInputLineage, admitsValidatedInputDependency, cloneInputLineage, completeInputLineage,
+import { admitsInputLineage, admitsValidatedInputDependency, cloneInputLineage, completeInputLineage, unionInputLineages,
     unknownInputLineage, type InputDependency, type InputLineage,
     type InputLineageAdmission } from './input-lineage';
 import { createCooperativeTask } from './cooperative-task';
 import { throwIfAborted } from './chat-utils';
+import { boundActionStates, cloneActionStateBinding, cloneActionStates, type PaAgentActionState } from './pa-agent-result-facts';
 
 export const MAX_TASK_SOURCE_NOTE_HANDLES = 32;
 export const MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS = 8000;
 
 export interface TaskSourceRunHost {
     runId: string;
+    conversationId?: string;
     userMessageId: string;
     runSourceSelection?: RunSourceSelection;
     userText: string;
@@ -76,6 +78,10 @@ export class TaskSourceRun {
     private readonly hostSourcesAreCurrent: () => boolean;
     private readonly ownedLineages = new WeakMap<InputLineage, InputLineage>();
     private readonly ownedHistoryLineages = new WeakMap<ChatMessage, InputLineage | undefined>();
+    private readonly conversationId: string | undefined;
+    private readonly historicalActionFragments = new WeakMap<ChatMessage, {
+        binding: string; provenance: string; states: string; userMessageId: string;
+    }>();
 
     constructor(host: TaskSourceRunHost) {
         const { runId, userMessageId, userText, workspace } = host;
@@ -85,6 +91,7 @@ export class TaskSourceRun {
             throw new Error('Chat run source selection does not match the user message');
         }
         this.runSourceSelection = runSourceSelection ? Object.freeze(runSourceSelection) : undefined;
+        this.conversationId = host.conversationId;
         this.workspace = workspace;
         this.getFileByPath = host.getFileByPath.bind(host);
         this.hostIsCurrent = host.isCurrent.bind(host);
@@ -291,10 +298,12 @@ export class TaskSourceRun {
     /** Recheck returned Vault evidence without mutating canonical conversation records. */
     readonly projectTranscript = (transcript: readonly PaAgentMessage[]): PaAgentMessage[] => {
         const constraint = this.state.snapshot();
-        const disallowedCalls = new Set(transcript.flatMap(message =>
-            this.runSourceSelection && message.role === 'assistant' && !this.admitsLineage(message.inputLineage)
-                ? message.content.flatMap(part => part.type === 'toolCall' && part.id ? [part.id] : []) : []));
+        let disallowedCalls = new Set<string>();
         return transcript.flatMap(message => {
+            if (message.role === 'user') disallowedCalls = new Set();
+            if (message.role === 'assistant') disallowedCalls = new Set(
+                this.runSourceSelection && !this.admitsLineage(message.inputLineage)
+                    ? message.content.flatMap(part => part.type === 'toolCall' && part.id ? [part.id] : []) : []);
             if (this.runSourceSelection && message.role !== 'user'
                 && (!this.admitsLineage(message.inputLineage)
                     || (message.role === 'toolResult' && disallowedCalls.has(message.toolCallId)))) return [];
@@ -337,9 +346,11 @@ export class TaskSourceRun {
         while (this.isCurrent() && this.state.isCurrent(constraint)) {
             const epoch = this.currentAuthorityEpoch();
             if (epoch === undefined) return this.projectTranscript(messages);
-            const disallowedCalls = new Set<string>();
+            let disallowedCalls = new Set<string>();
+            const disallowedResults = new Set<PaAgentMessage>();
             for (const message of messages) {
                 await task.checkpoint();
+                if (message.role === 'user' || message.role === 'assistant') disallowedCalls = new Set();
                 if (this.runSourceSelection && message.role === 'assistant'
                     && !await this.admitsLineageAsync(message.inputLineage, signal)) {
                     for (const part of message.content) {
@@ -347,13 +358,14 @@ export class TaskSourceRun {
                         if (part.type === 'toolCall' && part.id) disallowedCalls.add(part.id);
                     }
                 }
+                if (message.role === 'toolResult' && disallowedCalls.has(message.toolCallId)) disallowedResults.add(message);
             }
             const projected: PaAgentMessage[] = [];
             for (const message of messages) {
                 await task.checkpoint();
                 if (this.runSourceSelection && message.role !== 'user'
                     && (!await this.admitsLineageAsync(message.inputLineage, signal)
-                        || (message.role === 'toolResult' && disallowedCalls.has(message.toolCallId)))) continue;
+                        || (message.role === 'toolResult' && disallowedResults.has(message)))) continue;
                 if (message.role !== 'toolResult' || message.toolName === 'search_memory'
                     || !message.content.includeInNextPrompt) {
                     projected.push(message);
@@ -487,7 +499,7 @@ export class TaskSourceRun {
     /** D12: keep canonical history; omit only assistant turns with known revoked evidence. */
     readonly projectHistory = (history: readonly ChatMessage[]): ChatMessage[] => {
         const constraint = this.state.snapshot();
-        return history.filter(message => {
+        const prose = new Set(history.filter(message => {
             const lineage = historyInputLineage(message);
             if (this.runSourceSelection) {
                 if (this.runSourceSelection.scope === 'web' && message.role === 'assistant'
@@ -511,8 +523,103 @@ export class TaskSourceRun {
                 const noteId = record.path ? this.resolveNoteId(record.path) : undefined;
                 return noteId !== undefined && (!constraint || this.state.allows({ kind: 'note', noteId }, constraint));
             }) && this.isCurrent() && this.state.snapshot() === constraint;
+        }));
+        return history.flatMap(message => {
+            const states: PaAgentActionState[] = [];
+            const lineages: InputLineage[] = [];
+            for (const state of cloneActionStates(message.actionStates ?? message.canonicalTurn?.actionStates)) {
+                const lineage = this.historicalActionLineage(message, state, history);
+                if (lineage && this.admitsLineage(lineage, true)) { states.push(state); lineages.push(lineage); }
+            }
+            const transcript = prose.has(message) && message.canonicalTurn
+                ? this.projectTranscript(message.canonicalTurn.messages) : undefined;
+            return this.historyFragment(message, prose.has(message) && !this.hasHistoricalActionObservation(message), states, transcript, lineages, history);
         });
     };
+
+    /** Only this run's content-free derived objects carry historical observation proof.
+     * Copying an object cannot authorize old prose, tool results, or a foreign turn. */
+    readonly isOwnedHistoricalActionFragment = (message: ChatMessage): boolean => {
+        const proof = this.historicalActionFragments.get(message);
+        return !!proof && message.role === 'assistant' && message.content === '' && !message.canonicalTurn
+            && proof.binding === JSON.stringify(message.actionStateBinding)
+            && proof.provenance === JSON.stringify(message.hostProvenance)
+            && proof.states === JSON.stringify(message.actionStates);
+    };
+
+    private hasHistoricalActionObservation(message: ChatMessage): boolean {
+        return this.historicalActionFragments.has(message) || cloneActionStates(message.actionStates ?? message.canonicalTurn?.actionStates)
+            .some(state => state.inputLineage.dependencies.some(dependency => dependency.kind === 'run-notes-observation'
+                && dependency.runId !== this.state.snapshot().runId));
+    }
+
+    private historicalActionUser(message: ChatMessage, history: readonly ChatMessage[]): string | undefined {
+        if (this.isOwnedHistoricalActionFragment(message)) return this.historicalActionFragments.get(message)!.userMessageId;
+        const index = history.indexOf(message);
+        let user: ChatMessage | undefined;
+        for (let previous = index - 1; previous >= 0; previous--) {
+            if (history[previous].role === 'user') { user = history[previous]; break; }
+        }
+        const id = user?.hostProvenance?.messageId ?? user?.runSourceSelection?.userMessageId;
+        if (!id || history.filter(candidate => candidate.role === 'user'
+            && (candidate.hostProvenance?.messageId ?? candidate.runSourceSelection?.userMessageId) === id).length !== 1) return undefined;
+        return id;
+    }
+
+    private historicalActionLineage(message: ChatMessage, state: PaAgentActionState,
+        history: readonly ChatMessage[]): InputLineage | undefined {
+        if (this.historicalActionFragments.has(message) && !this.isOwnedHistoricalActionFragment(message)) return undefined;
+        const lineage = cloneInputLineage(state.inputLineage);
+        if (!lineage?.dependencies.some(dependency => dependency.kind === 'run-notes-observation'
+            && dependency.runId !== this.state.snapshot().runId)) return lineage;
+        const constraint = this.state.snapshot();
+        const binding = cloneActionStateBinding(message.actionStateBinding);
+        const userMessageId = this.historicalActionUser(message, history);
+        const canonical = message.canonicalTurn;
+        // Rehydration rebuilds an empty transcript container, while retaining the
+        // original execution binding. Its synthetic ID is only a container ID;
+        // the owner receipt still has to match the original binding below.
+        const restoredContainerId = binding ? `rehydrated:${binding.conversationId}:${binding.turnIndex}` : undefined;
+        const canonicalMatchesBinding = !canonical || !!binding && (
+            canonical.runId === binding.runId && canonical.turnId === binding.turnId
+            || canonical.schemaVersion === 1 && canonical.runId === restoredContainerId
+                && canonical.turnId === restoredContainerId && canonical.messages.length === 0);
+        if (lineage.completeness !== 'complete' || !this.conversationId || !binding || binding.conversationId !== this.conversationId
+            || message.role !== 'assistant' || constraint.allowedNoteIds !== null || constraint.excludedNoteIds.length !== 0
+            || !userMessageId || !lineage.dependencies.some(dependency => dependency.kind === 'user-text' && dependency.messageId === userMessageId)
+            || !canonicalMatchesBinding
+            || boundActionStates([state], binding, this.conversationId, binding.turnIndex).length !== 1
+            || lineage.dependencies.some(dependency => dependency.kind === 'run-notes-observation' && dependency.runId !== state.origin.runId)) return undefined;
+        // Keep the original stored state and every dependency/epoch unchanged. Only
+        // the request-only fragment's observation identity is rebound after admission.
+        const rebased = completeInputLineage(lineage.dependencies.map(dependency => dependency.kind === 'run-notes-observation'
+            ? { ...dependency, runId: constraint.runId } : dependency));
+        return this.admitsLineage(rebased, true) ? rebased : undefined;
+    }
+
+    private historyFragment(message: ChatMessage, proseAdmitted: boolean,
+        states: PaAgentActionState[], transcript?: PaAgentMessage[], lineages?: InputLineage[], history: readonly ChatMessage[] = []): ChatMessage[] {
+        if (!proseAdmitted) {
+            if (!states.length) return [];
+            const fragment: ChatMessage = { role: 'assistant', content: '',
+                inputLineage: unionInputLineages(...(lineages ?? states.map(state => state.inputLineage))), actionStates: states,
+                ...(message.actionStateBinding ? { actionStateBinding: { ...message.actionStateBinding } } : {}),
+                ...(message.hostProvenance ? { hostProvenance: { ...message.hostProvenance } } : {}) };
+            if (lineages?.some((lineage, index) => JSON.stringify(lineage) !== JSON.stringify(states[index].inputLineage))) {
+                const userMessageId = this.historicalActionUser(message, history);
+                if (!userMessageId) return [];
+                this.historicalActionFragments.set(fragment, { binding: JSON.stringify(fragment.actionStateBinding),
+                    provenance: JSON.stringify(fragment.hostProvenance), states: JSON.stringify(fragment.actionStates), userMessageId });
+            }
+            return [fragment];
+        }
+        if (!message.actionStates && !message.canonicalTurn?.actionStates && !transcript) return [message];
+        return [{ ...message,
+            ...(message.role === 'assistant' ? { actionStates: states } : {}),
+            ...(message.canonicalTurn && transcript ? { canonicalTurn: { ...message.canonicalTurn,
+                messages: transcript, actionStates: states } } : {}),
+        }];
+    }
 
     /** Project history with the same legacy and scope rules, then seal the whole pass. */
     readonly projectHistoryAsync = async (
@@ -582,7 +689,26 @@ export class TaskSourceRun {
                 if (admitted && this.isCurrent() && this.state.isCurrent(constraint)) projected.push(message);
             }
             if (!this.isCurrent() || !this.state.isCurrent(constraint)) break;
-            if (epoch === this.currentAuthorityEpoch()) return projected;
+            if (epoch === this.currentAuthorityEpoch()) {
+                const prose = new Set(projected);
+                const fragments: ChatMessage[] = [];
+                for (const message of messages) {
+                    await task.checkpoint();
+                    const states: PaAgentActionState[] = [];
+                    const lineages: InputLineage[] = [];
+                    for (const state of cloneActionStates(message.actionStates ?? message.canonicalTurn?.actionStates)) {
+                        const lineage = this.historicalActionLineage(message, state, messages);
+                        if (lineage && await this.admitsLineageAsync(lineage, signal, true)) { states.push(state); lineages.push(lineage); }
+                    }
+                    const transcript = prose.has(message) && message.canonicalTurn
+                        ? await this.projectTranscriptAsync(message.canonicalTurn.messages, signal) : undefined;
+                    fragments.push(...this.historyFragment(message, prose.has(message) && !this.hasHistoricalActionObservation(message), states, transcript, lineages, messages));
+                }
+                if (epoch === this.currentAuthorityEpoch() && this.isCurrent() && this.state.isCurrent(constraint)) {
+                    return fragments.filter(fragment => !this.isOwnedHistoricalActionFragment(fragment)
+                        || this.admitsLineage(fragment.inputLineage, true));
+                }
+            }
             await task.checkpoint(true);
         }
         throwIfAborted(signal);
@@ -590,11 +716,11 @@ export class TaskSourceRun {
     };
 
     /** Scope checks apply to represented Host ancestry, not citation text. */
-    readonly admitsLineage = (lineage: InputLineage | undefined): boolean => {
+    readonly admitsLineage = (lineage: InputLineage | undefined, strict = false): boolean => {
         const scope = this.runSourceSelection?.scope;
         const hasRunNotesObservation = lineage?.dependencies.some(dependency =>
             dependency.kind === 'run-notes-observation') === true;
-        if (!scope && !hasRunNotesObservation) return true;
+        if (!scope && !hasRunNotesObservation && !strict) return true;
         const constraint = this.state.snapshot();
         const allowed = admitsInputLineage(lineage, scope ?? 'combined', {
             ...this.lineageAdmission,
@@ -626,15 +752,15 @@ export class TaskSourceRun {
     }
 
     /** Complete admission sliced by dependency and sealed against authority changes. */
-    readonly admitsLineageAsync = async (lineage: InputLineage | undefined, signal?: AbortSignal): Promise<boolean> => {
+    readonly admitsLineageAsync = async (lineage: InputLineage | undefined, signal?: AbortSignal, strict = false): Promise<boolean> => {
         throwIfAborted(signal);
         const owned = this.ownedLineage(lineage);
         // Unknown Hosts keep the original complete check, never a cached true.
-        if (!this.getTaskSourceAuthorityEpoch) return this.admitsLineage(owned);
+        if (!this.getTaskSourceAuthorityEpoch) return this.admitsLineage(owned, strict);
         const scope = this.runSourceSelection?.scope;
         const dependencies = owned?.dependencies;
         const hasObservation = dependencies?.some(dependency => dependency.kind === 'run-notes-observation') === true;
-        if (!scope && !hasObservation) return this.isCurrent();
+        if (!scope && !hasObservation && !strict) return this.isCurrent();
         if (!owned || !dependencies || owned.completeness !== 'complete') return false;
         const constraint = this.state.snapshot();
         const admission: InputLineageAdmission = {
@@ -651,7 +777,7 @@ export class TaskSourceRun {
         const task = createCooperativeTask(signal);
         while (this.isCurrent() && this.state.snapshot() === constraint) {
             const epoch = this.currentAuthorityEpoch();
-            if (!epoch) return this.admitsLineage(owned);
+            if (!epoch) return this.admitsLineage(owned, strict);
             let admitted = true;
             for (const dependency of dependencies) {
                 await task.checkpoint();

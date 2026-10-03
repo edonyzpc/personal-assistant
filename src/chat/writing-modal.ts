@@ -17,6 +17,7 @@ export function newWritingActionId(): string {
 export interface WritingModalHost {
     versions: WritingVersionService;
     save?: WritingSaveAction;
+    onSaveStart?: (versionId: string) => void;
     onSelect?: (version: WritingVersion) => void;
     rememberStyle?: (versionId: string, scene: WritingScene) => Promise<void>;
     readStyleReferences?: (revisionIds: readonly string[], signal?: AbortSignal) => Promise<WritingStyleReference[]>;
@@ -179,7 +180,7 @@ export class WritingVersionModal extends Modal {
             action(t('plugin.chat.writing.keepEdit'), async () => { await this.render(); });
             if (this.host.onSelect) action(t('plugin.chat.writing.continue'), (chosen) => { this.host.onSelect?.(chosen); this.close(); });
             if (this.host.save) action(t('plugin.chat.writing.save'), (chosen) => {
-                new WritingSaveModal(this.app, this.host.save!, chosen, () => this.close()).open();
+                new WritingSaveModal(this.app, this.host.save!, chosen, () => this.close(), this.host.onSaveStart).open();
             });
             if (this.host.rememberStyle) action(t('plugin.chat.writing.rememberStyle'), (chosen) => {
                 new WritingStyleModal(this.app, chosen, this.host.rememberStyle!).open();
@@ -195,7 +196,7 @@ export class WritingSaveModal extends Modal {
     private controller?: AbortController;
     private prepareController?: AbortController;
     constructor(app: App, private readonly save: WritingSaveAction, private readonly version: WritingVersion,
-        private readonly onNoteOpened?: () => void) { super(app); }
+        private readonly onNoteOpened?: () => void, private readonly onSaveStart?: (versionId: string) => void) { super(app); }
     onOpen(): void {
         this.closed = false;
         const t = makePluginTranslator(getPluginUiLanguage());
@@ -330,6 +331,7 @@ export class WritingSaveModal extends Modal {
 
     private async run(plan: SaveReceipt, retry: boolean, result: HTMLElement): Promise<void> {
         if (this.closed || this.controller) return;
+        this.onSaveStart?.(plan.writingVersionId);
         const t = makePluginTranslator(getPluginUiLanguage());
         const controller = new AbortController(); this.controller = controller;
         result.empty(); result.createEl('p', { text: t('plugin.chat.writing.saving') });

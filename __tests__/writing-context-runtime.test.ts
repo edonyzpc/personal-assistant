@@ -19,7 +19,7 @@ afterEach(() => jest.restoreAllMocks());
 
 const scene = { writingTask: 'email', purpose: 'invitation', audience: 'colleagues', domain: 'work' };
 const body = '  请来参加周五的分享。\n🌱\n';
-type Scenario = 'complete' | 'ordinary' | 'reported-incomplete' | 'premature' | 'mixed' | 'revoked' | 'physical-retry' | 'image-subset' | 'image-empty' | 'schema-repair' | 'reselect' | 'repeat-selection' | 'new-topic' | 'personal-source' | 'personal-retry' | 'pagelet' | 'incomplete' | 'stale-insights';
+type Scenario = 'complete' | 'ordinary' | 'reported-incomplete' | 'finalization-unprepared' | 'premature' | 'mixed' | 'revoked' | 'physical-retry' | 'image-subset' | 'image-empty' | 'schema-repair' | 'reselect' | 'repeat-selection' | 'new-topic' | 'personal-source' | 'personal-retry' | 'pagelet' | 'incomplete' | 'stale-insights';
 
 async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = false, backgroundAdmission?: {
     change: 'live-refresh' | 'revoked-same-text' | 'unguarded-refresh'; writing: boolean;
@@ -104,6 +104,7 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
     const lifecycle: AgentEvent[] = [];
     const inputs: string[] = [];
     const serializedInputs: string[] = [];
+    const messageInputs: Array<Array<{ role: string; content: string }>> = [];
     const schemas: Array<Array<{ function: { name: string; parameters: unknown } }>> = [];
     const retryErrors: unknown[] = [];
     const createModel = jest.spyOn(ai, 'createChatModel').mockImplementation(async (_temperature, options) => {
@@ -120,8 +121,10 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
             const text = String(input);
             inputs.push(text);
             serializedInputs.push(JSON.stringify(input));
+            messageInputs.push((input as { toChatMessages(): Array<{ getType(): string; content: unknown }> })
+                .toChatMessages().map(message => ({ role: message.getType(), content: String(message.content) })));
             const turn = inputs.length;
-            if (scenario === 'reported-incomplete') {
+            if (scenario === 'reported-incomplete' || scenario === 'finalization-unprepared') {
                 yield new AIMessageChunk({ content: '', tool_call_chunks: [{ id: 'report', index: 0,
                     name: 'report_task_incomplete', args: JSON.stringify({ answer: 'I cannot complete this writing task.' }) }] });
                 yield new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'tool_calls' } });
@@ -166,7 +169,8 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
         Object.assign(model, { bindTools: (bound: typeof schemas[number]) => { schemas.push(bound); return model; } });
         return model as unknown as Awaited<ReturnType<AIUtils['createChatModel']>>;
     });
-    const runtime = new PaAgentRuntime(host, ai, { skillContextProvider: null });
+    const runtime = new PaAgentRuntime(host, ai, { skillContextProvider: null,
+        ...(scenario === 'finalization-unprepared' ? { maxWallClockMs: 100_000, finalizationReserveMs: 100_000 } : {}) });
     let error: unknown;
     try {
         await runtime.streamTurn({ prompt: 'Use the earlier proposal for an invitation', memoryMode: 'auto',
@@ -190,7 +194,7 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
             }, onLifecycleEvent: event => lifecycle.push(event) });
     } catch (caught) { error = caught; }
     finally { runtime.dispose(); versions.dispose(); }
-    return { events, lifecycle, inputs, serializedInputs, images, pagelet, parent, schemas, prepareStyle, createModel, error, retryErrors, log: host.log as jest.Mock,
+    return { events, lifecycle, inputs, serializedInputs, messageInputs, images, pagelet, parent, schemas, prepareStyle, createModel, error, retryErrors, log: host.log as jest.Mock,
         revokeStyle: () => { styleCurrent = false; }, revokePersonal: () => { personalCurrent = false; },
         revokeImage: () => { imageCurrent = false; },
         revokeParentSource: () => { parentSourceLive = false; }, revokeParentPermission: () => { parentPermission = false; },
@@ -409,6 +413,27 @@ describe('native writing context runtime integration', () => {
             expect.objectContaining({ body, styleRevisionIds: ['style-1'] }),
         ]);
     });
+    it.each(['complete', 'new-topic', 'finalization-unprepared'] as const)(
+        'separates trusted Writing protocol from user and selected material in %s', async scenario => {
+            const result = await runScenario(scenario);
+            expect(result.error).toBeUndefined();
+            for (const messages of result.messageInputs) {
+                const system = messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
+                const human = messages.filter(message => message.role === 'human').map(message => message.content).join('\n');
+                expect(system).toContain('The current run uses the Writing output protocol.');
+                expect(system).not.toContain('Authorized parent draft');
+                expect(system).not.toContain('Authorized concise style');
+                expect(system).not.toContain('<selected_writing_version');
+                expect(system).not.toContain('Use the earlier proposal for an invitation');
+                expect(human.split('Use the earlier proposal for an invitation')).toHaveLength(2);
+                expect(human).not.toContain('The current run uses the Writing output protocol.');
+            }
+            if (scenario === 'complete') {
+                const human = result.messageInputs[1].filter(message => message.role === 'human').map(message => message.content).join('\n');
+                expect(human).toContain('Authorized parent draft');
+                expect(human).toContain('Authorized concise style');
+            }
+        });
     it('prepares with the main Agent, then binds one final output to that receipt without acknowledgement', async () => {
         const result = await runScenario('complete');
         expect(result.error).toBeUndefined();
@@ -418,8 +443,11 @@ describe('native writing context runtime integration', () => {
         expect(result.schemas[0].map(schema => schema.function.name)).not.toContain('present_writing');
         expect(result.schemas[1].map(schema => schema.function.name)).toContain('present_writing');
         expect(result.inputs[0]).toContain('Before presenting writing, call get_writing_context');
+        expect(result.inputs[0]).not.toContain('Reply with ordinary text, or prepare');
+        expect(result.inputs[0].split('The current run uses the Writing output protocol.')).toHaveLength(2);
         expect(result.inputs[1]).toContain('Writing context preparation is complete');
         expect(result.inputs[1]).not.toContain('Before presenting writing, call get_writing_context');
+        expect(result.inputs[1].split('The current run uses the Writing output protocol.')).toHaveLength(2);
         expect(result.schemas[1].map(schema => schema.function.name)).toContain('get_writing_context');
         expect(result.inputs[0]).not.toContain('Authorized parent draft');
         expect(result.inputs[1]).toContain('Authorized parent draft');
@@ -503,6 +531,20 @@ describe('native writing context runtime integration', () => {
         }));
         expect(result.events.some(event => event.kind === 'writing-artifact' || event.kind === 'writing-recovery')).toBe(false);
         expect(result.prepareStyle).not.toHaveBeenCalled();
+    });
+
+    it('describes an unprepared finalization using only its actual pure outputs', async () => {
+        const result = await runScenario('finalization-unprepared');
+        expect(result.error).toBeUndefined();
+        expect(result.inputs).toHaveLength(1);
+        expect(result.schemas[0].map(schema => schema.function.name)).toEqual(['report_task_incomplete']);
+        expect(result.inputs[0]).toContain('get_writing_context is unavailable in the currently bound tools');
+        expect(result.inputs[0]).not.toContain('Before presenting writing, call get_writing_context');
+        expect(result.inputs[0]).not.toContain('Authorized parent handles');
+        expect(result.prepareStyle).not.toHaveBeenCalled();
+        expect(result.lifecycle.at(-1)).toMatchObject({ type: 'agent_end', status: 'incomplete',
+            metadata: expect.objectContaining({ reason: 'agent_reported_incomplete' }) });
+        expect(result.events.some(event => event.kind === 'writing-artifact' || event.kind === 'writing-recovery')).toBe(false);
     });
 
     it('reports withheld ordinary Chat as incomplete when its generation sources change during streaming', async () => {

@@ -5,6 +5,7 @@ import type { PersistedConversation, PersistedTurn } from "./chat-history-store"
 import type { WritingVersionService } from './writing-versions';
 import { cloneWritingVersion, type WritingVersion } from './writing-types';
 import { throwIfAborted } from '../ai-services/chat-utils';
+import { cloneActionStateBinding, type PaAgentActionState } from '../ai-services/pa-agent-result-facts';
 import { conservativeLegacySourceSelection, isChatSourceScope, newConversationSourceSelection,
     parseConversationSourceSelection, type ChatSourceScope, type ConversationSourceSelection,
     type RunSourceSelection } from '../ai-services/chat-source-scope';
@@ -49,6 +50,7 @@ export class ConversationPersistence {
     private persistedTurnIndexByEntry = new WeakMap<TimelineEntry, number>();
     private persistChain: Promise<void> = Promise.resolve();
     private unpersistedFinalizedEntries = new Set<TimelineEntry>();
+    private readonly pendingFinalizedRevisions = new WeakSet<TimelineEntry>();
     private pendingTurnIndexByRunId = new Map<string, number>();
     private readonly sourceSelectionInstanceId = ++sourceSelectionInstanceSequence;
     private sourceSelectionSequence = 0;
@@ -267,6 +269,32 @@ export class ConversationPersistence {
 
     async waitForPendingWrites(): Promise<void> {
         await this.persistChain.catch(() => undefined);
+    }
+
+    async updateActionStates(conversationId: string, runId: string, turnId: string,
+        transform: (states: PaAgentActionState[]) => PaAgentActionState[]): Promise<PaAgentActionState[] | undefined> {
+        let updated: PaAgentActionState[] | undefined;
+        const next = this.persistChain.catch(() => undefined).then(async () => {
+            const manager = await this.getReadyManager();
+            if (!manager) throw new Error('Conversation persistence unavailable.');
+            updated = await manager.updateActionStates(conversationId, runId, turnId, transform);
+        });
+        this.persistChain = next;
+        await next;
+        return updated;
+    }
+
+    async updateActionStatesForOperation(conversationId: string, runId: string, owner: PaAgentActionState['owner'],
+        operationId: string, transform: (states: PaAgentActionState[]) => PaAgentActionState[]): Promise<PaAgentActionState[] | undefined> {
+        let updated: PaAgentActionState[] | undefined;
+        const next = this.persistChain.catch(() => undefined).then(async () => {
+            const manager = await this.getReadyManager();
+            if (!manager) throw new Error('Conversation persistence unavailable.');
+            updated = await manager.updateActionStatesForOperation(conversationId, runId, owner, operationId, transform);
+        });
+        this.persistChain = next;
+        await next;
+        return updated;
     }
 
     resetActiveConversationState(): void {
@@ -637,6 +665,9 @@ export class ConversationPersistence {
                     turnCount: Math.max(this.activeConversation.turnCount, updated.turnCount) };
             }
             entryIndices.set(entry, turnIndex);
+            const canonical = entry.assistant.canonicalTurn;
+            if (canonical) entry.assistant.actionStateBinding = cloneActionStateBinding(persistedEntry.assistant.actionStateBinding)
+                ?? cloneActionStateBinding({ conversationId, turnIndex, runId: canonical.runId, turnId: canonical.turnId });
             if (pendingRunId) this.pendingTurnIndexByRunId.delete(pendingRunId);
             this.unpersistedFinalizedEntries.delete(entry);
             try {
@@ -749,12 +780,15 @@ export class ConversationPersistence {
         try {
             await manager.deleteTurn(conversationId, turnIndex);
             this.persistedTurnIndexByEntry.delete(entry);
+            this.pendingFinalizedRevisions.delete(entry);
         } catch (error) {
             this.options.log("Failed to delete persisted chat turn", error);
         }
     }
 
     /** Attach an explicitly recovered version to the existing turn, without a new chat or extraction event. */
+    needsFinalizedTurnRevision(entry: TimelineEntry): boolean { return this.pendingFinalizedRevisions.has(entry); }
+
     reviseFinalizedTurn(
         entry: TimelineEntry,
         prepare: (context: { conversationId: string; turnIndex: number }, isCurrent: () => boolean) => Promise<void>,
@@ -765,6 +799,7 @@ export class ConversationPersistence {
         const originalManager = this.options.getManager();
         const turnIndex = this.persistedTurnIndexByEntry.get(entry);
         if (!conversationId || turnIndex === undefined) return Promise.resolve(false);
+        this.pendingFinalizedRevisions.add(entry);
         const isCurrent = () => this.persistedTurnIndexByEntry === entryIndices
             && this.activeId === conversationId && this.options.getManager() === originalManager
             && entryIndices.get(entry) === turnIndex;
@@ -774,13 +809,24 @@ export class ConversationPersistence {
             const manager = await this.getReadyManager();
             if (!manager || !isCurrent()) return;
             const conversation = await manager.findConversation(conversationId);
-            if (!conversation || !isCurrent()) return;
+            if (!isCurrent()) return;
+            if (!conversation) {
+                this.pendingFinalizedRevisions.delete(entry);
+                entryIndices.delete(entry);
+                return;
+            }
             await prepare({ conversationId, turnIndex }, isCurrent);
             if (!isCurrent()) return;
-            const updated = await manager.recordTurn({ conversationId, turnIndex, entry,
+            const updated = await manager.reviseTurn({ conversationId, turnIndex, entry,
                 userPrompt: entry.user.content, conversation });
+            if (!updated) {
+                this.pendingFinalizedRevisions.delete(entry);
+                entryIndices.delete(entry);
+                return;
+            }
             if (isCurrent()) this.activeConversation = this.retainLatestSourceSelection(updated);
             persisted = true;
+            this.pendingFinalizedRevisions.delete(entry);
         }).catch((error) => this.options.log('Failed to attach recovered writing version', error));
         this.persistChain = next;
         return next.then(() => persisted);

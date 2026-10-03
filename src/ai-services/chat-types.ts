@@ -26,6 +26,9 @@ export interface ChatMessage {
     shareCardEligible?: boolean;
     memoryMetadata?: ChatTurnMemoryMetadata;
     canonicalTurn?: PaAgentPersistedTurn;
+    /** Host-proven finite domain state; independently admitted from this message's prose. */
+    actionStates?: import('./pa-agent-result-facts').PaAgentActionState[];
+    actionStateBinding?: import('./pa-agent-result-facts').PaAgentActionStateBinding;
     /** Host-admitted source choice retained when canonical tool messages are compacted from history. */
     sourceDecision?: TaskSourcePendingDecision;
     runtimeWarnings?: ChatRuntimeWarning[];
@@ -474,6 +477,7 @@ export interface PaAgentPersistedTurn {
     memoryManagementContractVersion?: 1;
     memoryManagementEvidenceInvalid?: boolean;
     messages: PaAgentMessage[];
+    actionStates?: import('./pa-agent-result-facts').PaAgentActionState[];
 }
 
 export type AgentMessageUpdate =
@@ -729,6 +733,12 @@ export type ChatToolUnavailableReason =
     | "pagelet_stage_first_rejected"
     | "pagelet_stage_lead_rejected";
 
+/** Closed diagnostic categories; never execution authority or proof of an effect. */
+export type ChatToolFailureReason = 'not_found' | 'source_changed' | 'timeout' | 'adapter_error';
+export function isChatToolFailureReason(value: unknown): value is ChatToolFailureReason {
+    return value === 'not_found' || value === 'source_changed' || value === 'timeout' || value === 'adapter_error';
+}
+
 export interface ChatToolResult<Output> {
     ok: boolean;
     tool: string;
@@ -742,6 +752,7 @@ export interface ChatToolResult<Output> {
     memoryManagementEvidence?: import("./memory-management-evidence").MemoryManagementEvidence;
     memoryManagementContractVersion?: 1;
     error?: string;
+    failureReason?: ChatToolFailureReason;
     unavailableReason?: ChatToolUnavailableReason;
 }
 

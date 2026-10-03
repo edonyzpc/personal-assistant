@@ -5904,6 +5904,8 @@ export class PluginManager extends Plugin {
     private createChatHost(): ChatHost {
         const host = this.chatIntegration.createChatHost();
         host.createGhostPublishingBinding = request => this.ghostPublishingIntegration?.createBinding(request);
+        host.readGhostContextReceipt = operationId => this.ghostPublishingIntegration?.readContextReceipt(operationId) ?? Promise.resolve(undefined);
+        host.clearGhostContextPersistence = conversationId => this.ghostPublishingIntegration?.clearContextPersistence(conversationId);
         return host;
     }
 

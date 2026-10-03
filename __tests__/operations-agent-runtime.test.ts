@@ -16,6 +16,7 @@ import type {
 } from "../src/ai-services/pa-agent-types";
 import {
     type PaAgentRuntimeOptions,
+    type PaAgentStreamOptions,
     PaAgentRuntime,
 } from "../src/ai-services/pa-agent-runtime";
 import {
@@ -52,6 +53,7 @@ import {
 } from "../src/ai-services/builtin-web-search-provider";
 import { revalidateVaultObservationFromApp } from "../src/ai-services/vault-observation-evidence";
 import { createAiServiceHost } from "../src/tests/factories/host-factory";
+import { WritingVersionService } from '../src/chat/writing-versions';
 
 jest.mock("obsidian");
 
@@ -351,6 +353,43 @@ describe("Operations Agent runtime discovery and staging", () => {
         expect(acknowledgement.runtimeInstruction).toContain("earlier proposal");
         expect(isOperationsStagedAcknowledgement(acknowledgement.runtimeInstruction)).toBe(true);
         expect(isOperationsStagedAcknowledgement("ordinary continuation")).toBe(false);
+    });
+
+    it('keeps a real staged acknowledgement free of unavailable Writing methods and stale history', async () => {
+        const fixture = operationsRuntimeFixture('Create notes/new.md with # Result', [
+            toolCall('create', 'vault_create', { path: 'notes/new.md', content: '# Result' }, 0),
+        ]);
+        const versions = new WritingVersionService({ getWritingVersion: async () => null,
+            putWritingVersion: async () => undefined, listWritingVersions: async () => [] });
+        const prepare = jest.fn(async () => ({ context: '', revisionIds: [], isCurrent: () => true }));
+        try {
+            await fixture.run({ writingRequest: { requestId: 'writing-request' }, writingOutputProtocol: 'native',
+                writingContextHost: { conversationId: 'writing-conversation', candidates: [], versions,
+                    styles: { prepare }, isCurrent: () => true, isParentCurrent: () => true },
+                chatHistory: [{ role: 'user', content: 'OLD_PENDING_STALE_27' },
+                    { role: 'assistant', content: 'OLD_PENDING_ANSWER_27' }] });
+            expect(fixture.providerInputs).toHaveLength(2);
+            expect(fixture.boundToolNames[0]).toContain('get_writing_context');
+            // The runtime uses an unbound model when no schemas remain.
+            expect(fixture.boundToolNames).toHaveLength(1);
+            const acknowledgement = JSON.stringify(fixture.providerInputs[1]);
+            const messages = (fixture.providerInputs[1] as { toChatMessages(): Array<{ getType(): string; content: unknown }> }).toChatMessages();
+            const system = messages.filter(message => message.getType() === 'system').map(message => String(message.content)).join('\n');
+            const human = messages.filter(message => message.getType() === 'human').map(message => String(message.content)).join('\n');
+            expect(system).toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+            expect(human).not.toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+            expect(system).not.toContain('The current run uses the Writing output protocol');
+            expect(system).not.toContain('OLD_PENDING_STALE_27');
+            expect(acknowledgement).toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+            expect(acknowledgement).not.toContain('OLD_PENDING_STALE_27');
+            expect(acknowledgement).not.toContain('Before presenting writing');
+            expect(acknowledgement).not.toContain('The current run uses the Writing output protocol');
+            expect(acknowledgement).not.toContain('Authorized parent handles');
+            expect(prepare).not.toHaveBeenCalled();
+            expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
+            expect(fixture.executeIntent).not.toHaveBeenCalled();
+            expect(fixture.vault.create).not.toHaveBeenCalled();
+        } finally { fixture.dispose(); versions.dispose(); }
     });
 
     it("aborts batch staging at the tool timeout before an intent can be stored", async () => {
@@ -960,8 +999,9 @@ function operationsRuntimeFixture(
     return {
         vault, otherFile, trashFile, controller, stageIntent, executeIntent, getFileCache,
         boundToolNames, providerInputs, lifecycle, legacyEvents,
-        run: () => runtime.streamTurn({
-            prompt, memoryMode: "auto", onLifecycleEvent: event => lifecycle.push(event),
+        run: (outputOptions: Pick<PaAgentStreamOptions, 'writingRequest' | 'writingOutputProtocol'
+            | 'writingContextHost' | 'chatHistory'> = {}) => runtime.streamTurn({
+            prompt, memoryMode: "auto", ...outputOptions, onLifecycleEvent: event => lifecycle.push(event),
             onEvent: event => legacyEvents.push(event),
         }),
         dispose: () => {

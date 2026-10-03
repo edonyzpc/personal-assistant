@@ -68,6 +68,8 @@ export interface PaAgentModelInput {
     transcript: PaAgentMessage[];
     hostContext?: Record<string, unknown>;
     runtimeInstruction?: string;
+    /** Explicit Harness protocol supplied by a trusted producer, separate from feedback/materials. */
+    currentProtocol?: string;
     toolMode?: PaAgentToolMode;
     controlSnapshot?: AgentControlSnapshot;
     signal?: AbortSignal;

@@ -4,6 +4,8 @@ import { canonicalContextJsonAsync, stringifyContextAsync, cloneContextJsonAsync
     from '../src/ai-services/context/PaAgentContextSerialization';
 import { stableJson, prepareVaultObservationProjection } from '../src/ai-services/vault-observation-evidence';
 import type { PaAgentMessage } from '../src/ai-services/chat-types';
+import { encodeToolResultTextSteps } from '../src/ai-services/context/PaAgentContextTextEncoding';
+import { prepareContextSteps } from '../src/ai-services/context/clone-utils';
 
 function projectionInput(): PaAgentContextManagerInput {
     const transcript: PaAgentMessage[] = [];
@@ -25,6 +27,19 @@ function projectionInput(): PaAgentContextManagerInput {
 }
 
 describe('cooperative context preparation', () => {
+    it('services native events and cancellation while scanning a giant tool result for lossless encoding', async () => {
+        const body = 'Long supporting sentence.\r\n'.repeat(20_000) + 'ONLY_OPERATION_ID_884';
+        let eventHandled = false;
+        setTimeout(() => { eventHandled = true; }, 0);
+        const encoded = await prepareContextSteps(encodeToolResultTextSteps(body));
+        expect(eventHandled).toBe(true);
+        expect(encoded).toContain('ONLY_OPERATION_ID_884');
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 0);
+        await expect(prepareContextSteps(encodeToolResultTextSteps(body), controller.signal))
+            .rejects.toMatchObject({ name: 'AbortError' });
+    });
+
     it('admits the first source-free request when the native authority fence is available', async () => {
         const projection = await prepareVaultObservationProjection({ transcript: [], history: [],
             validationMode: 'read_snapshot', getAuthorityEpoch: () => 'authority-1',

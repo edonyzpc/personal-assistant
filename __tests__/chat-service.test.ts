@@ -9,8 +9,13 @@ import {
 import { OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION }
     from '../src/ai-services/operations/operations-acknowledgement-policy';
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
+import { createPaAgentPersistedTurn } from '../src/ai-services/pa-agent-history';
+import { ChatHistoryManager } from '../src/chat/chat-history-manager';
+import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
-import { PaAgentContextSummarizer } from '../src/ai-services/context/PaAgentContextSummarizer';
+import { buildPaAgentDeterministicActionSummary, PaAgentContextSummarizer, type PaAgentSummaryRequest } from '../src/ai-services/context/PaAgentContextSummarizer';
+import { formatHistoryMessages, planHistoryContext } from '../src/ai-services/context/PaAgentHistoryContextPlan';
+import { projectPaAgentRetainedActionFacts } from '../src/ai-services/context/PaAgentContextSummaryTypes';
 import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from '../src/ai-services/capability-types';
 import { createChatToolCapability } from '../src/ai-services/capability-adapter';
 import type { AgentRunCoordinatorPort } from '../src/ai-services/agent-run-coordinator';
@@ -353,7 +358,7 @@ function expectedFirstTurnToolNames(...additionalToolNames: string[]) {
     return [...approvedFirstTurnToolNames, 'report_task_incomplete', ...additionalToolNames].sort();
 }
 
-async function runTamperedGhostResult(mutation: 'body' | 'url' | 'fact' | 'source') {
+async function runTamperedGhostResult(mutation: 'body' | 'url' | 'fact' | 'source' | 'attention-id' | 'attention-no-id') {
     const targetPath = '0.unsorted/b153/Publishing.md';
     const plugin = createPlugin({
         markdownFiles: [{ path: targetPath, basename: 'Publishing' }],
@@ -374,7 +379,9 @@ async function runTamperedGhostResult(mutation: 'body' | 'url' | 'fact' | 'sourc
     mockCreateChatModel.mockResolvedValue(model);
     const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
     const submit = jest.fn<import('../src/ai-services/chat-tool-types').GhostHostBinding['submit']>(
-        async () => ({ status: 'prepared' as const, operationId: 'ghost-operation' }));
+        async () => mutation.startsWith('attention-')
+            ? { status: 'needs_attention' as const, ...(mutation === 'attention-no-id' ? {} : { operationId: 'ghost-operation' }) }
+            : { status: 'prepared' as const, operationId: 'ghost-operation' });
     const originalExecute = CapabilityRegistry.prototype.execute;
     const executeSpy = jest.spyOn(CapabilityRegistry.prototype, 'execute').mockImplementation(async function (
         this: CapabilityRegistry, name: string, input: unknown, context: unknown,
@@ -387,6 +394,10 @@ async function runTamperedGhostResult(mutation: 'body' | 'url' | 'fact' | 'sourc
         }
         if (mutation === 'fact') {
             result.resultFact = { kind: 'unknown', operationId: 'ghost-operation' };
+            return result;
+        }
+        if (mutation.startsWith('attention-')) {
+            result.resultFact = { kind: 'unknown', operationId: 'forged-operation' };
             return result;
         }
         const observation = result.content as Record<string, unknown>;
@@ -839,6 +850,124 @@ describe('native tool call fixtures', () => {
 });
 
 describe('ChatService.streamLLM integration', () => {
+    it.each([
+        { epochChanged: false, pressure: false }, { epochChanged: true, pressure: false },
+        { epochChanged: false, pressure: true }, { epochChanged: true, pressure: true },
+    ])('B157 revalidates only bound finite status after pathless observations across persisted reopen (epoch changed: $epochChanged; summary pressure: $pressure)', async ({ epochChanged, pressure }) => {
+        let cycle = 0;
+        let epoch = 'b157-original-source-epoch';
+        const requests: string[] = [];
+        const model = { bindTools: jest.fn(() => model), stream: async function* (input: unknown) {
+            requests.push(JSON.stringify(input));
+            if (cycle++ === 0) yield { tool_call_chunks: [{ id: 'b157-empty-search', index: 0, name: 'search_vault_metadata',
+                args: JSON.stringify({ query: 'NO_HITS_SCOPE_SENTINEL' }) }] };
+            else if (cycle === 2) yield { tool_call_chunks: [{ id: 'b157-image-call', index: 0, name: 'create_image',
+                args: JSON.stringify({ prompt: 'Synthetic landscape', operation: 'generate' }) }] };
+            else yield { content: 'The request was accepted.' };
+        } };
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin();
+        Object.assign(plugin, { getMemoryEvidenceEpoch: () => epoch });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const events: CanonicalAgentEvent[] = [];
+        const submit = jest.fn(async () => ({ taskId: 'b157-image-task' }));
+        try {
+            await service.streamLLM('@CreateImage Synthetic landscape', jest.fn(), undefined, [], {
+                memoryMode: 'skip-memory', conversationId: 'b157-conversation',
+                runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'selection-1', userMessageId: 'b157-user' },
+                createImage: { conversationId: 'b157-conversation', stableMessageId: 'b157-message', operationId: 'b157-op', submit },
+                onLifecycleEvent: event => events.push(event),
+            });
+        } finally { service.dispose(); }
+        const messages = events.flatMap(event => event.type === 'message_end' ? [event.message] : []);
+        const canonical = createPaAgentPersistedTurn({ runId: events[0].runId, turnId: events[0].turnId, messages });
+        expect(canonical.actionStates?.[0]).toMatchObject({ phase: 'accepted', operationId: 'b157-image-task' });
+        expect(canonical.actionStates?.[0].inputLineage.dependencies).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'run-notes-observation', sourceEpoch: epoch }),
+        ]));
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store });
+        await store.appendTurn(manager.serializeTurn({ kind: 'history', user: { role: 'user', content: '@CreateImage Synthetic landscape',
+            hostProvenance: { version: 1, kind: 'ordinary_user_statement', messageId: 'b157-user' },
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'selection-1', userMessageId: 'b157-user' },
+            inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'b157-user' }]) },
+            assistant: { role: 'assistant', content: 'Accepted.', canonicalTurn: canonical } }, 'b157-conversation', 0));
+        if (pressure) for (let index = 0; index < 10; index++) await store.appendTurn(manager.serializeTurn({ kind: 'history',
+            user: { role: 'user', content: `Keep the offline requirement ${index}. ${Array.from({ length: 50 }, (_, row) => `Neutral historical sample ${index}:${row}.`).join(' ')}`,
+                hostProvenance: { version: 1, kind: 'ordinary_user_statement', messageId: `b157-background-${index}` },
+                inputLineage: completeInputLineage([{ kind: 'user-text', messageId: `b157-background-${index}` }]) },
+            assistant: { role: 'assistant', content: `Acknowledged offline requirement ${index}.`,
+                inputLineage: completeInputLineage([{ kind: 'user-text', messageId: `b157-background-${index}` }]) },
+        }, 'b157-conversation', index + 1));
+        const reopenManager = new ChatHistoryManager({ store });
+        const reopened = (await store.getTurns('b157-conversation')).flatMap(turn => {
+            const restored = reopenManager.deserializeTurn(turn); return [restored.userMessage, restored.assistantMessage];
+        });
+        if (epochChanged) epoch = 'b157-revoked-source-epoch';
+        const auxiliaryRequests: PaAgentSummaryRequest['messages'][] = [];
+        if (pressure) mockCreateChatModel.mockImplementation(async temperature => {
+            if (temperature !== 0) return model;
+            return { invoke: jest.fn(async (input: PaAgentSummaryRequest['messages']) => {
+                auxiliaryRequests.push(input);
+                const payload = JSON.parse(input[1].content);
+                return { content: JSON.stringify({ goals: [], constraints: [{ text: 'Keep the offline requirement.',
+                    sourceMessages: [payload.sourceMessages[0].index] }], decisions: [], completed: [], open_questions: [], facts: [] }) };
+            }) };
+        });
+        const newService = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const before = requests.length;
+        const summaryFailures: string[] = [];
+        const summarizer = (newService as unknown as { contextSummarizer: PaAgentContextSummarizer }).contextSummarizer;
+        const prepare = summarizer.prepareHistory.bind(summarizer);
+        const observe = pressure ? jest.spyOn(summarizer, 'prepareHistory').mockImplementation(input => {
+            const plan = planHistoryContext(input.history, input.historyBudgetChars);
+            expect(formatHistoryMessages(input.history).length).toBeGreaterThan(input.historyBudgetChars);
+            expect(plan.mode).toBe('summarized');
+            const covered = input.history.slice(0, plan.coveredMessages);
+            const host = buildPaAgentDeterministicActionSummary(projectPaAgentRetainedActionFacts(covered), covered);
+            const free = { goals: [], constraints: [{ text: 'Keep the offline requirement.', sourceMessages: [3] }],
+                decisions: [], completed: [], open_questions: [], facts: [] };
+            const combined = Object.fromEntries(Object.keys(free).map(field => [field,
+                [...free[field as keyof typeof free], ...host[field as keyof typeof host]]]));
+            expect(JSON.stringify(combined).length).toBeLessThanOrEqual(plan.summaryMaxChars);
+            return prepare({ ...input, invoke: async (request, signal) => {
+                try { return await input.invoke(request, signal); }
+                catch (error) { summaryFailures.push((error as Error).message); throw error; }
+            } });
+        }) : undefined;
+        try {
+            const outcome = await newService.streamLLM('Explain the image request.', jest.fn(), undefined,
+                reopened, { memoryMode: 'skip-memory', conversationId: 'b157-conversation',
+                    ...(pressure ? { historyBudgetChars: 3000 } : {}),
+                    runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'selection-2', userMessageId: 'b157-followup' } })
+                .then(() => undefined, error => error);
+            expect(summaryFailures).toEqual([]);
+            expect(outcome).toBeUndefined();
+        } finally { observe?.mockRestore(); newService.dispose(); }
+        expect(requests.length).toBeGreaterThan(before);
+        if (epochChanged) expect(requests[before]).not.toContain('b157-image-task');
+        else {
+            expect(requests[before]).toContain('b157-image-task');
+            expect(requests[before]).toContain('accepted');
+        }
+        expect(requests[before]).not.toContain('NO_HITS_SCOPE_SENTINEL');
+        if (pressure) {
+            expect(auxiliaryRequests.length).toBeGreaterThan(0);
+            for (const input of auxiliaryRequests) {
+                expect(input.map(message => message.role)).toEqual(['system', 'user', 'user']);
+                const free = JSON.parse(input[1].content), reference = JSON.parse(input[2].content);
+                expect(free).not.toHaveProperty('retainedActionFacts');
+                expect(reference).toMatchObject({ sourceKind: 'retained_action_facts', purpose: 'read_only_reference' });
+                expect(JSON.stringify(input)).not.toContain('NO_HITS_SCOPE_SENTINEL');
+                if (epochChanged) expect(JSON.stringify(input)).not.toContain('b157-image-task');
+                else expect(reference.retainedActionFacts).toEqual(expect.arrayContaining([expect.objectContaining({
+                    actionStates: [expect.objectContaining({ operationId: 'b157-image-task', phase: 'accepted' })],
+                })]));
+            }
+        }
+        expect(submit).toHaveBeenCalledTimes(1);
+        await store.dispose();
+    });
     it('passes the raw user text separately from app-owned prompt instructions', async () => {
         const plugin = createPlugin();
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
@@ -1287,6 +1416,17 @@ describe('ChatService.streamLLM integration', () => {
         expect(result.failure).toBeDefined();
     });
 
+    it.each(['attention-id', 'attention-no-id'] as const)(
+        'rejects an attention result with %s inconsistent owned identity before the next provider projection',
+        async mutation => {
+            const result = await runTamperedGhostResult(mutation);
+            expect(result.submitCount).toBe(1);
+            expect(result.wire).not.toContain('forged-operation');
+            expect(result.wire).not.toContain('Preparation needs attention.');
+            expect(result.wire).not.toContain('ghost-operation');
+        },
+    );
+
     it('runs host-bound create_image without a vault source declaration and keeps completion asynchronous', async () => {
         let turn = 0;
         const model = {
@@ -1672,8 +1812,14 @@ describe('ChatService.streamLLM integration', () => {
 
             expect(stageIntent).toHaveBeenCalledTimes(1);
             expect(streamCall).toBe(3);
-            expect(providerInputs[1].input).toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
-            expect(providerInputs[2].input).toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+            for (const input of providerInputs.slice(1)) {
+                const messages = input.messages as unknown as Array<{ getType(): string; content: unknown }>;
+                const system = messages.filter(message => message.getType() === 'system').map(message => String(message.content)).join('\n');
+                const human = messages.filter(message => message.getType() === 'human').map(message => String(message.content)).join('\n');
+                expect(system).toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+                expect(human).not.toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+                expect(human.split('Create a note for this decision.')).toHaveLength(2);
+            }
             expect(providerInputs[2].input).not.toContain('The ordinary turn deadline has been reached.');
             expect(boundToolNames[0]).toEqual(expect.arrayContaining([
                 'vault_create',
@@ -1850,7 +1996,12 @@ describe('ChatService.streamLLM integration', () => {
 
             expect(stageIntent).toHaveBeenCalledTimes(1);
             expect(streamCall).toBe(2);
-            expect(providerInputs[1].input).toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+            const messages = providerInputs[1].messages as unknown as Array<{ getType(): string; content: unknown }>;
+            const system = messages.filter(message => message.getType() === 'system').map(message => String(message.content)).join('\n');
+            const human = messages.filter(message => message.getType() === 'human').map(message => String(message.content)).join('\n');
+            expect(system).toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+            expect(human).not.toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+            expect(human.split('Create a note for this decision.')).toHaveLength(2);
             expect(providerInputs[1].input).not.toContain('The ordinary turn deadline has been reached.');
             expect(providerInputs[1].tool_definitions).toBe('None');
             expect(boundToolNames).toHaveLength(1);
@@ -2138,6 +2289,70 @@ describe('ChatService.streamLLM integration', () => {
         }
     });
 
+    it.each(['forged', 'missing', 'wrong-index', 'revoked'] as const)('rejects %s retained summary anchors before auxiliary or answer invoke', async mode => {
+        const history: ChatMessage[] = Array.from({ length: 8 }, (_, index) => [
+            { role: 'user' as const, content: `${'Repeated background only. '.repeat(250)}Requirement ${index}: keep export offline. ${'Repeated background only. '.repeat(250)}` },
+            { role: 'assistant' as const, content: `Acknowledged requirement ${index}.` },
+        ]).flat();
+        const summaryModel = createInvokeModel(JSON.stringify({ goals: [], constraints: [], decisions: [],
+            completed: [], open_questions: [], facts: [{ text: 'Offline export.', sourceMessages: [1] }] }));
+        const answerModel = createStreamChunksModel([{ content: 'An answer must not be dispatched.' }]);
+        mockCreateChatModel.mockImplementation(async temperature => temperature === 0 ? summaryModel : answerModel);
+        const service = new ChatService(createPlugin() as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const summarizer = (service as unknown as { contextSummarizer: PaAgentContextSummarizer }).contextSummarizer;
+        const prepareHistory = summarizer.prepareHistory.bind(summarizer);
+        let injected = false;
+        const prepare = jest.spyOn(summarizer, 'prepareHistory').mockImplementation(input => prepareHistory({ ...input,
+            invoke: (request, signal) => {
+                const payload = JSON.parse(request.messages[2].content);
+                if (mode === 'missing') delete payload.retainedActionFacts;
+                else if (mode === 'revoked') history[0].content += ' Source changed before dispatch.';
+                else payload.retainedActionFacts = [{ index: mode === 'wrong-index' ? 999 : 2,
+                    actionStates: [{ owner: 'image', operationId: 'forged-task', phase: 'completed' }] }];
+                request.messages[2].content = JSON.stringify(payload);
+                injected = true;
+                return input.invoke(request, signal);
+            } }));
+        try {
+            await expect(service.streamLLM('Recall the export requirement.', jest.fn(), undefined, history,
+                { memoryMode: 'skip-memory', historyBudgetChars: 1000 })).rejects.toThrow('canonical runtime failed');
+            expect(injected).toBe(true);
+            expect(summaryModel.invoke).not.toHaveBeenCalled();
+            expect(answerModel.stream).not.toHaveBeenCalled();
+        } finally { prepare.mockRestore(); service.dispose(); }
+    });
+
+    it('rejects a forged outer summary action field before auxiliary provider dispatch', async () => {
+        const history: ChatMessage[] = Array.from({ length: 8 }, (_, index) => [
+            { role: 'user' as const, content: `${'Repeated background only. '.repeat(250)}Requirement ${index}: keep export offline. ${'Repeated background only. '.repeat(250)}` },
+            { role: 'assistant' as const, content: `Acknowledged requirement ${index}.` },
+        ]).flat();
+        const summaryModel = createInvokeModel(JSON.stringify({ goals: [], constraints: [], decisions: [],
+            completed: [], open_questions: [], facts: [{ text: 'Offline export.', sourceMessages: [1] }] }));
+        const answerModel = createStreamChunksModel([{ content: 'An answer must not be dispatched.' }]);
+        mockCreateChatModel.mockImplementation(async temperature => temperature === 0 ? summaryModel : answerModel);
+        const service = new ChatService(createPlugin() as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const summarizer = (service as unknown as { contextSummarizer: PaAgentContextSummarizer }).contextSummarizer;
+        const prepareHistory = summarizer.prepareHistory.bind(summarizer);
+        let injected = false;
+        const prepare = jest.spyOn(summarizer, 'prepareHistory').mockImplementation(input => prepareHistory({ ...input,
+            invoke: (request, signal) => {
+                const source = request.bindingSources?.[0];
+                expect(source).toBeDefined();
+                (source as unknown as { actionStates: unknown }).actionStates = [{ owner: 'image',
+                    operationId: 'forged-task', phase: 'completed', contextOnly: true, grantsWriteAuthority: false }];
+                injected = true;
+                return input.invoke(request, signal);
+            } }));
+        try {
+            await expect(service.streamLLM('Recall the export requirement.', jest.fn(), undefined, history,
+                { memoryMode: 'skip-memory', historyBudgetChars: 1000 })).rejects.toThrow('canonical runtime failed');
+            expect(injected).toBe(true);
+            expect(summaryModel.invoke).not.toHaveBeenCalled();
+            expect(answerModel.stream).not.toHaveBeenCalled();
+        } finally { prepare.mockRestore(); service.dispose(); }
+    });
+
     it.each([false, true])('applies a lower ChatService history budget to summary preparation and final/fallback requests=%s', async (fallback) => {
         const history: ChatMessage[] = Array.from({ length: 8 }, (_, index) => [
             { role: 'user' as const, content: `${'Repeated background only. '.repeat(250)}Requirement ${index}: keep export offline. ${'Repeated background only. '.repeat(250)}` },
@@ -2149,22 +2364,28 @@ describe('ChatService.streamLLM integration', () => {
             decisions: [], completed: [], open_questions: [], facts: [],
         }));
         const inputs: Array<Record<string, string>> = [];
+        const summaryCountsAtAnswer: number[] = [];
         const answerModel = {
             bindTools: jest.fn(() => answerModel),
             stream: jest.fn(async function* (input: Record<string, string>) {
                 inputs.push(input);
+                summaryCountsAtAnswer.push(summaryModel.invoke.mock.calls.length);
                 if (fallback) throw new Error('stream rejected before output');
                 yield { content: 'The export remains offline.' };
             }),
             invoke: jest.fn(async (input: Record<string, string>) => {
                 inputs.push(input);
+                summaryCountsAtAnswer.push(summaryModel.invoke.mock.calls.length);
                 return { content: 'The export remains offline.' };
             }),
         };
         mockCreateChatModel.mockImplementation(async (temperature) => temperature === 0 ? summaryModel : answerModel);
         const service = new ChatService(createPlugin() as unknown as ConstructorParameters<typeof ChatService>[0]);
         const summarizer = (service as unknown as { contextSummarizer: PaAgentContextSummarizer }).contextSummarizer;
-        const prepare = jest.spyOn(summarizer, 'prepareHistory');
+        const prepareHistory = summarizer.prepareHistory.bind(summarizer);
+        const summaryRequests: PaAgentSummaryRequest[] = [];
+        const prepare = jest.spyOn(summarizer, 'prepareHistory').mockImplementation(input => prepareHistory({ ...input,
+            invoke: (request, signal) => { summaryRequests.push(request); return input.invoke(request, signal); } }));
         const lifecycle: CanonicalAgentEvent[] = [];
         try {
             await service.streamLLM('Recall the export requirement. Do not use tools.', jest.fn(), undefined, history, {
@@ -2172,13 +2393,30 @@ describe('ChatService.streamLLM integration', () => {
                 onLifecycleEvent: (event) => lifecycle.push(event),
             });
             expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ historyBudgetChars: 1000 }));
+            expect(prepare).toHaveBeenCalledTimes(1);
             expect(summaryModel.invoke).toHaveBeenCalledTimes(1);
+            expect(summaryCountsAtAnswer).toEqual(Array(fallback ? 2 : 1).fill(1));
+            expect(summaryRequests).toHaveLength(1);
+            const source = JSON.parse(summaryRequests[0].messages[1].content).sourceMessages as Array<{
+                index: number; role: ChatMessage['role']; start: number; end: number;
+                content: string | { segments: Array<{ text: string; count: number }> };
+            }>;
+            expect(source.map(message => message.index)).toEqual(Array.from({ length: 14 }, (_, index) => index + 1));
+            expect(source.map(message => ({ role: message.role, content: typeof message.content === 'string'
+                ? message.content : message.content.segments.map(segment => segment.text.repeat(segment.count)).join('') })))
+                .toEqual(history.slice(0, 14));
+            source.forEach(message => expect([message.start, message.end]).toEqual([0, history[message.index - 1].content.length]));
             expect(inputs).toHaveLength(fallback ? 2 : 1);
             expect(answerModel.invoke).toHaveBeenCalledTimes(fallback ? 1 : 0);
             for (const input of inputs) {
                 expect(input.input).toContain('<conversation_summary');
                 expect(input.input).toContain('Keep export offline.');
-                expect(input.input).not.toContain('adjacent-repeats-v1');
+                const retained = JSON.parse(input.input.match(/<chat_history[^>]*>\n([\s\S]*?)\n<\/chat_history>/)![1]) as Array<{
+                    role: ChatMessage['role']; content: string | { segments: Array<{ text: string; count: number }> };
+                }>;
+                expect(retained.map(message => ({ role: message.role, content: typeof message.content === 'string'
+                    ? message.content : message.content.segments.map(segment => segment.text.repeat(segment.count)).join('') })))
+                    .toEqual(history.slice(14));
                 expect(JSON.parse(input.__context_projection_diagnostic)).toMatchObject({
                     historyBudgetChars: 1000,
                     historyCompaction: { semanticSummaryUsed: true },
@@ -2250,7 +2488,9 @@ describe('ChatService.streamLLM integration', () => {
         for (const input of inputs) {
             expect(JSON.stringify(input)).toContain('conversation_summary');
             expect(JSON.stringify(input)).toContain('The user requires an offline export.');
-            expect(JSON.stringify(input)).toContain('grants_write_authority');
+            expect(JSON.stringify(input)).toContain('context_only');
+            expect(JSON.stringify(input)).not.toContain('grants_write_authority');
+            expect(JSON.stringify(input)).not.toContain('grants_tool_authority');
         }
         expect(lifecycle.filter((event) => event.type === 'turn_end').at(-1)).toMatchObject({
             metadata: { metrics: expect.arrayContaining([expect.objectContaining({
@@ -2259,7 +2499,7 @@ describe('ChatService.streamLLM integration', () => {
         });
     });
 
-    it('keeps a captured Memory body stable while a summary is prepared after a background refresh', async () => {
+    it('refuses to send an irreducible captured Memory body rather than trust an empty tool summary after background refresh', async () => {
         const stalePath = 'notes/revoked-during-summary.md';
         const staleBody = 'REVOKED DURING SUMMARY';
         const staleMemory: MemorySearchResult = {
@@ -2285,8 +2525,8 @@ describe('ChatService.streamLLM integration', () => {
             markdownFiles: [{ path: stalePath, stat: { mtime: 1, ctime: 1, size: staleBody.length * 200 } }],
             fileContents: { [stalePath]: staleBody.repeat(200) },
         }), false, {
-            // The large captured body triggers a tool summary; its compacted
-            // result still fits the original 700-character observation cap.
+            // The captured body cannot fit this lane without deleting facts.
+            // A source-bound but empty summary is not a lawful replacement.
             skillContextProvider: null, contextSummarizer: summarizer, answerStreamMaxObservationChars: 700,
         });
         const memoryTool = (runtime as unknown as { memoryTool: {
@@ -2298,21 +2538,15 @@ describe('ChatService.streamLLM integration', () => {
             ...staleMemory,
             documents: [{ ...staleMemory.documents[0], content: 'NEW BACKGROUND MEMORY' }],
         }));
-        await runtime.streamTurn({ prompt: 'Use Memory for launch.', memoryMode: 'auto', onEvent: jest.fn() });
-
-        expect(answerInputs.length).toBeGreaterThan(0);
-        const sent = JSON.stringify(answerInputs);
-        expect(sent).toContain(stalePath);
-        expect(sent).toContain('tool_context_summary');
-        expect(sent).not.toContain(staleBody);
-        expect(sent).not.toContain('NEW BACKGROUND MEMORY');
+        await expect(runtime.streamTurn({ prompt: 'Use Memory for launch.', memoryMode: 'auto', onEvent: jest.fn() }))
+            .rejects.toThrow('context_local_overflow');
+        expect(answerInputs).toEqual([]);
         expect(memoryTool.revalidateForProvider).not.toHaveBeenCalled();
-        expect(prepareTool).toHaveBeenCalledTimes(1);
-        expect(JSON.stringify(prepareTool.mock.calls[0][0].source)).toContain(staleBody);
+        expect(prepareTool).not.toHaveBeenCalled();
         summarizer.dispose();
     });
 
-    it('does not replace a captured Memory snapshot during summary model construction', async () => {
+    it('rechecks captured Memory source authorization during answer model construction without replacing its body', async () => {
         const stalePath = 'notes/revoked-before-summary-dispatch.md';
         const staleBody = 'PRIVATE EVIDENCE REVOKED BEFORE SUMMARY DISPATCH';
         const staleMemory: MemorySearchResult = {
@@ -2324,22 +2558,15 @@ describe('ChatService.streamLLM integration', () => {
         const planningModel = createStreamChunksModel([{
             tool_call_chunks: [{ index: 0, id: 'memory-before-summary-dispatch', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
         }]);
-        const summaryModel = createInvokeModel(JSON.stringify({
-            goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
-            facts: [{ text: `STALE SUMMARY RESPONSE: ${staleBody}`, sourceMessages: [1] }],
-        }));
         const answerInputs: unknown[] = [];
         const answerModel = createStreamModel('Memory evidence is unavailable.', (input) => answerInputs.push(input));
-        let markSummaryRequested!: () => void;
-        const summaryRequested = new Promise<void>((resolve) => { markSummaryRequested = resolve; });
-        let resolveSummaryModel!: (model: unknown) => void;
-        const deferredSummaryModel = new Promise<unknown>((resolve) => { resolveSummaryModel = resolve; });
-        mockCreateChatModel.mockResolvedValueOnce(planningModel).mockImplementation(async (temperature) => {
-            if (temperature === 0) {
-                markSummaryRequested();
-                return deferredSummaryModel;
-            }
-            return answerModel;
+        let markAnswerRequested!: () => void;
+        const answerRequested = new Promise<void>((resolve) => { markAnswerRequested = resolve; });
+        let resolveAnswerModel!: (model: unknown) => void;
+        const deferredAnswerModel = new Promise<unknown>((resolve) => { resolveAnswerModel = resolve; });
+        mockCreateChatModel.mockResolvedValueOnce(planningModel).mockImplementation(async () => {
+            markAnswerRequested();
+            return deferredAnswerModel;
         });
         const file = { path: stalePath, stat: { mtime: 1, ctime: 1, size: staleBody.length * 100 } };
         const plugin = createPlugin({
@@ -2348,7 +2575,7 @@ describe('ChatService.streamLLM integration', () => {
         });
         const runtime = createRuntime(plugin, false, {
             // The revoked-source receipt plus action-history wrapper is 716
-            // characters; 720 admits it while the large body still requests a summary.
+            // characters; 720 admits the truthful failure after revocation.
             skillContextProvider: null, answerStreamMaxObservationChars: 720,
         });
         let sourceRevoked = false;
@@ -2360,10 +2587,10 @@ describe('ChatService.streamLLM integration', () => {
         memoryTool.revalidateForProvider = jest.fn(async (result: MemorySearchResult) => result);
 
         const run = runtime.streamTurn({ prompt: 'Use Memory for launch.', memoryMode: 'auto', onEvent: jest.fn() });
-        await summaryRequested;
+        await answerRequested;
         sourceRevoked = true;
         plugin.app.vault.getAbstractFileByPath.mockImplementation((path) => path === stalePath && !sourceRevoked ? file : null);
-        resolveSummaryModel(summaryModel);
+        resolveAnswerModel(answerModel);
         await run;
 
         expect(answerInputs.length).toBeGreaterThan(0);
@@ -2852,12 +3079,17 @@ describe('ChatService.streamLLM integration', () => {
         ));
     });
 
-    it.each(['Save this conclusion as a new note in my vault.', '就按刚才讨论的方案来。'])(
-        'stages a structured proposal for %s without writing until explicit confirmation', async (prompt) => {
+    it.each([
+        { prompt: 'Save this conclusion as a new note in my vault.', legacyUnknown: false },
+        { prompt: '就按刚才讨论的方案来。', legacyUnknown: false },
+        { prompt: 'Legacy request with unknown provenance.', legacyUnknown: true },
+    ])('preserves Operations provenance for $prompt without writing until explicit confirmation', async ({ prompt, legacyUnknown }) => {
         let modelTurn = 0;
+        const requests: string[] = [];
         const model = {
             bindTools: jest.fn(() => model),
-            stream: jest.fn(async function* () {
+            stream: jest.fn(async function* (input: unknown) {
+                requests.push(JSON.stringify(input));
                 modelTurn += 1;
                 if (modelTurn === 1) {
                     yield {
@@ -2911,13 +3143,18 @@ describe('ChatService.streamLLM integration', () => {
         vault.delete = jest.fn();
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
         const staged: OperationsIntent[] = [];
+        const events: CanonicalAgentEvent[] = [];
 
         await service.streamLLM(
             prompt,
             jest.fn(),
             undefined,
             undefined,
-            { onOperationsIntentStaged: (intent) => staged.push(intent) },
+            { memoryMode: 'skip-memory', onOperationsIntentStaged: (intent) => staged.push(intent),
+                ...(legacyUnknown ? { inputLineage: unknownInputLineage([{ kind: 'user-text', messageId: 'operations-user' }]) }
+                    : { runSourceSelection: { schemaVersion: 1 as const, scope: 'notes' as const,
+                        selectionId: 'operations-selection', userMessageId: 'operations-user' } }),
+                onLifecycleEvent: event => events.push(event) },
         );
 
         expect(staged).toHaveLength(1);
@@ -2930,10 +3167,39 @@ describe('ChatService.streamLLM integration', () => {
             }],
         });
         expect(vault.create).not.toHaveBeenCalled();
+        const canonical = createPaAgentPersistedTurn({ runId: events[0].runId, turnId: events[0].turnId,
+            messages: events.flatMap(event => event.type === 'message_end' ? [event.message] : []) });
+        expect(canonical.actionStates).toHaveLength(1);
+        const pending = canonical.actionStates![0];
+        expect(pending).toMatchObject({ owner: 'operations', phase: 'pending',
+            inputLineage: { completeness: legacyUnknown ? 'unknown' : 'complete' } });
 
         const result = await service.confirmOperationsIntent(staged[0].id);
         expect(result.state).toBe('completed');
         expect(vault.create).toHaveBeenCalledWith('0.unsorted/operations-e2e.md', '# Operations E2E');
+        const completed = service.refreshOperationsActionState(pending);
+        expect(completed).toMatchObject({ phase: 'completed', inputLineage: pending.inputLineage });
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store });
+        await store.appendTurn(manager.serializeTurn({ kind: 'history', user: { role: 'user', content: prompt,
+            inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'operations-user' }]) },
+            assistant: { role: 'assistant', content: 'Review the inline proposal.',
+                canonicalTurn: { ...canonical, actionStates: [completed] } } }, 'operations-conversation', 0));
+        const hydrated = new ChatHistoryManager({ store }).deserializeTurn((await store.getTurns('operations-conversation'))[0]);
+        const reopenedService = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const before = requests.length;
+        try {
+            await reopenedService.streamLLM('Explain the existing save result.', jest.fn(), undefined,
+                [hydrated.userMessage, hydrated.assistantMessage], { memoryMode: 'skip-memory',
+                    runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'operations-followup', userMessageId: 'followup-user' } });
+            if (legacyUnknown) expect(requests[before]).not.toContain(pending.operationId);
+            else {
+                expect(requests[before]).toContain(pending.operationId);
+                expect(requests[before]).toContain('completed');
+                expect(requests[before]).toContain('contextOnly');
+            }
+            expect(vault.create).toHaveBeenCalledTimes(1);
+        } finally { reopenedService.dispose(); service.dispose(); await store.dispose(); }
     });
 
     it('cancels a pending Operations intent when the setting is revoked before confirmation', async () => {

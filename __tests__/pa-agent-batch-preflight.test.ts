@@ -45,6 +45,44 @@ function setup(preflightBatch?: PaAgentToolExecutor['preflightBatch'], maxToolCa
 }
 
 describe('complete tool batch Host preflight', () => {
+    it.each([
+        ['read_only', 'parallel'], ['side_effect', 'parallel'], [undefined, 'parallel'],
+        ['read_only', 'sequential'], ['side_effect', 'sequential'], [undefined, 'sequential'],
+    ] as const)('uses Host retry safety %s for %s execution and successful reuse, overriding result claims', async (safety, mode) => {
+        const f = setup();
+        f.executor.getRetrySafety = () => safety;
+        f.mode.mockReturnValue(mode);
+        f.execute.mockResolvedValue({ outcome: 'success', promptText: 'Completed observation',
+            metadata: { retrySafety: safety === 'read_only' ? 'side_effect' : 'read_only' } });
+        await f.dispatcher.executeBufferedToolCalls('first', 0, [call('a')], 'normal', undefined);
+        await f.dispatcher.executeBufferedToolCalls('second', 1, [call('b')], 'normal', undefined);
+        expect(f.results.map(result => result.outcome)).toEqual(['success', 'reused_result']);
+        for (const result of f.results) {
+            if (safety) expect(result.metadata?.retrySafety).toBe(safety);
+            else expect(result.metadata).not.toHaveProperty('retrySafety');
+        }
+        expect(f.execute).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['read_only', 'side_effect', undefined] as const)('preserves timeout effect state but stamps only proved retry safety %s', async safety => {
+        jest.useFakeTimers();
+        try {
+            const f = setup();
+            f.executor.getRetrySafety = () => safety;
+            f.executor.getTimeoutMs = () => 10;
+            f.execute.mockImplementation(() => new Promise(() => undefined));
+            const pending = f.dispatcher.executeBufferedToolCalls('timeout', 0, [call('a')], 'normal', undefined);
+            await jest.advanceTimersByTimeAsync(20);
+            await pending;
+            expect(f.results[0]).toMatchObject({ outcome: 'recoverable_error',
+                executionState: safety === 'side_effect' ? 'acceptance_unknown' : 'failed',
+                metadata: { reason: 'tool_timeout', failureReason: 'timeout' } });
+            if (safety) expect(f.results[0].metadata?.retrySafety).toBe(safety);
+            else expect(f.results[0].metadata).not.toHaveProperty('retrySafety');
+            expect(jest.getTimerCount()).toBe(0);
+        } finally { jest.useRealTimers(); }
+    });
+
     function admitted(guard?: TaskSourceReadGuard) {
         return { kind: 'admitted' as const, taskSourceReadGuard: guard };
     }
@@ -82,11 +120,13 @@ describe('complete tool batch Host preflight', () => {
         expect(f.dispatcher.reuseCount).toBe(1);
     });
 
-    it('blocks blind replay when a side effect has unknown acceptance', async () => {
+    it.each(['acceptance_unknown', 'partially_succeeded'] as const)('blocks blind replay when a side effect is %s', async executionState => {
         const f = setup();
+        f.executor.getRetrySafety = () => 'side_effect';
         f.execute.mockResolvedValueOnce({
             outcome: 'recoverable_error', promptText: 'Submission status unknown',
-            executionState: 'acceptance_unknown',
+            executionState,
+            metadata: { retrySafety: 'read_only' },
             recovery: { code: 'submission_unknown', allowedActions: ['query_operation'], operationId: 'op-1' },
         });
 
@@ -94,9 +134,11 @@ describe('complete tool batch Host preflight', () => {
         const repeated = await f.dispatcher.executeBufferedToolCalls('second', 1, [call('two', 'vault_write')], 'normal', undefined);
 
         expect(repeated.toolResults[0].content.metadata).toMatchObject({
-            outcome: 'recoverable_error', reason: 'unknown_replay_blocked', replayBlocked: true,
+            outcome: 'recoverable_error',
+            reason: executionState === 'acceptance_unknown' ? 'unknown_replay_blocked' : 'partial_replay_blocked',
+            replayBlocked: true, retrySafety: 'side_effect',
         });
-        expect(repeated.toolResults[0].content.promptText).toContain('Verify its status');
+        expect(repeated.toolResults[0].content.promptText).toContain(executionState === 'acceptance_unknown' ? 'Verify its status' : 'Continue only the remaining');
         expect(f.execute).toHaveBeenCalledTimes(1);
     });
 
@@ -197,10 +239,14 @@ describe('complete tool batch Host preflight', () => {
 
     it('normalizes a rejection into corrective failure without source observations or successful progress', async () => {
         const f = setup(() => ({ outcome: 'success', promptText: denied.promptText, includeInNextPrompt: false,
-            sourceRecords: [], contextUsed: [], metadata: { outcome: 'success', preflightOnly: false } }));
+            sourceRecords: [], contextUsed: [],
+            metadata: { outcome: 'success', preflightOnly: false, retrySafety: 'read_only' } }));
         await f.dispatcher.executeBufferedToolCalls('turn', 0, [call('one')], 'normal', undefined);
+        expect(f.execute).not.toHaveBeenCalled();
         expect(f.results[0]).toMatchObject({ outcome: 'policy_rejected', includeInNextPrompt: true,
-            metadata: { outcome: 'policy_rejected', preflightOnly: true, batchPreflightRejected: true } });
+            metadata: { outcome: 'policy_rejected', reason: 'batch_preflight_rejected',
+                preflightOnly: true, batchPreflightRejected: true } });
+        expect(f.results[0].metadata).not.toHaveProperty('retrySafety');
         expect(f.results[0]).not.toHaveProperty('sourceRecords');
         expect(f.results[0]).not.toHaveProperty('contextUsed');
     });

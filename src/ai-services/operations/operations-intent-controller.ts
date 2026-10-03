@@ -94,8 +94,11 @@ export class OperationsIntentController {
     private readonly pendingTtlMs: number;
     private readonly listeners = new Set<OperationsEventListener>();
     private readonly intents = new Map<string, OperationsIntent>();
-    private readonly terminalStates = new Map<string, OperationsIntentState>();
-    private readonly expiredIntentIds = new Set<string>();
+    private readonly terminalStates = new Map<string, { state: OperationsIntentState; runId: string }>();
+    /** Finite domain results for context; no note contents or undo capabilities. */
+    private readonly contextResults = new Map<string, { result: OperationsExecutionResult; runId: string }>();
+    private readonly contextUndone = new Map<string, Set<string>>();
+    private readonly expiredIntentIds = new Map<string, string>();
     private readonly expirationTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private disposed = false;
     private lifecycleEpoch = 0;
@@ -257,13 +260,29 @@ export class OperationsIntentController {
         return [...this.intents.values()].filter((intent) => intent.state === "pending");
     }
 
+    getContextResult(intentId: string, runId?: string): { execution?: OperationsExecutionResult; undoneReceiptIds: string[];
+        terminal?: OperationsIntentState | 'expired'; pending: boolean; executing: boolean } {
+        const intent = this.getIntent(intentId);
+        const completed = this.contextResults.get(intentId);
+        const terminal = this.terminalStates.get(intentId);
+        const recordedRunId = intent?.runId ?? completed?.runId ?? terminal?.runId ?? this.expiredIntentIds.get(intentId);
+        if (runId !== undefined && recordedRunId !== runId) {
+            return { undoneReceiptIds: [], pending: false, executing: false };
+        }
+        const execution = completed?.result;
+        return { ...(execution ? { execution: { ...execution, operations: execution.operations.map(operation => ({ ...operation })) } } : {}),
+            undoneReceiptIds: [...(this.contextUndone.get(intentId) ?? [])],
+            terminal: this.expiredIntentIds.has(intentId) ? 'expired' : terminal?.state,
+            pending: intent?.state === 'pending', executing: intent?.state === 'executing' };
+    }
+
     cancelIntent(intentId: string): OperationsIntent {
         this.assertUsable();
         const intent = this.requirePendingIntent(intentId);
         this.clearExpiration(intentId);
         const cancelled = replaceIntentState(intent, "cancelled");
         this.intents.delete(intentId);
-        this.terminalStates.set(intentId, "cancelled");
+        this.terminalStates.set(intentId, { state: "cancelled", runId: intent.runId });
         this.emit({ type: "intent-cancelled", intent: cancelled });
         return cancelled;
     }
@@ -311,8 +330,7 @@ export class OperationsIntentController {
         this.assertExecutionActive(lifecycleEpoch);
         const finalIntent = replaceIntentState(executing, state);
         this.intents.delete(intentId);
-        this.terminalStates.set(intentId, state);
-        this.emit({ type: "intent-state-changed", intent: finalIntent });
+        this.terminalStates.set(intentId, { state, runId: executing.runId });
         const completedRefs = results.flatMap(result => result.status === "succeeded" && result.receiptId
             ? [result.receiptId] : []);
         const remainingRefs = results.flatMap(result => result.status !== "succeeded" ? [result.operationId] : []);
@@ -324,6 +342,11 @@ export class OperationsIntentController {
                 : undefined;
         const executionResult = Object.freeze({ intentId, state, operations: Object.freeze(results),
             ...(resultFact ? { resultFact } : {}) });
+        this.contextResults.set(intentId, { runId: executing.runId, result: { intentId, state, operations: results.map(result => ({
+            operationId: result.operationId, toolCallId: result.toolCallId, name: result.name,
+            path: '', status: result.status, ...(result.receiptId ? { receiptId: result.receiptId } : {}),
+        })) } });
+        this.emit({ type: "intent-state-changed", intent: finalIntent });
         this.emit({ type: "intent-result", result: executionResult });
         return executionResult;
     }
@@ -350,6 +373,9 @@ export class OperationsIntentController {
             if (receipt.kind === "vault_create") await this.undoCreate(receipt);
             else await this.undoExisting(receipt);
             this.undoStore.markUsed(receipt.id);
+            const undone = this.contextUndone.get(receipt.intentId) ?? new Set<string>();
+            undone.add(receipt.id);
+            this.contextUndone.set(receipt.intentId, undone);
             result = {
                 receiptId,
                 operationId: receipt.operationId,
@@ -390,6 +416,8 @@ export class OperationsIntentController {
         this.expirationTimers.clear();
         this.intents.clear();
         this.terminalStates.clear();
+        this.contextResults.clear();
+        this.contextUndone.clear();
         this.expiredIntentIds.clear();
         this.undoStore.clear();
         this.emit({ type: "disposed" });
@@ -582,7 +610,7 @@ export class OperationsIntentController {
             if (this.expiredIntentIds.has(intentId)) {
                 throw new OperationsControllerError("expired", "Intent has expired.");
             }
-            const terminal = this.terminalStates.get(intentId);
+            const terminal = this.terminalStates.get(intentId)?.state;
             if (terminal === "cancelled") throw new OperationsControllerError("cancelled", "Intent was cancelled.");
             if (terminal) throw new OperationsControllerError("already_executed", "Intent has already finished.");
             throw new OperationsControllerError("expired", "Intent is missing or expired.");
@@ -602,7 +630,7 @@ export class OperationsIntentController {
         if (!intent || intent.state !== "pending") return;
         this.clearExpiration(intentId);
         this.intents.delete(intentId);
-        this.expiredIntentIds.add(intentId);
+        this.expiredIntentIds.set(intentId, intent.runId);
         this.emit({ type: "intent-expired", intentId });
     }
 

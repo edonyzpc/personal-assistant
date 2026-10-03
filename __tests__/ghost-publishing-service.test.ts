@@ -203,6 +203,30 @@ async function setup(existing = false, stableDraftPreview = false) {
 }
 
 describe("Ghost persistent publishing service", () => {
+    it('releases terminal and deleted conversation observers without scanning saves or retaining sessions', async () => {
+        const app = await setup();
+        const operation = await app.service.prepare(noteUid, undefined, app.context);
+        const persist = jest.fn(async () => true);
+        app.operations.registerContextPersistence(operation.operationId, persist, 'conversation-one');
+        let current = sealLocalOperation({ ...operation, revision: operation.revision + 1 });
+        await app.operations.save(current, operation.revision);
+        await Promise.resolve();
+        expect(persist).toHaveBeenCalledTimes(1);
+        current = sealLocalOperation({ ...current, revision: current.revision + 1 });
+        await app.operations.save(current, current.revision - 1);
+        expect(persist).toHaveBeenCalledTimes(1);
+        app.operations.registerContextPersistence(operation.operationId, persist, 'conversation-one');
+        app.operations.clearContextPersistence('conversation-two');
+        current = sealLocalOperation({ ...current, revision: current.revision + 1 });
+        await app.operations.save(current, current.revision - 1);
+        expect(persist).toHaveBeenCalledTimes(2);
+        app.operations.registerContextPersistence(operation.operationId, persist, 'conversation-one');
+        app.operations.clearContextPersistence('conversation-one');
+        current = sealLocalOperation({ ...current, revision: current.revision + 1 });
+        await app.operations.save(current, current.revision - 1);
+        expect(persist).toHaveBeenCalledTimes(2);
+        app.operations.close();
+    });
     it("uses readable versioned markers and queries both source identity formats completely", async () => {
         const app = await setup();
         const operation = await app.service.prepare(noteUid, undefined, app.context);

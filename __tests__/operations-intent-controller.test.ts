@@ -71,6 +71,23 @@ function makeController(
 }
 
 describe("OperationsIntentController", () => {
+    it('exposes the real terminal receipt synchronously at every completion event', async () => {
+        const vault = new MemoryVault();
+        const controller = makeController(vault);
+        const intent = await controller.stageIntent({ runId: 'run', turnId: 'stage', operations: [
+            { toolCallId: 'call', name: 'vault_create', input: { path: 'notes/new.md', content: 'A' } },
+        ] });
+        const observed: string[] = [];
+        controller.subscribe(event => {
+            if (event.type === 'intent-state-changed' || event.type === 'intent-result') {
+                const snapshot = controller.getContextResult(intent.id);
+                observed.push(snapshot.execution?.state ?? (snapshot.executing ? 'running' : 'lost'));
+            }
+        });
+        await controller.executeIntent(intent.id);
+        expect(observed).toEqual(['running', 'completed', 'completed']);
+        controller.dispose();
+    });
     it("stages one immutable intent with ordered virtual baselines and performs no write", async () => {
         const vault = new MemoryVault();
         vault.files.set("notes/a.md", "A");
@@ -95,6 +112,7 @@ describe("OperationsIntentController", () => {
         });
 
         expect(intent.state).toBe("pending");
+        expect(controller.getContextResult(intent.id)).toMatchObject({ pending: true, executing: false, undoneReceiptIds: [] });
         expect(intent.operations[0]).toMatchObject({ expectedBefore: "A", expectedAfter: "A\nB" });
         expect(intent.operations[1]).toMatchObject({ expectedBefore: "A\nB", expectedAfter: "A\nC" });
         expect(Object.isFrozen(intent)).toBe(true);
@@ -110,7 +128,14 @@ describe("OperationsIntentController", () => {
         expect(result.operations.map((row) => row.status)).toEqual(["succeeded", "succeeded"]);
         expect(vault.process).toHaveBeenCalledTimes(2);
         expect(vault.files.get("notes/a.md")).toBe("A\nC");
+        const contextResult = controller.getContextResult(intent.id);
+        expect(contextResult).toMatchObject({ pending: false, executing: false, terminal: 'completed', execution: { state: 'completed' } });
+        expect(contextResult.execution?.operations[0]).toEqual({ operationId: result.operations[0].operationId,
+            toolCallId: 'call-1', name: 'vault_append', path: '', status: 'succeeded', receiptId: result.operations[0].receiptId });
+        contextResult.execution!.operations[0].status = 'failed';
+        expect(controller.getContextResult(intent.id).execution?.operations[0].status).toBe('succeeded');
         controller.dispose();
+        expect(controller.getContextResult(intent.id).execution).toBeUndefined();
     });
 
     it("performs stale equality inside vault.process and preserves the user's edit", async () => {
@@ -233,6 +258,7 @@ describe("OperationsIntentController", () => {
         const firstResult = await controller.executeIntent(first.id);
         const firstReceipt = firstResult.operations[0]!.receiptId!;
         expect((await controller.undo(firstReceipt)).status).toBe("undone");
+        expect(controller.getContextResult(first.id).undoneReceiptIds).toEqual([firstReceipt]);
         expect(vault.files.get("notes/a.md")).toBe("before");
         expect((await controller.undo(firstReceipt)).status).toBe("unavailable");
 

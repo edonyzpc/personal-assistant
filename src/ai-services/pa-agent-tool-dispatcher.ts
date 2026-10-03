@@ -281,7 +281,7 @@ export class ToolExecutionDispatcher {
                 result = rejection!;
             }
             this.config.events.toolExecutionStart(turnId, toolCall.id, toolCall.name, toolCall.input, { index: toolCall.index });
-            toolResults.push(this.config.emitToolResult(turnId, toolCall, result));
+            toolResults.push(this.config.emitToolResult(turnId, toolCall, this.withHostRetrySafety(toolCall, result)));
         }
         return { toolResults, diagnostics };
     }
@@ -447,6 +447,7 @@ export class ToolExecutionDispatcher {
                         ?? await this.executeRealToolCall(turnId, turnIndex, toolCall, readGuard);
             }
 
+            executionResult = this.withHostRetrySafety(toolCall, executionResult);
             const toolResult = this.config.emitToolResult(turnId, toolCall, executionResult);
             this.rememberExecutionRecord(toolCall, executionResult);
             this.rememberSuccessfulWritingContext(toolCall, executionResult, toolResult);
@@ -522,7 +523,7 @@ export class ToolExecutionDispatcher {
 
         let stoppedBy: "aborted" | "wall_clock_exceeded" | undefined;
         for (let i = 0; i < entries.length; i++) {
-            const executionResult = results[i];
+            const executionResult = this.withHostRetrySafety(entries[i].toolCall, results[i]);
             const toolResult = this.config.emitToolResult(turnId, entries[i].toolCall, executionResult);
             this.rememberExecutionRecord(entries[i].toolCall, executionResult);
             this.rememberSuccessfulWritingContext(entries[i].toolCall, executionResult, toolResult);
@@ -861,6 +862,7 @@ export class ToolExecutionDispatcher {
                         metadata: {
                             outcome: this.config.toolTimeoutOutcome,
                             reason: "tool_timeout",
+                            failureReason: "timeout",
                             timeoutMs,
                         },
                     });
@@ -902,6 +904,16 @@ export class ToolExecutionDispatcher {
                 executionElapsedMs: Math.max(0, this.config.now() - startedAt),
             },
         };
+    }
+
+    private withHostRetrySafety(call: ParsedBufferedToolCall, result: PaAgentToolExecutionResult): PaAgentToolExecutionResult {
+        const metadata = { ...result.metadata };
+        // Only the executor's registered capability can establish replay safety.
+        // A timeout's internal fallback is not evidence about an unknown tool.
+        delete metadata.retrySafety;
+        const safety = this.config.toolExecutor?.getRetrySafety?.(call.name);
+        if (safety === 'read_only' || safety === 'side_effect') metadata.retrySafety = safety;
+        return { ...result, metadata };
     }
 
     private toolExceptionResult(

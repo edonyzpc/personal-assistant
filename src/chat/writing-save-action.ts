@@ -37,6 +37,34 @@ export class WritingSaveAction {
     private tail: Promise<void> = Promise.resolve();
     private disposed = false;
     private readonly controllers = new Set<AbortController>();
+    private readonly stateListeners = new Set<() => void>();
+    private readonly contextPersistors = new Map<string, { conversationId: string; persist: () => Promise<boolean | void> }>();
+
+    registerContextPersistence(versionId: string, persist: () => Promise<boolean | void>, conversationId: string): void {
+        this.contextPersistors.set(versionId, { conversationId, persist });
+    }
+
+    clearContextPersistence(conversationId: string): void {
+        for (const [versionId, entry] of this.contextPersistors) {
+            if (entry.conversationId === conversationId) this.contextPersistors.delete(versionId);
+        }
+    }
+
+    unregisterContextPersistence(versionId: string): void { this.contextPersistors.delete(versionId); }
+    hasContextPersistence(versionId: string): boolean { return this.contextPersistors.has(versionId); }
+
+    subscribeState(listener: () => void): () => void {
+        this.stateListeners.add(listener);
+        return () => this.stateListeners.delete(listener);
+    }
+
+    private notifyState(versionId: string): void {
+        for (const listener of this.stateListeners) listener();
+        const entry = this.contextPersistors.get(versionId);
+        if (entry) void entry.persist().then(terminal => {
+            if (terminal && this.contextPersistors.get(versionId) === entry) this.contextPersistors.delete(versionId);
+        }).catch(() => { /* Keep the observer until a subsequent save retries persistence. */ });
+    }
 
     constructor(private readonly app: App, private readonly store: ChatHistoryStore,
         private readonly images: ImageAssetService, private readonly options: { isPathAllowed?: (path: string) => boolean } = {}) {}
@@ -100,7 +128,7 @@ export class WritingSaveAction {
                 await this.store.putSaveReceipt(receipt);
             }
             try { return withSaveResultFact(await this.run(receipt, signal)); }
-            finally { this.releasePreview(operationId); }
+            finally { this.releasePreview(operationId); this.notifyState(receipt.writingVersionId); }
         }, options.signal);
     }
 
@@ -108,7 +136,8 @@ export class WritingSaveAction {
         return this.enqueue(async (signal) => {
             const receipt = await this.store.getSaveReceipt(operationId);
             if (!receipt) throw new WritingSaveError('receipt_unavailable');
-            return withSaveResultFact(await this.run(receipt, signal));
+            try { return withSaveResultFact(await this.run(receipt, signal)); }
+            finally { this.notifyState(receipt.writingVersionId); }
         }, options.signal);
     }
     listReceipts(writingVersionId?: string): Promise<SaveReceipt[]> { return this.enqueue(() => this.store.listSaveReceipts(writingVersionId)); }
@@ -117,6 +146,8 @@ export class WritingSaveAction {
         for (const controller of this.controllers) controller.abort();
         await this.tail;
         for (const id of [...this.previews.keys()]) this.releasePreview(id);
+        this.stateListeners.clear();
+        this.contextPersistors.clear();
     }
 
     private async run(input: SaveReceipt, signal?: AbortSignal): Promise<SaveReceipt> {

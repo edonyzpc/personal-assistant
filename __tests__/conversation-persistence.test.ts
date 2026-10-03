@@ -3,6 +3,8 @@ import { ChatHistoryManager } from "../src/chat/chat-history-manager";
 import { MemoryChatHistoryStore, type PersistedConversation, type PersistedTurn } from "../src/chat/chat-history-store";
 import { ConversationPersistence } from "../src/chat/ConversationPersistence";
 import type { TimelineEntry } from "../src/chat/types";
+import { completeInputLineage } from '../src/ai-services/input-lineage';
+import type { PaAgentActionState } from '../src/ai-services/pa-agent-result-facts';
 
 const conversation: PersistedConversation = {
     id: "conv-1",
@@ -48,6 +50,116 @@ function makePersistence(manager: ChatHistoryManager) {
 }
 
 describe("ConversationPersistence", () => {
+    it('adds the real saved turn binding to the live message only after finalization succeeds', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'bound-conversation' });
+        const persistence = makePersistence(manager);
+        const entry: TimelineEntry = { kind: 'history', user: { role: 'user', content: 'request' }, assistant: { role: 'assistant', content: 'draft',
+            canonicalTurn: { schemaVersion: 1, runId: 'actual-run', turnId: 'actual-turn', messages: [] } } };
+        jest.spyOn(manager, 'recordTurn').mockRejectedValueOnce(new Error('first write failed'));
+        expect(await persistence.persistFinalizedTurn('request', entry)).toBe(false);
+        expect(entry.assistant.actionStateBinding).toBeUndefined();
+        expect(await persistence.persistFinalizedTurn('request', entry)).toBe(true);
+        expect(entry.assistant.actionStateBinding).toEqual({ conversationId: 'bound-conversation', turnIndex: 0,
+            runId: 'actual-run', turnId: 'actual-turn' });
+        expect((await store.getTurns('bound-conversation'))[0].assistant.actionStateBinding).toEqual(entry.assistant.actionStateBinding);
+    });
+    it('retries a pending finalized-turn revision after its first persistence failure', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'hydrate-operations' });
+        const persistence = makePersistence(manager);
+        const initial: PaAgentActionState = { schemaVersion: 1, owner: 'operations', operationId: 'operation', revision: 0,
+            phase: 'pending', receipt: { kind: 'operations-staged', intentId: 'operation' },
+            origin: { runId: 'run', turnId: 'turn', assistantId: 'assistant', callId: 'call', resultId: 'result' },
+            inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'user' }]) };
+        const entry: TimelineEntry = { kind: 'history', user: { role: 'user', content: 'request' }, assistant: { role: 'assistant', content: 'reply',
+            canonicalTurn: { schemaVersion: 1, runId: 'run', turnId: 'turn', messages: [], actionStates: [initial] } } };
+        expect(await persistence.persistFinalizedTurn('request', entry)).toBe(true);
+        const conversationId = persistence.activeConversationId!;
+        const hydrated = persistence.hydrateConversation((await store.getConversation(conversationId))!, await store.getTurns(conversationId))!;
+        const restored = hydrated.timelineEntries[0];
+        if (restored.kind !== 'history') throw new Error('Expected history');
+        const current: PaAgentActionState = { ...initial, phase: 'lost', revision: 1,
+            receipt: { kind: 'operations-terminal', intentId: 'operation', state: 'lost' } };
+        restored.assistant.actionStates = [current];
+        restored.assistant.canonicalTurn!.actionStates = [current];
+        const record = jest.spyOn(manager, 'reviseTurn').mockRejectedValueOnce(new Error('disk unavailable'));
+        expect(await persistence.reviseFinalizedTurn(restored, async () => {})).toBe(false);
+        expect(persistence.needsFinalizedTurnRevision(restored)).toBe(true);
+        expect((await store.getTurns(conversationId))[0].assistant.actionStates?.[0].phase).toBe(initial.phase);
+        // A later persistence attempt retries precisely this retained turn.
+        if (persistence.needsFinalizedTurnRevision(restored)) await persistence.reviseFinalizedTurn(restored, async () => {});
+        expect(persistence.needsFinalizedTurnRevision(restored)).toBe(false);
+        expect((await store.getTurns(conversationId))[0].assistant.actionStates?.[0].phase).toBe(current.phase);
+        expect(record).toHaveBeenCalledTimes(2);
+    });
+    it('drops a dirty old View revision after another persistence View deletes that turn', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'shared-conversation' });
+        const first = makePersistence(manager);
+        const entry: TimelineEntry = { kind: 'history', user: { role: 'user', content: 'request' }, assistant: { role: 'assistant', content: 'original' } };
+        await first.persistFinalizedTurn('request', entry);
+        const conversationId = first.activeConversationId!;
+        const other = makePersistence(manager);
+        const hydrated = other.hydrateConversation((await store.getConversation(conversationId))!, await store.getTurns(conversationId))!;
+        entry.assistant.content = 'new owner state';
+        const revise = jest.spyOn(manager, 'reviseTurn').mockRejectedValueOnce(new Error('disk unavailable'));
+        expect(await first.reviseFinalizedTurn(entry, async () => {})).toBe(false);
+        expect(first.needsFinalizedTurnRevision(entry)).toBe(true);
+        await other.deletePersistedTurnForEntry(hydrated.timelineEntries[0]);
+        expect(await first.reviseFinalizedTurn(entry, async () => {})).toBe(false);
+        expect(first.needsFinalizedTurnRevision(entry)).toBe(false);
+        expect(await store.getTurns(conversationId)).toEqual([]);
+        expect(await first.reviseFinalizedTurn(entry, async () => {})).toBe(false);
+        expect(revise).toHaveBeenCalledTimes(2);
+    });
+    it('rejects unavailable domain updates instead of reporting a missing turn and cleaning the observer', async () => {
+        const persistence = new ConversationPersistence({ getManager: () => undefined, log: jest.fn() });
+        const transform = jest.fn((states: PaAgentActionState[]) => states);
+        const cleanup = jest.fn();
+        const update = persistence.updateActionStates('conv', 'run', 'turn', transform).then(result => {
+            if (!result) cleanup();
+        });
+        await expect(update).rejects.toThrow('Conversation persistence unavailable');
+        const operationUpdate = persistence.updateActionStatesForOperation('conv', 'run', 'ghost', 'operation', transform).then(result => {
+            if (!result) cleanup();
+        });
+        await expect(operationUpdate).rejects.toThrow('Conversation persistence unavailable');
+        expect(transform).not.toHaveBeenCalled();
+        expect(cleanup).not.toHaveBeenCalled();
+    });
+    it('queues completion after finalization, updates the original inactive turn and reloads the result', async () => {
+        const store = new MemoryChatHistoryStore();
+        let nextId = 0;
+        const manager = new ChatHistoryManager({ store, generateId: () => `context-${++nextId}` });
+        const persistence = makePersistence(manager);
+        await persistence.persistRunningTurn('make image', 'run-image', { role: 'user', content: 'make image' });
+        const conversationId = persistence.activeConversationId!;
+        const accepted: PaAgentActionState = { schemaVersion: 1, owner: 'image', operationId: 'task-image', phase: 'accepted', revision: 0,
+            origin: { runId: 'run-image', turnId: 'turn-image', assistantId: 'assistant-image', callId: 'call-image', resultId: 'result-image' },
+            inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'user-image' }]),
+            receipt: { kind: 'image-accepted', taskId: 'task-image' } };
+        const entry: TimelineEntry = { kind: 'history', user: { role: 'user', content: 'make image' },
+            assistant: { role: 'assistant', content: 'accepted', canonicalTurn: { schemaVersion: 1,
+                runId: 'run-image', turnId: 'turn-image', messages: [], actionStates: [accepted] } } };
+        let release!: () => void;
+        const barrier = new Promise<void>(resolve => { release = resolve; });
+        const finalizing = persistence.persistFinalizedTurn('make image', entry, async () => { await barrier; }, 'run-image');
+        const updating = persistence.updateActionStates(conversationId, 'run-image', 'turn-image', states =>
+            states.map(state => ({ ...state, phase: 'completed', revision: 1,
+                receipt: { kind: 'image-task', taskId: 'task-image', taskRevision: 2, state: 'completed' } })));
+        release();
+        expect(await finalizing).toBe(true);
+        expect((await updating)?.[0].phase).toBe('completed');
+        persistence.resetActiveConversationState();
+        const reloaded = await manager.getTurns(conversationId);
+        expect(reloaded).toHaveLength(1);
+        expect(reloaded[0].assistant.actionStates?.[0].phase).toBe('completed');
+        await persistence.updateActionStates(conversationId, 'run-image', 'turn-image', states => states);
+        await manager.deleteConversation(conversationId);
+        expect(await persistence.updateActionStates(conversationId, 'run-image', 'turn-image', states => states)).toBeUndefined();
+        expect(await manager.getTurns(conversationId)).toEqual([]);
+    });
     it("persists a running placeholder and overwrites the same turn when the run finalizes", async () => {
         const recorded: Array<{ turnIndex: number; entry: TimelineEntry }> = [];
         const manager = {
@@ -107,7 +219,7 @@ describe("ConversationPersistence", () => {
         const manager = {
             initialize: jest.fn(async () => undefined), isAvailable: () => true,
             startConversation: jest.fn(async () => { order.push('conversation'); return { ...conversation, turnCount: 0 }; }),
-            recordTurn, maybePrune: jest.fn(async () => []), findConversation: jest.fn(async () => conversation),
+            recordTurn, reviseTurn: recordTurn, maybePrune: jest.fn(async () => []), findConversation: jest.fn(async () => conversation),
         } as unknown as ChatHistoryManager;
         const extraction = jest.fn();
         const persistence = new ConversationPersistence({ getManager: () => manager, log: jest.fn(), scheduleMemoryExtractionAfterChatTurn: extraction });

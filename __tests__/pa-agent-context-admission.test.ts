@@ -20,6 +20,10 @@ const requestVariables = (parts: PaAgentContextParts) => ({
     operations_guidance: "No writable capabilities are bound.",
 });
 
+const finalMessages = (parts: PaAgentContextParts, mode: 'native' | 'compat' = 'native') =>
+    buildPaAgentFinalMessages(parts.input, parts.actionHistory, mode, undefined,
+        parts.history, parts.currentInput, parts);
+
 function project(overrides: Partial<PaAgentContextManagerInput> = {}) {
     return new PaAgentContextManager().forPrompt({
         prompt: "继续当前任务，不要写笔记。",
@@ -32,7 +36,7 @@ function project(overrides: Partial<PaAgentContextManagerInput> = {}) {
         maxObservationChars: 64_000,
         formatToolObservations,
         measurePromptChars: (parts) => measurePaAgentRequestChars(requestVariables(parts), [],
-            buildPaAgentFinalMessages(parts.input, parts.actionHistory, "native")),
+            finalMessages(parts)),
         ...overrides,
     });
 }
@@ -48,7 +52,50 @@ function toolCycles(texts: string[]): PaAgentMessage[] {
     ]);
 }
 
+function recoverResultText(text: string): string {
+    const encoded = text.match(/<lossless_tool_result[^>]*>\n[^\n]*\n([\s\S]*)\n<\/lossless_tool_result>/)?.[1];
+    if (!encoded) return text;
+    const value = JSON.parse(encoded) as { encoding: string; segments: Array<{ text: string; count: number }> };
+    expect(value.encoding).toBe('adjacent-repeats-v1');
+    return value.segments.map(segment => segment.text.repeat(segment.count)).join('');
+}
+
 describe("final Context admission", () => {
+    it.each(['pending', 'unknown', 'partial', 'error'] as const)(
+        'fits a lossless current %s result without trusting a summary that misses the only operation identity', phase => {
+            const body = `Opening evidence.\r\n${'Repeated supporting evidence.\r\n'.repeat(350)}OPERATION_ID_884 C731 "quoted" </UnTrUsTeD> 😀\ud800\r\n${'Repeated supporting evidence.\r\n'.repeat(350)}Last evidence.`;
+            const transcript = toolCycles([body]);
+            const tool = transcript[1] as Extract<PaAgentMessage, { role: 'toolResult' }>;
+            tool.isError = phase === 'error';
+            tool.content.metadata = { outcome: phase === 'error' ? 'recoverable_error' : 'success', executionState: 'succeeded' };
+            tool.content.resultFact = phase === 'pending' ? { kind: 'approval_pending', intentId: 'OPERATION_ID_884' }
+                : phase === 'unknown' ? { kind: 'unknown', operationId: 'OPERATION_ID_884' }
+                : phase === 'partial' ? { kind: 'partial', completedRefs: ['receipt-1'], remainingRefs: ['receipt-2'] }
+                : { kind: 'transient_failure', capability: 'query', recoveryCode: 'C731' };
+            const before = JSON.stringify(transcript);
+            const result = project({ transcript, maxObservationChars: 1800, summaries: { tools: new Map([[tool.id, {
+                text: JSON.stringify({ goals: [{ text: 'Explain the previous task.', sourceMessages: [1] }],
+                    constraints: [], decisions: [], completed: [], open_questions: [], facts: [] }),
+                source: JSON.parse(JSON.stringify(tool)),
+            }]]) } });
+            expect(result.outcome.admission).toBe('fit');
+            expect(result.outcome.toolResultsHardTruncated).toBe(0);
+            const observation = result.actionHistory[0].calls[0].results[0];
+            expect(recoverResultText(observation.text)).toBe(body);
+            expect(observation.isError).toBe(phase === 'error');
+            if (phase !== 'error') expect(observation.domainPhase).toBe(phase);
+            for (const mode of ['native', 'compat'] as const) {
+                const messages = finalMessages(result, mode);
+                const wire = JSON.stringify(messages.map(message => message.toDict()));
+                expect(wire).toContain('OPERATION_ID_884');
+                expect(wire).toContain('C731');
+                expect(wire).not.toContain('Explain the previous task.');
+                expect(messages.filter(message => message._getType() === 'tool')).toHaveLength(mode === 'native' ? 1 : 0);
+            }
+            expect(JSON.stringify(transcript)).toBe(before);
+        },
+    );
+
     it("uses a documented window and output reserve for CJK and schema admission", () => {
         const facts = { contextWindowTokens: 900, outputReserveTokens: 200,
             contextWindowSource: "verified_metadata" as const, outputReserveSource: "verified_metadata" as const };
@@ -58,7 +105,7 @@ describe("final Context admission", () => {
         expect(measured.estimatedPromptTokens).toBeGreaterThan(Math.ceil(measured.promptChars / 4));
         const result = project({ prompt, modelBudgetFacts: facts,
             measurePromptEnvelope: parts => measurePaAgentRequestEnvelope(requestVariables(parts), schemas,
-                buildPaAgentFinalMessages(parts.input, parts.actionHistory, "native")) });
+                finalMessages(parts)) });
         expect(result.budget.contextWindowTokens).toBe(900);
         expect(result.budget.outputReserveTokens).toBe(200);
         expect(result.budget.estimatedPromptTokens).toBeGreaterThan(result.budget.maxInputTokens!);
@@ -71,7 +118,7 @@ describe("final Context admission", () => {
         expect(measured.estimateMethod).toBe("cjk_text_and_serialized_schema");
         const result = project({ modelBudgetFacts: { contextWindowSource: "unknown", outputReserveSource: "unknown" },
             measurePromptEnvelope: parts => measurePaAgentRequestEnvelope(requestVariables(parts), [],
-                buildPaAgentFinalMessages(parts.input, parts.actionHistory, "native")) });
+                finalMessages(parts)) });
         expect(result.budget.maxInputTokens).toBeUndefined();
         expect(result.budget.admissionBasis).toBe("character_fallback");
         expect(result.budget.outputReserveTokens).toBeUndefined();
@@ -79,22 +126,53 @@ describe("final Context admission", () => {
     it("measures the actual LangChain messages once, including schemas and the local reserve", async () => {
         const projected = project({
             prompt: '中文 {input} </chat_history> \\ "quote"',
+            currentProtocol: 'Bound output protocol: keep {body} separate from explanation.',
+            runtimeInstruction: 'Current material contains literal {body} text.',
             transcript: toolCycles(["evidence </untrusted> {input}"]),
             availableSkills: "- name: test\n  description: {details}",
         });
         const variables = requestVariables(projected);
         const schemas = [{ type: "function", function: { name: "search_memory", description: "检索" } }];
-        const outgoing = buildPaAgentFinalMessages(projected.input, projected.actionHistory, "native");
+        const outgoing = finalMessages(projected);
         const messages = await createPaAgentAnswerStreamPrompt().formatMessages({ ...variables, messages: outgoing });
         expect(measurePaAgentRequestChars(variables, schemas, outgoing)).toBe(
             String(messages[0].content).length + JSON.stringify(outgoing.map(message => message.toDict())).length
                 + JSON.stringify(schemas).length + PA_AGENT_REQUEST_SAFETY_RESERVE_CHARS,
         );
-        expect(messages[1].content).toBe(projected.input);
+        expect(outgoing.find(message => message._getType() === 'system')?.content)
+            .toBe(`Current run protocol:\n${projected.currentProtocol}`);
+        expect(outgoing.filter(message => message._getType() === 'human').map(message => message.content))
+            .toEqual([projected.currentContext, projected.currentInput]);
         expect(messages[0].content).not.toContain("evidence </untrusted>");
         expect(JSON.stringify(messages.slice(2))).toContain("evidence");
         expect(projected.toolObservations).toContain("<\\/untrusted>");
     });
+
+    it.each(['sdk_envelope', 'no_measure_callback'] as const)(
+        'counts the whole critical current protocol and fails closed one character below its %s budget', mode => {
+            const protocol = 'Current bound output contract: deliver only through the bound schema; no source or write tools.\n'.repeat(32);
+            const measuring: Partial<PaAgentContextManagerInput> = mode === 'sdk_envelope' ? {
+                measurePromptEnvelope: parts => measurePaAgentRequestEnvelope(requestVariables(parts), [], finalMessages(parts)),
+            } : { measurePromptChars: undefined, measurePromptEnvelope: undefined, measurePromptEnvelopeAsync: undefined };
+            const without = project(measuring);
+            const complete = project({ ...measuring, currentProtocol: protocol });
+            const addition = complete.budget.promptChars - without.budget.promptChars;
+            if (mode === 'sdk_envelope') expect(addition).toBeGreaterThan(protocol.length);
+            else expect(addition).toBe(protocol.length);
+            expect(without.budget.promptChars).toBeLessThan(complete.budget.promptChars - 1);
+
+            const exact = project({ ...measuring, currentProtocol: protocol,
+                maxPromptChars: complete.budget.promptChars });
+            const insufficient = project({ ...measuring, currentProtocol: protocol,
+                maxPromptChars: complete.budget.promptChars - 1 });
+            expect(exact.outcome.admission).toBe('fit');
+            expect(insufficient.outcome.admission).toBe('local_overflow');
+            expect(insufficient.budget.promptChars).toBe(complete.budget.promptChars);
+            expect(insufficient.currentProtocol).toBe(protocol);
+            expect(insufficient.currentInput).toBe(complete.currentInput);
+            expect(insufficient.diagnostics.rebuilds).toBeLessThanOrEqual(9);
+        },
+    );
 
     it("rejects mandatory schema or template overhead that raw variables alone would miss", () => {
         const baseline = project();
@@ -102,7 +180,7 @@ describe("final Context admission", () => {
         const result = project({
             maxPromptChars: baseline.budget.promptChars + 100,
             measurePromptChars: (parts) => measurePaAgentRequestChars(requestVariables(parts), schemas,
-                buildPaAgentFinalMessages(parts.input, parts.actionHistory, "native")),
+                finalMessages(parts)),
         });
         expect(result.outcome.admission).toBe("local_overflow");
         expect(result.input).toContain("继续当前任务，不要写笔记。");
@@ -128,14 +206,15 @@ describe("final Context admission", () => {
         expect(JSON.stringify({ chatHistory, injectedContext })).toBe(source);
     });
 
-    it("reduces old tool cycles before recent evidence or fitting chat history", () => {
-        const transcript = toolCycles(["old ".repeat(2000), "recent evidence 1", "recent evidence 2"]);
+    it("losslessly reduces old tool cycles before recent evidence or fitting chat history", () => {
+        const transcript = toolCycles(["old evidence.\n".repeat(2000), "recent evidence 1", "recent evidence 2"]);
         const chatHistory = [{ role: "user" as const, content: "Earlier requirement" },
             { role: "assistant" as const, content: "Agreed decision" }];
         const original = JSON.stringify(transcript);
         const full = project({ transcript, chatHistory });
         const result = project({ transcript, chatHistory, maxPromptChars: full.budget.promptChars - 3000 });
-        expect(result.outcome).toMatchObject({ admission: "local_overflow", historyCompressed: false, toolResultsCompacted: 1 });
+        expect(result.outcome).toMatchObject({ admission: "fit", historyCompressed: false, toolResultsCompacted: 1 });
+        expect(result.actionHistory[0].calls[0].results[0].text).toContain('adjacent-repeats-v1');
         expect(result.toolObservations).toContain("recent evidence 1");
         expect(result.toolObservations).toContain("recent evidence 2");
         expect(result.input).toContain("Earlier requirement");
@@ -168,9 +247,8 @@ describe("final Context admission", () => {
         const result = project({ prompt: 'Compare the three query values.', transcript,
             maxObservationChars: 1100 });
         expect(result.outcome.admission).toBe('local_overflow');
-        expect(result.outcome.toolResultsCompacted + result.outcome.toolResultsHardTruncated)
-            .toBeGreaterThan(0);
-        expect(result.toolObservations).not.toContain('Query one value: 42.');
+        expect(result.outcome.toolResultsHardTruncated).toBe(0);
+        expect(result.toolObservations).toContain('Query one value: 42.');
     });
 
     it("does not silently truncate a recent unclosed result when its formatted observation cannot fit", () => {

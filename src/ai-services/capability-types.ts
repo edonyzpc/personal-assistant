@@ -1,4 +1,5 @@
 import type { AiServiceHost } from "./AiServiceHost";
+import { isChatToolFailureReason } from './chat-types';
 import type {
     ChatToolUnavailableReason,
     SourceRecord,
@@ -115,6 +116,7 @@ export interface AgentCapabilityResult {
     memoryManagementEvidence?: MemoryManagementEvidence;
     memoryManagementContractVersion?: 1;
     error?: string;
+    failureReason?: import('./chat-types').ChatToolFailureReason;
     truncated?: boolean;
     omittedCount?: number;
     unavailableReason?: string;
@@ -247,6 +249,7 @@ export function agentResultToChatToolResult(
         memoryManagementEvidence: result.memoryManagementEvidence,
         memoryManagementContractVersion: result.memoryManagementContractVersion,
         ...(result.userSafeMessage ?? result.error ? { error: result.userSafeMessage ?? result.error } : {}),
+        ...(isChatToolFailureReason(result.failureReason) ? { failureReason: result.failureReason } : {}),
         ...(unavailableReason ? { unavailableReason } : {}),
     };
 }

@@ -1,4 +1,5 @@
 import type { AiServiceHost } from "./AiServiceHost";
+import { isChatToolFailureReason } from './chat-types';
 import { BUILTIN_WEB_SEARCH_TOOL_NAME } from "./builtin-web-search-provider";
 import type { CapabilityRegistry } from "./capability-registry";
 import type { AgentCapabilityExecutionMode, AgentRuntimePlatform } from "./capability-types";
@@ -808,6 +809,7 @@ export function chatToolResultToPaAgentToolExecutionResult(
             tool: result.tool,
             toolCallId: toolCall.id,
             inputSummary: result.inputSummary,
+            ...(!result.ok && isChatToolFailureReason(result.failureReason) ? { failureReason: result.failureReason } : {}),
             ok: result.ok,
             sourceRecordCount: sourceRecords.length,
             contextUsedCount: contextUsed.length,
@@ -1125,7 +1127,8 @@ function serializeToolObservation(result: ChatToolResult<unknown>): string {
         tool: result.tool,
         status: result.ok ? "ok" : "unavailable",
         input: result.inputSummary,
-        ...(result.ok ? { observation: result.content } : { error: result.error ?? "Tool unavailable." }),
+        ...(result.ok ? { observation: result.content } : { error: result.error ?? "Tool unavailable.",
+            ...(isChatToolFailureReason(result.failureReason) ? { failureReason: result.failureReason } : {}) }),
     });
 }
 

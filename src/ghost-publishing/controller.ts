@@ -26,6 +26,9 @@ export interface GhostCardState {
 }
 export interface GhostPublishingSession {
     getState(): GhostCardState;
+    getContextReceipt(): { operationId: string; revision: number; state: GhostLocalOperation['state']; verified: boolean } | undefined;
+    registerContextPersistence?(persist: (receipt: NonNullable<ReturnType<GhostPublishingSession['getContextReceipt']>>) => Promise<boolean>, conversationId: string): void;
+    unregisterContextPersistence?(): void;
     subscribe(listener: () => void): () => void;
     run(action: GhostCardAction, confirmation?: { visibilityConfirmed?: boolean; replacementConfirmed?: boolean }): Promise<void>;
     dispose(): void;
@@ -81,6 +84,15 @@ export class GhostPublishingController {
     private readonly sessions = new Set<PublishingSession>();
     private disposed = false;
     constructor(readonly options: GhostControllerOptions) {}
+
+    async readContextReceipt(operationId: string): Promise<ReturnType<GhostPublishingSession['getContextReceipt']>> {
+        if (this.disposed || !this.options.isDesktop() || !this.options.isCurrent()) return undefined;
+        const connection = await this.options.configuration.connection();
+        const operation = await this.runtime(connection).operations.findForContext(connection.siteId, operationId);
+        if (this.disposed || !this.options.isCurrent() || connection.identity !== this.options.configuration.getIdentity()) return undefined;
+        return operation ? { operationId: operation.operationId, revision: operation.revision,
+            state: operation.state, verified: operation.verified?.status === 'published' } : undefined;
+    }
 
     private runtime(connection: GhostConnection): Runtime {
         const existing = this.runtimes.get(connection.siteId);
@@ -202,10 +214,15 @@ export class GhostPublishingController {
             if (session) session.report(error);
             else {
                 const state: GhostCardState = { title: request.path.split("/").pop() ?? "", site: "", status: "needs-attention", busy: false, errorKey: errorKey(error), actions: [] };
-                request.onSession({ getState: () => ({ ...state, actions: [] }), subscribe: () => () => {}, run: async () => {}, dispose: () => {} });
+                request.onSession({ getState: () => ({ ...state, actions: [] }), getContextReceipt: () => undefined,
+                    subscribe: () => () => {}, run: async () => {}, dispose: () => {} });
             }
             return { status: "needs_attention", ...(session?.getState().operationId ? { operationId: session.getState().operationId } : {}) };
         } finally { scope?.release(); }
+    }
+
+    clearContextPersistence(conversationId: string): void {
+        for (const runtime of this.runtimes.values()) runtime.operations.clearContextPersistence(conversationId);
     }
 
     dispose(): void {
@@ -339,6 +356,21 @@ class PublishingSession implements GhostPublishingSession {
                 .map((code) => `${KEY}warning.${code}`),
             visibilityChange: operation?.visibilityChange, actions: this.disposed ? [] : actions,
             operationKind: operation?.kind };
+    }
+    getContextReceipt(): { operationId: string; revision: number; state: GhostLocalOperation['state']; verified: boolean } | undefined {
+        const operation = this.operation;
+        return operation ? { operationId: operation.operationId, revision: operation.revision,
+            state: operation.state, verified: operation.verified?.status === 'published' } : undefined;
+    }
+    registerContextPersistence(persist: (receipt: NonNullable<ReturnType<GhostPublishingSession['getContextReceipt']>>) => Promise<boolean>, conversationId: string): void {
+        if (!this.operation) return;
+        this.runtime.operations.registerContextPersistence(this.operation.operationId, operation => {
+            return persist({ operationId: operation.operationId, revision: operation.revision, state: operation.state,
+                verified: operation.verified?.status === 'published' });
+        }, conversationId);
+    }
+    unregisterContextPersistence(): void {
+        if (this.operation) this.runtime.operations.unregisterContextPersistence(this.operation.operationId);
     }
     private async checkPreview(scope: ActionScope): Promise<void> {
         if (!this.operation?.target.previewId) throw failure("preview-required");

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@jest/globals";
 import { ChatService } from "../src/ai-services/chat-service";
 import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
+import { PA_AGENT_ACTION_STATE_CONTEXT_RULES } from '../src/ai-services/pa-agent-result-facts';
 
 import {
     PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES,
@@ -61,6 +62,9 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(system).toContain("permitted scope examined");
         expect(system).toContain("An unavailable or failed retrieval provides no evidence");
         expect(system).toContain("state which part remains incomplete");
+        for (const rule of PA_AGENT_ACTION_STATE_CONTEXT_RULES) {
+            expect(system?.split(rule)).toHaveLength(2);
+        }
     });
 
     it("instructs the model to always provide a non-empty query argument to search-style tools", () => {
@@ -101,7 +105,8 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(createOperationsPromptGuidance([])).toContain("Do not modify notes");
         expect(joined).toContain("{available_skills}");
         expect(joined).toContain("{tool_definitions}");
-        expect(joined).toContain("Action history records prior assistant calls");
+        expect(joined).toContain("Action history records assistant calls");
+        expect(joined).toContain("Current run protocol is supplied separately");
         expect(joined).not.toContain("{tool_observations}");
     });
 
@@ -162,8 +167,8 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         // per run when explicit constraints such as no-web apply. The model must not copy stale
         // tool-availability claims from older assistant messages.
         const joined = PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES.join("\n");
-        expect(joined).toContain("Recent chat history is context only");
-        expect(joined).toContain("do not infer current tool availability");
+        expect(joined).toContain("earlier conversation context");
+        expect(joined.toLowerCase()).toContain("do not infer current tool availability");
         expect(joined).toContain("Available tool definitions");
         expect(joined).toContain("if a tool is absent or blocked");
     });

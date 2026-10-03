@@ -167,7 +167,10 @@ describe("B-149 live eval script safety seam", () => {
         expect(report.results[0].runSourceSelection).toMatchObject({ scope: "notes",
             selectionId: "b149-E-01-selection", userMessageId: "b149-E-01-user" });
         const e01Followup = report.results[0].requestBodies[1].prompt.messages;
-        expect(e01Followup.map((message: any) => message.role)).toEqual(["system", "user", "assistant", "tool"]);
+        expect(e01Followup.map((message: any) => message.role)).toEqual(["system", "user", "user", "assistant", "tool"]);
+        expect(e01Followup.filter((message: any) => message.role === "user"
+            && String(message.content).startsWith("User input:\n"))).toHaveLength(1);
+        expect(e01Followup[1].content).toContain("Current run context and feedback:");
         const e01Call = e01Followup.find((message: any) => message.role === "assistant" && message.tool_calls?.length);
         expect(e01Call.tool_calls[0]).toMatchObject({ id: "b149-fixed-tool", function: { name: "read_note" } });
         expect(e01Call.tool_calls[0].function.arguments).toContain("synthetic/lighthouse-final.md");

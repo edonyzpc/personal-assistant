@@ -30,6 +30,8 @@ import { createAgentDebugLog, traceAgentPhase } from './pa-agent-debug';
 import { agentDebugError, agentDebugStatus, observeAgentDebugPhase } from './agent-debug-observation';
 import type { AgentDebugNodeStatus, AgentDebugRunRecorder } from './agent-debug-port';
 import type { AgentRunLease } from './agent-run-coordinator';
+import { applyOperationsExecutionResult, applyOperationsUndoResult, cloneActionStates,
+    type PaAgentActionState } from './pa-agent-result-facts';
 import { ChatImageCapabilityRegistry, chatImageModelKey, type ChatImageCapability } from './image-capability';
 import type {
     OperationsControllerEvent,
@@ -102,6 +104,18 @@ export class ChatService {
     private contextModelKey: string | undefined;
     private contextEpoch = 0;
     private readonly imageCapabilities = new ChatImageCapabilityRegistry();
+    private readonly operationsContextObservers = new Map<string, () => Promise<void>>();
+    private operationsContextUnsubscribe?: () => void;
+
+    registerOperationsContextPersistence(intentId: string, persist: () => Promise<void>): void {
+        this.operationsContextObservers.set(intentId, persist);
+        if (this.operationsContextUnsubscribe) return;
+        this.operationsContextUnsubscribe = this.operationsSession.subscribe(() => {
+            for (const persistState of this.operationsContextObservers.values()) {
+                void persistState().catch(error => this.host.log('Could not persist Operations context state', error));
+            }
+        });
+    }
 
     getImageCapability(): ChatImageCapability { return this.imageCapabilities.get(this.host.settings); }
 
@@ -149,10 +163,40 @@ export class ChatService {
         return this.operationsSession.subscribe(listener);
     }
 
+    refreshOperationsActionState(state: PaAgentActionState): PaAgentActionState {
+        if (state.owner !== 'operations') return state;
+        const observed = this.operationsSession.getContextResult(state.operationId, state.origin.runId);
+        let refreshed = observed.execution ? applyOperationsExecutionResult(state, observed.execution) ?? state : state;
+        for (const receiptId of observed.undoneReceiptIds) {
+            const action = refreshed.actions?.find(item => item.receiptId === receiptId);
+            if (action) refreshed = applyOperationsUndoResult(refreshed, {
+                receiptId, operationId: action.actionId, status: 'undone',
+            }) ?? refreshed;
+        }
+        const lost = refreshed.phase === 'lost' && refreshed.receipt.kind === 'operations-terminal'
+            && refreshed.receipt.state === 'lost';
+        if ((refreshed.phase === 'pending' || lost) && observed.executing) {
+            return cloneActionStates([{ ...refreshed, phase: 'running', revision: refreshed.revision + 1,
+                receipt: { kind: 'operations-executing', intentId: state.operationId } }])[0] ?? refreshed;
+        }
+        const knownTerminal = observed.terminal === 'cancelled' || observed.terminal === 'expired';
+        if ((refreshed.phase === 'pending' || refreshed.phase === 'running' || (lost && knownTerminal))
+            && !observed.pending && !observed.executing) {
+            const phase = observed.terminal === 'cancelled' ? 'cancelled'
+                : observed.terminal === 'expired' ? 'expired' : 'lost';
+            return cloneActionStates([{ ...refreshed, phase, revision: refreshed.revision + 1,
+                receipt: { kind: 'operations-terminal', intentId: state.operationId, state: phase } }])[0] ?? refreshed;
+        }
+        return refreshed;
+    }
+
     dispose(): void {
         this.contextEpoch += 1;
         this.contextSummarizer.dispose();
         this.operationsSession.dispose();
+        this.operationsContextUnsubscribe?.();
+        this.operationsContextUnsubscribe = undefined;
+        this.operationsContextObservers.clear();
         this.ownedOperationsService?.dispose();
     }
 

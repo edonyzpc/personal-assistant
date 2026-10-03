@@ -21,7 +21,7 @@ import {
 } from "obsidian";
 
 import type { AiServiceHost } from "./AiServiceHost";
-import type { ChatAgentSource } from "./chat-types";
+import type { ChatAgentSource, ChatToolFailureReason } from "./chat-types";
 import { throwIfAborted } from "./chat-utils";
 import { createCooperativeTask, sortCooperatively } from "./cooperative-task";
 export { sortCooperatively } from "./cooperative-task";
@@ -160,7 +160,16 @@ export function isMarkdownViewLike(view: unknown): view is MarkdownViewLike {
     return typeof getViewType !== "function" || getViewType.call(view) === "markdown";
 }
 
-export function createToolFailureResult<Output = unknown>(tool: string, inputSummary: string, error: string): ChatToolResult<Output> {
+/** Host code can preserve a known failure without exposing the underlying adapter error. */
+export class ChatToolFailureError extends Error {
+    constructor(readonly failureReason: ChatToolFailureReason, message: string) {
+        super(message);
+        this.name = 'ChatToolFailureError';
+    }
+}
+
+export function createToolFailureResult<Output = unknown>(tool: string, inputSummary: string, error: string,
+    failureReason?: ChatToolFailureReason): ChatToolResult<Output> {
     return {
         ok: false,
         tool,
@@ -168,6 +177,7 @@ export function createToolFailureResult<Output = unknown>(tool: string, inputSum
         content: null,
         sources: [],
         error,
+        ...(failureReason ? { failureReason } : {}),
     };
 }
 

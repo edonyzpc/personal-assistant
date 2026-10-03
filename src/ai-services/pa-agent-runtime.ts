@@ -47,7 +47,10 @@ import {
 } from "./pa-agent-prompts";
 import { canonicalContextJsonAsync, stringifyContextAsync } from './context/PaAgentContextSerialization';
 import { createCooperativeTask } from './cooperative-task';
-import type { PaAgentActionGroup } from "./pa-agent-action-history";
+import { projectPaAgentToolStatus, type PaAgentActionGroup } from "./pa-agent-action-history";
+import { cloneActionStateBinding, isSafeImageAcceptedObservation, isSafeOperationsStagedObservation } from './pa-agent-result-facts';
+import { cloneChatHostProvenance } from './chat-provenance';
+import { historySummaryContentSteps, protectedHistorySourceIndexesSteps } from './context/PaAgentHistoryContextPlan';
 import { ChatOpenAI } from "@langchain/openai";
 import {
     type ChatToolProviderSchema,
@@ -72,12 +75,14 @@ import {
     AgentEventEmitter,
     TurnExecutionDeadline,
 } from "./agent-runtime-primitives";
-import { MAX_TOOL_SUMMARY_CHARS, PaAgentContextSummarizer,
+import { PaAgentContextSummarizer,
     type PaAgentSummaryInvoke } from "./context/PaAgentContextSummarizer";
 import { resolvePaAgentInputTokenLimit, resolvePaAgentPromptCharCeiling,
     type PaAgentModelBudgetFacts } from "./context/PaAgentContextBudget";
-import { cloneMessage } from "./context/clone-utils";
-import { isCurrentHistorySummary, isCurrentToolSummary, type PaAgentContextSummaries, type PaAgentToolSummarySource } from "./context/PaAgentContextSummaryTypes";
+import { cloneMessage, prepareContextSteps } from "./context/clone-utils";
+import { isCurrentHistorySummary, isCurrentToolSummary, projectPaAgentSummaryActionStates,
+    projectPaAgentRetainedActionFactsSteps, matchesPaAgentHistorySummaryPayloadSteps,
+    type PaAgentContextSummaries, type PaAgentSummaryBindingSource, type PaAgentToolSummarySource } from "./context/PaAgentContextSummaryTypes";
 import { chatHistoryImageMetadata } from "./chat-image-identity";
 import { readChatHistoryTurnMetadata } from "./pa-agent-history";
 import { stableJson, type VaultObservationProjection } from "./vault-observation-evidence";
@@ -90,7 +95,7 @@ import {
     type GenerationInputSnapshot,
 } from "./generation-input-snapshot";
 import { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
-import { readProviderCompletion, writingOutputInstruction, nativeWritingOutputInstruction, nativeWritingOutputSchema, cloneChatWritingRequest, selectedWritingContext, isValidWritingContextHandle } from "./writing-output";
+import { readProviderCompletion, writingOutputInstruction, nativeWritingOutputInstruction, nativeWritingPreparationInstruction, nativeWritingOutputSchema, cloneChatWritingRequest, selectedWritingContext, isValidWritingContextHandle } from "./writing-output";
 import { REPORT_TASK_INCOMPLETE, taskIncompleteOutputSchema } from './pa-agent-task-outcome';
 import { NativeWritingCallCollector } from "./native-writing-call";
 import { ChatImageRequestScope, createResolveChatImagesTool, RESOLVE_CHAT_IMAGES } from "./image-request";
@@ -187,6 +192,7 @@ import type {
     ChatMessage,
     PaAgentMessage,
 } from "./chat-types";
+import { isChatToolFailureReason } from './chat-types';
 
 export type {
     AgentEvent,
@@ -696,6 +702,11 @@ function isSafeGhostPublishingStatusObservation(
         return validOperationId && fact?.kind === "approval_pending" && fact.intentId === operationId;
     }
     if (observation.status === "needs_attention") {
+        if (fact?.kind === "unknown") {
+            return validOperationId && fact.operationId === operationId;
+        }
+        // Older source-free observations remain readable; only the typed owned
+        // operation above can establish an action state for later Host updates.
         return (operationId === undefined || validOperationId)
             && fact?.kind === "unavailable" && fact.capability === message.toolName
             && fact.reason === "ghost_attention_required";
@@ -704,11 +715,18 @@ function isSafeGhostPublishingStatusObservation(
         && fact?.kind === "unknown" && fact.operationId === operationId;
 }
 
+function hasMatchingFailureReason(envelope: Record<string, unknown>, metadata?: Record<string, unknown>): boolean {
+    if (envelope.failureReason === undefined && metadata?.failureReason === undefined) return true;
+    return isChatToolFailureReason(envelope.failureReason) && envelope.failureReason === metadata?.failureReason;
+}
+
 /** Empty searches and standard read-only failures have no path receipts.
  * Admit only owner-classified observations with closed, source-free provider text. */
 function isSafeSourceFreeToolObservation(
     message: Extract<PaAgentMessage, { role: "toolResult" }>,
 ): boolean {
+    if (message.toolName === 'create_image') return isSafeImageAcceptedObservation(message);
+    if (isSafeOperationsStagedObservation(message)) return true;
     if (message.content.sourceRecords?.length || !message.content.includeInNextPrompt) return false;
     let envelope: Record<string, unknown> | undefined;
     try { envelope = asRecord(JSON.parse(message.content.promptText)); } catch { return false; }
@@ -739,14 +757,16 @@ function isSafeSourceFreeToolObservation(
                 || message.content.metadata.unavailableReason === "Read-only tool was unavailable.")
             && message.content.metadata.vaultObservationEvidence === undefined
             && message.content.metadata.vaultObservationContractVersion === undefined
-            && hasOnlyKeys(envelope, ["tool", "status", "input", "error"])
+            && hasOnlyKeys(envelope, ["tool", "status", "input", "error", "failureReason"])
+            && hasMatchingFailureReason(envelope, message.content.metadata)
             && envelope.status === "unavailable" && envelope.input === "execution failed"
             && envelope.error === "Read-only tool was unavailable.";
     }
 
     if (message.toolName === "search_memory" && message.isError
         && message.content.metadata?.outcome === "recoverable_error") {
-        return hasOnlyKeys(envelope, ["tool", "status", "input", "error"])
+        return hasOnlyKeys(envelope, ["tool", "status", "input", "error", "failureReason"])
+            && hasMatchingFailureReason(envelope, message.content.metadata)
             && envelope.status === "unavailable" && envelope.input === "execution failed"
             && envelope.error === "Read-only tool was unavailable.";
     }
@@ -1363,6 +1383,7 @@ export class PaAgentRuntime {
         };
         let sourceRunActive = true;
         const sourceRun = new TaskSourceRun({
+            ...(options.conversationId ? { conversationId: options.conversationId } : {}),
             runId, userMessageId, userText: options.userText ?? options.prompt,
             runSourceSelection,
             requestText: options.prompt,
@@ -1762,9 +1783,18 @@ export class PaAgentRuntime {
         let runSummaries: PaAgentContextSummaries = {};
         let actionProjectionMode: "native" | "compat" = "compat";
         const snapshotHistory = async (signal?: AbortSignal): Promise<ChatMessage[]> => (await sourceRun.projectHistoryAsync(options.chatHistory ?? [], signal)).map(message => {
+            // Keep the run-owned finite fragment's source proof through the
+            // budget/summary snapshot; it contains no historical prose or tools.
+            if (sourceRun.isOwnedHistoricalActionFragment(message)) return message;
             const metadata = readChatHistoryTurnMetadata(message);
             const inputLineage = historyInputLineage(message);
+            const actionStateBinding = cloneActionStateBinding(message.actionStateBinding);
+            const sourceSelection = parseRunSourceSelection(message.runSourceSelection);
             return { role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
+                ...(message.actionStates ? { actionStates: message.actionStates } : {}),
+                ...(actionStateBinding ? { actionStateBinding } : {}),
+                ...(message.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(message.hostProvenance) } : {}),
+                ...(sourceSelection ? { runSourceSelection: sourceSelection } : {}),
                 ...(inputLineage ? { inputLineage } : {}),
                 ...(metadata ? { memoryMetadata: metadata } : {}),
                 ...(message.canonicalTurn ? { canonicalTurn: message.canonicalTurn } : {}) };
@@ -1802,23 +1832,32 @@ export class PaAgentRuntime {
                 return this.host.memoryManagement.prepareObservation(evidence, currentMemoryUsage);
             },
         });
-        const writingPreparationInstruction = (): string | undefined => {
-            if (!writingContextRun) return undefined;
+        const writingPreparationInstruction = (toolMode: PaAgentModelInput['toolMode']): string | undefined => {
+            if (!writingContextRun || toolMode === 'final_answer_only') return undefined;
             const prepared = currentWritingContext();
             if (prepared) {
-                return `Writing context preparation is complete. Use the current contextHandle ${JSON.stringify(prepared.handle)} to present the finished work when the task is ready. Rewording the same scene is not a reason to prepare again. Reprepare only for a user correction, new evidence that changes the selected parent, scene, conflicts or materials, or a host-reported invalid context. Necessary source work remains subject to the current permissions. Authorized parent handles (JSON data): ${JSON.stringify(writingContextRun.candidateDirectory())}`;
+                return `Rewording the same scene is not a reason to prepare again. Reprepare only for a user correction, new evidence that changes the selected parent, scene, conflicts or materials, or a host-reported invalid context. Necessary source work remains subject to the current permissions. Authorized parent handles (JSON data): ${JSON.stringify(writingContextRun.candidateDirectory())}`;
             }
-            return `Before presenting writing, call get_writing_context and wait for its result. Select the parent and scene from the conversation semantically; use parentHandle=null for a new topic and omit scene when unknown. Authorized parent handles (JSON data): ${JSON.stringify(writingContextRun.candidateDirectory())}`;
+            return `Select the parent and scene from the conversation semantically; use parentHandle=null for a new topic and omit scene when unknown. Authorized parent handles (JSON data): ${JSON.stringify(writingContextRun.candidateDirectory())}`;
         };
         type ContextInstructionReceipt = ReturnType<TaskSourceRun['captureContextInstruction']>;
         const withImageContext = (input: PaAgentModelInput,
-            directory?: ContextInstructionReceipt): PaAgentModelInput => ({
-            ...input, runtimeInstruction: combineRuntimeInstructions([
-                input.runtimeInstruction, directory?.instruction ?? sourceRun.contextInstruction(),
-                imageScope?.hasImages ? imageScope.contextText() : undefined,
-                writingPreparationInstruction(),
-            ]),
-        });
+            directory?: ContextInstructionReceipt): PaAgentModelInput => {
+            // Recognize the fixed Host protocol before appending any source material.
+            const operationsAcknowledgement = isOperationsStagedAcknowledgement(input.runtimeInstruction);
+            return {
+                ...input,
+                currentProtocol: operationsAcknowledgement
+                    ? OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION : input.currentProtocol,
+                runtimeInstruction: combineRuntimeInstructions([
+                    operationsAcknowledgement ? undefined : input.runtimeInstruction,
+                    directory?.instruction ?? sourceRun.contextInstruction(),
+                    imageScope?.hasImages ? imageScope.contextText() : undefined,
+                    operationsAcknowledgement
+                        ? undefined : writingPreparationInstruction(input.toolMode),
+                ]),
+            };
+        };
         const buildCanonicalModelInput = async (
             input: PaAgentModelInput,
             toolDefinitions?: ChatToolRegistryDefinition[],
@@ -2208,7 +2247,7 @@ export class PaAgentRuntime {
             if (imageScope?.hasImages) {
                 result.messages = await buildPaAgentFinalMessagesAsync(projection.input, projection.actionHistory,
                     actionProjectionMode, imageScope.message(projection.input, input.signal),
-                    projection.history, projection.currentInput, input.signal);
+                    projection.history, projection.currentInput, input.signal, projection);
             }
             const actualEnvelope = await measurePaAgentRequestEnvelopeAsync(result as Record<string, string>, schemas,
                 result.messages as import("@langchain/core/messages").BaseMessage[], input.signal);
@@ -2401,16 +2440,10 @@ export class PaAgentRuntime {
                     : input;
                 injectedContext = readInjectedContext();
                 const preview = await previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
-                const summaryToolIds = preview.outcome.admission === 'local_overflow'
-                    ? providerInput.transcript.filter((message): message is PaAgentToolSummarySource =>
-                        message.role === 'toolResult' && message.content.includeInNextPrompt
-                        && message.content.promptText.length > MAX_TOOL_SUMMARY_CHARS)
-                        .sort((left, right) => right.content.promptText.length - left.content.promptText.length)
-                        .map(message => message.id)
-                    : [];
-                const needsHistorySummary = preview.history.summaryChars > 0 || preview.history.omittedCount > 0;
+                const needsHistorySummary = preview.history.summaryChars > 0 || preview.history.omittedCount > 0
+                    || preview.history.historyBudgetLimited === true;
                 if (input.toolMode !== "final_answer_only" && preview.outcome.admission === "local_overflow"
-                    && (needsHistorySummary || summaryToolIds.length > 0)) {
+                    && needsHistorySummary) {
                     debug('context_summary:start', { turnId: input.turnId });
                     // Summary guards include selected image currentness. Establish
                     // those receipts before the optional summary invokes them.
@@ -2443,7 +2476,7 @@ export class PaAgentRuntime {
                             lineage: InputLineage;
                             isAttachmentSourceCurrent: () => boolean;
                             serializedInput: string;
-                            expectedSources: ReadonlyArray<{ index: number; role: "user" | "assistant" | "tool"; content: string }>;
+                            expectedSources: readonly PaAgentSummaryBindingSource[];
                             historySources?: readonly ChatMessage[];
                             historySourceIndexes?: readonly number[];
                             managementSource?: PaAgentToolSummarySource;
@@ -2565,7 +2598,7 @@ export class PaAgentRuntime {
                             summaryManagementProjection.history,
                             signal,
                         );
-                        let expectedSources: ReadonlyArray<{ index: number; role: "user" | "assistant" | "tool"; content: string }>;
+                        let expectedSources: readonly PaAgentSummaryBindingSource[];
                         const suppliedSources = payload.bindingSources ?? [];
                         if (summarySource) {
                             const projectedSource = summaryVaultProjection.transcript.find(message => message.id === summarySource?.id);
@@ -2573,7 +2606,8 @@ export class PaAgentRuntime {
                                 || projectedSource.content.promptText !== summarySource.content.promptText) {
                                 throw new Error("Context summary source changed before dispatch");
                             }
-                            expectedSources = [{ index: 1, role: "tool", content: projectedSource.content.promptText }];
+                            expectedSources = [{ index: 1, role: "tool", content: projectedSource.content.promptText,
+                                actionResult: projectPaAgentToolStatus(projectedSource) }];
                         } else {
                             if (
                                 bindingHistorySources.length !== suppliedSources.length
@@ -2581,19 +2615,17 @@ export class PaAgentRuntime {
                             ) {
                                 throw new Error("Context summary source changed before dispatch");
                             }
-                            const sourceMatchesProjection = suppliedSources.every((item, index) => {
+                            let sourceMatchesProjection = true;
+                            for (const [index, item] of suppliedSources.entries()) {
                                 const message = summaryVaultProjection.history[index];
-                                const content = message?.images?.length
-                                    ? JSON.stringify({
-                                        text: message.content,
-                                        ...chatHistoryImageMetadata(message),
-                                        imageAvailability: "reference_only_not_pixels",
-                                    })
-                                    : message?.content;
-                                return message !== undefined
-                                    && message.role === item.role
-                                    && content === item.content;
-                            });
+                                const content = message ? await prepareContextSteps(historySummaryContentSteps(message), signal) : undefined;
+                                const actionStates = message ? projectPaAgentSummaryActionStates(message) : undefined;
+                                if (!message || message.role !== item.role || content !== item.content
+                                    || stableProviderJson(item.actionStates) !== stableProviderJson(actionStates)) {
+                                    sourceMatchesProjection = false;
+                                    break;
+                                }
+                            }
                             if (!sourceMatchesProjection) {
                                 throw new Error("Context summary source changed before dispatch");
                             }
@@ -2601,6 +2633,30 @@ export class PaAgentRuntime {
                         }
                         if (stableProviderJson(payload.bindingSources ?? []) !== stableProviderJson(expectedSources)) {
                             throw new Error("Context summary source changed before dispatch");
+                        }
+                        if (!summarySource) {
+                            const currentHistory = await sourceRun.projectHistoryAsync(options.chatHistory ?? [], signal);
+                            for (const [offset, source] of suppliedSources.entries()) {
+                                const current = currentHistory[source.index - 1];
+                                if (!current || !isCurrentHistorySummary({ text: '', sourceMessages: [bindingHistorySources[offset]] }, [current])) {
+                                    throw new Error('Context summary source changed before invoke');
+                                }
+                            }
+                            const coveredCount = payload.bindingCoveredMessageCount;
+                            if (!Number.isInteger(coveredCount) || coveredCount! <= 0 || coveredCount! > currentHistory.length) {
+                                throw new Error('Context summary covered source domain is unavailable');
+                            }
+                            const coveredHistory = currentHistory.slice(0, coveredCount);
+                            const protectedIndexes = await prepareContextSteps(protectedHistorySourceIndexesSteps(coveredHistory), signal);
+                            if (stableProviderJson([...protectedIndexes]) !== stableProviderJson(payload.bindingProtectedSourceIndexes)
+                                || [...protectedIndexes].some(index => !suppliedSources.some(source => source.index === index))) {
+                                throw new Error('Context summary protected source domain changed');
+                            }
+                            const retainedFacts = await prepareContextSteps(projectPaAgentRetainedActionFactsSteps(coveredHistory), signal);
+                            if (!await prepareContextSteps(matchesPaAgentHistorySummaryPayloadSteps(payload.messages,
+                                expectedSources, protectedIndexes, retainedFacts, payload.bindingPreviousSummary), signal)) {
+                                throw new Error('Context summary action anchors or free sources changed');
+                            }
                         }
                         const summaryLineage = unionInputLineages(
                             ...(summarySource ? [cloneInputLineage(summarySource.inputLineage)] : []),
@@ -2690,21 +2746,9 @@ export class PaAgentRuntime {
                             deadlineManagedByInvoke: true,
                         }) : runSummaries.history;
                         runSummaries = { history, tools };
-                        for (const id of summaryToolIds) {
-                            preparation.throwIfAborted();
-                            if ((await previewCanonicalModelInput(providerInput, toolDefinitions, schemas)).outcome.admission === 'fit') break;
-                            const current = providerInput.transcript.find((message) => message.id === id);
-                            if (current?.role !== "toolResult" || !current.content.includeInNextPrompt) continue;
-                            // Registry revalidation can mutate live transcript references.
-                            // Compare dispatch against the same independent snapshot that
-                            // supplies the summary payload, never a live comparison object.
-                            const source = cloneMessage(current) as PaAgentToolSummarySource;
-                            const summary = await contextSummarizer.prepareTool({
-                                source, invoke: invokeForSource(source), signal: preparation.signal,
-                                deadlineManagedByInvoke: true,
-                            });
-                            if (summary) tools.set(id, summary);
-                        }
+                        // Free-form tool summaries cannot prove body coverage.
+                        // The shared projection keeps those findings losslessly;
+                        // do not spend an auxiliary call that cannot enable fit.
                     } catch (error) {
                         // Summary deadline/failure degrades to deterministic projection; user/run cancellation does not.
                         if (input.signal?.aborted) throw error;
@@ -3183,7 +3227,8 @@ export class PaAgentRuntime {
                                 : message.content.metadata?.statusOnly === true
                                     ? completeInputLineage()
                                         : sourceFreeNotesObservation
-                                        ? message.toolName === 'prepare_ghost_post'
+                                        ? message.toolName === 'prepare_ghost_post' || message.toolName === 'create_image'
+                                            || isSafeOperationsStagedObservation(message)
                                             ? completeInputLineage()
                                             : sourceRun.captureRunNotesObservationLineage(
                                                 message.toolName === 'search_memory' ? 'memory' : 'vault',
@@ -3417,7 +3462,7 @@ export class PaAgentRuntime {
                 tool_observations: projection.toolObservations,
                 operations_guidance: operationsGuidance,
                 messages: await buildPaAgentFinalMessagesAsync(projection.input, projection.actionHistory,
-                    actionMode, undefined, projection.history, projection.currentInput, input.signal),
+                    actionMode, undefined, projection.history, projection.currentInput, input.signal, projection),
                 __context_projection_diagnostic: JSON.stringify(projection.diagnostics),
             } as Record<string, unknown>,
             projection,
@@ -3440,7 +3485,9 @@ export class PaAgentRuntime {
         const nativeWritingRequest = options.writingOutputProtocol === "native" ? options.writingRequest : undefined;
         const nativeContextHandle = nativeWritingRequest
             ? (options.writingContextHost ? options.writingContextHandle : nativeWritingRequest.requestId) : undefined;
-        const mayReportIncomplete = !hasOperationsStagedAcknowledgementInstruction(input.runtimeInstruction);
+        const operationsAcknowledgement = isOperationsStagedAcknowledgement(input.currentProtocol)
+            || isOperationsStagedAcknowledgement(input.runtimeInstruction);
+        const mayReportIncomplete = !operationsAcknowledgement;
         let toolDefinitionsText = input.toolMode === "final_answer_only"
             ? (nativeContextHandle ? "Only present_writing or report_task_incomplete (pure outputs) are available. No source, context or action tools are available in this finalization turn."
                 : mayReportIncomplete ? "No source, context or action tools are available in this finalization turn."
@@ -3452,21 +3499,27 @@ export class PaAgentRuntime {
         if (mayReportIncomplete) {
             toolDefinitionsText += `\nIf you cannot complete the user task, call ${REPORT_TASK_INCOMPLETE} as one native function/tool call with the explanation in answer. Do not print <${REPORT_TASK_INCOMPLETE}>, JSON, or any marker in ordinary text: that text will be shown literally and will not mark the task incomplete. Optional pure output schema: ${JSON.stringify(taskIncompleteOutputSchema().function)}`;
         }
-        if (nativeWritingRequest && nativeContextHandle && input.toolMode !== "final_answer_only") {
+        if (nativeWritingRequest && nativeContextHandle && mayReportIncomplete && input.toolMode !== "final_answer_only") {
             toolDefinitionsText += `\nPure output declaration (not a source or action): ${JSON.stringify(nativeWritingOutputSchema(nativeWritingRequest, nativeContextHandle).function)}`;
         }
         const operationsGuidance = createOperationsPromptGuidance(toolDefinitions ?? []);
         const projection = await this.contextManager.forPromptAsync({
             prompt: options.prompt,
-            chatHistory: isOperationsStagedAcknowledgement(input.runtimeInstruction)
+            chatHistory: operationsAcknowledgement
                 ? undefined
                 : options.chatHistory,
             transcript: input.transcript,
             turnIndex: input.turnIndex,
             hostContext,
             runtimeInstruction: combineRuntimeInstructions([input.runtimeInstruction,
-                selectedWritingContext(options.writingContext),
-                options.writingRequest ? (nativeWritingRequest ? (nativeContextHandle ? nativeWritingOutputInstruction(options.writingRequest, nativeContextHandle) : "Reply with ordinary text, or prepare a writing context before delivering a finished work.") : writingOutputInstruction(options.writingRequest)) : ""]),
+                selectedWritingContext(options.writingContext)]),
+            currentProtocol: combineRuntimeInstructions([
+                input.currentProtocol,
+                options.writingRequest && mayReportIncomplete ? (nativeWritingRequest ? (nativeContextHandle ? nativeWritingOutputInstruction(options.writingRequest, nativeContextHandle)
+                    : nativeWritingPreparationInstruction(options.writingRequest,
+                        boundSchemas.some(schema => schema.function.name === 'get_writing_context')))
+                    : writingOutputInstruction(options.writingRequest)) : "",
+            ]),
             injectedContext,
             summaries,
             availableSkills,
@@ -3486,7 +3539,7 @@ export class PaAgentRuntime {
                 tool_observations: parts.toolObservations,
                 operations_guidance: operationsGuidance,
             }, boundSchemas, await buildPaAgentFinalMessagesAsync(parts.input, parts.actionHistory,
-                actionMode, undefined, parts.history, parts.currentInput, input.signal), input.signal),
+                actionMode, undefined, parts.history, parts.currentInput, input.signal, parts), input.signal),
         }, input.signal);
         return { projection, operationsGuidance };
     }

@@ -10,6 +10,8 @@ import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
 import { AgentRunCoordinator } from "../src/ai-services/agent-run-coordinator";
 import { BuiltinWebSearchProvider, createBailianWebSearchNetworkPolicy } from "../src/ai-services/builtin-web-search-provider";
 import * as vaultEvidence from "../src/ai-services/vault-observation-evidence";
+import * as hostTools from "../src/ai-services/pa-agent-host-tools";
+import { MemorySearchTool } from "../src/ai-services/memory-search-tool";
 import { createPaRuntimeEvalRequestBudget, PA_RUNTIME_EVAL_CASES, runPaRuntimeEvalCase,
     validatePaRuntimeEvalEvidence, type PaRuntimeEvalCase } from "../src/pa/eval";
 
@@ -283,13 +285,76 @@ describe("B-149 runtime task baseline", () => {
         for (const [index, tool] of tools.entries()) {
             expect(JSON.parse(results[index].content.promptText)).toEqual({
                 tool: tool.name, status: 'unavailable', input: 'execution failed',
-                error: 'Read-only tool was unavailable.',
+                error: 'Read-only tool was unavailable.', failureReason: 'adapter_error',
             });
             expect(String(toolMessages[index].content)).toContain(results[index].content.promptText);
             expect(String(toolMessages[index].content)).not.toContain('result_unknown');
             expect(String(toolMessages[index].content)).not.toContain('private/secret.md');
         }
     });
+
+    it.each([
+        ['search_vault_metadata', 'unknown'], ['search_vault_metadata', 'mismatch'],
+        ['search_vault_metadata', 'envelope-only'], ['search_vault_metadata', 'metadata-only'],
+        ['search_memory', 'unknown'], ['search_memory', 'mismatch'],
+        ['search_memory', 'envelope-only'], ['search_memory', 'metadata-only'], ['search_memory', 'valid'],
+    ] as const)('checks the standard %s failure boundary when its reason is %s', async (tool, variant) => {
+            const evalCase = PA_RUNTIME_EVAL_CASES.find(item => item.id === 'E-06')!;
+            const host = hostFor(evalCase);
+            host.settings.memoryEnabled = tool === 'search_memory';
+            const memorySpy = tool === 'search_memory'
+                ? jest.spyOn(MemorySearchTool.prototype, 'search').mockRejectedValue(new Error('PRIVATE_MEMORY_FAILURE')) : undefined;
+            const createExecutor = hostTools.createPaAgentCapabilityToolExecutor;
+            const spy = jest.spyOn(hostTools, 'createPaAgentCapabilityToolExecutor').mockImplementation(options => {
+                const executor = createExecutor(options);
+                return { ...executor, execute: async input => {
+                    const result = await executor.execute(input);
+                    const envelope = JSON.parse(result.promptText);
+                    const metadata = { ...result.metadata };
+                    if (variant === 'unknown') envelope.failureReason = metadata.failureReason = 'unclassified_private_error';
+                    else if (variant === 'mismatch') envelope.failureReason = 'source_changed';
+                    else if (variant === 'envelope-only') delete metadata.failureReason;
+                    else if (variant === 'metadata-only') delete envelope.failureReason;
+                    return { ...result, promptText: JSON.stringify(envelope), metadata };
+                } };
+            });
+            const service = new ChatService(host);
+            const requests: RequestBody[] = [];
+            const results: Extract<PaAgentMessage, { role: 'toolResult' }>[] = [];
+            try {
+                globalThis.fetch = jest.fn(async (_url, init) => {
+                    const body = JSON.parse(String(init?.body)) as RequestBody;
+                    requests.push(body);
+                    return completion(body, requests.length === 1
+                        ? { tools: [{ name: tool, input: { query: 'moon' } }] }
+                        : { text: 'Search unavailable.' });
+                }) as typeof fetch;
+                await service.streamLLM('Find approval records', jest.fn(), undefined, [], {
+                    userText: 'Find approval records', memoryMode: tool === 'search_memory' ? 'auto' : 'skip-memory', runSourceSelection: {
+                        schemaVersion: 1, scope: 'notes', selectionId: `failure-${variant}`, userMessageId: 'failure-user',
+                    }, onLifecycleEvent: event => {
+                        if (event.type === 'message_end' && event.message.role === 'toolResult') results.push(event.message);
+                    },
+                });
+                expect(requests).toHaveLength(2);
+                const second = JSON.stringify(requests[1]);
+                if (variant === 'valid') {
+                    expect(results[0].inputLineage?.completeness).toBe('complete');
+                    expect(results[0].inputLineage?.dependencies).toEqual(expect.arrayContaining([
+                        expect.objectContaining({ kind: 'run-notes-observation', owner: 'memory' }),
+                    ]));
+                    expect(second).toContain('Read-only tool was unavailable.');
+                    expect(second).not.toContain('result_unknown');
+                } else {
+                    expect(results[0].inputLineage?.completeness).toBe('unknown');
+                    expect(results[0].inputLineage?.dependencies.some(item => item.kind === 'run-notes-observation')).toBe(false);
+                    expect(second).toContain('result_unknown');
+                    expect(second).not.toContain('Read-only tool was unavailable.');
+                }
+                expect(second).not.toContain('unclassified_private_error');
+                expect(second).not.toContain('PRIVATE_MEMORY_FAILURE');
+            } finally { spy.mockRestore(); memorySpy?.mockRestore(); service.dispose(); }
+        });
 
     it('keeps an owner-specific Vault error unknown in the next SDK request', async () => {
         const evalCase = PA_RUNTIME_EVAL_CASES.find(item => item.id === 'E-06')!;

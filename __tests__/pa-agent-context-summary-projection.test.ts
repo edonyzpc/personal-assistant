@@ -38,7 +38,7 @@ function summaryFor(messages: ChatMessage[], covered: number, text = JSON.string
     };
 }
 
-function result(id: string, body = "raw evidence ".repeat(1000)): PaAgentToolSummarySource {
+function result(id: string, body = "raw evidence.\n".repeat(1000)): PaAgentToolSummarySource {
     return {
         id, role: "toolResult", timestamp: 1, toolCallId: `call-${id}`,
         toolName: "search_memory", isError: false,
@@ -48,6 +48,14 @@ function result(id: string, body = "raw evidence ".repeat(1000)): PaAgentToolSum
             sourceRecords: [{ kind: "memory-reference", dedupKey: id, path: "notes/evidence.md", metadata: { revision: 1 } }],
         },
     };
+}
+
+function recoverResultText(text: string): string {
+    const encoded = text.match(/<lossless_tool_result[^>]*>\n[^\n]*\n([\s\S]*)\n<\/lossless_tool_result>/)?.[1];
+    if (!encoded) return text;
+    const value = JSON.parse(encoded) as RepeatedSourceContent;
+    expect(value.encoding).toBe('adjacent-repeats-v1');
+    return value.segments.map(segment => segment.text.repeat(segment.count)).join('');
 }
 
 function transcriptFor(...results: PaAgentToolSummarySource[]): PaAgentMessage[] {
@@ -71,6 +79,45 @@ function summariesFor(tool: PaAgentToolSummarySource, text = JSON.stringify({ fi
 }
 
 describe("complete lossless history projection", () => {
+    it('fits repetitive action results losslessly without letting a bound summary omit their unique evidence', async () => {
+        const body = `Opening evidence.\n${'Repeated supporting detail.\r\n'.repeat(300)}CONTRACT_ID_734\n${'Repeated supporting detail.\r\n'.repeat(300)}Final evidence.`;
+        const tool = result('contract', body);
+        const messages: ChatMessage[] = [{ role: 'user', content: 'Find the contract number.' },
+            { role: 'assistant', content: 'Found it.', canonicalTurn: {
+                schemaVersion: 1, runId: 'old-run', turnId: 'old-turn', messages: transcriptFor(tool),
+            } }];
+        const before = JSON.stringify(messages);
+        const full = fitFullHistory(messages, 2500);
+        expect(full).toBeDefined();
+        expect(full!.losslesslyEncoded).toBe(true);
+        expect(full!.text).toContain('CONTRACT_ID_734');
+        expect(full!.text).toContain('adjacent-repeats-v1');
+        const wire = JSON.parse(full!.text.match(/<chat_history[^>]*>\n([\s\S]*?)\n<\/chat_history>/)![1]);
+        const call = wire[1].actionHistory[0].calls[0];
+        expect(call.input).toEqual({});
+        expect(call.id).toBe(tool.toolCallId);
+        expect(call.results[0].id).toBe(tool.id);
+        expect(recoverResultText(call.results[0].text)).toBe(body);
+        const projected = new PaAgentContextProjector().projectUserInput({ prompt: 'What was the number?',
+            chatHistory: messages, maxHistoryChars: 2500,
+            summaries: { history: summaryFor(messages, 2, JSON.stringify({ goals: [
+                { text: 'Find the contract number.', sourceMessages: [1] },
+            ], constraints: [], decisions: [], completed: [], open_questions: [], facts: [] })) } });
+        expect(projected.history.omittedCount).toBe(0);
+        expect(projected.history.historyBudgetLimited).not.toBe(true);
+        expect(projected.input).toContain('CONTRACT_ID_734');
+        expect(projected.input).not.toContain('conversation_summary');
+        expect(JSON.stringify(messages)).toBe(before);
+        let summaryCalls = 0;
+        const coordinator = new PaAgentContextSummarizer();
+        try {
+            expect(await coordinator.prepareHistory({ history: messages, historyBudgetChars: 2500,
+                invoke: async () => { summaryCalls++; throw new Error('A full reversible history needs no summary.'); },
+            })).toBeUndefined();
+            expect(summaryCalls).toBe(0);
+        } finally { coordinator.dispose(); }
+    });
+
     it('invalidates a same-text summary when the represented ancestry changes', () => {
         const first = [{ role: 'assistant', content: 'same answer', inputLineage: {
             schemaVersion: 1, completeness: 'complete', dependencies: [{ kind: 'web', providerId: 'web', resultKey: 'a' }],
@@ -81,7 +128,7 @@ describe("complete lossless history projection", () => {
         expect(isCurrentHistorySummary(summaryFor(first, 1), second)).toBe(false);
     });
 
-    it('keeps internal aggregate dependencies out of compaction markers while retaining visible sources', () => {
+    it('keeps aggregate dependency metadata out of the encoded body while retaining all source records', () => {
         const tool = result('aggregate');
         tool.toolName = 'list_vault_tags';
         tool.content.sourceRecords!.unshift({ kind: 'context-used', dedupKey: 'hidden', path: 'INTERNAL_ONLY.md',
@@ -92,7 +139,7 @@ describe("complete lossless history projection", () => {
         const text = findResult(compacted.transcript, tool.id).content.promptText;
         expect(text.length).toBeLessThan(tool.content.promptText.length);
         expect(text).not.toContain('INTERNAL_ONLY');
-        expect(text).toContain('notes/evidence.md');
+        expect(recoverResultText(text)).toBe(tool.content.promptText);
         // Dependencies still belong to host validity checks, even when not advertised.
         expect(findResult(compacted.transcript, tool.id).content.sourceRecords).toEqual(tool.content.sourceRecords);
     });
@@ -218,7 +265,8 @@ describe("semantic prefix projection", () => {
         expect(projected.history.omittedCount).toBe(0);
         expect(projected.history.sourceMessages).toEqual(messages);
         expect(projected.history.semanticSummaryChars).toBe(semantic.text.length);
-        expect(projected.input).toContain('grants_tool_authority="false" grants_write_authority="false"');
+        expect(projected.input).not.toContain('grants_tool_authority');
+        expect(projected.input).not.toContain('grants_write_authority');
         expect(projected.input).toContain("User input:\n现在暂停写入，只复核。");
         expect(projected.input).toContain("Current mode: read-only. No write tools.");
         expect(projected.input).not.toContain("<user_profile");
@@ -334,7 +382,7 @@ describe("semantic prefix projection", () => {
         expect(projected.history.text.length).toBeLessThanOrEqual(2500);
     });
 
-    it("keeps the raw-tail fallback after a semantic prefix when the entire history cannot fit losslessly", () => {
+    it("keeps a complete reversible tail after a semantic prefix when the entire history cannot fit losslessly", () => {
         const messages: ChatMessage[] = [
             { role: "user", content: "x".repeat(8000) },
             { role: "assistant", content: "Earlier decision recorded." },
@@ -345,9 +393,16 @@ describe("semantic prefix projection", () => {
             prompt: "continue", chatHistory: messages, maxHistoryChars: 1800,
             summaries: { history: summaryFor(messages, 2) },
         });
+        expect(planHistoryContext(messages, 1800).coveredMessages).toBe(2);
         expect(projected.history.text).toContain("<conversation_summary");
-        expect(projected.history.text).not.toContain("adjacent-repeats-v1");
+        expect(projected.history.text).toContain("adjacent-repeats-v1");
         expect(projected.history.text.length).toBeLessThanOrEqual(1800);
+        expect(projected.history.omittedCount).toBe(0);
+        expect(projected.history.summaryChars).toBe(0);
+        const records = JSON.parse(projected.history.text.match(/<chat_history[^>]*>\n([\s\S]*?)\n<\/chat_history>/)![1]);
+        const encoded = records[0].content as RepeatedSourceContent;
+        expect(encoded.segments.map(segment => segment.text.repeat(segment.count)).join('')).toBe(messages[2].content);
+        expect(records[1].content).toBe(messages[3].content);
     });
 
     it("keeps semantic JSON atomic when later admission pressure leaves no room for it", () => {
@@ -366,10 +421,10 @@ describe("semantic prefix projection", () => {
     });
 });
 
-describe("semantic tool projection", () => {
+describe("lossless tool projection with semantic summaries", () => {
     const compactor = new PaAgentContextCompactor();
 
-    it("carries old findings with a truthful call/source marker while protecting recent raw results", () => {
+    it("retains complete old findings instead of trusting a summary to cover them, protecting recent raw results", () => {
         const old = result("old");
         const recentA = result("recent-a", "recent A");
         const recentB = result("recent-b", "recent B");
@@ -380,24 +435,25 @@ describe("semantic tool projection", () => {
         });
         const reduced = findResult(projected.transcript, old.id);
 
-        expect(reduced.content.promptText).toContain("Constraint A depends on note B.");
-        expect(reduced.content.promptText).toContain("call=call-old;");
-        expect(reduced.content.promptText).toContain("isError=false;");
-        expect(reduced.content.promptText).toContain("notes/evidence.md");
-        expect(reduced.content.promptText).toContain('grants_write_authority="false"');
+        expect(recoverResultText(reduced.content.promptText)).toBe(old.content.promptText);
+        expect(reduced.toolCallId).toBe(old.toolCallId);
+        expect(reduced.isError).toBe(old.isError);
+        expect(reduced.content.sourceRecords).toEqual(old.content.sourceRecords);
+        expect(reduced.content.promptText).not.toContain('grants_write_authority');
         expect(findResult(projected.transcript, recentA.id).content.promptText).toBe("recent A");
-        expect(reduced.content.metadata?.contextSemanticSummaryUsed).toBe(true);
+        expect(reduced.content.metadata?.contextSemanticSummaryUsed).toBe(false);
+        expect(reduced.content.metadata?.contextLosslessEncodingUsed).toBe(true);
         expect(JSON.stringify(transcript)).toBe(before);
     });
 
-    it("uses a giant recent result's semantic summary before falling back to hard truncation", () => {
+    it("losslessly encodes a giant recent result without deleting evidence through its semantic summary", () => {
         const tool = result("latest");
         const transcript = transcriptFor(tool);
         const projected = compactor.microCompact(transcript, {
             maxObservationChars: 1000, summaries: summariesFor(tool), canonicalTranscript: transcript,
         });
 
-        expect(findResult(projected.transcript, tool.id).content.promptText).toContain("Constraint A depends on note B.");
+        expect(recoverResultText(findResult(projected.transcript, tool.id).content.promptText)).toBe(tool.content.promptText);
         expect(projected.compactedToolResults).toBe(1);
         expect(projected.hardTruncatedToolResults).toBe(0);
         expect(projected.compactedObservationChars).toBeLessThanOrEqual(1000);
@@ -416,7 +472,7 @@ describe("semantic tool projection", () => {
         expect(findResult(projected.transcript, tool.id).content.metadata?.contextSemanticSummaryUsed).toBe(false);
     });
 
-    it("validates repeated reductions against canonical evidence rather than the previous projection", () => {
+    it("keeps a lossless representation stable across repeated reductions", () => {
         const tool = result("latest");
         const transcript = transcriptFor(tool);
         const summaries = summariesFor(tool);
@@ -427,11 +483,13 @@ describe("semantic tool projection", () => {
         });
 
         expect(findResult(repeated.transcript, tool.id).content.promptText).toBe(findResult(first.transcript, tool.id).content.promptText);
-        expect(findResult(repeated.transcript, tool.id).content.metadata?.contextSemanticSummaryUsed).toBe(true);
+        expect(recoverResultText(findResult(repeated.transcript, tool.id).content.promptText)).toBe(tool.content.promptText);
+        expect(findResult(repeated.transcript, tool.id).content.metadata?.contextLosslessEncodingUsed).toBe(true);
+        expect(findResult(repeated.transcript, tool.id).content.metadata?.contextSemanticSummaryUsed).toBe(false);
         expect(findResult(repeated.transcript, tool.id).content.metadata?.originalPromptTextLength).toBe(tool.content.promptText.length);
     });
 
-    it("invalidates only the tool summary whose observation evidence changed", () => {
+    it("invalidates changed evidence and preserves both original bodies instead of replacing either with a summary", () => {
         const stale = result('stale-vault', 'STALE_VAULT_BODY '.repeat(100));
         stale.toolName = 'read_note';
         const current = result('current-vault', 'CURRENT_VAULT_BODY '.repeat(100));
@@ -485,17 +543,21 @@ describe("semantic tool projection", () => {
             protectedRecentTurns: 0,
             summaries: { tools: summaries },
         });
+        expect(isCurrentToolSummary(summaries.get(stale.id)!, stale)).toBe(false);
+        expect(isCurrentToolSummary(summaries.get(current.id)!, current)).toBe(true);
         expect(findResult(projected.transcript, stale.id).content.metadata?.contextSemanticSummaryUsed)
             .not.toBe(true);
         expect(findResult(projected.transcript, stale.id).content.promptText)
             .not.toContain('STALE_TOOL_SUMMARY_SENTINEL');
         expect(findResult(projected.transcript, current.id).content.metadata?.contextSemanticSummaryUsed)
-            .toBe(true);
+            .not.toBe(true);
         expect(findResult(projected.transcript, current.id).content.promptText)
-            .toContain('CURRENT_TOOL_SUMMARY_SENTINEL');
+            .not.toContain('CURRENT_TOOL_SUMMARY_SENTINEL');
+        expect(recoverResultText(findResult(projected.transcript, stale.id).content.promptText)).toBe(stale.content.promptText);
+        expect(recoverResultText(findResult(projected.transcript, current.id).content.promptText)).toBe(current.content.promptText);
     });
 
-    it("drops an indivisible semantic block as a whole if hard pressure cannot fit it", () => {
+    it("keeps complete evidence above a tiny cap instead of dropping an indivisible result", () => {
         const tool = result("latest");
         const transcript = transcriptFor(tool);
         const projected = compactor.microCompact(transcript, {
@@ -505,9 +567,10 @@ describe("semantic tool projection", () => {
 
         expect(reduced.content.promptText).not.toContain("<tool_context_summary");
         expect(reduced.content.promptText).not.toContain('"findings"');
-        expect(reduced.content.promptText).toMatch(/result truncated;.*details omitted\.\]$/);
+        expect(recoverResultText(reduced.content.promptText)).toBe(tool.content.promptText);
+        expect(projected.compactedObservationChars).toBeGreaterThan(200);
         expect(reduced.content.metadata?.contextSemanticSummaryUsed).toBe(false);
-        expect(projected.hardTruncatedToolResults).toBe(1);
+        expect(projected.hardTruncatedToolResults).toBe(0);
     });
 });
 
@@ -531,7 +594,7 @@ describe("semantic Manager integration", () => {
         expect(projected.reducedToolMessageIds).toEqual(["tool"]);
         expect(projected.outcome.admission).toBe("fit");
         expect(projected.diagnostics.historyCompaction).toMatchObject({ semanticSummaryUsed: true });
-        expect(projected.diagnostics.microCompaction).toMatchObject({ semanticSummaryUsed: true, semanticToolSummaries: 1 });
+        expect(projected.diagnostics.microCompaction).toMatchObject({ semanticSummaryUsed: false, semanticToolSummaries: 0 });
         expect(JSON.stringify(projected.diagnostics)).not.toContain("Keep SQLite.");
         expect(JSON.stringify(projected.diagnostics)).not.toContain("Constraint A depends on note B.");
     });
@@ -587,20 +650,45 @@ describe("PaAgentContextSummarizer physical source bindings", () => {
         const hostProcessedIndexes = new Set<number>();
         for (const payload of payloads) {
             const request = JSON.parse(payload.messages[1]!.content) as {
-                sourceMessages: Array<{ index: number }>;
+                sourceMessages: Array<{ index: number; role: string; content: string; start: number; end: number }>;
                 previousSummary: { facts?: Array<{ sourceMessages?: number[] }> } | null;
             };
+            expect(payload.messages.map(message => message.role)).toEqual(['system', 'user', 'user']);
+            expect(JSON.parse(payload.messages[2].content)).toEqual({ sourceKind: 'retained_action_facts',
+                purpose: 'read_only_reference', retainedActionFacts: [] });
+            expect(JSON.stringify(payload).length + 512).toBeLessThanOrEqual(16_000);
             const expectedIndexes = new Set<number>(hostProcessedIndexes);
             for (const part of request.sourceMessages) expectedIndexes.add(part.index);
             const boundIndexes = payload.bindingSources?.map(source => source.index) ?? [];
             expect([...expectedIndexes].sort((left, right) => left - right)).toEqual(boundIndexes);
             expect(payload.bindingSourceMessages).toEqual(boundIndexes.map(index => messages[index - 1]!));
             if (payload === payloads[0]) {
-                expect(boundIndexes).toEqual([1, 2]);
-            }
+                const wholeExchange = { ...payload, messages: [payload.messages[0], { role: 'user',
+                    content: JSON.stringify({ ...request, sourceMessages: messages.slice(0, 2).map((message, index) => ({
+                        index: index + 1, role: message.role, content: message.content, start: 0, end: message.content.length,
+                    })) }, null, 2) }, payload.messages[2]] };
+                const wholeExchangeFits = JSON.stringify(wholeExchange).length + 512 <= 16_000;
+                expect(request.sourceMessages.map(part => part.index)).toEqual(wholeExchangeFits ? [1, 2] : [1]);
+                expect(boundIndexes).toEqual([...new Set(request.sourceMessages.map(part => part.index))]);
+                expect(request.previousSummary).toBeNull();
+                expect(request.sourceMessages.some(part => part.index >= 3)).toBe(false);
+            } else expect(request.previousSummary?.facts).toEqual([{ text: 'Keep the first source dependency.', sourceMessages: [1] }]);
             for (const part of request.sourceMessages) hostProcessedIndexes.add(part.index);
         }
         expect([...hostProcessedIndexes].sort((left, right) => left - right)).toEqual([1, 2, 3, 4]);
+        const parts = payloads.flatMap(payload => JSON.parse(payload.messages[1].content).sourceMessages as Array<{
+            index: number; role: string; content: string; start: number; end: number;
+        }>);
+        messages.forEach((message, index) => {
+            const slices = parts.filter(part => part.index === index + 1);
+            expect(slices.map(part => part.content).join('')).toBe(message.content);
+            slices.forEach((part, offset) => {
+                expect(part.role).toBe(message.role);
+                expect(part.start).toBe(offset ? slices[offset - 1].end : 0);
+                expect(part.content).toBe(message.content.slice(part.start, part.end));
+            });
+            expect(slices.at(-1)?.end).toBe(message.content.length);
+        });
     });
 
     it("keeps cached prefix host dependencies when extending the same summarizer", async () => {

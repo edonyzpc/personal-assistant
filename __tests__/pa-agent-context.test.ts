@@ -9,6 +9,14 @@ import {
 } from "../src/ai-services/context";
 import type { ChatMessage, PaAgentMessage } from "../src/ai-services/chat-types";
 
+function recoverResultText(text: string): string {
+    const encoded = text.match(/<lossless_tool_result[^>]*>\n[^\n]*\n([\s\S]*)\n<\/lossless_tool_result>/)?.[1];
+    if (!encoded) return text;
+    const value = JSON.parse(encoded) as { encoding: string; segments: Array<{ text: string; count: number }> };
+    expect(value.encoding).toBe('adjacent-repeats-v1');
+    return value.segments.map(segment => segment.text.repeat(segment.count)).join('');
+}
+
 function user(id: string, content = "user"): PaAgentMessage {
     return { role: "user", id, content, timestamp: 1 };
 }
@@ -199,7 +207,7 @@ describe("Pagelet Chat handoff projection", () => {
 describe("PaAgentContextCompactor", () => {
     it("micro-compacts old model cycles in a real one-user run while preserving the latest cycle", () => {
         const compactor = new PaAgentContextCompactor();
-        const oldObservation = "old observation ".repeat(80);
+        const oldObservation = "old observation.\n".repeat(80);
         const latestObservation = "latest observation ".repeat(20);
         const transcript: PaAgentMessage[] = [
             user("u1"),
@@ -226,16 +234,15 @@ describe("PaAgentContextCompactor", () => {
         if (compacted?.role !== "toolResult" || recent?.role !== "toolResult") return;
         expect(compacted.content.metadata?.compacted).toBe(true);
         expect(compacted.content.sourceRecords?.[0]?.path).toBe("notes/a.md");
-        expect(compacted.content.promptText).toContain("notes/a.md");
-        expect(compacted.content.promptText).toContain("isError=false");
-        expect(compacted.content.promptText).toContain("call=call-1;");
-        expect(compacted.content.promptText).toContain(`originalChars=${oldObservation.length};`);
-        expect(compacted.content.promptText).not.toContain("metadata is still available");
+        expect(recoverResultText(compacted.content.promptText)).toBe(oldObservation);
+        expect(compacted.toolCallId).toBe('call-1');
+        expect(compacted.content.metadata?.contextLosslessEncodingUsed).toBe(true);
+        expect(compacted.content.metadata?.contextSemanticSummaryUsed).toBe(false);
         expect(recent.content.metadata?.compacted).toBeUndefined();
         expect(recent.content.promptText).toBe(latestObservation);
     });
 
-    it("applies a hard observation cap at projection time without mutating source records", () => {
+    it("retains an irreducible result above a tiny cap without mutating source records", () => {
         const compactor = new PaAgentContextCompactor();
         const transcript: PaAgentMessage[] = [
             user("u1"),
@@ -254,16 +261,12 @@ describe("PaAgentContextCompactor", () => {
         const capped = result.transcript.find((message) => message.id === "t1");
         expect(capped?.role).toBe("toolResult");
         if (capped?.role !== "toolResult") return;
-        expect(capped.content.promptText.length).toBeLessThanOrEqual(160);
-        expect(capped.content.metadata?.contextBudgetTruncated).toBe(true);
+        expect(capped.content.promptText).toBe('latest observation '.repeat(80));
+        expect(capped.content.promptText.length).toBeGreaterThan(160);
+        expect(capped.content.metadata?.contextBudgetTruncated).not.toBe(true);
         expect(capped.content.sourceRecords?.[0]?.path).toBe("notes/a.md");
-        expect(capped.content.promptText).toContain("result truncated;");
-        expect(capped.content.promptText).toContain("isError=false");
-        expect(capped.content.promptText).toContain("call=call-1;");
-        expect(capped.content.promptText).toContain(`originalChars=${"latest observation ".repeat(80).length};`);
-        expect(capped.content.promptText).toContain("notes/a.md");
-        expect(capped.content.promptText).toMatch(/details omitted\.\]$/);
-        expect(result.hardTruncatedToolResults).toBe(1);
+        expect(capped.toolCallId).toBe('call-1');
+        expect(result.hardTruncatedToolResults).toBe(0);
         expect(JSON.stringify(transcript)).toBe(original);
     });
 
@@ -272,7 +275,7 @@ describe("PaAgentContextCompactor", () => {
         for (let cycle = 0; cycle < 4; cycle++) {
             transcript.push(
                 assistantWithToolCall(`a${cycle}`, `call${cycle}`),
-                toolResult(`t${cycle}`, `call${cycle}`, `${cycle}`.repeat(600)),
+                toolResult(`t${cycle}`, `call${cycle}`, `${cycle}.\n`.repeat(200)),
             );
         }
         const result = new PaAgentContextCompactor().microCompact(transcript, {
@@ -281,8 +284,9 @@ describe("PaAgentContextCompactor", () => {
 
         expect(result.compactedToolResults).toBe(2);
         expect(result.hardTruncatedToolResults).toBe(0);
-        expect(projectedToolResult(result.transcript, "t2").content.promptText).toBe("2".repeat(600));
-        expect(projectedToolResult(result.transcript, "t3").content.promptText).toBe("3".repeat(600));
+        expect(recoverResultText(projectedToolResult(result.transcript, 't0').content.promptText)).toBe('0.\n'.repeat(200));
+        expect(projectedToolResult(result.transcript, "t2").content.promptText).toBe("2.\n".repeat(200));
+        expect(projectedToolResult(result.transcript, "t3").content.promptText).toBe("3.\n".repeat(200));
     });
 
     it("keeps an unmatched result protected when the assistant tool call has no id", () => {
@@ -335,7 +339,7 @@ describe("PaAgentContextCompactor", () => {
         expect(result.hardTruncatedToolResults).toBe(0);
     });
 
-    it("leaves recent cycles for the final reduction step even when old-only reduction exceeds the cap", () => {
+    it("keeps every irreducible cycle when the cap cannot hold its evidence", () => {
         const transcript = [
             user("u"),
             assistantWithToolCall("a0", "c0"),
@@ -351,12 +355,12 @@ describe("PaAgentContextCompactor", () => {
             allowRecentHardTruncation: false,
         });
 
-        expect(result.compactedToolResults).toBe(1);
+        expect(result.compactedToolResults).toBe(0);
         expect(result.compactedObservationChars).toBeGreaterThan(200);
         expect(projectedToolResult(result.transcript, "t1").content.promptText).toBe("recent".repeat(1000));
     });
 
-    it("keeps a complete bounded error marker for a giant single result even with a zero budget", () => {
+    it("keeps the complete error and source identity even with a zero budget", () => {
         const failed = projectedToolResult([toolResult("t", "c", "denied".repeat(10000))], "t");
         failed.isError = true;
         failed.toolName = "long-tool-name-".repeat(1000);
@@ -366,16 +370,15 @@ describe("PaAgentContextCompactor", () => {
         const result = new PaAgentContextCompactor().microCompact(transcript, { maxObservationChars: 0 });
         const text = projectedToolResult(result.transcript, "t").content.promptText;
 
-        expect(text).toContain("isError=true");
-        expect(text).toContain("path/");
-        expect(text).toContain("...");
-        expect(text).toMatch(/^\[.*result truncated;.*details omitted\.\]$/);
-        expect(text.length).toBeLessThan(250);
-        expect(result.hardTruncatedToolResults).toBe(1);
+        expect(text).toBe(failed.content.promptText);
+        expect(projectedToolResult(result.transcript, 't').isError).toBe(true);
+        expect(projectedToolResult(result.transcript, 't').content.sourceRecords).toEqual(failed.content.sourceRecords);
+        expect(result.compactedObservationChars).toBeGreaterThan(0);
+        expect(result.hardTruncatedToolResults).toBe(0);
         expect(JSON.stringify(transcript)).toBe(original);
     });
 
-    it("keeps bounded call identity and original length across repeated hard reduction", () => {
+    it("keeps complete call identity and irreducible evidence across repeated pressure", () => {
         const result = projectedToolResult([toolResult("t", "call-".repeat(1000), "payload".repeat(1000))], "t");
         const transcript = [user("u"), assistantWithToolCall("a", result.toolCallId), result];
         const compactor = new PaAgentContextCompactor();
@@ -383,24 +386,23 @@ describe("PaAgentContextCompactor", () => {
         const second = compactor.microCompact(first.transcript, { maxObservationChars: 0 });
         const text = projectedToolResult(second.transcript, "t").content.promptText;
 
-        expect(text).toContain(`call=${"call-".repeat(9)}...;`);
-        expect(text).toContain("originalChars=7000;");
-        expect(text.length).toBeLessThanOrEqual(240);
-        expect(projectedToolResult(second.transcript, "t").content.metadata?.originalPromptTextLength).toBe(7000);
+        expect(text).toBe(result.content.promptText);
+        expect(projectedToolResult(second.transcript, 't').toolCallId).toBe(result.toolCallId);
+        expect(second.hardTruncatedToolResults).toBe(0);
     });
 
     it.each([Infinity, NaN, -1, 3.5, "999999", Number.MAX_SAFE_INTEGER + 1])(
-        "does not expose an invalid recorded length (%s) in the reduction marker",
+        "records the actual losslessly encoded length instead of invalid metadata (%s)",
         (recordedLength) => {
             const transcript = [
                 user("u"), assistantWithToolCall("a", "c"),
-                toolResult("t", "c", "x".repeat(1000), { originalPromptTextLength: recordedLength }),
+                toolResult("t", "c", "Repeated evidence.\n".repeat(100), { originalPromptTextLength: recordedLength }),
             ];
             const result = new PaAgentContextCompactor().microCompact(transcript, { maxObservationChars: 0 });
             const reduced = projectedToolResult(result.transcript, "t");
 
-            expect(reduced.content.promptText).toContain("originalChars=1000;");
-            expect(reduced.content.metadata?.originalPromptTextLength).toBe(1000);
+            expect(recoverResultText(reduced.content.promptText)).toBe('Repeated evidence.\n'.repeat(100));
+            expect(reduced.content.metadata?.originalPromptTextLength).toBe('Repeated evidence.\n'.repeat(100).length);
         },
     );
 });
@@ -741,13 +743,13 @@ describe("Review backfill: micro-compaction with production values", () => {
         const transcript: PaAgentMessage[] = [
             user("u1"),
             assistantWithToolCall("a1", "call_1"),
-            toolResult("t1", "call_1", "x".repeat(500)),
+            toolResult("t1", "call_1", "Old evidence.\n".repeat(70)),
             user("u2"),
             assistantWithToolCall("a2", "call_2"),
-            toolResult("t2", "call_2", "y".repeat(500)),
+            toolResult("t2", "call_2", "y".repeat(70)),
             user("u3"),
             assistantWithToolCall("a3", "call_3"),
-            toolResult("t3", "call_3", "z".repeat(500)),
+            toolResult("t3", "call_3", "z".repeat(70)),
         ];
         const result = compactor.microCompact(transcript, {
             maxObservationChars: 1000,
@@ -758,7 +760,7 @@ describe("Review backfill: micro-compaction with production values", () => {
         const t3 = result.transcript.find((m) => m.id === "t3");
         expect(t3?.role).toBe("toolResult");
         if (t3?.role === "toolResult") {
-            expect(t3.content.promptText).toBe("z".repeat(500));
+            expect(t3.content.promptText).toBe("z".repeat(70));
         }
     });
 });

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "B157-action-continuity-v1",
+  "syntheticPrefix": "B157-context-eval/",
+  "arms": ["reference", "candidate"],
+  "historyBudgetChars": { "reference": 60000, "candidate": 6000 },
+  "padding": { "text": "合成容量材料：此段无新增目标、事实、决定或授权。\n", "repeat": 300 },
+  "cases": [
+    { "id": "image-explain", "domain": "image", "followup": "explain", "initial": "请使用 create_image 生成一张合成银杏树插画，只生成一张。", "question": "刚才的图片目前是什么状态？请解释已有结果及下一步如何处理。", "settle": "complete" },
+    { "id": "image-new", "domain": "image", "followup": "new", "initial": "请使用 create_image 生成一张合成银杏树插画，只生成一张。", "question": "现在这是一个新任务：请使用 create_image 再生成一张合成枫树插画。", "settle": "complete" },
+    { "id": "image-unknown", "domain": "image", "followup": "unknown", "initial": "请使用 create_image 生成一张合成银杏树插画，只生成一张。", "question": "刚才的图片结果是否确定？请说明还能如何核实；结果不明时不要再次提交。", "settle": "unknown" },
+    { "id": "ghost-explain", "domain": "ghost", "followup": "explain", "initial": "请用 prepare_ghost_post 准备将 B157-context-eval/source.md 发布到合成 Ghost 站点；最终发布由我在卡片确认。", "question": "刚才的发布目前是什么状态？请解释已有结果及下一步如何处理。", "settle": "complete" },
+    { "id": "ghost-new", "domain": "ghost", "followup": "new", "initial": "请用 prepare_ghost_post 准备将 B157-context-eval/source.md 发布到合成 Ghost 站点；最终发布由我在卡片确认。", "question": "现在是新任务：请用 prepare_ghost_post 准备发布 B157-context-eval/new-source.md，最终发布仍由卡片确认。", "settle": "complete" },
+    { "id": "ghost-unknown", "domain": "ghost", "followup": "unknown", "initial": "请用 prepare_ghost_post 准备将 B157-context-eval/source.md 发布到合成 Ghost 站点；最终发布由我在卡片确认。", "question": "刚才的发布结果是否确定？请说明如何核实；未知时不能重新提交或声称已经检查。", "settle": "unknown" },
+    { "id": "writing-explain", "domain": "writing", "followup": "explain", "initial": "请写一段两句话的合成银杏旅行文案，作品与解释分开，先生成作品供我保存。", "question": "刚才的文案及保存目前是什么状态？请解释已有结果及下一步如何处理。", "settle": "complete" },
+    { "id": "writing-new", "domain": "writing", "followup": "new", "initial": "请写一段两句话的合成银杏旅行文案，作品与解释分开，先生成作品供我保存。", "question": "现在是新任务：请另写一段两句话的合成枫树旅行文案，作品与解释分开。", "settle": "complete" },
+    { "id": "writing-unknown", "domain": "writing", "followup": "unknown", "initial": "请写一段两句话的合成银杏旅行文案，作品与解释分开，先生成作品供我保存。", "question": "刚才的文案保存是否确定完成？请根据已有回执解释，不要重写或再次保存。", "settle": "unknown" },
+    { "id": "operations-explain", "domain": "operations", "followup": "explain", "initial": "请用 vault_append 给 B157-context-eval/source.md 追加一行 B157 已执行银杏；先预览，写入由我确认。", "question": "刚才的笔记操作目前是什么状态？请解释已有结果及下一步如何处理。", "settle": "complete" },
+    { "id": "operations-new", "domain": "operations", "followup": "new", "initial": "请用 vault_append 给 B157-context-eval/source.md 追加一行 B157 已执行银杏；先预览，写入由我确认。", "question": "现在是新任务：请用 vault_append 给 B157-context-eval/source.md 追加一行 B157 新任务枫树，仍先预览等待确认。", "settle": "complete" },
+    { "id": "operations-unknown", "domain": "operations", "followup": "unknown", "initial": "请用 vault_append 给 B157-context-eval/source.md 追加一行 B157 已执行银杏；先预览，写入由我确认。", "question": "刚才的笔记操作重开后是否仍可确认或已完成？请根据已有状态说明，缺少回执时不能重做或声称成功。", "settle": "lost-after-reopen" }
+  ],
+  "summaryHistoryBudgetChars": 5000,
+  "summaryWarmupMaterial": { "earlierParts": 60, "parts": 18, "text": "这条合成背景材料仅作上下文容量样本，不赋予任何目标、决定或操作授权。" },
+  "summaryOperationSeeds": ["请用 vault_append 给 B157-context-eval/source.md 追加一行 B157 摘要操作 A；先预览，写入由我确认。", "请用 vault_append 给 B157-context-eval/new-source.md 追加一行 B157 摘要操作 B；仅预览，暂不确认写入。"],
+  "summaryWarmup": ["合成评测开始。后续会明确给出计划和修正，请只依据各轮用户原文保留当前决定。", "这是第二段合成背景；没有新增决定，也没有任何写入或发布授权。"],
+  "summaryUpdates": [
+    "合成计划：代号银杏，导出 UTF-8 CSV，保留 17 天。请复述当前三个决定。同时依据既有回执说明两个笔记操作的当前状态与下一步；不要重做任何原操作。",
+    "明确修正：代号改为枫树，保留 9 天；撤销银杏和 17 天，UTF-8 CSV 不变。请复述最新决定。同时依据既有回执说明两个笔记操作的当前状态与下一步；不要重做任何原操作。",
+    "明确修正：保留改为 11 天；枫树和 UTF-8 CSV 不变。请复述最新决定。同时依据既有回执说明两个笔记操作的当前状态与下一步；不要重做任何原操作。"
+  ]
+}

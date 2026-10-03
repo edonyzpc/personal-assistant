@@ -157,6 +157,41 @@ async function openSaveFromVersion(h: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('writing save modal title, location and explicit confirmation', () => {
+    it('rearms a terminal version at real save confirmation without a live Chat observer', async () => {
+        const h = await setup();
+        h.modal.onClose();
+        const completedStates: string[][] = [];
+        const onSaveStart = jest.fn((versionId: string) => {
+            h.save.registerContextPersistence(versionId, async () => {
+                const receipts = await h.save.listReceipts(versionId);
+                completedStates.push(receipts.map(receipt => receipt.state));
+                return receipts.every(receipt => receipt.state === 'completed');
+            }, h.version.conversationId);
+        });
+        const open = (title: string) => {
+            const modal = new WritingSaveModal(h.modal.app, h.save, h.version, undefined, onSaveStart);
+            const root = new ModalElement('div');
+            modal.contentEl = root as unknown as HTMLElement; modal.onOpen();
+            nodes(root, 'input').find(input => input.getAttribute('type') === 'text')!.value = title;
+            return { modal, root };
+        };
+        const cancelled = open('Cancelled preview');
+        await button(cancelled.root, 'preview').click();
+        cancelled.modal.onClose();
+        expect(onSaveStart).not.toHaveBeenCalled();
+        expect(await h.store.listSaveReceipts()).toEqual([]);
+        for (const title of ['First save', 'Second save after Chat closes']) {
+            const current = open(title);
+            await button(current.root, 'preview').click();
+            expect(onSaveStart).toHaveBeenCalledTimes(completedStates.length);
+            button(current.root, 'confirmSave').click();
+            await settleSave(h); await h.save.listReceipts(); await Promise.resolve();
+            current.modal.onClose();
+        }
+        expect(onSaveStart).toHaveBeenCalledTimes(2);
+        expect(completedStates).toEqual([['completed'], ['completed', 'completed']]);
+        await h.save.dispose();
+    });
     it('previews all images at the vault root without writing, then executes the fixed plan once', async () => {
         const h = await setup();
         expect(h.title.value).not.toMatch(/\.md$/);

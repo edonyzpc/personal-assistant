@@ -70,6 +70,7 @@ export class OperationsService {
             controller,
             isOperationsAgentEnabled: this.options.isOperationsAgentEnabled,
             capabilityProvider: this.provider,
+            readContextResult: (intentId, runId) => this.readContextResult(intentId, runId),
             onDispose: () => this.sessions.delete(session),
         });
         this.sessions.add(session);
@@ -83,6 +84,16 @@ export class OperationsService {
         this.sessions.clear();
     }
 
+    /** Read-only context may follow a live owner on another Chat surface.
+     * Confirmation, cancellation and Undo remain local to its original session. */
+    private readContextResult(intentId: string, runId?: string): ReturnType<OperationsIntentController['getContextResult']> {
+        for (const session of this.sessions) {
+            const observed = session.getOwnedContextResult(intentId, runId);
+            if (observed.pending || observed.executing || observed.execution || observed.terminal) return observed;
+        }
+        return { undoneReceiptIds: [], pending: false, executing: false };
+    }
+
 }
 
 interface OperationsSessionOptions {
@@ -90,6 +101,7 @@ interface OperationsSessionOptions {
     isOperationsAgentEnabled: () => boolean;
     capabilityProvider: OperationsToolProvider;
     onDispose: () => void;
+    readContextResult: (intentId: string, runId?: string) => ReturnType<OperationsIntentController['getContextResult']>;
 }
 
 /** Surface-scoped pending/undo boundary backed by the shared service policy. */
@@ -100,6 +112,7 @@ export class OperationsSession {
     private readonly controller: OperationsIntentController;
     private readonly isOperationsAgentEnabled: () => boolean;
     private readonly onDispose: () => void;
+    private readonly readContextResult: OperationsSessionOptions['readContextResult'];
     private disposed = false;
 
     constructor(options: OperationsSessionOptions) {
@@ -108,6 +121,7 @@ export class OperationsSession {
         this.provider = options.capabilityProvider;
         this.capabilityProvider = this.provider;
         this.onDispose = options.onDispose;
+        this.readContextResult = options.readContextResult;
     }
 
     async stage(input: StageOperationsIntentInput, signal?: AbortSignal): Promise<OperationsIntent> {
@@ -147,6 +161,14 @@ export class OperationsSession {
 
     subscribe(listener: OperationsEventListener): () => void {
         return this.controller.subscribe(listener);
+    }
+
+    getContextResult(intentId: string, runId?: string): ReturnType<OperationsIntentController['getContextResult']> {
+        return this.readContextResult(intentId, runId);
+    }
+
+    getOwnedContextResult(intentId: string, runId?: string): ReturnType<OperationsIntentController['getContextResult']> {
+        return this.controller.getContextResult(intentId, runId);
     }
 
     dispose(): void {

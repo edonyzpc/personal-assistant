@@ -15,6 +15,9 @@ import { tmpdir } from "node:os";
 let mockOperations: GhostLocalOperation[] = [];
 const mockList = jest.fn(async () => mockOperations);
 const mockClose = jest.fn();
+const mockRegisterContext = jest.fn<(operationId: string, persist: (operation: GhostLocalOperation) => Promise<boolean>, conversationId: string) => void>();
+const mockUnregisterContext = jest.fn();
+const mockClearContext = jest.fn();
 const mockRecordRead = jest.fn<NonNullable<GhostActionContextOptions["readCompletedRecord"]>>(async () => null);
 const mockService = {
     prepare: jest.fn<(...args: any[]) => Promise<GhostLocalOperation>>(),
@@ -35,7 +38,8 @@ jest.mock("../src/ghost-publishing/action-context", () => ({ createGhostActionCo
 jest.mock("../src/ghost-publishing/service", () => ({ GhostPublishingService: function () { mockServiceConstructor(); return mockService; } }));
 jest.mock("../src/ghost-publishing/client", () => ({ GhostClient: function () { return { readPost: mockReadPost }; } }));
 jest.mock("../src/ghost-publishing/state-store", () => ({
-    GhostOperationStore: function () { return { list: mockList, close: mockClose }; },
+    GhostOperationStore: function () { return { list: mockList, close: mockClose, registerContextPersistence: mockRegisterContext,
+        unregisterContextPersistence: mockUnregisterContext, clearContextPersistence: mockClearContext }; },
     GhostCompletedRecordStore: function () { return { read: mockRecordRead }; }, ghostDatabaseName: () => "synthetic-database",
 }));
 jest.mock("../src/ghost-publishing/preview", () => {
@@ -126,6 +130,21 @@ beforeEach(() => {
 afterEach(() => { for (const controller of controllers.splice(0)) controller.dispose(); });
 
 describe("Ghost controller and human action card", () => {
+    it('keeps a finite background receipt callback after session close and clears it by original conversation', async () => {
+        mockRegisterContext.mockClear(); mockUnregisterContext.mockClear(); mockClearContext.mockClear();
+        const f = fixture();
+        await f.controller.prepare(f.request);
+        const persist = jest.fn<NonNullable<GhostPublishingSession['registerContextPersistence']> extends (persist: infer P, ...args: any[]) => any ? P : never>()
+            .mockResolvedValue(true);
+        f.session().registerContextPersistence!(persist, 'original-conversation');
+        const callback = mockRegisterContext.mock.calls.at(-1)![1];
+        f.session().dispose();
+        expect(mockUnregisterContext).not.toHaveBeenCalled();
+        await callback({ ...op(), state: 'terminal', revision: 2, verified: { status: 'published' } } as GhostLocalOperation);
+        expect(persist).toHaveBeenCalledWith({ operationId: 'op-one', revision: 2, state: 'terminal', verified: true });
+        f.controller.clearContextPersistence('original-conversation');
+        expect(mockClearContext).toHaveBeenCalledWith('original-conversation');
+    });
     it("shows an existing operation without POST replay, then captures fresh button authority and reuses the site service", async () => {
         mockOperations = [op()];
         const f = fixture();
@@ -272,6 +291,7 @@ describe("Ghost controller and human action card", () => {
             busy: false, actions: ["confirm"], operationKind: "restore" } as unknown as GhostCardState;
         const session: GhostPublishingSession = {
             getState: () => restoreState,
+            getContextReceipt: () => undefined,
             subscribe: () => () => {},
             run: jest.fn<GhostPublishingSession["run"]>().mockResolvedValue(),
             dispose: jest.fn(),
@@ -373,7 +393,8 @@ describe("Ghost controller and human action card", () => {
         const unsubscribe = jest.fn();
         let rerender = () => {};
         const run = jest.fn<GhostPublishingSession["run"]>().mockResolvedValue();
-        const session: GhostPublishingSession = { getState: () => state, subscribe: (listener) => { rerender = listener; return unsubscribe; }, run, dispose: jest.fn() };
+        const session: GhostPublishingSession = { getState: () => state, getContextReceipt: () => undefined,
+            subscribe: (listener) => { rerender = listener; return unsubscribe; }, run, dispose: jest.fn() };
         const dispose = renderGhostPublishingCard(container as unknown as HTMLElement, session, (key) => key);
         const all = (node: DomStubNode): DomStubNode[] => [node, ...node.children.flatMap(all)];
         const byLabel = (suffix: string) => all(container).find((node) =>
@@ -417,6 +438,7 @@ describe("Ghost controller and human action card", () => {
         let rerender = () => {};
         const session: GhostPublishingSession = {
             getState: () => state, subscribe: listener => { rerender = listener; return () => undefined; },
+            getContextReceipt: () => undefined,
             run: jest.fn<GhostPublishingSession["run"]>().mockResolvedValue(), dispose: jest.fn(),
         };
         mockSetIcon.mockClear();

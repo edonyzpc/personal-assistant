@@ -8,6 +8,9 @@ import type { GenerationInputSnapshotV1, GenerationInputSnapshotV2 } from "../sr
 import writingProtocolTrace from "./fixtures/b135-writing-protocol-trace.json";
 jest.mock('../src/platform-dom', () => ({ ...jest.requireActual('../src/platform-dom'), getPlatformCrypto: () => jest.requireActual('node:crypto').webcrypto }));
 import { createContextPagerStateFromChatContextUsed } from "../src/pa/context-pager";
+import { ChatHistoryManager } from '../src/chat/chat-history-manager';
+import { completeInputLineage } from '../src/ai-services/input-lineage';
+import { refreshWritingSaveStates, type PaAgentActionState } from '../src/ai-services/pa-agent-result-facts';
 
 const generationInput = (): GenerationInputSnapshotV1 => ({
     schemaVersion: 1, inputPurpose: 'writing', task: { state: 'none', sources: [] },
@@ -331,7 +334,155 @@ describe("createChatHistoryStore", () => {
     });
 });
 
+describe('B157 atomic historical state updates', () => {
+    it.each(['memory', 'indexeddb'] as const)('preserves the created-note substep of a partial Writing save across %s reopen', async backend => {
+        const factory = new FakeIndexedDbFactory();
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('b157-writing-substep', factory as unknown as IDBFactory);
+        await store.initialize();
+        const ready: PaAgentActionState = { schemaVersion: 1, owner: 'writing', operationId: 'writing-version', phase: 'ready', revision: 0,
+            origin: { runId: 'run-1', turnId: 'turn-1', assistantId: 'writing-result', resultId: 'writing-result' },
+            receipt: { kind: 'writing-version', versionId: 'writing-version' },
+            inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'user-1' }]) };
+        const partial = refreshWritingSaveStates(ready, [{ id: 'writing-save', operationId: 'writing-save',
+            writingVersionId: ready.operationId, textHash: 'a'.repeat(64), targetNotePath: 'HOST_ONLY_PRIVATE_TARGET.md',
+            origin: 'ai_generated', createdAt: 1, attachments: [], initialNoteHash: 'b'.repeat(64),
+            noteContentHash: 'b'.repeat(64), noteState: 'created', state: 'partial' }])!;
+        const manager = new ChatHistoryManager({ store });
+        await store.appendTurn(manager.serializeTurn({ kind: 'history',
+            user: { role: 'user', content: 'Write the synthetic Ginkgo paragraph.' },
+            assistant: { role: 'assistant', content: 'The writing is ready for saving.', actionStates: [partial],
+                canonicalTurn: { schemaVersion: 1, runId: 'run-1', turnId: 'turn-1', messages: [], actionStates: [partial] } },
+        }, 'writing-conversation', 0));
+        const reopened = backend === 'memory' ? store
+            : new IndexedDbChatHistoryStore('b157-writing-substep', factory as unknown as IDBFactory);
+        if (reopened !== store) { await store.dispose(); await reopened.initialize(); }
+        try {
+            const stored = (await reopened.getTurns('writing-conversation'))[0];
+            expect(stored.assistant.actionStates).toEqual([partial]);
+            expect(partial).toMatchObject({ phase: 'partial', revision: 1,
+                receipt: { kind: 'writing-saves', saves: [{ saveId: 'writing-save', state: 'partial', noteState: 'created' }] } });
+            expect(JSON.stringify(stored)).not.toContain('HOST_ONLY_PRIVATE_TARGET');
+            expect(new ChatHistoryManager({ store: reopened }).deserializeTurn(stored).assistantMessage.actionStates).toEqual([partial]);
+        } finally { await reopened.dispose(); }
+    });
+    it.each(['memory', 'indexeddb'] as const)('revises only the original existing turn, preserving current conversation metadata in %s', async backend => {
+        const factory = new FakeIndexedDbFactory();
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('b157-existing-revision', factory as unknown as IDBFactory);
+        await store.initialize();
+        const original = makeTurn({ assistant: { role: 'assistant', content: 'Original.', actionStateBinding: {
+            conversationId: 'conv-1', turnIndex: 0, runId: 'original-run', turnId: 'original-turn',
+        } } });
+        const updated = { ...original, assistant: { ...original.assistant, content: 'Updated.' } };
+        try {
+            await store.upsertConversation(makeConversation({ turnCount: 4, title: 'Current title' }));
+            await store.appendTurn(original);
+            expect(await store.reviseTurn(updated, '2026-10-02T10:00:00.000Z'))
+                .toMatchObject({ turnCount: 4, title: 'Current title', updatedAt: '2026-10-02T10:00:00.000Z' });
+            expect((await store.getTurns('conv-1'))[0].assistant.content).toBe('Updated.');
+            if (backend === 'indexeddb') expect(factory.db.transactionCalls.some(stores =>
+                stores.includes('turns') && stores.includes('conversations') && stores.includes('writingVersions'))).toBe(true);
+            await store.deleteTurn('conv-1', 0);
+            expect(await store.reviseTurn(updated, '2026-10-02T11:00:00.000Z')).toBeNull();
+            expect(await store.getTurns('conv-1')).toEqual([]);
+            const replacement = { ...original, assistant: { ...original.assistant, content: 'Replacement.',
+                actionStateBinding: { ...original.assistant.actionStateBinding!, runId: 'replacement-run' } } };
+            await store.appendTurn(replacement);
+            expect(await store.reviseTurn(updated, '2026-10-02T11:00:00.000Z')).toBeNull();
+            expect((await store.getTurns('conv-1'))[0].assistant.content).toBe('Replacement.');
+            await store.deleteConversation('conv-1');
+            expect(await store.reviseTurn(replacement, '2026-10-02T12:00:00.000Z')).toBeNull();
+            expect(await store.getConversation('conv-1')).toBeNull();
+        } finally { await store.dispose(); }
+    });
+    it.each(['memory', 'indexeddb'] as const)('does not recreate a turn deleted while a revision awaits its storage boundary in %s', async backend => {
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('b157-delayed-revision', new FakeIndexedDbFactory() as unknown as IDBFactory);
+        await store.initialize();
+        const manager = new ChatHistoryManager({ store });
+        await manager.initialize();
+        const conversation = await manager.startConversation('Original request', undefined, 'conv-1');
+        const entry = { kind: 'history' as const, user: { role: 'user' as const, content: 'Original request' },
+            assistant: { role: 'assistant' as const, content: 'Original response' } };
+        await manager.recordTurn({ conversationId: conversation.id, turnIndex: 0, entry, userPrompt: entry.user.content, conversation });
+        const originalRevise = store.reviseTurn.bind(store);
+        let release!: () => void;
+        let reached!: () => void;
+        const boundary = new Promise<void>(resolve => { reached = resolve; });
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        store.reviseTurn = async (...args) => { reached(); await gate; return originalRevise(...args); };
+        try {
+            const revision = manager.reviseTurn({ conversationId: conversation.id, turnIndex: 0, entry,
+                userPrompt: entry.user.content, conversation });
+            await boundary;
+            await manager.deleteTurn(conversation.id, 0);
+            release();
+            expect(await revision).toBeNull();
+            expect(await store.getTurns(conversation.id)).toEqual([]);
+        } finally { release(); await store.dispose(); }
+    });
+    it.each(['memory', 'indexeddb'] as const)('preserves latest state against stale finalize and refuses missing/cross-turn updates in %s', async backend => {
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('b157-atomic', new FakeIndexedDbFactory() as unknown as IDBFactory);
+        await store.initialize();
+        const binding = { conversationId: 'b157-conversation', turnIndex: 0, runId: 'run-1', turnId: 'turn-1' };
+        const accepted: PaAgentActionState = { schemaVersion: 1, owner: 'image', operationId: 'task-1', phase: 'accepted', revision: 0,
+            origin: { runId: 'run-1', turnId: 'turn-1', assistantId: 'assistant-1', callId: 'call-1', resultId: 'result-1' },
+            receipt: { kind: 'image-accepted', taskId: 'task-1' },
+            inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'user-1' }]) };
+        const ready: PaAgentActionState = { ...accepted, phase: 'completed', revision: 2,
+            receipt: { kind: 'image-task', taskId: 'task-1', taskRevision: 3, state: 'completed' } };
+        const turn = makeTurn({ conversationId: binding.conversationId, turnIndex: binding.turnIndex,
+            assistant: { role: 'assistant', content: 'Accepted.', actionStateBinding: binding, actionStates: [accepted] } });
+        try {
+            await store.appendTurn(turn);
+            await expect(store.updateActionStates(binding, () => [ready])).resolves.toEqual([ready]);
+            await store.appendTurn(turn);
+            await store.appendTurn({ ...turn, assistant: { ...turn.assistant, actionStates: [] } });
+            expect((await store.getTurns(binding.conversationId))[0].assistant.actionStates).toEqual([ready]);
+            await expect(store.updateActionStates(binding, () => [accepted])).resolves.toEqual([ready]);
+            await expect(store.updateActionStates({ ...binding, runId: 'other-run' }, () => [ready])).resolves.toBeUndefined();
+            await expect(store.updateActionStates(binding, () => [{ ...ready, origin: { ...ready.origin, turnId: 'other-turn' } }]))
+                .rejects.toThrow('different turn');
+            await expect(store.updateActionStates(binding, states => {
+                states[0].operationId = 'uncommitted';
+                throw new Error('State write failed');
+            })).rejects.toThrow('State write failed');
+            expect((await store.getTurns(binding.conversationId))[0].assistant.actionStates).toEqual([ready]);
+            await store.deleteTurn(binding.conversationId, binding.turnIndex);
+            await expect(store.updateActionStates(binding, () => [ready])).resolves.toBeUndefined();
+            expect(await store.getTurns(binding.conversationId)).toEqual([]);
+        } finally { await store.dispose(); }
+    });
+});
+
 describe("IndexedDbChatHistoryStore", () => {
+    it('B157 reloads bound finite status with a new store and manager over the same database', async () => {
+        const factory = new FakeIndexedDbFactory();
+        const first = new IndexedDbChatHistoryStore('b157-history', factory as unknown as IDBFactory);
+        await first.initialize();
+        const persisted = makeTurn({ conversationId: 'b157-conversation', assistant: {
+            role: 'assistant', content: 'Accepted.', actionStateBinding: {
+                conversationId: 'b157-conversation', turnIndex: 0, runId: 'run-1', turnId: 'turn-1',
+            }, actionStates: [{ schemaVersion: 1, owner: 'image', operationId: 'task-1', phase: 'accepted', revision: 0,
+                origin: { runId: 'run-1', turnId: 'turn-1', assistantId: 'assistant-1', callId: 'call-1', resultId: 'result-1' },
+                receipt: { kind: 'image-accepted', taskId: 'task-1' },
+                inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'user-1' }]) }],
+        } });
+        await first.appendTurn(persisted);
+        await first.dispose();
+        const reopened = new IndexedDbChatHistoryStore('b157-history', factory as unknown as IDBFactory);
+        await reopened.initialize();
+        try {
+            const turns = await reopened.getTurns('b157-conversation');
+            const hydrated = new ChatHistoryManager({ store: reopened }).deserializeTurn(turns[0]);
+            expect(hydrated.assistantMessage.actionStates).toEqual(persisted.assistant.actionStates);
+            expect(hydrated.assistantMessage.canonicalTurn?.messages).toEqual([]);
+            hydrated.assistantMessage.actionStates![0].origin.callId = 'mutated';
+            expect((await reopened.getTurns('b157-conversation'))[0].assistant.actionStates![0].origin.callId).toBe('call-1');
+        } finally { await reopened.dispose(); }
+    });
     it("persists conversation, turn, and metadata records across reads", async () => {
         const factory = new FakeIndexedDbFactory();
         const store = new IndexedDbChatHistoryStore("chat-history-test", factory as unknown as IDBFactory);

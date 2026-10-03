@@ -78,6 +78,7 @@ import {
     createCurrentNoteResult,
     createSkippedCanvasSummary,
     createToolFailureResult,
+    ChatToolFailureError,
     createUnavailableCanvasSummary,
     extractHeadingsFromEditor,
     extractOutlineFromCache,
@@ -877,6 +878,7 @@ export function createReadNoteTool(
                     "read_note",
                     sourcePath,
                     "Requested Markdown note was not found.",
+                    'not_found',
                 );
             }
             const stat = captureReadNoteStat(file);
@@ -1189,11 +1191,11 @@ function assertReadNoteSourceCurrent(
     }
     const currentFile = findMarkdownFileByPath(context.host, path);
     if (currentFile !== file || currentFile?.path !== path) {
-        throw new Error("Note source changed while it was being read.");
+        throw new ChatToolFailureError('source_changed', "Note source changed while it was being read.");
     }
     const currentStat = captureReadNoteStat(currentFile);
     if (!currentStat || currentStat.mtime !== stat.mtime || currentStat.size !== stat.size) {
-        throw new Error("Note source stat changed while it was being read.");
+        throw new ChatToolFailureError('source_changed', "Note source stat changed while it was being read.");
     }
 }
 
@@ -2021,8 +2023,10 @@ export function createPrepareGhostPostTool(binding: GhostHostBinding): ChatToolD
                     message: receipt.status === "prepared" ? "A draft or restoration preview is prepared. Check its publishing card and preview; publication has not been confirmed."
                         : receipt.status === "outcome_unknown" ? "The preparation result needs verification in its publishing card. Do not repeat the request or claim it is published."
                             : "Preparation needs attention. Check its publishing card before continuing; publication has not been confirmed." };
+                // Attention can follow creation of an owned operation, without
+                // proving a prepared preview or publication outcome.
                 const resultFact = receipt.status === "prepared" ? { kind: "approval_pending" as const, intentId: receipt.operationId! }
-                    : receipt.status === "outcome_unknown" ? { kind: "unknown" as const, operationId: receipt.operationId! }
+                    : receipt.operationId ? { kind: "unknown" as const, operationId: receipt.operationId }
                         : { kind: "unavailable" as const, capability: "prepare_ghost_post", reason: "ghost_attention_required" };
                 return { ok: true, tool: "prepare_ghost_post", inputSummary, content, sources: [], resultFact };
             } catch (error) {
@@ -2131,7 +2135,7 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
                         ? { status: "already_accepted", taskId: accepted.taskId,
                             message: "This user request already has an image task. Changes require a new user request." }
                         : { status: "accepted", taskId: accepted.taskId },
-                    sources: [] };
+                    sources: [], resultFact: { kind: 'accepted', action: 'image', operationId: accepted.taskId } };
             } catch (error) {
                 const reason = error instanceof Error ? error.message : '';
                 const featuredPromptReason = /^featured_image_prompt:(input_too_large|empty_result|nontext_result|result_too_large|source_changed|connection_changed|cancelled|timeout)$/

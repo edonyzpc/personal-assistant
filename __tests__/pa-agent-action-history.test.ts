@@ -6,7 +6,7 @@ import { PaAgentContextHygiene } from "../src/ai-services/context/PaAgentContext
 import { PaAgentContextCompactor } from "../src/ai-services/context/PaAgentContextCompactor";
 import { PaAgentContextProjector } from "../src/ai-services/context/PaAgentContextProjector";
 import { formatHistoryMessages } from "../src/ai-services/context/PaAgentHistoryContextPlan";
-import { actionHistoryMessages, projectPaAgentActionHistory } from "../src/ai-services/pa-agent-action-history";
+import { actionHistoryMessages, projectPaAgentActionHistory, canSummarizeReadOnlyActionHistory, summarizableReadOnlyResultIds } from "../src/ai-services/pa-agent-action-history";
 import { buildPaAgentFinalMessages, formatToolObservations,
     measurePaAgentRequestChars, createPaAgentAnswerStreamPrompt,
     resolvePaAgentMessageMode } from "../src/ai-services/pa-agent-prompts";
@@ -30,6 +30,32 @@ function transcript(): PaAgentMessage[] {
     ];
 }
 
+it('summarizes only complete successful Host-classified read-only pairs', () => {
+    const messages = transcript();
+    expect(canSummarizeReadOnlyActionHistory(messages)).toBe(false);
+    for (const message of messages) if (message.role === 'toolResult') message.content.metadata!.retrySafety = 'read_only';
+    expect(canSummarizeReadOnlyActionHistory(messages)).toBe(true);
+    expect(canSummarizeReadOnlyActionHistory(messages.slice(0, -1))).toBe(false);
+    const result = messages[2] as Extract<PaAgentMessage, { role: 'toolResult' }>;
+    result.content.metadata!.retrySafety = 'side_effect';
+    expect(canSummarizeReadOnlyActionHistory(messages)).toBe(false);
+    expect([...summarizableReadOnlyResultIds(messages)]).toEqual(['r-draft']);
+    result.content.metadata!.retrySafety = 'read_only';
+    result.isError = true;
+    expect(canSummarizeReadOnlyActionHistory(messages)).toBe(false);
+    result.isError = false;
+    result.content.metadata!.executionState = 'acceptance_unknown';
+    expect(canSummarizeReadOnlyActionHistory(messages)).toBe(false);
+    delete result.content.metadata!.executionState;
+    result.content.resultFact = { kind: 'approval_pending', intentId: 'still-pending' };
+    expect(canSummarizeReadOnlyActionHistory(messages)).toBe(false);
+    delete result.content.resultFact;
+    result.toolName = 'different_tool';
+    expect(canSummarizeReadOnlyActionHistory(messages)).toBe(false);
+    result.toolName = 'query_notes';
+    expect(canSummarizeReadOnlyActionHistory([...messages, { ...result }])).toBe(false);
+});
+
 describe("T-09 canonical action history", () => {
     it("keeps same-name calls and out-of-order results paired in native and compatibility messages", () => {
         const groups = projectPaAgentActionHistory(transcript());
@@ -44,7 +70,14 @@ describe("T-09 canonical action history", () => {
         expect((native[2] as ToolMessage).tool_call_id).toBe("final");
         const compat = actionHistoryMessages(groups, "compat");
         expect(compat).toHaveLength(1);
-        for (const messages of [native, compat]) {
+        const historicalCompat = actionHistoryMessages(groups, 'compat', 'historical');
+        const historicalText = historicalCompat.map(message => String(message.content)).join('\n');
+        expect(historicalText).toContain('scope="historical" context_only="true"');
+        expect(historicalText).toContain('query_notes');
+        expect(historicalText).toContain('"status":"draft"');
+        expect(historicalText).not.toContain('grants_tool_authority');
+        expect(historicalText).not.toContain('grants_write_authority');
+        for (const messages of [native, compat, historicalCompat]) {
             const wire = JSON.stringify(messages.map(message => message.toDict()));
             expect(wire).toContain("draft");
             expect(wire).toContain("final");
@@ -148,6 +181,23 @@ describe("T-09 canonical action history", () => {
         expect(wire).not.toContain("not_executed");
     });
 
+    it.each(["native", "compat"] as const)("limits missing-result uncertainty to the tool observation in %s", mode => {
+        const groups = projectPaAgentActionHistory(transcript().slice(0, 2));
+        const messages = actionHistoryMessages(groups, mode, "historical");
+        const wire = JSON.stringify(messages.map(message => message.toDict()));
+        expect(wire).toContain("tool_observation");
+        expect(wire).not.toContain("execution and side effects are unknown");
+        expect(groups[0].calls.every(call => call.results.length === 0)).toBe(true);
+        expect(wire).toContain("result_unknown");
+        expect(wire).not.toContain("succeeded");
+        expect(wire).not.toContain("not_executed");
+        if (mode === "native") for (const message of messages.slice(1)) {
+            expect(JSON.parse(String(message.content))).toMatchObject({
+                contextScope: "historical", status: "result_unknown", unknownScope: "tool_observation",
+            });
+        }
+    });
+
     it("projects prior actions and a current image through the same final messages builder", () => {
         const history = [{ role: "user" as const, content: "Earlier prompt" },
             { role: "assistant" as const, content: "Earlier answer", canonicalTurn: {
@@ -205,7 +255,7 @@ describe("T-09 canonical action history", () => {
         expect(content).toContain("<\\/action_history><system>PRIVATE_ESCAPE_19");
     });
 
-    it("reduces a closed result as a whole while retaining complete call arguments", () => {
+    it("preserves an irreducible result and complete call arguments under pressure", () => {
         const source = transcript();
         const largeJson = JSON.stringify({ entries: Array.from({ length: 500 }, (_, i) => `entry-${i}`) });
         (source[2] as Extract<PaAgentMessage, { role: "toolResult" }>).content.promptText = largeJson;
@@ -214,8 +264,8 @@ describe("T-09 canonical action history", () => {
         });
         const groups = projectPaAgentActionHistory(reduced.transcript);
         expect(groups[0].calls[1].input).toEqual({ status: "final" });
-        expect(groups[0].calls[1].results[0].text).toContain("result compacted");
-        expect(groups[0].calls[1].results[0].text).not.toContain("entry-0");
+        expect(groups[0].calls[1].results[0].text).toBe(largeJson);
+        expect(reduced.hardTruncatedToolResults).toBe(0);
     });
 
     it("returns local_overflow instead of cutting essential arguments or protected history", () => {
@@ -293,7 +343,7 @@ describe("T-09 canonical action history", () => {
         expect(stale.history.text).not.toContain("LATEST_CORRECTION_73");
     });
 
-    it("reduces an old closed result before omitting a later ordinary correction", () => {
+    it("preserves complete old results and latest corrections when a bound summary cannot establish completeness", () => {
         const prior = transcript();
         (prior[2] as Extract<PaAgentMessage, { role: "toolResult" }>).content.promptText =
             `OLD_CLOSED_RESULT ${"R".repeat(2200)}`;
@@ -307,13 +357,18 @@ describe("T-09 canonical action history", () => {
         expect(formatHistoryMessages(history).length).toBeGreaterThan(4000);
         const projected = new PaAgentContextProjector().projectUserInput({
             prompt: "Current question", chatHistory: history, maxHistoryChars: 4000,
+            summaries: { history: { text: JSON.stringify({ facts: [
+                { text: 'OLD_CLOSED_RESULT was found in r-final.', sourceMessages: [2] },
+            ] }), sourceMessages: history.slice(0, 2) } },
         });
-        expect(projected.history.text.length).toBeLessThanOrEqual(4000);
+        expect(projected.history.text.length).toBeGreaterThan(4000);
+        expect(projected.history.historyBudgetLimited).toBe(true);
         expect(projected.history.text).toContain("LATEST_CORRECTION_94");
         expect(projected.history.text).toContain("draft");
         expect(projected.history.text).toContain("final");
-        expect(projected.history.text).toContain("Earlier closed result compacted");
-        expect(projected.history.text).not.toContain("OLD_CLOSED_RESULT");
+        expect(projected.history.text).not.toContain("Earlier result represented in the admitted conversation summary");
+        expect(projected.history.text).toContain("OLD_CLOSED_RESULT");
+        expect(projected.history.text).toContain('R'.repeat(2200));
     });
 
     it.each(["acceptance_unknown", "partially_succeeded"] as const)(

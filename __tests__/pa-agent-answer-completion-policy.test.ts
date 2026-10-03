@@ -11,6 +11,55 @@ import type { SourceRecord } from "../src/ai-services/chat-types";
 import { createSourceDedupKey } from "../src/ai-services/source-store";
 
 describe("PA Agent answer completion policy", () => {
+    it('keeps one failure episode when read ranges, cursors, call IDs and path spelling change without a different note', () => {
+        const ledger = createAnswerCompletionLedger();
+        const decisions = Array.from({ length: 4 }, (_, index) => {
+            const result = createToolResult('read_note', { isError: true, outcome: 'recoverable_error',
+                metadata: { failureReason: 'adapter_error', retrySafety: 'read_only' } });
+            result.toolCallId = `call-${index}`;
+            const summary = createSummary({ status: 'tool_results_ready', toolResults: [result], toolCalls: [
+                { type: 'toolCall', id: result.toolCallId, name: 'read_note', input: {
+                    path: index % 2 ? './notes//a.md' : 'notes/a.md', endLine: index + 1, cursor: `cursor-${index}`,
+                } },
+            ] });
+            recordAnswerCompletionTurn(ledger, summary);
+            return decideAnswerCompletion({ summary, ledger });
+        });
+        expect(decisions.map(decision => decision?.action)).toEqual(['continue_recovery', 'continue_recovery', 'continue_recovery', 'stop_incomplete']);
+        expect(decisions[2]).toMatchObject({ reason: 'strategy_change_required' });
+        expect(ledger.progressEpoch).toBe(0);
+    });
+
+    it('does not reset an unknown failure with arbitrary unrecognized cause strings', () => {
+        const ledger = createAnswerCompletionLedger();
+        let decision;
+        for (let index = 0; index < 4; index++) {
+            const summary = createSummary({ status: 'tool_results_ready', toolResults: [
+                createToolResult('webSearch', { isError: true, outcome: 'recoverable_error',
+                    metadata: { failureReason: `UNTRUSTED_${index}` } }),
+            ] });
+            recordAnswerCompletionTurn(ledger, summary);
+            decision = decideAnswerCompletion({ summary, ledger });
+        }
+        expect(decision).toMatchObject({ action: 'stop_incomplete', reason: 'equivalent_no_progress' });
+    });
+
+    it('does not treat an unclassified unavailable or excluded path as a proven read recovery alternative', () => {
+        const ledger = createAnswerCompletionLedger();
+        let decision;
+        for (let index = 0; index < 4; index++) {
+            const result = createToolResult('read_note', { isError: true, outcome: 'recoverable_error',
+                promptText: 'Requested note is unavailable in the permitted scope.', metadata: { retrySafety: 'read_only' } });
+            const summary = createSummary({ status: 'tool_results_ready', toolResults: [result], toolCalls: [
+                { type: 'toolCall', id: result.toolCallId, name: 'read_note', input: { path: `excluded/${index}.md` } },
+            ] });
+            recordAnswerCompletionTurn(ledger, summary);
+            decision = decideAnswerCompletion({ summary, ledger });
+        }
+        expect(decision).toMatchObject({ action: 'stop_incomplete', reason: 'equivalent_no_progress' });
+        expect(ledger.progressEpoch).toBe(0);
+    });
+
     it("starts a new equivalent-failure episode after each distinct Host read receipt", () => {
         const ledger = createAnswerCompletionLedger();
         const failure = () => {

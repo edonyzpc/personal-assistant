@@ -49,8 +49,9 @@ describe('action wrapper batch preflight forwarding', () => {
         const preflightBatch = jest.fn(() => rejection);
         const base: PaAgentToolExecutor = { execute, prepareBatch, getCanonicalToolCallKey: canonical,
             getExecutionMode: mode, preflightBatch };
-        const lookup = jest.fn(() => { throw new Error('registry preparation must not run'); });
-        const registry = { get: lookup, prepareAndValidate: lookup } as never;
+        const lookup = jest.fn(() => undefined);
+        const prepareAndValidate = jest.fn(() => { throw new Error('registry preparation must not run'); });
+        const registry = { get: lookup, prepareAndValidate } as never;
         const stageIntent = jest.fn();
         const executeAction = jest.fn();
         const executor = wrapper === 'operations'
@@ -81,7 +82,7 @@ describe('action wrapper batch preflight forwarding', () => {
                     preflightOnly: true, batchPreflightRejected: true },
             });
         }
-        for (const operation of [execute, prepareBatch, canonical, mode, lookup, stageIntent, executeAction]) {
+        for (const operation of [execute, prepareBatch, canonical, mode, prepareAndValidate, stageIntent, executeAction]) {
             expect(operation).not.toHaveBeenCalled();
         }
     });

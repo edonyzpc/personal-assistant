@@ -102,6 +102,9 @@ jest.mock('../src/ai-services/chat-service', () => ({
         cancelOperationsIntent: mockCancelOperationsIntent,
         cancelPendingOperations: mockCancelPendingOperations,
         undoOperations: mockUndoOperations,
+        subscribeOperations: () => () => {},
+        refreshOperationsActionState: (state: unknown) => state,
+        registerOperationsContextPersistence: () => {},
         dispose: mockDisposeChatService,
         resetContext: mockResetChatContext,
     })),
@@ -938,6 +941,9 @@ function createView(options: {
             cancelOperationsIntent: mockCancelOperationsIntent,
             cancelPendingOperations: mockCancelPendingOperations,
             undoOperations: mockUndoOperations,
+            subscribeOperations: () => () => {},
+            refreshOperationsActionState: (state: unknown) => state,
+            registerOperationsContextPersistence: () => {},
             dispose: mockDisposeChatService,
             resetContext: mockResetChatContext,
         })),
@@ -2408,7 +2414,7 @@ describe('LLMView turn lifecycle', () => {
         const notices = (Notice as unknown as { messages: Array<{ message: unknown }> }).messages;
         const previousNoticeCount = notices.length;
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
-        Object.assign(plugin, { writingVersions: versions, writingSave: {} as WritingSaveAction });
+        Object.assign(plugin, { writingVersions: versions, writingSave: { subscribeState: () => () => {}, listReceipts: async () => [] } as unknown as WritingSaveAction });
         await view.onOpen();
         prefillWriting(view, '写一段旅行文案');
         getElementByClass(containerEl, 'send-button-visible').click();
@@ -2462,7 +2468,7 @@ describe('LLMView turn lifecycle', () => {
         const notices = (Notice as unknown as { messages: Array<{ message: unknown }> }).messages;
         const previousNoticeCount = notices.length;
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
-        Object.assign(plugin, { writingVersions: versions, writingSave: {} as WritingSaveAction });
+        Object.assign(plugin, { writingVersions: versions, writingSave: { subscribeState: () => () => {}, listReceipts: async () => [] } as unknown as WritingSaveAction });
         await view.onOpen();
         prefillWriting(view, '写一段旅行文案');
         getElementByClass(containerEl, 'send-button-visible').click();
@@ -10065,7 +10071,7 @@ describe('LLMView turn lifecycle', () => {
     it.each([null, 'completed', 'prepared', 'partial', 'failed'])('shows unfinished saves only for a real pending record: %s', async (state) => {
         const { view, containerEl, plugin } = createView();
         const listReceipts = jest.fn(async () => state ? [{ state }] : []);
-        Object.assign(plugin, { writingSave: { listReceipts }, writingVersions: {} });
+        Object.assign(plugin, { writingSave: { listReceipts, subscribeState: () => () => {} }, writingVersions: {} });
         await view.onOpen();
         const pending = getButtonByText(containerEl, 'Unfinished note saves');
         const more = getButtonByClass(containerEl, 'pa-chat-more-button');
@@ -10087,7 +10093,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, containerEl, plugin } = createView();
         const resolve: Array<(receipts: Array<{ state: string }>) => void> = [];
         const listReceipts = jest.fn(() => new Promise<Array<{ state: string }>>(done => { resolve.push(done); }));
-        Object.assign(plugin, { writingSave: { listReceipts }, writingVersions: {} });
+        Object.assign(plugin, { writingSave: { listReceipts, subscribeState: () => () => {} }, writingVersions: {} });
         await view.onOpen();
         const pending = getButtonByText(containerEl, 'Unfinished note saves');
         const more = getButtonByClass(containerEl, 'pa-chat-more-button');
@@ -10103,7 +10109,7 @@ describe('LLMView turn lifecycle', () => {
 
     it('keeps More usable when unfinished-save storage cannot be read', async () => {
         const { view, containerEl, plugin } = createView();
-        Object.assign(plugin, { writingSave: { listReceipts: async () => { throw new Error('unavailable'); } }, writingVersions: {} });
+        Object.assign(plugin, { writingSave: { listReceipts: async () => { throw new Error('unavailable'); }, subscribeState: () => () => {} }, writingVersions: {} });
         await view.onOpen();
         getButtonByClass(containerEl, 'pa-chat-more-button').click(); await flushPromises();
         expect(getElementByClass(containerEl, 'pa-chat-composer-menu').hidden).toBe(false);

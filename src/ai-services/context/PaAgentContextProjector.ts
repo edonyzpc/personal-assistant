@@ -6,7 +6,8 @@ import {
 import { escapeTaggedBoundary } from "../agent-utils";
 import { sanitizeUserProfileMarkdownForPrompt } from "../memory-extraction/type-a-extractor";
 import { groupChatTurnsSteps, PaAgentContextCompactor } from "./PaAgentContextCompactor";
-import { fitFullHistorySteps, formatHistoryMessagesSteps, formatSemanticHistorySummary } from "./PaAgentHistoryContextPlan";
+import { fitFullHistorySteps, formatHistoryMessagesSteps, formatSemanticHistorySummary,
+    protectedHistoryLayoutSteps, selectHistoryTurnsSteps } from "./PaAgentHistoryContextPlan";
 import { finishContextSteps } from './clone-utils';
 import { isCurrentHistorySummarySteps, type PaAgentContextSummaries } from "./PaAgentContextSummaryTypes";
 import type { GenerationInputBackgroundSources } from "../generation-input-snapshot";
@@ -42,7 +43,10 @@ export interface PaAgentProjectedInputOptions {
     prompt: string;
     chatHistory?: ChatMessage[];
     hostContext?: string;
+    /** Current-turn feedback and source material, never a trusted protocol. */
     runtimeInstruction?: string;
+    /** Only Harness-authored protocol templates; source text belongs in runtimeInstruction. */
+    currentProtocol?: string;
     injectedContext?: PaAgentInjectedContext;
     maxHistoryChars: number;
     /** A zero limit omits the old-turn digest before reducing recent raw turns. */
@@ -51,6 +55,8 @@ export interface PaAgentProjectedInputOptions {
 }
 
 export interface PaAgentProjectedHistory {
+    /** Protected facts exceeded the history lane; semantic preparation is required. */
+    historyBudgetLimited?: boolean;
     text: string;
     compactedCount: number;
     summaryChars: number;
@@ -70,12 +76,14 @@ export class PaAgentContextProjector {
     }
 
     projectUserInput(options: PaAgentProjectedInputOptions): { input: string; currentInput: string;
+        currentContext: string; currentProtocol: string;
         history: PaAgentProjectedHistory } {
         return finishContextSteps(this.projectUserInputSteps(options));
     }
 
     *projectUserInputSteps(options: PaAgentProjectedInputOptions): Generator<void,
-        { input: string; currentInput: string; history: PaAgentProjectedHistory }, void> {
+        { input: string; currentInput: string; currentContext: string; currentProtocol: string;
+            history: PaAgentProjectedHistory }, void> {
         const history = yield* this.projectHistorySteps(
             options.chatHistory,
             options.maxHistoryChars,
@@ -84,16 +92,17 @@ export class PaAgentContextProjector {
         );
         const injected = formatInjectedContext(options.injectedContext);
         const runtimeInstruction = options.runtimeInstruction
-            ? `\n\n<runtime_instruction>\n${options.runtimeInstruction}\n</runtime_instruction>`
+            ? `Current run context and feedback:\n<runtime_instruction>\n${options.runtimeInstruction}\n</runtime_instruction>`
             : "";
-        const currentInput = [
+        const currentContext = [
             options.hostContext ? `Host context:\n${options.hostContext}` : "",
             injected ? `Personal context:\n${injected}` : "",
-            `User input:\n${options.prompt}${runtimeInstruction}`,
+            runtimeInstruction,
         ].filter(Boolean).join("\n\n");
-        const input = [history.text ? `Recent chat history:\n${history.text}` : "", currentInput]
+        const currentInput = `User input:\n${options.prompt}`;
+        const input = [history.text ? `Recent chat history:\n${history.text}` : "", currentContext, currentInput]
             .filter(Boolean).join("\n\n");
-        return { input, currentInput, history };
+        return { input, currentInput, currentContext, currentProtocol: options.currentProtocol ?? "", history };
     }
 
     annotateOrigins(transcript: readonly PaAgentMessage[]): Array<{ id: string; origin: string }> {
@@ -123,51 +132,48 @@ export class PaAgentContextProjector {
         }
 
         // A persisted action's parameters and call/result relationship are
-        // protected history. Trim whole ordinary turns from oldest to newest
-        // while keeping every action turn in its original chronological place.
+        // protected history. Source-bound summaries may replace ordinary prose
+        // while action evidence stays in its original chronological place.
         // If the protected set itself is too large, final admission fails.
-        if (history.some(message => message.canonicalTurn?.messages.some(part =>
-            part.role === "assistant" && part.content.some(item => item.type === "toolCall")))) {
+        const protectedHistory = yield* protectedHistoryLayoutSteps(history);
+        if (protectedHistory.protectedIndices.size > 0 || history.some(message => message.canonicalTurn?.messages.some(part =>
+            part.role === 'assistant' && part.content.some(item => item.type === 'toolCall')))) {
             const semantic = summaries?.history?.text.trim()
                 && (yield* isCurrentHistorySummarySteps(summaries.history, history)) ? summaries.history : undefined;
             const summaryText = semantic ? formatSemanticHistorySummary(semantic.text) : "";
             const summarizedPrefixCount = semantic?.sourceMessages.length ?? 0;
-            const firstUser = history.findIndex(message => message.role === "user");
-            const turns = firstUser < 0 ? [history] : [
-                ...(firstUser > 0 ? [history.slice(0, firstUser)] : []),
-                ...(yield* groupChatTurnsSteps(history.slice(firstUser))),
-            ];
-            let consumed = 0;
-            const turnEnds = turns.map(turn => (consumed += turn.length));
-            const protectedIndices = new Set(turns.flatMap((turn, index) => turn.some(message =>
-                message.canonicalTurn?.messages.some(part => part.role === "assistant"
-                    && part.content.some(item => item.type === "toolCall"))) ? [index] : []));
-            const retainedIndices = new Set(protectedIndices);
-            const formatRetained = function* (compactResults: boolean): Generator<void, string, void> {
-                const retained: ChatMessage[] = [];
-                for (const [index, turn] of turns.entries()) {
-                    yield;
-                    if (retainedIndices.has(index)) retained.push(...turn);
-                }
-                return [summaryText, yield* formatHistoryMessagesSteps(retained, compactResults)].filter(Boolean).join("\n\n");
+            const { turns, turnEnds } = protectedHistory;
+            const projectedTurns = turns.map((turn, index) => turnEnds[index] <= summarizedPrefixCount
+                ? protectedHistory.evidenceTurns[index] : turn);
+            const retainedIndices = new Set(protectedHistory.mandatoryIndices);
+            // Completed reads may be replaced only by an accepted source-bound
+            // summary, never by the fallback line digest or a missing prefix.
+            for (const [index, turn] of turns.entries()) if (turnEnds[index] > summarizedPrefixCount
+                && turn.some(message => message.canonicalTurn?.messages.some(part => part.role === 'assistant'
+                    && part.content.some(item => item.type === 'toolCall')))) retainedIndices.add(index);
+            // The newest correction must not disappear to make old protected
+            // action history fit. An insufficient lane fails admission instead.
+            const formatRetained = function* (lossless: boolean): Generator<void, string, void> {
+                const retained = yield* selectHistoryTurnsSteps(projectedTurns, retainedIndices);
+                return [summaryText, yield* formatHistoryMessagesSteps(retained, lossless)].filter(Boolean).join("\n\n");
             };
-            let compactActionResults = (yield* formatRetained(false)).length > budget;
+            let useLosslessHistory = (yield* formatRetained(false)).length > budget;
             let ordinaryTurnLimitReached = false;
             for (let index = turns.length - 1; index >= 0; index--) {
                 yield;
-                if (protectedIndices.has(index) || turnEnds[index] <= summarizedPrefixCount
+                if (retainedIndices.has(index) || index === turns.length - 1 || turnEnds[index] <= summarizedPrefixCount
                     || ordinaryTurnLimitReached) continue;
                 retainedIndices.add(index);
-                if ((yield* formatRetained(compactActionResults)).length > budget) {
-                    if (!compactActionResults && (yield* formatRetained(true)).length <= budget) {
-                        compactActionResults = true;
+                if ((yield* formatRetained(useLosslessHistory)).length > budget) {
+                    if (!useLosslessHistory && (yield* formatRetained(true)).length <= budget) {
+                        useLosslessHistory = true;
                     } else {
                         retainedIndices.delete(index);
                         ordinaryTurnLimitReached = true;
                     }
                 }
             }
-            const text = yield* formatRetained(compactActionResults);
+            const text = yield* formatRetained(useLosslessHistory);
             const retainedMessageIndices = new Set<number>();
             let start = 0;
             for (const [index, turn] of turns.entries()) {
@@ -180,6 +186,7 @@ export class PaAgentContextProjector {
             const sourceMessages = history.filter((_message, index) =>
                 index < summarizedPrefixCount || retainedMessageIndices.has(index));
             return withHistorySources({ text, compactedCount: summarizedPrefixCount, summaryChars: 0,
+                ...(text.length > budget ? { historyBudgetLimited: true } : {}),
                 semanticSummaryChars: semantic?.text.length ?? 0,
                 omittedCount: history.length - sourceMessages.length, historyCompressed: true }, sourceMessages);
         }
@@ -194,7 +201,7 @@ export class PaAgentContextProjector {
                 Math.max(0, budget - summaryText.length - (remaining.length > 0 ? 2 : 0)),
                 maxHistorySummaryChars,
                 undefined,
-                false,
+                allowLossless,
             );
             // A valid semantic prefix is atomic. If even the prefix cannot fit,
             // leave it intact for the final-request guard rather than slice JSON

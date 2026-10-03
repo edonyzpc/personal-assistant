@@ -1,8 +1,37 @@
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
-import type { PaAgentMessage, ToolExecutionOutcome } from "./chat-types";
+import type { ChatMessage, PaAgentMessage, ToolExecutionOutcome } from "./chat-types";
 import { escapeTaggedBoundary } from "./agent-utils";
+import { cloneActionStates, type PaAgentActionState } from './pa-agent-result-facts';
 
 type ToolResult = Extract<PaAgentMessage, { role: "toolResult" }>;
+
+/** Only paired, completed observations with Host execution classification may
+ * move into a source-bound semantic summary. Legacy and unresolved calls stay exact. */
+export function canSummarizeReadOnlyActionHistory(transcript: readonly PaAgentMessage[]): boolean {
+    const groups = projectPaAgentActionHistory(transcript);
+    const calls = groups.flatMap(group => group.calls);
+    if (!calls.length) return false;
+    const results = transcript.filter((message): message is ToolResult => message.role === 'toolResult');
+    return results.length === calls.length && summarizableReadOnlyResultIds(transcript).size === calls.length;
+}
+
+export function summarizableReadOnlyResultIds(transcript: readonly PaAgentMessage[]): Set<string> {
+    const results = transcript.filter((message): message is ToolResult => message.role === 'toolResult');
+    const ids = new Set<string>();
+    for (const call of projectPaAgentActionHistory(transcript).flatMap(group => group.calls)) {
+        if (call.ambiguousResultId || call.results.length !== 1) continue;
+        const paired = call.results[0];
+        const matches = results.filter(message => message.id === paired.id && message.toolCallId === call.id);
+        const result = matches.length === 1 && results.filter(message => message.id === paired.id).length === 1 ? matches[0] : undefined;
+        if (result?.content.metadata?.retrySafety === 'read_only'
+            && result.toolName === call.name
+            && !result.isError && result.content.includeInNextPrompt
+            && (paired.outcome === 'success' || paired.outcome === 'reused_result')
+            && (!paired.executionState || paired.executionState === 'succeeded')
+            && !result.content.resultFact) ids.add(paired.id);
+    }
+    return ids;
+}
 
 export interface PaAgentActionCall {
     id: string;
@@ -11,6 +40,9 @@ export interface PaAgentActionCall {
     /** A provider reused one id within this assistant message, so no result can be assigned safely. */
     ambiguousResultId?: boolean;
     results: Array<{ id: string; outcome: ToolExecutionOutcome | "unknown"; executionState?: string;
+        domainPhase?: 'accepted' | 'ready' | 'pending' | 'completed' | 'partial' | 'unknown';
+        domainIdentity?: { operationId?: string; requestId?: string; receiptId?: string;
+            intentId?: string; completedRefs?: string[]; remainingRefs?: string[] };
         isError: boolean; text: string }>;
 }
 
@@ -56,12 +88,29 @@ export function projectPaAgentActionHistory(transcript: readonly PaAgentMessage[
             continue;
         }
         const call = message.toolCallId ? openCalls.get(message.toolCallId) : undefined;
-        if (call) call.results.push(projectResult(message));
+        if (call) call.results.push(projectPaAgentToolResult(message));
     }
     return groups;
 }
 
-function projectResult(result: ToolResult): PaAgentActionCall["results"][number] {
+/** Initial status is already represented by the original admitted result. Later snapshots
+ * and rehydrated status-only fragments remain independent, context-only facts. */
+export function additionalHistoricalActionStates(message: ChatMessage): PaAgentActionState[] {
+    const groups = message.canonicalTurn ? projectPaAgentActionHistory(message.canonicalTurn.messages) : [];
+    return cloneActionStates(message.actionStates ?? message.canonicalTurn?.actionStates).filter(state =>
+        state.revision !== 0 || !groups.some(group => group.assistantId === state.origin.assistantId
+            && group.calls.some(call => call.id === state.origin.callId
+                && call.results.some(result => result.id === state.origin.resultId && result.domainPhase === state.phase))));
+}
+
+export function projectPaAgentToolResult(result: ToolResult): PaAgentActionCall["results"][number] {
+    const domainIdentity = safeDomainIdentity(result);
+    const domainPhase = result.content.resultFact?.kind === 'accepted' ? 'accepted'
+        : result.content.resultFact?.kind === 'artifact_ready' ? 'ready'
+        : result.content.resultFact?.kind === 'approval_pending' ? 'pending'
+        : result.content.resultFact?.kind === 'applied' ? 'completed'
+        : result.content.resultFact?.kind === 'partial' ? 'partial'
+        : result.content.resultFact?.kind === 'unknown' ? 'unknown' : undefined;
     return {
         id: result.id,
         outcome: OUTCOMES.has(result.content.metadata?.outcome as ToolExecutionOutcome)
@@ -69,11 +118,35 @@ function projectResult(result: ToolResult): PaAgentActionCall["results"][number]
         ...(EXECUTION_STATES.has(String(result.content.metadata?.executionState))
             ? { executionState: String(result.content.metadata!.executionState) } : {}),
         isError: result.isError,
+        ...(domainPhase ? { domainPhase } : {}),
+        ...(domainIdentity ? { domainIdentity } : {}),
         text: result.content.includeInNextPrompt
             && result.content.metadata?.outcome !== "policy_rejected"
             && result.content.metadata?.outcome !== "duplicate_skipped"
             ? result.content.promptText : "",
     };
+}
+
+export function projectPaAgentToolStatus(result: ToolResult): Omit<PaAgentActionCall['results'][number], 'text'> {
+    const status: Omit<PaAgentActionCall['results'][number], 'text'> & { text?: string } = projectPaAgentToolResult(result);
+    delete status.text;
+    return status;
+}
+
+/** This finite view carries no parameters, bodies, paths or permission receipts. */
+function safeDomainIdentity(result: ToolResult): PaAgentActionCall['results'][number]['domainIdentity'] {
+    const fact = result.content.resultFact;
+    const safeId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9:_-]{1,256}$/.test(value);
+    if (!fact) return undefined;
+    if ((fact.kind === 'accepted' || fact.kind === 'unknown') && safeId(fact.operationId)) return { operationId: fact.operationId };
+    if (fact.kind === 'approval_pending' && safeId(fact.intentId)) return { intentId: fact.intentId };
+    if (fact.kind === 'artifact_ready' && safeId(fact.requestId) && safeId(fact.receiptId)) return { requestId: fact.requestId, receiptId: fact.receiptId };
+    if (fact.kind === 'applied' && safeId(fact.receiptId)) return { receiptId: fact.receiptId };
+    if (fact.kind === 'partial' && fact.completedRefs.length <= 100 && fact.remainingRefs.length <= 100
+        && fact.completedRefs.every(safeId) && fact.remainingRefs.every(safeId)) {
+        return { completedRefs: [...fact.completedRefs], remainingRefs: [...fact.remainingRefs] };
+    }
+    return undefined;
 }
 
 export function canProjectNativeActionHistory(groups: readonly PaAgentActionGroup[]): boolean {
@@ -93,19 +166,25 @@ function nativeInput(input: unknown): Record<string, unknown> | undefined {
     } catch { return undefined; }
 }
 
-function resultContent(call: PaAgentActionCall): string {
+type ActionContextScope = "historical" | "current_run";
+
+function resultContent(call: PaAgentActionCall, scope: ActionContextScope): string {
     if (call.ambiguousResultId) return escapeTaggedBoundary(JSON.stringify({
-        status: "result_association_unknown", callId: call.id,
+        contextScope: scope, status: "result_association_unknown", callId: call.id,
         detail: "A result cannot be assigned to this repeated call id; verify before replaying a possible side effect.",
     }), "action_history");
     if (!call.results.length) return escapeTaggedBoundary(JSON.stringify({
-        status: "result_unknown", callId: call.id,
-        detail: "No admitted observation is available; execution and side effects are unknown. Verify before replaying.",
+        contextScope: scope, status: "result_unknown", unknownScope: "tool_observation", callId: call.id,
+        // Pure output calls normally have no tool result. Independent admitted
+        // owner facts can still prove a phase; missing observations do not negate them.
+        detail: "No admitted tool-result observation is available. Use admitted domain facts for known phases or effects; otherwise keep execution and effects unknown and verify before replaying.",
     }), "action_history");
     return call.results.map(result => {
-        const header = escapeTaggedBoundary(JSON.stringify({ resultId: result.id, callId: call.id,
+        const header = escapeTaggedBoundary(JSON.stringify({ contextScope: scope, resultId: result.id, callId: call.id,
             outcome: result.outcome,
             ...(result.executionState ? { executionState: result.executionState } : {}), isError: result.isError,
+            ...(result.domainPhase ? { domainPhase: result.domainPhase } : {}),
+            ...(result.domainIdentity ? { domainIdentity: result.domainIdentity } : {}),
         }), "action_history");
         const safeText = escapeTaggedBoundary(escapeTaggedBoundary(result.text, "untrusted"), "action_history");
         return `${header}\n<untrusted source="tool:${call.name.replace(/["<>&]/g, "_")}">\n${safeText}\n</untrusted>`;
@@ -113,25 +192,26 @@ function resultContent(call: PaAgentActionCall): string {
 }
 
 /** Native and compatibility projections consume the same paired groups, never a second observation store. */
-export function actionHistoryMessages(groups: readonly PaAgentActionGroup[], mode: "native" | "compat"): BaseMessage[] {
+export function actionHistoryMessages(groups: readonly PaAgentActionGroup[], mode: "native" | "compat",
+    scope: ActionContextScope = "current_run"): BaseMessage[] {
     if (mode === "native") {
         if (!canProjectNativeActionHistory(groups)) throw new Error("Action history cannot use native tool messages");
         return groups.flatMap(group => [
-            new AIMessage({ content: group.text, tool_calls: group.calls.map(call => ({
+            new AIMessage({ content: `<action_context scope="${scope}"/>${group.text ? `\n${group.text}` : ""}`, tool_calls: group.calls.map(call => ({
                 id: call.id, name: call.name, args: nativeInput(call.input)!,
             })) }),
             ...group.calls.map(call => new ToolMessage({ tool_call_id: call.id, name: call.name,
-                content: resultContent(call) })),
+                content: resultContent(call, scope) })),
         ]);
     }
     return groups.map(group => new HumanMessage({ content: [
-        '<action_history context_only="true" grants_tool_authority="false" grants_write_authority="false">',
+        `<action_history scope="${scope}" context_only="true">`,
         escapeTaggedBoundary(JSON.stringify({ assistantId: group.assistantId, text: group.text }), "action_history"),
         ...group.calls.map(call => [
             `<action_call format="json">${escapeTaggedBoundary(escapeTaggedBoundary(JSON.stringify({
                 id: call.id, name: call.name, input: call.input,
             }), "action_call"), "action_history")}</action_call>`,
-            resultContent(call),
+            resultContent(call, scope),
         ].join("\n")),
         "</action_history>",
     ].join("\n") }));

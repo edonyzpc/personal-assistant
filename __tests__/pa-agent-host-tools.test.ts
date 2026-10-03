@@ -12,7 +12,9 @@ import {
     type AgentNetworkPolicy,
     type CapabilityProvider,
 } from "../src/ai-services/capability-types";
-import { createCoreToolCapabilities } from "../src/ai-services/capability-adapter";
+import { createCoreToolCapabilities, createChatToolCapability } from "../src/ai-services/capability-adapter";
+import { createReadNoteTool } from '../src/ai-services/chat-tool-factories';
+import { createRequiredCapabilityHostPolicy } from '../src/ai-services/pa-agent-required-capability-policy';
 import {
     createCurrentNoteContextTool,
     createInspectObsidianNoteTool,
@@ -37,7 +39,6 @@ import { extractCanonicalTurnMetadata } from "../src/ai-services/pa-agent-histor
 import {
     formatSkillCatalog,
     formatToolObservations,
-    PaAgentRuntime,
 } from "../src/ai-services/pa-agent-runtime";
 import { AgentLifecycleEventEmitter } from "../src/ai-services/agent-runtime-primitives";
 import { ToolExecutionDispatcher } from "../src/ai-services/pa-agent-tool-dispatcher";
@@ -64,6 +65,48 @@ import { MemorySearchTool } from "../src/ai-services/memory-search-tool";
 import type { TaskSourceReadGuard } from "../src/ai-services/task-source-read-guard";
 
 jest.mock("obsidian");
+
+describe('read failure recovery through actual capability feedback', () => {
+    it('lets the model correct distinct admitted read failures without merging them into one failed strategy', async () => {
+        const paths = ['notes/missing-a.md', 'notes/changing.md', 'notes/adapter.md', 'notes/missing-b.md'];
+        const changing = { path: paths[1], extension: 'md', stat: { mtime: 1, size: 4 } };
+        const adapter = { path: paths[2], extension: 'md', stat: { mtime: 1, size: 4 } };
+        const host = { settings: {}, log: jest.fn(), app: { vault: {
+            getMarkdownFiles: () => [changing, adapter],
+            getAbstractFileByPath: (path: string) => [changing, adapter].find(file => file.path === path) ?? null,
+            cachedRead: async (file: typeof changing) => {
+                if (file === changing) { changing.stat.mtime++; return 'body'; }
+                throw new Error('PRIVATE_ADAPTER_PATH /private/unrelated.md');
+            },
+        } } };
+        const registry = new CapabilityRegistry({ policyEngine: new PolicyEngine() });
+        registry.register(createChatToolCapability(createReadNoteTool(), { providerId: 'core-tools' }));
+        const executor = createPaAgentCapabilityToolExecutor({ registry, host: host as never });
+        let turn = 0;
+        const inputs: PaAgentModelInput[] = [];
+        const result = await new PaAgentLoop({ runId: 'read-recovery', userInput: 'Read the admitted sources and explain what remains unavailable.',
+            maxTurns: 8, toolExecutor: executor, hostPolicy: createRequiredCapabilityHostPolicy().hostPolicy,
+            model: { stream: async function* (input) {
+                inputs.push(input);
+                if (turn < paths.length) {
+                    yield { type: 'toolcall_delta', id: `read-${turn}`, index: 0, name: 'read_note', input: { path: paths[turn++] } } as const;
+                    yield { type: 'provider_completion', completion: 'tool_calls' } as const;
+                } else {
+                    yield { type: 'text_delta', text: 'The distinct reads remain unavailable; no write was attempted.' } as const;
+                    yield { type: 'provider_completion', completion: 'stop' } as const;
+                }
+            } },
+        }).run();
+        expect(result.status).toBe('completed');
+        const results = result.turns.flatMap(turn => turn.toolResults);
+        expect(results.map(message => message.content.metadata?.failureReason)).toEqual(['not_found', 'source_changed', 'adapter_error', 'not_found']);
+        expect(results.map(message => JSON.parse(message.content.promptText).failureReason)).toEqual(['not_found', 'source_changed', 'adapter_error', 'not_found']);
+        expect(results.map(message => message.content.metadata?.retrySafety)).toEqual(paths.map(() => 'read_only'));
+        expect(inputs.at(-1)?.transcript.filter(message => message.role === 'toolResult')).toHaveLength(paths.length);
+        expect(JSON.stringify(result.transcript)).not.toContain('PRIVATE_ADAPTER_PATH');
+        expect(result.turns.every(turn => turn.progressEpoch === 0)).toBe(true);
+    });
+});
 
 function createMemoryEvidence(content: string, path = "notes/current.md"): MemorySearchResult {
     return {
@@ -129,28 +172,7 @@ function registerMemoryEvidence(
     }];
 }
 
-function createTestPaAgentRuntime(): PaAgentRuntime {
-    return new PaAgentRuntime({
-        settings: { shareAnonymousCapabilityUsage: false },
-        isOperationsAgentEnabled: false,
-        log: jest.fn(),
-    } as never, {
-        createChatModel: jest.fn(),
-    } as never, {
-        skillContextProvider: null,
-    });
-}
-
 describe("PA Agent canonical host tool executor", () => {
-    it("does not abort the run-owned detached Memory lifetime on normal runtime dispose", () => {
-        const runtime = createTestPaAgentRuntime();
-        const run = new AbortController();
-
-        runtime.dispose();
-
-        expect(run.signal.aborted).toBe(false);
-    });
-
     it("propagates only allowlisted content-free capability reasons into loop metadata", () => {
         const baseResult: AgentCapabilityResult = {
             status: "unavailable",
