@@ -14,7 +14,7 @@
 验收标准及负例：{{REQ_AC_OR_CONTRACT -> EXPECTED_SUCCESS_FAILURE_BEHAVIOR}}
 不可变约束/非目标：{{TECHNOLOGY_PRODUCT_DATA_PERMISSION_COMPATIBILITY_BOUNDARIES}}
 必要读集与已核实事实：{{PATHS_SECTIONS_AND_FINDINGS_WITH_SOURCES；本上下文已有且未变的内容复用}}
-设计边界：{{REQUIRED_INTERFACES_STATE_INVARIANTS_OR_EXISTING_COMPONENT_TO_REUSE}}
+设计边界：{{REQUIRED_INTERFACES_STATE_INVARIANTS_OR_EXISTING_COMPONENT_TO_REUSE；Agent/command任务附统一架构链接、关键事项owner与Host事实依据}}
 允许编辑/生成：{{FILES_OR_NARROW_DIRECTORY_AND_BUILD_OUTPUTS}}
 工作树与基线：{{ABSOLUTE_CWD_BASE_AND_RELEVANT_DIRTY_INPUTS_OWNERSHIP}}
 接收目标与终点：{{TARGET_TREE_AND_REQUIRED_DELIVERY_STOP_POINT}}
@@ -85,6 +85,7 @@
 任务/修订；基线、完整变更范围、模型配置与复用预检是否相符：
 实际 writer / 风险 / 审查方式（自查或独立审查）/ reviewer（适用时）：
 逐项 AC、范围/不变量/负例：通过 / 未通过 / 未验证，附真实证据。
+职责符合性（Agent/command适用）：通过 / 未通过 / 未验证；依据是设计owner映射与真实调用链。
 关键回归：预期来源、目标失败原因和修复后结果；无红灯时的理由。
 证据复用：实际命令/自然退出及相关输入一致性；补验项与原因。
 交付目标：接收树、构建/部署/实际 app 观察一致；尚缺 gate 不标完成。

@@ -25,6 +25,11 @@ closure. Do not invent findings to satisfy a role or lane.
 3. Read the requirements/current contract, targeted diffs, and necessary
    dependencies before the implementer's conclusions. Form an independent
    view, then reconcile their explanation and validation evidence.
+   For PA Agent/runtime/command changes, first check the [Command Architecture Contract](../../../docs/architecture/pa-agent-architecture-plan.md#command-architecture-contract)
+   against the task's owner/factual-basis mapping and real call chain. Host
+   admission must use explicit authority or execution facts, not prose intent;
+   correctable attempts and accepted/unknown effects must remain distinct.
+   This is a normal gate check before green-test acceptance, not optional polish.
 4. Lead the final answer with findings ordered by severity.
 5. State validation run and validation not run.
 
@@ -87,6 +92,8 @@ lanes do not edit files, including while a final gate is running.
      Pagelet async-result, write-action, release, Memory/VSS, and tracker docs.
    - Check whether tests encode a behavior that contradicts a product/privacy
      non-goal.
+   - Keep deterministic harness, actual-model semantic/recovery and real-app
+     evidence distinct; none substitutes for another changed boundary.
    - Check whether tests cover failure, compatibility, stale-state, and
      concurrency edges, not only the easiest success path.
 

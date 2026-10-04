@@ -122,6 +122,12 @@ docs/development/active/<feature>/
 
 每个行为 slice：
 
+涉及 PA Agent/runtime/command 时，方案、SDD、派工与验收先遵守
+[Command Architecture Contract](../architecture/pa-agent-architecture-plan.md#command-architecture-contract)。
+在已有 SDD/任务记录映射关键决策、准入、状态和副作用的 owner、事实依据及输出；
+职责符合性先于实现与绿测验收。定义不复制到各工作流，窄修不增必填 artifact。
+按实际变化区分 harness 确定性、Agent 真实模型与 app 交互证据，不互相冒充。
+
 ```text
 implement → focused validation → review → fix → verify
 ```
@@ -177,7 +183,7 @@ Closed governance 保持已交付 `GOV-xxx` Current。Cancelled/Superseded contr
 
 1. `git status` + 稳定 ID/slug/concept 搜索。
 2. 只读匹配的 Backlog、Decision/Spec/GOV、Tracker。
-3. 进入实现才读相关 Architecture/code/tests，以及实际存在的 Plan/SDD。
+3. 进行涉及职责的设计、派工或实现时读相关 Architecture；code/tests 和实际存在的 Plan/SDD 按设计/实施需要读取。
 4. 创建 artifact 时才读对应 template。
 5. 当前 authority 明确引用历史，或 closeout 评估独有证据时才读 Archive。
 

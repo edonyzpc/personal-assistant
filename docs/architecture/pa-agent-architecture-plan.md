@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-09-30
+Updated: 2026-10-04
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -72,6 +72,149 @@ flowchart TD
 | `TaskSourceRun` | Binds one user request to its Host-selected notes, web, or combined scope, admits only compatible complete input lineage, preserves read snapshots, and rechecks current authorization before every physical provider request. |
 | `WritingContextRun` | Exposes Host-selected writing candidates on demand, binds the selected parent/material/style state to one context handle, and admits the final pure output against that handle. |
 | `ChatView` | Consumes canonical lifecycle, writing preview/artifact/recovery events and persists current-turn state, versions and confirmed save results without duplicate legacy rendering. |
+
+## Command Architecture Contract
+
+This is the single architecture authority for PA Agent command design. Owner
+confirmed this responsibility split and the design → workflow → shared framework
+→ domain migration order on 2026-10-04; see [DEC-049](../product/decisions/dec-049-command-agent-host-tool-contract.md).
+It consolidates DEC-034/038/040/042/043/048. It is a current design constraint;
+alignment of existing code is tracked by [B-158](../development/active/agent-command-contract/tracker.md),
+not implied by this document's status. Other workflows reference this section
+rather than maintaining another definition.
+
+### Roles And Ownership
+
+A command is a domain task contract and working guidance executed by the same
+main PA Agent. Relatively fixed means its goal, necessary domain conditions,
+inputs, deliverables and confirmation boundaries remain stable. The Agent may
+change searches, parameter interpretation, tool order and recovery strategy.
+
+| Role | Owns | Boundary |
+| --- | --- | --- |
+| Command | Task goal, input/context contract, necessary domain stages, required deliverables, capability needs, completion meaning and existing confirmation policy | A declaration/instruction is not permission, another Agent, a second planner, or an executable natural-language grammar |
+| Agent | User semantics, target selection, ambiguity, planning, tool arguments, recovery and assessment of goal coverage | Cannot manufacture permissions, file identities, confirmations or execution receipts |
+| Host / harness | Real invocation/context, capabilities, explicit permissions, source/file identity, protocol validation, budgets, cancellation, concurrency, lifecycle, effect admission and factual consistency | Does not infer intent, exclusions or task completion from natural-language words, quotes or model self-declarations |
+| Tool / domain owner | Structured execution interface; domain algorithms, necessary business stages, operations, candidates/artifacts and their actual state | A tool call is not task completion; domain ownership does not grant a general execution capability |
+
+These are logical responsibilities, not four required classes. Harness is a
+cross-cutting runtime role, not a requirement to move all domain logic into
+`PaAgentRuntime` or `PaAgentLoop`. Domain services may contain deterministic
+steps and already-approved auxiliary model preparation; the command does not
+require the Agent to micromanage them.
+
+### Declaration, Invocation And Authority
+
+Each command contract describes five things in its existing specification and
+design: inputs/context; goal and necessary stages; domain and ordinary helper
+capabilities; result/completion meaning; recovery and confirmation boundaries.
+Do not introduce a new mandatory manifest or duplicate the owning Product Spec.
+
+The reusable declaration is separate from one Host-bound invocation. The Host
+captures the actual request/message identity, original user text, explicit UI
+choices, source selection, current file/image/version identities, configured
+options and live validity/cancellation hooks. Raw user input is distinct from
+app-added working guidance. A model-interpreted selection remains semantic data;
+an app default must not be relabeled as the user's explicit selection.
+
+Activating a command makes its permitted capabilities available. It does not
+force execution: discussion, diagnosis or clarification may end without a
+domain effect. A registered command's capability needs intersect with current
+settings, source boundaries, platform and action authorization. Loading a Skill,
+reading a note or recalling an old operation cannot activate or broaden them.
+
+Host admission must identify a verifiable basis: an actual UI/configuration
+choice, registered capability/schema, real file/source identity, version/receipt,
+or current resource/lifecycle fact. Exact command-token parsing, path lookup and
+schema validation are valid protocol operations. Matching arbitrary prose,
+quoted instruction fragments or words such as “current”, “not”, “publish” or
+“new topic” is not an independent proof of intent or authorization.
+
+Agent semantic errors remain possible. The Host does not claim to prove which
+allowed note the user intended. Existing explicit scope controls, Data Boundary,
+domain action confirmation and effect/cost boundaries continue to apply; this
+contract neither deletes those protections nor adds routine confirmation gates.
+
+### Interaction Contract
+
+```mermaid
+flowchart LR
+  U[User] -->|command activation| C[Command contract]
+  C -->|Host assembles real context and permitted capabilities| A[Main Agent]
+  A -->|structured call| H[Host harness]
+  H -->|admitted invocation| T[Tool and domain owner]
+  T -->|execution and artifact facts| H
+  H -->|bounded observation and recovery options| A
+  A -->|delivery or necessary clarification| U
+```
+
+The Agent submits operation/target parameters, not Host secrets, arbitrary
+destinations, permission flags or a forged `confirmed`. The Host validates at
+actual system boundaries and calls the domain port. The domain reports factual
+execution state and operation/artifact identities. The Host preserves these
+facts through the capability bridge and returns a bounded observation and safe
+recovery options; the Agent chooses the next step. The Agent's interpretation
+of current execution and historical owner facts remains in the persistent
+system contract when tools are withdrawn for a final answer. A tool definition's
+planner guidance alone cannot carry this recovery boundary. User confirmation, where
+required by the domain, binds the concrete target/content/version and is obtained
+through the existing Host UI/authority path, not inferred from conversational wording.
+
+### Run, Attempt And Operation
+
+| Identity | Lifetime / meaning |
+| --- | --- |
+| Agent run | One user request's planning, tool attempts and answer within its live authority |
+| Tool attempt | One schema/admission/execution attempt; may fail before any domain effect |
+| Business operation | A real domain action with its own effect identity, candidate/version and recovery state; several attempts may locate, query or continue the same operation |
+
+A failed attempt is not evidence of no effect. A failed parameter/path admission
+may be corrected only when the owner can positively establish that no domain
+effect started. Once accepted, repeated calls reuse or query the same operation.
+Unknown or partial effects must be verified/continued through the domain's
+existing recovery path, not converted into a fresh operation by changing arguments.
+Cancellation stops further admission; it does not erase an effect already accepted.
+
+Reuse `PaAgentToolExecutionResult.executionState` and `recovery`, existing domain
+operation receipts and result facts. Keep attempt outcome and operation state
+as separate axes. Do not infer `not_started` from an error string, clear all
+failure reservations, add a second command ledger, or introduce automatic
+cross-reload execution. Missing facts remain unknown within the existing limits.
+
+### Results And Completion
+
+Domain/tool owners report execution and deliverable facts; the Agent assesses
+whether the user's goal is covered; the Host checks the deterministic permission,
+receipt and necessary-artifact consistency it can actually verify. Tool success,
+accepted work, prepared artifact, waiting for approval, completed operation and
+completed user task are distinct. A conversational claim cannot replace a receipt.
+
+Recoverable errors are observations with a specific reason and available next
+actions. They do not permanently consume permission for an operation that never
+started. Real ambiguity, missing authority or indispensable user judgment may
+require clarification. Retry/repair stays within existing budgets and effects;
+this contract does not promise unlimited retries or guaranteed model understanding.
+
+Actual domain events update the existing safe result projection/history/context
+chain under DEC-048. Previous results preserve continuity but grant no new
+execution authority. Compaction and provider projection must preserve necessary
+pending/unknown/completed facts without repeating completed side effects.
+
+### Design And Acceptance Obligations
+
+Before relevant design, dispatch or implementation, map each material semantic
+decision, admission condition, state transition and side effect to its owner,
+inputs/factual basis and next result/action in the existing SDD or task record.
+Do not copy the entire role table into every command. Review responsibility
+conformance before accepting implementation details or passing tests.
+
+Use evidence appropriate to the affected boundary: deterministic tests/probes
+for harness and execution facts; a small set of actual model tasks for changed
+semantic generalization/recovery; real app interaction for changed entry,
+selection and confirmation behavior. These kinds of evidence are not substitutes.
+Do not enumerate every synonym, add keyword checkers to enforce this architecture,
+or repeat unchanged broad gates. Ordinary direct Obsidian commands need not be
+converted into Agent tasks; this contract applies to PA Agent task entrypoints.
 
 ## Capability Model
 

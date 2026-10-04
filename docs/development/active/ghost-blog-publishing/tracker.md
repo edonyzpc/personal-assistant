@@ -2,7 +2,7 @@
 
 Document status: Current
 Delivery status: Validated
-Updated: 2026-10-01
+Updated: 2026-10-04
 Work item: B-153
 Authority: 本 track 的唯一执行状态、finding、验证证据与跨会话接续。
 Product spec: [Product Spec](../../../product/specs/pa-ghost-blog-publishing-product-spec.md)
@@ -10,6 +10,25 @@ Plan: [开发测试方案](./plan.md)
 SDD: [实施设计](../../ghost-blog-publishing-design.md)
 
 ## Current Snapshot
+
+- Local master delivery 2026-10-04：Owner授权本地提交，密钥状态展示为81a8a352；T-07入口输入已随B-158最终职责重构保存于a7d1bddd，不恢复被替代的词面规则。配套记录随文档提交保存；未推送、发布或部署anthelion。以下Previous Accepted Slice保留当时验收范围与证据，不作为当前代码的第二份定义。
+- T-07已验证状态保留。Owner于2026-10-04调整顺序：先统一四角色架构和流程，再公共框架，最后领域command；T-08由[B-158](../agent-command-contract/README.md)接续，不再独立推进或扩展command调查。
+- [入口提案](./agent-entry-proposal.md)只作为后续领域迁移输入；统一定义与顺序由B-158 owning contract承接，不用该提案形成竞争authority。现有密钥UI/源码/tests及验收证据保留，anthelion未更新。
+
+### Previous Accepted Slice — T-07
+
+- T-07 窄修：Owner 授权 GPT+GLM 修复 Ghost Key 空白显示误导与当前笔记准备失败，要求不过度设计/测试。当前 app 密钥 ID 匹配且可读；已有失败来自模型为“当前笔记”填写 capturedPath 后被目标校验拒绝，非 Key 丢失。
+- Writer / review：GLM writer，GPT 独立验收；风险为密钥状态展示与来源准入。保留 SecretStorage ID、凭据隔离、提交时笔记绑定；只接纳当前笔记的完全相同冗余路径，不扩大其他目标权限。
+- Delivery / stop：基线 `308fbace773234f271dd39428c8f40a5572514c9`；隔离 managed worktree `ghost-key-current-note-fix`；接收树当前 repo，实际部署仅 repo `test`，不触碰 anthelion/真实 Ghost，不提交或发布。证据目录 `/private/tmp/pa-ghost-key-fix-rbZOCI`；任务单 `deliver-task.md`。
+- Validation mapping：状态存在/缺失/读取失败、空白保留/删除→configuration/settings owner tests→不读值、不泄漏、保存/删除刷新；当前笔记同目标→entry/host tests→使用捕获目标，替代目标/非请求拒绝；模型提示→区分目标准入与凭据错误。GLM 跑四个 focused suites/diff/DOM scan；GPT 接收后冻结并集中一次 make deploy，观察真实设置页状态及当前笔记Host准入。只有相关输入变更或失败才补测；跳过真实网络发布、iOS及无关UI。
+- Current action：T-07 已由 GPT 独立验收，本轮停在已验证的本地未提交修改和 repo `test` 部署。GLM 同一 context `01a10289-8f47-76c2-abc5-f3762e1efbd7` 的 r3 natural exit0；CLI0.155.1，pa-glm/ZAI Responses/glm-5.3/max，catalog选定模型条目相同，服务端实际型号未知。真实 Obsidian 列表包含空密钥条目，因此采用 Host 只返回状态方案；未改变存储/删除行为。
+- GPT r2 独立验收发现 P2：`requestsCurrentNote` 子串匹配会在“发布 notes/B.md，不是当前笔记”及“不要发布当前笔记，发布 notes/B.md”中接纳 captured A.md；实际源文件 transpile+合成 host 两例均复现。r3 已改为全句锚定简单命令并补反例，GPT 核对真实 diff/断言后确认修复。密钥状态读取 await 前后核对配置身份，UI保留存活及最新刷新保护。
+- r3 接收：GLM natural exit0，四个 focused suites/21 tests PASS，原始日志 `glm-r3-focused-tests-final-rerun.log`；10个 runtime/tests/Skill/locales 文件，无新依赖或存储格式变化，已通过 patch check 接收当前 repo。GPT仅补配套 Product Spec/SDD/Tracker，未改GLM实现。非当前请求和其他目标仍拒绝/原样解析。未提交或发布。
+- Final automated evidence：冻结输入的 make deploy 通过 platform guards/lint/production build，完整363 suites中362通过；Ghost client 因 sandbox 禁止监听127.0.0.1失败，原命令natural exit2。只补该suite（39/39，unsandboxed natural exit0），合并证据覆盖全部363 suites/8895 tests；未重跑full/build/coverage。make deploy-current natural exit0验证当前构建并部署repo test；社区DOM scan无匹配、diff check通过。docs:check通过，四项既有advisory。
+- Native / Host acceptance：test真实Settings展开Ghost、空密码框与configured提示、留空Save保留、删除后missing及重开仍missing、合成读取失败显示unavailable均通过；可见提示完整无溢出。已部署真实Host正例冗余捕获path/省略locator均绑定同一Dog笔记；否定当前且指定另一目标/模型另给path均拒绝。controller.prepare前截获，无Ghost HTTP或AI调用，未声明真实站点/正常模型决策全链路或iOS验证。新鲜errors/console error均为空。
+- Restore / cleanup：合成配置和SecretStorage facade仅在内存，已恢复原引用并删除临时变量；实际Debugger=false、mobile=false、PA Debug=false，Settings窗口已关闭回原Chat。GLM已结束，临时managed worktree已归档并经list_artifacts确认；必要原始日志、任务修订及独立验收摘要 `/private/tmp/pa-ghost-key-fix-rbZOCI/acceptance.md` 保留。无anthelion/真实密钥、commit/push/release改动；用户DESIGN.md/design-samples原样保留。
+
+### Previous Accepted Slice — T-06
 
 - T-06 增量范围已批准：B-153/REQ/AC-14–16 英文 URL、可读内部标签、四个原生 Text 关联属性。Owner 明确选择新文章自动生成、已有草稿显式更换、已发布 URL 保持；2026-10-01 验收后明确授权“将当前代码修改提交到远程master”。该授权覆盖本轮已验收代码及对应文档的签名提交和推送，不包含 closeout、release 或个人 vault 部署。
 - Delivery / stop: T-05/T-06 的39个 runtime/tests/styles/locales 文件已签名提交为 `dbb24ad7af7e2a6f20a321224ea80b8163cda283`，五份配套文档同轮单独签名提交，按 Owner 后续授权交付到远程 master；实际推送和远端一致性以 Git 回执核对，不预先宣称推送成功。临时 managed worktree 已保存可恢复快照并归档。实际部署和 app 验收仅 repo `test`，使用本机 Ghost 合成草稿；未修改 anthelion 或真实 Ghost。
@@ -60,6 +79,7 @@ SDD: [实施设计](../../ghost-blog-publishing-design.md)
 | T-04 | master CI第三方来源、打包审计及Writing测试补验 | [x] | notices、10MiB预算及一个Writing测试文件的修复均独立验收；318 tests定向通过。`6facc3b`已固定SHA推送，实际CI `36667459680`完整validate job success，Test和Audit均success |
 | T-05 | beta.17 正文清理、题图字段、AI 摘要/SEO 与四列响应式卡片 | [x] | GPT 独立接受最终实现；gate-r7 351 suites /8539 tests、真实 test 与本机 Ghost 合成草稿验收通过，测试状态已恢复；后续 master 交付见 Current Snapshot，未发版 |
 | T-06 | 英文 URL、可读内部标签、原生关联属性 | [x] | GPT 接手完成，F06-01–07关闭；最终完整gate与真实test/本机Ghost合成验收通过；后续 master 交付见 Current Snapshot |
+| T-08 | Agent 意图解析与 Host 结构化目标绑定重新设计 | [-] | 转入 [B-158 owning Tracker](../agent-command-contract/tracker.md)；既有Draft提案仅作历史输入，本表不维护该任务的执行状态 |
 
 任务卡和静态验证方法唯一放在 Plan；下面只记录逐项执行结果，避免复制方案。
 

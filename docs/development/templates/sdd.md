@@ -19,6 +19,11 @@ Tracker: [Development Tracker](./tracker.md)
 
 ## Interfaces And Ownership
 
+PA Agent/runtime/command 设计引用 [统一契约](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)。
+只记录本任务关键语义决策、准入条件、状态转换和副作用的 owner、输入/事实依据、
+输出/恢复动作；分开 command 声明与调用、Agent run/tool attempt/business operation。
+不复制另一套职责定义或把模型计划当权限。
+
 ## Lifecycle And Cleanup
 
 ## Data, Privacy, Permission And Cost
@@ -28,6 +33,9 @@ Tracker: [Development Tracker](./tracker.md)
 覆盖 persisted state、旧设置、desktop/mobile、Obsidian reload/mount/unmount 与 fallback。
 
 ## Test Matrix
+
+按实际变化注明证据类型：harness确定性、真实模型任务、真实app交互。
+三者不互相代替；不要求每个AC都跑三类，不按同义词增加测试。
 
 | Requirement / AC | Unit / integration | App smoke | Failure / fallback | Evidence target |
 | --- | --- | --- | --- | --- |

@@ -47,6 +47,12 @@ Keep roles separate:
 
 ## Phase Setup
 
+PA Agent/runtime/command refactors follow the [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract).
+Establish the responsibility/interaction contract and workflow obligations before
+shared-framework changes, then migrate domain commands. Record phase-specific
+owners and factual admission bases in the existing SDD or task record; do not mix domain behavior changes
+into a framework-only phase or treat passing tests as responsibility acceptance.
+
 Each phase should define:
 
 - Goal.

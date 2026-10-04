@@ -70,7 +70,7 @@ flowchart TD
 并限制在 Chat 与可见视口的交集内。窗格调整后重新定位，失焦/关闭视图时清理监听；
 保留 Enter 选择、Escape 关闭、IME 与 `#skill` 的原有语义。
 
-工具只接受 prompt、`generate | reference | edit`、count、subrequestIndex、已登记
+工具只接受 prompt、`generate | reference | edit`、count、可选 totalCount、subrequestIndex、已登记
 referenceImageRefs、parentVersionId。conversationId、stableMessageId、operationId、
 连接与来源准入由宿主绑定，不能由模型指定路径、URL、凭据或 endpoint。
 宿主只准入当前主动图片和当前会话有效生成版本，抑制/撤回结果不能再作为新发送来源。
@@ -82,14 +82,17 @@ referenceImageRefs、parentVersionId。conversationId、stableMessageId、operat
 准备复用本轮取消信号、来源/连接守卫、模型预算、Debug 与 usage 记录。输出必须是有效
 文字，空白、非文字、超限或失败均在 Wan 前终止，不机械截断或退回原问题。
 
-分别描述“一张猫、一张狗”时，宿主共享本消息总量，使用稳定子请求序号；来源型请求
-的专用准备也接收宿主给定的序号/总数。拒绝合并不同目标和越界新增，未全部受理时
+依[统一职责契约](./pa-agent-architecture-plan.md#command-architecture-contract)，主Agent
+解释数量与不同描述，提交结构化总量/每槽数量/稳定子请求序号；Host依据原接口总上限
+及真实配置/控件约束冻结总计划、核累计预约与实际受理量，不从正文词面推预算或完成。
+来源型请求的专用准备也接收实际准入的序号/总数。拒绝合并不同目标和越界新增，未全部受理时
 报告实际数量。同主题多候选可使用一次多张请求。相同操作的准备和提交均去重，
 变更 tool-call ID 仍复用已受理操作；主动再生成是新身份。
 
 普通生图采用 `wan2.7-image`、`2K`、默认一张；全文/选区草稿沿用旧 Featured 的模型、
 数量和附件目录默认值，显示本次可修改的模型/数量，修改不重置全局设置。服务实际使用
-任务模型，包括 `wan2.7-image-pro`；参数不合法或原始补充与可见数量冲突时明确拒绝，
+任务模型，包括 `wan2.7-image-pro`。主Agent澄清文字要求与真实绑定选项的冲突；Host
+拒绝不合法或超出实际绑定数量约束的结构化计划，不把通用入口的程序默认当用户明确选择。
 不静默归一化、少给或拆成额外批次。去掉文字来源后回到普通默认值。
 本次没有比例/分辨率面板或全局单任务调度器；`2K` 请求不保证提示词中的横向比例。
 

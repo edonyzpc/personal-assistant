@@ -363,6 +363,13 @@ under the Local Deployment conditions when those checks already passed.
 
 ## Architecture Rules
 
+- Before designing, dispatching, implementing or reviewing PA Agent/runtime/
+  command work, apply the [Command Architecture Contract](docs/architecture/pa-agent-architecture-plan.md#command-architecture-contract).
+  In the existing SDD/task record, map material decisions, admission conditions,
+  state transitions and effects to their owner and factual basis. Check this
+  responsibility contract before accepting implementation or green tests;
+  narrow fixes need no new artifact. Keep the definition in that architecture
+  section, not in per-command rules or another workflow.
 - Don't add error handling for scenarios that can't happen. Trust internal
   code and framework guarantees. Only validate at system boundaries.
   Boundaries include user/provider input, persisted or synced state, files,

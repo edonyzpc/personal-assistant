@@ -57,6 +57,10 @@ Before implementation:
 1. Verify approved product scope or explicit governance authority from current
    contracts and the conversation; do not ask again for an already-made choice.
 2. Search the actual dependency surface with `rg`.
+   For PA Agent/runtime/command work, apply the [Command Architecture Contract](../../../docs/architecture/pa-agent-architecture-plan.md#command-architecture-contract).
+   Map this task's material decisions, admission, state transitions and effects
+   to owners and factual bases in the existing SDD/task record; do not copy a
+   second definition or infer the intended architecture from local command code.
 3. Create/update Feature Home and Tracker; register the Feature Home.
 4. Create a Plan only when its delivery/risk content would not fit concisely in
    Tracker.
@@ -85,6 +89,10 @@ or regression risk, and select the correct source/tooling/artifact group.
 Satisfy the Local Validation Gate at the justified scope, reusing covered
 checks only with verified inputs/results. Use PA review/follow-up skills for
 implementation review; fix-driven verification covers the affected risk.
+
+Accept responsibility conformance before implementation/green tests. Separate
+deterministic harness, actual-model semantics/recovery and real-app evidence
+according to the affected boundary; fixtures cannot prove model generalization.
 
 Retain required broad and app/device gates at each phase exit. For app proof,
 use `make deploy` or the eligible current-build reuse target under `AGENTS.md`

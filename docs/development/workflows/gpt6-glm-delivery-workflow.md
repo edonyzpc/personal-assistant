@@ -51,6 +51,10 @@ GPT 接管实现后的审查分级见 §3；不把实现者自查称为独立审
 已有工作从 Feature Home + Tracker 进入；窄修在任务消息保留必要字段即可，
 不额外创建完整 package。GPT-6 维护唯一执行状态，GLM 返回待核对报告。
 
+PA Agent/runtime/command 任务先应用 [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)。
+GPT在已有SDD/任务单写明本切片关键决策/准入/状态/副作用的owner与事实依据，传给GLM；
+只引用统一定义，不按当前command的局部规则反推新架构。
+
 任务单固定：目标与完整 REQ/AC、负例、不可变约束、非目标、必要读集、工作树及
 已有改动归属、允许编辑/生成范围、交付终点、验证分工和临时资源。每项风险对应
 “变化 → 最低充分证据/命令 → 通过条件 → 重跑触发”，不用完整调查替代派工。
@@ -100,6 +104,8 @@ codex exec --profile pa-glm --cd "$pa_worker_tree" \
 按 [项目 review 规则](../../../.agents/skills/personal-assistant-review/SKILL.md)，先读
 契约、实际 diff、关键断言和原始结果，再核对 GLM 报告。检查：
 
+- 相关变更先核对四角色职责与真实调用链；Host每项硬条件有明确权限/运行事实依据。
+  可修正错误与实际/未知效果分开，确定性fixture不冒充Agent模型语义或app交互。
 - 完整变更范围与基线、任务修订及约束一致，含未跟踪、删除和生成文件。
 - 每个 AC/负例有真实行为或断言支撑，既有测试未被弱化，正确测试分组确实运行。
 - 命令、自然退出、输入身份、构建/部署和实际 app 目标可核对；未运行、失败、

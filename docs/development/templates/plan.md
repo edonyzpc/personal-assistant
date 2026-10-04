@@ -18,6 +18,9 @@ Tracker: [Development Tracker](./tracker.md)
 
 ## Phases
 
+PA Agent/runtime/command 工作先按 [统一架构](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)
+完成职责符合性审视，再安排公共框架与领域切片；职责表引用SDD/现有任务记录，不重复维护。
+
 | Phase | Outcome | Scope | Exit gate | Stop point |
 | --- | --- | --- | --- | --- |
 

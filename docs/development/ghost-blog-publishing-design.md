@@ -98,6 +98,9 @@ Proposed 工具 `prepare_ghost_post` 只接受笔记定位和准备意图，采�
 - 当前笔记在 Chat 提交时捕获，不能在异步执行时重新拿活动标签。路径精确匹配；名称按
   Obsidian 解析规则且必须唯一。正文使用完整快照，嵌入递归按整篇/heading/block 限定，
   记录每个依赖的路径、内容 hash 和来源准入；发现循环/排除/缺失即停止外发。
+- Agent 根据完整用户请求选择目标与 locator，包括混合目标和否定条件。省略 locator 时，
+  Host 使用提交时捕获的当前笔记；提供 `path` 或 `name` 时，Host 验证真实 Markdown 文件、
+  路径合法性和名称唯一性，不通过用户文本匹配决定目标或设置语义旁路。
 - `ghost` frontmatter 管发布选项，`pa_ghost` 及其文本伴随属性只管机器关联。发布选项包含
   `title/tags/feature_image/custom_excerpt/meta_description`；null 或约定空值=明确清空且不自动补齐。
   标题缺省回到文件名；发布标签不猜测。封面先取显式配置，再取普通非空 `feature_image`，
@@ -376,6 +379,9 @@ mobile 普通编辑、入口限制和布局用 CLI mobile 模式；只有 iOS �
   仍可在 Ghost 编辑；恢复旧插件时系统快照可保留，但不能承诺旧版本能解析新 schema。
 - 发布状态 schema 未知或损坏时停止写入，保留数据；不 reset store。连接/站点改变使已准备确认失效。
   当前配置管理器可复用，Ghost 凭据与 AI 连接分开；不假定 SecretStorage 会自动跨桌面同步。
+- 设置页只接收配置管理器返回的密钥状态，不接收密钥值。状态读取复用既有站点与本地 scope
+  的 SecretStorage ID，区分空值/无有效密钥和存储不可读；异步配置变化或 UI 销毁不显示旧状态。
+  仅检查本机保存状态，不发送 Ghost 验证请求，也不改变存储格式或删除行为。
 - 移动端可以编辑带关联的笔记，不能调用发布工具；不为首版加载桌面探针、Electron 或写入依赖。
 - T-01 已固定真实 Ghost 渲染、Lexical schema 和本机持久化技术选择；不替代生产实现的
   来源准入、并发/网络恢复、格式保留、UI 或独立环境证据。完成后在另一独立vault发起新更新

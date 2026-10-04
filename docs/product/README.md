@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [PA Agent Command Contract](./specs/pa-agent-command-contract-product-spec.md) — B-158：统一职责、SDD/验收与公共框架后领域迁移。
 - [执行事实连续性](./specs/pa-action-continuity-product-spec.md) — B-157：合法动作状态、保存重开与压缩摘要，实施状态见 Tracker。
 
 - [Agent 响应性](./specs/pa-agent-responsive-execution-product-spec.md) — B-155：原生 UI 不被 Agent 准备阻塞，来源检查分层并保留快照与撤销。
