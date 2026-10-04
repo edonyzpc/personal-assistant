@@ -8,7 +8,6 @@ import type {
     RerankOutcome,
 } from "../src/ai-services/chat-types";
 import {
-    captureExplicitTemporalIntent,
     ChatMemoryRecoveryCoordinator,
     mergeMemorySearchResults,
     type MemoryRecoveryAttempt,
@@ -881,36 +880,26 @@ describe("retrieval recovery merge and temporal scope", () => {
         });
     });
 
-    it.each([
-        ["last 7 days", "recent_7d"],
-        ["最近30天的项目记录", "recent_30d"],
-        ["from 2026-01-01 to 2026-02-03", "range:2026-01-01..2026-02-03"],
-        ["notes on 2026-01-01", "range:2026-01-01..2026-01-01"],
-        ["仅使用 2026 年的记录说明当前时间边界信号", "range:2026-01-01..2026-12-31"],
-        ["仅使用2026年的记录说明时间边界信号", "range:2026-01-01..2026-12-31"],
-        ["仅使用2026年度的记录说明时间边界信号", "range:2026-01-01..2026-12-31"],
-        ["2026年Q1计划", "range:2026-01-01..2026-12-31"],
-        ["2026年度OKR", "range:2026-01-01..2026-12-31"],
-        ["2026年AI项目", "range:2026-01-01..2026-12-31"],
-        ["notes from 2026", "range:2026-01-01..2026-12-31"],
-        ["7401", "none"],
-        ["只从我的笔记中查找错误码 ERR_RETRIEVAL_LANTERN_7401", "none"],
-        ["find release_2026 notes", "none"],
-        ["find HTTP-2026 notes", "none"],
-        ["find ERR_2026年 notes", "none"],
-        ["find 2026年_release notes", "none"],
-        ["错误码2026", "none"],
-        ["型号2026版", "none"],
-        ["第2026号事项", "none"],
-        ["today's notes", "recent_30d"],
-        ["yesterday's notes", "recent_7d"],
-        ["当前工作记录", "recent_30d"],
-        ["current work notes", "recent_30d"],
-        ["当前架构", "none"],
-        ["current architecture", "none"],
-        ["old notes without a time filter", "none"],
-    ])("captures immutable explicit temporal intent from %s", (query, expected) => {
-        expect(captureExplicitTemporalIntent(query)).toBe(expected);
+    it("carries temporal intent per validated tool input rather than run prompt wording", async () => {
+        for (const temporal of [undefined, "none", "range:2026-01-01..2026-02-03"] as const) {
+            const coordinator = createCoordinator();
+            const attempts: MemoryRecoveryAttempt[] = [];
+            await coordinator.execute({
+                query: "不要限定最近30天",
+                ...(temporal === undefined ? {} : { temporal }),
+                signal: new AbortController().signal,
+                executeAttempt: async attempt => {
+                    attempts.push(attempt);
+                    return attempt.mode === "standard"
+                        ? asToolResult(createEvidenceResult("launch", [candidate("hit.md", 0.9)]))
+                        : asToolResult(createNoneResult("launch"));
+                },
+                revalidate: async memory => memory,
+            });
+            expect(attempts[0]).toMatchObject(
+                temporal === undefined ? { mode: "standard" } : { mode: "standard", temporalIntent: temporal },
+            );
+        }
     });
 });
 
@@ -924,7 +913,6 @@ function createCoordinator(
         softAt: 50_000,
         toolAt: 45_000,
         enabled: true,
-        temporalIntent: "none",
         now: () => 0,
         ...overrides,
     });

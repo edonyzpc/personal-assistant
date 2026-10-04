@@ -184,7 +184,7 @@ export type MemorySearchInvocationOptions =
     | {
         readonly [MEMORY_SEARCH_INVOCATION_BRAND]: true;
         readonly mode: "standard";
-        readonly temporalIntent: QueryTemporalIntent;
+        readonly temporalIntent?: QueryTemporalIntent;
         readonly captureRecoverySeed: boolean;
         readonly invocationOrdinal?: number;
         readonly runEpoch?: string;
@@ -210,6 +210,11 @@ export type MemorySearchInvocationOptions =
     };
 
 const MEMORY_SEARCH_INVOCATIONS = new WeakMap<AbortSignal, MemorySearchInvocationOptions>();
+
+export function getMemorySearchInvocation(signal?: AbortSignal): MemorySearchInvocationOptions | undefined {
+    return signal ? MEMORY_SEARCH_INVOCATIONS.get(signal) : undefined;
+}
+
 export type MemorySearchRequestDiagnostic = (
     stage: "query_rewrite" | "rerank",
 ) => ProviderRequestOptions["onProviderRequestDiagnostic"];
@@ -234,7 +239,7 @@ export interface MemorySearchTemporalFilterCapture {
 }
 
 export function createStandardMemorySearchInvocation(options: {
-    temporalIntent: QueryTemporalIntent;
+    temporalIntent?: QueryTemporalIntent;
     captureRecoverySeed: boolean;
     invocationOrdinal?: number;
     temporalFilterCapture?: MemorySearchTemporalFilterCapture;
@@ -248,7 +253,7 @@ export function createStandardMemorySearchInvocation(options: {
     const invocation: MemorySearchInvocationOptions = Object.freeze({
         [MEMORY_SEARCH_INVOCATION_BRAND]: true as const,
         mode: "standard" as const,
-        temporalIntent: options.temporalIntent,
+        ...(options.temporalIntent !== undefined ? { temporalIntent: options.temporalIntent } : {}),
         captureRecoverySeed: options.captureRecoverySeed,
         ...(isValidInvocationOrdinal(options.invocationOrdinal)
             ? { invocationOrdinal: options.invocationOrdinal }
@@ -589,12 +594,12 @@ export class MemorySearchTool {
         // it never invokes either provider a second time.
         const lexicalPlanPromise: Promise<MemoryFrozenLexicalPlan> = invocation?.mode === "relaxed"
             ? Promise.resolve(cloneFrozenLexicalPlan(invocation.seed.lexicalPlan))
-            : (policyModelName
-                ? this.rewriteQueryWithTimeout(query, policyModelName, signal, invocation)
-                : Promise.resolve<RewrittenQuery>({ keywords: null, temporal: "none" }))
+                : (policyModelName
+                    ? this.rewriteQueryWithTimeout(query, policyModelName, signal, invocation)
+                    : Promise.resolve<RewrittenQuery>({ keywords: null, temporal: "none" }))
                 .then((result) => freezeLexicalPlan(
                     result,
-                    invocation?.mode === "standard" ? invocation.temporalIntent : "none",
+                    invocation?.mode === "standard" ? invocation.temporalIntent : undefined,
                 ));
         const ftsQueryOverridePromise = lexicalPlanPromise.then((plan) => plan.ftsQueryOverride);
         const temporalFilterPromise = lexicalPlanPromise.then((plan) => plan.temporalFilter);
@@ -2343,11 +2348,9 @@ function currentGenerationMap(
 
 function freezeLexicalPlan(
     rewritten: RewrittenQuery,
-    outerTemporalIntent: QueryTemporalIntent,
+    outerTemporalIntent: QueryTemporalIntent | undefined,
 ): MemoryFrozenLexicalPlan {
-    const temporalIntent = outerTemporalIntent !== "none"
-        ? outerTemporalIntent
-        : rewritten.temporal;
+    const temporalIntent = outerTemporalIntent ?? rewritten.temporal;
     return {
         ftsQueryOverride: rewritten.keywords,
         temporalIntent,

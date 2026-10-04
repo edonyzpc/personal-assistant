@@ -1,10 +1,11 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { createChatToolCapability } from "../src/ai-services/capability-adapter";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
-import { createPaAgentCapabilityToolExecutor } from "../src/ai-services/pa-agent-host-tools";
+import { chatToolResultToPaAgentToolExecutionResult, createPaAgentCapabilityToolExecutor } from "../src/ai-services/pa-agent-host-tools";
 import { PolicyEngine } from "../src/ai-services/policy-engine";
 import { createPrepareGhostPostTool, isChatToolName, type ChatToolContext,
     type GhostHostBinding, type GhostPostToolReceipt } from "../src/ai-services/chat-tools";
+import { GhostHostAdmissionError } from "../src/ghost-publishing/types";
 
 function fixture(submit: GhostHostBinding["submit"] = async () => ({ status: "prepared", operationId: "opaque-operation" })) {
     let current = true;
@@ -98,6 +99,8 @@ describe("B-153 fixed Ghost preparation capability", () => {
         const app = fixture(submit);
         const result = await app.tool.execute({ intent: "prepare" }, app.context);
         expect(result.resultFact).toEqual({ kind: "unknown", operationId: "pending-operation" });
+        expect(result.executionState).toBe("acceptance_unknown");
+        expect(result.recovery).toMatchObject({ allowedActions: ["query_operation", "needs_user"] });
         await app.tool.execute({ intent: "prepare" }, app.context);
         expect(submit).toHaveBeenCalledTimes(1);
     });
@@ -143,16 +146,85 @@ describe("B-153 fixed Ghost preparation capability", () => {
         expect(JSON.stringify(result)).not.toContain("private.invalid");
     });
 
-    it("maps an ambiguous target to fixed guidance and never forwards raw errors", async () => {
+    it("allows one target correction after a typed not-started admission failure", async () => {
         const submit = jest.fn<GhostHostBinding["submit"]>(async () => {
-            throw Object.assign(new Error("PRIVATE_BODY https://private.invalid/key"), { code: "target-ambiguous" });
+            throw new GhostHostAdmissionError("target", {
+                executionState: "not_started",
+                recovery: { code: "ghost_target_ambiguous", allowedActions: ["correct_input"] },
+            });
         });
         const app = fixture(submit);
-        const result = await app.tool.execute({ intent: "prepare" }, app.context);
-        expect(result.error).toContain("exact vault-relative note path");
-        expect(JSON.stringify(result)).not.toMatch(/PRIVATE_BODY|private.invalid/);
+        const rejected = await app.tool.execute({ intent: "prepare", name: "Missing" }, app.context);
+        expect(rejected).toMatchObject({ ok: false, executionState: "not_started",
+            recovery: { code: "ghost_target_ambiguous", allowedActions: ["correct_input"] } });
+        expect(rejected.error).toContain("no preparation was started");
+        const corrected = await app.tool.execute({ intent: "prepare", path: "A.md" }, app.context);
+        expect(corrected.ok).toBe(false);
+        expect(submit).toHaveBeenCalledTimes(2);
+        expect(JSON.stringify(rejected)).not.toMatch(/PRIVATE_BODY|private.invalid/);
+        expect(JSON.stringify(corrected)).not.toMatch(/PRIVATE_BODY|private.invalid/);
+    });
+
+    it("projects the closed Ghost admission protocol through the Runtime execution bridge", async () => {
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => {
+            throw new Error("entered controller before failure");
+        });
+        const app = fixture(submit);
+        const targetApp = fixture(async () => {
+            throw new GhostHostAdmissionError("target", {
+                executionState: "not_started",
+                recovery: { code: "ghost_target_missing", allowedActions: ["correct_input"] },
+            });
+        });
+        const target = await targetApp.tool.execute({ intent: "prepare" }, targetApp.context);
         await app.tool.execute({ intent: "prepare" }, app.context);
+        const bridge = (result: Awaited<ReturnType<typeof app.tool.execute>>) => chatToolResultToPaAgentToolExecutionResult(
+            { type: "toolCall", id: "call", index: 0, name: "prepare_ghost_post", input: {} },
+            result,
+        );
+        expect(bridge(target)).toMatchObject({ executionState: "not_started",
+            recovery: { code: "ghost_target_missing", allowedActions: ["correct_input"] } });
+        expect(bridge(await app.tool.execute({ intent: "prepare" }, app.context))).toMatchObject({
+            executionState: "acceptance_unknown",
+            recovery: { code: "ghost_preparation_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] },
+        });
+    });
+
+    it.each(["source", "stale"] as const)("preserves the failed submission after a non-correctable %s rejection", async reason => {
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => {
+            throw new GhostHostAdmissionError(reason, {
+                executionState: "not_started",
+                recovery: { code: `ghost_${reason}`, allowedActions: reason === "source" ? ["needs_user"] : ["none"] },
+            });
+        });
+        const app = fixture(submit);
+        const rejected = await app.tool.execute({ intent: "prepare", name: "Denied" }, app.context);
+        expect(rejected).toMatchObject({ ok: false, executionState: "not_started",
+            recovery: { allowedActions: reason === "source" ? ["needs_user"] : ["none"] } });
+        const changed = await app.tool.execute({ intent: "prepare", path: "A.md" }, app.context);
+        expect(changed.ok).toBe(false);
+        expect(changed.error).toContain(reason === "source"
+            ? "The Ghost source is unavailable or not authorized for this request"
+            : "The Ghost request or its source guard is no longer current");
+        expect(changed).toMatchObject({ executionState: "not_started",
+            recovery: { code: `ghost_${reason}`, allowedActions: reason === "source" ? ["needs_user"] : ["none"] } });
         expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("treats an exception after entry into the domain controller as outcome-unknown and blocks changed arguments", async () => {
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => {
+            throw new Error("controller wrote local frontmatter then failed before operationId");
+        });
+        const app = fixture(submit);
+        const first = await app.tool.execute({ intent: "prepare", path: "A.md" }, app.context);
+        expect(first).toMatchObject({ ok: false, executionState: "acceptance_unknown",
+            recovery: { code: "ghost_preparation_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] } });
+        const same = await app.tool.execute({ intent: "prepare", path: "A.md" }, app.context);
+        const changed = await app.tool.execute({ intent: "prepare", name: "Different" }, app.context);
+        expect(same.ok).toBe(false);
+        expect(changed.ok).toBe(false);
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(changed.error).toContain("The preparation result is unknown.");
     });
 
     it.each(["published", "applied"])("does not accept a %s receipt as a preparation", async status => {

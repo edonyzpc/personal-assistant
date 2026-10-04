@@ -27,10 +27,7 @@ import { cloneInputLineage, completeInputLineage, sourceRecordsInputLineage,
 import { WritingContextRun, writingContextObservation, type WritingContextRunHost } from "./writing-context-run";
 import { createWritingContextCapability, GET_WRITING_CONTEXT } from "./writing-context-tool";
 import { createTaskSourceConstrainedExecutor } from "./task-source-executor";
-import {
-    captureExplicitTemporalIntent,
-    ChatMemoryRecoveryCoordinator,
-} from "./retrieval-recovery-coordinator";
+import { ChatMemoryRecoveryCoordinator } from "./retrieval-recovery-coordinator";
 import type { RetrievalDiagnosticEventInput } from "./retrieval-diagnostics";
 import {
     createPaAgentAnswerStreamPrompt,
@@ -48,7 +45,7 @@ import {
 import { canonicalContextJsonAsync, stringifyContextAsync } from './context/PaAgentContextSerialization';
 import { createCooperativeTask } from './cooperative-task';
 import { projectPaAgentToolStatus, type PaAgentActionGroup } from "./pa-agent-action-history";
-import { cloneActionStateBinding, isSafeImageAcceptedObservation, isSafeOperationsStagedObservation } from './pa-agent-result-facts';
+import { cloneActionStateBinding, isSafeImageAcceptedObservation, isSafeImageFailureObservation, isSafeOperationsStagedObservation } from './pa-agent-result-facts';
 import { cloneChatHostProvenance } from './chat-provenance';
 import { historySummaryContentSteps, protectedHistorySourceIndexesSteps } from './context/PaAgentHistoryContextPlan';
 import { ChatOpenAI } from "@langchain/openai";
@@ -105,6 +102,12 @@ import { WRITING_STYLE_MAX_CONTEXT_CHARS } from "../pa/writing-style";
 import { BUNDLED_SKILL_RESOURCES } from "./bundled-skills";
 import { CapabilityRegistry } from "./capability-registry";
 import { createCoreToolCapabilities, createChatToolCapability } from "./capability-adapter";
+import {
+    createPaAgentCommandCapabilityScope,
+    formatPaAgentCommandInvocationGuidance,
+    type PaAgentCommandCapabilityScope,
+    type PaAgentCommandInvocation,
+} from "./pa-agent-command";
 import {
     agentResultToChatToolResult,
     type AgentCapability,
@@ -223,13 +226,16 @@ export interface PaAgentRunOptions {
     writingRequest?: import("./chat-types").ChatWritingRequest;
     writingContext?: import("./chat-types").ChatWritingContext;
     writingMaterialContext?: import("./chat-types").ChatWritingMaterialContext;
-    prepareWritingStyle?: import("./chat-types").ChatWritingStylePreparation;
     /** Host-authorized candidates and semantic style reader; consumed only by the native candidate. */
     writingContextHost?: Omit<WritingContextRunHost, "runId" | "verifyImages">;
     /** Host-owned model/conversation epoch; checked at physical dispatch. */
     isCurrent?: () => boolean;
     /** Existing or reserved Chat conversation identity; never fabricated for standalone runs. */
     conversationId?: string;
+    /** Host-bound command identity; capability declarations alone grant no authority. */
+    commandInvocation?: PaAgentCommandInvocation;
+    /** Explicit app-owned command template; kept out of the raw user input channel. */
+    commandGuidance?: string;
     /** Stable host-only identity and durable dispatch port for one user image request. */
     createImage?: CreateImageHostBinding;
     /** One explicit Chat publishing request; never inferred from skill content. */
@@ -647,14 +653,21 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 const GHOST_STATUS_MESSAGES = {
     prepared: "A draft or restoration preview is prepared. Check its publishing card and preview; publication has not been confirmed.",
-    needs_attention: "Preparation needs attention. Check its publishing card before continuing; publication has not been confirmed.",
+    needs_attention_owned: "Preparation needs attention. Check its publishing card before continuing; publication has not been confirmed.",
+    needs_attention_unowned: "Preparation needs attention. Follow verified Host attention facts before continuing; publication has not been confirmed.",
     outcome_unknown: "The preparation result needs verification in its publishing card. Do not repeat the request or claim it is published.",
 } as const;
-const GHOST_TARGET_ERRORS = new Set([
-    "More than one note matches. Ask the user to provide an exact vault-relative note path.",
-    "The requested note is unavailable. Ask the user to check its exact vault-relative path.",
-    "The host has not authorized this target. Ask the user for an explicit publishing request naming the intended note.",
-]);
+const GHOST_ADMISSION_RECOVERY = {
+    ghost_request_required: { message: "The structured Ghost target is missing, invalid, or ambiguous. Correct the target from the user's request; no preparation was started.", actions: ["correct_input"] },
+    ghost_target_missing: { message: "The structured Ghost target is missing, invalid, or ambiguous. Correct the target from the user's request; no preparation was started.", actions: ["correct_input"] },
+    ghost_target_ambiguous: { message: "The structured Ghost target is missing, invalid, or ambiguous. Correct the target from the user's request; no preparation was started.", actions: ["correct_input"] },
+    ghost_source_unavailable: { message: "The Ghost source is unavailable or not authorized for this request. Ask the user; do not select another target to bypass admission.", actions: ["needs_user"] },
+    ghost_request_stale: { message: "The Ghost request or its source guard is no longer current. Start from the current user request; no preparation was started.", actions: ["none"] },
+    ghost_source_guard_missing: { message: "The Ghost request or its source guard is no longer current. Start from the current user request; no preparation was started.", actions: ["none"] },
+} as const;
+const GHOST_UNKNOWN_RECOVERY = {
+    ghost_preparation_acceptance_unknown: { message: "The preparation result is unknown. Verify an existing Ghost operation if one is verifiable; otherwise say it cannot be verified. Do not retry or claim publication.", actions: ["query_operation", "needs_user"] },
+} as const;
 
 /** B153 publishes only a closed Host status, never article content or remote addresses. */
 function isSafeGhostPublishingStatusObservation(
@@ -672,13 +685,31 @@ function isSafeGhostPublishingStatusObservation(
 
     if (message.isError) {
         const error = envelope.error;
+        const execution = asRecord(envelope.execution);
+        const executionState = execution?.executionState;
+        const executionRecovery = asRecord(execution?.recovery);
+        const recovery = asRecord(metadata?.recovery);
+        const recoveryCode = typeof recovery?.code === "string" ? recovery.code : undefined;
+        const expectedAdmission = recoveryCode !== undefined
+            ? GHOST_ADMISSION_RECOVERY[recoveryCode as keyof typeof GHOST_ADMISSION_RECOVERY]
+            : undefined;
+        const expectedUnknown = recoveryCode !== undefined
+            ? GHOST_UNKNOWN_RECOVERY[recoveryCode as keyof typeof GHOST_UNKNOWN_RECOVERY]
+            : undefined;
+        const expected = expectedAdmission ?? expectedUnknown;
+        const allowedActions = Array.isArray(recovery?.allowedActions) ? recovery.allowedActions : undefined;
         return metadata.outcome === "recoverable_error" && metadata.ok === false
-            && envelope.status === "unavailable" && typeof error === "string" && GHOST_TARGET_ERRORS.has(error)
+            && envelope.status === "unavailable" && expected !== undefined
+            && error === expected.message
+            && metadata.executionState === (expectedAdmission ? "not_started" : "acceptance_unknown")
+            && JSON.stringify(allowedActions) === JSON.stringify(expected.actions)
+            && executionState === metadata.executionState
+            && executionRecovery?.code === recoveryCode
+            && JSON.stringify(executionRecovery?.allowedActions) === JSON.stringify(allowedActions)
             && metadata.unavailableReason === undefined
             && message.content.previewText === error
-            && fact?.kind === "unavailable" && fact.capability === message.toolName
-            && fact.reason === "tool_unavailable"
-            && hasOnlyKeys(envelope, ["tool", "status", "input", "error"])
+            && hasOnlyKeys(envelope, ["tool", "status", "input", "error", "execution"])
+            && hasOnlyKeys(execution, ["executionState", "recovery"])
             && hasOnlyKeys(contextRecord, ["category", "label", "detail", "citationEligible", "statusOnly"])
             && contextRecord?.category === "tool-unavailable"
             && contextRecord.label === "Read-only tool unavailable"
@@ -686,14 +717,36 @@ function isSafeGhostPublishingStatusObservation(
             && contextRecord.citationEligible === false && contextRecord.statusOnly === true;
     }
 
-    if (metadata.outcome !== "success" || metadata.ok !== true || envelope.status !== "ok"
-        || !hasOnlyKeys(envelope, ["tool", "status", "input", "observation"])
-        || message.content.previewText !== message.content.promptText) return false;
     const observation = asRecord(envelope.observation);
-    if (!observation || !hasOnlyKeys(observation, ["status", "operationId", "message"])
-        || observation.message !== GHOST_STATUS_MESSAGES[observation.status as keyof typeof GHOST_STATUS_MESSAGES]) return false;
-    const operationId = observation.operationId;
+    const execution = asRecord(envelope.execution);
+    const executionState = execution?.executionState;
+    const executionRecovery = asRecord(execution?.recovery);
+    if (metadata.outcome !== "success" || metadata.ok !== true || envelope.status !== "ok"
+        || !hasOnlyKeys(envelope, execution ? ["tool", "status", "input", "observation", "execution"]
+            : ["tool", "status", "input", "observation"])
+        || message.content.previewText !== message.content.promptText) return false;
+    const operationId = observation?.operationId;
     const validOperationId = typeof operationId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(operationId);
+    if (!observation) return false;
+    const metadataRecovery = asRecord(metadata.recovery);
+    const expectedExecutionState = observation.status === "prepared" ? "succeeded" : "acceptance_unknown";
+    if (executionState !== undefined && executionState !== expectedExecutionState) return false;
+    if (execution) {
+        if (!hasOnlyKeys(execution, executionRecovery ? ["executionState", "recovery"] : ["executionState"])
+            || executionState !== metadata.executionState) return false;
+        if (observation.status === "prepared" ? executionRecovery !== undefined
+            : executionRecovery?.code !== metadataRecovery?.code
+                || JSON.stringify(executionRecovery?.allowedActions)
+                    !== JSON.stringify(metadataRecovery?.allowedActions)) return false;
+    } else if (observation.status !== "prepared"
+        || metadata.executionState !== expectedExecutionState) return false;
+    if (!observation || !hasOnlyKeys(observation, ["status", "operationId", "message"])
+        || observation.message !== (observation.status === "prepared" ? GHOST_STATUS_MESSAGES.prepared
+            : observation.status === "outcome_unknown" ? GHOST_STATUS_MESSAGES.outcome_unknown
+                : observation.status === "needs_attention"
+                    ? validOperationId ? GHOST_STATUS_MESSAGES.needs_attention_owned
+                        : operationId === undefined ? GHOST_STATUS_MESSAGES.needs_attention_unowned : undefined
+                    : undefined)) return false;
     if (!hasOnlyKeys(contextRecord, ["category", "label", "detail", "sources", "citationEligible"])
         || contextRecord?.category !== "read-only-tool" || contextRecord.label !== "Read-only tool"
         || contextRecord.detail !== "prepare_ghost_post output" || !emptyArray(contextRecord.sources)
@@ -725,7 +778,7 @@ function hasMatchingFailureReason(envelope: Record<string, unknown>, metadata?: 
 function isSafeSourceFreeToolObservation(
     message: Extract<PaAgentMessage, { role: "toolResult" }>,
 ): boolean {
-    if (message.toolName === 'create_image') return isSafeImageAcceptedObservation(message);
+    if (message.toolName === 'create_image') return isSafeImageAcceptedObservation(message) || isSafeImageFailureObservation(message);
     if (isSafeOperationsStagedObservation(message)) return true;
     if (message.content.sourceRecords?.length || !message.content.includeInNextPrompt) return false;
     let envelope: Record<string, unknown> | undefined;
@@ -1176,7 +1229,12 @@ export class PaAgentRuntime {
         const memoryTool = this.memoryTool;
         const coreCapabilities = createCoreToolCapabilities([
             createSearchMemoryTool((input, context) => {
-                return memoryTool.search(input.query, context.signal, context.onBeforeVssSearch, context.taskSourceReadGuard);
+                return memoryTool.search(
+                    input.query,
+                    context.signal,
+                    context.onBeforeVssSearch,
+                    context.taskSourceReadGuard,
+                );
             }),
             createCurrentNoteContextTool(),
             createQueryNotesTool(),
@@ -1232,6 +1290,22 @@ export class PaAgentRuntime {
         if (options.runSourceSelection !== undefined && !runSourceSelection) {
             throw new Error('Invalid Chat run source selection');
         }
+        if (options.commandInvocation && runSourceSelection
+            && runSourceSelection.userMessageId !== options.commandInvocation.stableMessageId) {
+            throw new Error('PA Agent command invocation is not bound to this Chat source selection.');
+        }
+        if (options.commandInvocation && (!options.conversationId
+            || options.commandInvocation.conversationId !== options.conversationId)) {
+            throw new Error('PA Agent command invocation is not bound to this conversation.');
+        }
+        if (options.createImage && options.commandInvocation
+            && options.createImage.stableMessageId !== options.commandInvocation.stableMessageId) {
+            throw new Error('PA Agent command invocation is not bound to this image request.');
+        }
+        if (options.ghostPublishing && options.commandInvocation
+            && options.ghostPublishing.stableMessageId !== options.commandInvocation.stableMessageId) {
+            throw new Error('PA Agent command invocation is not bound to this publishing request.');
+        }
         const nativeWritingRequest = options.writingOutputProtocol === "native" ? options.writingRequest : undefined;
         const budgetModelIdentity = {
             provider: this.host.settings.aiProvider,
@@ -1247,6 +1321,7 @@ export class PaAgentRuntime {
         let writingContextRun: WritingContextRun | undefined;
         let writingContextCapability: AgentCapability | undefined;
         let ghostPublishingCapability: AgentCapability | undefined;
+        let commandCapabilities: PaAgentCommandCapabilityScope | undefined;
         let writingContextBudget = { remainingTextChars: 0, remainingMemoryChars: 0 };
         const currentWritingContext = () => {
             try { return writingContextRun?.current(); } catch { return undefined; }
@@ -1349,7 +1424,8 @@ export class PaAgentRuntime {
         const debugLifecycle = createAgentEventDebugObserver(debug);
         debug('runtime_start', { model: this.host.settings.chatModelName, provider: this.host.settings.aiProvider,
             historyCount: options.chatHistory?.length ?? 0, promptChars: options.prompt.length });
-        const userMessageId = runSourceSelection?.userMessageId ?? `${runId}:source-user`;
+        const userMessageId = runSourceSelection?.userMessageId
+            ?? options.commandInvocation?.stableMessageId ?? `${runId}:source-user`;
         const explicitAttachmentKeys = new Set([
             ...(options.images ?? []),
             ...(options.chatHistory ?? []).flatMap(message => message.role === 'user'
@@ -1382,11 +1458,12 @@ export class PaAgentRuntime {
                 || [...admittedParentLineages.values()].some(matches);
         };
         let sourceRunActive = true;
+        const rawRequestText = options.userText ?? options.prompt;
         const sourceRun = new TaskSourceRun({
             ...(options.conversationId ? { conversationId: options.conversationId } : {}),
-            runId, userMessageId, userText: options.userText ?? options.prompt,
+            runId, userMessageId, userText: rawRequestText,
             runSourceSelection,
-            requestText: options.prompt,
+            requestText: rawRequestText,
             workspace: this.host.app.workspace,
             getFileByPath: path => this.host.isDataBoundaryAllowedPath?.(path) === false
                 ? undefined : this.host.app.vault.getAbstractFileByPath(path),
@@ -1544,7 +1621,6 @@ export class PaAgentRuntime {
             ...(this.host.onSettingsChanged
                 ? { onPolicyChanged: (listener: () => void | Promise<void>) => this.host.onSettingsChanged!(listener) }
                 : {}),
-            temporalIntent: captureExplicitTemporalIntent(options.prompt),
             recordDiagnostic: retrievalRecorder,
         });
         this.activeMemoryRecoveryCoordinators.add(memoryRecoveryCoordinator);
@@ -1555,6 +1631,7 @@ export class PaAgentRuntime {
             isMemoryAllowed: () => this.host.settings.memoryEnabled !== false,
         });
         try {
+        commandCapabilities = createPaAgentCommandCapabilityScope(this.toolRegistry);
         const legacyEvents = new AgentEventEmitter(options.onEvent);
         const readAdmittedInjectedContext = (): PaAgentInjectedContext | undefined => {
             // A web run must not even prepare automatic private background.
@@ -1620,7 +1697,7 @@ export class PaAgentRuntime {
         if (imageScope?.hasImages) {
             const capability = createChatToolCapability(createResolveChatImagesTool(imageScope), { providerId: "chat-images" });
             capability.executionMode = "sequential";
-            this.toolRegistry.register(capability);
+            if (!commandCapabilities.register(capability)) throw new Error("Chat image capability unavailable.");
             imageCapability = capability;
         }
         if (options.createImage) {
@@ -1647,7 +1724,7 @@ export class PaAgentRuntime {
             };
             imageGenerationCapability = createChatToolCapability(createCreateImageTool(scopedImageBinding), { providerId: "chat-image-generation" });
             imageGenerationCapability.executionMode = "sequential";
-            if (!this.toolRegistry.register(imageGenerationCapability)) throw new Error("Image generation capability unavailable");
+            if (!commandCapabilities.register(imageGenerationCapability)) throw new Error("Image generation capability unavailable");
         }
         if (options.ghostPublishing && (this.options.runtimePlatform ?? "desktop") === "desktop") {
             const binding = options.ghostPublishing;
@@ -1658,7 +1735,7 @@ export class PaAgentRuntime {
                 providerId: "chat-ghost-publishing", platform: "desktop",
             });
             ghostPublishingCapability.executionMode = "sequential";
-            if (!this.toolRegistry.register(ghostPublishingCapability)) throw new Error("Ghost publishing capability unavailable.");
+            if (!commandCapabilities.register(ghostPublishingCapability)) throw new Error("Ghost publishing capability unavailable.");
         }
         if (writingContextHost) {
             const candidates = runSourceSelection ? (await Promise.all(writingContextHost.candidates.map(async candidate => {
@@ -1704,10 +1781,12 @@ export class PaAgentRuntime {
             });
             writingContextCapability = createWritingContextCapability(writingContextRun, {
                 outputBudgetChars: MAX_PA_AGENT_PROMPT_CHARS,
-                getBudget: () => ({ ...writingContextBudget }),
+                getBudget: () => ({ ...writingContextBudget,
+                    remainingMemoryChars: Math.max(0, Math.min(writingContextBudget.remainingMemoryChars,
+                        MEMORY_CONTEXT_MAX_CHARS - formatBackground(readInjectedContext()).length - 2)) }),
                 onPrepared: context => imageScope?.selectWritingMaterials(context.images.map(image => image.ref)),
             });
-            if (!this.toolRegistry.register(writingContextCapability)) throw new Error("Writing context capability unavailable");
+            if (!commandCapabilities.register(writingContextCapability)) throw new Error("Writing context capability unavailable");
         }
         let additionalProvidersLoaded = false;
         await recordStartupTimingAsync(
@@ -1841,8 +1920,17 @@ export class PaAgentRuntime {
             return `Select the parent and scene from the conversation semantically; use parentHandle=null for a new topic and omit scene when unknown. Authorized parent handles (JSON data): ${JSON.stringify(writingContextRun.candidateDirectory())}`;
         };
         type ContextInstructionReceipt = ReturnType<TaskSourceRun['captureContextInstruction']>;
+        const commandDeclarationGuidance = (boundSchemas?: ChatToolProviderSchema[]) => options.commandInvocation
+            ? formatPaAgentCommandInvocationGuidance(
+                options.commandInvocation,
+                new Set((boundSchemas ?? [])
+                    .map(schema => schema.function.name)
+                    .filter(name => name !== REPORT_TASK_INCOMPLETE)),
+            )
+            : undefined;
         const withImageContext = (input: PaAgentModelInput,
-            directory?: ContextInstructionReceipt): PaAgentModelInput => {
+            directory?: ContextInstructionReceipt,
+            boundSchemas?: ChatToolProviderSchema[]): PaAgentModelInput => {
             // Recognize the fixed Host protocol before appending any source material.
             const operationsAcknowledgement = isOperationsStagedAcknowledgement(input.runtimeInstruction);
             return {
@@ -1851,6 +1939,8 @@ export class PaAgentRuntime {
                     ? OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION : input.currentProtocol,
                 runtimeInstruction: combineRuntimeInstructions([
                     operationsAcknowledgement ? undefined : input.runtimeInstruction,
+                    commandDeclarationGuidance(boundSchemas),
+                    options.commandGuidance,
                     directory?.instruction ?? sourceRun.contextInstruction(),
                     imageScope?.hasImages ? imageScope.contextText() : undefined,
                     operationsAcknowledgement
@@ -1867,7 +1957,7 @@ export class PaAgentRuntime {
         ) =>
             this.buildPaAgentCanonicalModelInput(
                 { ...projectionOptions(), chatHistory: history ?? await sourceRun.projectHistoryAsync(options.chatHistory ?? [], input.signal) },
-                withImageContext(input, directory),
+                withImageContext(input, directory, boundSchemas),
                 toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
                 toolDefinitions,
                 injectedContext,
@@ -1881,7 +1971,8 @@ export class PaAgentRuntime {
             toolDefinitions: ChatToolRegistryDefinition[],
             boundSchemas: ChatToolProviderSchema[],
         ) => (await this.projectPaAgentCanonicalModelInput(
-            { ...projectionOptions(), chatHistory: await sourceRun.projectHistoryAsync(options.chatHistory ?? [], input.signal) }, withImageContext(input),
+            { ...projectionOptions(), chatHistory: await sourceRun.projectHistoryAsync(options.chatHistory ?? [], input.signal) },
+            withImageContext(input, undefined, boundSchemas),
             toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
             toolDefinitions, injectedContext, boundSchemas,
             runSummaries, actionProjectionMode, modelBudgetFacts,
@@ -1982,6 +2073,12 @@ export class PaAgentRuntime {
             const backgroundGenerationSources = generationInputBackgroundSources(injectedContext);
             preparedBackground = formatBackground(injectedContext);
             preparedBackgroundSourceCurrent = backgroundSourceCurrent;
+            const nativeStyle = currentWritingContext()?.styleContext;
+            if (nativeStyle && nativeStyle.length > Math.max(0, MEMORY_CONTEXT_MAX_CHARS - preparedBackground.length - 2)) {
+                // A later background refresh cannot silently change an already
+                // published Writing receipt. Stop before the provider request.
+                throw new Error('Writing context exceeds the current Memory budget');
+            }
             if (writingStyle) {
                 const budget = await availableStyleBudget(input, definitions, schemas);
                 if (writingStyle.context.length <= Math.min(WRITING_STYLE_MAX_CONTEXT_CHARS, budget.remainingTextChars, budget.remainingMemoryChars)) {
@@ -2271,24 +2368,7 @@ export class PaAgentRuntime {
         ): Promise<{ providerInput: Record<string, unknown>; vaultBinding: AnswerVaultBinding }> => {
             if (imageScope?.hasSelectedImages && options.imageCapability?.get() === "unsupported") throw new ChatImageRequestError("unsupported_model");
             if (imageScope?.hasSelectedImages) await imageScope.prepare(input.signal);
-            let prepared = input.prepareForProviderRetry ? await input.prepareForProviderRetry() : input;
-            if (options.writingRequest && options.prepareWritingStyle && !writingContextRun
-                && runSourceSelection?.scope !== 'web') {
-                injectedContext = readInjectedContext();
-                writingStyle = undefined;
-                const { remainingTextChars, remainingMemoryChars } = await availableStyleBudget(prepared, definitions, schemas);
-                const style = await options.prepareWritingStyle({ remainingTextChars, remainingMemoryChars, signal: input.signal });
-                const styleIsCurrent = typeof style.isCurrent === "function" && style.isCurrent();
-                if (style.context && !styleIsCurrent) throw new ChatImageRequestError("request_changed");
-                if (style.context && style.context.length <= Math.min(WRITING_STYLE_MAX_CONTEXT_CHARS, remainingTextChars, remainingMemoryChars)
-                    && styleIsCurrent
-                    && Array.isArray(style.revisionIds) && style.revisionIds.every((id) => typeof id === "string")) {
-                    writingStyle = { ...style, revisionIds: [...style.revisionIds] };
-                    injectedContext = { ...injectedContext, writingStyleContext: style.context };
-                }
-                // Style source reads may suspend after Memory's preflight.
-                prepared = input.prepareForProviderRetry ? await input.prepareForProviderRetry() : input;
-            }
+            const prepared = input.prepareForProviderRetry ? await input.prepareForProviderRetry() : input;
             const sourceHistory = await snapshotHistory(prepared.signal);
             const managementProjection = await prepareManagementProjection(prepared.transcript, sourceHistory);
             const vaultObservationProjection = await sourceRun.prepareVaultObservationProjection(
@@ -3001,7 +3081,8 @@ export class PaAgentRuntime {
         const loop = new PaAgentLoop({
             runId,
             userMessageId,
-            userInput: options.prompt,
+            userInput: options.userText ?? options.prompt,
+            ...(options.userText !== undefined ? { userMessageContent: options.userText } : {}),
             userImages: options.images,
             writingRequest: options.writingRequest,
             isFinalTextCurrent: () => answerSourceValidity !== undefined && isPreviewCurrent(),
@@ -3321,8 +3402,7 @@ export class PaAgentRuntime {
             catch { /* Accounting observers cannot change the Agent outcome. */ }
             sourceRunActive = false;
             writingContextRun?.dispose();
-            if (writingContextCapability) this.toolRegistry.unregister(writingContextCapability);
-            if (ghostPublishingCapability) this.toolRegistry.unregister(ghostPublishingCapability);
+            commandCapabilities?.dispose();
             imageScope?.dispose();
             try {
                 const observedFinalizationOutcome = options.signal?.aborted
@@ -3488,6 +3568,7 @@ export class PaAgentRuntime {
         const operationsAcknowledgement = isOperationsStagedAcknowledgement(input.currentProtocol)
             || isOperationsStagedAcknowledgement(input.runtimeInstruction);
         const mayReportIncomplete = !operationsAcknowledgement;
+        const currentInput = options.userText ?? options.prompt;
         let toolDefinitionsText = input.toolMode === "final_answer_only"
             ? (nativeContextHandle ? "Only present_writing or report_task_incomplete (pure outputs) are available. No source, context or action tools are available in this finalization turn."
                 : mayReportIncomplete ? "No source, context or action tools are available in this finalization turn."
@@ -3504,7 +3585,7 @@ export class PaAgentRuntime {
         }
         const operationsGuidance = createOperationsPromptGuidance(toolDefinitions ?? []);
         const projection = await this.contextManager.forPromptAsync({
-            prompt: options.prompt,
+            prompt: currentInput,
             chatHistory: operationsAcknowledgement
                 ? undefined
                 : options.chatHistory,

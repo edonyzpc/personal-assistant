@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import { Platform, TFile, type App } from "obsidian";
 import { GhostPublishingIntegration, type GhostChatBindingRequest } from "../src/ghost-publishing/host-integration";
+import { createPrepareGhostPostTool } from "../src/ai-services/chat-tool-factories";
+import type { ChatToolContext } from "../src/ai-services/chat-tools";
 import type { GhostActionAuthority, GhostPublishingController } from "../src/ghost-publishing/controller";
 
 type ControllerOptions = ConstructorParameters<typeof GhostPublishingController>[0];
@@ -38,7 +40,7 @@ function setup() {
         getSettings: () => ({ siteUrl: "https://synthetic.example/", defaultVisibility: "public", profile: {} }), saveSettings: async () => undefined,
         isCurrent: () => current, isPathAllowed: () => allowed, isContentAllowed: () => allowed, isWebAllowed: () => true,
     });
-    const request: GhostChatBindingRequest = { conversationId: "conversation", stableMessageId: "message", userText: "@blog2ghost 当前笔记", capturedPath: "A.md",
+    const request: GhostChatBindingRequest = { conversationId: "conversation", stableMessageId: "message", userText: "@blog2ghost 当前笔记发不到ghost平台", capturedPath: "A.md",
         isCurrent: () => current, getSourceSelection: () => selection, onSession: () => undefined };
     let initialCurrent = true;
     const initial: GhostActionAuthority = { guard: { isCurrent: () => initialCurrent, isPathAllowed: () => initialCurrent, isNoteDomainAllowed: () => true },
@@ -55,11 +57,51 @@ describe("Ghost Obsidian Host bridge", () => {
         const fixture = setup();
         expect(fixture.integration.createBinding({ ...fixture.request, userText: "Discuss Ghost" })).toBeUndefined();
         const binding = fixture.integration.createBinding(fixture.request)!;
-        await expect(binding.submit({ intent: "prepare", path: "B.md" }, fixture.initial.guard, fixture.initial.sourceValidity)).rejects.toThrow("target-not-requested");
+        const stale = await binding.submit({ intent: "prepare", path: "missing.md" }, fixture.initial.guard, fixture.initial.sourceValidity)
+            .catch((error: unknown) => error);
+        expect(stale).toMatchObject({ name: "GhostHostAdmissionError", reason: "target",
+            facts: { executionState: "not_started", recovery: { allowedActions: ["correct_input"] } } });
         expect(mockPrepared).not.toHaveBeenCalled();
-        await binding.submit({ intent: "prepare" }, fixture.initial.guard, fixture.initial.sourceValidity);
+        const tool = createPrepareGhostPostTool(binding);
+        const context = { host: { log: () => undefined }, taskSourceReadGuard: fixture.initial.guard,
+            signal: new AbortController().signal } as unknown as ChatToolContext;
+        const rejected = await tool.execute({ intent: "prepare", path: "missing.md" }, context);
+        const corrected = await tool.execute({ intent: "prepare", path: "A.md" }, context);
+        expect(rejected).toMatchObject({ ok: false, executionState: "not_started",
+            recovery: { allowedActions: ["correct_input"] } });
+        expect(corrected.ok).toBe(true);
         expect(mockPrepared.mock.calls[0][0].path).toBe("A.md");
+        expect(mockPrepared).toHaveBeenCalledTimes(1);
         fixture.integration.dispose();
+    });
+
+    it("reports pre-controller permission and staleness as not-started owner facts without parameter bypass", async () => {
+        const sourceFixture = setup();
+        sourceFixture.revoke();
+        const sourceTool = createPrepareGhostPostTool(sourceFixture.integration.createBinding(sourceFixture.request)!);
+        const sourceContext = { host: { log: () => undefined }, taskSourceReadGuard: sourceFixture.initial.guard,
+            signal: new AbortController().signal } as unknown as ChatToolContext;
+        const sourceRejected = await sourceTool.execute({ intent: "prepare", path: "A.md" }, sourceContext);
+        const sourceChanged = await sourceTool.execute({ intent: "prepare", path: "B.md" }, sourceContext);
+        expect(sourceRejected).toMatchObject({ ok: false, executionState: "not_started",
+            recovery: { code: "ghost_source_unavailable", allowedActions: ["needs_user"] } });
+        expect(sourceChanged).toMatchObject({ ok: false, executionState: "not_started",
+            recovery: { code: "ghost_source_unavailable", allowedActions: ["needs_user"] } });
+
+        const staleFixture = setup();
+        staleFixture.revokeInitial();
+        const staleTool = createPrepareGhostPostTool(staleFixture.integration.createBinding(staleFixture.request)!);
+        const staleContext = { host: { log: () => undefined }, taskSourceReadGuard: staleFixture.initial.guard,
+            signal: new AbortController().signal } as unknown as ChatToolContext;
+        const staleRejected = await staleTool.execute({ intent: "prepare", path: "A.md" }, staleContext);
+        const staleChanged = await staleTool.execute({ intent: "prepare", path: "B.md" }, staleContext);
+        expect(staleRejected).toMatchObject({ ok: false, executionState: "not_started",
+            recovery: { code: "ghost_request_stale", allowedActions: ["none"] } });
+        expect(staleChanged).toMatchObject({ ok: false, executionState: "not_started",
+            recovery: { code: "ghost_request_stale", allowedActions: ["none"] } });
+        expect(mockPrepared).not.toHaveBeenCalled();
+        sourceFixture.integration.dispose();
+        staleFixture.integration.dispose();
     });
 
     it("reauthorizes explicit card actions independently of the expired Agent turn and invalidates scope changes", async () => {

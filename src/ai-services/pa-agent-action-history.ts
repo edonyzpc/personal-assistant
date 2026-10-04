@@ -1,7 +1,7 @@
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import type { ChatMessage, PaAgentMessage, ToolExecutionOutcome } from "./chat-types";
 import { escapeTaggedBoundary } from "./agent-utils";
-import { cloneActionStates, type PaAgentActionState } from './pa-agent-result-facts';
+import { cloneActionStates, projectPaAgentRecoveryControl, type PaAgentActionState } from './pa-agent-result-facts';
 
 type ToolResult = Extract<PaAgentMessage, { role: "toolResult" }>;
 
@@ -40,6 +40,7 @@ export interface PaAgentActionCall {
     /** A provider reused one id within this assistant message, so no result can be assigned safely. */
     ambiguousResultId?: boolean;
     results: Array<{ id: string; outcome: ToolExecutionOutcome | "unknown"; executionState?: string;
+        recovery?: NonNullable<ReturnType<typeof projectPaAgentRecoveryControl>>;
         domainPhase?: 'accepted' | 'ready' | 'pending' | 'completed' | 'partial' | 'unknown';
         domainIdentity?: { operationId?: string; requestId?: string; receiptId?: string;
             intentId?: string; completedRefs?: string[]; remainingRefs?: string[] };
@@ -105,6 +106,7 @@ export function additionalHistoricalActionStates(message: ChatMessage): PaAgentA
 
 export function projectPaAgentToolResult(result: ToolResult): PaAgentActionCall["results"][number] {
     const domainIdentity = safeDomainIdentity(result);
+    const recovery = projectPaAgentRecoveryControl(result.content.metadata?.recovery);
     const domainPhase = result.content.resultFact?.kind === 'accepted' ? 'accepted'
         : result.content.resultFact?.kind === 'artifact_ready' ? 'ready'
         : result.content.resultFact?.kind === 'approval_pending' ? 'pending'
@@ -117,6 +119,7 @@ export function projectPaAgentToolResult(result: ToolResult): PaAgentActionCall[
             ? result.content.metadata!.outcome as ToolExecutionOutcome : "unknown",
         ...(EXECUTION_STATES.has(String(result.content.metadata?.executionState))
             ? { executionState: String(result.content.metadata!.executionState) } : {}),
+        ...(recovery ? { recovery } : {}),
         isError: result.isError,
         ...(domainPhase ? { domainPhase } : {}),
         ...(domainIdentity ? { domainIdentity } : {}),
@@ -183,6 +186,7 @@ function resultContent(call: PaAgentActionCall, scope: ActionContextScope): stri
         const header = escapeTaggedBoundary(JSON.stringify({ contextScope: scope, resultId: result.id, callId: call.id,
             outcome: result.outcome,
             ...(result.executionState ? { executionState: result.executionState } : {}), isError: result.isError,
+            ...(result.recovery ? { recovery: result.recovery } : {}),
             ...(result.domainPhase ? { domainPhase: result.domainPhase } : {}),
             ...(result.domainIdentity ? { domainIdentity: result.domainIdentity } : {}),
         }), "action_history");

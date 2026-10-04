@@ -16,6 +16,8 @@ jest.mock("../src/pagelet/agent", () => {
 });
 
 import { createPageletAgentRuntime, PageletDeepDiscoverController } from "../src/pagelet/agent";
+import { getMemorySearchInvocation } from "../src/ai-services/memory-search-tool";
+import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
 
 type OwnerState = {
     rateLimiter: unknown;
@@ -108,6 +110,67 @@ describe("DeepDiscoverPluginIntegration ownership", () => {
         expect(dependencies.createLiveHost).not.toHaveBeenCalled();
         expect(dependencies.getProviderCallAdmission).not.toHaveBeenCalled();
         expect(dependencies.getCostTracker).not.toHaveBeenCalled();
+    });
+
+    it("passes structured Memory temporal input through its production callback to the Memory boundary", async () => {
+        const dependencies = createDependencies();
+        let runtimeDependencies: Parameters<typeof createPageletAgentRuntime>[0] | undefined;
+        (createPageletAgentRuntime as jest.Mock).mockImplementationOnce((...args: unknown[]) => {
+            runtimeDependencies = args[0] as Parameters<typeof createPageletAgentRuntime>[0];
+            return { runtime: "synthetic" };
+        });
+        const boundaryInvocations: unknown[] = [];
+        const searchHybrid = jest.fn(async (...args: unknown[]) => {
+            const signal = (args[1] as { signal?: AbortSignal } | undefined)?.signal;
+            boundaryInvocations.push(getMemorySearchInvocation(signal));
+            return [];
+        });
+        const liveHost = {
+            settings: {
+                aiProvider: "openai",
+                providerPreset: "openai",
+                baseURL: "https://api.openai.com/v1",
+                chatModelName: "gpt-4o-mini",
+                embeddingModelName: "text-embedding-3-small",
+                policyModelName: "",
+                webSearchEnabled: false,
+                retrievalOptimizationFlags: { relaxedRecovery: false },
+            },
+            app: {
+                workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null },
+                vault: { getAbstractFileByPath: () => null, getMarkdownFiles: () => [] },
+                metadataCache: { getFileCache: () => null },
+            },
+            memorySearch: {
+                ensureReadyForChat: async () => ({ decision: "use-memory" as const }),
+                searchHybrid,
+            },
+            getMemoryEvidenceEpoch: () => "pagelet-test-epoch",
+            log: jest.fn(),
+        } as unknown as AiServiceHost;
+        dependencies.createLiveHost = jest.fn(() => liveHost);
+        const owner = new DeepDiscoverPluginIntegration(dependencies);
+
+        await owner.createScheduler(owner.getPolicyIdentityKey(), 0);
+        expect(runtimeDependencies).toBeDefined();
+        const explicit = new AbortController();
+        const omitted = new AbortController();
+        await runtimeDependencies!.executeMemorySearch(
+            { query: "不要限定最近30天的项目记录", temporal: "none" },
+            { host: liveHost, signal: explicit.signal },
+        );
+        await runtimeDependencies!.executeMemorySearch(
+            { query: "project records" },
+            { host: liveHost, signal: omitted.signal },
+        );
+
+        expect(searchHybrid).toHaveBeenCalledTimes(2);
+        expect(boundaryInvocations[0]).toMatchObject({
+            mode: "standard",
+            temporalIntent: "none",
+        });
+        expect(boundaryInvocations[1]).toMatchObject({ mode: "standard" });
+        expect(boundaryInvocations[1]).not.toHaveProperty("temporalIntent");
     });
 
     it("deduplicates initialization by the current policy identity", async () => {

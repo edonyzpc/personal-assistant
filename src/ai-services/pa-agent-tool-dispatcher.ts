@@ -604,6 +604,8 @@ export class ToolExecutionDispatcher {
         if (toolCall.parseError) {
             return {
                 outcome: "schema_invalid",
+                executionState: "not_started",
+                recovery: { code: "tool_input_parse_failed", allowedActions: ["correct_input"] },
                 promptText: `Tool call ${toolCall.name} was not executed because its input JSON is invalid.`,
                 previewText: toolCall.parseError,
                 metadata: {
@@ -848,7 +850,7 @@ export class ToolExecutionDispatcher {
                     return finalize(normalizeToolExecutionResult(first.result));
                 case "rejected":
                     if (!isReadGuardCurrent(readGuard)) return finalize(sourceGuardRejection());
-                    return finalize(this.toolExceptionResult(toolCall, first.error));
+                    return finalize(this.toolExceptionResult(toolCall, first.error, retrySafety));
                 case "tool_timeout":
                     return finalize({
                         outcome: this.config.toolTimeoutOutcome,
@@ -884,7 +886,10 @@ export class ToolExecutionDispatcher {
             }
             return finalize({
                 outcome: "recoverable_error",
-                promptText: `Tool ${toolCall.name} ended with an unknown runtime state.`,
+                executionState: retrySafety === "read_only" ? "failed" : "acceptance_unknown",
+                promptText: retrySafety === "side_effect"
+                    ? `Tool ${toolCall.name} ended with an unknown runtime state. Verify the existing operation before submitting it again.`
+                    : `Tool ${toolCall.name} ended with an unknown runtime state.`,
                 metadata: { outcome: "recoverable_error", reason: "unknown_tool_runtime_state" },
             });
         } finally {
@@ -919,6 +924,7 @@ export class ToolExecutionDispatcher {
     private toolExceptionResult(
         toolCall: ParsedBufferedToolCall,
         error: unknown,
+        retrySafety: "read_only" | "side_effect",
     ): PaAgentToolExecutionResult {
         if (this.config.isAborted()) {
             return {
@@ -932,7 +938,18 @@ export class ToolExecutionDispatcher {
         const safeMsg = rawMsg.replace(/\/[^\s:]+/g, "<path>").slice(0, 200);
         return {
             outcome: "recoverable_error",
-            promptText: `Tool ${toolCall.name} failed: ${safeMsg}`,
+            executionState: retrySafety === "read_only" ? "failed" : "acceptance_unknown",
+            ...(retrySafety === "side_effect" ? {
+                recovery: {
+                    code: "operation_acceptance_unknown",
+                    allowedActions: ["query_operation", "needs_user"],
+                },
+            } : {
+                recovery: { code: "recoverable_failure", allowedActions: ["retry", "correct_input"] },
+            }),
+            promptText: retrySafety === "side_effect"
+                ? `Tool ${toolCall.name} result is unknown: ${safeMsg}. Verify the existing operation before submitting it again.`
+                : `Tool ${toolCall.name} failed: ${safeMsg}`,
             previewText: safeMsg,
             metadata: {
                 outcome: "recoverable_error",

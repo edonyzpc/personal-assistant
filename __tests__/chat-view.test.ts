@@ -19,7 +19,8 @@ import { ImageManagementModal, ImageSourcePickerModal, VaultImagePickerModal } f
 import { ImageAttachmentDetailModal } from '../src/chat/image-attachment-view';
 import { ImageAssetService } from '../src/chat/image-assets';
 import type { ImageGenerationSubmitInput } from '../src/chat/image-generation-service';
-import type { ImageGenerationTask } from '../src/chat/image-generation-types';
+import { ImagePreacceptError, type ImageGenerationTask } from '../src/chat/image-generation-types';
+import { createCreateImageTool, type ChatToolContext } from '../src/ai-services/chat-tools';
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
 import { ChatImageRequestError } from '../src/ai-services/image-capability';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
@@ -1489,6 +1490,29 @@ describe('LLMView turn lifecycle', () => {
         await view.onClose();
     });
 
+    it('persists the exact typed-token user request while sending the stripped working request', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'raw-user-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: {} });
+        await view.onOpen();
+        const rawPrompt = '@Writing RAW_USER_SENTINEL';
+        view.prefillComposer(rawPrompt);
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+
+        expect(streamCalls[0].prompt).toBe('RAW_USER_SENTINEL');
+        expect(streamCalls[0].options.userText).toBe(rawPrompt);
+        streamCalls[0].resolve();
+        await flushPromises();
+
+        const turns = await store.getTurns('raw-user-conversation');
+        expect(turns).toHaveLength(1);
+        expect(turns[0].user.content).toBe(rawPrompt);
+        expect(turns[0].user.hostProvenance?.messageId)
+            .toBe(streamCalls[0].options.commandInvocation?.stableMessageId);
+    });
+
     it('passes native candidates for writing prompts and persists the host-selected parent and semantic scene', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'native-conversation' });
@@ -1551,6 +1575,52 @@ describe('LLMView turn lifecycle', () => {
         expect(thirdVersion.parentVersionId).toBeUndefined();
         expect(thirdVersion.scene).toBeUndefined();
         expect(contextHost.isCurrent()).toBe(false);
+    });
+
+    it('keeps an explicitly selected edited draft as a native candidate without requiring message history', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'edited-candidate' });
+        await manager.initialize();
+        const versions = new WritingVersionService(store);
+        let conversation = await manager.startConversation('Original writing');
+        const parent = await versions.create({ requestId: 'parent-request', messageId: 'parent-message',
+            conversationId: conversation.id, turnIndex: 0, text: 'Original body', images: [] });
+        conversation = await manager.recordTurn({ conversationId: conversation.id, turnIndex: 0, conversation,
+            userPrompt: 'Original writing', entry: { kind: 'history',
+                user: { role: 'user', content: 'Original writing' },
+                assistant: { role: 'assistant', content: 'Original body', writingVersionId: parent.id } } });
+        const edited = await versions.edit(parent.id, 'Edited body not yet sent', 'edited-before-message-history');
+        expect(edited.id).not.toBe(parent.id);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const prepare = jest.fn(async () => ({ context: '', revisionIds: [], isCurrent: () => true }));
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native' as const,
+            prepareWritingStyleForScene: prepare });
+        await view.onOpen();
+        const opened: WritingVersionModal[] = [];
+        const open = jest.spyOn(WritingVersionModal.prototype, 'open').mockImplementation(function (this: WritingVersionModal) {
+            opened.push(this);
+        });
+        const rawPrompt = '不要换个话题，短一点';
+        try {
+            for (let index = 0; index < 12 && !getElementsByClass(containerEl, 'pa-chat-writing-action').length; index++) await flushPromises();
+            expect(view.chatHistory.some(message => message.writingVersionId === parent.id)).toBe(true);
+            getElementByClass(containerEl, 'pa-chat-writing-action').click();
+            (opened[0] as unknown as { host: { onSelect: (version: WritingVersion) => void } })
+                .host.onSelect(edited);
+            getTextArea(containerEl).value = rawPrompt;
+            getTextArea(containerEl).dispatchEvent('input');
+            getElementByClass(containerEl, 'send-button-visible').click();
+            await waitForStreamCallCount(streamCalls, 1);
+        } finally {
+            open.mockRestore();
+        }
+
+        expect(streamCalls[0].options.userText).toBe(rawPrompt);
+        expect(streamCalls[0].options.writingContextHost?.selectedParentVersionId).toBe(edited.id);
+        expect(streamCalls[0].options.writingContextHost?.candidates.map(version => version.id))
+            .toEqual(expect.arrayContaining([parent.id, edited.id]));
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
     });
 
     it.each([undefined, '先说明本次写作的取舍。'])('freezes a host-bound artifact independently of its preamble (%s)', async (preamble) => {
@@ -1782,13 +1852,27 @@ describe('LLMView turn lifecycle', () => {
         first.options.onEvent?.({ ...envelope, kind: 'writing-artifact', requestId: first.options.writingRequest!.requestId,
             messageId: 'parent', body: 'Parent body', explanation: '', associatedImages: [material] });
         first.resolve();
-        prefillWriting(view, '短一点');
         await waitForTurnCompletion(view);
+        const parent = (await versions.list('subset-writing')).find(version => version.messageId === 'parent');
+        expect(parent).toBeDefined();
+        const openedParents: WritingVersionModal[] = [];
+        const openParent = jest.spyOn(WritingVersionModal.prototype, 'open').mockImplementation(function (this: WritingVersionModal) {
+            openedParents.push(this);
+        });
+        try {
+            getElementsByClass(containerEl, 'pa-chat-writing-action').at(-1)!.click();
+            (openedParents[0] as unknown as { host: { onSelect: (version: WritingVersion) => void } })
+                .host.onSelect(parent!);
+        } finally {
+            openParent.mockRestore();
+        }
+        getTextArea(containerEl).value = '短一点';
+        getTextArea(containerEl).dispatchEvent('input');
         expect(getButtonByClass(containerEl, 'send-button-visible').disabled).toBe(false);
         getElementByClass(containerEl, 'send-button-visible').click();
         await flushPromises();
         const next = streamCalls[1];
-        expect(next.options.writingContext?.associatedImages).toEqual([material]);
+        expect(next.options.writingContext).toMatchObject({ parentVersionId: parent!.id, associatedImages: [material] });
         const shared = { ...envelope, requestId: next.options.writingRequest!.requestId, messageId: 'subset', associatedImages: [] };
         next.options.onEvent?.(kind === 'artifact'
             ? { ...shared, kind: 'writing-artifact', body: 'Text without images', explanation: '' }
@@ -1805,13 +1889,8 @@ describe('LLMView turn lifecycle', () => {
             getElementByClass(containerEl, 'send-button-visible').click();
             await flushPromises();
             const continuation = streamCalls[2];
-            expect(continuation.options.writingMaterialContext).toEqual({
-                requestId: next.options.writingRequest!.requestId, associatedImages: [],
-            });
-            expect(continuation.options.writingContext).toMatchObject({
-                parentVersionId: next.options.writingContext!.parentVersionId,
-                text: 'Parent body', textHash: next.options.writingContext!.textHash,
-            });
+            expect(continuation.options.writingMaterialContext).toBeUndefined();
+            expect(continuation.options.writingContext).toBeUndefined();
             continuation.resolve();
             await waitForTurnCompletion(view);
         } else {
@@ -2233,16 +2312,12 @@ describe('LLMView turn lifecycle', () => {
             prefillWriting(restored.view, '短一点');
             getElementByClass(restored.containerEl, 'send-button-visible').click();
             await flushPromises();
-            expect(streamCalls[1].options.writingContext).toMatchObject({ parentVersionId: recovered.id,
-                associatedImages: [{ ...material, ordinal: 1 }] });
+            expect(streamCalls[1].options.writingContext).toBeUndefined();
             streamCalls[1].resolve();
         }
     });
 
-    it.each([
-        { reopen: false, empty: false }, { reopen: true, empty: false },
-        { reopen: false, empty: true }, { reopen: true, empty: true },
-    ])('inherits the failed writing material snapshot on continuation: %j', async ({ reopen, empty }) => {
+    it.each([false, true])('does not bind a failed writing material snapshot from continuation wording (reopen=%p)', async reopen => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'failed-material' });
         const versions = new WritingVersionService(store);
@@ -2264,7 +2339,7 @@ describe('LLMView turn lifecycle', () => {
         const failed = streamCalls[0];
         failed.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1',
             kind: 'writing-recovery', requestId: failed.options.writingRequest!.requestId,
-            rawText: '{"body":""}', reason: 'invalid_output', ...(empty ? { associatedImages: [] } : {}) });
+            rawText: '{"body":""}', reason: 'invalid_output' });
         failed.resolve();
         await waitForTurnCompletion(fixture.view);
         if (reopen) {
@@ -2277,20 +2352,13 @@ describe('LLMView turn lifecycle', () => {
         prefillWriting(fixture.view, '继续刚才的文案任务：请重新查看第3张图片');
         getElementByClass(fixture.containerEl, 'send-button-visible').click();
         await flushPromises();
-        expect(streamCalls[1].options).toMatchObject({ writingMaterialContext: {
-            requestId: failed.options.writingRequest!.requestId, associatedImages: empty ? [] : [material],
-        } });
+        expect(streamCalls[1].options.writingMaterialContext).toBeUndefined();
         expect(streamCalls[1].options.writingContext).toBeUndefined();
         streamCalls[1].resolve();
         await waitForTurnCompletion(fixture.view);
-        prefillWriting(fixture.view, '换个话题，帮我写一封工作邮件');
-        getElementByClass(fixture.containerEl, 'send-button-visible').click();
-        await flushPromises();
-        expect(streamCalls[2].options).not.toHaveProperty('writingMaterialContext', expect.anything());
-        streamCalls[2].resolve();
     });
 
-    it.each(['before_reopen', 'while_lookup', 'same_task'] as const)('keeps the restored writing parent within the current topic: %s', async (timing) => {
+    it.each(['before_reopen', 'while_lookup', 'same_task'] as const)('does not infer a restored parent without an explicit UI selection: %s', async (timing) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'writing-topic-boundary' });
         const versions = new WritingVersionService(store);
@@ -2363,11 +2431,7 @@ describe('LLMView turn lifecycle', () => {
         lookup.mockRestore();
         const short = await send('@Writing 短一点');
         expect(short.options.writingRequest).toBeDefined();
-        if (timing === 'same_task') {
-            expect(short.options.writingContext).toMatchObject({ text: 'Trip body', associatedImages: [{ ...material, ordinal: 1 }] });
-        } else {
-            expect(short.options.writingContext).toBeUndefined();
-        }
+        expect(short.options.writingContext).toBeUndefined();
         expect(short.options.writingMaterialContext).toBeUndefined();
         await settle(short);
     });
@@ -3470,9 +3534,13 @@ describe('LLMView turn lifecycle', () => {
         if (count > 4) {
             expect(confirmFirstUse).not.toHaveBeenCalled();
             expect(submit).not.toHaveBeenCalled();
-            expect(streamCalls).toHaveLength(0);
-            expect(allText(containerEl)).toContain('up to 4 images');
-            expect(getTextArea(containerEl).value).toBe(`@CreateImage 请给我${quantity}蓝色猫`);
+            expect(streamCalls).toHaveLength(1);
+            expect(streamCalls[0].options.userText).toBe(`@CreateImage 请给我${quantity}蓝色猫`);
+            await expect(streamCalls[0].options.createImage!.submit({ prompt: '蓝色猫', operation: 'generate', count,
+                referenceImageRefs: [] })).rejects.toMatchObject({ facts: { executionState: 'not_started',
+                    recovery: { allowedActions: ['correct_input'] } } });
+            streamCalls[0].resolve();
+            await waitForTurnCompletion(view);
         } else {
             await streamCalls[0].options.createImage!.submit({
                 prompt: `请给我${quantity}蓝色猫`, operation: 'generate', count, referenceImageRefs: [],
@@ -3540,10 +3608,11 @@ describe('LLMView turn lifecycle', () => {
         getElementByClass(containerEl, 'send-button-visible').click();
         for (let i = 0; i < 5; i++) await flushPromises();
         const binding = streamCalls[0].options.createImage!;
-        expect(streamCalls[0].prompt).toContain('Available image ref tokens: none');
+        expect(streamCalls[0].options.commandGuidance).toContain('Available image ref tokens: none');
+        expect(streamCalls[0].prompt).not.toContain('Available image ref tokens');
         expect(getVersionForOutput).not.toHaveBeenCalled();
         await expect(binding.submit({ prompt: 'blue image', operation: 'edit', count: 1,
-            referenceImageRefs: [`${ref.assetId}:${ref.contentHash}`] })).rejects.toThrow(/outside the current conversation/);
+            referenceImageRefs: [`${ref.assetId}:${ref.contentHash}`] })).rejects.toMatchObject({ code: 'invalid_inputs', facts: { executionState: 'not_started' } });
         expect(submit).not.toHaveBeenCalled();
         streamCalls[0].resolve();
         await flushPromises();
@@ -3605,7 +3674,7 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).toContain('Plain image defaults: wan2.7-image · 1');
         getElementByClass(containerEl, 'send-button-visible').click();
         await waitForStreamCallCount(streamCalls, 1);
-        expect(streamCalls[0].prompt).toContain('Decide from the user\'s current request');
+        expect(streamCalls[0].options.commandGuidance).toContain('discussion or prompt writing may finish without generation');
         expect(streamCalls[0].prompt).not.toContain('Create the image now');
         expect(submit).not.toHaveBeenCalled();
         streamCalls[0].resolve();
@@ -3659,7 +3728,7 @@ describe('LLMView turn lifecycle', () => {
             getElementByClass(containerEl, 'cancel-button').click();
             expect(call.signal?.aborted).toBe(true);
             await expect(call.options.createImage!.submit({ prompt: 'LATE-CANCELLED-SENTINEL',
-                operation: 'generate', count: 1, referenceImageRefs: [] })).rejects.toThrow(/no longer current|Cancelled/);
+                operation: 'generate', count: 1, referenceImageRefs: [] })).rejects.toMatchObject({ code: 'source_changed', facts: { executionState: 'not_started' } });
             expect(submit).not.toHaveBeenCalled();
         } finally {
             call.resolve();
@@ -3697,7 +3766,7 @@ describe('LLMView turn lifecycle', () => {
             expect(submit).not.toHaveBeenCalled();
 
             const accepted = call.options.createImage!.submit({
-                prompt: 'WRONG-MAIN-AGENT-CONTEXT-SENTINEL', operation: 'generate', count: 1, referenceImageRefs: [],
+                prompt: 'WRONG-MAIN-AGENT-CONTEXT-SENTINEL', operation: 'generate', count: 2, totalCount: 2, referenceImageRefs: [],
             });
             await flushPromises();
             expect(prepare).toHaveBeenCalledTimes(1);
@@ -3729,7 +3798,7 @@ describe('LLMView turn lifecycle', () => {
                 }),
             }));
             await expect(call.options.createImage!.submit({
-                prompt: 'DUPLICATE-TOOL-SENTINEL', operation: 'generate', count: 1, referenceImageRefs: [],
+                prompt: 'DUPLICATE-TOOL-SENTINEL', operation: 'generate', count: 2, totalCount: 2, referenceImageRefs: [],
             })).resolves.toEqual({ taskId: 'prepared_source_task' });
             expect(prepare).toHaveBeenCalledTimes(1);
             expect(submit).toHaveBeenCalledTimes(1);
@@ -3894,7 +3963,7 @@ describe('LLMView turn lifecycle', () => {
         ['explicit one versus saved two', '@CreateImage 只生成一张蓝色纸鹤', 2],
         ['distinct two versus saved one', '@CreateImage 一张蓝色猫，一张红色狗', 1],
         ['distinct two versus saved three', '@CreateImage 一张蓝色猫，一张红色狗', 3],
-    ] as const)('rejects a count conflict before the first model call: %s', async (_name, prompt, count) => {
+    ] as const)('lets Agent interpret %s and rejects a conflicting structured total', async (_name, prompt, count) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'count-conflict-conversation' });
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
@@ -3908,10 +3977,14 @@ describe('LLMView turn lifecycle', () => {
         getElementByClass(containerEl, 'send-button-visible').click();
         for (let index = 0; index < 5; index++) await flushPromises();
 
-        expect(streamCalls).toHaveLength(0);
+        expect(streamCalls).toHaveLength(1);
+        expect(streamCalls[0].options.userText).toBe(prompt);
+        await expect(streamCalls[0].options.createImage!.submit({ prompt: '蓝色猫', operation: 'generate', count: 1,
+            totalCount: count === 2 ? 1 : 2, referenceImageRefs: [] })).rejects.toMatchObject({
+                code: 'plan_conflict', facts: { executionState: 'not_started' } });
         expect(submit).not.toHaveBeenCalled();
-        expect(allText(containerEl)).toContain('image count than');
-        expect(getTextArea(containerEl).value).toBe(prompt);
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
         await view.onClose();
     });
 
@@ -3932,7 +4005,7 @@ describe('LLMView turn lifecycle', () => {
         await waitForStreamCallCount(streamCalls, 1);
         try {
             await expect(streamCalls[0].options.createImage!.submit({ prompt: 'request',
-                operation: 'generate', count: 1, referenceImageRefs: [] })).rejects.toThrow(/Cancelled|AbortError/);
+                operation: 'generate', count: 1, referenceImageRefs: [] })).rejects.toMatchObject({ code: 'cancelled', facts: { executionState: 'not_started' } });
             expect(prepare).not.toHaveBeenCalled();
             expect(submit).not.toHaveBeenCalled();
         } finally {
@@ -3960,7 +4033,7 @@ describe('LLMView turn lifecycle', () => {
         const call = streamCalls[0];
         try {
             await expect(call.options.createImage!.submit({ prompt: 'wrong source', operation: 'generate',
-                count: 1, referenceImageRefs: [] })).rejects.toThrow('featured_image_prompt:result_too_large');
+                count: 1, referenceImageRefs: [] })).rejects.toMatchObject({ code: 'preparation_failed', cause: { message: 'featured_image_prompt:result_too_large' }, facts: { executionState: 'not_started' } });
             expect(submit).not.toHaveBeenCalled();
         } finally {
             call.resolve();
@@ -3998,7 +4071,7 @@ describe('LLMView turn lifecycle', () => {
             await flushPromises();
             connectionRevision = 8;
             releasePreparation('PREPARED-AFTER-CONNECTION-CHANGE');
-            await expect(accepted).rejects.toThrow('image_generation:connection_changed');
+            await expect(accepted).rejects.toMatchObject({ code: 'preparation_failed', cause: { message: 'image_generation:connection_changed' }, facts: { executionState: 'not_started' } });
             expect(submit).not.toHaveBeenCalled();
         } finally {
             releasePreparation('CLEANUP-PREPARED');
@@ -4032,7 +4105,7 @@ describe('LLMView turn lifecycle', () => {
             await flushPromises();
             getElementByClass(containerEl, 'cancel-button').click();
             releasePreparation('LATE-CANCELLED-PREPARED-SENTINEL');
-            await expect(accepted).rejects.toThrow('Image request is no longer current.');
+            await expect(accepted).rejects.toMatchObject({ code: 'preparation_failed', cause: { message: 'Image request is no longer current.' }, facts: { executionState: 'not_started' } });
             expect(submit).not.toHaveBeenCalled();
         } finally {
             releasePreparation('CLEANUP-CANCELLED-SENTINEL');
@@ -4088,11 +4161,9 @@ describe('LLMView turn lifecycle', () => {
 
         expect(submit).not.toHaveBeenCalled();
         const binding = streamCalls[0].options.createImage!;
-        await expect(binding.submit({ prompt: '蓝色猫和红色狗', operation: 'generate', count: 2,
-            referenceImageRefs: [], subrequestIndex: 1 })).rejects.toThrow('one-image request');
-        await binding.submit({ prompt: '蓝色猫', operation: 'generate', count: 1,
+        await binding.submit({ prompt: '蓝色猫', operation: 'generate', count: 1, totalCount: 2,
             referenceImageRefs: [], subrequestIndex: 1 });
-        await binding.submit({ prompt: '红色狗', operation: 'generate', count: 1,
+        await binding.submit({ prompt: '红色狗', operation: 'generate', count: 1, totalCount: 2,
             referenceImageRefs: [], subrequestIndex: 2 });
         expect(submit).toHaveBeenCalledTimes(2);
         expect(submit).toHaveBeenNthCalledWith(1, expect.objectContaining({
@@ -4102,14 +4173,14 @@ describe('LLMView turn lifecycle', () => {
             submittedPrompt: '红色狗', count: 1, model: 'wan2.7-image',
             operationId: expect.stringContaining('-sub2'),
         }));
-        await expect(binding.submit({ prompt: '绿色鸟', operation: 'generate', count: 1,
-            referenceImageRefs: [], subrequestIndex: 3 })).rejects.toThrow('not authorized');
+        await expect(binding.submit({ prompt: '绿色鸟', operation: 'generate', count: 1, totalCount: 2,
+            referenceImageRefs: [], subrequestIndex: 3 })).rejects.toMatchObject({ code: 'plan_conflict', facts: { executionState: 'not_started' } });
         streamCalls[0].resolve();
         await flushPromises();
         await view.onClose();
     });
 
-    it('does not report a separate-image request complete when Agent submits none', async () => {
+    it('allows discussion with no structured image plan and no task', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'incomplete-images-conversation' });
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
@@ -4126,10 +4197,153 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[0].resolve();
         for (let i = 0; i < 5; i++) await flushPromises();
         expect(submit).not.toHaveBeenCalled();
-        expect(allText(containerEl)).toContain('Only 0 of 2 separately described images were accepted');
-        expect(editor.value).toBe('一张蓝色猫，一张红色狗');
-        expect((view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft.snapshot(editor.value).imageIntent)
-            .toEqual({ operation: 'generate', referenceImageRefs: [] });
+        expect(allText(containerEl)).not.toContain('Only 0');
+        expect(getElementsByClass(containerEl, 'retry-message-button')).toHaveLength(0);
+        expect(editor.value).toBe('');
+        await view.onClose();
+    });
+
+    it('retains an unknown no-ID submission across actual Retry and new factory instances', async () => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'unknown-image-retry' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async () => { throw new Error('durable acceptance unresolved without task ID'); });
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        view.prefillComposer('@CreateImage 画一只蓝色猫');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const firstBinding = streamCalls[0].options.createImage!;
+        const original = { prompt: '蓝色猫', operation: 'generate' as const, count: 1, referenceImageRefs: [] };
+        const first = await createCreateImageTool(firstBinding).execute(original, {} as ChatToolContext);
+        expect(first).toMatchObject({ ok: false, executionState: 'acceptance_unknown' });
+        expect(first.resultFact).toEqual({ kind: 'unknown', operationId: firstBinding.operationId });
+        streamCalls[0].reject(new Error('terminal transport fault'));
+        await waitForTurnCompletion(view);
+        getElementByClass(containerEl, 'retry-message-button').click();
+        await waitForStreamCallCount(streamCalls, 2);
+        const retry = streamCalls[1].options.createImage!;
+        expect(retry).not.toBe(firstBinding);
+        expect(retry.stableMessageId).toBe(firstBinding.stableMessageId);
+        expect(retry.operationId).toBe(firstBinding.operationId);
+        const newFactory = createCreateImageTool(retry);
+        expect(await newFactory.execute({ ...original, prompt: 'changed', totalCount: 4 }, {} as ChatToolContext))
+            .toMatchObject({ ok: false, executionState: 'acceptance_unknown' });
+        const unstarted = await newFactory.execute({ ...original, subrequestIndex: 2, totalCount: 4 }, {} as ChatToolContext);
+        expect(unstarted).toMatchObject({ ok: false, executionState: 'not_started',
+            recovery: { code: 'image_operation_unresolved', allowedActions: ['needs_user'] } });
+        expect(unstarted.resultFact).toBeUndefined();
+        expect(await newFactory.execute(original, {} as ChatToolContext))
+            .toMatchObject({ executionState: 'acceptance_unknown', resultFact: first.resultFact });
+        expect(submit).toHaveBeenCalledTimes(1);
+        streamCalls[1].resolve();
+        await waitForTurnCompletion(view);
+        await view.onClose();
+    });
+
+    it('verifies a persisted task after lost acknowledgement and continues only the original image plan', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'verified-image-retry' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async (request: ImageGenerationSubmitInput) => {
+            const now = new Date().toISOString();
+            const task: ImageGenerationTask = { schemaVersion: 1, taskId: `task-${submit.mock.calls.length}`,
+                operationId: request.operationId, stableMessageId: request.stableMessageId, conversationId: request.conversationId,
+                createdAt: now, updatedAt: now, revision: 0, state: 'prepared', outputs: [],
+                connection: { mode: 'inherit-chat', endpointIdentity: 'https://fixture.invalid', credentialSlot: 'fixture', revision: 0 },
+                request: { userPrompt: request.userPrompt, submittedPrompt: request.submittedPrompt, operation: request.operation,
+                    count: request.count, totalCount: request.totalCount, model: 'wan2.7-image', inputRefs: request.inputRefs } };
+            await store.putImageGenerationTask(task);
+            if (submit.mock.calls.length === 1) throw new Error('persisted, acknowledgement lost');
+            return { taskId: task.taskId };
+        });
+        Object.assign(plugin, { imageGenerationService: { list: (id: string) => store.listImageGenerationTasks(id),
+            get: (id: string) => store.getImageGenerationTask(id), subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        view.prefillComposer('@CreateImage 一张蓝色猫，一张红色狗');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const first = { prompt: '蓝色猫', operation: 'generate' as const, count: 1, totalCount: 2,
+            subrequestIndex: 1, referenceImageRefs: [] };
+        expect(await createCreateImageTool(streamCalls[0].options.createImage!).execute(first, {} as ChatToolContext))
+            .toMatchObject({ ok: false, executionState: 'acceptance_unknown' });
+        streamCalls[0].reject(new Error('terminal fault'));
+        await waitForTurnCompletion(view);
+        getElementByClass(containerEl, 'retry-message-button').click();
+        await waitForStreamCallCount(streamCalls, 2);
+        const tool = createCreateImageTool(streamCalls[1].options.createImage!);
+        expect(await tool.execute(first, {} as ChatToolContext)).toMatchObject({ ok: true, content: { taskId: 'task-1' } });
+        expect(await tool.execute({ ...first, prompt: '红色狗', subrequestIndex: 2 }, {} as ChatToolContext))
+            .toMatchObject({ ok: true, content: { taskId: 'task-2' } });
+        const tasks = await store.listImageGenerationTasks('verified-image-retry');
+        expect(tasks).toHaveLength(2);
+        expect(tasks.reduce((sum, task) => sum + task.request.count, 0)).toBe(2);
+        expect(submit).toHaveBeenCalledTimes(2);
+        expect(submit.mock.calls[0][0].operationId).not.toBe(submit.mock.calls[1][0].operationId);
+        expect(tasks.map(task => task.request.totalCount)).toEqual([2, 2]);
+        streamCalls[1].resolve();
+        await waitForTurnCompletion(view);
+        expect(getElementsByClass(containerEl, 'retry-message-button')).toHaveLength(0);
+        await view.onClose();
+    });
+
+    it('releases only a definitely unaccepted image slot for corrected structured input', async () => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'image-repair' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const submit = jest.fn(async () => ({ taskId: 'corrected-task' }))
+            .mockRejectedValueOnce(new ImagePreacceptError('invalid_request'));
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        view.prefillComposer('@CreateImage 画两只猫');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const tool = createCreateImageTool(streamCalls[0].options.createImage!);
+        const input = { prompt: '猫', operation: 'generate' as const, count: 2, totalCount: 2, referenceImageRefs: [] };
+        expect(await tool.execute(input, {} as ChatToolContext)).toMatchObject({ ok: false, executionState: 'not_started' });
+        expect(await tool.execute({ ...input, prompt: '两只蓝色猫' }, {} as ChatToolContext))
+            .toMatchObject({ ok: true, content: { taskId: 'corrected-task' } });
+        expect(submit).toHaveBeenCalledTimes(2);
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
+        expect(getElementsByClass(containerEl, 'retry-message-button')).toHaveLength(0);
+        await view.onClose();
+    });
+
+    it.each([true, false])('keeps a pending submission through cancellation and Retry (accepted=%s)', async accepted => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'pending-image-retry' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        let finish!: (value: { taskId: string }) => void;
+        let reject!: (reason: Error) => void;
+        const pending = new Promise<{ taskId: string }>((resolve, fail) => { finish = resolve; reject = fail; });
+        const submit = jest.fn(() => pending);
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        view.prefillComposer('@CreateImage 画蓝色猫');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const input = { prompt: '猫', operation: 'generate' as const, count: 1, referenceImageRefs: [] };
+        const first = createCreateImageTool(streamCalls[0].options.createImage!).execute(input, {} as ChatToolContext);
+        for (let i = 0; i < 8 && !submit.mock.calls.length; i++) await flushPromises();
+        expect(submit).toHaveBeenCalledTimes(1);
+        getElementByClass(containerEl, 'cancel-button').click();
+        streamCalls[0].reject(new DOMException('Aborted', 'AbortError'));
+        await waitForTurnCompletion(view);
+        getElementByClass(containerEl, 'retry-message-button').click();
+        await waitForStreamCallCount(streamCalls, 2);
+        const retry = createCreateImageTool(streamCalls[1].options.createImage!);
+        const retained = retry.execute({ ...input, prompt: 'changed' }, {} as ChatToolContext);
+        expect(await retry.execute({ ...input, totalCount: 2, subrequestIndex: 2 }, {} as ChatToolContext))
+            .toMatchObject({ ok: false, executionState: 'not_started',
+                recovery: { code: 'image_operation_unresolved', allowedActions: ['needs_user'] } });
+        if (accepted) finish({ taskId: 'late-task' }); else reject(new Error('late unknown'));
+        expect(await first).toMatchObject({ ok: accepted });
+        expect(await retained).toMatchObject({ ok: accepted });
+        expect(submit).toHaveBeenCalledTimes(1);
+        streamCalls[1].resolve();
+        await waitForTurnCompletion(view);
         await view.onClose();
     });
 
@@ -4276,7 +4490,7 @@ describe('LLMView turn lifecycle', () => {
         getElementByClass(containerEl, 'send-button-visible').click();
         await waitForStreamCallCount(streamCalls, 1);
         await streamCalls[0].options.createImage!.submit({ prompt: 'agent rephrasing',
-            operation: 'generate', count: 1, referenceImageRefs: [] });
+            operation: 'generate', count: 2, totalCount: 2, referenceImageRefs: [] });
         expect(prepare).not.toHaveBeenCalled();
         expect(submit).toHaveBeenCalledWith(expect.objectContaining({
             userPrompt: 'PRIOR-SUBMITTED-SENTINEL',
@@ -4800,7 +5014,7 @@ describe('LLMView turn lifecycle', () => {
             getElementByClass(containerEl, 'pa-chat-writing-action').click();
             const modalHost = (opened[0] as unknown as { host: { onSelect: (version: WritingVersion) => void } }).host;
             modalHost.onSelect(parent!);
-            getTextArea(containerEl).value = '写得更短';
+            getTextArea(containerEl).value = '不要换个话题，写得更短';
             getTextArea(containerEl).dispatchEvent('input');
             getElementByClass(containerEl, 'send-button-visible').click();
             await waitForStreamCallCount(streamCalls, 2);

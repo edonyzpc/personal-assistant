@@ -18,7 +18,7 @@ import { WritingVersionService } from "../src/chat/writing-versions";
 import type { WritingVersion } from "../src/chat/writing-types";
 import { createPaAgentPersistedTurn } from "../src/ai-services/pa-agent-history";
 import { generationInputSnapshotInputLineage } from "../src/ai-services/input-lineage";
-import { decodeWritingOutput, isWritingContinuationPrompt, isWritingRequestPrompt, readProviderCompletion } from "../src/ai-services/writing-output";
+import { decodeWritingOutput, readProviderCompletion } from "../src/ai-services/writing-output";
 import { formatInjectedContext, MEMORY_CONTEXT_MAX_CHARS } from "../src/ai-services/context/PaAgentContextProjector";
 import type { PaAgentContextSummarizer, PaAgentSummaryRequest } from "../src/ai-services/context/PaAgentContextSummarizer";
 import { traceProviderDispatch } from "../src/ai-services/obsidian-fetch";
@@ -33,6 +33,32 @@ type RequestBody = { stream?: boolean; messages: Array<{ role: string; content: 
 type FixtureTool = { name: string; input: unknown };
 type Reply = { text?: string; finish?: string | null; tool?: FixtureTool; tools?: FixtureTool[]; error?: unknown; httpError?: { status: number; code: string; retryAfter?: string };
     usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; onEnd?: () => void };
+const writingScene = { writingTask: 'copywriting', purpose: 'social_share', audience: 'friends', domain: 'travel' };
+type StructuredStylePreparation = NonNullable<PaAgentStreamOptions['writingContextHost']>['styles']['prepare'];
+const prepareWritingContextReply = (imageRefs: MessageImage['ref'][] = [], parentHandle?: string): Reply => ({
+    tool: { name: 'get_writing_context', input: { parentHandle: parentHandle ?? null,
+        scene: writingScene, currentInstructionConflicts: false, imageRefs } },
+});
+function nativeWritingReply(lifecycle: AgentEvent[], body = '正文："海风"\n🌊'): Reply {
+    const result = lifecycle.filter((event): event is Extract<AgentEvent, { type: 'message_end' }> =>
+        event.type === 'message_end' && event.message.role === 'toolResult'
+        && event.message.toolName === 'get_writing_context' && !event.message.isError).at(-1);
+    if (!result || result.message.role !== 'toolResult') throw new Error('Actual writing context is missing');
+    const observation = JSON.parse(result.message.content.promptText).observation;
+    if (typeof observation?.contextHandle !== 'string') throw new Error('Actual writing context handle is missing');
+    return { tool: { name: 'present_writing', input: { contextHandle: observation.contextHandle,
+        body, explanation: '参考当前材料' } } };
+}
+function nativeWritingOptions(prepare: StructuredStylePreparation, candidates: WritingVersion[] = []): Partial<PaAgentStreamOptions> {
+    return { writingRequest: { requestId: 'writing-1' }, writingOutputProtocol: 'native',
+        writingContextHost: { conversationId: 'writing-fixture', candidates,
+            versions: { get: async id => candidates.find(version => version.id === id) ?? null },
+            styles: { prepare }, isCurrent: () => true,
+            isParentCurrent: version => candidates.some(candidate => candidate.id === version.id
+                && candidate.textHash === version.textHash),
+            isParentSourceCurrent: version => candidates.some(candidate => candidate.id === version.id
+                && candidate.textHash === version.textHash) } };
+}
 const response = (body: RequestBody, reply: Reply): Response => {
     if (reply.error) throw reply.error;
     if (reply.httpError) return new Response(JSON.stringify({ error: { code: reply.httpError.code, message: "Request rejected; echoed data:image/jpeg;base64,SECRET" } }), {
@@ -402,17 +428,19 @@ describe('B-135 production source handling', () => {
     });
 
     it('does not prepare automatic Writing style in web scope', async () => {
-        const f = fixture([{ text: envelope('Web writing') }]);
-        const prepareWritingStyle = jest.fn(async () => ({
+        const f = fixture((_request, index) => index === 0 ? prepareWritingContextReply()
+            : nativeWritingReply(f.lifecycle, 'Web writing'));
+        const prepareWritingStyleForScene = jest.fn(async () => ({
             context: 'PRIVATE_STYLE_SENTINEL', revisionIds: ['private-style'],
             isCurrent: () => true,
         }));
         await f.run({ images: undefined, prompt: 'Write from web material',
-            writingRequest: { requestId: 'writing-1' }, prepareWritingStyle,
+            ...nativeWritingOptions(prepareWritingStyleForScene),
             runSourceSelection: { schemaVersion: 1, scope: 'web',
                 selectionId: 'scope-web-style', userMessageId: 'writing-user' } });
-        expect(prepareWritingStyle).not.toHaveBeenCalled();
-        expect(requestText(f.requests[0])).not.toContain('PRIVATE_STYLE_SENTINEL');
+        expect(prepareWritingStyleForScene).not.toHaveBeenCalled();
+        expect(f.requests).toHaveLength(2);
+        expect(f.requests.every(request => !requestText(request).includes('PRIVATE_STYLE_SENTINEL'))).toBe(true);
     });
     it('does not create a writing artifact when a supplied note disappears after the final request', async () => {
         const prompt = '根据当前笔记写一段文字';
@@ -706,12 +734,11 @@ describe('B-135 production source handling', () => {
 
     it('keeps current-note task material, Personal, existing Memory and authorized style in one physical writing input', async () => {
         const prompt = '只用当前笔记整理一段邀请，保持我的表达习惯';
-        const f = fixture([
-            { tools: [
+        const f = fixture((_request, index) => index === 0
+            ? { tools: [
                 { name: 'get_current_note_context', input: { mode: 'full' } },
-            ] },
-            { text: envelope('COMBINED_SOURCE_WRITING') },
-        ]);
+            ] } : index === 1 ? prepareWritingContextReply()
+                : nativeWritingReply(f.lifecycle, 'COMBINED_SOURCE_WRITING'));
         const current = { path: 'notes/current.md', name: 'current.md', basename: 'current', extension: 'md',
             stat: { ctime: 1, mtime: 23, size: 41 } };
         const other = { path: 'notes/other.md', name: 'other.md', basename: 'other', extension: 'md',
@@ -739,17 +766,17 @@ describe('B-135 production source handling', () => {
         f.host.settings.memoryEnabled = true;
         f.host.getMemoryExtractionPromptContext.mockReturnValue(memoryContext);
         const styleText = '<writing_style context_only="true">AUTHORIZED_STYLE_SAMPLE_SENTINEL</writing_style>';
-        const prepareWritingStyle = jest.fn(async () => ({
+        const prepareWritingStyleForScene = jest.fn(async () => ({
             context: styleText,
             revisionIds: ['authorized-style-revision'],
             isCurrent: () => true,
             isSourceCurrent: () => true,
         }));
 
-        await f.run({ images: undefined, prompt, writingRequest: { requestId: 'writing-1' }, prepareWritingStyle });
+        await f.run({ images: undefined, prompt, ...nativeWritingOptions(prepareWritingStyleForScene) });
 
-        expect(f.requests).toHaveLength(2);
-        const finalInput = requestText(f.requests[1]);
+        expect(f.requests).toHaveLength(3);
+        const finalInput = requestText(f.requests[2]);
         expect(finalInput).toContain('CURRENT_NOTE_TASK_MATERIAL');
         expect(finalInput).toContain('PERSONAL_PROFILE_SENTINEL');
         expect(finalInput).toContain('EXISTING_MEMORY_SENTINEL');
@@ -830,19 +857,20 @@ describe.each([
     });
 
     it.each(changes)('refreshes %s background after asynchronous style preparation', async change => {
-        const f = fixture([{ text: envelope() }]);
+        const f = fixture((_request, index) => index === 0 ? prepareWritingContextReply()
+            : nativeWritingReply(f.lifecycle));
         const changeBackground = configureBackground(f, change);
         const styleText = '<writing_style context_only="true">T14_VALID_STYLE_SENTINEL</writing_style>';
-        const prepareWritingStyle = jest.fn(async () => {
+        const prepareWritingStyleForScene = jest.fn(async () => {
             await Promise.resolve();
             changeBackground();
             return { context: styleText, revisionIds: ['t14-style'], isCurrent: () => true, isSourceCurrent: () => true };
         });
-        await f.run({ images: undefined, prompt: 'Write a short paragraph', writingRequest: { requestId: 'writing-1' }, prepareWritingStyle });
-        expect(prepareWritingStyle).toHaveBeenCalled();
-        expect(f.requests).toHaveLength(1);
-        expectCurrentRequest(f.requests[0], change);
-        expect(requestText(f.requests[0])).toContain(styleText);
+        await f.run({ images: undefined, prompt: 'Write a short paragraph', ...nativeWritingOptions(prepareWritingStyleForScene) });
+        expect(prepareWritingStyleForScene).toHaveBeenCalledTimes(1);
+        expect(f.requests).toHaveLength(2);
+        expectCurrentRequest(f.requests[1], change);
+        expect(requestText(f.requests[1])).toContain(JSON.stringify(styleText).slice(1, -1));
         expect(f.events.find(event => event.kind === 'writing-artifact')).toMatchObject({ styleRevisionIds: ['t14-style'] });
     });
 
@@ -1103,7 +1131,8 @@ describe('B-135 T14 selected-image history summary', () => {
 });
 
 it('B-135 T14 keeps grown Memory and drops style that no longer fits after preparation', async () => {
-    const f = fixture([{ text: envelope() }]);
+    const f = fixture((_request, index) => index === 0 ? prepareWritingContextReply()
+        : nativeWritingReply(f.lifecycle));
     const oldText = 'T14_SMALL_MEMORY_SENTINEL';
     const grownText = 'T14_GROWN_MEMORY_SENTINEL';
     const styleText = `<writing_style context_only="true">T14_OVER_BUDGET_STYLE_SENTINEL ${'s'.repeat(200)}</writing_style>`;
@@ -1114,7 +1143,7 @@ it('B-135 T14 keeps grown Memory and drops style that no longer fits after prepa
     expect(styleText.length).toBeGreaterThan(100);
     f.host.settings.memoryEnabled = true;
     f.host.getMemoryExtractionPromptContext.mockReturnValue({ memoryContextMode: 'governed', governedMemoryContext: oldText });
-    const prepareWritingStyle = jest.fn(async (input: { remainingTextChars: number; remainingMemoryChars: number }) => {
+    const prepareWritingStyleForScene = jest.fn(async (_scene: unknown, input: { remainingTextChars: number; remainingMemoryChars: number }) => {
         // The style really fits the initial budget. Only the intervening source
         // change makes it ineligible; final projection must preserve new Memory.
         expect(styleText.length).toBeLessThan(input.remainingMemoryChars);
@@ -1123,13 +1152,74 @@ it('B-135 T14 keeps grown Memory and drops style that no longer fits after prepa
         f.host.getMemoryExtractionPromptContext.mockReturnValue(grownContext);
         return { context: styleText, revisionIds: ['t14-over-budget-style'], isCurrent: () => true, isSourceCurrent: () => true };
     });
-    await f.run({ images: undefined, prompt: 'Write a short paragraph', writingRequest: { requestId: 'writing-1' }, prepareWritingStyle });
-    expect(prepareWritingStyle).toHaveBeenCalledTimes(1);
+    await f.run({ images: undefined, prompt: 'Write a short paragraph', ...nativeWritingOptions(prepareWritingStyleForScene) });
+    expect(prepareWritingStyleForScene).toHaveBeenCalledTimes(1);
+    expect(f.requests).toHaveLength(2);
+    expect(requestText(f.requests[1])).toContain(grownContext.governedMemoryContext);
+    expect(requestText(f.requests[1])).not.toContain(oldText);
+    expect(requestText(f.requests[1])).not.toContain('T14_OVER_BUDGET_STYLE_SENTINEL');
+    expect(requestText(f.requests[1])).not.toContain('t14-over-budget-style');
+    const contextResult = f.lifecycle.find((event): event is Extract<AgentEvent, { type: 'message_end' }> =>
+        event.type === 'message_end' && event.message.role === 'toolResult'
+        && event.message.toolName === 'get_writing_context' && !event.message.isError);
+    expect(contextResult).toBeDefined();
+    if (contextResult?.message.role !== 'toolResult') throw new Error('Actual writing context is missing');
+    const observation = JSON.parse(contextResult.message.content.promptText).observation;
+    expect(observation.style).toEqual({ context: '', revisionIds: [] });
+    expect(f.events.find(event => event.kind === 'writing-artifact')).toMatchObject({
+        styleRevisionIds: [], generationInput: { style: { state: 'none' } },
+    });
+});
+
+it('B-135 T14 stops the next provider input when Memory grows after writing context publication', async () => {
+    const f = fixture((_request, index) => {
+        if (index !== 0) throw new Error('Over-budget writing input reached the provider');
+        return prepareWritingContextReply();
+    });
+    const oldText = 'T14_BEFORE_PUBLICATION_MEMORY';
+    const grownText = 'T14_AFTER_PUBLICATION_MEMORY';
+    const styleText = `<writing_style context_only="true">T14_PUBLISHED_STYLE ${'s'.repeat(200)}</writing_style>`;
+    const revisionId = 't14-published-style';
+    const wrapperChars = formatInjectedContext({ memoryContextMode: 'governed', governedMemoryContext: 'x' }).length - 1;
+    const grownContext = { memoryContextMode: 'governed' as const,
+        governedMemoryContext: grownText + 'x'.repeat(MEMORY_CONTEXT_MAX_CHARS - wrapperChars - grownText.length - 100) };
+    expect(formatInjectedContext(grownContext).length).toBe(MEMORY_CONTEXT_MAX_CHARS - 100);
+    expect(styleText.length).toBeGreaterThan(100);
+    f.host.settings.memoryEnabled = true;
+    f.host.getMemoryExtractionPromptContext.mockReturnValue({ memoryContextMode: 'governed', governedMemoryContext: oldText });
+    const prepareStyle = jest.fn(async (_scene: unknown, budget: { remainingTextChars: number; remainingMemoryChars: number }) => {
+        expect(styleText.length).toBeLessThan(budget.remainingMemoryChars);
+        expect(styleText.length).toBeLessThan(budget.remainingTextChars);
+        return { context: styleText, revisionIds: [revisionId], isCurrent: () => true, isSourceCurrent: () => true };
+    });
+    let publishedPrompt: string | undefined;
+    let publishedObservation: { contextHandle: string; style: { context: string; revisionIds: string[] } } | undefined;
+    let publishedResults = 0;
+    await expect(f.run({ images: undefined, prompt: 'Write a short paragraph', ...nativeWritingOptions(prepareStyle),
+        onLifecycleEvent: event => {
+            f.lifecycle.push(event);
+            if (event.type !== 'message_end' || event.message.role !== 'toolResult'
+                || event.message.toolName !== 'get_writing_context' || event.message.isError) return;
+            publishedResults += 1;
+            publishedPrompt = event.message.content.promptText;
+            publishedObservation = JSON.parse(publishedPrompt).observation;
+            // Grow background only after the real successful tool result is
+            // published. Its prepared context and observation already exist.
+            f.host.getMemoryExtractionPromptContext.mockReturnValue(grownContext);
+        },
+    })).rejects.toThrow('Writing context exceeds the current Memory budget');
+    expect(prepareStyle).toHaveBeenCalledTimes(1);
+    expect(publishedResults).toBe(1);
+    expect(publishedObservation?.contextHandle).toEqual(expect.any(String));
+    expect(publishedObservation?.style).toEqual({ context: styleText, revisionIds: [revisionId] });
+    const originalResult = f.lifecycle.find((event): event is Extract<AgentEvent, { type: 'message_end' }> =>
+        event.type === 'message_end' && event.message.role === 'toolResult'
+        && event.message.toolName === 'get_writing_context' && !event.message.isError);
+    expect(originalResult?.message.role === 'toolResult' && originalResult.message.content.promptText).toBe(publishedPrompt);
     expect(f.requests).toHaveLength(1);
-    expect(requestText(f.requests[0])).toContain(grownContext.governedMemoryContext);
-    expect(requestText(f.requests[0])).not.toContain(oldText);
-    expect(requestText(f.requests[0])).not.toContain('T14_OVER_BUDGET_STYLE_SENTINEL');
-    expect(f.events.find(event => event.kind === 'writing-artifact')).toMatchObject({ styleRevisionIds: [] });
+    expect(requestText(f.requests[0])).toContain(oldText);
+    expect(requestText(f.requests[0])).not.toContain(grownText);
+    expect(f.events.some(event => event.kind === 'writing-artifact' || event.kind === 'answer-snapshot')).toBe(false);
 });
 
 describe("B-129 production runtime with real ChatOpenAI/bindTools and offline transport", () => {
@@ -1286,45 +1376,76 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
     it.each(["image", "style"] as const)("blocks a real SDK internal 429 retry after %s currentness is revoked", async (source) => {
         let styleCurrent = true;
         const f = fixture((_request, index) => {
-            if (index !== 0) throw new Error("Revoked input reached a second physical fetch");
+            if (index === 0) return prepareWritingContextReply([image(1).ref]);
+            if (index !== 1) throw new Error("Revoked input reached another physical fetch");
             queueMicrotask(() => { if (source === "image") f.invalidate(); else styleCurrent = false; });
             return { httpError: { status: 429, code: "rate_limit_exceeded", retryAfter: "0.001" } };
         }, {}, 1);
-        await expect(f.run({ writingRequest: { requestId: "writing-1" }, prepareWritingStyle: async () => ({
-            context: "<writing_style>sample</writing_style>", revisionIds: ["style-1"], isCurrent: () => styleCurrent,
-        }) })).rejects.toThrow();
+        await expect(f.run(nativeWritingOptions(async () => ({
+            context: "<writing_style>sample</writing_style>", revisionIds: ["style-1"],
+            isCurrent: () => styleCurrent, isSourceCurrent: () => styleCurrent,
+        })))).rejects.toThrow();
         // Both attempts belong to the same stream. The SDK's own retry header
         // distinguishes the second attempt from the runtime's invoke fallback.
-        expect(f.sdkAttempts).toEqual([{ stream: true, retryCount: "0" }, { stream: true, retryCount: "1" }]);
-        expect(f.requests).toHaveLength(1); expect(pixels(f.requests[0])).toHaveLength(1);
+        expect(f.sdkAttempts).toEqual([{ stream: true, retryCount: "0" },
+            { stream: true, retryCount: "0" }, { stream: true, retryCount: "1" }]);
+        expect(f.requests).toHaveLength(2);
+        expect(pixels(f.requests[0])).toHaveLength(1); expect(pixels(f.requests[1])).toHaveLength(1);
         expect(f.service.resolveVariant).toHaveBeenCalledTimes(1); expect(f.release).toHaveBeenCalledTimes(1);
         expect(f.events.some((event) => event.kind === "writing-artifact" || event.kind === "answer-snapshot")).toBe(false);
         expect(JSON.stringify([f.events, f.lifecycle, f.host.log.mock.calls])).not.toMatch(/SECRET|data:image|base64/);
     });
 
     it("uses host parent text and bounded style preparation, invalidating cancellation before submission", async () => {
-        const f = fixture([{ text: envelope() }]); let current = true;
+        const records = new Map<string, WritingVersion>();
+        const versions = new WritingVersionService({ getWritingVersion: async id => records.get(id) ?? null,
+            putWritingVersion: async version => { records.set(version.id, version); }, listWritingVersions: async () => [...records.values()] });
+        const parent = await versions.create({ requestId: 'parent-request', conversationId: 'writing-fixture', messageId: 'parent-message',
+            turnIndex: 0, text: '本地修改的 V2，不能退回 V1', images: [image(1)] });
+        const f = fixture((request, index) => {
+            if (index === 0) {
+                const parentHandle = requestText(request).match(/"handle":"([^"]+:parent:1)"/)?.[1];
+                if (!parentHandle) throw new Error('Actual parent directory is missing');
+                return prepareWritingContextReply([image(1).ref], parentHandle);
+            }
+            return nativeWritingReply(f.lifecycle);
+        });
+        let current = true;
         f.host.getMemoryExtractionPromptContext.mockReturnValue({ memoryContextMode: "governed", governedMemoryContext: "ordinary preference" });
-        const prepareWritingStyle = jest.fn(async (_input: { remainingTextChars: number; remainingMemoryChars: number }) => ({ context: '<writing_style context_only="true">sample</writing_style>', revisionIds: ["style-1"], isCurrent: () => current }));
-        await f.run({ writingRequest: { requestId: "writing-1" }, writingContext: { parentVersionId: "v2", text: "本地修改的 V2，不能退回 V1", textHash: "a".repeat(64), associatedImages: [image(1)] }, prepareWritingStyle });
-        expect(requestText(f.requests[0])).toContain("本地修改的 V2"); expect(requestText(f.requests[0])).toContain("<writing_style");
-        expect(prepareWritingStyle.mock.calls[0][0].remainingMemoryChars).toBeLessThan(6000);
+        const prepareWritingStyleForScene = jest.fn(async (_scene: unknown, _input: { remainingTextChars: number; remainingMemoryChars: number }) => ({ context: '<writing_style context_only="true">sample</writing_style>', revisionIds: ["style-1"], isCurrent: () => current, isSourceCurrent: () => current }));
+        await f.run(nativeWritingOptions(prepareWritingStyleForScene, [parent]));
+        expect(f.requests).toHaveLength(2);
+        expect(requestText(f.requests[1])).toContain("本地修改的 V2"); expect(requestText(f.requests[1])).toContain("<writing_style");
+        expect(prepareWritingStyleForScene.mock.calls[0][1].remainingMemoryChars).toBeLessThan(6000);
         expect(f.events.find((event) => event.kind === "writing-artifact")).toMatchObject({
             styleRevisionIds: ["style-1"],
-            generationInput: { parent: { state: 'identified', versionId: 'v2',
-                textHash: { algorithm: 'sha256', value: 'a'.repeat(64) } } },
+            generationInput: { parent: { state: 'identified', versionId: parent.id,
+                textHash: { algorithm: 'sha256', value: parent.textHash } } },
         });
         current = false;
         const canonical = f.lifecycle.filter((event) => event.type === "message_end").map((event) => (event as Extract<AgentEvent, { type: "message_end" }>).message);
         const persisted = createPaAgentPersistedTurn({ runId: "r", turnId: "t", messages: canonical, committedFinalText: '正文："海风"\n🌊' });
         expect(JSON.stringify(persisted.messages)).not.toContain("pa.writing");
-        expect(persisted.messages.find((message) => message.role === "assistant")).toMatchObject({ content: [{ type: "text", text: '正文："海风"\n🌊' }], providerCompletion: "stop", writingRequestId: "writing-1" });
+        const persistedOutput = persisted.messages.filter(message => message.role === 'assistant').at(-1);
+        expect(persisted.committedFinalText).toBe('正文："海风"\n🌊');
+        expect(persistedOutput).toMatchObject({ content: [{ type: 'toolCall', name: 'present_writing' }],
+            providerCompletion: 'tool_calls', writingRequestId: 'writing-1' });
+        const outputCall = persistedOutput?.content[0];
+        expect(outputCall?.type).toBe('toolCall');
+        if (outputCall?.type === 'toolCall') {
+            expect(JSON.parse(String(outputCall.input))).toEqual({
+                body: '正文："海风"\n🌊', explanation: '参考当前材料', contextHandle: expect.any(String),
+            });
+        }
+        versions.dispose();
     });
 
     it("does not submit if a style is cancelled while the provider responds", async () => {
         let current = true;
-        const f = fixture([{ text: envelope(), onEnd: () => { current = false; } }]);
-        await f.run({ writingRequest: { requestId: "writing-1" }, prepareWritingStyle: async () => ({ context: "<writing_style>sample</writing_style>", revisionIds: ["style-1"], isCurrent: () => current }) });
+        const f = fixture((_request, index) => index === 0 ? prepareWritingContextReply([image(1).ref])
+            : { ...nativeWritingReply(f.lifecycle), onEnd: () => { current = false; } });
+        await f.run(nativeWritingOptions(async () => ({ context: "<writing_style>sample</writing_style>", revisionIds: ["style-1"],
+            isCurrent: () => current, isSourceCurrent: () => current })));
         expect(f.events.find((event) => event.kind === "writing-recovery")).toMatchObject({ reason: "source_changed" });
         expect(f.events.some((event) => event.kind === "writing-artifact")).toBe(false);
     });
@@ -1362,7 +1483,7 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
     });
 });
 
-describe("B-129 strict writing protocol and intent", () => {
+describe("B-129 strict writing output protocol", () => {
     it.each(["```json\n" + envelope() + "\n```\nExplanation", envelope() + " tail", envelope().replace('"version":1', '"version":2'), envelope().replace('"writing-1"', '"wrong"'), envelope().replace('{"kind"', '{"sourceMessageIds":[],"kind"')])("rejects an invalid whole response", (text) => {
         expect(decodeWritingOutput(text, { requestId: "writing-1" }, 10_000)).toBeUndefined();
     });
@@ -1371,15 +1492,6 @@ describe("B-129 strict writing protocol and intent", () => {
         expect(decodeWritingOutput(envelope(), { requestId: "writing-1" }, envelope().length - 1)).toBeUndefined();
         expect(readProviderCompletion({ response_metadata: { finish_reason: "stop" } })).toBe("stop");
         expect(readProviderCompletion({ response_metadata: {}, usage_metadata: {} })).toBeUndefined();
-    });
-    it.each(["短一点", "改写这版", "继续上段", "继续刚才的文案任务：请重新查看第3张图片", "重试上一轮配文", "make it shorter", "rewrite this", "continue the previous writing task"])("recognizes an explicit continuation: %s", (text) => {
-        expect(isWritingContinuationPrompt(text)).toBe(true); expect(isWritingRequestPrompt(text, true)).toBe(true);
-    });
-    it.each(["换个话题，写一封工作邮件", "new topic: write a caption", "这张图是什么", "继续"])("does not inherit material for %s", (text) => {
-        expect(isWritingContinuationPrompt(text)).toBe(false);
-    });
-    it.each(["换个话题，写一封工作邮件", "new topic: write a caption", "帮我写一篇文章", "draft an email"])("recognizes a new writing task without inheriting old material: %s", (text) => {
-        expect(isWritingRequestPrompt(text)).toBe(true); expect(isWritingContinuationPrompt(text)).toBe(false);
     });
 });
 

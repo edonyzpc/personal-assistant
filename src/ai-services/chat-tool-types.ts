@@ -63,6 +63,7 @@ export interface ChatToolInputSchemaProperty {
     type?: "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
     description?: string;
     enum?: string[];
+    pattern?: string;
     minimum?: number;
     maximum?: number;
     minLength?: number;
@@ -143,6 +144,8 @@ export interface CreateImageToolInput {
     prompt: string;
     operation: "generate" | "reference" | "edit";
     count: number;
+    /** Agent semantic plan total; Host freezes it and enforces actual configured limits. */
+    totalCount?: number;
     /** One-based selector only for clearly separate image requests in the same user message. */
     subrequestIndex?: number;
     /** Stable opaque refs from this request's authorized images or conversation versions. */
@@ -213,6 +216,8 @@ export type PrepareAndValidateResult =
 
 export interface SearchMemoryInput {
     query: string;
+    /** Omitted lets the auxiliary rewriter decide; `none` is an explicit main-Agent choice. */
+    temporal?: import("./query-rewriter").QueryTemporalIntent;
 }
 
 export type CurrentNoteContextMode = "selection-or-nearby" | "outline" | "metadata" | "full";

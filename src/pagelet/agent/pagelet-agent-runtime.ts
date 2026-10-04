@@ -252,8 +252,8 @@ async function runPageletAgent(
         finalizationReserveMs: PAGELET_DEEP_DISCOVER_FINALIZATION_RESERVE_MS,
         recordDiagnostic: retrievalRecorder,
         now,
-        executeStandard: (query, context, control) => dependencies.executeMemorySearch(
-            { query },
+        executeStandard: (input, context, control) => dependencies.executeMemorySearch(
+            input,
             context,
             { ...control, providerRequestScope, memoryPreparationOwnerSignal },
         ),
@@ -847,7 +847,7 @@ function createPageletRegistry(
     const pathFilter = { isPathAllowed: dependencies.isPathAllowed };
     registry.registerMany(createCoreToolCapabilities([
         createSearchMemoryTool((input, context) => recovery.executeMemorySearch(
-            input.query,
+            input,
             context,
         )),
         createAnchorBoundCurrentNoteTool(request.anchor),

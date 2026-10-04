@@ -1,5 +1,6 @@
 import { cloneImageRef, type ImageRef } from './image-types';
 import { cloneInputLineage, type InputLineage } from '../ai-services/input-lineage';
+import type { PaAgentToolExecutionFacts } from '../ai-services/pa-agent-types';
 
 export type ImageGenerationState = 'prepared' | 'not_submitted' | 'submitting' | 'submission_unknown'
     | 'running' | 'saving' | 'completed' | 'partial' | 'failed' | 'stopped' | 'expired';
@@ -44,6 +45,7 @@ export interface ImageGenerationTask {
         operation: 'generate' | 'reference' | 'edit';
         model: string;
         count: number;
+        totalCount?: number;
         size?: string;
         inputRefs: ImageRef[];
         parentVersionId?: string;
@@ -69,6 +71,48 @@ export interface ImageGenerationTask {
     inputWhiteBackgroundApplied?: boolean;
     recoveryReason?: string;
     outputs: ImageGenerationOutput[];
+}
+
+const IMAGE_PREACCEPT_ACTIONS = {
+    correct_input: ['correct_input'],
+    needs_user: ['needs_user'],
+    stale: ['none'],
+} as const;
+
+export const IMAGE_PREACCEPT_MESSAGES = {
+    invalid_request: 'The structured image request is invalid. Correct it; no image task was accepted.',
+    invalid_inputs: 'The selected image operation and references do not match. Correct the structured request; no image task was accepted.',
+    count_exceeds_provider_limit: 'Wan supports up to 4 images in one request. Ask the user to choose 1–4 images.',
+    plan_conflict: 'The structured image counts conflict with the frozen plan or actual options. Correct or clarify the plan; no new image task was accepted.',
+    source_changed: 'The image request source is no longer current. Start from the current source; no new image task was accepted.',
+    connection_unavailable: 'Image generation needs a compatible Wan connection in Settings. No image task was accepted.',
+    cancelled: 'Image preparation was declined or cancelled. No image task was accepted.',
+    preparation_failed: 'Image description preparation or admission failed. No image task was accepted; ask the user before continuing. Description model costs may already have been used.',
+    operation_unresolved: 'This image part has not started. An earlier part of the original operation is unresolved. Verify that original part before continuing; do not start a replacement operation.',
+} as const;
+export const IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE = 'Image task acceptance could not be confirmed. Verify the original operation if available; otherwise explain the verification limit. Do not resubmit.';
+
+/** The same Host operation identity is used for dispatch and owner facts. */
+export function imageSubrequestOperationId(operationId: string, index = 1): string {
+    return index === 1 ? operationId : `${operationId}-sub${index}`;
+}
+
+/** A closed pre-acceptance fact; the durable image task is created only after this point. */
+export class ImagePreacceptError extends Error {
+    readonly cause?: unknown;
+    constructor(readonly code: keyof typeof IMAGE_PREACCEPT_MESSAGES,
+        readonly action: keyof typeof IMAGE_PREACCEPT_ACTIONS = 'correct_input', options?: { cause: unknown }) {
+        super(`Image preacceptance: ${code}.`);
+        this.cause = options?.cause;
+        this.name = 'ImagePreacceptError';
+    }
+
+    get facts(): PaAgentToolExecutionFacts {
+        return {
+            executionState: 'not_started',
+            recovery: { code: `image_${this.code}`, allowedActions: [...IMAGE_PREACCEPT_ACTIONS[this.action]] },
+        };
+    }
 }
 
 export interface GeneratedImageVersion {
@@ -204,6 +248,7 @@ export function cloneImageGenerationTask(value: unknown): ImageGenerationTask {
             userPrompt: prompt(request.userPrompt), submittedPrompt: prompt(request.submittedPrompt),
             operation: request.operation as ImageGenerationTask['request']['operation'],
             model: text(request.model, 128), count: integer(request.count, 1, 16),
+            ...(request.totalCount !== undefined ? { totalCount: integer(request.totalCount, 1, 4) } : {}),
             inputRefs: refs(request.inputRefs),
         },
         connection: {

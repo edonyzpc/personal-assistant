@@ -507,7 +507,8 @@ describe("Ghost Host action context", () => {
         const denied = await initialChatUpdateFixture(false);
         expect(denied.result.ok).toBe(false);
         expect(denied.f.readBinary).not.toHaveBeenCalled();
-        expect(denied.result.error).toContain("Check its publishing card before retrying");
+        expect(denied.result.error).toContain("result is unknown");
+        expect(denied.result.error).toContain("Do not retry or claim publication");
     });
 
     it("keeps an explicit historical local image admitted and revision-tracked for an initial Chat restore", async () => {

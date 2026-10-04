@@ -102,9 +102,9 @@ import {
     type WritingRecoverySourceReceipt,
 } from './chat/writing-recovery-sources';
 import type { WritingSaveAction } from './chat/writing-save-action';
-import { WritingStyleUnavailableError, inferWritingScene, type WritingStyleService } from './chat/writing-style-service';
+import { WritingStyleUnavailableError, type WritingStyleService } from './chat/writing-style-service';
 import { hashWritingText, type WritingScene } from './chat/writing-types';
-import type { ChatTurnMemoryMetadata, ChatWritingRecovery, ChatWritingStylePreparation, ChatWritingStyleResult } from './ai-services/chat-types';
+import type { ChatTurnMemoryMetadata, ChatWritingRecovery } from './ai-services/chat-types';
 import type { MessageImage } from './chat/image-types';
 import { collectChatMemorySemanticSources, isChatMemoryRecordAdmissible, projectChatMemorySemanticText } from './pa/chat-memory-admission';
 import { CHAT_MEMORY_SEMANTIC_RULE, chatMemorySemanticSourceFingerprint,
@@ -1133,11 +1133,6 @@ export class PluginManager extends Plugin {
                 });
                 return () => { active = false; settings(); repository?.(); };
             },
-            prepareWritingStyle: (prompt, parentScene, budget) => this.prepareWritingStyle(
-                prompt,
-                parentScene,
-                budget,
-            ),
             prepareWritingStyleForScene: (scene, budget) => this.prepareWritingStyleForScene(scene, budget),
             createMemoryStatus: () => ({
                 getMaintenancePlan: () => this.hasStructuralAIConfiguration("memory")
@@ -5666,13 +5661,8 @@ export class PluginManager extends Plugin {
         });
     }
 
-    private async prepareWritingStyle(prompt: string, parentScene: WritingScene | undefined,
-        budget: Parameters<ChatWritingStylePreparation>[0]): Promise<ChatWritingStyleResult> {
-        return this.prepareWritingStyleForScene(inferWritingScene(prompt, parentScene), budget);
-    }
-
     private async prepareWritingStyleForScene(scene: Parameters<WritingStyleService['prepare']>[0],
-        budget: Parameters<WritingStyleService['prepare']>[1]): Promise<ChatWritingStyleResult> {
+        budget: Parameters<WritingStyleService['prepare']>[1]) {
         if (this.deviceMemoryCacheRefreshPromise) await this.deviceMemoryCacheRefreshPromise;
         const service = this.getWritingStyleService();
         if (!service) return { context: '', revisionIds: [], isCurrent: () => true };

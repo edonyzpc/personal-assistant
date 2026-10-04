@@ -538,6 +538,9 @@ describe("Phase 1 search assembly", () => {
         response: string;
         readLatest: (path: string) => Promise<LatestMemorySourceMaterial | null>;
         chatModelName?: string;
+        query?: string;
+        policyModelName?: string;
+        rewriteResponse?: string;
         omitLatestSourceSeam?: boolean;
         getEvidenceEpoch?: () => string;
         onRerankInvoke?: () => void;
@@ -597,11 +600,14 @@ describe("Phase 1 search assembly", () => {
                 await rerankRequestOptions?.prepareProviderRequest?.();
                 physicalRerankBodies.push(body);
             }
-            return {
-                content: options.invokeResponse
+            const messageText = (input as { toChatMessages?: () => Array<{ content: unknown }> })
+                .toChatMessages?.().map(message => String(message.content)).join("\n") ?? String(input);
+            const content = messageText.includes("ranking")
+                ? (options.invokeResponse
                     ? await options.invokeResponse(config?.signal)
-                    : options.response,
-            };
+                    : options.response)
+                : options.rewriteResponse ?? options.response;
+            return { content };
         });
         const llm = RunnableLambda.from(invoke);
         const createChatModel = jest.fn(async (_temperature?: number, modelOptions?: unknown) => {
@@ -613,12 +619,21 @@ describe("Phase 1 search assembly", () => {
         let generationReads = 0;
         const host = {
             settings: {
-                policyModelName: "",
+                policyModelName: options.policyModelName ?? "",
                 chatModelName: options.chatModelName ?? "chat-model",
                 retrievalOptimizationFlags: { strictReranker: options.strict },
             },
             memorySearch: {
-                searchHybrid: jest.fn(async () => rawResults),
+                searchHybrid: jest.fn(async (_query: string, options?: {
+                    queryEmbeddingOut?: { value?: number[]; profileSignature?: string; sourceEpoch?: string };
+                }) => {
+                    if (options?.queryEmbeddingOut) {
+                        options.queryEmbeddingOut.value = [0.25];
+                        options.queryEmbeddingOut.profileSignature = "test-profile";
+                        options.queryEmbeddingOut.sourceEpoch = "source-epoch-1";
+                    }
+                    return rawResults;
+                }),
                 getChunksByPath: jest.fn(async () => []),
                 getPathEvidenceGenerations: jest.fn(async (paths: string[]) => {
                     generationReads += 1;
@@ -681,7 +696,7 @@ describe("Phase 1 search assembly", () => {
                 invocation?: ReturnType<typeof createStandardMemorySearchInvocation>,
             ): Promise<import("../src/ai-services/chat-types").MemorySearchResult>;
         }).searchVss(
-            "one",
+            options.query ?? "one",
             undefined,
             invocation,
         );
@@ -1174,6 +1189,58 @@ describe("Phase 1 search assembly", () => {
             temporalFilterCapture.temporalFilter?.since,
         ));
     });
+
+    it("lets an explicit main-Agent none override an auxiliary recent rewrite", async () => {
+        const temporalFilterCapture: MemorySearchTemporalFilterCapture = {};
+        const search = await runSearch({
+            strict: true,
+            query: "请不要把这个项目记录查询限定在最近三十天",
+            policyModelName: "policy-model",
+            rewriteResponse: '{"keywords":"project records","temporal":"recent_30d"}',
+            response: '{"verdict":"relevant","ranking":[0],"needsMoreEvidence":false}',
+            temporalIntent: "none",
+            temporalFilterCapture,
+            readLatest: async () => latestSource(
+                "notes/one.md",
+                "# One\n\nUseful current evidence.",
+                Date.now(),
+            ),
+        });
+
+        expect(search.createChatModel).toHaveBeenCalledTimes(2);
+        expect(temporalFilterCapture.temporalFilter).toBeNull();
+        expect(search.result.documents.map(document => document.source.path))
+            .toEqual(["notes/one.md"]);
+    });
+
+    it("keeps an explicit main-Agent range even when the auxiliary rewrite says none", async () => {
+        const temporalFilterCapture: MemorySearchTemporalFilterCapture = {};
+        const today = new Date();
+        const isoDate = today.toISOString().slice(0, 10);
+        const search = await runSearch({
+            strict: true,
+            query: "请查找这个项目在指定日期范围内的完整记录",
+            policyModelName: "policy-model",
+            rewriteResponse: '{"keywords":"project records","temporal":"none"}',
+            response: '{"verdict":"relevant","ranking":[0,1],"needsMoreEvidence":false}',
+            temporalIntent: `range:${isoDate}..${isoDate}`,
+            temporalFilterCapture,
+            candidateMarkdownByPath: {
+                "notes/old.md": "# Old",
+                "notes/current.md": "# Current",
+            },
+            readLatest: async path => latestSource(
+                path,
+                path === "notes/current.md" ? "# Current" : "# Old",
+                path === "notes/current.md" ? Date.now() : Date.now() - 90 * 24 * 60 * 60 * 1000,
+            ),
+        });
+
+        expect(temporalFilterCapture.temporalFilter).toMatchObject({ since: expect.any(Number) });
+        expect(search.result.documents.map(document => document.source.path))
+            .toEqual(["notes/current.md"]);
+    });
+
 
     it("fails closed when a result with documents has no Host-only source handles", async () => {
         const search = await runSearch({

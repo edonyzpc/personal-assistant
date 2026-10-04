@@ -466,7 +466,7 @@ export class DeepDiscoverPluginIntegration {
                 const signal = context.signal ?? new AbortController().signal;
                 return runWithMemorySearchInvocation(
                     createStandardMemorySearchInvocation({
-                        temporalIntent: "none",
+                        ...(input.temporal !== undefined ? { temporalIntent: input.temporal } : {}),
                         captureRecoverySeed:
                             resolveB125RetrievalOptimizationFlags(
                                 runtimeHost.getRetrievalOptimizationFlags?.()

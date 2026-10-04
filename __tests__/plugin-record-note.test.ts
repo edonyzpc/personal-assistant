@@ -4320,13 +4320,14 @@ describe('Memory governance plugin bootstrap', () => {
             const { plugin, repository, service, version } = await setup();
             expect(plugin.getMemoryGovernanceUiMode()).toBe('effect_based');
             const before = await repository.initialize();
-            expect((await plugin.prepareWritingStyle('帮我写一段旅行朋友圈文案', undefined, budget)).context).toBe('');
+            const host = plugin.createChatHost();
+            expect((await host.prepareWritingStyleForScene(undefined, budget)).context).toBe('');
             expect((await repository.initialize()).revisions).toEqual(before.revisions);
             const receipt = await service.remember(version.id, scene, 'explicit-style-action');
             await plugin.refreshDeviceMemoryCaches();
-            const selected = await plugin.prepareWritingStyle('帮我写一段旅行朋友圈文案', undefined, budget);
+            const selected = await host.prepareWritingStyleForScene(scene, budget);
             expect(selected.revisionIds).toEqual([receipt.revisionId]); expect(selected.context).toContain(version.text);
-            expect((await plugin.prepareWritingStyle('帮我写工作邮件给同事', undefined, budget)).context).toBe('');
+            expect((await host.prepareWritingStyleForScene({ ...scene, domain: 'work' }, budget)).context).toBe('');
             const state = await repository.initialize();
             expect(state.revisions.filter((revision) => revision.writingStyle)).toHaveLength(1);
             const entry = plugin.getGovernedMemoryViewSnapshot().records.find((item: { claimId: string }) => item.claimId === receipt.claimId);
@@ -4392,7 +4393,7 @@ describe('Memory governance plugin bootstrap', () => {
             await expect(plugin.rememberWritingStyle(version.id, scene)).rejects.toMatchObject({
                 name: 'WritingStyleUnavailableError', code: 'legacy_memory',
             });
-            expect((await plugin.prepareWritingStyle('帮我写一段旅行朋友圈文案', undefined, budget)).context).toBe('');
+            expect((await plugin.createChatHost().prepareWritingStyleForScene(undefined, budget)).context).toBe('');
             expect(await repository.initialize()).toEqual(before);
         });
     });

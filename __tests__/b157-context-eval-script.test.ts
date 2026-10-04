@@ -1325,9 +1325,10 @@ describe('B157 independent context harness contracts (offline)', () => {
 
     it('isolates native history and preparation ports, creates the owned root, and awaits disposal before database deletion', async () => {
         const setup = offlineServicePlugin(() => { throw new Error('NO_MODEL_CALL_ALLOWED'); });
+        const privateStylePreparation = jest.fn(() => { throw new Error('PRIVATE_STYLE_MUST_NOT_BE_READ'); });
         const originalHost: any = { settings: { ...setup.plugin.settings, operationsAgentEnabled: false }, writingOutputProtocol: 'native',
             get chatHistoryManager() { throw new Error('ORIGINAL_HISTORY_MUST_NOT_BE_READ'); },
-            prepareWritingStyle: () => { throw new Error('PRIVATE_STYLE_MUST_NOT_BE_READ'); },
+            prepareWritingStyleForScene: privateStylePreparation,
             memoryStatus: { prepareFromCommand: () => { throw new Error('ORIGINAL_MEMORY_MUST_NOT_RUN'); } } };
         const originalFactory = () => originalHost; setup.plugin.createChatHost = originalFactory;
         const priorIndexedDb = globalThis.indexedDB;
@@ -1354,7 +1355,10 @@ describe('B157 independent context harness contracts (offline)', () => {
             expect(host.chatHistoryManager.isAvailable()).toBe(true);
             expect(host.isOperationsAgentEnabled).toBe(true);
             expect(setup.plugin.settings.operationsAgentEnabled).toBe(false);
-            expect(await host.prepareWritingStyle()).toMatchObject({ context: '', revisionIds: [] });
+            expect(await host.prepareWritingStyleForScene({ writingTask: 'copywriting', purpose: 'social_share',
+                audience: 'friends', domain: 'travel' }, { remainingTextChars: 6000, remainingMemoryChars: 6000 }))
+                .toMatchObject({ context: '', revisionIds: [] });
+            expect(privateStylePreparation).not.toHaveBeenCalled();
             await expect(host.memoryStatus.prepareFromCommand()).rejects.toThrow('OUTSIDE_FIXTURE');
             await expect(host.prepareWritingRecoverySources()).rejects.toThrow('OUTSIDE_FIXTURE');
             await handle.nativeAdapters.prepareSyntheticNotes();

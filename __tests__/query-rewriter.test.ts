@@ -106,10 +106,10 @@ describe("rewriteQuery", () => {
 });
 
 describe("rewriteQueryForSearch", () => {
-    it("returns temporal intent for concise recent queries without invoking the model", async () => {
+    it("does not word-scan a concise query for temporal intent", async () => {
         const invoke = makeInvoker('{"keywords":"ignored","temporal":"none"}');
         const result = await rewriteQueryForSearch("latest notes", invoke);
-        expect(result).toEqual({ keywords: null, temporal: "recent_30d" });
+        expect(result).toEqual({ keywords: null, temporal: "none" });
         expect(invoke).not.toHaveBeenCalled();
     });
 
@@ -188,6 +188,10 @@ describe("parseRewrittenQuery", () => {
             keywords: "project notes",
             temporal: "range:2025-01-01..2025-03-31",
         });
+        expect(parseRewrittenQuery('{"keywords":"leap day","temporal":"range:2024-02-29..2024-02-29"}')).toEqual({
+            keywords: "leap day",
+            temporal: "range:2024-02-29..2024-02-29",
+        });
     });
 
     it("rejects range: temporal with invalid dates", () => {
@@ -195,6 +199,12 @@ describe("parseRewrittenQuery", () => {
             keywords: "notes",
             temporal: "none",
         });
+        for (const temporal of ["range:2026-02-31..2026-03-01", "range:2023-02-29..2023-03-01"]) {
+            expect(parseRewrittenQuery(`{"keywords":"notes","temporal":"${temporal}"}`)).toEqual({
+                keywords: "notes",
+                temporal: "none",
+            });
+        }
     });
 
     it("rejects range: temporal with missing separator", () => {

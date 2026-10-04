@@ -115,7 +115,8 @@ export class WritingContextRun {
         } catch { return false; }
     }
 
-    async prepare(selection: WritingContextSelection, budget: Parameters<ChatWritingStylePreparation>[0]): Promise<PreparedWritingContext> {
+    async prepare(selection: WritingContextSelection, budget: Parameters<ChatWritingStylePreparation>[0],
+        refreshBudget?: () => Pick<Parameters<ChatWritingStylePreparation>[0], 'remainingTextChars' | 'remainingMemoryChars'>): Promise<PreparedWritingContext> {
         this.assertCurrent(budget.signal);
         const preparation = ++this.preparation;
         const parent = selection.parentHandle ? this.candidates.get(selection.parentHandle) : undefined;
@@ -139,14 +140,20 @@ export class WritingContextRun {
         if (!Number.isFinite(requestBudget.remainingTextChars) || requestBudget.remainingTextChars < baseChars) {
             throw new Error('Writing context exceeds available budget');
         }
-        const style = await this.host.styles.prepare(scene, { ...requestBudget,
+        let style = await this.host.styles.prepare(scene, { ...requestBudget,
             remainingTextChars: requestBudget.remainingTextChars - baseChars, currentInstructionConflicts: conflicts });
         this.assertCurrent(requestBudget.signal);
         if (parent) await this.assertParentCurrent(parent, requestBudget.signal);
+        // Background Memory may grow during asynchronous style preparation.
+        // Omit an optional style before publishing its observation and receipt.
+        const currentBudget = refreshBudget?.() ?? requestBudget;
+        const styleLimit = Math.min(requestBudget.remainingMemoryChars, currentBudget.remainingMemoryChars,
+            requestBudget.remainingTextChars - baseChars, currentBudget.remainingTextChars - baseChars);
+        if (style.context.length > styleLimit) style = { context: '', revisionIds: [], isCurrent: () => true };
         const value: PreparedWritingContext = {
             ...base, styleContext: style.context, styleRevisionIds: [...style.revisionIds],
         };
-        if (JSON.stringify(writingContextObservation(value)).length > requestBudget.remainingTextChars) {
+        if (JSON.stringify(writingContextObservation(value)).length > Math.min(requestBudget.remainingTextChars, currentBudget.remainingTextChars)) {
             throw new Error('Writing context exceeds available budget');
         }
         const receipt = { value, selectionIdentity: selectionIdentity({ parentHandle: selection.parentHandle,

@@ -9,6 +9,12 @@ import { cloneActionStates, markGhostStatusUnavailable, refreshGhostActionState,
 import { cloneInputLineage, completeInputLineage, generationInputSnapshotInputLineage, resolveWritingVersionInputLineage,
     unionInputLineages, unknownInputLineage, type InputLineage } from '../ai-services/input-lineage';
 import { PaAgentContextOverflowError } from '../ai-services/context';
+import {
+    paAgentCreateImageCommandDefinition,
+    paAgentGhostCommandDefinition,
+    paAgentWritingCommandDefinition,
+    type PaAgentCommandInvocation,
+} from '../ai-services/pa-agent-command';
 import { isTaskSourceDecisionBoundary, type TaskSourceDecisionKind } from '../ai-services/task-source-history';
 import type {
     ChatRuntimeWarning,
@@ -78,17 +84,15 @@ import {
     type ComposerSnapshot,
 } from './composer-draft';
 import { cloneImageRef, cloneMessageImages, type ImageRef, type MessageImage } from './image-types';
-import type { ImageGenerationTask } from './image-generation-types';
+import { ImagePreacceptError, imageSubrequestOperationId, type ImageGenerationTask } from './image-generation-types';
 import type { CreateImageHostBinding, CreateImageHostRuntime, CreateImageToolInput } from '../ai-services/chat-tool-types';
 import { ImageAttachmentDetailModal, renderComposerImageAttachments, renderImageAttachments } from './image-attachment-view';
 import { ImageSourcePickerModal, VaultImagePickerModal } from './image-management-modal';
 import { GeneratedImageNotePickerModal, saveGeneratedImageToNote } from './image-save-to-note';
 import { classifyChatUserProvenanceKind } from '../pa/chat-memory-admission';
 import { mergeChatImageMaterials } from '../ai-services/chat-image-identity';
-import { isNewWritingTopicPrompt, isWritingContinuationPrompt } from '../ai-services/writing-output';
 import { WritingRecoveryModal, WritingVersionModal, WritingSaveRecoveryListModal, newWritingActionId, type WritingModalHost } from './writing-modal';
 import { mergeWritingImages, type WritingVersion } from './writing-types';
-import { inferWritingScene } from './writing-style-service';
 import { ChatImageRequestError } from '../ai-services/image-capability';
 import {
     cloneGenerationInputSnapshot,
@@ -150,28 +154,6 @@ function parseWritingCommand(value: string): string | null {
 
 function imageRefToken(ref: ImageRef): string {
     return `${ref.assetId}:${ref.contentHash}`;
-}
-
-function explicitRequestedImageCount(prompt: string): number | undefined {
-    const separateOnes = [...prompt.matchAll(/(?:一|1|one)\s*(?:张|幅|个(?:图|图片|照片)|images?|pictures?|photos?)/gi)].length;
-    if (separateOnes > 1) return Math.min(separateOnes, 5);
-    const match = /([0-9]+|[一二两三四五六七八九十]+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:张|幅|个(?:图|图片|照片)|images?|pictures?|photos?)/i.exec(prompt);
-    if (!match) return undefined;
-    const value = match[1].toLowerCase();
-    if (/^\d+$/.test(value)) return Math.min(Number(value), 5);
-    const known: Record<string, number> = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5,
-        one: 1, two: 2, three: 3, four: 4, five: 5 };
-    return known[value] ?? 5;
-}
-
-function requestedImageCount(prompt: string): number {
-    return explicitRequestedImageCount(prompt) ?? 1;
-}
-
-function allowsSeparateImageRequests(prompt: string): boolean {
-    return requestedImageCount(prompt) > 1
-        && (/(?:分别|第一张|第二张|first\s+(?:image|picture).*second|one\s+(?:image|picture).*another)/i.test(prompt)
-            || [...prompt.matchAll(/(?:一|1|one)\s*(?:张|幅|个(?:图|图片|照片)|images?|pictures?|photos?)/gi)].length > 1);
 }
 
 class GeneratedImagePreviewModal extends Modal {
@@ -426,7 +408,6 @@ export class LLMView extends ItemView {
         this.composerTextArea.value = text;
         this.composerDraft.touchText();
         this.composerDraft.setImageIntent({
-            operation: 'generate',
             referenceImageRefs: [],
             ...(source ? { textSource: source } : {}),
             ...(this.host.getImageGenerationOptions ? { generationOptions: this.host.getImageGenerationOptions() } : {}),
@@ -1159,7 +1140,6 @@ export class LLMView extends ItemView {
                     if (action === 'CreateImage') {
                         const selectedSource = captureImageTextSource('selection');
                         composerDraft.setImageIntent({
-                            operation: 'generate',
                             referenceImageRefs: [],
                             ...(selectedSource ? { textSource: selectedSource } : {}),
                             ...(this.host.getImageGenerationOptions ? {
@@ -1876,7 +1856,22 @@ export class LLMView extends ItemView {
         const imageTaskCardTargets = new Map<string, ImageTaskCardTarget>();
         const imageTaskFallbackTarget: ImageTaskCardTarget = { parent: this.responseDiv };
         const imageCardCleanups = new Map<string, Array<() => void>>();
-        const imageOperationByTurn = new Map<number, { stableMessageId: string; operationId: string; intent?: ComposerImageIntent; taskIds?: string[] }>();
+        type ImagePlan = { total: number; frozen: boolean };
+        type ImageOperationRecord = {
+            stableMessageId: string;
+            operationId: string;
+            intent?: ComposerImageIntent;
+            taskIds?: string[];
+            plan?: ImagePlan;
+            reservations?: Map<string, number>;
+            preparations?: Map<string, Promise<string>>;
+            submissionReceipts?: Map<string, {
+                promise: Promise<{ taskId: string }>;
+                count: number;
+                state: 'pending' | 'accepted' | 'unknown';
+            }>;
+        };
+        const imageOperationByTurn = new Map<number, ImageOperationRecord>();
         const ghostTargetsByTurn = new Map<number, string>();
         const ghostCardCleanups = new Set<() => void>();
         const ghostSessions = new Map<string, import('../ghost-publishing/controller').GhostPublishingSession>();
@@ -4691,6 +4686,7 @@ export class LLMView extends ItemView {
             };
         };
 
+        const rawPromptsByTurn = new WeakMap<UiTurn, string>();
         const finalizeSuccessfulTurn = async (
             turn: UiTurn,
             prompt: string,
@@ -4744,7 +4740,7 @@ export class LLMView extends ItemView {
 
             if (!isLiveTurn()) return false;
 
-            const userMessage: ChatMessage = { role: 'user', content: prompt,
+            const userMessage: ChatMessage = { role: 'user', content: rawPromptsByTurn.get(turn) ?? prompt,
                 inputLineage: completeInputLineage([{ kind: 'user-text',
                     messageId: turn.userProvenance?.messageId ?? turn.runSourceSelection?.userMessageId ?? String(turn.id) },
                 ...(turn.images ?? []).map(image => ({ kind: 'attachment' as const,
@@ -4814,7 +4810,7 @@ export class LLMView extends ItemView {
             if (!sawLegacyPartialFailure) this.result = sourceChanged ? '' : visibleContent;
             readConversationImageAnchor();
             let createdWritingVersion: WritingVersion | undefined;
-            const persisted = await this.conversationPersistence.persistFinalizedTurn(prompt, historyEntry,
+            const persisted = await this.conversationPersistence.persistFinalizedTurn(rawPromptsByTurn.get(turn) ?? prompt, historyEntry,
                 turn.writingArtifact && this.host.writingVersions ? async (context, isCurrent) => {
                     const artifact = turn.writingArtifact!;
                     if (artifact.resultFact && (artifact.resultFact.kind !== 'artifact_ready'
@@ -4826,7 +4822,7 @@ export class LLMView extends ItemView {
                         images: turn.writingMaterials ?? [], styleRevisionIds: artifact.styleRevisionIds,
                         ...(artifact.generationInput
                             ? { generationInput: cloneGenerationInputSnapshot(artifact.generationInput) } : {}),
-                        scene: artifact.writingContext ? artifact.writingContext.scene : inferWritingScene(prompt, turn.writingParent?.scene),
+                        scene: artifact.writingContext?.scene,
                         backgroundSourceRefs: writingBackgroundSourceRefs(
                             turn.canonicalLifecycle.hostSourceRecords ?? [], artifact.generationInput,
                         ),
@@ -4963,11 +4959,6 @@ export class LLMView extends ItemView {
                 showComposerHint(t('plugin.chat.action.conflict'));
                 return;
             }
-            if (retryImages === undefined && (commandPrompt !== null || currentDraft.imageIntent)
-                && requestedImageCount(prompt) > 4) {
-                showComposerHint(t('plugin.chat.createImage.countTooHigh'));
-                return;
-            }
             if (isGenerating()) return;
             if (retryImages === undefined ? !composerDraft.canSend(prompt) : !prompt.trim() && !retryImages.length) return;
             if ((retryImages === undefined ? composerDraft.snapshot(prompt).images.length : retryImages.length)
@@ -5039,13 +5030,6 @@ export class LLMView extends ItemView {
                     sourceUserPromptIsDefault = true;
                 }
             }
-            if (sourceBeforeTake && imageOptionsBeforeTake) {
-                const statedCount = explicitRequestedImageCount(sourceUserRequest);
-                if (statedCount !== undefined && statedCount !== imageOptionsBeforeTake.count) {
-                    showComposerHint(t('plugin.chat.createImage.countConflict'));
-                    return;
-                }
-            }
             const consumeRestoredRetry = retryTurnId !== undefined && restoredTerminalDraft?.turnId === retryTurnId
                 && composerDraft.isUnchanged(restoredTerminalDraft.snapshot) && textArea.value === restoredTerminalDraft.snapshot.text;
             const sentDraft: SentComposerDraft<MessageImage> | null = retryImages === undefined || consumeRestoredRetry ? composerDraft.take(prompt) : null;
@@ -5055,26 +5039,13 @@ export class LLMView extends ItemView {
             const retryImageOperation = retryTurnId === undefined ? undefined : imageOperationByTurn.get(retryTurnId);
             const draftImageIntent = sentDraft?.snapshot.imageIntent ?? retryImageOperation?.intent;
             const explicitImageIntent: ComposerImageIntent | undefined = draftImageIntent ?? (commandPrompt !== null
-                ? { operation: turnImages.length ? 'reference' : 'generate', referenceImageRefs: turnImages.map(image => cloneImageRef(image.ref)) }
+                ? { referenceImageRefs: turnImages.map(image => cloneImageRef(image.ref)) }
                 : undefined);
             if (explicitImageIntent) clearSelectedWritingParent();
             if (sentDraft && commandPrompt !== null && !sentDraft.snapshot.imageIntent) {
                 sentDraft.snapshot.imageIntent = explicitImageIntent;
             }
             if (sentDraft && writingCommandPrompt !== null) sentDraft.snapshot.writingIntent = true;
-            if (retryImages === undefined && isNewWritingTopicPrompt(prompt)) {
-                selectedWritingVersion = undefined;
-                selectedWritingParentExplicit = false;
-            }
-            // Only the immediately preceding failed task supplies implicit
-            // material lineage. An unrelated history image is merely resolvable.
-            const previousTurn = timelineEntries.at(-1);
-            const previousAssistant = previousTurn?.kind === 'history' ? previousTurn.assistant : undefined;
-            const previousUser = previousTurn?.kind === 'history' ? previousTurn.user : undefined;
-            const failedWriting = previousAssistant?.role === 'assistant' && !previousAssistant.writingVersionId
-                ? previousAssistant.writingRecovery : undefined;
-            const continueFailedWriting = retryImages === undefined && !selectedWritingParentExplicit
-                && isWritingContinuationPrompt(prompt) && failedWriting;
             // Writing is an explicit composer action, including a selected version
             // or a retry of that action. Ordinary Chat never binds writing tools.
             const explicitWritingIntent = !explicitImageIntent && Boolean(sentDraft?.snapshot.writingIntent
@@ -5084,15 +5055,16 @@ export class LLMView extends ItemView {
             const writingRequest = this.host.writingVersions && explicitWritingIntent
                 ? { requestId: newWritingActionId() } : undefined;
             const writingParent = !writingRequest || nativeWriting ? undefined : retryImages !== undefined ? retryWritingParent
-                : !isNewWritingTopicPrompt(prompt) && (selectedWritingParentExplicit || isWritingContinuationPrompt(prompt))
-                    && (!continueFailedWriting || selectedWritingVersion?.id === failedWriting?.parentVersionId) ? selectedWritingVersion : undefined;
+                : selectedWritingParentExplicit ? selectedWritingVersion : undefined;
             const writingSelectedParent = nativeWriting
                 ? (retryImages !== undefined ? retryWritingParent
                     : selectedWritingParentExplicit ? selectedWritingVersion : undefined)
                 : undefined;
+            // Selecting a version is part of this composer action. Keep the
+            // candidate and the captured Retry parent, without binding later requests.
+            if (retryImages === undefined && explicitWritingIntent) selectedWritingParentExplicit = false;
             const writingMaterialContext = !writingRequest || nativeWriting ? undefined : retryImages !== undefined ? retryWritingMaterialContext
-                : continueFailedWriting ? { requestId: continueFailedWriting.requestId,
-                    associatedImages: cloneMessageImages(previousAssistant?.images ?? previousUser?.images ?? []) } : undefined;
+                : undefined;
             if (retryTurnId !== undefined) {
                 const retryEntry = timelineEntries.find((entry): entry is TerminalTurnEntry => entry.kind === 'terminal'
                     && entry.id === retryTurnId);
@@ -5148,6 +5120,7 @@ export class LLMView extends ItemView {
                 activityDetails: [],
                 canonicalLifecycle: createCanonicalLifecycleState(),
             };
+            rawPromptsByTurn.set(turn, rawPrompt);
             if (ghostCommand !== null) ghostTargetsByTurn.set(turn.id, ghostCapturedPath);
             if (retryImageOperation) turn.userProvenance!.messageId = retryImageOperation.stableMessageId;
             const stableMessageId = turn.userProvenance!.messageId;
@@ -5169,7 +5142,7 @@ export class LLMView extends ItemView {
                 ? unionInputLineages(...imageLineageSources)
                 : undefined;
             const persistedUserMessage: ChatMessage = {
-                role: 'user', content: prompt,
+                role: 'user', content: rawPrompt,
                 inputLineage: imageFirstRequestLineage ?? currentUserLineage,
                 runSourceSelection,
                 ...(turnImages.length ? { images: cloneMessageImages(turnImages) } : {}),
@@ -5178,18 +5151,22 @@ export class LLMView extends ItemView {
                         ? { parentVersionId: (writingSelectedParent ?? writingParent)!.id } : {}) } } : {}),
                 hostProvenance: turn.userProvenance!,
             };
-            await this.conversationPersistence.persistRunningTurn(prompt, stableMessageId, persistedUserMessage);
+            await this.conversationPersistence.persistRunningTurn(rawPrompt, stableMessageId, persistedUserMessage);
             const operationId = retryImageOperation?.operationId ?? `image-${stableMessageId}`;
-            imageOperationByTurn.set(turn.id, { stableMessageId, operationId, intent: explicitImageIntent });
+            const imageOperationRecord: ImageOperationRecord = retryImageOperation ?? {
+                stableMessageId, operationId,
+                ...(explicitImageIntent ? { intent: explicitImageIntent } : {}),
+                reservations: new Map<string, number>(),
+                preparations: new Map<string, Promise<string>>(),
+                submissionReceipts: new Map(),
+            };
+            imageOperationByTurn.set(turn.id, imageOperationRecord);
             let acceptedImageTaskId: string | undefined;
-            const separateImageRequests = Boolean(explicitImageIntent && allowsSeparateImageRequests(prompt));
-            const imageBudget = separateImageRequests
-                ? requestedImageCount(prompt)
-                : explicitImageIntent?.generationOptions
-                    && (explicitImageIntent.textSource || explicitImageIntent.promptOrigin)
-                    ? explicitImageIntent.generationOptions.count
-                    : requestedImageCount(prompt);
-            const acceptedImageSubrequests = new Set<number>();
+            const configuredImageTotal = explicitImageIntent?.generationOptions
+                && (explicitImageIntent.textSource || explicitImageIntent.promptOrigin
+                    || explicitImageIntent.promptLineage || explicitImageIntent.reusePreparedPrompt)
+                ? explicitImageIntent.generationOptions.count : undefined;
+            const acceptedImageCounts = new Map<string, number>();
             const operationsCardHandles: OperationsIntentCardHandle[] = [];
             let sawLegacyPartialFailure = false;
             const isUiTurnVisible = () => isCurrentSession()
@@ -5275,6 +5252,34 @@ export class LLMView extends ItemView {
                 const conversationIdForMemoryActions = this.conversationPersistence.activeConversationId
                     ?? await this.conversationPersistence.reserveConversationId(prompt);
                 imageTasksConversationId = conversationIdForMemoryActions;
+                const commandInvocation: PaAgentCommandInvocation | undefined = !conversationIdForMemoryActions
+                    ? undefined
+                    : ghostCommand !== null
+                        ? {
+                            definition: paAgentGhostCommandDefinition,
+                            conversationId: conversationIdForMemoryActions,
+                            stableMessageId,
+                            activation: { kind: 'typed-token', token: '@blog2ghost' },
+                        }
+                        : explicitImageIntent
+                            ? {
+                                definition: paAgentCreateImageCommandDefinition,
+                                conversationId: conversationIdForMemoryActions,
+                                stableMessageId,
+                                activation: commandPrompt !== null
+                                    ? { kind: 'typed-token', token: '@CreateImage' }
+                                    : { kind: 'composer-action', action: 'create-image' },
+                            }
+                            : explicitWritingIntent
+                                ? {
+                                    definition: paAgentWritingCommandDefinition,
+                                    conversationId: conversationIdForMemoryActions,
+                                    stableMessageId,
+                                    activation: writingCommandPrompt !== null
+                                        ? { kind: 'typed-token', token: '@Writing' }
+                                        : { kind: 'composer-action', action: 'writing' },
+                                }
+                                : undefined;
                 let writingContextHost: import('../ai-services/pa-agent-runtime').PaAgentRunOptions['writingContextHost'];
                 if (nativeWriting) {
                     const versions = this.host.writingVersions!;
@@ -5342,16 +5347,19 @@ export class LLMView extends ItemView {
                             ghostCardCleanups.add(() => { dispose(); container.remove(); });
                         },
                     }) : undefined;
-                if (separateImageRequests) {
-                    for (let index = 1; index <= imageBudget; index++) {
-                        const requestId = index === 1 ? operationId : `${operationId}-sub${index}`;
-                        if (priorImageRequests.has(requestId)) acceptedImageSubrequests.add(index);
-                    }
+                const reservedImageRequests = imageOperationRecord.reservations ??= new Map<string, number>();
+                const preparedImagePromises = imageOperationRecord.preparations ??= new Map<string, Promise<string>>();
+                const imageSubmissionReceipts = imageOperationRecord.submissionReceipts ??= new Map();
+                for (const task of priorImageRequests.values()) {
+                    reservedImageRequests.set(task.operationId, task.request.count);
+                    acceptedImageCounts.set(task.operationId, task.request.count);
+                    imageOperationRecord.plan ??= { total: task.request.totalCount ?? task.request.count, frozen: true };
+                    imageSubmissionReceipts.set(task.operationId, { promise: Promise.resolve({ taskId: task.taskId }),
+                        count: task.request.count, state: 'accepted' });
                 }
-                let usedImageBudget = [...priorImageRequests.values()].reduce((sum, task) => sum + task.request.count, 0);
-                const reservedImageRequests = new Map<string, number>();
-                const preparedImagePromises = new Map<string, Promise<string>>();
-                const imageSubmissionReceipts = new Map<string, Promise<{ taskId: string }>>();
+                for (const [id, receipt] of imageSubmissionReceipts) {
+                    if (receipt.state === 'accepted') acceptedImageCounts.set(id, receipt.count);
+                }
                 const createImage: CreateImageHostBinding | undefined = imageGeneration && conversationIdForMemoryActions ? {
                     conversationId: conversationIdForMemoryActions,
                     stableMessageId,
@@ -5366,185 +5374,231 @@ export class LLMView extends ItemView {
                         agentRequestLineage?: InputLineage,
                         durableImageSourceCurrent?: () => boolean,
                         runtime?: CreateImageHostRuntime) => {
-                        if (!isLiveTurn() || !imageGeneration) throw new Error('Image request is no longer current.');
                         const index = input.subrequestIndex ?? 1;
-                        if (index > 1 && (!allowsSeparateImageRequests(prompt) || index > imageBudget)) {
-                            throw new Error('Separate image requests were not authorized by this message.');
-                        }
-                        if (separateImageRequests && input.count !== 1) {
-                            throw new Error('Each separately requested image needs its own one-image request.');
-                        }
-                        const requestOperationId = index === 1 ? operationId : `${operationId}-sub${index}`;
+                        const requestOperationId = imageSubrequestOperationId(operationId, index);
                         const priorTask = priorImageRequests.get(requestOperationId);
-                        if (priorTask) return { taskId: priorTask.taskId };
-                        const frozenImageConnection = this.host.captureImageGenerationConnection?.() ?? null;
-                        const imageConnectionIsCurrent = () => {
-                            const current = this.host.captureImageGenerationConnection?.() ?? null;
-                            return current === frozenImageConnection
-                                || (current !== null && frozenImageConnection !== null
-                                    && current.mode === frozenImageConnection.mode
-                                    && current.baseURL === frozenImageConnection.baseURL
-                                    && current.credentialSlot === frozenImageConnection.credentialSlot
-                                    && current.revision === frozenImageConnection.revision);
-                        };
-                        const textSource = explicitImageIntent?.textSource;
-                        const promptOrigin = explicitImageIntent?.promptOrigin;
-                        const options = explicitImageIntent?.generationOptions ?? (
-                            textSource || promptOrigin || explicitImageIntent?.promptLineage
-                                ? this.host.getImageGenerationOptions?.() : undefined
-                        );
-                        const count = separateImageRequests
-                            ? 1
-                            : options?.count ?? input.count;
-                        const model = options?.model ?? 'wan2.7-image';
-                        if (model !== 'wan2.7-image' && model !== 'wan2.7-image-pro') {
-                            throw new Error('image_generation:invalid_model');
+                        if (priorTask) {
+                            imageOperationRecord.plan ??= { total: priorTask.request.totalCount ?? priorTask.request.count, frozen: true };
+                            reservedImageRequests.set(requestOperationId, priorTask.request.count);
+                            acceptedImageCounts.set(requestOperationId, priorTask.request.count);
+                            return { taskId: priorTask.taskId };
                         }
+                        const retained = imageSubmissionReceipts.get(requestOperationId);
+                        if (retained) {
+                            const accepted = await retained.promise;
+                            acceptedImageTaskId = accepted.taskId;
+                            acceptedImageCounts.set(requestOperationId, retained.count);
+                            return accepted;
+                        }
+                        if ([...imageSubmissionReceipts.values()].some(receipt => receipt.state === 'unknown'
+                            || (retryImageOperation && receipt.state === 'pending'))) {
+                            throw new ImagePreacceptError('operation_unresolved', 'needs_user');
+                        }
+                        if (!isLiveTurn() || !imageGeneration) throw new ImagePreacceptError('source_changed', 'stale');
+                        const count = input.count;
+                        const total = input.totalCount ?? imageOperationRecord.plan?.total ?? configuredImageTotal ?? count;
                         if (!Number.isSafeInteger(count) || count < 1 || count > 4) {
-                            throw new Error(count > 4
-                                ? 'image_generation:count_exceeds_provider_limit' : 'image_generation:invalid_request');
+                            throw new ImagePreacceptError(count > 4 ? 'count_exceeds_provider_limit' : 'invalid_request');
                         }
-                        const requestLineage = agentRequestLineage ?? (
-                            textSource || promptOrigin || explicitImageIntent?.promptLineage
-                                ? imageFirstRequestLineage : undefined);
-                        if (!priorImageRequests.has(requestOperationId) && !reservedImageRequests.has(requestOperationId)) {
-                            if (usedImageBudget + count > imageBudget) {
-                                throw new Error('Image request exceeds the user\'s stated image count.');
-                            }
-                            reservedImageRequests.set(requestOperationId, count);
-                            usedImageBudget += count;
+                        if (!Number.isSafeInteger(total) || total < 1 || total > 4 || index > total
+                            || (configuredImageTotal !== undefined && total !== configuredImageTotal)) {
+                            throw new ImagePreacceptError('plan_conflict');
                         }
-                        if (explicitImageIntent && input.operation !== explicitImageIntent.operation) {
-                            throw new Error('Image operation does not match the selected action.');
+                        if (imageOperationRecord.plan && imageOperationRecord.plan.total !== total
+                            && reservedImageRequests.size > 0) throw new ImagePreacceptError('plan_conflict');
+                        const reservedCount = [...reservedImageRequests.values()].reduce((sum, value) => sum + value, 0);
+                        if (reservedCount + count > total) throw new ImagePreacceptError('plan_conflict');
+                        if (explicitImageIntent?.operation && input.operation !== explicitImageIntent.operation) {
+                            throw new ImagePreacceptError('invalid_inputs');
                         }
                         let requestedRefs = input.referenceImageRefs;
-                        if (chosenRefs.length && requestedRefs.length === 0) requestedRefs = chosenRefs;
-                        if (chosenRefs.length && (requestedRefs.length !== chosenRefs.length
-                            || requestedRefs.some((ref, index) => ref !== chosenRefs[index]))) {
-                            throw new Error('Image references do not match the selected action.');
+                        if (explicitImageIntent?.operation && chosenRefs.length && requestedRefs.length === 0) requestedRefs = chosenRefs;
+                        if (explicitImageIntent?.operation && chosenRefs.length && (requestedRefs.length !== chosenRefs.length
+                            || requestedRefs.some((ref, offset) => ref !== chosenRefs[offset]))) {
+                            throw new ImagePreacceptError('invalid_inputs');
                         }
                         const inputRefs = requestedRefs.map(token => {
                             const ref = authorizedImageRefs.get(token);
-                            if (!ref) throw new Error('Image reference is outside the current conversation.');
+                            if (!ref) throw new ImagePreacceptError('invalid_inputs');
                             return cloneImageRef(ref);
                         });
-                        const parentVersionId = explicitImageIntent?.parentVersionId ?? input.parentVersionId;
-                        if (explicitImageIntent?.parentVersionId && input.parentVersionId
-                            && input.parentVersionId !== explicitImageIntent.parentVersionId) {
-                            throw new Error('Image version does not match the selected action.');
-                        }
-                        if (parentVersionId) {
-                            const parent = await imageGeneration.getVersion(parentVersionId);
-                            const parentTask = parent ? await imageGeneration.get(parent.taskId) : null;
-                            if (!parent || parentTask?.conversationId !== conversationIdForMemoryActions
-                                || parentTask.deliverySuppressed
-                                || !inputRefs.some(ref => imageRefToken(ref) === imageRefToken(parent.assetRef))) {
-                                throw new Error('Image version is outside the current conversation.');
+                        if ((input.operation === 'generate' && inputRefs.length)
+                            || (input.operation !== 'generate' && !inputRefs.length)) throw new ImagePreacceptError('invalid_inputs');
+                        imageOperationRecord.plan = { total, frozen: true };
+                        reservedImageRequests.set(requestOperationId, count);
+                        let enteredService = false;
+                        try {
+                            const frozenImageConnection = this.host.captureImageGenerationConnection?.() ?? null;
+                            const imageConnectionIsCurrent = () => {
+                                const current = this.host.captureImageGenerationConnection?.() ?? null;
+                                return current === frozenImageConnection
+                                    || (current !== null && frozenImageConnection !== null
+                                        && current.mode === frozenImageConnection.mode
+                                        && current.baseURL === frozenImageConnection.baseURL
+                                        && current.credentialSlot === frozenImageConnection.credentialSlot
+                                        && current.revision === frozenImageConnection.revision);
+                            };
+                            const textSource = explicitImageIntent?.textSource;
+                            const promptOrigin = explicitImageIntent?.promptOrigin;
+                            const options = explicitImageIntent?.generationOptions ?? (
+                                textSource || promptOrigin || explicitImageIntent?.promptLineage
+                                    ? this.host.getImageGenerationOptions?.() : undefined
+                            );
+                            const model = options?.model ?? 'wan2.7-image';
+                            if (model !== 'wan2.7-image' && model !== 'wan2.7-image-pro') {
+                                throw new Error('image_generation:invalid_model');
                             }
-                        }
-                        if (!isLiveTurn()) throw new Error('Image request is no longer current.');
-                        const confirmFirstUse = textSource && this.host.confirmFeaturedImageTextPreparationFirstUse
-                            ? this.host.confirmFeaturedImageTextPreparationFirstUse
-                            : this.host.confirmImageGenerationFirstUse;
-                        if (confirmFirstUse && !await confirmFirstUse()) {
-                            throw new DOMException('Cancelled', 'AbortError');
-                        }
-                        if (!isLiveTurn()) throw new Error('Image request is no longer current.');
-                        const durableConversationId = await this.conversationPersistence.ensureConversationForImageRequest(prompt);
-                        if (durableConversationId !== conversationIdForMemoryActions || !isLiveTurn()) {
-                            throw new Error('Image conversation is unavailable.');
-                        }
-                        if (!imageConnectionIsCurrent()) {
-                            throw new Error('image_generation:connection_changed');
-                        }
-                        const sourceStillCurrent = () => isLiveTurn()
-                            && durableImageSourceCurrent?.() !== false
-                            && (!textSource || this.host.isImageTextSourceCurrent?.(textSource) !== false)
-                            && (!promptOrigin || this.host.isImagePromptOriginCurrent?.(promptOrigin) !== false)
-                            && isSourceCurrent?.() !== false;
-                        const acceptedSourceStillCurrent = textSource
-                            ? () => durableImageSourceCurrent?.() !== false
-                                && this.host.isImageTextSourceCurrent?.(textSource) !== false
-                            : promptOrigin
-                                ? () => durableImageSourceCurrent?.() !== false
-                                    && this.host.isImagePromptOriginCurrent?.(promptOrigin) !== false
-                                : () => durableImageSourceCurrent?.() !== false;
-                        if (!sourceStillCurrent()) throw new Error('Image prompt sources changed.');
-                        let submittedPrompt = input.prompt;
-                        if (textSource) {
-                            if (!this.host.prepareFeaturedImagePrompt) {
-                                throw new Error('Image prompt preparation is unavailable.');
+                            if (!Number.isSafeInteger(count) || count < 1 || count > 4) {
+                                throw new Error(count > 4
+                                    ? 'image_generation:count_exceeds_provider_limit' : 'image_generation:invalid_request');
                             }
-                            const preparation = preparedImagePromises.get(requestOperationId) ?? this.host.prepareFeaturedImagePrompt({
-                                sourceText: textSource.text,
-                                userRequest: sourceUserRequest,
-                                ...(separateImageRequests ? {
-                                    imageOrdinal: index, imageTotal: imageBudget,
-                                } : {}),
-                                signal: controller.signal,
-                                isSourceCurrent: () => isLiveTurn()
-                                    && this.host.isImageTextSourceCurrent?.(textSource) !== false,
-                            }, runtime);
-                            preparedImagePromises.set(requestOperationId, preparation);
-                            submittedPrompt = await preparation;
-                            if (!isLiveTurn() || !sourceStillCurrent()) {
-                                throw new Error('Image request is no longer current.');
+                            const requestLineage = agentRequestLineage ?? (
+                                textSource || promptOrigin || explicitImageIntent?.promptLineage
+                                    ? imageFirstRequestLineage : undefined);
+                            const parentVersionId = explicitImageIntent?.parentVersionId ?? input.parentVersionId;
+                            if (explicitImageIntent?.parentVersionId && input.parentVersionId
+                                && input.parentVersionId !== explicitImageIntent.parentVersionId) {
+                                throw new ImagePreacceptError('invalid_inputs');
+                            }
+                            if (parentVersionId) {
+                                const parent = await imageGeneration.getVersion(parentVersionId);
+                                const parentTask = parent ? await imageGeneration.get(parent.taskId) : null;
+                                if (!parent || parentTask?.conversationId !== conversationIdForMemoryActions
+                                    || parentTask.deliverySuppressed
+                                    || !inputRefs.some(ref => imageRefToken(ref) === imageRefToken(parent.assetRef))) {
+                                    throw new ImagePreacceptError(explicitImageIntent?.parentVersionId ? 'source_changed' : 'invalid_inputs',
+                                        explicitImageIntent?.parentVersionId ? 'stale' : 'correct_input');
+                                }
+                            }
+                            if (!isLiveTurn()) throw new Error('Image request is no longer current.');
+                            const confirmFirstUse = textSource && this.host.confirmFeaturedImageTextPreparationFirstUse
+                                ? this.host.confirmFeaturedImageTextPreparationFirstUse
+                                : this.host.confirmImageGenerationFirstUse;
+                            if (confirmFirstUse && !await confirmFirstUse()) {
+                                throw new DOMException('Cancelled', 'AbortError');
+                            }
+                            if (!isLiveTurn()) throw new Error('Image request is no longer current.');
+                            const durableConversationId = await this.conversationPersistence.ensureConversationForImageRequest(prompt);
+                            if (durableConversationId !== conversationIdForMemoryActions || !isLiveTurn()) {
+                                throw new Error('Image conversation is unavailable.');
                             }
                             if (!imageConnectionIsCurrent()) {
                                 throw new Error('image_generation:connection_changed');
                             }
-                        } else if (explicitImageIntent?.reusePreparedPrompt && explicitImageIntent.preparedPrompt) {
-                            submittedPrompt = explicitImageIntent.preparedPrompt;
+                            const sourceStillCurrent = () => isLiveTurn()
+                                && durableImageSourceCurrent?.() !== false
+                                && (!textSource || this.host.isImageTextSourceCurrent?.(textSource) !== false)
+                                && (!promptOrigin || this.host.isImagePromptOriginCurrent?.(promptOrigin) !== false)
+                                && isSourceCurrent?.() !== false;
+                            const acceptedSourceStillCurrent = textSource
+                                ? () => durableImageSourceCurrent?.() !== false
+                                    && this.host.isImageTextSourceCurrent?.(textSource) !== false
+                                : promptOrigin
+                                    ? () => durableImageSourceCurrent?.() !== false
+                                        && this.host.isImagePromptOriginCurrent?.(promptOrigin) !== false
+                                    : () => durableImageSourceCurrent?.() !== false;
+                            if (!sourceStillCurrent()) throw new Error('Image prompt sources changed.');
+                            let submittedPrompt = input.prompt;
+                            if (textSource) {
+                                if (!this.host.prepareFeaturedImagePrompt) {
+                                    throw new Error('Image prompt preparation is unavailable.');
+                                }
+                                const preparation = preparedImagePromises.get(requestOperationId) ?? this.host.prepareFeaturedImagePrompt({
+                                    sourceText: textSource.text,
+                                    userRequest: sourceUserRequest,
+                                    ...(count === 1 && total > 1 ? {
+                                        imageOrdinal: index, imageTotal: total,
+                                    } : {}),
+                                    signal: controller.signal,
+                                    isSourceCurrent: () => isLiveTurn()
+                                        && this.host.isImageTextSourceCurrent?.(textSource) !== false,
+                                }, runtime);
+                                preparedImagePromises.set(requestOperationId, preparation);
+                                submittedPrompt = await preparation;
+                                if (!isLiveTurn() || !sourceStillCurrent()) {
+                                    throw new Error('Image request is no longer current.');
+                                }
+                                if (!imageConnectionIsCurrent()) {
+                                    throw new Error('image_generation:connection_changed');
+                                }
+                            } else if (explicitImageIntent?.reusePreparedPrompt && explicitImageIntent.preparedPrompt) {
+                                submittedPrompt = explicitImageIntent.preparedPrompt;
+                            }
+                            enteredService = true;
+                            const acceptedReceipt = imageGeneration.submit({ conversationId: durableConversationId,
+                                stableMessageId, operationId: requestOperationId, userPrompt: prompt, submittedPrompt,
+                                operation: input.operation, count, totalCount: total, countExplicitlyAuthorized: true,
+                                inputRefs, ...(parentVersionId ? { parentVersionId } : {}),
+                                model,
+                                ...(textSource ? {
+                                    promptOrigin: {
+                                        kind: textSource.kind,
+                                        displayName: textSource.displayName,
+                                        path: textSource.path,
+                                        ...(textSource.selection ? { selection: { ...textSource.selection } } : {}),
+                                        inputLineage: textSource.inputLineage,
+                                        ...(sourceUserPromptIsDefault ? { defaultUserPrompt: true } : {}),
+                                    },
+                                    countExplicitlyAuthorized: true,
+                                    attachmentPathHint: options?.attachmentPathHint,
+                                } : explicitImageIntent?.promptOrigin || explicitImageIntent?.promptLineage ? {
+                                    promptOrigin: explicitImageIntent.promptOrigin,
+                                    countExplicitlyAuthorized: true,
+                                    attachmentPathHint: options?.attachmentPathHint,
+                                } : {}),
+                                inputLineage: requestLineage,
+                                ...(requestLineage || durableImageSourceCurrent
+                                    ? { isSourceCurrent: acceptedSourceStillCurrent } : {}) });
+                            const entry = { promise: acceptedReceipt, count, state: 'pending' as 'pending' | 'accepted' | 'unknown' };
+                            imageSubmissionReceipts.set(requestOperationId, entry);
+                            let accepted: { taskId: string };
+                            try {
+                                accepted = await acceptedReceipt;
+                                if (!accepted?.taskId) throw new Error('Image task receipt missing.');
+                                entry.state = 'accepted';
+                            } catch (error) {
+                                entry.state = 'unknown';
+                                if (error instanceof ImagePreacceptError && imageSubmissionReceipts.get(requestOperationId) === entry) {
+                                    imageSubmissionReceipts.delete(requestOperationId);
+                                }
+                                throw error;
+                            }
+                            acceptedImageTaskId = accepted.taskId;
+                            acceptedImageCounts.set(requestOperationId, count);
+                            const operation = imageOperationByTurn.get(turn.id);
+                            if (operation) operation.taskIds = [...new Set([...(operation.taskIds ?? []), accepted.taskId])];
+                            return accepted;
+                        } catch (error) {
+                            if (!enteredService || error instanceof ImagePreacceptError) {
+                                reservedImageRequests.delete(requestOperationId);
+                                preparedImagePromises.delete(requestOperationId);
+                                if (error instanceof ImagePreacceptError) throw error;
+                                if (error instanceof DOMException && error.name === 'AbortError') {
+                                    throw new ImagePreacceptError('cancelled', 'needs_user', { cause: error });
+                                }
+                                throw new ImagePreacceptError('preparation_failed', 'needs_user', { cause: error });
+                            }
+                            throw error;
                         }
-                        const acceptedReceipt = imageSubmissionReceipts.get(requestOperationId)
-                            ?? imageGeneration.submit({ conversationId: durableConversationId,
-                            stableMessageId, operationId: requestOperationId, userPrompt: prompt, submittedPrompt,
-                            operation: input.operation, count, inputRefs, ...(parentVersionId ? { parentVersionId } : {}),
-                            model,
-                            ...(textSource ? {
-                                promptOrigin: {
-                                    kind: textSource.kind,
-                                    displayName: textSource.displayName,
-                                    path: textSource.path,
-                                    ...(textSource.selection ? { selection: { ...textSource.selection } } : {}),
-                                    inputLineage: textSource.inputLineage,
-                                    ...(sourceUserPromptIsDefault ? { defaultUserPrompt: true } : {}),
-                                },
-                                countExplicitlyAuthorized: true,
-                                attachmentPathHint: options?.attachmentPathHint,
-                            } : explicitImageIntent?.promptOrigin || explicitImageIntent?.promptLineage ? {
-                                promptOrigin: explicitImageIntent.promptOrigin,
-                                countExplicitlyAuthorized: true,
-                                attachmentPathHint: options?.attachmentPathHint,
-                            } : {}),
-                            inputLineage: requestLineage,
-                            ...(requestLineage || durableImageSourceCurrent
-                                ? { isSourceCurrent: acceptedSourceStillCurrent } : {}) });
-                        imageSubmissionReceipts.set(requestOperationId, acceptedReceipt);
-                        const accepted = await acceptedReceipt;
-                        acceptedImageTaskId = accepted.taskId;
-                        acceptedImageSubrequests.add(index);
-                        const operation = imageOperationByTurn.get(turn.id);
-                        if (operation) operation.taskIds = [...new Set([...(operation.taskIds ?? []), accepted.taskId])];
-                        return accepted;
                     },
                 } : undefined;
                 const imageInstructions = imageGeneration && conversationIdForMemoryActions
                     ? `\n\nImage creation capability: use create_image only when the user asks to create or edit an image. Available image ref tokens: ${[...authorizedImageRefs.keys()].join(', ') || 'none'}. Available generated versions: ${availableVersions.join(', ') || 'none'}. Refs identify only authorized current-user images and this conversation's saved generations. ${chatSupportsImages ? 'Only this request\'s attached image pixels were sent to the Chat model.' : 'The Chat model has not received image pixels. If the user asks what an attached image shows, explain that you cannot view it; do not guess its content.'} For edits, use the exact parent version when available. If the user discusses image ideas, asks only for a prompt, or asks for an image from a note without a selected source, do not call create_image; ask them to use the CreateImage source control.`
                     : '';
                 const selectedInstruction = explicitImageIntent
-                    ? `\n\n@CreateImage selected. Decide from the user's current request whether this is generation, or only image discussion/prompt writing; call create_image only for an actual generation or edit request. Operation ${explicitImageIntent.operation}, referenceImageRefs ${JSON.stringify(chosenRefs)}${explicitImageIntent.parentVersionId ? `, parentVersionId ${explicitImageIntent.parentVersionId}` : ''}.${explicitImageIntent.textSource ? ' A text source is bound host-side; do not read or widen the source. Call create_image once and the host will independently prepare the exact submitted description.' : ' If the request depends on note text but no text source is selected, ask the user to use the CreateImage source control instead of guessing a note.'}${separateImageRequests ? ` The user requested ${imageBudget} distinct images. Call create_image once per explicitly described image, count 1 each, with subrequestIndex 1 through ${imageBudget}; preserve each image's own description.` : ''} Keep the acknowledgement brief.`
+                    ? `\n\n@CreateImage selected. Interpret the current request; discussion or prompt writing may finish without generation. Choose operation and authorized references from the request.${explicitImageIntent.operation ? ` The actual selected action fixes operation ${explicitImageIntent.operation} and referenceImageRefs ${JSON.stringify(chosenRefs)}.` : ''}${explicitImageIntent.parentVersionId ? ` Fixed parentVersionId ${explicitImageIntent.parentVersionId}.` : ''}${explicitImageIntent.textSource ? ' The exact text source is bound host-side; the Host prepares the submitted description. Do not read or widen it.' : ' If generation needs note text without a selected source, ask for the CreateImage source control.'}${configuredImageTotal !== undefined ? ` The actual source options fix totalCount ${configuredImageTotal}; clarify conflicts before execution.` : ''} Default to one image; interpret explicit multi-image requests. For a shared description use count; for distinct descriptions use separate subrequestIndex with a consistent totalCount. Preserve each requested description and do not choose extra paid results. Keep the acknowledgement brief.`
                     : '';
                 if (explicitImageIntent && !createImage) throw new Error('Image creation is unavailable.');
                 const ghostInstructions = ghostPublishing
-                    ? '\n\n@blog2ghost is explicitly selected. Use prepare_ghost_post once for the requested note. If the user explicitly gives a path or note name, pass that locator even if a contextual reference or the captured note appears to be the same target. Omit both locators only when the user asks for the current note and names no other target; never infer the Host-captured target from model context. Never rewrite the article, submit text, supply remote IDs or claim publication. A draft or restoration preview is prepared; only the Host card reports whether preview checks passed. Ghost may already have saved, updated, or reused a draft and may have uploaded required media; do not infer whether this created, updated, reused, uploaded, or pushed anything. The Host result card owns preview checks and final confirmation; first publication is completed in Ghost. If the tool reports a missing, ambiguous, or unauthorized target, ask the user for the exact vault-relative path; do not describe it as outcome-unknown or claim that a card exists.'
+                    ? '\n\n@blog2ghost is explicitly selected. Interpret the target from the full request, including exclusions and descriptive references, then submit one structurally verifiable path or unique name; the locator need not appear verbatim in the user text. Omit both locators only when the selected target is the Host-captured current note. Correct a Host-reported not-started target error within the authorized scope, and ask only when the intended note remains genuinely ambiguous; do not treat a permission or source rejection as a target correction. Discussion or diagnosis may end without a domain call. One Host-bound preparation operation may include target-correction attempts. Never rewrite the article, submit text, supply remote IDs or claim publication. A draft or restoration preview is prepared; only verified Host facts report whether preview checks passed. Ghost may already have saved, updated, or reused a draft and may have uploaded required media; do not infer which effect occurred. Verified Host operation/card facts own preview checks and final confirmation; first publication is completed in Ghost. Never invent a card or replay an unknown preparation.'
                     : '';
+                const commandGuidance = `${imageInstructions}${selectedInstruction}${ghostInstructions}` || undefined;
                 const legacyWritingLineage = turn.writingParent && runSourceSelection && this.host.writingVersions
                     ? await resolveWritingVersionInputLineage(turn.writingParent,
                         id => this.host.writingVersions!.get(id)) : undefined;
                 if (!isLiveTurn()) throw new DOMException('Cancelled', 'AbortError');
                 await this.chatService.streamLLM(
-                    `${prompt}${imageInstructions}${selectedInstruction}${ghostInstructions}`,
+                    prompt,
                     (chunk) => {
                         if (!acceptingStreamEvents || !isLiveTurn()) return;
                         if (turn.canonicalLifecycle.active) return;
@@ -5554,10 +5608,12 @@ export class LLMView extends ItemView {
                     chatSupportsImages ? modelHistory : modelHistory.map(message => ({ ...message, images: undefined })),
                     {
                         memoryMode: "auto",
-                        userText: prompt,
+                        userText: rawPrompt,
                         inputLineage: imageFirstRequestLineage,
                         runSourceSelection,
                         conversationId: conversationIdForMemoryActions ?? undefined,
+                        commandInvocation,
+                        commandGuidance,
                         images: chatSupportsImages ? turnImages : [],
                         createImage,
                         ghostPublishing,
@@ -5565,9 +5621,6 @@ export class LLMView extends ItemView {
                         writingRequest,
                         writingContextHost,
                         writingOutputProtocol: nativeWriting ? 'native' : undefined,
-                        prepareWritingStyle: writingRequest && this.host.prepareWritingStyle
-                            ? (budget) => this.host.prepareWritingStyle!(prompt,
-                                runSourceSelection ? undefined : turn.writingParent?.scene, budget) : undefined,
                         writingContext: turn.writingParent ? {
                             parentVersionId: turn.writingParent.id, text: turn.writingParent.text,
                             textHash: turn.writingParent.textHash, associatedImages: turn.writingParent.associatedImages,
@@ -5693,7 +5746,7 @@ export class LLMView extends ItemView {
                     for (const handle of operationsCardHandles) handle.discard();
                     return;
                 }
-                if (separateImageRequests && acceptedImageSubrequests.size !== imageBudget) {
+                if (imageOperationRecord.plan && [...acceptedImageCounts.values()].reduce((sum, count) => sum + count, 0) !== imageOperationRecord.plan.total) {
                     throw new Error('image_generation:separate_request_incomplete');
                 }
                 if (operationsCardHandles.length > 0 && responseContent.trim().length === 0) {
@@ -5750,7 +5803,7 @@ export class LLMView extends ItemView {
                         const cancellationMessage = t("plugin.chat.notice.generationCancelled");
                         createTerminalEntry(turn, cancellationMessage, 'cancelled');
                         await this.conversationPersistence.persistTerminalTurn({
-                            prompt,
+                            prompt: rawPrompt,
                             runId: stableMessageId,
                             user: persistedUserMessage,
                             content: cancellationMessage,
@@ -5767,7 +5820,7 @@ export class LLMView extends ItemView {
                         ? t('plugin.chat.createImage.countTooHigh')
                         : imageError.includes('image_generation:separate_request_incomplete')
                             ? t('plugin.chat.createImage.separateIncomplete', {
-                                accepted: acceptedImageSubrequests.size, count: imageBudget })
+                                accepted: [...acceptedImageCounts.values()].reduce((sum, count) => sum + count, 0), count: imageOperationRecord.plan?.total ?? 0 })
                         : imageError.includes('image_generation:connection_unavailable')
                             ? t('plugin.chat.createImage.recovery.connectionUnavailable')
                             : imageError.includes('image_generation:credential_unavailable')
@@ -5793,7 +5846,7 @@ export class LLMView extends ItemView {
                     } else {
                         createTerminalEntry(turn, failureMessage, 'error', localOverflow ? undefined : String(error));
                         await this.conversationPersistence.persistTerminalTurn({
-                            prompt,
+                            prompt: rawPrompt,
                             runId: stableMessageId,
                             user: persistedUserMessage,
                             content: failureMessage,

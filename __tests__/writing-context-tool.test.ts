@@ -69,12 +69,32 @@ describe('get_writing_context tool boundary', () => {
         await expect(f.run.validate('run:writing:1')).rejects.toThrow('Unknown writing context');
     });
 
-    it('keeps the previous context if escaped style text exceeds the serialized budget', async () => {
+    it('omits optional escaped style and its revisions before publishing a bounded context', async () => {
         const f = setup();
         const prior = await f.capability.execute(input, context);
         expect(prior.status).toBe('ok');
-        f.prepare.mockImplementation(async () => ({ context: '\\'.repeat(700), revisionIds: [], isCurrent: () => true }));
+        f.prepare.mockImplementation(async () => ({ context: '\\'.repeat(700), revisionIds: ['oversized-style'], isCurrent: () => true }));
+        const next = await f.capability.execute(input, context);
+        expect(next.status).toBe('ok');
+        expect(next.observation).toMatchObject({ contextHandle: 'run:writing:2',
+            style: { context: '', revisionIds: [] } });
+        expect(JSON.stringify(next.observation).length).toBeLessThanOrEqual(800);
+        const prepared = await f.run.validate('run:writing:2');
+        expect(prepared.styleContext).toBe('');
+        expect(prepared.styleRevisionIds).toEqual([]);
+        await expect(f.run.validate('run:writing:1')).rejects.toThrow();
+    });
+
+    it('keeps the prior receipt when fitting raw style exceeds the serialized budget after escaping', async () => {
+        const f = setup();
+        expect((await f.capability.execute(input, context)).status).toBe('ok');
+        // Raw style fits the 600-character Memory allowance, while its JSON
+        // escaping plus the required context envelope exceeds the text budget.
+        f.prepare.mockImplementation(async () => ({ context: '\\'.repeat(400), revisionIds: ['escaped-style'], isCurrent: () => true }));
         expect((await f.capability.execute(input, context)).status).not.toBe('ok');
-        expect((await f.run.validate('run:writing:1')).styleContext).toBe('Approved style');
+        const prior = await f.run.validate('run:writing:1');
+        expect(prior.styleContext).toBe('Approved style');
+        expect(prior.styleRevisionIds).toEqual(['style1']);
+        await expect(f.run.validate('run:writing:2')).rejects.toThrow();
     });
 });

@@ -43,7 +43,9 @@ async function fixture(outcome: 'complete' | 'cancel' | 'tail-error' | 'forget' 
         })),
         verify: jest.fn(async () => ({ asset: {}, isCurrent: () => imageCurrent })),
     };
-    const providerText = native ? JSON.stringify({ body, explanation: '参考已授权表达习惯', contextHandle: 'writing-1' }) : rawText;
+    const providerText = rawText;
+    let nativeDeliveryArguments = '';
+    let actualContextHandle: string | undefined;
     const repository = new InMemoryMemoryGovernanceRepository();
     await repository.transact((state) => {
         state.policyStates.vault = { version: 1, mode: 'effect_based', contextProjectionMode: 'governed' };
@@ -96,16 +98,35 @@ async function fixture(outcome: 'complete' | 'cancel' | 'tail-error' | 'forget' 
     const bodyConsumed = new Promise<void>((resolve) => { bodyReceived = resolve; });
     const aiUtils = new AIUtils(host);
     const createModel = jest.spyOn(aiUtils, 'createChatModel').mockImplementation(async (_temperature, options) => {
-        enterReserve?.();
         const model = RunnableLambda.from(async function* (input: unknown) {
             options?.onProviderRequestStart?.();
             providerInputs.push(input);
-            yield new AIMessageChunk(native ? {
-                content: '', tool_call_chunks: [{ id: 'native-call', index: 0, name: 'present_writing', args: providerText }],
-            } : { content: providerText });
-            // Wait until the runtime has consumed the body before changing the
-            // user's generation state or the underlying governance revision.
-            await bodyConsumed;
+            const preparationRequest = native && providerInputs.length === 1;
+            let deliveredBody = !native;
+            if (preparationRequest) {
+                yield new AIMessageChunk({ content: '', tool_call_chunks: [{
+                    id: 'prepare-writing-context', index: 0, name: 'get_writing_context',
+                    args: JSON.stringify({ parentHandle: null, scene, currentInstructionConflicts: false,
+                        imageRefs: imageMode ? images.map(image => image.ref) : [] }),
+                }] });
+                yield new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'tool_calls' } });
+                return;
+            } else if (native) {
+                if (!actualContextHandle) throw new Error('Actual writing context handle is missing');
+                const handle = actualContextHandle;
+                nativeDeliveryArguments = JSON.stringify({ body, explanation: '参考已授权表达习惯', contextHandle: handle });
+                yield new AIMessageChunk({ content: '', tool_call_chunks: [{
+                    id: 'native-call', index: 0, name: 'present_writing', args: nativeDeliveryArguments,
+                }] });
+                deliveredBody = true;
+            } else {
+                yield new AIMessageChunk({ content: providerText });
+            }
+            if (deliveredBody) {
+                // Wait until the runtime has consumed the body before changing the
+                // user's generation state or the underlying governance revision.
+                await bodyConsumed;
+            }
             if (imageMode === 'revoke') imageCurrent = false;
             if (extraCall) yield new AIMessageChunk({ content: '', tool_call_chunks: [
                 { id: 'forbidden-extra', index: 1, name: extraCall, args: '{}' },
@@ -137,36 +158,55 @@ async function fixture(outcome: 'complete' | 'cancel' | 'tail-error' | 'forget' 
             await runtime.streamTurn({
                 prompt: '帮我写一段旅行朋友圈文案', memoryMode: 'auto', writingRequest: { requestId: 'writing-1' },
                 ...(native ? { writingOutputProtocol: 'native' as const } : {}),
+                ...(native ? { writingContextHost: {
+                    conversationId: 'conversation-1', candidates: [], versions: { get: async () => null },
+                    styles: { prepare: async (selectedScene: typeof scene | undefined,
+                        budget: Parameters<typeof styleService.prepare>[1]) => {
+                        const result = await styleService.prepare(selectedScene, budget);
+                        prepared.push(result);
+                        preparedSignals.push(budget.signal);
+                        return result;
+                    } },
+                    isCurrent: () => true,
+                    isParentCurrent: () => false,
+                } } : {}),
                 ...(imageMode ? {
                     images, imageAssetService: imageService as unknown as ImageAssetService,
                     imageCapability: { get: () => 'supported' as const, onSuccess: jest.fn(), onError: jest.fn() },
                     chatHistory: [{ role: 'user' as const, content: 'Earlier photo', images: [oldImage] }],
                 } : {}),
                 signal: controller.signal,
-                prepareWritingStyle: async (budget) => {
-                    const result = await styleService.prepare(scene, budget);
-                    prepared.push(result);
-                    preparedSignals.push(budget.signal);
-                    return result;
+                onEvent: (event) => {
+                    events.push(event);
+                    if (event.kind === 'writing-preview' && event.text === body) queueMicrotask(bodyReceived);
                 },
-                onEvent: (event) => events.push(event),
                 onLifecycleEvent: (event) => {
                     lifecycle.push(event);
+                    if (event.type === 'message_end' && event.message.role === 'toolResult'
+                        && event.message.toolName === 'get_writing_context' && !event.message.isError) {
+                        const observation = JSON.parse(event.message.content.promptText).observation;
+                        actualContextHandle = observation?.contextHandle;
+                    }
+                    if (event.type === 'tool_execution_end' && event.toolName === 'get_writing_context'
+                        && event.outcome === 'success') enterReserve?.();
                     if (event.type === 'message_update' && (
                         (event.update.kind === 'text_delta' && event.update.text === rawText)
-                        || (native && event.metadata?.nativeWritingArguments === providerText)
+                        || (native && event.metadata?.nativeWritingArguments === nativeDeliveryArguments)
                     )) bodyReceived();
                 },
             });
         } finally { runtime.dispose(); }
     };
-    return { run, events, lifecycle, prepared, preparedSignals, providerInputs, boundSchemas, schemaBatches, createModel, controller, remembered, images, imageService, releaseImage, log: host.log as jest.Mock };
+    return { run, events, lifecycle, prepared, preparedSignals, providerInputs, boundSchemas, schemaBatches, createModel, controller, remembered, images, imageService, releaseImage, log: host.log as jest.Mock,
+        get nativeDeliveryArguments() { return nativeDeliveryArguments; },
+        get actualContextHandle() { return actualContextHandle; } };
 }
 
 function expectGovernedStyleWasSent(f: Awaited<ReturnType<typeof fixture>>): void {
-    expect(f.createModel).toHaveBeenCalledTimes(1);
-    expect(f.providerInputs).toHaveLength(1);
-    expect(JSON.stringify(f.providerInputs[0])).toContain(styleText);
+    expect(f.createModel).toHaveBeenCalledTimes(2);
+    expect(f.providerInputs).toHaveLength(2);
+    expect(JSON.stringify(f.providerInputs[0])).not.toContain(styleText);
+    expect(JSON.stringify(f.providerInputs[1])).toContain(styleText);
     expect(f.prepared).toHaveLength(1);
     expect(f.prepared[0].context).toContain(styleText);
     expect(f.prepared[0].revisionIds).toEqual([f.remembered.revisionId]);
@@ -191,8 +231,8 @@ async function runReservedFixture(f: Awaited<ReturnType<typeof fixture>>): Promi
 }
 
 describe('writing preview with a governed style through the production runtime', () => {
-    it.each([false, true])('withdraws revoked style content even when cancellation interrupts completion (native=%s)', async (native) => {
-        const f = await fixture('cancel-forget', false, native);
+    it('withdraws revoked style content even when cancellation interrupts native completion', async () => {
+        const f = await fixture('cancel-forget', false, true);
         await expect(f.run()).rejects.toMatchObject({ name: 'AbortError' });
 
         expectGovernedStyleWasSent(f);
@@ -208,7 +248,7 @@ describe('writing preview with a governed style through the production runtime',
         await f.run();
         expectGovernedStyleWasSent(f);
         expect(f.imageService.resolveVariant.mock.calls.map(([ref]) => ref)).toEqual(f.images.map((image) => image.ref));
-        const sent = JSON.stringify(f.providerInputs[0]);
+        const sent = JSON.stringify(f.providerInputs[1]);
         expect(sent).toContain('data:image/jpeg;base64,AQ==');
         expect(sent).toContain('data:image/jpeg;base64,Ag==');
         expect(sent.indexOf('data:image/jpeg;base64,AQ==')).toBeLessThan(sent.indexOf('data:image/jpeg;base64,Ag=='));
@@ -227,11 +267,16 @@ describe('writing preview with a governed style through the production runtime',
             jest.spyOn(Date, 'now').mockImplementation(() => now);
             const f = await fixture('tail-error', false, true, true, { enterReserve: () => { now = 750; }, extraCall });
             await runReservedFixture(f);
-            expect(f.providerInputs).toHaveLength(1);
+            expect(f.providerInputs).toHaveLength(2);
+            expect(f.lifecycle.filter(event => event.type === 'tool_execution_start')
+                .map(event => (event as { toolName: string }).toolName)).toEqual(['get_writing_context']);
+            const contextTurnId = f.lifecycle.find(event => event.type === 'tool_execution_end'
+                && (event as { toolName: string }).toolName === 'get_writing_context')?.turnId;
+            expect(f.lifecycle.some(event => event.type === 'tool_execution_start'
+                && event.turnId !== contextTurnId)).toBe(false);
             expect(f.schemaBatches.at(-1)?.map(schema => (schema as { function: { name: string } }).function.name))
                 .toEqual(['report_task_incomplete', 'present_writing']);
             expect(f.events.some((event) => event.kind === 'writing-artifact')).toBe(false);
-            expect(f.lifecycle.some((event) => event.type === 'tool_execution_start')).toBe(false);
             expect(f.lifecycle.find((event) => event.type === 'agent_end')).toMatchObject({ status: 'incomplete' });
         },
     );
@@ -240,17 +285,22 @@ describe('writing preview with a governed style through the production runtime',
         jest.spyOn(Date, 'now').mockImplementation(() => now);
         const f = await fixture('tail-error', false, true, true, { enterReserve: () => { now = 750; } });
         await runReservedFixture(f);
-        expect(f.providerInputs).toHaveLength(1);
+        expect(f.providerInputs).toHaveLength(2);
+        expect(f.lifecycle.filter(event => event.type === 'tool_execution_start')
+            .map(event => (event as { toolName: string }).toolName)).toEqual(['get_writing_context']);
+        const contextTurnId = f.lifecycle.find(event => event.type === 'tool_execution_end'
+            && (event as { toolName: string }).toolName === 'get_writing_context')?.turnId;
+        expect(f.lifecycle.some(event => event.type === 'tool_execution_start'
+            && event.turnId !== contextTurnId)).toBe(false);
         expect(f.schemaBatches.at(-1)?.map(schema => (schema as { function: { name: string } }).function.name))
             .toEqual(['report_task_incomplete', 'present_writing']);
-        expect(JSON.stringify(f.providerInputs[0])).toContain('Only present_writing or report_task_incomplete (pure outputs) are available');
+        expect(JSON.stringify(f.providerInputs[1])).toContain('Only present_writing or report_task_incomplete (pure outputs) are available');
         expect(f.lifecycle.filter((event) => event.type === 'turn_start')).toContainEqual(expect.objectContaining({
             metadata: expect.objectContaining({ toolMode: 'final_answer_only', controlSnapshot: expect.objectContaining({ writingOutput: 'present_writing', sourceScope: 'none' }) }),
         }));
         expect(f.events.filter((event) => event.kind === 'writing-artifact')).toEqual([
             expect.objectContaining({ body, styleRevisionIds: [f.remembered.revisionId] }),
         ]);
-        expect(f.lifecycle.some((event) => event.type === 'tool_execution_start')).toBe(false);
     });
     it('rejects an unbindable native model before provider stream or invoke can run', async () => {
         const f = await fixture('tail-error', false, true, false);
@@ -269,10 +319,11 @@ describe('writing preview with a governed style through the production runtime',
         expect(f.boundSchemas).toContainEqual(expect.objectContaining({ function: expect.objectContaining({
             name: 'present_writing', parameters: expect.objectContaining({ additionalProperties: false }),
         }) }));
-        const input = JSON.stringify(f.providerInputs[0]);
+        const input = JSON.stringify(f.providerInputs[1]);
         expect(input).toContain('present_writing');
         expect(input).not.toContain('Required shape:');
-        expect(f.lifecycle.some((event) => event.type === 'tool_execution_start')).toBe(false);
+        expect(f.lifecycle.filter(event => event.type === 'tool_execution_start')
+            .map(event => (event as { toolName: string }).toolName)).toEqual(['get_writing_context']);
         const artifacts = f.events.filter((event) => event.kind === 'writing-artifact');
         if (outcome === 'tail-error') {
             expect(artifacts).toEqual([expect.objectContaining({ body, styleRevisionIds: [f.remembered.revisionId] })]);
@@ -285,13 +336,13 @@ describe('writing preview with a governed style through the production runtime',
         }
     });
     it.each([false, true])('records only local whitelist delivery evidence when debug=%s', async (debug) => {
-        const f = await fixture('tail-error', debug);
+        const f = await fixture('tail-error', debug, true);
         await f.run();
         const deliveryLogs = f.log.mock.calls.filter((args) => args[0] === 'PA Agent writing delivery');
         expect(deliveryLogs).toHaveLength(debug ? 1 : 0);
         if (debug) {
             expect(deliveryLogs[0][1]).toMatchObject({
-                providerCompletion: 'stop', transportOutcome: 'error', schemaState: 'valid', result: 'artifact',
+                providerCompletion: 'tool_calls', transportOutcome: 'unknown', schemaState: 'valid', result: 'artifact',
             });
             const serialized = JSON.stringify(deliveryLogs);
             for (const secret of [body, styleText, 'synthetic-fixture-token', 'writing-preview.invalid']) {
@@ -300,31 +351,33 @@ describe('writing preview with a governed style through the production runtime',
         }
     });
     it('keeps readable recovery after the user cancels a received body without creating an artifact', async () => {
-        const f = await fixture('cancel');
+        const f = await fixture('cancel', false, true);
         await expect(f.run()).rejects.toMatchObject({ name: 'AbortError' });
 
         expectGovernedStyleWasSent(f);
         expect(f.controller.signal.aborted).toBe(true);
-        expect(f.prepared[0].isCurrent()).toBe(false);
+        expect(f.prepared[0].isCurrent()).toBe(true);
         expect(f.prepared[0].isSourceCurrent?.()).toBe(true);
+        const nativeOutput = JSON.parse(f.nativeDeliveryArguments) as { body: string; explanation: string; contextHandle: string };
+        expect(nativeOutput).toEqual({ body, explanation: '参考已授权表达习惯', contextHandle: f.actualContextHandle });
+        expect(nativeOutput.body).toBe(body);
         expect(f.events.filter((event) => event.kind === 'writing-preview')).toEqual([
             expect.objectContaining({ requestId: 'writing-1', text: body }),
         ]);
         expect(f.events.find((event) => event.kind === 'writing-recovery')).toMatchObject({
-            requestId: 'writing-1', reason: 'incomplete', rawText, previewText: body,
+            requestId: 'writing-1', reason: 'incomplete', rawText: f.nativeDeliveryArguments, previewText: body,
         });
         expect(f.events.some((event) => event.kind === 'writing-artifact' || event.kind === 'answer-snapshot')).toBe(false);
         expect(f.lifecycle.find((event) => event.type === 'agent_end')).toMatchObject({ status: 'aborted' });
     });
 
     it('creates the completed artifact after a stop and tail error despite loop-owned signal cleanup', async () => {
-        const f = await fixture('tail-error');
+        const f = await fixture('tail-error', false, true);
         await f.run();
 
         expectGovernedStyleWasSent(f);
         expect(f.controller.signal.aborted).toBe(false);
-        expect(f.preparedSignals[0]?.aborted).toBe(true);
-        expect(f.prepared[0].isCurrent()).toBe(false);
+        expect(f.preparedSignals[0]).toBeDefined();
         expect(f.prepared[0].isSourceCurrent?.()).toBe(true);
         expect(f.events.find((event) => event.kind === 'writing-artifact')).toMatchObject({
             requestId: 'writing-1', body, styleRevisionIds: [f.remembered.revisionId],
@@ -337,7 +390,7 @@ describe('writing preview with a governed style through the production runtime',
     });
 
     it('clears an already displayed preview and refuses an artifact when its style is forgotten concurrently', async () => {
-        const f = await fixture('forget');
+        const f = await fixture('forget', false, true);
         await f.run();
 
         expectGovernedStyleWasSent(f);

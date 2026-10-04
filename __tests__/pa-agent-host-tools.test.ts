@@ -281,7 +281,6 @@ describe("PA Agent canonical host tool executor", () => {
             softAt: 45_000,
             toolAt: 40_000,
             enabled: true,
-            temporalIntent: "recent_7d",
             now: () => 0,
         });
         const executor = createPaAgentCapabilityToolExecutor({
@@ -303,7 +302,7 @@ describe("PA Agent canonical host tool executor", () => {
                 id: "call",
                 index: 0,
                 name: "search_memory",
-                input: { query: "launch" },
+                input: { query: "launch", temporal: "recent_7d" },
             },
             signal: new AbortController().signal,
         });
@@ -335,7 +334,6 @@ describe("PA Agent canonical host tool executor", () => {
             softAt: 45_000,
             toolAt: 40_000,
             enabled: false,
-            temporalIntent: "none",
             now: () => 0,
         });
         const runOwner = new AbortController();
@@ -389,7 +387,6 @@ describe("PA Agent canonical host tool executor", () => {
                 softAt: startedAt + 100,
                 toolAt: startedAt + 100,
                 enabled: true,
-                temporalIntent: "none",
                 memoryEpisodeBudgetMs: 40,
                 projectionMarginMs: 5,
                 hostSettlementMarginMs: 5,
@@ -1915,7 +1912,6 @@ describe("PA Agent canonical host tool executor", () => {
             softAt: 50_000,
             toolAt: 45_000,
             enabled: true,
-            temporalIntent: "none",
             now: () => 0,
         });
         const registry = createCoreRegistry(executeMemorySearch);

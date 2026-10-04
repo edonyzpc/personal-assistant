@@ -1153,7 +1153,6 @@ export function installB157ContextEval(appInstance) {
           openAgentDebug: { value: undefined }, recordAgentDebugTextCommitted: { value: () => undefined },
           imageAssetService: { value: domains.assets }, imageGenerationService: { value: domains.image },
           writingVersions: { value: domains.versions }, writingSave: { value: domains.save },
-          prepareWritingStyle: { value: async () => ({ context: '', revisionIds: [], isCurrent: () => true }) },
           prepareWritingStyleForScene: { value: async () => ({ context: '', revisionIds: [], isCurrent: () => true }) },
           readWritingStyleReferences: { value: async () => [] },
           rememberWritingStyle: { value: async () => fail('STYLE_WRITE_OUTSIDE_FIXTURE') },

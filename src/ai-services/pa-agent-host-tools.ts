@@ -2,7 +2,11 @@ import type { AiServiceHost } from "./AiServiceHost";
 import { isChatToolFailureReason } from './chat-types';
 import { BUILTIN_WEB_SEARCH_TOOL_NAME } from "./builtin-web-search-provider";
 import type { CapabilityRegistry } from "./capability-registry";
-import type { AgentCapabilityExecutionMode, AgentRuntimePlatform } from "./capability-types";
+import type {
+    AgentCapability,
+    AgentCapabilityExecutionMode,
+    AgentRuntimePlatform,
+} from "./capability-types";
 import {
     isCurrentNoteContextResult,
     isSearchMemoryResult,
@@ -55,9 +59,12 @@ import {
 import type { MemoryManagementCurrentUsageInput } from "./memory-management-types";
 import type { MemoryActionHostBinding } from "./memory-action-types";
 import { parseVaultObservationEvidence } from "./vault-observation-evidence";
-import { cloneResultFact, memoryResultFact } from "./pa-agent-result-facts";
+import { cloneResultFact, memoryResultFact, projectPaAgentRecoveryControl } from "./pa-agent-result-facts";
+import { isQueryTemporalIntent } from "./query-rewriter";
 
 const MAX_PREVIEW_CHARS = 1200;
+const MAX_EXECUTION_RECOVERY_PARTS = 8;
+const MAX_EXECUTION_RECOVERY_PART_CHARS = 48;
 const UNAVAILABLE_MEMORY_RETRIEVAL_GUIDANCE =
     "Memory retrieval is currently unavailable; empty results do not establish that no matching notes exist. Do not infer note content.";
 
@@ -572,6 +579,8 @@ export function createPaAgentCapabilityToolExecutor(
             if (!isAllowedHostToolCall(toolCall.name, options.allowedToolNames, options.blockedToolNames)) {
                 return {
                     outcome: "policy_rejected",
+                    executionState: "not_started",
+                    recovery: { code: "tool_scope_rejected", allowedActions: ["correct_input"] },
                     promptText: `Tool ${toolCall.name} was skipped because the user limited this request to different available context.`,
                     previewText: `Skipped ${toolCall.name}; outside the user-requested context scope.`,
                     metadata: {
@@ -589,11 +598,28 @@ export function createPaAgentCapabilityToolExecutor(
                 const message = preparedResult.error.message;
                 return {
                     outcome: "schema_invalid",
+                    executionState: "not_started",
+                    recovery: { code: "input_validation_failed", allowedActions: ["correct_input"] },
                     promptText: `Tool ${toolCall.name} input invalid: ${message}. Retry with the correct schema.`,
                     previewText: `Schema validation failed for ${toolCall.name}.`,
                     metadata: {
                         outcome: "schema_invalid",
                         reason: "input_validation_failed",
+                        tool: toolCall.name,
+                    },
+                };
+            }
+            const policyDecision = options.registry.canExecute(toolCall.name);
+            if (!policyDecision.allowed) {
+                return {
+                    outcome: "recoverable_error",
+                    executionState: "not_started",
+                    recovery: { code: "capability_admission_rejected", allowedActions: ["correct_input", "needs_user"] },
+                    promptText: "Skipped a capability that is unavailable in this mode.",
+                    previewText: "Capability admission rejected before execution.",
+                    metadata: {
+                        outcome: "recoverable_error",
+                        reason: "capability_policy_rejected",
                         tool: toolCall.name,
                     },
                 };
@@ -632,12 +658,17 @@ export function createPaAgentCapabilityToolExecutor(
                 && typeof (preparedResult.input as Record<string, unknown>).query === "string"
                 ? ((preparedResult.input as Record<string, unknown>).query as string)
                 : undefined;
+            const memoryTemporal = toolCall.name === "search_memory"
+                && isQueryTemporalIntent((preparedResult.input as { temporal?: unknown }).temporal)
+                ? (preparedResult.input as { temporal: import("./query-rewriter").QueryTemporalIntent }).temporal
+                : undefined;
             const temporalFilterCapture: MemorySearchTemporalFilterCapture = {};
             const result = memoryQuery
                 && options.memoryRecoveryCoordinator
                 && options.revalidateMemorySearch
                 ? await options.memoryRecoveryCoordinator.execute({
                     query: memoryQuery,
+                    temporal: memoryTemporal,
                     signal: input.signal,
                     ...(input.outerToolDeadlineAt === undefined
                         ? {}
@@ -683,9 +714,13 @@ export function createPaAgentCapabilityToolExecutor(
                 })
                 : await executeCapability(input.signal);
             assertTaskSourceReadCurrent(input.taskSourceReadGuard);
+            const normalizedResult = normalizeChatToolExecutionFacts(
+                result,
+                options.registry.get(toolCall.name),
+            );
             const memoryCapture = options.memoryEvidenceRegistry?.capture(
                 toolCall,
-                result,
+                normalizedResult,
                 input.turnId,
                 temporalFilterCapture.temporalFilter ?? null,
                 ...(input.taskSourceReadGuard ? [input.taskSourceReadGuard] : []),
@@ -694,7 +729,7 @@ export function createPaAgentCapabilityToolExecutor(
                 toolCall,
                 memoryCapture?.status === "collision"
                     ? createUnavailableMemoryToolResult(memoryCapture.query)
-                    : result,
+                    : normalizedResult,
             );
             // Phase 4 preflight metadata: when prepareArguments mutated raw input,
             // record audit fields on toolResult.metadata for Phase B alias-usage analytics
@@ -719,9 +754,9 @@ export function createPaAgentCapabilityToolExecutor(
             if (toolCall.name === "search_memory" && options.memoryEvidenceRegistry) {
                 const collisionQuery = memoryCapture?.status === "collision"
                     ? memoryCapture.query
-                    : isSearchMemoryResult(result.content)
-                        ? result.content.query
-                        : result.inputSummary;
+                    : isSearchMemoryResult(normalizedResult.content)
+                        ? normalizedResult.content.query
+                        : normalizedResult.inputSummary;
                 const finalizer: PaAgentPreEmitToolResultsFinalizer = (pendingResults) => {
                     options.memoryEvidenceRegistry!.finalizePendingRawIdCollision(
                         toolCall.id,
@@ -738,6 +773,57 @@ export function createPaAgentCapabilityToolExecutor(
             }
             return executionResult;
         },
+    };
+}
+
+function normalizeChatToolExecutionFacts(
+    result: ChatToolResult<unknown>,
+    capability: AgentCapability | undefined,
+): ChatToolResult<unknown> {
+    if (result.executionState !== undefined) return result;
+    const sideEffect = capability !== undefined
+        && (capability.kind === "action"
+            || !["read-only", "network-read"].includes(capability.permission));
+    const ownerRecovery = result.recovery ? { recovery: result.recovery } : {};
+    if (sideEffect && result.resultFact?.kind === "unknown") {
+        return {
+            ...result,
+            executionState: "acceptance_unknown",
+            ...ownerRecovery,
+            ...(result.recovery ? {} : {
+                recovery: {
+                    code: "operation_acceptance_unknown",
+                    allowedActions: ["query_operation", "needs_user"],
+                },
+            }),
+        };
+    }
+    if (sideEffect && result.resultFact?.kind === "partial") {
+        return {
+            ...result,
+            executionState: "partially_succeeded",
+            ...ownerRecovery,
+            ...(result.recovery ? {} : {
+                recovery: {
+                    code: "partial_operation",
+                    allowedActions: ["choose_alternative", "needs_user"],
+                },
+            }),
+        };
+    }
+    if (!sideEffect) {
+        return result;
+    }
+    return {
+        ...result,
+        executionState: result.ok ? "succeeded" : "acceptance_unknown",
+        ...ownerRecovery,
+        ...(result.ok || result.recovery ? {} : {
+            recovery: {
+                code: "operation_acceptance_unknown",
+                allowedActions: ["query_operation", "needs_user"],
+            },
+        }),
     };
 }
 
@@ -765,6 +851,10 @@ function overwritePendingMemoryExecution(
             ? { executionElapsedMs }
             : {}),
     };
+    if (unavailable.executionState) pending.executionState = unavailable.executionState;
+    else delete pending.executionState;
+    if (unavailable.recovery) pending.recovery = unavailable.recovery;
+    else delete pending.recovery;
 }
 
 /**
@@ -816,6 +906,8 @@ export function chatToolResultToPaAgentToolExecutionResult(
             ...(result.unavailableReason
                 ? { unavailableReason: result.unavailableReason }
                 : {}),
+            ...(result.executionState ? { executionState: result.executionState } : {}),
+            ...(result.recovery ? { recovery: result.recovery } : {}),
             // Trust-sensitive evidence metadata comes from the same fail-closed
             // projection serialized for the Provider. The helper may retain
             // only safe raw candidate aggregates for valid same-source follow-up.
@@ -845,6 +937,8 @@ export function chatToolResultToPaAgentToolExecutionResult(
                     };
             })() : {}),
         },
+        ...(result.executionState ? { executionState: result.executionState } : {}),
+        ...(result.recovery ? { recovery: result.recovery } : {}),
     };
 }
 
@@ -1123,13 +1217,74 @@ function getToolResultControlMetadata(
 }
 
 function serializeToolObservation(result: ChatToolResult<unknown>): string {
+    const closedActionEnvelope = result.ok && result.tool === "create_image"
+        && result.resultFact?.kind === "accepted";
+    const ghostObservation = result.tool === "prepare_ghost_post" && typeof result.content === "object" && result.content !== null
+        ? (result.content as { status?: unknown }).status : undefined;
+    const includeExecution = Boolean(result.recovery || (!result.ok && result.executionState)
+        || (result.tool === "prepare_ghost_post" && result.executionState
+            && (!result.ok || ghostObservation === "needs_attention" || ghostObservation === "outcome_unknown")));
     return safeStringify({
         tool: result.tool,
         status: result.ok ? "ok" : "unavailable",
         input: result.inputSummary,
         ...(result.ok ? { observation: result.content } : { error: result.error ?? "Tool unavailable.",
             ...(isChatToolFailureReason(result.failureReason) ? { failureReason: result.failureReason } : {}) }),
+        ...(includeExecution && !closedActionEnvelope
+            ? { execution: safeExecutionObservation(result) }
+            : {}),
     });
+}
+
+function safeExecutionObservation(result: ChatToolResult<unknown>): {
+    executionState?: NonNullable<ChatToolResult<unknown>["executionState"]>;
+    recovery?: {
+        code: string;
+        allowedActions: NonNullable<ChatToolResult<unknown>["recovery"]>["allowedActions"];
+        retryAfterMs?: number;
+        codeTruncated?: true;
+        completedParts?: string[];
+        completedPartsOmitted?: number;
+        remainingParts?: string[];
+        remainingPartsOmitted?: number;
+        partsTruncated?: true;
+    };
+} {
+    const recovery = result.recovery;
+    const control = projectPaAgentRecoveryControl(recovery);
+    const completed = boundRecoveryParts(recovery?.completedParts);
+    const remaining = boundRecoveryParts(recovery?.remainingParts);
+    return {
+        ...(result.executionState ? { executionState: result.executionState } : {}),
+        ...(recovery && control ? {
+            recovery: {
+                ...control,
+                ...(recovery.retryAfterMs !== undefined ? { retryAfterMs: recovery.retryAfterMs } : {}),
+                ...(completed.parts !== undefined ? { completedParts: completed.parts } : {}),
+                ...(completed.omitted ? { completedPartsOmitted: completed.omitted } : {}),
+                ...(remaining.parts !== undefined ? { remainingParts: remaining.parts } : {}),
+                ...(remaining.omitted ? { remainingPartsOmitted: remaining.omitted } : {}),
+                ...(completed.truncated || remaining.truncated
+                    ? { partsTruncated: true as const }
+                    : {}),
+            },
+        } : {}),
+    };
+}
+
+function boundRecoveryParts(parts: readonly string[] | undefined): {
+    parts?: string[];
+    omitted: number;
+    truncated: boolean;
+} {
+    if (parts === undefined) return { omitted: 0, truncated: false };
+    const bounded = parts.slice(0, MAX_EXECUTION_RECOVERY_PARTS).map(part =>
+        part.slice(0, MAX_EXECUTION_RECOVERY_PART_CHARS));
+    return {
+        parts: bounded,
+        omitted: Math.max(0, parts.length - bounded.length),
+        truncated: parts.some(part => part.length > MAX_EXECUTION_RECOVERY_PART_CHARS),
+    };
 }
 
 function buildContextUsed(

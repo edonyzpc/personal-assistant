@@ -4,6 +4,25 @@ import { z } from 'zod';
 import { cloneInputLineage, parseInputLineage, type InputLineage } from './input-lineage';
 import { OPERATIONS_STAGED_MESSAGE } from './operations/operations-tool-provider';
 import { isCoreWriteToolName } from './operations/input-validation';
+import { IMAGE_PREACCEPT_MESSAGES, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from '../chat/image-generation-types';
+import { PA_AGENT_RECOVERY_ACTIONS } from './pa-agent-types';
+
+export const PA_AGENT_RECOVERY_CODE_CHARS = 64;
+
+/** Recovery control is owner metadata, separate from untrusted tool bodies.
+ * Persisted metadata is a boundary; project only this finite, bounded view. */
+export function projectPaAgentRecoveryControl(value: unknown): {
+    code: string; allowedActions: Array<typeof PA_AGENT_RECOVERY_ACTIONS[number]>; codeTruncated?: true;
+} | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const recovery = value as Record<string, unknown>;
+    if (typeof recovery.code !== 'string' || !recovery.code || !Array.isArray(recovery.allowedActions)) return undefined;
+    const allowedActions = [...new Set(recovery.allowedActions.filter(
+        (action): action is typeof PA_AGENT_RECOVERY_ACTIONS[number] => PA_AGENT_RECOVERY_ACTIONS.includes(action),
+    ))];
+    return { code: recovery.code.slice(0, PA_AGENT_RECOVERY_CODE_CHARS), allowedActions,
+        ...(recovery.code.length > PA_AGENT_RECOVERY_CODE_CHARS ? { codeTruncated: true as const } : {}) };
+}
 
 /** Shared interpretation rules for answer and compaction context consumers. */
 export const PA_AGENT_ACTION_STATE_CONTEXT_RULES: readonly string[] = [
@@ -18,6 +37,13 @@ export const PA_AGENT_ACTION_STATE_CONTEXT_RULES: readonly string[] = [
     'Missing output/card, an error, or waiting does not establish rejection, failure, or no side effects; do not turn these UI observations into an execution verdict.',
     'imageOutputStatus:saved means the owner recorded saved output then; it does not prove the file still exists or is currently visible. Missing images require currently bound, authorized read-only checking of the existing task and outputs, not an inferred failure.',
     'Writing noteState:created records a past checkpoint where the complete Writing version body was written into the note and read back for verification. An overall partial save does not establish completion of every save step or the note\'s current existence or contents. Do not infer a failure cause that is not supplied. This checkpoint does not prove a UI gesture; an absent noteState leaves that note substep unproven.',
+];
+
+/** Live Agent recovery remains in System context after tools are withdrawn.
+ * Summarization retains historical facts; it does not plan current executions. */
+export const PA_AGENT_EFFECT_RECOVERY_RULES: readonly string[] = [
+    'For effectful actions, interpret current tool executionState/recovery and historical owner actionStates together. acceptance_unknown, partially_succeeded, partial, unknown, unavailable or lost does not establish no effects. Verify the original operation only through currently bound, authorized capabilities; preserve accepted results and the original plan, and continue only parts verified as remaining. If verification is unavailable, explain the uncertainty and verification limit, then stop.',
+    'An uncertain operation must not be retried or replaced by resending, changing its description, refreshing, or starting a new run. Do not recommend these actions, including a conditional retry after waiting or finding no output. needs_user means a decision or missing evidence is needed; it is not authority to submit again. Correct input only when trusted not_started facts explicitly allow correct_input.',
 ];
 
 export type PaAgentResultFact =
@@ -381,6 +407,46 @@ export function isSafeOperationsStagedObservation(message: Extract<import('./cha
 }
 
 /** Empty source records alone never qualify an arbitrary accepted observation. */
+export function isSafeImageFailureObservation(message: Extract<import('./chat-types').PaAgentMessage,
+    { role: 'toolResult' }>): boolean {
+    const metadata = message.content.metadata;
+    if (message.toolName !== 'create_image' || !message.isError || !message.content.includeInNextPrompt
+        || message.content.sourceRecords?.length || metadata?.tool !== 'create_image'
+        || metadata.ok !== false || metadata.outcome !== 'recoverable_error' || metadata.sourceRecordCount !== 0
+        || typeof metadata.inputSummary !== 'string' || !/^(generate|reference|edit); count:[1-8]$/.test(metadata.inputSummary)) return false;
+    try {
+        const envelope = JSON.parse(message.content.promptText);
+        const recovery = metadata.recovery as { code?: string; allowedActions?: string[] } | undefined;
+        const key = recovery?.code?.replace(/^image_/, '') as keyof typeof IMAGE_PREACCEPT_MESSAGES;
+        const expected = IMAGE_PREACCEPT_MESSAGES[key];
+        const unknown = recovery?.code === 'image_acceptance_unknown';
+        const fact = message.content.resultFact;
+        const legacyUnavailable = fact?.kind === 'unavailable' && fact.capability === 'create_image'
+            && fact.reason === 'tool_unavailable';
+        if (fact && !legacyUnavailable
+            && (!unknown || fact.kind !== 'unknown' || !opaqueId.safeParse(fact.operationId).success)) return false;
+        const actions = recovery?.allowedActions;
+        const context = message.content.contextUsed;
+        return Object.keys(envelope).sort().join(',') === 'error,execution,input,status,tool'
+            && envelope.tool === 'create_image' && envelope.status === 'unavailable' && envelope.input === metadata.inputSummary
+            && envelope.error === (unknown ? IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE : expected) && (unknown || expected !== undefined)
+            && message.content.previewText === envelope.error
+            && metadata.executionState === (unknown ? 'acceptance_unknown' : 'not_started')
+            && JSON.stringify(actions) === (unknown ? '["query_operation","needs_user"]'
+                : key === 'source_changed' ? '["none"]'
+                    : ['connection_unavailable', 'cancelled', 'preparation_failed', 'operation_unresolved'].includes(key) ? '["needs_user"]' : '["correct_input"]')
+            && Object.keys(envelope.execution).sort().join(',') === 'executionState,recovery'
+            && envelope.execution.executionState === metadata.executionState
+            && Object.keys(envelope.execution.recovery).sort().join(',') === 'allowedActions,code'
+            && envelope.execution.recovery.code === recovery?.code
+            && JSON.stringify(envelope.execution.recovery.allowedActions) === JSON.stringify(actions)
+            && context?.length === 1 && context[0].category === 'tool-unavailable'
+            && context[0].label === 'Read-only tool unavailable' && context[0].detail === envelope.error
+            && context[0].citationEligible === false && context[0].statusOnly === true
+            && Object.keys(context[0]).sort().join(',') === 'category,citationEligible,detail,label,statusOnly';
+    } catch { return false; }
+}
+
 export function isSafeImageAcceptedObservation(message: Extract<import('./chat-types').PaAgentMessage,
     { role: 'toolResult' }>): boolean {
     const fact = message.content.resultFact;
@@ -438,9 +504,25 @@ export function collectActionStates(input: { runId: string; turnId: string;
                 const operationId = status === 'prepared' && fact?.kind === 'approval_pending' ? fact.intentId
                     : (status === 'outcome_unknown' || status === 'needs_attention') && fact?.kind === 'unknown'
                         ? fact.operationId : undefined;
+                const execution = envelope.execution;
+                const ownerRecovery = metadata.recovery as { code?: string; allowedActions?: string[] } | undefined;
+                const executionValid = execution === undefined ? status === 'prepared'
+                    : execution && typeof execution === 'object' && !Array.isArray(execution)
+                        && execution.executionState === metadata.executionState
+                        && (status === 'prepared'
+                            ? Object.keys(execution).sort().join(',') === 'executionState'
+                                && execution.executionState === 'succeeded'
+                            : Object.keys(execution).sort().join(',') === 'executionState,recovery'
+                                && execution.executionState === 'acceptance_unknown'
+                                && execution.recovery?.code === ownerRecovery?.code
+                                && ['ghost_attention_required', 'ghost_preparation_outcome_unknown'].includes(execution.recovery?.code)
+                                && JSON.stringify(execution.recovery?.allowedActions) === '["query_operation","needs_user"]'
+                                && JSON.stringify(ownerRecovery?.allowedActions) === '["query_operation","needs_user"]');
                 if (operationId && envelope.tool === 'prepare_ghost_post' && envelope.status === 'ok'
                     && envelope.input === metadata.inputSummary && observation.operationId === operationId
-                    && Object.keys(envelope).sort().join(',') === 'input,observation,status,tool'
+                    && executionValid
+                    && Object.keys(envelope).sort().join(',') === (execution
+                        ? 'execution,input,observation,status,tool' : 'input,observation,status,tool')
                     && Object.keys(observation).sort().join(',') === 'message,operationId,status'
                     && observation.message === (status === 'prepared'
                         ? 'A draft or restoration preview is prepared. Check its publishing card and preview; publication has not been confirmed.'

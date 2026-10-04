@@ -155,7 +155,6 @@ function createHarness() {
             rememberWritingStyle: async () => undefined,
             readWritingStyleReferences: async () => [],
             onWritingReferencesChanged: () => () => undefined,
-            prepareWritingStyle: jest.fn(),
             prepareWritingStyleForScene: jest.fn(),
             createMemoryStatus: () => memoryStatus,
             onSettingsChanged: () => () => undefined,

@@ -84,8 +84,6 @@ export function installChatPluginIntegration(plugin: any): void {
                 });
                 return () => { active = false; settings(); repository?.(); };
             },
-            prepareWritingStyle: (prompt, parentScene, budget) =>
-                plugin.prepareWritingStyle(prompt, parentScene, budget),
             prepareWritingStyleForScene: (scene, budget) =>
                 plugin.prepareWritingStyleForScene(scene, budget),
             createMemoryStatus: () => ({

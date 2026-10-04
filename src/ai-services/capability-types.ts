@@ -121,6 +121,8 @@ export interface AgentCapabilityResult {
     omittedCount?: number;
     unavailableReason?: string;
     userSafeMessage?: string;
+    executionState?: import("./pa-agent-types").PaAgentToolExecutionFacts["executionState"];
+    recovery?: import("./pa-agent-types").PaAgentToolExecutionFacts["recovery"];
 }
 
 export interface PrepareCapabilityArgumentsContext {
@@ -251,6 +253,8 @@ export function agentResultToChatToolResult(
         ...(result.userSafeMessage ?? result.error ? { error: result.userSafeMessage ?? result.error } : {}),
         ...(isChatToolFailureReason(result.failureReason) ? { failureReason: result.failureReason } : {}),
         ...(unavailableReason ? { unavailableReason } : {}),
+        ...(result.executionState ? { executionState: result.executionState } : {}),
+        ...(result.recovery ? { recovery: result.recovery } : {}),
     };
 }
 

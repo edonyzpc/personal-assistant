@@ -10,6 +10,7 @@ import {
     createListVaultTagsTool,
     createReadCanvasSummaryTool,
     createReadNoteOutlineTool,
+    createSearchMemoryTool,
     createSearchVaultMetadataTool,
     createSearchVaultSnippetsTool,
     isChatToolName,
@@ -19,6 +20,7 @@ import {
     type ChatToolContext,
     type ChatToolResult,
 } from '../src/ai-services/chat-tools';
+import type { SearchMemoryInput } from '../src/ai-services/chat-tool-types';
 import { buildObsidianOperationsPlannerGuidance } from '../src/ai-services/obsidian-operations-capability-catalog';
 
 jest.mock('obsidian');
@@ -176,6 +178,49 @@ describe('Obsidian Operations v1A tool policy', () => {
         expect(isInspectObsidianNoteResult({
             path: 'notes/current.md',
         })).toBe(false);
+    });
+});
+
+describe('search_memory temporal input contract', () => {
+    it('exports and validates explicit temporal intent without losing alias-mapped query fields', () => {
+        const definition = createSearchMemoryTool(async input => {
+            void input;
+            return {
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+                candidates: [],
+                hasAnswerableContent: false,
+                memoryEvidenceState: 'none',
+                rerankVerdict: 'none_relevant',
+                needsMoreEvidence: false,
+            };
+        });
+        const schema = definition.inputSchema.properties.temporal;
+        expect(schema).toBeTruthy();
+
+        const omitted = definition.validateInput(definition.prepareArguments?.(
+            { q: ' 不要限定最近30天', temporal: undefined },
+            { userInput: '不要限定最近30天' },
+        ) ?? {});
+        const explicitNone = definition.validateInput(definition.prepareArguments?.(
+            { keywords: 'launch', temporal: 'none' },
+            { userInput: '不要限定最近30天' },
+        ) ?? {});
+        const explicitRange = definition.validateInput({
+            query: 'launch',
+            temporal: 'range:2026-01-01..2026-02-03',
+        });
+
+        expect(omitted).toEqual({ query: '不要限定最近30天' });
+        expect(explicitNone).toEqual({ query: 'launch', temporal: 'none' });
+        expect(explicitRange.temporal).toBe('range:2026-01-01..2026-02-03');
+
+        for (const temporal of ['recent_90d', 'range:2026-02-30..2026-03-01', 'range:2026-01-01']) {
+            expect(() => definition.validateInput({ query: 'launch', temporal }))
+                .toThrow('search_memory input.temporal is invalid.');
+        }
     });
 });
 

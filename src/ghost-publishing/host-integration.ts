@@ -5,7 +5,8 @@ import { TaskSourceConstraintState } from "../ai-services/task-source-constraint
 import { getVaultConfigDir } from "../obsidian-paths";
 import { GhostPublishingConfiguration, type GhostPublishingSettings } from "./configuration";
 import { GhostPublishingController, type GhostActionAuthority, type GhostControllerOptions, type GhostPublishingSession } from "./controller";
-import { parseGhostCommand, resolveGhostRequestedNote } from "./entry";
+import { GhostEntryError, parseGhostCommand, resolveGhostRequestedNote } from "./entry";
+import { GhostHostAdmissionError } from "./types";
 
 export interface GhostChatBindingRequest {
     conversationId: string;
@@ -108,20 +109,43 @@ export class GhostPublishingIntegration {
         return {
             conversationId: request.conversationId, stableMessageId: request.stableMessageId,
             submit: async (input, guard, sourceValidity, signal) => {
-                if (!current() || !guard.isCurrent() || !sourceValidity()) throw new Error("Ghost request is no longer current.");
-                const { app } = this.dependencies;
-                const path = resolveGhostRequestedNote({ input, userText: request.userText, capturedPath: request.capturedPath,
-                    host: {
-                        getAbstractFileByPath: value => {
-                            const file = app.vault.getAbstractFileByPath(value);
-                            return file instanceof TFile ? file : null;
+                let path: string;
+                try {
+                    if (!current() || !guard.isCurrent() || !sourceValidity()) {
+                        throw new GhostHostAdmissionError("stale", {
+                            executionState: "not_started",
+                            recovery: { code: "ghost_request_stale", allowedActions: ["none"] },
+                        });
+                    }
+                    const { app } = this.dependencies;
+                    path = resolveGhostRequestedNote({ input, userText: request.userText, capturedPath: request.capturedPath,
+                        host: {
+                            getAbstractFileByPath: value => {
+                                const file = app.vault.getAbstractFileByPath(value);
+                                return file instanceof TFile ? file : null;
+                            },
+                            getMarkdownFiles: () => app.vault.getMarkdownFiles(),
+                            getFirstLinkpathDest: (value, source) => app.metadataCache.getFirstLinkpathDest(value, source),
                         },
-                        getMarkdownFiles: () => app.vault.getMarkdownFiles(),
-                        getFirstLinkpathDest: (value, source) => app.metadataCache.getFirstLinkpathDest(value, source),
-                    },
-                });
+                    });
+                } catch (error) {
+                    if (error instanceof GhostEntryError) {
+                        throw new GhostHostAdmissionError("target", {
+                            executionState: "not_started",
+                            recovery: { code: `ghost_${error.code.replace(/-/g, "_")}`, allowedActions: ["correct_input"] },
+                        });
+                    }
+                    if (error instanceof GhostHostAdmissionError) throw error;
+                    throw new GhostHostAdmissionError("stale", {
+                        executionState: "not_started",
+                        recovery: { code: "ghost_request_stale", allowedActions: ["none"] },
+                    });
+                }
                 if (!guard.isPathAllowed(path, "task_material") || !this.dependencies.isPathAllowed(path)) {
-                    throw new Error("Ghost source is unavailable.");
+                    throw new GhostHostAdmissionError("source", {
+                        executionState: "not_started",
+                        recovery: { code: "ghost_source_unavailable", allowedActions: ["needs_user"] },
+                    });
                 }
                 return this.controller.prepare({ path, intent: input.intent,
                     authority: { guard, sourceValidity, signal }, createActionAuthority,

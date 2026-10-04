@@ -21,14 +21,12 @@ const DEFAULT_RELAXED_ATTEMPT_BUDGET_MS = 10_000;
 const DEFAULT_MINIMUM_RELAXED_BUDGET_MS = 2_000;
 export const MEMORY_RECOVERY_PROJECTION_MARGIN_MS = 500;
 export const MEMORY_RECOVERY_HOST_SETTLEMENT_MARGIN_MS = 250;
-const MIN_REASONABLE_EXPLICIT_YEAR = 1900;
-const MAX_REASONABLE_EXPLICIT_YEAR = 2199;
 
 export type MemoryRecoveryAttempt =
     | {
         mode: "standard";
         invocationOrdinal: number;
-        temporalIntent: QueryTemporalIntent;
+        temporalIntent?: QueryTemporalIntent;
         captureRecoverySeed: boolean;
         runEpoch: string;
         absoluteDeadlineMs: number;
@@ -53,7 +51,6 @@ export interface ChatMemoryRecoveryCoordinatorOptions {
     isEnabled?: () => boolean;
     getPolicyEpoch?: () => string;
     onPolicyChanged?: (listener: () => void | Promise<void>) => () => void;
-    temporalIntent: QueryTemporalIntent;
     now?: () => number;
     memoryEpisodeBudgetMs?: number;
     relaxedAttemptBudgetMs?: number;
@@ -65,6 +62,7 @@ export interface ChatMemoryRecoveryCoordinatorOptions {
 
 export interface ChatMemoryRecoveryExecution {
     query: string;
+    temporal?: QueryTemporalIntent;
     signal: AbortSignal;
     /** Absolute timeout boundary registered by the outer Tool dispatcher. */
     outerToolDeadlineAt?: number;
@@ -224,7 +222,7 @@ export class ChatMemoryRecoveryCoordinator {
                 {
                     mode: "standard",
                     invocationOrdinal,
-                    temporalIntent: this.options.temporalIntent,
+                    ...(input.temporal !== undefined ? { temporalIntent: input.temporal } : {}),
                     captureRecoverySeed: this.isRecoveryPolicyCurrent(),
                     runEpoch: this.options.runEpoch,
                     absoluteDeadlineMs: episodeAt,
@@ -714,51 +712,6 @@ function createSafeDiagnosticRecorder(
             // Measurement must never affect recovery.
         }
     };
-}
-
-export function captureExplicitTemporalIntent(query: string): QueryTemporalIntent {
-    const normalized = query.trim().toLowerCase();
-    if (/(?:\blast\s*7\s*days?\b|\bpast\s*7\s*days?\b|最近\s*7\s*天|近\s*7\s*天)/i.test(query)) {
-        return "recent_7d";
-    }
-    if (/(?:\blast\s*30\s*days?\b|\bpast\s*30\s*days?\b|最近\s*30\s*天|近\s*30\s*天)/i.test(query)) {
-        return "recent_30d";
-    }
-    const dates = [...query.matchAll(/\b(\d{4}-\d{2}-\d{2})\b/g)]
-        .map((match) => match[1])
-        .filter((value) => !Number.isNaN(Date.parse(value)));
-    if (dates.length >= 2 && Date.parse(dates[0]) <= Date.parse(dates[1])) {
-        return `range:${dates[0]}..${dates[1]}`;
-    }
-    if (dates.length === 1) return `range:${dates[0]}..${dates[0]}`;
-    const standaloneYears = [...query.matchAll(/(?:^|[^\p{L}\p{N}_-])(\d{4})(?![\p{L}\p{N}_-])/gu)];
-    const chineseSuffixedYears = [
-        ...query.matchAll(/(?:^|[^A-Za-z0-9_-])(\d{4})\s*(?:年度|年(?!度))(?![_-])/g),
-    ];
-    const years = [...standaloneYears, ...chineseSuffixedYears]
-        .map((match) => match[1])
-        .filter((year) => {
-            const value = Number(year);
-            return value >= MIN_REASONABLE_EXPLICIT_YEAR
-                && value <= MAX_REASONABLE_EXPLICIT_YEAR;
-        });
-    const distinctYears = [...new Set(years)];
-    if (distinctYears.length === 1) {
-        const year = distinctYears[0];
-        return `range:${year}-01-01..${year}-12-31`;
-    }
-    const hasContextualCurrentIntent =
-        /\bcurrent\s+(?:work|progress|updates?|activity|time|date|year|month|week|day)\b/.test(normalized)
-        || /当前(?:的)?(?:工作|进展|更新|动态|时间|日期|年份|年度|月份|星期|本周|今天)/.test(query);
-    if (
-        /\b(today|this week|latest|recent|recently|now)\b/.test(normalized)
-        || /(?:今天|本周|最近|近期|最新|现在)/.test(query)
-        || hasContextualCurrentIntent
-    ) return "recent_30d";
-    if (/\b(yesterday|last week)\b/.test(normalized) || /(?:昨天|上周)/.test(query)) {
-        return "recent_7d";
-    }
-    return "none";
 }
 
 export function qualifiesForRelaxedRecovery(result: MemorySearchResult): boolean {

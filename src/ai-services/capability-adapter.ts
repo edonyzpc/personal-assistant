@@ -95,6 +95,9 @@ export function chatToolResultToAgentCapabilityResult(
             error: "Vault observation evidence is missing or invalid.",
             unavailableReason: "Vault observation evidence is missing or invalid.",
             userSafeMessage: "Vault observation evidence is missing or invalid.",
+            resultFact: result.resultFact,
+            ...(result.executionState ? { executionState: result.executionState } : {}),
+            ...(result.recovery ? { recovery: result.recovery } : {}),
         };
     }
     if (result.ok && result.memoryManagementContractVersion === 1
@@ -108,6 +111,9 @@ export function chatToolResultToAgentCapabilityResult(
             error: "Memory management evidence is missing or invalid.",
             unavailableReason: "Memory management evidence is missing or invalid.",
             userSafeMessage: "Memory management evidence is missing or invalid.",
+            resultFact: result.resultFact,
+            ...(result.executionState ? { executionState: result.executionState } : {}),
+            ...(result.recovery ? { recovery: result.recovery } : {}),
         };
     }
     return {
@@ -116,8 +122,8 @@ export function chatToolResultToAgentCapabilityResult(
         inputSummary: result.inputSummary,
         sources: result.sources,
         sourceRecords: [...visibleRecords, ...dependencyRecords],
-        resultFact: result.ok ? result.resultFact
-            : { kind: "unavailable", capability: definition.name, reason: "tool_unavailable" },
+        resultFact: result.resultFact ?? (result.ok ? undefined
+            : { kind: "unavailable", capability: definition.name, reason: "tool_unavailable" }),
         ...(!result.ok && isChatToolFailureReason(result.failureReason) ? { failureReason: result.failureReason } : {}),
         ...(evidence.ok && evidence.evidence.tool === definition.name ? {
             vaultObservationEvidence: evidence.evidence,
@@ -132,6 +138,8 @@ export function chatToolResultToAgentCapabilityResult(
             unavailableReason: result.error,
             userSafeMessage: result.error,
         } : {}),
+        ...(result.executionState ? { executionState: result.executionState } : {}),
+        ...(result.recovery ? { recovery: result.recovery } : {}),
     };
 }
 
@@ -309,6 +317,7 @@ export function createChatToolCapability<Input, Output>(
     },
 ): AgentCapability {
     assertObsidianOperationsV1AToolPolicy(definition);
+    const sideEffect = definition.permission !== "read-only" && definition.permission !== "network-read";
 
     const registryDef: ChatToolRegistryDefinition = {
         name: definition.name,
@@ -362,11 +371,15 @@ export function createChatToolCapability<Input, Output>(
                     tool: definition.name,
                     errorType: getErrorType(error),
                 });
-                return createToolFailureResult(
-                    definition.name,
-                    summarizeInvalidToolInput(input),
-                    sanitizeToolErrorMessage(error, "Skipped a read-only tool because its input was invalid."),
-                );
+                return {
+                    ...createToolFailureResult(
+                        definition.name,
+                        summarizeInvalidToolInput(input),
+                        sanitizeToolErrorMessage(error, "Skipped a read-only tool because its input was invalid."),
+                    ),
+                    executionState: "not_started",
+                    recovery: { code: "input_validation_failed", allowedActions: ["correct_input"] },
+                };
             }
             try {
                 const message = definition.statusMessage(validatedInput);
@@ -405,12 +418,25 @@ export function createChatToolCapability<Input, Output>(
                     tool: definition.name,
                     errorType: getErrorType(error),
                 });
-                return createToolFailureResult(
-                    definition.name,
-                    "execution failed",
-                    "Read-only tool was unavailable.",
-                    error instanceof ChatToolFailureError ? error.failureReason : 'adapter_error',
-                );
+                return {
+                    ...createToolFailureResult(
+                        definition.name,
+                        "execution failed",
+                        sideEffect
+                            ? "The operation result is unknown. Verify the existing operation before submitting it again."
+                            : "Read-only tool was unavailable.",
+                        error instanceof ChatToolFailureError ? error.failureReason : 'adapter_error',
+                    ),
+                    ...(sideEffect
+                        ? {
+                            executionState: "acceptance_unknown" as const,
+                            recovery: {
+                                code: "operation_acceptance_unknown",
+                                allowedActions: ["query_operation", "needs_user"],
+                            },
+                        }
+                        : {}),
+                };
             }
         },
     });

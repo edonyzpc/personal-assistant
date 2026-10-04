@@ -1,7 +1,25 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it, jest } from "@jest/globals";
+import { AIMessageChunk } from "@langchain/core/messages";
+import { RunnableLambda } from "@langchain/core/runnables";
 import { ChatService } from "../src/ai-services/chat-service";
 import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
-import { PA_AGENT_ACTION_STATE_CONTEXT_RULES } from '../src/ai-services/pa-agent-result-facts';
+import { PaAgentRuntime } from "../src/ai-services/pa-agent-runtime";
+import {
+    paAgentCreateImageCommandDefinition,
+    paAgentGhostCommandDefinition,
+    paAgentWritingCommandDefinition,
+    type PaAgentCommandInvocation,
+} from "../src/ai-services/pa-agent-command";
+import type { CreateImageHostBinding, CreateImageToolInput, GhostHostBinding } from "../src/ai-services/chat-tool-types";
+import type { PaAgentMessage } from "../src/ai-services/chat-types";
+import { GhostHostAdmissionError } from "../src/ghost-publishing/types";
+import { ImagePreacceptError, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from "../src/chat/image-generation-types";
+import { createChatToolCapability } from "../src/ai-services/capability-adapter";
+import { CapabilityRegistry } from "../src/ai-services/capability-registry";
+import type { ChatToolDefinition } from "../src/ai-services/chat-tools";
+import { createCreateImageTool } from "../src/ai-services/chat-tool-factories";
+import { completeInputLineage } from "../src/ai-services/input-lineage";
+import { PA_AGENT_ACTION_STATE_CONTEXT_RULES, PA_AGENT_EFFECT_RECOVERY_RULES, isSafeImageFailureObservation } from '../src/ai-services/pa-agent-result-facts';
 
 import {
     PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES,
@@ -10,31 +28,122 @@ import {
 
 jest.mock("obsidian");
 
+const rawGhostUserText = "@blog2ghost 发布我刚才排除当前笔记后提到的那篇";
+
+async function runGhostRuntimeTrace(submit: GhostHostBinding["submit"], calls: Array<{ intent: "prepare" | "restore"; path?: string; name?: string }>) {
+    const host = createPromptHost();
+    const inputLineage = completeInputLineage([{ kind: "user-text", messageId: "ghost-r2b-user" }]);
+    const providerTexts: string[] = [];
+    const lifecycle: Array<{ type: string; turnId?: string; message?: PaAgentMessage }> = [];
+    let providerTurn = 0;
+    const boundModel = RunnableLambda.from(async function* (input: unknown) {
+        providerTexts.push(String(input));
+        providerTurn += 1;
+        const call = calls[providerTurn - 1];
+        if (call) {
+            yield new AIMessageChunk({ content: "", tool_call_chunks: [{
+                id: `ghost-runtime-call-${providerTurn}`, index: 0,
+                name: "prepare_ghost_post", args: JSON.stringify(call),
+            }] });
+        } else {
+            yield new AIMessageChunk({ content: "The Host-owned Ghost result is checked." });
+        }
+        yield new AIMessageChunk({ content: "", response_metadata: { finish_reason: call ? "tool_calls" : "stop" } });
+    });
+    const model = { bindTools: jest.fn(() => boundModel) };
+    const runtime = new PaAgentRuntime(
+        host as never,
+        { createChatModel: async () => model } as never,
+        { skillContextProvider: null },
+    );
+    const invocation: PaAgentCommandInvocation = {
+        definition: paAgentGhostCommandDefinition,
+        conversationId: "ghost-r2b-conversation",
+        stableMessageId: "ghost-r2b-user",
+        activation: { kind: "typed-token", token: "@blog2ghost" },
+    };
+    try {
+        await runtime.streamTurn({
+            prompt: rawGhostUserText,
+            userText: rawGhostUserText,
+            memoryMode: "skip-memory",
+            conversationId: invocation.conversationId,
+            commandInvocation: invocation,
+            inputLineage,
+            runSourceSelection: { schemaVersion: 1, scope: "notes", selectionId: "ghost-r2b-selection",
+                userMessageId: "ghost-r2b-user" },
+            ghostPublishing: { conversationId: invocation.conversationId, stableMessageId: "ghost-r2b-user", submit },
+            onLifecycleEvent: event => lifecycle.push(event as never),
+        });
+    } finally {
+        runtime.dispose();
+    }
+    const toolResults = lifecycle.flatMap(event => event.type === "message_end" && event.message?.role === "toolResult"
+        && event.message.toolName === "prepare_ghost_post" ? [event.message] : []);
+    return { providerTexts, lifecycle, toolResults };
+}
+
+async function runImageRuntimeTrace(submit: CreateImageHostBinding["submit"], calls: CreateImageToolInput[],
+    options: { reserveFinalAnswer?: boolean; naturalEntry?: boolean } = {}) {
+    const host = createPromptHost();
+    const rawUserText = options.naturalEntry ? "根据附件制作一张图片，保留主体" : "@CreateImage 根据附件制作一张图片，保留主体";
+    const invocation: PaAgentCommandInvocation = {
+        definition: paAgentCreateImageCommandDefinition,
+        conversationId: "image-p3-conversation",
+        stableMessageId: "image-p3-user",
+        activation: { kind: "typed-token", token: "@CreateImage" },
+    };
+    const inputLineage = completeInputLineage([{ kind: "user-text", messageId: invocation.stableMessageId }]);
+    const providerTexts: string[] = [];
+    const lifecycle: Array<{ type: string; message?: PaAgentMessage }> = [];
+    let providerTurn = 0;
+    const boundModel = RunnableLambda.from(async function* (input: unknown) {
+        providerTexts.push(String(input));
+        const call = calls[providerTurn++];
+        if (call) {
+            yield new AIMessageChunk({ content: "", tool_call_chunks: [{
+                id: `image-runtime-call-${providerTurn}`, index: 0,
+                name: "create_image", args: JSON.stringify(call),
+            }] });
+        } else {
+            yield new AIMessageChunk({ content: "The Host image result has been checked." });
+        }
+        yield new AIMessageChunk({ content: "", response_metadata: { finish_reason: call ? "tool_calls" : "stop" } });
+    });
+    const bindings: string[][] = [];
+    const model = { bindTools: jest.fn((schemas: Array<{ function: { name: string } }>) => {
+        bindings.push(schemas.map(schema => schema.function.name));
+        return boundModel;
+    }) };
+    const runtime = new PaAgentRuntime(host as never, { createChatModel: async () => model } as never,
+        { skillContextProvider: null, ...(options.reserveFinalAnswer
+            ? { maxWallClockMs: 30_000, finalizationReserveMs: 10_000 } : {}) });
+    try {
+        await runtime.streamTurn({
+            prompt: rawUserText,
+            userText: rawUserText,
+            memoryMode: "skip-memory",
+            conversationId: invocation.conversationId,
+            ...(options.naturalEntry ? {} : { commandInvocation: invocation }),
+            inputLineage,
+            createImage: { conversationId: invocation.conversationId, stableMessageId: invocation.stableMessageId,
+                operationId: "image-p3-operation", submit },
+            onLifecycleEvent: event => lifecycle.push(event as never),
+        });
+    } finally { runtime.dispose(); }
+    const toolResults = lifecycle.flatMap(event => event.type === "message_end" && event.message?.role === "toolResult"
+        && event.message.toolName === "create_image" ? [event.message] : []);
+    return { rawUserText, inputLineage, providerTexts, lifecycle, toolResults, bindings };
+}
+
 describe("PA Agent answer-stream system prompt (#5)", () => {
     it("sends the note-evidence completion boundary in the actual SDK request", async () => {
-        const host = {
-            settings: {
-                debug: false, aiProvider: "openai", baseURL: "https://b149-offline.invalid/v1",
-                chatModelName: "b149-fixed-model", policyModelName: "", embeddingModelName: "b149-fixed-embedding",
-                shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false, webSearchEnabled: false,
-                memoryEnabled: false, licenseTier: "paid", operationsAgentEnabled: false,
-                operationsProactiveSaveSuggestionsEnabled: false, operationsAuditIncludeContent: false,
-                operationsAuditRetentionDays: 30, statisticsVaultId: "b149-synthetic", retrievalOptimizationFlags: {},
-            },
-            app: {
-                workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
-                vault: { getMarkdownFiles: () => [], getAbstractFileByPath: () => null },
-                metadataCache: { getFileCache: () => null, getCache: () => null },
-            },
-            memorySearch: { ensureReadyForChat: async () => ({ decision: "answer-now" }), searchHybrid: async () => [] },
-            getMemoryEvidenceEpoch: () => "b149-synthetic-source-epoch",
-            getAPIToken: async () => "b149-synthetic-token", log: () => undefined,
-            isOperationsAgentEnabled: false, getMemoryExtractionPromptContext: () => undefined,
-        } as unknown as AiServiceHost;
+        const host = createPromptHost();
         const realFetch = globalThis.fetch;
         const requests: Array<{ stream?: boolean; messages: Array<{ role: string; content: string }> }> = [];
-        globalThis.fetch = jest.fn(async (_url, init) => {
-            const body = JSON.parse(String(init?.body));
+        globalThis.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body ?? "")) as { stream?: boolean;
+                messages: Array<{ role: string; content: string }> };
             requests.push(body);
             const frame = (delta: unknown, finishReason: string | null = null) => `data: ${JSON.stringify({
                 id: "b149-prompt-fixed", created: 0, model: "b149-fixed-model",
@@ -62,9 +171,768 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(system).toContain("permitted scope examined");
         expect(system).toContain("An unavailable or failed retrieval provides no evidence");
         expect(system).toContain("state which part remains incomplete");
-        for (const rule of PA_AGENT_ACTION_STATE_CONTEXT_RULES) {
+        for (const rule of [...PA_AGENT_ACTION_STATE_CONTEXT_RULES, ...PA_AGENT_EFFECT_RECOVERY_RULES]) {
             expect(system?.split(rule)).toHaveLength(2);
         }
+    });
+
+    it("keeps raw user text and app guidance separate through Service, Runtime, and provider input", async () => {
+        const host = createPromptHost();
+        const rawUserText = "RAW_USER_TEXT_SENTINEL";
+        const appGuidance = "APP_OWNED_COMMAND_GUIDANCE_SENTINEL";
+        const commandInvocation: PaAgentCommandInvocation = {
+            definition: paAgentCreateImageCommandDefinition,
+            conversationId: "prompt-command-conversation",
+            stableMessageId: "prompt-command-message",
+            activation: { kind: "typed-token", token: "@CreateImage" },
+        };
+        const realFetch = globalThis.fetch;
+        const requests: Array<{ messages: Array<{ role: string; content: string }> }> = [];
+        globalThis.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body ?? "")) as { stream?: boolean;
+                messages: Array<{ role: string; content: string }> };
+            requests.push(body);
+            const frame = (content: string) => `data: ${JSON.stringify({
+                id: "b149-prompt-fixed", created: 0, model: "b149-fixed-model",
+                object: "chat.completion.chunk", choices: [{ index: 0,
+                    delta: { role: "assistant", content }, finish_reason: "stop" }],
+            })}\n\n`;
+            return new Response(frame("done") + "data: [DONE]\n\n", {
+                headers: { "content-type": "text/event-stream" },
+            });
+        }) as typeof fetch;
+        try {
+            await expect(new ChatService(host).streamLLM(
+                rawUserText,
+                jest.fn(),
+                undefined,
+                [],
+                {
+                    userText: rawUserText,
+                    conversationId: "other-conversation",
+                    commandInvocation,
+                    commandGuidance: appGuidance,
+                    memoryMode: "skip-memory",
+                },
+            )).rejects.toThrow("PA Agent command invocation is not bound to this conversation.");
+            expect(requests).toHaveLength(0);
+
+            await new ChatService(host).streamLLM(
+                rawUserText,
+                jest.fn(),
+                undefined,
+                [],
+                {
+                    userText: rawUserText,
+                    conversationId: commandInvocation.conversationId,
+                    commandInvocation,
+                    commandGuidance: appGuidance,
+                    memoryMode: "skip-memory",
+                },
+            );
+        } finally {
+            globalThis.fetch = realFetch;
+        }
+
+        expect(requests).toHaveLength(1);
+        const appMessage = requests[0].messages.find(message => message.content.includes(appGuidance));
+        const userMessages = requests[0].messages.filter(message => message.role === "user");
+        expect(appMessage?.content).toContain("<runtime_instruction>");
+        expect(appMessage?.content).toContain(paAgentCreateImageCommandDefinition.agentGuidance[0]);
+        expect(appMessage?.content).toContain(
+            "Declared capability create_image is not currently admitted or exportable",
+        );
+        expect(appMessage?.content).not.toBe(rawUserText);
+        const rawMessage = userMessages.find(message => message.content.includes(rawUserText)
+            && !message.content.includes(appGuidance));
+        expect(rawMessage?.content).toBe(`User input:\n${rawUserText}`);
+        expect(userMessages.filter(message => message.content.includes(rawUserText))).toHaveLength(1);
+    });
+
+    it("links a command declaration to capabilities actually admitted for the run", async () => {
+        const host = createPromptHost();
+        const invocation: PaAgentCommandInvocation = {
+            definition: paAgentGhostCommandDefinition,
+            conversationId: "command-conversation",
+            stableMessageId: "command-message",
+            activation: { kind: "typed-token", token: "@blog2ghost" },
+        };
+        const realFetch = globalThis.fetch;
+        const requests: Array<{ messages: Array<{ role: string; content: string }>; tools?: unknown[] }> = [];
+        globalThis.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body ?? "")) as typeof requests[number];
+            requests.push(body);
+            const frame = `data: ${JSON.stringify({
+                id: "b149-prompt-fixed", created: 0, model: "qwen3.6-plus",
+                object: "chat.completion.chunk", choices: [{ index: 0,
+                    delta: { role: "assistant", content: "No effect is required." }, finish_reason: "stop" }],
+            })}\n\n`;
+            return new Response(frame + "data: [DONE]\n\n", {
+                headers: { "content-type": "text/event-stream" },
+            });
+        }) as typeof fetch;
+        const submit: GhostHostBinding["submit"] = jest.fn(async () => ({
+            status: "prepared" as const, operationId: "ghost-operation",
+        }));
+        try {
+            await new ChatService(host).streamLLM(
+                "@blog2ghost discuss the current note",
+                jest.fn(),
+                undefined,
+                [],
+                {
+                    userText: "@blog2ghost discuss the current note",
+                    conversationId: invocation.conversationId,
+                    commandInvocation: invocation,
+                    commandGuidance: "APP_OWNED_TEMPLATE_SENTINEL",
+                    memoryMode: "skip-memory",
+                    ghostPublishing: {
+                        conversationId: invocation.conversationId,
+                        stableMessageId: invocation.stableMessageId,
+                        submit,
+                    },
+                },
+            );
+        } finally {
+            globalThis.fetch = realFetch;
+        }
+
+        expect(requests).toHaveLength(1);
+        expect(JSON.stringify(requests[0].tools)).toContain("prepare_ghost_post");
+        const appMessage = requests[0].messages.find(message => message.content.includes("APP_OWNED_TEMPLATE_SENTINEL"));
+        expect(appMessage?.content).toContain(paAgentGhostCommandDefinition.agentGuidance[0]);
+        expect(appMessage?.content).toContain(
+            "Declared capability prepare_ghost_post is currently admitted and exportable",
+        );
+        expect(submit).not.toHaveBeenCalled();
+    });
+
+    it("carries a typed not-started Ghost correction through the real Runtime model loop", async () => {
+        const host = createPromptHost();
+        const rawUserText = "@blog2ghost 发布我刚才排除当前笔记后提到的那篇";
+        const inputLineage = completeInputLineage([{ kind: "user-text", messageId: "ghost-r2-user" }]);
+        const providerTexts: string[] = [];
+        const lifecycle: Array<{ type: string; message?: PaAgentMessage }> = [];
+        let providerTurn = 0;
+        const boundModel = RunnableLambda.from(async function* (input: unknown) {
+            providerTexts.push(String(input));
+            providerTurn += 1;
+            if (providerTurn === 1) {
+                yield new AIMessageChunk({ content: "", tool_call_chunks: [{ id: "ghost-missing-call", index: 0,
+                    name: "prepare_ghost_post", args: JSON.stringify({ intent: "prepare", path: "missing.md" }) }] });
+            } else if (providerTurn === 2) {
+                yield new AIMessageChunk({ content: "", tool_call_chunks: [{ id: "ghost-corrected-call", index: 0,
+                    name: "prepare_ghost_post", args: JSON.stringify({ intent: "prepare", path: "notes/target.md" }) }] });
+            } else {
+                yield new AIMessageChunk({ content: "The corrected preparation is ready." });
+            }
+            yield new AIMessageChunk({ content: "", response_metadata: { finish_reason: providerTurn === 3 ? "stop" : "tool_calls" } });
+        });
+        const model = {
+            bindTools: jest.fn(() => boundModel),
+        };
+        const runtime = new PaAgentRuntime(
+            host as never,
+            { createChatModel: async () => model } as never,
+            { skillContextProvider: null },
+        );
+        const invocation: PaAgentCommandInvocation = {
+            definition: paAgentGhostCommandDefinition,
+            conversationId: "ghost-r2-conversation",
+            stableMessageId: "ghost-r2-message",
+            activation: { kind: "typed-token", token: "@blog2ghost" },
+        };
+        const ghostSubmit = jest.fn<GhostHostBinding["submit"]>(async input => {
+            if (input.path !== "notes/target.md") {
+                throw new GhostHostAdmissionError("target", {
+                    executionState: "not_started",
+                    recovery: { code: "ghost_target_missing", allowedActions: ["correct_input"] },
+                });
+            }
+            return { status: "prepared", operationId: "ghost-r2-operation" };
+        });
+        try {
+            await runtime.streamTurn({
+                prompt: rawUserText,
+                userText: rawUserText,
+                memoryMode: "skip-memory",
+                conversationId: invocation.conversationId,
+                commandInvocation: invocation,
+                inputLineage,
+                ghostPublishing: {
+                    conversationId: invocation.conversationId,
+                    stableMessageId: invocation.stableMessageId,
+                    submit: ghostSubmit,
+                },
+                onLifecycleEvent: event => lifecycle.push(event),
+            });
+        } finally {
+            runtime.dispose();
+        }
+
+        expect(ghostSubmit).toHaveBeenCalledTimes(2);
+        expect(ghostSubmit.mock.calls[0][0]).toMatchObject({ path: "missing.md" });
+        expect(ghostSubmit.mock.calls[1][0]).toMatchObject({ path: "notes/target.md" });
+        expect(providerTexts).toHaveLength(3);
+        expect(providerTexts[1]).toContain(rawUserText);
+        expect(providerTexts[1]).toContain('"executionState":"not_started"');
+        expect(providerTexts[1]).toContain('"code": "ghost_target_missing"');
+        expect(providerTexts[1]).toContain('"allowedActions": [');
+        expect(providerTexts[1]).toContain('"correct_input"');
+        const toolResult = lifecycle.flatMap(event => event.type === "message_end" ? [event.message] : [])
+            .find((message): message is Extract<PaAgentMessage, { role: "toolResult" }> =>
+                message?.role === "toolResult" && message.toolName === "prepare_ghost_post");
+        expect(toolResult?.isError).toBe(true);
+        expect(toolResult?.content.metadata).toMatchObject({
+            executionState: "not_started",
+            recovery: { code: "ghost_target_missing", allowedActions: ["correct_input"] },
+        });
+        expect(toolResult?.inputLineage).toMatchObject({
+            completeness: "complete",
+            dependencies: [{ kind: "user-text", messageId: "ghost-r2-user" }],
+        });
+        expect(lifecycle.at(-1)).toMatchObject({ type: "agent_end", status: "completed" });
+    });
+
+    it("feeds typed Image admission correction back to the real Runtime loop before one accepted task", async () => {
+        const first: CreateImageToolInput = { prompt: "Preserve the subject", operation: "edit", count: 1,
+            totalCount: 1, referenceImageRefs: [] };
+        const corrected: CreateImageToolInput = { ...first, operation: "reference", referenceImageRefs: ["public-fixture-ref"] };
+        let acceptedTasks = 0;
+        const submit = jest.fn<CreateImageHostBinding["submit"]>(async value => {
+            if (value.referenceImageRefs.length === 0) throw new ImagePreacceptError("invalid_inputs");
+            acceptedTasks += 1;
+            return { taskId: "image-p3-accepted" };
+        });
+        const trace = await runImageRuntimeTrace(submit, [first, corrected]);
+
+        expect(submit).toHaveBeenCalledTimes(2);
+        expect(submit.mock.calls[0][0]).toMatchObject({ ...first });
+        expect(submit.mock.calls[1][0]).toMatchObject({ ...corrected });
+        expect(acceptedTasks).toBe(1);
+        expect(trace.providerTexts).toHaveLength(3);
+        expect(trace.providerTexts[1]).toContain(trace.rawUserText);
+        expect(trace.providerTexts[1]).toContain('"executionState":"not_started"');
+        expect(trace.providerTexts[1]).toContain('"code": "image_invalid_inputs"');
+        expect(trace.providerTexts[1]).toContain('"correct_input"');
+        expect(trace.toolResults).toHaveLength(2);
+        expect(trace.toolResults[0]).toMatchObject({ isError: true, content: { metadata: {
+            executionState: "not_started",
+            recovery: { code: "image_invalid_inputs", allowedActions: ["correct_input"] },
+        } } });
+        expect(trace.toolResults[1]).toMatchObject({ isError: false, content: {
+            resultFact: { kind: "accepted", action: "image", operationId: "image-p3-accepted" },
+        } });
+        expect(trace.providerTexts[2]).toContain("image-p3-accepted");
+        for (const result of trace.toolResults) expect(result.inputLineage).toMatchObject({ ...trace.inputLineage });
+        const rejected = trace.toolResults.find(result => result.content.metadata?.executionState === 'not_started')!;
+        expect(isSafeImageFailureObservation(rejected)).toBe(true);
+        expect(isSafeImageFailureObservation({ ...rejected, content: { ...rejected.content,
+            resultFact: { kind: 'unknown', operationId: 'forged-owner-operation' } } })).toBe(false);
+        expect(trace.lifecycle.at(-1)).toMatchObject({ type: "agent_end", status: "completed" });
+    });
+
+    it("retains an unknown Image submission across changed model arguments in the real Runtime loop", async () => {
+        const request: CreateImageToolInput = { prompt: "An original scene", operation: "generate", count: 1,
+            totalCount: 1, referenceImageRefs: [] };
+        const submit = jest.fn<CreateImageHostBinding["submit"]>(async () => {
+            throw new Error("local task acceptance acknowledgement lost");
+        });
+        const trace = await runImageRuntimeTrace(submit, [request, { ...request, prompt: "A replacement scene" }]);
+
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(submit.mock.calls[0][0]).toMatchObject({ ...request });
+        expect(trace.providerTexts).toHaveLength(3);
+        expect(trace.toolResults).toHaveLength(2);
+        for (const result of trace.toolResults) {
+            expect(result).toMatchObject({ isError: true, content: { metadata: {
+                executionState: "acceptance_unknown",
+                recovery: { code: "image_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] },
+            } } });
+            expect(result.inputLineage).toMatchObject({ ...trace.inputLineage });
+            expect(result.content.resultFact).toEqual({ kind: "unknown", operationId: "image-p3-operation" });
+        }
+        for (const feedback of trace.providerTexts.slice(1)) {
+            expect(feedback).toContain(IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE);
+            expect(feedback).toContain('"acceptance_unknown"');
+            expect(feedback).toContain('"image_acceptance_unknown"');
+            expect(feedback).toContain('"domainPhase":"unknown"');
+            expect(feedback).toContain('"domainIdentity":{"operationId":"image-p3-operation"}');
+            expect(feedback).not.toContain("Check its card");
+        }
+        const unknownResult = trace.toolResults[0];
+        expect(isSafeImageFailureObservation(unknownResult)).toBe(true);
+        for (const operationId of [undefined, null, 123, ['coerced-id']]) {
+            const malformed = { ...unknownResult, content: { ...unknownResult.content,
+                resultFact: { kind: 'unknown', operationId } } } as unknown as typeof unknownResult;
+            expect(isSafeImageFailureObservation(malformed)).toBe(false);
+        }
+    });
+
+    it.each([false, true])("keeps effect recovery in the final-answer system contract (natural entry: %s)", async naturalEntry => {
+        let now = Date.now();
+        const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+        const submit = jest.fn<CreateImageHostBinding["submit"]>(async () => {
+            now += 21_000;
+            throw new Error("acceptance acknowledgement lost");
+        });
+        let trace: Awaited<ReturnType<typeof runImageRuntimeTrace>>;
+        try {
+            trace = await runImageRuntimeTrace(submit, [{ prompt: "A red crane", operation: "generate", count: 1,
+                referenceImageRefs: [] }], { reserveFinalAnswer: true, naturalEntry });
+        } finally { clock.mockRestore(); }
+
+        expect(trace.providerTexts).toHaveLength(2);
+        expect(trace.bindings[0]).toContain("create_image");
+        expect(trace.bindings[1]).not.toContain("create_image");
+        const finalInput = trace.providerTexts[1];
+        expect(finalInput).toContain('"executionState":"acceptance_unknown"');
+        expect(finalInput).toContain('"image_acceptance_unknown"');
+        expect(finalInput).toContain('current tool executionState/recovery and historical owner actionStates');
+        expect(finalInput).toContain('Do not recommend these actions, including a conditional retry');
+        expect(finalInput).toContain('trusted not_started facts explicitly allow correct_input');
+        expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        { status: "needs_attention", operationId: "ghost-owned-attention" },
+        { status: "needs_attention" },
+        { status: "outcome_unknown", operationId: "ghost-unknown-operation" },
+    ] as const)("projects the closed Ghost owner execution for %s/%j through Runtime", async receipt => {
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => receipt);
+        const trace = await runGhostRuntimeTrace(submit, [{ intent: "prepare", path: "notes/target.md" }]);
+
+        expect(trace.providerTexts).toHaveLength(2);
+        const feedback = trace.providerTexts[1];
+        expect(feedback).toContain(rawGhostUserText);
+        expect(feedback).toContain(`"status": "${receipt.status}"`);
+        expect(feedback).toContain('"executionState": "acceptance_unknown"');
+        expect(feedback).toContain(`"code": "${receipt.status === "outcome_unknown" ? "ghost_preparation_outcome_unknown" : "ghost_attention_required"}"`);
+        expect(feedback).toContain('"allowedActions": [');
+        expect(feedback).toContain('"query_operation"');
+        expect(feedback).toContain('"needs_user"');
+        const toolResult = trace.toolResults[0];
+        expect(toolResult?.isError).toBe(false);
+        expect(toolResult?.content.metadata).toMatchObject({
+            executionState: "acceptance_unknown",
+            recovery: {
+                code: receipt.status === "outcome_unknown" ? "ghost_preparation_outcome_unknown" : "ghost_attention_required",
+                allowedActions: ["query_operation", "needs_user"],
+            },
+        });
+        expect(toolResult?.inputLineage).toMatchObject({
+            completeness: "complete",
+            dependencies: [{ kind: "user-text", messageId: "ghost-r2b-user" }],
+        });
+    });
+
+    it("keeps an entered-domain unknown Ghost failure visible without replay after changed arguments", async () => {
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => {
+            throw new Error("controller wrote local frontmatter and then failed");
+        });
+        const trace = await runGhostRuntimeTrace(submit, [
+            { intent: "prepare", path: "notes/first.md" },
+            { intent: "prepare", path: "notes/changed.md" },
+        ]);
+
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(trace.providerTexts).toHaveLength(3);
+        for (const feedback of trace.providerTexts.slice(1)) {
+            expect(feedback).toContain("The preparation result is unknown.");
+            expect(feedback).toContain('"executionState": "acceptance_unknown"');
+            expect(feedback).toContain('"code": "ghost_preparation_acceptance_unknown"');
+        }
+        expect(trace.toolResults).toHaveLength(2);
+        for (const result of trace.toolResults) {
+            expect(result.content.metadata).toMatchObject({
+                executionState: "acceptance_unknown",
+                recovery: { code: "ghost_preparation_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] },
+            });
+        }
+    });
+
+    it.each(["source", "stale"] as const)("keeps the original typed %s rejection visible when Runtime changes Ghost arguments", async reason => {
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => {
+            throw new GhostHostAdmissionError(reason, {
+                executionState: "not_started",
+                recovery: {
+                    code: reason === "source" ? "ghost_source_unavailable" : "ghost_request_stale",
+                    allowedActions: reason === "source" ? ["needs_user"] : ["none"],
+                },
+            });
+        });
+        const trace = await runGhostRuntimeTrace(submit, [
+            { intent: "prepare", path: "notes/denied.md" },
+            { intent: "prepare", path: "notes/changed.md" },
+        ]);
+        const expectedError = reason === "source"
+            ? "The Ghost source is unavailable or not authorized for this request. Ask the user; do not select another target to bypass admission."
+            : "The Ghost request or its source guard is no longer current. Start from the current user request; no preparation was started.";
+
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(trace.providerTexts).toHaveLength(3);
+        for (const feedback of trace.providerTexts.slice(1)) {
+            expect(feedback).toContain(expectedError);
+            expect(feedback).toContain('"executionState": "not_started"');
+            expect(feedback).toContain(reason === "source" ? '"needs_user"' : '"none"');
+            expect(feedback).not.toContain("different Ghost preparation");
+        }
+    });
+
+    it("correlates a declared command need with tools actually bound after this run's Memory mode", async () => {
+        const host = createPromptHost();
+        host.settings.memoryEnabled = true;
+        const boundToolNames: string[][] = [];
+        const providerInputs: string[] = [];
+        const model = {
+            bindTools: jest.fn((tools: unknown) => {
+                boundToolNames.push(Array.isArray(tools)
+                    ? tools.map(tool => (tool as { function?: { name?: string } }).function?.name ?? "")
+                    : []);
+                return model;
+            }),
+            stream: async function* (input: unknown) {
+                providerInputs.push(String(input));
+                yield new AIMessageChunk({ content: "No effect is required." });
+                yield new AIMessageChunk({ content: "", response_metadata: { finish_reason: "stop" } });
+            },
+        };
+        const runtime = new PaAgentRuntime(
+            host as never,
+            { createChatModel: async () => model } as never,
+            { skillContextProvider: null },
+        );
+        const invocation: PaAgentCommandInvocation = {
+            definition: {
+                id: "memory-command",
+                agentGuidance: ["Memory command declaration fixture."],
+                capabilityNames: ["search_memory"],
+            },
+            conversationId: "command-conversation",
+            stableMessageId: "command-message",
+            activation: { kind: "composer-action", action: "memory" },
+        };
+        try {
+            await runtime.streamTurn({
+                prompt: "Use Memory for launch",
+                userText: "Use Memory for launch",
+                memoryMode: "skip-memory",
+                conversationId: invocation.conversationId,
+                commandInvocation: invocation,
+                commandGuidance: "APP_OWNED_MEMORY_TEMPLATE",
+            });
+        } finally {
+            runtime.dispose();
+        }
+
+        const registry = (runtime as unknown as {
+            toolRegistry: { getDefinition(name: string): unknown };
+        }).toolRegistry;
+        expect(registry.getDefinition("search_memory")).toBeTruthy();
+        expect(boundToolNames.flat()).not.toContain("search_memory");
+        expect(providerInputs[0]).toContain("Memory command declaration fixture.");
+        expect(providerInputs[0]).toContain(
+            "Declared capability search_memory is not currently admitted or exportable",
+        );
+    });
+
+    it("binds a sourceless command invocation to its stable message identity", async () => {
+        const host = createPromptHost();
+        const invocation: PaAgentCommandInvocation = {
+            definition: paAgentCreateImageCommandDefinition,
+            conversationId: "command-conversation",
+            stableMessageId: "command-message",
+            activation: { kind: "typed-token", token: "@CreateImage" },
+        };
+        const boundToolNames: string[] = [];
+        const model = {
+            bindTools: jest.fn((tools: unknown) => {
+                boundToolNames.push(...Array.isArray(tools)
+                    ? tools.map(tool => (tool as { function?: { name?: string } }).function?.name ?? "")
+                    : []);
+                return model;
+            }),
+            stream: async function* () {
+                yield { content: "The image command is available but no effect is required." };
+            },
+        };
+        const runtime = new PaAgentRuntime(
+            host as never,
+            {
+                createChatModel: async () => model,
+                getNativeToolCallingCapability: () => ({
+                    supported: true,
+                    status: "supported",
+                    provider: "qwen",
+                    model: "qwen3.6-plus",
+                    baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    reason: "Provider/model/baseURL is validated for native tool calling.",
+                }),
+            } as never,
+            { nativeToolPlanningInternalGate: false, skillContextProvider: null },
+        );
+        try {
+            await runtime.streamTurn({
+                prompt: "@CreateImage draw a bounded test image",
+                userText: "@CreateImage draw a bounded test image",
+                memoryMode: "skip-memory",
+                conversationId: invocation.conversationId,
+                commandInvocation: invocation,
+                inputLineage: completeInputLineage([
+                    { kind: "user-text", messageId: invocation.stableMessageId },
+                ]),
+                createImage: {
+                    conversationId: invocation.conversationId,
+                    stableMessageId: invocation.stableMessageId,
+                    operationId: "image-operation",
+                    submit: jest.fn(async () => ({ taskId: "image-task" })),
+                },
+            });
+        } finally {
+            runtime.dispose();
+        }
+
+        expect(boundToolNames).toContain("create_image");
+    });
+
+    it("rejects a command invocation from a different source message", async () => {
+        const host = createPromptHost();
+        const createChatModel = jest.fn(async () => {
+            throw new Error("provider must not be constructed");
+        });
+        const runtime = new PaAgentRuntime(
+            host as never,
+            { createChatModel } as never,
+            { skillContextProvider: null },
+        );
+        try {
+            await expect(runtime.streamTurn({
+                prompt: "Write without a tool",
+                userText: "Write without a tool",
+                memoryMode: "skip-memory",
+                conversationId: "command-conversation",
+                runSourceSelection: {
+                    schemaVersion: 1,
+                    scope: "notes",
+                    selectionId: "selection",
+                    userMessageId: "current-message",
+                },
+                commandInvocation: {
+                    definition: paAgentWritingCommandDefinition,
+                    conversationId: "command-conversation",
+                    stableMessageId: "older-message",
+                    activation: { kind: "composer-action", action: "writing" },
+                },
+            })).rejects.toThrow("PA Agent command invocation is not bound to this Chat source selection.");
+            expect(createChatModel).not.toHaveBeenCalled();
+        } finally {
+            runtime.dispose();
+        }
+    });
+
+    it("retires run-bound Ghost capabilities before the same Runtime handles another run", async () => {
+        const host = createPromptHost();
+        const boundToolNames: string[][] = [];
+        const model = {
+            bindTools: jest.fn((tools: unknown) => {
+                boundToolNames.push(Array.isArray(tools)
+                    ? tools.map(tool => (tool as { function?: { name?: string } }).function?.name ?? "")
+                    : []);
+                return model;
+            }),
+            stream: async function* () {
+                yield { type: "text_delta", text: "No command effect is required." } as const;
+                yield { type: "provider_completion", completion: "stop" } as const;
+            },
+        };
+        const runtime = new PaAgentRuntime(
+            host as never,
+            { createChatModel: async () => model } as never,
+            { skillContextProvider: null },
+        );
+        const ghostInvocation: PaAgentCommandInvocation = {
+            definition: paAgentGhostCommandDefinition,
+            conversationId: "command-conversation",
+            stableMessageId: "command-message",
+            activation: { kind: "typed-token", token: "@blog2ghost" },
+        };
+        const ghostBinding: GhostHostBinding = {
+            conversationId: ghostInvocation.conversationId,
+            stableMessageId: ghostInvocation.stableMessageId,
+            submit: jest.fn(async () => ({ status: "prepared" as const, operationId: "ghost-operation" })),
+        };
+        try {
+            await runtime.streamTurn({
+                prompt: "@blog2ghost prepare the current note",
+                userText: "@blog2ghost prepare the current note",
+                memoryMode: "skip-memory",
+                conversationId: ghostInvocation.conversationId,
+                commandInvocation: ghostInvocation,
+                ghostPublishing: ghostBinding,
+            });
+            await runtime.streamTurn({
+                prompt: "An ordinary follow-up.",
+                userText: "An ordinary follow-up.",
+                memoryMode: "skip-memory",
+                conversationId: ghostInvocation.conversationId,
+            });
+        } finally {
+            runtime.dispose();
+        }
+
+        expect(ghostBinding.submit).not.toHaveBeenCalled();
+        expect(boundToolNames[0]).toContain("prepare_ghost_post");
+        expect(boundToolNames.at(-1)).not.toContain("prepare_ghost_post");
+    });
+
+    it("cleans this scope after later setup fails while another owner remains registered", async () => {
+        const host = createPromptHost();
+        const boundToolNames: string[][] = [];
+        const model = {
+            bindTools: jest.fn((tools: unknown) => {
+                boundToolNames.push(Array.isArray(tools)
+                    ? tools.map(tool => (tool as { function?: { name?: string } }).function?.name ?? "")
+                    : []);
+                return model;
+            }),
+            stream: async function* () {
+                yield { type: "text_delta", text: "No command effect is required." } as const;
+                yield { type: "provider_completion", completion: "stop" } as const;
+            },
+        };
+        const runtime = new PaAgentRuntime(
+            host as never,
+            { createChatModel: async () => model } as never,
+            { skillContextProvider: null },
+        );
+        const registry = (runtime as unknown as { toolRegistry: CapabilityRegistry }).toolRegistry;
+        const otherOwner = createChatToolCapability(createCreateImageTool({
+            conversationId: "command-conversation",
+            stableMessageId: "command-message",
+            operationId: "other-owner-operation",
+            submit: jest.fn(async () => ({ taskId: "other-owner-task" })),
+        }), { providerId: "chat-image-generation", platform: "desktop" });
+        otherOwner.executionMode = "sequential";
+        registry.register(otherOwner);
+        const invocation: PaAgentCommandInvocation = {
+            definition: paAgentCreateImageCommandDefinition,
+            conversationId: "command-conversation",
+            stableMessageId: "command-message",
+            activation: { kind: "typed-token", token: "@CreateImage" },
+        };
+        try {
+            const imageSubmit: CreateImageHostBinding["submit"] = jest.fn(async () => ({ taskId: "image-task" }));
+            await expect(runtime.streamTurn({
+                prompt: "@CreateImage draw",
+                userText: "@CreateImage draw",
+                memoryMode: "skip-memory",
+                conversationId: invocation.conversationId,
+                commandInvocation: invocation,
+                images: [{
+                    ref: { assetId: "image-asset", contentHash: "a".repeat(64) },
+                    ordinal: 1,
+                    label: "authorized input",
+                }],
+                createImage: {
+                    conversationId: invocation.conversationId,
+                    stableMessageId: invocation.stableMessageId,
+                    operationId: "image-operation",
+                    submit: imageSubmit,
+                },
+            })).rejects.toThrow("Image generation capability unavailable");
+
+            expect(registry.has("resolve_chat_images")).toBe(false);
+            expect(registry.get("create_image")).toBe(otherOwner);
+            expect(imageSubmit).not.toHaveBeenCalled();
+
+            await runtime.streamTurn({
+                prompt: "An ordinary follow-up.",
+                userText: "An ordinary follow-up.",
+                memoryMode: "skip-memory",
+                conversationId: invocation.conversationId,
+            });
+        } finally {
+            runtime.dispose();
+        }
+
+        expect(boundToolNames.flat()).not.toContain("resolve_chat_images");
+    });
+
+    it("retires a bound command capability when the model wait is cancelled", async () => {
+        const host = createPromptHost();
+        const boundToolNames: string[][] = [];
+        let modelStarted!: () => void;
+        const modelStartedWait = new Promise<void>(resolve => { modelStarted = resolve; });
+        let waiting = true;
+        const model = {
+            bindTools: jest.fn((tools: unknown) => {
+                boundToolNames.push(Array.isArray(tools)
+                    ? tools.map(tool => (tool as { function?: { name?: string } }).function?.name ?? "")
+                    : []);
+                return model;
+            }),
+            stream: async function* (input: { signal?: AbortSignal }) {
+                modelStarted();
+                if (waiting) {
+                    waiting = false;
+                    await new Promise<void>(resolve => {
+                        input.signal?.addEventListener("abort", () => resolve(), { once: true });
+                    });
+                    const error = new Error("Cancelled");
+                    error.name = "AbortError";
+                    throw error;
+                }
+                yield { type: "text_delta", text: "No command effect is required." } as const;
+                yield { type: "provider_completion", completion: "stop" } as const;
+            },
+        };
+        const runtime = new PaAgentRuntime(
+            host as never,
+            { createChatModel: async () => model } as never,
+            { skillContextProvider: null },
+        );
+        const controller = new AbortController();
+        const invocation: PaAgentCommandInvocation = {
+            definition: paAgentGhostCommandDefinition,
+            conversationId: "command-conversation",
+            stableMessageId: "command-message",
+            activation: { kind: "typed-token", token: "@blog2ghost" },
+        };
+        const ghostSubmit: GhostHostBinding["submit"] = jest.fn(async () => ({
+            status: "prepared" as const, operationId: "ghost-operation",
+        }));
+        try {
+            const run = runtime.streamTurn({
+                prompt: "@blog2ghost prepare the current note",
+                userText: "@blog2ghost prepare the current note",
+                memoryMode: "skip-memory",
+                conversationId: invocation.conversationId,
+                commandInvocation: invocation,
+                ghostPublishing: {
+                    conversationId: invocation.conversationId,
+                    stableMessageId: invocation.stableMessageId,
+                    submit: ghostSubmit,
+                },
+                signal: controller.signal,
+            });
+            await modelStartedWait;
+            expect(boundToolNames[0]).toContain("prepare_ghost_post");
+            controller.abort();
+            await expect(run).rejects.toThrow();
+
+            await runtime.streamTurn({
+                prompt: "An ordinary follow-up.",
+                userText: "An ordinary follow-up.",
+                memoryMode: "skip-memory",
+                conversationId: invocation.conversationId,
+            });
+        } finally {
+            runtime.dispose();
+        }
+
+        expect(ghostSubmit).not.toHaveBeenCalled();
+        expect(boundToolNames[0]).toContain("prepare_ghost_post");
+        expect(boundToolNames.at(-1)).not.toContain("prepare_ghost_post");
     });
 
     it("instructs the model to always provide a non-empty query argument to search-style tools", () => {
@@ -184,3 +1052,47 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(joined).toContain("not current-run tool policy");
     });
 });
+
+function createPromptHost(): AiServiceHost {
+    return {
+        settings: {
+            debug: false, aiProvider: "qwen", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            chatModelName: "qwen3.6-plus", policyModelName: "", embeddingModelName: "b149-fixed-embedding",
+            shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false, webSearchEnabled: false,
+            memoryEnabled: false, licenseTier: "paid", operationsAgentEnabled: false,
+            operationsProactiveSaveSuggestionsEnabled: false, operationsAuditIncludeContent: false,
+            operationsAuditRetentionDays: 30, statisticsVaultId: "b149-synthetic", retrievalOptimizationFlags: {},
+        },
+        app: {
+            workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
+            vault: { getMarkdownFiles: () => [], getAbstractFileByPath: () => null },
+            metadataCache: { getFileCache: () => null, getCache: () => null },
+        },
+        memorySearch: { ensureReadyForChat: async () => ({ decision: "answer-now" }), searchHybrid: async () => [] },
+        getMemoryEvidenceEpoch: () => "b149-synthetic-source-epoch",
+        getAPIToken: async () => "b149-synthetic-token", log: () => undefined,
+        isOperationsAgentEnabled: false, getMemoryExtractionPromptContext: () => undefined,
+    } as unknown as AiServiceHost;
+}
+
+function createConflictTool(): ChatToolDefinition<Record<string, unknown>, unknown> {
+    return {
+        name: "prepare_ghost_post",
+        description: "Conflict owner for scope cleanup.",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        plannerGuidance: ["Synthetic conflict owner."],
+        permission: "read-only",
+        cost: "free",
+        outputBudgetChars: 100,
+        requiresConfirmation: false,
+        failureBehavior: "recoverable",
+        statusMessageText: "Conflict owner",
+        sourceBoundary: "read-only-tool",
+        statusMessage: () => "Conflict owner",
+        validateInput: raw => {
+            if (!raw || typeof raw !== "object") throw new Error("input must be an object");
+            return raw as Record<string, unknown>;
+        },
+        execute: async () => ({ ok: true, tool: "prepare_ghost_post", inputSummary: "", content: null, sources: [] }),
+    };
+}

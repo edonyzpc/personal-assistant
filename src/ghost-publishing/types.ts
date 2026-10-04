@@ -1,4 +1,5 @@
 import type { TaskSourceReadGuard } from "../ai-services/task-source-read-guard";
+import type { PaAgentToolExecutionFacts } from "../ai-services/pa-agent-types";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -22,6 +23,15 @@ export interface LexicalDocumentJson {
 }
 
 export type GhostPublishingSourceGuard = TaskSourceReadGuard;
+
+/** A closed pre-controller admission fact; never inferred from exception prose. */
+export class GhostHostAdmissionError extends Error {
+    constructor(readonly reason: "target" | "source" | "stale",
+        readonly facts: PaAgentToolExecutionFacts) {
+        super(`Ghost publishing admission: ${reason}.`);
+        this.name = "GhostHostAdmissionError";
+    }
+}
 
 export interface GhostPublishingSourceFile {
     path: string;

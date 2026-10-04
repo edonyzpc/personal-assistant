@@ -44,6 +44,8 @@ import type {
 } from "./chat-tool-types";
 import { OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS } from "./chat-tool-types";
 import type { SourceRecord } from "./chat-types";
+import { GhostHostAdmissionError } from "../ghost-publishing/types";
+import { ImagePreacceptError, imageSubrequestOperationId, IMAGE_PREACCEPT_MESSAGES, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from "../chat/image-generation-types";
 import { createSourceDedupKey } from "./source-store";
 import { memoryResultFact } from "./pa-agent-result-facts";
 import { getPlatformCrypto } from "../platform-dom";
@@ -234,6 +236,7 @@ export function createSearchMemoryTool(
             "Use for questions that need the user's prepared Memory or historical note context beyond currently supplied context.",
             "Do not use for general knowledge, pure rewriting, or agent-control requests.",
             "Use a concise query that preserves the user's important terms.",
+            "Omit temporal when the auxiliary query rewriter should decide. Use temporal none when the main Agent explicitly wants all history; use a closed recent value or valid date range only when the current request establishes it.",
         ],
         inputSchema: {
             type: "object",
@@ -241,6 +244,14 @@ export function createSearchMemoryTool(
                 query: {
                     type: "string",
                     description: "Search query for Memory prepared from the user's notes.",
+                },
+                temporal: {
+                    type: "string",
+                    anyOf: [
+                        { enum: ["recent_7d", "recent_30d", "none"] },
+                        { pattern: "^range:\\d{4}-\\d{2}-\\d{2}\\.\\.\\d{4}-\\d{2}-\\d{2}$" },
+                    ],
+                    description: "Optional temporal intent. Omit for auxiliary-model rewrite; none means explicit all history.",
                 },
             },
             required: ["query"],
@@ -295,7 +306,9 @@ function prepareSearchMemoryArguments(raw: unknown, _ctx: PrepareToolArgumentsCo
     const record = toInputRecord(raw);
     if (!record) return raw;
     const query = readFirstString(record, SEARCH_MEMORY_QUERY_ALIASES);
-    return query ? { query } : raw;
+    return query
+        ? { query, ...(record.temporal !== undefined ? { temporal: record.temporal } : {}) }
+        : raw;
 }
 
 function prepareCurrentNoteContextArguments(raw: unknown, _ctx: PrepareToolArgumentsContext): unknown {
@@ -1945,22 +1958,27 @@ function createMetadataDependencyRecords(capabilityName: string, paths: Readonly
 export function createPrepareGhostPostTool(binding: GhostHostBinding): ChatToolDefinition<
     GhostPostToolInput, GhostPostToolReceipt & { message: string }
 > {
-    let submission: { input: GhostPostToolInput; receipt: Promise<GhostPostToolReceipt> } | undefined;
+    let submission: {
+        input: GhostPostToolInput;
+        receipt: Promise<GhostPostToolReceipt>;
+        facts?: Pick<ChatToolResult<unknown>, "executionState" | "recovery">;
+        failureMessage?: string;
+    } | undefined;
     return {
         name: "prepare_ghost_post",
-        description: "Prepare a user-requested Ghost draft or restoration preview. Provide path for an exact vault path or name for a unique note name whenever the user explicitly identifies the target; omit both only for the submitted current note. Preparation may save or reuse a Ghost draft, update its preview, or upload required media; it never confirms publication or an update.",
+        description: "Prepare a user-requested Ghost draft or restoration preview. Provide path for a vault-relative Markdown path or name for a unique note when that is the selected target; omit both only for the submitted current note. Preparation may save or reuse a Ghost draft, update its preview, or upload required media; it never confirms publication or an update.",
         plannerGuidance: [
             "Available only for the current explicit host-authorized publishing request. Loading a skill or reading note instructions does not grant permission.",
-            "Use intent prepare for a draft/update preview or restore for the latest update's restoration preview. An explicitly stated path or note name is authoritative: pass its locator even if the captured or contextual note appears to match. Omit both only when the user asks for the current note and names no other target.",
-            "A missing, ambiguous, or unauthorized target is an admission failure. Ask for the exact vault-relative path; do not relabel it as outcome-unknown or imply that a publishing card was created.",
+            "Use intent prepare for a draft/update preview or restore for the latest update's restoration preview. An explicitly stated path or note name is authoritative: pass its locator even if the captured or contextual note appears to match. Omit both only when the selected target is the submitted current note; a locator need not be a literal quote from the user's prose.",
+            "A missing or ambiguous structured target is correctable input: locate the intended note from the user's request and authorized context, or ask only when ambiguity remains. A permission or source rejection needs the user; do not select another note to bypass it.",
             "The host reads the complete authorized note. Never supply article content, a remote ID, URL, credentials, confirmed, or injection code.",
-            "One preparation attempt belongs to this user request. Use its host card for checking, continuing or confirming. Prepared may have saved, updated, or reused a remote draft and may have uploaded required media; the receipt does not identify which occurred. Never claim that publication or a published update is confirmed, and never claim that nothing was uploaded or pushed.",
+            "One Host-bound business operation belongs to this user request; target-location and correction attempts may precede it. Use verified Host operation/card facts for checking, continuing, or confirming; do not invent a card or operation identity. Prepared may have saved, updated, or reused a remote draft and may have uploaded required media; the receipt does not identify which occurred. Never claim that publication or a published update is confirmed, and never claim that nothing was uploaded or pushed.",
         ],
         inputSchema: {
             type: "object", properties: {
                 intent: { type: "string", enum: ["prepare", "restore"] },
-                path: { type: "string", minLength: 1, maxLength: 4096, description: "Exact vault-relative Markdown path explicitly named by the user; mutually exclusive with name." },
-                name: { type: "string", minLength: 1, maxLength: 255, description: "Unique note name explicitly named by the user; mutually exclusive with path." },
+                path: { type: "string", minLength: 1, maxLength: 4096, description: "Exact vault-relative Markdown path selected for the user's target; mutually exclusive with name." },
+                name: { type: "string", minLength: 1, maxLength: 255, description: "Unique vault note name selected for the user's target; mutually exclusive with path." },
             }, required: ["intent"], additionalProperties: false,
         },
         permission: "ghost-publishing", cost: "network-calls", outputBudgetChars: 1000,
@@ -1994,7 +2012,10 @@ export function createPrepareGhostPostTool(binding: GhostHostBinding): ChatToolD
             const inputSummary = input.intent;
             try {
                 const guard = context.taskSourceReadGuard;
-                if (!guard) throw new Error("Source guard missing.");
+                if (!guard) throw new GhostHostAdmissionError("stale", {
+                    executionState: "not_started",
+                    recovery: { code: "ghost_source_guard_missing", allowedActions: ["none"] },
+                });
                 // Pure user-text requests have no inherited source receipt. Their live
                 // guard still fences scope/lifetime; the domain adapter adds exact note checks.
                 const captured = guard.captureSourceValidity?.();
@@ -2003,17 +2024,21 @@ export function createPrepareGhostPostTool(binding: GhostHostBinding): ChatToolD
                         && guard.isNoteDomainAllowed?.() === true && (!captured || captured()); }
                     catch { return false; }
                 };
-                if (!sourceValidity()) throw new Error("Source guard unavailable.");
+                if (!sourceValidity()) throw new GhostHostAdmissionError("stale", {
+                    executionState: "not_started",
+                    recovery: { code: "ghost_request_stale", allowedActions: ["none"] },
+                });
                 if (submission && JSON.stringify(submission.input) !== JSON.stringify(input)) {
                     return { ok: false, tool: "prepare_ghost_post", inputSummary, content: null, sources: [],
-                        error: "This request already attempted a different Ghost preparation. Use its publishing card or make a new explicit request." };
+                        error: submission.failureMessage
+                            ?? "This request already attempted a different Ghost preparation. Use verified Host facts for that attempt or make a new explicit request.",
+                        ...(submission.facts ? submission.facts : {}) };
                 }
                 submission ??= { input: { ...input }, receipt: Promise.resolve().then(() => {
-                    if (!sourceValidity()) throw new Error("Source guard unavailable.");
                     return binding.submit(input, guard, sourceValidity, context.signal);
                 }) };
                 const receipt = await submission.receipt;
-                if (!sourceValidity()) throw new Error("Source guard unavailable.");
+                if (!sourceValidity()) throw new Error("Ghost preparation source changed after execution.");
                 if (!receipt || !["prepared", "needs_attention", "outcome_unknown"].includes(receipt.status)
                     || (receipt.operationId !== undefined && (typeof receipt.operationId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(receipt.operationId)))
                     || (receipt.status !== "needs_attention" && !receipt.operationId)) {
@@ -2022,20 +2047,48 @@ export function createPrepareGhostPostTool(binding: GhostHostBinding): ChatToolD
                 const content = { status: receipt.status, ...(receipt.operationId ? { operationId: receipt.operationId } : {}),
                     message: receipt.status === "prepared" ? "A draft or restoration preview is prepared. Check its publishing card and preview; publication has not been confirmed."
                         : receipt.status === "outcome_unknown" ? "The preparation result needs verification in its publishing card. Do not repeat the request or claim it is published."
-                            : "Preparation needs attention. Check its publishing card before continuing; publication has not been confirmed." };
+                            : receipt.operationId
+                                ? "Preparation needs attention. Check its publishing card before continuing; publication has not been confirmed."
+                                : "Preparation needs attention. Follow verified Host attention facts before continuing; publication has not been confirmed." };
                 // Attention can follow creation of an owned operation, without
                 // proving a prepared preview or publication outcome.
                 const resultFact = receipt.status === "prepared" ? { kind: "approval_pending" as const, intentId: receipt.operationId! }
                     : receipt.operationId ? { kind: "unknown" as const, operationId: receipt.operationId }
                         : { kind: "unavailable" as const, capability: "prepare_ghost_post", reason: "ghost_attention_required" };
-                return { ok: true, tool: "prepare_ghost_post", inputSummary, content, sources: [], resultFact };
+                const executionState = receipt.status === "prepared" ? "succeeded" : "acceptance_unknown";
+                const recovery: ChatToolResult<unknown>["recovery"] = receipt.status === "prepared" ? undefined
+                    : { code: receipt.status === "outcome_unknown" ? "ghost_preparation_outcome_unknown" : "ghost_attention_required",
+                        allowedActions: ["query_operation", "needs_user"], ...(receipt.operationId ? { operationId: receipt.operationId } : {}) };
+                return { ok: true, tool: "prepare_ghost_post", inputSummary, content, sources: [], resultFact,
+                    executionState, ...(recovery ? { recovery } : {}) };
             } catch (error) {
-                const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-                const message = code === "target-ambiguous" ? "More than one note matches. Ask the user to provide an exact vault-relative note path."
-                    : code === "target-missing" ? "The requested note is unavailable. Ask the user to check its exact vault-relative path."
-                        : code === "target-not-requested" || code === "request-required" ? "The host has not authorized this target. Ask the user for an explicit publishing request naming the intended note."
-                            : "Preparation could not be confirmed. Check its publishing card before retrying; no publication is confirmed.";
-                return { ok: false, tool: "prepare_ghost_post", inputSummary, content: null, sources: [], error: message };
+                if (error instanceof GhostHostAdmissionError) {
+                    const message = error.reason === "target"
+                        ? "The structured Ghost target is missing, invalid, or ambiguous. Correct the target from the user's request; no preparation was started."
+                        : error.reason === "source"
+                            ? "The Ghost source is unavailable or not authorized for this request. Ask the user; do not select another target to bypass admission."
+                            : "The Ghost request or its source guard is no longer current. Start from the current user request; no preparation was started.";
+                    const correctable = error.facts.executionState === "not_started"
+                        && error.facts.recovery?.allowedActions.includes("correct_input") === true;
+                    if (correctable && submission && JSON.stringify(submission.input) === JSON.stringify(input)) submission = undefined;
+                    else if (submission && JSON.stringify(submission.input) === JSON.stringify(input)) {
+                        submission.facts = error.facts;
+                        submission.failureMessage = message;
+                    }
+                    return { ok: false, tool: "prepare_ghost_post", inputSummary, content: null, sources: [],
+                        error: message, ...error.facts };
+                }
+                if (submission && JSON.stringify(submission.input) === JSON.stringify(input)) {
+                    submission.facts = {
+                        executionState: "acceptance_unknown",
+                        recovery: { code: "ghost_preparation_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] },
+                    };
+                    submission.failureMessage = "The preparation result is unknown. Verify an existing Ghost operation if one is verifiable; otherwise say it cannot be verified. Do not retry or claim publication.";
+                }
+                return { ok: false, tool: "prepare_ghost_post", inputSummary, content: null, sources: [],
+                    error: "The preparation result is unknown. Verify an existing Ghost operation if one is verifiable; otherwise say it cannot be verified. Do not retry or claim publication.",
+                    executionState: "acceptance_unknown",
+                    recovery: { code: "ghost_preparation_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] } };
             }
         },
     };
@@ -2046,7 +2099,7 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
     CreateImageToolInput,
     { status: "accepted" | "already_accepted"; taskId: string; message?: string }
 > {
-    const submitted = new Map<number, { receipt: Promise<{ taskId: string }>; input: CreateImageToolInput }>();
+    const submitted = new Map<number, { receipt: Promise<{ taskId: string }>; input: CreateImageToolInput; operationId: string }>();
     return {
         name: "create_image",
         description: "Start an image creation or edit requested by the user. Returns an accepted background task, not a completed image.",
@@ -2054,16 +2107,17 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
             "Use for an explicit image creation or edit request, including @CreateImage. Merely discussing images or attaching an image is not a generation request.",
             "Choose generate for text-only creation, reference for inspiration from authorized images, or edit for changing a specific image. Preserve the user's requested subject and constraints.",
             "Use only exact registered image ref tokens and version IDs visible in this conversation. The host rechecks access and costs; never invent a path, URL, credential or provider endpoint.",
-            "Default to one image. Do not call again to silently retry or choose the best paid result. An accepted task continues in the background; do not claim its pixels are ready or viewed.",
-            "Only when the user explicitly asks for separately described images in one message, use distinct one-based subrequestIndex values. The host enforces their shared image budget.",
+            "Default to one image. Interpret the requested total from the user; do not silently retry or choose the best paid result. The Host freezes a structured plan of at most four images.",
+            "Use count for images sharing one description. For separately described images use count 1 per one-based subrequestIndex and the same totalCount; the Host enforces that shared plan.",
         ],
         inputSchema: {
             type: "object",
             properties: {
                 prompt: { type: "string", description: "Description of the requested image or change, retaining the user's constraints.", minLength: 1, maxLength: 10000 },
-                operation: { type: "string", enum: ["generate", "reference", "edit"], description: "Creation from text, reference-based creation, or modification of a specific image." },
-                count: { type: "integer", minimum: 1, maximum: 8, description: "Number of images explicitly requested by the user; omit for one." },
-                subrequestIndex: { type: "integer", minimum: 1, maximum: 4, description: "Distinct requested image part, only for explicit separate descriptions; omit for one request." },
+                operation: { type: "string", enum: ["generate", "reference", "edit"], description: "Agent-selected creation from text, reference-based creation, or modification." },
+                count: { type: "integer", minimum: 1, maximum: 4, description: "Images sharing this exact description; omit for one." },
+                totalCount: { type: "integer", minimum: 1, maximum: 4, description: "Total images in the current user request plan; omit to inherit the Host plan or request count." },
+                subrequestIndex: { type: "integer", minimum: 1, maximum: 4, description: "Distinct requested image part for separate descriptions; omit for one request." },
                 referenceImageRefs: { type: "array", description: "Exact opaque refs for authorized chat images; no paths or URLs.", items: { type: "string", maxLength: 256 } },
                 parentVersionId: { type: "string", description: "Exact generated version ID when editing a previous result.", maxLength: 256 },
             },
@@ -2081,7 +2135,7 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
         validateInput: (raw) => {
             if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("create_image input must be an object.");
             const value = raw as Record<string, unknown>;
-            const allowed = new Set(["prompt", "operation", "count", "subrequestIndex", "referenceImageRefs", "parentVersionId"]);
+            const allowed = new Set(["prompt", "operation", "count", "totalCount", "subrequestIndex", "referenceImageRefs", "parentVersionId"]);
             if (Object.keys(value).some(key => !allowed.has(key))) throw new Error("create_image has unsupported arguments.");
             const prompt = typeof value.prompt === "string" ? value.prompt.trim() : "";
             if (!prompt || prompt.length > 10000) throw new Error("create_image requires a valid prompt.");
@@ -2090,8 +2144,12 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
                 throw new Error("create_image requires a valid operation.");
             }
             const count = value.count === undefined ? 1 : value.count;
-            if (!Number.isInteger(count) || (count as number) < 1 || (count as number) > 8) {
+            if (!Number.isInteger(count) || (count as number) < 1 || (count as number) > 4) {
                 throw new Error("create_image count is out of range.");
+            }
+            const totalCount = value.totalCount;
+            if (totalCount !== undefined && (!Number.isInteger(totalCount) || (totalCount as number) < 1 || (totalCount as number) > 4)) {
+                throw new Error("create_image total count is out of range.");
             }
             const subrequestIndex = value.subrequestIndex;
             if (subrequestIndex !== undefined && (!Number.isInteger(subrequestIndex)
@@ -2109,7 +2167,9 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
                 && (typeof parentVersionId !== "string" || !/^[A-Za-z0-9:_-]{1,256}$/.test(parentVersionId))) {
                 throw new Error("create_image parent version is invalid.");
             }
-            return { prompt, operation, count: count as number, referenceImageRefs: refs,
+            return { prompt, operation, count: count as number,
+                ...(totalCount === undefined ? {} : { totalCount: totalCount as number }),
+                referenceImageRefs: refs,
                 ...(subrequestIndex === undefined ? {} : { subrequestIndex: subrequestIndex as number }),
                 ...(parentVersionId ? { parentVersionId } : {}) };
         },
@@ -2120,11 +2180,12 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
             const isSourceCurrent = context.taskSourceReadGuard?.captureSourceValidity?.();
             const requestLineage = binding.resolveRequestLineage?.(input, context.imageRequestLineage)
                 ?? context.imageRequestLineage;
-            const entry = prior ?? { input, receipt: Promise.resolve().then(() => isSourceCurrent
+            const entry = prior ?? { input, operationId: imageSubrequestOperationId(binding.operationId, index),
+                receipt: Promise.resolve().then(() => isSourceCurrent
                 ? binding.submit(input, isSourceCurrent, requestLineage, undefined, context.createImageRuntime)
                 : binding.submit(input, undefined, requestLineage, undefined, context.createImageRuntime)) };
             if (!prior) submitted.set(index, entry);
-            const inputSummary = `${entry.input.operation}; count:${entry.input.count}`;
+            const inputSummary = `${entry.input.operation ?? "operation:unselected"}; count:${entry.input.count}`;
             try {
                 const accepted = await entry.receipt;
                 if (!accepted || typeof accepted.taskId !== "string" || !accepted.taskId) {
@@ -2137,34 +2198,18 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
                         : { status: "accepted", taskId: accepted.taskId },
                     sources: [], resultFact: { kind: 'accepted', action: 'image', operationId: accepted.taskId } };
             } catch (error) {
-                const reason = error instanceof Error ? error.message : '';
-                const featuredPromptReason = /^featured_image_prompt:(input_too_large|empty_result|nontext_result|result_too_large|source_changed|connection_changed|cancelled|timeout)$/
-                    .exec(reason)?.[1];
-                const message = featuredPromptReason
-                    ? featuredPromptReason === 'input_too_large'
-                        ? 'Image description preparation failed because the selected text is too large. Wan was not called; ask the user to choose a smaller exact range.'
-                    : featuredPromptReason === 'result_too_large'
-                        ? 'Image description preparation failed because the prepared description is too long for Wan. Wan was not called; ask the user to simplify their request and do not submit the original note.'
-                    : featuredPromptReason === 'nontext_result'
-                        ? 'The text model returned no usable image description. Wan was not called; ask the user for a clearer request.'
-                    : featuredPromptReason === 'empty_result'
-                        ? 'The text model returned an empty image description. Wan was not called; ask the user for a clearer request.'
-                    : featuredPromptReason === 'source_changed' || featuredPromptReason === 'connection_changed'
-                        ? 'Image description preparation stopped because its source or AI connection changed. Wan was not called.'
-                    : featuredPromptReason === 'timeout'
-                        ? 'Image description preparation timed out. Wan was not called.'
-                    : 'Image description preparation was cancelled. Wan was not called.'
-                    : reason.includes('image_generation:connection_unavailable')
-                    ? 'Image generation needs a compatible Wan connection in Settings.'
-                    : reason.includes('image_generation:credential_unavailable')
-                        ? 'The image service key is unavailable. Check the image connection settings.'
-                        : reason.includes('image_generation:count_exceeds_provider_limit')
-                            ? 'Wan supports up to 4 images in one request. Ask the user to choose 1–4 images.'
-                        : reason.includes('image_generation:count_needs_confirmation')
-                            ? 'The image count is not explicit. Ask the user before creating more than one image.'
-                            : 'Could not confirm the image request. Check its card before trying again.';
+                if (error instanceof ImagePreacceptError) {
+                    if ((error.action === "correct_input" || error.code === "operation_unresolved")
+                        && submitted.get(index) === entry) submitted.delete(index);
+                    const message = IMAGE_PREACCEPT_MESSAGES[error.code];
+                    return { ok: false, tool: "create_image", inputSummary, content: null, sources: [], error: message, ...error.facts };
+                }
+                const message = IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE;
                 return { ok: false, tool: "create_image", inputSummary,
-                    content: null, sources: [], error: message };
+                    content: null, sources: [], error: message,
+                    resultFact: { kind: "unknown", operationId: entry.operationId },
+                    executionState: "acceptance_unknown",
+                    recovery: { code: "image_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] } };
             }
         },
     };

@@ -8,14 +8,13 @@ import type { ChatHistoryStore } from './chat-history-store';
 import type { ImageAssetService } from './image-assets';
 import { cloneImageRef, type ImageRef, type ImageSyncReceipt } from './image-types';
 import type { GeneratedImageVersion, ImageGenerationPromptOrigin, ImageGenerationTask } from './image-generation-types';
+import { ImagePreacceptError } from './image-generation-types';
 import { normalizeFeaturedImageFolderPath } from '../ai-services/featured-image-path';
 
 const MAX_RESULT_BYTES = 20 * 1024 * 1024;
 const POLL_DELAY_MS = 3_000;
 const MAX_POLL_DELAY_MS = 30_000;
 const RESULT_LIFETIME_MS = 24 * 60 * 60 * 1_000;
-const COUNT_WORDS = ['[二两]', '三', '四'];
-const ENGLISH_COUNTS = ['two', 'three', 'four'];
 
 export interface ImageGenerationSubmitInput {
     conversationId: string;
@@ -25,6 +24,7 @@ export interface ImageGenerationSubmitInput {
     submittedPrompt: string;
     operation: 'generate' | 'reference' | 'edit';
     count: number;
+    totalCount?: number;
     inputRefs: ImageRef[];
     parentVersionId?: string;
     model?: string;
@@ -142,8 +142,8 @@ export class ImageGenerationService {
     }
 
     async submit(input: ImageGenerationSubmitInput): Promise<{ taskId: string }> {
-        if (this.disposed) throw new Error('image_generation:unavailable');
-        if (input.isSourceCurrent?.() === false) throw new Error('image_generation:source_changed');
+        if (this.disposed) throw new ImagePreacceptError('source_changed', 'stale');
+        if (input.isSourceCurrent?.() === false) throw new ImagePreacceptError('source_changed', 'stale');
         const existing = await this.options.store.getImageGenerationTaskByOperationId(input.operationId);
         if (existing) {
             if (existing.conversationId !== input.conversationId || existing.stableMessageId !== input.stableMessageId) {
@@ -152,40 +152,32 @@ export class ImageGenerationService {
             return { taskId: existing.taskId };
         }
         const connection = this.options.resolveConnection();
-        if (!connection) throw new Error('image_generation:connection_unavailable');
+        if (!connection) throw new ImagePreacceptError('connection_unavailable', 'needs_user');
         if (!await this.options.store.getConversation(input.conversationId)) {
-            throw new Error('image_generation:conversation_unavailable');
+            throw new ImagePreacceptError('source_changed', 'stale');
         }
         const model = input.model ?? 'wan2.7-image';
         if (model !== 'wan2.7-image' && model !== 'wan2.7-image-pro') {
-            throw new Error('image_generation:invalid_model');
+            throw new ImagePreacceptError('invalid_request');
         }
         const count = input.count;
         if (!Number.isSafeInteger(count) || count < 1 || count > 4) {
-            throw new Error(count > 4
-                ? 'image_generation:count_exceeds_provider_limit' : 'image_generation:invalid_request');
+            throw new ImagePreacceptError(count > 4 ? 'count_exceeds_provider_limit' : 'invalid_request');
         }
+        if (input.totalCount !== undefined && (!Number.isSafeInteger(input.totalCount)
+            || input.totalCount < count || input.totalCount > 4)) throw new ImagePreacceptError('plan_conflict');
         if (!input.userPrompt.trim() || !input.submittedPrompt.trim() || Array.from(input.submittedPrompt).length > 5000
             || input.inputRefs.length > 8) {
-            throw new Error('image_generation:invalid_request');
-        }
-        if (count > 1 && !input.countExplicitlyAuthorized) {
-            const word = COUNT_WORDS[count - 2];
-            const english = ENGLISH_COUNTS[count - 2];
-            const explicit = new RegExp(`(?:${input.count}|${word})\\s*(?:张|幅|个|幅图|张图)|(?:${input.count}|${english})\\s*(?:images?|pictures?|photos?)`, 'i');
-            const separateOnes = [...input.userPrompt.matchAll(/(?:一|1|one)\s*(?:张|幅|个(?:图|图片|照片)|images?|pictures?|photos?)/gi)].length;
-            if (!explicit.test(input.userPrompt) && separateOnes !== count) {
-                throw new Error('image_generation:count_needs_confirmation');
-            }
+            throw new ImagePreacceptError('invalid_request');
         }
         if ((input.operation === 'generate' && input.inputRefs.length > 0)
             || (input.operation !== 'generate' && input.inputRefs.length === 0)) {
-            throw new Error('image_generation:invalid_inputs');
+            throw new ImagePreacceptError('invalid_inputs');
         }
         if (input.parentVersionId) {
             const parent = await this.getVersion(input.parentVersionId);
             if (!parent || !input.inputRefs.some((ref) => ref.assetId === parent.assetRef.assetId
-                && ref.contentHash === parent.assetRef.contentHash)) throw new Error('image_generation:parent_unavailable');
+                && ref.contentHash === parent.assetRef.contentHash)) throw new ImagePreacceptError('invalid_inputs');
         }
         const now = new Date(this.now()).toISOString();
         const task: ImageGenerationTask = {
@@ -194,6 +186,7 @@ export class ImageGenerationService {
             createdAt: now, updatedAt: now, revision: 0,
             request: { userPrompt: input.userPrompt, submittedPrompt: input.submittedPrompt,
                 operation: input.operation, model, count,
+                ...(input.totalCount !== undefined ? { totalCount: input.totalCount } : {}),
                 size: '2K', inputRefs: input.inputRefs.map(cloneImageRef),
                 ...(input.parentVersionId ? { parentVersionId: input.parentVersionId } : {}),
                             ...(input.promptOrigin ? { promptOrigin: input.promptOrigin } : {}),

@@ -5,7 +5,6 @@ import { selectGovernedWritingStyles, type MemorySuppressionFingerprintRef } fro
 import { hashWritingStyleText, isGovernableWritingStyle, parseWritingStyle, writingStyleSceneSchema,
     writingStyleSceneMatches, type WritingStyleScene } from '../pa/writing-style';
 import type { ChatWritingStylePreparation, ChatWritingStyleResult } from '../ai-services/chat-types';
-import { isWritingContinuationPrompt } from '../ai-services/writing-output';
 import type { WritingVersionService } from './writing-versions';
 
 export interface WritingStyleServiceOptions {
@@ -261,25 +260,6 @@ export function normalizeWritingScene(value: unknown): WritingStyleScene | null 
     }
     return scene;
 }
-export function inferWritingScene(prompt: string, parentScene?: WritingStyleScene): WritingStyleScene | undefined {
-    if (hasConflictingWritingStyleInstruction(prompt)) return undefined;
-    const text = prompt.toLowerCase();
-    const domain = /旅行|旅游|游记|旅途|旅拍|出游|\btravel\b/.test(text) ? 'travel' : /美食|餐饮|\bfood\b/.test(text) ? 'food'
-        : /工作|职场|商务|\bwork\b/.test(text) ? 'work' : /日常|生活/.test(text) ? 'daily_life' : undefined;
-    const purpose = /朋友圈|社交分享|分享旅行|旅行分享|social[_ ]shar(?:e|ing)|travel sharing/.test(text) ? 'social_share'
-        : /工作邮件|商务邮件|work[_ ]email/.test(text) ? 'work_email' : /推广|营销/.test(text) ? 'promotion' : undefined;
-    const audience = /同事|colleague/.test(text) ? 'colleagues' : /客户|顾客|client/.test(text) ? 'clients'
-        : /朋友|好友|亲友|friend/.test(text) ? 'friends' : /公众|公开|public/.test(text) ? 'public'
-        : /朋友圈/.test(text) ? 'friends' : undefined;
-    const writingTask = /邮件|\bemail\b/.test(text) ? 'email' : /文案|短文|配文|copywriting|social post|写.{0,8}(朋友圈|分享)/.test(text) ? 'copywriting' : undefined;
-    if (domain && purpose && audience && writingTask) return normalizeWritingScene({ domain, purpose, audience, writingTask }) ?? undefined;
-    const parent = parentScene && normalizeWritingScene(parentScene);
-    if (parent && isWritingContinuationPrompt(prompt)
-        && (!domain || domain === parent.domain) && (!purpose || purpose === parent.purpose)
-        && (!audience || audience === parent.audience) && (!writingTask || writingTask === parent.writingTask)) return parent;
-    return undefined;
-}
-
 export function getWritingSceneDisplayValues(scene: WritingStyleScene, locale: 'zh' | 'en'): WritingStyleScene {
     const names: Record<string, string> = locale === 'zh'
         ? { copywriting: '文案', email: '邮件', social_share: '朋友圈分享', work_email: '工作邮件', promotion: '推广',
@@ -287,8 +267,4 @@ export function getWritingSceneDisplayValues(scene: WritingStyleScene, locale: '
         : { copywriting: 'Copywriting', email: 'Email', social_share: 'Social sharing', work_email: 'Work email', promotion: 'Promotion',
             friends: 'Friends', colleagues: 'Colleagues', clients: 'Clients', public: 'Public', travel: 'Travel', work: 'Work', food: 'Food', daily_life: 'Daily life' };
     return Object.fromEntries(Object.entries(scene).map(([key, value]) => [key, names[value] ?? value])) as unknown as WritingStyleScene;
-}
-
-export function hasConflictingWritingStyleInstruction(prompt: string): boolean {
-    return /(?:不要|不用|别|不必|禁止|停止).{0,16}(?:参考|沿用|模仿|学习|学我|风格|语气)|(?:换|改成|使用).{0,8}(?:一种|全新|不同|其他|别的).{0,4}风格|(?:do not|don't|never).{0,30}(?:use|copy|follow|imitate|reference).{0,30}(?:style|examples?)|ignore.{0,20}(?:old|previous|my).{0,12}style|(?:different|new)\s+style/i.test(prompt);
 }

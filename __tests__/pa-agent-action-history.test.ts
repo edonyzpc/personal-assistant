@@ -57,6 +57,24 @@ it('summarizes only complete successful Host-classified read-only pairs', () => 
 });
 
 describe("T-09 canonical action history", () => {
+    it.each(["native", "compat"] as const)("keeps bounded recovery control outside tool bodies in %s", mode => {
+        const messages = transcript();
+        const result = messages[2] as Extract<PaAgentMessage, { role: 'toolResult' }>;
+        result.content.metadata = { outcome: 'recoverable_error', executionState: 'acceptance_unknown',
+            recovery: { code: 'C'.repeat(500), allowedActions: ['query_operation', 'needs_user', 'query_operation', 'invent_permission'],
+                completedParts: ['PRIVATE_PART'], token: 'PRIVATE_RECOVERY_TOKEN' } };
+        result.content.resultFact = { kind: 'unknown', operationId: 'real-operation-sub2' };
+        const projected = projectPaAgentActionHistory(messages);
+        const control = projected[0].calls.find(call => call.id === 'final')!.results[0].recovery;
+        expect(control).toEqual({ code: 'C'.repeat(64), codeTruncated: true, allowedActions: ['query_operation', 'needs_user'] });
+        const text = actionHistoryMessages(projected, mode).map(message => String(message.content)).join('\n');
+        expect(text).toContain('"domainPhase":"unknown"');
+        expect(text).toContain('"operationId":"real-operation-sub2"');
+        expect(text).toContain('"recovery":{"code":');
+        expect(text).not.toMatch(/PRIVATE_PART|PRIVATE_RECOVERY_TOKEN|invent_permission/);
+        expect(result.content.metadata.recovery).toMatchObject({ code: 'C'.repeat(500), completedParts: ['PRIVATE_PART'] });
+    });
+
     it("keeps same-name calls and out-of-order results paired in native and compatibility messages", () => {
         const groups = projectPaAgentActionHistory(transcript());
         expect(groups).toHaveLength(1);

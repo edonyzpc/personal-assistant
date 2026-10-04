@@ -23,8 +23,6 @@ import type { PluginManagerSettings } from "../settings";
 import type {
     ChatTurnMemoryMetadata,
     ChatWritingRecovery,
-    ChatWritingStylePreparation,
-    ChatWritingStyleResult,
 } from "../ai-services/chat-types";
 import type { MessageImage } from "./image-types";
 import type { ComposerImageGenerationOptions, ComposerImageTextSource } from "./composer-draft";
@@ -54,11 +52,6 @@ export interface ChatHostActions {
     rememberWritingStyle(versionId: string, scene: WritingScene): Promise<void>;
     readWritingStyleReferences: NonNullable<ChatHost["readWritingStyleReferences"]>;
     onWritingReferencesChanged(listener: () => void): () => void;
-    prepareWritingStyle(
-        prompt: string,
-        parentScene: WritingScene | undefined,
-        budget: Parameters<ChatWritingStylePreparation>[0],
-    ): Promise<ChatWritingStyleResult>;
     prepareWritingStyleForScene: WritingStyleService["prepare"];
     createMemoryStatus(): MemoryStatusPort;
     onSettingsChanged(listener: () => void | Promise<void>): () => void;
@@ -407,8 +400,6 @@ export class ChatPluginIntegration {
             prepareWritingRecoverySources: (recovery, images, conversationId, metadata, scope) =>
                 this.prepareWritingRecoverySources(recovery, images, conversationId, metadata, scope),
             onWritingReferencesChanged: (listener) => actions.onWritingReferencesChanged(listener),
-            prepareWritingStyle: (prompt, parentScene, budget) =>
-                actions.prepareWritingStyle(prompt, parentScene, budget),
             prepareWritingStyleForScene: actions.prepareWritingStyleForScene,
             memoryStatus: actions.createMemoryStatus(),
             createChatService: () => this.createChatService(),

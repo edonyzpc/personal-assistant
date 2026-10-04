@@ -25,7 +25,7 @@ export interface ComposerImageGenerationOptions {
 }
 
 export interface ComposerImageIntent {
-    operation: 'generate' | 'reference' | 'edit';
+    operation?: 'generate' | 'reference' | 'edit';
     referenceImageRefs: ImageRef[];
     parentVersionId?: string;
     textSource?: ComposerImageTextSource;
@@ -66,7 +66,7 @@ function clonePromptOrigin(origin: ImageGenerationPromptOrigin): ImageGeneration
 
 function cloneImageIntent(intent: ComposerImageIntent): ComposerImageIntent {
     return {
-        operation: intent.operation,
+        ...(intent.operation ? { operation: intent.operation } : {}),
         referenceImageRefs: intent.referenceImageRefs.map(cloneImageRef),
         ...(intent.parentVersionId ? { parentVersionId: intent.parentVersionId } : {}),
         ...(intent.textSource ? { textSource: cloneTextSource(intent.textSource) } : {}),

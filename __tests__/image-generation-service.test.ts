@@ -3,7 +3,7 @@ import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import { ImageGenerationService } from '../src/chat/image-generation-service';
 import { WanImageProvider, WanImageProviderError } from '../src/ai-services/wan-image-provider';
 import type { ImageAssetService } from '../src/chat/image-assets';
-import type { ImageGenerationTask } from '../src/chat/image-generation-types';
+import { ImagePreacceptError, type ImageGenerationTask } from '../src/chat/image-generation-types';
 import { imageSourceHash } from '../src/chat/image-policy';
 import * as imageInput from '../src/chat/image-generation-input';
 
@@ -255,6 +255,7 @@ describe('image generation service admission and recovery', () => {
                 userPrompt: 'Create a featured image',
                 submittedPrompt: 'FEATURED-PREPARED-SENTINEL',
                 count: 3,
+                totalCount: 3,
                 model: 'wan2.7-image-pro',
                 attachmentPathHint: '/attachments/ai/',
                 countExplicitlyAuthorized: true,
@@ -277,6 +278,7 @@ describe('image generation service admission and recovery', () => {
             expect(task?.request).toMatchObject({
                 model: 'wan2.7-image-pro',
                 count: 3,
+                totalCount: 3,
                 attachmentPathHint: 'attachments/ai',
                 promptOrigin: {
                     kind: 'selection',
@@ -292,14 +294,52 @@ describe('image generation service admission and recovery', () => {
         const provider = { submit: jest.fn(async (_input: unknown) => ({ taskId: 'unexpected', status: 'PENDING' as const, imageUrls: [] })),
             query: jest.fn(), cancel: jest.fn() };
         const service = makeService(store, provider as Pick<WanImageProvider, 'submit' | 'query' | 'cancel'>);
+        const putTask = jest.spyOn(store, 'putImageGenerationTask');
         try {
             await expect(service.submit({ ...input, operationId: 'invalid_model', model: 'invalid-model' }))
-                .rejects.toThrow('image_generation:invalid_model');
+                .rejects.toMatchObject({ code: 'invalid_request', facts: { executionState: 'not_started',
+                    recovery: { code: 'image_invalid_request', allowedActions: ['correct_input'] } } });
             await expect(service.submit({ ...input, operationId: 'count_eight', count: 8 }))
-                .rejects.toThrow('image_generation:count_exceeds_provider_limit');
+                .rejects.toMatchObject({ code: 'count_exceeds_provider_limit', facts: { executionState: 'not_started',
+                    recovery: { code: 'image_count_exceeds_provider_limit', allowedActions: ['correct_input'] } } });
             await expect(service.submit({ ...input, operationId: 'count_fraction', count: 1.5 }))
-                .rejects.toThrow('image_generation:invalid_request');
+                .rejects.toMatchObject({ code: 'invalid_request', facts: { executionState: 'not_started' } });
+            await expect(service.submit({ ...input, operationId: 'plan_too_small', count: 2, totalCount: 1 }))
+                .rejects.toMatchObject({ code: 'plan_conflict', facts: { executionState: 'not_started',
+                    recovery: { code: 'image_plan_conflict', allowedActions: ['correct_input'] } } });
+            await expect(service.submit({ ...input, operationId: 'plan_too_large', totalCount: 5 }))
+                .rejects.toMatchObject({ code: 'plan_conflict', facts: { executionState: 'not_started' } });
+            await expect(service.submit({ ...input, operationId: 'invalid_refs', operation: 'edit' }))
+                .rejects.toMatchObject({ code: 'invalid_inputs', facts: { executionState: 'not_started' } });
+            expect(putTask).not.toHaveBeenCalled();
+            expect(await store.listImageGenerationTasks()).toEqual([]);
             expect(provider.submit).not.toHaveBeenCalled();
+        } finally { service.dispose(); }
+    });
+
+    it('keeps an ambiguous local put failure unknown and reuses its persisted operation without a second task', async () => {
+        const store = await readyStore();
+        const realPutTask = store.putImageGenerationTask.bind(store);
+        const putTask = jest.spyOn(store, 'putImageGenerationTask').mockImplementationOnce(async task => {
+            await realPutTask(task);
+            throw new Error('local put acknowledgement lost');
+        });
+        const provider = { submit: jest.fn(async () => ({ taskId: 'unexpected', status: 'PENDING' as const, imageUrls: [] })),
+            query: jest.fn(), cancel: jest.fn() };
+        const service = makeService(store, provider as Pick<WanImageProvider, 'submit' | 'query' | 'cancel'>);
+        try {
+            const failure = await service.submit({ ...input, totalCount: 2 }).catch(error => error);
+            expect(failure).toBeInstanceOf(Error);
+            expect(failure).not.toBeInstanceOf(ImagePreacceptError);
+            expect(failure.message).toBe('local put acknowledgement lost');
+            const original = await store.getImageGenerationTaskByOperationId(input.operationId);
+            expect(original?.request).toMatchObject({ count: 1, totalCount: 2, submittedPrompt: input.submittedPrompt });
+            const reused = await service.submit({ ...input, totalCount: 2, submittedPrompt: 'Do not replace the original' });
+            expect(reused.taskId).toBe(original?.taskId);
+            expect(putTask).toHaveBeenCalledTimes(1);
+            expect(await store.listImageGenerationTasks()).toHaveLength(1);
+            expect(provider.submit).not.toHaveBeenCalled();
+            expect((await service.get(reused.taskId))?.request.submittedPrompt).toBe(input.submittedPrompt);
         } finally { service.dispose(); }
     });
 
@@ -367,15 +407,17 @@ describe('image generation service admission and recovery', () => {
         } finally { service.dispose(); }
     });
 
-    it('accepts two separately stated single images as an explicit total of two', async () => {
+    it('uses the admitted structured count and total without parsing the user prose', async () => {
         const store = await readyStore();
         const provider = { submit: jest.fn(async (_request?: unknown) => ({ taskId: 'wan_two_images', status: 'PENDING' as const,
             imageUrls: [] })), query: jest.fn(async () => ({ taskId: 'wan_two_images', status: 'PENDING' as const,
             imageUrls: [] })), cancel: jest.fn(async () => ({ cancellationAccepted: false })) };
         const service = makeService(store, provider);
-        const { taskId } = await service.submit({ ...input, userPrompt: '一张猫，一张狗', count: 2 });
+        const { taskId } = await service.submit({ ...input, userPrompt: 'Create the planned image set', count: 2,
+            totalCount: 2, countExplicitlyAuthorized: true });
         await settle(async () => (await service.get(taskId))?.state === 'running');
         expect(provider.submit).toHaveBeenCalledWith(expect.objectContaining({ count: 2 }));
+        expect((await service.get(taskId))?.request).toMatchObject({ count: 2, totalCount: 2 });
         service.dispose();
     });
 

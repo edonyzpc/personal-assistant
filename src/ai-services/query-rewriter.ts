@@ -19,6 +19,24 @@ export const REWRITE_SYSTEM_PROMPT = [
 export type RewriteInvoker = (query: string, signal?: AbortSignal) => Promise<string>;
 export type QueryTemporalIntent = "recent_7d" | "recent_30d" | "none" | `range:${string}`;
 
+export function isQueryTemporalIntent(value: unknown): value is QueryTemporalIntent {
+    if (value === "recent_7d" || value === "recent_30d" || value === "none") return true;
+    if (typeof value !== "string" || !value.startsWith("range:")) return false;
+    const match = value.slice(6).match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/);
+    if (!match) return false;
+    const start = parseUtcCalendarDate(match[1]);
+    const end = parseUtcCalendarDate(match[2]);
+    if (!start || !end) return false;
+    return start.getTime() <= end.getTime();
+}
+
+function parseUtcCalendarDate(value: string): Date | undefined {
+    const date = new Date(`${value}T00:00:00Z`);
+    return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value
+        ? undefined
+        : date;
+}
+
 export interface RewrittenQuery {
     keywords: string | null;
     temporal: QueryTemporalIntent;
@@ -47,7 +65,7 @@ export async function rewriteQueryForSearch(
     signal?: AbortSignal,
 ): Promise<RewrittenQuery> {
     if (isShortQuery(query)) {
-        return { keywords: null, temporal: detectTemporalIntentFromQuery(query) };
+        return { keywords: null, temporal: "none" };
     }
 
     const content = await invoke(query, signal);
@@ -100,24 +118,5 @@ function parseTemporalIntent(content: string): QueryTemporalIntent {
 
 function normalizeTemporalIntent(value: unknown): QueryTemporalIntent {
     if (value === "recent_7d" || value === "recent_30d") return value;
-    if (typeof value === "string" && value.startsWith("range:")) {
-        const rangePart = value.slice(6);
-        const match = rangePart.match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/);
-        if (match && !isNaN(Date.parse(match[1])) && !isNaN(Date.parse(match[2]))) {
-            return value as QueryTemporalIntent;
-        }
-    }
-    return "none";
-}
-
-function detectTemporalIntentFromQuery(query: string): QueryTemporalIntent {
-    const normalized = query.toLowerCase();
-    if (/\b(today|this week|latest|recent|recently|current|now)\b/.test(normalized)
-        || /(?:今天|本周|最近|近期|最新|当前|现在)/.test(query)) {
-        return "recent_30d";
-    }
-    if (/\b(yesterday|last week)\b/.test(normalized) || /(?:昨天|上周)/.test(query)) {
-        return "recent_7d";
-    }
-    return "none";
+    return isQueryTemporalIntent(value) ? value : "none";
 }

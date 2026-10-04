@@ -75,7 +75,9 @@ export function createWritingContextTool(run: WritingContextRun, host: WritingCo
                 ...(input.parentHandle === null ? {} : { parentHandle: input.parentHandle }),
                 ...(input.scene === null ? {} : { scene: input.scene }),
                 currentInstructionConflicts: input.currentInstructionConflicts, imageRefs: input.imageRefs,
-            }, { ...budget, remainingTextChars: Math.min(budget.remainingTextChars, outputBudgetChars), signal: context.signal });
+            }, { ...budget, remainingTextChars: Math.min(budget.remainingTextChars, outputBudgetChars), signal: context.signal },
+            () => { const current = host.getBudget(); return { ...current,
+                remainingTextChars: Math.min(current.remainingTextChars, outputBudgetChars) }; });
             host.onPrepared?.(prepared);
             return { ok: true, tool: GET_WRITING_CONTEXT, inputSummary: 'Requested writing context',
                 content: writingContextObservation(prepared), sources: [] };

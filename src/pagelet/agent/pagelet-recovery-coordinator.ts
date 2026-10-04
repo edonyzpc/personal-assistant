@@ -1,5 +1,6 @@
 import type { AgentCapability, AgentCapabilityResult } from "../../ai-services/capability-types";
 import type { ChatToolContext, ChatToolName } from "../../ai-services/chat-tools";
+import type { SearchMemoryInput } from "../../ai-services/chat-tool-types";
 import type {
     ChatToolUnavailableReason,
     MemorySearchResult,
@@ -55,7 +56,7 @@ export interface PageletRecoveryCoordinatorOptions {
     runEpoch: string;
     now: () => number;
     executeStandard(
-        query: string,
+        input: SearchMemoryInput,
         context: ChatToolContext,
         control: { runEpoch: string; absoluteDeadlineMs: number },
     ): Promise<MemorySearchResult>;
@@ -141,7 +142,7 @@ export class PageletRecoveryCoordinator {
     }
 
     async executeMemorySearch(
-        query: string,
+        input: SearchMemoryInput,
         context: ChatToolContext,
     ): Promise<MemorySearchResult> {
         const lifecycleEpoch = this.lifecycleEpoch;
@@ -158,7 +159,7 @@ export class PageletRecoveryCoordinator {
         try {
             standard = await this.runBeforeDeadline(
                 (signal, deadline) => this.options.executeStandard(
-                    query,
+                    input,
                     { ...context, signal },
                     {
                         runEpoch: this.options.runEpoch,

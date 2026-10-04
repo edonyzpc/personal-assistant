@@ -754,6 +754,8 @@ export interface ChatToolResult<Output> {
     error?: string;
     failureReason?: ChatToolFailureReason;
     unavailableReason?: ChatToolUnavailableReason;
+    executionState?: import("./pa-agent-types").PaAgentToolExecutionFacts["executionState"];
+    recovery?: import("./pa-agent-types").PaAgentToolExecutionFacts["recovery"];
 }
 
 export type ChatContextKind = "memory" | "current-note" | "tool-note" | "skill-guide";

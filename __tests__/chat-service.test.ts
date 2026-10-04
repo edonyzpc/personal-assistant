@@ -9,6 +9,7 @@ import {
 import { OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION }
     from '../src/ai-services/operations/operations-acknowledgement-policy';
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
+import { GhostHostAdmissionError } from '../src/ghost-publishing/types';
 import { createPaAgentPersistedTurn } from '../src/ai-services/pa-agent-history';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
@@ -18,6 +19,11 @@ import { formatHistoryMessages, planHistoryContext } from '../src/ai-services/co
 import { projectPaAgentRetainedActionFacts } from '../src/ai-services/context/PaAgentContextSummaryTypes';
 import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from '../src/ai-services/capability-types';
 import { createChatToolCapability } from '../src/ai-services/capability-adapter';
+import {
+    paAgentGhostCommandDefinition,
+    paAgentWritingCommandDefinition,
+    type PaAgentCommandInvocation,
+} from '../src/ai-services/pa-agent-command';
 import type { AgentRunCoordinatorPort } from '../src/ai-services/agent-run-coordinator';
 import { type ChatToolDefinition, type ChatToolResult } from '../src/ai-services/chat-tools';
 import type {
@@ -42,6 +48,10 @@ import {
     BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
 } from '../src/ai-services/builtin-web-search-provider';
 import { completeInputLineage, unknownInputLineage, type InputLineage } from '../src/ai-services/input-lineage';
+import {
+    getMemorySearchInvocation,
+    MemorySearchTool,
+} from '../src/ai-services/memory-search-tool';
 
 jest.mock('obsidian');
 
@@ -975,18 +985,169 @@ describe('ChatService.streamLLM integration', () => {
         const runSourceSelection = Object.freeze({ schemaVersion: 1 as const, scope: 'notes' as const,
             selectionId: 'conversation:selection:1', userMessageId: 'stable-message' });
         try {
-            await service.streamLLM('只用当前笔记\n\nApp image instruction', jest.fn(), undefined, [], {
+            await service.streamLLM('只用当前笔记', jest.fn(), undefined, [], {
                 userText: '只用当前笔记',
                 runSourceSelection,
+                commandGuidance: 'App image instruction',
             });
             expect(stream).toHaveBeenCalledWith(expect.objectContaining({
-                prompt: '只用当前笔记\n\nApp image instruction', userText: '只用当前笔记',
-                runSourceSelection,
+                prompt: '只用当前笔记', userText: '只用当前笔记',
+                commandGuidance: 'App image instruction', runSourceSelection,
             }));
         } finally {
             stream.mockRestore();
             service.dispose();
         }
+    });
+
+    it('executes a real Memory tool with one raw request identity and explicit temporal input', async () => {
+        let modelTurn = 0;
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: jest.fn(async function* () {
+                if (modelTurn++ === 0) {
+                    yield { tool_call_chunks: [{ index: 0, id: 'memory-source-identity', name: 'search_memory',
+                        args: JSON.stringify({ query: '不要限定最近30天的项目记录', temporal: 'none' }) }] };
+                } else {
+                    yield { content: 'The structured Memory evidence was returned.' };
+                }
+            }),
+        };
+        mockCreateChatModel.mockResolvedValue(model);
+        const boundarySignals: AbortSignal[] = [];
+        const boundaryInvocations: unknown[] = [];
+        const searchSpy = jest.spyOn(MemorySearchTool.prototype, 'search').mockImplementation(async (
+            query: string,
+            signal?: AbortSignal,
+        ) => {
+            expect(query).toBe('不要限定最近30天的项目记录');
+            if (signal) boundarySignals.push(signal);
+            boundaryInvocations.push(getMemorySearchInvocation(signal));
+            return {
+                usedMemory: true,
+                query,
+                documents: [{
+                    content: 'synthetic structured Memory evidence',
+                    score: 1,
+                    source: { path: 'notes/structured.md', chunkIndex: 0, score: 1 },
+                }],
+                sources: [{ path: 'notes/structured.md', chunkIndex: 0, score: 1 }],
+                candidates: [],
+                hasAnswerableContent: true,
+                memoryEvidenceState: 'evidence',
+                rerankVerdict: 'relevant',
+                needsMoreEvidence: false,
+            };
+        });
+        const plugin = createPlugin();
+        (plugin.memorySearch.ensureReadyForChat as jest.Mock).mockImplementation(async () => ({
+            decision: 'use-memory' as const,
+        }));
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const rawUserText = '@Writing 请查找不要限定最近30天的项目记录';
+        const events: CanonicalAgentEvent[] = [];
+        const commandInvocation: PaAgentCommandInvocation = {
+            definition: paAgentWritingCommandDefinition,
+            conversationId: 'command-conversation',
+            stableMessageId: 'command-message',
+            activation: { kind: 'typed-token', token: '@Writing' },
+        };
+        try {
+            await service.streamLLM(
+                '请查找不要限定最近30天的项目记录',
+                jest.fn(),
+                undefined,
+                [],
+                {
+                    userText: rawUserText,
+                    conversationId: commandInvocation.conversationId,
+                    runSourceSelection: {
+                        schemaVersion: 1,
+                        scope: 'notes',
+                        selectionId: 'command-selection',
+                        userMessageId: commandInvocation.stableMessageId,
+                    },
+                    commandInvocation,
+                    commandGuidance: 'APP_OWNED_WRITING_TEMPLATE',
+                    memoryMode: 'auto',
+                    onLifecycleEvent: event => events.push(event),
+                },
+            );
+        } finally {
+            service.dispose();
+        }
+
+        expect(searchSpy).toHaveBeenCalledTimes(1);
+        expect(boundaryInvocations[0]).toMatchObject({
+            mode: 'standard',
+            temporalIntent: 'none',
+        });
+        expect(events.some(event => event.type === 'tool_execution_end'
+            && event.toolName === 'search_memory'
+            && event.outcome === 'success')).toBe(true);
+        expect(JSON.stringify(events)).not.toContain('source_run_changed');
+        expect(model.stream).toHaveBeenCalledTimes(2);
+        searchSpy.mockRestore();
+    });
+
+    it('correlates a declared command need with schemas actually bound to this provider request', async () => {
+        const providerInputs: Array<Record<string, unknown>> = [];
+        let dispatch = 0;
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: jest.fn(async function* (input: Record<string, unknown>) {
+                providerInputs.push(input);
+                if (dispatch++ < 2) {
+                    yield { tool_call_chunks: [{ index: 0, id: `memory-command-${dispatch}`, name: 'search_memory',
+                        args: JSON.stringify({ query: 'project records' }) }] };
+                } else {
+                    yield { content: 'No project evidence was found.' };
+                }
+            }),
+        };
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin();
+        (plugin.memorySearch.searchHybrid as jest.Mock).mockResolvedValue([] as never);
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const commandInvocation: PaAgentCommandInvocation = {
+            definition: paAgentGhostCommandDefinition,
+            conversationId: 'command-conversation',
+            stableMessageId: 'command-message',
+            activation: { kind: 'typed-token', token: '@blog2ghost' },
+        };
+        try {
+            await service.streamLLM(
+                '@blog2ghost discuss the current note',
+                jest.fn(),
+                undefined,
+                [],
+                {
+                    userText: '@blog2ghost discuss the current note',
+                    conversationId: commandInvocation.conversationId,
+                    runSourceSelection: {
+                        schemaVersion: 1,
+                        scope: 'notes',
+                        selectionId: 'command-selection',
+                        userMessageId: commandInvocation.stableMessageId,
+                    },
+                    commandInvocation,
+                    commandGuidance: 'APP_OWNED_GHOST_TEMPLATE',
+                    memoryMode: 'auto',
+                    ghostPublishing: {
+                        conversationId: commandInvocation.conversationId,
+                        stableMessageId: commandInvocation.stableMessageId,
+                        submit: jest.fn(async () => ({ status: 'prepared' as const, operationId: 'ghost-operation' })),
+                    },
+                },
+            );
+        } finally {
+            service.dispose();
+        }
+
+        expect(providerInputs.length).toBeGreaterThan(0);
+        expect(JSON.stringify(providerInputs[0])).toContain(
+            'Declared capability prepare_ghost_post is currently admitted and exportable',
+        );
     });
 
     it('records startup lease failure before a runtime exists without changing the rejection', async () => {
@@ -1343,11 +1504,11 @@ describe('ChatService.streamLLM integration', () => {
         { name: 'outcome unknown', receipt: { status: 'outcome_unknown', operationId: 'ghost-operation' },
             expected: ['ghost-operation', 'outcome_unknown', 'needs verification in its publishing card'] },
         { name: 'target missing', errorCode: 'target-missing',
-            expected: ['unavailable', 'requested note is unavailable', 'exact vault-relative path'] },
+            expected: ['unavailable', 'ghost_target_missing', 'not_started', 'correct_input'] },
         { name: 'target ambiguous', errorCode: 'target-ambiguous',
-            expected: ['unavailable', 'More than one note matches', 'exact vault-relative path'] },
-        { name: 'target unauthorized', errorCode: 'target-not-requested',
-            expected: ['unavailable', 'host has not authorized this target', 'explicit publishing request'] },
+            expected: ['unavailable', 'ghost_target_ambiguous', 'not_started', 'correct_input'] },
+        { name: 'source unauthorized', errorCode: 'source-unavailable',
+            expected: ['unavailable', 'ghost_source_unavailable', 'not_started', 'needs_user'] },
     ])('projects the closed Ghost %s Host result into the next provider dispatch in one stream', async caseValue => {
         const targetPath = '0.unsorted/b153/Publishing.md';
         const plugin = createPlugin({
@@ -1372,7 +1533,12 @@ describe('ChatService.streamLLM integration', () => {
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
         const submit = jest.fn<import('../src/ai-services/chat-tool-types').GhostHostBinding['submit']>(async () => {
             if (caseValue.errorCode) {
-                throw Object.assign(new Error('PRIVATE_TARGET_ERROR'), { code: caseValue.errorCode });
+                const sourceUnavailable = caseValue.errorCode === 'source-unavailable';
+                throw new GhostHostAdmissionError(sourceUnavailable ? 'source' : 'target', {
+                    executionState: 'not_started',
+                    recovery: { code: `ghost_${caseValue.errorCode.replace(/-/g, '_')}`,
+                        allowedActions: [sourceUnavailable ? 'needs_user' : 'correct_input'] },
+                });
             }
             return caseValue.receipt as never;
         });
@@ -2574,9 +2740,9 @@ describe('ChatService.streamLLM integration', () => {
             fileContents: { [stalePath]: staleBody.repeat(100) },
         });
         const runtime = createRuntime(plugin, false, {
-            // The revoked-source receipt plus action-history wrapper is 716
-            // characters; 720 admits the truthful failure after revocation.
-            skillContextProvider: null, answerStreamMaxObservationChars: 720,
+            // The revoked-source receipt, bounded execution fact, and action-history
+            // wrapper fit below this lane boundary.
+            skillContextProvider: null, answerStreamMaxObservationChars: 850,
         });
         let sourceRevoked = false;
         const memoryTool = (runtime as unknown as { memoryTool: {

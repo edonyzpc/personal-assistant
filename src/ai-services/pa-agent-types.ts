@@ -72,13 +72,22 @@ export interface PaAgentToolExecutionResult {
     /** Host-owned recovery affordances; never evidence that an operation succeeded. */
     recovery?: {
         code: string;
-        allowedActions: Array<"retry" | "correct_input" | "choose_alternative" | "refresh_required_input" | "query_operation" | "wait" | "needs_user" | "none">;
+        allowedActions: Array<typeof PA_AGENT_RECOVERY_ACTIONS[number]>;
         retryAfterMs?: number;
         operationId?: string;
         completedParts?: string[];
         remainingParts?: string[];
     };
 }
+
+export const PA_AGENT_RECOVERY_ACTIONS = ["retry", "correct_input", "choose_alternative",
+    "refresh_required_input", "query_operation", "wait", "needs_user", "none"] as const;
+
+/** Owner-reported execution facts shared by all tool result bridges. */
+export type PaAgentToolExecutionFacts = Pick<
+    PaAgentToolExecutionResult,
+    "executionState" | "recovery"
+>;
 
 /**
  * One complete assistant tool phase, presented to an executor before any

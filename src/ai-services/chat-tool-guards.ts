@@ -38,6 +38,7 @@ import type {
     VaultTagsOutput,
 } from "./chat-tool-types";
 import { isObsidianOperationsV1AToolName } from "./chat-tool-types";
+import { isQueryTemporalIntent } from "./query-rewriter";
 import {
     NOTE_OUTLINE_DEFAULT_HEADINGS,
     NOTE_OUTLINE_MAX_HEADINGS,
@@ -496,7 +497,11 @@ export function validateSearchMemoryInput(input: unknown): SearchMemoryInput {
     if (!query) {
         throw new Error("search_memory input.query must be a non-empty string.");
     }
-    return { query };
+    const temporal = value.temporal;
+    if (temporal !== undefined && !isQueryTemporalIntent(temporal)) {
+        throw new Error("search_memory input.temporal is invalid.");
+    }
+    return { query, ...(temporal !== undefined ? { temporal } : {}) };
 }
 
 export function validateCurrentNoteContextInput(input: unknown): CurrentNoteContextInput {

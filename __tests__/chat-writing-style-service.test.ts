@@ -1,4 +1,4 @@
-import { WritingStyleService, normalizeWritingScene, inferWritingScene, hasConflictingWritingStyleInstruction, getWritingSceneDisplayValues } from '../src/chat/writing-style-service';
+import { WritingStyleService, normalizeWritingScene, getWritingSceneDisplayValues } from '../src/chat/writing-style-service';
 import { MemoryGovernanceCoordinator } from '../src/pa/memory-governance-coordinator';
 import { InMemoryMemoryGovernanceRepository } from '../src/pa/memory-governance-persistence';
 import { hashWritingStyleText } from '../src/pa/writing-style';
@@ -169,29 +169,10 @@ describe('host writing-style service', () => {
     });
 });
 
-describe('conservative local writing-scene mapping', () => {
-    it('maps readable Chinese fields and explicit travel copy to the same stable scene', () => {
+describe('structured writing-scene normalization', () => {
+    it('maps readable structured fields and display values to the same stable scene', () => {
         expect(normalizeWritingScene({ writingTask: '文案', purpose: '朋友圈', audience: '朋友', domain: '旅行' })).toEqual(scene);
         expect(normalizeWritingScene({ writingTask: '旅行短文', purpose: '分享旅行', audience: '好友', domain: '旅途' })).toEqual(scene);
-        expect(inferWritingScene('写旅行短文，分享旅行给朋友')).toEqual(scene);
         for (const locale of ['zh', 'en'] as const) expect(normalizeWritingScene(getWritingSceneDisplayValues(scene, locale))).toEqual(scene);
-        expect(inferWritingScene('帮我写一段旅行朋友圈文案')).toEqual(scene);
-        expect(inferWritingScene('帮我写工作邮件给同事')).toEqual({ writingTask: 'email', purpose: 'work_email', audience: 'colleagues', domain: 'work' });
     });
-    it('does not inherit an unrelated parent scene or guess missing domains/audiences', () => {
-        expect(inferWritingScene('帮我写文案', scene)).toBeUndefined();
-        expect(inferWritingScene('帮我写工作邮件', scene)).toBeUndefined();
-        expect(inferWritingScene('帮我看看这张图片', scene)).toBeUndefined();
-        for (const prompt of ['改短一点', '短一点', '长一点', '再短一点', '换个说法', 'make it shorter']) {
-            expect(inferWritingScene(prompt, scene)).toEqual(scene);
-        }
-        expect(inferWritingScene('换个话题，短一点', scene)).toBeUndefined();
-        expect(inferWritingScene('new topic: make it shorter', scene)).toBeUndefined();
-        expect(inferWritingScene('改写成工作邮件给同事', scene)).toEqual({ writingTask: 'email', purpose: 'work_email', audience: 'colleagues', domain: 'work' });
-    });
-    it.each(['不要参考旧风格', '这次换一种风格', '不要学我', '不要旅行风格', "don't use my previous style", 'ignore my previous style'])(
-        'respects a current explicit refusal: %s', (prompt) => {
-            expect(hasConflictingWritingStyleInstruction(prompt)).toBe(true); expect(inferWritingScene(`帮我写旅行朋友圈文案，${prompt}`, scene)).toBeUndefined();
-        },
-    );
 });

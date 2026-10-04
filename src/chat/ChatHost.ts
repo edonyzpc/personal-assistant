@@ -13,7 +13,6 @@ import type { WritingVersionService } from "./writing-versions";
 import type { WritingSaveAction } from "./writing-save-action";
 import type { WritingScene } from "./writing-types";
 import type { WritingStyleReference, WritingStyleService } from './writing-style-service';
-import type { ChatWritingStylePreparation, ChatWritingStyleResult } from '../ai-services/chat-types';
 import type { ChatTurnMemoryMetadata, ChatWritingRecovery } from '../ai-services/chat-types';
 import type { MessageImage } from './image-types';
 import type { ComposerImageGenerationOptions, ComposerImageTextSource } from './composer-draft';
@@ -89,8 +88,6 @@ export interface ChatHost {
         conversationId: string, metadata?: ChatTurnMemoryMetadata,
         scope?: ChatSourceScope): Promise<WritingRecoverySourceReceipt>;
     onWritingReferencesChanged?(listener: () => void): () => void;
-    prepareWritingStyle?(prompt: string, parentScene: WritingScene | undefined,
-        budget: Parameters<ChatWritingStylePreparation>[0]): Promise<ChatWritingStyleResult>;
     prepareWritingStyleForScene?: WritingStyleService['prepare'];
     readonly memoryStatus: MemoryStatusPort;
     createChatService(): ChatService;

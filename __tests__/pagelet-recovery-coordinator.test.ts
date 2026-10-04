@@ -7,6 +7,10 @@ import type {
     MemorySearchResult,
     PaAgentMessage,
 } from "../src/ai-services/chat-types";
+import type { SearchMemoryInput } from "../src/ai-services/chat-tool-types";
+import { createChatToolCapability } from "../src/ai-services/capability-adapter";
+import { CapabilityRegistry } from "../src/ai-services/capability-registry";
+import { createSearchMemoryTool } from "../src/ai-services/chat-tools";
 import {
     PageletRecoveryCoordinator,
     type PageletRecoveryCoordinatorOptions,
@@ -152,7 +156,7 @@ function coordinator(options: {
 function executeBoundSearch(
     instance: PageletRecoveryCoordinator,
     toolCallId: string,
-    query = "model query",
+    input: SearchMemoryInput | string = { query: "model query" },
     context: {
         signal?: AbortSignal;
         outerToolDeadlineAt?: number;
@@ -160,7 +164,10 @@ function executeBoundSearch(
 ): Promise<MemorySearchResult> {
     return instance.withMemorySearchToolCall(
         toolCallId,
-        () => instance.executeMemorySearch(query, { host, ...context }),
+        () => instance.executeMemorySearch(
+            typeof input === "string" ? { query: input } : input,
+            { host, ...context },
+        ),
     );
 }
 
@@ -175,6 +182,54 @@ function deferred<T>() {
 }
 
 describe("Pagelet run-scoped retrieval recovery", () => {
+    it("passes the complete registered Memory tool input to the standard recovery port", async () => {
+        const inputs: SearchMemoryInput[] = [];
+        const { instance } = coordinator({
+            executeStandard: async input => {
+                inputs.push(input);
+                return {
+                    ...result("partially_relevant", ["notes/lead.md"]),
+                    query: input.query,
+                };
+            },
+        });
+        const input: SearchMemoryInput = {
+            query: "不要限定最近30天",
+            temporal: "none",
+        };
+
+        const searchResult = await executeBoundSearch(instance, "temporal-input-call", input);
+
+        expect(inputs).toEqual([input]);
+        expect(searchResult.query).toBe(input.query);
+    });
+
+    it("keeps temporal input intact through the registered Pagelet Memory capability", async () => {
+        const inputs: SearchMemoryInput[] = [];
+        const { instance } = coordinator({
+            executeStandard: async input => {
+                inputs.push(input);
+                return result("relevant", ["notes/current.md"]);
+            },
+        });
+        const registry = new CapabilityRegistry();
+        registry.register(createChatToolCapability(
+            createSearchMemoryTool(input => instance.executeMemorySearch(input, {
+                host,
+                signal: new AbortController().signal,
+            })),
+            { providerId: "pagelet-deep-discover-core" },
+        ));
+
+        const toolResult = await registry.execute("search_memory", {
+            query: "不要限定最近30天的项目记录",
+            temporal: "none",
+        }, { host, signal: new AbortController().signal });
+
+        expect(toolResult.ok).toBe(true);
+        expect(inputs).toEqual([{ query: "不要限定最近30天的项目记录", temporal: "none" }]);
+    });
+
     it("keeps the stage schema explicit about one terminal insight and disjoint lead evidence", () => {
         const { instance } = coordinator();
         const capability = instance.getStageCapability();

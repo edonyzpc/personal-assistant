@@ -33,6 +33,7 @@ import type { AgentRunLease } from './agent-run-coordinator';
 import { applyOperationsExecutionResult, applyOperationsUndoResult, cloneActionStates,
     type PaAgentActionState } from './pa-agent-result-facts';
 import { ChatImageCapabilityRegistry, chatImageModelKey, type ChatImageCapability } from './image-capability';
+import type { PaAgentCommandInvocation } from './pa-agent-command';
 import type {
     OperationsControllerEvent,
     OperationsExecutionResult,
@@ -66,7 +67,6 @@ export interface StreamLLMOptions {
     writingRequest?: import('./chat-types').ChatWritingRequest;
     writingContext?: import('./chat-types').ChatWritingContext;
     writingMaterialContext?: import('./chat-types').ChatWritingMaterialContext;
-    prepareWritingStyle?: import('./chat-types').ChatWritingStylePreparation;
     writingContextHost?: import('./pa-agent-runtime').PaAgentRunOptions['writingContextHost'];
     /** Explicit compatibility candidate; no default protocol switch. */
     writingOutputProtocol?: 'native';
@@ -75,6 +75,10 @@ export interface StreamLLMOptions {
     historyBudgetChars?: number;
     /** Current or reserved conversation identity for host-bound Memory actions. */
     conversationId?: string;
+    /** Host binding for one activated command; omitted by standalone callers. */
+    commandInvocation?: PaAgentCommandInvocation;
+    /** Explicit app-owned command template; never mixed into the raw user text. */
+    commandGuidance?: string;
     /** Per-user-request image authority; omitted when the image service is unavailable. */
     createImage?: import('./chat-tool-types').CreateImageHostBinding;
     ghostPublishing?: import('./chat-tool-types').GhostHostBinding;
@@ -328,6 +332,8 @@ export class ChatService {
                 inputLineage: options.inputLineage,
                 runSourceSelection: options.runSourceSelection,
                 conversationId: options.conversationId,
+                commandInvocation: options.commandInvocation,
+                commandGuidance: options.commandGuidance,
                 createImage: options.createImage,
                 ghostPublishing: options.ghostPublishing,
                 chatHistory,
@@ -336,7 +342,6 @@ export class ChatService {
                 writingRequest: options.writingRequest,
                 writingContext: options.writingContext,
                 writingMaterialContext: options.writingMaterialContext,
-                prepareWritingStyle: options.prepareWritingStyle,
                 writingContextHost: options.writingContextHost,
                 writingOutputProtocol: options.writingOutputProtocol,
                 isCurrent: () => contextEpoch === this.contextEpoch && imageModelKey === chatImageModelKey(this.host.settings),
