@@ -18,6 +18,7 @@ function setup(options: { localScope?: string } = {}) {
     let current = { ...DEFAULT_GHOST_SETTINGS, profile: {} };
     let desktop = true;
     let fail = false;
+    let failRead = false;
     let accesses = 0;
     const secretValues = new Map<string, string>();
     const persisted: GhostPublishingSettings[] = [];
@@ -34,6 +35,7 @@ function setup(options: { localScope?: string } = {}) {
             getSecret: (id) => {
                 assertHostSecretId(id);
                 accesses++;
+                if (failRead) throw new Error("Synthetic SecretStorage read failure");
                 return secretValues.get(id) ?? null;
             },
             setSecret: (id, value) => {
@@ -45,7 +47,7 @@ function setup(options: { localScope?: string } = {}) {
         },
     });
     return { configuration, persisted, secretValues, secretIds, get accesses() { return accesses; },
-        mobile: () => { desktop = false; }, failSave: () => { fail = true; } };
+        mobile: () => { desktop = false; }, failSave: () => { fail = true; }, failRead: () => { failRead = true; } };
 }
 
 describe("Ghost publishing configuration", () => {
@@ -117,5 +119,20 @@ describe("Ghost publishing configuration", () => {
         await expect(app.configuration.save(settings, key)).rejects.toThrow("desktop-required");
         await expect(app.configuration.connection()).rejects.toThrow("desktop-required");
         expect(app.accesses).toBe(0);
+    });
+
+    it("reports only key presence without exposing values, and distinguishes unreadable storage", async () => {
+        const app = setup();
+        expect(await app.configuration.getAdminKeyStatus()).toBe("missing");
+        expect(app.accesses).toBe(0);
+        await app.configuration.save(settings, key);
+        expect(await app.configuration.getAdminKeyStatus()).toBe("configured");
+        app.secretValues.set(app.secretIds[0], "");
+        expect(await app.configuration.getAdminKeyStatus()).toBe("missing");
+        app.failRead();
+        expect(await app.configuration.getAdminKeyStatus()).toBe("unavailable");
+        app.mobile();
+        expect(await app.configuration.getAdminKeyStatus()).toBe("unavailable");
+        expect(JSON.stringify(app.persisted)).not.toContain(key);
     });
 });

@@ -39,6 +39,7 @@ async function hash(value: string): Promise<string> {
 
 const GHOST_SECRET_ID_PREFIX = "pa-ghost-";
 const GHOST_SECRET_ID_BODY_LENGTH = 55;
+const GHOST_ADMIN_KEY_PATTERN = /^[a-f\d]{24}:[a-f\d]{64}$/i;
 
 export class GhostConfigurationError extends Error {
     constructor(readonly code: "desktop-required" | "invalid-settings" | "invalid-key" | "not-configured" | "changing" | "save-failed") {
@@ -54,6 +55,8 @@ export interface GhostConnection {
     profile: SitePublishingProfile;
     identity: string;
 }
+
+export type GhostAdminKeyStatus = "configured" | "missing" | "unavailable";
 
 /** Ghost credentials are separate from AI settings and are never persisted into data.json. */
 export class GhostPublishingConfiguration {
@@ -110,8 +113,26 @@ export class GhostPublishingConfiguration {
         let key: string | null;
         try { key = this.dependencies.secrets.getSecret(id); }
         catch { throw new GhostConfigurationError("not-configured"); }
-        if (!key || !/^[a-f\d]{24}:[a-f\d]{64}$/i.test(key)) throw new GhostConfigurationError("not-configured");
+        if (!key || !GHOST_ADMIN_KEY_PATTERN.test(key)) throw new GhostConfigurationError("not-configured");
         return key;
+    }
+
+    /** Returns only whether this desktop has a readable valid key; the value never leaves configuration. */
+    async getAdminKeyStatus(): Promise<GhostAdminKeyStatus> {
+        if (!this.dependencies.isDesktop() || this.changing) return "unavailable";
+        const settings = normalizeGhostSettings(this.dependencies.getSettings());
+        if (!settings.siteUrl) return "missing";
+        try {
+            const identity = this.getIdentity();
+            const id = await this.secretId(settings.siteUrl);
+            if (!this.dependencies.isDesktop() || this.changing || this.getIdentity() !== identity) return "unavailable";
+            let key: string | null;
+            try { key = this.dependencies.secrets.getSecret(id); }
+            catch { return "unavailable"; }
+            return key && GHOST_ADMIN_KEY_PATTERN.test(key) ? "configured" : "missing";
+        } catch {
+            return "unavailable";
+        }
     }
 
     /** Called only by manual Settings UI. Omitted key preserves this desktop's secret. */
@@ -122,7 +143,7 @@ export class GhostPublishingConfiguration {
         let settings: GhostPublishingSettings;
         try { settings = { ...parsed.data, siteUrl: canonicalGhostSite(parsed.data.siteUrl) }; }
         catch (error) { return Promise.reject(error); }
-        if (adminKey !== undefined && adminKey !== "" && !/^[a-f\d]{24}:[a-f\d]{64}$/i.test(adminKey)) {
+        if (adminKey !== undefined && adminKey !== "" && !GHOST_ADMIN_KEY_PATTERN.test(adminKey)) {
             return Promise.reject(new GhostConfigurationError("invalid-key"));
         }
         this.revision++;

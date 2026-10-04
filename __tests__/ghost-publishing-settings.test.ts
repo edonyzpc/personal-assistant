@@ -1,5 +1,5 @@
 import { webcrypto } from "node:crypto";
-import { GhostPublishingConfiguration, type GhostPublishingSettings } from "../src/ghost-publishing/configuration";
+import { GhostPublishingConfiguration, type GhostAdminKeyStatus, type GhostPublishingSettings } from "../src/ghost-publishing/configuration";
 import { renderGhostPublishingSettings } from "../src/ghost-publishing/settings-ui";
 import { pluginT } from "../src/locales/plugin";
 
@@ -71,6 +71,10 @@ const t = (id: Parameters<typeof pluginT>[0], params?: Readonly<Record<string, s
 const row = (name: string) => mockSettings.find((setting) => setting.name === name)!;
 const button = (name: string) => mockSettings.find((setting) => setting.button?.label === name)!.button!;
 const save = () => button(t("plugin.ghost.settings.save")).click();
+const statusConfiguration = (getStatus: () => Promise<GhostAdminKeyStatus>): Pick<GhostPublishingConfiguration, "save" | "getAdminKeyStatus"> => ({
+    save: async () => undefined,
+    getAdminKeyStatus: getStatus,
+});
 
 async function setup() {
     const otherSettings = { aiProvider: "unchanged", marker: 7 };
@@ -90,10 +94,11 @@ async function setup() {
     await configuration.save(prefs, key);
     getSecret.mockClear(); persisted.length = 0;
     const saveConfiguration = jest.spyOn(configuration, "save");
+    const getStatus = jest.spyOn(configuration, "getAdminKeyStatus");
     const node = new MockNode();
     const dispose = renderGhostPublishingSettings(node as unknown as HTMLElement,
         { isDesktop: () => true, getSettings: () => current, configuration, t });
-    return { node, dispose, configuration, saveConfiguration, getSecret, secrets, persisted, otherSettings,
+    return { node, dispose, configuration, saveConfiguration, getStatus, getSecret, secrets, persisted, otherSettings,
         current: () => current, fail: () => { failure = true; } };
 }
 
@@ -101,18 +106,24 @@ beforeAll(() => { Object.defineProperty(globalThis, "crypto", { configurable: tr
 beforeEach(() => { mockSettings.length = 0; });
 
 describe("Ghost Settings UI", () => {
-    it("leaves the password empty without reading secrets and preserves a saved key on blank input", async () => {
+    it("shows a configured key without exposing it and preserves the saved key on blank input", async () => {
         const app = await setup();
+        await app.getStatus.mock.results[0]!.value;
+        expect(app.node.text()).toContain(t("plugin.ghost.settings.keyStatus.configured"));
         const input = row(t("plugin.ghost.settings.key")).text!;
         expect(input.value).toBe("");
         expect(input.inputEl.type).toBe("password");
-        expect(app.getSecret).not.toHaveBeenCalled();
+        expect(app.getSecret).toHaveBeenCalledTimes(1);
+        expect(app.node.text()).not.toContain(key);
         row(t("plugin.ghost.settings.visibility")).dropdown!.edit("members");
         expect(app.current().defaultVisibility).toBe("public");
         await save();
         expect(app.saveConfiguration).toHaveBeenCalledWith({ ...prefs, defaultVisibility: "members" }, undefined);
         expect([...app.secrets.values()]).toEqual([key]);
-        expect(app.getSecret).not.toHaveBeenCalled();
+        await app.getStatus.mock.results[1]!.value;
+        expect(app.getSecret).toHaveBeenCalledTimes(2);
+        expect(app.node.text()).toContain(t("plugin.ghost.settings.keyStatus.configured"));
+        expect(app.node.text()).not.toContain(key);
         expect(JSON.stringify(app.persisted)).not.toContain(key);
         expect(app.otherSettings).toEqual({ aiProvider: "unchanged", marker: 7 });
         app.dispose();
@@ -138,8 +149,43 @@ describe("Ghost Settings UI", () => {
         expect(app.saveConfiguration).toHaveBeenCalledWith(prefs, "");
         expect(app.current()).toEqual(prefs);
         expect([...app.secrets.values()]).toEqual([""]);
+        await app.getStatus.mock.results[1]!.value;
+        expect(app.node.text()).toContain(t("plugin.ghost.settings.keyStatus.missing"));
         expect(row(t("plugin.ghost.settings.site")).text!.value).toBe("https://different.test/");
         app.dispose();
+        mockSettings.length = 0;
+        const reopened = new MockNode();
+        renderGhostPublishingSettings(reopened as unknown as HTMLElement,
+            { isDesktop: () => true, getSettings: () => app.current(), configuration: app.configuration, t });
+        await app.getStatus.mock.results[2]!.value;
+        expect(reopened.text()).toContain(t("plugin.ghost.settings.keyStatus.missing"));
+    });
+
+    it("shows an unreadable status and does not update destroyed UI from a late result", async () => {
+        let resolveStatus!: (status: GhostAdminKeyStatus) => void;
+        const node = new MockNode();
+        const dispose = renderGhostPublishingSettings(node as unknown as HTMLElement, {
+            isDesktop: () => true, getSettings: () => prefs,
+            configuration: statusConfiguration(() => new Promise(resolve => { resolveStatus = resolve; })), t,
+        });
+        dispose();
+        resolveStatus("configured");
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(node.text()).not.toContain(t("plugin.ghost.settings.keyStatus.configured"));
+
+        mockSettings.length = 0;
+        const unavailable = new MockNode();
+        const failingStatus = jest.fn(async (): Promise<GhostAdminKeyStatus> => {
+            throw new Error("Synthetic status failure");
+        });
+        renderGhostPublishingSettings(unavailable as unknown as HTMLElement, {
+            isDesktop: () => true, getSettings: () => prefs,
+            configuration: statusConfiguration(failingStatus), t,
+        });
+        await expect(failingStatus.mock.results[0]!.value).rejects.toThrow("Synthetic status failure");
+        await new Promise(resolve => globalThis.setTimeout(resolve));
+        expect(unavailable.text()).toContain(t("plugin.ghost.settings.keyStatus.unavailable"));
     });
 
     it("keeps persisted preferences and the old key when save fails, without exposing the raw error", async () => {

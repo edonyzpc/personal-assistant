@@ -2,12 +2,12 @@ import { Setting } from "obsidian";
 import type { ButtonComponent, DropdownComponent, TextComponent, ToggleComponent } from "obsidian";
 import type { PluginMessageKey } from "../locales/plugin";
 import { GhostConfigurationError, normalizeGhostSettings } from "./configuration";
-import type { GhostPublishingConfiguration, GhostPublishingSettings } from "./configuration";
+import type { GhostAdminKeyStatus, GhostPublishingConfiguration, GhostPublishingSettings } from "./configuration";
 
 export interface GhostPublishingSettingsHost {
     isDesktop(): boolean;
     getSettings(): GhostPublishingSettings;
-    readonly configuration?: Pick<GhostPublishingConfiguration, "save">;
+    readonly configuration?: Pick<GhostPublishingConfiguration, "save" | "getAdminKeyStatus">;
     t(key: PluginMessageKey, params?: Readonly<Record<string, string | number>>): string;
 }
 
@@ -16,8 +16,13 @@ type LibraryMode = "pa" | "auto" | "explicit";
 const LIBRARIES: ReadonlyArray<{ key: Library; label: string }> = [
     { key: "prism", label: "Prism" }, { key: "mermaid", label: "Mermaid" }, { key: "katex", label: "KaTeX" },
 ];
+const KEY_STATUS_MESSAGES: Record<GhostAdminKeyStatus, PluginMessageKey> = {
+    configured: "plugin.ghost.settings.keyStatus.configured",
+    missing: "plugin.ghost.settings.keyStatus.missing",
+    unavailable: "plugin.ghost.settings.keyStatus.unavailable",
+};
 
-/** Manual settings only. The UI never reads an existing secret or includes one in preferences. */
+/** Manual settings only. The UI receives key status, never a key value, and persists no key in preferences. */
 export function renderGhostPublishingSettings(container: HTMLElement, host: GhostPublishingSettingsHost): () => void {
     const t = host.t.bind(host);
     if (!host.isDesktop()) {
@@ -36,6 +41,7 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
     let adminKey = "";
     let alive = true;
     let busy = false;
+    let statusRefresh = 0;
     const modes: Record<Library, LibraryMode> = { prism: "pa", mermaid: "pa", katex: "pa" };
     const confirmed: Record<Library, boolean> = { prism: false, mermaid: false, katex: false };
     const toggles = new Map<Library, ToggleComponent>();
@@ -75,6 +81,7 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
                 if (alive && !busy) adminKey = value;
             });
         });
+    const keyStatus = container.createEl("p", { attr: { role: "status", "aria-live": "polite", "aria-atomic": "true" } });
     new Setting(container).setName(t("plugin.ghost.settings.visibility"))
         .setDesc(t("plugin.ghost.settings.visibilityDescription"))
         .addDropdown((dropdown) => {
@@ -150,6 +157,17 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
         if (!disabled) feedback.textContent = needsConfirmation() ? t("plugin.ghost.settings.compatibilityRequired") : "";
     }
 
+    async function refreshKeyStatus(): Promise<void> {
+        if (!alive || !configuration) return;
+        const refresh = ++statusRefresh;
+        keyStatus.textContent = t("plugin.ghost.settings.keyStatusChecking");
+        let status: GhostAdminKeyStatus;
+        try { status = await configuration.getAdminKeyStatus(); }
+        catch { status = "unavailable"; }
+        if (!alive || refresh !== statusRefresh) return;
+        keyStatus.textContent = t(KEY_STATUS_MESSAGES[status]);
+    }
+
     async function save(removeKey: boolean): Promise<void> {
         if (!alive || busy || !host.isDesktop() || (!removeKey && needsConfirmation())) return;
         const profile: GhostPublishingSettings["profile"] = {};
@@ -180,10 +198,12 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
         if (alive) {
             updateControls();
             feedback.textContent = t(message);
+            void refreshKeyStatus();
         }
     }
 
     updateControls();
+    void refreshKeyStatus();
     return () => {
         alive = false;
         adminKey = "";
