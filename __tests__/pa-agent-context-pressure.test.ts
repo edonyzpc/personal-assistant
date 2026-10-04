@@ -28,7 +28,7 @@ function project(history: ChatMessage[], maxHistoryChars: number,
     return new PaAgentContextManager().forPrompt({
         prompt: 'Compare the material; preserve the offline export constraint.',
         chatHistory: history, transcript: [], turnIndex: 0, availableSkills: 'None', toolDefinitions: 'None',
-        maxHistoryChars, maxPromptChars: 120_000, maxObservationChars: 64_000,
+        maxHistoryChars, maxPromptChars: maxHistoryChars < 60_000 ? 4500 : 120_000, maxObservationChars: 64_000,
         formatToolObservations,
         ...(summary ? { summaries: { history: summary } } : {}),
         measurePromptEnvelope: parts => measurePaAgentRequestEnvelope({
@@ -85,8 +85,8 @@ describe('B-149 T-11 fixed offline pressure comparison', () => {
                 }) as typeof fetch;
                 const startedAt = performance.now();
                 const preview = project(tier.history, tier.maxHistoryChars);
-                const shouldSummarize = policy === 'existing' ? preview.outcome.historyCompressed
-                    : policy === 'candidate' && preview.outcome.admission === 'local_overflow';
+                const shouldSummarize = policy === 'existing' ? preview.history.historyBudgetLimited
+                    : policy === 'candidate' && preview.outcome.needsCompaction;
                 const summarizer = new PaAgentContextSummarizer();
                 const ledger = new PaAgentRunUsageLedger();
                 const auxiliaryBudget = createPaAgentAuxiliarySummaryBudget(() => ledger.snapshot().attempts);
@@ -143,7 +143,8 @@ describe('B-149 T-11 fixed offline pressure comparison', () => {
                 retainedOfflineConstraint: true, retainedLatestQuestion: true });
             expect(at('small', 'candidate')).toMatchObject({ admission: 'fit', auxiliarySdkCalls: 0 });
             for (const tier of ['medium', 'long']) {
-                expect(at(tier, 'no_auxiliary')).toMatchObject({ admission: 'local_overflow', auxiliarySdkCalls: 0 });
+                expect(at(tier, 'no_auxiliary')).toMatchObject({ admission: 'fit', auxiliarySdkCalls: 0,
+                    retainedOfflineConstraint: true, retainedLatestQuestion: true });
                 for (const policy of ['existing', 'candidate'] as Policy[]) {
                     expect(at(tier, policy)).toMatchObject({ admission: 'fit', retainedOfflineConstraint: true,
                         retainedLatestQuestion: true, cacheHit: true });
@@ -155,9 +156,8 @@ describe('B-149 T-11 fixed offline pressure comparison', () => {
         } finally { globalThis.fetch = realFetch; }
     });
 
-    it.each([{ name: 'medium', words: 28, requiredCalls: 2 },
-        { name: 'long', words: 180, requiredCalls: 12 }])
-    ('keeps $name incomplete when one rolling source chunk is omitted by a lower auxiliary cap', async tier => {
+    it.each([{ name: 'medium', words: 28 }, { name: 'long', words: 180 }])
+    ('keeps complete $name input when a rolling summary request fails', async tier => {
         const history = fixture(12, tier.words);
         const preview = project(history, 3_000);
         let calls = 0;
@@ -165,12 +165,16 @@ describe('B-149 T-11 fixed offline pressure comparison', () => {
             historyBudgetChars: preview.historyBudgetChars,
             invoke: async payload => {
                 calls++;
-                if (calls >= tier.requiredCalls) throw new Error('synthetic auxiliary cap reached');
+                if (calls >= 2) throw new Error('synthetic auxiliary failure');
                 return { content: fixedSummaryContent(payload.messages[1].content) };
             },
         });
-        expect(calls).toBe(tier.requiredCalls);
+        expect(calls).toBe(2);
         expect(summary).toBeUndefined();
-        expect(project(history, 3_000, summary).outcome.admission).toBe('local_overflow');
+        const fallback = project(history, 3_000, summary);
+        expect(fallback.outcome.admission).toBe('fit');
+        expect(fallback.history.sourceMessages).toEqual(history);
+        expect(fallback.history.omittedCount).toBe(0);
+        expect(fallback.input).toContain('Export must remain offline.');
     });
 });

@@ -17,13 +17,44 @@ import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-hando
 jest.mock('obsidian');
 afterEach(() => jest.restoreAllMocks());
 
+it('reads a prior version absent from the timeline and registers it for current Writing preparation', async () => {
+    const result = await runScenario('history-read');
+    expect(result.error).toBeUndefined();
+    expect(result.inputs).toHaveLength(3);
+    expect(result.schemas[0].some(schema => schema.function.name === 'read_writing_history')).toBe(true);
+    expect(result.inputs[1]).toContain('Authorized parent draft');
+    expect(result.inputs[1]).toContain('parentHandle');
+    expect(result.prepareStyle).toHaveBeenCalledTimes(1);
+    expect(result.lifecycle.some(event => event.type === 'agent_end' && event.status === 'completed')).toBe(true);
+});
+
+it('rejects a history source revoked after preparation and before physical model dispatch', async () => {
+    const result = await runScenario('history-read-revoked', false, { change: 'live-refresh', writing: false });
+    expect(result.inputs).toHaveLength(1);
+    expect(result.lifecycle.some(event => event.type === 'agent_end' && event.status === 'completed')).toBe(false);
+});
+
+it('reads and delivers a complete selected draft beyond the former observation and output character caps', async () => {
+    const text = Array.from({ length: 4000 }, (_, index) =>
+        `Section ${index}: preserve this distinct sentence and its original order.\n`).join('');
+    expect(text.length).toBeGreaterThan(120_000);
+    const result = await runScenario('complete', false, undefined, undefined, text);
+    expect(result.error).toBeUndefined();
+    expect(result.inputs[1]).toContain(JSON.stringify(text).slice(1, -1));
+    const artifact = result.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> =>
+        event.kind === 'writing-artifact');
+    expect(artifact?.body).toBe(text);
+    expect(artifact?.writingContext?.parentVersionId).toBe(result.parent.id);
+    expect(result.lifecycle.some(event => event.type === 'agent_end' && event.status === 'completed')).toBe(true);
+});
+
 const scene = { writingTask: 'email', purpose: 'invitation', audience: 'colleagues', domain: 'work' };
 const body = '  请来参加周五的分享。\n🌱\n';
 type Scenario = 'complete' | 'ordinary' | 'reported-incomplete' | 'finalization-unprepared' | 'premature' | 'mixed' | 'revoked' | 'physical-retry' | 'image-subset' | 'image-empty' | 'schema-repair' | 'reselect' | 'repeat-selection' | 'new-topic' | 'parent-ab' | 'personal-source' | 'personal-retry' | 'pagelet' | 'incomplete' | 'stale-insights';
 
-async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = false, backgroundAdmission?: {
+async function runScenario(scenario: Scenario | 'ordinary-revoked' | 'history-read' | 'history-read-revoked', debug = false, backgroundAdmission?: {
     change: 'live-refresh' | 'revoked-same-text' | 'unguarded-refresh'; writing: boolean;
-}, scopedParentScope?: 'notes' | 'web') {
+}, scopedParentScope?: 'notes' | 'web', textOverride?: string) {
     const records = new Map<string, WritingVersion>();
     const versions = new WritingVersionService({
         getWritingVersion: async id => records.get(id) ?? null,
@@ -35,6 +66,8 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
     let parentSourceLive = true;
     let parentPermission = true;
     let scopeCurrent = true;
+    let historySourceCurrent = true;
+    const readsHistory = scenario === 'history-read' || scenario === 'history-read-revoked';
     const parentTaskSource: GenerationInputTaskSourceV2 = { purpose: 'task_material', kind: 'context-used',
         boundary: 'read-only-tool', dedupKey: 'parent-source', path: parentSourcePath,
         revision: { state: 'identified', basis: 'vault_read',
@@ -42,8 +75,8 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
     const parentLineage = completeInputLineage([{ kind: 'user-text', messageId: 'earlier-message' },
         { kind: 'vault', path: parentSourcePath, via: 'note' }]);
     const parent = await versions.create({ requestId: 'earlier', conversationId: 'conversation', messageId: 'earlier-message',
-        turnIndex: 1, text: 'Authorized parent draft', images: [],
-        ...(scopedParentScope || scenario === 'parent-ab' ? { generationInput: { schemaVersion: 2 as const, inputPurpose: 'writing' as const,
+        turnIndex: 1, text: textOverride ?? 'Authorized parent draft', images: [],
+        ...(scopedParentScope || scenario === 'parent-ab' || readsHistory ? { generationInput: { schemaVersion: 2 as const, inputPurpose: 'writing' as const,
             task: scopedParentScope ? { state: 'identified' as const, sources: [parentTaskSource] }
                 : { state: 'none' as const, sources: [] },
             personal: { state: 'none' as const }, insights: { state: 'none' as const },
@@ -130,6 +163,7 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
             }
             // Exercise the actual runtime dispatch callback after serialization,
             // with the same local-admission wrapper used by both transports.
+            if (scenario === 'history-read-revoked' && inputs.length === 1) historySourceCurrent = false;
             if (backgroundAdmission) runProviderAdmission(options?.onProviderRequestStart);
             else options?.onProviderRequestStart?.();
             const text = String(input);
@@ -138,6 +172,12 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
             messageInputs.push((input as { toChatMessages(): Array<{ getType(): string; content: unknown }> })
                 .toChatMessages().map(message => ({ role: message.getType(), content: String(message.content) })));
             const turn = inputs.length;
+            if (readsHistory && turn === 1) {
+                yield new AIMessageChunk({ content: '', tool_call_chunks: [{ id: 'history-read', index: 0,
+                    name: 'read_writing_history', args: JSON.stringify({ action: 'read', versionId: parent.id }) }] });
+                yield new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'tool_calls' } });
+                return;
+            }
             if (scenario === 'reported-incomplete' || scenario === 'finalization-unprepared') {
                 yield new AIMessageChunk({ content: '', tool_call_chunks: [{ id: 'report', index: 0,
                     name: 'report_task_incomplete', args: JSON.stringify({ answer: 'I cannot complete this writing task.' }) }] });
@@ -149,11 +189,13 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
                 yield new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'stop' } });
                 return;
             }
-            if ((turn === 1 || (turn === 2 && (scenario === 'schema-repair' || scenario === 'parent-ab'))
+            if ((turn === 1 || (turn === 2 && (scenario === 'schema-repair' || scenario === 'parent-ab' || scenario === 'history-read'))
                 || (scenario === 'reselect' && turn <= 3)
                 || (scenario === 'repeat-selection' && turn <= 4)) && scenario !== 'premature') {
                 const directoryHandles = [...text.matchAll(/"handle":"([^"]+:parent:\d+)"/g)].map(match => match[1]);
-                const parentHandle = scenario === 'parent-ab' ? directoryHandles[turn - 1] : directoryHandles[0];
+                const parentHandle = scenario === 'history-read'
+                    ? text.match(/"parentHandle":\s*"([^"]+:parent:\d+)"/)?.[1]
+                    : scenario === 'parent-ab' ? directoryHandles[turn - 1] : directoryHandles[0];
                 if (!parentHandle) throw new Error('Missing authorized parent directory');
                 const selectedScene = scenario === 'reselect' && turn === 2 ? { ...scene, purpose: 'reminder' } : scene;
                 const selection = { parentHandle: scenario === 'new-topic' ? null : parentHandle,
@@ -176,7 +218,7 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
                     try { options?.onProviderRequestStart?.(); } catch (error) { retryErrors.push(error); }
                 }
                 yield new AIMessageChunk({ content: '', tool_call_chunks: [{ id: 'output', index: 0,
-                    name: 'present_writing', args: JSON.stringify({ contextHandle: handle, body, explanation: '' }) }] });
+                    name: 'present_writing', args: JSON.stringify({ contextHandle: handle, body: textOverride ?? body, explanation: '' }) }] });
                 if (scenario === 'revoked') styleCurrent = false;
             }
             yield new AIMessageChunk({ content: '', response_metadata: { finish_reason: scenario === 'incomplete' ? 'length' : 'tool_calls' } });
@@ -189,6 +231,12 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
     let error: unknown;
     try {
         await runtime.streamTurn({ prompt: 'Use the earlier proposal for an invitation', memoryMode: 'auto',
+            ...(readsHistory ? { conversationId: 'conversation',
+                writingHistoryHost: { conversationId: 'conversation', versions,
+                    isCurrent: () => scopeCurrent, isSourceCurrent: () => historySourceCurrent },
+                runSourceSelection: { schemaVersion: 1 as const, scope: 'notes' as const,
+                    selectionId: 'history-selection', userMessageId: 'history-current-user' },
+            } : {}),
             isCurrent: () => scopeCurrent,
             writingRequest: backgroundAdmission?.writing === false ? undefined : { requestId: 'request' },
             writingOutputProtocol: backgroundAdmission?.writing === false ? undefined : 'native',
@@ -200,9 +248,9 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked', debug = fals
             ...(imageMode ? { images, imageAssetService: imageService as unknown as ImageAssetService,
                 imageCapability: { get: () => 'supported' as const, onSuccess: jest.fn(), onError: jest.fn() } } : {}),
             writingContextHost: backgroundAdmission?.writing === false ? undefined : { conversationId: 'conversation',
-                candidates: scenario === 'parent-ab' ? [parent, parentB] : [parent], versions,
+                candidates: scenario === 'history-read' ? [] : scenario === 'parent-ab' ? [parent, parentB] : [parent], versions,
                 styles: { prepare: prepareStyle }, isCurrent: () => true,
-                isParentCurrent: version => JSON.stringify(records.get(version.id)) === JSON.stringify(version),
+                isParentCurrent: version => scenario !== 'history-read' && JSON.stringify(records.get(version.id)) === JSON.stringify(version),
                 isParentSourceCurrent: version => JSON.stringify(records.get(version.id)) === JSON.stringify(version) },
             onEvent: event => {
                 events.push(event);
@@ -437,7 +485,7 @@ describe('native writing context runtime integration', () => {
         expect(result.prepareStyle).toHaveBeenCalledTimes(1);
         expect(result.inputs.length).toBeLessThanOrEqual(4);
         expect(result.lifecycle.find(event => event.type === 'agent_end')).toMatchObject({
-            status: 'incomplete', metadata: { reason: 'equivalent_no_progress' },
+            status: 'incomplete', metadata: { reason: 'identical_batch_replayed' },
         });
         expect(result.events.some(event => event.kind === 'writing-artifact')).toBe(false);
     });

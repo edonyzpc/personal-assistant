@@ -53,6 +53,17 @@ interface ContextReceipt {
     style: ChatWritingStyleResult;
 }
 
+export interface WritingCandidateGuard {
+    isCurrent(): boolean;
+    /** Source lifetime must survive the request's normal cleanup. */
+    isSourceCurrent(): boolean;
+}
+
+interface WritingCandidate {
+    version: WritingVersion;
+    guard: WritingCandidateGuard;
+}
+
 export interface WritingContextRunHost {
     runId: string;
     conversationId: string;
@@ -77,7 +88,7 @@ export interface WritingContextRunHost {
 
 /** Host preparation for get_writing_context; no model routing or persistent state. */
 export class WritingContextRun {
-    private readonly candidates = new Map<string, WritingVersion>();
+    private readonly candidates = new Map<string, WritingCandidate>();
     private receipt?: ContextReceipt;
     private sequence = 0;
     private preparation = 0;
@@ -87,13 +98,34 @@ export class WritingContextRun {
         for (const candidate of host.candidates) {
             const version = cloneWritingVersion(candidate);
             if (version.conversationId !== host.conversationId) throw new Error('Writing candidate outside conversation');
-            this.candidates.set(`${host.runId}:parent:${this.candidates.size + 1}`, version);
+            this.candidates.set(`${host.runId}:parent:${this.candidates.size + 1}`, { version, guard: {
+                isCurrent: () => host.isParentCurrent(cloneWritingVersion(version)),
+                isSourceCurrent: () => (host.isParentSourceCurrent ?? host.isParentCurrent)(cloneWritingVersion(version)),
+            } });
         }
+    }
+
+    /** Register a separately admitted history version without selecting or preparing it. */
+    registerCandidate(candidate: WritingVersion, guard: WritingCandidateGuard): string {
+        this.assertCurrent();
+        const version = cloneWritingVersion(candidate);
+        if (version.conversationId !== this.host.conversationId) throw new Error('Writing candidate outside conversation');
+        if (!guard.isCurrent() || !guard.isSourceCurrent()) throw new Error('Writing parent changed');
+        for (const [handle, existing] of this.candidates) {
+            if (existing.version.id !== version.id) continue;
+            if (JSON.stringify(existing.version) !== JSON.stringify(version)) throw new Error('Writing candidate changed');
+            // A second admission cannot revive an earlier preparation's revoked source receipt.
+            if (!existing.guard.isCurrent() || !existing.guard.isSourceCurrent()) throw new Error('Writing parent changed');
+            return handle;
+        }
+        const handle = `${this.host.runId}:parent:${this.candidates.size + 1}`;
+        this.candidates.set(handle, { version, guard });
+        return handle;
     }
 
     candidateDirectory(): Array<{ handle: string; messageId: string; turnIndex: number; selected?: true }> {
         this.assertCurrent();
-        return [...this.candidates].map(([handle, version]) => ({ handle, messageId: version.messageId, turnIndex: version.turnIndex,
+        return [...this.candidates].map(([handle, { version }]) => ({ handle, messageId: version.messageId, turnIndex: version.turnIndex,
             ...(version.id === this.host.selectedParentVersionId ? { selected: true as const } : {}) }));
     }
 
@@ -119,7 +151,7 @@ export class WritingContextRun {
         refreshBudget?: () => Pick<Parameters<ChatWritingStylePreparation>[0], 'remainingTextChars' | 'remainingMemoryChars'>): Promise<PreparedWritingContext> {
         this.assertCurrent(budget.signal);
         const preparation = ++this.preparation;
-        const parent = selection.parentHandle ? this.candidates.get(selection.parentHandle) : undefined;
+        const parent = selection.parentHandle ? this.candidates.get(selection.parentHandle)?.version : undefined;
         if (selection.parentHandle && !parent) throw new Error('Unknown writing parent handle');
         const scene = selection.scene === undefined ? undefined : normalizeWritingScene(selection.scene);
         if (scene === null) throw new Error('Invalid writing scene');
@@ -189,8 +221,8 @@ export class WritingContextRun {
         const parent = receipt.value.parent ? cloneWritingVersion(receipt.value.parent) : undefined;
         const checks: Array<() => boolean> = [];
         if (parent) {
-            const isParentCurrent = this.host.isParentSourceCurrent ?? this.host.isParentCurrent;
-            checks.push(() => isParentCurrent(cloneWritingVersion(parent)));
+            const guard = this.parentGuard(parent);
+            checks.push(() => guard.isSourceCurrent());
         }
         if (receipt.value.images.length) checks.push(receipt.isMaterialSourceCurrent!);
         if (usesStyle) checks.push(receipt.style.isSourceCurrent!);
@@ -256,7 +288,7 @@ export class WritingContextRun {
 
     private assertReceiptCurrent(receipt: ContextReceipt, signal?: AbortSignal): void {
         this.assertCurrent(signal);
-        if (receipt.value.parent && !this.host.isParentCurrent(cloneWritingVersion(receipt.value.parent))) {
+        if (receipt.value.parent && !this.parentGuard(receipt.value.parent).isCurrent()) {
             throw new Error('Writing parent changed');
         }
         const styleCurrent = receipt.style.isSourceCurrent ?? receipt.style.isCurrent;
@@ -266,10 +298,20 @@ export class WritingContextRun {
 
     private async assertParentCurrent(parent: WritingVersion, signal?: AbortSignal): Promise<void> {
         this.assertCurrent(signal);
-        if (!this.host.isParentCurrent(cloneWritingVersion(parent))) throw new Error('Writing parent changed');
+        const guard = this.parentGuard(parent);
+        if (!guard.isCurrent()) throw new Error('Writing parent changed');
         const current = await this.host.versions.get(parent.id);
         this.assertCurrent(signal);
-        if (!current || JSON.stringify(cloneWritingVersion(current)) !== JSON.stringify(parent)) throw new Error('Writing parent changed');
+        if (!guard.isCurrent() || !current || JSON.stringify(cloneWritingVersion(current)) !== JSON.stringify(parent)) {
+            throw new Error('Writing parent changed');
+        }
+    }
+
+    private parentGuard(parent: WritingVersion): WritingCandidateGuard {
+        for (const { version, guard } of this.candidates.values()) {
+            if (version.id === parent.id && JSON.stringify(version) === JSON.stringify(parent)) return guard;
+        }
+        throw new Error('Writing parent unavailable');
     }
 
     private receiptForMessage(message: Extract<PaAgentMessage, { role: 'toolResult' }>): ContextReceipt {

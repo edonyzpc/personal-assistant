@@ -162,7 +162,7 @@ describe("complete lossless history projection", () => {
         expect(projected.history.historyCompressed).toBe(false);
     });
 
-    it("recovers every character through the actual escaped wrapper and prefers full history over a cached semantic prefix", () => {
+    it("preserves exact lossless sources while reusing a current semantic prefix and keeping the latest turn", () => {
         const before = JSON.stringify(messages);
         const full = fitFullHistory(messages, 6000)!;
         expect(full.losslesslyEncoded).toBe(true);
@@ -175,14 +175,17 @@ describe("complete lossless history projection", () => {
             content: typeof message.content === "string" ? message.content
                 : message.content.segments.map((segment) => segment.text.repeat(segment.count)).join(""),
         }))).toEqual(messages);
+        const summary = summaryFor(messages, 2, '{"facts":["CACHED SEMANTIC PREFIX"]}');
         const projected = new PaAgentContextProjector().projectUserInput({
             prompt: "continue", chatHistory: messages, maxHistoryChars: full.text.length,
-            summaries: { history: summaryFor(messages, 2, '{"facts":["CACHED SEMANTIC PREFIX"]}') },
+            summaries: { history: summary },
         });
-        expect(projected.history).toEqual({ text: full.text, compactedCount: 0, summaryChars: 0,
-            omittedCount: 0, historyCompressed: true });
+        expect(projected.history).toMatchObject({ compactedCount: 2, summaryChars: 0,
+            semanticSummaryChars: summary.text.length, omittedCount: 0, historyCompressed: true });
+        expect(projected.history.text).toBe(`${formatSemanticHistorySummary(summary.text)}\n\n${formatHistoryMessages(messages.slice(2))}`);
+        expect(projected.history.entries.slice(1)).toEqual(messages.slice(2).map(message => ({ kind: 'message', message })));
         expect(projected.history.sourceMessages).toEqual(messages);
-        expect(projected.input).not.toContain("CACHED SEMANTIC PREFIX");
+        expect(projected.input).toContain("CACHED SEMANTIC PREFIX");
         expect(JSON.stringify(messages)).toBe(before);
     });
 
@@ -194,8 +197,10 @@ describe("complete lossless history projection", () => {
         const fallback = new PaAgentContextProjector().projectUserInput({
             prompt: "continue", chatHistory: messages, maxHistoryChars: full.text.length - 1,
         });
-        expect(fallback.history.text.length).toBeLessThan(full.text.length);
+        expect(fallback.history.text.length).toBeGreaterThan(full.text.length);
         expect(fallback.history.text).not.toContain("adjacent-repeats-v1");
+        expect(fallback.history.sourceMessages).toEqual(messages);
+        expect(fallback.history.omittedCount).toBe(0);
     });
 });
 
@@ -226,13 +231,13 @@ describe("semantic history coverage planning", () => {
         );
     });
 
-    it("can cover a giant latest exchange and skips impossible zero-budget summary requests", () => {
+    it("keeps a giant latest exchange intact even when it exceeds the summary target", () => {
         const messages = history(1, 20000);
         expect(planHistoryContext(messages, 3000)).toEqual({
-            mode: "summarized", coveredMessages: 2, summaryMaxChars: 750,
+            mode: "summarized", coveredMessages: 0, summaryMaxChars: 750,
         });
         expect(planHistoryContext(messages, 0)).toEqual({
-            mode: "summarized", coveredMessages: 2, summaryMaxChars: 0,
+            mode: "summarized", coveredMessages: 0, summaryMaxChars: 0,
         });
     });
 });
@@ -363,10 +368,11 @@ describe("semantic prefix projection", () => {
 
         expect(projected.history.text).not.toContain("stale unique decision");
         expect(projected.history.text).not.toContain("<conversation_summary");
-        expect(projected.history.text.length).toBeLessThanOrEqual(1500);
+        expect(projected.history.sourceMessages).toEqual(messages);
+        expect(projected.history.omittedCount).toBe(0);
     });
 
-    it("reports an uncovered gap without duplicating the cached prefix in a legacy digest", () => {
+    it("keeps the uncovered tail whole without duplicating the cached prefix or producing a lossy digest", () => {
         const messages = history(12, 500);
         const semantic = summaryFor(messages, 4);
         const projected = projector.projectUserInput({
@@ -378,8 +384,9 @@ describe("semantic prefix projection", () => {
         expect(projected.history.text).not.toContain("user-0:");
         expect(projected.history.text).not.toContain("user-1:");
         expect(projected.history.text).toContain("user-11:");
-        expect(projected.history.omittedCount).toBeGreaterThan(0);
-        expect(projected.history.text.length).toBeLessThanOrEqual(2500);
+        expect(projected.history.omittedCount).toBe(0);
+        expect(projected.history.text).toContain('user-2:');
+        expect(projected.history.historyBudgetLimited).toBe(true);
     });
 
     it("keeps a complete reversible tail after a semantic prefix when the entire history cannot fit losslessly", () => {
@@ -413,10 +420,12 @@ describe("semantic prefix projection", () => {
             maxHistorySummaryChars: 0, summaries: { history: semantic },
         });
 
-        expect(projected.history.text).toBe(formatSemanticHistorySummary(semantic.text));
+        expect(projected.history.text).toContain(formatSemanticHistorySummary(semantic.text));
         expect(projected.history.text.match(/<\/conversation_summary>/g)).toHaveLength(1);
         expect(projected.history.text).toContain("<\\/conversation_summary>");
-        expect(projected.history.omittedCount).toBe(4);
+        expect(projected.history.omittedCount).toBe(0);
+        expect(projected.history.text).toContain('user-2:');
+        expect(projected.history.text).toContain('assistant-3:');
         expect(projected.input).toContain("User input:\ncurrent request");
     });
 });
@@ -590,7 +599,8 @@ describe("semantic Manager integration", () => {
                 .map((message) => message.content.promptText).join("\n"),
         });
 
-        expect(projected.historyBudgetChars).toBe(2400);
+        expect(projected.historyBudgetChars).toBeLessThanOrEqual(2400);
+        expect(projected.historyBudgetChars).toBeGreaterThan(0);
         expect(projected.reducedToolMessageIds).toEqual(["tool"]);
         expect(projected.outcome.admission).toBe("fit");
         expect(projected.diagnostics.historyCompaction).toMatchObject({ semanticSummaryUsed: true });
@@ -599,9 +609,9 @@ describe("semantic Manager integration", () => {
         expect(JSON.stringify(projected.diagnostics)).not.toContain("Constraint A depends on note B.");
     });
 
-    it("keeps complete semantic JSON for the guard to reject instead of truncating it under final pressure", () => {
+    it("keeps complete semantic JSON and latest turn for the provider under estimate pressure", () => {
         const messages = history(4, 500);
-        const semantic = summaryFor(messages, 8);
+        const semantic = summaryFor(messages, 6);
         const projected = new PaAgentContextManager().forPrompt({
             prompt: "x".repeat(1000), chatHistory: messages, transcript: [], turnIndex: 1,
             summaries: { history: semantic }, availableSkills: "None", toolDefinitions: "None",
@@ -609,7 +619,7 @@ describe("semantic Manager integration", () => {
             formatToolObservations: () => "None",
         });
 
-        expect(projected.outcome.admission).toBe("local_overflow");
+        expect(projected.outcome).toMatchObject({ admission: 'fit', needsCompaction: true });
         expect(projected.input).toContain(formatSemanticHistorySummary(semantic.text));
         expect(projected.input).toContain(`User input:\n${"x".repeat(1000)}`);
     });
@@ -622,6 +632,8 @@ describe("PaAgentContextSummarizer physical source bindings", () => {
             { role: "assistant", content: "A acknowledged." },
             { role: "user", content: `B_FUTURE ${"b".repeat(5_000)}` },
             { role: "assistant", content: "B acknowledged." },
+            { role: "user", content: "Current question." },
+            { role: "assistant", content: "Current answer." },
         ];
         const payloads: Array<{
             bindingSources?: ReadonlyArray<{ index: number; role: "user" | "assistant" | "tool"; content: string }>;
@@ -679,7 +691,7 @@ describe("PaAgentContextSummarizer physical source bindings", () => {
         const parts = payloads.flatMap(payload => JSON.parse(payload.messages[1].content).sourceMessages as Array<{
             index: number; role: string; content: string; start: number; end: number;
         }>);
-        messages.forEach((message, index) => {
+        messages.slice(0, -2).forEach((message, index) => {
             const slices = parts.filter(part => part.index === index + 1);
             expect(slices.map(part => part.content).join('')).toBe(message.content);
             slices.forEach((part, offset) => {
@@ -695,11 +707,13 @@ describe("PaAgentContextSummarizer physical source bindings", () => {
         const prefix: ChatMessage[] = [
             { role: "user", content: `CACHED_A_DEPENDENCY ${"a".repeat(20_000)}` },
             { role: "assistant", content: "A acknowledged." },
+            { role: "user", content: `CACHED_B_DEPENDENCY ${"b".repeat(20_000)}` },
+            { role: "assistant", content: "B acknowledged." },
         ];
         const messages: ChatMessage[] = [
             ...prefix,
-            { role: "user", content: `CACHED_B_DEPENDENCY ${"b".repeat(20_000)}` },
-            { role: "assistant", content: "B acknowledged." },
+            { role: "user", content: "Current question." },
+            { role: "assistant", content: "Current answer." },
         ];
         const payloads: Array<{
             bindingSources?: ReadonlyArray<{ index: number; content: string }>;
@@ -737,7 +751,7 @@ describe("PaAgentContextSummarizer physical source bindings", () => {
         expect(payloads.length).toBeGreaterThan(payloadCountAfterPrefix);
         const extension = payloads.at(-1)!;
         expect(extension.bindingSources?.map(source => source.index)).toEqual([1, 2, 3, 4]);
-        expect(extension.bindingSourceMessages).toEqual(messages);
+        expect(extension.bindingSourceMessages).toEqual(prefix);
     });
 });
 

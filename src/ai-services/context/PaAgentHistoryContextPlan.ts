@@ -6,7 +6,7 @@ import { finishContextSteps } from './clone-utils';
 import { stringifyContextSteps } from './PaAgentContextSerialization';
 import { chatHistoryImageMetadata } from "../chat-image-identity";
 import { projectPaAgentActionHistory, additionalHistoricalActionStates, canSummarizeReadOnlyActionHistory, summarizableReadOnlyResultIds } from "../pa-agent-action-history";
-import { projectActionStates } from '../pa-agent-result-facts';
+import { cloneActionStates, projectActionStates } from '../pa-agent-result-facts';
 import { groupChatTurnsSteps } from './PaAgentContextCompactor';
 
 export interface PaAgentProtectedHistoryLayout {
@@ -17,8 +17,86 @@ export interface PaAgentProtectedHistoryLayout {
     mandatoryIndices: Set<number>;
 }
 
+/** Runtime supplies only source-admitted, retrievable versions, excluding the selected parent. */
+export interface ColdWritingVersion { textHash: string; text: string }
+export interface PaAgentWritingReference {
+    versionId: string;
+    textHash: string;
+    totalLength: number;
+    bodyAvailability: 'read_writing_history';
+    actionState: ReturnType<typeof projectActionStates>[number];
+}
+export interface PaAgentColdWritingProjection {
+    message: ChatMessage;
+    reference: PaAgentWritingReference;
+}
+export type PaAgentColdWritingReferences = ReadonlyMap<ChatMessage, PaAgentColdWritingProjection>;
+
+/** Replace an independently bound final Writing group, never rewrite its original arguments. */
+export function* coldWritingHistoryReferencesSteps(history: readonly ChatMessage[],
+    versions?: ReadonlyMap<string, ColdWritingVersion>): Generator<void, PaAgentColdWritingReferences, void> {
+    const references = new Map<ChatMessage, PaAgentColdWritingProjection>();
+    if (!versions?.size) return references;
+    const turns = yield* groupChatTurnsSteps(history);
+    const complete = turns.filter(turn => turn[0]?.role === 'user' && turn.some(message => message.role === 'assistant'));
+    const recent = new Set(complete.slice(-2).flat());
+    for (const message of history) {
+        yield;
+        if (recent.has(message) || message.role !== 'assistant' || !message.canonicalTurn) continue;
+        const canonical = message.canonicalTurn;
+        const states = cloneActionStates(message.actionStates ?? canonical.actionStates);
+        const groups = projectPaAgentActionHistory(canonical.messages);
+        const group = groups[groups.length - 1];
+        if (!group || group.calls.length !== 1 || group.calls[0].name !== 'present_writing') continue;
+        const call = group.calls[0];
+        if (!call.id || call.ambiguousResultId || call.results.length > 1) continue;
+        const owners = states.filter(state => state.owner === 'writing' && state.origin.runId === canonical.runId
+            && state.origin.turnId === canonical.turnId && state.origin.assistantId === group.assistantId
+            && (!state.origin.callId || state.origin.callId === call.id)
+            && (state.receipt.kind === 'writing-version' || state.receipt.kind === 'writing-save'
+                || state.receipt.kind === 'writing-saves')
+            && state.receipt.versionId === state.operationId
+            && (!message.writingVersionId || state.operationId === message.writingVersionId));
+        if (owners.length !== 1) continue;
+        const owner = owners[0];
+        const version = versions.get(owner.operationId);
+        if (!version || !/^[a-f0-9]{64}$/.test(version.textHash)) continue;
+        let input: unknown = call.input;
+        if (typeof input === 'string') { try { input = JSON.parse(input); } catch { continue; } }
+        if (!input || typeof input !== 'object' || Array.isArray(input)
+            || (input as Record<string, unknown>).body !== version.text) continue;
+        if (call.results.length ? call.results[0].id !== owner.origin.resultId || call.results[0].isError
+            || !['success', 'reused_result'].includes(call.results[0].outcome)
+            : owner.origin.resultId !== group.assistantId) continue;
+        if (canonical.messages.filter(part => part.id === group.assistantId).length !== 1) continue;
+        const resultIds = new Set(call.results.map(result => result.id));
+        if ([...resultIds].some(id => canonical.messages.filter(part => part.id === id).length !== 1
+            || !canonical.messages.some(part => part.role === 'toolResult' && part.id === id && part.toolName === call.name))) continue;
+        const remainingMessages = canonical.messages.filter(part => part.id !== group.assistantId && !resultIds.has(part.id));
+        // Unrecognized duplicate renderings stay on the legacy path rather than silently lose text.
+        if (remainingMessages.some(part => part.role === 'assistant'
+            && part.content.some(item => item.type === 'text' && item.text.includes(version.text)))) continue;
+        let content = message.content.endsWith(version.text)
+            ? message.content.slice(0, -version.text.length) : message.content;
+        const explanation = group.text.endsWith(version.text)
+            ? group.text.slice(0, -version.text.length) : group.text;
+        if (content.includes(version.text) || explanation.includes(version.text)) continue;
+        if (explanation && !content.includes(explanation)) content = [content, explanation].filter(Boolean).join('\n\n');
+        const retainedStates = states.filter(state => state !== owner);
+        const projected: ChatMessage = { role: 'assistant', content,
+            ...(message.images ? { images: message.images } : {}),
+            ...(remainingMessages.length ? { canonicalTurn: { schemaVersion: canonical.schemaVersion,
+                runId: canonical.runId, turnId: canonical.turnId, messages: remainingMessages } } : {}),
+            ...(retainedStates.length ? { actionStates: retainedStates } : {}) };
+        references.set(message, { message: projected, reference: { versionId: owner.operationId,
+            textHash: version.textHash, totalLength: version.text.length, bodyAvailability: 'read_writing_history',
+            actionState: projectActionStates([owner])[0] } });
+    }
+    return references;
+}
+
 /** Planning and projection share the exact action evidence and latest full turn. */
-export function* protectedHistoryLayoutSteps(history: readonly ChatMessage[]): Generator<void, PaAgentProtectedHistoryLayout, void> {
+export function* protectedHistoryLayoutSteps(history: readonly ChatMessage[], references?: PaAgentColdWritingReferences): Generator<void, PaAgentProtectedHistoryLayout, void> {
     const firstUser = history.findIndex(message => message.role === 'user');
     const turns = firstUser < 0 ? (history.length ? [[...history]] : []) : [
         ...(firstUser > 0 ? [history.slice(0, firstUser)] : []),
@@ -37,7 +115,7 @@ export function* protectedHistoryLayoutSteps(history: readonly ChatMessage[]): G
     const mandatoryIndices = new Set(protectedIndices);
     if (turns.length) mandatoryIndices.add(turns.length - 1);
     const evidenceTurns = turns.map((turn, index) => protectedIndices.has(index) && index !== turns.length - 1
-        ? turn.map(protectedEvidenceMessage) : turn);
+        ? turn.map(message => references?.has(message) ? message : protectedEvidenceMessage(message)) : turn);
     return { turns, evidenceTurns, turnEnds, protectedIndices, mandatoryIndices };
 }
 
@@ -80,18 +158,19 @@ export function fitFullHistory(
 }
 
 export function* fitFullHistorySteps(
-    history: readonly ChatMessage[], budget: number, allowLossless = true,
+    history: readonly ChatMessage[], budget: number, allowLossless = true, references?: PaAgentColdWritingReferences,
 ): Generator<void, { text: string; losslesslyEncoded: boolean } | undefined, void> {
-    const raw = yield* formatHistoryMessagesSteps(history);
+    const raw = yield* formatHistoryMessagesSteps(history, false, references);
     if (raw.length <= budget) return { text: raw, losslesslyEncoded: false };
     if (!allowLossless) return undefined;
     let encodedAny = false;
     const messages: Record<string, unknown>[] = [];
     for (const message of history) {
         yield;
-        const encoded = yield* encodeAdjacentRepeatsSteps(message.content);
+        const reference = references?.get(message);
+        const encoded = reference ? undefined : yield* encodeAdjacentRepeatsSteps(message.content);
         encodedAny ||= encoded !== undefined;
-        const record = historyRecord(message, encoded ?? message.content);
+        const record = reference ? coldWritingHistoryRecord(reference) : historyRecord(message, encoded ?? message.content);
         encodedAny = (yield* encodeHistoryActionResultsSteps(record)) || encodedAny;
         messages.push(record);
     }
@@ -107,63 +186,63 @@ export function planHistoryContext(
     history: readonly ChatMessage[] | undefined,
     budget: number,
     summaryMaxChars = 8000,
+    coldWritingVersions?: ReadonlyMap<string, ColdWritingVersion>,
+    protectedWritingVersionIds?: ReadonlySet<string>,
 ): PaAgentHistoryContextPlan {
-    return finishContextSteps(planHistoryContextSteps(history, budget, summaryMaxChars));
+    return finishContextSteps(planHistoryContextSteps(history, budget, summaryMaxChars, coldWritingVersions, protectedWritingVersionIds));
+}
+
+/** A semantic prefix ends between turns, before the latest exchange or selected Writing parent. */
+export function* historySummaryPrefixLimitSteps(history: readonly ChatMessage[],
+    protectedWritingVersionIds?: ReadonlySet<string>): Generator<void, number, void> {
+    let turnStart = 0;
+    let latestTurnStart = 0;
+    let latestCompleteStart: number | undefined;
+    let hasAssistant = false;
+    let protectedStart = history.length;
+    for (const [index, message] of history.entries()) {
+        yield;
+        if (message.role === 'user') {
+            if (hasAssistant) latestCompleteStart = turnStart;
+            turnStart = index; latestTurnStart = index; hasAssistant = false;
+        } else if (message.role === 'assistant') hasAssistant = true;
+        const ids = [message.writingVersionId,
+            ...(message.actionStates ?? message.canonicalTurn?.actionStates ?? [])
+                .filter(state => state.owner === 'writing').map(state => state.operationId)];
+        if (ids.some(id => id && protectedWritingVersionIds?.has(id))) protectedStart = Math.min(protectedStart, turnStart);
+    }
+    if (hasAssistant) latestCompleteStart = turnStart;
+    return Math.min(latestCompleteStart ?? latestTurnStart, protectedStart);
 }
 
 export function* planHistoryContextSteps(
     history: readonly ChatMessage[] | undefined, budget: number, summaryMaxChars = 8000,
+    coldWritingVersions?: ReadonlyMap<string, ColdWritingVersion>,
+    protectedWritingVersionIds?: ReadonlySet<string>,
 ): Generator<void, PaAgentHistoryContextPlan, void> {
     const messages = history ?? [];
+    const references = yield* coldWritingHistoryReferencesSteps(messages, coldWritingVersions);
     const maxChars = Math.max(0, Math.floor(budget));
-    if (yield* fitFullHistorySteps(messages, maxChars)) {
+    if (yield* fitFullHistorySteps(messages, maxChars, true, references)) {
         return { mode: "full", coveredMessages: 0, summaryMaxChars: 0 };
     }
     const summaryWrapperChars = formatSemanticHistorySummary("").length;
-    let reservedTextChars = Math.max(0, Math.min(
+    const reservedTextChars = Math.max(0, Math.min(
         Math.floor(summaryMaxChars),
         Math.floor(maxChars / 4),
         maxChars - summaryWrapperChars,
     ));
-    const layout = yield* protectedHistoryLayoutSteps(messages);
-    if (layout.protectedIndices.size > 0) {
-        const mandatory = yield* selectHistoryTurnsSteps(layout.evidenceTurns, layout.mandatoryIndices);
-        const mandatoryChars = Math.min(
-            (yield* formatHistoryMessagesSteps(mandatory)).length,
-            (yield* formatHistoryMessagesSteps(mandatory, true)).length,
-        );
-        reservedTextChars = Math.max(0, Math.min(reservedTextChars,
-            maxChars - mandatoryChars - summaryWrapperChars - 2));
-    }
     const recentBudget = Math.max(0, maxChars - summaryWrapperChars - reservedTextChars - 2);
-    let coveredMessages = messages.length;
-    if (layout.protectedIndices.size > 0) {
-        // Older protected turns remain in the final payload even when covered
-        // by the prefix. Count their union with each suffix, never twice.
-        const retainedIndices = new Set(layout.mandatoryIndices);
-        for (let index = layout.turns.length - 1; index >= 0; index--) {
-            yield;
-            const turn = layout.turns[index];
-            if (turn[0]?.role !== 'user') continue;
-            if (!turn.some(message => message.role === 'assistant')) break;
-            retainedIndices.add(index);
-            // Only the prefix actually covered by a summary may shed prose.
-            const planningTurns = layout.turns.map((turn, turnIndex) => turnIndex < index
-                ? layout.evidenceTurns[turnIndex] : turn);
-            const candidate = yield* selectHistoryTurnsSteps(planningTurns, retainedIndices);
-            if (!(yield* fitFullHistorySteps(candidate, recentBudget))) break;
-            coveredMessages = index > 0 ? layout.turnEnds[index - 1] : 0;
-        }
-        return { mode: 'summarized', coveredMessages, summaryMaxChars: reservedTextChars };
-    }
+    const prefixLimit = yield* historySummaryPrefixLimitSteps(messages, protectedWritingVersionIds);
+    let coveredMessages = prefixLimit;
     // A suffix starts at a user and keeps complete turns, using the same
     // reversible serialization admitted by the final projector.
-    let turnEnd = messages.length;
-    for (let index = messages.length - 1; index >= 0; index--) {
+    let turnEnd = prefixLimit;
+    for (let index = prefixLimit - 1; index >= 0; index--) {
         yield;
         if (messages[index].role !== "user") continue;
         if (!messages.slice(index, turnEnd).some((message) => message.role === "assistant")) break;
-        if (!(yield* fitFullHistorySteps(messages.slice(index), recentBudget))) break;
+        if (!(yield* fitFullHistorySteps(messages.slice(index), recentBudget, true, references))) break;
         coveredMessages = index;
         turnEnd = index;
     }
@@ -179,14 +258,15 @@ export function formatHistoryMessages(history: readonly ChatMessage[], lossless 
 }
 
 export function* formatHistoryMessagesSteps(
-    history: readonly ChatMessage[], lossless = false,
+    history: readonly ChatMessage[], lossless = false, references?: PaAgentColdWritingReferences,
 ): Generator<void, string, void> {
     if (history.length === 0) return "";
     const records: Record<string, unknown>[] = [];
     for (const message of history) {
         yield;
-        const content = lossless ? (yield* encodeAdjacentRepeatsSteps(message.content)) ?? message.content : message.content;
-        const record = historyRecord(message, content);
+        const reference = references?.get(message);
+        const content = lossless && !reference ? (yield* encodeAdjacentRepeatsSteps(message.content)) ?? message.content : message.content;
+        const record = reference ? coldWritingHistoryRecord(reference) : historyRecord(message, content);
         if (lossless) yield* encodeHistoryActionResultsSteps(record);
         records.push(record);
     }
@@ -229,6 +309,10 @@ export function historyRecord(message: ChatMessage, content: unknown = message.c
     };
 }
 
+export function coldWritingHistoryRecord(projection: PaAgentColdWritingProjection): Record<string, unknown> {
+    return { ...historyRecord(projection.message), writingReference: projection.reference };
+}
+
 /** Source binding cannot establish semantic completeness. Only reversible
  * result encoding may replace a result body in the protected action view. */
 function* encodeHistoryActionResultsSteps(record: Record<string, unknown>): Generator<void, boolean, void> {
@@ -249,23 +333,11 @@ export function historySummaryContent(message: ChatMessage): string {
 
 export function* historySummaryContentSteps(message: ChatMessage): Generator<void, string, void> {
     yield;
-    if (message.actionStates?.length || message.canonicalTurn?.actionStates?.length
-        || (message.canonicalTurn?.messages.some(part => part.role === 'assistant'
-            && part.content.some(item => item.type === 'toolCall'))
-            && !canSummarizeReadOnlyActionHistory(message.canonicalTurn.messages))) {
-        const readonlyIds = message.canonicalTurn ? summarizableReadOnlyResultIds(message.canonicalTurn.messages) : new Set<string>();
-        const groups = message.canonicalTurn ? projectPaAgentActionHistory(message.canonicalTurn.messages) : [];
-        const historicalAssistantText = groups.map(group => group.text).filter(text => text && text !== message.content);
-        const actions = groups
-            .map(group => ({ ...group, text: '', calls: group.calls.map(call => ({ ...call,
-                results: call.results.filter(result => readonlyIds.has(result.id)) })).filter(call => call.results.length) }))
-            .filter(group => group.calls.length);
-        return actions.length || historicalAssistantText.length ? (yield* stringifyContextSteps({ text: message.content,
-            ...(historicalAssistantText.length ? { historicalAssistantText } : {}),
-            ...(actions.length ? { actionHistory: actions } : {}) }))! : message.content;
-    }
     const record = historyRecord(message);
-    if (!message.images?.length && !record.actionHistory && !(record.actionStates as unknown[] | undefined)?.length) {
+    // Closed owner facts travel in retained_action_facts. Prose and original
+    // call/result content are the free sources and can be split into chunks.
+    delete record.actionStates;
+    if (!message.images?.length && !record.actionHistory) {
         return message.content;
     }
     const facts = { ...record };

@@ -2,11 +2,6 @@ import type { ChatContextItem, SourceRecord } from "./chat-types";
 import { createSourceDedupKey } from "./source-store";
 
 export const MAX_SKILL_NAME_CHARS = 64;
-export const MAX_SKILL_METADATA_CHARS = 2_000;
-export const MAX_SKILL_BODY_CHARS = 6_000;
-export const MAX_SKILL_REFERENCE_CHARS = 4_000;
-export const MAX_SKILL_CONTEXT_CHARS =
-    MAX_SKILL_METADATA_CHARS + MAX_SKILL_BODY_CHARS + MAX_SKILL_REFERENCE_CHARS;
 
 export interface AgentSkillMetadata {
     name: string;
@@ -27,7 +22,12 @@ export interface SkillReferenceResource {
     content: string;
 }
 
+export interface SkillReferenceSummary {
+    path: string;
+}
+
 export interface SkillContextBuildOptions {
+    /** Optional caller limits; by default the complete registered resource is returned. */
     maxContextChars?: number;
     metadataBudgetChars?: number;
     bodyBudgetChars?: number;
@@ -37,7 +37,9 @@ export interface SkillContextBuildOptions {
 export interface SkillContextResult {
     skill: AgentSkill;
     context: string;
+    /** Compatibility field: a root load no longer inlines reference contents. */
     selectedReferences: string[];
+    availableReferences: SkillReferenceSummary[];
     layerCharCounts: {
         metadata: number;
         body: number;
@@ -63,6 +65,7 @@ export interface SkillBody {
     description: string;
     body: string;
     selectedReferences: string[];
+    availableReferences: SkillReferenceSummary[];
     sourcePath: string;
     contextItem: ChatContextItem;
     sourceRecords: SourceRecord[];
@@ -72,6 +75,13 @@ export class SkillParseError extends Error {
     constructor(message: string) {
         super(message);
         this.name = "SkillParseError";
+    }
+}
+
+export class SkillTooLargeError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "SkillTooLargeError";
     }
 }
 
@@ -94,34 +104,37 @@ export function buildSkillContext(
     references: readonly SkillReferenceResource[] = [],
     options: SkillContextBuildOptions = {},
 ): SkillContextResult {
-    const maxContextChars = options.maxContextChars ?? MAX_SKILL_CONTEXT_CHARS;
-    const metadataBudget = Math.min(options.metadataBudgetChars ?? MAX_SKILL_METADATA_CHARS, maxContextChars);
-    const bodyBudget = Math.min(options.bodyBudgetChars ?? MAX_SKILL_BODY_CHARS, Math.max(0, maxContextChars - metadataBudget));
-    const referenceBudget = Math.min(
-        options.referenceBudgetChars ?? MAX_SKILL_REFERENCE_CHARS,
-        Math.max(0, maxContextChars - metadataBudget - bodyBudget),
-    );
-
-    const metadataBlock = truncateText(formatSkillMetadata(skill.metadata), metadataBudget);
-    const bodyBlock = truncateText(skill.body, bodyBudget);
-    const referenceBlock = buildReferenceBlock(skill.body, references, referenceBudget);
-    const context = truncateText([
+    const metadataBlock = formatSkillMetadata(skill.metadata);
+    const bodyBlock = skill.body;
+    const availableReferences = references.map(reference => ({ path: reference.path }));
+    const referenceCatalog = buildReferenceCatalog(availableReferences.map(reference => reference.path));
+    const context = [
         metadataBlock,
         bodyBlock ? `Skill guide:\n${bodyBlock}` : "",
-        referenceBlock.text,
-    ].filter(Boolean).join("\n\n"), maxContextChars);
+        referenceCatalog.text,
+    ].filter(Boolean).join("\n\n");
+
+    if ((options.metadataBudgetChars !== undefined && metadataBlock.length > options.metadataBudgetChars)
+        || (options.bodyBudgetChars !== undefined && bodyBlock.length > options.bodyBudgetChars)
+        || (options.referenceBudgetChars !== undefined && referenceCatalog.length > options.referenceBudgetChars)
+        || (options.maxContextChars !== undefined && context.length > options.maxContextChars)) {
+        throw new SkillTooLargeError(
+            `Skill ${skill.metadata.name} cannot be returned completely within its configured budgets.`,
+        );
+    }
 
     const layerCharCounts = {
         metadata: metadataBlock.length,
         body: bodyBlock.length,
-        references: referenceBlock.text.length,
+        references: referenceCatalog.length,
         total: context.length,
     };
 
     return {
         skill,
         context,
-        selectedReferences: referenceBlock.selectedReferences,
+        selectedReferences: [],
+        availableReferences,
         layerCharCounts,
         contextItem: {
             kind: "skill-guide",
@@ -129,10 +142,11 @@ export function buildSkillContext(
             content: context,
             sources: [{ path: skill.sourcePath }],
             metadata: {
-                selectedReferences: referenceBlock.selectedReferences,
+                selectedReferences: [],
+                availableReferences: availableReferences.map(reference => reference.path),
             },
         },
-        sourceRecords: [createSkillSourceRecord(skill, referenceBlock.selectedReferences)],
+        sourceRecords: [createSkillSourceRecord(skill, [])],
     };
 }
 
@@ -232,44 +246,11 @@ function formatSkillMetadata(metadata: AgentSkillMetadata): string {
     ].filter(Boolean).join("\n");
 }
 
-function buildReferenceBlock(
-    body: string,
-    references: readonly SkillReferenceResource[],
-    budget: number,
-): { text: string; selectedReferences: string[] } {
-    if (budget <= 0 || references.length === 0) {
-        return { text: "", selectedReferences: [] };
-    }
-    const referencedPaths = new Set(findReferencedPaths(body));
-    const blocks: string[] = [];
-    const selectedReferences: string[] = [];
-    let remaining = budget;
-    for (const reference of references) {
-        if (!referencedPaths.has(reference.path)) continue;
-        const header = `Reference: ${reference.path}\n`;
-        const contentBudget = Math.max(0, remaining - header.length);
-        if (contentBudget <= 0) break;
-        const content = truncateText(reference.content.trim(), contentBudget);
-        const block = `${header}${content}`;
-        blocks.push(block);
-        selectedReferences.push(reference.path);
-        remaining -= block.length + 2;
-        if (remaining <= 0) break;
-    }
-    return {
-        text: blocks.length > 0 ? `Skill references:\n${blocks.join("\n\n")}` : "",
-        selectedReferences,
-    };
-}
-
-function findReferencedPaths(body: string): string[] {
-    const paths = new Set<string>();
-    const pattern = /(?:^|[\s(["'`])((?:\.\/)?references\/[A-Za-z0-9._/-]+\.md)\b/g;
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(body)) !== null) {
-        paths.add(match[1].replace(/^\.\//, ""));
-    }
-    return [...paths];
+function buildReferenceCatalog(paths: readonly string[]): { text: string; length: number } {
+    if (paths.length === 0) return { text: "", length: 0 };
+    const text = `Skill references (load one exact path with load_skill):\n${
+        paths.map(path => `- ${path}`).join("\n")}`;
+    return { text, length: text.length };
 }
 
 export function createSkillSourceRecord(skill: AgentSkill, selectedReferences: string[]): SourceRecord {
@@ -289,11 +270,3 @@ export function createSkillSourceRecord(skill: AgentSkill, selectedReferences: s
         },
     };
 }
-
-function truncateText(value: string, maxChars: number): string {
-    if (maxChars <= 0) return "";
-    if (value.length <= maxChars) return value;
-    if (maxChars <= 3) return ".".repeat(maxChars);
-    return `${value.slice(0, maxChars - 3)}...`;
-}
-

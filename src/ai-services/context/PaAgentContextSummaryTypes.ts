@@ -10,7 +10,7 @@ import { finishContextSteps, prepareContextSteps } from './clone-utils';
 import { cloneActionStateBinding, cloneActionStates, projectActionStates, projectActionSummaryFacts, type PaAgentActionSummaryFact } from '../pa-agent-result-facts';
 import { cloneChatHostProvenance } from '../chat-provenance';
 import type { PaAgentActionCall } from '../pa-agent-action-history';
-import { encodeAdjacentRepeatsSteps, type RepeatedSourceContent } from './PaAgentContextTextEncoding';
+import { encodeAdjacentRepeatsSteps } from './PaAgentContextTextEncoding';
 import { stringifyContextSteps } from './PaAgentContextSerialization';
 
 /** Request-only derived state. Never serialized to Chat history or Memory. */
@@ -36,9 +36,8 @@ export interface PaAgentRetainedActionFacts {
     actionResults?: Array<Omit<PaAgentActionCall['results'][number], 'text'> & {
         callId: string;
         toolName: string;
-        /** Approved observation text remains untrusted, optionally reversibly encoded. */
-        text: string | RepeatedSourceContent;
     }>;
+    unresolvedCalls?: Array<{ callId: string; toolName: string; outcome: 'unknown' }>;
 }
 
 export function projectPaAgentRetainedActionFacts(messages: readonly ChatMessage[],
@@ -55,19 +54,36 @@ export function* projectPaAgentRetainedActionFactsSteps(messages: readonly ChatM
         if (message.role !== 'assistant') continue;
         // Initial canonical owner state is included here even if the ordinary
         // history serializer already represents its accepted/pending result.
-        const actionStates = projectActionSummaryFacts(message.actionStates ?? message.canonicalTurn?.actionStates ?? []);
+        const owners = cloneActionStates(message.actionStates ?? message.canonicalTurn?.actionStates);
+        const actionStates = projectActionSummaryFacts(owners);
         const actionResults: NonNullable<PaAgentRetainedActionFacts['actionResults']> = [];
+        const unresolvedCalls: NonNullable<PaAgentRetainedActionFacts['unresolvedCalls']> = [];
         const readonlyIds = message.canonicalTurn ? summarizableReadOnlyResultIds(message.canonicalTurn.messages) : new Set<string>();
         for (const group of message.canonicalTurn ? projectPaAgentActionHistory(message.canonicalTurn.messages) : []) {
-            for (const call of group.calls) for (const result of call.results) {
-                yield;
-                if (readonlyIds.has(result.id)) continue;
-                actionResults.push({ ...result, callId: call.id, toolName: call.name,
-                    text: (yield* encodeAdjacentRepeatsSteps(result.text)) ?? result.text });
+            for (const call of group.calls) {
+                const hasOwnerReceipt = owners.some(owner => owner.origin.runId === message.canonicalTurn?.runId
+                    && owner.origin.turnId === message.canonicalTurn?.turnId && owner.origin.assistantId === group.assistantId
+                    && (owner.origin.callId === call.id || (!owner.origin.callId && group.calls.length === 1
+                        && owner.origin.resultId === group.assistantId)));
+                if (!call.results.length && !hasOwnerReceipt) {
+                    unresolvedCalls.push({ callId: call.id, toolName: call.name, outcome: 'unknown' });
+                }
+                for (const result of call.results) {
+                    yield;
+                    if (readonlyIds.has(result.id)) continue;
+                    actionResults.push({ id: result.id, outcome: result.outcome, isError: result.isError,
+                        ...(result.executionState ? { executionState: result.executionState } : {}),
+                        ...(result.preflightRejection ? { preflightRejection: result.preflightRejection } : {}),
+                        ...(result.recovery ? { recovery: result.recovery } : {}),
+                        ...(result.domainPhase ? { domainPhase: result.domainPhase } : {}),
+                        ...(result.domainIdentity ? { domainIdentity: result.domainIdentity } : {}),
+                        callId: call.id, toolName: call.name });
+                }
             }
         }
-        if (actionStates.length || actionResults.length) facts.push({ index: indexes[offset]!,
-            ...(actionStates.length ? { actionStates } : {}), ...(actionResults.length ? { actionResults } : {}) });
+        if (actionStates.length || actionResults.length || unresolvedCalls.length) facts.push({ index: indexes[offset]!,
+            ...(actionStates.length ? { actionStates } : {}), ...(actionResults.length ? { actionResults } : {}),
+            ...(unresolvedCalls.length ? { unresolvedCalls } : {}) });
     }
     return facts;
 }

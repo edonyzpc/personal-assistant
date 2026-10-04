@@ -20,6 +20,40 @@ async function setup() {
 }
 
 describe('Chat writing candidate source lifetime', () => {
+    it('offers read-only history outside timeline candidates with independent session and source lifetimes', async () => {
+        const f = await setup();
+        const historical = await f.versions.create({ requestId: 'older', messageId: 'older', conversationId: 'chat',
+            turnIndex: 1, text: 'An older saved work', images: [] });
+        const foreign = await f.versions.create({ requestId: 'foreign', messageId: 'foreign', conversationId: 'other',
+            turnIndex: 0, text: 'Another conversation', images: [] });
+        const snapshot = await f.persistence.prepareWritingHistory(f.versions, f.input);
+        expect((await snapshot!.versions.list('chat')).map(version => version.id)).toContain(historical.id);
+        expect(await snapshot!.versions.get(historical.id)).toEqual(historical);
+        expect(await snapshot!.versions.get(foreign.id)).toBeNull();
+        await expect(snapshot!.versions.list('other')).rejects.toThrow('outside conversation');
+        f.state.ids = [];
+        expect(snapshot!.isCurrent()).toBe(true);
+        f.state.current = false;
+        expect(snapshot!.isCurrent()).toBe(false);
+        expect(snapshot!.isSourceCurrent()).toBe(true);
+        await expect(snapshot!.versions.get(historical.id)).rejects.toThrow('conversation changed');
+        f.persistence.hydrateConversation((await f.manager.findConversation('chat'))!, []);
+        expect(snapshot!.isSourceCurrent()).toBe(false);
+    });
+
+    it('rejects history deletion during a read before returning the stored version', async () => {
+        const f = await setup();
+        const snapshot = await f.persistence.prepareWritingHistory(f.versions, f.input);
+        const get = f.versions.get.bind(f.versions);
+        jest.spyOn(f.versions, 'get').mockImplementationOnce(async id => {
+            const version = await get(id);
+            await f.manager.deleteConversation('chat');
+            return version;
+        });
+        await expect(snapshot!.versions.get(f.parent.id)).rejects.toThrow('source changed');
+        expect(snapshot!.isSourceCurrent()).toBe(false);
+    });
+
     it('keeps the parent source valid after request cleanup but rejects a same-id conversation reopen', async () => {
         const f = await setup();
         const snapshot = await f.persistence.prepareWritingCandidates(f.versions, f.input);

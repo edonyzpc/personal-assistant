@@ -7812,6 +7812,65 @@ describe('LLMView turn lifecycle', () => {
         expect(chatHistoryManager.recordTurn).toHaveBeenCalledTimes(2);
     });
 
+    it.each([
+        { locale: 'en', ask: 'Ask', title: 'Request is too long', detail: "The request exceeds the AI provider's context capacity", reject: false },
+        { locale: 'zh', ask: '提问', title: '请求过长', detail: '本次请求超过 AI 服务商可处理的上下文容量', reject: true },
+    ])('explains terminal provider context overflow in $locale without showing an earlier recoverable rejection', async ({ locale, ask, title, detail, reject }) => {
+        (globalThis.window as typeof globalThis.window & { i18next?: { language?: string } }).i18next = { language: locale };
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        getTextArea(containerEl).value = 'Describe this material';
+        void getButtonByText(containerEl, ask).click();
+        await flushPromises();
+        const call = streamCalls[0];
+        const diagnostics = [{ type: 'provider_context_overflow', message: 'PRIVATE_PROVIDER_BODY', detail: 'PRIVATE_PROVIDER_DETAIL' }];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_end', status: 'error', metadata: { diagnostics } }));
+        expect(getElementsByClass(containerEl, 'thinking-status-warning-item')).toHaveLength(0);
+        expect(allText(containerEl)).not.toContain(title);
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'overflow_retry' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_end', turnId: 'overflow_retry', status: 'error', metadata: { diagnostics } }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'incomplete',
+            metadata: { finalTurnId: 'overflow_retry', diagnostics } }));
+        if (reject) call.reject(new Error('PRIVATE_PROVIDER_BODY'));
+        else call.resolve();
+        await flushPromises();
+        await flushPromises();
+        expect(getElementByClass(containerEl, 'thinking-status-summary').textContent).toBe(title);
+        expect(getElementsByClass(containerEl, 'thinking-status-warning-item')).toHaveLength(1);
+        expect(allText(containerEl)).toContain(detail);
+        expect(allText(containerEl)).not.toContain('PRIVATE_PROVIDER_BODY');
+        expect(allText(containerEl)).not.toContain('PRIVATE_PROVIDER_DETAIL');
+        expect(allText(containerEl)).not.toContain('provider_context_overflow');
+    });
+
+    it('does not retain a provider context overflow warning after successful recovery', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        getTextArea(containerEl).value = 'Describe this material';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_end', status: 'error',
+            metadata: { diagnostics: [{ type: 'provider_context_overflow' }] } }));
+        expect(getElementsByClass(containerEl, 'thinking-status-warning-item')).toHaveLength(0);
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'recovered_turn' }));
+        emitCanonical(call, canonicalEvent({ type: 'message_end', turnId: 'recovered_turn',
+            message: assistantMessage('recovered_answer', [{ type: 'text', text: 'The requested answer.' }]) }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_end', turnId: 'recovered_turn', status: 'completed' }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'completed', metadata: { finalTurnId: 'recovered_turn' } }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+        expect(getElementsByClass(containerEl, 'thinking-status-warning-item')).toHaveLength(0);
+        expect(allText(containerEl)).not.toContain('Request is too long');
+        expect(view.chatHistory[1]).toMatchObject({ content: 'The requested answer.', canonicalTurn: { status: 'completed' } });
+        expect(view.chatHistory[1].runtimeWarnings ?? []).toEqual([]);
+    });
+
     it('withdraws textual tool envelopes when the provider omitted native calls', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();

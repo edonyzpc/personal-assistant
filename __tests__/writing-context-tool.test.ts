@@ -1,6 +1,8 @@
 import { WritingContextRun, type WritingContextRunHost } from '../src/ai-services/writing-context-run';
 import { createWritingContextTool, createWritingContextCapability, GET_WRITING_CONTEXT } from '../src/ai-services/writing-context-tool';
 import type { AgentCapabilityContext } from '../src/ai-services/capability-types';
+import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
+import { WritingVersionService } from '../src/chat/writing-versions';
 
 const input = { parentHandle: null, scene: null, currentInstructionConflicts: false, imageRefs: [] };
 function setup(outputBudgetChars = 1000) {
@@ -20,6 +22,35 @@ function setup(outputBudgetChars = 1000) {
 const context = { host: { log: jest.fn() } } as unknown as AgentCapabilityContext;
 
 describe('get_writing_context tool boundary', () => {
+    it('registers a history parent with its own guard without changing a prepared selection', async () => {
+        const f = setup();
+        f.prepare.mockImplementation(async () => ({ context: '', revisionIds: [], isCurrent: () => true }));
+        const versions = new WritingVersionService(new MemoryChatHistoryStore());
+        const parent = await versions.create({ requestId: 'older', messageId: 'older', conversationId: 'chat',
+            turnIndex: 0, text: 'A saved parent', images: [] });
+        f.host.versions = versions;
+        const before = await f.capability.execute(input, context);
+        const state = { current: true, sourceCurrent: true };
+        const guard = { isCurrent: () => state.current, isSourceCurrent: () => state.sourceCurrent };
+        const handle = f.run.registerCandidate(parent, guard);
+        expect(f.run.registerCandidate(parent, guard)).toBe(handle);
+        expect(f.run.candidateDirectory()).toEqual([{ handle, messageId: 'older', turnIndex: 0 }]);
+        expect(f.run.current()?.handle).toBe((before.observation as { contextHandle: string }).contextHandle);
+        expect(f.run.current()?.parent).toBeUndefined();
+        expect(f.host.isParentCurrent(parent)).toBe(false);
+        const prepared = await f.capability.execute({ ...input, parentHandle: handle }, context);
+        expect(prepared.status).toBe('ok');
+        expect(f.run.current()?.parent).toEqual(parent);
+        expect(() => f.run.registerCandidate({ ...parent, explanation: 'different' }, guard)).toThrow('candidate changed');
+        const sourceValidity = f.run.captureSourceValidity();
+        state.current = false;
+        expect(() => f.run.current()).toThrow('parent changed');
+        f.run.dispose();
+        expect(sourceValidity).not.toThrow();
+        state.sourceCurrent = false;
+        expect(sourceValidity).toThrow('sources changed');
+    });
+
     it('exports a closed schema and prepares through the real capability adapter', async () => {
         const f = setup();
         expect(f.capability.executionMode).toBe('sequential');

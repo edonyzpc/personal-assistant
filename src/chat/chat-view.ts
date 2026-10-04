@@ -4337,6 +4337,9 @@ export class LLMView extends ItemView {
                     const type = typeof record.type === 'string'
                         ? record.type
                         : (typeof record.kind === 'string' ? record.kind : 'runtime_warning');
+                    // A rejected attempt may still recover. Only the run's
+                    // terminal diagnostic establishes a user-visible failure.
+                    if (type === 'provider_context_overflow' && !turn.canonicalLifecycle.terminalStatus) return null;
                     return {
                         type,
                         message: typeof record.message === 'string' ? record.message : undefined,
@@ -5281,6 +5284,21 @@ export class LLMView extends ItemView {
                                 }
                                 : undefined;
                 let writingContextHost: import('../ai-services/pa-agent-runtime').PaAgentRunOptions['writingContextHost'];
+                const writingHistoryHost = this.host.writingVersions
+                    ? await this.conversationPersistence.prepareWritingHistory(this.host.writingVersions, {
+                        isCurrent: isSameTurn, signal: controller.signal,
+                    }) : undefined;
+                const imageStatus: import('../ai-services/pa-agent-runtime').PaAgentRunOptions['imageStatus'] =
+                    imageGeneration && conversationIdForMemoryActions ? {
+                        conversationId: conversationIdForMemoryActions,
+                        read: (input, signal) => imageGeneration.readStatus(input, {
+                            conversationId: conversationIdForMemoryActions,
+                            isCurrent: () => isSameTurn() && this.host.imageGenerationService === imageGeneration,
+                            canReadTask: task => task.conversationId === conversationIdForMemoryActions,
+                            canQueryProvider: () => isSameTurn() && this.host.imageGenerationService === imageGeneration,
+                            signal,
+                        }),
+                    } : undefined;
                 if (nativeWriting) {
                     const versions = this.host.writingVersions!;
                     const getAllowedVersionIds = () => [...new Set([
@@ -5620,6 +5638,8 @@ export class LLMView extends ItemView {
                         imageAssetService: this.host.imageAssetService,
                         writingRequest,
                         writingContextHost,
+                        writingHistoryHost,
+                        imageStatus,
                         writingOutputProtocol: nativeWriting ? 'native' : undefined,
                         writingContext: turn.writingParent ? {
                             parentVersionId: turn.writingParent.id, text: turn.writingParent.text,
@@ -5815,6 +5835,9 @@ export class LLMView extends ItemView {
                     const localOverflow = error instanceof PaAgentContextOverflowError || turn.canonicalLifecycle.warnings.some(
                         (warning) => warning.type === 'context_local_overflow',
                     );
+                    const providerOverflow = turn.canonicalLifecycle.warnings.some(
+                        (warning) => warning.type === 'provider_context_overflow',
+                    );
                     const imageError = String(error);
                     const failureMessage = imageError.includes('image_generation:count_exceeds_provider_limit')
                         ? t('plugin.chat.createImage.countTooHigh')
@@ -5825,6 +5848,7 @@ export class LLMView extends ItemView {
                             ? t('plugin.chat.createImage.recovery.connectionUnavailable')
                             : imageError.includes('image_generation:credential_unavailable')
                                 ? t('plugin.chat.createImage.recovery.credentialUnavailable')
+                        : providerOverflow ? t('plugin.chat.formatter.warningProviderContextTooLongDetail')
                         : localOverflow ? t('plugin.chat.formatter.warningContextTooLongDetail')
                             : t("plugin.chat.terminal.answerDidNotFinish");
                     // A transport/runtime failure does not erase text already
@@ -5844,7 +5868,7 @@ export class LLMView extends ItemView {
                         syncComposerControls();
                         await finalizeSuccessfulTurn(turn, prompt, receivedText, isSameTurn, true);
                     } else {
-                        createTerminalEntry(turn, failureMessage, 'error', localOverflow ? undefined : String(error));
+                        createTerminalEntry(turn, failureMessage, 'error', localOverflow || providerOverflow ? undefined : String(error));
                         await this.conversationPersistence.persistTerminalTurn({
                             prompt: rawPrompt,
                             runId: stableMessageId,

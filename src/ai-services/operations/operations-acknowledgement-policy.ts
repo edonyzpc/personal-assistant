@@ -32,7 +32,6 @@ export function createOperationsAcknowledgementControlSnapshot(previous?: AgentC
         ...(previous ? { blockedReasons: previous.blockedReasons } : {}),
         runtimeInstruction: OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
         toolMode: "normal",
-        ...(previous ? { budgetState: previous.budgetState } : {}),
         diagnostics: [
             ...(previous?.diagnostics ?? []),
             { type: "operations_intent_staged_acknowledgement",

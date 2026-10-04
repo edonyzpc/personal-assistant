@@ -14,7 +14,7 @@ import {
 } from "../src/ai-services/capability-types";
 import { createCoreToolCapabilities, createChatToolCapability } from "../src/ai-services/capability-adapter";
 import { createReadNoteTool } from '../src/ai-services/chat-tool-factories';
-import { createRequiredCapabilityHostPolicy } from '../src/ai-services/pa-agent-required-capability-policy';
+import { createPaAgentHostPolicy } from '../src/ai-services/pa-agent-host-policy';
 import {
     createCurrentNoteContextTool,
     createInspectObsidianNoteTool,
@@ -42,8 +42,6 @@ import {
 } from "../src/ai-services/pa-agent-runtime";
 import { AgentLifecycleEventEmitter } from "../src/ai-services/agent-runtime-primitives";
 import { ToolExecutionDispatcher } from "../src/ai-services/pa-agent-tool-dispatcher";
-import { createAnswerCompletionLedger, decideAnswerCompletion }
-    from "../src/ai-services/pa-agent-answer-completion-policy";
 import type { PaAgentMessage } from "../src/ai-services/chat-types";
 import { BUNDLED_SKILL_RESOURCES } from "../src/ai-services/bundled-skills";
 import { SkillContextProvider } from "../src/ai-services/skill-context-provider";
@@ -85,7 +83,7 @@ describe('read failure recovery through actual capability feedback', () => {
         let turn = 0;
         const inputs: PaAgentModelInput[] = [];
         const result = await new PaAgentLoop({ runId: 'read-recovery', userInput: 'Read the admitted sources and explain what remains unavailable.',
-            maxTurns: 8, toolExecutor: executor, hostPolicy: createRequiredCapabilityHostPolicy().hostPolicy,
+            maxTurns: 8, toolExecutor: executor, hostPolicy: createPaAgentHostPolicy(),
             model: { stream: async function* (input) {
                 inputs.push(input);
                 if (turn < paths.length) {
@@ -104,7 +102,6 @@ describe('read failure recovery through actual capability feedback', () => {
         expect(results.map(message => message.content.metadata?.retrySafety)).toEqual(paths.map(() => 'read_only'));
         expect(inputs.at(-1)?.transcript.filter(message => message.role === 'toolResult')).toHaveLength(paths.length);
         expect(JSON.stringify(result.transcript)).not.toContain('PRIVATE_ADAPTER_PATH');
-        expect(result.turns.every(turn => turn.progressEpoch === 0)).toBe(true);
     });
 });
 
@@ -1245,19 +1242,7 @@ describe("PA Agent canonical host tool executor", () => {
         }
         expect(JSON.stringify(lifecycleEvents)).not.toContain("notes/first-parallel.md");
         expect(JSON.stringify(lifecycleEvents)).not.toContain("notes/second-parallel.md");
-        if (variant === "no_match") {
-            const completion = decideAnswerCompletion({
-                summary: { turnId: "parallel-collision-turn", turnIndex: 0, status: "tool_results_ready",
-                    assistantMessage: { role: "assistant", id: "assistant", content: [], timestamp: 1 },
-                    committedFinalText: "", pendingTextReclassified: false, toolCalls: [],
-                    toolResults: summary.toolResults, diagnostics: [], metrics: [],
-                    timing: { turnIndex: 0, status: "tool_results_ready", elapsedMs: 1,
-                        modelElapsedMs: 0, modelChunkCount: 0, toolCallCount: 2, toolResultCount: 2 },
-                } satisfies PaAgentTurnSummary,
-                ledger: createAnswerCompletionLedger(),
-            });
-            expect(completion).toMatchObject({ action: "continue_recovery", reason: "recoverable_tool_failure" });
-        }
+
     });
 
     it("tombstones duplicate Memory transcript occurrences even when the dispatcher skipped re-execution", async () => {
@@ -2157,7 +2142,6 @@ describe("PA Agent canonical host tool executor", () => {
             observedRevision: { state: "identified", basis: "editor_snapshot",
                 digest: { algorithm: "sha1", scope: "editor_projection", value: expect.stringMatching(/^[a-f0-9]{40}$/) } },
         })]);
-        expect(result.turns[0]?.progressEpoch).toBe(1);
         expect(toolResult?.content.contextUsed).toEqual([expect.objectContaining({
             category: "current-note",
             label: "Current note",

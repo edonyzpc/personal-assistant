@@ -19,16 +19,6 @@ export type PaAgentSourceScope =
     | "web"
     | "mixed";
 
-/** Tracks budget consumption across semantic rounds, follow-ups, and tool calls. */
-export interface PaAgentControlBudgetState {
-    semanticRoundCount: number;
-    followUpRoundCount: number;
-    realToolCallCount: number;
-    avoidedDuplicateCallCount: number;
-    wallClockExceeded: boolean;
-    exhaustedReason?: "tool_calls" | "semantic_rounds" | "follow_up_rounds" | "wall_clock";
-}
-
 /** A single diagnostic entry recording a control-policy decision for debugging. */
 export interface PaAgentControlDiagnostic {
     type: string;
@@ -42,7 +32,7 @@ export interface AgentControlToolConstraints {
     blockedToolNames?: ReadonlySet<string>;
 }
 
-/** Immutable snapshot of the agent's tool-exposure, source-scope, budget, and constraint state at a point in time. */
+/** Immutable snapshot of the agent's tool-exposure, source-scope, and constraint state at a point in time. */
 export interface AgentControlSnapshot {
     /** Current turn's host-declared pure output; never a source/action allowance. */
     writingOutput?: "present_writing";
@@ -53,7 +43,6 @@ export interface AgentControlSnapshot {
     blockedReasons: Record<string, string>;
     runtimeInstruction?: string;
     toolMode?: PaAgentControlToolMode;
-    budgetState: PaAgentControlBudgetState;
     diagnostics: PaAgentControlDiagnostic[];
 }
 
@@ -64,7 +53,6 @@ export interface CreateAgentControlSnapshotOptions extends AgentControlToolConst
     blockedReasons?: Record<string, string>;
     runtimeInstruction?: string;
     toolMode?: PaAgentControlToolMode;
-    budgetState?: Partial<PaAgentControlBudgetState>;
     diagnostics?: PaAgentControlDiagnostic[];
 }
 
@@ -73,17 +61,8 @@ export interface CreateInitialAgentControlSnapshotOptions {
     constraints?: AgentControlToolConstraints;
     availableSemanticToolNames: ReadonlySet<string>;
     availableMetaToolNames?: ReadonlySet<string>;
-    requiredToolNames?: ReadonlySet<string>;
     initialRuntimeInstruction?: string;
 }
-
-const DEFAULT_BUDGET_STATE: PaAgentControlBudgetState = {
-    semanticRoundCount: 0,
-    followUpRoundCount: 0,
-    realToolCallCount: 0,
-    avoidedDuplicateCallCount: 0,
-    wallClockExceeded: false,
-};
 
 /** Builds a control snapshot from explicit option overrides, inferring exposure and scope when omitted. */
 export function createAgentControlSnapshot(
@@ -99,10 +78,6 @@ export function createAgentControlSnapshot(
         blockedReasons: { ...(options.blockedReasons ?? {}) },
         ...(options.runtimeInstruction ? { runtimeInstruction: options.runtimeInstruction } : {}),
         ...(options.toolMode ? { toolMode: options.toolMode } : {}),
-        budgetState: {
-            ...DEFAULT_BUDGET_STATE,
-            ...(options.budgetState ?? {}),
-        },
         diagnostics: (options.diagnostics ?? []).map((d) => ({
             ...d,
             ...(d.metadata ? { metadata: { ...d.metadata } } : {}),
@@ -110,29 +85,7 @@ export function createAgentControlSnapshot(
     };
 }
 
-/** Wraps pre-existing PA Agent tool constraints into the new control-snapshot shape for backward compatibility. */
-export function createLegacyAgentControlSnapshot(options: {
-    constraints?: AgentControlToolConstraints;
-    initialRuntimeInstruction?: string;
-}): AgentControlSnapshot {
-    return createAgentControlSnapshot({
-        ...(options.constraints?.allowedToolNames
-            ? { allowedToolNames: options.constraints.allowedToolNames }
-            : {}),
-        ...(options.constraints?.blockedToolNames
-            ? { blockedToolNames: options.constraints.blockedToolNames }
-            : {}),
-        ...(options.initialRuntimeInstruction
-            ? { runtimeInstruction: options.initialRuntimeInstruction }
-            : {}),
-        diagnostics: [{
-            type: "legacy_tool_constraints",
-            message: "Control snapshot mirrors pre-existing PA Agent tool constraints for SPEC-01 plumbing.",
-        }],
-    });
-}
-
-/** Computes the initial control snapshot by intersecting available tools with user constraints and required capabilities. */
+/** Computes the initial control snapshot by intersecting available tools with explicit constraints. */
 export function createInitialAgentControlSnapshot(
     options: CreateInitialAgentControlSnapshotOptions,
 ): AgentControlSnapshot {
@@ -153,24 +106,6 @@ export function createInitialAgentControlSnapshot(
             diagnostics: [{
                 type: "explicit_tool_constraints",
                 message: "Initial control snapshot applies explicit user source constraints.",
-            }],
-        });
-    }
-
-    const requiredSourceToolNames = options.requiredToolNames
-        ? intersectTools(options.requiredToolNames, availableSemanticToolNames)
-        : new Set<string>();
-    if (requiredSourceToolNames.size > 0) {
-        const requiredToolNames = unionTools(requiredSourceToolNames, availableMetaToolNames);
-        return createAgentControlSnapshot({
-            exposureMode: "narrowed-required",
-            sourceScope: inferSourceScope(requiredToolNames),
-            allowedToolNames: requiredToolNames,
-            ...(blockedToolNames.size > 0 ? { blockedToolNames } : {}),
-            ...(options.initialRuntimeInstruction ? { runtimeInstruction: options.initialRuntimeInstruction } : {}),
-            diagnostics: [{
-                type: "high_confidence_required_capability",
-                message: "Initial control snapshot narrows tools to high-confidence required semantic sources.",
             }],
         });
     }
@@ -212,84 +147,8 @@ export function deriveContinuedAgentControlSnapshot(
         blockedReasons: base.blockedReasons,
         ...(runtimeInstruction ? { runtimeInstruction } : {}),
         ...(toolMode ? { toolMode } : {}),
-        budgetState: base.budgetState,
         diagnostics: [
             ...base.diagnostics,
-            ...(options.diagnostics ?? []),
-        ],
-    });
-}
-
-/** Derives a snapshot indicating the agent has enough observations and may answer or request one more targeted tool call. */
-export function deriveAnswerReadyAgentControlSnapshot(
-    previous: AgentControlSnapshot | undefined,
-    options: {
-        runtimeInstruction: string;
-        diagnostics?: PaAgentControlDiagnostic[];
-    },
-): AgentControlSnapshot {
-    const base = previous ?? createAgentControlSnapshot();
-    const isFinalOnly = base.exposureMode === "final-only"
-        || base.toolMode === "final_answer_only";
-    const allowedToolNames = isFinalOnly ? new Set<string>() : base.allowedToolNames;
-    return createAgentControlSnapshot({
-        exposureMode: isFinalOnly ? "final-only" : "answer-ready",
-        sourceScope: isFinalOnly ? "none" : base.sourceScope,
-        ...(allowedToolNames ? { allowedToolNames } : {}),
-        ...(base.blockedToolNames ? { blockedToolNames: base.blockedToolNames } : {}),
-        blockedReasons: base.blockedReasons,
-        runtimeInstruction: options.runtimeInstruction,
-        ...(base.toolMode ? { toolMode: base.toolMode } : {}),
-        budgetState: {
-            ...base.budgetState,
-            semanticRoundCount: base.budgetState.semanticRoundCount + 1,
-        },
-        diagnostics: [
-            ...base.diagnostics,
-            {
-                type: "answer_ready_after_observation",
-                message: "Useful observations are available; the model may answer or choose another allowed tool for a specific missing fact.",
-            },
-            ...(options.diagnostics ?? []),
-        ],
-    });
-}
-
-/** Derives a snapshot enabling only follow-up tools scoped to the same source type. */
-export function deriveSameSourceFollowUpAgentControlSnapshot(
-    previous: AgentControlSnapshot | undefined,
-    options: {
-        sourceScope: PaAgentSourceScope;
-        runtimeInstruction: string;
-        diagnostics?: PaAgentControlDiagnostic[];
-    },
-): AgentControlSnapshot {
-    const base = previous ?? createAgentControlSnapshot();
-    const isFinalOnly = base.exposureMode === "final-only"
-        || base.toolMode === "final_answer_only";
-    const previousAllowedToolNames = isFinalOnly
-        ? new Set<string>()
-        : base.allowedToolNames
-        ? subtractTools(base.allowedToolNames, base.blockedToolNames ?? new Set())
-        : undefined;
-    return createAgentControlSnapshot({
-        exposureMode: isFinalOnly ? "final-only" : "follow-up",
-        sourceScope: isFinalOnly ? "none" : options.sourceScope,
-        ...(previousAllowedToolNames ? { allowedToolNames: previousAllowedToolNames } : {}),
-        ...(base.blockedToolNames ? { blockedToolNames: base.blockedToolNames } : {}),
-        blockedReasons: base.blockedReasons,
-        runtimeInstruction: options.runtimeInstruction,
-        ...(base.toolMode ? { toolMode: base.toolMode } : {}),
-        budgetState: {
-            ...base.budgetState,
-            followUpRoundCount: base.budgetState.followUpRoundCount + 1,
-        },
-        diagnostics: [
-            ...base.diagnostics,
-            {
-                type: "same_source_follow_up",
-                message: "A tool result requested same-source follow-up; already allowed tools remain after blocked tools are removed.",
-            },
             ...(options.diagnostics ?? []),
         ],
     });
@@ -327,7 +186,6 @@ export function summarizeAgentControlSnapshot(
         ...(snapshot.blockedToolNames ? { blockedToolNames: [...snapshot.blockedToolNames].sort() } : {}),
         ...(Object.keys(snapshot.blockedReasons).length > 0 ? { blockedReasons: snapshot.blockedReasons } : {}),
         ...(snapshot.toolMode ? { toolMode: snapshot.toolMode } : {}),
-        budgetState: snapshot.budgetState,
         diagnosticTypes: snapshot.diagnostics.map((diagnostic) => diagnostic.type),
     };
 }

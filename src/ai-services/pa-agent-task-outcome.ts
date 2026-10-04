@@ -9,7 +9,7 @@ export function taskIncompleteOutputSchema(): ChatToolProviderSchema {
         type: 'function',
         function: {
             name: REPORT_TASK_INCOMPLETE,
-            description: 'When you cannot complete the user task, call this function alone through native tool calling. Put the user-facing explanation in answer. Do not write the function name, tags, or JSON as ordinary text. This does not request permission or execute an action.',
+            description: 'When an essential part of the current user request remains unfinished or requires a material user decision, call this function alone through native tool calling. Optional details in an editable plan or draft do not require stopping. Accurately explaining an unknown earlier operation can complete a current status question. Put the user-facing explanation in answer. Do not write the function name, tags, or JSON as ordinary text. This does not request permission or execute an action.',
             parameters: { type: 'object', additionalProperties: false,
                 properties: { answer: { type: 'string', description: 'User-facing explanation of the unfinished task and any useful next step.' } },
                 required: ['answer'] },

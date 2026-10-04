@@ -6,8 +6,6 @@ import {
     createAgentControlSnapshot,
     createInitialAgentControlSnapshot,
     deriveContinuedAgentControlSnapshot,
-    deriveAnswerReadyAgentControlSnapshot,
-    deriveSameSourceFollowUpAgentControlSnapshot,
     toolConstraintsFromAgentControlSnapshot,
 } from "../src/ai-services/pa-agent-control-policy";
 
@@ -16,7 +14,6 @@ describe("createAgentControlSnapshot", () => {
         const snapshot = createAgentControlSnapshot();
         expect(snapshot.exposureMode).toBe("semantic-first");
         expect(snapshot.sourceScope).toBe("none");
-        expect(snapshot.budgetState.semanticRoundCount).toBe(0);
         expect(snapshot.diagnostics).toEqual([]);
     });
 
@@ -98,85 +95,31 @@ describe("deriveContinuedAgentControlSnapshot", () => {
     });
 
     it("transitions to final-only when toolMode is final_answer_only", () => {
-        const base = createAgentControlSnapshot({ exposureMode: "semantic-first" });
+        const base = createAgentControlSnapshot({
+            exposureMode: "semantic-first",
+            allowedToolNames: new Set(["search_memory"]),
+            blockedToolNames: new Set(["webSearch"]),
+        });
         const result = deriveContinuedAgentControlSnapshot(base, {
             toolMode: "final_answer_only",
         });
         expect(result!.exposureMode).toBe("final-only");
         expect(result!.sourceScope).toBe("none");
-    });
-
-    it("preserves budget state from previous snapshot", () => {
-        const base = createAgentControlSnapshot({
-            budgetState: { semanticRoundCount: 3, followUpRoundCount: 1, realToolCallCount: 5, avoidedDuplicateCallCount: 0, wallClockExceeded: false },
-        });
-        const result = deriveContinuedAgentControlSnapshot(base, {});
-        expect(result!.budgetState.semanticRoundCount).toBe(3);
-        expect(result!.budgetState.realToolCallCount).toBe(5);
-    });
-});
-
-describe("deriveAnswerReadyAgentControlSnapshot", () => {
-    it("increments semanticRoundCount by 1", () => {
-        const base = createAgentControlSnapshot({
-            budgetState: { semanticRoundCount: 2, followUpRoundCount: 0, realToolCallCount: 0, avoidedDuplicateCallCount: 0, wallClockExceeded: false },
-        });
-        const result = deriveAnswerReadyAgentControlSnapshot(base, {
-            runtimeInstruction: "answer now",
-        });
-        expect(result.budgetState.semanticRoundCount).toBe(3);
-    });
-
-    it("sets exposure mode to answer-ready", () => {
-        const base = createAgentControlSnapshot({ exposureMode: "semantic-first" });
-        const result = deriveAnswerReadyAgentControlSnapshot(base, {
-            runtimeInstruction: "answer",
-        });
-        expect(result.exposureMode).toBe("answer-ready");
-    });
-
-    it("works when previous is undefined", () => {
-        const result = deriveAnswerReadyAgentControlSnapshot(undefined, {
-            runtimeInstruction: "answer",
-        });
-        expect(result.exposureMode).toBe("answer-ready");
-        expect(result.budgetState.semanticRoundCount).toBe(1);
-    });
-
-    it("preserves an explicit final-only exposure as a final-answer constraint", () => {
-        const base = createAgentControlSnapshot({
-            exposureMode: "final-only",
-            sourceScope: "notes",
-            allowedToolNames: new Set(["search_vault_snippets"]),
-            blockedToolNames: new Set(["webSearch"]),
-        });
-
-        const result = deriveAnswerReadyAgentControlSnapshot(base, {
-            runtimeInstruction: "answer",
-        });
-
-        expect(result.exposureMode).toBe("final-only");
-        expect(result.sourceScope).toBe("none");
-        expect(result.toolMode).toBeUndefined();
         const constraints = toolConstraintsFromAgentControlSnapshot(result);
         expect([...constraints!.allowedToolNames!]).toEqual([]);
         expect(constraints!.blockedToolNames?.has("webSearch")).toBe(true);
     });
 
-    it("preserves final_answer_only mode instead of reopening follow-up tools", () => {
+    it("preserves explicit constraints when continuing", () => {
         const base = createAgentControlSnapshot({
-            sourceScope: "notes",
-            allowedToolNames: new Set(["search_vault_snippets"]),
-            toolMode: "final_answer_only",
+            allowedToolNames: new Set(["read_note"]),
+            blockedToolNames: new Set(["webSearch"]),
+            blockedReasons: { webSearch: "Current request is limited to notes." },
         });
-
-        const result = deriveAnswerReadyAgentControlSnapshot(base, {
-            runtimeInstruction: "answer",
-        });
-
-        expect(result.exposureMode).toBe("final-only");
-        expect(result.toolMode).toBe("final_answer_only");
-        expect([...toolConstraintsFromAgentControlSnapshot(result)!.allowedToolNames!]).toEqual([]);
+        const result = deriveContinuedAgentControlSnapshot(base, {});
+        expect([...result!.allowedToolNames!]).toEqual(["read_note"]);
+        expect([...result!.blockedToolNames!]).toEqual(["webSearch"]);
+        expect(result!.blockedReasons).toEqual(base.blockedReasons);
     });
 
     it("keeps a normal empty allowlist answer-ready rather than converting it to generic final-only", () => {
@@ -187,109 +130,13 @@ describe("deriveAnswerReadyAgentControlSnapshot", () => {
             toolMode: "normal",
         });
 
-        const result = deriveAnswerReadyAgentControlSnapshot(base, {
+        const result = deriveContinuedAgentControlSnapshot(base, {
             runtimeInstruction: "acknowledge",
         });
 
-        expect(result.exposureMode).toBe("answer-ready");
-        expect(result.toolMode).toBe("normal");
-        expect([...result.allowedToolNames!]).toEqual([]);
-    });
-});
-
-describe("deriveSameSourceFollowUpAgentControlSnapshot", () => {
-    it("keeps an absent allowlist unconstrained for notes source scope", () => {
-        const base = createAgentControlSnapshot();
-        const result = deriveSameSourceFollowUpAgentControlSnapshot(base, {
-            sourceScope: "notes",
-            runtimeInstruction: "follow up",
-        });
-        expect(result.exposureMode).toBe("follow-up");
-        expect(result.allowedToolNames).toBeUndefined();
-    });
-
-    it.each(["notes", "web"] as const)("keeps an explicit empty allowlist empty: %s", sourceScope => {
-        const base = createAgentControlSnapshot({
-            allowedToolNames: new Set<string>(),
-        });
-        const result = deriveSameSourceFollowUpAgentControlSnapshot(base, {
-            sourceScope,
-            runtimeInstruction: "follow up",
-        });
-        expect(result.allowedToolNames).toBeDefined();
-        expect(result.allowedToolNames!.size).toBe(0);
-    });
-
-    it("increments followUpRoundCount", () => {
-        const base = createAgentControlSnapshot();
-        const result = deriveSameSourceFollowUpAgentControlSnapshot(base, {
-            sourceScope: "notes",
-            runtimeInstruction: "follow up",
-        });
-        expect(result.budgetState.followUpRoundCount).toBe(1);
-    });
-
-    it("keeps only allowed tools after blocked tools are removed", () => {
-        const base = createAgentControlSnapshot({
-            exposureMode: "source-scoped",
-            sourceScope: "notes",
-            allowedToolNames: new Set([
-                "search_memory",
-                "query_notes",
-                "read_note",
-                "read_note_outline",
-            ]),
-            blockedToolNames: new Set(["webSearch", "load_skill", "search_vault_snippets"]),
-        });
-
-        const result = deriveSameSourceFollowUpAgentControlSnapshot(base, {
-            sourceScope: "notes",
-            runtimeInstruction: "follow up",
-        });
-
-        expect([...result.allowedToolNames!].sort()).toEqual([
-            "query_notes",
-            "read_note",
-            "read_note_outline",
-            "search_memory",
-        ]);
-        expect(result.allowedToolNames!.has("webSearch")).toBe(false);
-        expect(result.allowedToolNames!.has("load_skill")).toBe(false);
-        expect(result.allowedToolNames!.has("search_vault_snippets")).toBe(false);
-    });
-
-    it("preserves final-only exposure without opening a follow-up allowlist", () => {
-        const base = createAgentControlSnapshot({
-            exposureMode: "final-only",
-            sourceScope: "notes",
-            allowedToolNames: new Set(["search_vault_snippets"]),
-        });
-
-        const result = deriveSameSourceFollowUpAgentControlSnapshot(base, {
-            sourceScope: "notes",
-            runtimeInstruction: "follow up",
-        });
-
-        expect(result.exposureMode).toBe("final-only");
-        expect(result.sourceScope).toBe("none");
-        expect([...toolConstraintsFromAgentControlSnapshot(result)!.allowedToolNames!]).toEqual([]);
-    });
-
-    it("preserves final_answer_only mode without opening a follow-up allowlist", () => {
-        const base = createAgentControlSnapshot({
-            sourceScope: "notes",
-            allowedToolNames: new Set(["search_vault_snippets"]),
-            toolMode: "final_answer_only",
-        });
-
-        const result = deriveSameSourceFollowUpAgentControlSnapshot(base, {
-            sourceScope: "notes",
-            runtimeInstruction: "follow up",
-        });
-
-        expect(result.exposureMode).toBe("final-only");
-        expect(result.toolMode).toBe("final_answer_only");
-        expect([...toolConstraintsFromAgentControlSnapshot(result)!.allowedToolNames!]).toEqual([]);
+        expect(result!.exposureMode).toBe("answer-ready");
+        expect(result!.toolMode).toBe("normal");
+        expect([...result!.allowedToolNames!]).toEqual([]);
     });
 });
 

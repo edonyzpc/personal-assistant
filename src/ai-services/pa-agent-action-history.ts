@@ -2,6 +2,7 @@ import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langcha
 import type { ChatMessage, PaAgentMessage, ToolExecutionOutcome } from "./chat-types";
 import { escapeTaggedBoundary } from "./agent-utils";
 import { cloneActionStates, projectPaAgentRecoveryControl, type PaAgentActionState } from './pa-agent-result-facts';
+import { projectHostBatchPreflightRejection } from './pa-agent-preflight-facts';
 
 type ToolResult = Extract<PaAgentMessage, { role: "toolResult" }>;
 
@@ -40,6 +41,7 @@ export interface PaAgentActionCall {
     /** A provider reused one id within this assistant message, so no result can be assigned safely. */
     ambiguousResultId?: boolean;
     results: Array<{ id: string; outcome: ToolExecutionOutcome | "unknown"; executionState?: string;
+        preflightRejection?: NonNullable<ReturnType<typeof projectHostBatchPreflightRejection>>;
         recovery?: NonNullable<ReturnType<typeof projectPaAgentRecoveryControl>>;
         domainPhase?: 'accepted' | 'ready' | 'pending' | 'completed' | 'partial' | 'unknown';
         domainIdentity?: { operationId?: string; requestId?: string; receiptId?: string;
@@ -107,6 +109,7 @@ export function additionalHistoricalActionStates(message: ChatMessage): PaAgentA
 export function projectPaAgentToolResult(result: ToolResult): PaAgentActionCall["results"][number] {
     const domainIdentity = safeDomainIdentity(result);
     const recovery = projectPaAgentRecoveryControl(result.content.metadata?.recovery);
+    const preflightRejection = projectHostBatchPreflightRejection(result);
     const domainPhase = result.content.resultFact?.kind === 'accepted' ? 'accepted'
         : result.content.resultFact?.kind === 'artifact_ready' ? 'ready'
         : result.content.resultFact?.kind === 'approval_pending' ? 'pending'
@@ -120,6 +123,7 @@ export function projectPaAgentToolResult(result: ToolResult): PaAgentActionCall[
         ...(EXECUTION_STATES.has(String(result.content.metadata?.executionState))
             ? { executionState: String(result.content.metadata!.executionState) } : {}),
         ...(recovery ? { recovery } : {}),
+        ...(preflightRejection ? { preflightRejection } : {}),
         isError: result.isError,
         ...(domainPhase ? { domainPhase } : {}),
         ...(domainIdentity ? { domainIdentity } : {}),
@@ -187,6 +191,7 @@ function resultContent(call: PaAgentActionCall, scope: ActionContextScope): stri
             outcome: result.outcome,
             ...(result.executionState ? { executionState: result.executionState } : {}), isError: result.isError,
             ...(result.recovery ? { recovery: result.recovery } : {}),
+            ...(result.preflightRejection ? { preflightRejection: result.preflightRejection } : {}),
             ...(result.domainPhase ? { domainPhase: result.domainPhase } : {}),
             ...(result.domainIdentity ? { domainIdentity: result.domainIdentity } : {}),
         }), "action_history");

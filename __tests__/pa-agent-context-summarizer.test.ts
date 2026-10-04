@@ -190,8 +190,8 @@ describe('F20 deterministic action anchors and free history sources', () => {
             expect(projected.history.text.length).toBeLessThanOrEqual(60_000);
             for (const marker of markers) expect(projected.history.text).toContain(marker);
             expect(projected.history.text).toContain(state.operationId);
-            expect(projected.history.text).toContain(`"phase": "${phase}"`);
-            if (phase === 'lost') expect(projected.history.text).toContain('"effectOutcome": "unknown"');
+            expect(projected.history.text).toContain(`phase=${phase}`);
+            if (phase === 'lost') expect(projected.history.text).toContain('effectOutcome=unknown');
             expect(JSON.stringify(input)).toBe(before);
             const changed = structuredClone(input);
             const result = changed[1].canonicalTurn!.messages[1];
@@ -342,7 +342,7 @@ describe('F20 deterministic action anchors and free history sources', () => {
                     actionResults: [{ callId: 'call-image', id: 'result-image', outcome: 'success', domainPhase: 'accepted' }],
                 }]);
                 expect(body(request).sourceMessages.filter(source => source.index === 2).every(source =>
-                    source.content === input[1].content.slice(source.start, source.end))).toBe(true);
+                    source.content === historySummaryContent(input[1]).slice(source.start, source.end))).toBe(true);
             }
             expect(JSON.parse(result!.text)).toMatchObject({ completed: [], open_questions: [{
                 text: expect.stringContaining('phase=accepted'), sourceMessages: [2],
@@ -371,7 +371,7 @@ describe('F20 deterministic action anchors and free history sources', () => {
         } finally { summarizer.dispose(); }
     });
 
-    it('refuses auxiliary dispatch when the separate complete canonical facts alone exceed the request boundary', async () => {
+    it('chunks large legacy observations instead of copying their bodies into every retained-fact envelope', async () => {
         const observation = Array.from({ length: 800 }, (_, index) => `Approved observation ${index}: CONTRACT_ID_734_${index}.\n`).join('');
         const input = history();
         input[1] = { ...input[1], canonicalTurn: { schemaVersion: 1, runId: 'run-contract', turnId: 'turn-contract', messages: [
@@ -391,13 +391,17 @@ describe('F20 deterministic action anchors and free history sources', () => {
         expect(plan.summaryMaxChars).toBeGreaterThanOrEqual(1_800);
         expect(fitFullHistory(input, historyBudgetChars)).toBeUndefined();
         const facts = projectPaAgentRetainedActionFacts(input.slice(0, plan.coveredMessages));
-        expect(facts[0].actionResults![0].text).toBe(observation);
+        expect(facts[0].actionResults![0]).not.toHaveProperty('text');
         expect(JSON.stringify({ sourceKind: 'retained_action_facts', purpose: 'read_only_reference', retainedActionFacts: facts }).length)
-            .toBeGreaterThan(16_000);
+            .toBeLessThan(16_000);
         const invoke = jest.fn(respond), summarizer = new PaAgentContextSummarizer();
         try {
-            expect(await summarizer.prepareHistory({ history: input, historyBudgetChars, invoke })).toBeUndefined();
-            expect(invoke).not.toHaveBeenCalled();
+            expect(await summarizer.prepareHistory({ history: input, historyBudgetChars, invoke })).toBeDefined();
+            expect(invoke).toHaveBeenCalled();
+            const sources = invoke.mock.calls.flatMap(([request]) => body(request).sourceMessages);
+            expect(sources.filter(source => source.index === 2).map(source => source.content).join(''))
+                .toBe(historySummaryContent(input[1]));
+            for (const [request] of invoke.mock.calls) expect(JSON.stringify(request).length + 512).toBeLessThanOrEqual(16_000);
             const projected = new PaAgentContextProjector().projectUserInput({ prompt: 'Explain the existing contract.',
                 chatHistory: input, maxHistoryChars: historyBudgetChars }).history;
             expect(projected.text).toContain('CONTRACT_ID_734_799');
@@ -441,9 +445,7 @@ describe('F20 deterministic action anchors and free history sources', () => {
     it('spends no auxiliary call when necessary deterministic facts exceed the existing composite allowance', async () => {
         const input = history();
         input[1] = { ...input[1], actionStates: [operationsState('LOST_FIXED_FACTS', 'lost')] };
-        const mandatory = [{ ...input[0], content: '' }, { ...input[1], content: '' }, ...input.slice(-2)];
-        const budget = Math.min(formatHistoryMessages(mandatory).length, formatHistoryMessages(mandatory, true).length)
-            + formatSemanticHistorySummary('').length + 2 + 140;
+        const budget = 560;
         expect(planHistoryContext(input, budget).summaryMaxChars).toBe(140);
         const invoke = jest.fn(respond), summarizer = new PaAgentContextSummarizer();
         try {
@@ -459,13 +461,12 @@ describe('F20 deterministic action anchors and free history sources', () => {
 });
 
 describe('history lane allocation with protected action turns', () => {
-    it('reserves the actual UUID-bearing protected and latest projection before admitting a summary', () => {
+    it('replaces the accepted whole prefix and keeps the latest UUID-bearing source snapshot', () => {
         const input = longIdentityActionHistory(), before = JSON.stringify(input), budget = 3_600;
         const retained = [...input.slice(0, 4), ...input.slice(-2)];
         const retainedChars = formatHistoryMessages(retained, true).length;
         expect(retainedChars).toBeLessThanOrEqual(formatHistoryMessages(retained).length);
-        // UUID-bearing owner facts and complete source text, rather than the
-        // generic quarter-lane reservation, determine the available remainder.
+        // Old exact arguments no longer consume the semantic-prefix allowance.
         expect(retainedChars).toBeGreaterThan(budget * 3 / 4);
         const allowance = budget - retainedChars - formatSemanticHistorySummary('').length - 2;
         expect(allowance).toBeGreaterThan(0);
@@ -481,9 +482,8 @@ describe('history lane allocation with protected action turns', () => {
         expect(projected.history.historyBudgetLimited).not.toBe(true);
         expect(projected.history.omittedCount).toBe(0);
         const records = JSON.parse(projected.history.text.match(/<chat_history[^>]*>\n([\s\S]*?)\n<\/chat_history>/)![1]);
-        expect(records.slice(0, 4).map((record: { content: string }) => record.content)).toEqual(['', '', '', '']);
-        expect(records[1].actionStates).toEqual(projectActionStates(input[1].actionStates!));
-        expect(records[3].actionStates).toEqual(projectActionStates(input[3].actionStates!));
+        expect(records.map((record: { content: string }) => record.content)).toEqual(input.slice(plan.coveredMessages).map(message => message.content));
+        expect(projected.history.sourceMessages).toEqual(input);
         for (const record of records) for (const state of record.actionStates ?? []) {
             expect(state).not.toHaveProperty('grantsWriteAuthority');
         }
@@ -508,12 +508,13 @@ describe('history lane allocation with protected action turns', () => {
         input.push({ role: 'user', content: latest }, { role: 'assistant', content: '枫树，11 天，UTF-8 CSV。' });
         expect(formatHistoryMessages(input.slice(-2)).length).toBeGreaterThan(3_600);
         expect(formatHistoryMessages(input.slice(-2), true).length).toBeLessThan(600);
-        expect(planHistoryContext(input, 3_600)).toEqual({ mode: 'summarized', coveredMessages: 8, summaryMaxChars: 900 });
+        const plan = planHistoryContext(input, 3_600);
+        expect(plan).toEqual({ mode: 'summarized', coveredMessages: 6, summaryMaxChars: 900 });
         const invoke = jest.fn(respond), summarizer = new PaAgentContextSummarizer();
         try {
             const summary = await summarizer.prepareHistory({ history: input, historyBudgetChars: 3_600, invoke });
             expect(summary).toBeDefined();
-            expect(summary!.sourceMessages).toEqual(input.slice(0, 8));
+            expect(summary!.sourceMessages).toEqual(input.slice(0, plan.coveredMessages));
             const parts = invoke.mock.calls.flatMap(([request]) => {
                 expect(JSON.stringify(request).length + 512).toBeLessThanOrEqual(16_000);
                 for (const [index, source] of request.bindingSources!.entries()) {
@@ -522,9 +523,9 @@ describe('history lane allocation with protected action turns', () => {
                 }
                 return body(request).sourceMessages;
             });
-            expect(parts.every(part => part.index <= 8)).toBe(true);
+            expect(parts.every(part => part.index <= plan.coveredMessages)).toBe(true);
             expect(parts.some(part => part.index <= 4)).toBe(true);
-            for (const [index, message] of input.slice(0, 8).entries()) {
+            for (const [index, message] of input.slice(0, plan.coveredMessages).entries()) {
                 if (index < 4) continue;
                 const slices = parts.filter(part => part.index === index + 1 && part.end > part.start);
                 expect(slices.map(part => part.content).join('')).toBe(historySummaryContent(message));
@@ -549,7 +550,7 @@ describe('history lane allocation with protected action turns', () => {
                 const rolling = body(invoke.mock.calls[previousCalls][0]);
                 expect(rolling.previousSummary).toEqual({ ...JSON.parse(summary!.text), completed: [], open_questions: [] });
                 expect(rolling.retainedActionFacts).toEqual(projectPaAgentRetainedActionFacts(input.slice(0, extendedPlan.coveredMessages)));
-                expect(rolling.sourceMessages[0].index).toBe(9);
+                expect(rolling.sourceMessages[0].index).toBe(plan.coveredMessages + 1);
             }
             const final = new PaAgentContextProjector().projectUserInput({ prompt: 'Explain the newest correction.',
                 chatHistory: input, maxHistoryChars: 3_600, summaries: { history: extended } });
@@ -562,7 +563,7 @@ describe('history lane allocation with protected action turns', () => {
 
     it('preserves overflowing necessary history and spends no auxiliary call on an impossible lane', async () => {
         const input = longIdentityActionHistory(), invoke = jest.fn(respond), summarizer = new PaAgentContextSummarizer();
-        expect(planHistoryContext(input, 1_000).summaryMaxChars).toBe(0);
+        expect(planHistoryContext(input, 1_000).summaryMaxChars).toBe(250);
         try {
             expect(await summarizer.prepareHistory({ history: input, historyBudgetChars: 1_000, invoke })).toBeUndefined();
             expect(invoke).not.toHaveBeenCalled();
@@ -584,7 +585,8 @@ describe('history lane allocation with protected action turns', () => {
             if (reducing) return respond(request, signal);
             const freeMax = Number(request.messages[0].content.match(/at most (\d+) characters/)![1]);
             const hostIncrement = planHistoryContext(input, 4200).summaryMaxChars - freeMax - 2;
-            return schema('r'.repeat(830 - hostIncrement - JSON.stringify(schema('', [5])).length), [5]);
+            const sourceIndex = body(request).sourceMessages.at(-1)!.index;
+            return schema('r'.repeat(830 - hostIncrement - JSON.stringify(schema('', [sourceIndex])).length), [sourceIndex]);
         });
         try {
             const first = await summarizer.prepareHistory({ history: input, historyBudgetChars: 4_200, invoke });
@@ -666,9 +668,9 @@ describe("PaAgentContextSummarizer", () => {
             const projected = new PaAgentContextProjector().projectUserInput({ prompt: 'Explain existing results.',
                 chatHistory: input, maxHistoryChars: 3_000, summaries: { history: summary } });
             expect(projected.history.historyBudgetLimited).not.toBe(true);
-            const records = JSON.parse(projected.history.text.match(/<chat_history[^>]*>\n([\s\S]*?)\n<\/chat_history>/)![1]);
-            expect(records[1].content).toBe('');
-            expect(records[1].actionStates).toEqual(projectActionStates([state]));
+            expect(projected.history.entries[0].kind).toBe('summary');
+            expect(projected.history.text).toContain(state.operationId);
+            expect(projected.history.sourceMessages).toEqual(input);
         } finally { summarizer.dispose(); }
     });
 
@@ -714,9 +716,9 @@ describe("PaAgentContextSummarizer", () => {
                 chatHistory: input, maxHistoryChars: historyBudgetChars, summaries: { history: result } });
             expect(projected.history.omittedCount).toBe(0);
             expect(projected.history.historyBudgetLimited).not.toBe(true);
-            const records = JSON.parse(projected.history.text.match(/<chat_history[^>]*>\n([\s\S]*?)\n<\/chat_history>/)![1]);
-            expect(records[1].content).toBe('');
-            expect(records[1].actionStates).toEqual(projectActionStates([state]));
+            expect(projected.history.entries[0].kind).toBe('summary');
+            expect(projected.history.text).toContain(state.operationId);
+            expect(projected.history.sourceMessages).toEqual(input);
         } finally { summarizer.dispose(); }
     });
 
@@ -1018,7 +1020,7 @@ describe("PaAgentContextSummarizer", () => {
         } finally { clock.dispose(); jest.useRealTimers(); }
     });
 
-    it('caps confirmed summary attempts across calls and SDK retries without counting synchronous non-dispatch', () => {
+    it('warns on confirmed summary attempts without blocking or counting synchronous non-dispatch', () => {
         const ledger = new PaAgentRunUsageLedger();
         let now = 0;
         const budget = createPaAgentAuxiliarySummaryBudget(() => ledger.snapshot().attempts, () => now);
@@ -1034,13 +1036,13 @@ describe("PaAgentContextSummarizer", () => {
             now += 1;
         }
         const rejected = budget.begin('next-summary', 1125);
-        expect(() => rejected.admit(100)).toThrow('physical_requests');
+        expect(() => rejected.admit(100)).not.toThrow();
         rejected.finish();
         expect(budget.snapshot()).toMatchObject({ physicalRequests: 30,
-            estimatedReservedTokens: 36_750, exhaustedReason: 'physical_requests' });
+            estimatedReservedTokens: 36_750, pressureReason: 'physical_requests' });
     });
 
-    it('counts only active summary time and blocks the next dispatch after 60 minutes', () => {
+    it('counts only active summary time and warns without blocking after 60 minutes', () => {
         const ledger = new PaAgentRunUsageLedger();
         let now = 0;
         const budget = createPaAgentAuxiliarySummaryBudget(() => ledger.snapshot().attempts, () => now);
@@ -1054,9 +1056,10 @@ describe("PaAgentContextSummarizer", () => {
         }
         expect(budget.snapshot()).toMatchObject({ activeElapsedMs: 60 * 60_000, physicalRequests: 3 });
         const rejected = budget.begin('fourth-summary', 1125);
-        expect(() => rejected.admit(100)).toThrow('active_elapsed');
+        expect(() => rejected.admit(100)).not.toThrow();
         rejected.finish();
         expect(ledger.snapshot().attempts).toHaveLength(3);
+        expect(budget.snapshot().pressureReason).toBe('active_elapsed');
     });
 
     it('does not interrupt an admitted attempt at the run limit and still charges a cancelled physical request', () => {
@@ -1074,8 +1077,9 @@ describe("PaAgentContextSummarizer", () => {
             estimatedReservedTokens: 1225, activeElapsedMs: 79 * 60_000 });
         expect(ledger.snapshot().attempts[0].status).toBe('cancelled');
         const next = budget.begin('next-summary', 1125);
-        expect(() => next.admit(100)).toThrow('active_elapsed');
+        expect(() => next.admit(100)).not.toThrow();
         next.finish();
+        expect(budget.snapshot().pressureReason).toBe('active_elapsed');
     });
 
     it('reserves estimated prompt plus actual max output for each physical summary attempt', () => {
@@ -1090,9 +1094,10 @@ describe("PaAgentContextSummarizer", () => {
         }
         expect(budget.snapshot()).toMatchObject({ physicalRequests: 20, estimatedReservedTokens: 88_500 });
         const rejected = budget.begin('next-summary', 1125);
-        expect(() => rejected.admit(3300)).toThrow('estimated_or_known_tokens');
+        expect(() => rejected.admit(3300)).not.toThrow();
         rejected.finish();
         expect(ledger.snapshot().attempts).toHaveLength(20);
+        expect(budget.snapshot().pressureReason).toBe('estimated_or_known_tokens');
     });
 
     it('treats a confirmed summary request with missing estimate as unknown rather than free', () => {
@@ -1100,10 +1105,10 @@ describe("PaAgentContextSummarizer", () => {
         const budget = createPaAgentAuxiliarySummaryBudget(() => ledger.snapshot().attempts);
         ledger.dispatch('unmeasured-summary', 'context_summary', 'http-unknown');
         const next = budget.begin('next-summary', 1125);
-        expect(() => next.admit(100)).toThrow('estimate_unknown');
+        expect(() => next.admit(100)).not.toThrow();
         next.finish();
         expect(budget.snapshot()).toMatchObject({ physicalRequests: 1,
-            estimatedReservedTokens: null, exhaustedReason: 'estimate_unknown' });
+            estimatedReservedTokens: null, pressureReason: 'estimate_unknown' });
     });
 
     it('uses known physical prompt usage above the estimate when admitting the next summary', () => {
@@ -1124,8 +1129,9 @@ describe("PaAgentContextSummarizer", () => {
         expect(budget.snapshot()).toMatchObject({ physicalRequests: 8,
             estimatedReservedTokens: 18_800, admissionTokens: 98_000 });
         const next = budget.begin('next-summary', 2250);
-        expect(() => next.admit(100)).toThrow('estimated_or_known_tokens');
+        expect(() => next.admit(100)).not.toThrow();
         next.finish();
+        expect(budget.snapshot().pressureReason).toBe('estimated_or_known_tokens');
     });
 
     it('uses a larger complete provider total as the cost floor without adding it to the estimate', () => {
@@ -1161,8 +1167,9 @@ describe("PaAgentContextSummarizer", () => {
         expect(budget.snapshot()).toMatchObject({ estimatedReservedTokens: 1100,
             admissionTokens: 100_000 });
         const next = budget.begin('next-summary', 1000);
-        expect(() => next.admit(100)).toThrow('estimated_or_known_tokens');
+        expect(() => next.admit(100)).not.toThrow();
         next.finish();
+        expect(budget.snapshot().pressureReason).toBe('estimated_or_known_tokens');
     });
 
     it("keeps complete exchanges together when they fit a request", async () => {
@@ -1314,6 +1321,8 @@ describe("PaAgentContextSummarizer", () => {
             { role: "assistant" as const, content: "Hello." },
             { role: "user" as const, content: "The implementation must use SQLite. " + "x".repeat(4_000) },
             { role: "assistant" as const, content: "Acknowledged. " + "x".repeat(4_000) },
+            { role: "user" as const, content: "Continue with the current question." },
+            { role: "assistant" as const, content: "Current exchange." },
         ];
         const empty = { goals: [], constraints: [], decisions: [], completed: [], open_questions: [], facts: [] };
         const invoke = jest.fn<PaAgentSummaryInvoke>().mockImplementation(async (request) => {
@@ -1325,7 +1334,7 @@ describe("PaAgentContextSummarizer", () => {
         expect(invoke.mock.calls.length).toBeGreaterThan(1);
         expect(body(invoke.mock.calls[1][0]).previousSummary).toEqual(empty);
         expect(JSON.parse(result!.text).constraints).toEqual([{ text: "User requires SQLite.", sourceMessages: [3] }]);
-        expect(result!.sourceMessages).toEqual(input);
+        expect(result!.sourceMessages).toEqual(input.slice(0, -2));
     });
 
     it("rejects an empty update that would erase a previous nonempty summary", async () => {

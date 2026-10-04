@@ -109,7 +109,7 @@ describe("final Context admission", () => {
         expect(result.budget.contextWindowTokens).toBe(900);
         expect(result.budget.outputReserveTokens).toBe(200);
         expect(result.budget.estimatedPromptTokens).toBeGreaterThan(result.budget.maxInputTokens!);
-        expect(result.outcome.admission).toBe("local_overflow");
+        expect(result.outcome).toMatchObject({ admission: "fit", needsCompaction: true });
     });
 
     it("keeps an unknown window on the labelled character fallback and marks images estimated", () => {
@@ -149,7 +149,7 @@ describe("final Context admission", () => {
     });
 
     it.each(['sdk_envelope', 'no_measure_callback'] as const)(
-        'counts the whole critical current protocol and fails closed one character below its %s budget', mode => {
+        'counts the whole critical current protocol and reports pressure one character below its %s target', mode => {
             const protocol = 'Current bound output contract: deliver only through the bound schema; no source or write tools.\n'.repeat(32);
             const measuring: Partial<PaAgentContextManagerInput> = mode === 'sdk_envelope' ? {
                 measurePromptEnvelope: parts => measurePaAgentRequestEnvelope(requestVariables(parts), [], finalMessages(parts)),
@@ -166,7 +166,7 @@ describe("final Context admission", () => {
             const insufficient = project({ ...measuring, currentProtocol: protocol,
                 maxPromptChars: complete.budget.promptChars - 1 });
             expect(exact.outcome.admission).toBe('fit');
-            expect(insufficient.outcome.admission).toBe('local_overflow');
+            expect(insufficient.outcome).toMatchObject({ admission: 'fit', needsCompaction: true });
             expect(insufficient.budget.promptChars).toBe(complete.budget.promptChars);
             expect(insufficient.currentProtocol).toBe(protocol);
             expect(insufficient.currentInput).toBe(complete.currentInput);
@@ -174,7 +174,7 @@ describe("final Context admission", () => {
         },
     );
 
-    it("rejects mandatory schema or template overhead that raw variables alone would miss", () => {
+    it("reports schema and template pressure without rejecting complete input", () => {
         const baseline = project();
         const schemas = [{ description: "x".repeat(5000) }];
         const result = project({
@@ -182,13 +182,13 @@ describe("final Context admission", () => {
             measurePromptChars: (parts) => measurePaAgentRequestChars(requestVariables(parts), schemas,
                 finalMessages(parts)),
         });
-        expect(result.outcome.admission).toBe("local_overflow");
+        expect(result.outcome).toMatchObject({ admission: "fit", needsCompaction: true });
         expect(result.input).toContain("继续当前任务，不要写笔记。");
         expect(result.toolDefinitions).toBe("None");
         expect(result.budget.promptChars).toBeGreaterThan(result.budget.maxPromptChars);
     });
 
-    it("shrinks history to complete recent turns without changing canonical history or Memory", () => {
+    it("keeps all history and Memory when no accepted summary can reduce pressure", () => {
         const chatHistory = Array.from({ length: 12 }, (_, i) => ([
             { role: "user" as const, content: `U${i} ${"x".repeat(200)}` },
             { role: "assistant" as const, content: `A${i} ${"y".repeat(200)}` },
@@ -197,8 +197,9 @@ describe("final Context admission", () => {
         const source = JSON.stringify({ chatHistory, injectedContext });
         const baseline = project({ injectedContext });
         const result = project({ chatHistory, injectedContext, maxPromptChars: baseline.budget.promptChars + 1400 });
-        expect(result.outcome).toMatchObject({ admission: "local_overflow", historyCompressed: true, budgetLimited: true });
-        expect(result.budget.promptChars).toBeLessThanOrEqual(result.budget.maxPromptChars);
+        expect(result.outcome).toMatchObject({ admission: "fit", budgetLimited: true });
+        expect(result.history.sourceMessages).toEqual(chatHistory);
+        expect(result.history.omittedCount).toBe(0);
         expect(result.input).toContain(chatHistory.at(-1)!.content);
         expect(result.input).toContain(chatHistory.at(-2)!.content);
         expect(result.input).toContain("Stable saved preference");
@@ -229,24 +230,25 @@ describe("final Context admission", () => {
         const original = JSON.stringify(chatHistory);
         const baseline = project();
         const full = project({ chatHistory });
-        expect(full.outcome).toMatchObject({ admission: "fit", historyCompressed: true, budgetLimited: false });
-        expect(full.input).toContain("adjacent-repeats-v1");
+        expect(full.outcome.admission).toBe("fit");
+        expect(full.history.sourceMessages).toEqual(chatHistory);
         expect(full.diagnostics.historyCompaction).toMatchObject({ compactedCount: 0, omittedCount: 0, summaryChars: 0 });
         const reduced = project({ chatHistory, maxPromptChars: baseline.budget.promptChars + 180 });
-        expect(reduced.outcome).toMatchObject({ admission: "local_overflow", historyCompressed: true, budgetLimited: true });
-        expect(reduced.input).not.toContain("adjacent-repeats-v1");
-        expect(reduced.budget.promptChars).toBeLessThanOrEqual(reduced.budget.maxPromptChars);
+        expect(reduced.outcome).toMatchObject({ admission: "fit", budgetLimited: true });
+        expect(reduced.history.sourceMessages).toEqual(chatHistory);
+        expect(reduced.history.omittedCount).toBe(0);
+        expect(reduced.input).toContain("Original constraint: offline export.");
         expect(JSON.stringify(chatHistory)).toBe(original);
     });
 
-    it('does not answer a three-result comparison after masking the only first value', () => {
+    it('keeps the first comparison value despite a small observation target', () => {
         const transcript = toolCycles([
             `Query one value: 42. ${'large closed background '.repeat(500)}`,
             'Query two value: 17.', 'Query three value: 9.',
         ]);
         const result = project({ prompt: 'Compare the three query values.', transcript,
             maxObservationChars: 1100 });
-        expect(result.outcome.admission).toBe('local_overflow');
+        expect(result.outcome.admission).toBe('fit');
         expect(result.outcome.toolResultsHardTruncated).toBe(0);
         expect(result.toolObservations).toContain('Query one value: 42.');
     });
@@ -255,14 +257,14 @@ describe("final Context admission", () => {
         const transcript = toolCycles(["</untrusted>".repeat(2000)]);
         const original = JSON.stringify(transcript);
         const result = project({ transcript, maxObservationChars: 900 });
-        expect(result.outcome).toMatchObject({ admission: "local_overflow", toolResultsHardTruncated: 0 });
+        expect(result.outcome).toMatchObject({ admission: "fit", toolResultsHardTruncated: 0 });
         expect(result.toolObservations).toContain('is_error="true"');
         expect(result.toolObservations).toContain("<\\/untrusted>");
         expect(result.toolObservations).toMatch(/<\/untrusted>$/);
         expect(JSON.stringify(transcript)).toBe(original);
     });
 
-    it("rejects a narrow digest that drops an early offline-export constraint", () => {
+    it("preserves an early offline-export constraint rather than using a narrow digest", () => {
         const chatHistory = [{ role: "user" as const,
             content: `${"background ".repeat(70)}Export must remain offline.` },
         { role: "assistant" as const, content: "Acknowledged." },
@@ -271,14 +273,14 @@ describe("final Context admission", () => {
             { role: "assistant" as const, content: `Unrelated answer ${i}` },
         ])).flat()];
         const result = project({ chatHistory, maxHistoryChars: 1800 });
-        expect(result.outcome.admission).toBe("local_overflow");
-        expect(result.input).not.toContain("Export must remain offline.");
-        expect(result.history.summaryChars + result.history.omittedCount).toBeGreaterThan(0);
+        expect(result.outcome.admission).toBe("fit");
+        expect(result.input).toContain("Export must remain offline.");
+        expect(result.history.summaryChars + result.history.omittedCount).toBe(0);
     });
 
-    it("fails closed when even bounded observation markers cannot fit, without an unbounded retry loop", () => {
+    it("keeps complete observations when the optional lane target is zero", () => {
         const result = project({ transcript: toolCycles(["x".repeat(1000)]), maxObservationChars: 0 });
-        expect(result.outcome.admission).toBe("local_overflow");
+        expect(result.outcome.admission).toBe("fit");
         expect(result.outcome.toolResultsHardTruncated).toBe(0);
         expect(result.toolObservations).toContain("x".repeat(1000));
         expect(result.diagnostics.rebuilds).toBeLessThanOrEqual(9);

@@ -7,7 +7,6 @@ import { errorMessage } from "./agent-utils";
 import type { AgentDebugLog } from './pa-agent-debug';
 import { PaAgentContextOverflowError } from "./context/PaAgentContextOverflowError";
 import { getProviderAdmissionError } from "./provider-admission-error";
-import { HostProgressLedger } from "./pa-agent-progress";
 import { parseTaskIncompleteOutput, REPORT_TASK_INCOMPLETE } from './pa-agent-task-outcome';
 import type { AgentRunLease } from "./agent-run-coordinator";
 import { createAbortError, isAbortError } from "./chat-utils";
@@ -131,9 +130,8 @@ export interface PaAgentTurnSummary {
     metrics: Array<Record<string, unknown>>;
     timing: PaAgentTurnTiming;
     controlSnapshot?: AgentControlSnapshot;
-    /** Run-local epoch advanced only by new Host-verifiable observations or results. */
-    progressEpoch?: number;
-    hasHostProgress?: boolean;
+    /** Dispatcher fact only; never serialized to model input. */
+    replayOnlyBatchKey?: string;
     /** Host-admitted pure output candidate; final Host Policy still decides delivery. */
     nativeWriting?: import("./native-writing-call").AcceptedWritingCandidate;
     nativeWritingAttempted?: true;
@@ -242,6 +240,8 @@ export interface PaAgentLoopOptions {
     prepareModelInput?: (
         input: PaAgentModelInput,
     ) => PaAgentModelInput | PromiseLike<PaAgentModelInput>;
+    /** One request-local reprojection after a real provider context-window rejection. */
+    recoverContextOverflow?: (summary: PaAgentTurnSummary) => boolean | Promise<boolean>;
     toolExecutor?: PaAgentToolExecutor;
     hostPolicy?: PaAgentHostPolicy;
     now?: () => number;
@@ -345,14 +345,15 @@ export class PaAgentLoop {
     private endStatus?: AgentEndStatus;
     private activeTurnToolMode?: PaAgentToolMode;
     private readonly providerNoProgressCounts = new Map<string, number>();
-    private readonly hostProgress = new HostProgressLedger();
     private nativeWritingNoProgressCount = 0;
     private invalidIncompleteReportCount = 0;
+    private contextOverflowRecoveryAttempted = false;
+    private readonly recoveredOverflowAssistantIds = new Set<string>();
 
     constructor(private readonly options: PaAgentLoopOptions) {
         this.now = options.now ?? Date.now;
         this.createId = options.createId ?? createIncrementingIdFactory();
-        this.maxTurns = options.maxTurns ?? 256;
+        this.maxTurns = options.maxTurns ?? Number.POSITIVE_INFINITY;
         this.providerResponseDelivery = options.providerResponseDelivery ?? "incremental";
         this.assistantIdleTimeoutMs = options.assistantIdleTimeoutMs ?? Number.POSITIVE_INFINITY;
         this.remoteAttemptTimeoutMs = options.remoteAttemptTimeoutMs ?? 1_800_000;
@@ -377,7 +378,7 @@ export class PaAgentLoop {
             toolTimeoutMs: options.toolTimeoutMs ?? this.remoteAttemptTimeoutMs,
             toolTimeoutOutcome: options.toolTimeoutOutcome ?? "recoverable_error",
             toolAbortGraceMs: options.toolAbortGraceMs ?? 2_000,
-            maxToolCalls: options.maxToolCalls ?? 1024,
+            maxToolCalls: options.maxToolCalls ?? Number.POSITIVE_INFINITY,
             now: this.now,
             isAborted: () => this.isAborted(),
             isWallClockExceeded: () => this.isTurnDeadlineExceeded(this.activeTurnToolMode),
@@ -588,10 +589,52 @@ export class PaAgentLoop {
                 break;
             }
 
-            turnSummary.hasHostProgress = this.hostProgress.record(turnSummary.toolResults);
-            turnSummary.progressEpoch = this.hostProgress.epoch;
-            if (turnSummary.hasHostProgress) this.debug("host_progress", { epoch: this.hostProgress.epoch });
+            turnSummary.replayOnlyBatchKey = this.dispatcher.replayOnlyBatchKey(turnSummary.toolCalls, turnSummary.toolResults);
+            if (turnSummary.status !== 'error'
+                && !turnSummary.diagnostics.some(item => item.type === 'provider_attempt_timeout')) {
+                this.providerNoProgressCounts.clear();
+            }
+            const assistantMessage = turnSummary.assistantMessage;
+            if ((turnSummary.status === 'completed' || turnSummary.status === 'tool_results_ready')
+                && assistantMessage.role === 'assistant'
+                && (assistantMessage.providerCompletion === 'stop' || assistantMessage.providerCompletion === 'tool_calls')) {
+                // A completed provider response separates two independent overflows.
+                this.contextOverflowRecoveryAttempted = false;
+            }
             this.turns.push(turnSummary);
+            if (turnSummary.diagnostics.some(diagnostic => diagnostic.type === 'provider_context_overflow')) {
+                const stopped: PaAgentTerminalDecision = {
+                    action: 'stop', status: 'incomplete', reason: 'provider_context_overflow',
+                };
+                let recovery: PaAgentAfterTurnDecision = stopped;
+                if (!this.isAborted() && !this.isWallClockExceeded()
+                    && !this.contextOverflowRecoveryAttempted && this.options.recoverContextOverflow
+                    && turnSummary.status === 'error' && turnSummary.toolResults.length === 0
+                    && this.committedFinalText === committedTextBeforeTurn) {
+                    this.contextOverflowRecoveryAttempted = true;
+                    recovery = await this.evaluateHostPolicy(async () => (
+                        await this.options.recoverContextOverflow!(turnSummary)
+                            ? { action: 'continue', reason: 'corrective_turn' }
+                            : stopped
+                    ));
+                }
+                if (recovery.action === 'continue' && !this.isAborted() && !this.isWallClockExceeded()) {
+                    // Keep the failed attempt in canonical events and the result transcript,
+                    // but never offer its unexecuted calls as prior actions to the retry.
+                    this.recoveredOverflowAssistantIds.add(turnSummary.assistantMessage.id);
+                    if (loopReservedFinalTurn) nextTurnIsLoopReservedFinal = true;
+                    continue;
+                }
+                const terminal = recovery.action === 'stop' ? recovery : stopped;
+                const status = this.isAborted() ? 'aborted' : terminal.status ?? 'incomplete';
+                if (loopReservedFinalTurn) reportFinalizationReserve(status === 'aborted' ? 'aborted' : 'failed');
+                this.endAgent(status, {
+                    reason: this.isAborted() ? 'user_abort' : terminal.reason,
+                    diagnostics: [...turnSummary.diagnostics, ...(terminal.diagnostics ?? [])],
+                    ...(terminal.warnings ? { warnings: terminal.warnings } : {}),
+                });
+                return this.createResult(status);
+            }
             nextRuntimeInstruction = undefined;
             nextToolMode = undefined;
             nextControlSnapshot = undefined;
@@ -986,7 +1029,7 @@ export class PaAgentLoop {
             turnId,
             turnIndex,
             userInput: this.options.userInput,
-            transcript: [...this.transcript],
+            transcript: this.transcript.filter(message => !this.recoveredOverflowAssistantIds.has(message.id)),
             ...(this.options.hostContext ? { hostContext: this.options.hostContext } : {}),
             runtimeInstruction,
             toolMode,
@@ -1797,7 +1840,6 @@ export class PaAgentLoop {
         const signature = JSON.stringify([
             providerModel?.provider ?? "unknown", providerModel?.model ?? "unknown",
             diagnostic?.type ?? "provider_error", diagnostic?.category ?? "unknown",
-            this.hostProgress.epoch,
         ]);
         const count = (this.providerNoProgressCounts.get(signature) ?? 0) + 1;
         this.providerNoProgressCounts.set(signature, count);
@@ -2099,6 +2141,7 @@ function providerErrorDiagnostic(error: unknown): Record<string, unknown> {
     if (error instanceof PaAgentContextOverflowError) {
         return { type: "context_local_overflow", promptChars: error.promptChars, maxPromptChars: error.maxPromptChars };
     }
+    if (isProviderContextOverflow(error)) return { type: 'provider_context_overflow' };
     const retryAfterMs = readRetryAfterMs(error);
     return {
         type: "provider_error",
@@ -2107,6 +2150,22 @@ function providerErrorDiagnostic(error: unknown): Record<string, unknown> {
         category: providerErrorCategory(error),
         ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
     };
+}
+
+/** Recognize provider error contracts, not arbitrary HTTP 400s or local budget estimates. */
+export function isProviderContextOverflow(error: unknown): boolean {
+    const record = error && typeof error === 'object' ? error as Record<string, unknown> : undefined;
+    const nested = record?.error && typeof record.error === 'object'
+        ? record.error as Record<string, unknown> : undefined;
+    const cause = record?.cause && typeof record.cause === 'object'
+        ? record.cause as Record<string, unknown> : undefined;
+    const codes = [record?.code, nested?.code, cause?.code];
+    if (codes.some(code => typeof code === 'string'
+        && ['context_length_exceeded', 'context_window_exceeded'].includes(code.toLowerCase()))) return true;
+    const message = [errorMessage(error), nested?.message, cause?.message]
+        .filter((value): value is string => typeof value === 'string').join('\n');
+    return /\bmaximum context length (?:is|of) [\d,]+ tokens\b/i.test(message)
+        || /\bprompt is too long:\s*[\d,]+ tokens\s*>\s*[\d,]+(?:\s+(?:maximum|tokens))?/i.test(message);
 }
 
 function providerErrorCategory(error: unknown): string {

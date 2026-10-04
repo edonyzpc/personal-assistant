@@ -5724,9 +5724,6 @@ describe('Pagelet agent runtime', () => {
         expect(nativeInputs[3]?.controlSnapshot?.exposureMode).toBe(
             nativeInputs[1]?.controlSnapshot?.exposureMode,
         );
-        expect(nativeInputs[3]?.controlSnapshot?.budgetState).toEqual(
-            nativeInputs[1]?.controlSnapshot?.budgetState,
-        );
         const ordinaryReasons = (input: PaAgentModelInput | undefined) => Object.fromEntries(
             Object.entries(input?.controlSnapshot?.blockedReasons ?? {})
                 .filter(([toolName]) => toolName !== 'stage_pagelet_insight'),

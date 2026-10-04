@@ -11,7 +11,7 @@ import {
     chatToolResultToPaAgentToolExecutionResult,
     createPaAgentCapabilityToolExecutor,
 } from "../src/ai-services/pa-agent-host-tools";
-import { createRequiredCapabilityHostPolicy } from "../src/ai-services/pa-agent-required-capability-policy";
+import { createPaAgentHostPolicy } from "../src/ai-services/pa-agent-host-policy";
 import { PaAgentLoop, type PaAgentModelInput } from "../src/ai-services/pa-agent-loop";
 
 jest.mock("obsidian");
@@ -251,7 +251,7 @@ async function runToolChain(mode: EffectMode, calls: Array<Record<string, unknow
         userInput: "Use the command tool.",
         maxTurns: calls.length + 2,
         toolExecutor: executor,
-        hostPolicy: createRequiredCapabilityHostPolicy().hostPolicy,
+        hostPolicy: createPaAgentHostPolicy(),
         model: {
             stream: async function* (input: PaAgentModelInput) {
                 providerInputs.push(input);

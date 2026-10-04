@@ -8,7 +8,7 @@ import { projectPaAgentToolStatus } from '../pa-agent-action-history';
 import { historySummaryContentSteps, protectedHistorySourceIndexesSteps } from './PaAgentHistoryContextPlan';
 import { TurnExecutionDeadline } from "../agent-runtime-primitives";
 import { createAbortError, throwIfAborted } from "../chat-utils";
-import { planHistoryContextSteps } from "./PaAgentHistoryContextPlan";
+import { planHistoryContextSteps, type ColdWritingVersion } from "./PaAgentHistoryContextPlan";
 import { encodeAdjacentRepeatsSteps, type RepeatedSourceContent } from "./PaAgentContextTextEncoding";
 import { prepareContextSteps } from './clone-utils';
 import { stringifyContextAsync, stringifyContextSteps, cloneContextJsonAsync } from './PaAgentContextSerialization';
@@ -136,6 +136,8 @@ export class PaAgentContextSummarizer {
     async prepareHistory(input: {
         history: readonly ChatMessage[];
         historyBudgetChars: number;
+        coldWritingVersions?: ReadonlyMap<string, ColdWritingVersion>;
+        protectedWritingVersionIds?: ReadonlySet<string>;
         invoke: PaAgentSummaryInvoke;
         signal?: AbortSignal;
         /** Runtime transport owns a deadline beginning at the physical dispatch hook. */
@@ -149,7 +151,8 @@ export class PaAgentContextSummarizer {
         if (this.lastHistory && !await isPrefixAsync(this.lastHistory, snapshot, input.signal)) this.reset();
         const preparationGeneration = this.generation;
         this.lastHistory = snapshot;
-        const plan = await prepareContextSteps(planHistoryContextSteps(snapshot, input.historyBudgetChars, MAX_HISTORY_SUMMARY_CHARS), input.signal);
+        const plan = await prepareContextSteps(planHistoryContextSteps(snapshot, input.historyBudgetChars,
+            MAX_HISTORY_SUMMARY_CHARS, input.coldWritingVersions, input.protectedWritingVersionIds), input.signal);
         if (this.disposed || preparationGeneration !== this.generation) return undefined;
         if (plan.mode === "full" || plan.coveredMessages <= 0 || plan.summaryMaxChars <= 0) return undefined;
         const maxChars = Math.min(MAX_HISTORY_SUMMARY_CHARS, plan.summaryMaxChars);
@@ -554,6 +557,9 @@ function combineSummaries(free: StructuredSummary, host: StructuredSummary): Str
 export function buildPaAgentDeterministicActionSummary(facts: readonly PaAgentRetainedActionFacts[], covered: readonly ChatMessage[]): StructuredSummary {
     const summary = emptySummary();
     for (const source of facts) {
+        for (const call of source.unresolvedCalls ?? []) {
+            summary.open_questions.push({ text: conciseClosedFact(call), sourceMessages: [source.index] });
+        }
         for (const state of source.actionStates ?? []) {
             const field = state.phase === 'completed' ? 'completed' : 'open_questions';
             summary[field].push({ text: conciseClosedFact(state), sourceMessages: [source.index] });
@@ -572,6 +578,8 @@ export function buildPaAgentDeterministicActionSummary(facts: readonly PaAgentRe
                 ...(result.executionState ? { executionState: result.executionState } : {}),
                 ...(result.domainPhase ? { domainPhase: result.domainPhase } : {}),
                 ...(result.domainIdentity ? { domainIdentity: result.domainIdentity } : {}),
+                ...(result.preflightRejection ? { preflightRejection: result.preflightRejection } : {}),
+                ...(result.recovery ? { recovery: result.recovery } : {}),
                 ...(result.isError ? { isError: true } : {}),
             }), sourceMessages: [source.index] });
         }
@@ -579,7 +587,7 @@ export function buildPaAgentDeterministicActionSummary(facts: readonly PaAgentRe
     return summary;
 }
 
-/** Deterministic closed primitives; raw result bodies remain in protected history. */
+/** Deterministic closed primitives; body details are separately summarized from the original sources. */
 function conciseClosedFact(fact: object): string {
     return Object.entries(fact).map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`).join('; ');
 }
@@ -598,6 +606,7 @@ async function snapshotHistoryAsync(history: readonly ChatMessage[], signal?: Ab
         snapshots.push({
             role: message.role,
             content: message.content,
+            ...(message.writingVersionId ? { writingVersionId: message.writingVersionId } : {}),
             ...(message.actionStates !== undefined ? { actionStates: cloneActionStates(message.actionStates) } : {}),
             ...(actionStateBinding ? { actionStateBinding } : {}),
             ...(message.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(message.hostProvenance) } : {}),

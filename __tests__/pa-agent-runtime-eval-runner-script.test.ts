@@ -20,6 +20,10 @@ describe("B-149 offline runtime eval CLI", () => {
                 runtimeTerminals: { completed: 11, incomplete: 0, cancelled: 1, failed: 0 },
                 expectedGaps: ["E-02", "E-03", "E-08"], fixedWebRequests: 3 });
             expect(summary.modelPhysicalRequests).toBeGreaterThan(0);
+            expect(report.probes.e10NoProgress).toMatchObject({ status: "incomplete", terminalStatus: "incomplete",
+                sourcePaths: [], sourceUrls: [] });
+            expect(report.probes.e10NoProgress.answer).toContain("尚未取得");
+            expect(report.probes.e10NoProgress.answer).not.toMatch(/JAY_NEW_2[345]/);
             expect(report.requests[0].body.messages.length).toBeGreaterThan(0);
             expect(report.requests[0]).toMatchObject({ association: "unknown", attemptId: null, purpose: null });
             expect(report.actual.find((item: { caseId: string }) => item.caseId === "E-01").runtimeRunId).toBeTruthy();

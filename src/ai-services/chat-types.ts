@@ -697,6 +697,8 @@ export interface AgentTurnPlan {
 export type ChatAgentIntent = "content-seeking" | "agent-control";
 
 export type ChatToolName =
+    | "read_writing_history"
+    | "get_image_status"
     | "get_writing_context"
     | "resolve_chat_images"
     | "create_image"

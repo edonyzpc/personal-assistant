@@ -39,7 +39,7 @@ jest.mock('../src/ai-services/task-source-run', () => {
     } };
 });
 
-function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
+function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'batch-rejected') {
     const revoke = change === 'revoked';
     mockAuthority = 1;
     mockPreparations = 0;
@@ -91,8 +91,12 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
             signal.addEventListener('abort', abort, { once: true });
             if (signal.aborted) abort();
         });
-        const delta = first ? { role: 'assistant', tool_calls: [{ index: 0, id: 'read-target', type: 'function',
-            function: { name: 'read_note', arguments: JSON.stringify({ path: files[499].path }) } }] }
+        const calls = change === 'batch-rejected'
+            ? [{ index: 0, id: 'skill-call', type: 'function', function: { name: 'load_skill', arguments: '{"name":"obsidian-markdown"}' } },
+                { index: 1, id: 'context-call', type: 'function', function: { name: 'get_current_note_context', arguments: '{"mode":"metadata"}' } }]
+            : [{ index: 0, id: 'read-target', type: 'function',
+                function: { name: 'read_note', arguments: JSON.stringify({ path: files[499].path }) } }];
+        const delta = first ? { role: 'assistant', tool_calls: calls }
             : { role: 'assistant', content: '依据不足' };
         const frame = (value: unknown, finish: string | null) => `data: ${JSON.stringify({ id: 'fixed', created: 0,
             model: 'fixed-model', object: 'chat.completion.chunk', choices: [{ index: 0, delta: value, finish_reason: finish }] })}\n\n`;
@@ -148,8 +152,20 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
         await running;
         expect(mockPreparations).toBeGreaterThan(0);
         expect(requests).toHaveLength(2);
-        expect(read).toHaveBeenCalledTimes(revoke ? 0 : 1);
-        if (!revoke) {
+        expect(read).toHaveBeenCalledTimes(revoke || change === 'batch-rejected' ? 0 : 1);
+        if (change === 'batch-rejected') {
+            const messages = (requests[1] as { messages: Array<{ role: string; content: string }> }).messages;
+            const results = messages.filter(message => message.role === 'tool');
+            expect(results).toHaveLength(2);
+            for (const result of results) {
+                expect(JSON.parse(result.content.split('\n')[0])).toMatchObject({
+                    outcome: 'policy_rejected', executionState: 'not_started',
+                    preflightRejection: { scope: 'batch', reason: 'source_read_plan_unavailable' },
+                });
+                expect(result.content).not.toContain('result_unknown');
+                expect(result.content).not.toContain('No source reads were admitted');
+            }
+        } else if (!revoke) {
             const messages = (requests[1] as { messages: Array<{ role: string; content: string }> }).messages;
             const observation = messages.find(message => message.role === 'tool');
             expect(observation).toBeDefined();
@@ -164,7 +180,7 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit') {
     return { firstRequest, finish, cleanup };
 }
 
-describe.each(['unchanged', 'revoked', 'ordinary-edit'] as const)('source admission in one continuous actual SDK run: %s', change => {
+describe.each(['unchanged', 'revoked', 'ordinary-edit', 'batch-rejected'] as const)('source admission in one continuous actual SDK run: %s', change => {
     let scenario: ReturnType<typeof createScenario>;
     let firstStageVerified = false;
     let phasePassed = false;

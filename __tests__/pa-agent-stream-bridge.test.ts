@@ -2,7 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import { AgentEventEmitter } from "../src/ai-services/agent-runtime-primitives";
 import type { AgentEvent, LegacyAgentEvent, ProviderCompletion } from "../src/ai-services/chat-types";
 import { PaAgentLoop } from "../src/ai-services/pa-agent-loop";
-import { createRequiredCapabilityHostPolicy } from "../src/ai-services/pa-agent-required-capability-policy";
+import { createPaAgentHostPolicy } from "../src/ai-services/pa-agent-host-policy";
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
 import { CanonicalToLegacyEventAdapter, type WritingDeliveryDiagnostic } from "../src/ai-services/pa-agent-stream-bridge";
 import type { GenerationInputSnapshot } from "../src/ai-services/generation-input-snapshot";
@@ -78,7 +78,7 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
         const events: LegacyAgentEvent[] = [];
         const adapter = new CanonicalToLegacyEventAdapter(new AgentEventEmitter(event => events.push(event)), undefined,
             native ? { request, nativeContextHandle: request.requestId, maxTextChars: 10000, isCurrent: () => true } : undefined);
-        const { hostPolicy } = createRequiredCapabilityHostPolicy();
+        const hostPolicy = createPaAgentHostPolicy();
         const loop = new PaAgentLoop({ runId: "missing-native-call", userInput: "Explain this idea.",
             hostPolicy, model: { stream: async function* () {
                 yield { type: "text_delta", text };
@@ -106,7 +106,7 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
     });
 
     it("keeps a missing native call incomplete without predicting a required capability", async () => {
-        const { hostPolicy } = createRequiredCapabilityHostPolicy();
+        const hostPolicy = createPaAgentHostPolicy();
         const result = await new PaAgentLoop({ runId: "required-missing-native", userInput: "Read the current note.",
             hostPolicy, model: { stream: async function* () {
                 yield { type: "text_delta", text: "<tool_calls></tool_calls>" };

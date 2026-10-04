@@ -1,5 +1,15 @@
 import { describe, expect, it } from "@jest/globals";
 
+import { createChatToolCapability } from "../src/ai-services/capability-adapter";
+import { CapabilityRegistry } from "../src/ai-services/capability-registry";
+import {
+    createInspectObsidianNoteTool,
+    createListVaultTagsTool,
+    createReadCanvasSummaryTool,
+    createSearchMemoryTool,
+    createSearchVaultSnippetsTool,
+} from "../src/ai-services/chat-tools";
+import { buildObsidianOperationsPlannerGuidance } from "../src/ai-services/obsidian-operations-capability-catalog";
 import {
     createPaAgentModelInputMetricsDiagnostic,
     formatPlannerToolDefinitions,
@@ -25,7 +35,7 @@ describe("formatPlannerToolDefinitions (#2.1)", () => {
             name: "search_memory",
             description: "should be omitted",
             inputSchema: { type: "object" },
-            plannerGuidance: "Use for memory queries",
+            plannerGuidance: ["Use for memory queries"],
             permission: "read-only",
             cost: 1,
             outputBudgetChars: 1000,
@@ -39,6 +49,65 @@ describe("formatPlannerToolDefinitions (#2.1)", () => {
         expect(out).not.toContain("should be omitted");
         expect(out).not.toContain("read-only");
         expect(out).not.toContain("output_budget_chars");
+    });
+
+    it("shares exact source guidance only across its bound tools, preserving definitions and schemas", () => {
+        const registry = new CapabilityRegistry();
+        const options = { providerId: "test-planner-guidance" };
+        registry.register(createChatToolCapability(createInspectObsidianNoteTool(), options));
+        registry.register(createChatToolCapability(createReadCanvasSummaryTool(), options));
+        registry.register(createChatToolCapability(createSearchVaultSnippetsTool(), options));
+        registry.register(createChatToolCapability(createListVaultTagsTool(), options));
+        registry.register(createChatToolCapability(createSearchMemoryTool(async () => {
+            throw new Error('This projection test must not execute retrieval');
+        }), options));
+        const definitions = registry.listDefinitions();
+        const definitionsBefore = JSON.stringify(definitions);
+        const schemasBefore = registry.exportProviderSchemas();
+
+        const rows = formatPlannerToolDefinitions(definitions).split("\n").map((row) => JSON.parse(row));
+        const shared = rows.filter((row) => row.shared_planner_guidance)
+            .map((row) => row.shared_planner_guidance);
+        expect(shared).toEqual([
+            {
+                tools: ["inspect_obsidian_note", "search_vault_snippets", "list_vault_tags"],
+                planner_guidance: buildObsidianOperationsPlannerGuidance(["markdown"]),
+            },
+            {
+                tools: ["inspect_obsidian_note", "read_canvas_summary", "search_vault_snippets", "list_vault_tags"],
+                planner_guidance: buildObsidianOperationsPlannerGuidance(["safety"]),
+            },
+        ]);
+        const toolRows = rows.filter((row) => row.name);
+        for (const definition of definitions) {
+            const ownGuidance = toolRows.find((row) => row.name === definition.name).planner_guidance;
+            const applicableSharedGuidance = shared.filter((group) => group.tools.includes(definition.name))
+                .flatMap((group) => group.planner_guidance);
+            const reconstructed = [...ownGuidance, ...applicableSharedGuidance];
+            expect(reconstructed.sort()).toEqual([...definition.plannerGuidance].sort());
+            expect(new Set(reconstructed).size).toBe(reconstructed.length);
+        }
+        expect(JSON.stringify(definitions)).toBe(definitionsBefore);
+        expect(registry.exportProviderSchemas()).toEqual(schemasBefore);
+    });
+
+    it("keeps single-tool and nonidentical guidance output unchanged", () => {
+        const registry = new CapabilityRegistry();
+        registry.register(createChatToolCapability(createInspectObsidianNoteTool(), { providerId: "test-planner-guidance" }));
+        registry.register(createChatToolCapability(createSearchMemoryTool(async () => {
+            throw new Error('This projection test must not execute retrieval');
+        }), { providerId: "test-planner-guidance" }));
+        const definitions = registry.listDefinitions();
+        // Similar wording is not a shared rule; repeated text within one tool is
+        // also not permission to attach that instruction to another tool.
+        definitions[0].plannerGuidance = ["Read a snippet.", "Read a snippet."];
+        definitions[1].plannerGuidance = ["Read a snippet. "];
+        const originalFormat = (selected: typeof definitions) => selected.map((definition) => JSON.stringify({
+            name: definition.name,
+            planner_guidance: definition.plannerGuidance,
+        })).join("\n");
+        expect(formatPlannerToolDefinitions([definitions[0]])).toBe(originalFormat([definitions[0]]));
+        expect(formatPlannerToolDefinitions(definitions)).toBe(originalFormat(definitions));
     });
 
     it("summarizes model input metrics without including prompt or schema content", () => {

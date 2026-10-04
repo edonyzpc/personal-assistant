@@ -578,6 +578,7 @@
     "plugin.chat.formatter.warningNoAnswer": "未生成最终回答。",
     "plugin.chat.formatter.warningContextTooLong": "请求过长",
     "plugin.chat.formatter.warningContextTooLongDetail": "当前上下文过长，无法继续处理。请缩短消息或开启新对话。",
+    "plugin.chat.formatter.warningProviderContextTooLongDetail": "本次请求超过 AI 服务商可处理的上下文容量，未能完成。请减少所用材料或开启新对话。",
     "plugin.chat.formatter.summaryIncomplete": "回答不完整",
     "plugin.chat.formatter.summaryNeedsUser": "等待你的选择",
     "plugin.chat.sourceDecision.source.other_notes": "当前限制外的其他笔记",

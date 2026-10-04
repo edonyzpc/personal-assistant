@@ -1,4 +1,5 @@
 import { stableStringify } from "./agent-utils";
+import { createHostBatchPreflightRejection } from './pa-agent-preflight-facts';
 import { assertTaskSourceReadCurrent, checkpointTaskSourceRead, type TaskSourceReadGuard } from "./task-source-read-guard";
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import {
@@ -82,6 +83,7 @@ export interface ToolDispatcherConfig {
 export class ToolExecutionDispatcher {
     private readonly seenToolCallKeys = new Set<string>();
     private readonly executionRecords = new Map<string, PaAgentToolExecutionResult>();
+    private readonly normalizedCallKeys = new Map<string, string>();
     private lastSuccessfulWritingContextKey?: string;
     private _toolCallCount = 0;
     private _physicalAttemptCount = 0;
@@ -92,6 +94,19 @@ export class ToolExecutionDispatcher {
     get reuseCount(): number { return this._reuseCount; }
 
     constructor(private readonly config: ToolDispatcherConfig) {}
+
+    /** Host-only identity, derived using the same normalization as actual dispatch. */
+    replayOnlyBatchKey(calls: readonly import('./chat-types').AssistantMessagePart[],
+        results: readonly Extract<PaAgentMessage, { role: 'toolResult' }>[]): string | undefined {
+        const tools = calls.filter((call): call is Extract<typeof call, { type: 'toolCall' }> => call.type === 'toolCall');
+        if (!tools.length || tools.length !== results.length) return undefined;
+        if (!tools.every(call => results.some(result => result.toolCallId === call.id
+            && (result.content.metadata?.outcome === 'reused_result'
+                || result.content.metadata?.outcome === 'duplicate_skipped'
+                || result.content.metadata?.replayBlocked === true)))) return undefined;
+        const keys = tools.map(call => call.id ? this.normalizedCallKeys.get(call.id) : undefined);
+        return keys.every((key): key is string => key !== undefined) ? JSON.stringify(keys) : undefined;
+    }
 
     async executeBufferedToolCalls(
         turnId: string,
@@ -278,7 +293,11 @@ export class ToolExecutionDispatcher {
                 };
             } else {
                 this._toolCallCount += 1;
-                result = rejection!;
+                result = { ...rejection!, executionState: 'not_started', metadata: {
+                    ...rejection!.metadata, preflightOnly: true, batchPreflightRejected: true,
+                    hostBatchPreflightRejection: createHostBatchPreflightRejection(toolCall.id, toolCall.name,
+                        rejection!.metadata?.reason),
+                } };
             }
             this.config.events.toolExecutionStart(turnId, toolCall.id, toolCall.name, toolCall.input, { index: toolCall.index });
             toolResults.push(this.config.emitToolResult(turnId, toolCall, this.withHostRetrySafety(toolCall, result)));
@@ -747,14 +766,19 @@ export class ToolExecutionDispatcher {
                     toolCall,
                     { userInput: this.config.userInput },
                 );
-                if (canonical) return canonical;
+                if (canonical) {
+                    this.normalizedCallKeys.set(toolCall.id, canonical);
+                    return canonical;
+                }
             } catch {
                 // Canonicalization is an optimization over the execution-time
                 // validation gate. A broken optional seam must not execute a
                 // call under an invented key or bypass schema handling.
             }
         }
-        return normalizeRawToolCallKey(toolCall);
+        const key = normalizeRawToolCallKey(toolCall);
+        this.normalizedCallKeys.set(toolCall.id, key);
+        return key;
     }
 
     private classifyControlSnapshotSkip(

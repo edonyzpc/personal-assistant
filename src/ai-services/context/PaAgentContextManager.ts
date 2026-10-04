@@ -8,6 +8,7 @@ import type { PaAgentContextSummaries } from "./PaAgentContextSummaryTypes";
 import { projectPaAgentActionHistory, type PaAgentActionGroup } from "../pa-agent-action-history";
 import { createCooperativeTask } from '../cooperative-task';
 import { stringifyContextAsync } from './PaAgentContextSerialization';
+import type { ColdWritingVersion } from './PaAgentHistoryContextPlan';
 
 export interface PaAgentContextEnvelope {
     promptChars: number;
@@ -25,6 +26,12 @@ export interface PaAgentContextManagerInput {
     currentProtocol?: string;
     injectedContext?: PaAgentInjectedContext;
     summaries?: PaAgentContextSummaries;
+    coldWritingVersions?: ReadonlyMap<string, ColdWritingVersion>;
+    protectedWritingVersionIds?: ReadonlySet<string>;
+    /** A provider has rejected the preceding full request for context length. */
+    recoveryRequested?: boolean;
+    /** Soft recovery target derived from the actual rejected request, never admission. */
+    recoveryMaxPromptChars?: number;
     availableSkills: string;
     toolDefinitions: string;
     maxHistoryChars: number;
@@ -57,6 +64,7 @@ export interface PaAgentContextOutcome {
     toolResultsHardTruncated: number;
     budgetLimited: boolean;
     admission: "fit" | "local_overflow";
+    needsCompaction?: boolean;
 }
 
 export interface PaAgentContextProjection extends PaAgentContextParts {
@@ -163,27 +171,30 @@ export class PaAgentContextManager {
     private *forPromptSteps(input: PaAgentContextManagerInput): Generator<void | ContextMeasurement,
         PaAgentContextProjection, unknown> {
         const hygiene = yield* contextWork(this.hygiene.cleanSteps(input.transcript));
-        let micro = yield* contextWork(this.compactor.microCompactSteps(hygiene.transcript, {
-            maxObservationChars: input.maxObservationChars,
-            allowRecentHardTruncation: false,
-            summaries: input.summaries,
-            canonicalTranscript: hygiene.transcript,
-        }));
+        let micro = { transcript: hygiene.transcript };
+        if (input.summaries?.tools?.size) {
+            micro = yield* contextWork(this.compactor.microCompactSteps(hygiene.transcript, {
+                maxObservationChars: Number.POSITIVE_INFINITY,
+                summaries: input.summaries, canonicalTranscript: hygiene.transcript,
+            }));
+        }
         let historyBudget = input.maxHistoryChars;
-        let summaryBudget: number | undefined;
         let rebuilds = 0;
-        const projectHistory = () => this.projector.projectUserInputSteps({
+        const projectHistory = (full: boolean) => this.projector.projectUserInputSteps({
             prompt: input.prompt,
             chatHistory: input.chatHistory,
             hostContext: input.hostContext,
             runtimeInstruction: input.runtimeInstruction,
             currentProtocol: input.currentProtocol,
             injectedContext: input.injectedContext,
-            maxHistoryChars: historyBudget,
-            maxHistorySummaryChars: summaryBudget,
+            maxHistoryChars: full ? Number.POSITIVE_INFINITY : historyBudget,
             summaries: input.summaries,
+            coldWritingVersions: input.coldWritingVersions,
+            protectedWritingVersionIds: input.protectedWritingVersionIds,
         });
-        let projected = yield* contextWork(projectHistory());
+        // Keep accepted source-current summaries across requests. Measure their
+        // complete legal projection before applying any new pressure target.
+        let projected = yield* contextWork(projectHistory(true));
         let parts: PaAgentContextParts;
         const measure = function* (): Generator<ContextMeasurement, PaAgentContextBudgetSnapshot, unknown> {
             const measured = (yield { transcript: micro.transcript, projected }) as MeasuredContext;
@@ -196,79 +207,43 @@ export class PaAgentContextManager {
             sum + (message.role === "toolResult" && message.content.includeInNextPrompt
                 ? message.content.promptText.length : 0)
         ), 0);
-        const compactor = this.compactor;
-        const reduceTools = function* (maxChars: number, allowRecentHardTruncation: boolean): Generator<
-            void | ContextMeasurement, void, unknown> {
-            micro = yield* contextWork(compactor.microCompactSteps(micro.transcript, {
-                maxObservationChars: maxChars,
-                triggerRatio: 0,
-                targetRatio: 0,
-                allowRecentHardTruncation,
-                summaries: input.summaries,
-                canonicalTranscript: hygiene.transcript,
+        const exceedsEstimate = () => budget.maxInputTokens !== undefined
+            ? budget.estimatedPromptTokens > budget.maxInputTokens
+            : budget.promptChars > budget.maxPromptChars;
+        const recoveryTarget = input.recoveryRequested ? input.recoveryMaxPromptChars : undefined;
+        const exceedsRecoveryTarget = () => recoveryTarget !== undefined && budget.promptChars > recoveryTarget;
+        const pressure = input.recoveryRequested === true || exceedsEstimate();
+        if (pressure) {
+            // A smaller target asks the existing summarizer to choose a whole
+            // prefix. Failure to obtain a valid summary leaves full sources here.
+            const modelRatio = budget.maxInputTokens !== undefined && budget.estimatedPromptTokens > 0
+                ? budget.maxInputTokens / budget.estimatedPromptTokens
+                : budget.maxPromptChars / Math.max(1, budget.promptChars);
+            const availableRatio = recoveryTarget === undefined ? modelRatio
+                : Math.min(modelRatio, recoveryTarget / Math.max(1, budget.promptChars));
+            historyBudget = Math.max(0, Math.min(input.maxHistoryChars,
+                Math.floor(projected.history.text.length * Math.min(0.5, availableRatio * 0.8))));
+            micro = yield* contextWork(this.compactor.microCompactSteps(hygiene.transcript, {
+                maxObservationChars: input.maxObservationChars, triggerRatio: 0, targetRatio: 0,
+                summaries: input.summaries, canonicalTranscript: hygiene.transcript,
             }));
+            projected = yield* contextWork(projectHistory(false));
             rebuilds++;
             budget = yield* measure();
-        };
-        // The lane cap includes escaping and wrappers, not just raw observation text.
-        // Two passes are bounded; irreducible markers remain for final fail-closed admission.
-        for (let pass = 0; pass < 2 && budget.toolObservationChars > input.maxObservationChars; pass++) {
-            yield* reduceTools(Math.max(0, observationChars() - (budget.toolObservationChars - input.maxObservationChars)), false);
-        }
-        const excess = () => {
-            const charExcess = Math.max(0, budget.promptChars - budget.maxPromptChars);
-            if (budget.admissionBasis !== "estimated_tokens" || budget.maxInputTokens === undefined) return charExcess;
-            const tokenExcess = Math.max(0, budget.estimatedPromptTokens - budget.maxInputTokens);
-            const charsPerToken = budget.estimatedPromptTokens > 0
-                ? budget.promptChars / budget.estimatedPromptTokens : 1;
-            return Math.max(charExcess, Math.ceil(tokenExcess * charsPerToken));
-        };
-        if (excess() > 0) {
-            // One ordered stronger projection. Reuse clones, never rewrite the canonical inputs.
-            yield* reduceTools(Math.max(input.maxObservationChars, observationChars()), false);
-            if (excess() > 0) yield* reduceTools(Math.max(0, observationChars() - excess()), false);
-            if (excess() > 0 && projected.history.summaryChars > 0) {
-                summaryBudget = Math.max(0, projected.history.summaryChars - excess());
-                projected = yield* contextWork(projectHistory());
-                rebuilds++;
-                budget = yield* measure();
-            }
-            if (excess() > 0 && projected.history.summaryChars > 0) {
-                summaryBudget = 0;
-                projected = yield* contextWork(projectHistory());
-                rebuilds++;
-                budget = yield* measure();
-            }
-            if (excess() > 0 && projected.history.text.length > 0) {
-                summaryBudget = 0;
-                historyBudget = Math.max(0, projected.history.text.length - excess());
-                projected = yield* contextWork(projectHistory());
-                rebuilds++;
-                budget = yield* measure();
-            }
-            if (excess() > 0) yield* reduceTools(Math.max(0, observationChars() - excess()), false);
         }
         const finalToolResults = micro.transcript.filter((message) => message.role === "toolResult");
         const toolResultsCompacted = finalToolResults.filter((message) => message.content.metadata?.compacted === true).length;
         const toolResultsHardTruncated = finalToolResults.filter((message) => message.content.metadata?.contextBudgetTruncated === true).length;
-        const unverifiedToolReduction = finalToolResults.some((message) =>
-            message.content.metadata?.contextBudgetTruncated === true
-            || (message.content.metadata?.compacted === true
-                && message.content.metadata.contextSemanticSummaryUsed !== true
-                && message.content.metadata.contextLosslessEncodingUsed !== true));
+        const semanticReduction = (projected.history.semanticSummaryChars ?? 0) > 0
+            || finalToolResults.some(message => message.content.metadata?.contextSemanticSummaryUsed === true);
         const outcome: PaAgentContextOutcome = {
             historyCompressed: projected.history.historyCompressed,
             toolResultsCompacted,
             toolResultsHardTruncated,
-            budgetLimited: toolResultsHardTruncated > 0 || projected.history.omittedCount > 0
-                || projected.history.historyBudgetLimited === true,
-            // The legacy digest clips user text and can omit whole turns. It is
-            // never evidence that an earlier necessary constraint survived.
-            admission: projected.history.omittedCount === 0 && projected.history.summaryChars === 0
-                && !unverifiedToolReduction
-                && projected.history.historyBudgetLimited !== true
-                && !budget.configurationOverflow && excess() === 0
-                && budget.toolObservationChars <= input.maxObservationChars ? "fit" : "local_overflow",
+            budgetLimited: pressure,
+            needsCompaction: pressure && (exceedsEstimate() || (input.recoveryRequested === true
+                && (recoveryTarget === undefined ? !semanticReduction : exceedsRecoveryTarget()))),
+            admission: budget.configurationOverflow ? "local_overflow" : "fit",
         };
 
         return {
@@ -279,7 +254,8 @@ export class PaAgentContextManager {
             reducedToolMessageIds: finalToolResults.filter((message) =>
                 message.content.metadata?.compacted === true || message.content.metadata?.contextBudgetTruncated === true)
                 .map((message) => message.id),
-            sourceToolMessages: finalToolResults.filter(message => message.content.includeInNextPrompt),
+            sourceToolMessages: hygiene.transcript.filter((message): message is Extract<PaAgentMessage, { role: 'toolResult' }> =>
+                message.role === 'toolResult' && message.content.includeInNextPrompt),
             history: projected.history,
             diagnostics: {
                 type: "context_projection",

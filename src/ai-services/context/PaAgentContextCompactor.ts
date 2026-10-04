@@ -1,7 +1,8 @@
 import type { ChatMessage, PaAgentMessage } from "../chat-types";
 import { cloneTranscriptSteps, finishContextSteps } from "./clone-utils";
-import type { PaAgentContextSummaries } from "./PaAgentContextSummaryTypes";
+import { isCurrentToolSummary, type PaAgentContextSummaries } from "./PaAgentContextSummaryTypes";
 import { encodeToolResultTextSteps } from './PaAgentContextTextEncoding';
+import { summarizableReadOnlyResultIds } from '../pa-agent-action-history';
 
 export interface PaAgentMicroCompactionOptions {
     maxObservationChars: number;
@@ -11,7 +12,7 @@ export interface PaAgentMicroCompactionOptions {
     protectedRecentTurns?: number;
     /** Compatibility option: tool bodies are never hard-truncated. */
     allowRecentHardTruncation?: boolean;
-    /** Source-bound summaries do not authorize deleting facts from a tool body. */
+    /** Accepted summaries may replace older successful read-only observations. */
     summaries?: PaAgentContextSummaries;
     /** Compatibility source snapshot; reversible encoding preserves the supplied text exactly. */
     canonicalTranscript?: readonly PaAgentMessage[];
@@ -36,6 +37,24 @@ const DEFAULT_TARGET_RATIO = 0.55;
 const DEFAULT_PROTECTED_RECENT_TURNS = 2;
 const DEFAULT_RECENT_HISTORY_TURNS = 10;
 
+/** Preparation receipts, effect facts, unresolved observations and recent cycles remain exact. */
+export function getPaAgentToolSummaryCandidates(transcript: readonly PaAgentMessage[], protectedRecentTurns = 2):
+    Array<Extract<PaAgentMessage, { role: 'toolResult' }>> {
+    const readonlyIds = summarizableReadOnlyResultIds(transcript);
+    const cycles = new Map<string, number>();
+    let cycle = 0;
+    for (const message of transcript) {
+        if (message.role === 'assistant') {
+            for (const part of message.content) if (part.type === 'toolCall' && part.id) cycles.set(part.id, cycle);
+            cycle++;
+        }
+    }
+    const protectedStart = Math.max(0, cycle - protectedRecentTurns);
+    return transcript.filter((message): message is Extract<PaAgentMessage, { role: 'toolResult' }> =>
+        message.role === 'toolResult' && readonlyIds.has(message.id) && message.toolName !== 'get_writing_context'
+        && (cycles.get(message.toolCallId) ?? cycle) < protectedStart);
+}
+
 export class PaAgentContextCompactor {
     microCompact(
         transcript: readonly PaAgentMessage[],
@@ -59,7 +78,7 @@ export class PaAgentContextCompactor {
                 originalObservationChars += message.content.promptText.length;
             }
         }
-        if (originalObservationChars <= maxObservationChars * triggerRatio
+        if (!options.summaries?.tools?.size && originalObservationChars <= maxObservationChars * triggerRatio
             && originalObservationChars <= maxObservationChars) {
             return {
                 transcript: yield* cloneTranscriptSteps(transcript),
@@ -86,6 +105,20 @@ export class PaAgentContextCompactor {
         let currentChars = originalObservationChars;
         let compactedToolResults = 0;
         const compacted = yield* cloneTranscriptSteps(transcript);
+        const summaryCandidates = new Set(getPaAgentToolSummaryCandidates(transcript, protectedRecentTurns).map(message => message.id));
+        for (const [index, message] of compacted.entries()) {
+            yield;
+            if (message.role !== 'toolResult' || !summaryCandidates.has(message.id)) continue;
+            const summary = options.summaries?.tools?.get(message.id);
+            if (!summary?.text.trim() || !isCurrentToolSummary(summary, message)) continue;
+            const replacement = `<tool_observation_summary context_only="true">\n${summary.text.replace(/<\/tool_observation_summary/gi, '<\\/tool_observation_summary')}\n</tool_observation_summary>`;
+            if (replacement.length >= message.content.promptText.length) continue;
+            currentChars += replacement.length - message.content.promptText.length;
+            compactedToolResults++;
+            compacted[index] = { ...message, content: { ...message.content, promptText: replacement,
+                metadata: { ...message.content.metadata, compacted: true, contextSemanticSummaryUsed: true,
+                    originalPromptTextLength: originalToolResultLength(message) } } };
+        }
         // Prefer older results. Recent evidence is also safe to encode when it
         // cannot fit or the Manager requests a stronger envelope projection.
         for (const recentPass of [false, true]) {
@@ -94,7 +127,8 @@ export class PaAgentContextCompactor {
                 if (currentChars <= maxObservationChars * targetRatio) break;
                 if (message.role !== 'toolResult' || isRecent(message) !== recentPass
                     || !message.content.includeInNextPrompt || !message.content.promptText
-                    || message.content.metadata?.contextLosslessEncodingUsed === true) continue;
+                    || message.content.metadata?.contextLosslessEncodingUsed === true
+                    || message.content.metadata?.contextSemanticSummaryUsed === true) continue;
                 if (recentPass && currentChars <= maxObservationChars && triggerRatio !== 0) continue;
                 const replacement = yield* encodeToolResultTextSteps(message.content.promptText);
                 if (!replacement) continue;

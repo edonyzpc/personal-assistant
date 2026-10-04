@@ -1342,7 +1342,6 @@ function unlockVerificationOnlyWeb(
             ? { runtimeInstruction: snapshot.runtimeInstruction }
             : {}),
         ...(snapshot.toolMode ? { toolMode: snapshot.toolMode } : {}),
-        budgetState: snapshot.budgetState,
         diagnostics: [
             ...snapshot.diagnostics,
             {
@@ -1369,7 +1368,6 @@ function unlockPendingFirstStage(
         ...(blockedToolNames.size > 0 ? { blockedToolNames } : {}),
         blockedReasons,
         runtimeInstruction,
-        budgetState: base.budgetState,
         diagnostics: [
             ...base.diagnostics,
             {
@@ -1401,7 +1399,6 @@ function lockStageAfterUse(
         },
         runtimeInstruction,
         ...(base.toolMode ? { toolMode: base.toolMode } : {}),
-        budgetState: base.budgetState,
         diagnostics: [
             ...base.diagnostics,
             {

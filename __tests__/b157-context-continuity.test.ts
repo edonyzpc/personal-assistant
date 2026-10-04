@@ -332,17 +332,20 @@ describe('B-157 continuity regressions', () => {
         expect(projected.history.historyBudgetLimited).toBe(true);
     });
 
-    it('marks an overflowing protected result for semantic preparation even with zero omitted messages', () => {
+    it('keeps a full protected result when only the history lane target is exceeded', () => {
         const history = resultHistory();
         const result = history[1].canonicalTurn!.messages[2] as Extract<PaAgentMessage, { role: 'toolResult' }>;
         result.content.promptText = `Begin ${'Long result '.repeat(700)} CONTRACT_ID_734 end`;
+        const original = JSON.stringify(history);
         const projected = new PaAgentContextManager().forPrompt({ prompt: 'Explain', transcript: [], turnIndex: 1,
             chatHistory: history, maxHistoryChars: 1200, maxPromptChars: 60000, maxObservationChars: 1000,
             availableSkills: 'None', toolDefinitions: 'None', formatToolObservations });
         expect(projected.history.omittedCount).toBe(0);
-        expect(projected.history.historyBudgetLimited).toBe(true);
-        expect(projected.outcome.admission).toBe('local_overflow');
-        expect(projected.history.text).toContain('CONTRACT_ID_734');
+        expect(projected.history.text.length).toBeGreaterThan(1200);
+        expect(projected.outcome).toMatchObject({ admission: 'fit', budgetLimited: false, needsCompaction: false });
+        expect(projected.history.text).toContain(result.content.promptText);
+        expect(projected.history.sourceMessages).toEqual(history);
+        expect(JSON.stringify(history)).toBe(original);
     });
     it('rejects phase/owner/receipt tampering and clones finite state without shared references', () => {
         const state = acceptedState();
@@ -421,15 +424,24 @@ describe('B-157 continuity regressions', () => {
         for (let index = 0; index < 14; index++) history.push(
             { role: 'user', content: `Question ${index}: ${Array.from({ length: 80 }, (_, n) => `${index}-${n}`).join(' ')}` },
             { role: 'assistant', content: `Answer ${index}: ${Array.from({ length: 80 }, (_, n) => `${n}:${index}`).join(' ')}` });
+        const original = JSON.stringify(history);
         const payloads: string[] = [];
         const summarizer = new PaAgentContextSummarizer();
         try {
             const summary = await summarizer.prepareHistory({ history, historyBudgetChars: 3000,
                 invoke: async request => {
                     payloads.push(JSON.stringify(request.messages));
-                    const source = JSON.parse(request.messages[1].content).sourceMessages[0];
+                    const free = JSON.parse(request.messages[1].content);
+                    const source = free.sourceMessages[0];
+                    const facts = [...(free.previousSummary?.facts ?? [])];
+                    if (free.sourceMessages.some((item: { index: number; content: string }) =>
+                        item.index === 2 && item.content.includes('CONTRACT_ID_734'))
+                        && !facts.some(item => item.text.includes('CONTRACT_ID_734'))) {
+                        facts.push({ text: 'Contract number CONTRACT_ID_734', sourceMessages: [2] });
+                    }
+                    if (facts.length === 0) facts.push({ text: 'Ordinary background question.', sourceMessages: [source.index] });
                     return { content: JSON.stringify({ goals: [], constraints: [], decisions: [], completed: [],
-                        open_questions: [], facts: [{ text: 'Ordinary background question.', sourceMessages: [source.index] }] }) };
+                        open_questions: [], facts }) };
                 } });
             expect(summary).toBeDefined();
             expect(payloads.length).toBeGreaterThan(0);
@@ -439,12 +451,14 @@ describe('B-157 continuity regressions', () => {
             const actionReference = JSON.parse(actualMessages[2].content);
             expect(actionReference).toMatchObject({ sourceKind: 'retained_action_facts', purpose: 'read_only_reference' });
             expect(actionReference.retainedActionFacts).toEqual([expect.objectContaining({ index: 2, actionResults: [expect.objectContaining({
-                callId: 'call-1', id: 'result-1', outcome: 'success', text: 'Contract number CONTRACT_ID_734',
+                callId: 'call-1', id: 'result-1', outcome: 'success', toolName: 'query_notes', isError: false,
             })] })]);
+            expect(actionReference.retainedActionFacts[0].actionResults[0]).not.toHaveProperty('text');
+            expect(JSON.stringify(actionReference)).not.toContain('CONTRACT_ID_734');
             expect(freeSources).not.toHaveProperty('retainedActionFacts');
             expect(freeSources.sourceMessages.find((source: { index: number }) => source.index === 2).content)
-                .toBe(history[1].content);
-            expect(JSON.stringify(freeSources)).not.toContain('Contract number CONTRACT_ID_734');
+                .toContain(history[1].content);
+            expect(JSON.stringify(freeSources)).toContain('Contract number CONTRACT_ID_734');
             const combined = JSON.parse(summary!.text);
             expect(combined.completed).toEqual([]);
             expect(combined.facts).toEqual(expect.arrayContaining([expect.objectContaining({
@@ -455,6 +469,7 @@ describe('B-157 continuity regressions', () => {
             expect(final.history.text).toContain('CONTRACT_ID_734');
             expect(summary!.sourceMessages[0].content).toContain('Find the contract number');
             expect(final.history.historyBudgetLimited).not.toBe(true);
+            expect(JSON.stringify(history)).toBe(original);
         } finally { summarizer.dispose(); }
     });
 });

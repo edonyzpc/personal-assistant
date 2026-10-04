@@ -347,7 +347,7 @@ export function formatRuntimeWarningType(type: string): string {
     if (type === 'provider_admission_rejected') return ft('plugin.chat.formatter.warningContextUnavailable');
     if (type === 'provider_tool_calls_missing') return ft('plugin.chat.formatter.warningToolRequestIncomplete');
     if (type === 'assistant_source_changed') return ft('plugin.chat.writing.sourceChangedHint');
-    if (type === 'context_local_overflow') return ft('plugin.chat.formatter.warningContextTooLong');
+    if (type === 'context_local_overflow' || type === 'provider_context_overflow') return ft('plugin.chat.formatter.warningContextTooLong');
     if (type === 'required_capability_missing') return ft('plugin.chat.formatter.warningIncomplete');
     if (type === 'provider_partial_error') return ft('plugin.chat.formatter.warningStoppedEarly');
     if (type === 'assistant_idle_timeout') return ft('plugin.chat.formatter.warningIdleTimeout');
@@ -358,12 +358,14 @@ export function formatRuntimeWarningType(type: string): string {
 
 export function formatRuntimeWarningLabel(warning: ChatRuntimeWarning): string {
     if (warning.type === 'provider_admission_rejected' || warning.type === 'provider_tool_calls_missing') return formatRuntimeWarningType(warning.type);
-    if (warning.type === 'assistant_empty_response' || warning.type === 'context_local_overflow') return formatRuntimeWarningType(warning.type);
+    if (warning.type === 'assistant_empty_response' || warning.type === 'context_local_overflow'
+        || warning.type === 'provider_context_overflow') return formatRuntimeWarningType(warning.type);
     return warning.message ?? formatRuntimeWarningType(warning.type);
 }
 
 export function formatRuntimeWarningDetail(warning: ChatRuntimeWarning): string | undefined {
     if (warning.type === 'context_local_overflow') return ft('plugin.chat.formatter.warningContextTooLongDetail');
+    if (warning.type === 'provider_context_overflow') return ft('plugin.chat.formatter.warningProviderContextTooLongDetail');
     if (warning.type === 'assistant_empty_response') return ft('plugin.chat.formatter.warningNoAnswer');
     return warning.detail ?? warning.capability;
 }
@@ -372,7 +374,7 @@ export function formatCanonicalTerminalSummary(
     status: string | undefined,
     warnings: ChatRuntimeWarning[] = [],
 ): string {
-    if (warnings.some((warning) => warning.type === 'context_local_overflow')) {
+    if (warnings.some((warning) => warning.type === 'context_local_overflow' || warning.type === 'provider_context_overflow')) {
         return ft('plugin.chat.formatter.warningContextTooLong');
     }
     if (status === 'needs_user') return ft('plugin.chat.formatter.summaryNeedsUser');

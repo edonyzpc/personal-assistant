@@ -16,7 +16,7 @@ import {
 } from "../src/ai-services/pa-agent-loop";
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
 import { PaAgentContextOverflowError } from "../src/ai-services/context";
-import { createRequiredCapabilityHostPolicy } from "../src/ai-services/pa-agent-required-capability-policy";
+import { createPaAgentHostPolicy } from "../src/ai-services/pa-agent-host-policy";
 import type { AgentEvent, PaAgentMessage } from "../src/ai-services/chat-types";
 import { PageletLeadDrivenPolicy } from "../src/pagelet/agent/lead-driven-policy";
 import { ProviderAdmissionError } from "../src/ai-services/provider-admission-error";
@@ -24,8 +24,8 @@ import { ProviderAdmissionError } from "../src/ai-services/provider-admission-er
 describe("PaAgentLoop", () => {
     it.each([
         { changed: true, expectedStatus: "completed", expectedTurns: 8 },
-        { changed: false, expectedStatus: "incomplete", expectedTurns: 9 },
-    ] as const)("counts provider failures only within the current read-evidence episode (changed: $changed)", async ({
+        { changed: false, expectedStatus: "completed", expectedTurns: 10 },
+    ] as const)("resets consecutive provider failures after successful turns regardless of read-evidence changes (changed: $changed)", async ({
         changed, expectedStatus, expectedTurns,
     }) => {
         let modelTurns = 0;
@@ -69,14 +69,10 @@ describe("PaAgentLoop", () => {
                 : { action: "stop", status: "completed", reason: "text_present" } },
         }).run();
 
-        expect(result.turns.map(turn => turn.progressEpoch)).toEqual(changed
-            ? [0, 1, 1, 2, 2, 3, 3, 3]
-            : [0, 1, 1, 1, 1, 1, 1, 1, 1]);
         expect(result.status).toBe(expectedStatus);
         expect(result.turns).toHaveLength(expectedTurns);
         expect(result.turns.filter(turn => turn.status === "error")).toHaveLength(changed ? 4 : 5);
         expect(reads).toBe(changed ? 3 : 4);
-        if (!changed) expect(result.endPayload).toMatchObject({ reason: "provider_no_progress" });
     });
 
     it('uses an explicit incomplete report for task status and its user-facing answer', async () => {
@@ -650,11 +646,11 @@ describe("PaAgentLoop", () => {
         }
     });
 
-    it("runs the reserved final-answer turn with the production Required Capability policy", async () => {
+    it("runs the reserved final-answer turn with the production Host policy", async () => {
         jest.useFakeTimers();
         try {
             const modelInputs: PaAgentModelInput[] = [];
-            const policy = createRequiredCapabilityHostPolicy();
+            const policy = createPaAgentHostPolicy();
             const loop = new PaAgentLoop({
                 runId: "run-production-policy-provider-deadline",
                 userInput: "Use Memory to answer this.",
@@ -692,7 +688,7 @@ describe("PaAgentLoop", () => {
                         promptText: "Memory observation",
                     }),
                 },
-                hostPolicy: policy.hostPolicy,
+                hostPolicy: policy,
                 maxWallClockMs: 100,
                 finalizationReserveMs: 30,
                 createId: createDeterministicId,
@@ -722,7 +718,7 @@ describe("PaAgentLoop", () => {
         jest.useFakeTimers();
         try {
             const modelInputs: PaAgentModelInput[] = [];
-            const policy = createRequiredCapabilityHostPolicy();
+            const policy = createPaAgentHostPolicy();
             const loop = new PaAgentLoop({
                 runId: "run-production-policy-missing-at-reserve",
                 userInput: "Use Memory to answer this.",
@@ -742,7 +738,7 @@ describe("PaAgentLoop", () => {
                         yield { type: "text_delta", text: "Answer without Memory." } as const;
                     },
                 },
-                hostPolicy: policy.hostPolicy,
+                hostPolicy: policy,
                 maxWallClockMs: 100,
                 finalizationReserveMs: 30,
                 createId: createDeterministicId,
@@ -767,7 +763,7 @@ describe("PaAgentLoop", () => {
         try {
             const modelInputs: PaAgentModelInput[] = [];
             const executedTools: string[] = [];
-            const policy = createRequiredCapabilityHostPolicy();
+            const policy = createPaAgentHostPolicy();
             const loop = new PaAgentLoop({
                 runId: "run-production-policy-partial-tools-at-reserve",
                 userInput: "Compare my notes with the latest web information.",
@@ -813,7 +809,7 @@ describe("PaAgentLoop", () => {
                     },
                 },
                 toolExecutionMode: "parallel",
-                hostPolicy: policy.hostPolicy,
+                hostPolicy: policy,
                 maxWallClockMs: 100,
                 finalizationReserveMs: 30,
                 createId: createDeterministicId,
@@ -863,7 +859,7 @@ describe("PaAgentLoop", () => {
                     }), { once: true });
                 });
             });
-            const policy = createRequiredCapabilityHostPolicy();
+            const policy = createPaAgentHostPolicy();
             const loop = new PaAgentLoop({
                 runId: "run-memory-revoked-in-reserved-preparation",
                 userInput: "Use Memory to answer this.",
@@ -885,7 +881,6 @@ describe("PaAgentLoop", () => {
                             },
                         };
                     });
-                    policy.synchronizeProjectedTranscript(transcript);
                     return { ...input, transcript };
                 },
                 model: {
@@ -916,7 +911,7 @@ describe("PaAgentLoop", () => {
                 },
                 toolExecutor: { execute },
                 toolExecutionMode: "parallel",
-                hostPolicy: policy.hostPolicy,
+                hostPolicy: policy,
                 maxWallClockMs: 100,
                 finalizationReserveMs: 30,
                 createId: createDeterministicId,
@@ -962,7 +957,7 @@ describe("PaAgentLoop", () => {
                 memoryEvidenceState: "unavailable",
             },
         }));
-        const policy = createRequiredCapabilityHostPolicy();
+        const policy = createPaAgentHostPolicy();
         const loop = new PaAgentLoop({
             runId: "run-required-memory-unavailable",
             userInput: "Use Memory to answer this.",
@@ -983,7 +978,7 @@ describe("PaAgentLoop", () => {
                 },
             },
             toolExecutor: { execute },
-            hostPolicy: policy.hostPolicy,
+            hostPolicy: policy,
             createId: createDeterministicId,
         });
 
@@ -992,14 +987,14 @@ describe("PaAgentLoop", () => {
         expect(execute).toHaveBeenCalledTimes(1);
         expect(modelInputs.map((input) => input.toolMode)).toEqual([
             undefined,
-            "normal",
+            undefined,
         ]);
         expect(result.status).toBe("completed");
         expect(result.turns[0]?.toolResults[0]?.content.metadata?.memoryEvidenceState).toBe("unavailable");
         expect(result.endPayload?.warnings).toBeUndefined();
     });
 
-    it("counts a required Memory none result as a completed search without repeating it", async () => {
+    it("lets the Agent answer from a no-match observation without repeating the search", async () => {
         const modelInputs: PaAgentModelInput[] = [];
         const execute = jest.fn(async () => ({
             outcome: "success" as const,
@@ -1008,7 +1003,7 @@ describe("PaAgentLoop", () => {
                 memoryEvidenceState: "none",
             },
         }));
-        const policy = createRequiredCapabilityHostPolicy();
+        const policy = createPaAgentHostPolicy();
         const loop = new PaAgentLoop({
             runId: "run-required-memory-none",
             userInput: "Use Memory to answer this.",
@@ -1029,7 +1024,7 @@ describe("PaAgentLoop", () => {
                 },
             },
             toolExecutor: { execute },
-            hostPolicy: policy.hostPolicy,
+            hostPolicy: policy,
             createId: createDeterministicId,
         });
 
@@ -1038,13 +1033,13 @@ describe("PaAgentLoop", () => {
         expect(execute).toHaveBeenCalledTimes(1);
         expect(modelInputs.map((input) => input.toolMode)).toEqual([
             undefined,
-            "normal",
+            undefined,
         ]);
         expect(result.status).toBe("completed");
         expect(result.endPayload).not.toHaveProperty("warnings");
     });
 
-    it("stops after one empty Loop-reserved turn under the production Required Capability policy", async () => {
+    it("stops after one empty Loop-reserved turn under the production Host policy", async () => {
         jest.useFakeTimers();
         try {
             const modelInputs: PaAgentModelInput[] = [];
@@ -1053,7 +1048,7 @@ describe("PaAgentLoop", () => {
                 outcome: "success" as const,
                 promptText: "Memory observation",
             }));
-            const policy = createRequiredCapabilityHostPolicy();
+            const policy = createPaAgentHostPolicy();
             const loop = new PaAgentLoop({
                 runId: "run-production-policy-empty-reserve",
                 userInput: "Use Memory to answer this.",
@@ -1084,7 +1079,7 @@ describe("PaAgentLoop", () => {
                     },
                 },
                 toolExecutor: { execute },
-                hostPolicy: policy.hostPolicy,
+                hostPolicy: policy,
                 maxWallClockMs: 100,
                 finalizationReserveMs: 30,
                 onFinalizationReserve: (event) => reserveEvents.push(event),
@@ -2480,7 +2475,7 @@ describe("PaAgentLoop", () => {
         });
     });
 
-    it("creates semantic-first and narrowed-required initial control snapshots", () => {
+    it("keeps initial tool exposure within explicit source constraints", () => {
         const semanticFirst = createInitialAgentControlSnapshot({
             availableSemanticToolNames: new Set(["search_memory", "webSearch", "get_current_note_context"]),
         });
@@ -2493,17 +2488,6 @@ describe("PaAgentLoop", () => {
             "search_memory",
             "webSearch",
         ]);
-
-        const narrowedRequired = createInitialAgentControlSnapshot({
-            availableSemanticToolNames: new Set(["search_memory", "webSearch", "get_current_note_context"]),
-            availableMetaToolNames: new Set(["load_skill"]),
-            requiredToolNames: new Set(["webSearch"]),
-        });
-        expect(narrowedRequired).toMatchObject({
-            exposureMode: "narrowed-required",
-            sourceScope: "web",
-        });
-        expect([...narrowedRequired.allowedToolNames!].sort()).toEqual(["load_skill", "webSearch"]);
 
         const notesOnly = createInitialAgentControlSnapshot({
             availableSemanticToolNames: new Set(["search_memory", "webSearch", "get_current_note_context"]),
@@ -2520,20 +2504,7 @@ describe("PaAgentLoop", () => {
         expect([...notesOnly.allowedToolNames!].sort()).toEqual(["search_memory"]);
         expect([...notesOnly.blockedToolNames!].sort()).toEqual(["get_current_note_context", "webSearch"]);
 
-        const requiredSourceBlocked = createInitialAgentControlSnapshot({
-            availableSemanticToolNames: new Set(["search_memory", "get_current_note_context"]),
-            availableMetaToolNames: new Set(["load_skill"]),
-            requiredToolNames: new Set(["webSearch"]),
-        });
-        expect(requiredSourceBlocked).toMatchObject({
-            exposureMode: "semantic-first",
-            sourceScope: "mixed",
-        });
-        expect([...requiredSourceBlocked.allowedToolNames!].sort()).toEqual([
-            "get_current_note_context",
-            "load_skill",
-            "search_memory",
-        ]);
+
     });
 
     it("turns no-first-chunk idle into incomplete without an empty answer", async () => {
@@ -2647,12 +2618,12 @@ describe("PaAgentLoop", () => {
         expect(result.turns[0].metrics.some(metric => metric.type === "provider_transport_end")).toBe(false);
     });
 
-    it.each([false, true])("uses one bounded finalization for blank text after an observation (still blank: %s)", async (stillBlank) => {
-        const policy = createRequiredCapabilityHostPolicy();
+    it.each([false, true])("corrects blank text once after an observation without narrowing tool access (still blank: %s)", async (stillBlank) => {
+        const policy = createPaAgentHostPolicy();
         const inputs: PaAgentModelInput[] = [];
         const answer = " \n  Exact answer.\n";
         const loop = new PaAgentLoop({ runId: "blank-after-observation", userInput: "Answer from context",
-            hostPolicy: policy.hostPolicy, toolExecutor: { execute: async () => ({ outcome: "success", promptText: "Observed fact" }) },
+            hostPolicy: policy, toolExecutor: { execute: async () => ({ outcome: "success", promptText: "Observed fact" }) },
             model: { stream: async function* (input) {
                 inputs.push(input);
                 if (input.turnIndex === 0) yield { type: "toolcall_delta", id: "read", name: "read_note", input: {}, index: 0 };
@@ -2661,7 +2632,8 @@ describe("PaAgentLoop", () => {
         });
         const result = await loop.run();
         expect(inputs).toHaveLength(3);
-        expect(inputs[2].toolMode).toBe("final_answer_only");
+        expect(inputs[2].toolMode).toBeUndefined();
+        expect(inputs[2].runtimeInstruction).toContain("no answer or tool call");
         expect(result.status).toBe(stillBlank ? "incomplete" : "completed");
         expect(result.committedFinalText).toBe(stillBlank ? "" : answer);
     });

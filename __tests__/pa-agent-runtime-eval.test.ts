@@ -99,7 +99,12 @@ function replyFor(evalCase: PaRuntimeEvalCase, index: number, arm: "main" | "no_
     ] };
     if (evalCase.offline === "recovery") {
         if (arm === "no_progress") {
-            if (index < 6) return { tools: [{ name: "search_vault_snippets", input: { query: "jay same", limit: 5 } }] };
+            // The scripted Agent retries once, then reports its task outcome.
+            // Read-only failures are observations, not Host judgments of task progress.
+            if (index < 2) return { tools: [{ name: "search_vault_snippets", input: { query: "jay same", limit: 5 } }] };
+            return { tools: [{ name: "report_task_incomplete", input: {
+                answer: "两次搜索均不可用，尚未取得松鸦项目的审批依据，无法核实；未执行写入动作。",
+            } }] };
         } else if (index < 7) {
             return index % 2 === 0
                 ? { tools: [{ name: "search_vault_snippets", input: { query: `jay failure ${index}`, limit: 5 } }] }
@@ -651,7 +656,7 @@ describe("B-149 runtime task baseline", () => {
                 requests.filter(request => request.caseId === evalCase.id && request.arm === "main").map(request => request.body));
         });
 
-        it("runs E-10 without new evidence", async () => {
+        it("runs E-10 with an explicit incomplete report after failed reads", async () => {
             await runRecoveryArm("no_progress", result => { probes.e10NoProgress = result; });
         });
 
@@ -721,10 +726,25 @@ describe("B-149 runtime task baseline", () => {
                 status: "completed",
                 sourcePaths: ["synthetic/jay-approval.md", "synthetic/jay-revision.md", "synthetic/jay-confirmation.md"],
         });
-        expect((probes.e10NoProgress as { terminalStatus: string; toolResults: Array<{ isError: boolean }> }))
-            .toMatchObject({ terminalStatus: "incomplete", toolResults: [
-                { isError: true }, { isError: true }, { isError: true }, { isError: true },
-            ] });
+        const failedRecovery = probes.e10NoProgress as Awaited<ReturnType<typeof runPaRuntimeEvalCase>>;
+        expect(failedRecovery).toMatchObject({ status: "incomplete", terminalStatus: "incomplete",
+            sourcePaths: [], sourceUrls: [],
+            answer: "两次搜索均不可用，尚未取得松鸦项目的审批依据，无法核实；未执行写入动作。",
+            toolResults: [
+                { name: "search_vault_snippets", isError: true, promptText: expect.stringContaining('"failureReason": "adapter_error"') },
+                { name: "search_vault_snippets", isError: true, promptText: expect.stringContaining('"failureReason": "adapter_error"') },
+            ],
+        });
+        expect(failedRecovery.answer).not.toMatch(/JAY_NEW_2[345]/);
+        expect(failedRecovery.sourceAssertions).toHaveLength(3);
+        expect(failedRecovery.toolCalls.map(call => call.name)).toEqual([
+            "search_vault_snippets", "search_vault_snippets",
+        ]);
+        const failedRecoveryRequests = requests.filter(request => request.caseId === "E-10" && request.arm === "no_progress");
+        expect(failedRecoveryRequests).toHaveLength(3);
+        expect(failedRecoveryRequests.at(-1)?.body.tools).toEqual(expect.arrayContaining([
+            expect.objectContaining({ function: expect.objectContaining({ name: "report_task_incomplete" }) }),
+        ]));
         expect(probes.e09).toMatchObject({ sdkHasBothCanonicalInputs: true, sdkHasPairedToolMessages: true });
         expect(probes.e11).toMatchObject({ enteredBeforeTimeout: true, cancelSettledBeforeRelease: true,
             secondLeaseAvailableBeforeRelease: true, requestsAfterLateRelease: 0,

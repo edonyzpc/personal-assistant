@@ -68,6 +68,8 @@ export interface StreamLLMOptions {
     writingContext?: import('./chat-types').ChatWritingContext;
     writingMaterialContext?: import('./chat-types').ChatWritingMaterialContext;
     writingContextHost?: import('./pa-agent-runtime').PaAgentRunOptions['writingContextHost'];
+    writingHistoryHost?: import('./pa-agent-runtime').PaAgentRunOptions['writingHistoryHost'];
+    imageStatus?: import('./pa-agent-runtime').PaAgentRunOptions['imageStatus'];
     /** Explicit compatibility candidate; no default protocol switch. */
     writingOutputProtocol?: 'native';
     memoryMode?: MemoryMode;
@@ -343,6 +345,8 @@ export class ChatService {
                 writingContext: options.writingContext,
                 writingMaterialContext: options.writingMaterialContext,
                 writingContextHost: options.writingContextHost,
+                writingHistoryHost: options.writingHistoryHost,
+                imageStatus: options.imageStatus,
                 writingOutputProtocol: options.writingOutputProtocol,
                 isCurrent: () => contextEpoch === this.contextEpoch && imageModelKey === chatImageModelKey(this.host.settings),
                 imageCapability: {

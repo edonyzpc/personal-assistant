@@ -48,7 +48,8 @@ describe('B-157 current request and action context assembly', () => {
             expect(projection.currentContext).not.toContain(currentPrompt);
             expect(projection.currentInput.endsWith(currentPrompt)).toBe(true);
             const projectedHistory = variant === 'fallback'
-                ? { ...projection.history, sourceMessages: projection.history.sourceMessages, historyCompressed: true }
+                ? { ...projection.history, sourceMessages: projection.history.sourceMessages, historyCompressed: true,
+                    entries: [{ kind: 'summary' as const, text: projection.history.text, hasActionHistory: true }] }
                 : projection.history;
             const image = variant === 'multimodal' ? new HumanMessage({ content: [
                 { type: 'text', text: projection.input },

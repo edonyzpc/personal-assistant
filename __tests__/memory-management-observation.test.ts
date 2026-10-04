@@ -621,17 +621,22 @@ describe("B-140 T-08 Memory management observations", () => {
         const summaryPayloads: Array<{ messages: Array<{ role: string; content: string }> }> = [];
         const summarizer = new PaAgentContextSummarizer();
         const summary = await summarizer.prepareHistory({
-            history: summaryHistory,
+            history: [...summaryHistory, { role: 'user', content: 'Keep that evidence for the next question.' },
+                { role: 'assistant', content: 'Understood.' }],
             historyBudgetChars: 5_000,
             invoke: async payload => {
                 summaryPayloads.push(payload);
+                const sources = JSON.parse(payload.messages[1].content).sourceMessages as Array<{ index: number; content: unknown }>;
+                const supportedIndexes = sources.filter(source => JSON.stringify(source.content).includes('BANANA'))
+                    .map(source => source.index);
                 return JSON.stringify({
                     goals: [],
                     constraints: [],
                     decisions: [],
                     completed: [],
                     open_questions: [],
-                    facts: [{ text: "BANANA remains permitted.", sourceMessages: [1] }],
+                    facts: supportedIndexes.length
+                        ? [{ text: "BANANA remains permitted.", sourceMessages: supportedIndexes }] : [],
                 });
             },
         });

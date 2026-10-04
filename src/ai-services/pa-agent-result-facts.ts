@@ -43,7 +43,7 @@ export const PA_AGENT_ACTION_STATE_CONTEXT_RULES: readonly string[] = [
  * Summarization retains historical facts; it does not plan current executions. */
 export const PA_AGENT_EFFECT_RECOVERY_RULES: readonly string[] = [
     'For effectful actions, interpret current tool executionState/recovery and historical owner actionStates together. acceptance_unknown, partially_succeeded, partial, unknown, unavailable or lost does not establish no effects. Verify the original operation only through currently bound, authorized capabilities; preserve accepted results and the original plan, and continue only parts verified as remaining. If verification is unavailable, explain the uncertainty and verification limit, then stop.',
-    'An uncertain operation must not be retried or replaced by resending, changing its description, refreshing, or starting a new run. Do not recommend these actions, including a conditional retry after waiting or finding no output. needs_user means a decision or missing evidence is needed; it is not authority to submit again. Correct input only when trusted not_started facts explicitly allow correct_input.',
+    'An uncertain operation must not be resubmitted or replaced by changing its description or starting a new run. Read-only status refresh of the original operation ID is allowed through a currently bound, authorized query tool; it must not submit or resume the operation. Do not recommend resubmission, including a conditional retry after waiting or finding no output. needs_user means a decision or missing evidence is needed, not authority to submit again. Correct input only when trusted not_started facts explicitly allow correct_input.',
 ];
 
 export type PaAgentResultFact =

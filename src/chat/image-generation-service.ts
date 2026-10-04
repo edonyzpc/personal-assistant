@@ -10,6 +10,9 @@ import { cloneImageRef, type ImageRef, type ImageSyncReceipt } from './image-typ
 import type { GeneratedImageVersion, ImageGenerationPromptOrigin, ImageGenerationTask } from './image-generation-types';
 import { ImagePreacceptError } from './image-generation-types';
 import { normalizeFeaturedImageFolderPath } from '../ai-services/featured-image-path';
+import { throwIfAborted } from '../ai-services/chat-utils';
+import type { GetImageStatusInput, ImageStatusObservation, ImageStatusReadScope,
+    ImageStatusBlockingReason, ImageStatusRefreshReason } from './image-generation-status';
 
 const MAX_RESULT_BYTES = 20 * 1024 * 1024;
 const POLL_DELAY_MS = 3_000;
@@ -51,6 +54,26 @@ interface ImageGenerationServiceOptions {
 
 function identity(): string {
     return globalThis.crypto.randomUUID().replace(/-/g, '');
+}
+
+function sameStatusQueryTarget(previous: ImageGenerationTask, current: ImageGenerationTask): boolean {
+    return previous.operationId === current.operationId && previous.conversationId === current.conversationId
+        && previous.stableMessageId === current.stableMessageId && previous.providerTaskId === current.providerTaskId
+        && previous.connection.mode === current.connection.mode
+        && previous.connection.endpointIdentity === current.connection.endpointIdentity
+        && previous.connection.credentialSlot === current.connection.credentialSlot
+        && previous.connection.revision === current.connection.revision;
+}
+
+function knownImageProviderState(value: string | undefined): WanImageTask['status'] | undefined {
+    return ['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELED', 'UNKNOWN'].includes(value ?? '')
+        ? value as WanImageTask['status'] : undefined;
+}
+
+function ownerBlockingReason(value: string | undefined): ImageStatusBlockingReason | undefined {
+    return value === 'credential_unavailable' || value === 'connection_changed'
+        || value === 'source_changed' || value === 'transparent_input_needs_confirmation'
+            ? value : undefined;
 }
 
 function resultDestination(urlText: string): URL {
@@ -114,6 +137,93 @@ export class ImageGenerationService {
 
     get(taskId: string): Promise<ImageGenerationTask | null> {
         return this.options.store.getImageGenerationTask(taskId);
+    }
+
+    /** Read existing task facts without entering the submission or delivery lifecycle. */
+    async readStatus(input: GetImageStatusInput, scope: ImageStatusReadScope): Promise<ImageStatusObservation> {
+        this.assertStatusScopeCurrent(scope);
+        const task = input.taskId !== undefined ? await this.get(input.taskId)
+            : await this.options.store.getImageGenerationTaskByOperationId(input.operationId);
+        this.assertStatusScopeCurrent(scope);
+        if (!this.isStatusTaskReadable(task, scope)) return { status: 'unavailable', reason: 'task_unavailable' };
+        const queryReason = this.statusQueryReason(task, scope);
+        if (!input.refresh || queryReason) return this.statusObservation(task, queryReason);
+
+        try {
+            const provider = await this.provider(task);
+            this.assertStatusScopeCurrent(scope);
+            const beforeQuery = await this.get(task.taskId);
+            this.assertStatusScopeCurrent(scope);
+            if (!this.isStatusTaskReadable(beforeQuery, scope)) return { status: 'unavailable', reason: 'task_unavailable' };
+            const beforeReason = this.statusQueryReason(beforeQuery, scope)
+                ?? (!sameStatusQueryTarget(task, beforeQuery) ? 'task_changed' : undefined);
+            if (beforeReason) return this.statusObservation(beforeQuery, beforeReason);
+            const result = await provider.query(task.providerTaskId!);
+            this.assertStatusScopeCurrent(scope);
+            const current = await this.get(task.taskId);
+            this.assertStatusScopeCurrent(scope);
+            if (!this.isStatusTaskReadable(current, scope)) return { status: 'unavailable', reason: 'task_unavailable' };
+            const currentReason = this.statusQueryReason(current, scope)
+                ?? (!sameStatusQueryTarget(task, current) ? 'task_changed' : undefined);
+            if (currentReason) return this.statusObservation(current, currentReason);
+            const observation = this.statusObservation(current);
+            if (['FAILED', 'CANCELED', 'UNKNOWN'].includes(result.status) && current.state !== 'completed') {
+                observation.nextAction = 'needs_user';
+                delete observation.retryAfterMs;
+            }
+            return { ...observation, basis: 'provider_query',
+                providerState: result.status, checkedAt: new Date(this.now()).toISOString() };
+        } catch (error) {
+            this.assertStatusScopeCurrent(scope);
+            const current = await this.get(task.taskId);
+            this.assertStatusScopeCurrent(scope);
+            if (!this.isStatusTaskReadable(current, scope)) return { status: 'unavailable', reason: 'task_unavailable' };
+            const reason = this.statusQueryReason(current, scope)
+                ?? (!sameStatusQueryTarget(task, current) ? 'task_changed' : undefined)
+                ?? (error instanceof Error && error.message === 'image_generation:credential_unavailable'
+                    ? 'credential_unavailable' : 'provider_unavailable');
+            return this.statusObservation(current, reason);
+        }
+    }
+
+    private assertStatusScopeCurrent(scope: ImageStatusReadScope): void {
+        throwIfAborted(scope.signal);
+        if (this.disposed || !scope.isCurrent()) throw new Error('image_status:request_changed');
+    }
+
+    private isStatusTaskReadable(task: ImageGenerationTask | null, scope: ImageStatusReadScope): task is ImageGenerationTask {
+        return task !== null && task.conversationId === scope.conversationId && !task.deliverySuppressed
+            && scope.canReadTask({ taskId: task.taskId, operationId: task.operationId,
+                conversationId: task.conversationId, stableMessageId: task.stableMessageId });
+    }
+
+    private statusQueryReason(task: ImageGenerationTask, scope: ImageStatusReadScope): ImageStatusRefreshReason | undefined {
+        if (!task.providerTaskId) return 'no_provider_task';
+        if (!scope.canQueryProvider()) return 'network_not_allowed';
+        const connection = this.options.resolveConnection();
+        if (!connection || connection.mode !== task.connection.mode
+            || connection.baseURL !== task.connection.endpointIdentity
+            || connection.credentialSlot !== task.connection.credentialSlot
+            || connection.revision !== task.connection.revision) return 'connection_changed';
+        return undefined;
+    }
+
+    private statusObservation(task: ImageGenerationTask,
+        reason?: ImageStatusRefreshReason): Extract<ImageStatusObservation, { status: 'available' }> {
+        const waiting = ['prepared', 'submitting', 'running', 'saving'].includes(task.state);
+        const blockingReason = ownerBlockingReason(task.recoveryReason);
+        const requiresUser = reason !== undefined
+            && !['no_provider_task', 'provider_unavailable'].includes(reason);
+        const nextAction = task.state === 'completed' ? 'none'
+            : requiresUser || blockingReason !== undefined || !waiting ? 'needs_user' : 'wait';
+        const providerState = knownImageProviderState(task.lastProviderState);
+        return { status: 'available', taskId: task.taskId, operationId: task.operationId,
+            localState: task.state, revision: task.revision, updatedAt: task.updatedAt,
+            basis: 'local_snapshot', ...(providerState ? { providerState } : {}),
+            remoteQueryAvailable: reason === undefined, ...(reason ? { remoteQueryReason: reason } : {}),
+            ...(blockingReason ? { blockingReason } : {}),
+            nextAction, ...(nextAction === 'wait'
+                ? { retryAfterMs: Math.max(POLL_DELAY_MS, (task.nextPollAt ?? 0) - this.now()) } : {}) };
     }
 
     /** Return the still-live in-memory source receipt captured with an accepted task. */

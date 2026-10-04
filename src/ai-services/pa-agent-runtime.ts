@@ -26,6 +26,8 @@ import { cloneInputLineage, completeInputLineage, sourceRecordsInputLineage,
     type InputLineage, type InputDependency } from './input-lineage';
 import { WritingContextRun, writingContextObservation, type WritingContextRunHost } from "./writing-context-run";
 import { createWritingContextCapability, GET_WRITING_CONTEXT } from "./writing-context-tool";
+import { createWritingHistoryTool, type WritingHistoryHost, type WritingHistoryAdmission } from './writing-history-tool';
+import { createImageStatusTool, isImageStatusObservation, type ImageStatusHost } from './image-status-tool';
 import { createTaskSourceConstrainedExecutor } from "./task-source-executor";
 import { ChatMemoryRecoveryCoordinator } from "./retrieval-recovery-coordinator";
 import type { RetrievalDiagnosticEventInput } from "./retrieval-diagnostics";
@@ -37,7 +39,6 @@ import {
     formatSkillCatalog,
     formatToolObservations,
     formatToolObservationsAsync,
-    measurePaAgentRequestChars,
     measurePaAgentRequestEnvelopeAsync,
     estimatePaAgentTextTokensAsync,
     type PaAgentRequestEnvelopeEstimate,
@@ -47,7 +48,7 @@ import { createCooperativeTask } from './cooperative-task';
 import { projectPaAgentToolStatus, type PaAgentActionGroup } from "./pa-agent-action-history";
 import { cloneActionStateBinding, isSafeImageAcceptedObservation, isSafeImageFailureObservation, isSafeOperationsStagedObservation } from './pa-agent-result-facts';
 import { cloneChatHostProvenance } from './chat-provenance';
-import { historySummaryContentSteps, protectedHistorySourceIndexesSteps } from './context/PaAgentHistoryContextPlan';
+import { historySummaryContentSteps, protectedHistorySourceIndexesSteps, type ColdWritingVersion } from './context/PaAgentHistoryContextPlan';
 import { ChatOpenAI } from "@langchain/openai";
 import {
     type ChatToolProviderSchema,
@@ -77,6 +78,7 @@ import { PaAgentContextSummarizer,
 import { resolvePaAgentInputTokenLimit, resolvePaAgentPromptCharCeiling,
     type PaAgentModelBudgetFacts } from "./context/PaAgentContextBudget";
 import { cloneMessage, prepareContextSteps } from "./context/clone-utils";
+import { getPaAgentToolSummaryCandidates } from './context/PaAgentContextCompactor';
 import { isCurrentHistorySummary, isCurrentToolSummary, projectPaAgentSummaryActionStates,
     projectPaAgentRetainedActionFactsSteps, matchesPaAgentHistorySummaryPayloadSteps,
     type PaAgentContextSummaries, type PaAgentSummaryBindingSource, type PaAgentToolSummarySource } from "./context/PaAgentContextSummaryTypes";
@@ -166,11 +168,11 @@ import {
     type SelfWriteRegistry,
     type WriteActionCapability,
 } from "./write-action-framework";
-import {
-    createRequiredCapabilityHostPolicy,
-} from "./pa-agent-required-capability-policy";
+import { createPaAgentHostPolicy } from './pa-agent-host-policy';
+import { isLiveHostBatchPreflightRejection } from './pa-agent-preflight-facts';
 import {
     PaAgentLoop,
+    isProviderContextOverflow,
     type PaAgentLoopResult,
     type PaAgentModel,
     type PaAgentModelInput,
@@ -228,6 +230,8 @@ export interface PaAgentRunOptions {
     writingMaterialContext?: import("./chat-types").ChatWritingMaterialContext;
     /** Host-authorized candidates and semantic style reader; consumed only by the native candidate. */
     writingContextHost?: Omit<WritingContextRunHost, "runId" | "verifyImages">;
+    writingHistoryHost?: Omit<WritingHistoryHost, 'admitVersion' | 'onObservation'> & { isSourceCurrent?: () => boolean };
+    imageStatus?: ImageStatusHost & { conversationId: string };
     /** Host-owned model/conversation epoch; checked at physical dispatch. */
     isCurrent?: () => boolean;
     /** Existing or reserved Chat conversation identity; never fabricated for standalone runs. */
@@ -251,6 +255,12 @@ export interface PaAgentRunOptions {
 }
 
 export interface PaAgentStreamOptions extends PaAgentRunOptions {
+    /** In-memory owner bindings, never persisted or supplied by a model. */
+    coldWritingVersions?: ReadonlyMap<string, ColdWritingVersion>;
+    protectedWritingVersionIds?: ReadonlySet<string>;
+    /** Run-local request to compact after the provider rejected its context window. */
+    recoveryRequested?: boolean;
+    recoveryMaxPromptChars?: number;
     /** Explicit Chat ownership; standalone/background runs never inherit a global observer. */
     debugRecorder?: AgentDebugRunRecorder;
     /** Content-free, run-local accounting report for evaluation and diagnostics. */
@@ -438,6 +448,7 @@ export const canFallbackToNonStreaming = (
         && (!getProviderAdmissionError(error) || (canReprepareInput
             && getProviderAdmissionError(error) instanceof ProviderInputReprepareRequiredError))
         && !(error instanceof PaAgentContextOverflowError)
+        && !isProviderContextOverflow(error)
         && !(error instanceof ChatImageRequestError)
         && !isStructuredImageUnsupportedError(error)
         && !isAbortError(error, signal);
@@ -1320,6 +1331,8 @@ export class PaAgentRuntime {
         let legacyWritingContextIdentity: string | undefined;
         let writingContextRun: WritingContextRun | undefined;
         let writingContextCapability: AgentCapability | undefined;
+        let writingHistoryCapability: AgentCapability | undefined;
+        let imageStatusCapability: AgentCapability | undefined;
         let ghostPublishingCapability: AgentCapability | undefined;
         let commandCapabilities: PaAgentCommandCapabilityScope | undefined;
         let writingContextBudget = { remainingTextChars: 0, remainingMemoryChars: 0 };
@@ -1327,7 +1340,19 @@ export class PaAgentRuntime {
             try { return writingContextRun?.current(); } catch { return undefined; }
         };
         const currentWritingHandle = () => writingContextHost ? currentWritingContext()?.handle : nativeWritingRequest?.requestId;
+        let contextRecoveryRequested = false;
+        let recoveryMaxPromptChars: number | undefined;
+        let lastAnswerPromptChars: number | undefined;
         const projectionOptions = () => ({ ...options,
+            recoveryRequested: contextRecoveryRequested,
+            recoveryMaxPromptChars,
+            protectedWritingVersionIds: new Set([
+                writingContextHost?.selectedParentVersionId, currentWritingContext()?.parent?.id,
+                allowLegacyWritingContext ? options.writingContext?.parentVersionId : undefined,
+            ].filter((id): id is string => Boolean(id))),
+            coldWritingVersions: new Map([...coldWritingVersions].filter(([id]) => id !== writingContextHost?.selectedParentVersionId
+                    && id !== currentWritingContext()?.parent?.id
+                    && writingHistoryAdmissions.get(id)?.isSourceCurrent())),
             ...(!allowLegacyWritingContext || writingContextHost
                 ? { writingContext: undefined, writingContextHandle: currentWritingHandle() } : {}),
         });
@@ -1365,21 +1390,9 @@ export class PaAgentRuntime {
             throwIfAborted(signal ?? options.signal);
             assertRequestSourcesCurrent(signal);
         };
-        // Reject an irreducibly large current request before optional context preparation.
-        // This lower bound does not replace the complete, revalidated per-attempt guard below.
-        const minimumRequestChars = measurePaAgentRequestChars({
-            input: [options.prompt, writingContextHost || !allowLegacyWritingContext ? ""
-                : selectedWritingContext(options.writingContext), options.writingRequest ? (nativeWritingRequest
-                    ? (writingContextHost ? "" : nativeWritingOutputInstruction(options.writingRequest))
-                    : writingOutputInstruction(options.writingRequest)) : ""].filter(Boolean).join("\n\n"),
-            available_skills: "",
-            tool_definitions: "",
-            tool_observations: "",
-            operations_guidance: "",
-        }, []);
-        if (maxInputTokens === 0 || minimumRequestChars > maxPromptChars) {
-            throw new PaAgentContextOverflowError(minimumRequestChars, maxPromptChars);
-        }
+        // Local estimates guide compaction, not admission. Only an impossible
+        // explicit model configuration can fail before the provider is tried.
+        if (maxInputTokens === 0) throw new PaAgentContextOverflowError(0, maxPromptChars);
         const runtimeStartedAt = Date.now();
         const startupTimings: PaAgentStartupTiming[] = [];
         const operationsActionsEligible = this.areOperationsActionsAvailable();
@@ -1434,6 +1447,10 @@ export class PaAgentRuntime {
         ].map(image => `${image.ref.assetId}:${image.ref.contentHash}`));
         const admittedParentLineages = new Map<string, InputLineage>();
         const admittedParentSourceValidity = new Map<string, { textHash: string; isCurrent: () => boolean }>();
+        const coldWritingVersions = new Map<string, ColdWritingVersion>();
+        const writingHistoryAdmissions = new Map<string, WritingHistoryAdmission>();
+        const writingHistoryObservations = new Map<string, readonly WritingHistoryAdmission[]>();
+        const writingReadReceipts = new Map<string, readonly WritingHistoryAdmission[]>();
         const styleGuards = new Map<string, () => boolean>();
         const styleKey = (ids: readonly string[]) => JSON.stringify([...new Set(ids)].sort());
         const captureStyles = async (lineage: InputLineage | undefined): Promise<void> => {
@@ -1492,6 +1509,43 @@ export class PaAgentRuntime {
             getMemoryEvidenceEpoch: this.host.getMemoryEvidenceEpoch?.bind(this.host),
             getTaskSourceAuthorityEpoch: this.host.getTaskSourceAuthorityEpoch?.bind(this.host),
         });
+        const admitHistoryVersion = async (version: import('../chat/writing-types').WritingVersion,
+            signal?: AbortSignal): Promise<WritingHistoryAdmission | undefined> => {
+            const binding = options.writingHistoryHost;
+            if (!binding || binding.conversationId !== options.conversationId
+                || version.conversationId !== binding.conversationId || !binding.isCurrent()) return undefined;
+            throwIfAborted(signal);
+            const lineage = await resolveWritingVersionInputLineage(version, id => binding.versions.get(id));
+            await captureStyles(lineage);
+            checkingParentLineage = lineage;
+            const admitted = sourceRun.admitsLineage(lineage, true);
+            checkingParentLineage = undefined;
+            if (!admitted || !binding.isCurrent() || binding.isSourceCurrent?.() === false) return undefined;
+            admittedParentLineages.set(version.id, lineage);
+            const sourceCurrent = sourceRun.captureLineageSourceValidity(lineage);
+            const guard = {
+                isCurrent: () => binding.isCurrent() && sourceRun.isCurrent() && sourceCurrent(),
+                isSourceCurrent: () => binding.isSourceCurrent?.() !== false && sourceCurrent(),
+            };
+            admittedParentSourceValidity.set(version.id, { textHash: version.textHash, isCurrent: guard.isSourceCurrent });
+            const parentHandle = writingContextRun?.registerCandidate(version, guard);
+            const receipt: WritingHistoryAdmission = { lineage, ...guard, ...(parentHandle ? { parentHandle } : {}) };
+            writingHistoryAdmissions.set(version.id, receipt);
+            return receipt;
+        };
+        if (options.writingHistoryHost) {
+            const versionIds = new Set((options.chatHistory ?? []).flatMap(message => [
+                ...(message.writingVersionId ? [message.writingVersionId] : []),
+                ...(message.actionStates ?? message.canonicalTurn?.actionStates ?? []).flatMap(state =>
+                    state.owner === 'writing' && 'versionId' in state.receipt ? [state.receipt.versionId] : []),
+            ]));
+            for (const id of versionIds) {
+                const version = await options.writingHistoryHost.versions.get(id);
+                if (version && await admitHistoryVersion(version, options.signal)) {
+                    coldWritingVersions.set(id, { textHash: version.textHash, text: version.text });
+                }
+            }
+        }
         if (runSourceSelection && options.writingContext) {
             const parentLineage = cloneInputLineage(options.writingContext.inputLineage);
             await captureStyles(parentLineage);
@@ -1669,7 +1723,7 @@ export class PaAgentRuntime {
             return imageScope?.isUsable() ?? true;
         };
         const eventAdapter = new CanonicalToLegacyEventAdapter(legacyEvents, options.onLifecycleEvent, options.writingRequest ? {
-            request: options.writingRequest, maxTextChars: MAX_PA_AGENT_PROMPT_CHARS,
+            request: options.writingRequest, maxTextChars: Number.MAX_SAFE_INTEGER,
             ...(nativeWritingRequest ? { nativeContextHandle: nativeWritingRequest.requestId,
                 ...(writingContextHost ? { getContextHandle: currentWritingHandle } : {}) } : {}),
             isCurrent: () => {
@@ -1737,6 +1791,13 @@ export class PaAgentRuntime {
             ghostPublishingCapability.executionMode = "sequential";
             if (!commandCapabilities.register(ghostPublishingCapability)) throw new Error("Ghost publishing capability unavailable.");
         }
+        if (options.imageStatus) {
+            if (!options.conversationId || options.imageStatus.conversationId !== options.conversationId) {
+                throw new Error('Image status is not bound to this conversation');
+            }
+            imageStatusCapability = createChatToolCapability(createImageStatusTool(options.imageStatus), { providerId: 'chat-image-status' });
+            if (!commandCapabilities.register(imageStatusCapability)) throw new Error('Image status capability unavailable');
+        }
         if (writingContextHost) {
             const candidates = runSourceSelection ? (await Promise.all(writingContextHost.candidates.map(async candidate => {
                 const lineage = await resolveWritingVersionInputLineage(candidate,
@@ -1780,13 +1841,24 @@ export class PaAgentRuntime {
                 },
             });
             writingContextCapability = createWritingContextCapability(writingContextRun, {
-                outputBudgetChars: MAX_PA_AGENT_PROMPT_CHARS,
+                outputBudgetChars: Number.MAX_SAFE_INTEGER,
                 getBudget: () => ({ ...writingContextBudget,
                     remainingMemoryChars: Math.max(0, Math.min(writingContextBudget.remainingMemoryChars,
                         MEMORY_CONTEXT_MAX_CHARS - formatBackground(readInjectedContext()).length - 2)) }),
                 onPrepared: context => imageScope?.selectWritingMaterials(context.images.map(image => image.ref)),
             });
             if (!commandCapabilities.register(writingContextCapability)) throw new Error("Writing context capability unavailable");
+        }
+        if (options.writingHistoryHost) {
+            if (!options.conversationId || options.writingHistoryHost.conversationId !== options.conversationId) {
+                throw new Error('Writing history is not bound to this conversation');
+            }
+            writingHistoryCapability = createChatToolCapability(createWritingHistoryTool({
+                ...options.writingHistoryHost, admitVersion: admitHistoryVersion,
+                onObservation: (observation, admissions) => writingHistoryObservations.set(JSON.stringify(observation), admissions),
+            }), { providerId: 'chat-writing-history' });
+            writingHistoryCapability.executionMode = 'sequential';
+            if (!commandCapabilities.register(writingHistoryCapability)) throw new Error('Writing history capability unavailable');
         }
         let additionalProvidersLoaded = false;
         await recordStartupTimingAsync(
@@ -1833,11 +1905,9 @@ export class PaAgentRuntime {
         if (this.toolRegistry.getDefinition(LOAD_SKILL_TOOL_NAME)) {
             availableMetaToolNames.add(LOAD_SKILL_TOOL_NAME);
         }
-        const requiredCapabilityPolicy = createRequiredCapabilityHostPolicy({
-            allowWritingContextSchemaRepair: Boolean(writingContextRun),
-            allowManagedActionAfterDuplicateNoteRead: Boolean(this.host.insightActions
-                && exportableToolNames.has("manage_saved_insight")),
-        });
+        if (writingHistoryCapability) availableMetaToolNames.add('read_writing_history');
+        if (imageStatusCapability) availableMetaToolNames.add('get_image_status');
+        const hostPolicy = createPaAgentHostPolicy();
         // Structured host controls apply before dispatch. Natural-language task
         // boundaries are interpreted by the same main Agent and admitted below.
         const fixedBlockedToolNames = new Set<string>([
@@ -1860,6 +1930,7 @@ export class PaAgentRuntime {
         const contextManager = this.contextManager;
         const contextSummarizer = this.contextSummarizer;
         let runSummaries: PaAgentContextSummaries = {};
+        const toolSummaryAttempts = new Map<string, string>();
         let actionProjectionMode: "native" | "compat" = "compat";
         const snapshotHistory = async (signal?: AbortSignal): Promise<ChatMessage[]> => (await sourceRun.projectHistoryAsync(options.chatHistory ?? [], signal)).map(message => {
             // Keep the run-owned finite fragment's source proof through the
@@ -1870,6 +1941,7 @@ export class PaAgentRuntime {
             const actionStateBinding = cloneActionStateBinding(message.actionStateBinding);
             const sourceSelection = parseRunSourceSelection(message.runSourceSelection);
             return { role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
+                ...(message.writingVersionId ? { writingVersionId: message.writingVersionId } : {}),
                 ...(message.actionStates ? { actionStates: message.actionStates } : {}),
                 ...(actionStateBinding ? { actionStateBinding } : {}),
                 ...(message.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(message.hostProvenance) } : {}),
@@ -2001,15 +2073,11 @@ export class PaAgentRuntime {
                 throw new ProviderAdmissionError(new Error("Personal context changed before provider dispatch"));
             }
         };
-        const availableStyleBudget = async (input: PaAgentModelInput, definitions: ChatToolRegistryDefinition[], schemas: ChatToolProviderSchema[]) => {
-            const baseline = await previewCanonicalModelInput(input, definitions, schemas);
+        const availableStyleBudget = () => {
             return {
-                remainingTextChars: Math.max(0, Math.min(
-                    baseline.budget.maxPromptChars - baseline.budget.promptChars - 2,
-                    writingContextRun
-                        ? (this.options.answerStreamMaxObservationChars ?? 64_000) - baseline.budget.toolObservationChars
-                        : Infinity,
-                )),
+                // The selected parent is required material. Context pressure
+                // is handled on the complete request, not by refusing its read.
+                remainingTextChars: Number.MAX_SAFE_INTEGER,
                 remainingMemoryChars: Math.max(0, MEMORY_CONTEXT_MAX_CHARS - formatBackground(injectedContext).length - 2),
             };
         };
@@ -2073,14 +2141,8 @@ export class PaAgentRuntime {
             const backgroundGenerationSources = generationInputBackgroundSources(injectedContext);
             preparedBackground = formatBackground(injectedContext);
             preparedBackgroundSourceCurrent = backgroundSourceCurrent;
-            const nativeStyle = currentWritingContext()?.styleContext;
-            if (nativeStyle && nativeStyle.length > Math.max(0, MEMORY_CONTEXT_MAX_CHARS - preparedBackground.length - 2)) {
-                // A later background refresh cannot silently change an already
-                // published Writing receipt. Stop before the provider request.
-                throw new Error('Writing context exceeds the current Memory budget');
-            }
             if (writingStyle) {
-                const budget = await availableStyleBudget(input, definitions, schemas);
+                const budget = availableStyleBudget();
                 if (writingStyle.context.length <= Math.min(WRITING_STYLE_MAX_CONTEXT_CHARS, budget.remainingTextChars, budget.remainingMemoryChars)) {
                     injectedContext = { ...injectedContext, writingStyleContext: writingStyle.context };
                 } else {
@@ -2187,6 +2249,8 @@ export class PaAgentRuntime {
             }
             const assertWritingInputCurrent = writingContextRun?.captureTranscriptValidity(taskTranscript);
             const assertHistoryInputCurrent = sourceRun.captureSourceValidity([], actualHistorySources);
+            const writingReadsCurrent = () => actualToolSources.every(message =>
+                (writingReadReceipts.get(message.id) ?? []).every(receipt => receipt.isSourceCurrent()));
             // This receipt belongs to the exact projected material sent for the
             // answer. Keep it independent of Writing, and check authorization
             // and file identity at visible/final delivery without treating a
@@ -2196,7 +2260,7 @@ export class PaAgentRuntime {
             const isDeliveredSourceCurrent = () => {
                 try {
                     assertDeliveredTaskSources();
-                    if (!directoryReceipt.isCurrent()) return false;
+                    if (!directoryReceipt.isCurrent() || !writingReadsCurrent()) return false;
                     if (backgroundSourceCurrent?.() === false || !isRequestLineageSourceCurrent()
                         || !isAttachmentSourceCurrent()) return false;
                     return true;
@@ -2215,6 +2279,7 @@ export class PaAgentRuntime {
             let preparedInputAdmission: Awaited<ReturnType<TaskSourceRun['prepareLineageAdmission']>> | undefined;
             const prepareInputCurrent = async (signal?: AbortSignal) => {
                 assertWritingInputCurrent?.();
+                if (!writingReadsCurrent()) throw new Error('Writing history source changed before provider dispatch');
                 try {
                     if (!isAttachmentSourceCurrent()) {
                         throw new Error('Answer attachment source changed before provider dispatch');
@@ -2247,7 +2312,7 @@ export class PaAgentRuntime {
             };
             const assertInputCurrent = () => {
                 assertWritingInputCurrent?.();
-                if (!preparedInputAdmission?.isCurrent() || !isAttachmentSourceCurrent()
+                if (!preparedInputAdmission?.isCurrent() || !writingReadsCurrent() || !isAttachmentSourceCurrent()
                     || !directoryReceipt.isAttemptCurrent()) {
                     rejectStaleProjection(new Error('Answer input changed before provider dispatch'));
                 }
@@ -2255,7 +2320,7 @@ export class PaAgentRuntime {
             };
             answerVaultBinding.prepareInputCurrent = prepareInputCurrent;
             answerVaultBinding.assertInputCurrent = assertInputCurrent;
-            if (writingContextRun) writingContextBudget = await availableStyleBudget(input, definitions, schemas);
+            if (writingContextRun) writingContextBudget = availableStyleBudget();
             if (options.writingRequest) {
                 const context = currentWritingContext();
                 const assertSourceValidity = sourceRun.captureSourceValidity(actualToolSources, actualHistorySources);
@@ -2352,11 +2417,14 @@ export class PaAgentRuntime {
             if (actualEnvelope.promptChars > actualMaxChars
                 || (maxInputTokens !== undefined
                     && actualEnvelope.estimatedPromptTokens > maxInputTokens)) {
-                throw new PaAgentContextOverflowError(actualEnvelope.promptChars, actualMaxChars);
+                debug('context_capacity_pressure', { promptChars: actualEnvelope.promptChars,
+                    estimatedPromptTokens: actualEnvelope.estimatedPromptTokens,
+                    maxInputTokens, basis: modelBudgetFacts.contextWindowSource });
             }
             assertProviderInputCurrent(input.signal);
             answerVaultBinding.serializedInput = await stableProviderJsonAsync(result, input.signal);
             answerVaultBinding.promptEstimate = actualEnvelope;
+            lastAnswerPromptChars = actualEnvelope.promptChars;
             physicalVaultProjection.serializedInput = answerVaultBinding.serializedInput;
             answerVaultBinding.providerInput = result;
             await prepareInputCurrent(input.signal);
@@ -2520,10 +2588,8 @@ export class PaAgentRuntime {
                     : input;
                 injectedContext = readInjectedContext();
                 const preview = await previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
-                const needsHistorySummary = preview.history.summaryChars > 0 || preview.history.omittedCount > 0
-                    || preview.history.historyBudgetLimited === true;
-                if (input.toolMode !== "final_answer_only" && preview.outcome.admission === "local_overflow"
-                    && needsHistorySummary) {
+                const needsHistorySummary = preview.history.historyBudgetLimited === true;
+                if (input.toolMode !== "final_answer_only" && preview.outcome.needsCompaction) {
                     debug('context_summary:start', { turnId: input.turnId });
                     // Summary guards include selected image currentness. Establish
                     // those receipts before the optional summary invokes them.
@@ -2761,9 +2827,6 @@ export class PaAgentRuntime {
                             managementProjection: summaryManagementProjection,
                             admission: await sourceRun.prepareLineageAdmission(summaryLineage, signal),
                         };
-                        if (summaryVaultState.binding.serializedInput.length + 2048 > MAX_PA_AGENT_PROMPT_CHARS) {
-                            throw new Error("Context summary request exceeds local budget");
-                        }
                         summaryVaultState.binding.estimatedPromptTokens = await estimatePaAgentTextTokensAsync(
                             summaryVaultState.binding.serializedInput, signal);
                         modelCalls++;
@@ -2822,15 +2885,31 @@ export class PaAgentRuntime {
                         const history = needsHistorySummary ? await contextSummarizer.prepareHistory({
                             history: historySources ?? [],
                             historyBudgetChars: preview.historyBudgetChars,
+                            coldWritingVersions: projectionOptions().coldWritingVersions,
+                            protectedWritingVersionIds: projectionOptions().protectedWritingVersionIds,
                             invoke: invokeForSource(undefined, historySources), signal: preparation.signal,
                             deadlineManagedByInvoke: true,
                         }) : runSummaries.history;
                         runSummaries = { history, tools };
-                        // Free-form tool summaries cannot prove body coverage.
-                        // The shared projection keeps those findings losslessly;
-                        // do not spend an auxiliary call that cannot enable fit.
+                        let remaining = await previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
+                        for (const source of getPaAgentToolSummaryCandidates(summaryProjection.transcript)) {
+                            if (!remaining.outcome.needsCompaction) break;
+                            const serializedSource = await stableProviderJsonAsync(source, preparation.signal);
+                            if (toolSummaryAttempts.get(source.id) === serializedSource) continue;
+                            // A failed or non-reducing optional summary must not
+                            // repeat on every turn while its exact source is unchanged.
+                            toolSummaryAttempts.set(source.id, serializedSource);
+                            const summary = await contextSummarizer.prepareTool({ source,
+                                invoke: invokeForSource(source), signal: preparation.signal,
+                                deadlineManagedByInvoke: true });
+                            if (summary) {
+                                tools.set(source.id, summary);
+                                remaining = await previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
+                            }
+                        }
                     } catch (error) {
-                        // Summary deadline/failure degrades to deterministic projection; user/run cancellation does not.
+                        // Optional compaction failure keeps complete original context;
+                        // user cancellation and the final source checks still apply.
                         if (input.signal?.aborted) throw error;
                     } finally {
                         preparation.dispose();
@@ -2925,6 +3004,10 @@ export class PaAgentRuntime {
                     debugConsumerEnded = true;
                     debug('llm_stream:error', { turnId: input.turnId, status: debugErrorStatus, ...describeAgentError(error) });
                     if (!imageScope?.hasImages || isAbortError(error, input.signal) || error instanceof PaAgentContextOverflowError) throw error;
+                    // Preserve the recoverable category without exposing SDK errors
+                    // that may contain the private image request body.
+                    if (isProviderContextOverflow(error)) throw Object.assign(
+                        new Error('Provider context window exceeded'), { code: 'context_length_exceeded' });
                     options.imageCapability?.onError(error);
                     throw error instanceof ChatImageRequestError ? error
                         : new ChatImageRequestError(isStructuredImageUnsupportedError(error) ? "unsupported_model" : "provider_failed");
@@ -3057,6 +3140,8 @@ export class PaAgentRuntime {
                     return capability !== undefined && (capability === imageCapability
                         || capability === imageGenerationCapability
                         || capability === ghostPublishingCapability
+                        || capability === imageStatusCapability
+                        || capability === writingHistoryCapability
                         || insightRead
                         || insightAction
                         || capability === writingContextCapability
@@ -3090,7 +3175,7 @@ export class PaAgentRuntime {
             ...(nativeWritingRequest ? { nativeWriting: {
                 contextHandle: nativeWritingRequest.requestId,
                 ...(writingContextHost ? { getContextHandle: currentWritingHandle } : {}),
-                maxTextChars: MAX_PA_AGENT_PROMPT_CHARS,
+                maxTextChars: Number.MAX_SAFE_INTEGER,
                 isCurrent: () => { assertRequestCurrent(); return (!writingContextRun || !!currentWritingContext()) && (imageScope?.isUsable() ?? true); },
                 isValidContextHandle: isValidWritingContextHandle,
                 createCollector: (contextHandle, maxTextChars) => new NativeWritingCallCollector(contextHandle, maxTextChars),
@@ -3131,7 +3216,6 @@ export class PaAgentRuntime {
                         // result must not erase an earlier still-valid source.
                         sourceRun.publishAdmittedNotePaths(paths, constraint);
                     }
-                    requiredCapabilityPolicy.synchronizeProjectedTranscript(transcript);
                     return {
                         ...input,
                         transcript,
@@ -3143,14 +3227,23 @@ export class PaAgentRuntime {
             toolExecutor,
             hostPolicy: {
                 afterTurn: async (summary) => {
+                    const assistant = summary.assistantMessage;
+                    if ((summary.status === 'completed' || summary.status === 'tool_results_ready')
+                        && assistant.role === 'assistant'
+                        && (assistant.providerCompletion === 'stop' || assistant.providerCompletion === 'tool_calls')) {
+                        // The provider accepted this context. Future turns return to
+                        // model-window pressure instead of inheriting a stale retry target.
+                        contextRecoveryRequested = false;
+                        recoveryMaxPromptChars = undefined;
+                    }
                     operationsIntentStaged ||= hasStagedOperationsIntent(summary);
-                    const decision = await requiredCapabilityPolicy.hostPolicy.afterTurn(summary);
+                    const decision = await hostPolicy.afterTurn(summary);
                     if (
                         operationsIntentStaged
                         && operationsAcknowledgementRequested
                         && decision.action === "continue"
                     ) {
-                        const terminalPolicy = requiredCapabilityPolicy.hostPolicy;
+                        const terminalPolicy = hostPolicy;
                         const terminalDecision = terminalPolicy.finalizeAfterTurn
                             ? await terminalPolicy.finalizeAfterTurn(summary, {
                                 defaultStatus: "completed",
@@ -3219,7 +3312,7 @@ export class PaAgentRuntime {
                             reason: "operations_intent_staged_acknowledgement_completed",
                         }
                         : context;
-                    const terminalPolicy = requiredCapabilityPolicy.hostPolicy;
+                    const terminalPolicy = hostPolicy;
                     const decision = terminalPolicy.finalizeAfterTurn
                         ? await terminalPolicy.finalizeAfterTurn(summary, terminalContext)
                         : {
@@ -3262,6 +3355,21 @@ export class PaAgentRuntime {
                     } else {
                         const records = message.content.sourceRecords ?? [];
                         let writingContextLineage: InputLineage | undefined;
+                        if (!message.isError && message.content.includeInNextPrompt) {
+                            try {
+                                const payload = JSON.parse(message.content.promptText) as { observation?: unknown };
+                                if (message.toolName === 'read_writing_history'
+                                    && this.toolRegistry.get(message.toolName) === writingHistoryCapability) {
+                                    const receipts = writingHistoryObservations.get(JSON.stringify(payload.observation));
+                                    if (receipts?.every(receipt => receipt.isCurrent() && receipt.isSourceCurrent())) {
+                                        writingContextLineage = unionInputLineages(...receipts.map(receipt => receipt.lineage));
+                                        writingReadReceipts.set(message.id, receipts);
+                                    }
+                                } else if (message.toolName === 'get_image_status'
+                                    && this.toolRegistry.get(message.toolName) === imageStatusCapability
+                                    && isImageStatusObservation(payload.observation)) writingContextLineage = completeInputLineage();
+                            } catch { /* Unmatched observations remain unknown. */ }
+                        }
                         if (runSourceSelection && message.toolName === GET_WRITING_CONTEXT
                             && !message.isError && message.content.includeInNextPrompt) {
                             try {
@@ -3305,7 +3413,7 @@ export class PaAgentRuntime {
                             && isSafeSourceFreeToolObservation(message);
                         const resultLineage = writingContextLineage
                             ?? (records.length ? sourceRecordsInputLineage(records)
-                                : message.content.metadata?.statusOnly === true
+                                : isLiveHostBatchPreflightRejection(message) || message.content.metadata?.statusOnly === true
                                     ? completeInputLineage()
                                         : sourceFreeNotesObservation
                                         ? message.toolName === 'prepare_ghost_post' || message.toolName === 'create_image'
@@ -3335,7 +3443,18 @@ export class PaAgentRuntime {
             initialControlSnapshot,
             signal: options.signal,
             ...(options.turnLeaseProvider ? { turnLeaseProvider: options.turnLeaseProvider } : {}),
-            maxTurns: this.options.maxModelTurns ?? 256,
+            maxTurns: this.options.maxModelTurns ?? Number.POSITIVE_INFINITY,
+            recoverContextOverflow: () => {
+                if (options.signal?.aborted || options.isCurrent?.() === false) return false;
+                contextRecoveryRequested = true;
+                // Reduce relative to the rejected request, including any summary
+                // it already used. This is a compression goal, never admission.
+                recoveryMaxPromptChars = lastAnswerPromptChars === undefined ? undefined
+                    : Math.max(1, Math.floor(lastAnswerPromptChars * 0.7));
+                toolSummaryAttempts.clear();
+                debug('context_overflow_recovery', { recovery: 'compact_and_retry', recoveryMaxPromptChars });
+                return true;
+            },
             maxWallClockMs,
             runStartedAt: runtimeStartedAt,
             finalizationReserveMs,
@@ -3368,7 +3487,7 @@ export class PaAgentRuntime {
                     },
                 }
                 : {}),
-            maxToolCalls: this.options.answerStreamMaxToolCalls ?? 1024,
+            maxToolCalls: this.options.answerStreamMaxToolCalls ?? Number.POSITIVE_INFINITY,
             remoteAttemptTimeoutMs: 1_800_000,
             toolTimeoutMs: 1_800_000,
             maxObservationChars: this.options.answerStreamMaxObservationChars ?? 64_000,
@@ -3585,6 +3704,10 @@ export class PaAgentRuntime {
         }
         const operationsGuidance = createOperationsPromptGuidance(toolDefinitions ?? []);
         const projection = await this.contextManager.forPromptAsync({
+            coldWritingVersions: options.coldWritingVersions,
+            protectedWritingVersionIds: options.protectedWritingVersionIds,
+            recoveryRequested: options.recoveryRequested,
+            recoveryMaxPromptChars: options.recoveryMaxPromptChars,
             prompt: currentInput,
             chatHistory: operationsAcknowledgement
                 ? undefined
@@ -3606,7 +3729,7 @@ export class PaAgentRuntime {
             availableSkills,
             toolDefinitions: toolDefinitionsText,
             maxHistoryChars: typeof options.historyBudgetChars === "number" && Number.isFinite(options.historyBudgetChars)
-                ? Math.min(MAX_CHAT_HISTORY_CHARS, Math.max(0, Math.floor(options.historyBudgetChars)))
+                ? Math.max(0, Math.floor(options.historyBudgetChars))
                 : MAX_CHAT_HISTORY_CHARS,
             maxPromptChars: MAX_PA_AGENT_PROMPT_CHARS,
             modelBudgetFacts,
@@ -3754,10 +3877,37 @@ class ChatPlanner {
 // runtime. See SDD §3.3 / item 2.1 for the token-saving rationale.
 export function formatPlannerToolDefinitions(definitions: ChatToolRegistryDefinition[]): string {
     if (definitions.length === 0) return "None";
-    return definitions.map((definition) => JSON.stringify({
+
+    const guidanceTools = new Map<string, Set<string>>();
+    for (const definition of definitions) {
+        for (const guidance of definition.plannerGuidance) {
+            const tools = guidanceTools.get(guidance) ?? new Set<string>();
+            tools.add(definition.name);
+            guidanceTools.set(guidance, tools);
+        }
+    }
+
+    // Share only exact text with the same bound-tool scope. A source tool's
+    // instructions must not become global rules for unrelated capabilities.
+    const sharedGroups = new Map<string, { tools: string[]; planner_guidance: string[] }>();
+    for (const [guidance, tools] of guidanceTools) {
+        if (tools.size < 2) continue;
+        const names = [...tools];
+        const key = JSON.stringify(names);
+        const group = sharedGroups.get(key) ?? { tools: names, planner_guidance: [] };
+        group.planner_guidance.push(guidance);
+        sharedGroups.set(key, group);
+    }
+
+    const sharedRows = [...sharedGroups.values()].map((group) => JSON.stringify({
+        shared_planner_guidance: group,
+    }));
+    const toolRows = definitions.map((definition) => JSON.stringify({
         name: definition.name,
-        planner_guidance: definition.plannerGuidance,
-    }, null, 0)).join("\n");
+        planner_guidance: definition.plannerGuidance.filter((guidance) =>
+            guidanceTools.get(guidance)!.size < 2),
+    }, null, 0));
+    return [...sharedRows, ...toolRows].join("\n");
 }
 
 export interface PaAgentModelInputMetricsDiagnosticOptions {
@@ -4305,16 +4455,13 @@ export function createPaAgentSummaryAttemptClock(ownerSignal: AbortSignal,
     };
 }
 
-const MAX_AUXILIARY_SUMMARY_PHYSICAL_REQUESTS = 30;
-const MAX_AUXILIARY_SUMMARY_ACTIVE_MS = 60 * 60_000;
-// The fixed long SDK fixture needs 48,357 prompt-plus-output reserved tokens
-// over 12 requests. This 90k admission cap leaves room for later tools/retries;
-// measured usage can raise its floor but is never added to an estimated bill.
-const MAX_AUXILIARY_SUMMARY_ADMISSION_TOKENS = 90_000;
+const SUMMARY_REQUEST_WARNING = 30;
+const SUMMARY_ACTIVE_TIME_WARNING_MS = 60 * 60_000;
+const SUMMARY_TOKEN_WARNING = 90_000;
 type AuxiliaryBudgetReason = 'physical_requests' | 'active_elapsed'
     | 'estimated_or_known_tokens' | 'estimate_unknown';
 
-/** Run-local optional summary admission; only confirmed transport attempts spend request/token quota. */
+/** Run-local summary accounting. Soft pressure is diagnostic, never a task stop. */
 export function createPaAgentAuxiliarySummaryBudget(
     attempts: () => PaAgentUsageLedgerSnapshot['attempts'],
     now: () => number = agentDebugNow,
@@ -4322,12 +4469,12 @@ export function createPaAgentAuxiliarySummaryBudget(
     begin: (callId: string, maxOutputTokens: number) => { admit: (estimatedPromptTokens: number) => void; finish: () => void };
     snapshot: () => { physicalRequests: number; activeElapsedMs: number;
         estimatedReservedTokens: number | null; admissionTokens: number | null;
-        exhaustedReason?: AuxiliaryBudgetReason };
+        pressureReason?: AuxiliaryBudgetReason };
 } {
     const outputReserveByCall = new Map<string, number>();
     const active = new Map<symbol, number>();
     let completedElapsedMs = 0;
-    let exhaustedReason: AuxiliaryBudgetReason | undefined;
+    let pressureReason: AuxiliaryBudgetReason | undefined;
     const elapsedMs = () => completedElapsedMs + [...active.values()]
         .reduce((total, startedAt) => total + Math.max(0, now() - startedAt), 0);
     const usage = () => {
@@ -4358,26 +4505,25 @@ export function createPaAgentAuxiliarySummaryBudget(
             estimatedReservedTokens: estimateKnown ? estimatedReservedTokens : null,
             admissionTokens: admissionKnown ? admissionTokens : null };
     };
-    const reject = (reason: AuxiliaryBudgetReason): never => {
-        exhaustedReason = reason;
-        throw new Error(`PA Agent auxiliary summary budget exhausted: ${reason}`);
-    };
     return {
         begin: (callId, maxOutputTokens) => {
-            if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0) reject('estimate_unknown');
+            if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0) pressureReason = 'estimate_unknown';
             outputReserveByCall.set(callId, maxOutputTokens);
             const identity = Symbol(callId);
             active.set(identity, now());
             return {
                 admit: estimatedPromptTokens => {
-                    if (!Number.isSafeInteger(estimatedPromptTokens) || estimatedPromptTokens < 0) reject('estimate_unknown');
                     const current = usage();
-                    if (current.physicalRequests >= MAX_AUXILIARY_SUMMARY_PHYSICAL_REQUESTS) reject('physical_requests');
-                    if (elapsedMs() >= MAX_AUXILIARY_SUMMARY_ACTIVE_MS) reject('active_elapsed');
                     const spent = current.admissionTokens;
-                    if (spent === null) return reject('estimate_unknown');
-                    if (spent + estimatedPromptTokens + maxOutputTokens
-                        > MAX_AUXILIARY_SUMMARY_ADMISSION_TOKENS) reject('estimated_or_known_tokens');
+                    if (!Number.isSafeInteger(estimatedPromptTokens) || estimatedPromptTokens < 0 || spent === null) {
+                        pressureReason = 'estimate_unknown';
+                    } else if (current.physicalRequests >= SUMMARY_REQUEST_WARNING) {
+                        pressureReason = 'physical_requests';
+                    } else if (elapsedMs() >= SUMMARY_ACTIVE_TIME_WARNING_MS) {
+                        pressureReason = 'active_elapsed';
+                    } else if (spent + estimatedPromptTokens + maxOutputTokens > SUMMARY_TOKEN_WARNING) {
+                        pressureReason = 'estimated_or_known_tokens';
+                    }
                 },
                 finish: () => {
                     const startedAt = active.get(identity);
@@ -4391,7 +4537,7 @@ export function createPaAgentAuxiliarySummaryBudget(
             };
         },
         snapshot: () => ({ ...usage(), activeElapsedMs: elapsedMs(),
-            ...(exhaustedReason ? { exhaustedReason } : {}) }),
+            ...(pressureReason ? { pressureReason } : {}) }),
     };
 }
 

@@ -578,6 +578,7 @@
     "plugin.chat.formatter.warningNoAnswer": "No final answer was produced.",
     "plugin.chat.formatter.warningContextTooLong": "Request is too long",
     "plugin.chat.formatter.warningContextTooLongDetail": "The current context is too long to continue. Shorten your message or start a new conversation.",
+    "plugin.chat.formatter.warningProviderContextTooLongDetail": "The request exceeds the AI provider's context capacity and could not be completed. Reduce the included material or start a new conversation.",
     "plugin.chat.formatter.summaryIncomplete": "Answer incomplete",
     "plugin.chat.formatter.summaryNeedsUser": "Waiting for your choice",
     "plugin.chat.sourceDecision.source.other_notes": "other notes outside the current limit",

@@ -25,6 +25,14 @@ export interface WritingCandidateSnapshot {
     isParentSourceCurrent(parent: WritingVersion): boolean;
 }
 
+/** Current-conversation storage access; runtime separately admits each version's ancestry. */
+export interface WritingHistorySession {
+    conversationId: string;
+    versions: Pick<WritingVersionService, 'get' | 'list'>;
+    isCurrent(): boolean;
+    isSourceCurrent(): boolean;
+}
+
 export interface HydratedConversation {
     chatHistory: ChatMessage[];
     timelineEntries: TimelineEntry[];
@@ -181,6 +189,52 @@ export class ConversationPersistence {
             if (this.sourceSelectionPersistChains.get(conversationId) === next) this.sourceSelectionPersistChains.delete(conversationId);
         });
         return result;
+    }
+
+    async prepareWritingHistory(versions: Pick<WritingVersionService, 'get' | 'list'>, input: {
+        isCurrent(): boolean;
+        signal?: AbortSignal;
+    }): Promise<WritingHistorySession | undefined> {
+        const conversationId = this.activeId;
+        const entryIndices = this.persistedTurnIndexByEntry;
+        const assertSession = () => {
+            throwIfAborted(input.signal);
+            if (!input.isCurrent() || this.activeId !== conversationId || this.persistedTurnIndexByEntry !== entryIndices) {
+                throw new Error('Writing conversation changed');
+            }
+        };
+        assertSession();
+        if (!conversationId) return undefined;
+        const manager = await this.getReadyManager();
+        assertSession();
+        if (!manager) throw new Error('Writing history unavailable');
+        const sourceCurrent = manager.captureSourceLifetime(conversationId);
+        const isSourceCurrent = () => this.activeId === conversationId && this.persistedTurnIndexByEntry === entryIndices
+            && this.options.getManager() === manager && sourceCurrent();
+        const isCurrent = () => !input.signal?.aborted && input.isCurrent() && isSourceCurrent();
+        const assertCurrent = () => {
+            assertSession();
+            if (!isSourceCurrent()) throw new Error('Writing history source changed');
+        };
+        assertCurrent();
+        return {
+            conversationId, isCurrent, isSourceCurrent,
+            versions: {
+                get: async id => {
+                    assertCurrent();
+                    const version = await versions.get(id);
+                    assertCurrent();
+                    return version?.conversationId === conversationId ? cloneWritingVersion(version) : null;
+                },
+                list: async requestedConversationId => {
+                    assertCurrent();
+                    if (requestedConversationId !== conversationId) throw new Error('Writing history outside conversation');
+                    const candidates = await versions.list(conversationId);
+                    assertCurrent();
+                    return candidates.filter(version => version.conversationId === conversationId).map(cloneWritingVersion);
+                },
+            },
+        };
     }
 
     async prepareWritingCandidates(versions: Pick<WritingVersionService, 'get'>, input: {

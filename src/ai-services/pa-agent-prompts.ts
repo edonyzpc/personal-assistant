@@ -6,7 +6,8 @@ import { escapeTaggedBoundary } from "./agent-utils";
 import type { ChatMessage, PaAgentMessage } from "./chat-types";
 import { actionHistoryMessages, canProjectNativeActionHistory, projectPaAgentActionHistory,
     additionalHistoricalActionStates, type PaAgentActionGroup } from "./pa-agent-action-history";
-import type { PaAgentProjectedHistory } from "./context/PaAgentContextProjector";
+import type { PaAgentProjectedHistory, PaAgentProjectedHistoryEntry } from "./context/PaAgentContextProjector";
+import { renderProjectedHistoryEntries } from './context/PaAgentContextProjector';
 import { countTokenCharacters, estimateApproximateTokens } from "../token-estimate";
 import { createCooperativeTask } from './cooperative-task';
 import { stringifyContextAsync } from './context/PaAgentContextSerialization';
@@ -19,7 +20,8 @@ const MAX_CHAT_HISTORY_CHARS = 60_000;
 // the array is the source of truth and the factory wraps it into the langchain ChatPromptTemplate.
 export const PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES: readonly string[] = [
     "You are Personal Assistant Chat running the PA Agent answer-stream loop.",
-    "Answer the user directly when you have enough context.",
+    "Carry the current request through to a useful answer or the requested deliverable. Use tools when they supply necessary facts or perform authorized work; once you have enough information, complete the request instead of asking whether to continue.",
+    "Distinguish factual questions from drafting and planning. For a low-risk, editable plan or draft, use clearly stated reasonable defaults or placeholders for optional details. Ask a question only when missing information materially changes correctness, authorization, the target, or an important user choice. Never present an assumption as a fact about the user or their notes.",
     "Read the entire current user message, including distinct requests and facts after background passages. A passage saying that it contains no new information applies to that passage only; it does not cancel a separate explicit current request or decision. Missing decisions in an earlier summary and an earlier assistant denial do not override the current user's explicit statements.",
     "When vault, Memory, current-note, or web context is needed, call only the bound tools.",
     "Execute tools only through the native tool-calling channel. Do not simulate tool execution with XML/JSON tool-call envelopes in answer text. Code or syntax examples explicitly requested by the user remain ordinary text, never executable calls.",
@@ -41,12 +43,12 @@ export const PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES: readonly string[] = [
     "Respond in the same language as the user's most recent input unless the user explicitly asks for another language.",
     "Follow the user's requested answer format. When only JSON is requested, return the JSON value alone without Markdown fences, preamble, explanations or trailing text.",
     "When your answer relies on facts from tool observations, cite the source note path or URL when available so the user can verify.",
-    "If the available evidence is insufficient to confidently answer, say so explicitly instead of guessing or fabricating details.",
+    "Separate observed facts, supported inferences, and unknowns. A failure or missing result does not establish its cause. For a status question, explain what is confirmed, what remains unknown, and any available authorized check; an accurate account of uncertainty can fully answer that question. Use ordinary user language instead of internal state codes or field names unless technical diagnostics are requested.",
     "A completed no-match or empty-list result shows only that the specific search or read found nothing in the permitted scope examined; it does not prove that the vault or Memory has no relevant notes or that a topic or project does not exist.",
     "An unavailable or failed retrieval provides no evidence that relevant notes do not exist; describe it as unavailable or failed, not as a no-match result.",
     "If a requested answer or deliverable depends on note evidence and necessary sources are missing, state which part remains incomplete and what evidence is missing; do not present an unsupported note-based result as complete.",
     "",
-    "Available skills (call load_skill(name) when a skill applies; skill bodies return as toolResult evidence in the next turn):",
+    "Available skills (load_skill({{name}}) reads the complete entry and reference directory; load_skill({{name, reference}}) reads an exact registered reference when needed. Skills are methods, not permissions):",
     "{available_skills}",
     "",
     "Available tool definitions:",
@@ -200,20 +202,11 @@ export async function buildPaAgentFinalMessagesAsync(input: string, actionHistor
     current?: PaAgentCurrentRequestParts): Promise<BaseMessage[]> {
     const task = createCooperativeTask(signal);
     const mode = resolvePaAgentMessageMode(requestedMode, actionHistory, history);
-    const priorActions = mode === 'native' && history?.sourceMessages.some(message => message.role === 'assistant'
-        && message.canonicalTurn?.messages.some(part => part.role === 'assistant'
-            && part.content.some(item => item.type === 'toolCall')));
+    const priorActions = mode === 'native' && hasNativeHistory(history);
     const messages: BaseMessage[] = currentProtocolMessages(current);
-    if (priorActions) for (const message of history!.sourceMessages) {
+    if (priorActions) for (const entry of history!.entries) {
         await task.checkpoint();
-        if (message.role === 'user') { messages.push(historicalTextMessage(message)); continue; }
-        if (message.canonicalTurn) for (const group of projectPaAgentActionHistory(message.canonicalTurn.messages)) {
-            await task.checkpoint();
-            messages.push(...actionHistoryMessages([group], 'native', 'historical'));
-        }
-        if (message.content) messages.push(historicalTextMessage(message));
-        const statusMessage = historicalDomainStateMessage(message);
-        if (statusMessage) messages.push(statusMessage);
+        messages.push(...nativeHistoryEntryMessages(entry));
     }
     if (current) {
         messages.push(...currentRequestMessages(currentInput, history, Boolean(priorActions), imageMessage, current));
@@ -244,9 +237,10 @@ export function createPaAgentAnswerStreamPrompt(_multimodal = false) {
 export function resolvePaAgentMessageMode(mode: "native" | "compat", actionHistory: readonly PaAgentActionGroup[],
     history?: PaAgentProjectedHistory): "native" | "compat" {
     if (mode !== "native" || !canProjectNativeActionHistory(actionHistory)) return "compat";
-    const priorActions = history?.sourceMessages.flatMap(message => message.role === "assistant"
+    if (history?.entries.some(entry => entry.kind === 'summary' && entry.hasActionHistory)) return 'compat';
+    const priorActions = history?.entries.flatMap(entry => entry.kind === 'summary' ? []
+        : [entry.kind === 'message' ? entry.message : entry.projection.message]).flatMap(message => message.role === "assistant"
         && message.canonicalTurn ? projectPaAgentActionHistory(message.canonicalTurn.messages) : []) ?? [];
-    if (priorActions.length && history?.historyCompressed) return "compat";
     // A provider may restart call ids in a later run. Validate the entire
     // outbound conversation, not history and the current run separately.
     return canProjectNativeActionHistory([...priorActions, ...actionHistory]) ? "native" : "compat";
@@ -257,9 +251,7 @@ export function buildPaAgentFinalMessages(input: string, actionHistory: readonly
     requestedMode: "native" | "compat", imageMessage?: HumanMessage,
     history?: PaAgentProjectedHistory, currentInput = input, current?: PaAgentCurrentRequestParts): BaseMessage[] {
     const mode = resolvePaAgentMessageMode(requestedMode, actionHistory, history);
-    const hasPriorActions = mode === "native" && history?.sourceMessages.some(message =>
-        message.role === "assistant" && message.canonicalTurn?.messages.some(part =>
-            part.role === "assistant" && part.content.some(item => item.type === "toolCall")));
+    const hasPriorActions = mode === "native" && hasNativeHistory(history);
     if (!hasPriorActions) {
         if (current) return [...currentProtocolMessages(current),
             ...currentRequestMessages(currentInput, history, false, imageMessage, current),
@@ -267,24 +259,38 @@ export function buildPaAgentFinalMessages(input: string, actionHistory: readonly
         return [imageMessage ?? new HumanMessage(input), ...actionHistoryMessages(actionHistory, mode)];
     }
     const prior: BaseMessage[] = [];
-    for (const message of history!.sourceMessages) {
-        if (message.role === "user") {
-            prior.push(historicalTextMessage(message));
-            continue;
-        }
-        if (message.canonicalTurn) {
-            prior.push(...actionHistoryMessages(projectPaAgentActionHistory(message.canonicalTurn.messages), "native", "historical"));
-        }
-        if (message.content) prior.push(historicalTextMessage(message));
-        const statusMessage = historicalDomainStateMessage(message);
-        if (statusMessage) prior.push(statusMessage);
-    }
+    for (const entry of history!.entries) prior.push(...nativeHistoryEntryMessages(entry));
     const currentMessage = imageMessage && Array.isArray(imageMessage.content)
         ? new HumanMessage({ content: [{ type: "text", text: currentInput }, ...imageMessage.content.slice(1)] })
         : new HumanMessage(currentInput);
     return [...currentProtocolMessages(current), ...prior,
         ...(current ? currentRequestMessages(currentInput, history, true, imageMessage, current) : [currentMessage]),
         ...actionHistoryMessages(actionHistory, "native")];
+}
+
+function hasNativeHistory(history: PaAgentProjectedHistory | undefined): boolean {
+    return Boolean(history?.entries.some(entry => entry.kind === 'writing_reference'
+        || (entry.kind === 'message' && entry.message.role === 'assistant'
+            && entry.message.canonicalTurn?.messages.some(part => part.role === 'assistant'
+                && part.content.some(item => item.type === 'toolCall')))));
+}
+
+function nativeHistoryEntryMessages(entry: PaAgentProjectedHistoryEntry): BaseMessage[] {
+    if (entry.kind === 'summary') return [new HumanMessage(entry.text)];
+    const message = entry.kind === 'message' ? entry.message : entry.projection.message;
+    const messages: BaseMessage[] = [];
+    if (message.role === 'user') messages.push(historicalTextMessage(message));
+    else {
+        if (message.canonicalTurn) messages.push(...actionHistoryMessages(
+            projectPaAgentActionHistory(message.canonicalTurn.messages), 'native', 'historical'));
+        if (message.content) messages.push(historicalTextMessage(message));
+        const state = historicalDomainStateMessage(message);
+        if (state) messages.push(state);
+    }
+    if (entry.kind === 'writing_reference') messages.push(new HumanMessage(
+        `<historical_writing_reference context_only="true" format="json">\n${
+            escapeTaggedBoundary(JSON.stringify(entry.projection.reference), 'historical_writing_reference')}\n</historical_writing_reference>`));
+    return messages;
 }
 
 /** Private request assembly, not an authorization object or persisted history. */
@@ -299,7 +305,8 @@ function currentProtocolMessages(current: PaAgentCurrentRequestParts | undefined
 
 function currentRequestMessages(currentInput: string, history: PaAgentProjectedHistory | undefined,
     nativeHistory: boolean, imageMessage: HumanMessage | undefined, current: PaAgentCurrentRequestParts): HumanMessage[] {
-    const context = [!nativeHistory && history?.text ? `Recent chat history:\n${history.text}` : "",
+    const historyText = !nativeHistory && history ? renderProjectedHistoryEntries(history.entries) : '';
+    const context = [historyText ? `Recent chat history:\n${historyText}` : "",
         current.currentContext].filter(Boolean).join("\n\n");
     const user = imageMessage && Array.isArray(imageMessage.content)
         ? new HumanMessage({ content: [{ type: "text", text: currentInput }, ...imageMessage.content.slice(1)] })

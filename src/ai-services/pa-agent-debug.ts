@@ -14,6 +14,7 @@ const debugCodes = new Set([
     'new_tool_evidence', 'tool_chain_allowed', 'tool_failure',
     'empty_after_observation', 'empty_after_finalization', 'duplicate_tool_call_without_answer',
     'assistant_empty_response', 'assistant_idle_timeout', 'assistant_source_changed', 'context_local_overflow',
+    'provider_context_overflow',
     'final_answer_only_violation', 'finalization_policy_preparation_error',
     'finalization_policy_requested_continuation', 'finalization_reserve_exhausted',
     'finalization_reserve_exhausted_by_buffered_provider', 'finalization_reserve_overrun',

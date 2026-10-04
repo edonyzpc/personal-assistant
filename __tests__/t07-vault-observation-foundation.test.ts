@@ -14,9 +14,6 @@ import type {
     VaultSnippetSearchOutput,
 } from "../src/ai-services/chat-tool-types";
 import type { ChatMessage, PaAgentMessage } from "../src/ai-services/chat-types";
-import { createAnswerCompletionLedger, decideAnswerCompletion, deriveAnswerCompletionTurnFacts }
-    from "../src/ai-services/pa-agent-answer-completion-policy";
-import type { PaAgentTurnSummary } from "../src/ai-services/pa-agent-loop";
 import {
     MAX_VAULT_OBSERVATION_ENVELOPES_PER_TURN,
     assertVaultObservationHistory,
@@ -769,16 +766,6 @@ describe("T-07 snippet evidence foundation", () => {
         });
         const projectedResult = projection.transcript[0] as Extract<PaAgentMessage, { role: "toolResult" }>;
         expect(projectedResult.content.resultFact).toMatchObject({ kind: "unavailable" });
-        const turn: PaAgentTurnSummary = { turnId: "vault-fact", turnIndex: 0,
-            status: "tool_results_ready", committedFinalText: "", pendingTextReclassified: false,
-            assistantMessage: { role: "assistant", id: "answer", content: [], timestamp: 1 },
-            diagnostics: [], metrics: [], toolCalls: [], toolResults: [projectedResult],
-            timing: { turnIndex: 0, status: "tool_results_ready", elapsedMs: 0, modelElapsedMs: 0,
-                modelChunkCount: 0, toolCallCount: 0, toolResultCount: 1 } };
-        const ledger = createAnswerCompletionLedger();
-        const facts = deriveAnswerCompletionTurnFacts(turn, ledger);
-        expect(facts.hasOnlyNoMatchResults).toBe(false);
-        expect(decideAnswerCompletion({ summary: turn, ledger, facts })).toMatchObject({ action: "continue_recovery" });
         await expect(projection.binding.prepare()).rejects.toThrow("changed before dispatch");
     });
 

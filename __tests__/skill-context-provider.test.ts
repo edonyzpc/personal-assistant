@@ -9,6 +9,7 @@ import { PolicyEngine } from "../src/ai-services/policy-engine";
 import { SkillContextProvider } from "../src/ai-services/skill-context-provider";
 import {
     SkillParseError,
+    SkillTooLargeError,
     buildSkillContext,
     parseAgentSkillMarkdown,
 } from "../src/ai-services/skill-router";
@@ -48,7 +49,7 @@ describe("SkillContextProvider", () => {
         }))).toThrow("64 characters");
     });
 
-    it("builds bounded three-layer skill context with referenced resources", () => {
+    it("builds a complete root context and reference catalog without inlining references", () => {
         const skill = parseAgentSkillMarkdown(createSkillMarkdown({
             name: "obsidian-bases",
             description: "Use when inspecting Obsidian Bases formulas and views.",
@@ -58,17 +59,17 @@ describe("SkillContextProvider", () => {
             path: "references/base-schema.md",
             content: "schema ".repeat(2_000),
         }], {
-            maxContextChars: 1_200,
-            metadataBudgetChars: 250,
-            bodyBudgetChars: 600,
-            referenceBudgetChars: 350,
+            maxContextChars: 20_000,
+            metadataBudgetChars: 2_000,
+            bodyBudgetChars: 12_000,
+            referenceBudgetChars: 6_000,
         });
 
-        expect(result.context.length).toBeLessThanOrEqual(1_200);
-        expect(result.layerCharCounts.metadata).toBeLessThanOrEqual(250);
-        expect(result.layerCharCounts.body).toBeLessThanOrEqual(600);
-        expect(result.layerCharCounts.references).toBeLessThanOrEqual(380);
-        expect(result.selectedReferences).toEqual(["references/base-schema.md"]);
+        expect(result.context).not.toContain("schema ");
+        expect(result.selectedReferences).toEqual([]);
+        expect(result.availableReferences).toEqual([{ path: "references/base-schema.md" }]);
+        expect(() => buildSkillContext(skill, [], { bodyBudgetChars: 6_000 })).toThrow(SkillTooLargeError);
+        expect(() => buildSkillContext(skill, [], { maxContextChars: 100 })).toThrow(SkillTooLargeError);
     });
 
     it("registers read-only load_skill capability when a bundled guide is available", async () => {
@@ -167,15 +168,16 @@ describe("SkillContextProvider", () => {
         expect(body?.sourceRecords).toEqual([expect.objectContaining({ kind: "skill-guide" })]);
     });
 
-    it("loadSkillBody includes the DataviewJS reference when requested by the bundled skill", async () => {
+    it("loadSkillBody exposes the DataviewJS reference without inlining its contents", async () => {
         const provider = new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
         await provider.load({ turnId: "turn-1", platform: "desktop", settings: {} });
 
         const body = provider.loadSkillBody("obsidian-dataview");
 
         expect(body).not.toBeNull();
-        expect(body?.selectedReferences).toEqual(["references/dataviewjs-api.md"]);
-        expect(body?.body).toContain("DataviewJS API Reference");
+        expect(body?.selectedReferences).toEqual([]);
+        expect(body?.availableReferences).toEqual([{ path: "references/dataviewjs-api.md" }]);
+        expect(body?.body).not.toContain("DataviewJS API Reference");
     });
 
     it("loadSkillBody returns null for unknown skill name", async () => {
@@ -230,7 +232,7 @@ describe("load_skill capability execution (A3 progressive disclosure)", () => {
             settings: { skillContextEnabled: true },
         });
         expect(result.status).toBe("available");
-        return { provider, registry };
+        return { provider, registry, capability: result.capabilities[0]! };
     }
 
     function fakePlugin() {
@@ -246,13 +248,141 @@ describe("load_skill capability execution (A3 progressive disclosure)", () => {
         });
 
         expect(result.ok).toBe(true);
-        const content = result.content as { name: string; body: string; selectedReferences: string[] };
+        const content = result.content as {
+            name: string;
+            resource: { kind: "skill"; path: string };
+            complete: true;
+            body: string;
+            references: Array<{ path: string }>;
+        };
         expect(content.name).toBe("obsidian-markdown");
+        expect(content.resource).toEqual({
+            kind: "skill",
+            path: "skills/obsidian-markdown/SKILL.md",
+        });
+        expect(content.complete).toBe(true);
         expect(content.body).toContain('<skill_body name="obsidian-markdown">');
         expect(content.body).toContain("</skill_body>");
         expect(content.body).toContain("Skill metadata:");
+        expect(content.references).toEqual([]);
         expect(result.sourceRecords).toHaveLength(1);
         expect(result.sourceRecords?.[0]?.kind).toBe("skill-guide");
+    });
+
+    it("returns every registered reference completely", async () => {
+        const { provider, registry } = await setup();
+        for (const resource of BUNDLED_SKILL_RESOURCES) {
+            const parsed = parseAgentSkillMarkdown(resource.content, resource.path);
+            const root = await registry.execute("load_skill", { name: parsed.metadata.name }, {
+                host: fakePlugin(),
+                turnId: "turn-load-skill",
+                platform: "desktop",
+            });
+            expect(root.ok).toBe(true);
+            const expectedRoot = provider.loadSkillBody(parsed.metadata.name);
+            const rootContent = root.content as {
+                complete: true;
+                body: string;
+                references: Array<{ path: string }>;
+            };
+            expect(expectedRoot).not.toBeNull();
+            expect(rootContent.complete).toBe(true);
+            expect(rootContent.body).toBe(`<skill_body name="${parsed.metadata.name}">\n`
+                + `${expectedRoot?.body}\n</skill_body>`);
+            expect(rootContent.references).toEqual(
+                (resource.references ?? []).map(reference => ({ path: reference.path })),
+            );
+
+            for (const reference of resource.references ?? []) {
+                const loaded = await registry.execute("load_skill", {
+                    name: parsed.metadata.name,
+                    reference: reference.path,
+                }, {
+                    host: fakePlugin(),
+                    turnId: "turn-load-skill",
+                    platform: "desktop",
+                });
+                expect(loaded.ok).toBe(true);
+                const content = loaded.content as {
+                    resource: { kind: "reference"; path: string };
+                    complete: true;
+                    body: string;
+                };
+                expect(content.resource).toEqual({ kind: "reference", path: reference.path });
+                expect(content.complete).toBe(true);
+                expect(content.body).toBe(`<skill_reference name="${parsed.metadata.name}" path="${reference.path}">\n`
+                    + `${reference.content.trim()}\n</skill_reference>`);
+            }
+        }
+    });
+
+    it("keeps the original Templater tail methods reachable after the root split", async () => {
+        const { registry } = await setup();
+        const common = await registry.execute("load_skill", {
+            name: "obsidian-templater",
+            reference: "references/common-patterns.md",
+        }, { host: fakePlugin(), turnId: "turn-load-skill", platform: "desktop" });
+        const api = await registry.execute("load_skill", {
+            name: "obsidian-templater",
+            reference: "references/templater-modules-api.md",
+        }, { host: fakePlugin(), turnId: "turn-load-skill", platform: "desktop" });
+
+        expect((common.content as { body: string }).body).toContain(
+            "When evidence about the user's template setup is missing",
+        );
+        expect((api.content as { body: string }).body).toContain("tp.obsidian");
+    });
+
+    it.each(["references/not-registered.md", "../SKILL.md", "/private/secret.md"])(
+        "rejects the unregistered reference %s without returning another resource", async reference => {
+            const { registry } = await setup();
+            const result = await registry.execute("load_skill", {
+                name: "obsidian-templater",
+                reference,
+            }, { host: fakePlugin(), turnId: "turn-load-skill", platform: "desktop" });
+
+            expect(result.ok).toBe(false);
+            expect(result.content).toBeNull();
+            expect(result.error ?? "").toContain("not registered");
+        },
+    );
+
+    it("returns complete entries and registered references beyond the former size limits", async () => {
+        const body = `${"guide ".repeat(3_000)}ENTRY_TAIL_METHOD`;
+        const reference = { path: "references/full-method.md", content: `${"method ".repeat(3_000)}REFERENCE_TAIL_METHOD` };
+        const provider = new SkillContextProvider([{
+            path: "skills/long-guide/SKILL.md",
+            content: createSkillMarkdown({
+                name: "long-guide",
+                description: "Use when testing a complete long skill entry.",
+                body,
+            }),
+            references: [reference],
+        }]);
+        const registry = createPaidCapabilityRegistry();
+        await registry.registerProvider(provider, {
+            turnId: "turn-load-skill",
+            platform: "desktop",
+            settings: {},
+        });
+        const context = {
+            host: fakePlugin(),
+            turnId: "turn-load-skill",
+            platform: "desktop" as const,
+        };
+        const root = await registry.execute("load_skill", { name: "long-guide" }, context);
+        const loadedReference = await registry.execute("load_skill", {
+            name: "long-guide", reference: reference.path,
+        }, context);
+
+        expect(root.ok).toBe(true);
+        expect(root.content).toMatchObject({ complete: true,
+            body: `<skill_body name="long-guide">\n${provider.loadSkillBody("long-guide")?.body}\n</skill_body>` });
+        expect((root.content as { body: string }).body).toContain(body);
+        expect(loadedReference.ok).toBe(true);
+        expect(loadedReference.content).toMatchObject({ complete: true,
+            body: `<skill_reference name="long-guide" path="${reference.path}">\n${reference.content}\n</skill_reference>` });
+        expect(() => provider.loadSkillBody("long-guide", { bodyBudgetChars: 6_000 })).toThrow(SkillTooLargeError);
     });
 
     it("returns ok=false when name is unknown", async () => {

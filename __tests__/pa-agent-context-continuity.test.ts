@@ -39,7 +39,7 @@ describe("B-128 deterministic conversation continuity", () => {
         expect(JSON.stringify(fixture)).toBe(original);
     });
 
-    it("repeated projection is stable and a later larger budget restores original history", () => {
+    it("repeated projection is stable and a larger target does not change retained original history", () => {
         const original = JSON.stringify(fixture);
         const options = { prompt: "继续复核", chatHistory: fixture, maxHistoryChars: 650 };
         const first = projector.projectUserInput(options);
@@ -47,16 +47,20 @@ describe("B-128 deterministic conversation continuity", () => {
         const expanded = projector.projectUserInput({ ...options, maxHistoryChars: 60000 });
 
         expect(again).toEqual(first);
-        expect(first.history.historyCompressed).toBe(true);
-        expect(first.history.text.length).toBeLessThanOrEqual(650);
+        expect(first.history.historyCompressed).toBe(false);
+        expect(first.history.historyBudgetLimited).toBe(true);
+        expect(first.history.omittedCount).toBe(0);
+        expect(first.history.text.length).toBeGreaterThan(650);
         expect(first.history.text).toContain(fixture[fixture.length - 1].content);
         expect(expanded.history.historyCompressed).toBe(false);
         expect(expanded.history.text).toContain(fixture[0].content);
         expect(expanded.history.text).toContain(fixture[24].content);
+        expect(first.history.text).toBe(expanded.history.text);
+        expect(first.history.sourceMessages).toEqual(fixture);
         expect(JSON.stringify(fixture)).toBe(original);
     });
 
-    it("exposes the known limitation: severe pressure can omit an early requirement entirely", () => {
+    it("keeps early requirements and corrections under severe local pressure", () => {
         const newestPair = fixture.slice(-2);
         const budget = projector.projectUserInput({
             prompt: "", chatHistory: newestPair, maxHistoryChars: 60000,
@@ -69,11 +73,14 @@ describe("B-128 deterministic conversation continuity", () => {
 
         expect(projected.history.text).toContain(newestPair[0].content);
         expect(projected.history.text).toContain(newestPair[1].content);
-        expect(projected.history.text).not.toContain("SQLite");
-        expect(projected.history.text).not.toContain("可以修改代码");
-        expect(projected.history.omittedCount).toBe(fixture.length - 2);
+        expect(projected.history.text).toContain("SQLite");
+        expect(projected.history.text).toContain("可以修改代码");
+        expect(projected.history.text).toContain("但不要提交，也不要改变 Memory 的存储规则");
+        expect(projected.history.omittedCount).toBe(0);
         expect(projected.history.compactedCount).toBe(0);
-        expect(projected.history.historyCompressed).toBe(true);
+        expect(projected.history.historyCompressed).toBe(false);
+        expect(projected.history.historyBudgetLimited).toBe(true);
+        expect(projected.history.sourceMessages).toEqual(fixture);
         expect(projected.input).toContain("User input:\n仅复核，不写入。");
     });
 });

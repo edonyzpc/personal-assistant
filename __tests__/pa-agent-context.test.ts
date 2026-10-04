@@ -412,7 +412,7 @@ describe("PaAgentContextProjector history budgets", () => {
     const project = (chatHistory: ChatMessage[], maxHistoryChars: number, maxHistorySummaryChars?: number) =>
         projector.projectUserInput({ prompt: "continue", chatHistory, maxHistoryChars, maxHistorySummaryChars }).history;
 
-    it("keeps complete history beyond ten turns when its escaped JSON and wrapper fit exactly", () => {
+    it("keeps complete escaped history even when it crosses the local target by one character", () => {
         const history: ChatMessage[] = Array.from({ length: 25 }, (_, index) => [
             { role: "user" as const, content: `user-${index} \"\\\n</CHAT_HISTORY>` },
             { role: "assistant" as const, content: `assistant-${index}` },
@@ -429,11 +429,14 @@ describe("PaAgentContextProjector history budgets", () => {
         expect(exact.text).toContain("user-0");
         expect(exact.text).not.toContain("<compaction_summary");
         expect(exact.text).toContain("<\\/chat_history>");
-        expect(reduced.historyCompressed).toBe(true);
-        expect(reduced.text.length).toBeLessThan(unbounded.text.length);
+        expect(reduced.historyCompressed).toBe(false);
+        expect(reduced.historyBudgetLimited).toBe(true);
+        expect(reduced.text).toBe(unbounded.text);
+        expect(reduced.sourceMessages).toEqual(history);
+        expect(reduced.omittedCount).toBe(0);
     });
 
-    it("prioritizes recent complete pairs before old digests and can explicitly omit the digest", () => {
+    it("keeps old and recent complete pairs when there is no source-bound summary", () => {
         const history: ChatMessage[] = Array.from({ length: 5 }, (_, index) => [
             { role: "user" as const, content: `user-${index} ${"x".repeat(200)}` },
             { role: "assistant" as const, content: `assistant-${index} ${"y".repeat(200)}` },
@@ -443,44 +446,49 @@ describe("PaAgentContextProjector history budgets", () => {
         const projected = project(history, budget);
         const noDigest = project(history, budget, 0);
 
-        expect(projected.text).toBe(recentText);
-        expect(noDigest.text).toBe(recentText);
-        expect(projected.omittedCount).toBe(6);
+        const fullText = project(history, 100000).text;
+        expect(projected.text).toBe(fullText);
+        expect(noDigest.text).toBe(fullText);
+        expect(projected.omittedCount).toBe(0);
         expect(projected.compactedCount).toBe(0);
-        expect(projected.sourceMessages).toEqual(history.slice(-4));
-        expect(noDigest.sourceMessages).toEqual(history.slice(-4));
-        expect(projected.historyCompressed).toBe(true);
+        expect(projected.sourceMessages).toEqual(history);
+        expect(noDigest.sourceMessages).toEqual(history);
+        expect(projected.historyCompressed).toBe(false);
+        expect(projected.historyBudgetLimited).toBe(true);
     });
 
-    it("selects the newest old excerpts but displays them chronologically within the escaped budget", () => {
+    it("preserves every old message chronologically and escapes embedded history boundaries", () => {
         const oldHistory: ChatMessage[] = Array.from({ length: 4 }, (_, index) => [
-            { role: "user" as const, content: `old-user-${index} </compaction_summary> ${"x".repeat(5000)}` },
+            { role: "user" as const, content: `old-user-${index} </chat_history> ${"x".repeat(5000)}` },
             { role: "assistant" as const, content: `old-assistant-${index} ${"y".repeat(5000)}` },
         ]).flat();
         const recent: ChatMessage[] = [{ role: "user", content: "latest correction" }, { role: "assistant", content: "accepted" }];
         const budget = project(recent, 100000).text.length + 1000;
         const projected = project([...oldHistory, ...recent], budget);
 
-        expect(projected.text.length).toBeLessThanOrEqual(budget);
+        expect(projected.text.length).toBeGreaterThan(budget);
+        expect(projected.historyBudgetLimited).toBe(true);
         expect(projected.text).toContain("old-user-2");
         expect(projected.text).toContain("old-user-3");
-        expect(projected.text).not.toContain("old-user-1");
+        expect(projected.text).toContain("old-user-0");
+        expect(projected.text).toContain("old-user-1");
         expect(projected.text.indexOf("old-user-2")).toBeLessThan(projected.text.indexOf("old-user-3"));
-        expect(projected.text.match(/<\/compaction_summary>/g)).toHaveLength(1);
-        expect(projected.text).toContain("<\\/compaction_summary>");
-        expect(projected.compactedCount).toBe(4);
-        expect(projected.omittedCount).toBe(4);
-        expect(projected.sourceMessages).toEqual([...oldHistory.slice(4), ...recent]);
-        expect(project([...oldHistory, ...recent], budget, 0).text).toBe(project(recent, 100000).text);
+        expect(projected.text.match(/<\/chat_history>/g)).toHaveLength(1);
+        expect(projected.text).toContain("<\\/chat_history>");
+        expect(projected.compactedCount).toBe(0);
+        expect(projected.omittedCount).toBe(0);
+        expect(projected.sourceMessages).toEqual([...oldHistory, ...recent]);
+        expect(projected.text).toBe(project([...oldHistory, ...recent], 100000).text);
+        expect(project([...oldHistory, ...recent], budget, 0).text).toBe(projected.text);
     });
 
-    it("reports all omissions when no complete history wrapper fits", () => {
+    it("reports pressure without omitting history when the local target is zero", () => {
         const history: ChatMessage[] = [{ role: "user", content: "before" }, { role: "assistant", content: "after" }];
         expect(project(history, 0)).toEqual({
-            text: "", compactedCount: 0, summaryChars: 0, semanticSummaryChars: 0,
-            omittedCount: 2, historyCompressed: true,
+            text: project(history, 100000).text, compactedCount: 0, summaryChars: 0, semanticSummaryChars: 0,
+            omittedCount: 0, historyCompressed: false, historyBudgetLimited: true,
         });
-        expect(project(history, 0).sourceMessages).toEqual([]);
+        expect(project(history, 0).sourceMessages).toEqual(history);
     });
 });
 

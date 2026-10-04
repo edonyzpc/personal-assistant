@@ -6,6 +6,7 @@ import { PaAgentLoop } from '../src/ai-services/pa-agent-loop';
 import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import type { BufferedToolCall, PaAgentToolExecutor, PaAgentToolExecutionResult } from '../src/ai-services/pa-agent-types';
 import type { TaskSourceReadGuard } from '../src/ai-services/task-source-read-guard';
+import { isLiveHostBatchPreflightRejection, projectHostBatchPreflightRejection } from '../src/ai-services/pa-agent-preflight-facts';
 
 const denied: PaAgentToolExecutionResult = {
     outcome: 'policy_rejected', promptText: 'Choose one allowed source scope for the entire batch.',
@@ -244,11 +245,43 @@ describe('complete tool batch Host preflight', () => {
         await f.dispatcher.executeBufferedToolCalls('turn', 0, [call('one')], 'normal', undefined);
         expect(f.execute).not.toHaveBeenCalled();
         expect(f.results[0]).toMatchObject({ outcome: 'policy_rejected', includeInNextPrompt: true,
+            executionState: 'not_started',
             metadata: { outcome: 'policy_rejected', reason: 'batch_preflight_rejected',
                 preflightOnly: true, batchPreflightRejected: true } });
         expect(f.results[0].metadata).not.toHaveProperty('retrySafety');
         expect(f.results[0]).not.toHaveProperty('sourceRecords');
         expect(f.results[0]).not.toHaveProperty('contextUsed');
+    });
+
+    it('mints source-free rejection proof before lifecycle delivery only for the unexecuted Host batch', async () => {
+        const execute = jest.fn<PaAgentToolExecutor['execute']>(async () => ({ outcome: 'success', promptText: 'must not run' }));
+        const proofs: boolean[] = [];
+        const loop = new PaAgentLoop({ runId: 'preflight-fact', userInput: 'Inspect existing material', maxTurns: 1,
+            toolExecutor: { execute, preflightBatch: () => ({ outcome: 'policy_rejected',
+                promptText: 'PRIVATE_REJECTION_BODY notes/private.md', metadata: { reason: 'source_read_plan_unavailable' } }) },
+            model: { stream: async function* () {
+                for (const [index, name] of ['load_skill', 'get_current_note_context', 'search_memory'].entries()) {
+                    yield { type: 'toolcall_delta', id: `call-${index}`, name, input: { query: 'public' }, index } as const;
+                }
+            } },
+            onEvent: event => {
+                if (event.type === 'message_end' && event.message.role === 'toolResult') {
+                    proofs.push(isLiveHostBatchPreflightRejection(event.message));
+                }
+            },
+        });
+        const result = await loop.run();
+        expect(execute).not.toHaveBeenCalled();
+        expect(proofs).toEqual([true, true, true]);
+        for (const message of result.turns[0].toolResults) {
+            expect(message.content.metadata).toMatchObject({ outcome: 'policy_rejected', executionState: 'not_started' });
+            expect(projectHostBatchPreflightRejection(message)).toEqual({ scope: 'batch', reason: 'source_read_plan_unavailable' });
+            const copied = JSON.parse(JSON.stringify(message)) as typeof message;
+            expect(isLiveHostBatchPreflightRejection(copied)).toBe(false);
+            expect(isLiveHostBatchPreflightRejection({ ...message, toolCallId: 'another-call' })).toBe(false);
+            expect(isLiveHostBatchPreflightRejection({ ...message, content: { ...message.content,
+                sourceRecords: [{ kind: 'memory-reference', dedupKey: 'private', path: 'notes/private.md' }] } })).toBe(false);
+        }
     });
 
     it('charges repeated denied batches to the existing call cap and skips the hook after exhaustion', async () => {

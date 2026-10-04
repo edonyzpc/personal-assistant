@@ -11,6 +11,10 @@ import paPluginConfigReview from "../../skills/pa-plugin-config-review/SKILL.md"
 import obsidianDataview from "../../skills/obsidian-dataview/SKILL.md";
 import obsidianDataviewRef from "../../skills/obsidian-dataview/references/dataviewjs-api.md";
 import obsidianTemplater from "../../skills/obsidian-templater/SKILL.md";
+import templaterCommandTypes from "../../skills/obsidian-templater/references/command-types.md";
+import templaterModuleReference from "../../skills/obsidian-templater/references/module-reference.md";
+import templaterUserScripts from "../../skills/obsidian-templater/references/user-scripts.md";
+import templaterCommonPatterns from "../../skills/obsidian-templater/references/common-patterns.md";
 import obsidianTemplaterRef from "../../skills/obsidian-templater/references/templater-modules-api.md";
 import blog2ghost from "../../skills/blog2ghost/SKILL.md";
 
@@ -58,6 +62,22 @@ export const BUNDLED_SKILL_RESOURCES: readonly BundledSkillResource[] = [
         path: "skills/obsidian-templater/SKILL.md",
         content: obsidianTemplater,
         references: [
+            {
+                path: "references/command-types.md",
+                content: templaterCommandTypes,
+            },
+            {
+                path: "references/module-reference.md",
+                content: templaterModuleReference,
+            },
+            {
+                path: "references/user-scripts.md",
+                content: templaterUserScripts,
+            },
+            {
+                path: "references/common-patterns.md",
+                content: templaterCommonPatterns,
+            },
             {
                 path: "references/templater-modules-api.md",
                 content: obsidianTemplaterRef,

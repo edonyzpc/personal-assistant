@@ -106,7 +106,7 @@ describe("formatCanonicalChatHistory (#2.2)", () => {
         expect(out).toContain("assistant-turn-24");
     });
 
-    it("uses complete recent pairs when long content exceeds the runtime history budget", () => {
+    it("keeps every complete pair when long content exceeds the local history target", () => {
         const history = Array.from({ length: 25 }, (_, index) => ([
             { role: "user" as const, content: `user-turn-${index} ${"x".repeat(3000)}` },
             { role: "assistant" as const, content: `assistant-turn-${index} ${"y".repeat(3000)}` },
@@ -115,9 +115,9 @@ describe("formatCanonicalChatHistory (#2.2)", () => {
         const match = out.match(/<chat_history[^>]*>\n([\s\S]*?)\n<\/chat_history>/);
         const retained = JSON.parse(match![1]) as Array<{ role: string; content: string }>;
 
-        expect(out.length).toBeLessThanOrEqual(60000);
-        expect(retained).toHaveLength(18);
-        expect(retained[0].content).toBe(history[32].content);
+        expect(out.length).toBeGreaterThan(60000);
+        expect(retained).toEqual(history);
+        expect(retained[0].content).toBe(history[0].content);
         expect(retained[retained.length - 1].content).toBe(history[history.length - 1].content);
         for (let index = 0; index < retained.length; index += 2) {
             expect(retained[index].role).toBe("user");

@@ -866,6 +866,10 @@ async function writingOptions(context, requestId) {
 }
 
 async function runSummaryUpdates(input) {
+  // historyBudgetChars is now only a summary target. A live run needs actual
+  // whole-envelope pressure or provider overflow; this older live fixture has
+  // not been recalibrated for every model window. Zero auxiliary calls are not
+  // evidence that the three corrections survived semantic summarization.
   const item = { id: 'three-summary-updates', arm: 'candidate', domain: 'prose', followup: 'corrections', initial: fixture.summaryUpdates[0] };
   const context = await newEpisodeContext({ ...input, item });
   try {

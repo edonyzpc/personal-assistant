@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import { BaseMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
 import { AIUtils } from "../src/ai-services/ai-utils";
+import * as aiUtilsModule from '../src/ai-services/ai-utils';
 import { createReadNoteTool } from "../src/ai-services/chat-tool-factories";
 import { BuiltinWebSearchProvider, createBailianWebSearchNetworkPolicy,
     type BuiltinWebSearchRequest } from "../src/ai-services/builtin-web-search-provider";
@@ -34,6 +35,17 @@ type FixtureTool = { name: string; input: unknown };
 type Reply = { text?: string; finish?: string | null; tool?: FixtureTool; tools?: FixtureTool[]; error?: unknown; httpError?: { status: number; code: string; retryAfter?: string };
     usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; onEnd?: () => void };
 const writingScene = { writingTask: 'copywriting', purpose: 'social_share', audience: 'friends', domain: 'travel' };
+const latestHistoryTurn = (): ChatMessage[] => [
+    { role: 'user', content: 'Keep the current choice.',
+        hostProvenance: { version: 1, kind: 'ordinary_user_statement', messageId: 'latest-history-user' },
+        inputLineage: { schemaVersion: 1, completeness: 'complete',
+            dependencies: [{ kind: 'user-text', messageId: 'latest-history-user' }] } },
+    { role: 'assistant', content: 'Acknowledged the current choice.',
+        inputLineage: { schemaVersion: 1, completeness: 'complete',
+            dependencies: [{ kind: 'user-text', messageId: 'latest-history-user' }] } },
+];
+const distinctContext = (label: string, count: number): string =>
+    Array.from({ length: count }, (_, index) => `${label} ${index}.`).join(' ');
 type StructuredStylePreparation = NonNullable<PaAgentStreamOptions['writingContextHost']>['styles']['prepare'];
 const prepareWritingContextReply = (imageRefs: MessageImage['ref'][] = [], parentHandle?: string): Reply => ({
     tool: { name: 'get_writing_context', input: { parentHandle: parentHandle ?? null,
@@ -141,9 +153,18 @@ function fixture(replies: Reply[] | ((body: RequestBody, index: number) => Reply
         verify: jest.fn(async () => ({ asset: {}, isCurrent: () => sourceCurrent })),
     };
     const runtime = new PaAgentRuntime(host as unknown as AiServiceHost, new AIUtils(host), { skillContextProvider: null, ...runtimeOptions });
-    const run = async (options: Partial<PaAgentStreamOptions> = {}) => {
+    const run = async (options: Partial<PaAgentStreamOptions> & { summaryPressure?: boolean } = {}) => {
+        const { summaryPressure, ...streamOptions } = options;
+        if (summaryPressure) {
+            // Exercise summary admission with a known small whole-model window;
+            // a history lane target alone no longer creates capacity pressure.
+            jest.spyOn(aiUtilsModule, 'resolvePaAgentModelBudgetFacts').mockReturnValue({
+                contextWindowTokens: 4000, outputReserveTokens: 512,
+                contextWindowSource: 'verified_metadata', outputReserveSource: 'verified_metadata',
+            });
+        }
         try { await runtime.streamTurn({ prompt: "请描述图片", memoryMode: "auto", images: [image(1)], imageAssetService: service as unknown as ImageAssetService,
-            onEvent: (event) => events.push(event), onLifecycleEvent: (event) => lifecycle.push(event), ...options }); }
+            onEvent: (event) => events.push(event), onLifecycleEvent: (event) => lifecycle.push(event), ...streamOptions }); }
         finally { runtime.dispose(); }
     };
     return { host, requests, observed, sdkAttempts, modelSpecifications, events, lifecycle, service, release, run, invalidate: () => { sourceCurrent = false; },
@@ -465,10 +486,11 @@ describe('B-135 production source handling', () => {
 
     it.each(['answer', 'summary'] as const)('revalidates historical Memory revocation at the %s SDK retry', async stage => {
         const history: ChatMessage[] = [
-            { role: 'assistant', content: 'REVOKED_HISTORY_MEMORY ' + (stage === 'summary' ? 'earlier '.repeat(900) : ''),
+            { role: 'assistant', content: 'REVOKED_HISTORY_MEMORY ' + (stage === 'summary' ? distinctContext('Earlier public detail', 300) : ''),
                 memoryMetadata: { hasMemoryContent: true, allowedMemorySourcePaths: ['A.md'] } },
             { role: 'assistant', content: 'KEEP_INDEPENDENT_CHOICES' },
             { role: 'user', content: '保留第二个方案' },
+            { role: 'assistant', content: '已保留第二个方案。' },
         ];
         const original = JSON.stringify(history);
         const f = fixture((_body, index) => {
@@ -482,7 +504,7 @@ describe('B-135 production source handling', () => {
         const file = { path: 'A.md', extension: 'md' };
         jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockReturnValue(file as never);
         await f.run({ images: undefined, prompt: '继续', chatHistory: history,
-            ...(stage === 'summary' ? { historyBudgetChars: 1200 } : {}) });
+            ...(stage === 'summary' ? { summaryPressure: true, historyBudgetChars: 1200 } : {}) });
         expect(f.requests[0].stream).toBe(stage === 'answer');
         expect(requestText(f.requests[0])).toContain('REVOKED_HISTORY_MEMORY');
         expect(f.sdkAttempts.filter(attempt => attempt.retryCount === '1')).toEqual([
@@ -541,7 +563,7 @@ describe('B-135 production source handling', () => {
 
     it.each(['answer', 'summary'] as const)('excludes only a revoked historical assistant reply from %s input', async stage => {
         const history: ChatMessage[] = [
-            { role: 'user', content: '保留我的原始要求 ' + (stage === 'summary' ? 'context '.repeat(900) : '') },
+            { role: 'user', content: '保留我的原始要求 ' + (stage === 'summary' ? distinctContext('Public context', 300) : '') },
             { role: 'assistant', content: 'REVOKED_MIXED_REPLY with facts and proposals', memoryMetadata: {
                 hasMemoryContent: false, allowedMemorySourcePaths: [], sourceRecords: [
                     { kind: 'context-used', dedupKey: 'A', path: 'A.md', sourceBoundary: 'read-only-tool' },
@@ -549,6 +571,7 @@ describe('B-135 production source handling', () => {
             } },
             { role: 'assistant', content: 'KEPT_ALTERNATIVES 方案一；方案二' },
             { role: 'user', content: '采用第二个方案' },
+            { role: 'assistant', content: '已采用第二个方案。' },
         ];
         const original = JSON.stringify(history);
         const f = fixture(body => ({ text: body.stream ? '继续第二个方案' : JSON.stringify({
@@ -557,7 +580,7 @@ describe('B-135 production source handling', () => {
         }) }));
         // A is absent. Legacy messages without source metadata retain continuity.
         await f.run({ images: undefined, prompt: '继续', chatHistory: history,
-            ...(stage === 'summary' ? { historyBudgetChars: 1200 } : {}) });
+            ...(stage === 'summary' ? { summaryPressure: true, historyBudgetChars: 1200 } : {}) });
         expect(f.requests.length).toBeGreaterThan(0);
         expect(f.requests.some(request => !request.stream)).toBe(stage === 'summary');
         for (const request of f.requests) expect(requestText(request)).not.toContain('REVOKED_MIXED_REPLY');
@@ -572,6 +595,7 @@ describe('B-135 production source handling', () => {
         const history: ChatMessage[] = [
             { role: 'user', content: 'OLD_HISTORY_TEXT ' + (stage === 'summary' ? 'earlier '.repeat(900) : '') },
             { role: 'assistant', content: '方案一；方案二' },
+            ...latestHistoryTurn(),
         ];
         const f = fixture((_body, index) => {
             if (index === 0) {
@@ -581,7 +605,7 @@ describe('B-135 production source handling', () => {
             return { text: '采用第二个方案' };
         }, {}, 1);
         await f.run({ images: undefined, prompt: '采用第二个', chatHistory: history,
-            ...(stage === 'summary' ? { historyBudgetChars: 1200 } : {}) });
+            ...(stage === 'summary' ? { summaryPressure: true, historyBudgetChars: 1200 } : {}) });
         expect(requestText(f.requests[0])).toContain('OLD_HISTORY_TEXT');
         expect(f.requests[0].stream).toBe(stage === 'answer');
         expect(f.sdkAttempts.filter(attempt => attempt.retryCount === '1')).toEqual([
@@ -604,7 +628,7 @@ describe('B-135 production source handling', () => {
                 { name: 'get_current_note_context', input: { mode: 'full' } },
             ] };
             if (revokedAt === -1 && requestText(body).includes('SERIALIZED_VAULT_SECRET')
-                && Boolean(body.stream) === (stage === 'answer')) {
+                && body.stream === true) {
                 revokedAt = index;
                 liveFile = { ...liveFile };
                 return { httpError: { status: 429, code: 'rate_limit_exceeded', retryAfter: '0.001' } };
@@ -618,25 +642,14 @@ describe('B-135 production source handling', () => {
             editor: { getValue: () => 'SERIALIZED_VAULT_SECRET ' + 'material '.repeat(900), getSelection: () => '', lineCount: () => 1,
                 getLine: () => 'SERIALIZED_VAULT_SECRET', getCursor: () => ({ line: 0, ch: 0 }) } } as never);
         jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation(() => liveFile as never);
-        if (stage === 'overflow') {
-            // Necessary tool text cannot be replaced by a free-form summary.
-            // If its lossless representation cannot fit, no second request
-            // containing a partial or summarized result is admitted.
-            await expect(f.run({ images: undefined, prompt })).rejects.toThrow('context_local_overflow');
-            expect(f.requests).toHaveLength(1);
-            expect(requestText(f.requests[0])).not.toContain('SERIALIZED_VAULT_SECRET');
-            expect(f.sdkAttempts.filter(attempt => attempt.retryCount === '1')).toEqual([]);
-            expect(revokedAt).toBe(-1);
-            return;
-        }
         await f.run({ images: undefined, prompt });
         expect(revokedAt).toBeGreaterThan(0);
         expect(requestText(f.requests[revokedAt])).toContain('SERIALIZED_VAULT_SECRET');
-        expect(f.requests[revokedAt].stream).toBe(stage === 'answer');
+        expect(f.requests[revokedAt].stream).toBe(true);
         // The SDK retry is blocked; the runtime may prepare a fresh invoke
         // fallback. That request must contain no material from the old file.
         expect(f.sdkAttempts.filter(attempt => attempt.retryCount === '1')).toEqual([
-            { stream: stage === 'answer', retryCount: '1' },
+            { stream: true, retryCount: '1' },
         ]);
         expect(f.requests.length).toBeGreaterThan(revokedAt + 1);
         for (const request of f.requests.slice(revokedAt + 1)) {
@@ -944,7 +957,7 @@ function repeatedSummaryPreparation(calls: number, preserveCoveredSource: boolea
             for (let index = 0; index < calls; index++) {
                 await input.invoke(payload, input.signal ?? new AbortController().signal);
             }
-            return preserveCoveredSource ? { sourceMessages: input.history, text: JSON.stringify({
+            return preserveCoveredSource ? { sourceMessages: input.history.slice(0, -2), text: JSON.stringify({
                 goals: [], constraints: [{ text: 'Export must remain offline.', sourceMessages: [1] }],
                 decisions: [], completed: [], open_questions: [], facts: [],
             }) } : undefined;
@@ -985,8 +998,8 @@ describe('B-135 T14 selected-image history summary', () => {
         let accounting: { knownPhysicalTokens: number; attempts: Array<{ purpose: string; totalTokens?: number }> } | undefined;
         await f.run({ images: undefined, prompt: 'Continue with prior requirements',
             chatHistory: [{ role: 'user', content: 'Export must remain offline. ' + 'context '.repeat(1_000) },
-                { role: 'assistant', content: 'Keep this requirement. ' + 'detail '.repeat(1_000) }],
-            historyBudgetChars: 1200, signal: controller.signal, isCurrent: () => current, debugRecorder,
+                { role: 'assistant', content: 'Keep this requirement. ' + 'detail '.repeat(1_000) }, ...latestHistoryTurn()],
+            summaryPressure: true, historyBudgetChars: 1200, signal: controller.signal, isCurrent: () => current, debugRecorder,
             onUsageAccounting: snapshot => { accounting = snapshot; } }).catch(() => undefined);
         expect(createModel.mock.calls.some(([, options]) => options?.maxTokens === 256)).toBe(true);
         expect(accounting?.knownPhysicalTokens).toBe(7);
@@ -998,64 +1011,85 @@ describe('B-135 T14 selected-image history summary', () => {
         expect(f.events.some(event => event.kind === 'answer-snapshot')).toBe(false);
     });
 
-    it('bounds actual auxiliary SDK retries at 30 physical requests and leaves required context in local overflow', async () => {
+    it('accounts for auxiliary SDK retries beyond the request warning and lets the answer use complete original context', async () => {
         const history: ChatMessage[] = [
             { role: 'user', content: 'Export must remain offline. ' + 'context '.repeat(1_000) },
             { role: 'assistant', content: 'Keep this requirement. ' + 'detail '.repeat(1_000) },
+            ...latestHistoryTurn(),
         ];
-        const f = fixture((_body, index) => index === 29
+        const f = fixture((body, index) => index === 29
             ? { httpError: { status: 429, code: 'rate_limit', retryAfter: '0' } }
-            : { text: '{}' }, { contextSummarizer: repeatedSummaryPreparation(30, false) }, 1);
+            : { text: body.stream ? 'Answer from the complete original context.' : '{}' }, { contextSummarizer: repeatedSummaryPreparation(30, false) }, 1);
         let accounting: { attempts: Array<{ purpose: string; estimatedPromptTokens?: number }> } | undefined;
         await expect(f.run({ images: undefined, prompt: 'Compare all prior requirements',
-            chatHistory: history, historyBudgetChars: 1200,
+            chatHistory: history, summaryPressure: true, historyBudgetChars: 1200,
             onUsageAccounting: snapshot => { accounting = snapshot; } }))
-            .rejects.toThrow('context_local_overflow');
-        expect(f.requests).toHaveLength(30);
-        expect(f.requests.every(request => request.stream === false)).toBe(true);
-        expect(f.requests.every(request => Number((request as RequestBody & { max_tokens?: number }).max_tokens) === 256)).toBe(true);
-        expect(f.sdkAttempts).toHaveLength(31); // The SDK tried one more retry; local admission blocked its fetch.
-        expect(f.sdkAttempts.at(-1)?.retryCount).toBe('1');
+            .resolves.toBeUndefined();
+        const auxiliaryRequests = f.requests.filter(request => request.stream === false);
+        expect(auxiliaryRequests).toHaveLength(31);
+        expect(f.requests.filter(request => request.stream === true)).toHaveLength(1);
+        expect(auxiliaryRequests.every(request => Number((request as RequestBody & { max_tokens?: number }).max_tokens) === 256)).toBe(true);
+        const auxiliaryAttempts = f.sdkAttempts.filter(attempt => !attempt.stream);
+        expect(auxiliaryAttempts).toHaveLength(31); // The last SDK retry is admitted and counted independently.
+        expect(auxiliaryAttempts.at(-1)?.retryCount).toBe('1');
         const summaryAttempts = accounting?.attempts.filter(attempt => attempt.purpose === 'context_summary') ?? [];
-        expect(summaryAttempts).toHaveLength(30);
+        expect(summaryAttempts).toHaveLength(31);
         expect(summaryAttempts.every(attempt => (attempt.estimatedPromptTokens ?? 0) > 0)).toBe(true);
-        expect(summaryAttempts.reduce((total, attempt) => total + attempt.estimatedPromptTokens! + 256, 0))
-            .toBeLessThanOrEqual(90_000);
-        expect(f.events.some(event => event.kind === 'answer-snapshot')).toBe(false);
+        expect(f.lifecycle).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'turn_end',
+            metadata: expect.objectContaining({ metrics: expect.arrayContaining([expect.objectContaining({
+                type: 'context_summary_preparation', auxiliaryBudget: expect.objectContaining({
+                    physicalRequests: 31, pressureReason: 'physical_requests',
+                    estimatedReservedTokens: summaryAttempts.reduce((total, attempt) => total + attempt.estimatedPromptTokens! + 256, 0),
+                }),
+            })]) }),
+        })]));
+        expect(requestText(f.requests.at(-1)!)).toContain('Export must remain offline.');
+        expect(f.events.some(event => event.kind === 'answer-snapshot')).toBe(true);
     });
 
-    it('uses SDK reported prompt usage to stop later optional summaries before the request cap', async () => {
+    it('uses SDK reported prompt usage to report summary token pressure without stopping the answer', async () => {
         const history: ChatMessage[] = [
             { role: 'user', content: 'Export must remain offline. ' + 'context '.repeat(1_000) },
             { role: 'assistant', content: 'Keep this requirement. ' + 'detail '.repeat(1_000) },
+            ...latestHistoryTurn(),
         ];
-        const f = fixture(() => ({ text: '{}', usage: {
+        const f = fixture(body => ({ text: body.stream ? 'Answer from the complete original context.' : '{}', usage: {
             prompt_tokens: 10_000, completion_tokens: 20, total_tokens: 10_020,
         } }), { contextSummarizer: repeatedSummaryPreparation(10, false) });
         let accounting: { attempts: Array<{ purpose: string; measuredPromptTokens?: number;
             estimatedPromptTokens?: number }> } | undefined;
         await expect(f.run({ images: undefined, prompt: 'Compare all prior requirements',
-            chatHistory: history, historyBudgetChars: 1200,
+            chatHistory: history, summaryPressure: true, historyBudgetChars: 1200,
             onUsageAccounting: snapshot => { accounting = snapshot; } }))
-            .rejects.toThrow('context_local_overflow');
-        expect(f.requests).toHaveLength(9); // The tenth optional request exceeds 90k known-or-reserved tokens.
+            .resolves.toBeUndefined();
+        expect(f.requests.filter(request => request.stream === false)).toHaveLength(10);
+        expect(f.requests.filter(request => request.stream === true)).toHaveLength(1);
         const summaries = accounting?.attempts.filter(attempt => attempt.purpose === 'context_summary') ?? [];
-        expect(summaries).toHaveLength(9);
+        expect(summaries).toHaveLength(10);
         expect(summaries.every(attempt => attempt.measuredPromptTokens === 10_000
             && (attempt.estimatedPromptTokens ?? Infinity) < 10_000)).toBe(true);
-        expect(f.events.some(event => event.kind === 'answer-snapshot')).toBe(false);
+        expect(f.lifecycle).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'turn_end',
+            metadata: expect.objectContaining({ metrics: expect.arrayContaining([expect.objectContaining({
+                type: 'context_summary_preparation', auxiliaryBudget: expect.objectContaining({
+                    physicalRequests: 10, pressureReason: 'estimated_or_known_tokens', admissionTokens: 102_560,
+                }),
+            })]) }),
+        })]));
+        expect(requestText(f.requests.at(-1)!)).toContain('Export must remain offline.');
+        expect(f.events.some(event => event.kind === 'answer-snapshot')).toBe(true);
     });
 
     it('lets the main answer continue when the final admitted summary already preserves required context', async () => {
         const history: ChatMessage[] = [
             { role: 'user', content: 'Export must remain offline. ' + 'context '.repeat(1_000) },
             { role: 'assistant', content: 'Keep this requirement. ' + 'detail '.repeat(1_000) },
+            ...latestHistoryTurn(),
         ];
         const f = fixture((body, index) => index < 30 ? { text: '{}' } : { text: 'Final answer from preserved context.' },
             { contextSummarizer: repeatedSummaryPreparation(30, true) });
         let accounting: { attempts: Array<{ purpose: string }> } | undefined;
         await f.run({ images: undefined, prompt: 'Compare all prior requirements',
-            chatHistory: history, historyBudgetChars: 1200,
+            chatHistory: history, summaryPressure: true, historyBudgetChars: 1200,
             onUsageAccounting: snapshot => { accounting = snapshot; } });
         expect(f.requests.filter(request => request.stream === false)).toHaveLength(30);
         expect(f.requests.filter(request => request.stream === true)).toHaveLength(1);
@@ -1079,9 +1113,9 @@ describe('B-135 T14 selected-image history summary', () => {
         });
         invalidate = f.invalidate;
         let accounting: { attempts: Array<{ purpose: string; totalTokens?: number; complete: boolean }>; knownPhysicalTokens: number } | undefined;
-        await f.run({ prompt: 'Continue our discussion', historyBudgetChars: 1200,
+        await f.run({ prompt: 'Continue our discussion', summaryPressure: true, historyBudgetChars: 1200,
             runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'summary-stale-image', userMessageId: 'summary-user' },
-            chatHistory: [{ role: 'user', content: 'Historical source fact. ' + 'context '.repeat(800), images: [image(1)],
+            chatHistory: [{ role: 'user', content: 'Historical source fact. ' + distinctContext('Public image context', 300), images: [image(1)],
                 inputLineage: { schemaVersion: 1, completeness: 'complete', dependencies: [
                     { kind: 'user-text', messageId: 'history-user' },
                     { kind: 'attachment', ownerMessageId: 'history-user', ref: image(1).ref },
@@ -1090,7 +1124,7 @@ describe('B-135 T14 selected-image history summary', () => {
                 inputLineage: { schemaVersion: 1, completeness: 'complete', dependencies: [
                     { kind: 'user-text', messageId: 'history-user' },
                     { kind: 'attachment', ownerMessageId: 'history-user', ref: image(1).ref },
-                ] } }],
+                ] } }, ...latestHistoryTurn()],
             debugRecorder,
             onUsageAccounting: snapshot => { accounting = snapshot; } }).catch(() => undefined);
         expect(f.requests.some(request => request.stream === false)).toBe(true);
@@ -1110,9 +1144,9 @@ describe('B-135 T14 selected-image history summary', () => {
             facts: [{ text: 'Historical source fact', sourceMessages: [1] }],
         }) }));
         if (state === 'revoked') f.beforeSdkDispatch(() => f.invalidate());
-        const running = f.run({ prompt: 'Continue our discussion', historyBudgetChars: 1200,
+        const running = f.run({ prompt: 'Continue our discussion', summaryPressure: true, historyBudgetChars: 1200,
             chatHistory: [{ role: 'user', content: 'Historical source fact. ' + 'context '.repeat(800) },
-                { role: 'assistant', content: 'Prior alternatives. ' + 'detail '.repeat(800) }] });
+                { role: 'assistant', content: 'Prior alternatives. ' + 'detail '.repeat(800) }, ...latestHistoryTurn()] });
         if (state === 'revoked') {
             await expect(running).rejects.toThrow('PA Agent canonical runtime failed');
             expect(f.requests).toHaveLength(0);
@@ -1171,11 +1205,9 @@ it('B-135 T14 keeps grown Memory and drops style that no longer fits after prepa
     });
 });
 
-it('B-135 T14 stops the next provider input when Memory grows after writing context publication', async () => {
-    const f = fixture((_request, index) => {
-        if (index !== 0) throw new Error('Over-budget writing input reached the provider');
-        return prepareWritingContextReply();
-    });
+it('B-135 T14 preserves published Writing context when Memory grows beyond the old lane target', async () => {
+    const f = fixture((_request, index) => index === 0 ? prepareWritingContextReply()
+        : nativeWritingReply(f.lifecycle));
     const oldText = 'T14_BEFORE_PUBLICATION_MEMORY';
     const grownText = 'T14_AFTER_PUBLICATION_MEMORY';
     const styleText = `<writing_style context_only="true">T14_PUBLISHED_STYLE ${'s'.repeat(200)}</writing_style>`;
@@ -1207,7 +1239,7 @@ it('B-135 T14 stops the next provider input when Memory grows after writing cont
             // published. Its prepared context and observation already exist.
             f.host.getMemoryExtractionPromptContext.mockReturnValue(grownContext);
         },
-    })).rejects.toThrow('Writing context exceeds the current Memory budget');
+    })).resolves.toBeUndefined();
     expect(prepareStyle).toHaveBeenCalledTimes(1);
     expect(publishedResults).toBe(1);
     expect(publishedObservation?.contextHandle).toEqual(expect.any(String));
@@ -1216,10 +1248,12 @@ it('B-135 T14 stops the next provider input when Memory grows after writing cont
         event.type === 'message_end' && event.message.role === 'toolResult'
         && event.message.toolName === 'get_writing_context' && !event.message.isError);
     expect(originalResult?.message.role === 'toolResult' && originalResult.message.content.promptText).toBe(publishedPrompt);
-    expect(f.requests).toHaveLength(1);
+    expect(f.requests).toHaveLength(2);
     expect(requestText(f.requests[0])).toContain(oldText);
     expect(requestText(f.requests[0])).not.toContain(grownText);
-    expect(f.events.some(event => event.kind === 'writing-artifact' || event.kind === 'answer-snapshot')).toBe(false);
+    expect(requestText(f.requests[1])).toContain(grownText);
+    expect(requestText(f.requests[1])).toContain(JSON.stringify(styleText).slice(1, -1));
+    expect(f.events.some(event => event.kind === 'writing-artifact')).toBe(true);
 });
 
 describe("B-129 production runtime with real ChatOpenAI/bindTools and offline transport", () => {
@@ -1231,9 +1265,10 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
             return { httpError: { status: 429, code: 'rate_limit_exceeded', retryAfter: '0.001' } };
         }, {}, 1);
         await expect(f.run({ images: undefined, prompt: 'Continue', isCurrent: () => current,
-            historyBudgetChars: 1200, chatHistory: [
+            summaryPressure: true, historyBudgetChars: 1200, chatHistory: [
                 { role: 'user', content: 'Prior request. ' + 'context '.repeat(800) },
                 { role: 'assistant', content: 'Prior alternatives. ' + 'detail '.repeat(800) },
+                ...latestHistoryTurn(),
             ] })).rejects.toThrow('PA Agent canonical runtime failed');
         expect(f.requests).toHaveLength(1);
         expect(f.requests[0].stream).toBe(false);
@@ -1257,9 +1292,9 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
             f.beforeSdkDispatch(() => { if (phase === 'physical_dispatch') current = false; });
             const signal = new AbortController().signal;
             const running = f.run({ images: undefined, prompt: 'Continue the discussion', signal,
-                isCurrent: () => current, historyBudgetChars: 1200,
+                isCurrent: () => current, summaryPressure: true, historyBudgetChars: 1200,
                 chatHistory: [{ role: 'user', content: 'Historical source fact. ' + 'context '.repeat(800) },
-                    { role: 'assistant', content: 'Two proposed alternatives. ' + 'detail '.repeat(800) }] });
+                    { role: 'assistant', content: 'Two proposed alternatives. ' + 'detail '.repeat(800) }, ...latestHistoryTurn()] });
             if (phase === 'valid') await running;
             else await expect(running).rejects.toThrow('PA Agent canonical runtime failed');
             expect(signal.aborted).toBe(false);
@@ -1585,13 +1620,14 @@ describe("B-140 T-07 vault observation physical integration", () => {
             f,
             // Overflow the history lane while keeping the complete first exchange
             // in one summary request, where the retry must bind both vault sources.
-            "A_LONG_HISTORY_SUMMARY_SOURCE " + "detail ".repeat(250),
-            "B_INDEPENDENT_HISTORY_CHOICE " + "detail ".repeat(250),
+            "A_LONG_HISTORY_SUMMARY_SOURCE " + distinctContext('Public source A', 50),
+            "B_INDEPENDENT_HISTORY_CHOICE " + distinctContext('Public source B', 50),
         );
         contents = installed.contents;
+        installed.history.push({ role: 'assistant', content: 'Acknowledged the current material.' });
         expect(installed.history.reduce((chars, message) => chars + message.content.length, 0)).toBeGreaterThan(1200);
 
-        await f.run({ images: undefined, prompt: "Continue", historyBudgetChars: 1200, chatHistory: installed.history });
+        await f.run({ images: undefined, prompt: "Continue", summaryPressure: true, historyBudgetChars: 1200, chatHistory: installed.history });
         const summary = f.modelSpecifications.find(specification => specification.isSummary);
         const answer = f.modelSpecifications.find(specification => !specification.isSummary);
         expect(summary).toBeDefined();
@@ -1607,7 +1643,7 @@ describe("B-140 T-07 vault observation physical integration", () => {
             sourceKind: 'retained_action_facts', purpose: 'read_only_reference', retainedActionFacts: [],
         });
         const firstSources = JSON.parse(f.requests[0].messages[1].content as string).sourceMessages;
-        expect(firstSources).toEqual(installed.history.map((message, index) => ({
+        expect(firstSources).toEqual(installed.history.slice(0, -2).map((message, index) => ({
             index: index + 1, role: message.role, content: message.content, start: 0, end: message.content.length,
         })));
         expect(f.sdkAttempts.filter(attempt => attempt.retryCount === "1")).toEqual([
@@ -1636,9 +1672,10 @@ describe("B-140 T-07 vault observation physical integration", () => {
             f,
             // sourceMessages:[2] must refer to A in this complete first exchange,
             // before the retry and the later budget-hidden answer preparation.
-            "A_HIDDEN_AFTER_CHANGE " + "detail ".repeat(250),
-            "B_INDEPENDENT_HISTORY_CHOICE " + "detail ".repeat(250),
+            "A_HIDDEN_AFTER_CHANGE " + distinctContext('Public source A', 50),
+            "B_INDEPENDENT_HISTORY_CHOICE " + distinctContext('Public source B', 50),
         );
+        installed.history.push({ role: 'assistant', content: 'Acknowledged the current material.' });
         expect(installed.history.reduce((chars, message) => chars + message.content.length, 0)).toBeGreaterThan(1200);
         const reads = { a: 0, b: 0 };
         let sourceChanged = false;
@@ -1668,7 +1705,7 @@ describe("B-140 T-07 vault observation physical integration", () => {
             };
         });
 
-        await f.run({ images: undefined, prompt: "Continue", historyBudgetChars: 1200, chatHistory: installed.history });
+        await f.run({ images: undefined, prompt: "Continue", summaryPressure: true, historyBudgetChars: 1200, chatHistory: installed.history });
 
         expect(f.requests[0]?.stream).toBe(false);
         expect(requestText(f.requests[0]!)).toContain("A_HIDDEN_AFTER_CHANGE");
@@ -1678,7 +1715,7 @@ describe("B-140 T-07 vault observation physical integration", () => {
             sourceKind: 'retained_action_facts', purpose: 'read_only_reference', retainedActionFacts: [],
         });
         const firstSources = JSON.parse(f.requests[0].messages[1].content as string).sourceMessages;
-        expect(firstSources).toEqual(installed.history.map((message, index) => ({
+        expect(firstSources).toEqual(installed.history.slice(0, -2).map((message, index) => ({
             index: index + 1, role: message.role, content: message.content, start: 0, end: message.content.length,
         })));
         expect(f.requests.slice(1).some(request => requestText(request).includes("A_HIDDEN_AFTER_CHANGE"))).toBe(true);

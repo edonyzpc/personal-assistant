@@ -288,7 +288,12 @@ describe("B-129 B-128 image identity continuity", () => {
         expect(isCurrentHistorySummary({ text: "summary", sourceMessages: snapshot }, history)).toBe(false);
     });
     it("passes only image references to summaries and rejects a late changed snapshot", async () => {
-        const history: ChatMessage[] = [{ role: "user", content: Array.from({ length: 400 }, (_, i) => `unique-${i} `).join(""), images: [image(1)] }, { role: "assistant", content: "understood" }];
+        const history: ChatMessage[] = [
+            { role: "user", content: Array.from({ length: 400 }, (_, i) => `unique-${i} `).join(""), images: [image(1)] },
+            { role: "assistant", content: "understood" },
+            { role: "user", content: "Keep the latest exchange intact." },
+            { role: "assistant", content: "The earlier image can be summarized by reference." },
+        ];
         const seen: string[] = []; const summarizer = new PaAgentContextSummarizer();
         const result = await summarizer.prepareHistory({ history, historyBudgetChars: 1500, invoke: async (payload) => {
             seen.push(JSON.stringify(payload)); history[0].images![0].ref.contentHash = "f".repeat(64);

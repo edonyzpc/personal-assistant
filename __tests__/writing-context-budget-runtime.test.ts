@@ -78,10 +78,14 @@ async function runWithBudget(observationBudget: number, reduceAfterPreparation =
 }
 
 describe('writing context physical input budget', () => {
-    it('never dispatches an answer with a partial parent context or creates a version from it', async () => {
+    it('retains the complete required parent when its size exceeds the observation soft target', async () => {
         const result = await runWithBudget(600);
-        expect(result.physicalAnswerInputs.slice(1).some(input => input.includes('PARENT_START'))).toBe(false);
-        expect(result.events.some(event => event.kind === 'writing-artifact')).toBe(false);
+        expect(result.error).toBeUndefined();
+        expect(result.physicalAnswerInputs).toHaveLength(2);
+        expect(result.physicalAnswerInputs[1]).toContain(result.parentText);
+        expect(result.events.filter(event => event.kind === 'writing-artifact')).toEqual([
+            expect.objectContaining({ requestId: 'budget-request', body: 'Finished version' }),
+        ]);
     });
 
     it('delivers a complete admitted context and preserves request identity and metadata', async () => {
@@ -95,10 +99,13 @@ describe('writing context physical input budget', () => {
         ]);
     });
 
-    it('rejects a previously admitted context if final projection shortens it before dispatch', async () => {
+    it('keeps the full admitted parent after the observation soft target decreases during preparation', async () => {
         const result = await runWithBudget(16_000, true);
-        expect(result.physicalAnswerInputs).toHaveLength(1);
-        expect(result.events.some(event => event.kind === 'writing-artifact')).toBe(false);
-        expect(String(result.error)).toContain('Complete writing context does not fit');
+        expect(result.error).toBeUndefined();
+        expect(result.physicalAnswerInputs).toHaveLength(2);
+        expect(result.physicalAnswerInputs[1]).toContain(result.parentText);
+        expect(result.events.filter(event => event.kind === 'writing-artifact')).toEqual([
+            expect.objectContaining({ requestId: 'budget-request', body: 'Finished version' }),
+        ]);
     });
 });

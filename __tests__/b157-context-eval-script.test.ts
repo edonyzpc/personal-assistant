@@ -12,8 +12,7 @@ import { ChatService } from '../src/ai-services/chat-service';
 import { MemoryChatHistoryStore, IndexedDbChatHistoryStore, buildTurnRecordKey } from '../src/chat/chat-history-store';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 import { PaAgentContextProjector } from '../src/ai-services/context/PaAgentContextProjector';
-import { formatHistoryMessages, formatSemanticHistorySummary, planHistoryContext, protectedHistoryLayoutSteps,
-    selectHistoryTurnsSteps } from '../src/ai-services/context/PaAgentHistoryContextPlan';
+import { formatHistoryMessages, planHistoryContext, historySummaryContentSteps } from '../src/ai-services/context/PaAgentHistoryContextPlan';
 import { finishContextSteps } from '../src/ai-services/context/clone-utils';
 import { isCurrentHistorySummary, projectPaAgentRetainedActionFacts } from '../src/ai-services/context/PaAgentContextSummaryTypes';
 import { PaAgentContextSummarizer, buildPaAgentDeterministicActionSummary } from '../src/ai-services/context/PaAgentContextSummarizer';
@@ -81,11 +80,27 @@ function offlineServicePlugin(reply: (body: any, index: number) => any, configur
     }, createChatService() {
         const service: any = new ChatService({ settings: plugin.settings, app: harness.createSyntheticApp(),
             isOperationsAgentEnabled: false, getAPIToken: async () => 'synthetic-placeholder', log: () => undefined } as any);
+        const streamLLM = service.streamLLM.bind(service);
+        let rejectFirstMainRequest = false;
+        service.streamLLM = (...args: any[]) => {
+            // A history lane target no longer rejects an otherwise legal full
+            // request. Exercise actual Runtime overflow recovery using the
+            // offline provider, without changing model metadata or source rules.
+            rejectFirstMainRequest = args[4]?.historyBudgetChars === fixture.summaryHistoryBudgetChars;
+            return streamLLM(...args);
+        };
         service.aiUtils.createChatModel = async (_temperature: number, options: any) => new ChatOpenAI({
             model: plugin.settings.chatModelName, apiKey: 'SYNTHETIC_NEVER_SENT', maxRetries: 0,
             configuration: { baseURL: 'https://synthetic.invalid/v1', fetch: async (_url, init) => {
                 await options.prepareProviderRequest?.(init?.signal); options.onProviderRequestStart?.();
                 const body = JSON.parse(String(init?.body)); bodies.push(body);
+                if (rejectFirstMainRequest && !body.messages[0].content.startsWith('Produce a source-grounded summary')) {
+                    rejectFirstMainRequest = false;
+                    return traceProviderDispatch(async () => new Response(JSON.stringify({ error: {
+                        code: 'context_length_exceeded', message: 'Synthetic provider context window exceeded.',
+                    } }), { status: 400, headers: { 'content-type': 'application/json' } }),
+                    'native', options.onProviderRequestTrace, init?.body, () => true);
+                }
                 const message = reply(body, bodies.length - 1);
                 const common = { id: `offline-${bodies.length}`, created: 0, model: body.model };
                 const finish = message.tool_calls ? 'tool_calls' : 'stop';
@@ -197,7 +212,9 @@ function historySummaryMaterials(request: any) {
     return { source, actionFacts };
 }
 
-function summaryEpisodeReply(onSummary: () => void, followupReplyChars = 712) {
+function summaryEpisodeReply(onSummary: () => void, followupReplyChars = 1600) {
+    // Offline capacity fixture: larger neutral replies make all three original
+    // corrections enter whole-turn summary prefixes without changing live seeds.
     const staged = new Set<string>();
     return (body: any) => {
         if (body.messages[0].content.startsWith('Produce a source-grounded summary')) {
@@ -291,7 +308,8 @@ function summaryHistory(episode: any, preparationIndex = 0) {
 }
 
 function summaryFreeAllowance(episode: any, preparationIndex = 0): number {
-    const history = summaryHistory(episode, preparationIndex), plan = planHistoryContext(history, fixture.summaryHistoryBudgetChars);
+    const history = summaryHistory(episode, preparationIndex), plan = planHistoryContext(history,
+        episode.summaryPreparations[preparationIndex].historyBudgetChars);
     const covered = history.slice(0, plan.coveredMessages);
     const host = buildPaAgentDeterministicActionSummary(projectPaAgentRetainedActionFacts(covered), covered);
     const empty = { goals: [], constraints: [], decisions: [], completed: [], open_questions: [], facts: [] };
@@ -330,7 +348,7 @@ function assertSummaryPressureAndOverflow(episode: any) {
     expect(accepted.completed).toEqual(expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining(states[0].operationId) })]));
     expect(accepted.open_questions).toEqual(expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining(states[1].operationId) })]));
     const admitted = project(history, fixture.summaryHistoryBudgetChars, summary);
-    expect(admitted.historyBudgetLimited).toBeUndefined();
+    expect(admitted.historyBudgetLimited).toBe(false);
     expect(admitted.text.length).toBeLessThanOrEqual(fixture.summaryHistoryBudgetChars);
     const protectedOnly = project(history.slice(0, 4), 1400);
     expect(protectedOnly.historyBudgetLimited).toBe(true);
@@ -343,7 +361,7 @@ function assertSummaryPressureAndOverflow(episode: any) {
     expect(overflow.text).not.toContain('grants_tool_authority');
     for (const state of states) {
         expect(overflow.text).toContain(state.operationId);
-        expect(overflow.text).toContain(`"phase": "${state.phase}"`);
+        expect(overflow.text).toContain(`phase=${state.phase}`);
     }
 }
 
@@ -383,7 +401,7 @@ function assertAcceptedCorrectionsAndVerification(episode: any) {
     const semanticUpdates = accepted.filter((item: any) => item.decisions.length > 0);
     expect(new Set(semanticUpdates.map((item: any) => JSON.stringify(item.decisions))).size).toBe(3);
     const replies = episode.turns.slice(4).filter((turn: any) => !turn.error).map((turn: any) => turn.answer);
-    expect(replies.every((content: string) => content.length === 712)).toBe(true);
+    expect(replies.every((content: string) => content.length === 1600)).toBe(true);
     expect(replies).toHaveLength(episode.status === 'failed' ? 4 : 5);
     expect(new Set(replies).size).toBe(replies.length);
     for (const content of replies) {
@@ -420,6 +438,27 @@ function projectedHistoryRecords(input: any) {
     return records;
 }
 
+function assertFullHistoryFallback(episode: any) {
+    const firstUpdate = fixture.summaryOperationSeeds.length + fixture.summaryWarmup.length;
+    for (let index = 0; index < episode.turns.length - firstUpdate; index++) {
+        const turn = episode.turns[firstUpdate + index];
+        const requests = episode.providerInputs.slice(episode.turns[firstUpdate + index - 1]?.providerInputEnd ?? 0, turn.providerInputEnd)
+            .filter((input: any) => input.requestId && !input.body.messages[0].content.startsWith('Produce a source-grounded summary'));
+        // The first real request is rejected by the offline provider; recovery
+        // rejects an invalid summary and sends the complete original history.
+        expect(requests).toHaveLength(2);
+        const expected = projectedHistoryRecords({ body: { messages: [{ role: 'user',
+            content: formatHistoryMessages(summaryHistory(episode, index)) }] } });
+        for (const request of requests) {
+            expect(request.historyPath).toBe('compat-raw');
+            expect(projectedHistoryRecords(request)).toEqual(expected);
+        }
+        expect(turn.error).toBeUndefined();
+        expect(turn.answer).not.toBe('');
+    }
+    expect(episode.summaryStateBeforeVerification.slice(0, firstUpdate)).toEqual(episode.summaryStateBeforeUpdates);
+}
+
 async function assertOldCapacityBoundary(episode: any) {
     // Replay the observed owner-reply lengths and long explanatory reply using
     // real admitted UUID states. Removing redundant provider permission flags
@@ -427,7 +466,8 @@ async function assertOldCapacityBoundary(episode: any) {
     // report remains historical evidence, not the current formatter's boundary.
     const history = summaryHistory(episode, 1).map((message: any, index: number) => ({ ...message,
         content: index === 1 ? recordedNeutralReply('原回执甲', 86)
-            : index === 3 ? recordedNeutralReply('原回执乙', 90) : message.content }));
+            : index === 3 ? recordedNeutralReply('原回执乙', 90)
+            : index === 9 ? recordedNeutralReply('旧容量样本', 712) : message.content }));
     expect(history[9].content).toHaveLength(712);
     const facts = projectPaAgentRetainedActionFacts(history), text = JSON.stringify(buildPaAgentDeterministicActionSummary(facts, history));
     const reachablePlan = planHistoryContext(history, 3600);
@@ -451,17 +491,10 @@ async function assertOldCapacityBoundary(episode: any) {
         for (const part of source.sourceMessages) {
             const content = typeof part.content === 'string' ? part.content
                 : part.content.segments.map((segment: any) => segment.text.repeat(segment.count)).join('');
-            expect(content).toBe(history[part.index - 1].content.slice(part.start, part.end));
+            expect(content).toBe(finishContextSteps(historySummaryContentSteps(history[part.index - 1])).slice(part.start, part.end));
         }
     }
-    const layout = finishContextSteps(protectedHistoryLayoutSteps(history));
-    const mandatory = finishContextSteps(selectHistoryTurnsSteps(layout.evidenceTurns, layout.mandatoryIndices));
-    const necessaryChars = Math.min(formatHistoryMessages(mandatory).length, formatHistoryMessages(mandatory, true).length)
-        + formatSemanticHistorySummary(text).length + 2;
-    const insufficientBudget = necessaryChars - 1;
-    expect(insufficientBudget).toBeLessThan(3600);
-    const insufficientPlan = planHistoryContext(history, insufficientBudget);
-    expect(insufficientPlan.summaryMaxChars).toBe(text.length - 1);
+    const insufficientBudget = 100;
     let auxCalls = 0;
     const blockedSummarizer = new PaAgentContextSummarizer();
     try {
@@ -470,29 +503,26 @@ async function assertOldCapacityBoundary(episode: any) {
     } finally { blockedSummarizer.dispose(); }
     expect(auxCalls).toBe(0);
     const projector = new PaAgentContextProjector();
-    const blocked = projector.projectUserInput({ chatHistory: history, prompt: fixture.summaryUpdates[1], maxHistoryChars: insufficientBudget,
-        summaries: { history: summary } }).history;
-    expect(blocked.historyBudgetLimited).toBe(true);
-    expect(blocked.text.length).toBe(necessaryChars);
-    const reachable = projector.projectUserInput({ chatHistory: history, prompt: fixture.summaryUpdates[1], maxHistoryChars: 3600,
-        summaries: { history: summary } }).history;
-    expect(reachable.historyBudgetLimited).toBeUndefined();
-    expect(reachable.text.length).toBeLessThanOrEqual(3600);
-    const next = projector.projectUserInput({ chatHistory: history, prompt: fixture.summaryUpdates[1],
-        maxHistoryChars: fixture.summaryHistoryBudgetChars, summaries: { history: summary } }).history;
-    expect(next.historyBudgetLimited).toBeUndefined();
-    expect(next.text.length).toBeLessThanOrEqual(fixture.summaryHistoryBudgetChars);
-    expect(Math.min(formatHistoryMessages(history).length, formatHistoryMessages(history, true).length)).toBeGreaterThan(fixture.summaryHistoryBudgetChars);
-    const expected = projectedHistoryRecords({ body: { messages: [{ role: 'user', content: formatHistoryMessages(mandatory) }] } });
-    for (const projection of [blocked, reachable, next]) {
-        expect(projectedHistoryRecords({ body: { messages: [{ role: 'user', content: `Recent chat history:\n${projection.text}` }] } }))
-            .toEqual(expected);
+    const original = JSON.stringify(history);
+    const fallback = projector.projectUserInput({ chatHistory: history, prompt: fixture.summaryUpdates[1],
+        maxHistoryChars: insufficientBudget }).history;
+    expect(fallback.historyBudgetLimited).toBe(true);
+    expect(fallback.text).toBe(formatHistoryMessages(history));
+    const expectedTail = projectedHistoryRecords({ body: { messages: [{ role: 'user',
+        content: formatHistoryMessages(history.slice(summary.sourceMessages.length)) }] } });
+    for (const budget of [insufficientBudget, 3600, fixture.summaryHistoryBudgetChars]) {
+        const projection = projector.projectUserInput({ chatHistory: history, prompt: fixture.summaryUpdates[1],
+            maxHistoryChars: budget, summaries: { history: summary } }).history;
+        expect(projection.text).toContain(summary.text);
+        expect(projectedHistoryRecords({ body: { messages: [{ role: 'user', content: `Recent chat history:\n${projection.text}` }] } })).toEqual(expectedTail);
+        expect(projection.sourceMessages).toEqual(history);
+        for (const turn of episode.summaryStateAfterReopen) {
+            const state = turn.assistant.actionStates[0];
+            expect(projection.text).toContain(state.operationId);
+            expect(projection.text).toContain(`phase=${state.phase}`);
+        }
     }
-    for (const turn of episode.summaryStateAfterReopen) {
-        expect(blocked.text).toContain(turn.assistant.actionStates[0].operationId);
-        expect(reachable.text).toContain(turn.assistant.actionStates[0].operationId);
-        expect(next.text).toContain(turn.assistant.actionStates[0].operationId);
-    }
+    expect(JSON.stringify(history)).toBe(original);
 }
 
 describe('B157 independent context harness contracts (offline)', () => {
@@ -786,29 +816,29 @@ describe('B157 independent context harness contracts (offline)', () => {
         const handle = harness.installB157ContextEval(setup.app);
         try {
             const report = await handle.start({ ...setup.options, summaryOnly: true }), episode = report.results[0];
-            expect(report).toMatchObject({ status: 'recorded_for_review', physicalRequests: 13, humanVerdict: 'pending' });
+            expect(report).toMatchObject({ status: 'recorded_for_review', physicalRequests: 17, humanVerdict: 'pending' });
             assertSummaryOperations(episode);
             const plannedCoverage = episode.summaryPreparations.map((_item: any, index: number) =>
-                planHistoryContext(summaryHistory(episode, index), fixture.summaryHistoryBudgetChars).coveredMessages);
-            expect(episode.summaryEvidence).toMatchObject({ summaryCallCount: 2, observedSummaryUpdates: 1, preparedSummaryCount: 5,
+                planHistoryContext(summaryHistory(episode, index), episode.summaryPreparations[index].historyBudgetChars).coveredMessages);
+            expect(episode.summaryEvidence).toMatchObject({ summaryCallCount: 1, observedSummaryUpdates: 1, preparedSummaryCount: 5,
                 coveredMessageCounts: plannedCoverage });
             const returned = episode.summaryCompletions.filter((item: any) => item.outcome === 'returned');
-            expect(returned).toHaveLength(2);
+            expect(returned).toHaveLength(1);
             const actualPayloads = returned.map((completion: any) => {
                 const dispatched = episode.providerInputs.find((input: any) => input.requestId === completion.requestIds[0]);
                 expect(completion.requestIds).toHaveLength(1);
                 return historySummaryMaterials(dispatched.body).source;
             });
-            // Physical calls consume distinct ordinary source intervals;
-            // cached preparations alone cannot prove the 9/11-day corrections
-            // entered the semantic prefix.
+            // Only the initial source interval was sent to the summary model;
+            // cached preparations cannot prove that later corrections entered
+            // the semantic prefix.
             expect(actualPayloads.map((payload: any) => [...new Set(payload.sourceMessages.map((part: any) => part.index))]))
-                .toEqual([[1, 2, 3, 4, 5, 6], [7, 8]]);
+                .toEqual([[1, 2, 3, 4, 5, 6]]);
             const lastHistory = summaryHistory(episode, 4);
             for (const payload of actualPayloads) for (const part of payload.sourceMessages) {
                 const text = typeof part.content === 'string' ? part.content
                     : part.content.segments.map((segment: any) => segment.text.repeat(segment.count)).join('');
-                expect(text).toBe(lastHistory[part.index - 1].content.slice(part.start, part.end));
+                expect(text).toBe(finishContextSteps(historySummaryContentSteps(lastHistory[part.index - 1])).slice(part.start, part.end));
             }
             expect(new Set(episode.summaryPreparations.slice(0, 4).map((item: any) => item.text)).size).toBe(1);
             const last = JSON.parse(episode.summaryPreparations.at(-1).text);
@@ -822,20 +852,20 @@ describe('B157 independent context harness contracts (offline)', () => {
         } finally { await handle.cleanup(); }
     }, 20_000);
 
-    it.each([15, 13, 12])('runs actual seeds, original corrections and natural verification through ChatService with physical cap %i', async maxRequests => {
+    it.each([20, 19, 18])('runs actual seeds, original corrections and natural verification through ChatService with physical cap %i', async maxRequests => {
         let summaries = 0;
         const setup = offlineServicePlugin(summaryEpisodeReply(() => summaries++));
         (globalThis as any).__b157PreReloadPlugin = {};
         const handle = harness.installB157ContextEval(setup.app);
         try {
             const options = { ...setup.options, summaryOnly: true, maxRequests };
-            if (maxRequests === 15) {
+            if (maxRequests === 20) {
                 await expect(handle.start({ ...options, expectedHarnessSha256: '0'.repeat(64) })).rejects.toThrow('DEPLOYED_BUNDLE_MISMATCH');
                 expect(setup.bodies).toEqual([]);
             }
             const report = await handle.start(options), episode = report.results[0];
-            const complete = maxRequests >= 15, verified = maxRequests >= 14;
-            const actualAuxCalls = maxRequests >= 14 ? 4 : 3;
+            const complete = maxRequests >= 20, verified = maxRequests >= 19;
+            const actualAuxCalls = maxRequests >= 19 ? 4 : 3;
             expect(report.summaryOnly).toBe(true);
             expect(report.results).toHaveLength(1);
             expect(episode.caseId).toBe('three-summary-updates');
@@ -843,9 +873,9 @@ describe('B157 independent context harness contracts (offline)', () => {
             assertSummaryOperations(episode);
             expect({ status: report.status, error: report.error, physicalRequests: report.physicalRequests, summaries,
                 lane: summaryLaneEvidence(episode) }).toEqual({ status: complete ? 'recorded_for_review' : 'aborted',
-                error: complete ? null : expect.any(String), physicalRequests: complete ? 15 : maxRequests, summaries: actualAuxCalls,
-                lane: expect.objectContaining({ budget: fixture.summaryHistoryBudgetChars, historyBudgetLimited: undefined }) });
-            expect(episode.turns).toHaveLength(maxRequests >= 13 ? 9 : 8);
+                error: complete ? null : expect.any(String), physicalRequests: complete ? 20 : maxRequests, summaries: actualAuxCalls,
+                lane: expect.objectContaining({ budget: fixture.summaryHistoryBudgetChars, historyBudgetLimited: true }) });
+            expect(episode.turns).toHaveLength(9);
             for (let index = 0; index < fixture.summaryOperationSeeds.length; index++) {
                 expect(episode.turns[index].userText).toBe(fixture.summaryOperationSeeds[index]);
             }
@@ -886,7 +916,7 @@ describe('B157 independent context harness contracts (offline)', () => {
             expect(dispatched.map((input: any) => input.body)).toEqual(setup.bodies);
             expect(setup.bodies.flatMap(body => body.messages.flatMap((message: any) =>
                 message.tool_calls?.filter((call: any) => call.function.name === 'vault_append') ?? []))).toHaveLength(2);
-            expect(report.physicalRequests).toBe(complete ? 15 : maxRequests);
+            expect(report.physicalRequests).toBe(complete ? 20 : maxRequests);
             expect(setup.bodies[0].tools).toEqual(expect.arrayContaining(['search_memory', 'vault_append'].map(name =>
                 expect.objectContaining({ function: expect.objectContaining({ name }) }))));
             const summaryInputs = dispatched.filter((input: any) => input.body.messages[0].content.startsWith('Produce a source-grounded summary'));
@@ -944,18 +974,19 @@ describe('B157 independent context harness contracts (offline)', () => {
                         function: expect.objectContaining({ name: 'vault_append' }),
                     })]));
                     const records = projectedHistoryRecords(input), history = summaryHistory(episode, index);
-                    const expected = projectedHistoryRecords({ body: { messages: [{ role: 'user', content: formatHistoryMessages(history) }] } });
-                    expect(records.slice(0, 4)).toEqual(expected.slice(0, 4).map((record: any) => ({ ...record, content: '',
-                        ...(record.actionHistory ? { actionHistory: record.actionHistory.map((group: any) => ({ ...group, text: '' })) } : {}) })));
-                    expect(records.slice(-2)).toEqual(expected.slice(-2));
-                    const states = records.flatMap((record: any) => record.actionStates ?? []);
+                    const covered = episode.summaryPreparations[index].coveredMessageCount;
+                    const expected = projectedHistoryRecords({ body: { messages: [{ role: 'user',
+                        content: formatHistoryMessages(history.slice(covered)) }] } });
+                    expect(records).toEqual(expected);
+                    expect(records.some((record: any) => record.actionHistory?.length)).toBe(false);
+                    expect(historyMaterial.content).toContain(episode.summaryPreparations[index].text);
                     for (const turn of episode.summaryStateAfterReopen) {
                         const state = turn.assistant.actionStates[0];
-                        expect(states).toEqual(expect.arrayContaining([expect.objectContaining({
-                            owner: 'operations', operationId: state.operationId, phase: state.phase,
-                        })]));
+                        expect(historyMaterial.content).toContain(state.operationId);
+                        expect(historyMaterial.content).toContain(`phase=${state.phase}`);
                     }
                 }
+                expect(episode.summaryStateBeforeVerification.slice(0, 4)).toEqual(episode.summaryStateBeforeUpdates);
             }
             expect(report.humanVerdict).toBe('pending');
             expect(episode.humanVerdict).toBe('pending');
@@ -967,7 +998,7 @@ describe('B157 independent context harness contracts (offline)', () => {
 
     it.each(['forged', 'missing', 'wrong-index', 'free-protected-index', 'wrong-fact-role', 'wrong-fact-purpose',
         'duplicate-fact-message', 'source-in-fact-lane'] as const)(
-        'rejects %s actual seeded action anchors before physical auxiliary or answer dispatch', async scenario => {
+        'rejects %s summary anchors before auxiliary dispatch and continues with exact original history', async scenario => {
             let intercepted = false;
             const reply = summaryEpisodeReply(() => undefined);
             const setup = offlineServicePlugin(reply, service => {
@@ -1004,13 +1035,16 @@ describe('B157 independent context harness contracts (offline)', () => {
             try {
                 const report = await handle.start({ ...setup.options, summaryOnly: true, maxRequests: 24 }), episode = report.results[0];
                 expect(intercepted).toBe(true);
-                expect(report).toMatchObject({ status: 'failed', error: 'B157_TURN_FAILED', physicalRequests: 6 });
+                expect(report).toMatchObject({ status: 'recorded_for_review', error: null, physicalRequests: 16 });
                 assertSummaryOperations(episode);
-                expect(setup.bodies).toHaveLength(6);
+                expect(setup.bodies).toHaveLength(16);
                 expect(setup.bodies.some(body => body.messages[0].content.startsWith('Produce a source-grounded summary'))).toBe(false);
-                expect(episode.summaryCompletions).toEqual([expect.objectContaining({ outcome: 'invoke_error', requestIds: [] })]);
-                expect(episode.providerInputs).toHaveLength(6);
-                expect(episode.turns.at(-1).answer).toBe('');
+                expect(episode.summaryCompletions).toHaveLength(5);
+                for (const completion of episode.summaryCompletions) {
+                    expect(completion).toMatchObject({ outcome: 'invoke_error', requestIds: [] });
+                }
+                expect(JSON.stringify(setup.bodies)).not.toContain('FORGED_SOURCE_CONTENT');
+                assertFullHistoryFallback(episode);
             } finally { await handle.cleanup(); }
         }, 20_000,
     );
@@ -1025,13 +1059,15 @@ describe('B157 independent context harness contracts (offline)', () => {
         try {
             const report = await handle.start({ ...setup.options, summaryOnly: true, maxRequests: 24 }), episode = report.results[0];
             expect({ status: report.status, error: report.error, physicalRequests: report.physicalRequests }).toEqual({
-                status: 'failed', error: 'B157_TURN_FAILED', physicalRequests: 7,
+                status: 'recorded_for_review', error: null, physicalRequests: 21,
             });
             assertSummaryOperations(episode);
-            expect(episode.summaryPreparations).toEqual([{ historyBudgetChars: fixture.summaryHistoryBudgetChars, historyMessageCount: 8, outcome: 'no_summary' }]);
-            expect(episode.summaryCompletions).toHaveLength(1);
+            expect(episode.summaryPreparations).toHaveLength(5);
+            expect(episode.summaryPreparations.every((item: any) => item.outcome === 'no_summary' && item.text === undefined)).toBe(true);
+            expect(episode.summaryCompletions).toHaveLength(5);
             const completion = episode.summaryCompletions[0];
-            const { source: actualPayload, actionFacts } = historySummaryMaterials(episode.providerInputs.at(-1).body);
+            const dispatched = episode.providerInputs.find((input: any) => input.requestId === completion.requestIds[0]);
+            const { source: actualPayload, actionFacts } = historySummaryMaterials(dispatched.body);
             expect(completion).toMatchObject({ outcome: 'returned', maxChars: summaryFreeAllowance(episode), sourceIndexes: [1, 2, 3, 4, 5, 6],
                 freeSourceIndexes: actualPayload.sourceMessages.map((source: any) => source.index),
                 retainedActionFactIndexes: actionFacts.retainedActionFacts.map((source: any) => source.index),
@@ -1041,13 +1077,14 @@ describe('B157 independent context harness contracts (offline)', () => {
             expect(completion.parserInput.text).toBeUndefined();
             expect(completion.parserInput.parserTextChars).toBeUndefined();
             expect(completion.parserInput.canonicalJSONStringChars).toBeUndefined();
-            expect(completion.requestIds).toEqual([episode.providerInputs.at(-1).requestId]);
+            expect(completion.requestIds).toEqual([dispatched.requestId]);
             expect(episode.summaryConsumerUpdates).toEqual(expect.arrayContaining([expect.objectContaining({
                 callId: completion.callId, phase: 'consumer_end', status: 'completed',
             })]));
-            expect(episode.turns.at(-1).answer).toBe('');
+            assertFullHistoryFallback(episode);
             expect(episode.turns.at(-1).providerInputEnd).toBe(episode.providerInputs.length);
-            expect(episode.providerInputs.at(-1).body.messages[0].content).toMatch(/^Produce a source-grounded summary/);
+            expect(episode.providerInputs.at(-1).body.messages[0].content).not.toMatch(/^Produce a source-grounded summary/);
+            expect(JSON.stringify(episode.providerInputs.filter((input: any) => input.historyPath !== 'none'))).not.toContain('synthetic-aux-prefix');
             const exported = JSON.stringify(handle.safeExport());
             expect(exported).not.toContain('UNEXPORTED_MIDDLE_MARKER');
             expect(exported).not.toContain('DO_NOT_EXPORT_AUX_REASONING');
@@ -1088,7 +1125,7 @@ describe('B157 independent context harness contracts (offline)', () => {
                 expect(first.requestIds).toHaveLength(1);
                 if (scenario === 'formatting only') {
                     expect({ status: report.status, physicalRequests: report.physicalRequests }).toEqual({
-                        status: 'recorded_for_review', physicalRequests: 15,
+                        status: 'recorded_for_review', physicalRequests: 20,
                     });
                     expect(episode.summaryCompletions).toHaveLength(4);
                     expect(episode.summaryPreparations).toHaveLength(5);
@@ -1109,12 +1146,13 @@ describe('B157 independent context harness contracts (offline)', () => {
                     expect(combined.completed).toEqual([expect.objectContaining({ text: expect.stringContaining(ownerStates[0].operationId), sourceMessages: [2] })]);
                     expect(combined.open_questions).toEqual([expect.objectContaining({ text: expect.stringContaining(ownerStates[1].operationId), sourceMessages: [4] })]);
                 } else {
-                    expect({ status: report.status, physicalRequests: report.physicalRequests }).toEqual({ status: 'failed', physicalRequests: 7 });
+                    expect({ status: report.status, physicalRequests: report.physicalRequests }).toEqual({ status: 'recorded_for_review', physicalRequests: 21 });
                     expect(first.parserInput).toMatchObject({ chars: first.maxChars + 1, canonicalJSONStringChars: first.maxChars + 1,
                         formattingOverBudget: false, rejectionCondition: 'canonical_summary_exceeds_max_chars' });
-                    expect(episode.summaryCompletions).toHaveLength(1);
-                    expect(episode.summaryPreparations).toEqual([{ historyBudgetChars: fixture.summaryHistoryBudgetChars, historyMessageCount: 8, outcome: 'no_summary' }]);
-                    expect(episode.turns.at(-1).answer).toBe('');
+                    expect(episode.summaryCompletions).toHaveLength(5);
+                    expect(episode.summaryPreparations).toHaveLength(5);
+                    expect(episode.summaryPreparations.every((item: any) => item.outcome === 'no_summary' && item.text === undefined)).toBe(true);
+                    assertFullHistoryFallback(episode);
                 }
                 expect(episode.humanVerdict).toBe('pending');
             } finally { await handle.cleanup(); }
@@ -1170,7 +1208,7 @@ describe('B157 independent context harness contracts (offline)', () => {
             const followup = episode.providerInputs.slice(episode.turns[0].providerInputEnd).filter((item: any) => item.requestId);
             expect(JSON.stringify(followup.map((item: any) => item.body.messages))).toContain('completed');
             expect(episode.followupSubmissions).toEqual([]);
-            expect(episode.comparison.observedPaths).toEqual(['lossless']);
+            expect(episode.comparison.observedPaths).toEqual(['compat-raw']);
             expect(episode.humanVerdict).toBe('pending');
         } finally { await handle.cleanup(); }
     }, 20_000);
@@ -1223,7 +1261,7 @@ describe('B157 independent context harness contracts (offline)', () => {
             expect(episode.submissions.filter((item: any) => item.domain === 'ghost' && item.method === 'create')).toHaveLength(1);
             expect(episode.submissions.some((item: any) => item.domain === 'ghost' && ['update', 'delete'].includes(item.method))).toBe(false);
             expect(episode.followupSubmissions).toEqual([]);
-            expect(episode.comparison.observedPaths).toEqual(['lossless']);
+            expect(episode.comparison.observedPaths).toEqual(['compat-raw']);
             expect(episode.humanVerdict).toBe('pending');
         } finally { await handle.cleanup(); }
     }, 20_000);

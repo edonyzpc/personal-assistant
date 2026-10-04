@@ -489,7 +489,7 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(finalInput).toContain('"executionState":"acceptance_unknown"');
         expect(finalInput).toContain('"image_acceptance_unknown"');
         expect(finalInput).toContain('current tool executionState/recovery and historical owner actionStates');
-        expect(finalInput).toContain('Do not recommend these actions, including a conditional retry');
+        expect(finalInput).toContain('Do not recommend resubmission, including a conditional retry');
         expect(finalInput).toContain('trusted not_started facts explicitly allow correct_input');
         expect(submit).toHaveBeenCalledTimes(1);
     });
@@ -1022,12 +1022,9 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
     });
 
     it("instructs the model to admit insufficient evidence rather than guess (#1.1)", () => {
-        // #1.1 motivation: hallucination guard. "Explicitly" is asserted so a paraphrase that
-        // softens the rule into hedging language ("I am not sure but...") would surface as a
-        // test failure instead of silently regressing.
         const joined = PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES.join("\n");
-        expect(joined).toContain("insufficient");
-        expect(joined.toLowerCase()).toContain("instead of guessing");
+        expect(joined).toContain("Separate observed facts, supported inferences, and unknowns");
+        expect(joined).toContain("A failure or missing result does not establish its cause");
     });
 
     it("treats current-run tool definitions as the source of truth for tool availability", () => {

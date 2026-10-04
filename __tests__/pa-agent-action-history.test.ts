@@ -6,7 +6,10 @@ import { PaAgentContextHygiene } from "../src/ai-services/context/PaAgentContext
 import { PaAgentContextCompactor } from "../src/ai-services/context/PaAgentContextCompactor";
 import { PaAgentContextProjector } from "../src/ai-services/context/PaAgentContextProjector";
 import { formatHistoryMessages } from "../src/ai-services/context/PaAgentHistoryContextPlan";
+import { projectPaAgentRetainedActionFacts } from "../src/ai-services/context/PaAgentContextSummaryTypes";
+import { buildPaAgentDeterministicActionSummary } from "../src/ai-services/context/PaAgentContextSummarizer";
 import { actionHistoryMessages, projectPaAgentActionHistory, canSummarizeReadOnlyActionHistory, summarizableReadOnlyResultIds } from "../src/ai-services/pa-agent-action-history";
+import { createHostBatchPreflightRejection } from '../src/ai-services/pa-agent-preflight-facts';
 import { buildPaAgentFinalMessages, formatToolObservations,
     measurePaAgentRequestChars, createPaAgentAnswerStreamPrompt,
     resolvePaAgentMessageMode } from "../src/ai-services/pa-agent-prompts";
@@ -191,6 +194,33 @@ describe("T-09 canonical action history", () => {
         expect(wire).not.toContain("PRIVATE_REJECTED_BODY");
     });
 
+    it.each(['native', 'compat'] as const)('retains only closed Host rejection facts after hygiene and storage cloning in %s', mode => {
+        const source = transcript();
+        const result = source[2] as Extract<PaAgentMessage, { role: 'toolResult' }>;
+        result.isError = true;
+        result.content = { promptText: 'PRIVATE_REJECTED_BODY notes/private.md', includeInNextPrompt: true,
+            metadata: { outcome: 'policy_rejected', executionState: 'not_started', preflightOnly: true,
+                batchPreflightRejected: true, reason: 'PRIVATE_UNBOUNDED_REASON notes/private.md',
+                hostBatchPreflightRejection: createHostBatchPreflightRejection(result.toolCallId, result.toolName,
+                    'source_read_plan_unavailable') } };
+        const restored = JSON.parse(JSON.stringify(source)) as PaAgentMessage[];
+        const groups = projectPaAgentActionHistory(new PaAgentContextHygiene().clean(restored).transcript);
+        const rejected = groups[0].calls.find(call => call.id === result.toolCallId)!.results[0];
+        expect(rejected).toMatchObject({ outcome: 'policy_rejected', executionState: 'not_started', text: '',
+            preflightRejection: { scope: 'batch', reason: 'source_read_plan_unavailable' } });
+        const wire = JSON.stringify(actionHistoryMessages(groups, mode).map(message => message.toDict()));
+        expect(wire).toContain('source_read_plan_unavailable');
+        expect(wire).toContain('not_started');
+        expect(wire).not.toContain('result_unknown');
+        expect(wire).not.toContain('PRIVATE_');
+        expect(wire).not.toContain('notes/private.md');
+        result.content.metadata!.hostBatchPreflightRejection = createHostBatchPreflightRejection(
+            result.toolCallId, result.toolName, 'PRIVATE_REASON notes/private.md');
+        const closed = projectPaAgentActionHistory([source[1], result]);
+        expect(closed[0].calls.find(call => call.id === result.toolCallId)!.results[0].preflightRejection?.reason)
+            .toBe('batch_preflight_rejected');
+    });
+
     it("does not claim a call was unexecuted when isolation removed its result", () => {
         const isolated = projectPaAgentActionHistory(transcript().slice(0, 2));
         const wire = JSON.stringify(actionHistoryMessages(isolated, "compat").map(message => message.toDict()));
@@ -286,7 +316,7 @@ describe("T-09 canonical action history", () => {
         expect(reduced.hardTruncatedToolResults).toBe(0);
     });
 
-    it("returns local_overflow instead of cutting essential arguments or protected history", () => {
+    it("keeps essential arguments and full history despite local pressure", () => {
         const source = transcript();
         const parameter = "P".repeat(4000);
         (source[1] as Extract<PaAgentMessage, { role: "assistant" }>).content[1] = {
@@ -303,7 +333,7 @@ describe("T-09 canonical action history", () => {
                 tool_observations: parts.toolObservations, operations_guidance: "None" }, [],
             buildPaAgentFinalMessages(parts.input, parts.actionHistory, "compat")),
         });
-        expect(projected.outcome.admission).toBe("local_overflow");
+        expect(projected.outcome).toMatchObject({ admission: "fit", needsCompaction: true });
         expect(projected.actionHistory[0].calls[0].input).toEqual({ exact: parameter });
         expect(projected.history.text).toContain(parameter);
     });
@@ -323,13 +353,13 @@ describe("T-09 canonical action history", () => {
             availableSkills: "None", toolDefinitions: "None", maxHistoryChars: 4000,
             maxPromptChars: 25_000, maxObservationChars: 1000, formatToolObservations,
         });
-        expect(projected.outcome.admission).toBe("local_overflow");
-        expect(projected.history.text.length).toBeLessThanOrEqual(4000);
+        expect(projected.outcome.admission).toBe("fit");
+        expect(projected.history.sourceMessages).toEqual(history);
         expect(projected.history.text).toContain('"status"');
         expect(projected.history.text).toContain("draft");
         expect(projected.history.text).toContain("final");
         expect(projected.history.text).toContain("ordinary-159");
-        expect(projected.history.omittedCount).toBeGreaterThan(0);
+        expect(projected.history.omittedCount).toBe(0);
     });
 
     it("keeps an admitted semantic correction beside protected action history", () => {
@@ -343,9 +373,11 @@ describe("T-09 canonical action history", () => {
             ]).flat()];
         history[2].content = "Earlier constraint: analyse only";
         history[100].content = "Later correction: code changes allowed; do not commit";
-        const summary = { text: JSON.stringify({ constraints: [
+        const covered = history.slice(0, 150);
+        const closedFacts = buildPaAgentDeterministicActionSummary(projectPaAgentRetainedActionFacts(covered), covered);
+        const summary = { text: JSON.stringify({ ...closedFacts, constraints: [
             { text: "LATEST_CORRECTION_73: code changes allowed; do not commit", sourceMessages: [3, 101] },
-        ] }), sourceMessages: history.slice(0, 150) };
+        ] }), sourceMessages: covered };
         const projector = new PaAgentContextProjector();
         const options = { prompt: "Current question", chatHistory: history,
             maxHistoryChars: 4000, summaries: { history: summary } };
@@ -353,7 +385,7 @@ describe("T-09 canonical action history", () => {
         expect(projected.history.text).toContain("LATEST_CORRECTION_73");
         expect(projected.history.text).toContain("draft");
         expect(projected.history.text).toContain("final");
-        expect(projected.history.text.length).toBeLessThanOrEqual(4000);
+        expect(projected.history.sourceMessages).toEqual(history);
         const stale = projector.projectUserInput({ ...options, summaries: { history: {
             ...summary, sourceMessages: [{ role: "user" as const, content: "different source" },
                 ...summary.sourceMessages.slice(1)],
@@ -361,7 +393,7 @@ describe("T-09 canonical action history", () => {
         expect(stale.history.text).not.toContain("LATEST_CORRECTION_73");
     });
 
-    it("preserves complete old results and latest corrections when a bound summary cannot establish completeness", () => {
+    it("uses a source-bound summary for old results while preserving the latest correction and original records", () => {
         const prior = transcript();
         (prior[2] as Extract<PaAgentMessage, { role: "toolResult" }>).content.promptText =
             `OLD_CLOSED_RESULT ${"R".repeat(2200)}`;
@@ -379,14 +411,13 @@ describe("T-09 canonical action history", () => {
                 { text: 'OLD_CLOSED_RESULT was found in r-final.', sourceMessages: [2] },
             ] }), sourceMessages: history.slice(0, 2) } },
         });
-        expect(projected.history.text.length).toBeGreaterThan(4000);
-        expect(projected.history.historyBudgetLimited).toBe(true);
+        expect(projected.history.text.length).toBeLessThan(4000);
         expect(projected.history.text).toContain("LATEST_CORRECTION_94");
-        expect(projected.history.text).toContain("draft");
-        expect(projected.history.text).toContain("final");
         expect(projected.history.text).not.toContain("Earlier result represented in the admitted conversation summary");
         expect(projected.history.text).toContain("OLD_CLOSED_RESULT");
-        expect(projected.history.text).toContain('R'.repeat(2200));
+        expect(projected.history.text).not.toContain('R'.repeat(2200));
+        expect(projected.history.sourceMessages).toEqual(history);
+        expect(history[1].canonicalTurn?.messages[2]).toEqual(prior[2]);
     });
 
     it.each(["acceptance_unknown", "partially_succeeded"] as const)(
@@ -407,7 +438,7 @@ describe("T-09 canonical action history", () => {
             });
             expect(projected.history.text).toContain(`VERIFY_BEFORE_REPLAY_${executionState}`);
             expect(projected.history.text).not.toContain("resultId=r-final");
-            expect(projected.outcome.admission).toBe("local_overflow");
+            expect(projected.outcome).toMatchObject({ admission: "fit", needsCompaction: true });
         },
     );
 });
