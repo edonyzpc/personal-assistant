@@ -1,0 +1,89 @@
+{
+  "date": "2026-10-04",
+  "vault": "test",
+  "buildSha256": "09d4c6bb6233083b6854f180c65bd3e7f4b33b11ef4d7212a8a35c106c93fe5d",
+  "provider": "qwen",
+  "model": "deepseek-v4-pro",
+  "physicalRequests": 7,
+  "totalWithAblation": 64,
+  "requestCap": 76,
+  "evidenceKind": "Obsidian visible Chat interaction plus persisted domain records",
+  "visibleUi": {
+    "writingRead": "First draft including final English line visibly returned; no new version.",
+    "writingRevision": "Writing version button and complete revised body visible; only 每周三 changed to 每周六.",
+    "imageStatus": "Answer states local submission unknown, missing provider task ID, no available output, and no resubmission. Answer exposes technical state names; wording quality remains a limitation."
+  },
+  "cases": [
+    {
+      "case": "S3 native UI",
+      "conversationId": "8e0a021f-43c7-4c13-a9f1-625993091f24",
+      "physicalRequests": 5,
+      "read": {
+        "prompt": "请原样给我最早保存的第1稿全文，包括最后一行。不要生成新稿。",
+        "answer": "以下是第 1 稿的完整原文（共 111 字符，已包含最后一行）：\n\n---\n\n# 第 1 稿\n灯塔读书会原计划：每周三讨论；每期 45 分钟；参加者带一本旧书交换。\nDraft 0 paragraph 0: completed article content item 0, reference 0.",
+        "exactBodyIncluded": true,
+        "newVersion": false,
+        "contextUsed": [
+          {
+            "category": "read-only-tool",
+            "label": "Read-only tool",
+            "detail": "read_writing_history output",
+            "citationEligible": false,
+            "statusOnly": false,
+            "sources": []
+          }
+        ],
+        "status": "completed"
+      },
+      "revision": {
+        "prompt": "@Writing 只把第1稿的每周三改成每周六，其余正文逐字保留，给出修订稿。",
+        "parentVersionId": "writing_22995c30702f2f75c3ab487651f991447fe0b7d5783d61cb",
+        "expectedParentId": "writing_22995c30702f2f75c3ab487651f991447fe0b7d5783d61cb",
+        "correctParent": true,
+        "text": "# 第 1 稿\n灯塔读书会原计划：每周六讨论；每期 45 分钟；参加者带一本旧书交换。\nDraft 0 paragraph 0: completed article content item 0, reference 0.",
+        "exactExpectedBody": true
+      },
+      "originalBodiesUnchanged": true,
+      "savedNoteReceipts": 0
+    },
+    {
+      "case": "S4 native UI",
+      "conversationId": "ac20ef0b-da6c-454e-8b6a-bb5c11295ac2",
+      "physicalRequests": 2,
+      "observations": [
+        {
+          "input": {
+            "operationId": "pa_s4_cf923c08-b5a1-4bce-8eba-ac238a68e81f_operation",
+            "refresh": false
+          },
+          "result": {
+            "status": "available",
+            "taskId": "pa_s4_cf923c08-b5a1-4bce-8eba-ac238a68e81f_task",
+            "operationId": "pa_s4_cf923c08-b5a1-4bce-8eba-ac238a68e81f_operation",
+            "localState": "submission_unknown",
+            "revision": 2,
+            "updatedAt": "2026-10-04T04:30:33.064Z",
+            "basis": "local_snapshot",
+            "remoteQueryAvailable": false,
+            "remoteQueryReason": "no_provider_task",
+            "nextAction": "needs_user"
+          }
+        }
+      ],
+      "unchanged": true,
+      "revision": 2,
+      "state": "submission_unknown",
+      "outputs": 0
+    }
+  ],
+  "cleanup": {
+    "temporaryConversationsDeleted": true,
+    "temporaryWritingVersionsRemaining": 0,
+    "temporaryImageTaskDeleted": true,
+    "originalActiveConversationRestored": true,
+    "temporaryLeavesClosed": true,
+    "temporaryPluginUnloaded": true,
+    "temporaryGlobalsRemoved": true,
+    "debug": false
+  }
+}

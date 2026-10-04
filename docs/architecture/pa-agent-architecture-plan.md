@@ -344,8 +344,8 @@ abort, or deadline expiry invalidates the token and discards late work.
 ### Skill context
 
 - L1 catalog metadata is available as bounded prompt context.
-- The model calls `load_skill` for L2 bodies.
-- Referenced resources are loaded only through the approved Skill context path.
+- `load_skill({name})` returns the complete entry and its registered reference directory.
+- `load_skill({name, reference})` reads one exact registered reference. Entries and references are returned completely; their size participates in normal context pressure rather than a separate default character rejection. Explicit caller budgets, registered paths and schema boundaries remain enforced.
 - Bundled Skills provide context/instructions; they do not become arbitrary script execution.
 
 ### Task source and writing output
@@ -374,7 +374,7 @@ than reusing an exact successful duplicate.
 
 For writing, Chat binds `get_writing_context` only after the user selects the
 `@Writing` action or explicitly continues an existing writing version. Ordinary
-Chat does not expose the writing tools or infer writing intent from prompt
+Chat does not expose writing output tools or infer writing intent from prompt
 keywords. The context tool exposes only Host-selected candidates and
 returns a run-bound context handle. When native writing output is enabled,
 `present_writing` becomes available only after that context is prepared. It must
@@ -384,6 +384,26 @@ schema, source currentness and the generation-input snapshot before creating one
 artifact/version. Preview reads and saves nothing; saving remains an explicit
 confirmed Host action. Legacy JSON, recovery and persisted-version readers stay
 available for existing records.
+
+Ordinary Chat can call `read_writing_history` to list or read versions from its
+current conversation. Each read verifies the original source lineage and current
+conversation lifetime, returns bounded exact text with hash/range/continuation,
+and registers a candidate handle when Writing is active. Actual continuation
+still prepares its parent through `get_writing_context`. Physical model dispatch
+rechecks the history source lifetime after asynchronous preparation.
+
+Older independently paired `present_writing` groups may become explicit history
+references after the most recent two complete turns. The selected parent stays
+available in full. Original canonical calls and stored bodies remain unchanged;
+both adapters and budget calculation consume the same projected entries. Mixed,
+unbound or conflicting legacy groups keep their original representation. Required
+facts that cannot fit still fail admission; history is not silently discarded.
+
+`get_image_status` reads a current-conversation task by `taskId` or `operationId`.
+It returns finite local state and query eligibility. Explicit refresh can perform
+one pure provider query with the original connection identity and lifecycle guard;
+it does not submit, resume, import, cancel or poll. Without a provider task ID,
+acceptance stays unknown and remote verification remains unavailable.
 `report_task_incomplete` is a separate pure output for Chat and explicit Writing:
 it delivers an explanation without creating a work, cannot share a batch with
 other calls, and an invalid report receives bounded correction under the run budget.
@@ -463,24 +483,25 @@ The general vault tools use Obsidian public APIs at the existing minimum App ver
 
 `PaAgentContextManager` composes four delegates:
 
-- `PaAgentContextProjector`: controlled context injection and history projection measured after JSON escaping and wrappers. Complete history is retained when it fits; otherwise recent complete turns take priority over older excerpts.
+- `PaAgentContextProjector`: controlled context injection and history projection measured after JSON escaping and wrappers. Valid source-bound summaries can replace complete old turns; the latest complete turn and selected Writing parent stay intact. Without a valid summary, complete source text remains available.
 - `PaAgentContextHygiene`: removes status-only noise and repairs orphaned tool/message shapes.
-- `PaAgentContextCompactor`: deterministic tool reduction grouped by assistant/model cycle, protecting the latest two cycles from soft compaction. Bounded replacement markers identify the tool, call, original size, error status and sources; canonical evidence remains unchanged.
-- `PaAgentContextBudget`: admission against a verified model window and output reserve when known, otherwise the local character fallback; token estimates and measured provider usage stay distinct. Estimates do not guarantee provider acceptance.
+- `PaAgentContextCompactor`: lossless encoding or source-bound summaries of old successful read-only observations, protecting the latest two cycles, Writing preparation and effect receipts. Canonical evidence remains unchanged.
+- `PaAgentContextBudget`: pressure estimates against a verified model window and output reserve when known, otherwise a character fallback. Estimates guide compression; they do not establish provider acceptance or justify dropping required input.
 
 Current top-level constants:
 
 | Budget | Current value | Meaning |
 | --- | ---: | --- |
-| Chat history | 60,000 chars | Maximum history projection before compaction/truncation. |
+| Chat history | 60,000 chars | Soft summary target under whole-request pressure; not a rejection or truncation threshold. |
 | Local answer request | Verified window minus output reserve and 512-token safety margin; otherwise 120,000 chars | Final rendered messages and bound schema are measured together. The character value is an unknown-model fallback, not a universal model limit. |
 | Read-only tool context | 24,000 chars | Bounded injected tool/context payload. |
-| Loop observation aggregate | 64,000 chars | Production loop cap across tool observations before host policy/finalization. |
+| Loop observation aggregate | 64,000 chars | Soft reduction target under whole-request pressure. |
 | Model/remote attempt | 1,800,000 ms | Per physical request/execution, including response consumption; capability override allowed. |
 | Run wall clock | unbounded by default | No legacy 180-second forced finalization; callers may still configure an explicit bound. |
-| Auxiliary context summaries | 30 physical requests, 60 minutes active wait, 90,000 estimated-or-known admission tokens per run | Optional summaries stop at the first exhausted limit; retries count as physical attempts. A required context that cannot fit ends with a recoverable Context explanation. |
+| Run model turns / tool calls | unbounded by default | Explicit caller budgets still apply; cancellation, per-attempt timeouts and mechanical replay protection remain. |
+| Auxiliary context summaries | 30 physical requests, 60 minutes active wait, 90,000 estimated-or-known tokens per run | Diagnostic warning thresholds only. Retries count as physical attempts; crossing a threshold does not reject the next summary or main task. |
 
-The 24k read-only context and 64k loop observation cap are different layers; do not collapse them into one constant.
+Per-read ranges with continuation are different from aggregate task limits. Bounded read tools retain continuation; selected Writing parents and Writing delivery have no default character cap.
 
 Immediately before a provider request, including SDK physical retries, the
 runtime rebuilds the prompt from fixed read snapshots and current authorization.
@@ -488,15 +509,28 @@ Each physical attempt receives a fresh 30-minute deadline; failed attempts stop
 that clock before SDK backoff. A real `Retry-After` is cancellable, happens after
 the turn lease is released, and does not consume the next attempt's budget.
 
-The final synchronous projection measures the same templates used by the chain.
-Under total-request pressure it reduces old tool evidence, then older history
-excerpts, then the oldest complete raw turns, and finally recent tool evidence.
-The separate observation limit includes formatted wrappers. Mandatory current
-input, runtime instructions, tool/write boundaries and existing Memory/Pagelet
-projections are not silently cut. An irreducible overflow stops that attempted
-request with a local Context explanation; a previous attempt in the same run
-may already have reached the provider. An early lower-bound check rejects an
-oversized current input before optional context preparation.
+The final projection first measures the complete legal request using the same
+templates and bound schemas as the chain. Under whole-request pressure it tries
+lossless reduction and source-bound summaries of older material. Failed or invalid
+summaries retain complete original input. Current requirements, selected parents,
+source permissions and closed effect facts are never silently cut to satisfy an
+estimate. Unknown-model fallback size is soft; only impossible configuration
+(no available input window) is locally rejected.
+
+A definite provider context-window error allows one compaction-and-retry per
+consecutive failure. A successful provider response resets this recovery guard,
+so a later overflow in the same long task can recover again. Recovery asks for
+a smaller projection relative to the rejected request, including any cached
+summary; that target is soft and never authorizes dropping required input. It
+bypasses stream-to-invoke fallback with unchanged input. Image errors retain a
+safe overflow category without exposing the SDK request body. The failed attempt
+stays in canonical history but is omitted from subsequent model projections; already
+executed effects are not replayed. A consecutive second rejection, cancellation or source
+revocation stops explicitly. Actual provider capacity remains a physical limit.
+After successful recovery, the numeric retry target is cleared. Accepted
+source-current summaries remain in subsequent projections, so the next tool
+turn does not expand back to the input the provider already rejected. Original
+source snapshots remain available for authorization and source revalidation.
 
 Each attempted admissible projection contributes a three-boolean Context
 receipt (`historyCompressed`, `toolContextReduced`, `budgetLimited`), aggregated
@@ -529,8 +563,8 @@ omissions or semantic-summary characters, and makes no history-summary model
 call. Answer instructions describe the encoding while preserving the data-only
 history boundary. Source closing-tag case is preserved by the encoded formatter.
 Internal callers may lower the per-turn history allocation through
-`historyBudgetChars`; it cannot exceed the default 60,000-character allocation
-or raise the overall request limit. Preview, summary preparation, final
+`historyBudgetChars`; this is a soft allocation and may exceed the default.
+Preview, summary preparation, final
 projection and invoke fallback share it, and diagnostics record the final
 allocation. This is not a new user setting.
 The model is asked to return minified JSON and retain each material item in its
@@ -548,22 +582,18 @@ output remains distinct from this source presentation.
 ChatService owns the ephemeral summary cache. History edits, deletion, switching,
 closing and provider/model changes invalidate it; reload rebuilds from saved
 Chat messages. Summary requests are tool-free and cancellable. The run-local
-auxiliary ledger admits another physical request only while its request, active
-wait and token limits allow it; starting no further request does not shorten an
-already dispatched 30-minute attempt. Provider-reported physical usage is kept
+auxiliary ledger records request, active wait and token pressure without blocking
+another summary. Each physical attempt retains its independent timeout.
+Provider-reported physical usage is kept
 per attempt when attributable, including failed or cancelled attempts; unknown
 usage remains unknown rather than being added to a fabricated total. After
 preparation and before every answer attempt, source
-currentness is revalidated and the complete request passes local admission.
-The owner-approved auxiliary ceiling is 30 physical requests including retries
-and 60 minutes of cumulative active wait per run, with 90,000
-estimated-or-known tokens as the admission lower bound. Exhaustion leaves the
-main task running when its required context remains intact; otherwise it reports
-recoverable insufficient context rather than silently dropping constraints.
+currentness is revalidated and the complete request is measured again. Missing
+usage remains unknown; it does not become zero or block task execution.
 Tool-summary payload snapshots and registry live references use independent
 clones. Optional summary checks use their own cancellation scope; late results
 cannot update caches or mutate the input used by answer fallback.
-Invalid or timed-out summaries fall back to deterministic reduction; a valid
+Invalid or timed-out summaries fall back to complete original or losslessly encoded input; a valid
 history summary remains an atomic block rather than a truncated JSON fragment.
 No summary is written to long-term Memory. Source indices verify association,
 not semantic correctness; real-model continuity evaluation is specified in the
@@ -580,7 +610,7 @@ is a model instruction, not a guaranteed schema property.
 History summaries reserve at most 8,000 characters within the actual history
 allocation; tool summaries default to at most 1,500 characters. Each physical
 summary request uses the ordinary 30-minute attempt deadline, while the
-run-local auxiliary limits above control total optional work. An empty intermediate batch may continue to later sources when
+run-local auxiliary thresholds above record total optional work. An empty intermediate batch may continue to later sources when
 there is no prior valid state. An update that erases valid prior state, a final
 empty result, invalid output, or timeout cannot replace the cache. Exact source
 snapshots determine reuse; counts or short hashes alone cannot validate it.
@@ -611,8 +641,8 @@ or changing the Memory index.
   current permission or a reason to replay a possible side effect.
 - Domain owners emit typed facts for success, normal no-match, unavailable
   retrieval, pending confirmation and committed output. The main Agent decides
-  whether the user goal is covered; Host completion policy verifies necessary
-  tools, sources and receipts. An accepted Writing artifact is distinct from a
+  whether the user goal is covered; Host policy verifies protocol, sources and
+  actual domain receipts. An accepted Writing artifact is distinct from a
   confirmed save receipt, and a task missing necessary evidence may end
   incomplete without a generic fabricated answer.
 - Memory references, Context Used, Web sources, and Skill context retain distinct origin metadata.
@@ -625,20 +655,22 @@ or changing the Memory index.
 
 ## Required Capability And Completion Policy
 
-The main Agent interprets the request and selects from the tools that Host policy
-actually exports. The Host does not make a separate startup-classification model
-call or create a predicted required-tool list. Completion policy instead uses
-the tools that were actually executed, their admitted source state, pending
-actions, writing-output state and the run terminal condition. An executed
-capability is satisfied only by its successful tool result.
+The Agent assesses task sufficiency from admitted observations. The production
+Host has one mechanical policy: continue after tool results; correct one empty
+response; stop repeated replay-only batches using the dispatcher's actual
+canonical call keys; preserve real terminal status. It has no parallel semantic
+completion ledger, progress epoch or semantic-round budget state.
 
-Host policy may:
+The Loop retains actual request/tool/time budgets, reserved finalization,
+cancellation and bounded consecutive provider recovery. A successful provider
+turn resets consecutive failure counts. Domain owners continue to enforce source,
+permission, confirmation, artifact and side-effect boundaries.
 
-- continue with a corrective runtime instruction;
-- retry one failed required-tool shape;
-- force a final-answer-only turn;
-- finish with warning/incomplete metadata when evidence is unavailable;
-- stop on budgets, abort, or terminal error.
+A batch rejected before execution retains a closed `policy_rejected/not_started`
+fact and reason in model history. Its original refusal body remains hidden. Only
+the dispatcher's live receipt grants admission of that finite fact; persisted
+copies can be displayed but grant no source or execution authority. Missing
+observations still remain unknown.
 
 Warnings stay structured for UI/history; they are not silently appended as answer prose.
 

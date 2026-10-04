@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "id": "pa-harness-ablation-2026-10-04-v1",
+  "syntheticPrefix": "PA-harness-ablation/",
+  "maximumEpisodes": 20,
+  "maximumPhysicalRequests": 76,
+  "groupRequestCaps": { "hostPolicy": 32, "writingHistory": 16, "personalInjection": 18, "final": 10 },
+  "defaultHistoryBudgetChars": 60000,
+  "sampling": { "temperature": 0 },
+  "scoring": {
+    "semanticVerdict": "pending_human_review",
+    "rules": [
+      "Judge final user-visible answer against expected facts and requested action, using actual tool evidence.",
+      "A transport error or request cap is incomplete, not a semantic failure; never retry automatically.",
+      "E-C1 pre-model overflow is capacity evidence only. E-C2 must admit both arms before comparing semantic quality.",
+      "No real vault source, settings change, note mutation, image request, web request, or publication is authorized."
+    ]
+  },
+  "cases": [
+    {
+      "id": "E-H1", "axis": "hostPolicy", "arms": ["classic", "lean"],
+      "notes": [
+        { "path": "PA-harness-ablation/pilot-cost.md", "content": "# 云杉试点成本\n2026-09-10 记录：场地租赁 1200 元，设备运输 300 元；培训费尚未确定。" },
+        { "path": "PA-harness-ablation/pilot-training.md", "content": "# 云杉试点培训\n2026-09-12 最终报价：培训 800 元，报价包含培训师交通，不能另加交通费。" },
+        { "path": "PA-harness-ablation/pilot-budget.md", "content": "# 云杉试点审批\n2026-09-14 批准总预算 2500 元；三项成本均由此预算支付。" }
+      ],
+      "turns": [{ "text": "请调查我的三份云杉试点记录：最终总成本是多少、预算还剩多少？列出计算和每项依据。" }],
+      "expected": ["Read all three source notes", "Total 2300, remaining 200, no double-counted travel", "Cite traceable source paths"]
+    },
+    {
+      "id": "E-H2", "axis": "hostPolicy", "arms": ["lean", "classic"],
+      "notes": [
+        { "path": "PA-harness-ablation/launch-initial.md", "content": "# 苔原上线初稿\n2026-08-01：暂定周三上线，日期待项目复盘确认；本记录不是最终决定。" },
+        { "path": "PA-harness-ablation/launch-review.md", "content": "# 苔原上线复盘\n2026-08-04：因资料迁移需两天，最终改为周五上线。旧初稿的周三安排取消。" }
+      ],
+      "turns": [{ "text": "查一下苔原项目最后定在周几上线，以及为什么。初稿可能不是最终安排。" }],
+      "expected": ["Read final review after or alongside initial note", "Friday because migration needs two days", "Do not finalize from the obsolete Wednesday note"]
+    },
+    {
+      "id": "E-H3", "axis": "hostPolicy", "arms": ["classic", "lean"],
+      "seed": { "kind": "unknown-operation" },
+      "notes": [],
+      "turns": [{ "text": "刚才那次操作到底完成了吗？你这里为什么不能确认？" }],
+      "expected": ["State that original result is unknown and current verification is unavailable", "Do not claim no effects or a fabricated failure cause", "Do not restart the old operation"]
+    },
+    {
+      "id": "E-H4", "axis": "hostPolicy", "arms": ["lean", "classic"],
+      "seed": { "kind": "writing", "count": 1, "paragraphs": 1, "topic": "晨间笔记方案：用 Templater 的 tp.file.include 引入共享计划模板，减少重复维护。" },
+      "notes": [],
+      "turns": [{ "text": "刚才为什么建议 include 共享模板？另外请查 Templater skill 的参考说明：include 的路径相对哪里，find_tfile 找不到时返回什么？解释即可。" }],
+      "expected": ["Explain reuse without producing a new Writing version", "Read the bundled Templater reference resource", "include resolves relative to vault root; find_tfile returns null when missing"]
+    },
+    {
+      "id": "E-C1", "axis": "writingHistory", "arms": ["current", "cold"],
+      "seed": { "kind": "writing", "count": 12, "paragraphs": 80, "topic": "社区读书会筹备记录" },
+      "notes": [],
+      "turns": [{ "text": "现在换一个小问题：18 位读者每桌坐 6 人，需要几桌？请只回答桌数。" }],
+      "expected": ["Answer 3 tables", "No old Writing request resumed", "Pre-model overflow is capacity evidence, not a failed arithmetic answer"]
+    },
+    {
+      "id": "E-C2", "axis": "writingHistory", "arms": ["cold", "current"],
+      "seed": { "kind": "writing", "count": 4, "paragraphs": 1, "topic": "灯塔读书会原计划：每周三讨论；每期 45 分钟；参加者带一本旧书交换。", "targetIndex": 0 },
+      "notes": [],
+      "turns": [{ "text": "回到最早那份灯塔读书会稿子（第 1 稿）。请先取回原稿，把活动时间改为周六，时长改为 60 分钟，保留其他约定，然后给我修改后的完整稿子。", "writing": true }],
+      "expected": ["Both arms must reach a model request", "Recover first version (older than recent two), using history read when cold", "Saturday and 60 minutes override Wednesday and 45", "Keep the old-book exchange detail"]
+    },
+    {
+      "id": "E-M1", "axis": "personalInjection", "arms": ["current", "off"],
+      "personal": "我更容易读懂先给结论、再列最多三个短要点的中文回答。",
+      "notes": [],
+      "turns": [{ "text": "我想开始记录每天读过的书，怎样最容易坚持？" }],
+      "expected": ["Actionable low-burden advice", "Score whether remembered format improves fit", "No invented personal facts"]
+    },
+    {
+      "id": "E-M2", "axis": "personalInjection", "arms": ["off", "current"],
+      "personal": "我喜欢在周末研究咖啡豆的产地和烘焙程度。",
+      "notes": [],
+      "turns": [{ "text": "把 72 分钟换算成小时和分钟。" }],
+      "expected": ["1 hour 12 minutes", "No irrelevant coffee detour or unnecessary personalization"]
+    },
+    {
+      "id": "E-M3", "axis": "personalInjection", "arms": ["current", "off"],
+      "personal": "我以前习惯用英文阅读计划和建议。",
+      "notes": [],
+      "turns": [{ "text": "这次请全部用简体中文。我有三本短书，帮我做一个三天读书安排，每天一行。" }],
+      "originalExpected": ["Use Simplified Chinese despite old English preference", "Exactly three brief daily entries", "Current instruction wins without negotiating the remembered preference"],
+      "assessmentRevision": "Owner accepts asking for book titles before arranging the plan. The three-line format applies to the eventual plan, not a ban on clarification. No new model run.",
+      "expected": ["Use Simplified Chinese despite old English preference", "Ask for book titles or other needed planning information when useful; the eventual plan uses one line per day", "Current instruction wins without negotiating the remembered preference"]
+    },
+    {
+      "id": "FINAL-1", "axis": "final", "arms": ["selected"],
+      "notes": [
+        { "path": "PA-harness-ablation/cedar-base.md", "content": "# 雪松活动\n初始报名 24 人；最早打算每组 5 人。" },
+        { "path": "PA-harness-ablation/cedar-final.md", "content": "# 雪松活动确认\n后来 4 人退出；最终改为每组 4 人；每组需要 2 本练习册。" },
+        { "path": "PA-harness-ablation/cedar-stock.md", "content": "# 雪松物料库存\n已有 7 本可用练习册。" }
+      ],
+      "turns": [{ "text": "按雪松活动最后确认的人数和分组规则，还要补买几本练习册？给出依据。" }],
+      "expected": ["20 participants, 5 groups, needs 10 books, buy 3", "Trace evidence across all three notes"]
+    },
+    {
+      "id": "FINAL-2", "axis": "final", "arms": ["selected"],
+      "seed": { "kind": "writing", "count": 1, "paragraphs": 1, "topic": "银杏活动：周二在图书馆讨论，每人带一本旧书。" },
+      "notes": [],
+      "turns": [
+        { "text": "上一稿写的活动在哪里、周几？这次只核对原文。" },
+        { "text": "现在请新写一份枫树活动通知：周日在社区中心见面，每人带一支铅笔。", "writing": true }
+      ],
+      "expected": ["First turn only reports library and Tuesday, without new version", "Second turn explicitly creates maple notice with Sunday, community center and pencil", "Do not carry ginkgo details into the new task"]
+    }
+  ]
+}

@@ -12,6 +12,12 @@
 - [Chat 图片生成、版本与任务恢复](./chat-image-generation-architecture.md)
 - [Obsidian read tools / Operations boundary](./obsidian-operations-agent-plan.md)
 
+## Harness 审查与实施
+
+- [PA Agent Harness 深审与离线消融](./pa-agent-harness/pa-agent-harness-review-2026-10-04.md)
+- [PA Agent Harness 完整优化方案](./pa-agent-harness/pa-agent-harness-optimization-plan-2026-10-04.md)
+- [实施与消融结果](./pa-agent-harness/implementation-results-2026-10-04.md) — 默认策略、逐项结果、验证与保留限制。
+
 ## Memory / VSS
 
 - [SQLite/WASM architecture](./vss-sqlite-wasm-architecture.md)

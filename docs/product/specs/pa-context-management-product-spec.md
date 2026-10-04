@@ -1,10 +1,12 @@
 # PA Context Management Product Spec
 
 Document status: Current
-Updated: 2026-09-06
+Updated: 2026-10-04
 Work item: B-128
 Decision: [DEC-032](../decisions/dec-032-context-reliability-and-conversation-continuity.md)
 Authority: 已交付的 Context 可靠性、会话连续性及其与长期 Memory 的边界；B-128 构建绑定的验证记录保留为历史证据。
+
+2026-10-04 Owner 的[可靠性后续授权](../../architecture/pa-agent-harness/pa-agent-harness-optimization-plan-2026-10-04.md#13-可靠性后续容量恢复与任务交付)将字符分区和辅助摘要总配额改为压力目标，并增加真实 provider overflow 的一次恢复。下列容量条款按当前行为修订；B-128 原始验收仍是历史证据，不代替本次检查。
 
 ## Problem And Product Outcome
 
@@ -14,10 +16,10 @@ Authority: 已交付的 Context 可靠性、会话连续性及其与长期 Memor
 
 ### In Scope
 
-- B-128/REQ-01: 原始历史满足预算时保留完整 escaped JSON；有压力时保留最近完整对话，先删减旧摘录再牺牲近期原文，不固定十轮。
-- B-128/REQ-02: 按 assistant/model cycle 缩短旧工具结果，最近 cycle 尽可能完整；硬上限兜底不得损坏 wrapper、伪造成功或声称不可见原文可恢复。
-- B-128/REQ-03: 最终 provider 请求（包括 streaming fallback 重建）使用完整本地字符门；有序缩减后仍超限时不发送该次请求，且不截短当前输入、当前 runtime/tool/write 边界。同一 run 的此前调用可能已经发送，不能声称整轮零 provider 调用。
-- B-128/REQ-04: 本地超限显示可理解的缩短请求/开启新对话说明，不显示通用网络故障，不自动创建会话。
+- B-128/REQ-01: 原始历史满足完整请求容量估算时保留完整 escaped JSON；有压力时用来源有效摘要替换完整旧轮，最新完整轮和当前父稿保留，不固定十轮或静默丢弃历史。
+- B-128/REQ-02: 按 assistant/model cycle 缩短旧的成功只读结果，最近两轮、Writing 准备和效果回执保持完整；没有有效摘要时保留原文或可逆表示，不伪造成功。
+- B-128/REQ-03: 最终 provider 请求（包括 fallback 重建）统一测量正文、wrapper 与 schema；本地估算只触发压缩，不阻断完整合法请求。真实 provider context overflow 允许一次压缩后重试，不重放已执行效果。
+- B-128/REQ-04: 第二次真实容量拒绝或配置没有可用输入窗口时准确解释，保留当前会话和原始证据，不显示通用网络故障、不自动创建会话。
 - B-128/REQ-05: 聚合所有实际 provider 请求投影的 reduction outcome；在现有 Context UI 显示至多一个状态，budget limit 优先 compressed，零来源的纯历史压缩也能显示。
 - B-128/REQ-06: 保存无正文的 historyCompressed/toolContextReduced/budgetLimited 布尔值，重载保持一致；检索来源、Memory 和 skipped scope 计数不被压缩回执改写。
 - B-128/REQ-07: 验收连续投影、长对话、更改要求和已有讨论的延续。明确当前规则能保留的内容与已丢失内容；需要语义摘要时依据失败样例单独确定方案，不以扩大 Memory 功能替代。
@@ -36,7 +38,7 @@ Authority: 已交付的 Context 可靠性、会话连续性及其与长期 Memor
 
 ## User Flow And States
 
-正常发送：当前问题 + 会话状态 + 按既有规则选择的 Memory/工具内容 → 投影 → 最终预算检查 → 回答。未缩减时 UI 安静；缩减时 Context 区域提供单一简短说明；无法容纳当前不可裁剪内容时停止发送并解释。桌面/移动采用同一既有 Chat surface。
+正常发送：当前问题 + 会话状态 + 按既有规则选择的 Memory/工具内容 → 完整投影与压力估算 → 必要时压缩 → 回答。未缩减时 UI 安静；缩减时 Context 区域提供单一简短说明；真实服务商容量拒绝先尝试一次恢复，再准确解释仍无法容纳的限制。桌面/移动采用同一既有 Chat surface。
 
 ## Trust, Data And Authority
 
@@ -45,9 +47,9 @@ Authority: 已交付的 Context 可靠性、会话连续性及其与长期 Memor
 ## Acceptance Criteria
 
 - B-128/AC-01: 超过十轮但能容纳的历史原文完整；压力下完整近期轮次优先于旧摘录，escaping 和 wrapper 完整。
-- B-128/AC-02: 一条 user + 至少三个 assistant/tool cycles 触发旧结果 soft compaction；巨大单结果有界；成功/失败、来源和截短标记真实，原始对象不变。
-- B-128/AC-03: fully formatted system/human、schema JSON-size estimate、安全余量各计一次；stream/invoke fallback 超限不发送，强缩减有界且按顺序执行。
-- B-128/AC-04: Loop → Chat 保留 local overflow 原因，展示 EN/ZH 用户文案并不执行自动重试/新会话。
+- B-128/AC-02: 完整请求有压力时，至少三个 assistant/tool cycles 可压缩旧成功只读结果；摘要不成功仍保留完整输入，原始对象和效果事实不变。
+- B-128/AC-03: fully formatted system/human、schema JSON-size estimate、安全余量各计一次；未知模型 fallback 和分区超限不提前拒绝；真实 overflow 不先以相同输入走 invoke fallback。
+- B-128/AC-04: 连续真实 overflow 最多恢复一次，成功响应后重置，长任务后续独立溢出仍可恢复；已有摘要也按被拒请求申请更小投影。已完成效果不重做；连续第二次拒绝、来源撤销及取消准确结束，不自动创建会话。
 - B-128/AC-05: 多 model invocation 重复缩减使用 OR 布尔聚合；零来源历史压缩可显示；每条回答只显示一个 reduction 状态。
 - B-128/AC-06: live/save/reload reduction 一致，旧行兼容，既有 source/Memory/scope 计数不变，新增持久化字段无正文。
 - B-128/AC-07: 有界长对话样例验证重要早期要求、近期修正、已确认决定、重复投影与无源数据写入；输出失败/限制而非宣称无限语义保留。语义性能需模型评测，静态字段断言不能替代。

@@ -20,7 +20,7 @@ Updated: 2026-10-04
 
 | ID | 事项 | 重新启动条件 / 决策边界 | 依据 |
 | --- | --- | --- | --- |
-| B-159 | 未决操作的状态刷新与重新提交提示 | 承接 B-158/F-24；Owner 认为应按恢复交互提示优化：先刷新或查询原操作状态，确认确实失败后再重新提交，不能把状态未知或暂未看到结果当成确定失败。当前仅记录，不继续修复或模型测试；用户明确选择重启时，基于原操作真实状态设计提示与交互，保留现有 Host 防重放边界 | User request 2026-10-04；[B-158 Findings](./development/active/agent-command-contract/tracker.md#findings) |
+| B-159 | 未决操作的状态刷新与重新提交提示 | 承接 B-158/F-24；先刷新或查询原操作状态，确认确实失败后再重新提交，不能把状态未知或暂未看到结果当成确定失败。Owner 后续已授权更广的 harness 重构，实施与验收校正统一见[本次收尾](./architecture/pa-agent-harness/pa-agent-harness-optimization-plan-2026-10-04.md#15-owner-校正与本地收尾)；原 F-24 证据不因后续工程改进被改记为模型通过 | User request 2026-10-04；[B-158 Findings](./development/active/agent-command-contract/tracker.md#findings) |
 | B-141 | Pagelet 临时 Detail 页的 Discuss in Chat 交接 | B-140/T13-UX1：展开到临时 Detail tab 后，旧结果的 Discuss in Chat 按钮未完成交接；live Panel 同入口已实测可交接并 Keep。用户选择修复此入口时，以同一候选从 Detail 打开 Chat、携带来源并完成交接为最小验收；不重开 B-140 的洞察/Memory 范围 | User request 2026-09-17 closeout；[B-140 验收与限制](./archive/2026/b140-pa-agent-essential-capabilities-validation.md#deferred-and-retained-items) |
 | B-132 | 多模态媒体扩展：动画理解与外部资源 SVG | 承接 B-129/T-16、REQ-15 的明确延期范围；用户选择启动后先定义完整理解/渲染的验收、解码依赖、帧与资源预算及外部网络边界。现有静态图恢复继续有效，不因收尾自动抽帧或联网补齐；不预定二期优先级或工期 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md), [Product Spec](./product/specs/pa-multimodal-chat-product-spec.md), [历史媒体与资源证据](./archive/2026/b129-multimodal-chat-validation.md) |
 | B-134 | 跨设备图片聊天续接 | 承接 DEC-030 后续方向；用户选择启动后先设计聊天历史、图片引用/原件可用性、冲突恢复及同步隐私边界。首期仍仅承诺同设备续聊；图片进入 vault 或正式附件同步不等于聊天同步，也不自动扩大到风格同步 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md), [当前存储契约](./architecture/multimodal-chat-architecture.md) |

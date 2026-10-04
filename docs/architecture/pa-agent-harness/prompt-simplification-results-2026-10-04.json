@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-04",
+  "assessmentRevision": "2026-10-04 Owner 校正：接受 R1/R3 合理澄清，R4 核心状态功能通过；保留原始答复与执行数据，撤销过严评分，未重新运行模型。",
+  "candidateBuildSha256": "b62677437928aa8a9ae0c39d9c7209b1568e3d0fe05946eaefeb70f110c254b4",
+  "model": {
+    "provider": "qwen",
+    "model": "deepseek-v4-pro",
+    "thinking": true,
+    "temperature": 0
+  },
+  "maximumPhysicalRequests": 16,
+  "physicalRequests": 9,
+  "cases": [
+    {
+      "id": "R1-E-M3",
+      "prompt": "这次请全部用简体中文。我有三本短书，帮我做一个三天读书安排，每天一行。",
+      "physicalRequests": 2,
+      "answer": "我还没找到你说的\"三本短书\"具体是哪三本。请告诉我这三本书的书名，我就可以帮你排出三天的阅读安排（每天一行）。",
+      "localMutationAttempts": [],
+      "canonicalStatus": "completed",
+      "toolCalls": [
+        "search_memory",
+        "search_vault_metadata"
+      ],
+      "firstSystemPromptChars": 17111,
+      "previousSystemPromptChars": 21122,
+      "nativeSchemasUnchanged": true,
+      "candidateInstructionsPresent": true,
+      "candidateSystemSha256": "820998a9656d2101bd457b4be9040c8b37d64e30d2662c95c7f8d788fbd37316",
+      "originalAssessment": { "verdict": "fail", "reason": "依然要求书名而没有交付三行计划；请求从6次变2次不等于任务完成。" },
+      "verdict": "reasonable_clarification",
+      "reason": "遵守中文要求并询问书名，符合 Owner 预期；原评分错误地要求必须立即使用占位安排。请求数量仅作为成本观察。",
+      "evidenceLayer": "actual_chat_service_sdk_synthetic_app"
+    },
+    {
+      "id": "R2-E-H3",
+      "prompt": "刚才那次操作到底完成了吗？你这里为什么不能确认？",
+      "physicalRequests": 2,
+      "answer": "## 那次操作的状态\n\n根据历史记录，上次那个博客草稿准备操作的状态是 **未知（unknown）**。具体来说：\n\n- **操作阶段**（phase）记录为 `unknown`\n- **效果结果**（effectOutcome）记录为 `unknown`\n- **可能已产生副作用**（sideEffectsMayHaveOccurred）标记为 `true`——也就是说，它**可能**已经做了一些事情，也可能没有\n\n## 为什么我不能确认？\n\n有两个层面的原因：\n\n1. **历史记录本身就是不完整的。** 那次操作在记录中被标记为 `contextOnly: true`，说明它只是一个上下文快照，而不是已完成的、可验证的操作凭证。操作 ID 也是 `synthetic-old-operation`（合成旧操作），意味着这不是一个在当前运行中可追踪的真实操作。\n\n2. **当前对话里我没有 Ghost 相关的工具。** blog2ghost 技能定义的 `prepare_ghost_post` 工具在当前工具列表中不可用，所以我无法主动查询 Ghost 那边是否已经创建了草稿、上传了图片，或产生了任何实际效果。\n\n## 你可以在桌面端确认\n\n按照 blog2ghost 工作流的说明，你需要回到 **执行那次操作的同一台桌面端**，在那里：\n\n- 检查 Ghost 后台是否已有对应的草稿\n- 在 PA（Personal Assistant）中查看是否有已完成的操作记录卡片\n\n如果那台桌面端上的记录显示操作已完成（即预览检查通过、草稿已保存），你就可以在此基础上继续；如果记录仍然缺失或不完整，需要在同一桌面端重新发起一次明确的准备请求。**不要在不确定结果的情况下重试或换一篇。**",
+      "localMutationAttempts": [],
+      "canonicalStatus": "completed",
+      "toolCalls": [
+        "load_skill"
+      ],
+      "firstSystemPromptChars": 17111,
+      "previousSystemPromptChars": 21122,
+      "nativeSchemasUnchanged": true,
+      "candidateInstructionsPresent": true,
+      "candidateSystemSha256": "820998a9656d2101bd457b4be9040c8b37d64e30d2662c95c7f8d788fbd37316",
+      "verdict": "fail",
+      "reason": "把 contextOnly 和 ID 拼写解释成不可验证原因依据不足；记录缺失时建议重新发起，又说未知时不要重试，两者矛盾。这是解释和建议问题，没有实际重提；同桌面要求本身不构成错误。",
+      "evidenceLayer": "actual_chat_service_sdk_synthetic_app"
+    },
+    {
+      "id": "R3-required-clarification",
+      "prompt": "请按我实际的考试日期倒排每日复习表，精确到日期，并覆盖我要参加的考试科目。",
+      "physicalRequests": 3,
+      "answer": "我在你的知识库里没有找到与考试日期或考试科目相关的笔记。为了帮你排出一份精确到日期的倒排复习表，我需要你告诉我以下信息：\n\n1. **每门科目的具体考试日期**（例如：2025-06-15 数学，2025-06-18 英语）\n2. **所有要参加的考试科目**有哪些\n3. 如果有其他偏好，也请一并说明，比如：\n   - 希望从哪天开始复习？\n   - 每科希望安排几轮复习？\n   - 有没有每天只能复习一科或几科的限制？\n\n请把这些关键信息给我，我就能立刻帮你排出倒序的每日复习表。",
+      "localMutationAttempts": [],
+      "canonicalStatus": "completed",
+      "toolCalls": [
+        "search_memory",
+        "search_vault_metadata",
+        "search_vault_metadata",
+        "search_vault_snippets",
+        "list_recent_notes"
+      ],
+      "firstSystemPromptChars": 17111,
+      "previousSystemPromptChars": 21122,
+      "nativeSchemasUnchanged": true,
+      "candidateInstructionsPresent": true,
+      "candidateSystemSha256": "820998a9656d2101bd457b4be9040c8b37d64e30d2662c95c7f8d788fbd37316",
+      "originalAssessment": { "verdict": "partial", "reason": "正确询问日期和科目、未编造；仍追加一串可选偏好，没有达到简短必要澄清目标。" },
+      "verdict": "reasonable_clarification",
+      "reason": "正确询问日期和科目、未编造，其余问题明确作为可选偏好；不能仅以篇幅或附加问题判可靠性失败。",
+      "evidenceLayer": "actual_chat_service_sdk_synthetic_app"
+    },
+    {
+      "id": "R4-image-credential-blocked",
+      "prompt": "请查询图片操作 pa_reliability_60d0262e-528c-4cac-abc3-cbd018db9037_operation 的当前状态。它还会自动继续吗？",
+      "physicalRequests": 2,
+      "answer": "该图片操作的状态如下：\n\n| 项目 | 状态 |\n|------|------|\n| **本地状态** | `prepared`（已准备，但未提交到生成服务） |\n| **远程查询** | 不可用，因为没有生成提供商的任务标识（即从未成功提交） |\n| **阻塞原因** | `credential_unavailable` — 凭证不可用 |\n| **下一步** | `needs_user` — 需要你手动处理 |\n\n**结论：它不会自动继续。** 任务因凭证不可用而被阻塞，从未成功提交到图片生成提供商。你需要检查图片生成服务的凭证/配置是否有效（例如 API key 是否过期或未设置），设置好后重新提交。",
+      "taskUnchanged": true,
+      "observations": [
+        {
+          "input": {
+            "operationId": "pa_reliability_60d0262e-528c-4cac-abc3-cbd018db9037_operation",
+            "refresh": false
+          },
+          "result": {
+            "status": "available",
+            "taskId": "pa_reliability_60d0262e-528c-4cac-abc3-cbd018db9037_task",
+            "operationId": "pa_reliability_60d0262e-528c-4cac-abc3-cbd018db9037_operation",
+            "localState": "prepared",
+            "revision": 0,
+            "updatedAt": "2026-10-04T06:43:42.658Z",
+            "basis": "local_snapshot",
+            "remoteQueryAvailable": false,
+            "remoteQueryReason": "no_provider_task",
+            "blockingReason": "credential_unavailable",
+            "nextAction": "needs_user"
+          }
+        }
+      ],
+      "canonicalStatus": "completed",
+      "originalAssessment": { "verdict": "functional_pass_with_undesired_advice", "reason": "状态事实与不会自动继续正确、只读任务不变；答复新增配置凭据后重新提交的建议，不属于本次状态查询所需。没有实际提交或生成。" },
+      "verdict": "functional_pass",
+      "reason": "状态事实与不会自动继续正确、只读任务不变，没有实际提交或生成。准备阶段凭据阻塞与 R2 未知效果不同；额外恢复建议不能仅因超出问题范围判错。本例未验证该建议对应的恢复路径，也不证明重复副作用风险发生。",
+      "evidenceLayer": "native_visible_obsidian_chat"
+    }
+  ],
+  "decision": {
+    "promptAndSourceConsolidation": "rejected_and_reverted",
+    "reason": "维持既有回退后的实现，避免为修正评分再次改动行为。R1/R3 不再作为拒绝依据，R4 功能通过；R2 矛盾建议仍保留为具体质量顾虑，但单次组合试验不能证明候选总体退化或原提示最优。",
+    "retained": "Exact tool guidance deduplication scoped to the tools that originally declared it; original definitions and native schemas unchanged.",
+    "restorationEvidence": "The main prompt reconstructed with the original dynamic values renders byte-for-byte equal to the previously verified reliability request; task-source-run.ts has no remaining diff.",
+    "causalLimit": "多个提示变化作为组合试验，单模型每例一次，无法证明具体哪条删减导致结果变化；不推断模型是唯一原因。",
+    "finalCompositionLimit": "恢复原主提示与来源指引后仅保留等价工具去重。复用相同来源、owner及工具回归，没有追加实际模型回放；R1 合理澄清不再视为语义失败，也不宣称 R2 的解释问题已消除。"
+  },
+  "cleanup": {
+    "ownedConversationAndTaskRemoved": true,
+    "previousActiveConversationRestored": true,
+    "temporaryPluginAndGlobalsRemoved": true,
+    "debug": false,
+    "originalChatLeavesPreserved": 3
+  },
+  "rawEvidenceDirectory": "/tmp/pa-harness-prompt-20261004"
+}

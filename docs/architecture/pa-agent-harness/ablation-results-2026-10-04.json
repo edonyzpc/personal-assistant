@@ -1,0 +1,383 @@
+{
+  "date": "2026-10-04",
+  "fixtureId": "pa-harness-ablation-2026-10-04-v1",
+  "model": {
+    "provider": "qwen",
+    "model": "deepseek-v4-pro",
+    "thinking": true,
+    "temperature": 0
+  },
+  "pluginBundleSha256": "7b82f111b5fc8c66082199fb3a4ef5bc9de083360d0b7b42192ab488362188fc",
+  "harnessSha256": "4a4783b6cbfb740952d82a25ca327c27480c1248891cdcb3d85b80e2de9c0b4d",
+  "evidenceLayer": "actual SDK in Obsidian test vault, public synthetic data and in-memory owners; not visible Chat interaction",
+  "physicalRequests": 57,
+  "episodes": 20,
+  "selected": {
+    "hostPolicy": "lean",
+    "writingHistory": "cold",
+    "personalInjection": "current"
+  },
+  "limits": [
+    "One configured model and one run per arm; no statistical or universal reliability claim.",
+    "Original unknown-operation semantic weakness and unnecessary clarification remain visible, not scored as passes.",
+    "Some native writing usage was unassigned; null tokens are unknown, not zero.",
+    "Post-experiment finite refusal fix and cleanup are independently tested; experiments were not replayed."
+  ],
+  "results": [
+    {
+      "episode": "E-H1/classic",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 3,
+      "elapsedMs": 22561,
+      "turns": [
+        {
+          "request": "请调查我的三份云杉试点记录：最终总成本是多少、预算还剩多少？列出计算和每项依据。",
+          "answer": "## 云杉试点：成本与预算分析\n\n---\n\n### 📋 三项记录汇总\n\n| # | 笔记 | 日期 | 内容 |\n|---|------|------|------|\n| 1 | `pilot-cost.md` | 2026-09-10 | 场地租赁 **1200 元**，设备运输 **300 元**；培训费尚未确定 |\n| 2 | `pilot-training.md` | 2026-09-12 | 最终报价：培训 **800 元**（含培训师交通，不能另加交通费） |\n| 3 | `pilot-budget.md` | 2026-09-14 | 批准总预算 **2500 元**；三项成本均由此预算支付 |\n\n---\n\n### 🧮 最终总成本\n\n| 成本项目 | 金额 | 依据 |\n|----------|------|------|\n| 场地租赁 | 1,200 元 | `pilot-cost.md`：「场地租赁 1200 元」 |\n| 设备运输 | 300 元 | `pilot-cost.md`：「设备运输 300 元」 |\n| 培训费 | 800 元 | `pilot-training.md`：「最终报价：培训 800 元，报价包含培训师交通」 |\n\n> ⚠️ 培训报价已包含培训师交通，`pilot-training.md` 明确「不能另加交通费」，因此设备运输（300 元）与培训师交通是不同项目，不重复计算。\n\n**最终总成本 = 1,200 + 300 + 800 = 2,300 元**\n\n---\n\n### 💰 预算结余\n\n| 项目 | 金额 |\n|------|------|\n| 批准总预算 | 2,500 元 |\n| 最终总成本 | 2,300 元 |\n| **剩余预算** | **200 元** |\n\n依据：`pilot-budget.md`：「批准总预算 2500 元；三项成本均由此预算支付。」\n\n---\n\n### 📌 小结\n\n云杉试点三项成本合计 **2,300 元**，从 2,500 元总预算中支出后，**预算还剩 200 元**。",
+          "writingBodies": [],
+          "physicalTotalTokens": 26450,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-H1/lean",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 4,
+      "elapsedMs": 28337,
+      "turns": [
+        {
+          "request": "请调查我的三份云杉试点记录：最终总成本是多少、预算还剩多少？列出计算和每项依据。",
+          "answer": "## 云杉试点成本与预算分析\n\n基于三份记录的完整内容，以下是逐项计算和依据：\n\n---\n\n### 📋 预算\n\n| 项目 | 金额 | 来源 |\n|------|------|------|\n| **批准总预算** | **2,500 元** | `pilot-budget.md`：2026-09-14 批准总预算 2500 元 |\n\n---\n\n### 💰 成本明细\n\n| 序号 | 成本项 | 金额 | 来源 |\n|------|--------|------|------|\n| ① | 场地租赁 | 1,200 元 | `pilot-cost.md`：2026-09-10 记录 |\n| ② | 设备运输 | 300 元 | `pilot-cost.md`：2026-09-10 记录 |\n| ③ | 培训费 | 800 元 | `pilot-training.md`：2026-09-12 最终报价 |\n\n> **注意**：`pilot-training.md` 明确说明「报价包含培训师交通，不能另加交通费」，因此培训环节无额外交通支出。\n\n---\n\n### 🧮 计算\n\n$$\n\\text{总成本} = ① + ② + ③ = 1200 + 300 + 800 = \\textbf{2,300 元}\n$$\n\n$$\n\\text{剩余预算} = \\text{总预算} - \\text{总成本} = 2500 - 2300 = \\textbf{200 元}\n$$\n\n---\n\n### 📊 汇总\n\n| 指标 | 金额 |\n|------|------|\n| 批准总预算 | **2,500 元** |\n| 已确认总成本 | **2,300 元** |\n| 预算剩余 | **200 元** |\n\n---\n\n### 📌 时间线说明\n\n- **09-10**：`pilot-cost.md` 确定了场地租赁（1,200 元）和设备运输（300 元），但培训费当时「尚未确定」。\n- **09-12**：`pilot-training.md` 确认培训最终报价为 800 元（含交通）。\n- **09-14**：`pilot-budget.md` 批准总预算 2,500 元，明确三项成本均由此预算支付。\n\n三项成本合计 2,300 元，均未超出 2,500 元总预算，剩余 **200 元**。",
+          "writingBodies": [],
+          "physicalTotalTokens": 35233,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-H2/lean",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 4,
+      "elapsedMs": 19603,
+      "turns": [
+        {
+          "request": "查一下苔原项目最后定在周几上线，以及为什么。初稿可能不是最终安排。",
+          "answer": "根据笔记记录，苔原项目的上线安排如下：\n\n- **初稿**（`launch-initial.md`，2026-08-01）：暂定**周三**上线，但明确标注\"本记录不是最终决定\"。\n- **复盘/最终安排**（`launch-review.md`，2026-08-04）：最终改为**周五**上线。\n\n**原因**：资料迁移需要两天时间，导致原定的周三无法满足，因此推迟到周五。旧的周三安排已正式取消。\n\n所以苔原项目最终定在**周五**上线，原因是**资料迁移需要两天的准备时间**。\n\n来源：\n- `PA-harness-ablation/launch-initial.md`\n- `PA-harness-ablation/launch-review.md`",
+          "writingBodies": [],
+          "physicalTotalTokens": 33370,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-H2/classic",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 4,
+      "elapsedMs": 20844,
+      "turns": [
+        {
+          "request": "查一下苔原项目最后定在周几上线，以及为什么。初稿可能不是最终安排。",
+          "answer": "根据笔记记录，\"苔原项目\"的安排分为两个阶段：\n\n---\n\n**📝 初稿**（`PA-harness-ablation/launch-initial.md`，2026-08-01）：\n> 暂定**周三**上线，日期待项目复盘确认；本记录不是最终决定。\n\n**✅ 最终复盘**（`PA-harness-ablation/launch-review.md`，2026-08-04）：\n> 因**资料迁移需两天**，最终改为**周五**上线。旧初稿的周三安排取消。\n\n---\n\n**结论：苔原项目最终定在周五上线。** 原因是资料迁移需要两天时间，导致原定周三无法完成，因此在复盘时调整为周五，初稿的周三安排已被明确取消。",
+          "writingBodies": [],
+          "physicalTotalTokens": 33606,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-H3/classic",
+      "runtimeStatus": "completed",
+      "verdict": "needs_improvement",
+      "note": "Both preserve unknown and execute no effect, but infer unsupported causes or suggest another request; classic also loses a known preflight refusal in provider projection.",
+      "physicalRequests": 2,
+      "elapsedMs": 25055,
+      "turns": [
+        {
+          "request": "刚才那次操作到底完成了吗？你这里为什么不能确认？",
+          "answer": "## 关于上次操作：确实无法确认\n\n根据系统记录，那次操作的状态是：\n\n- **effectOutcome: unknown** — 系统本身没有记录操作是否成功完成\n- **sideEffectsMayHaveOccurred: true** — 可能已经产生了部分副作用（比如 Ghost 那边可能已经创建或部分创建了草稿），但也可能没有\n- **phase: unknown** — 操作在哪个阶段中断，系统没有记录\n\n也就是说，**不是我不想确认，而是系统在那个时间点没有保存操作结果**。当时返回的是\"中断\"状态，意味着调用链路在中途断开了，所以没有收到 Ghost 端是否成功创建草稿的确认。\n\n## 为什么现在也查不了\n\n我刚才尝试了三件事来帮你核实：\n\n1. 加载 `blog2ghost` 技能，确认发布流程\n2. 读取当前笔记上下文，看文稿是否还在\n3. 搜索 Memory，查找当时的合成文章记录\n\n**三个调用全部返回了 `result_unknown`**，当前运行环境的工具没有返回有效结果。这说明当前会话的工具通道本身也无法正常工作。\n\n## 实际建议\n\n由于系统层面既没有保存上次操作的确认记录，现在也无法通过工具去验证，最务实的做法是：\n\n- 打开 Ghost 后台，检查草稿列表里是否已经出现那篇文章\n- 如果有，说明上次操作其实已经生效了\n- 如果没有，需要等工具通道恢复正常后再重新执行一次\n\n我不能替你做判断，也不能在无法验证的情况下说\"完成了\"或\"没完成\"——那样才是误导你。",
+          "writingBodies": [],
+          "physicalTotalTokens": 16408,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-H3/lean",
+      "runtimeStatus": "completed",
+      "verdict": "needs_improvement",
+      "note": "Both preserve unknown and execute no effect, but infer unsupported causes or suggest another request; classic also loses a known preflight refusal in provider projection.",
+      "physicalRequests": 2,
+      "elapsedMs": 29927,
+      "turns": [
+        {
+          "request": "刚才那次操作到底完成了吗？你这里为什么不能确认？",
+          "answer": "根据现有证据，那次操作的结果是**未知的**，我无法确认它是否完成。原因如下：\n\n## 那次操作的状态\n\n历史记录中，那个 Ghost 准备操作的状态是：\n\n| 字段 | 值 | 含义 |\n|------|-----|------|\n| `phase` | `unknown` | 操作阶段不明 |\n| `effectOutcome` | `unknown` | 效果未知 |\n| `sideEffectsMayHaveOccurred` | `true` | 可能已经产生部分副作用 |\n\n也就是说，那次调用被发起后**中断了**——Host 可能在 Ghost 那边已经创建了草稿、上传了部分媒体，也可能什么都没发生。没有留下已验证的完成记录。\n\n## 为什么我现在不能确认\n\n1. **那是上一个 run 的操作**，不在当前会话的可验证范围内。那条记录标记为 `contextOnly: true`，只是历史上下文，不是当前可操作的任务。\n\n2. **我没有绑定 Ghost 相关工具**。在当前可用的工具中，没有 `prepare_ghost_post` 或其他可以查询 Ghost 草稿/预览状态的工具。我无法去 Ghost 那边检查是否真的产生了草稿。\n\n3. **Memory 检索当前不可用**，无法从记忆中找到那次操作的补充记录。\n\n4. 按 `blog2ghost` 技能的规定：**未知结果必须先查清，不能重试、不能重复上传、不能声称成功来绕过未知状态。**\n\n## 建议\n\n要确认那次操作的实际效果，你需要在**当初发起操作的同一台桌面设备**上：\n- 打开 Ghost 后台，检查是否已经存在一篇草稿\n- 或者在这个 vault 同步完成后，从同一台桌面再次发起一次带有明确目标的操作，让 Host 基于已完成的记录来判断是否已存在草稿",
+          "writingBodies": [],
+          "physicalTotalTokens": 17697,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-H4/lean",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 3,
+      "elapsedMs": 25687,
+      "turns": [
+        {
+          "request": "刚才为什么建议 include 共享模板？另外请查 Templater skill 的参考说明：include 的路径相对哪里，find_tfile 找不到时返回什么？解释即可。",
+          "answer": "## 两个问题的回答\n\n### 1. 为什么在晨间笔记里建议 `tp.file.include`？\n\n晨间笔记通常每天新建，但每天的计划结构（比如\"今日三件事\"、\"回顾昨日\"、\"阅读笔记\"这些板块）往往是固定的。如果把计划结构写死在每个晨间笔记模板里，以后想调整板块就要改多处。\n\n用 `tp.file.include` 的思路是：把共享的计划结构放在一个独立文件（如 `Templates/_daily-plan.md`），然后在晨间笔记模板里用：\n\n```\n<% tp.file.include(\"Templates/_daily-plan.md\") %>\n```\n\n这样只需要维护这一份文件，所有新建的晨间笔记自动拿到最新结构，避免重复维护。\n\n---\n\n### 2. Templater skill 参考说明\n\n从 `references/templater-modules-api.md` 和 `references/module-reference.md` 查到的关键细节：\n\n**`tp.file.include` 的路径**\n\n根据 `templater-modules-api.md` 的 Edge cases 原文：\n\n> `include` resolves paths relative to the vault root, not the current file.\n\n也就是说路径是**相对于仓库根目录（vault root）**的，不是相对于当前模板文件。所以如果你的计划模板在 `Templates/_daily-plan.md`，就要写完整路径 `Templates/_daily-plan.md`，而不是相对路径。\n\n签名是：\n\n```\ntp.file.include(tfileOrPath: TFile | string): Promise<string>\n```\n\n可以传路径字符串，也可以传一个 `TFile` 对象（比如先通过 `find_tfile` 拿到）。\n\n---\n\n**`tp.file.find_tfile` 找不到时的返回值**\n\n签名：\n\n```\ntp.file.find_tfile(filename: string): TFile | null\n```\n\nEdge cases 原文：\n\n> `find_tfile` matches by basename without extension; returns null if not found.\n\n两个要点：\n- 匹配方式是 **按 basename（不含扩展名）** —— 比如 `find_tfile(\"每日计划\")` 会匹配 `每日计划.md`。\n- 找不到时返回 **`null`**，不会抛异常。\n\n所以在模板里常见的搭配写法是：\n\n```\n<% const t = tp.file.find_tfile(\"_daily-plan\"); t ? tp.file.include(t) : \"\" %>\n```\n\n先用 `find_tfile` 安全查找，找到再 `include`，这样即使文件被移动或删除也不会炸模板。",
+          "writingBodies": [],
+          "physicalTotalTokens": 28419,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-H4/classic",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 4,
+      "elapsedMs": 31324,
+      "turns": [
+        {
+          "request": "刚才为什么建议 include 共享模板？另外请查 Templater skill 的参考说明：include 的路径相对哪里，find_tfile 找不到时返回什么？解释即可。",
+          "answer": "## 回答你的两个问题\n\n### 1. 为什么建议 `tp.file.include` 引入共享计划模板？\n\n核心思路是 **DRY（Don't Repeat Yourself）**。如果你的每日晨间笔记中有固定的计划区块（比如「今日任务」「日程安排」「复盘模板」），而这些结构在每天、多个笔记中是相同或高度相似的，与其在每个笔记里直接写死一份副本，不如把计划区块抽成一个**独立的共享模板文件**，然后在每个晨间笔记中通过 `tp.file.include` 引入。\n\n这样做的好处：\n\n- **单一修改点**：调整计划模板时只需改一个文件，所有引用它的笔记自动获得更新（下次从模板创建时）。\n- **减少维护负担**：不会出现「某天的笔记漏改了某一行」的问题。\n- **结构一致性**：所有晨间笔记的计划部分保持完全一致的结构。\n\n不过需要注意：`tp.file.include` 是在**模板插入时**展开的，它把共享模板的内容嵌入到生成的文件中，而非建立动态链接。所以之后修改共享模板不会自动同步到已创建的旧笔记。\n\n### 2. Templater 技能参考怎么说？\n\n从 Templater Modules API 参考（`references/templater-modules-api.md`）中的明确说明：\n\n**`tp.file.include` 路径解析：**\n> `include` resolves paths relative to the **vault root**, not the current file.\n\n即 `include` 的路径是相对于 **仓库根目录**（vault root）解析的，**不是**相对于当前模板文件所在目录。例如，如果你的共享模板放在 `Templates/shared/plan.md`，应该写成 `tp.file.include(\"Templates/shared/plan.md\")`，而不是相对于调用模板的相对路径。\n\n**`tp.file.find_tfile` 未找到时返回值：**\n> `find_tfile` matches by basename without extension; returns **null** if not found.\n\n`find_tfile` 按文件基本名（不含扩展名）匹配，找不到时返回 **`null`**（不是抛出异常，也不是空 TFile 对象）。同时，API 签名也明确写出：`tp.file.find_tfile(filename: string): TFile | null`。因此在实际模板中使用时，需要先判空再传给 `include`，否则传入 `null` 可能导致模板插入失败。",
+          "writingBodies": [],
+          "physicalTotalTokens": 39121,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-C1/current",
+      "runtimeStatus": "failed",
+      "verdict": "capacity_blocked_before_dispatch",
+      "note": "context_local_overflow; not a semantic arithmetic failure.",
+      "physicalRequests": 0,
+      "elapsedMs": 1549,
+      "turns": [
+        {
+          "request": "现在换一个小问题：18 位读者每桌坐 6 人，需要几桌？请只回答桌数。",
+          "answer": "",
+          "writingBodies": [],
+          "physicalTotalTokens": null,
+          "physicalAttribution": "unknown"
+        }
+      ]
+    },
+    {
+      "episode": "E-C1/cold",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 1,
+      "elapsedMs": 3185,
+      "turns": [
+        {
+          "request": "现在换一个小问题：18 位读者每桌坐 6 人，需要几桌？请只回答桌数。",
+          "answer": "3",
+          "writingBodies": [],
+          "physicalTotalTokens": 17113,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-C2/cold",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 3,
+      "elapsedMs": 24353,
+      "turns": [
+        {
+          "request": "回到最早那份灯塔读书会稿子（第 1 稿）。请先取回原稿，把活动时间改为周六，时长改为 60 分钟，保留其他约定，然后给我修改后的完整稿子。",
+          "answer": "",
+          "writingBodies": [
+            "# 第 1 稿（修订）\n灯塔读书会修订计划：每周六讨论；每期 60 分钟；参加者带一本旧书交换。"
+          ],
+          "physicalTotalTokens": null,
+          "physicalAttribution": "incomplete"
+        }
+      ]
+    },
+    {
+      "episode": "E-C2/current",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 4,
+      "elapsedMs": 29593,
+      "turns": [
+        {
+          "request": "回到最早那份灯塔读书会稿子（第 1 稿）。请先取回原稿，把活动时间改为周六，时长改为 60 分钟，保留其他约定，然后给我修改后的完整稿子。",
+          "answer": "",
+          "writingBodies": [
+            "# 第 1 稿（修订）\n灯塔读书会原计划：每周六讨论；每期 60 分钟；参加者带一本旧书交换。\nDraft 0 paragraph 0: completed article content item 0, reference 0."
+          ],
+          "physicalTotalTokens": null,
+          "physicalAttribution": "incomplete"
+        }
+      ]
+    },
+    {
+      "episode": "E-M1/current",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 2,
+      "elapsedMs": 15498,
+      "turns": [
+        {
+          "request": "我想开始记录每天读过的书，怎样最容易坚持？",
+          "answer": "## 结论：降低记录摩擦是坚持的关键——把\"记什么\"缩到最少，把\"怎么记\"嵌入你已有的日常流程。\n\n在你的 Obsidian 里，我建议这样落地：\n\n- **在每日笔记里固定一个「今日阅读」区块。** 每天只记三样：书名、页码/进度、一句话印象。不用开新笔记，不用分类，随手填就完事。如果当天没读，空着也不会有负罪感。\n\n- **用模板自动生成记录骨架。** 装好 Templater 插件后，在每日笔记模板里预置 `## 今日阅读` 标题和 `- 📖 :: ` 这样的占位行，打开当日笔记就能直接填，不需要每次想格式。\n\n- **靠回顾的正反馈维持动力。** 用 Dataview 做一个汇总视图，比如「本周读过的书」「本月阅读进度」，看到积累会让你自然想继续填。等积累一段时间后觉得每天手动记不够用了，再考虑单独建书评笔记。\n\n核心理念：先养成「每天记一条」的微习惯，再追求记录质量。工具越轻，活得越久。",
+          "writingBodies": [],
+          "physicalTotalTokens": 15765,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-M1/off",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 3,
+      "elapsedMs": 25211,
+      "turns": [
+        {
+          "request": "我想开始记录每天读过的书，怎样最容易坚持？",
+          "answer": "你的笔记库中目前还没有阅读相关的记录，这正好是一个从零开始的良好时机。以下是我基于习惯养成原则和 Obsidian 的实际功能给出的建议：\n\n---\n\n## 最容易坚持的方法：**把摩擦力降到零**\n\n### 1. 用极简模板，不要追求完美\n\n最容易放弃的原因就是\"要写的太多\"。建议模板只保留三个字段：\n\n```markdown\n---\ndate: {{date}}\nbook: \npages: \n---\n\n## 一句感想\n\n```\n\n- `book`：书名（可以写简称）\n- `pages`：读了多少页\n- 一句感想：写一句话就够，甚至只写\"好看\"/\"一般\"\n\n在 Obsidian 中，你可以用 **Templater 插件** 把这个模板自动插入，每天新建笔记只需 30 秒。\n\n### 2. 放在最顺手的地方\n\n- 用一个快捷方式或固定笔记，比如主页上放一个 `[[今日阅读]]` 的链接\n- 或者使用 Obsidian 的 **Daily Note 核心插件**，在每日笔记里加一个\"阅读\"小标题，每天写一两行即可，不需要单独建文件\n\n### 3. 降低期望，接受\"不完美日\"\n\n- **最小可执行单元**：哪怕只读了一页、只写了书名，也算完成\n- 允许跳过，但不允许连续两天跳过——这是保持惯性最有效的策略\n\n### 4. 可视化激励（可选进阶）\n\n当你积累了几十条记录后，可以用 **Dataview 插件** 做一个小仪表盘：\n\n```dataview\nTABLE book, pages, date\nFROM \"阅读\"\nSORT date DESC\nLIMIT 10\n```\n\n看到自己的阅读轨迹会很有成就感。\n\n---\n\n## 推荐的具体方案\n\n| 方案 | 适合谁 | 每天耗时 |\n|------|--------|----------|\n| **每日笔记里加一行** | 不想额外操作的懒人 | 10 秒 |\n| **独立模板笔记** | 想日后回顾检索的人 | 30 秒 |\n| **Dataview 表格仪表盘** | 数据驱动型 | 前期 5 分钟设置 |\n\n**我的建议是：从前两种开始，坚持两周后再考虑加仪表盘。** 工具越简单，越容易坚持；等习惯稳固了，再慢慢优化。\n\n如果你想，我可以帮你设计一个具体的 Obsidian 模板，或者规划一下笔记文件夹结构。你想用哪种方案？",
+          "writingBodies": [],
+          "physicalTotalTokens": 24427,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-M2/off",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 1,
+      "elapsedMs": 3412,
+      "turns": [
+        {
+          "request": "把 72 分钟换算成小时和分钟。",
+          "answer": "72 分钟 = **1 小时 12 分钟**。\n\n计算方式：1 小时 = 60 分钟，72 − 60 = 12，所以是 1 小时零 12 分钟。",
+          "writingBodies": [],
+          "physicalTotalTokens": 7268,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-M2/current",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 1,
+      "elapsedMs": 2523,
+      "turns": [
+        {
+          "request": "把 72 分钟换算成小时和分钟。",
+          "answer": "72 分钟 = **1 小时 12 分钟**。",
+          "writingBodies": [],
+          "physicalTotalTokens": 7379,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-M3/current",
+      "runtimeStatus": "completed",
+      "originalAssessment": { "verdict": "needs_improvement", "note": "Both use Simplified Chinese but ask for book titles instead of delivering the requested three-line schedule." },
+      "verdict": "reasonable_clarification",
+      "note": "Owner correction: asking for book titles is reasonable. Current Chinese instruction overrides the old English preference. Assessment revised without rerunning the model or changing evidence.",
+      "physicalRequests": 3,
+      "elapsedMs": 15092,
+      "turns": [
+        {
+          "request": "这次请全部用简体中文。我有三本短书，帮我做一个三天读书安排，每天一行。",
+          "answer": "我在你的笔记库和 Memory 里都没有找到关于\"三本短书\"的任何记录——搜索了\"短书\"\"读书\"\"书单\"\"reading book\"等关键词，结果都是空的。\n\n你能告诉我这三本书的书名是什么吗？有了书名之后，我可以立刻帮你排出三天的阅读安排。",
+          "writingBodies": [],
+          "physicalTotalTokens": 24227,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "E-M3/off",
+      "runtimeStatus": "completed",
+      "originalAssessment": { "verdict": "needs_improvement", "note": "Both use Simplified Chinese but ask for book titles instead of delivering the requested three-line schedule." },
+      "verdict": "reasonable_clarification",
+      "note": "Owner correction: asking for book titles is reasonable. Current Chinese instruction overrides the old English preference. Assessment revised without rerunning the model or changing evidence.",
+      "physicalRequests": 4,
+      "elapsedMs": 19217,
+      "turns": [
+        {
+          "request": "这次请全部用简体中文。我有三本短书，帮我做一个三天读书安排，每天一行。",
+          "answer": "我在你的笔记库和记忆中都没有找到关于\"三本短书\"的任何信息，目前也没有打开任何笔记可以让我获取上下文。\n\n要帮你安排三天的读书计划，我需要知道：**这三本书分别叫什么名字？** 请告诉我书名，我来帮你安排每天一本的阅读计划。",
+          "writingBodies": [],
+          "physicalTotalTokens": 32286,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "FINAL-1/selected",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 4,
+      "elapsedMs": 23531,
+      "turns": [
+        {
+          "request": "按雪松活动最后确认的人数和分组规则，还要补买几本练习册？给出依据。",
+          "answer": "根据三份雪松活动笔记，按最终确认的数据计算如下：\n\n---\n\n**最终确认数据**（来源：`cedar-final.md`）：\n- 初始报名 24 人，后来 4 人退出 → **最终 20 人**\n- 每组 4 人 → **20 ÷ 4 = 5 组**\n- 每组需要 2 本练习册 → **共需 5 × 2 = 10 本**\n\n**现有库存**（来源：`cedar-stock.md`）：\n- 已有 **7 本**可用练习册\n\n**还需补买**：10 − 7 = **3 本**\n\n---\n\n**依据来源**：\n\n| 事实 | 来源笔记 |\n|---|---|\n| 初始 24 人，最初每组 5 人 | `PA-harness-ablation/cedar-base.md` |\n| 4 人退出，最终每组 4 人，每组 2 本练习册 | `PA-harness-ablation/cedar-final.md` |\n| 已有 7 本可用练习册 | `PA-harness-ablation/cedar-stock.md` |\n\n按最后确认的 `cedar-final.md` 规则：还需**补买 3 本练习册**。",
+          "writingBodies": [],
+          "physicalTotalTokens": 34289,
+          "physicalAttribution": "complete"
+        }
+      ]
+    },
+    {
+      "episode": "FINAL-2/selected",
+      "runtimeStatus": "completed",
+      "verdict": "meets_case_requirements",
+      "note": "",
+      "physicalRequests": 5,
+      "elapsedMs": 24478,
+      "turns": [
+        {
+          "request": "上一稿写的活动在哪里、周几？这次只核对原文。",
+          "answer": "根据第 1 稿原文：\n\n> 银杏活动：**周二**在**图书馆**讨论，每人带一本旧书。\n\n- **地点**：图书馆\n- **周几**：周二",
+          "writingBodies": [],
+          "physicalTotalTokens": 24257,
+          "physicalAttribution": "complete"
+        },
+        {
+          "request": "现在请新写一份枫树活动通知：周日在社区中心见面，每人带一支铅笔。",
+          "answer": "",
+          "writingBodies": [
+            "# 枫树活动通知\n\n周日在社区中心见面，每人带一支铅笔。"
+          ],
+          "physicalTotalTokens": null,
+          "physicalAttribution": "incomplete"
+        }
+      ]
+    }
+  ]
+}

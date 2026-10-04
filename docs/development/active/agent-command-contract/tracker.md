@@ -11,6 +11,7 @@ SDD: [Software Design](./sdd.md)
 
 ## Current Snapshot
 
+- Later follow-up: Owner 随后在同一会话授权更广的 harness 重构及可靠性优化，当前接续与评分校正见[该任务收尾](../../../architecture/pa-agent-harness/pa-agent-harness-optimization-plan-2026-10-04.md#15-owner-校正与本地收尾)。以下 F-24 停止记录属于前序 B-158 决策，不限制已获授权的后续工作；其原模型回复 FAIL／Host 防重放 PASS 仍保留，不因后续工程完成而关闭。
 - Current phase: P1/P2完成；P3域迁移及P4文档/源码一致性已实现并独立审查，最终共享gate及test恢复完成。Owner于2026-10-04将F-24按恢复交互提示问题延期至B-159，不在当前解决；原模型回复FAIL仍保留，延期不等于修复或验收PASS。
 - Next action: 当前停止F-24排查、运行代码修改及模型补验；本轮仅登记延期，不变更整体Delivery status或做closeout。后续由用户明确重启B-159，按“先刷新/查询原操作状态，确认确实失败后再重新提交”设计交互；不把未知状态或暂未看到结果视为确定失败。
 - Authority: DEC-049承接已确定职责；不重新请求Agent语义/Host事实校验的产品判断。现有领域权限、确认、来源、付费、预算及存储保持；架构规范不冒充已交付代码。
