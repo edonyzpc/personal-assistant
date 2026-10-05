@@ -57,8 +57,6 @@ export interface ReviewNoteSaveCallbacks {
     petFlashError(): void;
     /** Close the panel after a successful write. */
     closePanel(): void;
-    /** Get the current analysis source path (for stale-guard). */
-    getAnalysisSourcePath(): string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,11 +210,6 @@ export class ReviewNoteSaveFlow {
     }
 
     private resolveReviewSourcePath(findings: PanelFinding[], activePath?: string): string {
-        const active = activePath ?? null;
-        const analysisSourcePath = this.callbacks.getAnalysisSourcePath();
-        if (analysisSourcePath && active === analysisSourcePath) {
-            return analysisSourcePath;
-        }
         return findings.find((finding) => finding.sourceFile)?.sourceFile
             ?? activePath
             ?? "pagelet";

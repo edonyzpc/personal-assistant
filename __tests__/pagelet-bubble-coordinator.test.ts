@@ -48,12 +48,6 @@ function makeHost(
         isPathAllowedForPagelet: () => true,
         isMemoryReadyForPageletDiscovery: async () => true,
         getMemoryPreparationStatus: () => null,
-        runQuietRecall: async () => ({
-            generatedAt: "2026-07-05T12:00:00.000Z",
-            currentPath: "notes/current.md",
-            totalCount: 0,
-            candidates: [],
-        }),
         linkRecallCandidate: jest.fn(),
         log: jest.fn(),
         ...overrides,
@@ -612,13 +606,8 @@ describe("BubbleCoordinator Review Queue reminders", () => {
     });
 
     it("closes Bubble and routes Discover through the unified callback without running Quiet Recall", async () => {
-        const runQuietRecall = jest.fn(async () => ({
-            generatedAt: "2026-07-05T12:00:00.000Z",
-            totalCount: 0,
-            candidates: [],
-        }));
         const onDiscoverConnections = jest.fn();
-        const coordinator = makeCoordinator(() => [], { runQuietRecall }, {
+        const coordinator = makeCoordinator(() => [], {}, {
             onDiscoverConnections,
         });
         const bubbleView = makeBubbleView();
@@ -630,7 +619,6 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         expect(bubbleView.close).toHaveBeenCalledTimes(1);
         expect(bubbleView.bubbleState).toBe("hidden");
         expect(onDiscoverConnections).toHaveBeenCalledTimes(1);
-        expect(runQuietRecall).not.toHaveBeenCalled();
     });
 
 

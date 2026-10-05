@@ -1,4 +1,3 @@
-import type { RecallNoteDigest, RecallRelevanceResult } from "./quiet-recall";
 import type { RecapLlmInsight } from "./scope-recap";
 import type { ReviewQueueScope } from "./contracts";
 import { detectNoteLanguage } from "../locales/pagelet/language-detect";
@@ -84,69 +83,4 @@ export function parseRecapInsightsResponse(text: string): RecapLlmInsight[] | nu
     } catch {
         return null;
     }
-}
-
-// ---------------------------------------------------------------------------
-// Quiet Recall Relevance Prompt
-// ---------------------------------------------------------------------------
-
-export function buildRecallRelevancePrompt(input: {
-    currentDigest: RecallNoteDigest;
-    candidateDigest: RecallNoteDigest;
-    candidateAge: string;
-    language?: "zh" | "en";
-}): string {
-    return `You are deciding whether to remind the user of an old note.
-
-## Current note the user is viewing
-Title: "${input.currentDigest.title}"
-Headings: ${input.currentDigest.headings.join(" / ") || "none"}
-First paragraph: "${input.currentDigest.firstParagraph}"
-
-## Old note candidate
-Title: "${input.candidateDigest.title}" (last modified: ${input.candidateAge} ago)
-Headings: ${input.candidateDigest.headings.join(" / ") || "none"}
-First paragraph: "${input.candidateDigest.firstParagraph}"
-
-## Task
-Is there a SPECIFIC, CONCRETE reason this old note matters RIGHT NOW given what the user is currently looking at?
-
-${input.language ? buildLanguageDirective(input.language) : "Respond in the same language as the current note. If the two notes use different languages, the current note wins."}
-
-## Quality standard
-- "Both notes mention topic X" is NOT sufficient. That's a search result, not a recall.
-- A good reason: "Your current note asks whether to use Redis or Postgres for caching; this old note documents your Redis performance benchmarks."
-- A bad reason: "Both notes are about databases."
-
-## Output (JSON only, no markdown fences)
-{"isConvincing":true or false,"whyNow":"one sentence explaining why this old note matters now" or null}
-
-Default to isConvincing: false when uncertain. The user prefers silence over noise.`;
-}
-
-export function parseRecallRelevanceResponse(text: string): RecallRelevanceResult {
-    try {
-        const cleaned = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-        const parsed = JSON.parse(cleaned);
-        return {
-            isConvincing: parsed.isConvincing === true,
-            whyNow: typeof parsed.whyNow === "string" ? parsed.whyNow : null,
-        };
-    } catch {
-        return { isConvincing: false, whyNow: null };
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Language Detection + Retry Helper
-// ---------------------------------------------------------------------------
-
-export function detectLanguageMismatch(
-    whyNow: string,
-    noteContent: string,
-): boolean {
-    const noteHasCjk = /[一-鿿぀-ゟ゠-ヿ]/.test(noteContent.slice(0, 500));
-    const whyNowHasCjk = /[一-鿿぀-ゟ゠-ヿ]/.test(whyNow);
-    if (noteHasCjk && !whyNowHasCjk) return true;
-    return false;
 }

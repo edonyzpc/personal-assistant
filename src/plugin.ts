@@ -141,8 +141,6 @@ import type { PageletSettings } from './settings/pagelet';
 import { PageletOrchestrator, type PageletHost } from './pagelet/orchestrator';
 import {
     QuietRecallPluginIntegration,
-    type QuietRecallLimiterUsage,
-    type QuietRecallProviderModel,
     type QuietRecallSavedInsightCollection,
 } from './pagelet/plugin-quiet-recall';
 import { ScopeRecapPluginIntegration } from './pagelet/plugin-scope-recap';
@@ -170,10 +168,6 @@ import {
     PageletProviderCallControlError,
     type PageletProviderCallReservation,
 } from './pagelet/provider-call-admission';
-import {
-    requestPageletReviewHighRiskDecision,
-    type PageletReviewHighRiskSummary,
-} from './pagelet/ReviewHighRiskModal';
 import { registerPageletCommands, type PageletCommandCallbacks } from './pagelet/commands';
 import {
     PAGELET_DETAIL_VIEW_TYPE,
@@ -263,9 +257,6 @@ import {
     type PatternDetectionInput,
     type PatternDetectionResult,
     type QuietRecallCandidate,
-    type QuietRecallEvaluationAttempt,
-    type QuietRecallEvaluationDecision,
-    type QuietRecallRunResult,
     type QuietRecallSaveResult,
     type RetrievalHabitFeedbackKind,
     type RetrievalHabitProfileRecordResult,
@@ -281,7 +272,6 @@ import {
     type ScopeRecapSourceNote,
     addPaRelatedLink,
     resolveOutputLanguage,
-    QuietRecallEvaluationCoordinator,
     canAutoConfirmMemoryCandidate,
     detectCrossNotePatterns,
     discoverLightweightGraphItems,
@@ -1263,21 +1253,8 @@ export class PluginManager extends Plugin {
         },
         getSettings: () => ({
             pagelet: this.settings.pagelet,
-            mergedPagelet: this.getPageletSettingsWithDataBoundary(),
-            provider: this.settings.aiProvider,
-            model: this.settings.chatModelName,
-            embeddingModel: this.settings.embeddingModelName,
         }),
-        getLocale: () => this.getPageletLocale(),
         isRuntimeCurrent: () => !this.unloading,
-        getScopeRecapAuthorizationContextId: () => this.getScopeRecapAuthorizationContextId(),
-        getScopeRecapProviderInfo: () => this.getScopeRecapProviderInfo(),
-        getProviderCallAdmission: () => this.getPageletProviderCallAdmission(),
-        getCostTracker: () => this.pageletCostTracker,
-        requestHighRiskDecision: (summary, signal) => this.requestForegroundReviewHighRiskDecision(
-            summary,
-            signal,
-        ),
         getVaultStorageScope: () => this.pageletVaultStorageScope(),
         createRateLimitStorage: (vaultStorageScope) => this.createPageletRateLimitStorage(
             "foreground-review",
@@ -1287,13 +1264,6 @@ export class PluginManager extends Plugin {
             "foreground-review",
             vaultStorageScope,
         ),
-        findRelatedNotes: (primarySourcePath, noteContents, sourcePaths, options) => this.findPageletRelatedNotes(
-            primarySourcePath,
-            noteContents,
-            sourcePaths,
-            options,
-        ),
-        createChatModel: (temperature, options) => this.createChatModel(temperature, options),
         log: (message, detail) => this.log(message, detail),
     });
     private readonly pageletOperationsIntegration = new PageletOperationsPluginIntegration({
@@ -1389,8 +1359,6 @@ export class PluginManager extends Plugin {
         getGraphDiscoveryBacklinkMap: () => this.buildGraphDiscoveryBacklinkMap(),
         getResolvedOutgoingLinks: (path) => this.getResolvedOutgoingLinks(path),
         getGraphDiscoveryLinks: (file) => this.getGraphDiscoveryLinks(file),
-        getProviderCallAdmission: () => this.getPageletProviderCallAdmission(),
-        getCostTracker: () => this.pageletCostTracker,
         createRateLimitStorage: () => this.createPageletRateLimitStorage(
             "quiet-recall",
             this.pageletVaultStorageScope(),
@@ -1400,8 +1368,6 @@ export class PluginManager extends Plugin {
             "quiet-recall",
             vaultStorageScope,
         ),
-        getAISetupIssue: () => this.getAISetupIssue(),
-        createModel: (temperature, options) => this.createChatModel(temperature, options),
         listSavedInsights: () => this.listSavedInsights(),
         createSavedInsight: (input) => this.getSavedInsightStore().create(input),
         confirmLink: async (input) => confirmUserAction(this.app, input),
@@ -2435,10 +2401,6 @@ export class PluginManager extends Plugin {
         this.pageletIntegration.sync(true);
     }
 
-    private getQuietRecallEvaluationPolicyIdentity(): string {
-        return this.quietRecallIntegration.getPolicyIdentity();
-    }
-
     private hasConfirmedMemoryExtractionConsent(): boolean {
         return isMemoryExtractionConsentConfirmed(this.settings.memoryExtractionConsent);
     }
@@ -2942,7 +2904,6 @@ export class PluginManager extends Plugin {
                     : { status: "unavailable" };
             },
             openQuickCapture: () => this.openQuickCaptureModal(),
-            createForegroundAnalyzeCallback: () => this.retainedReviewIntegration.createAnalyzeCallback(),
             updatePageletSetting: <K extends keyof PageletSettings>(key: K, value: PageletSettings[K]) => {
                 this.settings.pagelet[key] = value;
                 void this.saveSettings();
@@ -2984,9 +2945,6 @@ export class PluginManager extends Plugin {
             getPageletFeatureRateLimitStatus: () => this.getPageletFeatureRateLimitStatus(),
             getScopeRecapDataBoundarySnapshotId: () => this.getMemoryDataBoundaryFingerprint(),
             runScopeRecap: (options) => this.runScopeRecap(options),
-            runQuietRecall: () => this.runQuietRecall(),
-            isQuietRecallRunCurrent: (result) => this.isQuietRecallRunCurrent(result),
-            getQuietRecallEvaluationPolicySnapshotId: () => this.getQuietRecallEvaluationPolicyIdentity(),
             saveQuietRecallAsInsight: (candidate) => this.saveQuietRecallAsInsight(candidate),
             linkRecallCandidate: (currentPath, candidatePath) => this.linkRecallCandidate(currentPath, candidatePath),
             recordQuietRecallFeedback: (candidate, feedback) =>
@@ -3584,77 +3542,6 @@ export class PluginManager extends Plugin {
 
     private async undoMaintenanceMove(actionId: string): Promise<MaintenanceMoveUndoResult> {
         return this.pageletActionIntegration.undoMaintenanceMove(actionId);
-    }
-
-    private async runQuietRecall(): Promise<QuietRecallRunResult> {
-        return this.quietRecallIntegration.runQuietRecall();
-    }
-
-    private quietRecallCandidateSourcesAreCurrent(
-        candidate: QuietRecallCandidate,
-    ): boolean {
-        return this.quietRecallIntegration.quietRecallCandidateSourcesAreCurrent(candidate);
-    }
-
-    private resolveQuietRecallRunSourceSnapshots(
-        activeSnapshot: Parameters<QuietRecallPluginIntegration["resolveQuietRecallRunSourceSnapshots"]>[0],
-        capturedCandidateSnapshots: Parameters<QuietRecallPluginIntegration["resolveQuietRecallRunSourceSnapshots"]>[1],
-        candidates: Parameters<QuietRecallPluginIntegration["resolveQuietRecallRunSourceSnapshots"]>[2],
-    ): ReturnType<QuietRecallPluginIntegration["resolveQuietRecallRunSourceSnapshots"]> {
-        return this.quietRecallIntegration.resolveQuietRecallRunSourceSnapshots(
-            activeSnapshot,
-            capturedCandidateSnapshots,
-            candidates,
-        );
-    }
-
-    private async reserveQuietRecallProviderCall(options: {
-        roundStarted: boolean;
-        revalidate: () => boolean;
-    }) {
-        return this.quietRecallIntegration.reserveQuietRecallProviderCall(options);
-    }
-
-    private async getQuietRecallLimiterUsage(
-        limiter: PageletRateLimiter,
-    ): Promise<{ limiterUsage?: QuietRecallLimiterUsage }> {
-        return this.quietRecallIntegration.getQuietRecallLimiterUsage(limiter);
-    }
-
-    private buildQuietRecallRunSourceSnapshotId(
-        currentPath: string,
-        candidates: readonly QuietRecallCandidate[],
-        capturedSourcePaths?: readonly string[],
-    ): string | null {
-        return this.quietRecallIntegration.buildQuietRecallRunSourceSnapshotId(
-            currentPath,
-            candidates,
-            capturedSourcePaths,
-        );
-    }
-
-    private isQuietRecallRunCurrent(result: QuietRecallRunResult): boolean {
-        return this.quietRecallIntegration.isQuietRecallRunCurrent(result);
-    }
-
-    private async evaluateQuietRecallProviderAttempt(
-        model: QuietRecallProviderModel,
-        prompt: string,
-        currentNoteContent: string,
-        attemptKind: QuietRecallEvaluationAttempt["kind"],
-        pricingIdentity: { provider: string; model: string },
-        revalidate: () => boolean,
-        providerCallReservation?: PageletProviderCallReservation,
-    ): Promise<QuietRecallEvaluationDecision> {
-        return this.quietRecallIntegration.evaluateQuietRecallProviderAttempt(
-            model,
-            prompt,
-            currentNoteContent,
-            attemptKind,
-            pricingIdentity,
-            revalidate,
-            providerCallReservation,
-        );
     }
 
     private async saveQuietRecallAsInsight(candidate: QuietRecallCandidate): Promise<QuietRecallSaveResult> {
@@ -6110,18 +5997,6 @@ export class PluginManager extends Plugin {
         return this.pageletProviderCallAdmissionInstance;
     }
 
-    private requestForegroundReviewHighRiskDecision(
-        summary: PageletReviewHighRiskSummary,
-        signal?: AbortSignal,
-    ) {
-        return requestPageletReviewHighRiskDecision(
-            this.app,
-            summary,
-            this.getPageletLocale(),
-            signal,
-        );
-    }
-
     private async getPageletFeatureRateLimitStatus() {
         const [scopeRecap, quietRecall] = await Promise.all([
             this.scopeRecapIntegration.getFeatureRateSnapshot(),
@@ -6131,10 +6006,6 @@ export class PluginManager extends Plugin {
             scopeRecap,
             quietRecall,
         };
-    }
-
-    private getQuietRecallEvaluationCoordinator(): QuietRecallEvaluationCoordinator {
-        return this.quietRecallIntegration.getEvaluationCoordinator();
     }
 
     private createPageletRateLimitStorage(

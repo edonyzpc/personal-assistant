@@ -520,7 +520,7 @@ function cloneState(state: PageletRateLimitState): PageletRateLimitState {
  * expose UTC-offset helpers; the resulting `dailyResetAt` is local-midnight
  * cast to a UTC ms timestamp.
  */
-function defaultNextLocalMidnight(now: number): number {
+export function defaultNextLocalMidnight(now: number): number {
     const d = new Date(now);
     d.setHours(24, 0, 0, 0);
     return d.getTime();

@@ -50,7 +50,6 @@ function makeCallbacks(overrides: Partial<ReviewNoteSaveCallbacks> = {}): Review
         petTransition: jest.fn(),
         petFlashError: jest.fn(),
         closePanel: jest.fn(),
-        getAnalysisSourcePath: jest.fn(() => "notes/current.md"),
         ...overrides,
     };
 }

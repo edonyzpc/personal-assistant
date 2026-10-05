@@ -284,6 +284,250 @@ describe("DeepDiscoverPluginIntegration ownership", () => {
         });
     });
 
+    it("keeps explicit runs available when automatic storage fails closed", async () => {
+        const dependencies = createDependencies();
+        dependencies.createRateLimitStorage = jest.fn(() => ({
+            load: () => {
+                throw new Error("storage unavailable");
+            },
+            save: () => undefined,
+        }));
+        const admitStandardCall = jest.fn(async () => undefined);
+        dependencies.getProviderCallAdmission = () => ({ admitStandardCall } as never);
+        const owner = new DeepDiscoverPluginIntegration(dependencies);
+        const input = {
+            path: "notes/current.md",
+            triggerReason: "explicit" as const,
+            force: true,
+        };
+
+        await expect(owner.admitRun(owner.getPolicyIdentityKey(), input))
+            .resolves.toEqual({ ok: true });
+        await expect(owner.admitRun(owner.getPolicyIdentityKey(), {
+            ...input,
+            triggerReason: "edit-idle",
+            force: false,
+        })).resolves.toEqual({ ok: false, reason: "unavailable" });
+
+        expect(dependencies.createRateLimitStorage).toHaveBeenCalledTimes(1);
+        expect(admitStandardCall).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not let an explicit force flag bypass the source boundary", async () => {
+        const dependencies = createDependencies();
+        dependencies.source.isPageletProviderPathAllowed = jest.fn(() => false);
+        const admitStandardCall = jest.fn(async () => undefined);
+        dependencies.getProviderCallAdmission = () => ({ admitStandardCall } as never);
+        const owner = new DeepDiscoverPluginIntegration(dependencies);
+
+        await expect(owner.admitRun(owner.getPolicyIdentityKey(), {
+            path: "notes/private.md",
+            triggerReason: "explicit",
+            force: true,
+        })).resolves.toEqual({ ok: false, reason: "unavailable" });
+
+        expect(dependencies.source.isPageletProviderPathAllowed).toHaveBeenCalledWith("notes/private.md");
+        expect(dependencies.createRateLimitStorage).not.toHaveBeenCalled();
+        expect(admitStandardCall).not.toHaveBeenCalled();
+    });
+
+    it("persists explicit completion diagnostics without reading the automatic quota pool", async () => {
+        const dependencies = createDependencies();
+        dependencies.createRateLimitStorage = jest.fn(() => ({
+            load: () => {
+                throw new Error("automatic pool unavailable");
+            },
+            save: () => undefined,
+        }));
+        const owner = new DeepDiscoverPluginIntegration(dependencies);
+        const values = new Map<string, string>();
+        const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+        Object.defineProperty(globalThis, "localStorage", {
+            configurable: true,
+            value: {
+                getItem: (storageKey: string) => values.get(storageKey) ?? null,
+                setItem: (storageKey: string, value: string) => { values.set(storageKey, value); },
+                removeItem: (storageKey: string) => { values.delete(storageKey); },
+            },
+        });
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date("2026-10-05T18:30:00"));
+        const now = Date.now();
+        const expectedMidnight = new Date(now);
+        expectedMidnight.setHours(24, 0, 0, 0);
+
+        try {
+            const handler = owner.createResultHandler({
+                provider: "openai",
+                model: "gpt-4o-mini",
+                endpoint: "https://api.openai.com/v1",
+            });
+            handler(
+                {
+                    status: "quiet",
+                    reason: "no-insight",
+                    metrics: {
+                        modelTurns: 3,
+                        toolCalls: 5,
+                        wallTimeMs: 1_200,
+                    },
+                } as never,
+                {
+                    path: "notes/current.md",
+                    triggerReason: "explicit",
+                    force: true,
+                } as never,
+            );
+            for (let index = 0; index < 4; index += 1) await Promise.resolve();
+
+            expect(dependencies.createRateLimitStorage).not.toHaveBeenCalled();
+            expect(JSON.parse(values.get("pa-pagelet-deep-discover-usage:v1:test-vault") ?? "{}")).toEqual({
+                dailyResetAt: expectedMidnight.getTime(),
+                modelTurns: 3,
+                toolCalls: 5,
+            });
+            expect(dependencies.log).not.toHaveBeenCalledWith(
+                "Pagelet Deep Discover metrics persistence failed",
+                expect.anything(),
+            );
+        } finally {
+            jest.useRealTimers();
+            if (previous) Object.defineProperty(globalThis, "localStorage", previous);
+            else delete (globalThis as { localStorage?: unknown }).localStorage;
+        }
+    });
+
+    it("counts automatic started runs at 12/36 while explicit runs leave the pool untouched", async () => {
+        const dependencies = createDependencies();
+        const values = new Map<string, string>();
+        dependencies.createRateLimitStorage = jest.fn(() => ({
+            load: () => (values.has("state") ? JSON.parse(values.get("state")!) : null),
+            save: (state: unknown) => {
+                values.set("state", JSON.stringify(state));
+            },
+        }));
+        const admitStandardCall = jest.fn(async () => undefined);
+        dependencies.getProviderCallAdmission = () => ({ admitStandardCall } as never);
+        const owner = new DeepDiscoverPluginIntegration(dependencies);
+        const policy = owner.getPolicyIdentityKey();
+        const automaticInput = {
+            path: "notes/current.md",
+            triggerReason: "edit-idle" as const,
+            force: false,
+        };
+
+        for (let index = 0; index < 12; index += 1) {
+            await expect(owner.admitRun(policy, automaticInput)).resolves.toEqual({ ok: true });
+        }
+        await expect(owner.admitRun(policy, automaticInput)).resolves.toEqual({
+            ok: false,
+            reason: "limit",
+        });
+        await expect(owner.admitRun(policy, {
+            ...automaticInput,
+            triggerReason: "explicit",
+            force: true,
+        })).resolves.toEqual({ ok: true });
+
+        const afterHourly = await owner.getRateLimiter().getStateSnapshot();
+        expect(afterHourly.hourlyTimestamps).toHaveLength(12);
+        expect(afterHourly.dailyCount).toBe(12);
+        expect(admitStandardCall).toHaveBeenCalledTimes(13);
+
+        const reloadedOwner = new DeepDiscoverPluginIntegration(dependencies);
+        await expect(reloadedOwner.admitRun(policy, automaticInput)).resolves.toEqual({
+            ok: false,
+            reason: "limit",
+        });
+    });
+
+    it("preserves mixed legacy counters and rolls back an unstarted automatic lease", async () => {
+        const dependencies = createDependencies();
+        const now = Date.now();
+        const values = new Map<string, string>( [[
+            "state",
+            JSON.stringify({
+                hourlyTimestamps: [now - 7_200_000],
+                dailyCount: 8,
+                dailyResetAt: now + 3_600_000,
+            }),
+        ]]);
+        dependencies.createRateLimitStorage = jest.fn(() => ({
+            load: () => JSON.parse(values.get("state")!),
+            save: (state: unknown) => {
+                values.set("state", JSON.stringify(state));
+            },
+        }));
+        const admitStandardCall = jest.fn(async () => {
+            if (admitStandardCall.mock.calls.length === 2) throw new Error("provider admission failed");
+            return undefined;
+        });
+        dependencies.getProviderCallAdmission = () => ({ admitStandardCall } as never);
+        const owner = new DeepDiscoverPluginIntegration(dependencies);
+        const policy = owner.getPolicyIdentityKey();
+        const before = await owner.getRateLimiter().getStateSnapshot();
+
+        await expect(owner.admitRun(policy, {
+            path: "notes/current.md",
+            triggerReason: "explicit",
+            force: true,
+        })).resolves.toEqual({ ok: true });
+        await expect(owner.getRateLimiter().getStateSnapshot()).resolves.toEqual(before);
+
+        await expect(owner.admitRun(policy, {
+            path: "notes/current.md",
+            triggerReason: "edit-idle",
+            force: false,
+        })).resolves.toEqual({ ok: false, reason: "unavailable" });
+        await expect(owner.getRateLimiter().getStateSnapshot()).resolves.toEqual(before);
+
+        await expect(owner.admitRun(policy, {
+            path: "notes/current.md",
+            triggerReason: "edit-idle",
+            force: false,
+        })).resolves.toEqual({ ok: true });
+        await expect(owner.getRateLimiter().getStateSnapshot()).resolves.toEqual(
+            expect.objectContaining({ dailyCount: 9 }),
+        );
+    });
+
+    it("keeps the automatic daily pool at 36 while explicit work remains available", async () => {
+        const dependencies = createDependencies();
+        const now = Date.now();
+        const values = new Map<string, string>( [[
+            "state",
+            JSON.stringify({
+                hourlyTimestamps: [now - 3_600_001],
+                dailyCount: 36,
+                dailyResetAt: now + 3_600_000,
+            }),
+        ]]);
+        dependencies.createRateLimitStorage = jest.fn(() => ({
+            load: () => JSON.parse(values.get("state")!),
+            save: (state: unknown) => {
+                values.set("state", JSON.stringify(state));
+            },
+        }));
+        const admitStandardCall = jest.fn(async () => undefined);
+        dependencies.getProviderCallAdmission = () => ({ admitStandardCall } as never);
+        const owner = new DeepDiscoverPluginIntegration(dependencies);
+        const policy = owner.getPolicyIdentityKey();
+
+        await expect(owner.admitRun(policy, {
+            path: "notes/current.md",
+            triggerReason: "edit-idle",
+            force: false,
+        })).resolves.toEqual({ ok: false, reason: "limit" });
+        await expect(owner.admitRun(policy, {
+            path: "notes/current.md",
+            triggerReason: "explicit",
+            force: true,
+        })).resolves.toEqual({ ok: true });
+        await expect(owner.getRateLimiter().getStateSnapshot()).resolves.toEqual(
+            expect.objectContaining({ dailyCount: 36 }),
+        );
+    });
+
     it("uses one captured vault scope for limiter storage and coordination key", () => {
         const dependencies = createDependencies();
         const owner = new DeepDiscoverPluginIntegration(dependencies);

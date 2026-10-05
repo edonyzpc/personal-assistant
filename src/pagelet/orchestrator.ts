@@ -52,7 +52,6 @@ import type { PageletCommandCallbacks } from "./commands";
 import { ProactiveHints } from "./hints/ProactiveHints";
 import type { PetCorner, PetTaskKind } from "./pet/types";
 import { PetView } from "./pet/PetView";
-import { PreloadBudget } from "./preload/PreloadBudget";
 import { getPageletOverlayRoot } from "./overlay-root";
 import { ResearchManager } from "./research";
 
@@ -164,20 +163,14 @@ export class PageletOrchestrator {
                 host.log("Pagelet attention delivery storage fallback", diagnostic);
             },
         });
-        // Scope infrastructure
-        const foregroundBudget = new PreloadBudget(
-            s.foregroundPerHourCap,
-            s.foregroundPerDayCap,
-        );
         // Delegate: analysis session manager
-        this.sessionManager = new AnalysisSessionManager(host, foregroundBudget);
+        this.sessionManager = new AnalysisSessionManager();
 
         // Delegate: review note save flow
         this.saveFlow = new ReviewNoteSaveFlow(host, {
             petTransition: (event) => this.transitionPet(event, "review"),
             petFlashError: () => this.petView?.flashError(),
             closePanel: () => this.panelView?.close(),
-            getAnalysisSourcePath: () => this.sessionManager.analysisSourcePath,
         });
 
         // Proactive hints
@@ -420,7 +413,6 @@ export class PageletOrchestrator {
             this.backgroundDiscoveryEnabled = s.backgroundDiscoveryEnabled;
             this.backgroundDiscoveryEpoch += 1;
         }
-        this.sessionManager.syncBudget();
         this.proactiveHints.updateConfig({
             enabled: s.proactiveHints,
             cooldownMinutes: s.proactiveHintsCooldown,
@@ -852,13 +844,11 @@ export class PageletOrchestrator {
     private beginForegroundRoute(
         layout: "summary" | "discover" | "current" | "review",
         taskKind: PetTaskKind,
-        options: { reserveGenericBudget?: boolean } = {},
     ): number | null {
         if (this.sessionManager.isForegroundRunInProgress) {
             new Notice(this.t("pagelet.notice.alreadyReviewing"), 4000);
             return null;
         }
-        if (options.reserveGenericBudget !== false && !this.sessionManager.reserveForegroundCall()) return null;
         this.sessionManager.beginForegroundRouteRun();
         const routeToken = ++this.foregroundRouteToken;
         this.currentPanelLayout = layout;
@@ -910,7 +900,7 @@ export class PageletOrchestrator {
 
     private panelExtraForLayout(layoutType: PanelLayoutType): PanelOpenExtra | undefined {
         return this.withReviewQueueExtra(
-            this.withContextPagerExtra(this.sessionManager.panelExtraForLayout(layoutType), layoutType),
+            this.withContextPagerExtra(undefined, layoutType),
         );
     }
 
@@ -1730,20 +1720,10 @@ export class PageletOrchestrator {
         this.bubbleView?.close();
 
         // Only mount on markdown views (D029/R1)
-        if (!leaf || leaf.view?.getViewType() !== "markdown") {
-            const discarded = this.sessionManager.discardAnalysisSessionIfStale(null);
-            if (discarded && this.panelView?.isOpen) {
-                this.panelView.close();
-            }
-            return;
-        }
+        if (!leaf || leaf.view?.getViewType() !== "markdown") return;
         if (!this.host.settings.pagelet.petVisible) return;
 
         const markdownView = leaf.view as MarkdownView;
-        const discarded = this.sessionManager.discardAnalysisSessionIfStale(markdownView.file?.path ?? null);
-        if (discarded && this.panelView?.isOpen) {
-            this.panelView.close();
-        }
         const containerEl = markdownView.contentEl;
         if (!containerEl) return;
 
@@ -2068,11 +2048,9 @@ export class PageletOrchestrator {
             layoutType = requestedType;
         }
         this.currentPanelLayout = layoutType;
-        const panelFindings = this.sessionManager.currentAnalysisFindings();
-
         this.panelView?.open(
             layoutType,
-            panelFindings,
+            [],
             this.panelExtraForLayout(layoutType),
         );
     }
@@ -2103,10 +2081,7 @@ export class PageletOrchestrator {
             || Boolean(tabExtra?.maintenanceReview)
             || Boolean(tabExtra?.graphDiscovery)
             || Boolean(tabExtra?.quietRecall);
-        let findings = panelFindings;
-        if (!hasPanelContent) {
-            findings = this.sessionManager.currentAnalysisFindings();
-        }
+        const findings = hasPanelContent ? panelFindings : [];
         const detailExtra = this.detailExtraForTab(tabExtra);
         const payload: PageletDetailPayload = {
             title,

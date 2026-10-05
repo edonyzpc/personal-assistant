@@ -91,7 +91,6 @@ import type {
     QuietRecallCandidate,
     QuietRecallEvaluationDiagnostics,
     MaintenanceReviewRunResult,
-    QuietRecallRunResult,
     ReviewQueueItem,
     SavedInsight,
     ScopeRecapLocalOverview,
@@ -206,12 +205,6 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
         },
         log: jest.fn(),
         registerEvent: jest.fn(),
-        createForegroundAnalyzeCallback: () => async () => ({
-            findings: [],
-            analyzedFiles: [],
-            analyzedAt: Date.now(),
-            tokenCost: { input: 0, output: 0 },
-        }),
         writeReviewNote: async () => ({ success: true, filePath: ".pagelet/test.md" }),
         saveSettings: () => undefined,
         prepareMemoryForPagelet: () => undefined,
@@ -331,12 +324,6 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 localOverview,
             };
         },
-        runQuietRecall: async () => ({
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            currentPath: "notes/current.md",
-            totalCount: 0,
-            candidates: [],
-        }),
         saveQuietRecallAsInsight: async () => ({
             ok: false,
             reason: "not_configured",
@@ -653,11 +640,8 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             reason: "no-insight",
         } as const));
         const host = makeHost({ runDeepDiscover });
-        const foregroundAnalyze = jest.fn();
-        host.createForegroundAnalyzeCallback = () => foregroundAnalyze as never;
         const legacyDiscovery = jest.spyOn(host, "discoverConnections");
         const legacyRecap = jest.spyOn(host, "runScopeRecap");
-        const legacyRecall = jest.spyOn(host, "runQuietRecall");
         const orchestrator = new PageletOrchestrator(host);
         const callbacks = orchestrator.getCommandCallbacks();
 
@@ -677,10 +661,9 @@ describe("PageletOrchestrator Deep Discover migration", () => {
                 force: true,
             });
         }
-        expect(foregroundAnalyze).not.toHaveBeenCalled();
         expect(legacyDiscovery).not.toHaveBeenCalled();
         expect(legacyRecap).not.toHaveBeenCalled();
-        expect(legacyRecall).not.toHaveBeenCalled();
+        expect(Notice).not.toHaveBeenCalled();
     });
 
     it("uses the exact leave, changed-open, and edited paths for automatic triggers", async () => {
@@ -956,6 +939,48 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             force: true,
         });
         expect(Notice).not.toHaveBeenCalled();
+    });
+
+    it("keeps local Maintenance and Graph available beyond old foreground caps while mutually exclusive", async () => {
+        const runMaintenanceReview = jest.fn<NonNullable<PageletHost["runMaintenanceReview"]>>(
+            () => new Promise((resolve) => {
+                finishMaintenance = resolve;
+            }),
+        );
+        const runGraphDiscovery = jest.fn<NonNullable<PageletHost["runGraphDiscovery"]>>(
+            async () => ({
+                generatedAt: "2026-06-29T12:00:00.000Z",
+                totalCount: 0,
+                items: [],
+                skippedSourceCount: 0,
+            }),
+        );
+        let finishMaintenance!: (value: Awaited<ReturnType<NonNullable<PageletHost["runMaintenanceReview"]>>>) => void;
+        const host = makeHost({ runMaintenanceReview, runGraphDiscovery });
+        host.settings.pagelet.foregroundPerHourCap = 0;
+        host.settings.pagelet.foregroundPerDayCap = 0;
+        const orchestrator = new PageletOrchestrator(host);
+
+        const maintenance = orchestrator.runMaintenanceReview();
+        await Promise.resolve();
+        await orchestrator.runGraphDiscovery();
+
+        expect(runMaintenanceReview).toHaveBeenCalledTimes(1);
+        expect(runGraphDiscovery).not.toHaveBeenCalled();
+        expect(Notice).toHaveBeenCalledWith("Pagelet is already reviewing. Please wait for it to finish.", 4000);
+        expect(Notice).not.toHaveBeenCalledWith("Foreground review limit reached. Try again later.", 5000);
+
+        finishMaintenance({
+            generatedAt: "2026-06-28T12:00:00.000Z",
+            previewOnly: true,
+            weeklyScanEnabled: false,
+            totalCount: 0,
+            categories: [],
+            proposals: [],
+        });
+        await maintenance;
+        await orchestrator.runGraphDiscovery();
+        expect(runGraphDiscovery).toHaveBeenCalledTimes(1);
     });
 
     it.each([false, true])("discards a late automatic result after pause, resumed=%s", async (resume) => {
@@ -2053,15 +2078,7 @@ describe("PageletOrchestrator quick review command", () => {
 
 
     it("shows ready-empty Bubble without a review-current launcher", async () => {
-        const foregroundAnalyze = jest.fn(async () => ({
-            findings: [],
-            analyzedFiles: ["notes/current.md"],
-            analyzedAt: Date.now(),
-            tokenCost: { input: 0, output: 0 },
-        }));
-        const host = makeHost({
-            createForegroundAnalyzeCallback: () => foregroundAnalyze,
-        });
+        const host = makeHost();
         host.settings.pagelet.proactiveHints = true;
         const orchestrator = new PageletOrchestrator(host);
         const bubbleView = {
@@ -2092,7 +2109,6 @@ describe("PageletOrchestrator quick review command", () => {
         }, HTMLElement];
         expect(content.type).toBe("ready-empty");
         expect(content.actions.map((action) => action.label)).toEqual(["Find related old notes"]);
-        expect(foregroundAnalyze).not.toHaveBeenCalled();
     });
 
 
@@ -2888,14 +2904,8 @@ describe("PageletOrchestrator detail expansion", () => {
 
 
 
-    it("suppresses open-note Quiet Recall preparation in Focus Mode", async () => {
-        const runQuietRecall = jest.fn(async (): Promise<QuietRecallRunResult> => ({
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            currentPath: "notes/current.md",
-            totalCount: 0,
-            candidates: [],
-        }));
-        const host = makeHost({ runQuietRecall });
+    it("suppresses open-note proactive preparation in Focus Mode", async () => {
+        const host = makeHost();
         host.settings.pagelet.proactiveHints = true;
         host.settings.quietRecall.bubbleNudgesEnabled = true;
         host.settings.focusMode = true;
@@ -2926,23 +2936,16 @@ describe("PageletOrchestrator detail expansion", () => {
         });
         await flushAsyncWork();
 
-        expect(runQuietRecall).not.toHaveBeenCalled();
         orchestrator.destroy();
     });
 
-    it("runs Quiet Recall on double Ctrl but ignores a single Ctrl press", async () => {
-        const runQuietRecall = jest.fn(async (): Promise<QuietRecallRunResult> => ({
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            currentPath: "notes/current.md",
-            totalCount: 0,
-            candidates: [],
-        }));
+    it("runs unified discovery on double Ctrl but ignores a single Ctrl press", async () => {
         const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(async () => ({
             status: "quiet",
             reason: "no-insight",
         } as const));
         const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
-        const host = makeHost({ runQuietRecall, runDeepDiscover, openPageletDetailView });
+        const host = makeHost({ runDeepDiscover, openPageletDetailView });
         const orchestrator = new PageletOrchestrator(host);
         const preventDefault = jest.fn();
         const internals = orchestrator as unknown as {
@@ -2951,8 +2954,6 @@ describe("PageletOrchestrator detail expansion", () => {
 
         internals.handleQuietRecallShortcut({ key: "Control", preventDefault });
         await flushAsyncWork();
-        expect(runQuietRecall).not.toHaveBeenCalled();
-
         internals.handleQuietRecallShortcut({ key: "Control", preventDefault });
         await flushAsyncWork();
 
@@ -2963,7 +2964,6 @@ describe("PageletOrchestrator detail expansion", () => {
             triggerReason: "explicit",
             force: true,
         });
-        expect(runQuietRecall).not.toHaveBeenCalled();
         expect(openPageletDetailView).not.toHaveBeenCalled();
     });
 
@@ -2996,28 +2996,18 @@ describe("PageletOrchestrator background status command", () => {
 describe("PageletOrchestrator review panel context flow", () => {
 
     it("adds current-scope Review Queue items through the host without starting provider work", () => {
-        const foregroundAnalyze = jest.fn(async () => ({
-            findings: [],
-            analyzedFiles: ["notes/current.md"],
-            analyzedAt: Date.now(),
-            tokenCost: { input: 0, output: 0 },
-        }));
         const listReviewQueueItems = jest.fn((filter: { scopePaths?: readonly string[] } = {}) => {
             return filter.scopePaths?.includes("notes/current.md")
                 ? [makeReviewQueueItem()]
                 : [];
         });
-        const host = makeHost({
-            createForegroundAnalyzeCallback: () => foregroundAnalyze,
-            listReviewQueueItems,
-        });
+        const host = makeHost({ listReviewQueueItems });
         const orchestrator = new PageletOrchestrator(host);
         const panelView = { open: jest.fn() };
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
         orchestrator.openPanel();
 
-        expect(foregroundAnalyze).not.toHaveBeenCalled();
         expect(listReviewQueueItems).toHaveBeenCalledWith(expect.objectContaining({
             statuses: expect.arrayContaining(["suggested", "accepted", "edited", "snoozed", "failed"]),
             scopePaths: expect.arrayContaining(["notes/current.md"]),
@@ -3052,9 +3042,7 @@ describe("PageletOrchestrator review panel context flow", () => {
         expect(panelView.open).toHaveBeenCalledWith(
             "review",
             [],
-            expect.not.objectContaining({
-                contextPager: expect.anything(),
-            }),
+            undefined,
         );
     });
 
@@ -3117,9 +3105,7 @@ describe("PageletOrchestrator review panel context flow", () => {
         expect(panelView.open).toHaveBeenCalledWith(
             "review",
             [],
-            expect.not.objectContaining({
-                contextPager: expect.anything(),
-            }),
+            undefined,
         );
     });
 

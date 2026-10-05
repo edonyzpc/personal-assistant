@@ -32,7 +32,11 @@ import type { GraphBoundarySnapshotSource } from "../graph/graph-boundary-snapsh
 import { getPlatformLocalStorage } from "../platform-dom";
 import { stableHash } from "../pa/helpers";
 import type { PageletCostEntry, PageletCostTracker } from "./pa-review-cost";
-import { PageletRateLimiter, type PageletRateLimitStorage } from "./pa-review-rate-limit";
+import {
+    defaultNextLocalMidnight,
+    PageletRateLimiter,
+    type PageletRateLimitStorage,
+} from "./pa-review-rate-limit";
 import type { PageletProviderCallAdmission } from "./provider-call-admission";
 import {
     PageletDeepDiscoverController,
@@ -787,6 +791,27 @@ export class DeepDiscoverPluginIntegration {
         if (!this.admissionIsCurrent(expectedPolicyIdentity, input)) {
             return { ok: false, reason: "unavailable" };
         }
+
+        // Explicit runs remain provider calls, but they do not read, reserve,
+        // or commit the automatic-run pool. This also prevents an automatic
+        // storage failure from blocking a user-initiated run.
+        if (input.triggerReason === "explicit") {
+            try {
+                await this.dependencies.getProviderCallAdmission().admitStandardCall();
+                if (input.signal?.aborted) throw createPageletProviderAbortError();
+                if (!this.admissionIsCurrent(expectedPolicyIdentity, input)) {
+                    return { ok: false, reason: "unavailable" };
+                }
+                return { ok: true };
+            } catch (error) {
+                if (input.signal?.aborted) throw createPageletProviderAbortError();
+                this.dependencies.log("Pagelet Deep Discover provider admission failed", {
+                    errorType: error instanceof Error ? error.name : "unknown",
+                });
+                return { ok: false, reason: "unavailable" };
+            }
+        }
+
         let decision: Awaited<ReturnType<PageletRateLimiter["reserveLeaseIf"]>>;
         try {
             decision = await this.getRateLimiter().reserveLeaseIf(() => (
@@ -938,7 +963,10 @@ export class DeepDiscoverPluginIntegration {
                 ? result.metrics
                 : undefined;
         if (!metrics) return;
-        void this.recordUsageMetrics(metrics).catch((error) => {
+        const usageDailyResetAt = request.triggerReason === "explicit"
+            ? defaultNextLocalMidnight(Date.now())
+            : undefined;
+        void this.recordUsageMetrics(metrics, usageDailyResetAt).catch((error) => {
             this.dependencies.log("Pagelet Deep Discover metrics persistence failed", {
                 errorType: error instanceof Error ? error.name : "unknown",
             });
@@ -983,14 +1011,17 @@ export class DeepDiscoverPluginIntegration {
     async recordUsageMetrics(metrics: {
         modelTurns?: number;
         toolCalls?: number;
-    }): Promise<void> {
-        const limiterState = await this.getRateLimiter().getStateSnapshot();
-        const current = this.readUsageMetrics(limiterState.dailyResetAt);
+    }, usageDailyResetAt?: number): Promise<void> {
+        let dailyResetAt = usageDailyResetAt;
+        if (dailyResetAt === undefined) {
+            dailyResetAt = (await this.getRateLimiter().getStateSnapshot()).dailyResetAt;
+        }
+        const current = this.readUsageMetrics(dailyResetAt);
         const storage = getPlatformLocalStorage();
         const key = this.usageStorageKey();
         if (!storage || !key) return;
         storage.setItem(key, JSON.stringify({
-            dailyResetAt: limiterState.dailyResetAt,
+            dailyResetAt,
             modelTurns: current.modelTurns + normalizeDeepDiscoverUsageCount(metrics.modelTurns),
             toolCalls: current.toolCalls + normalizeDeepDiscoverUsageCount(metrics.toolCalls),
         }));

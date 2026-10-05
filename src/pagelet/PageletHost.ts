@@ -24,7 +24,6 @@ import type {
 } from "../ai-services/operations/types";
 
 import type { PetCorner } from "./pet/types";
-import type { AnalyzeCallback } from "./preload/types";
 import type { PageletAttentionStorage } from "./attention";
 import type { GeneratedReviewNote } from "./output/types";
 import type { WriteResult } from "./output/types";
@@ -45,7 +44,6 @@ import type {
     PatternDetectionResult,
     QuietRecallCandidate,
     QuietRecallEvaluationDiagnostics,
-    QuietRecallRunResult,
     QuietRecallSaveResult,
     RetrievalHabitFeedbackKind,
     RetrievalHabitProfileRecordResult,
@@ -231,9 +229,6 @@ export interface PageletHost {
         signal?: AbortSignal,
     ): Promise<PageletChatHandoffPreparationResult>;
 
-    /** Factory for the LLM callback used by foreground review commands. */
-    createForegroundAnalyzeCallback(): AnalyzeCallback;
-
     /** Write a review note through the Pagelet write framework. */
     writeReviewNote(note: GeneratedReviewNote): Promise<WriteResult>;
 
@@ -346,15 +341,6 @@ export interface PageletHost {
         scope: ReviewQueueScope;
         noteDigests: Array<{ title: string; digest: string; tags: string[] }>;
     }): Promise<RecapLlmInsight[] | null>;
-
-    /** Generate quiet recall candidates for the active note. */
-    runQuietRecall(): Promise<QuietRecallRunResult>;
-
-    /** Revalidate source, Data Boundary, and evaluation-policy identity before delivery. */
-    isQuietRecallRunCurrent?(result: QuietRecallRunResult): boolean;
-
-    /** Current provider/model/locale/policy identity for nudge invalidation. */
-    getQuietRecallEvaluationPolicySnapshotId?(): string;
 
     /** Save a quiet recall candidate into the Saved Insight ledger. */
     saveQuietRecallAsInsight(candidate: QuietRecallCandidate): Promise<QuietRecallSaveResult>;

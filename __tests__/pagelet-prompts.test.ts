@@ -2,10 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 
 import {
     buildRecapInsightsPrompt,
-    buildRecallRelevancePrompt,
-    detectLanguageMismatch,
     parseRecapInsightsResponse,
-    parseRecallRelevanceResponse,
 } from "../src/pa";
 import { buildPreloadPrompt } from "../src/pagelet/llm";
 import { estimateTokens } from "../src/pagelet/pa-review-cost";
@@ -97,100 +94,5 @@ describe("parseRecapInsightsResponse", () => {
 
     it("returns empty array for empty JSON array", () => {
         expect(parseRecapInsightsResponse("[]")).toEqual([]);
-    });
-});
-
-describe("buildRecallRelevancePrompt", () => {
-    it("includes current and candidate note info", () => {
-        const prompt = buildRecallRelevancePrompt({
-            currentDigest: { title: "Current Note", headings: ["Intro", "Method"], firstParagraph: "Exploring caching." },
-            candidateDigest: { title: "Old Note", headings: ["Results"], firstParagraph: "Redis benchmark data." },
-            candidateAge: "3 months",
-        });
-        expect(prompt).toContain('"Current Note"');
-        expect(prompt).toContain("Intro / Method");
-        expect(prompt).toContain('"Old Note"');
-        expect(prompt).toContain("3 months");
-        expect(prompt).toContain("Redis benchmark data.");
-    });
-
-    it("handles empty headings", () => {
-        const prompt = buildRecallRelevancePrompt({
-            currentDigest: { title: "A", headings: [], firstParagraph: "text" },
-            candidateDigest: { title: "B", headings: [], firstParagraph: "text2" },
-            candidateAge: "1 week",
-        });
-        expect(prompt).toContain("Headings: none");
-    });
-
-    it("includes language instruction", () => {
-        const prompt = buildRecallRelevancePrompt({
-            currentDigest: { title: "A", headings: [], firstParagraph: "" },
-            candidateDigest: { title: "B", headings: [], firstParagraph: "" },
-            candidateAge: "unknown",
-        });
-        expect(prompt).toContain("Respond in the same language as the current note");
-    });
-});
-
-describe("parseRecallRelevanceResponse", () => {
-    it("parses convincing result", () => {
-        const result = parseRecallRelevanceResponse(
-            '{"isConvincing":true,"whyNow":"Your note asks about caching; this has benchmarks."}',
-        );
-        expect(result.isConvincing).toBe(true);
-        expect(result.whyNow).toBe("Your note asks about caching; this has benchmarks.");
-    });
-
-    it("parses unconvincing result", () => {
-        const result = parseRecallRelevanceResponse('{"isConvincing":false,"whyNow":null}');
-        expect(result.isConvincing).toBe(false);
-        expect(result.whyNow).toBeNull();
-    });
-
-    it("strips markdown fences", () => {
-        const result = parseRecallRelevanceResponse('```json\n{"isConvincing":true,"whyNow":"reason"}\n```');
-        expect(result.isConvincing).toBe(true);
-    });
-
-    it("returns safe default on parse failure", () => {
-        const result = parseRecallRelevanceResponse("garbage");
-        expect(result.isConvincing).toBe(false);
-        expect(result.whyNow).toBeNull();
-    });
-
-    it("treats non-true isConvincing as false", () => {
-        const result = parseRecallRelevanceResponse('{"isConvincing":"yes","whyNow":"reason"}');
-        expect(result.isConvincing).toBe(false);
-    });
-});
-
-describe("detectLanguageMismatch", () => {
-    it("detects English whyNow for Chinese notes", () => {
-        expect(detectLanguageMismatch(
-            "Both notes discuss architecture",
-            "这篇笔记讨论了项目架构的选择",
-        )).toBe(true);
-    });
-
-    it("no mismatch when both are Chinese", () => {
-        expect(detectLanguageMismatch(
-            "当前笔记讨论了缓存策略，这篇旧笔记有相关测试数据",
-            "这篇笔记探讨了 Redis 和 Postgres 的缓存方案",
-        )).toBe(false);
-    });
-
-    it("no mismatch when notes are English", () => {
-        expect(detectLanguageMismatch(
-            "Both discuss caching strategies",
-            "This note explores Redis and Postgres caching approaches",
-        )).toBe(false);
-    });
-
-    it("no mismatch for mixed content with CJK in both", () => {
-        expect(detectLanguageMismatch(
-            "笔记A和B都讨论了缓存",
-            "关于缓存的讨论 and some English",
-        )).toBe(false);
     });
 });

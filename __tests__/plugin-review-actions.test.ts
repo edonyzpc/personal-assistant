@@ -25,12 +25,8 @@ jest.mock("obsidian", () => ({
 
 const settings = {
     enabled: true,
-    temperature: 0.2,
-    maxInputTokens: 8_000,
-    maxOutputTokens: 2_000,
     foregroundPerHourCap: 3,
     foregroundPerDayCap: 9,
-    outputLanguage: "auto" as const,
 };
 
 const createDependencies = () => {
@@ -47,29 +43,11 @@ const createDependencies = () => {
             workspace: { getActiveFile: () => file },
         },
         source: { isPageletProviderSourceAllowedFile: jest.fn(() => true) },
-        getSettings: () => ({
-            pagelet: settings,
-            mergedPagelet: settings,
-            provider: "openai",
-            model: "model",
-            embeddingModel: "embedding",
-        }),
-        getLocale: () => "en",
+        getSettings: () => ({ pagelet: settings }),
         isRuntimeCurrent: () => true,
-        getScopeRecapAuthorizationContextId: () => "policy",
-        getScopeRecapProviderInfo: () => ({
-            provider: "openai",
-            model: "model",
-            endpoint: "endpoint",
-        }),
-        getProviderCallAdmission: jest.fn(() => ({} as never)),
-        getCostTracker: jest.fn(() => ({ record: jest.fn() }) as never),
-        requestHighRiskDecision: jest.fn(async (): Promise<"run"> => "run"),
         getVaultStorageScope: () => "vault",
         createRateLimitStorage: jest.fn(() => ({ load: () => null, save: () => undefined })),
         getRateLimitStorageKey: jest.fn((scope: string | null) => `foreground:${scope}`),
-        findRelatedNotes: jest.fn(async () => []),
-        createChatModel: jest.fn(async () => ({}) as never),
         log: jest.fn(),
     };
     return { dependencies, file };
