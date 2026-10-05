@@ -39,6 +39,21 @@ Use this file as the project README for coding agents. Keep changes aligned with
   findings instead of repeating the same exploration. Small single-path edits
   need no artificial agent split; preserve configured model routing.
 
+## Proportionate Design And Delivery
+
+- These constraints apply to the lead agent, writers and reviewers throughout
+  design, implementation and validation. Ground new abstractions, mechanisms,
+  state and rules in a current requirement or evidenced failure. Prefer existing
+  capabilities; future possibilities, external examples or architectural symmetry
+  alone do not justify expanding the work.
+- A review suggestion becomes a fix only with a concrete trigger, consequence
+  and violated requirement or invariant. Distinguish defects from preferences
+  and unconfirmed concerns; reviewers may revise or withdraw their findings.
+- Once scoped requirements and required gates are satisfied and confirmed
+  blockers are resolved or explicitly deferred, deliver. Further design, review
+  or testing needs a new concrete risk or requirement. Do not add process layers,
+  reports or approval steps merely to enforce these constraints.
+
 ## GPT-6 And GLM Delivery
 
 - For this owner's GPT-6/GLM workflow, GPT-6 owns product discussion, design,
@@ -242,7 +257,9 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
   existing contract suites affected by the change. No plugin Build, TypeScript,
   or Obsidian/device smoke is needed unless executable or runtime assets change.
 - For narrow changes, run the closest relevant Jest tests first.
-- For Memory/VSS/chat changes, run the focused tests that cover `memory-manager`, `vss`, and affected chat paths when present.
+- For Memory/VSS/chat changes, select focused tests for the affected behavior,
+  call paths and integration boundaries. Cover each affected module when its
+  contract changes; a module name alone does not require testing all three.
 - For broad behavior, release, packaging, or shared infrastructure changes, run:
   - `npm run lint`
   - `npm run build`
@@ -265,6 +282,21 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
   a new change, failure, or concrete unresolved risk. Reuse checks already run
   by an enclosing gate such as `make deploy` when their inputs are unchanged.
 
+### Agent Behavior Acceptance
+
+- Judge behavior against explicit user requirements, confirmed product contracts
+  and observable correctness, not an evaluator's preferred answer or tool path.
+  Allow reasonable clarification; a final-format requirement does not prohibit
+  gathering needed information, and no deliverable in one turn is not itself failure.
+- Length, optional questions, tool counts and additional advice do not alone
+  establish a defect. Separate observed behavior from its assessment: a suggestion
+  is not an executed effect, and absent effect tools do not prove write protection.
+  Do not infer general success rates or attribute a combined change to one mechanism
+  from isolated model samples.
+- If the acceptance criterion is wrong, correct it with the requirement or user
+  decision as the basis; retain the raw evidence and reason for the revised verdict.
+  Do not change correct behavior or repeat model sampling to satisfy a faulty rubric.
+
 ### Validation Planning And Reuse
 
 - Before each slice, record a compact mapping in the existing Tracker:
@@ -272,6 +304,9 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
   condition -> rerun/expansion trigger`. A narrow fix without a Tracker can
   keep this in the task response; do not create a separate test plan. Add a
   test or probe only to answer an uncovered behavior or regression question.
+  Before adding validation, identify what remains unknown, why existing evidence
+  is insufficient and which decision the result could change. Keep this in the
+  existing record, without a new form or gate; no concrete need means no extra check.
 - Separate required outcomes/gates from reference or diagnostic methods. An
   unavailable optional method is a recorded limit, not an extra delivery gate.
   Use other relevant evidence only for the outcome it actually proves; user
@@ -288,7 +323,8 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
   or build identity. Use a targeted diff from the tested baseline and account
   for relevant uncommitted changes; do not default to whole-repo hash manifests
   or repeated HEAD/SHA comparisons. Stage, commit, push and unrelated docs do
-  not invalidate passing tests; commit identity is not test-input identity.
+  not invalidate passing tests; neither a new phase nor a different reviewer
+  invalidates unchanged evidence. Commit identity is not test-input identity.
   Trust successful project automation for invariants it already checked.
   Invalidate affected evidence when inputs
   change; shared behavior/config/dependencies may require a broad rerun.
@@ -310,8 +346,9 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
 ### Test Failure Diagnosis
 
 - Start from the exact failing command, assertion, inputs, and logs. Separate
-  product defects, fixture/runner defects, unavailable environment/device,
-  and stale build/deployment identity before selecting a targeted diagnostic.
+  product defects, faulty acceptance criteria, fixture/runner defects, unavailable
+  environment/device, and stale build/deployment identity before selecting a
+  targeted diagnostic.
 - Retry with a new hypothesis or changed input. A second same-cause failure
   with no new information, or about 15 minutes of diagnosis without progress,
   prompts a reassessment: reduce the reproduction, inspect the checker, and
@@ -493,10 +530,14 @@ under the Local Deployment conditions when those checks already passed.
 - For repo-scale refactors, follow `docs/development/workflows/refactor-workflow.md`.
 - Start with a plan doc and a separate development tracker.
 - Each phase loops through `dev -> test -> review -> fix`; include Obsidian
-  smoke and any resulting fixes for affected app runtime/UI. Close or explicitly
-  defer P2/P1/P0 issues before completing the phase.
-- Use Codex subagents for phase review when available.
-- Runtime/UI changes require `make deploy` and real Obsidian test-vault smoke before the phase is marked done.
+  smoke for affected app runtime/UI, reusing valid evidence for unchanged inputs.
+  Repeat affected steps only for a change, confirmed failure or concrete unresolved
+  risk. Close or explicitly defer confirmed P2/P1/P0 issues before completing the phase.
+- Scope phase review and subagent participation to concrete risks and reuse prior
+  findings; required independent reviews under GPT-6 And GLM Delivery remain binding.
+- Runtime/UI changes require deployment under Local Deployment and real Obsidian
+  test-vault smoke before the phase is marked done. Use eligible `deploy-current`
+  and existing interaction evidence when their inputs and required behavior are unchanged.
 - Keep tracker status, risk table, verification log, open decisions, and `docs/backlog.md` aligned with the actual final behavior.
 - Split commits by intent: runtime/tests, docs/tracker, TODO/future milestones, and release automation.
 

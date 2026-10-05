@@ -15,13 +15,20 @@ For a one-file bug fix, use the normal focused review/fix/test/commit path inste
 
 ## Core Rule
 
-Each active phase follows this loop until P2/P1/P0 issues are closed or explicitly deferred:
+Each active phase follows this loop until confirmed P2/P1/P0 issues are closed or explicitly deferred:
 
 ```text
 dev -> test -> review -> fix -> Obsidian smoke test -> fix
 ```
 
 Do not mark a phase done just because code compiles. A phase is done only when the tracker, tests, review findings, smoke evidence, and risk table agree with the actual behavior.
+
+Apply [Proportionate Design And Delivery](../../../AGENTS.md#proportionate-design-and-delivery).
+The loop describes responsibilities, not a requirement to rerun every step after
+every edit. Reuse valid evidence; repeat affected steps for changed inputs or a
+concrete unresolved risk. Required integration, device, CI and release gates remain
+binding. Deliver when the scoped exit conditions are met rather than opening
+another round for speculative improvements.
 
 ## Artifacts
 
@@ -81,8 +88,8 @@ Avoid leaving `[~]` in historical evidence rows after the overall track is compl
 2. Record the phase as `[~] In progress`.
 3. Implement one behavior slice at a time.
 4. Prefer existing module boundaries and helper APIs.
-5. Update tests with the implementation, not after the fact.
-6. Run focused tests first.
+5. Update affected behavior tests with the implementation; do not add tests solely for mechanical edits or wording.
+6. Run the relevant focused checks first, reusing unchanged valid evidence.
 7. Update Tracker and any affected Plan/SDD to match verified behavior；Feature Home only changes when routing or scope boundary changes.
 
 For risky paths, keep fallback behavior working before enabling the new path by default.
@@ -97,7 +104,9 @@ replace the phase's required tests or deployed Obsidian smoke.
 
 ## Review Loop
 
-Use subagents for every phase review when available.
+Scope review and subagent participation to the phase's concrete risks, reusing
+findings for unchanged areas. Preserve the independent review requirements in
+[GPT-6 And GLM Delivery](../../../AGENTS.md#gpt-6-and-glm-delivery).
 
 Choose review responsibilities for the phase's actual risks; the following
 split is a reference, not four mandatory roles for each small slice:
@@ -107,7 +116,12 @@ split is a reference, not four mandatory roles for each small slice:
 - Testing/QA reviewer: coverage gaps, smoke coverage, tracker evidence.
 - Docs/tracker reviewer: stale status, contradictory source-of-truth claims.
 
-Only fix P2/P1/P0 findings immediately. Move low-risk polish into `docs/backlog.md` if it should not block the phase, and keep the source Work item/track link.
+Only confirmed P2/P1/P0 findings require immediate resolution or explicit deferral.
+Check their trigger, consequence and violated requirement before changing code;
+reviewer preferences and unconfirmed concerns are not blockers. For model behavior,
+apply [Agent Behavior Acceptance](../../../AGENTS.md#agent-behavior-acceptance).
+Keep requested follow-up work in the existing Backlog with its source link; do not
+automatically turn every polish suggestion into a new task.
 
 After fixes, re-review the changed area or at least re-check the specific finding against the live diff.
 
@@ -267,8 +281,9 @@ Use this prompt to start the next refactor:
 按照 AGENTS.md 和 docs/development/documentation-workflow.md、docs/development/workflows/refactor-workflow.md，基于 docs/development/active/<feature>/README.md 开始下一轮重构。
 
 要求：
-- 每个 phase 按 dev -> test -> review -> fix -> Obsidian smoke test -> fix 循环推进。
-- 使用 subagents 做 phase review。
+- 每个 phase 按 dev -> test -> review -> fix -> Obsidian smoke test -> fix 的职责推进；按实际变化复用有效证据，达到退出条件即交付。
+- 按具体风险安排 phase review 和 subagents，保留明确要求的独立审查；不重复审查未变范围。
+- 新增设计必须对应当前需求或已证实问题；追加验证说明尚未解决的问题和会影响的决定。模型行为按 AGENTS.md 的 Agent Behavior Acceptance 验收。
 - 只在 Tracker 更新执行状态；实现后同步受影响的 Product Spec/Architecture、按需 Plan/SDD、风险与验证记录。
 - Runtime/UI 变化必须部署后在 test vault smoke；默认 make deploy，当前改动所需检查已通过且 production build 有效时按 AGENTS.md 复用 make deploy-current。
 - Closeout 把稳定结论吸收到 current authority/tests，未完成项进入 Backlog，过程文档默认删除；提交时拆分 docs、runtime/test、Backlog/future milestone、release commit。
