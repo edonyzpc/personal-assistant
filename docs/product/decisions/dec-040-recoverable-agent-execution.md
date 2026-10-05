@@ -8,7 +8,7 @@ Work item: B-144
 
 ## Context
 
-[空回答事故与修复证据](../../development/validation/pa-agent-empty-answer-diagnosis-2026-09-21.md)确认：来源准入失败被 SDK 重试、idle 覆盖请求准备、工具失败过早收尾、正文交付与完成状态不一致。已交付修复制止已知故障，但未改变通用 loop 与领域策略的职责分配。另一设备的 `<tool_calls>` 截图没有原始 provider payload，不能由此断言其唯一根因。
+[空回答事故与修复证据](../../archive/2026/pa-agent-empty-answer-diagnosis-2026-09-21.md)确认：来源准入失败被 SDK 重试、idle 覆盖请求准备、工具失败过早收尾、正文交付与完成状态不一致。已交付修复制止已知故障，但未改变通用 loop 与领域策略的职责分配。另一设备的 `<tool_calls>` 截图没有原始 provider payload，不能由此断言其唯一根因。
 
 Owner 要求从架构层面支持长任务、自主纠错，并降低 writing 对普通 Chat 的影响。方向遵守 [North Star](../pa-product-north-star.md)：用户自然提问，宿主保证来源、权限、真实结果及持久动作边界。
 

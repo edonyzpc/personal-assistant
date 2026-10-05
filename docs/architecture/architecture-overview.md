@@ -1,8 +1,9 @@
 # Personal Assistant — 项目架构全景
 
-> **版本**: v2.9.2 current architecture · **日期**: 2026-09-21 · **作者**: edony
+> **版本**: v2.9.2 worktree architecture · **日期**: 2026-10-06 · **作者**: edony
 >
 > 本文档面向项目负责人，提供**技术状态**与**产品定义**的全局视图，辅助下一步规划决策。
+> 工作树版本不等于后续功能已发布；发布记录见 [Changelog](../../CHANGELOG.md)，细节以各模块当前契约和源码为准。历史统计与旧设计在对应段落保留其原范围。
 
 ---
 
@@ -17,7 +18,7 @@
 7. [数据流与交互管线](#7-数据流与交互管线)
 8. [构建、测试与发布](#8-构建测试与发布)
 9. [代码规模与测试覆盖](#9-代码规模与测试覆盖)
-10. [版本路线图与关键决策](#10-版本路线图与关键决策)
+10. [版本状态与关键决策](#10-版本状态与关键决策)
 
 ---
 
@@ -36,7 +37,7 @@
 │   │ • 插件管理/更新  │     │ • 对话式 AI 助手          │  │
 │   │ • 主题管理/更新  │     │ • RAG 本地向量索引        │  │
 │   │ • Callout 管理   │     │ • Agent 工具调用          │  │
-│   │ • Frontmatter   │     │ • 8 个内置 Skills         │  │
+│   │ • Frontmatter   │     │ • 内置 Skills             │  │
 │   │ • 统计仪表盘    │     │ • Web 搜索集成            │  │
 │   │ • 本地图谱      │     │ • 向量混合检索 (FTS+VSS)  │  │
 │   │ • 快捷笔记/预览  │     │ • Pagelet 评审助手 (beta) │  │
@@ -48,9 +49,11 @@
 
 ### 1.2 版本演进时间线
 
+以下保留截至 2026-06-15 的演进快照；其中当时的未发布工作不代表当前 HEAD 或发布状态。
+
 ```mermaid
 timeline
-    title Personal Assistant 版本演进
+    title Personal Assistant 版本演进（截至 2026-06-15）
     section 基础期 (v1.0–1.2)
         2022-2023 : 笔记创建 / Memo / 本地图谱
                    : 插件管理 / 主题更新
@@ -85,7 +88,7 @@ timeline
         2026-06-03 : Pagelet Review Assistant v1
                     : Write Action Framework v1
                     : Pet 吉祥物 / 结构化评审
-    section HEAD (未发布)
+    section 当时未发布工作
         2026-06-15 : Pagelet 存稿 / 生命周期加固
                     : Ribbon Review MVP
 ```
@@ -120,7 +123,7 @@ graph LR
     subgraph AI["AI / LLM"]
         LC[LangChain Core]
         LCO[LangChain OpenAI]
-        LCT[LangChain TextSplitters]
+        CHUNKER[PA Markdown Chunker<br/>按标题保留来源位置]
         ZOD[Zod 验证]
     end
 
@@ -131,7 +134,7 @@ graph LR
     end
 
     subgraph Build["构建工具"]
-        ESB[esbuild 0.25]
+        ESB[esbuild 0.28]
         JEST[Jest 30 + ts-jest]
         ESL[ESLint 10]
         NV[Node 22 LTS]
@@ -140,8 +143,8 @@ graph LR
     subgraph UI["UI 库"]
         CJS[Chart.js 4]
         RCJ[react-chartjs-2]
-        VP[vanilla-picker]
-        LDRS[ldrs 加载动画]
+        VP[本地颜色工具<br/>src/color.ts]
+        LDRS[本地加载动画<br/>adapted from ldrs]
     end
 
     Core --> Runtime
@@ -160,8 +163,12 @@ graph LR
 | **数据** | @sqlite.org/sqlite-wasm | 3.53.0-build1 | OPFS SQLite + FTS5；Worker 内精确向量检索 |
 | **验证** | Zod | 3.25 | LLM 输出结构化验证 |
 | **图表** | Chart.js + react-chartjs-2 | 4.x / 5.x | 统计仪表盘渲染 |
-| **构建** | esbuild | 0.25.5 | 单文件 CJS bundle，自定义 WASM/Worker 插件 |
-| **测试** | Jest + ts-jest | 30.3 / 29.4 | 90+ 测试文件，覆盖率 ≥ 75% |
+| **构建** | esbuild | ^0.28.1 | 单文件 CJS bundle，自定义 WASM/Worker 插件 |
+| **测试** | Jest + ts-jest | 30.1.3 / ^29.4.9 | source/tooling/artifact 分组；当前测试命令见 [AGENTS](../../AGENTS.md#build-and-local-run-commands) |
+
+版本列取自 [package.json](../../package.json) 的声明，不代表本机安装状态或最新上游版本；
+本地加载动画的来源与许可证见 [Third-party notices](../../THIRD_PARTY_NOTICES.md)。
+Memory 的 Markdown 分块由 [本地 chunker](../../src/vss/markdown-chunker.ts) 实现。
 
 ---
 
@@ -199,8 +206,8 @@ graph TB
         AGENT[PA Agent Runtime<br/>流式工具调用循环]
         CAP[Capability Registry<br/>工具注册表]
         POL[Policy Engine<br/>权限策略]
-        TOOLS[Chat Tools<br/>10 个内置工具]
-        SKILLS[Skill Router<br/>8 个 Skills]
+        TOOLS[Chat Tools<br/>按实际能力与权限开放]
+        SKILLS[Skill Router<br/>bundled catalogue]
         QR[Query Rewriter<br/>查询改写]
         CS[Chat Service<br/>对话编排]
         WAF[Write Action<br/>Framework v1]
@@ -214,7 +221,7 @@ graph TB
         FTS[FTS5 Query Builder<br/>全文检索]
         RRF[RRF Fusion<br/>混合排序]
         WORKER[SQLite Worker<br/>Web Worker]
-        WASM[SQLite WASM<br/>~941KB binary]
+        WASM[SQLite WASM<br/>inlined binary]
     end
 
     subgraph Platform["⚙️ 平台抽象层"]
@@ -416,7 +423,7 @@ admission 都在首个异步等待前封闭新工作，后段资源仍按原偏�
 
 ### 5.3 AI Services (`src/ai-services/`)
 
-52 个文件，是项目最大的模块。
+主 Agent、工具、来源、Context 与领域命令的职责集中在该目录；模块入口见 [PA Agent 当前架构](./pa-agent-architecture-plan.md)。
 
 ```mermaid
 graph LR
@@ -428,9 +435,10 @@ graph LR
 
     subgraph Runtime["Agent Runtime"]
         AU[AIUtils<br/>模型工厂]
-        ART[PaAgentRuntime<br/>Agent 循环]
-        CHUNK[ChunkConsumer<br/>流式处理]
-        DISPATCH[ToolDispatcher<br/>工具派发]
+        ART[PaAgentRuntime<br/>Chat 领域适配]
+        LOOP[PaAgentLoop<br/>Agent 循环]
+        CHUNK[ModelChunkConsumer<br/>流式处理]
+        DISPATCH[ToolExecutionDispatcher<br/>工具派发]
     end
 
     subgraph Cap["Capability 层"]
@@ -439,34 +447,32 @@ graph LR
         CP[CapabilityProvider<br/>加载器]
     end
 
-    subgraph Tools["内置工具 (10)"]
-        T1[searchMemory]
-        T2[inspectObsidianNote]
-        T3[listRecentNotes]
-        T4[searchVaultMetadata]
-        T5[searchVaultSnippets]
-        T6[listVaultTags]
-        T7[readNoteOutline]
-        T8[readCanvasSummary]
-        T9[currentNoteContext]
-        T10[loadSkillContext]
+    subgraph Tools["当前工具分组（非完整清单）"]
+        T1[Memory 检索与管理]
+        T2[query_notes / read_note<br/>笔记检索与读取]
+        T3[Metadata / Snippets / Tags<br/>笔记证据工具]
+        T4[Insight 读取与动作<br/>按 Host 能力注册]
+        T5[load_skill<br/>Skill 上下文]
     end
 
-    subgraph Skills["内置 Skills (8)"]
+    subgraph Skills["内置 Skills（当前 catalogue）"]
         S1[obsidian-markdown]
         S2[obsidian-bases]
         S3[json-canvas]
-        S4[frontmatter-audit]
-        S5[callout-cleanup]
-        S6[vault-link-health]
-        S7[plugin-config-review]
+        S4[pa-frontmatter-audit]
+        S5[pa-callout-cleanup]
+        S6[pa-vault-link-health]
+        S7[pa-plugin-config-review]
         S8[obsidian-dataview]
+        S9[obsidian-templater]
+        S10[blog2ghost]
     end
 
     Providers --> AU
     AU --> ART
-    ART --> CHUNK
-    ART --> DISPATCH
+    ART --> LOOP
+    LOOP --> CHUNK
+    LOOP --> DISPATCH
     DISPATCH --> CR
     CR --> PE
     CR --> CP
@@ -480,9 +486,13 @@ graph LR
     style Skills fill:#fce4ec
 ```
 
+工具注册以 [PaAgentRuntime](../../src/ai-services/pa-agent-runtime.ts) 与当前
+provider 为准；Skills ID 以 [bundled catalogue](../../src/ai-services/bundled-skill-catalog.ts)
+为准，加载 Skill 本身不授予执行权限。
+
 **Agent 工具调用模式**: `sequential` | `parallel` | `hybrid`
 
-**工具权限层级**: 当前全部为 `read-only`，`write` 层级为 Action Mode 预留。
+**工具权限层级**: 核心检索/上下文工具为 `read-only`，WebSearch 为受配置与来源范围约束的 `network-read`。已批准的 Operations 写入由同一主 Agent 与实际领域控制器执行；当前明确修改请求可直接执行，预览-only 不执行，结果与 Undo 不由模型自报决定。旧 Operations 开关不再作为准入条件，详见 [当前 Operations 架构](./pa-agent-architecture-plan.md#operations-agent-providers)。
 
 ### 5.4 Memory / VSS (`src/vss/`)
 
@@ -494,15 +504,15 @@ graph TB
     end
 
     subgraph Indexing["索引管线"]
-        SPLIT[TextSplitter<br/>分块 ~1800 chars]
-        EMBED[OpenAI Embeddings<br/>向量化]
+        SPLIT[Heading-aware Markdown chunker<br/>分块默认值见源码]
+        EMBED[Configured embedding provider<br/>向量化]
         UPSERT[Upsert<br/>插入/更新]
     end
 
     subgraph Storage["存储层"]
         SQLITE[SQLite WASM<br/>Web Worker]
-        VEC_TBL[vec_chunks 表<br/>向量列]
-        FTS_TBL[fts_chunks 表<br/>FTS5 全文索引]
+        VEC_TBL[vss_chunks 表<br/>embedding BLOB]
+        FTS_TBL[vss_chunks_lexical_0 / 1<br/>FTS5 active / shadow generations]
         OPFS_STORE[(OPFS SAHPool<br/>持久化)]
     end
 
@@ -538,14 +548,14 @@ graph TB
 ```
 
 **关键设计决策**:
-- WASM 二进制 (~941KB) 构建时 base64 编码内联，首次使用时解码 → 移动端节省堆内存
+- WASM 二进制构建时内联，首次使用时由 [inline asset loader](../../src/vss/sqlite-inline-assets.ts) 载入；不在总览复制随依赖版本变化的文件体积
 - OPFS 是设备本地缓存，Markdown vault 是 source of truth
 - Web Worker 隔离 SQLite 操作，不阻塞主线程
-- v2.3 计划迁移到 `@sqlite.org/sqlite-wasm` + JS brute-force 向量
+- 已使用官方 `@sqlite.org/sqlite-wasm`，Worker 内使用 JS 向量缓存及 brute-force 搜索；当前表结构见 [SQLite/WASM 契约](./vss-sqlite-wasm-architecture.md#local-storage-model)，分块实现见 [Markdown chunker](../../src/vss/markdown-chunker.ts)
 
 ### 5.5 Chat UI (`src/chat/`)
 
-10 个文件，从原 3518 行 God Object 拆分而来。
+以 `chat-view.ts` 为 UI 入口，拆分会话、图片、作品与操作结果等职责；当前模块和生命周期见 [PA Agent 架构](./pa-agent-architecture-plan.md#ownership)。
 
 | 文件 | 职责 |
 |------|------|
@@ -562,7 +572,7 @@ graph TB
 
 ### 5.6 Statistics (`src/stats/`)
 
-9 个文件，写作统计子系统。
+写作统计子系统，当前存储与视图职责见 [Statistics 契约](./statistics-v3-plan.md)。
 
 | 组件 | 说明 |
 |------|------|
@@ -608,60 +618,59 @@ Pagelet (拾页) 是嵌入式 AI 笔记评审助手。核心理念: **安静的�
 
 ```mermaid
 graph TB
-    subgraph Entry["入口层"]
-        PET[🐾 Pet<br/>浮动吉祥物<br/>4 状态 FSM]
+    subgraph Entry["发现入口"]
+        COMMAND[显式 Discover 与兼容命令]
+        EVENTS[笔记打开 / 离开 / 编辑后空闲]
     end
 
-    subgraph Overlay["浮层"]
-        BUBBLE[💬 Bubble<br/>快捷气泡<br/>摘要 + 操作按钮]
+    ORCH[PageletOrchestrator<br/>入口 / 交付检查 / 界面]
+
+    subgraph Engine["当前 Deep Discover 调用链"]
+        INTEGRATION[DeepDiscoverPluginIntegration<br/>配置 / 来源 / provider 准入]
+        SCHED[PageletDeepDiscoverScheduler<br/>显式运行 / 自动触发合并]
+        CTRL[PageletDeepDiscoverController<br/>来源快照 / 运行 / 缓存]
+        RUNTIME[Pagelet Agent Runtime<br/>PaAgentLoop + 只读 review 策略]
+        MODEL[配置的 AI Provider]
+        TOOLS[允许的只读证据工具]
+        RESULT[来源绑定的运行结果]
     end
 
-    subgraph Panel["面板"]
-        PANEL[📋 Panel<br/>侧滑面板 380px<br/>4 种布局]
-    end
-
-    subgraph Tab["标签页"]
-        TAB[📄 Tab<br/>Obsidian 原生标签<br/>完整探索视图]
-    end
-
-    subgraph Engine["后台引擎"]
-        PRELOAD[⚙️ Preload Engine<br/>定时后台分析]
-        SCOPE[🔍 Scope Resolver<br/>文件范围解析]
-        CHANGE[📝 Change Detector<br/>变更追踪]
-        REVIEW[🧠 Review Model<br/>LLM 评审模型]
-        BUDGET[💰 Budget<br/>速率限制]
-        HINTS[🔔 Proactive Hints<br/>主动提示]
-    end
-
-    subgraph Orchestrator["🎯 Orchestrator (~1130 行)"]
-        ORCH[PageletOrchestrator<br/>+ AnalysisSessionManager<br/>+ ReviewNoteSaveFlow]
+    subgraph UI["交互界面"]
+        PET[Pet<br/>4 状态 FSM]
+        BUBBLE[Bubble]
+        PANEL[Panel<br/>4 种布局]
+        TAB[Tab]
     end
 
     subgraph Output["输出"]
-        RNOTE[📝 Review Note<br/>Markdown 评审笔记]
-        RESEARCH[🔬 Research<br/>→ Chat View]
+        RNOTE[ReviewNoteSaveFlow<br/>预览确认后保存 Markdown]
+        RESEARCH[可见上下文交接<br/>→ Chat View]
     end
 
+    COMMAND & EVENTS --> ORCH
+    ORCH --> INTEGRATION --> SCHED --> CTRL --> RUNTIME
+    RUNTIME --> MODEL & TOOLS
+    CTRL --> RESULT --> ORCH
+    ORCH --> PET & BUBBLE & PANEL & TAB
     PET -->|click| BUBBLE
     BUBBLE -->|expand| PANEL
     PANEL -->|expand to tab| TAB
-
-    ORCH --> PET & BUBBLE & PANEL & TAB
-    ORCH --> PRELOAD
-    PRELOAD --> SCOPE --> CHANGE
-    PRELOAD --> REVIEW --> BUDGET
-    ORCH --> HINTS
     PANEL -->|save| RNOTE
-    PANEL -->|research| RESEARCH
+    PANEL -->|discuss| RESEARCH
 
     style Entry fill:#fff3e0,stroke:#ff9800
-    style Overlay fill:#e8f4fd,stroke:#2196f3
-    style Panel fill:#f3e5f5,stroke:#9c27b0
-    style Tab fill:#e8f5e9,stroke:#4caf50
     style Engine fill:#fce4ec,stroke:#e91e63
-    style Orchestrator fill:#fffde7,stroke:#ffc107
+    style UI fill:#e8f4fd,stroke:#2196f3
     style Output fill:#f5f5f5,stroke:#9e9e9e
 ```
+
+调用入口见 [Orchestrator](../../src/pagelet/orchestrator.ts) 和
+[plugin 接线](../../src/plugin.ts)；发现执行由
+[Deep Discover integration](../../src/pagelet/plugin-deep-discover.ts)、
+[scheduler](../../src/pagelet/agent/pagelet-deep-discover-scheduler.ts)、
+[controller](../../src/pagelet/agent/pagelet-deep-discover-controller.ts) 与
+[领域 runtime](../../src/pagelet/agent/pagelet-agent-runtime.ts) 负责。
+单独的 Open Panel 命令只打开界面，不进入上述 provider 调用链。
 
 ### 6.3 Pet 状态机
 
@@ -769,7 +778,7 @@ graph LR
 
 **安全防护**: 路径遍历、`.obsidian` 目录、控制字符、不可见字符、尾部点/空格 — 共 10 种攻击类别校验。
 
-Operations Agent Step 2 只按需暴露 `vault_create`、`vault_append`、`vault_process` 与 `frontmatter_update`。同一 intent 通过 Chat inline card 一次确认；已有笔记在 `vault.process()` 内重验 baseline，Undo 遇到 drift 则 fail closed，audit 默认 content-free。build gate 可用不代表用户授权，per-vault 设置仍默认关闭。
+Operations 现支持四个 core writes 和 [DEC-050](../product/decisions/dec-050-note-image-removal-and-undo.md) 批准的 `remove_note_image`。按 [DEC-051](../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)，主 Agent 对当前明确修改请求可 stage intent 后调用 `execute_operations`，不再必经整批第二次确认；只讨论或仅预览不执行。已有笔记仍在 `vault.process()` 内重验 baseline，Undo 遇到 drift 则 fail closed。旧 per-vault 开关是兼容字段，持久 Operations audit 与其设置已由 [DEC-046](../product/decisions/dec-046-note-change-review-and-audit-retirement.md) 退役；历史审计文件不自动读取、清理或迁移。
 
 Step 3 已在同一 plugin-owned Operations provider 上交付 Pagelet 联动，Chat 与
 Pagelet 的 pending intent / Undo session 相互隔离。用户主动打开 source-backed
@@ -777,15 +786,18 @@ Panel 后，只能预览并确认一个确定性的单文件 `pa-related` 更新
 以完整可见上下文进入 Chat，不自动发送，也不继承写入授权。额外工具、更多 Pagelet
 直接动作与后台写入仍关闭。
 
-### 6.8 五个 LLM 场景
+### 6.8 当前发现入口
 
-| 场景 | 触发 | 用途 |
-|------|------|------|
-| `preload` | 后台定时 | 快速扫描最近笔记 |
-| `quick-review` | Pet 点击 | 当前笔记快速评审 |
-| `writing-assist` | 写作辅助 | 写作建议和改进 |
-| `discovery` | 知识发现 | 跨笔记关联发现 |
-| `periodic-summary` | 命令触发 | 3/7/14 天周期性总结 |
+| 入口 | 当前路由 | Provider 行为 |
+|------|----------|---------------|
+| Discover、Review Current、Quick Review、Quiet Recall、Scope Recap 及 Open Prepared Review 兼容命令 | 活动 Markdown 为 anchor；符合当前策略的已有 insight 可直接复用，否则执行显式 Deep Discover | 经配置、来源和 provider 准入后可能调用 AI |
+| 笔记打开、离开、编辑后空闲 | 启用后台发现且来源获准时，经 scheduler 合并自动触发 | 经自动预算和 provider 准入运行；关闭或失效后不交付旧结果 |
+| Open Panel | 打开面板 | 不启动 provider 调用 |
+
+命令绑定与路由以 [commands](../../src/pagelet/commands.ts) 和
+[Orchestrator](../../src/pagelet/orchestrator.ts) 为准。
+Open Prepared Review 的当前约定见 [DEC-052](../product/decisions/dec-052-prepared-review-deep-discover-route.md)；
+旧五场景分类不再描述当前可达的发现执行链。
 
 ---
 
@@ -798,40 +810,50 @@ sequenceDiagram
     participant U as 用户
     participant CV as ChatView
     participant CS as ChatService
-    participant QR as QueryRewriter
-    participant AR as AgentRuntime
+    participant AR as PaAgentRuntime
+    participant LOOP as PaAgentLoop
     participant CR as CapabilityRegistry
     participant PE as PolicyEngine
-    participant T as Tools
-    participant VSS as Memory/VSS
+    participant T as 领域工具与 Host
     participant LLM as LLM Provider
 
     U->>CV: 输入消息
-    CV->>CS: submitMessage()
-    CS->>QR: rewriteQuery() [并行]
-    CS->>LLM: createEmbedding() [并行]
-
-    CS->>AR: runAgentLoop()
-    AR->>LLM: stream(systemPrompt + history + tools)
+    CV->>CS: streamLLM()
+    CS->>AR: streamTurn()，绑定当前来源与领域能力
+    AR->>LOOP: 创建并运行循环
+    LOOP->>LLM: 当前准入后的上下文与工具
 
     loop Agent Loop
-        LLM-->>AR: tool_call chunk
-        AR->>CR: resolveCapability(toolName)
-        CR->>PE: checkPermission()
-        PE-->>CR: allowed (read-only)
-        CR-->>AR: capability
-        AR->>T: execute(args)
-        T->>VSS: searchMemory / inspectNote / ...
-        VSS-->>T: results
-        T-->>AR: tool_result
-        AR->>LLM: stream(tool_result)
+        LLM-->>LOOP: tool call
+        LOOP->>AR: 经 dispatcher 调用领域 executor
+        AR->>CR: capability 与策略校验
+        CR->>PE: canExecute()
+        PE-->>CR: 当前权限判定
+        CR-->>AR: 许可或拒绝
+        alt 来源、权限及领域条件允许
+            AR->>T: 经领域 executor 执行真实动作
+            Note over T: Memory 检索才进入改写/混合检索分支；<br/>笔记读取、Operations、图片与 Ghost 按自身边界运行
+            T-->>AR: 实际结果或错误
+        else 准入拒绝
+            Note over AR: 返回拒绝事实，不执行效果
+        end
+        AR-->>LOOP: tool result
+        LOOP->>LLM: 经当前上下文准入的工具结果
     end
 
-    LLM-->>AR: final response
-    AR-->>CS: complete
-    CS-->>CV: render streamed response
+    LLM-->>LOOP: 回答与完成状态
+    LOOP-->>AR: 流式事件与结果
+    AR-->>CS: 回调与完成
+    CS-->>CV: 流式正文 / 领域状态
     CV-->>U: 显示回答 + 源引用
 ```
+
+当前接线见 [ChatView](../../src/chat/chat-view.ts)、
+[ChatService](../../src/ai-services/chat-service.ts)、
+[PaAgentRuntime](../../src/ai-services/pa-agent-runtime.ts) 与
+[PaAgentLoop](../../src/ai-services/pa-agent-loop.ts)。查询改写和 embedding 的并行准备
+属于 [MemorySearchTool](../../src/ai-services/memory-search-tool.ts) 的标准检索路径，
+不是每次 Chat 提交的固定前置步骤。
 
 ### 7.2 Vault 事件驱动的 Memory 维护
 
@@ -886,7 +908,7 @@ graph LR
     subgraph Source["源码"]
         TS_SRC[src/**/*.ts<br/>src/**/*.tsx]
         PCSS[src/custom.pcss]
-        WASM_BIN[sqlite3.wasm<br/>~941KB]
+        WASM_BIN[sqlite3.wasm<br/>inlined asset]
         WORKER_SRC[sqlite-worker.ts]
     end
 
@@ -929,25 +951,27 @@ graph LR
 
 ```mermaid
 graph TB
-    A[version-bump.mjs<br/>同步版本号] --> B[git tag vX.Y.Z]
-    B --> C[push tag]
-    C --> D[GitHub Actions 触发]
-    D --> E[npm ci]
-    E --> F[npm run lint]
-    F --> G[npm run build]
-    G --> H[npm test --coverage]
-    H --> I[audit-bundle<br/>检查 Node 内置泄漏]
-    I --> J[artifact attestation<br/>供应链安全]
-    J --> K[gh release create<br/>发布 Release]
-    K --> L[main.js + manifest.json + styles.css]
+    A[make release VERSION=next-version<br/>release.mjs 本地检查与版本准备]
+    A --> B[本地 release commit 与 annotated tag<br/>tag = 版本号，无 v 前缀]
+    B --> C[另行授权 make publish VERSION=prepared-version<br/>publish-release.mjs 检查并推送]
+    C --> D[release.yml<br/>版本 / 来源 CI / 构建 / 测试 / 产物检查]
+    D --> E[GitHub Release<br/>main.js + manifest.json + styles.css]
 
+    style A fill:#fff3e0
     style D fill:#e8f4fd
-    style J fill:#fff3e0
-    style K fill:#e8f5e9
+    style E fill:#e8f5e9
 ```
 
+`next-version` 必须大于准备前的 `package.json` 版本；发布时的 `prepared-version`
+必须等于已准备的版本和 HEAD 上的本地 tag。完整命令与 CI 复用条件见
+[Release Process](../operations/release-process.md)、
+[release.mjs](../../scripts/release.mjs)、
+[publish-release.mjs](../../scripts/publish-release.mjs) 和
+[release workflow](../../.github/workflows/release.yml)。workflow 使用完整测试或符合条件的来源 CI
+复用加产物测试；本地准备、推送和远端发布是独立步骤。
+
 **双通道发布**:
-- `manifest.json` → 稳定版 (当前 v2.8.4)，Obsidian 社区插件市场
+- `manifest.json` → 稳定版身份；当前工作树声明 v2.9.2，不据此推断社区市场或远端发布状态
 - GitHub Release prerelease tag → BRAT 测试版通道；BRAT 下载
   `main.js`、`manifest.json`、`styles.css` release assets
 - `manifest-beta.json` → 本地部署与旧工具兼容，非当前 BRAT 主分发机制
@@ -964,6 +988,8 @@ make deploy-icloud  # 构建 → iCloud Obsidian vault (移动端测试)
 ## 9. 代码规模与测试覆盖
 
 ### 9.1 源码规模
+
+以下规模表为原总览的历史估算，未在本次文档整理中重新计数；不作为当前源码规模或质量结论。
 
 | 模块 | 文件数 | 占比 | 说明 |
 |------|--------|------|------|
@@ -989,7 +1015,7 @@ make deploy-icloud  # 构建 → iCloud Obsidian vault (移动端测试)
 | Functions | 74% | 79.16% |
 | Lines | 75% | 80.04% |
 
-**测试文件**: 90+ (in `__tests__/`)，覆盖 AI agent loop/policy、chat service、pagelet UI、SQLite/VSS、statistics、settings、locales、security (prompt injection)、error handling。
+**历史测试规模**: 原总览记录为 90+ 文件 (in `__tests__/`)，不代表当前全量数量。上表保留 2026-06-01 覆盖率快照，不当作当前门禁或本次测试结果；当前验证选择与规则见 [AGENTS](../../AGENTS.md#testing-instructions)，各轮实际结果见对应验收记录。
 
 ---
 
@@ -1004,10 +1030,10 @@ summary.
 
 | Field | Value |
 |------|------|
-| Current version | `2.8.4` |
-| Current release theme | Post-2.8 patch line plus completed Memory Control Center validation and PA Agent/Pagelet release-readiness |
-| Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools + opt-in bounded Operations with delivered Pagelet integration |
-| Operations Agent availability | `OPERATIONS_AGENT_RUNTIME_ENABLED=true` makes the bounded layer build-available; persisted per-vault `operationsAgentEnabled` defaults to `false` |
+| Worktree version | `2.9.2`, from [package.json](../../package.json) and [manifest.json](../../manifest.json); later local development is not thereby published |
+| Release baseline | Latest stable version recorded in [Changelog](../../CHANGELOG.md): `2.9.2`; live remote status is not checked by this overview |
+| Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools + approved Operations and Pagelet integration |
+| Operations Agent availability | Build/live-controller/policy admission remain required; the persisted legacy switch no longer gates admission. Current explicit requests, previews, results and Undo follow the [current architecture](./pa-agent-architecture-plan.md#operations-agent-providers) |
 
 ### 10.2 已完成发布线
 
@@ -1016,7 +1042,8 @@ summary.
 | v2.0-v2.1 | PA Agent and stability foundation | Release history and archived reviews |
 | v2.2-v2.7 | Pagelet, Memory/VSS, AI Insight, context, and write-action infrastructure train | [`archive/v2-post-release-spec-driven-development.md`](../archive/v2-post-release-spec-driven-development.md) |
 | v2.8.0 | License and compliance migration | [`license-migration-2.8.0.md`](../archive/license-migration-2.8.0.md) |
-| v2.8.1-v2.8.4 | Current post-migration patch line | [`CHANGELOG.md`](../../CHANGELOG.md) and release metadata |
+| v2.8.1-v2.8.4 | Historical post-migration patch line | [`CHANGELOG.md`](../../CHANGELOG.md) and release metadata |
+| v2.9.0-v2.9.2 | Latest stable releases recorded in Changelog | [`CHANGELOG.md`](../../CHANGELOG.md); later worktree acceptance is separate from publication |
 
 ### 10.3 后续候选主题
 

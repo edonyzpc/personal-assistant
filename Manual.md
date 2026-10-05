@@ -1,4 +1,7 @@
 # Personal Assistant Plugin Manual
+
+Updated against the repository on 2026-10-06. Features in an installed build depend on its actual version and release record.
+
 ## Background
 
 When it comes to note-taking tools, I greatly admire Obsidian CEO Kepano's concept — [File Over App](https://twitter.com/kepano/status/1675626836821409792?s=20). My thoughts on using the Obsidian note-taking tool are quite similar. As a tool, Obsidian should help me focus exclusively on one thing — recording my thoughts while it takes care of everything else.
@@ -18,7 +21,7 @@ Personal Assistant ships an in-vault AI Chat view that can answer questions, sum
 ### 2. Entry points
 
 - **Ribbon icon (recommended)**: Left-click the Personal Assistant icon on the left ribbon to open the chat view. Right-click the same icon if you want the older plugin-controls modal.
-- **Command palette**: Search for `Personal Assistant: Open Chat` or any chat-related command listed under the plugin.
+- **Command palette**: Search for `Personal Assistant: Open Chat in Sidebar`.
 - **Empty-state setup**: When AI setup is incomplete, Chat offers Qwen China, Qwen International, or OpenAI plus a token field when needed. **Advanced setup** opens the plugin Settings for custom endpoints or models.
 
 ### 3. Configuration
@@ -48,17 +51,25 @@ Once all fields are set, the empty-state banner disappears and the default chat 
 - When Memory or read-only vault tools are used, the assistant reports the selected note paths or context it used so you can verify the answer.
 - Use Memory preparation/update controls when you want chat to search indexed notes beyond the current note.
 
-### 6. Web search and tools
+### 6. Web search and note actions
 
 - Enable WebSearch in plugin settings to let the assistant fetch external pages while answering when the configured provider supports it. Web results are summarized inline with URLs when available.
-- Chat tools are read-only in this release: Memory search, current-note context, bounded vault metadata/snippet reads, canvas summaries, tag lists, skill guides, and WebSearch when enabled.
+- Read tools include Memory search, current-note context, bounded vault metadata/snippet reads, canvas summaries, tag lists, skill guides, and WebSearch when available.
+- With the current note-action capability available, an explicit request to create, append, edit, or update note properties can be executed directly. Ask for a preview when you want to inspect the proposal before writing. Analysis, quoted instructions, and preview-only requests do not execute changes; unclear targets or actions beyond your authorization still require clarification or confirmation.
+- Inspect the reported result and note differences after execution. Undo is offered for eligible completed changes and stops if restoring the old content would overwrite later edits. A pending proposal or an unknown result is not a completed change. The current action boundary is described in [DEC-051](./docs/product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md).
 
 ### 7. Memory integration
 
 - After Memory has been prepared (see the **Memory** chapter referenced from settings), the assistant can search your indexed notes before answering. The composer Memory button surfaces Memory status (ready / preparing / disabled).
 - Memory is enabled by default but can be turned off in **Settings → Memory & Personalization**. Its index stays device-local in SQLite/WASM. After you configure an AI provider and send the first Chat message, Memory may start preparing in the background without a blocking prompt: eligible note text is sent to the configured embedding provider and may use API credits. Folder, tag, and generated-note exclusions are applied; recovery, settings-change, and manual rebuilds still ask before costly work.
 
-### 8. FAQ
+### 8. Images, Pagelet, and Ghost
+
+- Add images to Chat to ask about them with a compatible model. Processed image copies are sent to your configured Chat provider. Explicit image generation/editing requests use the configured image connection; adding an image or discussing a prompt alone does not submit a generation. See [image chat and storage](./docs/guides/multimodal-chat-user-guide.md).
+- Pagelet discovers connections with visible note sources. Its **Discuss in Chat** action prepares a new conversation for you to inspect and send; discovery itself does not modify notes. See the [Pagelet guide](./docs/guides/pagelet-user-guide.md).
+- Explicit `@blog2ghost` prepares the selected note for Ghost on desktop. Preparation may save a Ghost draft or upload required media; first publication is completed in Ghost by you. Updates/restoration retain confirmation for the exact checked candidate. See the [Ghost workflow](./skills/blog2ghost/SKILL.md).
+
+### 9. FAQ
 
 - **The banner stays after I added a token** — wait for the settings save to finish; the open chat view refreshes when settings change.
 - **The right-click modal disappeared** — right-click works on desktop. On mobile, use the command palette `Open Personal Assistant Controls`.

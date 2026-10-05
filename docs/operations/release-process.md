@@ -4,22 +4,29 @@ This project keeps release preparation inside the repository so a release can be
 
 ## Commands
 
+For release preparation, replace `<next-version>` with a semantic version
+greater than the current `package.json` version. After preparation, use that
+same version as `<prepared-version>` when publishing: it must now equal
+`package.json` and the local tag at `HEAD`. Both are placeholders, not valid
+release targets. These checks are implemented in [release.mjs](../../scripts/release.mjs)
+and [publish-release.mjs](../../scripts/publish-release.mjs).
+
 Preview a release without changing files:
 
 ```bash
-make release-dry-run VERSION=1.6.6
+make release-dry-run VERSION="<next-version>"
 ```
 
 Create the local release commit and annotated tag:
 
 ```bash
-make release VERSION=1.6.6
+make release VERSION="<next-version>"
 ```
 
 Push the current branch and tag, then watch the GitHub Actions release workflow:
 
 ```bash
-make publish VERSION=1.6.6
+make publish VERSION="<prepared-version>"
 ```
 
 ## What `make release` Does
@@ -195,7 +202,7 @@ The changelog generator is `scripts/changelog.mjs`. It excludes previous `[relea
 To regenerate only the changelog section:
 
 ```bash
-make changelog VERSION=1.6.6
+make changelog VERSION="<next-version>"
 ```
 
 ## Publishing

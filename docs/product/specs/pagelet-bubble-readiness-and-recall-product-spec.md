@@ -1,7 +1,7 @@
 # Pagelet Bubble Readiness & Recall Product Spec
 
 Document status: Current
-Updated: 2026-10-05
+Updated: 2026-10-06
 Work item: B-108
 Scoped work items: B-118, B-121, B-124, B-125
 Decisions: [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-027](../decisions/dec-027-bounded-retrieval-recovery.md)
@@ -12,6 +12,11 @@ Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delive
 evaluator 仅描述仍有生产消费者时的旧实现约束，不恢复旧管线。旧 10/50 provider-call
 桶不同于自动 Deep Discover 可调默认 12/36 started runs，手动不扣自动池；新运行对齐
 见 [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)。
+
+2026-10-06 [DEC-052](../decisions/dec-052-prepared-review-deep-discover-route.md)：Owner 在
+知悉文档/代码差异后接受 `Open prepared review` 沿用显式 Deep Discover，可能调用
+配置服务商并使用额度；取消下文该入口的零调用/Prepared Panel 查看承诺。
+`Open Pagelet` 仍是单独的零调用面板入口；旧验收不回填为新批准或新运行验证。
 
 ## Status
 
@@ -660,6 +665,9 @@ ranking still decide whether one or both qualified candidates are visible.
 Review candidates rank below Recall, Recap, and Pattern. `Review current note`
 remains a Needs Setup fallback or intentional Panel/Tab/Command action, not the
 default Bubble identity.
+
+The following raw-preload/Prepared Panel scenario is historical; DEC-035 retired
+that route and DEC-052 supersedes its `Open prepared review` zero-call promise.
 
 `PreloadFinding[]` is a background transport/cache shape, not a Bubble
 `DeliveryCandidate`. Raw preload findings remain available through the explicit

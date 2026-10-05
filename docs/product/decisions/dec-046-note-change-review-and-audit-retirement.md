@@ -2,7 +2,7 @@
 
 Decision ID: DEC-046
 Status: Accepted
-Updated: 2026-10-05
+Updated: 2026-10-06
 Authority: Owner 在本次对话逐项确认下述产品选择，并于 2026-09-30 授权文档、开发测试及文档收尾；本记录承载产品选择，不授予 Git 或发布权限。
 Work item: B-154
 
@@ -10,7 +10,9 @@ Work item: B-154
 
 [DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md) 取消当前明确修改请求
 的必经整批二次确认，保留差异审阅、真实结果与撤销；用户主动要求仅预览仍不执行。
-持久Operations审计退役结论不变。运行代码尚待B-161对齐。
+持久Operations审计退役结论不变。该次合同修订先修改文档；后续源码对齐与本地验收
+已由 [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md) 接续完成，
+不改写 B-154 原始验收范围，也不据此推定已发布。
 
 ## Context
 

@@ -2,7 +2,7 @@
 
 Decision ID: DEC-049
 Status: Accepted
-Updated: 2026-10-05
+Updated: 2026-10-06
 Authority: Owner 于 2026-10-04 要求先明确 command、Agent、Host、Tool 抽象与契约，再落实方案/SDD/测试/review工作流，随后公共框架重构，最后逐 command 调整。
 Work item: B-158
 
@@ -31,8 +31,9 @@ Work item: B-158
 2026-10-05 Owner 先要求清理 Host 关键词读取判断及 Operations 无依据容量限制的
 规则和合同，再讨论去掉 Host。相应旧约定已撤销，统一定义见
 [架构修订](../../architecture/pa-agent-architecture-plan.md#2026-10-05-contract-cleanup)。
-本次仅修改文档，运行代码尚未对齐；上述既有模块、流程及 Host 职责不构成后续
-讨论必须保留 Host 规则的前提。
+该次合同清理先只修改文档；后续源码对齐与本地验收已由
+[B-161](../../archive/2026/b161-contract-alignment-validation.md) 完成。整体 Host 去留
+尚未决定；上述既有模块、流程及 Host 职责不构成后续讨论必须保留 Host 规则的前提。
 
 这是既定职责的统一落实，不授予新的网络、数据、付费、写入、确认、跨设备恢复或
 Git/release 权限。DEC-038/044/045 等领域具体范围、必要辅助模型和确认边界保持。

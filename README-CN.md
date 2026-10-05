@@ -11,9 +11,9 @@
     <img alt="Downloads" src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=下载量&logo=obsidian&logoColor=%23b300ff&style=social" />
 </p>
 
-> ***号外***: 新特性来啦！Personal Assistant 的聊天助手可以读取来自你笔记的 Memory。开启 Memory 并配置 AI Provider 后，首次 Chat 可以不弹阻断确认、直接在后台准备 Memory：符合 Data Boundary 的笔记文本会发送给已配置的 embedding provider，并可能消耗 API credits。你可以随时在 Settings 关闭 Memory；索引恢复、设置变更和手动重建等高成本路径仍会先确认。
+> ***功能提示***: 拾页可以从允许范围内的笔记发现关联，供你核对来源或继续到 Chat 讨论，操作见[当前拾页指南](./docs/guides/pagelet-user-guide.md)。聊天助手也可以读取来自你笔记的 Memory。开启 Memory 并配置 AI Provider 后，首次 Chat 可以不弹阻断确认、直接在后台准备 Memory：符合 Data Boundary 的笔记文本会发送给已配置的 embedding provider，并可能消耗 API credits。你可以随时在 Settings 关闭 Memory；索引恢复、设置变更和手动重建等高成本路径仍会先确认。
 
-> ***v2.7 用户指南***: 发布前建议先阅读 [v2.7 用户指南：AI Insights、Memory 与 Pagelet 最佳实践](./docs/archive/v2.7-user-guide.md)。它从用户工作流出发，说明 AI Insights、Memory、Pagelet、Research 和安全保存应该怎么搭配使用，也包含可录制发布视频的脚本。海外用户可查看 [English v2.7 user guide](./docs/archive/v2.7-user-guide-en.md)。
+> ***历史 v2.7 用户指南***: 归档的[v2.7 中文指南](./docs/archive/v2.7-user-guide.md)及[英文指南](./docs/archive/v2.7-user-guide-en.md)保留当时的工作流和视频脚本。当前仓库行为请参考[使用手册](./Manual-CN.md)与[当前指南](./docs/guides/README.md)。文档于 2026-10-06 对照仓库整理；实际安装构建提供哪些功能，仍以安装版本及发布记录为准。
 
 > ***项目文档***: 项目需求、讨论、决策、产品/架构契约、开发 workflow、Backlog 与历史资料统一从 [项目文档导航](./docs/index.md) 进入。
 
@@ -93,6 +93,7 @@ https://github.com/user-attachments/assets/4832e962-85da-477f-b341-0c3443b718cd
 6. 自动更新主题
 7. 自动设置关系视图的颜色
 8. 聊天时使用来自笔记的 Memory，也可以选择立刻普通回答
+9. 拾页从当前笔记发现关联，展示有来源的洞察，并可继续到 Chat 讨论；发现过程本身不修改笔记
 
 ## 研发
 
@@ -112,17 +113,22 @@ https://github.com/user-attachments/assets/4832e962-85da-477f-b341-0c3443b718cd
 
 ### 网络与隐私说明
 
-Personal Assistant 不包含 telemetry 或 analytics。默认情况下，Statistics history 存储在当前设备的本地 Obsidian app storage 中，插件不会上传这些统计数据。如果你开启跨设备同步 Statistics history，插件会创建 vault-visible 的 Statistics history 文件，让你已有的 vault sync 机制同步这些文件；Git 用户会看到这些文件变化。
+Personal Assistant 不上传 telemetry 或 analytics。可选的能力使用统计设置默认关闭；启用后只生成本地诊断事件，包含能力/服务商 ID、状态和耗时，不包含 prompt、笔记正文、路径、URL、凭据或模型输出，详见[本地使用事件契约](./docs/operations/pa-agent-telemetry-baseline.md)。默认情况下，Statistics history 存储在当前设备的本地 Obsidian app storage 中，插件不会上传这些统计数据。如果你开启跨设备同步 Statistics history，插件会创建 vault-visible 的 Statistics history 文件，让你已有的 vault sync 机制同步这些文件；Git 用户会看到这些文件变化。
 
 | 功能 | 触发条件 | 发送的数据 | 目标位置 | 是否后台 | 用户控制 |
 | --- | --- | --- | --- | --- | --- |
-| Chat | 你发送消息 | Prompt；启用上下文时选中的 note/tool context；启用 Memory 时的 Memory search query，以及最终回答 prompt 中使用的已选 Memory excerpts 或 note snippets | 配置的 AI provider | 否 | Provider、chat 和 Memory 设置 |
+| Chat | 你发送消息 | Prompt；启用时选中的笔记/工具上下文、Memory 查询及片段；Chat 模型支持图片时附加图片的处理副本 | 配置的 AI provider | 否 | Provider、Chat、Memory 和附件控制 |
 | AI note tools | 你运行 summary 或 note AI 操作 | 当前 note content 和生成的 prompt | 配置的 AI provider | 否 | 用户操作和 AI 设置 |
 | Memory prepare/update | 开启 Memory 且已配置 AI Provider 后的首次 Chat；或经确认的恢复/手动操作 | 符合 Data Boundary 的 note text 和 Memory search 数据 | 配置的 embedding provider | 首次准备在后台运行；手动操作显示阻断进度；成功后 changed notes 可能后台更新 | Memory 开关、Data Boundary 排除规则、Provider 设置和后台开关 |
 | Memory changed-note maintenance | Memory 已准备且后台更新开启 | Changed note text | 配置的 AI provider | 是 | Memory 后台设置 |
 | Qwen web search | 你开启 Qwen web search | 问题和最终 prompt context | DashScope/Bailian | 否 | Qwen response 设置 |
 | Featured image generation | 你运行图片生成 | 用于生成图片 prompt 的当前 note content，以及图片 prompt 和 task 请求 | 配置的 AI provider 和 DashScope/Bailian | 请求后会轮询 task 状态 | 用户操作和 AI 设置 |
+| Chat 图片生成/编辑 | 你明确请求生成或编辑图片 | 图片描述、获授权的参考图片副本；用笔记准备描述时的已选笔记文本 | 配置的 Chat/图片连接 | 提交后可能轮询任务状态 | 明确请求、来源选择和图片连接设置 |
+| 拾页发现 | 你运行发现或开启自动准备 | 允许范围内的锚点/来源笔记文本，以及可选网页查询 | 配置的 AI provider；配置且受支持的网页搜索 | 自动准备可在后台运行 | 拾页设置和 Data Boundary 排除规则 |
+| Ghost 准备/更新 | 你明确使用 `@blog2ghost` | 选中文章及所需媒体发送到 Ghost；准备元数据所用的笔记文本发送到配置的 AI provider | 配置的 Ghost 站点与 AI provider | 否 | 显式工作流、本桌面凭据、在 Ghost 首发，以及确切候选版本的更新确认 |
 | Plugin/theme updater | 你运行 updater/install 流程 | Plugin 或 theme ID 以及下载请求 | GitHub 和 jsDelivr | 否 | 用户操作 |
+
+图片的数据、存储与同步边界见[图片聊天指南](./docs/guides/multimodal-chat-user-guide.md)；Ghost 的准备与正式发布边界见[Ghost 工作流](./skills/blog2ghost/SKILL.md)。
 
 ### VSS SQLite/WASM 依赖说明
 

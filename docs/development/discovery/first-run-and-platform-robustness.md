@@ -2,18 +2,24 @@
 
 Document status: Current
 Delivery status: Exploring
-Updated: 2026-08-23
+Updated: 2026-10-06
 Work item: B-126
 Authority: 首次体验与平台韧性的活跃问题、证据和未决方向；已批准的 silent Memory 与 inline setup/first-Settings slices 分别由 DEC-028、DEC-029 与 B-126 Product Spec 负责，本 Brief 不替代批准证据。
 
 ## Problem And User Outcome
+
+下方 Problem、Evidence、Part 1–5 与 Cross-cutting 分析保留 2026-08-10 的研究
+快照，不代表当前源码或当前缺陷清单。原文的 `Confirmed`、`已验证`、当前配置、
+测试数量及 provider 参数是当时的记录或估计，本轮未重新验证，不作为当前平台故障、
+测试通过、性能提升或外部服务能力的证据。2026-10-06 的代码核对单列在
+[当前源码核对](#当前源码核对2026-10-06)；未决方向和授权范围见 Current Disposition。
 
 - Problem: v2.9.1/v2.9.2 修复了两个严重 bug（data.json 缺失崩溃、iOS keychain 卡死），但这两个 bug 暴露了系统性的工程薄弱点。
 - User / context: 首次安装用户（empty vault）、iOS/移动端用户、非技术背景用户
 - Desired outcome: 首次安装即可用（2 步内完成配置）；移动端无冻结/崩溃；测试覆盖防止此类问题复现
 - Why now: 两个已发布的 hotfix 证明问题真实存在且影响用户；距下一个 minor release 是建设的好时机
 
-## Evidence
+## Evidence（2026-08-10 历史研究快照）
 
 | Item | Grade | Source | Implication |
 | --- | --- | --- | --- |
@@ -817,6 +823,24 @@ repo-local Decision/Product Spec 或当前明确 Owner 选择可以提升其中�
 - Pipeline 化
 - Simple/Advanced 模式
 - PA Cloud + 商业化
+
+## 当前源码核对（2026-10-06）
+
+本节只记录当前代码及测试文件的静态事实；本轮未执行测试、构建、provider 调用或
+设备验证，不据文件存在宣称测试通过，也不从实现并发数推断实测提速。
+
+- [MobileInputAdapter tests](../../../__tests__/mobile-input-adapter.test.ts) 已存在，
+  `beforeEach` 调用 `setPlatformMobile()`；[platform mock](../../../__tests__/helpers/platform-mock.ts)
+  提供 mobile、phone 与 iOS 分支。因此“所有测试只用 Desktop”及“MobileInputAdapter
+  零测试”的旧观察不再描述当前代码；实际覆盖率与设备行为需各自证据。
+- [VSS batching policy](../../../src/vss/vss-core.ts) 的 `getEmbeddingBatchPolicy()`
+  对 Qwen text-embedding-v3/v4 使用 `maxBatchItems: 10`、`minRequestGapMs: 100`、
+  `maxConcurrency: 3`；其他 provider/model 保留独立策略。旧表中的统一并发 1
+  和 1→3 待实施建议不代表当前配置，旧 3x/15min→3–5min 估算不是实测性能承诺。
+- [Settings](../../../src/settings.ts) 的 `getConfiguredAPITokenSecret()` 调用位于
+  `openApiTokenSecretEditor()`，当前调用入口是 token 编辑按钮的 `onClick`。旧
+  Settings display 描述不能据此当成当前已复现的 iOS 冻结；静态调用位置也不证明
+  真实设备无故障。
 
 ## Current Disposition
 

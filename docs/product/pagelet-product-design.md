@@ -11,9 +11,16 @@
 > chain; they do not retire global source boundaries. The current command section
 > below governs legacy aliases: Quick review/review/recall/recap invoke explicit
 > active-note Deep Discover. Earlier Bubble-hotkey scenarios are historical for
-> those aliases. `Open prepared review` is a zero-call compatibility entry with
-> honest empty feedback; no generic raw-preload producer or Prepared Panel remains.
+> those aliases. Under [DEC-052](./decisions/dec-052-prepared-review-deep-discover-route.md),
+> `Open prepared review` is also an explicit Deep Discover compatibility entry
+> that may invoke the provider. `Open Pagelet` remains provider-free; no generic
+> raw-preload producer or Prepared Panel remains.
 > Archive discussions are provenance only, never the current baseline.
+
+> 2026-10-06 reconciliation: Owner explicitly accepted the existing
+> [callback route](../../src/pagelet/orchestrator.ts) through DEC-052 after the
+> zero-call wording/code mismatch was reported. This dated choice supersedes that
+> promise; it does not backdate approval or expand historical verification.
 
 > [DEC-051](./decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
 > now owns necessary confirmation and manual/automatic budgets: source count is
@@ -31,14 +38,14 @@
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
 | Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. B-121 three-action Ring evidence covers automated、review、local/iCloud deployment、desktop and iPhone portrait gates；its physical landscape waiver remains historical only. B-121 core runtime is included in BRAT `2.9.0-beta.5`. The 2026-08-06 DEC-025/DEC-026 amendment adds Share as the fourth Ring action；the 2026-08-07 owner amendment accepts the current `master` compact layout fallback. B-124 is closed, with current behavior in DEC-026, its Product Spec, Architecture, tests and the smoke checklist. DEC-027/B-125 defines the current implemented 0–2 insight and single-recovery contract；its validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../archive/2026/b-125-retrieval-optimization-closeout.md). |
-| Last revised | 2026-10-05 |
+| Last revised | 2026-10-06 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
-| Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |
+| Runtime relationship | Current Deep Discover uses `PaAgentLoop` with `CapabilityRegistry` / `PolicyEngine`, `runKind="review"` and `allowWrite=false`; the D024 adapter and D032 generic background route are historical |
 | Write boundary | Background Deep Discover stays read-only. Current explicit Operations requests follow DEC-051 with source/permission checks and real receipts; optional preview remains non-executing. There is no standalone Periodic Summary save contract. |
 | Background preparation engine | Current automatic Deep Discover uses note-trigger scheduling and source admission. DEC-035 retires the unreachable generic timer/change-detector/preload chain; persisted settings remain compatible. |
 | Prepared Scope Recap history | DEC-017/018/019 describe the predecessor behavior. The current Scope Recap command aliases explicit active-note Deep Discover; this row does not revive its old preparation pipeline or controls. Shared first-use disclosure and current source boundaries still apply. |
 | Historical reference | [review-assistant-product-design.md](../archive/review-assistant-product-design.md) |
-| Current decisions | D001-D041 as reconciled in this document, with DEC-017 through DEC-027 and the owning Scope Recap/Quiet Recall/B-121/B-124/B-125 contracts taking precedence for their scopes |
+| Current decisions | D001-D041 as reconciled in this document, with DEC-017 through DEC-027 and the owning Scope Recap/Quiet Recall/B-121/B-124/B-125 contracts taking precedence for their scopes; DEC-035, DEC-051 and DEC-052 supersede the retired routes, confirmation/budgets and Open prepared review zero-call promise in their stated scopes |
 | Historical decisions provenance | [review-assistant-decisions.md](../archive/review-assistant-decisions.md) (non-authoritative) |
 | Technical design | See [pagelet-sdd-guide.md](../development/workflows/pagelet-sdd-guide.md); [review-assistant-sdd.md](../archive/review-assistant-sdd.md) is preserved as historical implementation context |
 | Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
@@ -190,31 +197,31 @@ Pagelet does NOT try to solve (preserved from historical design):
 
 1. **Review first, Pet second.** The Pet exists to make the entry recognizable, the state legible, and context accessible. It must not pull scope toward decoration. **[PRESERVED — "mascot" renamed to "Pet"]**
 
-2. **安静审阅者，即时响应。** 后台审阅准备让有效洞察尽量在用户询问时即时就绪；没有可靠洞察时，主动打开也应立即获得诚实的范围方向而不是等待或伪装。后台准备是性能优化，不是行为变化——审阅者保持安静，直到被召唤。 **[CHANGED — DEC-017/DEC-019]**
-   - English: "The quiet reviewer, instant response. Prepare valid insight when possible; otherwise return honest local orientation immediately. The reviewer stays quiet until called."
-   - Current decision: **D032**
+2. **安静审阅者，诚实响应。** 优先呈现仍然有效、可核对来源的发现；显式发现需要服务商时，应展示实际进度或结果，不承诺即时洞察。自动发现采用当前笔记活动触发机制，旧 D032 通用定时准备不是当前运行契约。 **[CHANGED — DEC-035 / DEC-052]**
+   - English: "The quiet reviewer, honest response. Show valid source-backed findings when available; otherwise make the actual discovery state clear."
 
 3. **Evidence over fluency.** Every suggestion must point back to source evidence. Suggestions without sources should be discarded, downgraded, or shown as "needs confirmation". **[PRESERVED]**
 
-4. **Output is optional, and when chosen, minimal-friction.** Current Bubble,
-   Recall, and B-108 Recap delivery create no output artifact. Existing
-   intentional review-note creation keeps explicit preview/confirmation.
+4. **Output is optional, and when chosen, minimal-friction.** Deep Discover
+   creates no note automatically. The Panel's save action creates a separate
+   review note through the existing preview/confirmation flow.
    Broader time-range Recap needs separate current authority; standalone
    Periodic Summary is not a current success contract. **[CHANGED]**
 
 5. **Review should feel like recognition, not administration.** A user can read
    a Bubble, close it, and owe Pagelet nothing. Findings do not become queue
-   items merely because PA generated them. Confirmation is for durable
-   consequence: saving an insight, writing a review note, creating or updating
-   Memory, or applying maintenance. **[NEW]**
+   items merely because PA generated them. Pagelet review-note saves and
+   association actions retain their own preview/confirmation; Chat may execute
+   a clear current modification request under DEC-051 without a second approval.
+   Domain-specific permission and confirmation boundaries still apply. **[NEW]**
 
 6. **Fewer better findings.** Pagelet returns `0–2` independently validated
    insights per Deep Discover run. Two is a ceiling, not a target; it may return
    one or stay quiet, and it never pads categories for completeness. **[DEC-027]**
 
-7. **Vault-local and transparent.** Settings, pending review drafts, and feedback state are scoped to the current vault. Included and skipped notes should be inspectable. **[PRESERVED]**
+7. **Vault-local and transparent.** Settings and feedback state are scoped to the current vault. Findings expose their actual sources; retained source/context views describe their own boundaries without reviving the retired scope controls. **[CHANGED]**
 
-8. **Narrow write boundary.** Pagelet keeps Deep Discover read-only. Basic Operations follow the [essential-capabilities contract](./specs/pa-agent-essential-capabilities-product-spec.md), without the retired opt-in gate. A user-opened, source-backed insight may prepare its bounded deterministic action; multi-file, judgment-heavy, or uncertain work moves to Chat with complete visible context. DEC-051 permits current explicit modification requests to execute without a second confirmation; merely opening or staging a proposal never authorizes execution. No background writes. **[CHANGED — DEC-037 / DEC-051]**
+8. **Narrow write boundary.** Pagelet keeps Deep Discover read-only. Basic Operations follow the [essential-capabilities contract](./specs/pa-agent-essential-capabilities-product-spec.md), without the retired opt-in gate. A user-opened, source-backed insight may prepare its bounded association action for preview/confirmation; the separate Panel save action also requires preview/confirmation. Multi-file, judgment-heavy, or uncertain work moves to Chat with visible context. DEC-051 permits current explicit modification requests in Chat to execute without a second confirmation; merely opening or staging a proposal never authorizes execution. No background writes. **[CHANGED — DEC-037 / DEC-051]**
 
 9. **Quiet and non-intrusive.** Pagelet's voice and presence prioritise calm. No urgency, no interruption, no claim of being indispensable. The Pet never pops up a modal, plays a sound, or demands attention. **[PRESERVED]**
 
@@ -465,7 +472,7 @@ a current Pagelet success contract.
 
 **Key property**: "看完就走." Zero output, zero friction, under 10 seconds.
 
-**AI source**: Already-valid Recall、Recap or Pattern delivery candidates. Raw
+**Historical AI source before the current alias route**: Already-valid Recall、Recap or Pattern delivery candidates. Raw
 generic background `PreloadFinding[]` remains available through the explicit
 `Open prepared review` command → read-only Prepared Panel route. It cannot be
 saved, expanded to Tab, or treated as current analysis, and never enters Bubble
@@ -683,6 +690,11 @@ D018–D036 explain the predecessor pools only. They must not restore foreground
 10/100 limits, generic preload, or removed settings controls.
 
 ### Result Caching
+
+The generic review / Prepared Panel cache description below is historical.
+DEC-035 retired its producer/panel; [DEC-052](./decisions/dec-052-prepared-review-deep-discover-route.md)
+now accepts `Open prepared review` as explicit Deep Discover, with possible provider
+calls and current discovery caching/admission. It does not expose this old raw cache.
 
 - Background preparation results are cached in memory per vault.
 - When the user summons the Pet (click or hotkey), cached artifacts that already
@@ -1064,10 +1076,10 @@ Top-level Pagelet settings group inside PA settings:
 - Pet visibility: show / hide (hide recoverable from command palette or this setting).
 - Pet corner position: `bottom-right` (default) / `bottom-left` / `top-right` / `top-left`.
 - 主动提示 (proactive hints): `on` / `off` (default: `off`). Also togglable from Panel header, Command Palette, and keyboard shortcut (D039).
-- 高价值回顾提醒: `on` / `off` (default: `on` for an eligible bounded Recap path). It
-  is independently disableable without disabling Scope Recap preparation or
-  enabling other hint kinds; exact control consolidation belongs to the SDD.
-- 主动提示 cooldown: `15 min` / `30 min` / `1 hour` / `2 hours` (default: `30 min`).
+- The retained high-value Recap hint preference is exposed separately; it does
+  not control provider preparation or restore the retired Scope Recap pipeline.
+- 主动提示 cooldown remains a stored preference (default: `30 min`); the
+  current Settings renderer does not expose the old interval selector.
 - 主动提示 quiet hours: start time / end time (default: off). When active, proactive hints are suppressed during the specified window.
 
 > **Not a setting:** Pet state (resting, idle, working, nudge) is system-driven. Users do not manually cycle states. See the "State transitions are automatic" note in Pet Design.
@@ -1079,9 +1091,9 @@ Top-level Pagelet settings group inside PA settings:
 - The old generic preparation timer, cache and selected-range controls are
   retired. Remaining legacy settings are read for compatibility; they do not
   provide a current generic polling/preparation feature.
-- Shared Quiet Recall/Scope Recap services and the separate high-risk provider
-  confirmation contract remain; retiring old UI is not permission to broaden
-  sources, send excluded notes or bypass confirmation.
+- Shared Quiet Recall/Scope Recap services remain available internally; their
+  historical producer contracts are not current command routes. Retiring old UI
+  is not permission to broaden sources, send excluded notes or bypass source admission.
 
 **Storage** — [PRESERVED]
 - Review notes folder (default `.pagelet/`; configurable in advanced).
@@ -1099,104 +1111,103 @@ Top-level Pagelet settings group inside PA settings:
 - UI language (follows PA i18n).
 - Review response language: `Follow source note` (default) / `Always English` / `Always Chinese`.
 
-**Cost** — [PRESERVED for foreground; NEW for background preparation]
-- Foreground per-call token budget (default 8K + 2K, max 32K + 4K).
-- Foreground per-hour cap (default 10).
-- Foreground per-day cap (default 100).
-- Generic background preparation per-call token budget (default/max 4K + 1K; users may configure lower values only).
-- Generic background preparation actual-provider-call cap (2 per rolling hour).
-- Generic background preparation actual-provider-call cap (20 per local day).
-- Prepared Scope Recap calls/cost: separately attributable and bounded from generic preload; hard guardrail is 2 actual provider calls per rolling hour and 10 per local day. **[B-108]**
-- Quiet Recall why-now calls: independently evaluate at most 5 candidates, with
-  at most one language retry per candidate and no more than 10 actual provider
-  calls in the evaluator stage. A cold semantic query embedding is also one
-  actual Quiet Recall call. Query embedding、initial evaluator 与 language retry
-  share the unchanged hard guardrail of 10 actual calls per rolling hour and 50
-  per local day; no retrieval-specific quota is added. **[DEC-020, DEC-024, B-108]**
+**Cost** — current Deep Discover
+- The current production entry uses an automatic-run pool of 12 per rolling
+  hour and 36 per local day. Settings displays usage; it has no quota adjustment
+  control. These are current implementation values, not a new permanent product limit.
+- Explicit manual discovery may use API credits, but does not read, reserve or
+  consume the automatic-run pool. Provider availability and source admission still apply.
+- Old foreground budgets, generic preload, Scope Recap and Quiet Recall pools
+  are historical route details, not limits for the current Deep Discover entry.
+  See [historical D018–D036 decisions](../archive/review-assistant-decisions.md) and
+  [DEC-051](./decisions/dec-051-proportionate-confirmation-and-contract-alignment.md).
 
 **Beta** — [PRESERVED]
 - Settings shows a Beta callout.
 - Feedback is currently routed through GitHub Issues and user-reported dogfood notes.
-- Usage metrics are not collected by the plugin.
+- Pagelet Deep Discover disables capability telemetry. The plugin's separate
+  default-off Chat capability usage hook can log content-free events locally;
+  it is not a Pagelet product analytics collector.
 
 Defaults:
 
-- Feature on (in `-beta.N`). **[PRESERVED]**
+- Pagelet enabled by default in the current settings; installed/released version
+  is established by its manifest, not this historical beta label.
 - Pet visible (can be hidden). **[PRESERVED — "mascot" -> "Pet"]**
-- Generic background review preparation off by default; users explicitly opt in from settings. **[D032]**
-- Prepared Scope Recap on by default after provider setup when the capability is enabled and sources are allowed; the shared first-use notification and high-risk blocking boundary follow DEC-023. Users can disable it persistently. **[DEC-017, DEC-023]**
-- High-value Scope Recap hints on by default for an eligible bounded Recap path, subject to the DEC-018 quality/dedupe/suppression gate; users can disable hints without disabling preparation. **[DEC-018]**
-- Other proactive hints off. **[D038 — opt-in, respects "quiet reviewer" positioning]**
-- WebSearch off until clicked. **[PRESERVED]**
+- Automatic background Deep Discover enabled by default and independently
+  disableable. Generic timer/preload and Scope Recap preparation settings are
+  retained compatibility state, not evidence of a reachable producer.
+- Generic proactive hints off; the retained high-value Recap preference defaults
+  on. Current Agent Insight presentation has its own admission and attention gates.
+- WebSearch disabled by default in shared settings. If enabled and available,
+  Deep Discover may use it after vault evidence reaches the model; a separate
+  per-search click is not required.
 - Conservative exclusions on. **[PRESERVED]**
 
 ---
 
-## Privacy and Trust — [CHANGED — updated for background preparation engine]
+## Privacy and Trust — current implementation
 
-Trust requirements:
+Current Deep Discover boundaries, reviewed against source on 2026-10-06:
 
-- ~~No background analysis.~~ **[REMOVED — background review preparation is now a performance feature]**
-- Background review preparation reads only changed notes, subject to the same exclusion rules as foreground. **[NEW]**
-- Background review preparation results are cached in memory only, not persisted to disk. **[NEW]**
-- Background review preparation can be disabled entirely in settings. **[NEW]**
-- The first actual standard bounded Pagelet provider read shows one shared non-blocking notice and continues. Broad/sensitive/costly/whole-vault or excluded-override runs still require blocking `run / adjust / cancel` before any provider call or cost reservation. If that confirmed high-risk run is the first actual call, its complete disclosure counts as first use only after `Run`, at the provider seam, and no second notice is stacked; Cancel/close/unfinished Adjust leaves the shared flag unchanged. Provider trust does not grant Memory admission, write, Markdown, or external-action permission. **[DEC-023]**
-- Foreground Review risk is based on the post-filter, de-duplicated actual allowed
-  source set: `<=1` is standard bounded; `>1` requires per-run
-  `Run / Adjust / Cancel`, with zero quota/cost reservation before confirmation.
-  A requested `last7` Review with only one actual allowed source remains standard.
-  **[DEC-023]**
-- Generic background preload is standard bounded only with explicit opt-in,
-  changed-only sources from the recent 7 days, actual input `<=4K`, requested
-  output `<=1K`, actual calls `<=2/rolling-hour` and `<=20/local-day`,
-  `allowWrite=false`, and every actual source allowed by the user's explicit
-  shared Data Boundary without override. Any breach silently skips with no blocking UI、provider
-  call、quota/cost reservation or shared-flag mutation. The narrow envelope is
-  excluded from “broad/weekly scan high-risk”; content-free call timestamps
-  and per-path analyzed mtimes persist across reload/toggle. Provider-bound
-  sources are rechecked from the latest Markdown body, so MetadataCache lag or
-  malformed frontmatter fails closed; findings without an exact actual-input
-  source path are discarded. **[DEC-023]**
-- Prepared Scope Recap activity and cost are separately attributable from generic preload, even if internal runtime is shared; its fixed guardrail is 2 actual calls per rolling hour and 10 per local day. **[DEC-017, B-108]**
-- Scope Recap attempt status is stored separately from last valid artifact; failed/empty/rejected output creates no ready/nudge and ordinary UI uses an honest local explanation without provider jargon. **[DEC-019]**
-- Quiet Recall local candidates become proactive delivery only after independent
-  AI why-now evaluation; provider/cooldown/budget gaps and candidate failures
-  never fall back to a template nudge. **[DEC-020]**
-- Quiet Recall retains pure-semantic candidate discovery. A cold query embedding
-  is an actual call admitted through DEC-023 after all source/policy/index/
-  cooldown/budget/current-run gates and consumes the existing 10/hour、50/day
-  bucket. Empty retrieval performs no evaluator/generation calls. If the index
-  is unavailable, metadata-only matches remain explicit-Discover local clues
-  and never become semantic/proactive Recall. **[DEC-024]**
-- Every Pagelet provider-bound source uses one combined gate: the shared Data
-  Boundary plus Pagelet-local exclusions (trash/hidden/config/plugin/template/
-  generated output paths, configured exclusions, empty or oversized notes).
-  The primary note must pass a live-body check before a cold embedding; all
-  Review、preload、Scope Recap、Discover and Quiet Recall sources are checked
-  again from the exact body paired with a stable file snapshot. A Saved Insight
-  may enter a Quiet Recall evaluator only when every `sourceRef` is live-read
-  and allowed; one missing、unreadable、changed or excluded ref drops the entire
-  Insight, and its text is never sent. **[B-118/REQ-10]**
-- Background review preparation uses `runKind="background"` with `allowWrite=false` — it can NEVER trigger write operations. **[NEW]**
-- No hidden note reads before user action — **revised**: background preparation is transparent via the Pet state (`working` state visible when background preparation runs). **[CHANGED]**
-- No sending skipped note bodies to the model. **[PRESERVED]**
-- Honest used/skipped source and boundary details through ContextPager and source
-  views; the retired Panel range selector is not a source-permission control. **[PRESERVED]**
-- Source-backed suggestions. **[PRESERVED]**
-- Preview before write. **[PRESERVED]**
-- User-confirmed note creation. **[PRESERVED]**
-- No telemetry or analytics are collected by the plugin. Any future metrics must remain content-free. **[UPDATED]**
+- Both manual and automatic discovery can send allowed note evidence to the
+  configured Chat provider and use API credits. Discovery starts from a Markdown
+  anchor and may read allowed cross-note evidence; it is not changed-note-only.
+- Automatic discovery follows note activity and can be disabled independently
+  in Settings. Opening `Pagelet: Open Pagelet` only opens the Panel;
+  `Pagelet: Open prepared review` follows the explicit discovery route and may
+  invoke the provider under [DEC-052](./decisions/dec-052-prepared-review-deep-discover-route.md).
+- The current runtime uses `PaAgentLoop` with `runKind="review"` and
+  `allowWrite=false`. Its discovery capability registry contains read tools and
+  eligible WebSearch capabilities, not vault-write Operations.
+- Sources must pass the shared Data Boundary and Pagelet exclusions.
+  This is source permission, not a requirement that Memory already be prepared.
+  The host captures current Markdown with file snapshots, checks the exact
+  body against exclusions, and revalidates evidence before provider use and
+  accepting a finding. Provider first-use disclosure does not expand source or
+  write permission; source count alone is not a confirmation trigger.
+- Standard provider admission uses the shared non-blocking first-use notice.
+  Current explicit runs bypass the automatic-run pool; automatic runs remain
+  bounded by that pool and current cancellation/policy checks. Old fixed scope,
+  per-source confirmation and generic preload envelopes are historical; see
+  [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md),
+  [DEC-035](./decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md)
+  and [DEC-051](./decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+  for their provenance and supersession.
+- Optional WebSearch is available only when enabled and supported by the
+  configured provider. It unlocks after a vault observation reaches the model;
+  it does not require a separate click for each search. Queries leave the vault
+  through that provider's search service.
+- Deep Discover caches candidate results in memory; separate attention/usage
+  state and explicitly saved notes have their own persistence. Discovery does
+  not automatically create, modify or delete vault notes.
+- Panel saving remains available: it creates a separate note in the configured
+  review folder through the Write Action Framework's preview/confirmation,
+  choosing a non-colliding path. Pagelet's bounded association action also
+  stages a preview and requires its own confirmation before writing.
+- Chat handoff opens a fresh conversation with visible context and a suggested
+  question, without sending it. Busy Chat or an existing draft blocks handoff.
+  A clear current modification request in Chat may execute under DEC-051;
+  a preview-only request or merely opening a proposal does not authorize a write.
+- Findings retain actual source links. The retired Panel range selector is not
+  a source-permission control; current source and ContextPager views explain
+  their own evidence without inventing old selected-range counts.
+- Pagelet's discovery registry disables capability telemetry. The separate
+  Chat usage hook is off by default and can log content-free capability events
+  locally; the current hook has no upload path. Pagelet product analytics below
+  remain future candidates.
 
-Foreground source explanation follows the actual active-note run and its
-source-backed result. Do not show selected ranges or selected/included/skipped
-counts from the retired scope controls. ContextPager and current source views
-retain their own truthful source and boundary explanations.
-
-Background preparation transparency:
-
-- Pet shows `working` state when background preparation is running.
-- User can trigger `Pagelet: Show background preparation status` command to see details.
-- A Settings status block with last preparation time and analyzed-note count is future work.
+Implementation sources: [Deep Discover integration](../../src/pagelet/plugin-deep-discover.ts),
+[runtime and read-only registry](../../src/pagelet/agent/pagelet-agent-runtime.ts),
+[source acceptance](../../src/pagelet/agent/pagelet-deep-discover-controller.ts),
+[provider admission](../../src/pagelet/provider-call-admission.ts),
+[Pagelet action/handoff routing](../../src/pagelet/orchestrator.ts),
+[review-note save flow](../../src/pagelet/ReviewNoteSaveFlow.ts),
+[write action integration](../../src/pagelet/plugin-pagelet-actions.ts),
+[review-note capability](../../src/pagelet/pa-review-tool-provider.ts),
+[Chat Operations guidance](../../src/ai-services/operations/operations-tool-provider.ts),
+[Chat handoff](../../src/chat/chat-view.ts) and
+[Chat usage hook](../../src/ai-services/pa-agent-runtime.ts).
 
 ---
 
@@ -1214,9 +1225,9 @@ New Pagelet commands (command palette, registered with `Pagelet:` prefix per D02
 
 - `Pagelet: Quick review` — preserved alias for the current explicit Deep Discover
   route, using the active Markdown anchor and existing admission/cache behavior.
-- `Pagelet: Open prepared review` — preserved zero-call compatibility entry.
-  The retired generic producer has no current cache to open; the entry reports
-  that no prepared suggestions are available without replacing the current view.
+- `Pagelet: Open prepared review` — explicit Deep Discover compatibility entry under DEC-052; may invoke the provider and use API credits.
+  It reuses an eligible insight when available, otherwise follows current discovery
+  admission and displays the actual result; it does not open the retired raw cache.
 - `Pagelet: Discover connections` — uses the same explicit Deep Discover route;
   allowed cross-note evidence is part of the current behavior.
 - `Pagelet: Toggle proactive hints` — toggles 主动提示 on/off.
@@ -1255,7 +1266,10 @@ Primary success signal:
 
 - Users engage with Pagelet findings (view in Bubble, explore in Panel, or create review notes).
 
-The plugin does not currently collect telemetry or analytics. The metrics below are future product-analysis candidates only; they must not be presented as current behavior.
+Pagelet Deep Discover disables capability telemetry. PA separately retains a
+default-off, content-free Chat capability event hook for local diagnostic logging.
+That hook does not establish collection of the product metrics below; these are
+future product-analysis candidates, not current behavior or validation evidence.
 
 Future allowed metrics (historical design preserved + new):
 
@@ -1337,58 +1351,53 @@ Pagelet ships as a feature inside PA `2.(x+1).0-beta.N`:
 
 ---
 
-## Success Criteria — [CHANGED — updated for Pagelet scenarios]
+## Success Criteria — current acceptance targets
 
-Pagelet considered successful if:
+These criteria describe the current behavior to assess. They do not assert that
+app/device validation or performance measurement has passed; original historical
+evidence retains its own scope.
 
-**Pet and Bubble (new)**:
-- Pet correctly reflects all 4 states (resting, idle, working, nudge).
-- Pet persists its desktop/iPad corner choice; on iPhone it follows the active note toolbar.
-- Bubble opens in under 200ms when cached results exist.
-- Bubble closes on click-outside, X, and Escape.
-- Proactive hints use exact-owner admission and acknowledge only successful
-  visible presentation; Recap/Pattern/onboarding respect the shared cooldown,
-  while Quiet Recall keeps its independent per-candidate gate and shares only
-  quiet hours.
-- Generic and Quiet Recall proactive hints are off by default; high-value Scope
-  Recap uses the independent DEC-018 default and quality gate.
-- Bubble shows one highest-quality card by default; a 2-to-3-card stack appears
-  only when every candidate independently passes and remains distinct and
-  source-backed.
+**Current discovery and entry contracts**:
+- Quick Review, Review Current Note, Discover, Quiet Recall and Scope Recap
+  compatibility commands use explicit active-note Deep Discover. Open prepared
+  review uses that same route under DEC-052; Open Pagelet only opens the Panel.
+- Automatic discovery follows eligible note activity and respects its independent
+  enable/disable setting. The current entry uses the 12/hour, 36/local-day
+  automatic-run pool; explicit manual discovery does not consume that pool.
+- Both paths enforce current source permissions and cancellation/policy checks.
+  Discovery remains read-only through `runKind="review"`, `allowWrite=false`.
+- Each run delivers `0–2` validated insights, with inspectable actual sources.
+  Missing, excluded or changed evidence cannot support an accepted finding.
+  No reliable finding is a valid outcome; fixed yesterday/3-day/7-day presets
+  and source-count confirmation are not current acceptance requirements.
+- Enabled, supported WebSearch may run after vault evidence reaches the model.
+  UI explains actual source/provider boundaries without promising a per-search click.
 
-**Background Preparation Engine (new)**:
-- Background preparation runs at the configured interval.
-- Background preparation respects all exclusion rules.
-- Generic background preload stays inside the exact DEC-023 standard envelope;
-  each individual envelope breach silently skips and cannot prompt for broader access.
-- Background preparation uses `runKind="background"` with `allowWrite=false`.
-- Background preparation can be fully disabled.
-- Pet shows `working` state during background preparation.
+**Explicit actions and handoff**:
+- Saving Panel findings creates a separate review note in the configured folder,
+  with a non-colliding path and the existing preview/confirmation flow; discovery
+  itself never saves notes automatically.
+- A Pagelet association action previews its current bounded proposal and requires
+  confirmation; execution reports the actual result and available Undo.
+- Chat handoff exposes context and a suggested question without sending them,
+  and preserves a busy conversation or existing composer draft by declining handoff.
+- Clear current modification requests in Chat can execute under DEC-051.
+  Preview-only, analysis and source text do not themselves authorize execution.
 
-**Foreground Analysis (preserved from historical design)**:
-- A review can be run for the current note, yesterday, last 3 days, and last 7 days.
-- After filtering and de-duplication, one actual allowed source remains standard
-  bounded regardless of requested range; two or more require per-run blocking
-  confirmation before any provider call or quota/cost reservation.
-- The Panel clearly shows what was read.
-- Output includes findings with source links.
-- Findings without valid sources are not shown as strong suggestions.
+**Pet and Bubble interaction targets**:
+- Pet communicates its four states and respects visibility and platform placement.
+- Bubble closes through its outside, close-button and Escape paths.
+- Current Agent Insight presentation uses its own admission/attention gates;
+  generic Pattern/onboarding hints respect their opt-in, cooldown and quiet hours.
+- The historical target of opening cached Bubble content within 200ms remains
+  a performance target requiring measurement, not a fact inferred from the code.
 
-**Core Invariants (preserved from historical design)**:
-- Creating a note never modifies source notes.
-- WebSearch only runs from explicit user action.
-- Cost ceiling enforced; foreground limit hits show a notice and can be adjusted in settings.
-- No plugin telemetry/analytics are collected today; future metrics must be content-free.
-- Coexists with the 10 mainstream plugins in D029 without HIGH-severity conflicts.
-- Pending drafts survive Panel close/reopen until created or discarded.
-
-**Product validation target**:
-- In at least one real weekly test window, the user:
-  - Uses Quick Review (Bubble) at least 3 times.
-  - Opens at least one prepared Scope Recap or honest no-artifact explanation
-    and can verify the sources.
-  - If the user explicitly enables Quiet Recall/generic hints, receives at least
-    one useful hint; default-off behavior is itself a required pass.
+**Product validation targets**:
+- In a real usage window, assess whether findings are useful and sources can be
+  verified, whether optional save/association actions match the visible proposal,
+  and whether handoff leaves the user in control of sending and modification.
+- Assess enabled automatic discovery and its disabled state without treating
+  retired generic preload or prepared Scope Recap production as required passes.
 
 ---
 
@@ -1460,56 +1469,60 @@ Pagelet considered successful if:
 | D029 | Plugin compatibility mitigations | Preserved |
 | D031 | Write Action Framework implementation | Preserved |
 
-### Preserved with Adjustment
+### Historical Cost Decisions and Current Successors
 
 | Decision | Topic | Pagelet Adjustment |
 | --- | --- | --- |
-| D018 | Per-call token budget | Preserved for foreground; new smaller budget for background preparation (D036) |
-| D019 | LLM calls per review | Preserved for foreground; background preparation uses single-call only |
-| D020 | Daily/hourly caps | Preserved for foreground; separate background preparation caps (D036) |
-| D021 | Ceiling-hit behavior | Preserved for foreground; background preparation silently skips |
-| D022 | Cost display | Preserved; extended to show background preparation cost in settings |
-| D023 | Exception circuit breakers | Still deferred (OQ003); background preparation adds new failure modes |
+| D018 | Per-call token budget | Historical review/preload budgets; retained settings do not establish current Deep Discover limits |
+| D019 | LLM calls per review | Historical route contract; current Deep Discover runs `PaAgentLoop`, not a generic single-call preload |
+| D020 | Daily/hourly caps | Historical pools; current automatic Deep Discover admission follows the Cost section and DEC-051 |
+| D021 | Ceiling-hit behavior | Historical route behavior; current automatic admission may decline a run without blocking explicit manual discovery |
+| D022 | Cost display | Current Settings exposes Deep Discover usage, not the retired preload controls |
+| D023 | Exception circuit breakers | Historical deferred proposal (OQ003), not a current runtime guarantee |
+
+Original decisions remain in [the historical decision record](../archive/review-assistant-decisions.md).
 
 ### Reconciled Decisions
 
 | Decision | Topic | Pagelet Change | New Decision |
 | --- | --- | --- | --- |
-| D024 | Runtime (RunKindAdapter) | Supports `runKind="background"` background preparation with `allowWrite=false` in the implemented contract | D032 |
-| D025 | Write path strategy | Current B-108 delivery stays read-only; any future Recap export requires explicit preview/confirmation | D035 superseded |
+| D024 | Runtime (RunKindAdapter) | Historical adapter plan; current Deep Discover uses `PaAgentLoop` plus read-only `CapabilityRegistry` / `PolicyEngine` with `runKind="review"` | DEC-035 current route retirement |
+| D025 | Write path strategy | Discovery is read-only; Panel review-note saving and Pagelet association actions retain preview/confirmation, while current explicit Chat Operations follow DEC-051 | DEC-035 / DEC-051 |
 | D030 | Write path infrastructure | No current standalone Periodic Summary caller; future export must use the Write Action Framework | D035 superseded |
 
-### Current Pagelet Decisions (D032+)
+### Pagelet Decisions (D032+) — Current and Historical Scope
 
 | ID | Topic | Summary |
 | --- | --- | --- |
-| **D032** | Background preparation engine | Introduce timed polling + change detection + AI background preparation + result caching. Uses `runKind="background"` with `allowWrite=false`. Supersedes historical design Principle #2 ("no background analysis"). Background preparation is a performance optimization, not proactive analysis. |
+| **D032** | Historical background preparation engine | Timed generic polling/change detection/preload is retired by [DEC-035](./decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md). Current automatic discovery uses note-triggered Deep Discover; see Runtime, Cost and Privacy above. Original D032 remains historical provenance. |
 | **D033** | Pet states (4 states) | 4 states: resting (#d0d0d0 gray), idle (#e8e8e8 gray), working (#7c9eff blue), nudge (#5dd39e green). Replaces earlier 6-state proposal. |
 | **D034** | Pet position | Desktop/iPad use a configurable corner (default bottom-right); iPhone follows the active note toolbar. The corner remains switchable via Settings or Command Palette. No drag, no pin, no double-click. |
 | **D035** | Historical Periodic Summary simplification | Superseded as a current contract. The broader product direction is a separately authorized Recap time-range mode, not an independent Periodic Summary flow. |
-| **D036** | Background preparation engine cost control | Separate rate limits and token budgets for background preparation vs foreground AI calls. Generic preload is admitted only at actual input `<=4K` and no more than 2 actual provider calls/rolling hour、20/local day; output remains 1K and any envelope breach silently skips. |
+| **D036** | Historical background preparation cost control | The generic preload envelope is retired with its producer; original limits remain in the historical decision record. Current manual/automatic admission follows [DEC-051](./decisions/dec-051-proportionate-confirmation-and-contract-alignment.md) and the source-backed Cost section above. |
 | **D037** | Progressive disclosure layers | Four-layer content model: Pet -> Bubble -> Panel -> Tab. DEC-025's Action Ring is a peer command surface, not a fifth content layer. Bubble and Ring are mutually exclusive and close on their documented outside/Escape/Pet paths. |
-| **D038** | Generic proactive hints (主动提示) design | Quiet Recall, Pattern, and generic review hints remain opt-in and OFF by default. When ON, Pet enters `nudge` only after their own quality gates. Cooldown, no sound, no modal, no focus steal. |
+| **D038** | Generic proactive hints (主动提示) design | Generic hints remain opt-in and OFF by default. Historical Quiet Recall/Recap producer defaults do not define current Deep Discover; Agent Insight presentation has its own admission/attention gates. Retain quiet hours and non-intrusive presentation. |
 | **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. The separate Pet Action Ring is reserved for Capture / Review / Discover / Share. |
 | **D040** | Action Ring Share and geometry | Fourth action Share uses exact nonblank selection first, otherwise current Markdown note under DEC-026/B-124. On fine-hover non-phone-toolbar surfaces, four icons reveal complete localized labels on hover/focus; no-hover touch surfaces show labels directly. Desktop/iPad prefer a compact inward arc and use a whole-group compact row/column fallback when targets cannot fit without overlap; iPhone uses a complete four-label row when it fits and a whole-column fallback when it does not. The first three actions and all 44px/logical/focus boundaries remain unchanged. |
 | **D041** | Bounded retrieval recovery and Pagelet insight depth | Under DEC-027/B-125, one Pagelet run returns 0–2 independently validated insights and owns at most one relaxed retrieval retry. Zero may retry for the first insight; one may retry for a second only with a concrete unresolved lead. Explicit time constraints remain binding; without one, discovery may cross time. B-123's single-result implementation evidence does not validate this successor behavior. |
 
-[DEC-018](./decisions/dec-018-quality-gated-scope-recap-hints.md) is the accepted
-Scope Recap exception to D038: high-value Recap hints default on for an eligible
-bounded Recap path, while all other hint kinds retain their existing defaults.
+[DEC-018](./decisions/dec-018-quality-gated-scope-recap-hints.md) and
+[DEC-019](./decisions/dec-019-honest-layered-recap-fallback.md) retain the predecessor
+Scope Recap hint/fallback decisions. They do not restore the retired producer or
+replace the current explicit Deep Discover route.
 
-[DEC-019](./decisions/dec-019-honest-layered-recap-fallback.md) governs the same
-Recap path when no reliable insight exists: retain any still-valid artifact;
-otherwise show an immediate local scope explanation only after explicit Recap
-open. It does not weaken D003 or create a proactive candidate.
-
-This current document plus DEC-017 through DEC-027 governs these decisions.
+This document and the owning current decisions govern their stated scopes;
+DEC-035, DEC-051 and DEC-052 supersede the retired routes, confirmation/budget
+rules and Open prepared review promise respectively.
 `docs/archive/review-assistant-decisions.md` is provenance only and must not be
 used to override current behavior.
 
 ---
 
-## Future Phases
+## Future Phases — historical roadmap
+
+The lists below preserve earlier planning, not current delivery status or new
+authorization. Retired D032/D036 generic preparation and cost controls are not
+current Phase 2 acceptance work; their original decisions remain historical.
 
 ### Phase 2 candidates (Pagelet scope — this document):
 

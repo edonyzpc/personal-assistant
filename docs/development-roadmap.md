@@ -1,17 +1,17 @@
 # Development Roadmap
 
-> Last updated: 2026-08-01. The previous v2.7 release-prep roadmap is archived
+> Last updated: 2026-10-06. The previous v2.7 release-prep roadmap is archived
 > at [development-roadmap-v2.7.md](./archive/development-roadmap-v2.7.md).
 
 ## Current Baseline
 
 | Field | Value |
 | --- | --- |
-| Current version in this worktree | `2.8.4` |
-| Release tag | `2.8.4` |
-| Current release theme | Post-2.8 patch line plus completed Memory Control Center validation and PA Agent/Pagelet release-readiness |
-| Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools + opt-in bounded Operations with delivered Pagelet integration |
-| Operations Agent availability | `OPERATIONS_AGENT_RUNTIME_ENABLED=true` makes the bounded Operations layer build-available; persisted `operationsAgentEnabled` remains `false` by default and requires explicit per-vault opt-in |
+| Current version in this worktree | `2.9.2`, from [package.json](../package.json) and [manifest.json](../manifest.json) |
+| Latest stable version recorded in Changelog | `2.9.2` (2026-08-09), from [Changelog](../CHANGELOG.md); this is not a live remote-release check |
+| Worktree / release boundary | Current contracts also describe later accepted local development; the version field alone does not prove those changes were published |
+| Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools + approved bounded Operations with delivered Pagelet integration |
+| Operations Agent availability | Build availability and the live controller/policy remain factual gates. The persisted legacy `operationsAgentEnabled` field no longer gates admission; a current explicit modification request can execute through the same main Agent under [DEC-051](./product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md) and the [current architecture](./architecture/pa-agent-architecture-plan.md#operations-agent-providers) |
 
 ## Completed Release Lines
 
@@ -20,15 +20,16 @@
 | v2.2-v2.7 implementation train | Complete, historical | [v2 post-release tracker](./archive/v2-post-release-spec-driven-development.md) |
 | v2.7 consolidated feature release | Complete, historical | [archived roadmap](./archive/development-roadmap-v2.7.md) and release tags |
 | v2.8.0 license migration | Complete, historical one-time migration | [license migration sign-off](./archive/license-migration-2.8.0.md) |
-| v2.8.1-v2.8.4 patch line | Current shipped baseline | [changelog](../CHANGELOG.md) and release metadata |
+| v2.8.1-v2.8.4 patch line | Historical recorded releases | [changelog](../CHANGELOG.md) and release metadata |
+| v2.9.0-v2.9.2 release line | Latest stable releases recorded in Changelog | [changelog](../CHANGELOG.md); later worktree acceptance is separate from publication |
 
 ## Current Product Baseline
 
 | Theme | Current meaning | Current authority |
 | --- | --- | --- |
 | Memory Control Center | Validated device-local Memory governance; broader sync/action authority is not implied | [Product Spec](./product/specs/pa-memory-control-center-product-spec.md) |
-| PA Agent | Capture/review/memory/maintenance/recall runtime with source-backed evidence and current safety boundaries | [Product index](./product/README.md), [Architecture](./architecture/pa-agent-architecture-plan.md) |
-| Pagelet Delivery | Bubble、Scope Recap、Recall、Pattern 与 Review 的安静、可忽略 delivery model | [Pagelet Product Design](./product/pagelet-product-design.md) |
+| PA Agent | The same main Chat Agent handles Memory, source-backed answers and approved domain commands; current Operations execution, results and Undo follow the accepted command boundary | [Product index](./product/README.md), [Architecture](./architecture/pa-agent-architecture-plan.md) |
+| Pagelet Delivery | Active-note Deep Discover is the current review/recall/recap alias route; Pet, Panel/Tab, source visibility and saved insights retain their scoped contracts. Earlier Bubble/Scope Recap scenarios are historical for those aliases | [Pagelet Product Design](./product/pagelet-product-design.md), [DEC-035](./product/decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md) |
 
 ## Candidate Directions
 

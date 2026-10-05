@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-10-05
+Updated: 2026-10-06
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -11,7 +11,7 @@ Updated: 2026-10-05
 | B-002 | Pagelet source-bound async result 完整体验 | Typed outcome 与 interim stale-result 修复已存在；统一 in-memory result store 与 Pet/Bubble ready-state 仍需按当前代码复核 | 先做 code-to-plan reconciliation，再为剩余 slice 建新 SDD；不要重复已实现部分 | [Historical plan](./archive/pagelet-async-result-plan.md) |
 | B-003 | Android VSS 真机验证 | Desktop 与 iOS 有证据，Android parity 未验证 | 在物理 Android 设备验证 SQLite/WASM Memory backend 后再更新 README 声明 | [README note](../README.md#mobile-vss-validation-note) |
 | B-004 | PA Agent telemetry baseline | Instrumentation 与 runbook 就绪，尚无 post-ship aggregate sample | 在明确 opt-in 后采集至少 7 天内容无关的聚合数据，再用于功能优先级判断 | [Runbook](./operations/pa-agent-telemetry-baseline.md) |
-| B-006 | GitHub CI 首次远端验证 | 本地 workflow 命令已验证；`actionlint`、GitHub-hosted run 与 branch protection 未验证 | 在明确授权远端操作后验证首个 CI run，并决定 required checks | [Optimization final report](./archive/repo-wide-optimization-2026-07-10-final-report.md) |
+| B-006 | CI 配置与保护规则后续核对 | GitHub-hosted 完整 CI 已有 B-155 的历史通过证据；`actionlint` 与 branch protection / required checks 尚无对应验证记录，不据历史通过推定最新 CI 状态 | 在明确选择维护 CI 配置或保护规则时，补齐相应检查并决定 required checks；不重复首次 hosted run 验证 | [Optimization final report](./archive/repo-wide-optimization-2026-07-10-final-report.md), [B-155 master CI 证据](./archive/2026/b155-agent-responsive-execution-validation.md) |
 
 ## 已延期的产品与工程工作
 
@@ -65,6 +65,6 @@ Updated: 2026-10-05
 - 新条目使用下一个未占用 `B-xxx`；先搜索重复项。触发型评估继续使用 `T-xxx`。
 - 用户明确要求记录/保存，或事项需要产品决策、进入候选方向、开始跨会话研究/执行时，创建或复用一个 repo-local Backlog ID。来源可以写 `User request YYYY-MM-DD`；既有外部链接仅作历史依据，不要求双向同步或新增外部条目。
 - 复杂讨论链接 Discovery，不在 Backlog 表格复制 research、方案比较或聊天记录。
-- Promotion 到 Active 时，Backlog ID 只有在 Accepted Decision、Approved Product Spec 与 Feature Home 都已接续后才能从本表删除；Rejected/Cancelled 项需要 Decision/Closeout 记录最终 outcome。
+- Promotion 到 Active 时，Product lane 由 Accepted Decision + Product Spec + Active Package 接续，L2G lane 由 Current Governance Contract + Active Package 接续后，才能从本表移出相应 Backlog ID；Rejected/Cancelled 项由对应终态 authority 承接，按 [Documentation Workflow](./development/documentation-workflow.md#5-closeoutarchive-与删除) 吸收并处置，不另建 Closeout 过程文档。
 - 不把风险表中的所有历史 “Open” 自动视为待办；只有仍能在当前代码/产品边界中复现或有明确触发条件的事项进入这里。
 - Backlog 条目只记录“还要做什么、何时做、依据在哪里”，不复制完整设计。

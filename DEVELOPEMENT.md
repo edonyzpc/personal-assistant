@@ -3,7 +3,7 @@
 ## 1. Env Preparation
 - Node: 22 LTS
 - npm: 10.x or 11.x
-- Obsidian API: latest
+- Obsidian API: the dependency declared in `package.json`; the minimum runtime version is declared in `manifest.json`
 
 ## 2. Develop
 ### 2.1 developing workflow
@@ -49,9 +49,17 @@ make deploy
 ```
 
 #### 6. release
+
+Release preparation and publication are separate actions. Use the current
+[release process](./docs/operations/release-process.md) for authority and gates.
+Replace `<next-version>` with a semantic version greater than the current
+`package.json` version; the placeholder is not an executable release target.
+
 ```sh
-# update version with interaction and add new commit and version tag
+# choose a version interactively and create the local release commit/tag
 make release
-# or run a non-interactive release with an exact version
-make release VERSION=1.6.0
+# or prepare an explicitly chosen version locally
+make release VERSION="<next-version>"
 ```
+
+Updated against repository commands on 2026-10-06.

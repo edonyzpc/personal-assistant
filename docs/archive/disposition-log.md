@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-10-05
+Updated: 2026-10-06
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-10-06 | `tmp/oq002-spike-report.md` | deleted-after-absorption | [保留的 structured/JSON 模型实现](../../src/pagelet/pa-review-model.ts), [按变化选用的 OQ002 验证](../development/validation/pagelet-smoke-checklist.md#provider-structured-output-oq002) | OQ002 旧研究没有当前源码或文档入链；保留模型及其按需回归承接可维护事实，但当前普通 Pagelet 入口走 Deep Discover，不能据此声称旧结构化模型有生产调用者。原稿的 provider 支持推断与未实测命中率估计不迁成当前事实，也不作为 provider 矩阵通过证据；稳定身份在此保留，原始研究由 Git 历史恢复，不改历史 Archive 引述与证据哈希。 |
 | 2026-10-05 | `docs/archive/featured-image-model-upgrade-spec-driven-development.md` | deleted-after-absorption | [B-005 terminal record](./2026/b005-wan-provider-smoke-closeout.md), [B-152 live evidence](./2026/b152-unified-chat-image-creation-validation.md), [Image architecture](../architecture/chat-image-generation-architecture.md) | B005唯一缺失的真实Wan provider证据已由B152获准新统一入口承接，旧同步链已退役；移除已完成Backlog后旧过程不再有current入链，紧凑终态记录满足身份连续性。原始旧执行过程由Git恢复，不扩为其他模型/地区认证。 |
 | 2026-10-05 | `docs/development/active/contract-alignment/**` | deleted-after-absorption | [DEC-051](../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md), [Product Spec](../product/specs/pa-contract-alignment-product-spec.md), [Agent architecture](../architecture/pa-agent-architecture-plan.md), [Share Card architecture](../architecture/share-card-architecture.md), [B-161 evidence](./2026/b161-contract-alignment-validation.md) | Owner 明确要求 closeout 全部实际已完成任务；T00–07/12REQ-AC 与 finding 完成。组合工程门、真实模型/desktop/simulator、原失败及定向重放边界紧凑保留，原过程可从125f9b52恢复。整体Host/B159不在范围；本次不执行Git/release。 |
 | 2026-10-05 | `docs/development/active/note-image-removal/**` | deleted-after-absorption | [DEC-050](../product/decisions/dec-050-note-image-removal-and-undo.md), [Product Spec](../product/specs/pa-note-image-removal-product-spec.md), [Operations architecture](../architecture/pa-agent-architecture-plan.md#operations-agent-providers), [B-160 evidence](./2026/b160-note-image-removal-validation.md), [B-161 successor](./2026/b161-contract-alignment-validation.md) | P0–P3/全部REQ-AC、F01–21及必要模型/desktop/simulator已接受；原额度/确认基线不倒改，新约定由B161完成。部分/未知、原字节Undo、重载与原临时日志缺口保留；无原开发遗留。 |

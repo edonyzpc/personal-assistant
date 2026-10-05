@@ -2,13 +2,15 @@
 
 > 来源：2026-07-08 复盘讨论。解决"所有产品决策均来自内部循环，无外部用户信号"的结构性盲区。
 
+> 历史讨论提案，非当前状态或已授权执行任务。下列社区指标、Issues/Discussions 状态和服务商额度是当时的讨论输入，未在 2026-10-06 文档整理中重新验证，使用前需查证。当前产品方向与收费边界以 [Product](../../docs/product/README.md) 和 [Backlog](../../docs/backlog.md) 为准；本提案不授权发帖、账户设置、Issue 清理或发布。
+
 ## 背景
 
 PA 当前 ~145 stars，50-500 活跃用户，GitHub Issues 存在但不活跃（22 open issues 全是 Renovate bot），GitHub Discussions 未开启。所有产品决策来自 AI 研究报告 + AI 代码审计 + 开发者 dogfooding，无任何真实用户行为或反馈数据。
 
 **目标：拉新 + 反馈并重**，为后续收费（Lite tier）和功能验证（北极星"随手记下，需要时自然浮现"）建立外部信号源。
 
-## 当前问题（发帖前必须解决）
+## 2026-07-08 提出的问题（历史快照）
 
 | # | 问题 | 影响 | 状态 |
 |---|------|------|------|
@@ -16,7 +18,7 @@ PA 当前 ~145 stars，50-500 活跃用户，GitHub Issues 存在但不活跃（
 | P2 | GitHub Discussions 未开启 | 反馈没有着陆点 | [ ] 待开启 |
 | P3 | 22 个 open issues 全是 Renovate bot | 给人"无人维护"的错觉 | [ ] 待清理 |
 | P4 | README 把 AI 功能标为 "beta feature" | 降低用户信心 | [ ] 待评估 |
-| P5 | 无 BYOK 快速上手指南 | API key 门槛阻止新用户试用 | [ ] 待编写 |
+| P5 | 当时提出缺少 BYOK 快速上手指南 | API key 门槛阻止新用户试用 | 当前 [README](../../README.md#ai-chat-in-60-seconds) / [中文版](../../README-CN.md#60-秒开始-ai-chat) 已有配置步骤；独立外部推广指南仍为提案 |
 
 ---
 

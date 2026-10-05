@@ -13,9 +13,9 @@
 
 ## Capture、Recall 与 Context
 
-- [必要确认与合同接续](./specs/pa-contract-alignment-product-spec.md) — B-161：本轮确认的直接执行、选源、预算、容量与旧合同接续；目标合同及实施差异见对应开发入口。
+- [必要确认与合同接续](./specs/pa-contract-alignment-product-spec.md) — B-161：已完成本地对齐的直接执行、选源、预算、容量与旧合同接续；证据与限制见 [最终验证](../archive/2026/b161-contract-alignment-validation.md)。
 - [PA Agent Command Contract](./specs/pa-agent-command-contract-product-spec.md) — B-158：统一职责、SDD/验收与公共框架后领域迁移。
-- [执行事实连续性](./specs/pa-action-continuity-product-spec.md) — B-157：合法动作状态、保存重开与压缩摘要，实施状态见 Tracker。
+- [执行事实连续性](./specs/pa-action-continuity-product-spec.md) — B-157：合法动作状态、保存重开与压缩摘要，历史验收与限制见 [最终验证](../archive/2026/b157-context-action-continuity-validation.md)。
 
 - [Agent 响应性](./specs/pa-agent-responsive-execution-product-spec.md) — B-155：原生 UI 不被 Agent 准备阻塞，来源检查分层并保留快照与撤销。
 - [Note Change Review](./specs/pa-note-change-review-product-spec.md) — B-154：按笔记最终差异、Chat/tab 审阅与 Operations 审计退役。
@@ -30,7 +30,7 @@
 - [Context Pager](./specs/pa-context-pager-product-spec.md)
 - [Context Management and Conversation Continuity](./specs/pa-context-management-product-spec.md)
 - [Multimodal Chat and Image Copywriting](./specs/pa-multimodal-chat-product-spec.md)
-- [Chat Image Generation and Editing](./specs/pa-chat-image-generation-product-spec.md) — B-133 已确认产品范围；详细设计与执行记录由 Feature Home 接续。
+- [Chat Image Generation and Editing](./specs/pa-chat-image-generation-product-spec.md) — B-133 已确认产品范围；[当前架构](../architecture/chat-image-generation-architecture.md)与[历史验收](../archive/2026/b133-chat-image-generation-validation.md)承接设计及证据。
 - [Unified Chat Image Creation](./specs/pa-unified-chat-image-creation-product-spec.md) — B-152：明确文字来源、专用配图提炼与 command 快捷入口。
 - [Lightweight Graph Discovery](./specs/pa-lightweight-graph-discovery-product-spec.md)
 - [Scope Recap and Theme Summary](./specs/pa-scope-recap-theme-summary-product-spec.md)

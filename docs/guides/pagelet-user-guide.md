@@ -1,291 +1,80 @@
-# Pagelet 使用指南
+# 拾页（Pagelet）使用指南
 
-> 正在试用 BRAT `2.9.0-beta.6`？请优先阅读
-> [2.9.0-beta.6 用户试用指南](./v2.9.0-beta.6-user-trial-guide.md)。该版本已把多个
-> provider-backed Pagelet 入口统一到“深度发现”管线；下文保留较早的结构化审阅
-> 工作流说明，不应覆盖 Beta 指南中标明的当前行为。
+Updated: 2026-10-06
 
-> 本指南已对照 2026-06-06 的真实 Obsidian `test/` vault GUI smoke 结果整理。
-> 最新全量 GUI smoke 结果保存在 `test/pagelet-smoke-runtime-result.json`，
-> 摘要记录在 `docs/development/validation/pagelet-smoke-checklist.md`。
+本指南对照当前仓库的用户入口与代码整理；实际安装构建的功能以安装版本及发布记录为准。
+[2.9.0-beta.6 试用指南](../archive/2026/v2.9.0-beta.6-user-trial-guide.md)保留该历史版本的操作与限制，不作为当前行为说明。
 
-Pagelet 是一个“写完之后帮你审视笔记”的安静审阅器。默认情况下，它不会在
-后台读取你的 vault，也不会偷偷改写源笔记；只有当你主动打开面板或运行审阅
-命令时，它才会读取你选中的笔记，并把审阅建议整理成可取舍、可编辑、可保存
-的工作流。
-
-如果你在设置中显式开启“后台审阅准备”，Pagelet 会按配置的间隔读取近期变更
-笔记来提前准备审阅结果；这些笔记正文可能会发送给当前配置的 AI provider，
-并可能消耗 API 额度。这个后台路径只准备结果，不会写入或修改笔记。
-
-它最适合这些场景：
-
-- 刚写完一篇笔记，想检查表达是否清楚、是否容易行动；
-- 做日回顾或周回顾，不想手动翻最近几天的笔记；
-- 想找出遗漏的证据、模糊的决策、未收束的 follow-up；
-- 想把有用建议收集成草稿，但不希望 AI 直接修改原文；
-- 需要从一个具体建议出发去查证，而不是打开 Chat 后从空白提示开始。
+拾页从你正在使用的笔记出发，发现值得重新看见的关联，展示洞察及来源，供你核对或继续讨论。
+发现本身只读取允许范围内的资料，不修改笔记。运行时，读取的笔记正文可能发送给配置的 AI 服务商，并可能使用 API 额度。
 
 ## 使用前准备
 
-使用 Pagelet 前需要确认：
+- 启用 Personal Assistant 和拾页。
+- 在插件设置中配置 Chat 服务商、模型和凭据；模型需要支持发现所需的工具调用能力。
+- 检查“数据与隐私”及拾页排除规则，确认哪些笔记允许读取。
+- 打开一篇 Markdown 笔记作为发现起点。Memory 可以提供线索，但不是深度发现的必要条件。
 
-- Personal Assistant 插件已启用；
-- Pagelet 在插件设置中已启用；
-- 已配置可用的 AI provider 和模型；
-- 如果要审阅当前笔记，需要先打开一篇 Markdown 笔记。
+## 手动发现关联
 
-运行审阅时，已选笔记正文可能会发送给当前配置的 AI provider，并可能消耗
-API 额度。Pagelet 面板会在可用时显示本次或累计审阅成本。
+1. 打开希望了解的笔记。
+2. 从命令面板运行 `拾页：发现关联`。`拾页：审阅当前笔记`、`拾页：快速回顾`、`拾页：打开已准备的审阅`和`拾页：打开范围回顾`也使用同一条发现路径。
+3. 等待发现结束；已有可用洞察时可能直接打开结果。
+4. 在完整面板阅读洞察，打开来源笔记，核对结论是否有依据。
+5. 如需深入讨论，选择“在聊天中讨论”。
 
-Pagelet 保存的审阅笔记默认放在 `.pagelet/`。这个目录仍在 vault 内，能被
-Obsidian 搜索、同步、备份和双链系统识别；但它又和你的源笔记分开，避免把
-AI 生成的审阅记录混进日常笔记目录。
+`拾页：打开拾页面板`只打开面板，本身不启动发现。旧指南中的 `Current / Yesterday / Last 3 days / Last 7 days → Review selected → Draft` 是较早的结构化审阅流程，不是上述当前发现入口的操作步骤。
 
-## 入口怎么选
+`打开已准备的审阅`保留兼容名称，但当前也可能调用服务商并使用 API 额度；如果只想
+打开面板而不启动发现，请使用`打开拾页面板`。现行约定见
+[DEC-052](../product/decisions/dec-052-prepared-review-deep-discover-route.md)。
 
-Pagelet 当前有两类实用入口：
+没有洞察不一定是错误：关系不够具体、来源不能支持结论、结果重复或内容已变化时，拾页可能安静结束。不要把没有新结果等同于插件没有工作。
 
-- `Pagelet: Open Pagelet`：只打开 Pagelet 面板，不立刻调用 AI。适合先检查
-  scope、切换时间范围、手动包含或排除笔记，再从面板运行。
-- `Pagelet: Review current note` 或 Pagelet 图标：直接从当前 Markdown 笔记
-  开始审阅。适合你已经明确只想审阅当前笔记的时候。
+## 自动准备与提醒
 
-第一次使用建议走 `Pagelet: Open Pagelet`。这样你能在 provider 调用前先看清
-楚 Pagelet 准备读取哪些笔记。
+自动发现仅在相应开关、来源权限和运行条件允许时准备结果。它仍可能发送允许范围内的笔记正文并使用 API 额度；需要时可在拾页设置中关闭自动准备。
 
-如果你的 Pagelet 显示为中文界面，常见文案大致对应如下：
+通过检查的结果会以轻提示出现。选择“查看洞察”，再在完整面板核对内容与来源；重复看过的结果不会仅为显示运行状态而反复提醒。
 
-| 英文界面 | 中文界面 |
+自动发现默认每小时最多启动 12 次、每天最多 36 次，缓存命中或未获准启动不计入。手动发现不消耗这个自动额度池，也不因自动额度耗尽而被同一累计次数限制阻止；模型配置、来源权限和实际服务可用性仍需满足。设置中的“今日深度发现用量”用于查看用量，不是调高额度的设置入口。
+
+## 在 Chat 继续讨论
+
+1. 在完整洞察面板选择“在聊天中讨论”。
+2. PA 准备一段新 Chat，并附上“来自 Pagelet”的洞察材料。
+3. 检查洞察正文、来源笔记、可用网页链接和浮现原因。
+4. 编辑问题并手动发送。
+
+准备聊天材料不会自动调用模型或写入笔记。Chat 正在回答或已有草稿时，PA 不会覆盖；处理现有对话后再重试。发送后，附件中的洞察与来源上下文会用于该次 Chat。
+
+## 修改或保存笔记
+
+完整面板有可保存的内容时，可以点击“保存为审阅笔记”。PA 会先展示目标与内容预览，
+确认后在配置的“审阅笔记目录”中创建独立笔记；路径冲突时使用新的可用路径。
+这一步保存现有面板内容，不额外生成一次 AI 审阅，也不覆盖来源笔记。实现见
+[保存流程](../../src/pagelet/ReviewNoteSaveFlow.ts)和[写入接线](../../src/pagelet/plugin-pagelet-actions.ts)。
+
+发现结果本身不授予修改权限。希望保存结论或修改笔记时，可以在 Chat 中明确说明目标与操作。当前主 Agent 的明确新建、追加、编辑或属性更新请求可直接执行；只想先检查时，明确要求“先给预览”。目标不清或超出已有授权时仍需澄清或确认。执行后可核对实际结果、差异和可用的撤销，详见[使用手册](../../Manual-CN.md#6-网页搜索与笔记操作)。
+
+完整拾页面板在有合适洞察且操作可用时，还可能提供单笔记关联动作。这个按钮先准备目标及属性预览，由你点击“确认”或“取消”；成功后可在满足条件时撤销。这是面板自身的关联流程，不应套用为每次 Chat 修改都要再确认的规则。
+
+来源或目标已变化时，准备、确认或撤销可能停止，以免使用旧内容覆盖新编辑。结果未知时不能当作完成，也不能盲目重复执行。
+
+## 常见情况
+
+| 情况 | 处理 |
 | --- | --- |
-| `Pagelet: Open Pagelet` | `拾页：打开拾页面板` |
-| `Pagelet: Review current note` | `拾页：审阅当前笔记` |
-| `Review selected (N)` | `审阅已选（N）` |
-| `Save review note` | `保存审阅笔记` |
-| `Cancel` | `取消` |
-| `Add to draft` | `加入草稿` |
-| `Dismiss` | `忽略` |
-| `Research` | `查证` |
-
-## 快速审阅当前笔记
-
-适合：刚写完一篇笔记，想让 Pagelet 做一次清晰度、证据、关联和可行动性的
-检查。
-
-1. 在 Obsidian 中打开一篇 Markdown 笔记。
-2. 从命令面板运行 `Pagelet: Open Pagelet`。
-3. 确认面板顶部显示的是当前笔记名，并且范围停留在 `Current`。
-4. 查看 `Scope`。单篇审阅时，`Included (1)` 应该只列出当前笔记，原因是
-   `current note`。
-5. 点击 `Review selected (1)`。
-6. 等待状态从 `Reviewing selected notes...` 变成 `Suggestions ready`。
-7. 阅读建议卡片。每张卡片会告诉你：建议类型、来源、为什么值得处理，以及
-   推荐动作。
-8. 按需要处理建议：
-   - `Add to draft`：把这条建议加入右侧/下方的草稿区；
-   - `Dismiss`：隐藏这条不想处理的建议；
-   - `Source`：打开建议对应的来源笔记或来源片段；
-   - `Related notes`：打开 Pagelet 认为相关的笔记；
-   - `Research`：把查证提示准备到 Personal Assistant Chat 中。
-9. 在 `Draft` 区直接编辑已采纳的草稿块。
-10. 如果想保留这次审阅，在面板的保存确认区展开 Markdown 预览并点击
-    `Save review note`；如果只是看看建议，点击 `Cancel`。
-
-保存后，Pagelet 会创建一篇独立的 Markdown 审阅笔记，例如：
-
-```text
-.pagelet/pagelet-smoke-golden-pagelet-review-2026-06-06-11.md
-```
-
-源笔记不会被修改。
-
-## 审阅最近几天的笔记
-
-适合：做日回顾、项目回顾、周回顾，或者想从最近几天的零散笔记中找出重点。
-
-1. 打开任意一篇 Markdown 笔记作为锚点。
-2. 运行 `Pagelet: Open Pagelet`。
-3. 选择一个范围：
-   - `Current`：只审阅当前笔记；
-   - `Yesterday`：审阅昨天的笔记；
-   - `Last 3 days`：做一次轻量近期回顾；
-   - `Last 7 days`：做一次周回顾式扫描。
-4. 在 `Included` 中检查 Pagelet 将要读取的笔记。
-5. 在 `Skipped` 中检查被排除的笔记和原因。
-6. 如果某篇笔记不该发给 provider，取消勾选它。
-7. 确认范围后点击 `Review selected (N)`。
-
-`Scope` 是 Pagelet 的安全边界之一：你可以在真正调用 AI 前看到并调整将要
-读取的笔记。
-
-在已验证的 test vault 中，Pagelet 生成过的审阅笔记不会一条条塞进 skipped
-列表，而是聚合显示为：
-
-```text
-Excluded: 10 Pagelet review notes
-```
-
-`.trash/` 和其它隐藏/系统目录路径也不会出现在普通 scope 行里。这能避免把
-隐藏内容或生成内容送进 provider，同时让 scope 面板保持可读。
-
-## 怎么理解建议卡片
-
-Pagelet 的建议卡片不是“自动改稿”，而是给你挑选的审阅材料。
-
-常见建议类型：
-
-- `Clarify`：当前表达可能不够清楚，需要补决策条件、背景或结论；
-- `Expand`：某个想法值得展开，需要例子、证据、下一步或边界；
-- `Link`：这篇笔记和其它笔记、链接或概念有关联；
-- `Evidence`：某个判断需要来源、数据或外部查证；
-- `Trim`：内容可能重复、发散或不利于后续行动。
-
-卡片里的关键区域：
-
-- `Source`：建议来自哪段笔记或哪个 source id；
-- `Why`：为什么 Pagelet 认为这件事值得处理；
-- `Suggested action`：可以怎么改、补、查或整理；
-- `Related notes`：Pagelet 发现的相关笔记；
-- `Cost`：可用时显示本次审阅成本。
-
-使用建议时保持判断：有用就加入草稿，不确定就打开来源或查证，不合适就
-Dismiss。
-
-## 用草稿区收集有用内容
-
-点击 `Add to draft` 后，Pagelet 会把建议动作复制到 `Draft` 区。你可以：
-
-- 收集多条建议；
-- 直接编辑每个草稿块；
-- 删除不想保留的草稿块；
-- 关闭并重新打开面板后，继续恢复同一来源笔记的未完成草稿。
-
-草稿区只是本地待处理状态，不会自动创建新笔记。只有你在面板保存确认区点击
-`Save review note` 后，Pagelet 才会写入一篇审阅笔记。
-
-## 用 Research 做查证
-
-当建议类型是 `Evidence` 或 `Link` 时，卡片可能出现 `Research`。它适合用在
-这些情况：
-
-- Pagelet 指出某个判断缺少证据；
-- 某个链接或相关笔记需要外部资料补充；
-- 你想知道这条建议是否有可靠来源支持。
-
-Research 的行为很克制：
-
-- 它只把查证提示准备到 Personal Assistant Chat；
-- 不会自动提交 Chat；
-- 如果 Chat 里已经有草稿，它不会覆盖；
-- 提示会要求 Chat 不要修改任何笔记。
-
-这让你可以先检查 prompt，再决定是否提交、是否使用 Web Search、是否把结果
-带回审阅草稿。
-
-## 保存还是取消
-
-Pagelet 返回建议后，面板会显示保存确认区。这个区域会列出目标路径，并提供
-可展开的 Markdown 预览。
-
-选择 `Save review note` 的场景：
-
-- 这次审阅产生了值得保留的结论；
-- 你想给当前笔记或近期笔记留一个独立审阅记录；
-- 你希望以后能通过 Obsidian 链接、搜索或历史记录重新找到这次 review。
-
-选择 `Cancel` 的场景：
-
-- 只是想临时看一下建议；
-- 这次建议没有明显价值；
-- 你想自己手动改源笔记，不需要保留 sidecar 审阅记录。
-
-取消不会创建 `.pagelet/*.md` 文件。
-
-## 保存后的审阅笔记
-
-保存后的审阅笔记会带有 Pagelet frontmatter，例如 `pagelet: true` 和来源笔记
-路径。这样 Pagelet 和其它工具能识别这是 AI 审阅产物，并避免重复审阅自己的
-输出。
-
-默认保存目录是 `.pagelet/`。你可以在设置里改审阅笔记目录，但路径必须是
-安全的 vault 相对路径。Pagelet 会拒绝绝对路径、`..` 上级跳转、`.obsidian`
-配置目录或其它不安全位置。
-
-## 常见问题
-
-`Open a Markdown note before running Pagelet.`
-
-: 当前没有可审阅的 Markdown 笔记。Canvas 等非 Markdown 视图会安全 no-op。
-
-`Pagelet needs some note text to review.`
-
-: 当前范围内没有可读正文。打开有内容的笔记，或换一个时间范围。
-
-`Pagelet hit the hourly call limit. Try again later.`
-
-: 当前 provider 或 Pagelet 限额挡住了新的模型响应。稍后重试，或检查设置中
-  的 provider、模型和限额。
-
-`No suggestions worth saving.`
-
-: Pagelet 完成了审阅，但没有发现值得保存的建议。这不一定是错误，短笔记或
-  已经很清晰的笔记可能会出现这种结果。
-
-面板里出现 `Skipped`。
-
-: 先看跳过原因。`unchecked` 表示你手动取消了这篇笔记；`excluded tag` 和
-  `pagelet note` 是安全排除。
-
-## 几个实际用法
-
-单篇清晰度检查：
-
-1. 打开刚写完的笔记。
-2. 运行 `Pagelet: Open Pagelet`。
-3. 保持范围为 `Current`。
-4. 点击 `Review selected (1)`。
-5. 只采纳能让笔记更清楚、更容易行动的建议。
-
-日回顾：
-
-1. 打开 Pagelet。
-2. 选择 `Yesterday` 或 `Last 3 days`。
-3. 排除噪音笔记。
-4. 用 `Add to draft` 收集 follow-up、未闭环决策和不清楚的地方。
-5. 如果信号足够，保存一篇审阅笔记。
-
-周扫描：
-
-1. 打开 Pagelet。
-2. 选择 `Last 7 days`。
-3. 先检查 included 列表。
-4. 重点看 `Evidence`、`Link`、`Clarify`。
-5. 只对真正需要外部确认的建议使用 `Research`。
-
-查证缺口：
-
-1. 对包含判断、引用或决策的笔记运行 Pagelet。
-2. 找到 `Evidence` 或 `Link` 建议。
-3. 点击 `Research`。
-4. 检查 Chat 中准备好的 prompt，再决定是否提交。
-
-快速当前笔记审阅：
-
-1. 打开一篇 Markdown 笔记。
-2. 使用 `Pagelet: Review current note` 或 Pagelet 图标。
-3. 等 Pagelet 完成后阅读建议卡片。
-4. 在面板保存确认区保存或取消。
-
-## 本指南核对过的真实路径
-
-本指南对照了 2026-06-06 的 Obsidian `test/` vault GUI smoke：
-
-- Pagelet 在已部署的 Obsidian 插件包中打开成功；
-- `Current`、`Yesterday`、`Last 3 days`、`Last 7 days` 范围控件可见；
-- `Review selected (1)` 和多笔记 `Review selected (N)` 路径渲染正常；
-- provider 调用前能看到 included / skipped scope 行；
-- `.pagelet/` 审阅输出被聚合显示，没有逐条污染 skipped 列表；
-- 取消路径没有写入审阅笔记；
-- 保存路径只写入一篇 `.pagelet/*.md` 审阅笔记；
-- Source、related note、Draft、Dismiss、Research 在真实面板中通过；
-- provider quota 被归类为外部 `BLOCKED`，不是 Pagelet 产品失败。
+| 没有新洞察 | 先核对来源是否丰富、关系是否具体；无结果可能是正常结束 |
+| “深度发现暂不可用”或模型能力提示 | 检查 Chat 服务商、模型和凭据，按提示选择支持所需能力的模型 |
+| 笔记不在允许的数据范围 | 检查“数据与隐私”和拾页排除规则，不通过换入口绕过排除 |
+| 自动发现额度已满 | 自动准备等待额度恢复；手动发现不使用自动额度池 |
+| Chat 正忙或已有草稿 | 先处理当前回复或草稿，再从拾页继续讨论 |
+| 关联动作不可用、过期或来源变化 | 查看当前提示；必要时重新发现，不执行旧提案 |
+| 撤销不能安全完成 | 核对笔记是否已有后续编辑，保留较新的内容 |
+
+## 维护依据与历史验证
+
+当前入口见[命令回调和洞察交互](../../src/pagelet/orchestrator.ts)、[手动/自动发现准入](../../src/pagelet/plugin-deep-discover.ts)；确认及前后台预算边界见 [DEC-051](../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md) 与[当前 Agent 架构](../architecture/pa-agent-architecture-plan.md)。
+
+2026-06-06 的结构化审阅 GUI smoke 属于历史验证，记录见 [Pagelet Smoke Checklist](../development/validation/pagelet-smoke-checklist.md)。本次文档整理没有重新运行 app smoke，也不把当时的结果作为当前发现流程或已安装构建的验证。

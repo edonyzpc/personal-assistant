@@ -25,6 +25,15 @@
 - [Embedding refresh](./vss-embedding-refresh.md)
 - [Local state](./vss-local-state-plan.md)
 
+## 保留的未实施设计输入
+
+以下原稿按 Owner 的保留要求继续留在原路径。它们是 2026-08 的讨论与实施前设计，
+不代表已批准范围、当前 Memory 实现或活跃任务；当前实现事实以代码为准，
+以上技术契约用于记录和对照，不以文档状态推定已经实施。
+
+- [Episodic Memory 设计讨论原稿](./pa-episodic-memory-design-discussion.md)
+- [Episodic Memory 与 Attunement 实施前设计](./pa-episodic-memory-design.md)
+
 ## Write、Statistics 与 Settings
 
 - [Write Action Framework](./write-action-framework-sdd.md)
@@ -39,4 +48,4 @@
 
 - 当前代码是事实基线；文档描述目标但尚未实现时，必须明确标成 proposal 或 future。
 - Memory/VSS 行为变化同步更新对应三份契约；不要在 Tracker 中复制长期架构说明。
-- Runtime/UI 变化完成 closeout 后，把最终契约更新在这里，并将实现过程归档。
+- Runtime/UI 变化完成 closeout 后，把最终契约更新在这里；已吸收的过程文档默认删除，只有当前源码或文档仍引用的独有证据才归档。

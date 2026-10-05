@@ -44,21 +44,28 @@ Sources:
 
 ## Version Pattern
 
-Use this sequence for a feature train:
+The table below is the historical `2.8.4 → 2.9.0` feature-train example, not a
+claim about the latest stable or Beta release. At this document's 2026-10-06
+reconciliation, the local repository package/manifest baseline is `2.9.2`;
+that alone does not establish remote publication, installed-build behavior, or
+the latest available Beta. Choose a target greater than the current local
+package version and substitute it consistently in the branch, commands, tag,
+and expected results below.
 
 | Channel | Example | Notes |
 | --- | --- | --- |
-| Current stable | `2.8.4` | Must already be tagged before release scripts can run. |
+| Historical stable baseline | `2.8.4` | The actual current package version must already be tagged before release scripts can run. |
 | Integration authority | `master` | Owns every accepted code/test/research/docs/tooling commit before beta packaging. |
 | Optional work branch | `feature/pagelet-recall` | Review/transport only; merge by PR or authorized direct commit before beta. |
 | First BRAT beta | `2.9.0-beta.1` | Cut `beta/2.9.0-beta.1` from the exact verified `master` HEAD. |
-| Current BRAT beta | `2.9.0-beta.2` | Published prerelease; desktop and iPhone BRAT smoke completed on 2026-07-19. |
-| Next BRAT beta | `2.9.0-beta.3` | Use only when beta feedback needs another build. |
+| Historical BRAT beta | `2.9.0-beta.2` | The recorded desktop/iPhone BRAT smoke is dated 2026-07-19; it is not new validation. |
+| Example next BRAT beta | `2.9.0-beta.3` | Illustrates another build on that historical train. |
 | Stable graduation | `2.9.0` | Cut directly from verified `master`; beta release commits remain excluded. |
 
-BRAT users who installed `2.9.0-beta.N` should use BRAT to update to the latest
-release when the stable `2.9.0` ships. Do not rely on Obsidian's ordinary update
-mechanism to move a prerelease install to the same final stable version.
+When graduating a prerelease install to the final stable version, BRAT users
+should use BRAT to select the intended release. The historical example is
+`2.9.0-beta.N → 2.9.0`; do not rely on Obsidian's ordinary update mechanism to
+perform that transition.
 
 ## Create a BRAT Beta Release
 

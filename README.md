@@ -14,9 +14,9 @@
  <mark><b><span style="font-size:18px;">💯</span>Tips</b></mark>: If you are not a developer, please refer to the manual for optimal use.
 </p>
 
-> ***NOTE***: Newest beta feature: **Pagelet** — a quiet review assistant for your notes (produces structured suggestions, saves as review notes). Also supports LLM chat with Memory. When Memory is enabled and an AI provider is configured, the first Chat can prepare Memory in the background without a blocking prompt: eligible note text is sent to the configured embedding provider and may use API credits. You can turn Memory off in Settings; recovery, settings-change, and manual rebuilds still ask before costly work.
+> ***NOTE***: **Pagelet** discovers connections across permitted notes and lets you inspect their sources or continue in Chat. See the [current Pagelet guide](./docs/guides/pagelet-user-guide.md). Also supports LLM chat with Memory. When Memory is enabled and an AI provider is configured, the first Chat can prepare Memory in the background without a blocking prompt: eligible note text is sent to the configured embedding provider and may use API credits. You can turn Memory off in Settings; recovery, settings-change, and manual rebuilds still ask before costly work.
 
-> ***v2.7 guide***: Before trying the release, read the [v2.7 user guide](./docs/archive/v2.7-user-guide-en.md). It explains AI Insights, Memory, Pagelet, Research, safe save flows, best practices, and a short release-video script from a user workflow perspective. Chinese version: [v2.7 用户指南](./docs/archive/v2.7-user-guide.md).
+> ***Historical v2.7 guide***: The archived [v2.7 user guide](./docs/archive/v2.7-user-guide-en.md) and [Chinese version](./docs/archive/v2.7-user-guide.md) describe that release's workflows and video script. Use the [Manual](./Manual.md) and [current guides](./docs/guides/README.md) for repository behavior. Documentation was reconciled with the repository on 2026-10-06; available features in an installed build depend on its actual version and release record.
 
 > ***Project docs***: Use the [documentation index](./docs/index.md) for repo-local requirements, decisions, product/architecture contracts, active development, backlog, and historical records.
 
@@ -112,7 +112,7 @@ https://github.com/user-attachments/assets/aa246889-0c32-4ce5-bde1-32eba813d034
 7. automatically set color of graph view
 8. list all callouts css configuration for quickly inserting
 9. chat with AI using Memory from your notes, or answer immediately without reading memory
-10. **(beta)** Pagelet — a quiet review assistant that reads selected notes, produces structured suggestions, and lets you save them as review notes without modifying originals
+10. Pagelet — discover connections from the current note, inspect source-backed insights, and continue the discussion in Chat; discovery itself does not modify notes
 
 ## Develop
 
@@ -132,17 +132,22 @@ Automatic maintenance writes Memory embedding data to the device-local SQLite/WA
 
 ### Network and privacy note
 
-Personal Assistant does not include telemetry or analytics. By default, Statistics history is stored in local Obsidian app storage on the current device and is not uploaded by the plugin. If you enable cross-device Statistics history, the plugin creates vault-visible Statistics history files so your normal vault sync can carry them; Git users will see those files change.
+Personal Assistant does not upload telemetry or analytics. An optional, default-off capability-usage setting emits local diagnostic events containing only capability/provider IDs, status, and duration; it excludes prompts, note text, paths, URLs, credentials, and model output. See the [local usage-event contract](./docs/operations/pa-agent-telemetry-baseline.md). By default, Statistics history is stored in local Obsidian app storage on the current device and is not uploaded by the plugin. If you enable cross-device Statistics history, the plugin creates vault-visible Statistics history files so your normal vault sync can carry them; Git users will see those files change.
 
 | Feature | Trigger | Data sent | Destination | Background? | User control |
 | --- | --- | --- | --- | --- | --- |
-| Chat | You send a message | Prompt; when enabled, selected note/tool context, Memory search query, and selected Memory excerpts or note snippets used in the final answer prompt | Configured AI provider | No | Provider, chat, and Memory settings |
+| Chat | You send a message | Prompt; selected note/tool context, Memory search query and excerpts when enabled; processed copies of attached images when the Chat model supports images | Configured AI provider | No | Provider, chat, Memory, and attachment controls |
 | AI note tools | You run summary or note AI actions | Current note content and the generated prompt | Configured AI provider | No | User action and AI settings |
 | Memory prepare/update | First Chat while Memory is enabled and the AI provider is configured; or an approved recovery/manual action | Eligible note text and Memory search data | Configured embedding provider | First-use preparation runs in the background; manual actions block on progress; after success, changed notes may update in background | Memory on/off, Data Boundary exclusions, provider settings, and background toggle |
 | Memory changed-note maintenance | Memory has been prepared and background updates are enabled | Changed note text | Configured AI provider | Yes | Memory background setting |
 | Qwen web search | You enable web search for Qwen responses | Question and final prompt context | DashScope/Bailian | No | Qwen response setting |
 | Featured image generation | You run image generation | Current note content for prompt generation, then image prompt and task requests | Configured AI provider and DashScope/Bailian | Polls task status after your request | User action and AI settings |
+| Chat image generation/editing | You explicitly request an image or edit | Image description and authorized reference-image copies; selected note text when used to prepare the description | Configured Chat/image connections | Task status may be polled after submission | Explicit request, source selection, and image connection settings |
+| Pagelet discovery | You run discovery or enable its automatic preparation | Permitted anchor/source note text and optional web queries | Configured AI provider; configured supported web search | Automatic preparation may run in background | Pagelet settings and Data Boundary exclusions |
+| Ghost preparation/update | You explicitly use `@blog2ghost` | Selected article and required media to Ghost; note text used for metadata preparation to the configured AI provider | Configured Ghost site and AI provider | No | Explicit workflow, desktop-local key, first publication in Ghost, and exact-candidate update confirmation |
 | Plugin/theme updater | You run the updater/install flow | Plugin or theme IDs and download requests | GitHub and jsDelivr | No | User action |
+
+See [image chat and storage](./docs/guides/multimodal-chat-user-guide.md) and the [Ghost workflow](./skills/blog2ghost/SKILL.md) for their data, storage, and publication boundaries.
 
 ### VSS SQLite/WASM dependency note
 

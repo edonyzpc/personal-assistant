@@ -47,12 +47,17 @@ only source of project truth. For broad runtime or packaging changes, run the
 release gate checks before asking for review:
 
 ```bash
-npm test -- --runInBand
 npm run lint
 npm run build
+npm run test:all -- --runInBand
 npm run docs:check
 git diff --check
 ```
+
+The production build precedes the complete test run because artifact tests use
+the current bundle. `npm test` runs source tests only; use the affected checks
+for narrower changes as described in AGENTS.md. Validation commands were
+reconciled with the repository on 2026-10-06.
 
 ## Pull Request Checklist
 

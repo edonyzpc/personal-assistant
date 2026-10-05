@@ -12,9 +12,11 @@ repo-local Backlog, Decision, Product Spec, or Active Tracker records.
 
 ## Product North Star
 
-Before product design, UX, planning, SDD, Pagelet, Memory, Capture, Review,
-Maintenance, or PA Agent behavior work, read
+When work involves product behavior, UX, or product tradeoffs, read
 [docs/product/pa-product-north-star.md](./docs/product/pa-product-north-star.md).
+Pure engineering planning, documentation maintenance, and local fixes without
+such decisions use [AGENTS.md](./AGENTS.md) and the affected contracts. This
+scope was aligned with AGENTS.md on 2026-10-06.
 
 The product standard:
 

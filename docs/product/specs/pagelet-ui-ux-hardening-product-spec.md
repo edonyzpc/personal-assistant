@@ -1,7 +1,7 @@
 # Pagelet UI/UX Hardening Product Spec
 
 Document status: Approved
-Updated: 2026-10-05
+Updated: 2026-10-06
 Work item: B-118
 Decision: [DEC-021 — 按真实界面证据分阶段修复 Pagelet UI/UX 漂移](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)
 Scoped decision: [DEC-023 — Pagelet provider 首次使用采用共享非阻断通知](../decisions/dec-023-shared-pagelet-provider-first-use.md)
@@ -16,6 +16,12 @@ Authority: B-118 的已授权修复范围、证据边界、非目标与验收标
 10/50 physical-call 桶不合并，候选默认 5 可调、无语言正则拒绝/重试，且不复活旧管线。
 下文旧验收和产品选择记录保留原判定，不是新实现门；新验收见
 [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)。
+
+2026-10-06 [DEC-052](../decisions/dec-052-prepared-review-deep-discover-route.md)：Owner 知悉
+旧零调用说明与代码差异后，接受 `Open prepared review` 沿用当前 Deep Discover 路由，
+可能调用配置服务商并使用额度；下文该命令的缓存查看/零调用约定局部被接续。
+`Open Pagelet` 的零调用和来源权限仍保留，不回填 B-118 原始批准或历史验收。
+
 Approval boundary: SG-01 至 SG-04、SG-07a/SG-07b 已由用户于 2026-07-20
 解决，SG-07c 当时延期且不阻断 B-118；其后续已由独立的
 [DEC-025/B-121](./pagelet-attention-aware-delivery-product-spec.md) 接续，不重开

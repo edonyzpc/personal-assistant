@@ -2,6 +2,10 @@
 
 `docs/` 是需求、决策、产品/技术契约与开发执行的 repo-local system of record。仓库外工具可以提供输入，但不承担默认收件箱、规划镜像或当前权威。已完成的过程文档在结论吸收后默认删除；只有仍被当前源码或文档引用的独有历史证据进入 [Archive](./archive/README.md)。
 
+当前实现事实只以仓库现有代码、脚本和配置为依据。Decision / Product Spec 记录产品选择，
+Tracker / Archive 记录当时的过程与证据；这些记录本身不能证明当前实现、已安装构建或远端发布状态。
+与代码不一致的旧说明应修正或明确标为历史、提案及尚未实现的范围。
+
 ## 我现在要找什么
 
 | 目的 | 入口 | 权威范围 |
@@ -18,7 +22,7 @@
 | 阶段性优化与精简测试 | [测试优化流程](./development/workflows/test-optimization-workflow.md) | 可复用步骤、候选裁决、证据复用与停止条件 |
 | 开始或继续开发 | [Development](./development/README.md) | 文档生命周期、SDD workflow、活跃开发包与验证规则 |
 | 一眼查看正在开发什么 | [Active Registry](./development/active/README.md) | 当前 L2/L3/L2G track 的入口；状态看 Tracker |
-| 复用文档结构 | [Templates](./development/templates/README.md) | Discovery、Decision、Product/Governance contract、Plan、SDD、Tracker、Closeout 模板 |
+| 复用文档结构 | [Templates](./development/templates/README.md) | Discovery、Decision、Product/Governance contract、Feature Home、Plan、SDD 与 Tracker 模板 |
 | 理解当前实现 | [Architecture](./architecture/README.md) | 当前 runtime、Memory/VSS、PA Agent、Settings、Statistics 契约 |
 | 查用户操作方法 | [Guides](./guides/README.md) | 面向用户的稳定使用指南 |
 | 发版、Beta、运行观测 | [Operations](./operations/README.md) | Release、BRAT、Telemetry runbook |
@@ -28,7 +32,7 @@
 
 - 活跃执行状态只看 [Active Registry](./development/active/README.md)，需求讨论状态只看 [Discovery Registry](./development/discovery/README.md)；本页不复制状态，避免漂移。
 - 未开始、延期与触发型事项只看 [Backlog](./backlog.md)；本页不复制条目状态。
-- Operations Agent build availability 已开启，但 per-vault `operationsAgentEnabled` 仍默认为 `false`。显式 opt-in 只开放 [DEC-014](./product/decisions/dec-014-defer-operations-agent.md) 批准的四个 core tools 与 inline 确认 / stale-safe / Undo / content-free audit 边界；已交付的 Step 3 只允许 Pagelet 单文件确定性动作或完整上下文 Chat handoff，额外写入仍关闭。
+- Operations 的当前执行边界见 [DEC-051](./product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md) 与 [Architecture](./architecture/pa-agent-architecture-plan.md#operations-agent-providers)：在实际控制器与权限可用时，主 Agent 可执行当前明确修改请求；仅预览不执行，真实歧义或超授权仍需必要确认。旧 `operationsAgentEnabled` 是兼容字段，不再作为准入开关；结果、差异审阅和可用 Undo 按领域事实提供。
 
 ## 目录职责
 
@@ -44,12 +48,12 @@
 
 ## Agent 更新规则
 
-1. 普通用户表达 idea、决定、规划、实现、继续或收尾意图时，默认由 [`pa-docs-lifecycle-manager`](../.agents/skills/pa-docs-lifecycle-manager/SKILL.md) 自动选择 lane、ID 与文档；随口 idea 留在当前对话，明确要求记录/保存，或达到 decision/version/cross-session research-or-execution gate 时，才创建或复用最小 `B-xxx`。不要让用户操作目录结构。
+1. 需要持久记录 idea、创建/更新执行记录、变更权威文档或 closeout/archive 时，使用 [`pa-docs-lifecycle-manager`](../.agents/skills/pa-docs-lifecycle-manager/SKILL.md) 选择 lane、ID 与文档。普通讨论、只读状态查询和局部修复按 AGENTS 与现有契约执行；随口 idea 留在当前对话，明确要求记录/保存，或达到 decision/version/cross-session research-or-execution gate 时，才创建或复用最小 `B-xxx`。不要让用户操作目录结构。
 2. 按任务只读 [Documentation Workflow](./development/documentation-workflow.md) 的相关段落和对应当前权威；不要为例行 turn 预载 Roadmap、全部索引、模板或 Archive。按 L0/L1/L2G/L2/L3 选择最轻但完整的 lane。
 3. 一个状态只能有一个权威来源：需求讨论看 Discovery，产品决定看 Decision，产品行为看 Product Spec，工程治理/tooling 看 Governance Contract，技术行为看 Architecture/SDD，执行进度看 Tracker，剩余工作看 Backlog。
 4. 跨会话执行以 Feature Home + Tracker 为最小 Active Package；仅在多阶段/风险管理需要时加 Plan，在复杂设计需要时加 SDD。Feature Home 必须链接 Product Spec 或 Governance Contract 之一，不得混用。
 5. Closeout 先把稳定结论吸收到 durable contract、Backlog 或 tests，再删除过程文档；只有仍需当前源码或文档引用的独有证据才进入 Archive。
-6. 移动、删除或归档后，同步更新索引、仓库引用与 [Disposition Log](./archive/disposition-log.md)，并运行 `npm run docs:check`。
+6. 移动、删除或归档后，同步更新索引和仓库引用，按 [Documentation Workflow](./development/documentation-workflow.md#默认删除) 的身份连续性要求更新 [Disposition Log](./archive/disposition-log.md)，并运行 `npm run docs:check`；无当前入链、未索引且无稳定身份的一次性草稿无需另建处置记录。
 
 当前分支与 BRAT 包装权威见 [GOV-002 Master-First Branch And Beta Packaging](./development/governance/gov-002-master-first-branch-and-beta-packaging.md)：所有已接受代码、测试、研究/文档和治理修改先进入 `master`，正式 beta 再从该精确基线创建。
 

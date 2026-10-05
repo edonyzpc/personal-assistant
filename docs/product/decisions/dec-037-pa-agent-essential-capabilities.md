@@ -2,11 +2,20 @@
 
 Decision ID: DEC-037
 Status: Accepted
-Updated: 2026-09-22
+Updated: 2026-10-06
 Authority: 用户于 2026-09-14 明确要求在 B-140 分支推进开发，并选择日期口径由主 Agent 根据上下文判断；2026-09-16 明确选择记住/纠正指令直接保存，仅歧义或风险时确认。
 Work item: B-140
 
 2026-09-21 局部后续决定：[DEC-040](./dec-040-recoverable-agent-execution.md) 将主 Agent 自主规划延伸到统一恢复、长任务与受控并发；普通 Chat 新鲜度与授权分离。B-144 已于 2026-09-22 完成交付与 closeout；现有工具语义、真实来源/权限、Pagelet anchor 和写入确认继续有效，不重开 B-140。
+
+## Scoped Successors
+
+[DEC-046](./dec-046-note-change-review-and-audit-retirement.md) 已退役持久 Operations 审计；
+[DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md) 允许主 Agent 执行
+当前明确修改请求，不再必经整批第二次确认。仅预览不执行，真正歧义、超授权和各领域
+必要确认仍保留。以下原决定中的旧写入确认/独立审计措辞在这些范围内由后继合同接续；
+[B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md) 承接后续本地实现，
+不扩大 B-140 的历史验收或声明已发布。
 
 ## Context
 

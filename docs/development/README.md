@@ -16,13 +16,13 @@
 ## 验证
 
 - [Pagelet Manual Smoke Checklist](./validation/pagelet-smoke-checklist.md)
-- [PA Agent empty-answer diagnosis, 2026-09-21](./validation/pa-agent-empty-answer-diagnosis-2026-09-21.md) — 本地来源准入失败证据、跨设备症状边界与 debug 观测。
+- [PA Agent empty-answer diagnosis, 2026-09-21](../archive/2026/pa-agent-empty-answer-diagnosis-2026-09-21.md) — 已归档的本地来源准入事故、修复验证与跨设备证据边界。
 
 ## Discovery 与 Decision
 
 - [Discovery Registry](./discovery/README.md) — 需要跨会话讨论、研究或方案选择的活跃主题。
 - [Decision Index](../product/decisions/README.md) — Accepted/Deferred/Rejected/Superseded 的 repo-local 决策入口。
-- [B-153 最终验证](../archive/2026/b153-ghost-blog-publishing-validation.md) — B-153 的开发入口；[实施设计](./ghost-blog-publishing-design.md)复用既有技术文档，任务与验证见入口中的 Plan/Tracker。
+- [Ghost 发布设计](./ghost-blog-publishing-design.md) — 当前技术设计与边界；[B-153 最终验证](../archive/2026/b153-ghost-blog-publishing-validation.md)保留该轮历史验收与限制，开发过程包已收尾。
 
 ## Engineering Governance
 
