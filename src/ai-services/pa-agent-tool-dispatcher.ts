@@ -844,9 +844,11 @@ export class ToolExecutionDispatcher {
         }
 
         const interrupt = this.createToolInterruptPromise(controller, timeoutMs);
+        let executionStarted = false;
         const executionPromise: Promise<ToolExecutionRaceResult> = Promise.resolve().then(async () => {
             await checkpointTaskSourceRead(readGuard, controller.signal);
             assertTaskSourceReadCurrent(readGuard);
+            executionStarted = true;
             return this.config.toolExecutor!.execute({
                 runId: this.config.runId,
                 turnId,
@@ -870,10 +872,14 @@ export class ToolExecutionDispatcher {
 
             switch (first.type) {
                 case "completed":
-                    if (!isReadGuardCurrent(readGuard)) return finalize(sourceGuardRejection());
+                    if (!isReadGuardCurrent(readGuard)) return finalize(retrySafety === "side_effect"
+                        ? actionResultAfterSourceChange(first.result, readGuard)
+                        : sourceGuardRejection());
                     return finalize(normalizeToolExecutionResult(first.result));
                 case "rejected":
-                    if (!isReadGuardCurrent(readGuard)) return finalize(sourceGuardRejection());
+                    if (!isReadGuardCurrent(readGuard)) return finalize(retrySafety === "side_effect" && executionStarted
+                        ? actionResultAfterSourceChange(this.toolExceptionResult(toolCall, first.error, retrySafety), readGuard)
+                        : sourceGuardRejection());
                     return finalize(this.toolExceptionResult(toolCall, first.error, retrySafety));
                 case "tool_timeout":
                     return finalize({
@@ -1266,6 +1272,40 @@ function delay(ms: number): Promise<void> {
 
 function isReadGuardCurrent(guard: TaskSourceReadGuard | undefined): boolean {
     try { assertTaskSourceReadCurrent(guard); return true; } catch { return false; }
+}
+
+/** An invoked action can already have effects. A stale observation fence must
+ * not turn those facts into a preflight rejection or erase replay protection. */
+function actionResultAfterSourceChange(
+    result: PaAgentToolExecutionResult,
+    guard: TaskSourceReadGuard | undefined,
+): PaAgentToolExecutionResult {
+    try {
+        // A native write itself can invalidate observation freshness while its
+        // source/session authority remains valid. Keep that domain receipt.
+        const sourceAuthority = guard?.captureSourceAuthority?.();
+        if (sourceAuthority?.()) return normalizeToolExecutionResult(result);
+    } catch { /* Unverifiable authority permits only the finite execution facts below. */ }
+
+    const fact = result.resultFact;
+    const resultFact = fact && (fact.kind === "applied" || fact.kind === "partial"
+        || fact.kind === "unknown" || fact.kind === "accepted") ? fact : undefined;
+    const executionState = result.executionState
+        ?? (result.outcome === "success" ? "succeeded" : "acceptance_unknown");
+    const recovery = result.recovery ?? (executionState === "acceptance_unknown"
+        ? { code: "operation_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] as const }
+        : undefined);
+    // Drop material-bearing text, source records, context and free-form
+    // metadata. These existing Host-owned fields report effects, not sources.
+    return {
+        outcome: executionState === "acceptance_unknown" ? "recoverable_error" : result.outcome,
+        promptText: `The source scope changed after this action was invoked. Its recorded execution state is ${executionState}. Report only the recorded effect facts; do not repeat completed or unknown effects.`,
+        includeInNextPrompt: true,
+        executionState,
+        ...(resultFact ? { resultFact } : {}),
+        ...(recovery ? { recovery: { ...recovery, allowedActions: [...recovery.allowedActions] } } : {}),
+        metadata: { reason: "task_source_changed_after_execution" },
+    };
 }
 
 function sourceGuardRejection(): PaAgentToolExecutionResult {

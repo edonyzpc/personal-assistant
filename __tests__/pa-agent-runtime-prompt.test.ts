@@ -978,7 +978,7 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(joined).not.toContain("{tool_observations}");
     });
 
-    it("describes bound Operations tools as staged proposals, not completed writes", () => {
+    it("distinguishes staging from execution authorized by the current request", () => {
         const guidance = createOperationsPromptGuidance([
             { name: "vault_create" },
             { name: "vault_append" },
@@ -986,8 +986,10 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
             { name: "frontmatter_update" },
         ]);
 
-        expect(guidance).toContain("stages a proposal only");
-        expect(guidance).toContain("no write has occurred");
+        expect(guidance).toContain("stage an immutable proposal only");
+        expect(guidance).toContain("never write during that tool call");
+        expect(guidance).toContain("When the current user request itself authorizes the modification and execute_operations is bound");
+        expect(guidance).toContain("For preview-only or analytical work, stop without execute_operations");
         expect(guidance).toContain("0.unsorted/");
         expect(guidance).toContain("obsidian-markdown");
         expect(guidance).not.toContain("append_to_current_note");

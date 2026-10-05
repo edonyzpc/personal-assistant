@@ -232,6 +232,23 @@ export class ChatHistoryManager {
         } finally { lease.release(); }
     }
 
+    /** Action ownership changes no source text; keep existing source leases valid. */
+    async bindRunningActionStates(conversationId: string, turnIndex: number, pendingRunId: string,
+        states: readonly PaAgentActionState[]): Promise<boolean> {
+        if (!this.isAvailable()) throw new Error('Chat history is unavailable for an action state update.');
+        if (states.length === 0) return false;
+        const { runId, turnId } = states[0].origin;
+        const lease = this.observeSourceLifetime(conversationId);
+        try {
+            const updated = await this.store.updateActionStates({ conversationId, turnIndex, runId, turnId }, () => {
+                if (!lease.isCurrent()) throw new Error('Conversation changed before action state binding.');
+                return [...states];
+            }, pendingRunId);
+            if (!lease.isCurrent()) throw new Error('Conversation changed during action state binding.');
+            return updated !== undefined;
+        } finally { lease.release(); }
+    }
+
     async getActiveConversationId(): Promise<string | null> {
         if (!this.isAvailable()) return null;
         return this.store.getActiveConversationId();

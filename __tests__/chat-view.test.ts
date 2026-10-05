@@ -24,7 +24,9 @@ import { createCreateImageTool, type ChatToolContext } from '../src/ai-services/
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
 import { ChatImageRequestError } from '../src/ai-services/image-capability';
 import { collectActionStates } from '../src/ai-services/pa-agent-result-facts';
-import { OPERATIONS_BLOCKED_MESSAGE } from '../src/ai-services/operations/operations-tool-provider';
+import { OPERATIONS_BLOCKED_MESSAGE, OPERATIONS_STAGED_MESSAGE } from '../src/ai-services/operations/operations-tool-provider';
+import { OperationsService } from '../src/ai-services/operations/operations-service';
+import { createAiServiceHost } from '../src/tests/factories/host-factory';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
 import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
 import type { ComposerDraft, ComposerImageTextSource } from '../src/chat/composer-draft';
@@ -3731,6 +3733,92 @@ describe('LLMView turn lifecycle', () => {
             expect(call.signal?.aborted).toBe(true);
             await expect(call.options.createImage!.submit({ prompt: 'LATE-CANCELLED-SENTINEL',
                 operation: 'generate', count: 1, referenceImageRefs: [] })).rejects.toMatchObject({ code: 'source_changed', facts: { executionState: 'not_started' } });
+            expect(submit).not.toHaveBeenCalled();
+        } finally {
+            call.resolve();
+            for (let index = 0; index < 5; index++) await flushPromises();
+            await view.onClose();
+        }
+    });
+
+    it.each([false, true])('uses a naturally bound note and original request; revoke during preparation=%s', async revoke => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'natural-source-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const source = createImageTextSource({ kind: 'note', text: 'NATURAL-NOTE-BODY',
+            documentText: 'NATURAL-NOTE-BODY', selection: undefined });
+        const submit = jest.fn<(input: ImageGenerationSubmitInput) => Promise<{ taskId: string }>>(
+            async () => ({ taskId: 'natural_source_task' }));
+        let current = true;
+        const prepare = jest.fn<NonNullable<ChatHost['prepareFeaturedImagePrompt']>>(async input => {
+            expect(input.isSourceCurrent?.()).toBe(true);
+            if (revoke) current = false;
+            return 'PREPARED-FROM-NATURAL-NOTE';
+        });
+        const resolve = jest.fn<NonNullable<ChatHost['resolveImageNoteSource']>>(async () => source);
+        Object.assign(plugin, {
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            prepareFeaturedImagePrompt: prepare, resolveImageNoteSource: resolve,
+        });
+        await view.onOpen();
+        const rawRequest = '请根据刚提到的笔记生成封面，保留蓝色天空。';
+        getTextArea(containerEl).value = rawRequest;
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const call = streamCalls[0];
+        const guard = { isCurrent: () => current, isNoteDomainAllowed: () => current,
+            isPathAllowed: (path: string) => current && path === source.path };
+        const input = { prompt: 'MODEL-DESCRIPTION-IS-NOT-THE-USER-REQUEST', operation: 'generate' as const,
+            count: 1, referenceImageRefs: [] as string[], sourceNotePath: source.path };
+        try {
+            const binding = call.options.createImage!;
+            const boundSource = await binding.resolveImageNoteSource!(input, guard, call.signal);
+            expect(boundSource).toBe(source);
+            const accepted = binding.submit(input, () => current, source.inputLineage, () => current,
+                undefined, { guard, signal: call.signal, textSource: boundSource });
+            if (revoke) {
+                await expect(accepted).rejects.toMatchObject({ facts: { executionState: 'not_started' } });
+                expect(submit).not.toHaveBeenCalled();
+            } else {
+                await expect(accepted).resolves.toEqual({ taskId: 'natural_source_task' });
+                expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+                    submittedPrompt: 'PREPARED-FROM-NATURAL-NOTE', inputLineage: source.inputLineage,
+                    promptOrigin: expect.objectContaining({ kind: 'note', path: source.path }),
+                }));
+            }
+            expect(resolve).toHaveBeenCalledWith(source.path, guard, call.signal);
+            expect(prepare.mock.calls[0][0]).toMatchObject({ sourceText: source.text, userRequest: rawRequest });
+        } finally {
+            call.resolve();
+            for (let index = 0; index < 5; index++) await flushPromises();
+            await view.onClose();
+        }
+    });
+
+    it('keeps an explicit selection when the Agent names its note and refuses a conflicting note', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'selected-source-conversation' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const source = createImageTextSource();
+        const resolve = jest.fn(async () => source);
+        const submit = jest.fn(async () => ({ taskId: 'unexpected_task' }));
+        Object.assign(plugin, { resolveImageNoteSource: resolve,
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit } });
+        await view.onOpen();
+        view.prefillImageDraft('根据选区生成一张图', source);
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const call = streamCalls[0];
+        const guard = { isCurrent: () => true, isNoteDomainAllowed: () => true, isPathAllowed: () => true };
+        const input = { prompt: 'A cover', operation: 'generate' as const, count: 1, referenceImageRefs: [] as string[] };
+        try {
+            const binding = call.options.createImage!;
+            const selected = await binding.resolveImageNoteSource!({ ...input, sourceNotePath: source.path }, guard);
+            expect(selected).toMatchObject({ kind: 'selection', text: source.text, selection: source.selection });
+            expect(selected?.text).not.toContain('OUTSIDE-SELECTION');
+            await expect(binding.resolveImageNoteSource!({ ...input, sourceNotePath: 'notes/another.md' }, guard))
+                .rejects.toMatchObject({ code: 'source_conflict', facts: { executionState: 'not_started' } });
+            expect(resolve).not.toHaveBeenCalled();
             expect(submit).not.toHaveBeenCalled();
         } finally {
             call.resolve();
@@ -11104,6 +11192,132 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('Read-only tool');
         expect(allText(containerEl)).not.toContain('0.unsorted/Dog.md');
     });
+
+    it.each(['current-status', 'final-history', 'late-close'] as const)(
+        'retains a same-request native Operations completion in %s', async assertion => {
+            const store = new MemoryChatHistoryStore();
+            const manager = new ChatHistoryManager({ store, generateId: () => 'current-operations-conversation' });
+            const { view, plugin, containerEl } = createView({ chatHistoryManager: manager, operationsEnabled: true });
+            const file = { path: 'notes/change.md', extension: 'md' };
+            let body = 'Blue kite';
+            const vault = {
+                getAbstractFileByPath: (path: string) => path === file.path ? file : null,
+                adapter: { exists: async (path: string) => path === file.path },
+                read: async () => body,
+                create: jest.fn(async () => file),
+                process: jest.fn(async (_file: unknown, transform: (text: string) => string) => { body = transform(body); }),
+            };
+            const operations = new OperationsService({ vault, trashFile: async () => {}, isOperationsAgentEnabled: () => true });
+            const session = operations.createSession({ surface: 'chat' });
+            const { ChatService: RealChatService } = jest.requireActual<typeof import('../src/ai-services/chat-service')>(
+                '../src/ai-services/chat-service');
+            const service = new RealChatService(createAiServiceHost(), session);
+            Object.assign(plugin.createChatService.mock.results[0].value as object, {
+                registerOperationsContextPersistence: service.registerOperationsContextPersistence.bind(service),
+                refreshOperationsActionState: service.refreshOperationsActionState.bind(service),
+                getVisibleOperationsStatus: service.getVisibleOperationsStatus.bind(service),
+                subscribeOperations: service.subscribeOperations.bind(service),
+                dispose: service.dispose.bind(service),
+            });
+            try {
+                await view.onOpen();
+                getTextArea(containerEl).value = 'Change Blue to Green now.';
+                void getButtonByText(containerEl, 'Ask').click();
+                await flushPromises();
+                const call = streamCalls[0];
+                emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__' }));
+                emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+                const guard = { isCurrent: () => true, isPathAllowed: () => true, isNoteDomainAllowed: () => true };
+                const intent = await session.stage({ runId: 'run_ui_1', turnId: 'turn_1', taskSourceReadGuard: guard,
+                    operations: [{ toolCallId: 'stage-call', name: 'vault_process', input: {
+                        path: file.path, operation: 'replace', params: { search: 'Blue', replace: 'Green', occurrence: 'first' },
+                    } }] });
+                call.options.onOperationsIntentStaged?.(intent);
+                const lineage = completeInputLineage([{ kind: 'user-text', messageId: 'current-operations-user' }]);
+                emitCanonical(call, canonicalEvent({ type: 'message_end', message: {
+                    ...assistantMessage('stage-assistant', [{ type: 'toolCall', id: 'stage-call', name: 'vault_process', input: {} }]),
+                    inputLineage: lineage,
+                } }));
+                emitCanonical(call, canonicalEvent({ type: 'message_end', message: toolResultMessage('stage-result', {
+                    toolCallId: 'stage-call', toolName: 'vault_process', inputLineage: lineage,
+                    content: { promptText: OPERATIONS_STAGED_MESSAGE, previewText: 'Staged vault_process for inline review; no write occurred.',
+                        includeInNextPrompt: true, resultFact: { kind: 'approval_pending', intentId: intent.id },
+                        metadata: { outcome: 'success', intentId: intent.id, operationCount: 1, staged: true, wrote: false,
+                            originalLength: OPERATIONS_STAGED_MESSAGE.length, observationChars: OPERATIONS_STAGED_MESSAGE.length } },
+                }) }));
+                emitCanonical(call, canonicalEvent({ type: 'turn_end', status: 'completed' }));
+                emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'execute-turn' }));
+                let releaseNative: (() => void) | undefined;
+                let nativeStarted: Promise<void> | undefined;
+                if (assertion === 'late-close') {
+                    nativeStarted = new Promise<void>(started => {
+                        vault.process.mockImplementationOnce(async (_file, transform) => {
+                            const next = transform(body);
+                            started();
+                            await new Promise<void>(resolve => { releaseNative = resolve; });
+                            body = next;
+                        });
+                    });
+                }
+                const execution = service.executeOperationsIntentFromAgent({ intentId: intent.id,
+                    runId: intent.runId, taskSourceReadGuard: guard, signal: call.signal });
+                let closedText: string | undefined;
+                if (nativeStarted) {
+                    await nativeStarted;
+                    await view.onClose();
+                    closedText = allText(containerEl);
+                    releaseNative!();
+                }
+                const completed = await execution;
+                expect(completed.state).toBe('completed');
+                expect(body).toBe('Green kite');
+                expect(vault.process).toHaveBeenCalledTimes(1);
+                if (assertion === 'current-status') {
+                    const status = call.options.operationsStatus!;
+                    expect(await status.read({ intentId: intent.id })).toMatchObject({ available: true, state: 'completed', undoAvailable: true });
+                    const foreign = await session.stage({ runId: 'foreign-run', turnId: 'foreign-turn', operations: [
+                        { toolCallId: 'foreign-call', name: 'vault_append', input: { path: file.path, content: 'Unrelated' } },
+                    ] });
+                    expect(service.getVisibleOperationsStatus(foreign.id, foreign.runId).available).toBe(true);
+                    expect(await status.read({ intentId: foreign.id })).toEqual({ intentId: foreign.id, available: false, reason: 'not_visible' });
+                }
+                if (assertion === 'late-close') {
+                    expect(completed.operations[0].undoAvailable).toBe(false);
+                    expect(await call.options.operationsStatus!.read({ intentId: intent.id })).toEqual({
+                        intentId: intent.id, available: false, reason: 'not_visible',
+                    });
+                    call.resolve();
+                    for (let index = 0; index < 8; index++) await flushPromises();
+                    const saved = await manager.getTurns(call.options.operationsStatus!.conversationId);
+                    expect(saved[0].assistant.actionStates).toEqual([expect.objectContaining({
+                        owner: 'operations', operationId: intent.id, phase: 'completed', operationsUndoAvailable: false,
+                        origin: expect.objectContaining({ runId: intent.runId }), inputLineage: lineage,
+                    })]);
+                    expect(allText(containerEl)).toBe(closedText);
+                    return;
+                }
+                emitCanonical(call, canonicalEvent({ type: 'turn_end', turnId: 'execute-turn', status: 'completed' }));
+                emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'final-turn' }));
+                emitCanonical(call, canonicalEvent({ type: 'message_end', turnId: 'final-turn', message: {
+                    ...assistantMessage('final-assistant', [{ type: 'text', text: 'Updated the note.' }]), inputLineage: lineage,
+                } }));
+                emitCanonical(call, canonicalEvent({ type: 'turn_end', turnId: 'final-turn', status: 'completed' }));
+                emitCanonical(call, canonicalEvent({ type: 'agent_end', scope: 'run', turnId: '__run__', status: 'completed' }));
+                call.resolve();
+                for (let index = 0; index < 8; index++) await flushPromises();
+                if (assertion === 'final-history') {
+                    const saved = await manager.getTurns(call.options.operationsStatus!.conversationId);
+                    expect(saved).toHaveLength(1);
+                    expect(saved[0].assistant.actionStates).toEqual([expect.objectContaining({
+                        owner: 'operations', operationId: intent.id, phase: 'completed',
+                        receipt: { kind: 'operations-result', intentId: intent.id, state: 'completed' },
+                        operationsUndoAvailable: true,
+                    })]);
+                    expect(view.chatHistory[1].canonicalTurn?.actionStates?.[0].phase).toBe('completed');
+                }
+            } finally { service.dispose(); operations.dispose(); }
+        },
+    );
 
     it.each(['same', 'run', 'turn', 'assistant', 'none'] as const)(
         'binds a mixed-batch Operations status query to one original owner (history binding: %s)',

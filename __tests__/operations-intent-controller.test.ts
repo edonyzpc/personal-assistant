@@ -2,7 +2,6 @@ import {
     OperationsControllerError,
     OperationsIntentController,
 } from "../src/ai-services/operations/operations-intent-controller";
-import { MAX_OPERATION_RESULT_GROWTH_CHARS } from "../src/ai-services/operations/input-validation";
 import { OperationsUndoStore } from "../src/ai-services/operations/operations-undo-store";
 import type {
     OperationsControllerEvent,
@@ -429,7 +428,11 @@ describe("OperationsIntentController", () => {
         controller.dispose();
         finishFirstWrite();
 
-        await expect(execution).rejects.toMatchObject({ category: "cancelled" });
+        await expect(execution).resolves.toMatchObject({ state: "partial", operations: [
+            { status: "succeeded", undoAvailable: false }, { status: "skipped", undoAvailable: false },
+        ] });
+        expect(vault.files.get("notes/a.md")).toBe("A\nafter");
+        expect(vault.files.get("notes/b.md")).toBe("B");
         expect(vault.process).toHaveBeenCalledTimes(1);
         expect(createReceipt).not.toHaveBeenCalled();
         const disposedIndex = events.findIndex((event) => event.type === "disposed");
@@ -437,43 +440,38 @@ describe("OperationsIntentController", () => {
         expect(events.slice(disposedIndex + 1)).toEqual([]);
     });
 
-    it("caps actual generated replacement text across the complete intent", async () => {
+    it("executes a complete intent beyond the retired operation-count and generated-content caps", async () => {
         const vault = new MemoryVault();
-        vault.files.set("notes/a.md", ["A", "B", "C", "D", "E"]
-            .map((token) => token.repeat(100))
-            .join("|"));
+        vault.files.set("notes/a.md", "");
         const controller = makeController(vault);
-        const replacement = "x".repeat(500);
 
-        await expect(controller.stageIntent({
+        const intent = await controller.stageIntent({
             runId: "run",
             turnId: "turn",
-            operations: ["A", "B", "C", "D", "E"].map((search, index) => ({
+            operations: Array.from({ length: 17 }, (_item, index) => ({
                 toolCallId: `call-${index}`,
-                name: "vault_process" as const,
-                input: {
-                    path: "notes/a.md",
-                    operation: "replace",
-                    params: { search, replace: replacement, occurrence: "all" },
-                },
+                name: "vault_append" as const,
+                input: { path: "notes/a.md", content: "x".repeat(3_000) },
             })),
-        })).rejects.toMatchObject({ category: "schema_invalid" });
-        expect(vault.process).not.toHaveBeenCalled();
-        expect(controller.listPendingIntents()).toEqual([]);
+        });
+        const result = await controller.executeIntent(intent.id);
+        expect(result.state).toBe("completed");
+        expect(result.operations).toHaveLength(17);
+        expect(vault.files.get("notes/a.md")?.length).toBeGreaterThanOrEqual(17 * 3_000);
         controller.dispose();
     });
 
-    it("rejects an unexpectedly amplified expected-after snapshot", async () => {
+    it("keeps an amplified expected-after snapshot reversible without a growth cap", async () => {
         const vault = new MemoryVault();
         vault.files.set("notes/a.md", "Body");
         const controller = makeController(vault, {
             frontmatterCodec: {
                 parse: () => ({}),
-                stringify: () => "x".repeat(MAX_OPERATION_RESULT_GROWTH_CHARS + 1),
+                stringify: () => "x".repeat(200_001),
             },
         });
 
-        await expect(controller.stageIntent({
+        const intent = await controller.stageIntent({
             runId: "run",
             turnId: "turn",
             operations: [{
@@ -481,8 +479,12 @@ describe("OperationsIntentController", () => {
                 name: "frontmatter_update",
                 input: { path: "notes/a.md", set: { status: "done" } },
             }],
-        })).rejects.toMatchObject({ category: "transform_failed" });
-        expect(controller.listPendingIntents()).toEqual([]);
+        });
+        const result = await controller.executeIntent(intent.id);
+        expect(result.state).toBe("completed");
+        expect(vault.files.get("notes/a.md")?.includes("x".repeat(200_001))).toBe(true);
+        await controller.undoCompleted(result);
+        expect(vault.files.get("notes/a.md")).toBe("Body");
         controller.dispose();
     });
 

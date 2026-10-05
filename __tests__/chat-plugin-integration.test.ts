@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { TFile, type App } from "obsidian";
+import { TaskSourceConstraintState } from '../src/ai-services/task-source-constraint';
 
 const mockHistoryManagerConstructor = jest.fn();
 const mockImageAssetConstructor = jest.fn();
@@ -197,6 +198,40 @@ function createHarness() {
 }
 
 describe("ChatPluginIntegration", () => {
+    it.each(['revocation', 'cancel', 'replacement'] as const)(
+        'does not bind a natural note source when %s occurs during its read', async failure => {
+            const harness = createHarness();
+            const controller = new AbortController();
+            let current = true;
+            const state = new TaskSourceConstraintState({ runId: 'run', userMessageId: 'user',
+                userText: 'Create an image from my note.', noteHandles: new Map(), sourceScope: 'notes' });
+            const guard = state.createReadGuard(state.snapshot(),
+                path => path === harness.sourceFile.path ? 'note-id' : undefined, () => current);
+            jest.mocked(harness.app.vault.cachedRead).mockImplementation(async () => {
+                if (failure === 'revocation') current = false;
+                if (failure === 'cancel') controller.abort();
+                if (failure === 'replacement') {
+                    jest.mocked(harness.app.vault.getAbstractFileByPath).mockReturnValue(
+                        Object.assign(new TFile(), { path: harness.sourceFile.path, extension: 'md' }));
+                }
+                return 'SOURCE-BODY';
+            });
+            await expect(harness.owner.resolveImageNoteSource(harness.sourceFile.path, guard, controller.signal))
+                .rejects.toThrow();
+            expect(harness.app.vault.cachedRead).toHaveBeenCalledTimes(1);
+        });
+
+    it('refuses an excluded natural note source before reading its body', async () => {
+        const harness = createHarness();
+        const state = new TaskSourceConstraintState({ runId: 'run', userMessageId: 'user',
+            userText: 'Create an image from my note.', noteHandles: new Map(), sourceScope: 'notes' });
+        const guard = state.createReadGuard(state.snapshot(), () => 'note-id', () => true);
+        harness.dependencies.source.isDataBoundaryAllowedFile = () => false;
+        await expect(harness.owner.resolveImageNoteSource(harness.sourceFile.path, guard))
+            .rejects.toMatchObject({ code: 'source_unavailable' });
+        expect(harness.app.vault.cachedRead).not.toHaveBeenCalled();
+    });
+
     beforeEach(() => {
         mockHistoryManagerConstructor.mockClear();
         mockImageAssetConstructor.mockClear();

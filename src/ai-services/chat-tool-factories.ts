@@ -2105,6 +2105,8 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
         description: "Start an image creation or edit requested by the user. Returns an accepted background task, not a completed image.",
         plannerGuidance: [
             "Use for an explicit image creation or edit request, including @CreateImage. Merely discussing images or attaching an image is not a generation request.",
+            "For an image based on a named note, locate the real note with the available read tools and pass its exact sourceNotePath. A source control is optional; clarify genuinely ambiguous notes. Never replace an explicitly selected source or submit note text as a source argument.",
+            "When distinct notes match the requested title and the current request does not distinguish them, ask which source the user means before create_image. A shared title or recent search position does not select a note; do not silently choose the first match or merge alternative sources to resolve that ambiguity.",
             "Choose generate for text-only creation, reference for inspiration from authorized images, or edit for changing a specific image. Preserve the user's requested subject and constraints.",
             "Use only exact registered image ref tokens and version IDs visible in this conversation. The host rechecks access and costs; never invent a path, URL, credential or provider endpoint.",
             "Default to one image. Interpret the requested total from the user; do not silently retry or choose the best paid result. The Host freezes a structured plan of at most four images.",
@@ -2120,6 +2122,7 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
                 subrequestIndex: { type: "integer", minimum: 1, maximum: 4, description: "Distinct requested image part for separate descriptions; omit for one request." },
                 referenceImageRefs: { type: "array", description: "Exact opaque refs for authorized chat images; no paths or URLs.", items: { type: "string", maxLength: 256 } },
                 parentVersionId: { type: "string", description: "Exact generated version ID when editing a previous result.", maxLength: 256 },
+                sourceNotePath: { type: "string", minLength: 1, description: "Exact vault-relative Markdown note path located for this request. The host reads the source; do not supply note content." },
             },
             required: ["prompt", "operation"],
             additionalProperties: false,
@@ -2135,7 +2138,7 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
         validateInput: (raw) => {
             if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("create_image input must be an object.");
             const value = raw as Record<string, unknown>;
-            const allowed = new Set(["prompt", "operation", "count", "totalCount", "subrequestIndex", "referenceImageRefs", "parentVersionId"]);
+            const allowed = new Set(["prompt", "operation", "count", "totalCount", "subrequestIndex", "referenceImageRefs", "parentVersionId", "sourceNotePath"]);
             if (Object.keys(value).some(key => !allowed.has(key))) throw new Error("create_image has unsupported arguments.");
             const prompt = typeof value.prompt === "string" ? value.prompt.trim() : "";
             if (!prompt || prompt.length > 10000) throw new Error("create_image requires a valid prompt.");
@@ -2167,11 +2170,16 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
                 && (typeof parentVersionId !== "string" || !/^[A-Za-z0-9:_-]{1,256}$/.test(parentVersionId))) {
                 throw new Error("create_image parent version is invalid.");
             }
+            const sourceNotePath = value.sourceNotePath;
+            if (sourceNotePath !== undefined && (typeof sourceNotePath !== 'string' || !sourceNotePath.trim())) {
+                throw new Error('create_image sourceNotePath must name a note.');
+            }
             return { prompt, operation, count: count as number,
                 ...(totalCount === undefined ? {} : { totalCount: totalCount as number }),
                 referenceImageRefs: refs,
                 ...(subrequestIndex === undefined ? {} : { subrequestIndex: subrequestIndex as number }),
-                ...(parentVersionId ? { parentVersionId } : {}) };
+                ...(parentVersionId ? { parentVersionId } : {}),
+                ...(typeof sourceNotePath === 'string' ? { sourceNotePath } : {}) };
         },
         execute: async (input, context) => {
             const index = input.subrequestIndex ?? 1;
@@ -2181,9 +2189,9 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
             const requestLineage = binding.resolveRequestLineage?.(input, context.imageRequestLineage)
                 ?? context.imageRequestLineage;
             const entry = prior ?? { input, operationId: imageSubrequestOperationId(binding.operationId, index),
-                receipt: Promise.resolve().then(() => isSourceCurrent
-                ? binding.submit(input, isSourceCurrent, requestLineage, undefined, context.createImageRuntime)
-                : binding.submit(input, undefined, requestLineage, undefined, context.createImageRuntime)) };
+                receipt: Promise.resolve().then(() => binding.submit(input, isSourceCurrent, requestLineage,
+                    undefined, context.createImageRuntime,
+                    { guard: context.taskSourceReadGuard, signal: context.signal })) };
             if (!prior) submitted.set(index, entry);
             const inputSummary = `${entry.input.operation ?? "operation:unselected"}; count:${entry.input.count}`;
             try {

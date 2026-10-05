@@ -567,9 +567,10 @@ export function createPaAgentCapabilityToolExecutor(
             // must preserve the dispatcher's normal successful reuse policy.
             if (!capability) return true;
             const isRead = capability.permission === "read-only" || capability.permission === "network-read";
-            if (!isRead) return true;
-            return !/(?:\blatest\b|\bcurrent\b|\bnewest\b|\bup[- ]to[- ]date\b|最新|当前|刚刚|此刻)/iu
-                .test(context.userInput);
+            // An explicit repeated ordinary read is a real domain request. The
+            // Agent may still answer from earlier context without calling; the
+            // Host only must not swallow a call it explicitly dispatched.
+            return !isRead;
         },
         execute: async (input: PaAgentToolExecutionInput): Promise<PaAgentToolExecutionResult> => {
             assertTaskSourceReadCurrent(input.taskSourceReadGuard);

@@ -236,6 +236,23 @@ function executorFor(run: TaskSourceRun, userInput = userText) {
 }
 
 describe('Task source run host', () => {
+    it('keeps legacy source authority consistent with admission without bypassing Host invalidation', async () => {
+        const h = fixture();
+        let epoch = 'authority-1';
+        const run = new TaskSourceRun({ ...h.host, getTaskSourceAuthorityEpoch: () => epoch });
+        const lineage = completeInputLineage([{ kind: 'vault', path: h.a.path, via: 'note' }]);
+        const proof = await run.prepareLineageAdmission(lineage);
+        expect(proof.isCurrent()).toBe(true);
+        expect(proof.authorityValidity()).toBe(true);
+        epoch = 'authority-2';
+        expect(proof.isCurrent()).toBe(false);
+        expect(proof.sourceValidity()).toBe(true);
+        expect(proof.authorityValidity()).toBe(true);
+        h.setCurrent(false);
+        expect(proof.sourceValidity()).toBe(false);
+        expect(proof.authorityValidity()).toBe(false);
+    });
+
     it('keeps original Memory authority after a self-note observation epoch advance', async () => {
         const h = fixture();
         const run = new TaskSourceRun({

@@ -151,6 +151,8 @@ export interface CreateImageToolInput {
     /** Stable opaque refs from this request's authorized images or conversation versions. */
     referenceImageRefs: string[];
     parentVersionId?: string;
+    /** Agent-located note; the host reads and binds its actual content. */
+    sourceNotePath?: string;
 }
 
 export interface GhostPostToolInput {
@@ -185,10 +187,17 @@ export interface CreateImageHostBinding {
     conversationId: string;
     stableMessageId: string;
     operationId: string;
+    resolveImageNoteSource?(input: CreateImageToolInput,
+        guard: import('./task-source-read-guard').TaskSourceReadGuard | undefined,
+        signal?: AbortSignal): Promise<import('../chat/composer-draft').ComposerImageTextSource | undefined>;
     /** Revalidates refs, user cost budget and the durable operation before paid dispatch. */
     submit(input: CreateImageToolInput, isSourceCurrent?: () => boolean,
         requestLineage?: InputLineage, imageSourceCurrent?: () => boolean,
-        runtime?: CreateImageHostRuntime): Promise<{ taskId: string }>;
+        runtime?: CreateImageHostRuntime, source?: {
+            guard?: import('./task-source-read-guard').TaskSourceReadGuard;
+            signal?: AbortSignal;
+            textSource?: import('../chat/composer-draft').ComposerImageTextSource;
+        }): Promise<{ taskId: string }>;
     /** Host-selected actual lineage for this image request; never model-writable. */
     resolveRequestLineage?(input: CreateImageToolInput, agentRequestLineage: InputLineage | undefined): InputLineage | undefined;
 }

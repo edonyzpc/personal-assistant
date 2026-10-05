@@ -28,6 +28,7 @@ export const CORE_WRITE_TOOL_NAMES = [
 ] as const;
 
 export type CoreWriteToolName = typeof CORE_WRITE_TOOL_NAMES[number];
+export const EXECUTE_OPERATIONS_TOOL_NAME = "execute_operations";
 
 export type JsonLikeValue =
     | null
@@ -237,7 +238,7 @@ export interface OperationExecutionResult {
 
 export interface OperationsExecutionResult {
     intentId: string;
-    state: Extract<OperationsIntentState, "completed" | "partial" | "failed" | "unknown">;
+    state: Extract<OperationsIntentState, "executing" | "completed" | "partial" | "failed" | "unknown">;
     operations: readonly OperationExecutionResult[];
     /** Issued only after actual confirm execution, from operation receipts. */
     resultFact?: import("../pa-agent-result-facts").PaAgentResultFact;
@@ -297,6 +298,15 @@ export interface StageOperationsIntentInput {
     operations: readonly OperationsToolCall[];
     /** Host-owned staging read boundary; never copied into the retained intent. */
     taskSourceReadGuard?: TaskSourceReadGuard;
+}
+
+export interface ExecuteCurrentOperationsIntentInput {
+    intentId: string;
+    /** Runtime-captured user request identity; never accepted from model arguments. */
+    runId: string;
+    signal?: AbortSignal;
+    /** Live boundary for the executing model turn; never copied into the intent. */
+    taskSourceReadGuard: import("../task-source-read-guard").TaskSourceReadGuard;
 }
 
 export type OperationsControllerEvent =

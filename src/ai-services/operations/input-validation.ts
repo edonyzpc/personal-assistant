@@ -12,22 +12,6 @@ import {
 import { validateOperationsVaultPath } from "./vault-path";
 import { isRecord } from "../../pa/helpers";
 
-export const MAX_OPERATION_CONTENT_CHARS = 50_000;
-export const MAX_INTENT_OPERATIONS = 16;
-export const MAX_INTENT_GENERATED_CHARS = 200_000;
-/** Maximum positive growth of one frozen expected-after snapshot. */
-export const MAX_OPERATION_RESULT_GROWTH_CHARS = 200_000;
-/** Bound the number of literal replacements before allocating the transformed note. */
-export const MAX_LITERAL_REPLACE_MATCHES = 50_000;
-/** Bound provider-controlled heading and section selectors. */
-export const MAX_OPERATION_SELECTOR_CHARS = 1_000;
-/** Bound one frontmatter mapping or explicit delete list. */
-export const MAX_FRONTMATTER_KEYS = 256;
-/** Bound provider-controlled frontmatter property names at every nesting level. */
-export const MAX_FRONTMATTER_KEY_CHARS = 256;
-/** Bound traversal work before cloning a provider-controlled JSON value. */
-export const MAX_FRONTMATTER_JSON_NODES = 10_000;
-
 const DANGEROUS_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 const MAX_JSON_DEPTH = 20;
 
@@ -62,6 +46,16 @@ export function validateCoreWriteInput<Name extends CoreWriteToolName>(
     }
 }
 
+export function validateExecuteOperationsInput(raw: unknown): { intentId: string } {
+    const input = expectObject(raw, "execute_operations");
+    expectExactKeys(input, ["intentId"], ["intentId"], "execute_operations");
+    const intentId = expectString(input.intentId, "execute_operations.intentId");
+    if (intentId.length === 0) {
+        throw new OperationsValidationError("execute_operations.intentId must not be empty.");
+    }
+    return Object.freeze({ intentId });
+}
+
 /** Non-generic runtime alias for provider and dispatcher adapters. */
 export function validateCoreWriteToolInput(name: CoreWriteToolName, raw: unknown): CoreWriteInputMap[CoreWriteToolName] {
     return validateCoreWriteInput(name, raw);
@@ -76,7 +70,7 @@ export function validateRemoveNoteImageInput(raw: unknown): RemoveNoteImageInput
         "remove_note_image",
     );
     const notePath = validateOperationsVaultPath(input.notePath);
-    const imageReference = expectCappedString(
+    const imageReference = expectContentString(
         input.imageReference,
         "remove_note_image.imageReference",
         false,
@@ -99,7 +93,7 @@ export function validateVaultCreateInput(raw: unknown): VaultCreateInput {
     expectExactKeys(input, ["path", "content"], ["path", "content"], "vault_create");
     return {
         path: expectString(input.path, "vault_create.path"),
-        content: expectCappedString(input.content, "vault_create.content", true),
+        content: expectContentString(input.content, "vault_create.content", true),
     };
 }
 
@@ -108,7 +102,7 @@ export function validateVaultAppendInput(raw: unknown): VaultAppendInput {
     expectExactKeys(input, ["path", "content"], ["path", "content"], "vault_append");
     return {
         path: expectString(input.path, "vault_append.path"),
-        content: expectCappedString(input.content, "vault_append.content", false),
+        content: expectContentString(input.content, "vault_append.content", false),
     };
 }
 
@@ -121,8 +115,8 @@ export function validateVaultProcessInput(raw: unknown): VaultProcessInput {
 
     if (operation === "replace") {
         expectExactKeys(params, ["search", "replace", "occurrence"], ["search", "replace"], "vault_process.params");
-        const search = expectCappedString(params.search, "vault_process.params.search", false);
-        const replace = expectCappedString(params.replace, "vault_process.params.replace", true);
+        const search = expectContentString(params.search, "vault_process.params.search", false);
+        const replace = expectContentString(params.replace, "vault_process.params.replace", true);
         const occurrence = params.occurrence === undefined
             ? undefined
             : expectEnum(params.occurrence, ["first", "all"] as const, "vault_process.params.occurrence");
@@ -145,7 +139,7 @@ export function validateVaultProcessInput(raw: unknown): VaultProcessInput {
             params: {
                 anchor: validatedAnchor,
                 position: expectEnum(params.position, ["before", "after"] as const, "vault_process.params.position"),
-                content: expectCappedString(params.content, "vault_process.params.content", false),
+                content: expectContentString(params.content, "vault_process.params.content", false),
             },
         };
     }
@@ -174,42 +168,28 @@ export function validateFrontmatterUpdateInput(raw: unknown): FrontmatterUpdateI
     let rawSet: Record<string, unknown> | undefined;
     let set: Record<string, JsonLikeValue> | undefined;
     let deleteKeys: string[] | undefined;
-    let suppliedContentChars = 0;
 
     if (input.set !== undefined) {
         rawSet = expectObject(input.set, "frontmatter_update.set");
-        suppliedContentChars += preflightJsonLike(rawSet, "frontmatter_update.set");
     }
 
     if (input.delete !== undefined) {
         if (!Array.isArray(input.delete)) {
             throw new OperationsValidationError("frontmatter_update.delete must be an array.");
         }
-        if (input.delete.length > MAX_FRONTMATTER_KEYS) {
-            throw new OperationsValidationError(`frontmatter_update.delete must contain at most ${MAX_FRONTMATTER_KEYS} keys.`);
-        }
         deleteKeys = [];
-        let deleteChars = 2;
         for (let index = 0; index < input.delete.length; index += 1) {
             const value = input.delete[index];
             const key = expectString(value, `frontmatter_update.delete[${index}]`);
             assertSafeFrontmatterKey(key, `frontmatter_update.delete[${index}]`);
-            deleteChars += (index > 0 ? 1 : 0) + jsonEncodedStringLength(key);
-            if (deleteChars > MAX_OPERATION_CONTENT_CHARS) {
-                throw new OperationsValidationError(`frontmatter_update supplied content exceeds ${MAX_OPERATION_CONTENT_CHARS} characters.`);
-            }
             deleteKeys.push(key);
         }
-        suppliedContentChars += deleteChars;
         if (new Set(deleteKeys).size !== deleteKeys.length) {
             throw new OperationsValidationError("frontmatter_update.delete must not contain duplicate keys.");
         }
     }
 
-    if (suppliedContentChars > MAX_OPERATION_CONTENT_CHARS) {
-        throw new OperationsValidationError(`frontmatter_update supplied content exceeds ${MAX_OPERATION_CONTENT_CHARS} characters.`);
-    }
-    if (rawSet) set = cloneValidatedJsonLike(rawSet) as Record<string, JsonLikeValue>;
+    if (rawSet) set = validateJsonLike(rawSet, "frontmatter_update.set", 0, new Set()) as Record<string, JsonLikeValue>;
 
     if ((!set || Object.keys(set).length === 0) && (!deleteKeys || deleteKeys.length === 0)) {
         throw new OperationsValidationError("frontmatter_update requires a non-empty set or delete change.");
@@ -225,130 +205,47 @@ export function validateFrontmatterUpdateInput(raw: unknown): FrontmatterUpdateI
     };
 }
 
-interface JsonPreflightBudget {
-    nodes: number;
-    serializedChars: number;
-    ancestors: Set<object>;
-}
-
-function preflightJsonLike(value: unknown, path: string): number {
-    const budget: JsonPreflightBudget = {
-        nodes: 0,
-        serializedChars: 0,
-        ancestors: new Set(),
-    };
-    inspectJsonLike(value, path, 0, budget);
-    return budget.serializedChars;
-}
-
-function inspectJsonLike(value: unknown, path: string, depth: number, budget: JsonPreflightBudget): void {
+function validateJsonLike(
+    value: unknown,
+    path: string,
+    depth: number,
+    ancestors: Set<object>,
+): JsonLikeValue {
     if (depth > MAX_JSON_DEPTH) throw new OperationsValidationError(`${path} exceeds the maximum nesting depth.`);
-    budget.nodes += 1;
-    if (budget.nodes > MAX_FRONTMATTER_JSON_NODES) {
-        throw new OperationsValidationError(`frontmatter_update.set exceeds ${MAX_FRONTMATTER_JSON_NODES} JSON nodes.`);
-    }
-
     if (value === null) {
-        consumeJsonChars(budget, 4);
-        return;
+        return null;
     }
     if (typeof value === "string") {
-        if (value.length > MAX_OPERATION_CONTENT_CHARS) {
-            throw new OperationsValidationError(`frontmatter_update.set exceeds ${MAX_OPERATION_CONTENT_CHARS} characters.`);
-        }
-        consumeJsonChars(budget, jsonEncodedStringLength(value));
-        return;
+        return value;
     }
     if (typeof value === "boolean") {
-        consumeJsonChars(budget, value ? 4 : 5);
-        return;
+        return value;
     }
     if (typeof value === "number") {
         if (!Number.isFinite(value)) throw new OperationsValidationError(`${path} must contain only finite numbers.`);
-        consumeJsonChars(budget, Object.is(value, -0) ? 1 : String(value).length);
-        return;
+        return value;
     }
     if (Array.isArray(value)) {
-        if (value.length > MAX_FRONTMATTER_JSON_NODES) {
-            throw new OperationsValidationError(`frontmatter_update.set exceeds ${MAX_FRONTMATTER_JSON_NODES} JSON nodes.`);
-        }
-        if (budget.ancestors.has(value)) throw new OperationsValidationError(`${path} must not contain cycles.`);
-        budget.ancestors.add(value);
-        consumeJsonChars(budget, 2 + Math.max(0, value.length - 1));
-        for (let index = 0; index < value.length; index += 1) {
-            inspectJsonLike(value[index], `${path}[${index}]`, depth + 1, budget);
-        }
-        budget.ancestors.delete(value);
-        return;
+        if (ancestors.has(value)) throw new OperationsValidationError(`${path} must not contain cycles.`);
+        ancestors.add(value);
+        const items = value.map((item, index) => validateJsonLike(item, `${path}[${index}]`, depth + 1, ancestors));
+        ancestors.delete(value);
+        return items;
     }
     if (!isRecord(value)) throw new OperationsValidationError(`${path} must be JSON-compatible.`);
-    if (budget.ancestors.has(value)) throw new OperationsValidationError(`${path} must not contain cycles.`);
-    budget.ancestors.add(value);
-    consumeJsonChars(budget, 2);
-    let propertyCount = 0;
-    for (const key in value) {
-        if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
-        propertyCount += 1;
-        if (propertyCount > MAX_FRONTMATTER_KEYS) {
-            throw new OperationsValidationError(`${path} must contain at most ${MAX_FRONTMATTER_KEYS} keys.`);
-        }
-        assertSafeFrontmatterKey(key, path);
-        consumeJsonChars(budget, (propertyCount > 1 ? 1 : 0) + jsonEncodedStringLength(key) + 1);
-        inspectJsonLike(value[key], `${path}.${key}`, depth + 1, budget);
-    }
-    budget.ancestors.delete(value);
-}
-
-function consumeJsonChars(budget: JsonPreflightBudget, chars: number): void {
-    budget.serializedChars += chars;
-    if (budget.serializedChars > MAX_OPERATION_CONTENT_CHARS) {
-        throw new OperationsValidationError(`frontmatter_update.set exceeds ${MAX_OPERATION_CONTENT_CHARS} characters.`);
-    }
-}
-
-function jsonEncodedStringLength(value: string): number {
-    let length = 2;
-    for (let index = 0; index < value.length; index += 1) {
-        const code = value.charCodeAt(index);
-        if (code === 0x22 || code === 0x5c || code === 0x08 || code === 0x09
-            || code === 0x0a || code === 0x0c || code === 0x0d) {
-            length += 2;
-        } else if (code <= 0x1f) {
-            length += 6;
-        } else if (code >= 0xd800 && code <= 0xdbff) {
-            const next = value.charCodeAt(index + 1);
-            if (next >= 0xdc00 && next <= 0xdfff) {
-                length += 2;
-                index += 1;
-            } else {
-                length += 6;
-            }
-        } else if (code >= 0xdc00 && code <= 0xdfff) {
-            length += 6;
-        } else {
-            length += 1;
-        }
-    }
-    return length;
-}
-
-function cloneValidatedJsonLike(value: unknown): JsonLikeValue {
-    if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
-        return value as JsonLikeValue;
-    }
-    if (Array.isArray(value)) return value.map((item) => cloneValidatedJsonLike(item));
+    if (ancestors.has(value)) throw new OperationsValidationError(`${path} must not contain cycles.`);
+    ancestors.add(value);
     const output = Object.create(null) as Record<string, JsonLikeValue>;
-    for (const key of Object.keys(value as Record<string, unknown>)) {
-        output[key] = cloneValidatedJsonLike((value as Record<string, unknown>)[key]);
+    for (const key of Object.keys(value)) {
+        assertSafeFrontmatterKey(key, path);
+        output[key] = validateJsonLike(value[key], `${path}.${key}`, depth + 1, ancestors);
     }
+    ancestors.delete(value);
     return output;
 }
 
 function assertSafeFrontmatterKey(key: string, path: string): void {
     if (key.length === 0) throw new OperationsValidationError(`${path} must not contain an empty key.`);
-    if (key.length > MAX_FRONTMATTER_KEY_CHARS) {
-        throw new OperationsValidationError(`${path} contains a key longer than ${MAX_FRONTMATTER_KEY_CHARS} characters.`);
-    }
     if (DANGEROUS_KEYS.has(key)) {
         throw new OperationsValidationError(`${path} contains forbidden key ${key}.`);
     }
@@ -381,12 +278,9 @@ function expectString(value: unknown, path: string): string {
     return value;
 }
 
-function expectCappedString(value: unknown, path: string, allowEmpty: boolean): string {
+function expectContentString(value: unknown, path: string, allowEmpty: boolean): string {
     const string = expectString(value, path);
     if (!allowEmpty && string.length === 0) throw new OperationsValidationError(`${path} must not be empty.`);
-    if (string.length > MAX_OPERATION_CONTENT_CHARS) {
-        throw new OperationsValidationError(`${path} exceeds ${MAX_OPERATION_CONTENT_CHARS} characters.`);
-    }
     return string;
 }
 
@@ -403,9 +297,6 @@ function expectHeading(value: unknown, path: string): string {
         throw new OperationsValidationError(`${path} must be non-empty visible heading text without surrounding whitespace.`);
     }
     if (heading.startsWith("#")) throw new OperationsValidationError(`${path} must not include a # prefix.`);
-    if (heading.length > MAX_OPERATION_SELECTOR_CHARS) {
-        throw new OperationsValidationError(`${path} exceeds ${MAX_OPERATION_SELECTOR_CHARS} characters.`);
-    }
     return heading;
 }
 

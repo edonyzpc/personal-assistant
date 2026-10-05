@@ -422,6 +422,34 @@ describe('B157 atomic historical state updates', () => {
             expect(await store.getTurns(conversation.id)).toEqual([]);
         } finally { release(); await store.dispose(); }
     });
+    it.each(['memory', 'indexeddb'] as const)('binds actions only to their existing running request in %s', async backend => {
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('running-action-binding', new FakeIndexedDbFactory() as unknown as IDBFactory);
+        await store.initialize();
+        const binding = { conversationId: 'conv-1', turnIndex: 0, runId: 'runtime-run', turnId: 'runtime-turn' };
+        const state: PaAgentActionState = { schemaVersion: 1, owner: 'operations', operationId: 'intent',
+            phase: 'pending', revision: 0, origin: { runId: binding.runId, turnId: binding.turnId,
+                assistantId: 'assistant', callId: 'call', resultId: 'result' },
+            inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'original-user' }]),
+            receipt: { kind: 'operations-staged', intentId: 'intent' } };
+        const turn = makeTurn({ assistant: { role: 'assistant', content: '', shareCardEligible: false,
+            agentExecution: { runId: 'original-user', state: 'running' } } });
+        try {
+            await store.appendTurn(turn);
+            expect(await store.updateActionStates(binding, () => [state], 'another-user')).toBeUndefined();
+            expect(await store.updateActionStates(binding, () => [state])).toBeUndefined();
+            expect(await store.updateActionStates(binding, () => [state], 'original-user')).toEqual([state]);
+            expect((await store.getTurns('conv-1'))[0]).toEqual({ ...turn, assistant: { ...turn.assistant,
+                actionStateBinding: binding, actionStates: [state] } });
+            await store.appendTurn({ ...turn, assistant: { ...turn.assistant,
+                content: 'Final answer', agentExecution: { runId: 'original-user', state: 'completed' } } });
+            expect(await store.updateActionStates(binding, () => [state], 'original-user')).toBeUndefined();
+            expect((await store.getTurns('conv-1'))[0].assistant.content).toBe('Final answer');
+            await store.deleteTurn('conv-1', 0);
+            expect(await store.updateActionStates(binding, () => [state], 'original-user')).toBeUndefined();
+            expect(await store.getTurns('conv-1')).toEqual([]);
+        } finally { await store.dispose(); }
+    });
     it.each(['memory', 'indexeddb'] as const)('preserves latest state against stale finalize and refuses missing/cross-turn updates in %s', async backend => {
         const store = backend === 'memory' ? new MemoryChatHistoryStore()
             : new IndexedDbChatHistoryStore('b157-atomic', new FakeIndexedDbFactory() as unknown as IDBFactory);

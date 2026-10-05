@@ -24,6 +24,7 @@ import {
 import type { CapabilityProvider } from './capability-types';
 import type { AgentEvent, ChatAgentStatus, ChatContextUsedItem, ChatMessage, ChatTurnMemoryMetadata, LegacyAgentEvent } from './chat-types';
 import { OperationsService, OperationsSession } from './operations/operations-service';
+import { OperationsControllerError } from './operations/operations-intent-controller';
 import { createObsidianNoteImageHost } from './operations/obsidian-note-image-host';
 import { PaAgentContextSummarizer } from './context/PaAgentContextSummarizer';
 import { createAbortError, throwIfAborted } from './chat-utils';
@@ -36,6 +37,7 @@ import { applyOperationsExecutionResult, applyOperationsUndoResult, cloneActionS
 import { ChatImageCapabilityRegistry, chatImageModelKey, type ChatImageCapability } from './image-capability';
 import type { PaAgentCommandInvocation } from './pa-agent-command';
 import type {
+    ExecuteCurrentOperationsIntentInput,
     OperationsControllerEvent,
     OperationsExecutionResult,
     OperationsIntent,
@@ -171,6 +173,41 @@ export class ChatService {
             const settled = this.operationsSession.isDisposed ? { ...result,
                 operations: result.operations.map(operation => ({ ...operation, undoAvailable: false })) } : undefined;
             await persist(settled).catch(error => this.host.log('Could not persist Operations context state', error));
+        }
+        return result;
+    }
+
+    async executeOperationsIntentFromAgent(
+        input: ExecuteCurrentOperationsIntentInput,
+    ): Promise<OperationsExecutionResult> {
+        const persist = this.operationsContextObservers.get(input.intentId);
+        const observed = this.operationsSession.getOwnedContextResult(input.intentId, input.runId);
+        if (persist && observed.pending) {
+            try {
+                // The original running row must own the intent before a native
+                // call can outlive this surface and deliver its result there.
+                await persist();
+            } catch (error) {
+                this.host.log('Could not persist Operations intent before Agent execution', error);
+                const current = this.operationsSession.getOwnedContextResult(input.intentId, input.runId);
+                if (!current.execution && !current.executing) {
+                    throw new OperationsControllerError('fs_error', 'The original Operations request could not be saved; execution did not start.');
+                }
+            }
+        }
+        const result = await this.operationsSession.executeCurrentIntent(input);
+        if (persist) {
+            const settled = this.operationsSession.isDisposed ? {
+                ...result,
+                operations: result.operations.map(operation => ({
+                    ...operation,
+                    undoAvailable: false,
+                })),
+            } : undefined;
+            await persist(settled).catch(error => this.host.log(
+                'Could not persist Operations context state from Agent execution',
+                error,
+            ));
         }
         return result;
     }
@@ -382,6 +419,7 @@ export class ChatService {
                     licenseTier: this.host.settings.licenseTier,
                 },
                 operationsIntentController: this.operationsSession,
+                operationsIntentExecutor: input => this.executeOperationsIntentFromAgent(input),
                 operationsToolProvider: this.operationsSession.provider,
             });
             // Startup admission protects the conversation/model snapshot. The

@@ -11,6 +11,52 @@ const pending = (): PaAgentActionState => ({ schemaVersion: 1, owner: 'operation
     receipt: { kind: 'operations-staged', intentId: 'intent-1' } });
 
 describe('Operations finite action state', () => {
+    it('retains every effect and the last Undo checkpoint beyond the former action count limit', () => {
+        const operations = Array.from({ length: 101 }, (_, index) => ({
+            operationId: `op-${index}`,
+            toolCallId: 'call-1',
+            name: 'vault_create' as const,
+            path: `synthetic-${index}.md`,
+            status: 'succeeded' as const,
+            receiptId: `receipt-${index}`,
+            undoAvailable: true,
+        }));
+        const applied = applyOperationsExecutionResult(pending(), {
+            intentId: 'intent-1', state: 'completed', operations,
+        });
+        expect(applied).toBeDefined();
+        expect(applied?.actions).toHaveLength(operations.length);
+        const restored = cloneActionStates(JSON.parse(JSON.stringify([applied])));
+        expect(restored).toEqual([applied]);
+        expect(projectActionStates(restored)[0]?.actions).toEqual(operations.map(operation => ({
+            actionId: operation.operationId, receiptId: operation.receiptId, phase: 'applied',
+        })));
+
+        const undone = applyOperationsUndoResult(applied!, {
+            operationId: 'op-100', receiptId: 'receipt-100', status: 'undone', undoAvailable: true,
+        });
+        expect(undone?.actions?.slice(0, 100)).toEqual(applied?.actions?.slice(0, 100));
+        expect(undone?.actions?.[100]).toMatchObject({ actionId: 'op-100', phase: 'undone' });
+        expect(projectActionStates(cloneActionStates([undone]))[0]?.actions).toHaveLength(101);
+        const malformed = JSON.parse(JSON.stringify(applied));
+        malformed.actions[100].phase = 'invented';
+        expect(cloneActionStates([malformed])).toEqual([]);
+    });
+
+    it('projects an executing Operations intent without converting it to a write result', () => {
+        const staged = pending();
+        const running = applyOperationsExecutionResult(staged, {
+            intentId: 'intent-1', state: 'executing', operations: [],
+        })!;
+        expect(running).toMatchObject({
+            phase: 'running',
+            revision: 1,
+            receipt: { kind: 'operations-executing', intentId: 'intent-1' },
+        });
+        expect(running.actions).toBeUndefined();
+        expect(projectActionSummaryFacts([running])[0]).toMatchObject({ phase: 'running' });
+    });
+
     it('retains a closed shared-reference block through history and summary without paths or confirmability', () => {
         const message: Extract<PaAgentMessage, { role: 'toolResult' }> = {
             role: 'toolResult', id: 'blocked-result', toolCallId: 'blocked-call', toolName: 'remove_note_image',

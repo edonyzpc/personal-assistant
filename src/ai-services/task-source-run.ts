@@ -865,6 +865,9 @@ export class TaskSourceRun {
                 authorityValidity: () => {
                     try {
                         if (!this.hostSourcesAreCurrent() || this.state.snapshot() !== constraint) return false;
+                        // Legacy callers without a selected scope use the same
+                        // Host authority as admission and sourceValidity above.
+                        if (!needsLineage) return true;
                         if (authorityObservations.some(observation => observation.runId !== constraint.runId
                             || (observation.owner === 'memory'
                                 && observation.memoryEnabled !== this.isMemoryAllowed()))) return false;

@@ -4,19 +4,24 @@ import { isAllowedHostToolCall } from "../pa-agent-host-tools";
 import type {
     PaAgentToolBatchPreparationInput,
     PaAgentToolBatchPreparationResult,
+    PaAgentToolExecutionInput,
     PaAgentToolExecutionResult,
     PaAgentToolExecutor,
 } from "../pa-agent-types";
 import type { CapabilityRegistry } from "../capability-registry";
 import { isCoreWriteToolName } from "./input-validation";
+import { OperationsControllerError } from "./operations-intent-controller";
 import {
     OPERATIONS_STAGED_MESSAGE,
     OPERATIONS_BLOCKED_MESSAGE,
 } from "./operations-tool-provider";
-import { getOperationsBlockedReason } from "./types";
-import type {
-    OperationsIntent,
-    StageOperationsIntentInput,
+import {
+    getOperationsBlockedReason,
+    EXECUTE_OPERATIONS_TOOL_NAME,
+    type ExecuteCurrentOperationsIntentInput,
+    type OperationsExecutionResult,
+    type OperationsIntent,
+    type StageOperationsIntentInput,
 } from "./types";
 
 export interface OperationsIntentStager {
@@ -26,10 +31,13 @@ export interface OperationsIntentStager {
     ): Promise<OperationsIntent> | OperationsIntent;
 }
 
+export type OperationsIntentExecutor = (input: ExecuteCurrentOperationsIntentInput) => Promise<OperationsExecutionResult>;
+
 export interface OperationsStagingToolExecutorOptions {
     baseExecutor: PaAgentToolExecutor;
     registry: CapabilityRegistry;
     controller: OperationsIntentStager;
+    intentExecutor?: OperationsIntentExecutor;
     allowedToolNames?: ReadonlySet<string>;
     blockedToolNames?: ReadonlySet<string>;
     onToolRunning?: (tool: string, message: string) => void;
@@ -37,8 +45,8 @@ export interface OperationsStagingToolExecutorOptions {
 
 /**
  * Converts one assistant action-tool phase into one immutable pending intent.
- * It deliberately has no confirmation or vault-write method: those belong to
- * the controller/UI bridge after the model turn has completed.
+ * Staging never writes. Execution delegates the opaque current intent id to
+ * the session/controller's request-bound execution port.
  */
 export function createOperationsStagingToolExecutor(
     options: OperationsStagingToolExecutorOptions,
@@ -49,17 +57,20 @@ export function createOperationsStagingToolExecutor(
             options.baseExecutor.getCanonicalToolCallKey?.(toolCall, context)
         ),
         getExecutionMode: (toolName) => (
-            isCoreWriteToolName(toolName)
+            isCoreWriteToolName(toolName) || toolName === EXECUTE_OPERATIONS_TOOL_NAME
                 ? "sequential"
                 : options.baseExecutor.getExecutionMode?.(toolName)
         ),
         getTimeoutMs: options.baseExecutor.getTimeoutMs?.bind(options.baseExecutor),
-        getRetrySafety: (toolName) => isCoreWriteToolName(toolName)
+        getRetrySafety: (toolName) => isCoreWriteToolName(toolName) || toolName === EXECUTE_OPERATIONS_TOOL_NAME
             ? "side_effect"
             : options.baseExecutor.getRetrySafety?.(toolName),
         canReuseSuccessfulResult: options.baseExecutor.canReuseSuccessfulResult?.bind(options.baseExecutor),
         prepareBatch: async (input) => prepareOperationsBatch(options, input),
         execute: async (input) => {
+            if (input.toolCall.name === EXECUTE_OPERATIONS_TOOL_NAME) {
+                return executeCurrentIntent(options, input);
+            }
             const capability = options.registry.get(input.toolCall.name);
             if (!capability || capability.kind !== "action" || !isCoreWriteToolName(input.toolCall.name)) {
                 return options.baseExecutor.execute(input);
@@ -76,6 +87,169 @@ export function createOperationsStagingToolExecutor(
                 },
             };
         },
+    };
+}
+
+async function executeCurrentIntent(
+    options: OperationsStagingToolExecutorOptions,
+    input: PaAgentToolExecutionInput,
+): Promise<PaAgentToolExecutionResult> {
+    const capability = options.registry.get(EXECUTE_OPERATIONS_TOOL_NAME);
+    if (!capability || capability.kind !== "action") {
+        return {
+            outcome: "policy_rejected",
+            promptText: "The Operations execution capability is unavailable in this run.",
+            previewText: "Operations execution was unavailable.",
+            metadata: {
+                outcome: "policy_rejected",
+                reason: "operations_execution_unavailable",
+                staged: false,
+                wrote: false,
+            },
+        };
+    }
+
+    if (!isAllowedHostToolCall(
+        EXECUTE_OPERATIONS_TOOL_NAME,
+        options.allowedToolNames,
+        options.blockedToolNames,
+    )) {
+        return rejectedResult(EXECUTE_OPERATIONS_TOOL_NAME, "tool_outside_user_requested_scope");
+    }
+    const policy = options.registry.canExecute(EXECUTE_OPERATIONS_TOOL_NAME);
+    if (!policy.allowed) {
+        options.registry.recordCapabilityEvent({
+            capabilityName: capability.name,
+            providerId: capability.providerId,
+            status: "skipped",
+            durationMs: 0,
+        });
+        return rejectedResult(EXECUTE_OPERATIONS_TOOL_NAME, "policy_rejected", policy.reason);
+    }
+
+    const prepared = options.registry.prepareAndValidate(EXECUTE_OPERATIONS_TOOL_NAME, input.toolCall.input, {
+        userInput: input.userInput,
+    });
+    if (!prepared.ok) {
+        return {
+            outcome: "schema_invalid",
+            promptText: `Tool execute_operations input is invalid: ${safeError(prepared.error)}. Supply only the current staged intentId.`,
+            previewText: "Invalid Operations execution request; no write occurred.",
+            metadata: {
+                outcome: "schema_invalid",
+                reason: "operations_schema_invalid",
+                staged: false,
+                wrote: false,
+            },
+        };
+    }
+    if (!options.intentExecutor) {
+        return rejectedResult(EXECUTE_OPERATIONS_TOOL_NAME, "operations_execution_unavailable");
+    }
+    const taskSourceReadGuard = input.taskSourceReadGuard;
+    if (!taskSourceReadGuard) {
+        return rejectedResult(EXECUTE_OPERATIONS_TOOL_NAME, "task_source_scope_changed");
+    }
+
+    options.onToolRunning?.(EXECUTE_OPERATIONS_TOOL_NAME, "Executing the current Operations intent...");
+    options.registry.recordCapabilityEvent({
+        capabilityName: capability.name,
+        providerId: capability.providerId,
+        status: "invoked",
+        durationMs: 0,
+    });
+    try {
+        const execution = await options.intentExecutor({
+            intentId: (prepared.input as { intentId: string }).intentId,
+            runId: input.runId,
+            signal: input.signal,
+            taskSourceReadGuard,
+        });
+        return executionResult(execution);
+    } catch (error) {
+        if (!(error instanceof OperationsControllerError)) {
+            const intentId = (prepared.input as { intentId: string }).intentId;
+            return {
+                outcome: "recoverable_error",
+                promptText: `The result of Operations intent ${intentId} is unknown. Query this original intent before taking any further action; do not stage or execute a replacement.`,
+                previewText: "The Operations execution result is unknown.",
+                includeInNextPrompt: true,
+                metadata: { outcome: "error", reason: "operations_execution_unknown", intentId, staged: true },
+                executionState: "acceptance_unknown",
+                resultFact: { kind: "unknown", operationId: intentId },
+                recovery: { code: "operations_unknown", operationId: intentId,
+                    allowedActions: ["query_operation", "wait"] },
+            };
+        }
+        const safeCategory = error.category;
+        return {
+            outcome: safeCategory === "boundary_denied" || safeCategory === "cancelled" || safeCategory === "expired"
+                ? "policy_rejected"
+                : "recoverable_error",
+            promptText: `The current Operations intent did not execute (${safeCategory}): ${safeError(error)}`,
+            previewText: `Operations execution did not start (${safeCategory}).`,
+            includeInNextPrompt: true,
+            metadata: {
+                outcome: "error",
+                reason: "operations_execution_failed",
+                category: safeCategory,
+                staged: true,
+                wrote: false,
+            },
+            executionState: "failed",
+            recovery: {
+                code: `operations_${safeCategory}`,
+                allowedActions: safeCategory === "boundary_denied" || safeCategory === "expired"
+                    ? ["none"]
+                    : ["correct_input", "query_operation"],
+            },
+        };
+    }
+}
+
+function executionResult(execution: OperationsExecutionResult): PaAgentToolExecutionResult {
+    const undoAvailable = execution.operations.some(operation => operation.undoAvailable === true);
+    const state = execution.state;
+    return {
+        outcome: state === "completed" || state === "executing" ? "success" : "recoverable_error",
+        promptText: state === "completed"
+            ? `Operations intent ${execution.intentId} completed. Report the actual operation results and available Undo state.`
+            : state === "executing"
+                ? `Operations intent ${execution.intentId} is already executing. Report that the prior execution is in progress; do not stage or execute a replacement.`
+                : `Operations intent ${execution.intentId} ended in state ${state}. Report the actual completed, failed, and unknown effects without claiming a complete write.`,
+        previewText: `Operations intent ${execution.intentId}: ${state}.`,
+        includeInNextPrompt: true,
+        ...(execution.resultFact ? { resultFact: execution.resultFact } : {}),
+        metadata: {
+            outcome: state === "completed" || state === "executing" ? "success" : "error",
+            intentId: execution.intentId,
+            state,
+            operationCount: execution.operations.length,
+            undoAvailable,
+            retrySafety: "side_effect",
+        },
+        executionState: state === "completed"
+            ? "succeeded"
+            : state === "executing"
+                ? "running"
+                : state === "partial"
+                    ? "partially_succeeded"
+                    : state === "unknown"
+                        ? "acceptance_unknown"
+                        : "failed",
+        ...(state === "partial" || state === "unknown" ? {
+            recovery: {
+                code: `operations_${state}`,
+                allowedActions: ["query_operation", "wait"],
+                operationId: execution.intentId,
+                completedParts: execution.operations
+                    .filter(operation => operation.status === "succeeded")
+                    .map(operation => operation.operationId),
+                remainingParts: execution.operations
+                    .filter(operation => operation.status !== "succeeded")
+                    .map(operation => operation.operationId),
+            },
+        } : {}),
     };
 }
 

@@ -5,7 +5,7 @@ import { parseGhostCommand } from '../ghost-publishing/entry';
 import { renderGhostPublishingCard } from '../ghost-publishing/card';
 import type { ChatSourceScope } from '../ai-services/chat-source-scope';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
-import { applyOperationsExecutionResult, applyOperationsUndoResult, cloneActionStates, markGhostStatusUnavailable, refreshGhostActionState, refreshImageActionState, refreshWritingSaveStates } from '../ai-services/pa-agent-result-facts';
+import { applyOperationsExecutionResult, applyOperationsUndoResult, cloneActionStates, markGhostStatusUnavailable, refreshGhostActionState, refreshImageActionState, refreshWritingSaveStates, type PaAgentActionState } from '../ai-services/pa-agent-result-facts';
 import { cloneInputLineage, completeInputLineage, generationInputSnapshotInputLineage, resolveWritingVersionInputLineage,
     unionInputLineages, unknownInputLineage, type InputLineage } from '../ai-services/input-lineage';
 import { PaAgentContextOverflowError } from '../ai-services/context';
@@ -4480,7 +4480,7 @@ export class LLMView extends ItemView {
                 ?? [...canonical.turnStatuses.keys()].at(-1)
                 ?? canonical.currentTurnId;
             if (!turnId) return undefined;
-            return createPaAgentPersistedTurn({
+            const persisted = createPaAgentPersistedTurn({
                 runId: canonical.runId,
                 turnId,
                 status: (canonical.terminalStatus ?? canonical.turnStatuses.get(turnId)) as TurnEndStatus | undefined,
@@ -4491,6 +4491,12 @@ export class LLMView extends ItemView {
                     ? { ...message, content: message.content.filter((part) => part.type !== 'text') }
                     : message) : canonical.messages,
             });
+            // Agent execution may finish before this turn first stores its
+            // action states. Reconcile the staged observation with its owner.
+            if (persisted.actionStates) {
+                persisted.actionStates = persisted.actionStates.map(state => this.chatService.refreshOperationsActionState(state));
+            }
+            return persisted;
         };
 
         const refreshTurnMetadataFromCanonical = (turn: UiTurn, canonicalTurn: PaAgentPersistedTurn | undefined) => {
@@ -5047,7 +5053,7 @@ export class LLMView extends ItemView {
                 return;
             }
             let sourceUserPromptIsDefault = false;
-            let sourceUserRequest = '';
+            const sourceUserRequest = rawPrompt;
             const sourceBeforeTake = currentDraft.imageIntent?.textSource;
             const promptLineageBeforeTake = currentDraft.imageIntent?.promptLineage;
             const sourceReceiptBeforeTake = currentDraft.imageIntent?.sourceReceipt;
@@ -5081,7 +5087,6 @@ export class LLMView extends ItemView {
                     showComposerHint(t('plugin.chat.createImage.source.changed'));
                     return;
                 }
-                sourceUserRequest = prompt;
                 if (!prompt.trim()) {
                     prompt = t('plugin.chat.createImage.defaultPrompt', { source: sourceBeforeTake.displayName });
                     sourceUserPromptIsDefault = true;
@@ -5364,10 +5369,12 @@ export class LLMView extends ItemView {
                                 return { intentId: input.intentId, available: false, reason: 'not_visible' };
                             }
                             const entriesSnapshot = timelineEntries;
+                            const currentStates = persistCanonicalTurnFromLifecycle(turn, '')?.actionStates ?? [];
                             const visibleStates = entriesSnapshot
                                 .flatMap(entry => entry.kind === 'history'
                                     ? entry.assistant.actionStates ?? entry.assistant.canonicalTurn?.actionStates ?? []
                                     : [])
+                                .concat(currentStates)
                                 .filter(state => state.owner === 'operations' && state.operationId === input.intentId);
                             const visibleOrigins = new Map(visibleStates.map(state => [
                                 JSON.stringify([state.origin.runId, state.origin.turnId, state.origin.assistantId]),
@@ -5477,6 +5484,21 @@ export class LLMView extends ItemView {
                     conversationId: conversationIdForMemoryActions,
                     stableMessageId,
                     operationId,
+                    resolveImageNoteSource: async (input, guard, signal) => {
+                        const selected = explicitImageIntent?.textSource;
+                        if (selected) {
+                            if (input.sourceNotePath && input.sourceNotePath !== selected.path) {
+                                throw new ImagePreacceptError('source_conflict');
+                            }
+                            if (!guard || guard.isNoteDomainAllowed?.() !== true || !guard.isPathAllowed(selected.path)) {
+                                throw new ImagePreacceptError('source_changed', 'stale');
+                            }
+                            return selected;
+                        }
+                        if (!input.sourceNotePath) return undefined;
+                        if (!this.host.resolveImageNoteSource) throw new ImagePreacceptError('source_unavailable');
+                        return await this.host.resolveImageNoteSource(input.sourceNotePath, guard, signal);
+                    },
                     resolveRequestLineage: (_input, agentRequestLineage) => (
                         explicitImageIntent?.textSource || explicitImageIntent?.promptOrigin
                             || explicitImageIntent?.promptLineage
@@ -5486,7 +5508,7 @@ export class LLMView extends ItemView {
                     submit: async (input: CreateImageToolInput, isSourceCurrent?: () => boolean,
                         agentRequestLineage?: InputLineage,
                         durableImageSourceCurrent?: () => boolean,
-                        runtime?: CreateImageHostRuntime) => {
+                        runtime?: CreateImageHostRuntime, source?: Parameters<CreateImageHostBinding['submit']>[5]) => {
                         const index = input.subrequestIndex ?? 1;
                         const requestOperationId = imageSubrequestOperationId(operationId, index);
                         const priorTask = priorImageRequests.get(requestOperationId);
@@ -5551,7 +5573,7 @@ export class LLMView extends ItemView {
                                         && current.credentialSlot === frozenImageConnection.credentialSlot
                                         && current.revision === frozenImageConnection.revision);
                             };
-                            const textSource = explicitImageIntent?.textSource;
+                            const textSource = source?.textSource ?? explicitImageIntent?.textSource;
                             const promptOrigin = explicitImageIntent?.promptOrigin;
                             const options = explicitImageIntent?.generationOptions ?? (
                                 textSource || promptOrigin || explicitImageIntent?.promptLineage
@@ -5613,6 +5635,12 @@ export class LLMView extends ItemView {
                             if (!sourceStillCurrent()) throw new Error('Image prompt sources changed.');
                             let submittedPrompt = input.prompt;
                             if (textSource) {
+                                try {
+                                    await this.host.verifyImageTextSource?.(textSource, 'before-send');
+                                } catch (error) {
+                                    throw new ImagePreacceptError('source_changed', 'stale', { cause: error });
+                                }
+                                if (!sourceStillCurrent()) throw new ImagePreacceptError('source_changed', 'stale');
                                 if (!this.host.prepareFeaturedImagePrompt) {
                                     throw new Error('Image prompt preparation is unavailable.');
                                 }
@@ -5623,8 +5651,7 @@ export class LLMView extends ItemView {
                                         imageOrdinal: index, imageTotal: total,
                                     } : {}),
                                     signal: controller.signal,
-                                    isSourceCurrent: () => isLiveTurn()
-                                        && this.host.isImageTextSourceCurrent?.(textSource) !== false,
+                                    isSourceCurrent: sourceStillCurrent,
                                 }, runtime);
                                 preparedImagePromises.set(requestOperationId, preparation);
                                 submittedPrompt = await preparation;
@@ -5696,10 +5723,10 @@ export class LLMView extends ItemView {
                     },
                 } : undefined;
                 const imageInstructions = imageGeneration && conversationIdForMemoryActions
-                    ? `\n\nImage creation capability: use create_image only when the user asks to create or edit an image. Available image ref tokens: ${[...authorizedImageRefs.keys()].join(', ') || 'none'}. Available generated versions: ${availableVersions.join(', ') || 'none'}. Refs identify only authorized current-user images and this conversation's saved generations. ${chatSupportsImages ? 'Only this request\'s attached image pixels were sent to the Chat model.' : 'The Chat model has not received image pixels. If the user asks what an attached image shows, explain that you cannot view it; do not guess its content.'} For edits, use the exact parent version when available. If the user discusses image ideas, asks only for a prompt, or asks for an image from a note without a selected source, do not call create_image; ask them to use the CreateImage source control.`
+                    ? `\n\nImage creation capability: use create_image only when the user asks to create or edit an image. Available image ref tokens: ${[...authorizedImageRefs.keys()].join(', ') || 'none'}. Available generated versions: ${availableVersions.join(', ') || 'none'}. Refs identify only authorized current-user images and this conversation's saved generations. ${chatSupportsImages ? 'Only this request\'s attached image pixels were sent to the Chat model.' : 'The Chat model has not received image pixels. If the user asks what an attached image shows, explain that you cannot view it; do not guess its content.'} For edits, use the exact parent version when available. Discussion or prompt writing may finish without generation. For a note-based image, locate the requested note and pass sourceNotePath; clarify only an ambiguous or conflicting source. An explicit source control remains binding.`
                     : '';
                 const selectedInstruction = explicitImageIntent
-                    ? `\n\n@CreateImage selected. Interpret the current request; discussion or prompt writing may finish without generation. Choose operation and authorized references from the request.${explicitImageIntent.operation ? ` The actual selected action fixes operation ${explicitImageIntent.operation} and referenceImageRefs ${JSON.stringify(chosenRefs)}.` : ''}${explicitImageIntent.parentVersionId ? ` Fixed parentVersionId ${explicitImageIntent.parentVersionId}.` : ''}${explicitImageIntent.textSource ? ' The exact text source is bound host-side; the Host prepares the submitted description. Do not read or widen it.' : ' If generation needs note text without a selected source, ask for the CreateImage source control.'}${configuredImageTotal !== undefined ? ` The actual source options fix totalCount ${configuredImageTotal}; clarify conflicts before execution.` : ''} Default to one image; interpret explicit multi-image requests. For a shared description use count; for distinct descriptions use separate subrequestIndex with a consistent totalCount. Preserve each requested description and do not choose extra paid results. Keep the acknowledgement brief.`
+                    ? `\n\n@CreateImage selected. Interpret the current request; discussion or prompt writing may finish without generation. Choose operation and authorized references from the request.${explicitImageIntent.operation ? ` The actual selected action fixes operation ${explicitImageIntent.operation} and referenceImageRefs ${JSON.stringify(chosenRefs)}.` : ''}${explicitImageIntent.parentVersionId ? ` Fixed parentVersionId ${explicitImageIntent.parentVersionId}.` : ''}${explicitImageIntent.textSource ? ' The exact text source is bound host-side; the Host prepares the submitted description. Do not read or widen it.' : ' For a note-based image, locate the requested note and pass sourceNotePath. A source control is optional; clarify genuinely ambiguous notes.'}${configuredImageTotal !== undefined ? ` The actual source options fix totalCount ${configuredImageTotal}; clarify conflicts before execution.` : ''} Default to one image; interpret explicit multi-image requests. For a shared description use count; for distinct descriptions use separate subrequestIndex with a consistent totalCount. Preserve each requested description and do not choose extra paid results. Keep the acknowledgement brief.`
                     : '';
                 if (explicitImageIntent && !createImage) throw new Error('Image creation is unavailable.');
                 const ghostInstructions = ghostPublishing
@@ -5751,13 +5778,24 @@ export class LLMView extends ItemView {
                                 const persistence = this.conversationPersistence;
                                 const service = this.chatService;
                                 service.registerOperationsContextPersistence(intent.id, async (execution, undoResults) => {
-                                    await persistence.updateActionStatesForOperation(conversationId, intent.runId, 'operations', intent.id,
-                                        states => states.map(state => execution
+                                    const refresh = (states: PaAgentActionState[]) => states.map(state => execution
                                             ? applyOperationsExecutionResult(state, execution) ?? state
                                             : undoResults
                                                 ? undoResults.reduce((current, result) =>
                                                     applyOperationsUndoResult(current, result, false) ?? current, state)
-                                                : service.refreshOperationsActionState(state)));
+                                                : service.refreshOperationsActionState(state));
+                                    if (await persistence.updateActionStatesForOperation(
+                                        conversationId, intent.runId, 'operations', intent.id, refresh)) return;
+                                    const states = persistCanonicalTurnFromLifecycle(turn, '')?.actionStates ?? [];
+                                    if (!states.some(state => state.owner === 'operations' && state.operationId === intent.id
+                                        && state.origin.runId === intent.runId)
+                                        || !await persistence.persistRunningActionStates(conversationId, stableMessageId, states)) {
+                                        throw new Error('The original running Operations request is unavailable.');
+                                    }
+                                    if (!await persistence.updateActionStatesForOperation(
+                                        conversationId, intent.runId, 'operations', intent.id, refresh)) {
+                                        throw new Error('The original Operations action binding is unavailable.');
+                                    }
                                 });
                             }
                             const handle = renderOperationsIntentCard(turn.assistantMessage, intent);

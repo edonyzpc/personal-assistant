@@ -51,7 +51,7 @@ export function isOperationsStatusObservation(value: unknown): value is Operatio
             || observation.effects !== undefined || reason !== undefined) return false;
     }
     const effects = observation.effects;
-    if (effects !== undefined && (!Array.isArray(effects) || effects.length > 16
+    if (effects !== undefined && (!Array.isArray(effects)
         || effects.some(effect => !effect || typeof effect !== 'object'
             || Object.keys(effect).some(key => !['key', 'status'].includes(key))
             || typeof (effect as { key?: unknown }).key !== 'string'

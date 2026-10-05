@@ -73,6 +73,8 @@ export interface ChatHost {
     confirmFeaturedImageTextPreparationFirstUse?(): Promise<boolean>;
     verifyImageTextSource?(source: ComposerImageTextSource, phase: 'before-send'): Promise<void>;
     isImageTextSourceCurrent?(source: ComposerImageTextSource): boolean;
+    resolveImageNoteSource?(path: string, guard: import('../ai-services/task-source-read-guard').TaskSourceReadGuard | undefined,
+        signal?: AbortSignal): Promise<ComposerImageTextSource>;
     isImagePromptOriginCurrent?(origin: ImageGenerationPromptOrigin): boolean;
     prepareFeaturedImagePrompt?(input: PrepareFeaturedImagePromptInput,
         runtime?: PrepareFeaturedImagePromptRuntime): Promise<string>;

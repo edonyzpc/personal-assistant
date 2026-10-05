@@ -1,9 +1,19 @@
 import { describe, expect, it, jest } from "@jest/globals";
+import { AIMessageChunk } from "@langchain/core/messages";
+import { RunnableLambda } from "@langchain/core/runnables";
+import { TFile } from 'obsidian';
+import { ChatPluginIntegration, type ChatPluginIntegrationDependencies } from '../src/chat/plugin-integration';
+import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
+import { PaAgentRuntime } from "../src/ai-services/pa-agent-runtime";
+import { paAgentCreateImageCommandDefinition } from "../src/ai-services/pa-agent-command";
 import { createChatToolCapability } from "../src/ai-services/capability-adapter";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
 import { createCreateImageTool, type ChatToolContext, type CreateImageToolInput } from "../src/ai-services/chat-tools";
+import { completeInputLineage } from "../src/ai-services/input-lineage";
 import { PolicyEngine } from "../src/ai-services/policy-engine";
 import { ImagePreacceptError, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from "../src/chat/image-generation-types";
+
+jest.mock("obsidian");
 
 const request: CreateImageToolInput = {
     prompt: "A warm watercolor bookstore",
@@ -11,6 +21,35 @@ const request: CreateImageToolInput = {
     count: 1,
     referenceImageRefs: [],
 };
+
+function createNaturalImageSourceHost(file: { path: string }, reads: Array<{ path: string }>): AiServiceHost {
+    return {
+        settings: {
+            debug: false, aiProvider: "qwen", baseURL: "https://example.test/v1",
+            chatModelName: "qwen-test", policyModelName: "", embeddingModelName: "embedding-test",
+            shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false, webSearchEnabled: false,
+            memoryEnabled: false, licenseTier: "paid", operationsAgentEnabled: false,
+            operationsProactiveSaveSuggestionsEnabled: false, operationsAuditIncludeContent: false,
+            operationsAuditRetentionDays: 30, statisticsVaultId: "b161-t04-synthetic", retrievalOptimizationFlags: {},
+        },
+        app: {
+            workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
+            vault: {
+                getMarkdownFiles: () => [file],
+                getAbstractFileByPath: (path: string) => path === file.path ? file : null,
+                cachedRead: async (readFile: { path: string }) => {
+                    reads.push(readFile);
+                    return "NATURAL_IMAGE_SOURCE_SENTINEL";
+                },
+            },
+            metadataCache: { getFileCache: () => null, getCache: () => null },
+        },
+        memorySearch: { ensureReadyForChat: async () => ({ decision: "answer-now" }), searchHybrid: async () => [] },
+        getMemoryEvidenceEpoch: () => "b161-t04-source-epoch",
+        getAPIToken: async () => "b161-synthetic-token", log: () => undefined,
+        isOperationsAgentEnabled: false, getMemoryExtractionPromptContext: () => undefined,
+    } as unknown as AiServiceHost;
+}
 
 describe("B-133 create_image host binding", () => {
     it("exposes only semantic arguments under a fixed image permission", () => {
@@ -28,10 +67,91 @@ describe("B-133 create_image host binding", () => {
         expect(tool.inputSchema.required).toEqual(["prompt", "operation"]);
         expect(tool.inputSchema.properties.count).toMatchObject({ minimum: 1, maximum: 4 });
         expect(tool.inputSchema.properties.totalCount).toMatchObject({ type: "integer", minimum: 1, maximum: 4 });
-        for (const secretOrHostKey of ["conversationId", "stableMessageId", "operationId", "endpoint", "credential", "path", "confirmed", "countExplicitlyAuthorized"]) {
+        for (const secretOrHostKey of ["conversationId", "stableMessageId", "operationId", "endpoint", "credential", "path", "body", "lineage", "permission", "runId", "sourceText", "confirmed", "countExplicitlyAuthorized"]) {
             expect(tool.inputSchema.properties).not.toHaveProperty(secretOrHostKey);
         }
         expect(new PolicyEngine().canExport({ ...capability, name: "query_notes" })).toMatchObject({ allowed: false });
+    });
+
+    it.each(['notes', 'combined', 'web'] as const)("binds a natural-language note only within the %s source scope", async scope => {
+        const file = Object.assign(new TFile(), { path: "notes/travel-essay.md", name: "travel-essay.md", basename: "travel-essay",
+            extension: "md", stat: { mtime: 1, ctime: 1, size: 29 } });
+        const reads: Array<{ path: string }> = [];
+        const host = createNaturalImageSourceHost(file, reads);
+        const sourceOwner = new ChatPluginIntegration({
+            app: host.app,
+            source: { isDataBoundaryAllowedFile: () => true },
+            isChatRuntimeCurrent: () => true,
+        } as unknown as ChatPluginIntegrationDependencies);
+        const submit = jest.fn(async (
+            _input: unknown, _isSourceCurrent?: () => boolean, requestLineage?: { dependencies: unknown[] },
+            imageSourceCurrent?: () => boolean,
+        ) => {
+            expect(requestLineage?.dependencies).toEqual(expect.arrayContaining([
+                expect.objectContaining({ kind: "user-text", messageId: "b161-t04-user" }),
+                expect.objectContaining({ kind: "vault", path: file.path, via: "note" }),
+            ]));
+            expect(imageSourceCurrent?.()).toBe(true);
+            return { taskId: "task-natural-note-source" };
+        });
+        const providerInputs: string[] = [];
+        let providerTurn = 0;
+        const boundModel = RunnableLambda.from(async function* (input: unknown) {
+            providerInputs.push(String(input));
+            const call = providerTurn++ === 0;
+            if (call) {
+                yield new AIMessageChunk({ content: "", tool_call_chunks: [{
+                    id: "create-image-from-located-note", index: 0, name: "create_image",
+                    args: JSON.stringify({
+                        prompt: "A warm cover for the travel essay", operation: "generate",
+                        sourceNotePath: file.path,
+                    }),
+                }] });
+            } else {
+                yield new AIMessageChunk({ content: "The image request was accepted." });
+            }
+            yield new AIMessageChunk({ content: "", response_metadata: { finish_reason: call ? "tool_calls" : "stop" } });
+        });
+        const model = { bindTools: jest.fn(() => boundModel) };
+        const runtime = new PaAgentRuntime(
+            host,
+            { createChatModel: async () => model } as never,
+            { skillContextProvider: null },
+        );
+        const rawUserText = "@CreateImage 根据我刚才提到的旅行笔记生成一张封面";
+        try {
+            await runtime.streamTurn({
+                prompt: rawUserText,
+                userText: rawUserText,
+                memoryMode: "skip-memory",
+                conversationId: "b161-t04-conversation",
+                commandInvocation: {
+                    definition: paAgentCreateImageCommandDefinition,
+                    conversationId: "b161-t04-conversation",
+                    stableMessageId: "b161-t04-user",
+                    activation: { kind: "typed-token", token: "@CreateImage" },
+                },
+                inputLineage: completeInputLineage([{ kind: "user-text", messageId: "b161-t04-user" }]),
+                runSourceSelection: { schemaVersion: 1, scope, selectionId: "b161-t04-notes",
+                    userMessageId: "b161-t04-user" },
+                createImage: { conversationId: "b161-t04-conversation", stableMessageId: "b161-t04-user",
+                    operationId: "b161-t04-operation", submit,
+                    resolveImageNoteSource: (input, guard, signal) => sourceOwner.resolveImageNoteSource(input.sourceNotePath!, guard, signal) },
+                onLifecycleEvent: () => undefined,
+            });
+        } finally {
+            runtime.dispose();
+        }
+
+        expect(rawUserText).not.toContain(file.path);
+        expect(providerInputs).toHaveLength(2);
+        expect(submit).toHaveBeenCalledTimes(scope === 'web' ? 0 : 1);
+        expect(reads).toEqual(scope === 'web' ? [] : [file]);
+        if (scope !== 'web') {
+            expect(submit.mock.calls[0][0]).toMatchObject({ sourceNotePath: file.path });
+            expect(submit.mock.calls[0][0]).not.toHaveProperty("sourceText");
+        }
+        expect(providerInputs[0]).toContain("sourceNotePath");
     });
 
     it("submits once for repeated model calls with the same host request identity", async () => {
@@ -44,7 +164,8 @@ describe("B-133 create_image host binding", () => {
         });
         expect(submit).not.toHaveBeenCalled();
         const first = await tool.execute(tool.validateInput(request), {} as ChatToolContext);
-        const second = await tool.execute(tool.validateInput({ ...request, prompt: "Try a different scene" }), {} as ChatToolContext);
+        const second = await tool.execute(tool.validateInput({ ...request, prompt: "Try a different scene",
+            sourceNotePath: 'notes/a-different-source.md' }), {} as ChatToolContext);
         expect(submit).toHaveBeenCalledTimes(1);
         expect((submit.mock.calls[0] as unknown[])[0]).toEqual(request);
         expect(first.content).toEqual({ status: "accepted", taskId: "task-1" });
@@ -133,7 +254,8 @@ describe("B-133 create_image host binding", () => {
             conversationId: "conversation-1", stableMessageId: "message-1", operationId: "operation-1", submit,
         });
         const first = await tool.execute(tool.validateInput(request), {} as ChatToolContext);
-        const second = await tool.execute(tool.validateInput({ ...request, prompt: "A changed description" }), {} as ChatToolContext);
+        const second = await tool.execute(tool.validateInput({ ...request, prompt: "A changed description",
+            sourceNotePath: 'notes/a-different-source.md' }), {} as ChatToolContext);
         expect(submit).toHaveBeenCalledTimes(1);
         expect(first.ok).toBe(false);
         expect(second.ok).toBe(false);

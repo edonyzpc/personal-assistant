@@ -1,8 +1,4 @@
 import {
-    MAX_FRONTMATTER_JSON_NODES,
-    MAX_FRONTMATTER_KEYS,
-    MAX_FRONTMATTER_KEY_CHARS,
-    MAX_OPERATION_SELECTOR_CHARS,
     OperationsValidationError,
     validateCoreWriteInput,
     validateRemoveNoteImageInput,
@@ -106,70 +102,67 @@ describe("Operations core input validation", () => {
 
         const polluted = JSON.parse('{"path":"notes/a.md","set":{"safe":{"__proto__":{"polluted":true}}}}');
         expect(() => validateCoreWriteInput("frontmatter_update", polluted)).toThrow("forbidden key __proto__");
-        expect(() => validateCoreWriteInput("vault_process", {
+        expect(validateCoreWriteInput("vault_process", {
             path: "notes/a.md",
             operation: "replace",
             params: { search: "x".repeat(50_001), replace: "y" },
-        })).toThrow("exceeds 50000 characters");
+        })).toMatchObject({ params: { search: "x".repeat(50_001) } });
     });
 
-    it("bounds heading and section selectors supplied by the provider", () => {
-        const oversizedSelector = "h".repeat(MAX_OPERATION_SELECTOR_CHARS + 1);
-        expect(() => validateCoreWriteInput("vault_process", {
+    it("accepts complete provider selectors without a schema length cap", () => {
+        const completeSelector = "h".repeat(1_001);
+        expect(validateCoreWriteInput("vault_process", {
             path: "notes/a.md",
             operation: "insert",
-            params: { anchor: { heading: oversizedSelector }, position: "after", content: "x" },
-        })).toThrow(`exceeds ${MAX_OPERATION_SELECTOR_CHARS} characters`);
-        expect(() => validateCoreWriteInput("vault_process", {
+            params: { anchor: { heading: completeSelector }, position: "after", content: "x" },
+        })).toMatchObject({ params: { anchor: { heading: completeSelector } } });
+        expect(validateCoreWriteInput("vault_process", {
             path: "notes/a.md",
             operation: "delete",
-            params: { section: oversizedSelector },
-        })).toThrow(`exceeds ${MAX_OPERATION_SELECTOR_CHARS} characters`);
+            params: { section: completeSelector },
+        })).toMatchObject({ params: { section: completeSelector } });
     });
 
-    it("bounds frontmatter key counts and key lengths before allocating output arrays", () => {
-        const oversizedKey = "k".repeat(MAX_FRONTMATTER_KEY_CHARS + 1);
-        expect(() => validateCoreWriteInput("frontmatter_update", {
+    it("keeps structural frontmatter boundaries without key-count or key-length caps", () => {
+        const longKey = "k".repeat(257);
+        expect(validateCoreWriteInput("frontmatter_update", {
             path: "notes/a.md",
-            delete: [oversizedKey],
-        })).toThrow(`longer than ${MAX_FRONTMATTER_KEY_CHARS} characters`);
-        expect(() => validateCoreWriteInput("frontmatter_update", {
+            delete: [longKey],
+        })).toMatchObject({ delete: [longKey] });
+        expect(validateCoreWriteInput("frontmatter_update", {
             path: "notes/a.md",
-            delete: Array.from({ length: MAX_FRONTMATTER_KEYS + 1 }, (_, index) => `key-${index}`),
-        })).toThrow(`at most ${MAX_FRONTMATTER_KEYS} keys`);
-        expect(() => validateCoreWriteInput("frontmatter_update", {
+            delete: Array.from({ length: 257 }, (_, index) => `key-${index}`),
+        })).toMatchObject({ delete: expect.arrayContaining(["key-256"]) });
+        expect(validateCoreWriteInput("frontmatter_update", {
             path: "notes/a.md",
             set: Object.fromEntries(Array.from(
-                { length: MAX_FRONTMATTER_KEYS + 1 },
+                { length: 257 },
                 (_, index) => [`key-${index}`, index],
             )),
-        })).toThrow(`at most ${MAX_FRONTMATTER_KEYS} keys`);
+        })).toMatchObject({ set: expect.objectContaining({ "key-256": 256 }) });
         expect(() => validateCoreWriteInput("frontmatter_update", {
             path: "notes/a.md",
-            set: { nested: { [oversizedKey]: true } },
-        })).toThrow(`longer than ${MAX_FRONTMATTER_KEY_CHARS} characters`);
-
-        const aggregateOversizedDelete = Array.from({ length: 200 }, (_, index) => (
-            `${index}-`.padEnd(MAX_FRONTMATTER_KEY_CHARS, "x")
-        ));
+            set: { nested: { [longKey]: true } },
+        })).not.toThrow();
         expect(() => validateCoreWriteInput("frontmatter_update", {
             path: "notes/a.md",
-            delete: aggregateOversizedDelete,
-        })).toThrow("supplied content exceeds 50000 characters");
+            delete: ["", "key"],
+        })).toThrow("empty key");
+        expect(() => validateCoreWriteInput("frontmatter_update", {
+            path: "notes/a.md",
+            delete: ["key", "key"],
+        })).toThrow("duplicate keys");
     });
 
-    it("preflights frontmatter JSON node and encoded-character budgets before deep cloning", () => {
-        const oversizedSparseArray: unknown[] = [];
-        oversizedSparseArray.length = MAX_FRONTMATTER_JSON_NODES + 1;
-        expect(() => validateCoreWriteInput("frontmatter_update", {
+    it("keeps JSON protocol safety without node or encoded-character budgets", () => {
+        expect(validateCoreWriteInput("frontmatter_update", {
             path: "notes/a.md",
-            set: { values: oversizedSparseArray },
-        })).toThrow(`exceeds ${MAX_FRONTMATTER_JSON_NODES} JSON nodes`);
-
-        expect(() => validateCoreWriteInput("frontmatter_update", {
+            set: { values: Array.from({ length: 10_001 }, (_, index) => index) },
+        })).toMatchObject({ set: { values: expect.arrayContaining([10_000]) } });
+        expect(validateCoreWriteInput("frontmatter_update", {
             path: "notes/a.md",
-            set: { value: "\u0000".repeat(9_000) },
-        })).toThrow("frontmatter_update.set exceeds 50000 characters");
+            set: { value: "\u0000".repeat(50_001) },
+        })).toMatchObject({ set: { value: "\u0000".repeat(50_001) } });
 
         const cyclic: Record<string, unknown> = {};
         cyclic.self = cyclic;
@@ -215,12 +208,9 @@ describe("Operations pure Markdown transforms", () => {
         expect(() => replaceLiteral("abc", "z", "x")).toThrow("not found");
     });
 
-    it("measures replace-all amplification before constructing an unbounded result", () => {
-        expect(replaceLiteral("a".repeat(1_000), "a", "x".repeat(50), "all")).toHaveLength(50_000);
-        expect(() => replaceLiteral("a".repeat(1_001), "a", "x".repeat(50), "all"))
-            .toThrow("generates more than 50000 characters");
-        expect(() => replaceLiteral("a".repeat(50_001), "a", "", "all"))
-            .toThrow("exceeds 50000 matches");
+    it("constructs literal replace-all results beyond the retired match and output caps", () => {
+        expect(replaceLiteral("a".repeat(1_001), "a", "x".repeat(50), "all")).toHaveLength(50_050);
+        expect(replaceLiteral("a".repeat(50_001), "a", "", "all")).toHaveLength(0);
     });
 
     it("matches visible headings while ignoring fenced code and refuses ambiguity", () => {

@@ -8,10 +8,34 @@ import type {
     OperationsStatusHost,
     OperationsStatusObservation,
 } from '../src/ai-services/operations-status-tool';
-import { isOperationsStatusObservation } from '../src/ai-services/operations-status-tool';
+import { createOperationsStatusTool, isOperationsStatusObservation } from '../src/ai-services/operations-status-tool';
 
 jest.mock('obsidian');
 afterEach(() => jest.restoreAllMocks());
+
+it('reads every effect above the former status-observation limit without truncation', async () => {
+    const effects = Array.from({ length: 17 }, (_value, index) => ({
+        key: index % 2 === 0 ? 'note' as const : 'attachment' as const,
+        status: index % 3 === 0 ? 'applied' as const : 'unknown' as const,
+    }));
+    const observation: OperationsStatusObservation = {
+        intentId: 'intent_many_effects', available: true, state: 'partial', effects, undoAvailable: true,
+    };
+    const host: OperationsStatusHost = { read: async () => observation };
+
+    expect(isOperationsStatusObservation(observation)).toBe(true);
+    const result = await createOperationsStatusTool(host).execute(
+        { intentId: observation.intentId },
+        { signal: new AbortController().signal } as never,
+    );
+    if (!result.content) throw new Error('Expected the complete Operations status observation.');
+    expect(result.content.effects).toHaveLength(17);
+    expect(result.content.effects).toEqual(effects);
+    expect(isOperationsStatusObservation({
+        ...observation,
+        effects: [...effects, { key: 'note', status: 'invented-status' }],
+    })).toBe(false);
+});
 
 it('admits the finite blocked observation without leaking conflict paths or Undo ability', () => {
     const observation = { intentId: 'blocked-intent', available: true, state: 'blocked',
@@ -40,12 +64,19 @@ it('registers and freshly reads a finite Operations status observation across re
         isDataBoundaryAllowedPath: () => true,
         getMemoryExtractionPromptContext: () => undefined,
     } as unknown as AiServiceHost;
+    const firstEffects: NonNullable<OperationsStatusObservation['effects']> = [
+        ...Array.from({ length: 32 }, () => ({ key: 'note' as const, status: 'applied' })),
+        { key: 'attachment', status: 'unknown' },
+    ];
+    const secondEffects: NonNullable<OperationsStatusObservation['effects']> = [
+        ...firstEffects.slice(0, -1), { key: 'attachment', status: 'restored' },
+    ];
     const observations: OperationsStatusObservation[] = [
         { intentId: 'intent_previous', available: true, state: 'partial',
-            effects: [{ key: 'note', status: 'applied' }, { key: 'attachment', status: 'unknown' }],
+            effects: firstEffects,
             undoAvailable: true },
         { intentId: 'intent_previous', available: true, state: 'partial',
-            effects: [{ key: 'note', status: 'applied' }, { key: 'attachment', status: 'restored' }],
+            effects: secondEffects,
             undoAvailable: true },
     ];
     let readCount = 0;
@@ -97,9 +128,20 @@ it('registers and freshly reads a finite Operations status observation across re
     expect(readMock).toHaveBeenCalledTimes(2);
     expect(readMock.mock.calls[0]?.[0]).toEqual({ intentId: 'intent_previous' });
     expect(readMock.mock.calls.at(-1)?.[0]).toEqual({ intentId: 'intent_previous' });
-    const modelResult = inputs.find(message => message.some(item => item.content.includes('intent_previous')));
-    expect(modelResult?.some(item => item.content.includes('restored')))
-        .toBe(true);
+    const statusResults = lifecycle.filter(event => event.type === 'message_end'
+        && event.message.role === 'toolResult' && event.message.toolName === 'get_operations_status');
+    expect(statusResults).toHaveLength(2);
+    for (const [requestIndex, expected] of [[1, firstEffects], [3, secondEffects]] as const) {
+        const result = statusResults[(requestIndex - 1) / 2];
+        if (result.type !== 'message_end' || result.message.role !== 'toolResult') {
+            throw new Error('Expected the actual Operations tool result.');
+        }
+        const resultText = result.message.content.promptText;
+        const payload = JSON.parse(resultText) as { observation: OperationsStatusObservation };
+        expect(payload.observation.effects).toEqual(expected);
+        expect(payload.observation.effects).toHaveLength(33);
+        expect(inputs[requestIndex].map(message => message.content).join('\n')).toContain(resultText);
+    }
     const resultEvent = lifecycle.find(event => event.type === 'message_end'
         && event.message.role === 'toolResult' && event.message.toolName === 'get_operations_status');
     expect(resultEvent?.type === 'message_end' ? resultEvent.message.inputLineage : undefined).toEqual({

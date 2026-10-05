@@ -1,10 +1,5 @@
 import { parseYaml, stringifyYaml } from "obsidian";
 
-import {
-    MAX_LITERAL_REPLACE_MATCHES,
-    MAX_OPERATION_CONTENT_CHARS,
-    MAX_OPERATION_RESULT_GROWTH_CHARS,
-} from "./input-validation";
 import type {
     FrontmatterUpdateInput,
     JsonLikeValue,
@@ -79,11 +74,7 @@ export function replaceLiteral(
     return chunks.join("");
 }
 
-/**
- * Measure a literal replacement before constructing its output. This keeps
- * provider-controlled replace-all calls from amplifying a small replacement
- * string into an unbounded allocation before the confirmation card exists.
- */
+/** Measure a literal replacement before constructing its output. */
 export function planLiteralReplacement(
     current: string,
     search: string,
@@ -91,13 +82,6 @@ export function planLiteralReplacement(
     occurrence: "first" | "all" = "first",
 ): LiteralReplacementPlan {
     if (search.length === 0) throw new OperationsTransformError("Literal search must not be empty.");
-    if (search.length > MAX_OPERATION_CONTENT_CHARS) {
-        throw new OperationsTransformError(`Literal search exceeds ${MAX_OPERATION_CONTENT_CHARS} characters.`);
-    }
-    if (replacement.length > MAX_OPERATION_CONTENT_CHARS) {
-        throw new OperationsTransformError(`Literal replacement exceeds ${MAX_OPERATION_CONTENT_CHARS} characters.`);
-    }
-
     const first = current.indexOf(search);
     if (first < 0) throw new OperationsTransformError("Literal search text was not found.");
     const matchOffsets = [first];
@@ -107,37 +91,14 @@ export function planLiteralReplacement(
             const next = current.indexOf(search, cursor);
             if (next < 0) break;
             matchOffsets.push(next);
-            if (matchOffsets.length > MAX_LITERAL_REPLACE_MATCHES) {
-                throw new OperationsTransformError(
-                    `Literal replace-all exceeds ${MAX_LITERAL_REPLACE_MATCHES} matches.`,
-                );
-            }
-            if (
-                replacement.length > 0
-                && matchOffsets.length > Math.floor(MAX_OPERATION_CONTENT_CHARS / replacement.length)
-            ) {
-                throw new OperationsTransformError(
-                    `Literal replace-all generates more than ${MAX_OPERATION_CONTENT_CHARS} characters.`,
-                );
-            }
             cursor = next + search.length;
         }
     }
 
     const generatedChars = matchOffsets.length * replacement.length;
-    if (generatedChars > MAX_OPERATION_CONTENT_CHARS) {
-        throw new OperationsTransformError(
-            `Literal replacement generates more than ${MAX_OPERATION_CONTENT_CHARS} characters.`,
-        );
-    }
     const finalLength = current.length - matchOffsets.length * search.length + generatedChars;
     if (!Number.isSafeInteger(finalLength) || finalLength < 0) {
         throw new OperationsTransformError("Literal replacement output length is invalid.");
-    }
-    if (finalLength - current.length > MAX_OPERATION_RESULT_GROWTH_CHARS) {
-        throw new OperationsTransformError(
-            `Literal replacement grows the note by more than ${MAX_OPERATION_RESULT_GROWTH_CHARS} characters.`,
-        );
     }
     return Object.freeze({
         matchOffsets: Object.freeze(matchOffsets),

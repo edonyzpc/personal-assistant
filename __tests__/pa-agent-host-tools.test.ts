@@ -105,6 +105,80 @@ describe('read failure recovery through actual capability feedback', () => {
     });
 });
 
+describe('ordinary read-tool dispatch freshness', () => {
+    it('executes an identical explicit read again after the source changes without freshness wording', async () => {
+        const file = {
+            path: 'notes/changing-source.md',
+            extension: 'md',
+            stat: { mtime: 1, size: 16 },
+        };
+        let content = 'ORIGINAL ALPHA';
+        const cachedRead = jest.fn(async () => content);
+        const host = {
+            settings: {},
+            log: jest.fn(),
+            app: {
+                vault: {
+                    getAbstractFileByPath: (path: string) => path === file.path ? file : null,
+                    getMarkdownFiles: () => [file],
+                    cachedRead,
+                },
+                metadataCache: { getFileCache: () => null },
+            },
+        };
+        const registry = new CapabilityRegistry({ policyEngine: new PolicyEngine() });
+        registry.register(createChatToolCapability(createReadNoteTool(), { providerId: 'core-tools' }));
+        const executor = createPaAgentCapabilityToolExecutor({ registry, host: host as never });
+        const dispatcher = new ToolExecutionDispatcher({
+            toolExecutor: executor,
+            toolExecutionMode: 'hybrid',
+            runId: 'ordinary-read-refresh',
+            userInput: 'Read the named note and report its body.',
+            toolTimeoutMs: 1000,
+            toolTimeoutOutcome: 'recoverable_error',
+            toolAbortGraceMs: 1,
+            maxToolCalls: 20,
+            now: () => 1,
+            isAborted: () => false,
+            isWallClockExceeded: () => false,
+            wallClockRemainingMs: () => 1000,
+            events: new AgentLifecycleEventEmitter({ runId: 'ordinary-read-refresh', now: () => 1 }),
+            emitToolResult: (_turn, call, result) => ({
+                role: 'toolResult',
+                id: `result-${call.id}`,
+                toolCallId: call.id,
+                toolName: call.name,
+                timestamp: 1,
+                isError: !['success', 'reused_result', 'duplicate_skipped'].includes(result.outcome),
+                content: { ...result, includeInNextPrompt: result.includeInNextPrompt ?? true },
+            }) as Extract<PaAgentMessage, { role: 'toolResult' }>,
+        });
+        const dispatchRead = async (id: string) => {
+            const summary = await dispatcher.executeBufferedToolCalls(id, id === 'first' ? 0 : 1, [{
+                key: id,
+                id,
+                name: 'read_note',
+                argsText: JSON.stringify({ path: file.path }),
+                index: 0,
+                partIndex: 0,
+                hasStructuredInput: false,
+            }], undefined, undefined);
+            return summary.toolResults[0]?.content;
+        };
+
+        const first = await dispatchRead('first');
+        content = 'REPLACED BRAVO';
+        file.stat = { mtime: 2, size: content.length };
+        const second = await dispatchRead('second');
+
+        expect(cachedRead).toHaveBeenCalledTimes(2);
+        expect(first?.promptText).toContain('ORIGINAL ALPHA');
+        expect(second?.promptText).toContain('REPLACED BRAVO');
+        expect(second?.promptText).not.toContain('ORIGINAL ALPHA');
+        expect(second?.metadata?.outcome).toBe('success');
+    });
+});
+
 function createMemoryEvidence(content: string, path = "notes/current.md"): MemorySearchResult {
     return {
         usedMemory: true,
@@ -2019,7 +2093,7 @@ describe("PA Agent canonical host tool executor", () => {
         expect(typeof toolResult?.content.metadata?.originalInputSummary).toBe("string");
     });
 
-    it("deduplicates alias and whitespace-equivalent calls by prepared canonical input", async () => {
+    it("canonicalizes alias and whitespace-equivalent calls but executes both explicit reads", async () => {
         const plugin = createPlugin();
         const executeMemorySearch = jest.fn<(input: SearchMemoryInput, context: ChatToolContext) => Promise<MemorySearchResult>>(
             async (input) => ({
@@ -2051,13 +2125,13 @@ describe("PA Agent canonical host tool executor", () => {
 
         const result = await loop.run();
 
-        expect(executeMemorySearch).toHaveBeenCalledTimes(1);
+        expect(executeMemorySearch).toHaveBeenCalledTimes(2);
         expect(executeMemorySearch).toHaveBeenCalledWith(
             expect.objectContaining({ query: "project launch" }),
             expect.any(Object),
         );
         expect(result.turns[0]?.toolResults.map((message) => message.content.metadata?.outcome))
-            .toEqual(["success", "reused_result"]);
+            .toEqual(["success", "success"]);
     });
 
     it("fails loud with schema_invalid when search_memory tool call omits query (Phase A fail-loud)", async () => {

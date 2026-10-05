@@ -6,8 +6,6 @@ import {
     PaAgentRuntime,
     parseNativeToolCallsFromModelResponse,
 } from '../src/ai-services/pa-agent-runtime';
-import { OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION }
-    from '../src/ai-services/operations/operations-acknowledgement-policy';
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
 import { GhostHostAdmissionError } from '../src/ghost-publishing/types';
 import { createPaAgentPersistedTurn } from '../src/ai-services/pa-agent-history';
@@ -37,7 +35,7 @@ import type {
     PreparedMarkdownOperation,
     StageOperationsIntentInput,
 } from '../src/ai-services/operations/types';
-import type { OperationsSession } from '../src/ai-services/operations/operations-service';
+import { OperationsService, type OperationsSession } from '../src/ai-services/operations/operations-service';
 import { OperationsToolProvider } from '../src/ai-services/operations/operations-tool-provider';
 import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
 import {
@@ -527,6 +525,59 @@ function extractSerializedToolContextBlocks(input: string | undefined): string[]
     return [...(input ?? '').matchAll(/<tool_context tool="[^"]+">\n[\s\S]*?\n<\/tool_context>/g)]
         .map((match) => match[0]);
 }
+
+describe('Operations execution persistence', () => {
+    it.each(['wait', 'failure', 'concurrent-receipt'] as const)(
+        'awaits original ownership before native execution and retains real facts (%s)', async mode => {
+            const file = { path: 'notes/change.md', extension: 'md' };
+            let body = 'Blue';
+            const process = jest.fn(async (_file: unknown, change: (text: string) => string) => { body = change(body); });
+            const operations = new OperationsService({ vault: { getAbstractFileByPath: () => file,
+                read: async () => body, create: async () => file, process,
+                adapter: { exists: async (path: string) => path === file.path } },
+                trashFile: async () => {}, isOperationsAgentEnabled: () => true });
+            const session = operations.createSession({ surface: 'chat' });
+            const service = new ChatService(createPlugin() as unknown as ConstructorParameters<typeof ChatService>[0], session);
+            try {
+                const guard = { isCurrent: () => true, isPathAllowed: () => true, isNoteDomainAllowed: () => true };
+                const intent = await session.stage({ runId: 'run', turnId: 'stage', taskSourceReadGuard: guard,
+                    operations: [{ toolCallId: 'call', name: 'vault_append', input: { path: file.path, content: 'Green' } }] });
+                const input = { intentId: intent.id, runId: intent.runId, taskSourceReadGuard: guard };
+                let entered!: () => void, release!: () => void;
+                const started = new Promise<void>(resolve => { entered = resolve; });
+                const barrier = new Promise<void>(resolve => { release = resolve; });
+                const persist = jest.fn<() => Promise<void>>(async () => {});
+                persist.mockImplementationOnce(async () => {
+                    entered();
+                    await barrier;
+                    if (mode !== 'wait') throw new Error('history storage unavailable');
+                });
+                service.registerOperationsContextPersistence(intent.id, persist);
+                const executing = service.executeOperationsIntentFromAgent(input);
+                const outcome = executing.then(result => ({ result }), error => ({ error }));
+                await started;
+                expect(process).not.toHaveBeenCalled();
+                if (mode === 'concurrent-receipt') {
+                    expect((await session.executeCurrentIntent(input)).state).toBe('completed');
+                }
+                release();
+                if (mode === 'failure') {
+                    expect(await outcome).toMatchObject({ error: { category: 'fs_error' } });
+                    expect(process).not.toHaveBeenCalled();
+                    expect(body).toBe('Blue');
+                    expect(session.getOwnedContextResult(intent.id, intent.runId).pending).toBe(true);
+                } else {
+                    expect(await outcome).toMatchObject({ result: { state: 'completed' } });
+                    expect(process).toHaveBeenCalledTimes(1);
+                    expect(body).toBe('Blue\nGreen');
+                    service.registerOperationsContextPersistence(intent.id, async () => { throw new Error('history unavailable'); });
+                    expect((await service.executeOperationsIntentFromAgent(input)).state).toBe('completed');
+                    expect(process).toHaveBeenCalledTimes(1);
+                }
+            } finally { service.dispose(); operations.dispose(); }
+        },
+    );
+});
 
 describe('retrieval diagnostics surface ownership', () => {
     it('binds the complete Chat turn to chat diagnostics', async () => {
@@ -1900,7 +1951,7 @@ describe('ChatService.streamLLM integration', () => {
         }
     });
 
-    it('keeps the Operations acknowledgement contract when its empty response crosses into reserve', async () => {
+    it('keeps a staged Operations preview under ordinary reserve handling', async () => {
         jest.useFakeTimers();
         jest.setSystemTime(0);
         try {
@@ -1955,9 +2006,8 @@ describe('ChatService.streamLLM integration', () => {
                     }
                     return {
                         async *[Symbol.asyncIterator]() {
-                            // The inline confirmation card is already the
-                            // successful output, so an empty reserved
-                            // acknowledgement must not turn the run incomplete.
+                            // A staged preview uses the ordinary finalization
+                            // contract; an empty response is still incomplete.
                             yield { content: '' };
                         },
                     };
@@ -1973,6 +2023,9 @@ describe('ChatService.streamLLM integration', () => {
                 maxWallClockMs: 100,
                 finalizationReserveMs: 30,
                 operationsIntentController: { stageIntent },
+                operationsIntentExecutor: jest.fn(async () => ({
+                    intentId: 'unused', state: 'completed' as const, operations: [],
+                })),
                 operationsToolProvider: new OperationsToolProvider(),
             });
             const lifecycleEvents: CanonicalAgentEvent[] = [];
@@ -1992,31 +2045,27 @@ describe('ChatService.streamLLM integration', () => {
             expect(streamCall).toBe(3);
             for (const input of providerInputs.slice(1)) {
                 const messages = input.messages as unknown as Array<{ getType(): string; content: unknown }>;
-                const system = messages.filter(message => message.getType() === 'system').map(message => String(message.content)).join('\n');
-                const human = messages.filter(message => message.getType() === 'human').map(message => String(message.content)).join('\n');
-                expect(system).toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
-                expect(human).not.toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
-                expect(human.split('Create a note for this decision.')).toHaveLength(2);
+                const human = messages.filter(message => message.getType() === 'human')
+                    .map(message => String(message.content)).join('\n');
+                expect(human).not.toContain('Do not call tools or claim that a write has completed.');
             }
-            expect(providerInputs[2].input).not.toContain('The ordinary turn deadline has been reached.');
             expect(boundToolNames[0]).toEqual(expect.arrayContaining([
                 'vault_create',
                 'vault_append',
                 'vault_process',
                 'frontmatter_update',
+                'execute_operations',
             ]));
-            expect(boundToolNames).toHaveLength(1);
-            expect(providerInputs[1].tool_definitions).toBe('None');
-            expect(providerInputs[2].tool_definitions).toBe('No tools are available in this finalization turn.');
-            expect(lifecycleEvents.find((event) => event.type === 'agent_end')).toMatchObject({
-                status: 'completed',
-                metadata: {
-                    reason: 'operations_intent_staged_acknowledgement_completed',
-                    diagnostics: [expect.objectContaining({
-                        type: 'operations_intent_staged_acknowledgement_completed',
-                    })],
-                },
-            });
+            expect(boundToolNames.length).toBeGreaterThanOrEqual(2);
+            expect(String(providerInputs[1].tool_definitions)).toContain('vault_create');
+            expect(String(providerInputs[2].tool_definitions))
+                .toContain('No source, context or action tools are available in this finalization turn.');
+            const end = lifecycleEvents.find((event) => event.type === 'agent_end');
+            expect(end).toMatchObject({ status: 'incomplete', metadata: {
+                reason: 'finalization_reserve_exhausted',
+                diagnostics: expect.arrayContaining([expect.objectContaining({ type: 'assistant_empty_response' })]),
+            } });
+            expect(JSON.stringify(end?.metadata)).not.toContain('operations_intent_staged_acknowledgement');
             expect(jest.getTimerCount()).toBe(0);
             runtime.dispose();
         } finally {
@@ -2024,7 +2073,7 @@ describe('ChatService.streamLLM integration', () => {
         }
     });
 
-    it('offers Memory with permitted Operations and completes only the pending card without a predicted-search warning', async () => {
+    it('offers Memory with permitted Operations and completes a preview answer without a predicted-search warning', async () => {
         let streamCall = 0;
         const model = {
             bindTools: jest.fn(() => model),
@@ -2044,7 +2093,7 @@ describe('ChatService.streamLLM integration', () => {
                     };
                     return;
                 }
-                yield { content: '' };
+                yield { content: 'The proposal is ready for review.' };
             }),
             invoke: jest.fn(async () => ({ content: '' })),
         };
@@ -2056,6 +2105,9 @@ describe('ChatService.streamLLM integration', () => {
         const runtime = createRuntime(plugin, false, {
             skillContextProvider: null,
             operationsIntentController: { stageIntent },
+            operationsIntentExecutor: jest.fn(async () => ({
+                intentId: 'unused', state: 'completed' as const, operations: [],
+            })),
             operationsToolProvider: new OperationsToolProvider(),
         });
         const lifecycleEvents: CanonicalAgentEvent[] = [];
@@ -2076,21 +2128,13 @@ describe('ChatService.streamLLM integration', () => {
         expect(schemas.map((schema) => schema.function?.name)).toEqual(expect.arrayContaining(['search_memory', 'vault_create']));
         expect(await stageIntent.mock.results[0].value).toMatchObject({ state: 'pending' });
         expect(createNote).not.toHaveBeenCalled();
-        expect(lifecycleEvents.find((event) => event.type === 'agent_end')).toMatchObject({
-            status: 'completed',
-            metadata: {
-                reason: 'operations_intent_staged_acknowledgement_empty',
-                diagnostics: expect.arrayContaining([
-                    expect.objectContaining({
-                        type: 'operations_intent_staged_acknowledgement_empty',
-                    }),
-                ]),
-            },
-        });
+        expect(lifecycleEvents.find((event) => event.type === 'agent_end'))
+            .toMatchObject({ status: 'completed' });
+        expect(JSON.stringify(lifecycleEvents)).toContain('The proposal is ready for review.');
         runtime.dispose();
     });
 
-    it('accepts a staged Operations card when a buffered empty acknowledgement finishes after softAt', async () => {
+    it('keeps a buffered staged Operations preview turn through the finalization reserve', async () => {
         jest.useFakeTimers();
         jest.setSystemTime(0);
         try {
@@ -2154,6 +2198,9 @@ describe('ChatService.streamLLM integration', () => {
                 finalizationReserveMs: 30,
                 providerResponseDelivery: 'buffered',
                 operationsIntentController: { stageIntent },
+                operationsIntentExecutor: jest.fn(async () => ({
+                    intentId: 'unused', state: 'completed' as const, operations: [],
+                })),
                 operationsToolProvider: new OperationsToolProvider(),
             });
             const lifecycleEvents: CanonicalAgentEvent[] = [];
@@ -2175,23 +2222,18 @@ describe('ChatService.streamLLM integration', () => {
             expect(stageIntent).toHaveBeenCalledTimes(1);
             expect(streamCall).toBe(2);
             const messages = providerInputs[1].messages as unknown as Array<{ getType(): string; content: unknown }>;
-            const system = messages.filter(message => message.getType() === 'system').map(message => String(message.content)).join('\n');
             const human = messages.filter(message => message.getType() === 'human').map(message => String(message.content)).join('\n');
-            expect(system).toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
-            expect(human).not.toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+            expect(human).not.toContain('Do not call tools or claim that a write has completed.');
             expect(human.split('Create a note for this decision.')).toHaveLength(2);
             expect(providerInputs[1].input).not.toContain('The ordinary turn deadline has been reached.');
-            expect(providerInputs[1].tool_definitions).toBe('None');
-            expect(boundToolNames).toHaveLength(1);
+            expect(String(providerInputs[1].tool_definitions)).toContain('execute_operations');
+            expect(boundToolNames).toHaveLength(2);
             expect(lifecycleEvents.find((event) => event.type === 'agent_end')).toMatchObject({
-                status: 'completed_with_warning',
+                status: 'incomplete',
                 metadata: {
                     reason: 'finalization_reserve_overrun',
                     diagnostics: expect.arrayContaining([
                         expect.objectContaining({ type: 'finalization_reserve_overrun' }),
-                        expect.objectContaining({
-                            type: 'operations_intent_staged_acknowledgement_completed',
-                        }),
                     ]),
                 },
             });
@@ -3272,6 +3314,7 @@ describe('ChatService.streamLLM integration', () => {
             .map((tool) => tool.function?.name)
             .sort();
         expect(exportedToolNames).toEqual(expectedFirstTurnToolNames(
+            'execute_operations',
             'frontmatter_update',
             'remove_note_image',
             'vault_append',

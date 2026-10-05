@@ -1,7 +1,5 @@
 import type { NoteImageRemovalAttachmentFile } from "./note-image-removal";
 
-export const NOTE_IMAGE_REMOVAL_MAX_RECOVERY_BYTES = 64 * 1024 * 1024;
-
 export interface NoteImageRemovalReservation {
     readonly id: string;
     readonly byteLength: number;
@@ -23,7 +21,7 @@ interface RetainedSnapshot extends NoteImageRemovalSnapshot {
 }
 
 export type NoteImageRemovalResourceErrorCode =
-    | "capacity_exceeded"
+    | "invalid_size"
     | "missing"
     | "expired"
     | "busy";
@@ -52,14 +50,7 @@ export class NoteImageRemovalResourceOwner {
     reserve(byteLength: number, createId: () => string): NoteImageRemovalReservation {
         this.assertUsable();
         if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
-            throw new NoteImageRemovalResourceError("capacity_exceeded", "Invalid attachment recovery size.");
-        }
-        if (byteLength > NOTE_IMAGE_REMOVAL_MAX_RECOVERY_BYTES
-            || this.usedBytes() + byteLength > NOTE_IMAGE_REMOVAL_MAX_RECOVERY_BYTES) {
-            throw new NoteImageRemovalResourceError(
-                "capacity_exceeded",
-                "Temporary image recovery capacity is full.",
-            );
+            throw new NoteImageRemovalResourceError("invalid_size", "Invalid attachment recovery size.");
         }
         const id = createId();
         this.reservations.set(id, byteLength);

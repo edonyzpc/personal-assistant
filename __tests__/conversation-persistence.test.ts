@@ -50,6 +50,29 @@ function makePersistence(manager: ChatHistoryManager) {
 }
 
 describe("ConversationPersistence", () => {
+    it('binds a running action without changing source content or reviving a deleted request', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'running-operations' });
+        const persistence = makePersistence(manager);
+        await persistence.persistRunningTurn('change note', 'original-user', { role: 'user', content: 'change note' });
+        const original = (await manager.getTurns('running-operations'))[0];
+        const sourceCurrent = manager.captureSourceLifetime('running-operations');
+        const state: PaAgentActionState = { schemaVersion: 1, owner: 'operations', operationId: 'intent',
+            phase: 'pending', revision: 0, origin: { runId: 'runtime-run', turnId: 'runtime-turn',
+                assistantId: 'assistant', callId: 'call', resultId: 'result' },
+            inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'original-user' }]),
+            receipt: { kind: 'operations-staged', intentId: 'intent' } };
+        expect(await persistence.persistRunningActionStates('running-operations', 'original-user', [state])).toBe(true);
+        expect(sourceCurrent()).toBe(true);
+        const saved = (await manager.getTurns('running-operations'))[0];
+        expect(saved.user).toEqual(original.user);
+        expect(saved.assistant).toEqual({ ...original.assistant, actionStates: [state], actionStateBinding: {
+            conversationId: 'running-operations', turnIndex: 0, runId: 'runtime-run', turnId: 'runtime-turn',
+        } });
+        await manager.deleteTurn('running-operations', 0);
+        expect(await persistence.persistRunningActionStates('running-operations', 'original-user', [state])).toBe(false);
+        expect(await manager.getTurns('running-operations')).toEqual([]);
+    });
     it('adds the real saved turn binding to the live message only after finalization succeeds', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'bound-conversation' });

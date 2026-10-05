@@ -272,6 +272,20 @@ export class ComposerDraft<T> {
 }
 
 /** Capture an exact editor source before Chat takes focus; no asynchronous provider reads happen here. */
+export function captureComposerImageNoteSource(
+    file: { path: string; extension: string; basename?: string },
+    documentText: string,
+): ComposerImageTextSource | null {
+    if (!file.path || file.extension !== 'md') return null;
+    const text = documentText.slice(getFrontMatterInfo(documentText).contentStart);
+    if (!text.trim()) return null;
+    return Object.freeze({
+        kind: 'note', path: file.path, displayName: file.basename || file.path,
+        text, documentText, file,
+        inputLineage: completeInputLineage([{ kind: 'vault', path: file.path, via: 'note' }]),
+    });
+}
+
 export function captureComposerImageTextSource(
     editor: Editor,
     view: MarkdownView,
@@ -282,17 +296,7 @@ export function captureComposerImageTextSource(
     if (typeof editor.getValue !== 'function') return null;
     const documentText = editor.getValue() ?? '';
     if (kind === 'note') {
-        const text = documentText.slice(getFrontMatterInfo(documentText).contentStart);
-        if (!text.trim()) return null;
-        return {
-            kind,
-            path: file.path,
-            displayName: file.basename || file.path,
-            text,
-            documentText,
-            file,
-            inputLineage: completeInputLineage([{ kind: 'vault', path: file.path, via: 'note' }]),
-        };
+        return captureComposerImageNoteSource(file, documentText);
     }
 
     if (typeof editor.getSelection !== 'function'

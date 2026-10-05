@@ -137,7 +137,7 @@ export interface ChatHistoryStore {
     getTurns(conversationId: string): Promise<PersistedTurn[]>;
     /** Patches an existing turn atomically; does not create a conversation, turn, or action. */
     updateActionStates(binding: PaAgentActionStateBinding,
-        transform: (states: PaAgentActionState[]) => PaAgentActionState[]): Promise<PaAgentActionState[] | undefined>;
+        transform: (states: PaAgentActionState[]) => PaAgentActionState[], pendingRunId?: string): Promise<PaAgentActionState[] | undefined>;
     appendTurn(turn: PersistedTurn): Promise<void>;
     appendTurnAndUpdateConversation(
         turn: PersistedTurn,
@@ -331,16 +331,18 @@ export class MemoryChatHistoryStore extends ChatDebugDeletionNotifications imple
     }
 
     async updateActionStates(binding: PaAgentActionStateBinding,
-        transform: (states: PaAgentActionState[]) => PaAgentActionState[]): Promise<PaAgentActionState[] | undefined> {
+        transform: (states: PaAgentActionState[]) => PaAgentActionState[], pendingRunId?: string): Promise<PaAgentActionState[] | undefined> {
         const key = buildTurnRecordKey(binding.conversationId, binding.turnIndex);
         const turn = this.turns.get(key);
-        if (!turn || !sameActionStateBinding(turn.assistant.actionStateBinding, binding)) return undefined;
+        if (!turn || (pendingRunId
+            ? turn.assistant.agentExecution?.runId !== pendingRunId || turn.assistant.agentExecution.state !== 'running'
+            : !sameActionStateBinding(turn.assistant.actionStateBinding, binding))) return undefined;
         const current = boundActionStates(turn.assistant.actionStates, binding, binding.conversationId, binding.turnIndex);
         const states = mergeLatestActionStates(current, transform(cloneActionStates(current)));
         if (!states.every(state => state.origin.runId === binding.runId && state.origin.turnId === binding.turnId)) {
             throw new Error('Action state belongs to a different turn.');
         }
-        this.turns.set(key, { ...turn, assistant: { ...turn.assistant, actionStates: states } });
+        this.turns.set(key, { ...turn, assistant: { ...turn.assistant, actionStateBinding: { ...binding }, actionStates: states } });
         return cloneActionStates(states);
     }
 
@@ -713,19 +715,22 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
     }
 
     async updateActionStates(binding: PaAgentActionStateBinding,
-        transform: (states: PaAgentActionState[]) => PaAgentActionState[]): Promise<PaAgentActionState[] | undefined> {
+        transform: (states: PaAgentActionState[]) => PaAgentActionState[], pendingRunId?: string): Promise<PaAgentActionState[] | undefined> {
         let result: PaAgentActionState[] | undefined;
         await this.writeTransaction([TURNS_STORE], async transaction => {
             const store = transaction.objectStore(TURNS_STORE);
             const key = buildTurnRecordKey(binding.conversationId, binding.turnIndex);
             const record = await requestToPromise<TurnRecord | undefined>(store.get(key));
-            if (!record || !sameActionStateBinding(record.turn.assistant.actionStateBinding, binding)) return;
+            if (!record || (pendingRunId
+                ? record.turn.assistant.agentExecution?.runId !== pendingRunId || record.turn.assistant.agentExecution.state !== 'running'
+                : !sameActionStateBinding(record.turn.assistant.actionStateBinding, binding))) return;
             const current = boundActionStates(record.turn.assistant.actionStates, binding, binding.conversationId, binding.turnIndex);
             const states = mergeLatestActionStates(current, transform(cloneActionStates(current)));
             if (!states.every(state => state.origin.runId === binding.runId && state.origin.turnId === binding.turnId)) {
                 throw new Error('Action state belongs to a different turn.');
             }
-            store.put({ key, turn: { ...record.turn, assistant: { ...record.turn.assistant, actionStates: states } } } satisfies TurnRecord);
+            store.put({ key, turn: { ...record.turn, assistant: { ...record.turn.assistant,
+                actionStateBinding: { ...binding }, actionStates: states } } } satisfies TurnRecord);
             result = cloneActionStates(states);
         });
         return result;

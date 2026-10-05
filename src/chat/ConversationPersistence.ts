@@ -5,7 +5,7 @@ import type { PersistedConversation, PersistedTurn } from "./chat-history-store"
 import type { WritingVersionService } from './writing-versions';
 import { cloneWritingVersion, type WritingVersion } from './writing-types';
 import { throwIfAborted } from '../ai-services/chat-utils';
-import { cloneActionStateBinding, type PaAgentActionState } from '../ai-services/pa-agent-result-facts';
+import { cloneActionStateBinding, cloneActionStates, type PaAgentActionState } from '../ai-services/pa-agent-result-facts';
 import { conservativeLegacySourceSelection, isChatSourceScope, newConversationSourceSelection,
     parseConversationSourceSelection, type ChatSourceScope, type ConversationSourceSelection,
     type RunSourceSelection } from '../ai-services/chat-source-scope';
@@ -363,6 +363,23 @@ export class ConversationPersistence {
         this.persistChain = next;
         await next;
         return updated;
+    }
+
+    /** Bind an admitted action to its existing running row before its native effect. */
+    async persistRunningActionStates(conversationId: string, pendingRunId: string,
+        actionStates: readonly PaAgentActionState[]): Promise<boolean> {
+        const turnIndex = this.activeId === conversationId ? this.pendingTurnIndexByRunId.get(pendingRunId) : undefined;
+        const states = cloneActionStates(actionStates);
+        if (turnIndex === undefined || states.length === 0) return false;
+        let persisted = false;
+        const next = this.persistChain.catch(() => undefined).then(async () => {
+            const manager = await this.getReadyManager();
+            if (!manager) throw new Error('Conversation persistence unavailable.');
+            persisted = await manager.bindRunningActionStates(conversationId, turnIndex, pendingRunId, states);
+        });
+        this.persistChain = next;
+        await next;
+        return persisted;
     }
 
     resetActiveConversationState(): void {

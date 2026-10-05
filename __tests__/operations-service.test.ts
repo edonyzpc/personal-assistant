@@ -12,12 +12,15 @@ import { completeInputLineage } from "../src/ai-services/input-lineage";
 import { type PaAgentActionState, applyOperationsExecutionResult } from "../src/ai-services/pa-agent-result-facts";
 import { ChatHistoryManager } from "../src/chat/chat-history-manager";
 import { MemoryChatHistoryStore } from "../src/chat/chat-history-store";
-import type {
-    OperationsControllerEvent,
-    OperationsVault,
-    OperationsVaultFile,
-    PreparedMarkdownOperation,
-    PreparedOperation,
+import type { TaskSourceReadGuard } from "../src/ai-services/task-source-read-guard";
+import {
+    EXECUTE_OPERATIONS_TOOL_NAME,
+    type ExecuteCurrentOperationsIntentInput,
+    type OperationsControllerEvent,
+    type OperationsVault,
+    type OperationsVaultFile,
+    type PreparedMarkdownOperation,
+    type PreparedOperation,
 } from "../src/ai-services/operations/types";
 
 class MemoryVault implements OperationsVault {
@@ -71,6 +74,27 @@ function appendInput(path: string, content: string) {
             { toolCallId: `call-${path}`, name: "vault_append" as const, input: { path, content } },
         ],
     };
+}
+
+function sourceGuard(options: {
+    current?: boolean;
+    noteDomain?: boolean;
+    allowedPaths?: readonly string[];
+} = {}): TaskSourceReadGuard {
+    const current = () => options.current ?? true;
+    return Object.freeze({
+        isCurrent: current,
+        isPathAllowed: (path: string) => current() && (options.allowedPaths ?? ["notes/a.md", "notes/b.md"]).includes(path),
+        isNoteDomainAllowed: () => current() && (options.noteDomain ?? true),
+    });
+}
+
+function agentExecutionInput(
+    intentId: string,
+    runId = "run-1",
+    guard: TaskSourceReadGuard = sourceGuard(),
+): ExecuteCurrentOperationsIntentInput {
+    return { intentId, runId, taskSourceReadGuard: guard };
 }
 
 function pendingContext(intentId: string): PaAgentActionState {
@@ -235,8 +259,284 @@ describe("Operations context across Chat sessions", () => {
     });
 });
 
+describe("OperationsSession current-request execution", () => {
+    it("executes only the owning request, repeats terminal facts, and observes an executing intent", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        const service = new OperationsService({
+            vault,
+            trashFile: async () => undefined,
+            isOperationsAgentEnabled: () => true,
+        });
+        const session = service.createSession({ surface: "chat" });
+        const intent = await session.stage(appendInput("notes/a.md", "B"));
+
+        await expect(session.executeCurrentIntent(agentExecutionInput(intent.id, "other-run")))
+            .rejects.toMatchObject({ category: "expired" });
+        expect(vault.process).not.toHaveBeenCalled();
+
+        let releaseProcess!: () => void;
+        vault.process.mockImplementationOnce(async () => {
+            await new Promise<void>(resolve => { releaseProcess = resolve; });
+            vault.files.set("notes/a.md", "A\nB");
+            return "A\nB";
+        });
+        const executing = session.executeCurrentIntent(agentExecutionInput(intent.id));
+        const inProgress = await session.executeCurrentIntent(agentExecutionInput(intent.id));
+        expect(inProgress).toMatchObject({ intentId: intent.id, state: "executing", operations: [] });
+        releaseProcess();
+        const result = await executing;
+        expect(result.state).toBe("completed");
+        const repeated = await session.executeCurrentIntent(agentExecutionInput(intent.id));
+        expect(repeated).toMatchObject({ intentId: intent.id, state: "completed" });
+        expect(repeated.resultFact).toEqual(result.resultFact);
+        expect(vault.process).toHaveBeenCalledTimes(1);
+        expect(vault.files.get("notes/a.md")).toBe("A\nB");
+        service.dispose();
+    });
+
+    it("lets another session observe but not execute the original pending intent", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        const service = new OperationsService({
+            vault,
+            trashFile: async () => undefined,
+            isOperationsAgentEnabled: () => true,
+        });
+        const owner = service.createSession({ surface: "chat-owner" });
+        const observer = service.createSession({ surface: "chat-reader" });
+        const intent = await owner.stage(appendInput("notes/a.md", "B"));
+
+        expect(observer.getContextResult(intent.id, "run-1")).toMatchObject({ pending: true });
+        await expect(observer.executeCurrentIntent(agentExecutionInput(intent.id)))
+            .rejects.toMatchObject({ category: "expired" });
+        expect(await owner.executeCurrentIntent(agentExecutionInput(intent.id))).toMatchObject({ state: "completed" });
+        expect(vault.process).toHaveBeenCalledTimes(1);
+        service.dispose();
+    });
+
+    it.each([
+        ["revoked source scope", sourceGuard({ current: false })],
+        ["web-only source scope", sourceGuard({ noteDomain: false })],
+        ["target outside source scope", sourceGuard({ allowedPaths: ["notes/other.md"] })],
+    ])("rejects execution before a write when the %s changed", async (_label, guard) => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        const service = new OperationsService({
+            vault,
+            trashFile: async () => undefined,
+            isOperationsAgentEnabled: () => true,
+        });
+        const session = service.createSession({ surface: "chat" });
+        const stageGuard = _label === "target outside source scope"
+            ? sourceGuard({ allowedPaths: ["notes/a.md"] })
+            : sourceGuard();
+        const intent = await session.stage({
+            ...appendInput("notes/a.md", "B"),
+            taskSourceReadGuard: stageGuard,
+        });
+
+        await expect(session.executeCurrentIntent(agentExecutionInput(intent.id, "run-1", guard)))
+            .rejects.toMatchObject({ category: "boundary_denied" });
+        expect(vault.process).not.toHaveBeenCalled();
+        service.dispose();
+    });
+
+    it("rejects a cancelled current-request intent without rewriting it", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        const service = new OperationsService({
+            vault,
+            trashFile: async () => undefined,
+            isOperationsAgentEnabled: () => true,
+        });
+        const session = service.createSession({ surface: "chat" });
+        const intent = await session.stage(appendInput("notes/a.md", "B"));
+        session.cancel(intent.id);
+        expect(session.getContextResult(intent.id, "run-1")).toMatchObject({ terminal: "cancelled" });
+
+        const error = await session.executeCurrentIntent(agentExecutionInput(intent.id))
+            .catch(reason => reason as OperationsControllerError);
+        expect(error).toMatchObject({ category: "cancelled", message: "The Operations intent is cancelled." });
+        expect(vault.process).not.toHaveBeenCalled();
+        service.dispose();
+    });
+});
+
+describe("B-161 live Operations execution", () => {
+    function deferred() {
+        let resolve!: () => void;
+        const promise = new Promise<void>(done => { resolve = done; });
+        return { promise, resolve };
+    }
+
+    function executionFixture() {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        vault.files.set("notes/b.md", "B");
+        const access = { current: true, enabled: true };
+        const abort = new AbortController();
+        const service = new OperationsService({ vault, trashFile: async () => undefined,
+            isOperationsAgentEnabled: () => access.enabled });
+        const session = service.createSession({ surface: "chat" });
+        const input = (intentId: string) => ({ ...agentExecutionInput(intentId, "run-1", sourceGuard(access)), signal: abort.signal });
+        const revoke = (kind: string) => {
+            if (kind === "cancel") abort.abort();
+            else if (kind === "source revoke") access.current = false;
+            else access.enabled = false;
+        };
+        return { vault, service, session, input, revoke };
+    }
+
+    it.each(["cancel", "source revoke", "disable"])("does not create after %s while target lookup is pending", async kind => {
+        const h = executionFixture();
+        try {
+            const intent = await h.session.stage({ runId: "run-1", turnId: "turn-1", operations: [
+                { toolCallId: "create", name: "vault_create", input: { path: "notes/new.md", content: "New" } },
+            ] });
+            const started = deferred(), release = deferred();
+            h.vault.adapter.exists.mockImplementationOnce(async () => {
+                started.resolve();
+                await release.promise;
+                return false;
+            });
+            const executing = h.session.executeCurrentIntent(h.input(intent.id));
+            await started.promise;
+            h.revoke(kind);
+            release.resolve();
+            expect(await executing).toMatchObject({ state: "failed", operations: [{ status: "failed" }] });
+            expect(h.vault.create).not.toHaveBeenCalled();
+            expect(h.vault.files.has("notes/new.md")).toBe(false);
+        } finally { h.service.dispose(); }
+    });
+
+    it.each(["cancel", "source revoke", "disable"])("does not mutate when %s precedes the atomic process callback", async kind => {
+        const h = executionFixture();
+        try {
+            const intent = await h.session.stage(appendInput("notes/a.md", "changed"));
+            const started = deferred(), release = deferred();
+            h.vault.process.mockImplementationOnce(async (file, change) => {
+                started.resolve();
+                await release.promise;
+                const next = change(h.vault.files.get(file.path)!);
+                h.vault.files.set(file.path, next);
+                return next;
+            });
+            const executing = h.session.executeCurrentIntent(h.input(intent.id));
+            await started.promise;
+            h.revoke(kind);
+            release.resolve();
+            expect(await executing).toMatchObject({ state: "failed", operations: [{ status: "failed" }] });
+            expect(h.vault.files.get("notes/a.md")).toBe("A");
+        } finally { h.service.dispose(); }
+    });
+
+    it.each(["cancel", "source revoke", "disable"])("preserves a native write in progress on %s and skips the next operation", async kind => {
+        const h = executionFixture();
+        try {
+            const intent = await h.session.stage({ ...appendInput("notes/a.md", "changed"), operations: [
+                ...appendInput("notes/a.md", "changed").operations,
+                ...appendInput("notes/b.md", "changed").operations,
+            ] });
+            const started = deferred(), release = deferred();
+            h.vault.process.mockImplementationOnce(async (file, change) => {
+                const next = change(h.vault.files.get(file.path)!);
+                started.resolve();
+                await release.promise;
+                h.vault.files.set(file.path, next);
+                return next;
+            });
+            const executing = h.session.executeCurrentIntent(h.input(intent.id));
+            await started.promise;
+            h.revoke(kind);
+            release.resolve();
+            expect(await executing).toMatchObject({ state: "partial", operations: [
+                { status: "succeeded" }, { status: "skipped" },
+            ] });
+            expect(h.vault.process).toHaveBeenCalledTimes(1);
+            expect(h.vault.files.get("notes/a.md")).toBe("A\nchanged");
+            expect(h.vault.files.get("notes/b.md")).toBe("B");
+        } finally { h.service.dispose(); }
+    });
+
+    it("persists the original conversation's real partial result after its ChatService is disposed", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        vault.files.set("notes/b.md", "B");
+        const h = sharedChatServices(vault);
+        const store = new MemoryChatHistoryStore(), manager = new ChatHistoryManager({ store });
+        try {
+            await manager.initialize();
+            const intent = await h.owner.stage({ ...appendInput("notes/a.md", "changed"), operations: [
+                { ...appendInput("notes/a.md", "changed").operations[0], toolCallId: "call-1" },
+                ...appendInput("notes/b.md", "changed").operations,
+            ] });
+            const pending = pendingContext(intent.id), conversation = await manager.startConversation("Apply both changes");
+            const binding = { conversationId: conversation.id, turnIndex: 0,
+                runId: pending.origin.runId, turnId: pending.origin.turnId };
+            await store.appendTurn({ conversationId: conversation.id, turnIndex: 0,
+                user: { role: "user", content: "Apply both changes" },
+                assistant: { role: "assistant", content: "", actionStateBinding: binding, actionStates: [pending] } });
+            const persistence = jest.fn(async (execution?: Parameters<typeof applyOperationsExecutionResult>[1]) => {
+                await manager.updateActionStatesForOperation(conversation.id, pending.origin.runId, "operations", intent.id,
+                    states => states.map(state => execution ? applyOperationsExecutionResult(state, execution) ?? state
+                        : h.a.refreshOperationsActionState(state)));
+            });
+            h.a.registerOperationsContextPersistence(intent.id, persistence);
+            const events: OperationsControllerEvent[] = [];
+            h.owner.subscribe(event => events.push(event));
+            const started = deferred(), release = deferred();
+            vault.process.mockImplementationOnce(async (file, change) => {
+                const next = change(vault.files.get(file.path)!);
+                started.resolve();
+                await release.promise;
+                vault.files.set(file.path, next);
+                return next;
+            });
+            const executing = h.a.executeOperationsIntentFromAgent(agentExecutionInput(intent.id));
+            await started.promise;
+            h.a.dispose();
+            release.resolve();
+            expect(await executing).toMatchObject({ state: "partial", operations: [
+                { status: "succeeded", undoAvailable: false }, { status: "skipped", undoAvailable: false },
+            ] });
+            expect(vault.files.get("notes/a.md")).toBe("A\nchanged");
+            expect(vault.files.get("notes/b.md")).toBe("B");
+            expect(vault.process).toHaveBeenCalledTimes(1);
+            expect(persistence).toHaveBeenCalledWith(expect.objectContaining({ state: "partial" }));
+            expect((await store.getTurns(conversation.id))[0].assistant.actionStates).toEqual([
+                expect.objectContaining({ phase: "partial", origin: pending.origin,
+                    inputLineage: pending.inputLineage, operationsUndoAvailable: false }),
+            ]);
+            const disposedIndex = events.findIndex(event => event.type === "disposed");
+            expect(disposedIndex).toBeGreaterThanOrEqual(0);
+            expect(events.slice(disposedIndex + 1)).toEqual([]);
+        } finally { h.a.dispose(); h.b.dispose(); h.operations.dispose(); await store.dispose(); }
+    });
+
+    it("retains an unknown native write result and does not replay the intent", async () => {
+        const h = executionFixture();
+        try {
+            const intent = await h.session.stage(appendInput("notes/a.md", "changed"));
+            h.vault.process.mockImplementationOnce(async (file, change) => {
+                h.vault.files.set(file.path, change(h.vault.files.get(file.path)!));
+                throw new Error("Native completion acknowledgement lost");
+            });
+            expect(await h.session.executeCurrentIntent(h.input(intent.id))).toMatchObject({
+                state: "unknown", operations: [{ status: "unknown" }],
+            });
+            expect(await h.session.executeCurrentIntent(h.input(intent.id))).toMatchObject({ state: "unknown" });
+            h.revoke("disable");
+            h.revoke("cancel");
+            expect(await h.session.executeCurrentIntent(h.input(intent.id))).toMatchObject({ state: "unknown" });
+            expect(h.vault.process).toHaveBeenCalledTimes(1);
+            expect(h.vault.files.get("notes/a.md")).toBe("A\nchanged");
+        } finally { h.service.dispose(); }
+    });
+});
+
 describe("OperationsToolProvider shared identity", () => {
-    it("returns the same five Operations capability objects across repeated loads", async () => {
+    it("returns the same five staging objects and execution object across repeated loads", async () => {
         const provider = new OperationsToolProvider();
         const first = await provider.load(providerContext());
         const second = await provider.load(providerContext());
@@ -249,8 +549,9 @@ describe("OperationsToolProvider shared identity", () => {
             "vault_process",
             "frontmatter_update",
             "remove_note_image",
+            EXECUTE_OPERATIONS_TOOL_NAME,
         ]);
-        expect(second.capabilities).toHaveLength(5);
+        expect(second.capabilities).toHaveLength(6);
         first.capabilities.forEach((capability, index) => {
             expect(second.capabilities[index]).toBe(capability);
         });

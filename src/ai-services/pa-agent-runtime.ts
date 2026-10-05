@@ -19,6 +19,7 @@ import type { PageletChatHandoffContext } from "./pagelet-handoff";
 import { stableHash } from "../pa/helpers";
 import { MemorySearchTool } from "./memory-search-tool";
 import { TaskSourceRun, historyInputLineage } from "./task-source-run";
+import { ImagePreacceptError } from '../chat/image-generation-types';
 import { parseRunSourceSelection } from './chat-source-scope';
 import { cloneInputLineage, completeInputLineage, sourceRecordsInputLineage,
     toGenerationInputLineage, unionInputLineages, unknownInputLineage,
@@ -137,16 +138,13 @@ import { LOAD_SKILL_TOOL_NAME, SkillContextProvider } from "./skill-context-prov
 import { OperationsToolProvider } from "./operations/operations-tool-provider";
 import {
     createOperationsStagingToolExecutor,
+    type OperationsIntentExecutor,
     type OperationsIntentStager,
 } from "./operations/operations-tool-executor";
-import { CORE_WRITE_TOOL_NAMES } from "./operations/types";
 import {
-    createOperationsAcknowledgementControlSnapshot,
-    hasOperationsStagedAcknowledgementInstruction,
-    hasStagedOperationsIntent,
-    isOperationsStagedAcknowledgement,
-    OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
-} from "./operations/operations-acknowledgement-policy";
+    CORE_WRITE_TOOL_NAMES,
+    EXECUTE_OPERATIONS_TOOL_NAME,
+} from "./operations/types";
 import {
     chatToolResultToPaAgentToolExecutionResult,
     createPaAgentCapabilityToolExecutor,
@@ -301,6 +299,8 @@ export interface PaAgentRuntimeOptions {
     skillContextProvider?: SkillContextProvider | null;
     /** Per-view Operations controller. Its presence enables staging, never direct writes. */
     operationsIntentController?: OperationsIntentStager;
+    /** ChatService-owned execution wrapper; model arguments cannot supply this port. */
+    operationsIntentExecutor?: OperationsIntentExecutor;
     /** Plugin-owned provider shared across surface-scoped Operations sessions. */
     operationsToolProvider?: OperationsToolProvider;
     /**
@@ -398,7 +398,9 @@ class OperationsTurnPolicyEngine extends PolicyEngine {
 
     private allowsAction(capability: AgentCapability): boolean {
         return this.actionsAllowedForTurn && this.isEnabled()
-            && CORE_WRITE_TOOL_NAMES.some((name) => name === capability.name);
+            && (CORE_WRITE_TOOL_NAMES as readonly string[])
+                .concat(EXECUTE_OPERATIONS_TOOL_NAME)
+                .some((name) => name === capability.name);
     }
 
     setActionsAllowedForTurn(allowed: boolean): void {
@@ -426,7 +428,7 @@ function resolveChatOperationsPolicyOptions(
     const policyOptions = options.policyOptions;
     const runKind = policyOptions?.runKind;
     const allowedActionPermissions = policyOptions?.allowedActionPermissions;
-    const eligible = Boolean(options.operationsIntentController)
+        const eligible = Boolean(options.operationsIntentController && options.operationsIntentExecutor)
         && (runKind === undefined || runKind === "chat-with-actions")
         && policyOptions?.allowWrite !== false
         && (
@@ -1403,8 +1405,6 @@ export class PaAgentRuntime {
         const runtimeStartedAt = Date.now();
         const startupTimings: PaAgentStartupTiming[] = [];
         const operationsActionsEligible = this.areOperationsActionsAvailable();
-        let operationsIntentStaged = false;
-        let operationsAcknowledgementRequested = false;
         this.operationsPolicyEngine?.setActionsAllowedForTurn(operationsActionsEligible);
         const recordStartupTiming = <T>(
             phase: string,
@@ -1769,18 +1769,42 @@ export class PaAgentRuntime {
             const hostImageBinding = options.createImage;
             const scopedImageBinding: typeof hostImageBinding = {
                 ...hostImageBinding,
-                submit: async (input, isSourceCurrent, requestLineage, _imageSourceCurrent, runtime) => {
-                    const lineage = requestLineage ?? hostImageBinding.resolveRequestLineage?.(input, undefined);
-                    if (!lineage || !sourceRun.admitsLineage(lineage)) {
-                        throw new Error(!lineage
-                            ? 'Image request actual lineage is missing.'
-                            : 'Image request source scope rejected.');
+                submit: async (input, isSourceCurrent, requestLineage, _imageSourceCurrent, runtime, source) => {
+                    let textSource: import('../chat/composer-draft').ComposerImageTextSource | undefined;
+                    try {
+                        throwIfAborted(source?.signal);
+                        if (input.sourceNotePath && !hostImageBinding.resolveImageNoteSource) {
+                            throw new ImagePreacceptError('source_unavailable');
+                        }
+                        textSource = await hostImageBinding.resolveImageNoteSource?.(input, source?.guard, source?.signal);
+                        throwIfAborted(source?.signal);
+                    } catch (error) {
+                        if (error instanceof ImagePreacceptError) throw error;
+                        throw new ImagePreacceptError(isAbortError(error, source?.signal) ? 'cancelled' : 'source_unavailable',
+                            isAbortError(error, source?.signal) ? 'needs_user' : 'correct_input', { cause: error });
                     }
-                    const attachmentValidity = await captureAttachmentSourceValidity(lineage);
-                    const sourceLineageCurrent = sourceRun.captureImageTaskSourceValidity(lineage);
-                    const imageSourceCurrent = () => sourceLineageCurrent()
-                        && (!attachmentValidity || attachmentValidity());
-                    return await hostImageBinding.submit(input, isSourceCurrent, lineage, imageSourceCurrent, runtime);
+                    const selectedLineage = requestLineage ?? hostImageBinding.resolveRequestLineage?.(input, undefined);
+                    const lineage = textSource ? unionInputLineages(selectedLineage, textSource.inputLineage) : selectedLineage;
+                    if (!lineage || !sourceRun.admitsLineage(lineage)) {
+                        throw new ImagePreacceptError('source_changed', 'stale');
+                    }
+                    let imageSourceCurrent: () => boolean;
+                    try {
+                        const attachmentValidity = await captureAttachmentSourceValidity(lineage);
+                        const sourceLineageCurrent = sourceRun.captureImageTaskSourceValidity(lineage);
+                        imageSourceCurrent = () => sourceLineageCurrent()
+                            && (!attachmentValidity || attachmentValidity());
+                        throwIfAborted(source?.signal);
+                        if (!imageSourceCurrent() || source?.guard?.isCurrent() === false) {
+                            throw new ImagePreacceptError('source_changed', 'stale');
+                        }
+                    } catch (error) {
+                        if (error instanceof ImagePreacceptError) throw error;
+                        throw new ImagePreacceptError(isAbortError(error, source?.signal) ? 'cancelled' : 'source_changed',
+                            isAbortError(error, source?.signal) ? 'needs_user' : 'stale', { cause: error });
+                    }
+                    return await hostImageBinding.submit(input, isSourceCurrent, lineage, imageSourceCurrent, runtime,
+                        { ...source, ...(textSource ? { textSource } : {}) });
                 },
             };
             imageGenerationCapability = createChatToolCapability(createCreateImageTool(scopedImageBinding), { providerId: "chat-image-generation" });
@@ -1913,6 +1937,9 @@ export class PaAgentRuntime {
             for (const toolName of CORE_WRITE_TOOL_NAMES.filter((toolName) => this.toolRegistry.getDefinition(toolName))) {
                 availableSemanticToolNames.add(toolName);
             }
+            if (this.toolRegistry.getDefinition(EXECUTE_OPERATIONS_TOOL_NAME)) {
+                availableSemanticToolNames.add(EXECUTE_OPERATIONS_TOOL_NAME);
+            }
         }
         const availableMetaToolNames = new Set<string>();
         if (writingContextCapability) availableMetaToolNames.add(GET_WRITING_CONTEXT);
@@ -2021,20 +2048,16 @@ export class PaAgentRuntime {
         const withImageContext = (input: PaAgentModelInput,
             directory?: ContextInstructionReceipt,
             boundSchemas?: ChatToolProviderSchema[]): PaAgentModelInput => {
-            // Recognize the fixed Host protocol before appending any source material.
-            const operationsAcknowledgement = isOperationsStagedAcknowledgement(input.runtimeInstruction);
             return {
                 ...input,
-                currentProtocol: operationsAcknowledgement
-                    ? OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION : input.currentProtocol,
+                currentProtocol: input.currentProtocol,
                 runtimeInstruction: combineRuntimeInstructions([
-                    operationsAcknowledgement ? undefined : input.runtimeInstruction,
+                    input.runtimeInstruction,
                     commandDeclarationGuidance(boundSchemas),
                     options.commandGuidance,
                     directory?.instruction ?? sourceRun.contextInstruction(),
                     imageScope?.hasImages ? imageScope.contextText() : undefined,
-                    operationsAcknowledgement
-                        ? undefined : writingPreparationInstruction(input.toolMode),
+                    writingPreparationInstruction(input.toolMode),
                 ]),
             };
         };
@@ -2502,9 +2525,7 @@ export class PaAgentRuntime {
                 const schemas = schemaResult.ok && input.toolMode !== "final_answer_only"
                     ? schemaResult.schemas
                     : [];
-                if (!hasOperationsStagedAcknowledgementInstruction(input.runtimeInstruction)) {
-                    schemas.push(taskIncompleteOutputSchema());
-                }
+                schemas.push(taskIncompleteOutputSchema());
                 const nativeContextHandle = currentWritingHandle();
                 if (nativeWritingRequest && nativeContextHandle && input.controlSnapshot?.writingOutput === "present_writing") {
                     schemas.push(nativeWritingOutputSchema(nativeWritingRequest, nativeContextHandle));
@@ -2897,9 +2918,7 @@ export class PaAgentRuntime {
                             ...providerInput,
                             transcript: summaryProjection.transcript,
                         };
-                        const historySources = isOperationsStagedAcknowledgement(input.runtimeInstruction)
-                            ? undefined
-                            : summaryProjection.history;
+                        const historySources = summaryProjection.history;
                         const history = needsHistorySummary ? await contextSummarizer.prepareHistory({
                             history: historySources ?? [],
                             historyBudgetChars: preview.historyBudgetChars,
@@ -3087,6 +3106,7 @@ export class PaAgentRuntime {
                 baseExecutor: baseToolExecutor,
                 registry: this.toolRegistry,
                 controller: this.options.operationsIntentController,
+                intentExecutor: this.options.operationsIntentExecutor,
                 onToolRunning: (tool, message) => {
                     options.onStatus?.({ type: "tool-running", tool, message });
                 },
@@ -3143,8 +3163,9 @@ export class PaAgentRuntime {
             resolveNoteSearchScope: sourceRun.resolveNoteSearchScope,
             resolveReadPlans: calls => {
                 // These fixed capabilities use their own admission ports.
-                // create_image rechecks registered image refs and cost in the
-                // host callback; it grants no generic vault source read.
+                // create_image binds any named note through its runtime-owned
+                // source guard before lineage capture; image refs/cost remain
+                // with the image domain. It grants no generic vault read.
                 const independent = calls.filter(call => {
                     const capability = this.toolRegistry.get(call.name);
                     const memoryManagement = this.host.memoryManagement !== undefined
@@ -3191,7 +3212,7 @@ export class PaAgentRuntime {
             userImages: options.images,
             writingRequest: options.writingRequest,
             isFinalTextCurrent: () => answerSourceValidity !== undefined && isPreviewCurrent(),
-            allowTaskIncompleteReport: runtimeInstruction => !hasOperationsStagedAcknowledgementInstruction(runtimeInstruction),
+            allowTaskIncompleteReport: () => true,
             ...(nativeWritingRequest ? { nativeWriting: {
                 contextHandle: nativeWritingRequest.requestId,
                 ...(writingContextHost ? { getContextHandle: currentWritingHandle } : {}),
@@ -3246,6 +3267,7 @@ export class PaAgentRuntime {
             },
             toolExecutor,
             hostPolicy: {
+                ...hostPolicy,
                 afterTurn: async (summary) => {
                     const assistant = summary.assistantMessage;
                     if ((summary.status === 'completed' || summary.status === 'tool_results_ready')
@@ -3256,103 +3278,7 @@ export class PaAgentRuntime {
                         contextRecoveryRequested = false;
                         recoveryMaxPromptChars = undefined;
                     }
-                    operationsIntentStaged ||= hasStagedOperationsIntent(summary);
-                    const decision = await hostPolicy.afterTurn(summary);
-                    if (
-                        operationsIntentStaged
-                        && operationsAcknowledgementRequested
-                        && decision.action === "continue"
-                    ) {
-                        const terminalPolicy = hostPolicy;
-                        const terminalDecision = terminalPolicy.finalizeAfterTurn
-                            ? await terminalPolicy.finalizeAfterTurn(summary, {
-                                defaultStatus: "completed",
-                                reason: "operations_intent_staged_acknowledgement_empty",
-                            })
-                            : {
-                                action: "stop" as const,
-                                status: "completed" as const,
-                                reason: "operations_intent_staged_acknowledgement_empty",
-                            };
-                        return {
-                            ...terminalDecision,
-                            diagnostics: [
-                                ...(terminalDecision.diagnostics ?? []),
-                                {
-                                    type: "operations_intent_staged_acknowledgement_empty",
-                                    message: "The inline confirmation card is the successful output; no generic finalization turn was run.",
-                                },
-                            ],
-                        };
-                    }
-                    if (operationsIntentStaged && decision.action === "continue") {
-                        operationsAcknowledgementRequested = true;
-                        return {
-                            ...decision,
-                            runtimeInstruction: OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
-                            toolMode: "normal" as const,
-                            controlSnapshot: createOperationsAcknowledgementControlSnapshot(
-                                decision.controlSnapshot ?? summary.controlSnapshot,
-                            ),
-                        };
-                    }
-                    if (
-                        decision.action !== "continue"
-                        || decision.toolMode === "final_answer_only"
-                        || !decision.controlSnapshot
-                    ) {
-                        return decision;
-                    }
-                    return decision;
-                },
-                prepareFinalizationTurn: (summary, context) => {
-                    operationsIntentStaged ||= hasStagedOperationsIntent(summary);
-                    if (!operationsIntentStaged && !operationsAcknowledgementRequested) return {};
-
-                    operationsAcknowledgementRequested = true;
-                    return {
-                        runtimeInstruction: OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
-                        controlSnapshot: createOperationsAcknowledgementControlSnapshot(
-                            context.defaultControlSnapshot ?? summary.controlSnapshot,
-                        ),
-                        allowEmptyResponse: true,
-                    };
-                },
-                finalizeAfterTurn: async (summary, context) => {
-                    operationsIntentStaged ||= Boolean(
-                        context.unobservedTurnSummary
-                        && hasStagedOperationsIntent(context.unobservedTurnSummary)
-                    );
-                    const operationsAcknowledgementCompleted = operationsIntentStaged
-                        && operationsAcknowledgementRequested
-                        && context.defaultStatus === "completed";
-                    const terminalContext = operationsAcknowledgementCompleted
-                        ? {
-                            ...context,
-                            reason: "operations_intent_staged_acknowledgement_completed",
-                        }
-                        : context;
-                    const terminalPolicy = hostPolicy;
-                    const decision = terminalPolicy.finalizeAfterTurn
-                        ? await terminalPolicy.finalizeAfterTurn(summary, terminalContext)
-                        : {
-                            action: "stop" as const,
-                            status: context.defaultStatus,
-                            reason: terminalContext.reason,
-                        };
-                    if (!operationsIntentStaged || !operationsAcknowledgementRequested) {
-                        return decision;
-                    }
-                    return {
-                        ...decision,
-                        diagnostics: [
-                            ...(decision.diagnostics ?? []),
-                            {
-                                type: "operations_intent_staged_acknowledgement_completed",
-                                message: "The reserved final turn acknowledged the inline confirmation card; no write occurred.",
-                            },
-                        ],
-                    };
+                    return await hostPolicy.afterTurn(summary);
                 },
             },
             onEvent: (event) => {
@@ -3600,7 +3526,7 @@ export class PaAgentRuntime {
     private areOperationsActionsAvailable(): boolean {
         return this.operationsActionsPolicyEligible
             && this.host.isOperationsAgentEnabled
-            && Boolean(this.options.operationsIntentController);
+            && Boolean(this.options.operationsIntentController && this.options.operationsIntentExecutor);
     }
 
     private async loadCanonicalHostContextForRun(
@@ -3707,9 +3633,7 @@ export class PaAgentRuntime {
         const nativeWritingRequest = options.writingOutputProtocol === "native" ? options.writingRequest : undefined;
         const nativeContextHandle = nativeWritingRequest
             ? (options.writingContextHost ? options.writingContextHandle : nativeWritingRequest.requestId) : undefined;
-        const operationsAcknowledgement = isOperationsStagedAcknowledgement(input.currentProtocol)
-            || isOperationsStagedAcknowledgement(input.runtimeInstruction);
-        const mayReportIncomplete = !operationsAcknowledgement;
+        const mayReportIncomplete = true;
         const currentInput = options.userText ?? options.prompt;
         let toolDefinitionsText = input.toolMode === "final_answer_only"
             ? (nativeContextHandle ? "Only present_writing or report_task_incomplete (pure outputs) are available. No source, context or action tools are available in this finalization turn."
@@ -3732,9 +3656,7 @@ export class PaAgentRuntime {
             recoveryRequested: options.recoveryRequested,
             recoveryMaxPromptChars: options.recoveryMaxPromptChars,
             prompt: currentInput,
-            chatHistory: operationsAcknowledgement
-                ? undefined
-                : options.chatHistory,
+            chatHistory: options.chatHistory,
             transcript: input.transcript,
             turnIndex: input.turnIndex,
             hostContext,

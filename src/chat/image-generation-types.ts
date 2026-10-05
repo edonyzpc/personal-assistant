@@ -85,6 +85,8 @@ export const IMAGE_PREACCEPT_MESSAGES = {
     count_exceeds_provider_limit: 'Wan supports up to 4 images in one request. Ask the user to choose 1–4 images.',
     plan_conflict: 'The structured image counts conflict with the frozen plan or actual options. Correct or clarify the plan; no new image task was accepted.',
     source_changed: 'The image request source is no longer current. Start from the current source; no new image task was accepted.',
+    source_unavailable: 'The requested note source is unavailable or has no usable text. Locate an allowed note or clarify the source; no image task was accepted.',
+    source_conflict: 'The named note conflicts with the explicitly selected source. Keep that selection or clarify the intended source; no image task was accepted.',
     connection_unavailable: 'Image generation needs a compatible Wan connection in Settings. No image task was accepted.',
     cancelled: 'Image preparation was declined or cancelled. No image task was accepted.',
     preparation_failed: 'Image description preparation or admission failed. No image task was accepted; ask the user before continuing. Description model costs may already have been used.',

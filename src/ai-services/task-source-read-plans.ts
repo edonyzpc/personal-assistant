@@ -10,6 +10,7 @@ import {
 import { extractInputPath, readFirstString, toInputRecord } from './chat-tool-prepare-helpers';
 import {
     isCoreWriteToolName,
+    validateExecuteOperationsInput,
     validateCoreWriteInput,
     validateRemoveNoteImageInput,
 } from './operations/input-validation';
@@ -82,6 +83,13 @@ export function resolveTaskSourceReadPlans(
                 operationBaselines.set(path, plan);
             } else {
                 switch (call.name) {
+                    case 'execute_operations':
+                        validateExecuteOperationsInput(call.input);
+                        // The staged intent was admitted with its real baselines.
+                        // This call adds no model-selected source and is rechecked
+                        // by the runtime-bound execution guard.
+                        plan = { reads: [] };
+                        break;
                     case 'get_current_note_context':
                         plan = planCurrentNote(host);
                         break;

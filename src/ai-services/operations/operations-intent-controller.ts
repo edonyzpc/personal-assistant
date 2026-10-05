@@ -1,7 +1,4 @@
 import {
-    MAX_INTENT_GENERATED_CHARS,
-    MAX_INTENT_OPERATIONS,
-    MAX_OPERATION_RESULT_GROWTH_CHARS,
     OperationsValidationError,
     isCoreWriteToolName,
     validateVaultAppendInput,
@@ -11,7 +8,7 @@ import {
     validateRemoveNoteImageInput,
 } from "./input-validation";
 import { OperationsUndoStore } from "./operations-undo-store";
-import { IMAGE_POLICY, imageSourceHash } from "../../chat/image-policy";
+import { imageSourceHash } from "../../chat/image-policy";
 import {
     createRetainedNoteImageReadGuard,
     prepareNoteImageRemoval,
@@ -19,10 +16,7 @@ import {
     type NoteImageRemovalHost,
     type NoteImageRemovalPrivatePreparation,
 } from "./note-image-removal";
-import {
-    NoteImageRemovalResourceError,
-    NoteImageRemovalResourceOwner,
-} from "./note-image-removal-resources";
+import { NoteImageRemovalResourceOwner } from "./note-image-removal-resources";
 import type {
     FrontmatterUpdateInput,
     OperationExecutionResult,
@@ -57,7 +51,6 @@ import {
     type FrontmatterCodec,
     OperationsTransformError,
     appendMarkdown,
-    planLiteralReplacement,
     transformFrontmatter,
     transformVaultProcess,
 } from "./vault-transform";
@@ -170,17 +163,16 @@ export class OperationsIntentController {
         if (!input.runId || !input.turnId) {
             throw new OperationsControllerError("schema_invalid", "runId and turnId are required.");
         }
-        if (input.operations.length < 1 || input.operations.length > MAX_INTENT_OPERATIONS) {
+        if (input.operations.length < 1) {
             throw new OperationsControllerError(
                 "schema_invalid",
-                `An intent must contain 1-${MAX_INTENT_OPERATIONS} operations.`,
+                "An intent must contain at least one operation.",
             );
         }
         const toolCallIds = new Set<string>();
         const virtualTargets = new Map<string, VirtualTarget>();
         const initialReadKinds = new Map<string, TaskSourceReadKind>();
         const prepared: PreparedOperation[] = [];
-        let generatedChars = 0;
 
         // Validate the complete target list before a guarded batch reads any
         // baseline. The guard stays local to this call, including concurrent runs.
@@ -249,10 +241,6 @@ export class OperationsIntentController {
                     createId: () => operationId,
                 });
                 assertReadAllowed(path, readKind);
-                assertExpectedAfterGrowth(
-                    preparation.operation.expectedBefore,
-                    preparation.operation.expectedAfter,
-                );
                 this.noteImageProposals.set(operationId, preparation.privatePreparation);
                 prepared.push(preparation.operation);
                 const target = virtualTargets.get(path) ?? { exists: true, content: null };
@@ -271,14 +259,6 @@ export class OperationsIntentController {
             try {
                 expectedAfter = await this.prepareExpectedAfter(normalizedCall, path, target);
                 assertReadAllowed(path, readKind);
-                assertExpectedAfterGrowth(expectedBefore, expectedAfter);
-                generatedChars += countPreparedGeneratedCharacters(normalizedCall, expectedBefore);
-                if (generatedChars > MAX_INTENT_GENERATED_CHARS) {
-                    throw new OperationsControllerError(
-                        "schema_invalid",
-                        `Intent generated content exceeds ${MAX_INTENT_GENERATED_CHARS} characters.`,
-                    );
-                }
             } catch (error) {
                 throw normalizeStageError(error);
             }
@@ -399,12 +379,16 @@ export class OperationsIntentController {
         return cancelled;
     }
 
-    async executeIntent(intentId: string): Promise<OperationsExecutionResult> {
+    async executeIntent(
+        intentId: string,
+        assertOperationAllowed?: (operation: PreparedOperation, afterSelfWrite: boolean) => void,
+    ): Promise<OperationsExecutionResult> {
         this.assertUsable();
         const lifecycleEpoch = this.lifecycleEpoch;
         const pending = this.requirePendingIntent(intentId);
         if (getOperationsBlockedReason(pending.operations)) {
-            throw new Error("This proposal is blocked by a shared image reference. Submit a new proposal to continue.");
+            throw new OperationsControllerError("boundary_denied",
+                "This proposal is blocked by a shared image reference. Submit a new proposal to continue.");
         }
         this.clearExpiration(intentId);
         const executing = replaceIntentState(pending, "executing");
@@ -413,8 +397,19 @@ export class OperationsIntentController {
 
         const results: OperationExecutionResult[] = [];
         let stop = false;
+        let hasAppliedEffect = false;
         for (const operation of executing.operations) {
-            this.assertExecutionActive(lifecycleEpoch);
+            const assertBeforeEffect = (afterSelfWrite = false): void => {
+                this.assertExecutionActive(lifecycleEpoch);
+                this.assertPathAllowed(operation.path);
+                assertOperationAllowed?.(operation, hasAppliedEffect || afterSelfWrite);
+            };
+            // A native effect already in progress must settle. Lost admission
+            // prevents the next effect; it cannot retroactively undo that write.
+            if (!stop && results.length > 0) {
+                try { assertBeforeEffect(); }
+                catch { stop = true; }
+            }
             if (stop) {
                 const skipped: OperationExecutionResult = {
                     operationId: operation.id,
@@ -422,57 +417,35 @@ export class OperationsIntentController {
                     name: operation.name,
                     path: operation.path,
                     status: "skipped",
-                    message: "Skipped because an earlier operation failed.",
+                    message: "Skipped because execution stopped before this operation.",
                 };
                 results.push(skipped);
-                this.assertExecutionActive(lifecycleEpoch);
-                this.emit({ type: "operation-result", intentId, result: skipped });
+                if (this.isExecutionActive(lifecycleEpoch)) this.emit({ type: "operation-result", intentId, result: skipped });
                 continue;
             }
 
-            const result = await this.executeOperation(executing, operation, lifecycleEpoch);
-            if (!this.isExecutionActive(lifecycleEpoch) && operation.kind === "note_image_removal") {
-                this.emit({ type: "operation-result", intentId, result });
-                const settled: OperationExecutionResult[] = [...results, result, ...executing.operations.slice(results.length + 1)
-                    .map(remaining => ({ operationId: remaining.id, toolCallId: remaining.toolCallId,
-                        name: remaining.name, path: remaining.path, status: "skipped" as const }))]
-                    .map(operationResult => ({ ...operationResult, undoAvailable: false }));
-                const applied = settled.some(operationResult => operationResult.status === "succeeded"
-                    || operationResult.effects?.some(effect => effect.status === "applied" || effect.status === "removed"));
-                const unknown = settled.some(operationResult => operationResult.status === "unknown"
-                    || operationResult.effects?.some(effect => effect.status === "unknown"));
-                const state: OperationsExecutionResult["state"] = settled.every(operationResult => operationResult.status === "succeeded")
-                    ? "completed" : applied ? "partial" : unknown ? "unknown" : "failed";
-                const executionResult = Object.freeze({
-                    intentId,
-                    state,
-                    operations: Object.freeze(settled),
-                });
-                this.contextResults.set(intentId, { runId: executing.runId, result: executionResult });
-                this.terminalStates.set(intentId, { state, runId: executing.runId });
-                this.emit({ type: "intent-state-changed", intent: replaceIntentState(executing, state) });
-                this.emit({ type: "intent-result", result: executionResult });
-                return executionResult;
-            }
-            this.assertExecutionActive(lifecycleEpoch);
+            const result = await this.executeOperation(executing, operation, lifecycleEpoch, assertBeforeEffect);
             results.push(result);
-            this.emit({ type: "operation-result", intentId, result });
+            hasAppliedEffect ||= result.status === "succeeded"
+                || result.effects?.some(effect => effect.status === "applied" || effect.status === "removed") === true;
+            if (this.isExecutionActive(lifecycleEpoch)) this.emit({ type: "operation-result", intentId, result });
             if (result.status !== "succeeded") stop = true;
+        }
+
+        const active = this.isExecutionActive(lifecycleEpoch);
+        if (!active) {
+            for (let index = 0; index < results.length; index += 1) {
+                results[index] = { ...results[index], undoAvailable: false };
+            }
         }
 
         const succeeded = results.filter(result => result.status === "succeeded"
             || result.effects?.some(effect => effect.status === "applied" || effect.status === "removed")).length;
-        const failed = results.some(result => result.status === "failed" || result.status === "stale"
-            || result.effects?.some(effect => effect.status === "failed"));
         const unknown = results.some(result => result.status === "unknown"
             || result.effects?.some(effect => effect.status === "unknown"));
-        const state: OperationsExecutionResult["state"] = failed || unknown
-            ? (succeeded > 0 ? "partial" : failed && !unknown ? "failed" : "unknown")
-            : "completed";
-        this.assertExecutionActive(lifecycleEpoch);
+        const state: OperationsExecutionResult["state"] = results.every(result => result.status === "succeeded")
+            ? "completed" : succeeded > 0 ? "partial" : unknown ? "unknown" : "failed";
         const finalIntent = replaceIntentState(executing, state);
-        this.intents.delete(intentId);
-        this.terminalStates.set(intentId, { state, runId: executing.runId });
         const completedRefs = results.flatMap(result => (result.status === "succeeded"
             || result.effects?.some(effect => effect.status === "applied" || effect.status === "removed"))
             && result.receiptId
@@ -488,7 +461,13 @@ export class OperationsIntentController {
                 : undefined;
         const executionResult = Object.freeze({ intentId, state, operations: Object.freeze(results),
             ...(resultFact ? { resultFact } : {}) });
-        this.contextResults.set(intentId, { runId: executing.runId, result: { intentId, state, operations: results.map(result => ({
+        // The captured history sink can consume this finite result after close.
+        // Do not recreate any disposed owner's state or notify its old UI.
+        if (!active) return executionResult;
+        this.intents.delete(intentId);
+        this.terminalStates.set(intentId, { state, runId: executing.runId });
+        this.contextResults.set(intentId, { runId: executing.runId, result: { intentId, state,
+            ...(resultFact ? { resultFact } : {}), operations: results.map(result => ({
             operationId: result.operationId, toolCallId: result.toolCallId, name: result.name,
             path: '', status: result.status,
             ...(result.effects ? { effects: result.effects.map(effect => ({ ...effect })) } : {}),
@@ -838,60 +817,57 @@ export class OperationsIntentController {
         intent: OperationsIntent,
         operation: PreparedOperation,
         lifecycleEpoch: number,
+        assertBeforeEffect: (afterSelfWrite?: boolean) => void,
     ): Promise<OperationExecutionResult> {
         if (operation.kind === "note_image_removal") {
-            return await this.executeNoteImageRemoval(intent, operation, lifecycleEpoch);
+            return await this.executeNoteImageRemoval(intent, operation, lifecycleEpoch, assertBeforeEffect);
         }
-        let result: OperationExecutionResult;
+        let writeAttempted = false;
+        const markWriteAttempted = (): void => { writeAttempted = true; };
         try {
-            this.assertExecutionActive(lifecycleEpoch);
-            this.assertPathAllowed(operation.path);
+            assertBeforeEffect();
             if (operation.name === "vault_create") {
-                await this.executeCreate(operation, lifecycleEpoch);
+                await this.executeCreate(operation, assertBeforeEffect, markWriteAttempted);
             } else {
-                await this.executeExisting(operation);
+                await this.executeExisting(operation, assertBeforeEffect, markWriteAttempted);
             }
-            this.assertExecutionActive(lifecycleEpoch);
-            const receipt = this.undoStore.create({
+            const active = this.isExecutionActive(lifecycleEpoch);
+            const receiptId = active ? this.undoStore.create({
                 intentId: intent.id,
                 operationId: operation.id,
                 path: operation.path,
                 kind: operation.name,
                 before: operation.expectedBefore,
                 expectedAfter: operation.expectedAfter,
-            });
-            result = {
+            }).id : this.createId();
+            return {
                 operationId: operation.id,
                 toolCallId: operation.toolCallId,
                 name: operation.name,
                 path: operation.path,
                 status: "succeeded",
-                receiptId: receipt.id,
+                receiptId,
+                undoAvailable: active,
             };
         } catch (error) {
-            if (!this.isExecutionActive(lifecycleEpoch)) {
-                throw new OperationsControllerError("cancelled", "Operations execution was cancelled because the controller was disposed.");
-            }
             const normalized = normalizeExecutionError(error);
-            result = {
+            return {
                 operationId: operation.id,
                 toolCallId: operation.toolCallId,
                 name: operation.name,
                 path: operation.path,
-                status: normalized.category === "stale_target" ? "stale" : "failed",
-                failureCategory: normalized.category,
+                status: writeAttempted ? "unknown" : normalized.category === "stale_target" ? "stale" : "failed",
+                failureCategory: writeAttempted ? "unknown" : normalized.category,
                 message: normalized.message,
             };
         }
-
-        this.assertExecutionActive(lifecycleEpoch);
-        return result;
     }
 
     private async executeNoteImageRemoval(
         intent: OperationsIntent,
         operation: PreparedOperation & { kind: "note_image_removal" },
         lifecycleEpoch: number,
+        assertBeforeEffect: (afterSelfWrite?: boolean) => void,
     ): Promise<OperationExecutionResult> {
         if (!this.noteImageRemovalHost) {
             return this.noteImageFailure(operation, [], "failed", "boundary_denied", "The note-image Host boundary is unavailable.");
@@ -922,8 +898,7 @@ export class OperationsIntentController {
         let readAttachmentFile: NonNullable<NoteImageRemovalHost["readAttachmentFile"]> | undefined;
 
         try {
-            this.assertExecutionActive(lifecycleEpoch);
-            this.assertPathAllowed(operation.path);
+            assertBeforeEffect();
             if (!proposal.revalidate()) {
                 throw new OperationsControllerError("boundary_denied", "The staged note-image source evidence is no longer current.");
             }
@@ -934,7 +909,7 @@ export class OperationsIntentController {
                 || before.content !== operation.expectedBefore) {
                 throw new StaleTargetError("The selected note changed after preview.");
             }
-            this.assertExecutionActive(lifecycleEpoch);
+            assertBeforeEffect();
 
             if (operation.input.attachmentAction === "delete") {
                 const guard = createRetainedNoteImageReadGuard(this.noteImageRemovalHost, proposal);
@@ -965,9 +940,6 @@ export class OperationsIntentController {
                     || exactAttachment.version.size !== proposal.attachment.version.size) {
                     throw new StaleTargetError("The selected attachment changed after preview.");
                 }
-                if (proposal.attachment.version.size > IMAGE_POLICY.maxOriginalBytes) {
-                    throw new OperationsControllerError("undo_unavailable", "The selected attachment exceeds the temporary recovery size limit.");
-                }
                 reservation = this.noteImageRemovalResources.reserve(
                     proposal.attachment.version.size,
                     this.createId,
@@ -986,7 +958,7 @@ export class OperationsIntentController {
                     throw new StaleTargetError("The selected attachment changed while being read.");
                 }
                 contentHash = await imageSourceHash(bytes);
-                this.assertExecutionActive(lifecycleEpoch);
+                assertBeforeEffect();
                 if (!proposal.revalidate()) {
                     throw new OperationsControllerError("boundary_denied", "The staged source authority changed while the attachment was prepared.");
                 }
@@ -1021,34 +993,27 @@ export class OperationsIntentController {
                 }
             }
 
-            this.assertExecutionActive(lifecycleEpoch);
+            assertBeforeEffect();
             if (!proposal.revalidate()) {
                 throw new OperationsControllerError("boundary_denied", "The original source is no longer current before the note write.");
             }
             const noteFile = this.vault.getAbstractFileByPath(operation.path);
             if (!noteFile) throw new StaleTargetError("The selected note no longer exists.");
             this.markSelfWrite?.(operation.path);
-            noteWriteAttempted = true;
             await this.vault.process(noteFile, current => {
+                assertBeforeEffect();
                 if (current !== operation.expectedBefore) throw new StaleTargetError();
+                noteWriteAttempted = true;
                 return operation.expectedAfter;
             });
             if (!this.isExecutionActive(lifecycleEpoch)) {
                 reservation?.release();
-                const nativeFactReceipt = this.undoStore.create({
-                    intentId: intent.id,
-                    operationId: operation.id,
-                    path: operation.path,
-                    kind: operation.name,
-                    before: operation.expectedBefore,
-                    expectedAfter: operation.expectedAfter,
-                });
-                this.undoStore.markUsed(nativeFactReceipt.id);
-                receiptId = nativeFactReceipt.id;
+                receiptId = this.createId();
                 noteApplied = true;
                 effects[0] = { key: "note", status: "applied" };
                 effects[1] = { key: "attachment", status: "not_started" };
-                return this.noteImageResult(operation, "partial", effects, nativeFactReceipt.id, false);
+                return this.noteImageResult(operation,
+                    operation.input.attachmentAction === "keep" ? "succeeded" : "partial", effects, receiptId, false);
             }
             noteApplied = true;
             proposal.markNoteApplied();
@@ -1089,6 +1054,7 @@ export class OperationsIntentController {
             const recoverySnapshot = this.noteImageRemovalResources.acquire(receipt.id);
             executionLease = true;
 
+            assertBeforeEffect(true);
             const after = await this.readNoteImageSource(operation.path);
             if (!proposal.revalidateAfterSelfWrite()) {
                 effects[1] = { key: "attachment", status: "failed", failureCategory: "boundary_denied", message: "The staged source authority changed after the note was applied." };
@@ -1160,6 +1126,7 @@ export class OperationsIntentController {
                 effects[1] = { key: "attachment", status: "not_started" };
                 return this.noteImageResult(operation, "partial", effects, receipt.id, false);
             }
+            assertBeforeEffect(true);
             this.markSelfWrite?.(proposal.attachment.path);
             trashAttempted = true;
             await this.trashFile(proposal.attachment.file as unknown as OperationsVaultFile);
@@ -1198,9 +1165,7 @@ export class OperationsIntentController {
                 effects[1] = { key: "attachment", status: "not_started" };
                 return this.noteImageResult(operation, noteWriteAttempted ? "unknown" : "failed", effects, receiptId, false);
             }
-            const normalized = error instanceof NoteImageRemovalResourceError && error.code === "capacity_exceeded"
-                ? new OperationsControllerError("undo_unavailable", error.message)
-                : normalizeExecutionError(error);
+            const normalized = normalizeExecutionError(error);
             if (noteApplied) {
                 effects[0] = { key: "note", status: "applied" };
                 effects[1] = {
@@ -1283,26 +1248,37 @@ export class OperationsIntentController {
         };
     }
 
-    private async executeCreate(operation: PreparedMarkdownOperation, lifecycleEpoch: number): Promise<void> {
+    private async executeCreate(
+        operation: PreparedMarkdownOperation,
+        assertBeforeEffect: () => void,
+        markWriteAttempted: () => void,
+    ): Promise<void> {
         if (await this.pathExists(operation.path)) {
             throw new OperationsControllerError("target_collision", `Target already exists: ${operation.path}.`);
         }
-        this.assertExecutionActive(lifecycleEpoch);
+        assertBeforeEffect();
         const parent = parentVaultPath(operation.path);
         if (parent && !this.resolveFolder(parent)) {
             throw new OperationsControllerError("parent_missing", `Parent folder no longer exists: ${parent}.`);
         }
-        this.assertExecutionActive(lifecycleEpoch);
+        assertBeforeEffect();
         this.markSelfWrite?.(operation.path);
+        markWriteAttempted();
         await this.vault.create(operation.path, operation.expectedAfter);
     }
 
-    private async executeExisting(operation: PreparedMarkdownOperation): Promise<void> {
+    private async executeExisting(
+        operation: PreparedMarkdownOperation,
+        assertBeforeEffect: () => void,
+        markWriteAttempted: () => void,
+    ): Promise<void> {
         const file = this.resolveFile(operation.path);
         if (!file) throw new StaleTargetError("The target note no longer exists.");
         this.markSelfWrite?.(operation.path);
         await this.vault.process(file, (current) => {
+            assertBeforeEffect();
             if (current !== operation.expectedBefore) throw new StaleTargetError();
+            markWriteAttempted();
             return operation.expectedAfter;
         });
     }
@@ -1506,39 +1482,6 @@ function normalizeStageError(error: unknown): OperationsControllerError {
 function normalizeExecutionError(error: unknown): OperationsControllerError {
     if (error instanceof OperationsControllerError) return error;
     return new OperationsControllerError("fs_error", safeError(error, "Vault operation failed."));
-}
-
-function assertExpectedAfterGrowth(expectedBefore: string | null, expectedAfter: string): void {
-    const beforeLength = expectedBefore?.length ?? 0;
-    const growth = expectedAfter.length - beforeLength;
-    if (growth > MAX_OPERATION_RESULT_GROWTH_CHARS) {
-        throw new OperationsTransformError(
-            `Operation result grows the note by more than ${MAX_OPERATION_RESULT_GROWTH_CHARS} characters.`,
-        );
-    }
-}
-
-function countPreparedGeneratedCharacters(
-    tool: MarkdownWriteTool,
-    expectedBefore: string | null,
-): number {
-    const { name, input } = tool;
-    if (name === "vault_create" || name === "vault_append") {
-        return input.content.length;
-    }
-    if (name === "frontmatter_update") {
-        return JSON.stringify(input.set ?? {}).length;
-    }
-    const process = input;
-    if (process.operation === "insert") return process.params.content.length;
-    if (process.operation === "delete") return 0;
-    if (expectedBefore === null) return process.params.replace.length;
-    return planLiteralReplacement(
-        expectedBefore,
-        process.params.search,
-        process.params.replace,
-        process.params.occurrence ?? "first",
-    ).generatedChars;
 }
 
 function safeError(error: unknown, fallback: string): string {

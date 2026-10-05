@@ -17,8 +17,10 @@ export function createImageStatusTool(host: ImageStatusHost): ChatToolDefinition
         name: GET_IMAGE_STATUS,
         description: 'Read the status of an existing image task. Use its taskId or submission operationId, exactly one. Set refresh=true only to query the original provider once; this never starts or resumes image generation.',
         plannerGuidance: [
+            'For an accepted create_image receipt, copy observation.taskId exactly into taskId. Use operationId only for an explicitly returned submission operationId, not the generic domainIdentity.operationId, which may name the task. Never reconstruct or alter an identity; if a lookup is unavailable, check it against the original receipt before drawing a conclusion.',
             'A local snapshot is the latest saved task state, not a fresh provider response. Inspect basis and remoteQueryReason.',
-            'An unknown submission without a provider task identity cannot be checked remotely. A missing local record does not prove that no request was accepted or charged.',
+            'For localState=submission_unknown, provider acceptance and charges are unverified, not failed. no_provider_task means no remote verification is available; nextAction=needs_user does not request confirmation or resubmission. Explain the uncertainty and available ways to verify the original task, then stop. Until the original task is confirmed failed, do not suggest or offer a replacement generation, or ask whether the user wants to regenerate. An accepted create_image receipt confirms a local task, not provider acceptance or image delivery.',
+            'An unavailable lookup is not a failed generation. Preserve the last verified task facts, explain the lookup limit, and do not invite a replacement generation because no record was returned.',
             'Provider success does not establish local image delivery. Respect localState; do not claim an image was saved from providerState alone.',
             'Respect nextAction and retryAfterMs. Do not poll repeatedly in the same turn or treat a status check as authorization to submit, resume, save or cancel.',
         ],

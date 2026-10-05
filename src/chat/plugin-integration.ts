@@ -25,7 +25,10 @@ import type {
     ChatWritingRecovery,
 } from "../ai-services/chat-types";
 import type { MessageImage } from "./image-types";
-import type { ComposerImageGenerationOptions, ComposerImageTextSource } from "./composer-draft";
+import { captureComposerImageNoteSource, type ComposerImageGenerationOptions, type ComposerImageTextSource } from "./composer-draft";
+import { ImagePreacceptError } from './image-generation-types';
+import { throwIfAborted } from '../ai-services/chat-utils';
+import { checkpointTaskSourceRead, type TaskSourceReadGuard } from '../ai-services/task-source-read-guard';
 import type { WritingRecoverySourceReceipt } from "./writing-recovery-sources";
 import type { ChatSourceScope } from "../ai-services/chat-source-scope";
 import type { WritingScene } from "./writing-types";
@@ -192,6 +195,29 @@ export class ChatPluginIntegration {
         const file = this.dependencies.app.vault.getAbstractFileByPath(source.path);
         return file instanceof TFile && file.extension === 'md'
             && this.dependencies.source.isDataBoundaryAllowedFile(file) ? file : null;
+    }
+
+    async resolveImageNoteSource(path: string, guard: TaskSourceReadGuard | undefined,
+        signal?: AbortSignal): Promise<ComposerImageTextSource> {
+        const checkSource = async () => {
+            throwIfAborted(signal);
+            await checkpointTaskSourceRead(guard, signal);
+            if (!guard || guard.isNoteDomainAllowed?.() !== true || !guard.isPathAllowed(path)
+                || !this.dependencies.isChatRuntimeCurrent()) {
+                throw new ImagePreacceptError('source_unavailable');
+            }
+        };
+        await checkSource();
+        const file = this.imageTextSourceFile({ path });
+        if (!file) throw new ImagePreacceptError('source_unavailable');
+        const documentText = await this.dependencies.app.vault.cachedRead(file);
+        await checkSource();
+        if (this.imageTextSourceFile({ path }) !== file) {
+            throw new ImagePreacceptError('source_changed', 'stale');
+        }
+        const source = captureComposerImageNoteSource(file, documentText);
+        if (!source) throw new ImagePreacceptError('source_unavailable');
+        return source;
     }
 
     async verifyImageTextSource(source: ComposerImageTextSource): Promise<void> {
@@ -372,6 +398,7 @@ export class ChatPluginIntegration {
                 return this.verifyImageTextSource(source);
             },
             isImageTextSourceCurrent: source => this.isImageTextSourceCurrent(source),
+            resolveImageNoteSource: (path, guard, signal) => this.resolveImageNoteSource(path, guard, signal),
             isImagePromptOriginCurrent: origin => this.isImagePromptOriginCurrent(origin),
             prepareFeaturedImagePrompt: (input, runtime) => {
                 const providerRevision = this.dependencies.getProviderConfigurationRevision();

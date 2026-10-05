@@ -22,6 +22,85 @@ import { PageletLeadDrivenPolicy } from "../src/pagelet/agent/lead-driven-policy
 import { ProviderAdmissionError } from "../src/ai-services/provider-admission-error";
 
 describe("PaAgentLoop", () => {
+    it.each(["read_only", "side_effect"] as const)("keeps expired source content out of a completed %s result", async retrySafety => {
+        let current = true;
+        const result = await new PaAgentLoop({
+            runId: `source-expired-${retrySafety}`, userInput: "Perform this request", maxTurns: 1,
+            model: { stream: async function* () {
+                yield { type: "toolcall_delta", id: "call-1", name: "source_tool", input: {}, index: 0 } as const;
+            } },
+            toolExecutor: {
+                getRetrySafety: () => retrySafety,
+                preflightBatch: () => ({ kind: "admitted", taskSourceReadGuard: {
+                    isCurrent: () => current, isPathAllowed: () => current,
+                    captureSourceAuthority: () => () => false,
+                } }),
+                execute: async () => {
+                    current = false;
+                    return { outcome: "success", promptText: "REVOKED NOTE TEXT", previewText: "REVOKED NOTE TEXT",
+                        sourceRecords: [{ kind: "context-used", path: "revoked.md", dedupKey: "revoked", citationEligible: false }],
+                        metadata: { noteBody: "REVOKED NOTE TEXT" },
+                        executionState: "succeeded", resultFact: { kind: "applied", action: "operations", receiptId: "receipt-1" } };
+                },
+            },
+        }).run();
+        const observed = result.turns[0].toolResults[0].content;
+        expect(JSON.stringify(observed)).not.toContain("REVOKED NOTE TEXT");
+        expect(observed.sourceRecords).toBeUndefined();
+        if (retrySafety === "read_only") {
+            expect(observed.metadata).toMatchObject({ reason: "task_source_scope_expired", preflightOnly: true });
+            expect(observed.resultFact).toBeUndefined();
+        } else {
+            expect(observed.metadata).toMatchObject({ executionState: "succeeded" });
+            expect(observed.metadata?.preflightOnly).toBeUndefined();
+            expect(observed.resultFact).toEqual({ kind: "applied", action: "operations", receiptId: "receipt-1" });
+            expect(observed.promptText).not.toContain("not admitted");
+        }
+    });
+
+    it("preserves partial action facts after source revocation and blocks replay after fresh admission", async () => {
+        let current = true, executions = 0, modelTurns = 0;
+        const result = await new PaAgentLoop({
+            runId: "partial-source-expired", userInput: "Apply both changes", maxTurns: 2,
+            hostPolicy: { afterTurn: () => ({ action: "continue", reason: "tool_results_ready" }) },
+            model: { stream: async function* () {
+                modelTurns += 1;
+                yield { type: "toolcall_delta", id: `call-${modelTurns}`, name: "execute_operations",
+                    input: { intentId: "intent-1" }, index: 0 } as const;
+            } },
+            toolExecutor: {
+                getRetrySafety: () => "side_effect",
+                preflightBatch: () => {
+                    current = true;
+                    return { kind: "admitted", taskSourceReadGuard: {
+                        isCurrent: () => current, isPathAllowed: () => current,
+                        captureSourceAuthority: () => () => current,
+                    } };
+                },
+                execute: async () => {
+                    executions += 1;
+                    current = false;
+                    return { outcome: "recoverable_error", promptText: "REVOKED NOTE TEXT",
+                        executionState: "partially_succeeded",
+                        resultFact: { kind: "partial", completedRefs: ["receipt-1"], remainingRefs: ["operation-2"] },
+                        recovery: { code: "operations_partial", operationId: "intent-1",
+                            allowedActions: ["query_operation", "wait"] } };
+                },
+            },
+        }).run();
+        expect(executions).toBe(1);
+        expect(result.turns[0].toolResults[0].content).toMatchObject({
+            resultFact: { kind: "partial", completedRefs: ["receipt-1"], remainingRefs: ["operation-2"] },
+            metadata: { executionState: "partially_succeeded", recovery: {
+                operationId: "intent-1", allowedActions: ["query_operation", "wait"],
+            } },
+        });
+        expect(result.turns[1].toolResults[0].content.metadata).toMatchObject({
+            executionState: "partially_succeeded", replayBlocked: true,
+        });
+        expect(JSON.stringify(result.turns)).not.toContain("REVOKED NOTE TEXT");
+    });
+
     it.each([
         { changed: true, expectedStatus: "completed", expectedTurns: 8 },
         { changed: false, expectedStatus: "completed", expectedTurns: 10 },

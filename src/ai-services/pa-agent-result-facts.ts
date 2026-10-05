@@ -159,7 +159,7 @@ const actionStateSchema = z.object({
             key: z.enum(['note', 'attachment']),
             status: z.enum(['not_started', 'applied', 'removed', 'failed', 'unknown', 'restored']),
         }).strict().optional(),
-        checkpoint: z.literal('attachment-restored').optional() }).strict()).max(100).optional(),
+        checkpoint: z.literal('attachment-restored').optional() }).strict()).optional(),
     operationsUndoAvailable: z.boolean().optional(),
     operationsBlockedReason: z.literal('shared_reference').optional(),
 }).strict().refine(state => {
@@ -319,6 +319,11 @@ export function applyOperationsExecutionResult(state: PaAgentActionState,
     const lost = state.phase === 'lost' && state.receipt.kind === 'operations-terminal' && state.receipt.state === 'lost';
     if (state.owner !== 'operations' || state.operationId !== result.intentId
         || (!['operations-staged', 'operations-executing', 'operations-result'].includes(state.receipt.kind) && !lost)) return undefined;
+    if (result.state === 'executing') {
+        const running = cloneActionStates([{ ...state, phase: 'running', revision: state.revision + 1,
+            receipt: { kind: 'operations-executing', intentId: result.intentId } }])[0];
+        return isSameOperationsFacts(state, running) ? state : running;
+    }
     // Lost is an observation of an unavailable owner, not an execution terminal.
     // A later original-owner receipt can correct it at the latest stored revision.
     if (lost && (!state.origin.callId || !result.operations.some(operation => operation.toolCallId === state.origin.callId))) return undefined;
