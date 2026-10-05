@@ -27,7 +27,7 @@
 依赖准备：{{RUNNER_AND_KEY_PACKAGE_CHECKS_INSTALL_AUTHORITY_IF_NEEDED}}
 回归：{{CONTINUOUS_RED_GREEN | SEPARATE_REPRODUCE_CHECKPOINT | EXISTING_EVIDENCE | NOT_APPLICABLE_REASON}}
 完整 gate/部署（适用时）：{{EXECUTOR_COMMANDS_FROZEN_INPUTS_ACTUAL_TARGET_VAULT}}
-剩余 app/device 验收（适用时）：{{受影响动作_CLI准备路径_真实交互_执行者_构建身份_OR_NONE}}
+剩余 app/mobile 验收（适用时）：{{指定环境及用户要求/当前契约依据_受影响动作与通过条件_CLI准备路径_执行者_构建身份_OR_NONE}}
 
 执行纪律：
 - 遵守 AGENTS.md；产品工作获得 North Star 与当前契约。当前上下文已读且未变的
@@ -45,7 +45,7 @@
   每次重跑应有相关输入变化或具体风险；同因失败第二次无新信息，停该项重试并报告。
 - 若获派 UI：样式任务优先 CLI 准备状态，再做受影响的真实交互；菜单/入口本身
   有改动必须实际操作该入口。工具状态刷新一次后同因再失败，切换支持的等价方法；
-  无法覆盖必需动作就报告未验证，不以 CLI 成功代替。
+  无法覆盖必需动作就报告未验证，不以 CLI 成功代替，也不自行更换指定验收环境。
 - 范围冲突、实质偏差或必需工具/权限缺失时报告证据，继续独立授权工作；不绕过 sandbox。
 - 不读取凭据或完整用户配置，不修改模型配置，不启动嵌套 agent。
   不 stage/commit/push/merge/tag/publish；本地部署仅执行任务单明确授权的目标。

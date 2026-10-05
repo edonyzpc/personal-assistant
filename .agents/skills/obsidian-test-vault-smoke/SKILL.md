@@ -1,6 +1,6 @@
 ---
 name: obsidian-test-vault-smoke
-description: Validate the personal-assistant Obsidian plugin in the repo-local test vault using both fast CLI runtime smoke and full app UI/UX interaction smoke. Use when end-to-end verification is needed after UI/runtime changes, Pagelet work, Chat, Memory/VSS, Preview/Stats, settings, release-gate smoke, or visible layout/copy/interaction changes. For real-device iOS validation, use `obsidian-ios-real-device-smoke`. For community compliance scan, use `obsidian-community-check`.
+description: Validate Personal Assistant runtime and UI changes in the repo-local Obsidian test vault. Use for app smoke, desktop interaction, and general mobile validation with Obsidian CLI mobile simulator. Real-device iPhone validation uses obsidian-ios-real-device-smoke only for an explicit user request or a verified iOS-specific capability.
 ---
 
 # Obsidian Test Vault Smoke
@@ -12,6 +12,9 @@ description: Validate the personal-assistant Obsidian plugin in the repo-local t
 - Require visible-window interaction for UI/UX PASS; CLI, DOM, and screenshots support the finding but do not replace real interaction.
 - Use `obsidian vault=test <command>` for every Obsidian CLI call. `vault=test` must precede the command.
 - Choose the lightest tier that covers the changed surface.
+- Follow the mobile environment rule in `AGENTS.md` before choosing a smoke
+  skill. Use this skill for general mobile validation with CLI mobile simulator;
+  a tool failure does not create a real-device requirement.
 
 ## Scope Freeze And Evidence Reuse
 
@@ -27,10 +30,11 @@ Before an expensive gate or app interaction:
    geometry-only change.
 4. Reuse automated checks under `AGENTS.md` **Validation Planning And Reuse**,
    verifying relevant source/tests/fixtures/config and build inputs/results.
-   Reuse observed app smoke only within the same turn while its runtime/assets,
-   target vault state, and loaded build remain unchanged. Docs/evidence-only
-   edits do not invalidate runtime smoke unless they change its acceptance
-   rules. Input changes invalidate the affected evidence.
+   Reuse observed app smoke when its runtime/assets, target vault state, loaded
+   build, and acceptance conditions are verifiably unchanged. A new turn alone
+   does not invalidate it. Changed or unknown relevant state requires only the
+   affected proof; docs/evidence-only edits do not invalidate runtime smoke
+   unless they change its acceptance conditions.
 5. Freeze runtime files before `make deploy`. If they change afterward, rerun
    only the affected validation gate and app proof.
 

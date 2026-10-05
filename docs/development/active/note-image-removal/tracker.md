@@ -81,7 +81,7 @@ SDD: [Software Design](./sdd.md)
 | AC-02/04 F-20 | 完整获准冲突冻结为blocked提案、整组硬阻、有限事实/query | 累计冲突后incomplete隐藏、mixedbatch首笔零写、真实tool→history→summary、同intent多call可见查询；compact/full实际列表 | 所有可披露冲突可见且不可确认；不完整无累计信息；同run/turn多call同owner，不同绑定拒绝 | block/admission、事实schema或Host绑定变化；已证UI反例 |
 | AC-04/05 F-21 | compound效果和receipt-only Undo错误同显 | inline/full execution unknown与expired/failed Undo focused；最终公开native-lostresponse UI | note已修改与附件未知不被总状态/Undo错误覆盖；新Undo effects优先 | 结果行/Undo投影变化或实际效果反例 |
 | AC-01/02/04/05 | 获准真实模型语义 | 另获明确调用授权后按 Plan 使用公开夹具；禁止图片生成调用 | 正确选图/冲突/Undo/部分及未知结果追问；未获授权或未运行保留未验证 | 语义指导、能力/schema、查询或模型配置变化 |
-| AC-03/05/06 | both 平台 API/交互 | 桌面证据复用；CLI mobile simulator 最小可见交互；领域失效回归复用 | mobile 删除/Undo/共享冲突可用；真实模拟状态确认并恢复；不称真机证据 | 平台 UI 变化或已确认 iOS 专有能力/模拟器系统边界缺口 |
+| AC-03/05/06 | both 平台 API/交互 | 桌面证据复用；CLI mobile simulator 最小可见交互；领域失效回归复用 | mobile 删除/Undo/共享冲突可用；真实模拟状态确认并恢复；不称真机证据 | 平台 UI 变化补受影响模拟证据；真机仅按用户明确要求或已确认 iOS 专有能力另定，覆盖缺口不自动新增门禁 |
 
 ## Findings
 

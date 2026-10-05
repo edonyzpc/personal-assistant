@@ -161,9 +161,10 @@ lint/build/full Jest/type-check。另补未包含的 DOM source scan、docs:chec
 
 移动端沿既有 both 能力规划，按 Owner 2026-10-05 的明确约束，默认使用 Obsidian
 CLI mobile simulator 验证删除/Undo/共享冲突与失效交互，复用未变的领域边界证据。
-仅出现 iOS 系统特有能力或具体模拟器覆盖缺口时，才另行使用
-[iOS smoke](../../../../.agents/skills/obsidian-ios-real-device-smoke/SKILL.md)；iCloud 部署
-与真机操作另按实际范围授权。模拟器结果明确记为 mobile simulator，不称真机 PASS。
+仅用户明确要求真机或已确认涉及 iOS 系统特有能力时，才进入
+[iOS smoke](../../../../.agents/skills/obsidian-ios-real-device-smoke/SKILL.md) 路径；iCloud
+部署与真机操作另按实际范围授权。模拟器覆盖缺口只能作为提出升级建议的依据，
+不自动新增真机门禁。模拟器结果明确记为 mobile simulator，不称真机 PASS。
 
 真实模型门仅在**另获明确调用授权**后，用公开夹具验证自然语言目标选择、共享
 冲突、正常 Undo 与部分/未知结果追问，实际 create_image/图片 provider 调用必须为零。

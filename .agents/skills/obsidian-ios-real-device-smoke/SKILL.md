@@ -1,12 +1,16 @@
 ---
 name: obsidian-ios-real-device-smoke
-description: Validate personal-assistant Obsidian plugin changes on a USB-connected iPhone using the iCloud Obsidian test vault, iPhone Mirroring when available, and Safari Web Inspector for real WKWebView DOM/CSS/console evidence. Use when asked to test, verify, debug, inspect, or visually confirm mobile/iOS behavior, touch interactions, Pagelet/Chat/Memory mobile UI, Safari Inspector probes, iCloud deployment, or real-device smoke after local Obsidian test-vault validation.
+description: Validate Personal Assistant on an iPhone using the iCloud test vault and Safari Web Inspector. Use only for an explicit real-device request or a verified iOS-specific capability requiring device evidence. General mobile UI and Obsidian CLI mobile simulator validation use obsidian-test-vault-smoke.
 ---
 
 # Obsidian iOS Real-Device Smoke
 
 ## Core Rules
 
+- Select this skill under the mobile environment rule in `AGENTS.md` and name
+  the user request or verified iOS-specific capability. Device selection does
+  not itself authorize deployment or interaction; an Agent-authored plan or a
+  simulator/tool failure cannot create that requirement or authorization.
 - Do not claim iOS real-device validation for a plugin-asset change unless the current build was written to the iCloud Obsidian `test` vault, all copied assets matched `dist`, the loaded plugin identity matched that artifact, and the affected behavior was observed on the connected iPhone.
 - If only a vault-resident smoke runner changed, sync and hash-check that runner, then re-evaluate it in the existing page. Do not redeploy or reload the plugin when `dist` and plugin runtime assets did not change.
 - Treat Safari Web Inspector as DOM/CSS/console/network evidence, not touch automation. Use iPhone Mirroring or the user for real touch interaction.

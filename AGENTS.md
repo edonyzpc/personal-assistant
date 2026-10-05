@@ -252,6 +252,11 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
 - For Obsidian UI smoke tests, select the Local Deployment path above,
   reload/re-enable the plugin, open the exact test vault target with the
   Obsidian CLI/deep link, and observe the required interaction in the app.
+- Use Obsidian CLI mobile simulator for general mobile validation. Select
+  iPhone real-device validation only for an explicit user request or a verified
+  iOS-specific capability; identify that basis before loading the device skill.
+  A simulator/tool failure or an Agent-authored plan does not create a device
+  gate. Preserve the specified environment and report the affected evidence gap.
 - If a command cannot be run, state that clearly and explain the residual risk.
 - Do not claim behavior was validated in Obsidian unless it was actually deployed/tested in the app.
 - Add tests when they protect a meaningful behavior or regression; do not add
