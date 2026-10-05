@@ -11,7 +11,7 @@ Restart condition: Step 2/3 已关闭；额外写工具或 Pagelet 直接动作�
 接续旧 vault opt-in/意图加载门；[DEC-046](../../../product/decisions/dec-046-note-change-review-and-audit-retirement.md)
 已退役 Operations 持久审计且不处理旧目录；[DEC-051](../../../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
 取消当前明确修改请求的二次确认。下文 Step 2/3 的比较、任务和决定表为历史记录，
-不能据此恢复旧开关、Host 意图分类或审计。新运行对齐见 [B-161 Tracker](../../active/contract-alignment/tracker.md)。
+不能据此恢复旧开关、Host 意图分类或审计。新运行对齐见 [B-161 最终验证](../../../archive/2026/b161-contract-alignment-validation.md)。
 
 > 定义 PA Agent 在 Obsidian vault 中的写操作能力。
 > 核心场景：Chat 对话结论落地到 vault + Pagelet insight 的推荐动作执行。

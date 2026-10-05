@@ -69,7 +69,7 @@ quota; automatic Deep Discover defaults to 12/hour and 36/day started runs,
 internally adjustable without new UI. DB-D8's 10/50 budget describes the old
 Quiet Recall provider-call bucket only; it neither activates that pipeline nor
 becomes the current discovery quota. New implementation/validation belongs to
-[B-161](../../development/active/contract-alignment/tracker.md); B-118 evidence
+[B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md); B-118 evidence
 in the status and history sections remains evidence for the old inputs.
 
 ## 1. Product Decision

@@ -67,7 +67,7 @@ B-135实施、真实provider、部署和阶段验收已完成，最终范围见�
 - 本决定承接 2026-09-09 对 [DEC-033](./dec-033-simple-settings-and-unified-defaults.md)、[DEC-005](./dec-005-memory-governance.md)、[DEC-021](./dec-021-evidence-led-pagelet-ui-ux-hardening.md)及对应设置/习惯 Product Spec 的默认学习修订。旧默认关闭验收是历史事实；新增迁移、实现与组合验收归 B-135/REQ-17、AC-17。
 - [DEC-030](./dec-030-multimodal-chat-image-copywriting.md) 的作品、图片、保存与风格产品边界保留。文本JSON输出已在兼容验证后由native作品通道替换为生产Chat默认，旧reader继续保留；D15不引入自动fallback或provider特判。不扩大支持媒体范围，不改动B-132/B-133的延期边界。
 - [DEC-032](./dec-032-context-reliability-and-conversation-continuity.md) 的完整原文优先、有来源摘要和长期 Memory 独立继续有效。B-135 修改相关接缝并独立补证据，不重新开启 B-128。
-- Operations 的基础能力开放由 [DEC-037](./dec-037-pa-agent-essential-capabilities.md) / [Essential Capabilities Spec](../specs/pa-agent-essential-capabilities-product-spec.md)接续旧 vault opt-in/意图暴露门；[DEC-046](./dec-046-note-change-review-and-audit-retirement.md)已退役持久审计，旧目录不扫描或清理；[DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md)取消当前明确修改请求的必经第二次确认。仅提议/预览不执行，来源、目标变化检查、取消、真实结果和 Undo 保留；代码对齐与验收见 [B-161 Tracker](../../development/active/contract-alignment/tracker.md)。
+- Operations 的基础能力开放由 [DEC-037](./dec-037-pa-agent-essential-capabilities.md) / [Essential Capabilities Spec](../specs/pa-agent-essential-capabilities-product-spec.md)接续旧 vault opt-in/意图暴露门；[DEC-046](./dec-046-note-change-review-and-audit-retirement.md)已退役持久审计，旧目录不扫描或清理；[DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md)取消当前明确修改请求的必经第二次确认。仅提议/预览不执行，来源、目标变化检查、取消、真实结果和 Undo 保留；代码对齐与验收见 [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)。
 
 ## Consequences
 

@@ -36,7 +36,9 @@ Work item: B-158
 
 这是既定职责的统一落实，不授予新的网络、数据、付费、写入、确认、跨设备恢复或
 Git/release 权限。DEC-038/044/045 等领域具体范围、必要辅助模型和确认边界保持。
-架构设计成立不表示现有代码已对齐；开发状态由 [B-158 Tracker](../../development/active/agent-command-contract/tracker.md)记录。
+原批准工程范围已完成，历史验收见 [B-158 最终验证](../../archive/2026/b158-agent-command-contract-validation.md)；
+后续容量/读取/直接执行约定由 [B-161](../../archive/2026/b161-contract-alignment-validation.md) 接续。
+F-24 恢复提示仍延期至 B-159，不以架构或后续工程结果改写原模型失败。
 
 ## Revisit Trigger
 
@@ -46,6 +48,6 @@ Git/release 权限。DEC-038/044/045 等领域具体范围、必要辅助模型�
 ## Traceability
 
 - [Product Spec](../specs/pa-agent-command-contract-product-spec.md)
-- [Feature Home](../../development/active/agent-command-contract/README.md)
+- [B-158 最终验证](../../archive/2026/b158-agent-command-contract-validation.md)
 - [DEC-043](./dec-043-agent-runtime-evolution-and-source-scope.md)
 - [DEC-048](./dec-048-action-facts-and-context-continuity.md)

@@ -58,7 +58,7 @@ explicit discovery. The historical generic opt-in and raw prepared-cache route
 below must not be used to recreate a current Settings toggle or delivery lane.
 Scope Recap and every effective source/disclosure/write boundary remain
 distinct. B-106 delivery evidence belongs to its
-[Tracker](../../development/active/simple-settings/tracker.md).
+[B-106 最终验证](../../archive/2026/b106-simple-settings-validation.md).
 
 | Capability | Current runtime shape | Product value | Problem | Consolidation direction |
 | --- | --- | --- | --- | --- |

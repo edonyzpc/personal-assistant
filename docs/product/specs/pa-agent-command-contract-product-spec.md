@@ -48,6 +48,6 @@ Host 准入后领域执行；真实结果和恢复动作返回 Agent；必要用
 
 ## Delivery Handoff
 
-- [Feature Home](../../development/active/agent-command-contract/README.md)
+- [B-158 最终验证](../../archive/2026/b158-agent-command-contract-validation.md)
 - [Architecture](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)
-- 具体切片、原始验证与剩余工作只记 owning Tracker；未授权生产站点或发布。
+- 已完成切片及原失败见最终验证；B-159/F-24 等未完成事项见 Backlog。没有生产站点或发布授权。

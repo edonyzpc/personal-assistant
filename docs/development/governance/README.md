@@ -14,7 +14,7 @@ Authority: PA 仓库的 engineering governance/tooling contract 索引；不定�
 | GOV-002 | [Master-First Branch And Beta Packaging](./gov-002-master-first-branch-and-beta-packaging.md) | Current | B-117 | Release tooling + operations docs + focused release tests |
 | GOV-003 | [Proportionate Test Design](./gov-003-proportionate-test-design.md) | Current | B-142 | Focused tests + full Jest coverage gate |
 | GOV-004 | [测试审计与质量保护设计](./gov-004-test-audit-quality-preservation.md) | Current | B-150 | Focused tests + full Jest coverage gate；[历史验收依据](../../archive/2026/b150-test-audit/final-report.md) |
-| GOV-005 | [质量优先的测试精简](./gov-005-quality-first-test-reduction.md) | Current | B-151 | [Tracker](../active/test-reduction/tracker.md) |
+| GOV-005 | [质量优先的测试精简](./gov-005-quality-first-test-reduction.md) | Current | B-151 | [B-151 最终验证](../../archive/2026/b151-test-reduction/final-report.md) |
 | GOV-006 | [Lean Delivery And Beta Validation](./gov-006-lean-delivery-and-beta-validation.md) | Current | B-156 | Current rules + release tooling/tests；[最终验证](./gov-006-lean-delivery-and-beta-validation.md#final-validation-and-limits) |
 
 ## Boundary

@@ -98,7 +98,7 @@ recovery parity 证据；Win32 继续受 DEC-027 临时 waiver 约束。
 - Source behavior decision: [DEC-027](./dec-027-bounded-retrieval-recovery.md)
 - Product Spec: [PA Active Vault Indexer — B-125 shipping-default amendment](../specs/pa-active-vault-indexer-product-spec.md#102-b-125-shipping-default-amendment)
 - Architecture: [VSS SQLite/WASM architecture](../../architecture/vss-sqlite-wasm-architecture.md)
-- Active execution: [B-125 Shipping-Default Continuation Tracker](../../development/active/retrieval-optimization-shipping-default/tracker.md)
+- Historical delivery: [B-125 最终验证](../../archive/2026/b125-retrieval-shipping-default-validation.md)
 - Historical evidence: [B-125 closeout evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md)
 - Deferred performance/floor evidence: [Backlog B-127](../../backlog.md#已延期的产品与工程工作)
 - Source request: Owner confirmation, 2026-09-04

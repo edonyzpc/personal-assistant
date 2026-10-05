@@ -10,14 +10,14 @@ Work item: B-152
 
 [DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md) 允许Agent依据明确
 自然语言笔记指代查找并绑定真实来源，不再强制先点全文/选区控件。来源身份、专用提炼、
-实际提交及回执边界保持；代码对齐和验收见 [B-161 Tracker](../../development/active/contract-alignment/tracker.md)。
+实际提交及回执边界保持；代码对齐和验收见 [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)。
 
 ## Context
 
 显式 CreateImage 单目标路径在主 Agent 启动前以原问题创建图片任务。同 operationId
 后续提交复用原任务，因此 Agent 后来读取笔记、构思画面也不能改变实际图片输入。
 原 Featured command 已有独立的「全文 → 专用提示词生成描述 → 生图」步骤；仅调整
-Chat 的调用顺序不能替代它。源码依据见 [SDD](../../development/active/unified-chat-image-creation/sdd.md#current-source-baseline)。
+Chat 的调用顺序不能替代它。源码依据见 [B-152 Architecture](../../architecture/chat-image-generation-architecture.md)。
 主动为自己的文字配图服务于笔记复用，符合[北极星](../pa-product-north-star.md)，不扩展为主动配图推荐。
 
 ## Options Considered
@@ -65,6 +65,6 @@ Chat 的调用顺序不能替代它。源码依据见 [SDD](../../development/ac
 ## Traceability
 
 - [Product Spec](../specs/pa-unified-chat-image-creation-product-spec.md)
-- [Feature Home](../../development/active/unified-chat-image-creation/README.md)
+- [B-152 最终验证](../../archive/2026/b152-unified-chat-image-creation-validation.md)
 - 继承 [DEC-038](./dec-038-chat-image-generation.md)、[DEC-043](./dec-043-agent-runtime-evolution-and-source-scope.md)。
 - Supersedes: 上述局部约定，不撤销 DEC-038 其余契约或改写历史验收。

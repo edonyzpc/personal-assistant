@@ -44,4 +44,4 @@ Work item: B-155
 ## Traceability
 
 - Product Spec: [Agent 响应性](../specs/pa-agent-responsive-execution-product-spec.md)
-- Architecture / SDD: [实施设计](../../development/active/agent-responsive-execution/sdd.md)
+- Architecture / SDD: [B-155 Architecture](../../architecture/pa-agent-responsive-execution.md)

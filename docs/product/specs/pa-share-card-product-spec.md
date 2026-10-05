@@ -10,7 +10,7 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 > [DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
 > 取消 50,000 字符/24 页整批拒绝；保留完整分页、取消、真实资源失败和 SnapDOM。
 > 下列 REQ-04/08、AC-05/09 已接续目标合同；新实现与验收仅见
-> [B-161 Tracker](../../development/active/contract-alignment/tracker.md)，旧证据不证明本次交付。
+> [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)，旧证据不证明本次交付。
 
 > [!note] Owner decision 2026-08-05
 > 用户选择完整渲染保真（方案 C）与 SnapDOM 窄例外（方案 A）。REQ-04、REQ-05、

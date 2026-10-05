@@ -79,13 +79,11 @@ Agent 对用户语义负责；来源域对允许材料与派生关系负责；�
 
 ## Open Decisions
 
-本范围无未决产品选择。具体实现方案由 SDD 给出；整体 Host 去留及其他非目标不阻挡本包，
+本范围无未决产品选择，已完成的实现职责由当前架构承接；整体 Host 去留及其他非目标不阻挡本包，
 也不能由实施者自行决定。新的实质偏差另行提交，不能借局部实现改变上述选择。
 
 ## Delivery Handoff
 
-- [Feature Home](../../development/active/contract-alignment/README.md)
-- [Tracker](../../development/active/contract-alignment/tracker.md)
-- [SDD](../../development/active/contract-alignment/sdd.md)
+- [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)
 - [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)
 - 发布、生产账号及真实付费/外发验证遵循已有且适用的用户授权，不由本 Spec 创造授权。

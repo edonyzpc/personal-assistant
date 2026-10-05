@@ -84,6 +84,6 @@ None for the approved slices. Owner 于 2026-08-11 选择 silent Memory/marker f
 
 ## Delivery Handoff
 
-- Active Package: [B-126 First-Run AI Setup And Silent Memory Preparation](../../development/active/silent-first-use-memory-preparation/README.md)
+- Historical validation: [B-126 最终验证](../../archive/2026/b126-first-run-memory-validation.md)
 - Architecture contracts: [VSS SQLite/WASM Current Architecture](../../architecture/vss-sqlite-wasm-architecture.md)、[VSS Local State](../../architecture/vss-local-state-plan.md)、[VSS Embedding Refresh](../../architecture/vss-embedding-refresh.md)、[PA Data Boundary](./pa-data-boundary-product-spec.md)
 - Release / rollout boundary: PR #378 只在 focused failure/concurrency/lifecycle tests、full CI 与适用 Obsidian smoke 通过后可合并；自动化 mock 不等于真实 iOS/Android 证明。

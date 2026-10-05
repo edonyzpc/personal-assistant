@@ -8,7 +8,7 @@ Authority: Owner 已确认的统一生图、专用提炼及 command 收敛目标
 
 2026-10-05 scoped successor：[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
 接续控件唯一选源限制；下列 REQ-01/02 与用户流程允许明确自然语言笔记绑定。
-来源身份、专用提炼和一次真实提交不变；新代码与验收见 [B-161 Tracker](../../development/active/contract-alignment/tracker.md)。
+来源身份、专用提炼和一次真实提交不变；新代码与验收见 [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)。
 
 ## Problem And Product Outcome
 
@@ -90,11 +90,11 @@ Chat 选择 CreateImage → 检查来源与本次选项 → 可选补充要求 �
 
 ## Open Decisions
 
-已确认产品范围无待选项。技术接线和兼容设计见 SDD；改变专用调用、来源、旧有效选项
+已确认产品范围无待选项。技术接线和兼容设计由当前图片架构维护；改变专用调用、来源、旧有效选项
 或付费次数必须回到契约，worker 不得自行缩减。
 
 ## Delivery Handoff
 
-- [Feature Home](../../development/active/unified-chat-image-creation/README.md) / [Tracker](../../development/active/unified-chat-image-creation/tracker.md)
+- [B-152 最终验证](../../archive/2026/b152-unified-chat-image-creation-validation.md)；旧 [B-005 provider smoke](../../archive/2026/b005-wan-provider-smoke-closeout.md) 已由统一入口真实验收承接。
 - 继承 [B-133](./pa-chat-image-generation-product-spec.md) 和[当前图片架构](../../architecture/chat-image-generation-architecture.md)，仅按 DEC-044 局部接续。
-- 用户已授权按本方案完成开发测试；具体执行和证据见 Tracker，Git 交付和发布按实际后续授权执行。
+- 原开发测试已完成，实际证据与限制见上述验证；Git 交付和发布按各自实际授权执行。

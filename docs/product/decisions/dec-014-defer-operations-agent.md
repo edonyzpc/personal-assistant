@@ -25,7 +25,7 @@ classifier. [DEC-051](./dec-051-proportionate-confirmation-and-contract-alignmen
 also supersedes compulsory second confirmation for a current explicit modification
 request. Preview-only requests remain non-executing; real permissions, frozen
 targets, effect receipts and Undo still apply. Runtime alignment is tracked in
-[B-161](../../development/active/contract-alignment/tracker.md), not proved here.
+[B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md), not proved here.
 
 DEC-014 原先在 action runtime、prompt、Settings 与确认边界不完整时延期 Operations Agent。B-101 Step 2/3 交付时：`OPERATIONS_AGENT_RUNTIME_ENABLED=true` 只表示 build 具备该能力，不是用户授权；当时持久化的 `operationsAgentEnabled` 默认为 `false`，要求 per-vault opt-in。此历史开放方式已由上述后继合同取代。
 

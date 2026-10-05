@@ -7,6 +7,7 @@
 - [项目架构全景](./architecture-overview.md)
 - [PA Agent Architecture](./pa-agent-architecture-plan.md)
 - [PA Agent Runtime Lifecycle](./pa-agent-runtime-lifecycle-plan.md)
+- [Agent 响应性完整设计](./pa-agent-responsive-execution.md) — B-155 已交付设计，按 Owner 要求完整保留。
 - [PA Agent Debug View 与本机历史](./pa-agent-debug-view.md)
 - [Multimodal Chat、文案版本与图文保存](./multimodal-chat-architecture.md)
 - [Chat 图片生成、版本与任务恢复](./chat-image-generation-architecture.md)

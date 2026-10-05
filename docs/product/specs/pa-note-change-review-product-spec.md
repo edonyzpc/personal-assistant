@@ -8,7 +8,7 @@ Authority: Owner 已逐项确认的笔记审阅、按钮和 Operations 审计退
 
 2026-10-05 scoped successor：[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
 取消当前明确修改请求的整批二次确认。以下受影响的 REQ/AC 和流程按新目标修订；
-B-154 本地验收仍只证明修订前输入，新入口与结果收口由 [B-161 Tracker](../../development/active/contract-alignment/tracker.md)
+B-154 本地验收仍只证明修订前输入，新入口与结果收口由 [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)
 记录，不以本 Spec 的 Current 或旧 PASS 声称新实现已交付。
 
 ## Problem And Product Outcome

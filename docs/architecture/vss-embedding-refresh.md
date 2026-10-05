@@ -1,6 +1,6 @@
 # VSS Embedding 刷新方案说明
 
-> **Status (2026-08-11)**: Current refresh/maintenance contract. DEC-028/B-126 is the approved first-use amendment and its implementation validation is tracked in the [active package](../development/active/silent-first-use-memory-preparation/tracker.md). Ollama support was removed in v2.0.0; the current provider matrix is Qwen plus supported OpenAI-compatible embedding providers.
+> **Status (2026-08-11)**: Current refresh/maintenance contract. DEC-028/B-126 is the approved first-use amendment and its implementation validation is tracked in the [B-126 最终验证](../archive/2026/b126-first-run-memory-validation.md). Ollama support was removed in v2.0.0; the current provider matrix is Qwen plus supported OpenAI-compatible embedding providers.
 ## 目标
 
 在保证 Memory 搜索结果新鲜度的前提下，降低频繁编辑和大 vault 重建时的 embedding 请求数与 Token 消耗，让准备和后台维护过程不阻塞聊天，并在限流或网络抖动时给用户明确反馈。

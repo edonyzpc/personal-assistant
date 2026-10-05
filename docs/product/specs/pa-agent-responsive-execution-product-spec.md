@@ -44,6 +44,5 @@ Agent 检索、准备输入和检查来源时，用户仍可切换 tab、编辑�
 
 ## Traceability
 
-- [Feature Home](../../development/active/agent-responsive-execution/README.md)
-- [Detailed design](../../development/active/agent-responsive-execution/sdd.md)
-- [Tracker](../../development/active/agent-responsive-execution/tracker.md)
+- [B-155 最终验证](../../archive/2026/b155-agent-responsive-execution-validation.md)
+- [B-155 Architecture](../../architecture/pa-agent-responsive-execution.md)

@@ -50,13 +50,14 @@ Bootstrap source: Owner 于 2026-09-26 要求分析减少 20% 用例的可行性
 
 | Requirement / AC | Design | Delivery evidence |
 | --- | --- | --- |
-| B-151/REQ-01 / B-151/AC-01 | GOV-004 契约承接与非作者复核 | [Tracker](../active/test-reduction/tracker.md#candidate-decisions) |
-| B-151/REQ-02 / B-151/AC-02 | 原始覆盖计数、路径与分母核对 | [Tracker](../active/test-reduction/tracker.md#validation-log) |
-| B-151/REQ-03 / B-151/AC-03 | 定向验证后集中完整门禁 | [Tracker](../active/test-reduction/tracker.md#evidence-plan) |
+| B-151/REQ-01 / B-151/AC-01 | GOV-004 契约承接与非作者复核 | [B-151 最终验证](../../archive/2026/b151-test-reduction/final-report.md) |
+| B-151/REQ-02 / B-151/AC-02 | 原始覆盖计数、路径与分母核对 | [B-151 最终验证](../../archive/2026/b151-test-reduction/final-report.md) |
+| B-151/REQ-03 / B-151/AC-03 | 定向验证后集中完整门禁 | [B-151 最终验证](../../archive/2026/b151-test-reduction/final-report.md) |
 
 ## Authority And Change Boundary
 
-[Tracker](../active/test-reduction/tracker.md) 是本轮唯一执行状态权威。
+[B-151 最终验证](../../archive/2026/b151-test-reduction/final-report.md) 保留已完成任务的独有验收与候选裁决；
+收尾后不再作为活跃执行状态权威。
 本契约补充 GOV-003/GOV-004，不替代二者。扩大生产修改、降低质量标准或接受保护缺口
 须先由 Owner 决定；常规候选取舍按已批准的质量优先原则执行。
 

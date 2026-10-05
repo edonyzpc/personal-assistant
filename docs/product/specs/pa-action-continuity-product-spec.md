@@ -6,7 +6,7 @@ Work item: B-157
 Decision: [DEC-048](../decisions/dec-048-action-facts-and-context-continuity.md)
 Authority: Owner 于 2026-10-02 明确要求按照 B-157 方案及开发计划完成全部任务；恢复既有 Context/Agent 契约，不扩大权限。
 
-本规格承接 [B-157 Discovery](../../development/discovery/context-reliability-and-action-continuity.md) 与 [完整计划](../../development/discovery/context-reliability-and-action-continuity/plan.md)，补充 [Context 契约](./pa-context-management-product-spec.md) 与 [Agent 契约](./pa-agent-runtime-evolution-product-spec.md)。批准范围不表示已交付。
+本规格已吸收 B-157 Discovery 的产品范围，补充 [Context 契约](./pa-context-management-product-spec.md) 与 [Agent 契约](./pa-agent-runtime-evolution-product-spec.md)。实现设计由 [Context architecture](../../architecture/pa-agent-architecture-plan.md#action-state-continuity-and-summary-ownership) 维护，实际验收见 [最终证据](../../archive/2026/b157-context-action-continuity-validation.md)，不由批准状态推定交付。
 
 ## Requirements
 
@@ -38,4 +38,4 @@ Owner 随后进一步明确：验证以产品功能和初衷是否满足为尺�
 
 无新 ledger/Agent SDK/Host 自然语言 classifier，无长期 Memory 或持久化摘要，无真实付费图片或 Ghost 发布，无私人 vault 部署、自动未知动作恢复、跨设备同步或 Git/release。
 
-全部 C01–C28、T01–T12 与命令/阶段门槛沿用完整计划。实际执行证据与未完成项只记在 [Tracker](../../development/active/context-reliability-and-action-continuity/tracker.md)。
+原 C01–C28 与后续任务已完成并吸收，历史失败、Owner 校准验收及剩余体验优化的触发条件见 [B-157 最终验证](../../archive/2026/b157-context-action-continuity-validation.md) 和 Backlog；不保留待执行的重复计划。

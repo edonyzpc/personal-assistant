@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-10-04
+Updated: 2026-10-05
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -8,19 +8,17 @@ Updated: 2026-10-04
 
 | ID | 事项 | 当前边界 | 下一步 | 依据 |
 | --- | --- | --- | --- | --- |
-| B-157 | Agent context 连续性与执行事实保全 | Owner 已授权按完整方案及计划实施；执行状态以 Tracker 为准 | 按统一事实投影及完整验收矩阵修复四域，保持来源与动作权限 | [Feature Home](./development/active/context-reliability-and-action-continuity/README.md)、[Discovery](./development/discovery/context-reliability-and-action-continuity.md) |
 | B-002 | Pagelet source-bound async result 完整体验 | Typed outcome 与 interim stale-result 修复已存在；统一 in-memory result store 与 Pet/Bubble ready-state 仍需按当前代码复核 | 先做 code-to-plan reconciliation，再为剩余 slice 建新 SDD；不要重复已实现部分 | [Historical plan](./archive/pagelet-async-result-plan.md) |
 | B-003 | Android VSS 真机验证 | Desktop 与 iOS 有证据，Android parity 未验证 | 在物理 Android 设备验证 SQLite/WASM Memory backend 后再更新 README 声明 | [README note](../README.md#mobile-vss-validation-note) |
 | B-004 | PA Agent telemetry baseline | Instrumentation 与 runbook 就绪，尚无 post-ship aggregate sample | 在明确 opt-in 后采集至少 7 天内容无关的聚合数据，再用于功能优先级判断 | [Runbook](./operations/pa-agent-telemetry-baseline.md) |
-| B-005 | Featured Image Wan 2.7 live provider smoke | 自动化、构建、部署与既有图片渲染通过；真实生成未调用 | 仅在用户明确同意发送测试笔记内容并接受 API 成本后执行 | [Historical tracker](./archive/featured-image-model-upgrade-spec-driven-development.md) |
 | B-006 | GitHub CI 首次远端验证 | 本地 workflow 命令已验证；`actionlint`、GitHub-hosted run 与 branch protection 未验证 | 在明确授权远端操作后验证首个 CI run，并决定 required checks | [Optimization final report](./archive/repo-wide-optimization-2026-07-10-final-report.md) |
-| B-126 | First-run experience and platform robustness | Owner 于 2026-08-11 批准 silent first-use Memory 与 marker unknown fail-closed；2026-08-23 选择保留 bounded Chat inline setup 与 first-Settings focus。Fresh Custom、wizard、Test Connection、progressive build、provider/model 性能、PA Cloud 与 release timing 未获批准 | 完成 PR #378 当前 build 的 runtime/tests/docs/CI 与适用 Obsidian smoke；更宽方向继续 Discovery，不从 DEC-028/DEC-029 外推 | [Discovery](./development/discovery/first-run-and-platform-robustness.md), [DEC-028](./product/decisions/dec-028-silent-memory-auto-prepare.md), [DEC-029](./product/decisions/dec-029-inline-ai-setup-and-settings-focus.md), [Product Spec](./product/specs/pa-silent-first-use-memory-preparation-product-spec.md), [Tracker](./development/active/silent-first-use-memory-preparation/tracker.md) |
 
 ## 已延期的产品与工程工作
 
 | ID | 事项 | 重新启动条件 / 决策边界 | 依据 |
 | --- | --- | --- | --- |
-| B-159 | 未决操作的状态刷新与重新提交提示 | 承接 B-158/F-24；先刷新或查询原操作状态，确认确实失败后再重新提交，不能把状态未知或暂未看到结果当成确定失败。Owner 后续已授权更广的 harness 重构，实施与验收校正统一见[本次收尾](./architecture/pa-agent-harness/pa-agent-harness-optimization-plan-2026-10-04.md#15-owner-校正与本地收尾)；原 F-24 证据不因后续工程改进被改记为模型通过 | User request 2026-10-04；[B-158 Findings](./development/active/agent-command-contract/tracker.md#findings) |
+| B-126 | First-run 后续宽方向 | 已交付 silent Memory、bounded inline setup 与 first-Settings focus 见最终验证；仅 Fresh Custom、wizard、Test Connection、progressive build、provider/model 性能、PA Cloud 与更宽 rollout 尚未批准。Owner 选择具体后续方向后再定义范围，不重开已合入 PR #378 的验证 | [Discovery](./development/discovery/first-run-and-platform-robustness.md), [B-126 最终验证](./archive/2026/b126-first-run-memory-validation.md) |
+| B-159 | 未决操作的状态刷新与重新提交提示 | 承接 B-158/F-24；先刷新或查询原操作状态，确认确实失败后再重新提交，不能把状态未知或暂未看到结果当成确定失败。Owner 后续已授权更广的 harness 重构，实施与验收校正统一见[本次收尾](./architecture/pa-agent-harness/pa-agent-harness-optimization-plan-2026-10-04.md#15-owner-校正与本地收尾)；原 F-24 证据不因后续工程改进被改记为模型通过 | User request 2026-10-04；[B-158 F-24 延期证据](archive/2026/b158-agent-command-contract-validation.md#f-24-deferred-not-fixed) |
 | B-141 | Pagelet 临时 Detail 页的 Discuss in Chat 交接 | B-140/T13-UX1：展开到临时 Detail tab 后，旧结果的 Discuss in Chat 按钮未完成交接；live Panel 同入口已实测可交接并 Keep。用户选择修复此入口时，以同一候选从 Detail 打开 Chat、携带来源并完成交接为最小验收；不重开 B-140 的洞察/Memory 范围 | User request 2026-09-17 closeout；[B-140 验收与限制](./archive/2026/b140-pa-agent-essential-capabilities-validation.md#deferred-and-retained-items) |
 | B-132 | 多模态媒体扩展：动画理解与外部资源 SVG | 承接 B-129/T-16、REQ-15 的明确延期范围；用户选择启动后先定义完整理解/渲染的验收、解码依赖、帧与资源预算及外部网络边界。现有静态图恢复继续有效，不因收尾自动抽帧或联网补齐；不预定二期优先级或工期 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md), [Product Spec](./product/specs/pa-multimodal-chat-product-spec.md), [历史媒体与资源证据](./archive/2026/b129-multimodal-chat-validation.md) |
 | B-134 | 跨设备图片聊天续接 | 承接 DEC-030 后续方向；用户选择启动后先设计聊天历史、图片引用/原件可用性、冲突恢复及同步隐私边界。首期仍仅承诺同设备续聊；图片进入 vault 或正式附件同步不等于聊天同步，也不自动扩大到风格同步 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md), [当前存储契约](./architecture/multimodal-chat-architecture.md) |
@@ -58,6 +56,8 @@ Updated: 2026-10-04
 | T-007 | Pagelet 取消与临时额度 reservation | admission 接口的人工异步 reserve 反例已显示 abort 后 lease 未被捕获，rollback 未执行；当前默认同步 localStorage 与私有 timer 路径未证实际可达。新增异步存储/调用方、出现真实取消耗额度，或 Owner 单独授权生产修复时，先补真实 caller 反例，再决定最小修复 | [B-150 独立追溯](./archive/2026/b150-test-audit/final-report.md#production-follow-ups), [admission owner](../src/pagelet/provider-call-admission.ts) |
 | T-008 | 已退役 append 与测试专用生产入口清理 | 在单独授权生产清理后，完整核对导出、历史和非测试调用；不得删除仍被 Quick Capture 使用的 confinement，或被生产入口调用的 WithHost renderer。B-150 仅纠正测试证据，不执行此清理 | [B-150 候选边界](./archive/2026/b150-test-audit/final-report.md#production-follow-ups), [GOV-004](./development/governance/gov-004-test-audit-quality-preservation.md) |
 | T-009 | 全量Jest异步清理提示定位 | 下次测试基础设施维护、自然退出失败或测试进程持续存活时，以`--detectOpenHandles`定位受影响suite；当前357 suites/8655 tests自然exit0，本次3个tooling suites的92 tests诊断无未释放资源报告。保留真实退出证据，不用forceExit或弱化测试消除提示 | [B-156验证与限制](./development/governance/gov-006-lean-delivery-and-beta-validation.md#final-validation-and-limits) |
+| T-010 | Ghost 来源变化观察与真实双桌面同步补验 | B-153/F-28 未复现且根因未知；只有新证据复现来源变化才定位。真实双桌面同步仅在用户要求或实际同步失败时补验，同机 test/test2 不冒称两设备通过；不自动改来源策略或发布生产文章 | [B-153 原观察与限制](./archive/2026/b153-ghost-blog-publishing-validation.md) |
+| T-011 | Agent 历史解释精度与重复动作提示体验 | B-157 按 Owner 判读为非阻塞：没有实际执行的纯重做邀请、无依据的过程/UI细节不改记成重放；用户明确要求优化，或新的可复现输出影响效果判断/当前授权时再启动。先用已有回答/工具事实核对，不自动扩展Host语义门、自检模型或重跑全矩阵 | [B-157 原判读及限制](./archive/2026/b157-context-action-continuity-validation.md#residual-and-later-continuity) |
 
 ## 维护规则
 

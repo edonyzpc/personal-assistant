@@ -782,7 +782,7 @@ repo-local Decision/Product Spec 或当前明确 Owner 选择可以提升其中�
 - 该选择只批准 D2 对应的 narrow first-use slice，已进入
   [DEC-028](../../product/decisions/dec-028-silent-memory-auto-prepare.md)、
   [Product Spec](../../product/specs/pa-silent-first-use-memory-preparation-product-spec.md)
-  与 [Active Package](../active/silent-first-use-memory-preparation/README.md)。
+  与 [B-126 最终验证](../../archive/2026/b126-first-run-memory-validation.md)。
 - D1、首次 Settings 折叠、D3、D4、Fresh Custom、progressive build、provider/model 性能与 release timing 在该日期继续只是 Discovery 输入，不从 2026-08-11 选择推导批准。
 
 ## Owner Decision Routed On 2026-08-23

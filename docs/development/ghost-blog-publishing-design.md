@@ -1,17 +1,16 @@
 # Ghost Blog Publishing — 实施设计与验收
 
-Document status: Approved
-Updated: 2026-10-01
+Document status: Current
+Updated: 2026-10-05
 Work item: B-153
-Authority: 对已批准产品范围、源码和 T-01 可行性证据的实施设计；实际交付与验证状态以 owning Tracker 为准。
+Authority: 已交付 Ghost 领域的当前实施设计；历史交付与验证另见最终证据。
 Product spec: [Ghost Blog Publishing](../product/specs/pa-ghost-blog-publishing-product-spec.md)
 Decision: [DEC-045](../product/decisions/dec-045-ghost-blog-publishing.md)
 
-本技术设计由 [B-153 Feature Home](./active/ghost-blog-publishing/README.md) 引用，保留原路径，
-不复制第二份 SDD。2026-10-01 beta.17 反馈修订见来源/字段小节；详细任务与验证方法见 [开发测试方案](./active/ghost-blog-publishing/plan.md)，
-执行状态、证据和接续只记 [Tracker](./active/ghost-blog-publishing/tracker.md)。
-Owner 已授权完整开发测试和本机隔离 Ghost 合成测试。T-01 技术选择由 GPT 核定；
-真实产品行为仍按 Tracker 验收，不把设计 Approved 当作运行时通过。
+本技术设计保留原路径，稳定职责在本文维护，不复制另一份 SDD。
+2026-10-01 beta.17 反馈修订见来源/字段小节；T-01–07 完成证据与限制见
+[B-153 最终验证](../archive/2026/b153-ghost-blog-publishing-validation.md)。
+Agent 入口由 B-158 接续，真实双桌面补验和未复现来源观察按 Backlog 触发条件处理。
 
 ## Current Source Baseline
 
@@ -101,6 +100,10 @@ Proposed 工具 `prepare_ghost_post` 只接受笔记定位和准备意图，采�
 - Agent 根据完整用户请求选择目标与 locator，包括混合目标和否定条件。省略 locator 时，
   Host 使用提交时捕获的当前笔记；提供 `path` 或 `name` 时，Host 验证真实 Markdown 文件、
   路径合法性和名称唯一性，不通过用户文本匹配决定目标或设置语义旁路。
+- `controller.createScope` 可能在 `ensureNoteUid`/`processFrontMatter` 建立本地效果后
+  才继续远端流程。没有 HTTP 或 operation ID 不证明 `not_started`；只有进入 controller
+  前的可信 typed `not_started` 可释放本次 reservation。进入领域后失败/未知保留原操作
+  事实，查询原 owner，不凭错误文案重新准备或复用另一操作。
 - `ghost` frontmatter 管发布选项，`pa_ghost` 及其文本伴随属性只管机器关联。发布选项包含
   `title/tags/feature_image/custom_excerpt/meta_description`；null 或约定空值=明确清空且不自动补齐。
   标题缺省回到文件名；发布标签不猜测。封面先取显式配置，再取普通非空 `feature_image`，
@@ -353,9 +356,9 @@ Ghost 临时稿不会天然执行所有以正式 slug 为条件的主题行为�
 
 ## GPT / GLM Implementation Handoff
 
-具体顺序、每张任务卡的输入/范围/停点、工作树与本机预检字段统一见
-[开发测试方案](./active/ghost-blog-publishing/plan.md#phases)，执行状态与原始证据统一见
-[Tracker](./active/ghost-blog-publishing/tracker.md)。不在技术设计复制第二套任务状态或派工清单。
+原实施顺序与任务卡已完成并吸收；必要验收及证据限制见
+[B-153 最终验证](../archive/2026/b153-ghost-blog-publishing-validation.md)。
+后续工作按当前产品合同与 GPT/GLM 流程派工，不复用已结束任务的授权。
 
 不可变设计边界：完整 REQ/AC、API-only 正式写入、原生临时草稿预览、原 ID/URL、
 SecretStorage、本地正文不改、无 newsletter/全站设置/旧文接管；模型输出不是正文或确认。
@@ -364,9 +367,9 @@ SecretStorage、本地正文不改、无 newsletter/全站设置/旧文接管；
 
 ## Validation Matrix
 
-完整风险映射、通过条件、重跑触发、准确命令及 app 操作见
-[Plan 的 Validation Strategy](./active/ghost-blog-publishing/plan.md#validation-strategy)；
-全部 REQ/AC 的结果映射见 [Tracker Work](./active/ghost-blog-publishing/tracker.md#work)。
+全部 REQ/AC 的历史结果映射见
+[B-153 最终验证](../archive/2026/b153-ghost-blog-publishing-validation.md)；
+仅相关输入改变、实际新失败或补验触发条件命中时安排受影响验证。
 一篇合成综合文章覆盖主流程，自动化在 exporter、workflow、host-ui 的 owner 层验证失败矩阵；
 真实站点只做必要代表路径。Owner于2026-09-29明确选择本轮以同机`test`/`test2`独立vault
 完成AC-08，分别配置凭据、不共享本机进度，只复制源与完成记录模拟同步；真实双桌面同步留后续补验，不阻塞本轮。

@@ -1,6 +1,6 @@
 # Settings Current Status
 
-Updated: 2026-09-12
+Updated: 2026-10-05
 
 ## Status
 
@@ -8,7 +8,7 @@ Updated: 2026-09-12
 | --- | --- |
 | Document type | Current status / navigation entry |
 | Scope | Settings UI, settings persistence, SecretStorage migration follow-ups |
-| Current source of truth | Current code and linked product contracts; B-106 delivery evidence is owned only by its Tracker |
+| Current source of truth | Current code and linked product contracts; B-106 historical delivery evidence is retained below |
 | Historical design target | [Settings SDD](../archive/settings-ui-sdd.md) |
 
 This document is the current entry point for Settings work. The original
@@ -21,9 +21,8 @@ or delivery status.
 Settings 简化的产品目标和旧选项失效规则见
 [DEC-033](../product/decisions/dec-033-simple-settings-and-unified-defaults.md) 与
 [B-106 Product Spec](../product/specs/pa-simple-settings-product-spec.md)。这是已确定的
-产品契约，运行时仍以当前源码为准；实施入口为
-[B-106 Feature Home](../development/active/simple-settings/README.md)，执行状态只看
-[Tracker](../development/active/simple-settings/tracker.md)。
+产品契约，运行时以当前源码为准；已完成的开发验收见
+[B-106 最终验证](../archive/2026/b106-simple-settings-validation.md)。
 
 2026-09-12当前实现已将长期记忆提取与本地习惯学习分别默认开启。缺失值及没有
 明确用户关闭证据的旧`false`按新默认迁移为开启；明确关闭或有效暂停继续保留。
@@ -69,7 +68,19 @@ contextual entry. Statistics view selection remains in its existing tabs;
 `displaySectionCounts` and `countComments` already have Settings controls.
 Ordinary field saves and statistics choices expose failure/retry feedback.
 
-The [B-106 Tracker](../development/active/simple-settings/tracker.md) retains
+B-106 已退役的闭合字段集合是 `pagelet.preloadEnabled`、
+`pagelet.deepDiscoverEnabled`、`memoryAutoCheckBeforeChat`、`skillContextEnabled`
+与 `enabledSkillIds`；它们不再决定运行能力。Pagelet 的唯一后台开关为
+`pagelet.backgroundDiscoveryEnabled`，默认 true，保留有效显式 false，不由旧键推导。
+关闭只暂停 automatic lane，不重置 scheduler 或阻止手动发现。Skills 使用当前
+统一运行契约，不恢复已退役的 enabled-ID 配置。
+
+AI 配置由 `PluginAIConfiguration` 持有共享事务队列、计数 credential lease、
+token tri-state 与失败补偿；`SettingTab` 只持有未提交草稿和界面状态。
+Provider tuple、token-only 修改与跨存储失败语义见
+[B-126 Product Spec](../product/specs/pa-silent-first-use-memory-preparation-product-spec.md)。
+
+The [B-106 最终验证](../archive/2026/b106-simple-settings-validation.md) retains
 only its historical delivery evidence. B-135 owns the later default-on,
 migration, independent-exit, platform-risk audit, and mobile-simulator evidence
 described above.

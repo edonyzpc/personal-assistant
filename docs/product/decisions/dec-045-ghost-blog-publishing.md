@@ -89,4 +89,4 @@ edony.ink 页面声明 Ghost 6.65。对应 v6.65.0 的预览路由将已发布�
 
 - [Product Spec](../specs/pa-ghost-blog-publishing-product-spec.md)
 - [设计与实施验收拆分](../../development/ghost-blog-publishing-design.md)
-- [B-153 开发入口](../../development/active/ghost-blog-publishing/README.md)
+- [B-153 最终验证](../../archive/2026/b153-ghost-blog-publishing-validation.md)

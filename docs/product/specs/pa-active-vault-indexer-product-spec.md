@@ -12,7 +12,7 @@ Authority: DEC-027 owns B-125/REQ-01..08 and B-125/AC-01..08 retrieval behavior�
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Delivery status | Bounded v1 and AVI deepening slices have shipped. DEC-027/B-125 implementation and validation are closed；the owner approved rollout for all four internal flags on 2026-08-30. On 2026-09-04 the owner approved a dated B-125 amendment that makes all four build defaults active only for explicit macOS/Linux/iOS identity, with Win32/Android and identity lacking an allowlist signal masked off and sparse explicit rollback preserved. Current implementation/validation is owned by [DEC-031](../decisions/dec-031-b125-retrieval-shipping-default.md) and the [B-125 continuation Tracker](../../development/active/retrieval-optimization-shipping-default/tracker.md), without rewriting the [B-125 closeout evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md). |
+| Delivery status | Bounded v1 and AVI deepening slices have shipped. DEC-027/B-125 implementation and validation are closed；the owner approved rollout for all four internal flags on 2026-08-30. On 2026-09-04 the owner approved a dated B-125 amendment that makes all four build defaults active only for explicit macOS/Linux/iOS identity, with Win32/Android and identity lacking an allowlist signal masked off and sparse explicit rollback preserved. Current implementation/validation is owned by [DEC-031](../decisions/dec-031-b125-retrieval-shipping-default.md) and the [B-125 最终验证](../../archive/2026/b125-retrieval-shipping-default-validation.md), without rewriting the [B-125 closeout evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md). |
 | Primary surfaces | Chat, Pagelet, Memory, Maintenance Review |
 | Feature family | Active Vault Indexer / Retrieval Substrate |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
@@ -856,7 +856,7 @@ technical switches or Beta-version special case and changes no algorithm、model
 budget、provider、Data Boundary or storage semantics. The accepted contract and
 current execution state live in [DEC-031](../decisions/dec-031-b125-retrieval-shipping-default.md),
 this B-125/REQ-09 and B-125/AC-09 amendment, and its
-[Tracker](../../development/active/retrieval-optimization-shipping-default/tracker.md).
+[B-125 最终验证](../../archive/2026/b125-retrieval-shipping-default-validation.md).
 It does not alter the historical B-125 closeout.
 
 Because no Windows device is currently available, the owner temporarily excludes Win32

@@ -15,7 +15,7 @@ Authority: B-118 的已授权修复范围、证据边界、非目标与验收标
 累计次数硬限或扣自动池；自动默认 12/36 started runs 可调整且不加 UI。旧 Recall
 10/50 physical-call 桶不合并，候选默认 5 可调、无语言正则拒绝/重试，且不复活旧管线。
 下文旧验收和产品选择记录保留原判定，不是新实现门；新验收见
-[B-161 Tracker](../../development/active/contract-alignment/tracker.md)。
+[B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)。
 Approval boundary: SG-01 至 SG-04、SG-07a/SG-07b 已由用户于 2026-07-20
 解决，SG-07c 当时延期且不阻断 B-118；其后续已由独立的
 [DEC-025/B-121](./pagelet-attention-aware-delivery-product-spec.md) 接续，不重开

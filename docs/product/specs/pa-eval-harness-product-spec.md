@@ -30,7 +30,7 @@ authority to restore retired products. The [product index](../README.md) records
 independent Weekly Review as retired and wider B-112 Trust/Maintenance proposals
 as inactive; existing bounded Maintenance remains in scope. B-119 AI enhancement
 is not activated by this matrix. Current successors are identified below;
-[B-161 delivery evidence](../../development/active/contract-alignment/tracker.md)
+[B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)
 owns implementation status for the newly approved alignment.
 
 ## Confirmed Decisions

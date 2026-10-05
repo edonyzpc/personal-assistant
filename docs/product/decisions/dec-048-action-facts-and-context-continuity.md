@@ -16,4 +16,4 @@ Authority: Owner 明确要求从 context 根本解决 create_image、Writing、b
 
 ## Consequences And Revisit
 
-实施范围及完整验收以 [B-157 Product Spec](../specs/pa-action-continuity-product-spec.md) 和 [开发计划](../../development/discovery/context-reliability-and-action-continuity/plan.md) 为准。批准是设计与实施授权，不是 runtime 已交付、Git 或发布授权。若须扩大来源/动作权限、改变持久化边界或新增存储层，必须先交 Owner 决定。
+产品范围以 [B-157 Product Spec](../specs/pa-action-continuity-product-spec.md) 为准，已完成的开发验收和 Owner 判读见 [最终证据](../../archive/2026/b157-context-action-continuity-validation.md)。原批准是设计与实施授权，不是 Git 或发布授权。若须扩大来源/动作权限、改变持久化边界或新增存储层，必须先交 Owner 决定。

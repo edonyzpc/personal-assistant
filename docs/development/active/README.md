@@ -8,16 +8,9 @@ Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governa
 
 | Track | Work item | Feature Home | Tracker |
 | --- | --- | --- | --- |
-| Contract alignment | B-161 | [Feature Home](./contract-alignment/README.md) | [Tracker](./contract-alignment/tracker.md) |
-| Note image removal | B-160 | [Feature Home](./note-image-removal/README.md) | [Tracker](./note-image-removal/tracker.md) |
-| Agent command contract | B-158 | [Feature Home](./agent-command-contract/README.md) | [Tracker](./agent-command-contract/tracker.md) |
-| Context action continuity | B-157 | [Feature Home](./context-reliability-and-action-continuity/README.md) | [Tracker](./context-reliability-and-action-continuity/tracker.md) |
-| Agent responsive execution | B-155 | [Feature Home](./agent-responsive-execution/README.md) | [Tracker](./agent-responsive-execution/tracker.md) |
-| Ghost Blog Publishing | B-153 | [Feature Home](./ghost-blog-publishing/README.md) | [Tracker](./ghost-blog-publishing/tracker.md) |
-| Unified Chat image creation | B-152 | [Feature Home](./unified-chat-image-creation/README.md) | [Tracker](./unified-chat-image-creation/tracker.md) |
-| Quality-first test reduction | B-151 | [Feature Home](./test-reduction/README.md) | [Tracker](./test-reduction/tracker.md) |
-| Simple settings and unified defaults | B-106 | [Feature Home](./simple-settings/README.md) | [Tracker](./simple-settings/tracker.md) |
-| First-run AI setup and silent Memory preparation | B-126 | [Feature Home](./silent-first-use-memory-preparation/README.md) | [Tracker](./silent-first-use-memory-preparation/tracker.md) |
-| B-125 retrieval shipping-default continuation | B-125 | [Feature Home](./retrieval-optimization-shipping-default/README.md) | [Tracker](./retrieval-optimization-shipping-default/tracker.md) |
+
+当前无活跃开发包。已完成任务的稳定契约留在 Product/Governance/Architecture，
+独有历史验证及处置见 [Disposition Log](../../archive/disposition-log.md)，
+未完成或延期事项见 [Backlog](../../backlog.md)。
 
 完成或取消后，从本表删除。过程 artifact 在结论吸收后默认删除；只有独有证据才按需归档。

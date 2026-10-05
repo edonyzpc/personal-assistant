@@ -49,6 +49,6 @@ API token 通过 Obsidian `SecretStorage` 保存。iOS Keychain 曾出现同步�
 
 - Discovery: [First-Run Experience & Platform Robustness](../../development/discovery/first-run-and-platform-robustness.md)
 - Product Spec: [B-126 First-Run Product Spec](../specs/pa-silent-first-use-memory-preparation-product-spec.md)
-- Architecture / SDD: [B-126 SDD](../../development/active/silent-first-use-memory-preparation/sdd.md)
-- Backlog / successor decision: [Backlog B-126](../../backlog.md)、[B-126 Tracker](../../development/active/silent-first-use-memory-preparation/tracker.md)
+- Architecture / SDD: [B-126 Product Spec](../specs/pa-silent-first-use-memory-preparation-product-spec.md)
+- Backlog / successor decision: [Backlog B-126](../../backlog.md)、[B-126 最终验证](../../archive/2026/b126-first-run-memory-validation.md)
 - Supersedes / superseded by: None；作为 [DEC-028](./dec-028-silent-memory-auto-prepare.md) owning contract 下的 scoped decision，授权 B-126 的 inline setup 与 Settings focus slice

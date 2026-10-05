@@ -14,7 +14,7 @@ that counter, including its storage failure, but retain source/provider admissio
 and lifecycle checks. Existing mixed timestamps expire naturally; no reset,
 guessed reclassification or conversion from the legacy Quiet Recall 10/50
 provider-call bucket. No new settings UI. §10 and the original tests/dogfood
-remain predecessor evidence; [B-161](../../active/contract-alignment/tracker.md)
+remain predecessor evidence; [B-161 最终验证](../../../archive/2026/b161-contract-alignment-validation.md)
 owns current implementation and verification, without reopening B-123.
 Implementation step: Step 1 — Pagelet Agent Deep Discover
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)
@@ -346,7 +346,7 @@ timing，不记录 path 或正文。
 仍按当前能力、来源、预算与生命周期规则运行。普通用量只显示发现次数/每日上限，
 model turns/tool calls 留在诊断。下述设置与旧值继承描述保留为 B-123 历史来源，
 不再约束当前实现；B-106 验证状态只见
-[Tracker](../../active/simple-settings/tracker.md)。
+[B-106 最终验证](../../../archive/2026/b106-simple-settings-validation.md)。
 
 - `36/day` 定义为“通过 cache/currentness/admission 后实际启动的 Deep Discover
   run”；cache hit、stale、boundary deny、provider unavailable 与 quiet local skip

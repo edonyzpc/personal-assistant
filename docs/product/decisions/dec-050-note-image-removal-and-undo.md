@@ -43,7 +43,8 @@ Chat 移除 Featured Image callout 中的图片引用后，实际附件仍保留
    与失效边界，快照仅在内存中保留，不新增持久备份、审计或跨设备恢复。
    本次完整恢复快照实际准备成功后才允许首个写入；不能静默执行不可撤销删除。
    2026-10-05 Owner 撤销自设容量额度作为业务准入条件；真实读取/分配失败仍须
-   如实报告。本次先修订合同，现有源码中的额度拒绝尚待移除。
+   如实报告。后续 [B-161](../../archive/2026/b161-contract-alignment-validation.md)
+   已完成任意额度拒绝的源码移除与本地验收；原 B-160 验收仍按当时范围保留。
 4. 优先复用官方 `FileManager.trashFile`，尊重 Obsidian 删除设置。确认文案与结果
    不保证一定进入回收站；PA 的临时 Undo 不依赖回收站恢复接口。
 5. 联合操作仍是顺序效果，不承诺跨文件事务。分别保存笔记、附件及撤销的真实结果；
@@ -57,7 +58,8 @@ Chat 移除 Featured Image callout 中的图片引用后，实际附件仍保留
 删除聊天、清缓存及原图片管理入口仍不自动删除正式附件。
 
 本决定承载已确认产品选择。拟新增接口和具体设计由 SDD 拥有；规划完成
-不表示功能已实现、已部署或已验收。实施及交付状态只由 B-160 Tracker 记录。
+不由批准状态推断实施；原 B-160 实际部署与验收见
+[最终证据](../../archive/2026/b160-note-image-removal-validation.md)，后续约定见 B-161。
 
 ## Revisit Trigger
 
@@ -67,7 +69,7 @@ Chat 移除 Featured Image callout 中的图片引用后，实际附件仍保留
 ## Traceability
 
 - [Product Spec](../specs/pa-note-image-removal-product-spec.md)
-- [Feature Home](../../development/active/note-image-removal/README.md)
-- [SDD](../../development/active/note-image-removal/sdd.md)
+- [B-160 最终验证](../../archive/2026/b160-note-image-removal-validation.md)
+- [B-160 Architecture](../../architecture/pa-agent-architecture-plan.md#operations-agent-providers)
 - [DEC-046](./dec-046-note-change-review-and-audit-retirement.md)
 - [DEC-049](./dec-049-command-agent-host-tool-contract.md)

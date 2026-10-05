@@ -103,5 +103,5 @@ Settings 已有分组和折叠，但仍把必要实现机制、用户偏好、�
 - Product standard: [North Star](../pa-product-north-star.md)
 - Dated amendment source: [DEC-034](./dec-034-unified-agent-task-execution.md) and [B-135 historical validation](../../archive/2026/b135-unified-task-execution-validation.md)
 - Current implementation entry: [Settings status](../../architecture/settings-status.md)
-- Original development entry: [B-106 Feature Home](../../development/active/simple-settings/README.md)
+- Original development entry: [B-106 最终验证](../../archive/2026/b106-simple-settings-validation.md)
 - New default/migration implementation: [B-135 historical validation](../../archive/2026/b135-unified-task-execution-validation.md)，不向原B-106 Tracker新增任务。

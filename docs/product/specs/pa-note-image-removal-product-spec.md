@@ -8,7 +8,7 @@ Authority: 已确认的共享引用保护与一键撤销，以及本会话联合
 
 2026-10-05 scoped successor：[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
 接续本 Spec 的整批二次确认与任意容量拒绝；现行目标以下文修订为准，运行对齐及新验收
-归 [B-161 Tracker](../../development/active/contract-alignment/tracker.md)。B-160 原始证据保持其原范围。
+归 [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)。B-160 原始证据保持其原范围。
 
 ## Problem And Product Outcome
 
@@ -38,7 +38,8 @@ Authority: 已确认的共享引用保护与一键撤销，以及本会话联合
 
 2026-10-05 Owner 撤销自设 Operations 数量、内容及恢复额度的硬拒绝要求。
 合法操作及完整效果回读不因这些内部阈值被阻断；真实资源使用可提示，真实准备
-失败须如实报告。当前仅合同修订，源码中的限制仍在，旧验收不证明已完成移除。
+失败须如实报告。后续 B-161 已完成相关源码移除与新验收；旧 B-160 验收保留原范围，
+不倒改为新合同测试结果。
 
 ### Non-goals
 
@@ -83,7 +84,7 @@ Agent 理解用户当前明确选择，领域解析目标并准备实际联合�
 
 ## Delivery Handoff
 
-- [Feature Home](../../development/active/note-image-removal/README.md)
-- [SDD](../../development/active/note-image-removal/sdd.md)
+- [B-160 最终验证](../../archive/2026/b160-note-image-removal-validation.md)
+- [B-160 Architecture](../../architecture/pa-agent-architecture-plan.md#operations-agent-providers)
 - [统一架构](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)
-- Owner 已授权按 B-160 完成全部开发设计任务；实际实施、验证及费用/部署范围以 Tracker 的授权记录为准。
+- 原开发与验证已完成，历史授权/证据范围见上述最终验证；费用、部署与发布仍按实际授权。

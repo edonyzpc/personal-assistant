@@ -61,7 +61,8 @@ generic preload/旧范围控件退役、effect/risk Memory、独立 Weekly Revie
 
 ## Consequences
 
-- 已确认的是目标合同；当前实现差异和完成证据只由 B-161 Tracker 管理。
+- 已确认目标已由 B-161 完成本地实现与验收，历史失败及证据范围见
+  [最终验证](../../archive/2026/b161-contract-alignment-validation.md)；不从批准状态推断实现或发布。
 - Agent 判断语义和是否需要澄清；运行时/领域 owner 核验真实请求、权限、身份及效果。
   不以模型提交 `approved=true` 或 Host 关键词分类替代用户授权。
 - 直接执行不等于自动执行所有提案；未知/部分效果先查询原操作，不能重复付费或重放写入。
@@ -76,6 +77,5 @@ generic preload/旧范围控件退役、effect/risk Memory、独立 Weekly Revie
 ## Traceability
 
 - [Product Spec](../specs/pa-contract-alignment-product-spec.md)
-- [Feature Home](../../development/active/contract-alignment/README.md)
-- [SDD](../../development/active/contract-alignment/sdd.md)
+- [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)
 - [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)

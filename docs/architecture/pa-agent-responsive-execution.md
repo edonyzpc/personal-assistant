@@ -1,11 +1,13 @@
 # Agent 响应性与来源检查 Software Design Document
 
-Document status: Approved
-Updated: 2026-10-01
+Document status: Current
+Updated: 2026-10-05
 Work item: B-155
-Authority: 已授权约束下的 source-verified 设计、职责、兼容、风险与最低充分验收；实际完成状态只见 Tracker。
-Product spec: [Product Spec](../../../product/specs/pa-agent-responsive-execution-product-spec.md)
-Tracker: [Development Tracker](./tracker.md)
+Authority: B-155 已交付响应性设计；按 Owner 要求完整保留原 SDD，历史源码基线及设计批准边界不改写。
+Product spec: [Product Spec](../product/specs/pa-agent-responsive-execution-product-spec.md)
+Validation: [B-155 final evidence](../archive/2026/b155-agent-responsive-execution-validation.md)
+
+2026-10-05 文档收尾：完整设计从 active 迁入当前 Architecture。以下故障基线、设计与验收计划保留原上下文，最终已交付证据见上链；它们不是仍待执行任务。Operations 的必经二次确认、关键词读取复用及任意容量规则已由 [DEC-051](../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md) / [B-161](../archive/2026/b161-contract-alignment-validation.md) 接续；本文原设计中的旧确认措辞不恢复这些要求。整体移除 Host 尚未决定。
 
 ## 1. 目标与产品约束
 
@@ -13,7 +15,7 @@ Agent 可以继续检索和思考，但用户必须能继续操作 Obsidian。�
 
 本次同时处理四类问题：安全承担了过多内容新鲜度工作；扫描过程产生大量 ancestry；重复来源准入造成乘法计算；所有工作共用 renderer，使取消和原生操作一起失去调度机会。
 
-遵循 [North Star](../../../product/pa-product-north-star.md) 的“安静且可信”，职责固定如下：
+遵循 [North Star](../product/pa-product-north-star.md) 的“安静且可信”，职责固定如下：
 
 | 责任 | Host 确定性保证 | Agent 按任务需要处理 |
 | --- | --- | --- |
@@ -24,7 +26,7 @@ Agent 可以继续检索和思考，但用户必须能继续操作 Obsidian。�
 | 写入与外部动作 | 沿用既有确认、目标检查及执行 receipt | 提出计划和可审阅结果 |
 | 可操作性 | PA 无界同步工作不能占住原生 UI；停止可调度 | 不以长思考占有 UI |
 
-普通正文编辑不是权限撤销。[现有合同](../../../product/specs/pa-agent-runtime-evolution-product-spec.md) 已允许“读到 A 后文件变 B，继续按 A 回答”。本次不再把普通编辑提升成全面安全阻断。新鲜度要求、写入目标 current 检查和权限撤销仍分开。
+普通正文编辑不是权限撤销。[现有合同](../product/specs/pa-agent-runtime-evolution-product-spec.md) 已允许“读到 A 后文件变 B，继续按 A 回答”。本次不再把普通编辑提升成全面安全阻断。新鲜度要求、写入目标 current 检查和权限撤销仍分开。
 
 ## 2. 当前源码基线与故障链
 

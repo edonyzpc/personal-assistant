@@ -13,7 +13,7 @@ Authority: Quiet Recall 的候选、触发、质量、成本、数据、交付�
 Review/Quiet Recall 等命令已走统一 Deep Discover；下文独立 evaluator/10–50 调用桶仅
 约束确有合法消费者的旧路径，不要求复活无调用代码。自动 Deep Discover 的 12/36
 按启动 run 计数，手动不扣自动池，两者不可合并或换算。旧交付事实保留，新对齐见
-[B-161 Tracker](../../development/active/contract-alignment/tracker.md)。
+[B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)。
 
 > [!note] Current implementation includes the 2026-07-02 amendments: the
 > candidate pool spans the eligible vault and triggers are note open/switch,

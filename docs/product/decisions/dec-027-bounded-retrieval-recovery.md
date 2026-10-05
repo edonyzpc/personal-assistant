@@ -364,6 +364,6 @@ deadline/finalization reserve 由 SDD EC-03 收束为可验证的工程合同，
 - Pagelet contract: [Pagelet Product Design](../pagelet-product-design.md)
 - Architecture: [VSS SQLite/WASM architecture](../../architecture/vss-sqlite-wasm-architecture.md), [PA Agent architecture](../../architecture/pa-agent-architecture-plan.md)
 - Final implementation / validation evidence: [B-125 closeout evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md)
-- Shipping-default amendment: [DEC-031](./dec-031-b125-retrieval-shipping-default.md), [B-125 Product Spec amendment](../specs/pa-active-vault-indexer-product-spec.md#102-b-125-shipping-default-amendment), [B-125 continuation Tracker](../../development/active/retrieval-optimization-shipping-default/tracker.md)
+- Shipping-default amendment: [DEC-031](./dec-031-b125-retrieval-shipping-default.md), [B-125 Product Spec amendment](../specs/pa-active-vault-indexer-product-spec.md#102-b-125-shipping-default-amendment), [B-125 最终验证](../../archive/2026/b125-retrieval-shipping-default-validation.md)
 - Source request: Owner discussion and sequential confirmations, 2026-08-08
 - Supersedes / superseded by: supersedes the conflicting algorithm, boundary, projection and retry-state choices in the 2026-08-07 retrieval-optimization draft; DEC-031 supersedes only the pending/default-off shipping disposition and does not supersede this retrieval behavior decision

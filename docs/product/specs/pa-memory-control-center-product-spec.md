@@ -341,7 +341,7 @@ gates; this is historical evidence for that iteration's inputs:
 
 These results do not validate B-106's later group layout, input handling, or
 local refresh changes. Their Desktop and real-device evidence remains owned
-by the [B-106 Tracker](../../development/active/simple-settings/tracker.md).
+by the [B-106 最终验证](../../archive/2026/b106-simple-settings-validation.md).
 
 Migration and first cutover preserve actual effects rather than labels. A
 currently used, vault-scoped Type-A profile remains used through a governed

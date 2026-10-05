@@ -102,5 +102,5 @@ PA 的 Memory 系统在首次使用时需要将 vault 中的 Markdown 笔记文�
 - Discovery: [First-Run Experience & Platform Robustness](../../development/discovery/first-run-and-platform-robustness.md)
 - Product Spec: [Silent First-Use Memory Preparation](../specs/pa-silent-first-use-memory-preparation-product-spec.md)
 - Architecture: [VSS SQLite/WASM Current Architecture](../../architecture/vss-sqlite-wasm-architecture.md)、[VSS Local State](../../architecture/vss-local-state-plan.md)、[VSS Embedding Refresh](../../architecture/vss-embedding-refresh.md)
-- Active Package: [B-126 Feature Home](../../development/active/silent-first-use-memory-preparation/README.md)、[Tracker](../../development/active/silent-first-use-memory-preparation/tracker.md)
+- Historical validation: [B-126 最终验证](../../archive/2026/b126-first-run-memory-validation.md)
 - Source request: Owner decisions on 2026-08-11 in the current PR #378 review follow-up—option A for silent first-use and the later option 1 for unknown-marker fail-closed；Owner 于 2026-08-23 选择 legacy provider 方案 B，只 grandfather 可证明的旧 Qwen，Ollama/来源不明迁移重新选择；no earlier discussion is used as approval evidence.

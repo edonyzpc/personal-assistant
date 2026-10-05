@@ -11,7 +11,7 @@ accumulated-count caps or consume automatic quota; automatic Deep Discover uses
 adjustable defaults of 12/hour and 36/day started runs, without new settings UI.
 Old mixed usage expires naturally, without resetting or reclassifying it; the
 legacy Quiet Recall 10/50 provider-call bucket remains separate. This closed
-proposal and its experiment results stay historical; [B-161](../../active/contract-alignment/tracker.md)
+proposal and its experiment results stay historical; [B-161 最终验证](../../../archive/2026/b161-contract-alignment-validation.md)
 owns the new alignment and verification.
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)
 Restart condition: B-123 已由 owner 于 2026-08-01 关闭；仅在新的 Pagelet Deep Discover 证据触发独立 work item 时重开。

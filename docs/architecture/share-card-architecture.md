@@ -108,8 +108,11 @@ Renderer 移除 script、runtime style、事件处理器、交互控件和外部
 边界拆分，视觉块保持原子。实现基线原有 50,000 characters / 24 页整批拒绝，已由
 [DEC-051](../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
 撤销：目标是完整分页与可取消，不因固定字符数/页数拒绝或截断尾部；真实无法无损
-分页或资源失败仍准确报告。移除实现门、解耦边界采样参数和传播取消信号由
-[B-161](../development/active/contract-alignment/tracker.md)验收，本文不先行宣称已交付。
+分页或资源失败仍准确报告。B-161 已移除实现门、解耦边界采样并传播取消信号，
+长单块切点在同一静态 DOM 中按需细化，源边界与实际文本一致才能生成坐标，不重渲染
+全文或跨 DOM 复用旧坐标。分页和序列导出沿当前 AbortSignal 及时停止并释放资源；
+原生 54,702 字符/77 页完整导出与移动交互证据见
+[B-161](../archive/2026/b161-contract-alignment-validation.md)。
 
 字号选择是 batch-level 决策：
 

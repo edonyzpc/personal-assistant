@@ -21,7 +21,7 @@
 > Deep Discover defaults to 12/hour and 36/day started runs. These are adjustable
 > defaults, with no new settings UI. The old Quiet Recall 10/50 provider-call
 > bucket is historical and is not merged with this run counter. Runtime alignment
-> and verification belong to [B-161](../development/active/contract-alignment/tracker.md).
+> and verification belong to [B-161 最终验证](../archive/2026/b161-contract-alignment-validation.md).
 
 ## Status
 

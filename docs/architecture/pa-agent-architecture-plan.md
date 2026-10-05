@@ -16,7 +16,7 @@ Default runtime boundary:
 - Memory and Context Used remain source-visible.
 - No provider built-in web-search fallback.
 - No arbitrary MCP endpoint, shell, script, local executable, or hidden note mutation.
-- When the live Operations controller and policy are available, the same main Agent may propose the four core vault writes and the approved note-image removal operation; every write still requires its existing preview and explicit confirmation. The old persisted Operations setting is retained for compatibility but is no longer a planning gate.
+- When the live Operations controller and policy are available, the same main Agent may stage the four core vault writes and the approved note-image removal operation, then execute a current explicit modification request through the domain tool. Preview-only work does not execute; genuine ambiguity or actions beyond authorization retain necessary confirmation. Real results, optional full diff and drift-safe Undo remain available. The old persisted Operations setting is retained for compatibility but is no longer a planning gate.
 
 ## Runtime Map
 
@@ -79,7 +79,7 @@ This is the single architecture authority for PA Agent command design. Owner
 confirmed this responsibility split and the design → workflow → shared framework
 → domain migration order on 2026-10-04; see [DEC-049](../product/decisions/dec-049-command-agent-host-tool-contract.md).
 It consolidates DEC-034/038/040/042/043/048. It is a current design constraint;
-alignment of existing code is tracked by [B-158](../development/active/agent-command-contract/tracker.md),
+alignment of existing code is tracked by [B-158 最终验证](../archive/2026/b158-agent-command-contract-validation.md),
 not implied by this document's status. Other workflows reference this section
 rather than maintaining another definition.
 
@@ -92,16 +92,16 @@ or passing test does not establish a product limit. Complete operation facts
 must remain readable without a separate effect-count cap. Actual resource
 failures remain facts to report, not a basis for silently reducing the task.
 
-This is a contract change only: the keyword branch and capacity guards still
-exist in runtime code. The Owner wants to discuss removing the Host next;
+The later [B-161 implementation and acceptance](../archive/2026/b161-contract-alignment-validation.md)
+removed these keyword and arbitrary capacity guards. The Owner wants to discuss removing the Host next;
 the remaining architecture below describes the existing system, not a mandate
 to preserve its Host rules in that discussion.
 
 ### Roles And Ownership
 
 2026-10-05 的进一步产品选择见[DEC-051](../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)：
-必要确认、当前明确Operations直接执行、自然语言图片来源与前后台预算的目标行为已确认，
-现有实现尚待[B-161](../development/active/contract-alignment/README.md)对齐。
+必要确认、当前明确Operations直接执行、自然语言图片来源与前后台预算已由
+[B-161](../archive/2026/b161-contract-alignment-validation.md)完成本地实现与验收。
 本节职责不要求沿用旧的必经确认；来源/身份/真实效果边界仍成立，整体移除Host尚未决定。
 
 A command is a domain task contract and working guidance executed by the same
@@ -153,6 +153,12 @@ Agent semantic errors remain possible. The Host does not claim to prove which
 allowed note the user intended. Existing explicit scope controls, Data Boundary,
 domain action confirmation and effect/cost boundaries continue to apply; this
 contract neither deletes those protections nor adds routine confirmation gates.
+
+Command bridge guidance names only schemas actually bound for the current
+invocation. Scope registration and teardown affect that instance alone. A
+side-effect exception without trusted owner effect facts is acceptance_unknown
+according to the capability's real kind/permission; error prose cannot prove
+not_started. Ordinary read-only failure does not fabricate a domain execution.
 
 ### Interaction Contract
 
@@ -279,9 +285,15 @@ are defined in [Chat Image Generation Architecture](./chat-image-generation-arch
 
 ### Memory retrieval and projection
 
-The model-facing `search_memory` schema remains `{query}`. Retrieval modes,
+The model-facing `search_memory` schema is `{query, temporal?}`. The optional
+closed temporal value describes the Agent's per-invocation time choice. Retrieval modes,
 candidate lanes, graph scores, retry state, and internal IDs are Host-owned and
 cannot be selected by the model.
+
+The Agent's structured temporal choice is distinct from Host intent guessing:
+omitted uses the existing auxiliary query interpretation, `none` covers all
+history, and `range` is validated and frozen for that invocation. Recovery A2
+reuses A1's frozen choice rather than interpreting it again.
 
 One standard invocation follows these boundaries:
 
@@ -394,10 +406,10 @@ from the run's read snapshots and rechecks live authorization. Ordinary note
 edits and background Memory refresh do not rewrite an already-read snapshot;
 deletion, exclusion, Forget, Data Boundary or lost identity still withdraw it.
 The Agent decides whether another read is needed. User-text keywords do not
-decide execution or cache reuse. Reuse must have an explicit version/snapshot
-basis compatible with the requested read. The current executor still checks
-latest/current and similar words; that branch is an implementation gap under
-the 2026-10-05 contract cleanup, not the required behavior.
+decide execution or cache reuse. An explicit repeated ordinary read executes
+through the existing capability again; identical parameters do not silently
+replace it with an earlier success. Domain snapshot/version reuse retains its
+own factual basis. B-161 removed the latest/current keyword branch.
 
 For writing, Chat binds `get_writing_context` only after the user selects the
 `@Writing` action or explicitly continues an existing writing version. Ordinary
@@ -411,6 +423,12 @@ schema, source currentness and the generation-input snapshot before creating one
 artifact/version. Preview reads and saves nothing; saving remains an explicit
 confirmed Host action. Legacy JSON, recovery and persisted-version readers stay
 available for existing records.
+
+The main Agent selects a permitted Writing `parentHandle` from the UI-bound
+candidates, or selects null for a new work; genuine ambiguity can be clarified.
+A non-Retry submission consumes the composer action while retaining the selected
+candidate/version identity. Physical Retry preserves that original identity and
+does not silently choose another parent.
 
 Ordinary Chat can call `read_writing_history` to list or read versions from its
 current conversation. Each read verifies the original source lineage and current
@@ -461,13 +479,27 @@ the original bound history sink. A receipt proves an effect, not current Undo
 availability. `get_operations_status` reads only the visible original
 conversation/run/intent owner through the Host boundary and cannot confirm,
 retry, restore authority or create another intent. The [Product Spec](../product/specs/pa-note-image-removal-product-spec.md)
-and [SDD](../development/active/note-image-removal/sdd.md) own the detailed contract.
+and [B-160 Architecture](pa-agent-architecture-plan.md#operations-agent-providers) own the detailed contract.
 
-The existing operation/content/recovery quota guards are pending removal from
-runtime; they are no longer required admission conditions. Actual snapshot
+The arbitrary operation/content/recovery quota guards were removed by B-161;
+they are no longer admission conditions. Actual snapshot
 preparation and truthful Undo availability remain separate from these quotas.
 An admitted intent's full effect facts must survive status queries and context
 projection, regardless of the number of operations or effects.
+
+For a current explicit modification, the Agent stages the immutable intent and
+calls `execute_operations({ intentId })`. Merely staging or displaying a proposal
+does not execute it. Runtime binds the current user run, source guard and signal;
+model input cannot supply permission, run identity or replacement operations.
+`ChatService.executeOperationsIntentFromAgent` captures the original conversation
+history sink before its first await, then invokes `OperationsSession.executeCurrentIntent`.
+Pending becomes executing before the first write; executing or terminal intents
+return their actual state/result without another write. Old-run pending intents,
+cancellation and revocation cannot gain execution authority through this tool.
+The running row is bound to its existing action history before execution; final
+owner facts update that original row even when the view has closed. A closed
+owner does not regain UI or Undo. Analysis/preview-only work stops before the
+execution tool; optional manual review and drift-safe Undo remain available.
 
 Calls from one assistant tool phase stage one immutable intent. Chat groups that
 intent by normalized note path and shows the first frozen baseline to the last
@@ -677,6 +709,46 @@ older rows behave as false without a schema migration. Projection, admission
 and the UI receipt bridge can be reverted independently; disabling semantic
 preparation restores deterministic reduction without deleting source history
 or changing the Memory index.
+
+### Action State Continuity And Summary Ownership
+
+有限 `PaAgentActionState` 保存 owner、operationId、phase、revision、origin、
+inputLineage 与 owner receipt；Host-only resultFact 不直接外发。正文、canonical 与
+状态分别准入，状态始终 strict lineage，unknown 不能洗为 complete。模型可见的是
+有限领域阶段、opaque identity 与可证明子步骤：Ghost published 必须 verified；
+Image saved 不证明当前文件仍在，provider acceptance unknown 不等于未提交；
+Writing noteState created 可以与 overall partial 并存，不证明全部保存步骤完成。
+
+现有 Chat/PersistedMessage 的 optional actionStates/actionStateBinding 绑定原
+conversation/run/turn。ChatHistoryStore 与 Manager 在原 turn 内原子条件更新，
+ConversationPersistence 沿已有顺序链补写；旧 revision 不覆盖、同 revision 冲突拒绝。
+reviseTurn 核原请求/binding 并保留现有 conversation 元数据，缺失/替换不 upsert。
+实际写成功才补 live binding；失败保留待补写，不重放领域动作。删除不复活，重开
+canonical 仍为空，没有新增数据库、原始 canonical 或摘要持久化。
+
+Operations 跨实例只读状态查询沿既有 service 找同 intent 与原 run 的真实 owner；
+当前 session 未找到不能误记 lost。confirm/cancel/Undo 留在原 session，不随查询转移。
+同一原操作的可信回执可按存储最新 revision 纠正 legacy lost，不能复活 cancelled/expired。
+旧 run 有限状态仅在原 conversation、binding、唯一原 user、origin 与 complete lineage
+核实后派生当前空正文片段，epoch/Memory/依赖/lifetime 再验；限定 notes 范围或 exclusions
+不能据 DTO 猜原观察范围。证明只在 TaskSourceRun 私有 WeakMap，普通复制不继承；
+rehydrated 兼容仅限 schema1 空 messages 且 run/turn 同时精确等于原 rehydrated 身份。
+
+压缩保护必要 call/result 配对、owner 有限事实与未决副作用，不永久保护整轮普通正文。
+Host executor 确认 read_only、完整配对且成功的观察可以进入来源化摘要；仅在合法摘要
+已承接覆盖后释放原正文。unknown 分类、缺配对、副作用证据和最新完整轮仍保留；
+没有合法摘要不丢原文，owner 完成不等于整轮所有意图完成。
+
+history aux 使用 System 协议、Human 普通来源/纯自由 previousSummary、独立 Human
+只读 retainedActionFacts 三消息。Host 从当前获准快照确定性提取操作事实，与模型
+六字段草稿组合；事实不交给模型重新判定，previousSummary 只回传自由草稿。runtime
+校验角色、封闭键、来源索引、完整正文与独立事实，派发前重算 binding/currentness；
+缺失、重复或篡改不派发。组合 JSON 的转义、wrapper 与完整保护集合计入同一请求预算，
+不增预算或缩掉必要证据。有 owner 事实时初始空草稿可合法组合，空更新不能擦掉已有
+非空草稿；实际容纳不了则如实 overflow。工具摘要保持原两消息，缓存仍为现有内存缓存。
+
+稳定机制的原模型/应用验收与 Owner 判读校准见
+[B-157 evidence](../archive/2026/b157-context-action-continuity-validation.md)。
 
 ## Source And Trust Boundaries
 

@@ -122,7 +122,7 @@ PA 无法拦截用户自行在 Ghost 点击 Publish；检查未通过时只提�
 
 ## Delivery Handoff
 
-- [B-153 Feature Home](../../development/active/ghost-blog-publishing/README.md)
-- [实施设计](../../development/ghost-blog-publishing-design.md)与[开发测试方案](../../development/active/ghost-blog-publishing/plan.md)
-- [Tracker](../../development/active/ghost-blog-publishing/tracker.md)唯一记录执行状态；开发测试规划不等于运行时实施已启动，不修改现有运行时 Architecture。
+- [B-153 最终验证](../../archive/2026/b153-ghost-blog-publishing-validation.md)
+- [实施设计](../../development/ghost-blog-publishing-design.md)与[B-153 最终验证](../../archive/2026/b153-ghost-blog-publishing-validation.md)
+- 上述最终验证保留已完成交付的历史证据；当前行为由本 Spec 与实施设计维护，未完成或补验事项由 Backlog 承接，归档不是活跃执行权威。
 - Git、部署、测试站点写入、正式站点验证及 release 依实际实施任务授权，本文不授予外部发布权限。

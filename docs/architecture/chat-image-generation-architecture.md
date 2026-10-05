@@ -9,7 +9,7 @@ Validation evidence: [B-133 验收与迁移证据](../archive/2026/b133-chat-ima
 
 统一入口与明确来源遵循 [DEC-044](../product/decisions/dec-044-unified-chat-image-creation.md)、
 [B-152 Product Spec](../product/specs/pa-unified-chat-image-creation-product-spec.md)；
-交付与验收记录见 [B-152 Tracker](../development/active/unified-chat-image-creation/tracker.md)。
+交付与验收记录见 [B-152 最终验证](../archive/2026/b152-unified-chat-image-creation-validation.md)。
 
 ## Scope And Modules
 
@@ -121,6 +121,11 @@ referenceImageRefs、parentVersionId。conversationId、stableMessageId、operat
 不以会自动跳转的其他 HTTP 路径兜底。服务密钥只进入已验证 API origin。
 
 ## Persistent Identity And Ordering
+
+Chat 的 `imageOperationByTurn` 将同一用户轮的槽、receipt 与冻结图片计划保持到
+Retry 重建 Runtime/factory 后，避免再次准备或提交。仅领域提供可信、精确对应原槽
+的 `not_started` 才释放预约；异常、缺 ID、unknown 或迟到结果不能由错误文案推导为
+未执行。后续 `get_image_status` 查询原身份，不能授予重新提交权限。
 
 Chat IndexedDB version 3 在既有库增加 `imageGenerationTasks` 与 `generatedImageVersions`。
 任务有 schemaVersion、taskId、operationId、conversationId、stableMessageId、revision、

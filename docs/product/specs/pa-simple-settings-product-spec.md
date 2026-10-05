@@ -100,9 +100,8 @@ Owner在B-135讨论中将长期提取和本地习惯学习改为分别默认开�
 
 ## Delivery Handoff
 
-- Active Package: [B-106 Feature Home](../../development/active/simple-settings/README.md)
-  与 [Tracker](../../development/active/simple-settings/tracker.md) 承接字段级设计、
-  实现与验证；本规格不记录执行状态或将产品批准描述为已发布。
+- Historical delivery: [B-106 最终验证](../../archive/2026/b106-simple-settings-validation.md)
+  保留实现与验证，字段级设计由当前 Settings contracts 承接；本规格不将产品批准描述为已发布。
 - Architecture contracts: [Settings status](../../architecture/settings-status.md)、
   [Memory Control Center](./pa-memory-control-center-product-spec.md)、
   [Data Boundary](./pa-data-boundary-product-spec.md)。

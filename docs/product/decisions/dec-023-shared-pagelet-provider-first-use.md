@@ -12,7 +12,7 @@ Related work item: B-119
 [DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md) 撤销按来源篇数要求
 确认，必要确认改按真实歧义、超授权或超已接受费用范围。下文旧foreground Review与
 generic preload envelope不覆盖当前统一发现入口；来源权限、必要外发告知继续适用。
-旧条款已按下文接续；代码与验证由 [B-161 Tracker](../../development/active/contract-alignment/tracker.md)
+旧条款已按下文接续；代码与验证由 [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)
 管理，不能将文档修订视为已验证运行行为。B-119 在本记录中的引用不激活其未启动范围。
 
 ## Context

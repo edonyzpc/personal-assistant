@@ -21,7 +21,7 @@ directories. [DEC-051](../../../product/decisions/dec-051-proportionate-confirma
 supersedes compulsory second confirmation for a current explicit modification.
 It does not make Pagelet background discovery writable or auto-execute a staged
 proposal. User-opened actions, surface isolation, actual source/permission checks,
-effect receipts and drift-safe Undo remain. Follow [B-161](../../active/contract-alignment/tracker.md)
+effect receipts and drift-safe Undo remain. Follow [B-161 最终验证](../../../archive/2026/b161-contract-alignment-validation.md)
 for alignment evidence; do not recreate the old switch, classifier or audit writer.
 
 ## 1. Outcome And Scope

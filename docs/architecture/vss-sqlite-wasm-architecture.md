@@ -2,7 +2,7 @@
 
 Updated: 2026-09-04
 
-Status: Current runtime contract. The SQLite/WASM baseline was verified against `src/vss/`, `src/plugin.ts`, `src/memory-manager.ts`, the current package manifest, and VSS tests during the documentation restructure; DEC-028/B-126 owns silent first-use Memory, while DEC-031 is the dated B-125 amendment for the platform-scoped retrieval shipping default and tracks its current implementation/validation in the [B-125 continuation package](../development/active/retrieval-optimization-shipping-default/tracker.md).
+Status: Current runtime contract. The SQLite/WASM baseline was verified against `src/vss/`, `src/plugin.ts`, `src/memory-manager.ts`, the current package manifest, and VSS tests during the documentation restructure; DEC-028/B-126 owns silent first-use Memory, while DEC-031 is the dated B-125 amendment for the platform-scoped retrieval shipping default and tracks its current implementation/validation in the [B-125 最终验证](../archive/2026/b125-retrieval-shipping-default-validation.md).
 
 ## Authority And Product Boundary
 
@@ -315,7 +315,7 @@ mutate defaults；see the
 [B-125 closeout evidence](../archive/2026/b-125-retrieval-optimization-closeout.md).
 On 2026-09-04 [DEC-031](../product/decisions/dec-031-b125-retrieval-shipping-default.md)
 and the [B-125 Product Spec amendment](../product/specs/pa-active-vault-indexer-product-spec.md#102-b-125-shipping-default-amendment)
-approved one versioned rollout profile；the B-125 shipping-default candidate implements
+approved one versioned rollout profile；the delivered B-125 shipping default implements
 macOS/Linux/iOS build defaults that set `lexicalProfile`、`strictReranker`、`graphPpr` and
 `relaxedRecovery` to `true`. Sparse raw booleans remain per-flag overrides；explicit
 `false` rolls back one capability, while absent/invalid fields use the build default
@@ -325,8 +325,10 @@ allowlist signal receives `unsupported` and the same all-false result. Win32/And
 signals take precedence even if an allowlist signal is also present. The resolver
 does not mutate raw settings.
 This rollout identity is separate from calibration evidence and uses no Beta-version
-special case. Implementation/validation state and release authority remain in the
-[B-125 continuation Tracker](../development/active/retrieval-optimization-shipping-default/tracker.md).
+special case. Historical implementation, validation and release evidence is retained in
+[B-125 最终验证](../archive/2026/b125-retrieval-shipping-default-validation.md).
+Current behavior is owned by this architecture and the Product Spec; future work
+follows Backlog and release operations require their own current authorization.
 Desktop owns real selected-reranker、structured temporal、Pagelet 0/1/2 and one
 source-triggered lexical upsert；OPFS restart runs only when persistence code/input
 changed.

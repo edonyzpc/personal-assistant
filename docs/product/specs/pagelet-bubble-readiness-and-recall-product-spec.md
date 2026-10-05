@@ -11,7 +11,7 @@ Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delive
 接续旧候选数/语言重试与预算适用性。当前命令走统一 Deep Discover；本文独立 Recall
 evaluator 仅描述仍有生产消费者时的旧实现约束，不恢复旧管线。旧 10/50 provider-call
 桶不同于自动 Deep Discover 可调默认 12/36 started runs，手动不扣自动池；新运行对齐
-见 [B-161 Tracker](../../development/active/contract-alignment/tracker.md)。
+见 [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)。
 
 ## Status
 

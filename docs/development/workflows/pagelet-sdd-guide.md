@@ -12,7 +12,7 @@
 > Panel scope controls and generic preload. Older scenario diagrams, settings
 > shapes and numeric envelopes below are historical, not instructions to restore
 > them. New budget/confirmation alignment is tracked in
-> [B-161](../active/contract-alignment/tracker.md), not validated by this guide.
+> [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md), not validated by this guide.
 
 ---
 

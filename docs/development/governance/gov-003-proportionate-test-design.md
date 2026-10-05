@@ -134,7 +134,7 @@ Owner 同时要求试跑四 worker，常规 CI 与最终版本标签 CI 改用
 Owner 明确选择“提高到10MiB”，当前默认 bundle 硬上限因此调整为
 10 MiB（10,485,760 字节）。超限拒绝、显式预算参数及 Node 引用、动态 script、字体
 和完整 license 检查继续沿用现有规则；B-153 的执行与验证结果见
-[owning Tracker](../active/ghost-blog-publishing/tracker.md)。
+[B-153 最终验证](../../archive/2026/b153-ghost-blog-publishing-validation.md)。
 
 ## Traceability
 

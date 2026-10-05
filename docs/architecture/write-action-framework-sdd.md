@@ -10,7 +10,7 @@
 > requests; optional preview remains non-executing. Existing framework callers
 > retain their own domain confirmation contracts, including Ghost's concrete
 > version boundary. Frozen targets, permission checks, real effects and Undo are
-> unchanged. [B-161](../development/active/contract-alignment/tracker.md) owns the
+> unchanged. [B-161 最终验证](../archive/2026/b161-contract-alignment-validation.md) owns the
 > new runtime alignment; the historic v1 evidence below does not validate it.
 
 > **Status (2026-07-11): Current implemented framework contract.** The original

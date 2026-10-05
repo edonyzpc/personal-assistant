@@ -587,8 +587,8 @@ graph TB
 | 域 | 关键配置 |
 |-----|---------|
 | **AI** | provider (qwen/openai), baseURL, model names, thinking mode |
-| **Memory** | enabled, auto-check, approval policy, exclude paths |
-| **Skills** | enabled skill IDs, context injection |
+| **Memory** | enabled, approval policy, exclude paths；Chat auto-check 旧开关已退役 |
+| **Skills** | 统一运行契约；enabled IDs/context injection 旧开关已退役 |
 | **Pagelet** | 嵌套 `PageletSettings` (~25 字段) |
 | **Statistics** | type, sync, section counts |
 | **Local Graph** | depth, show flags, resize, auto-colors |

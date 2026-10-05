@@ -31,7 +31,9 @@ enhancement, or create new delivery gates. Memory admission follows
 [Memory Control Center](./specs/pa-memory-control-center-product-spec.md#5-effect-based-admission-and-disclosure);
 Operations confirmation and review follow
 [DEC-051](./decisions/dec-051-proportionate-confirmation-and-contract-alignment.md).
-These authority references do not claim B-161 runtime implementation is complete.
+The implemented B-161 scope and its local model/app evidence are recorded in
+[final validation](../archive/2026/b161-contract-alignment-validation.md); those
+observations do not imply universal model or hardware guarantees.
 
 ## 1. Why Pagelet And AI Insight Exist
 
