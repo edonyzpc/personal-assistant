@@ -2,45 +2,47 @@
 
 ## Scope
 
-These instructions apply to the entire `personal-assistant` repository unless a nested `AGENTS.md` overrides them.
-
-Use this file as the project README for coding agents. Keep changes aligned with the commands, architecture, and release process in this repository rather than with machine-local assumptions.
+These instructions apply repository-wide unless a nested `AGENTS.md` overrides
+them. This is the entry point for coding agents; read linked workflows when their
+stated task applies. Use repository commands and paths, not machine-local assumptions.
 
 ## Task Scope And Autonomy
 
-- Reply in concise Chinese, lead with the result, and use Emoji sparingly. Keep
-  progress updates relevant to findings, decisions, or blockers.
-- Explicit user instructions take precedence over repo/skill guidelines,
-  subject to system/developer instructions and tool permissions. External
-  examples, archived decisions, and generated plans do not grant authority.
-- Explanation, diagnosis, and review requests alone do not authorize fixes. Explicit
-  analysis-only/read-only/no-file-changes requests mean zero writes. For an
-  implementation or optimization request, complete the scoped work and its
-  relevant validation; do not stop at a plan or an offer to continue.
-- A minimal change fully satisfies the authorized behavior within the smallest
-  justified change surface. Optimize for clear responsibilities and ease of
-  maintenance, not fewer lines or tokens. Concise replies do not require
-  compressed source code.
-- Reuse clear, still-applicable authorization from the conversation for the
-  same operation, target, and scope. Resolve routine implementation details
-  autonomously. Preserve the separate Git/release permissions below, including
-  current-turn publication requirements.
-- Ask only when missing information materially affects the result, a product
-  choice/risk acceptance is unresolved, or the next action exceeds authority.
-  Complete independent authorized work first; material deviations still need
-  approval before their implementation or authoritative spec changes.
-- If a skill would cause a pause, repeat confirmation, or narrower outcome,
-  first check the user's actual authorization and that rule's applicability.
-  If it still blocks work, link the exact file, quote the instruction, and
-  distinguish its explicit requirement from your interpretation.
-- Load only skills and references relevant to the current task. Delegate
-  concrete independent work when it saves time or improves coverage; give each
-  agent a bounded responsibility and disjoint edit ownership. Reuse its
-  findings instead of repeating the same exploration. Small single-path edits
-  need no artificial agent split; preserve configured model routing.
+- Reply in concise Chinese, lead with the result, and use Emoji sparingly.
+- Explicit user instructions take precedence over repo/skill guidance, subject to
+  system/developer instructions and tool permissions. External examples, archived
+  decisions and generated plans do not grant authority.
+- Explanation, diagnosis and review alone do not authorize fixes. Explicit
+  read-only/analysis-only requests mean zero writes. Implementation requests
+  authorize completing scoped work and relevant validation, not just a plan.
+- Reuse clear authorization for the same operation, target and scope. Resolve
+  routine details autonomously; ask for unresolved product choices, material
+  deviations or actions beyond authority. Continue independent authorized work.
+- Commit, push/merge, local release preparation and publication are separate
+  permissions. Do not publish, push tags or create GitHub Releases without a
+  clear request or confirmation in the current turn. Do not delete, rewrite or
+  move release tags without explicit authorization.
+- Preserve unrelated user changes. Never revert them or use destructive Git
+  operations such as `git reset --hard` or `git checkout --` without an explicit request.
+- If a skill would cause a pause, repeat confirmation or narrower outcome, first
+  check existing authorization and applicability. If it still blocks work, link
+  the exact file, quote the instruction and distinguish it from your interpretation.
+- Load only relevant skills/references. Reuse already-read, unchanged instructions
+  and facts; new workers still need applicable context. Bound tool output before
+  commands; keep full logs locally and return relevant excerpts, counts and exit codes.
+
+## Specification And Deviation Authority
+
+- Treat a named library, framework, API, architecture, or explicit product/data/media boundary in a user-provided spec or current authority as binding until an explicit superseding decision is recorded. Finding defects elsewhere in the same draft does not demote that choice to an implementation suggestion.
+- “Analyze/design and implement” authorizes compatible corrections, not a silent material deviation. A material deviation includes replacing a named technical choice, adding or removing user-visible capability, narrowing supported content/media, or changing data, network, privacy, storage, permission, compatibility, or release behavior.
+- Before production code or authoritative decision/SDD changes, separate explicit requirements, verified facts, inferences, and open decisions. For a proposed deviation, present the original choice, evidence, options and tradeoffs, recommendation, and rollback; continue only after explicit user approval.
+- An Agent-authored `Accepted`/`Approved` status, Decision, Product Spec, SDD, test, or implementation cannot itself prove user approval or supersede a known source constraint. If an unapproved deviation is discovered after implementation, label it honestly and ask whether to restore the original constraint or accept a new dated decision; never backdate approval. Retain the source until the resolved outcome is absorbed under the documentation lifecycle.
 
 ## Proportionate Design And Delivery
 
+- Minimal scope must fully satisfy the authorized behavior with clear responsibilities
+  and maintainable code, not merely fewer lines. Concise replies do not require
+  compressed source code.
 - These constraints apply to the lead agent, writers and reviewers throughout
   design, implementation and validation. Ground new abstractions, mechanisms,
   state and rules in a current requirement or evidenced failure. Prefer existing
@@ -56,159 +58,51 @@ Use this file as the project README for coding agents. Keep changes aligned with
 
 ## GPT-6 And GLM Delivery
 
-- For this owner's GPT-6/GLM workflow, GPT-6 owns product discussion, design,
-  task decomposition, dispatch, and independent acceptance. GLM owns bounded
-  investigation, implementation, tests, self-review, and assigned validation
-  through a separately configured Codex CLI process after preflight passes.
-- GPT-6 reads `docs/development/workflows/gpt6-glm-delivery-workflow.md` when
-  planning, dispatching, continuing, or accepting this workflow. GLM reads its
-  assigned task and relevant contracts; it need not reload the full orchestration
-  or configuration guide unless a specific question requires that section.
-  Use the workflow's task template;
-  keep execution status in the owning Tracker, maintained by GPT-6. Carry
-  accepted corrections into a revised task before each new worker context;
-  identify the delivery tree, stop point, and actual app deployment target.
-- Both GPT-6 and GLM reuse already-read, unchanged instructions and verified
-  facts available in their current context. Read only changed, missing, or
-  contradicted sections; new workers still receive the applicable instructions.
-- Bound tool output before running commands. Compare large baselines in code
-  and return changed paths; extract target rules from generated/minified CSS.
-  Never dump whole inventories or minified lines into context. Keep full logs
-  locally and return relevant excerpts, counts, exit codes, and paths.
-- GLM cannot approve its own delivery, change authoritative scope or acceptance
-  criteria, silently replace a named technical choice, or weaken test gates.
-  GPT-6 checks actual diffs and evidence before marking a task done.
-- Verify the actual provider/model and available tools. Never describe another
-  model as GLM, assume desktop tools are inherited by a CLI worker, or silently
-  change delivery ownership. The owner authorizes necessary PA source, tests,
-  contracts and redacted tool results to the configured `pa-glm` / ZAI endpoint;
-  reuse this authorization for the same scope, including revisions and resume.
-  Exclude private vaults, secrets, sensitive raw logs and unrelated workspaces.
-  A new provider/endpoint or expanded data scope requires a user decision.
-  Weekly quota exhaustion transfers implementation to GPT immediately. For a
-  five-hour quota window, wait only when the reported reset is within one hour
-  of the first block; otherwise GPT takes over. If reset is unknown, inspect
-  available quota information once, then transfer if it remains unknown.
-  Stop the old writer before takeover, preserve its diff/evidence/corrections,
-  and do not switch back mid-task. Follow workflow section 5 for bounded resume;
-  authentication, protocol and tool failures are separate diagnoses.
-  After GPT takeover, release gates, data/permission changes, migrations and
-  cross-module behavior require a different read-only reviewer (GPT is fine);
-  the writer handles fixes. Low-risk wording, local styling and narrow
-  contract-restoring fixes may use writer self-review plus required tests or
-  interaction evidence; label this self-review, not independent review.
-  Repeated rework, unclear scope or conflicting evidence requires independent
-  review. Record the risk, writer, review mode and reviewer when applicable in
-  the existing Tracker/task record; other required gates remain in force.
-  Existing specialist roles remain available
-  for their scoped work; they do not replace GLM delivery or GPT-6 acceptance.
-- Default clear low-risk tasks to one GLM writer and one continuous delivery
-  context; do not repeat GPT investigation or require separate understand/red
-  test handoffs merely because it is a pilot. Use explicit checkpoints for
-  ambiguity, high-risk behavior, or demonstrated delivery failures.
-- Assign focused and required broad checks/build/deploy to GLM where its tools,
-  permissions, and target are verified. GPT owns acceptance, not every command;
-  inspect real diffs and original evidence, and supplement only missing or
-  invalid checks. Preserve all required app/device and release gates.
-- For style-only acceptance, prepare the actual app state with the verified
-  Obsidian CLI, then observe and exercise affected visible actions. After one
-  state refresh and a repeated same-cause UI-tool error, switch the affected
-  step to an equivalent supported method. A changed menu/entry still requires
-  its own real interaction proof; CLI success cannot replace that evidence.
-- Reuse unchanged provider/tool preflight, check each task's actual dependencies,
-  and stop same-cause retries without new information. Quality and scope are
-  fixed gates; reduce GPT supervision, repeated context, and total delivery
-  cost/time. Three tasks are an observation window, not qualification; further
-  simplification needs repeated evidence for that task category.
-- Extra workflow cost studies and measurement-only inventories are opt-in.
-  Routine delivery retains required change protection and quality evidence,
-  without additional model calls or reports solely to measure the workflow.
-- Share workflow rules through Git; configure each device's GLM runtime and
-  credentials independently, following workflow section 7 and the repo catalog.
-  Multi-device reuse means each device can run the workflow; it adds no task
-  transfer protocol or extra Tracker requirements for narrow fixes. Verify
-  each device's tools and app targets locally; reuse unchanged local preflight.
-- After acceptance and safe delivery, clean this task's disposable runtime
-  resources and restore temporary app state. Preserve required evidence,
-  deliverables, uncommitted work, shared dependencies, and stable GLM config.
-  Record owned resources as created; never sweep other tasks or force-remove
-  a dirty worktree. GPT coordinates cleanup and reports retained items/reasons;
-  GLM must not delete review evidence before acceptance. Follow workflow section 6.
+- GPT-6 owns product discussion, design, authoritative docs, decomposition,
+  dispatch, Tracker and independent acceptance. GLM owns bounded investigation,
+  implementation, tests, self-review and assigned validation through the separately
+  configured Codex CLI. Never describe another model as GLM.
+- When planning, dispatching, continuing or accepting this workflow, GPT-6 reads the
+  applicable sections of [GPT-6 / GLM delivery](docs/development/workflows/gpt6-glm-delivery-workflow.md).
+  It owns task templates, provider/tool preflight, quota takeover, risk-based
+  review, validation assignment, recovery, cleanup and device setup. Preserve its
+  model routing and independent review requirements; do not silently change ownership.
+- GLM reads its assigned task and necessary contracts; it need not load the full
+  orchestration/configuration guide without a specific need.
+- Necessary PA source/tests/contracts and redacted results may go to configured
+  `pa-glm` / ZAI for the same authorized scope. Exclude private vaults, secrets,
+  sensitive raw logs and unrelated workspaces. A new provider/endpoint or expanded
+  data scope requires a user decision.
+- Delegate concrete independent work when useful, with disjoint edit ownership.
+  Small single-path edits need no artificial split. GPT acceptance inspects actual
+  diffs and original evidence instead of repeating valid worker checks.
 
 ## Product North Star
 
-Before product design, UX, planning, SDD, Pagelet, Memory, Capture, Review,
-Maintenance, or PA Agent behavior work, read
-`docs/product/pa-product-north-star.md` and use it as the top-level product standard.
+> 随手记下，需要时自然浮现。 — Capture lightly. Let the right notes return when they matter.
 
-North Star:
-
-> 随手记下，需要时自然浮现。
-
-Short form:
-
-> Capture lightly. Let the right notes return when they matter.
-
-Design philosophy:
-
-> 安静且可信。
-
-Treat "quiet and trustworthy" as a design constraint, not the product
-positioning. Design and implementation should preserve these product instincts:
-
-- Less management, more capture.
-- Less generation, more return.
-- Less interruption, more right-time presence.
-- Less black-box insight, more source-backed evidence.
-- Less full automation, more earned trust.
-- Less tool jargon, more long-term companionship.
-
-When a feature creates tension between technical capability and product feel,
-prefer the North Star unless the user explicitly chooses a different direction.
+Design philosophy: **安静且可信**. Before product design, UX, planning, SDD, Pagelet,
+Memory, Capture, Review, Maintenance or PA Agent behavior work, read the current
+[Product North Star](docs/product/pa-product-north-star.md). It owns the detailed
+product principles and tradeoffs; prefer it unless the user chooses another direction.
 
 ## Dev Environment Tips
 
-- This is an Obsidian plugin written in TypeScript.
-- Use Node 22 LTS with npm 10.x or 11.x.
-- Entry path: `src/main.ts` -> `src/plugin.ts`.
-- Chat UI: `src/chat/chat-view.ts`.
-- Memory orchestration: `src/memory-manager.ts`.
-- VSS facade and indexing flow: `src/vss.ts`.
-- Vector index implementations: `src/vss/*`.
-- AI service code: `src/ai-services/*`.
-- React components and views: `src/components/*`, `src/preview.ts`, `src/stats-view.ts`.
-- Tests live in `__tests__/*`.
-- Project docs live in `docs/*`.
-- Playbooks live in `.agents/playbooks/*` — step-by-step operational procedures (not product specs). Use when a specific scenario triggers (release, audit, migration, outreach). Skills (`.agents/skills/`) are for AI-automated flows; playbooks are for human-or-AI-driven procedures that don't need skill-level encapsulation.
-- Release automation lives in `scripts/release.mjs`, `scripts/changelog.mjs`, and `scripts/publish-release.mjs`.
-- The local test vault is `test/`.
-- Prefer `rg` and `rg --files` for searching.
-- Use `apply_patch` for manual edits.
-- Do not rely on absolute paths from one machine. Resolve paths from the repo root.
-
-### v2.4/v2.5 New Module Mapping
-
-```
-src/ai-services/context/                    (v2.4 new) Context Management layer
-  PaAgentContextManager.ts                  组合调用 4 个 delegate
-  PaAgentContextProjector.ts                投影：origins 标注 + diffing + 注入
-  PaAgentContextHygiene.ts                  清洁：过滤 status-only + 修复 orphan
-  PaAgentContextCompactor.ts                (v2.5) 压缩：micro + full compaction
-  PaAgentContextBudget.ts                   (v2.5) 预算：chars/tokens 追踪
-```
-
-```
-src/ai-services/memory-extraction/          (v2.5 new) Memory extraction pipeline
-  type-a-extractor.ts                       用户画像自动提取
-  type-c-analyzer.ts                        Vault 元认知分析
-  extraction-scheduler.ts                   独立调度 A/C 的触发逻辑
-```
+- Obsidian plugin in TypeScript; Node 22 LTS and npm 10.x or 11.x.
+- Entry: `src/main.ts` → `src/plugin.ts`; Chat: `src/chat/chat-view.ts`.
+- Memory: `src/memory-manager.ts`; VSS facade: `src/vss.ts`; index backends: `src/vss/`.
+- AI/Agent: `src/ai-services/`; context: `src/ai-services/context/`;
+  memory extraction: `src/ai-services/memory-extraction/`.
+- UI: `src/components/`, `src/preview.ts`, `src/stats-view.ts`.
+- Tests: `__tests__/`; docs: `docs/`; local Obsidian test vault: `test/`.
+- Automated task skills: `.agents/skills/`; scenario playbooks: `.agents/playbooks/`.
+- Prefer `rg` / `rg --files`, use `apply_patch` for manual edits, and resolve paths
+  from the repo root.
 
 ### Context Limit Constants
 
-Read current values from `src/ai-services/pa-agent-runtime.ts` (turn/history/tool
-budgets) and `src/ai-services/memory-search-tool.ts` (Memory retrieval limits).
-Keep numeric limits in source rather than mirroring them in agent instructions.
+Read current limits in `src/ai-services/pa-agent-runtime.ts` and
+`src/ai-services/memory-search-tool.ts`; do not mirror numeric values here.
 
 ## Build And Local Run Commands
 
@@ -228,59 +122,26 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
 - There is no `npm run tsc` script.
 - Whitespace check: `git diff --check`.
 
-## Local Deployment
-
-- Use `make deploy` to build and copy the latest plugin assets into the `test/` vault.
-- `make deploy` runs platform guards, lint, build, and full Jest through `bin`, then verifies and copies:
-  - `dist/main.js`
-  - `dist/manifest.json`
-  - `dist/manifest-beta.json`
-  - `dist/styles.css`
-- The destination is `test/.obsidian/plugins/personal-assistant/`.
-- When the required checks have already passed for the current changes and a
-  current production build exists, use `make deploy-current` to copy it without
-  repeating lint/build/Jest. `make deploy-icloud-current` reuses the same build
-  for an authorized iCloud test-vault deployment. These commands verify build
-  identity and asset content, not test results; missing/stale assets are rejected
-  before modifying the destination. Test/config changes still need their checks.
-- `make deploy deploy-icloud` runs shared full validation once when both targets
-  are authorized together. Default individual deploy targets retain full checks.
-- When validating behavior in the already-open Obsidian test vault, use
-  `make deploy` or the eligible current-build target above, then reload or
-  re-enable the plugin in Obsidian as needed.
-- To speed up Obsidian smoke setup, first check `command -v obsidian`. When available, use the Obsidian CLI with `obsidian://open` deep links to jump the test vault to the target note or asset before using Computer Use for visual/chat verification. Example: `obsidian "obsidian://open?vault=test&file=0.unsorted%2FDog.md"`. URL-encode vault file paths when needed.
-- Standard plugin packaging should work with `main.js`, `manifest.json`, and `styles.css`. If a change adds worker/WASM runtime assets, audit build, deploy, release, install, and docs together.
-
 ## Testing Instructions
 
-- For docs/skills-only changes, run `npm run docs:check`, `git diff --check`, and
-  existing contract suites affected by the change. No plugin Build, TypeScript,
-  or Obsidian/device smoke is needed unless executable or runtime assets change.
-- For narrow changes, run the closest relevant Jest tests first.
-- For Memory/VSS/chat changes, select focused tests for the affected behavior,
-  call paths and integration boundaries. Cover each affected module when its
-  contract changes; a module name alone does not require testing all three.
-- For broad behavior, release, packaging, or shared infrastructure changes, run:
-  - `npm run lint`
-  - `npm run build`
-  - `npm run test:all -- --runInBand`
-  - `git diff --check`
-- For dependency or lockfile changes, also run `npm ci --dry-run` when practical.
-- For Obsidian UI smoke tests, select the Local Deployment path above,
-  reload/re-enable the plugin, open the exact test vault target with the
-  Obsidian CLI/deep link, and observe the required interaction in the app.
-- Use Obsidian CLI mobile simulator for general mobile validation. Select
-  iPhone real-device validation only for an explicit user request or a verified
-  iOS-specific capability; identify that basis before loading the device skill.
-  A simulator/tool failure or an Agent-authored plan does not create a device
-  gate. Preserve the specified environment and report the affected evidence gap.
-- If a command cannot be run, state that clearly and explain the residual risk.
-- Do not claim behavior was validated in Obsidian unless it was actually deployed/tested in the app.
-- Add tests when they protect a meaningful behavior or regression; do not add
-  tests that only mirror low-impact wording or mechanical edits. Once the
-  required checks pass for the current state, repeat or broaden them only for
-  a new change, failure, or concrete unresolved risk. Reuse checks already run
-  by an enclosing gate such as `make deploy` when their inputs are unchanged.
+- Docs/skills-only: `npm run docs:check`, `git diff --check` and affected existing
+  contract suites. No plugin build, TypeScript or app/device smoke unless
+  executable/runtime assets change.
+- Narrow changes: closest relevant tests first. For Memory/VSS/chat, select by
+  affected behavior, call paths and integration boundaries, not module names.
+- Broad behavior, release, packaging or shared infrastructure: lint, production
+  build, `npm run test:all -- --runInBand` and diff check. Release-specific reuse
+  and coverage follow [Release Instructions](#release-instructions).
+- Dependency/lockfile changes: also run `npm ci --dry-run` when practical.
+- Add tests for meaningful behavior/regressions, not low-impact wording or
+  mechanical implementation mirrors. Repeat/broaden only for changed inputs,
+  failures or a concrete unresolved risk.
+- App claims require deployment and observation of the affected interaction.
+  General mobile validation uses Obsidian CLI mobile simulator; iPhone hardware
+  requires an explicit request or verified iOS-specific capability. An Agent's
+  plan or simulator/tool failure does not create a real-device gate.
+- Report unavailable commands and residual evidence gaps. Local checks, app/device
+  evidence, CI and release conclusions remain distinct.
 
 ### Agent Behavior Acceptance
 
@@ -299,90 +160,57 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
 
 ### Validation Planning And Reuse
 
-- Before each slice, record a compact mapping in the existing Tracker:
-  `REQ/AC or risk -> change -> minimum sufficient evidence/command -> pass
-  condition -> rerun/expansion trigger`. A narrow fix without a Tracker can
-  keep this in the task response; do not create a separate test plan. Add a
-  test or probe only to answer an uncovered behavior or regression question.
-  Before adding validation, identify what remains unknown, why existing evidence
-  is insufficient and which decision the result could change. Keep this in the
-  existing record, without a new form or gate; no concrete need means no extra check.
-- Separate required outcomes/gates from reference or diagnostic methods. An
-  unavailable optional method is a recorded limit, not an extra delivery gate.
-  Use other relevant evidence only for the outcome it actually proves; user
-  feedback on one interaction does not validate another. Explicitly required
-  comparisons, named technical choices, unresolved ACs, and app/device gates
-  remain binding.
-- Select source, tooling, or artifact suites using the command groups above.
-  Verify the intended suites actually ran; a wrong group or missing build is
-  not a reason to run everything. Collect coverage only when the gate requires
-  it. Preserve required integration tests and broad/real-device phase exits;
-  do not defer a phase's gate to the end of the whole feature.
-- Record reusable evidence with command/scope, result and natural exit,
-  relevant source/tests/fixtures/config/dependencies, and required environment
-  or build identity. Use a targeted diff from the tested baseline and account
-  for relevant uncommitted changes; do not default to whole-repo hash manifests
-  or repeated HEAD/SHA comparisons. Stage, commit, push and unrelated docs do
-  not invalidate passing tests; neither a new phase nor a different reviewer
-  invalidates unchanged evidence. Commit identity is not test-input identity.
-  Trust successful project automation for invariants it already checked.
-  Invalidate affected evidence when inputs
-  change; shared behavior/config/dependencies may require a broad rerun.
-  Docs-only edits do not invalidate runtime proof unless they change its
-  requirements or validation rules. Unknown input identity means no reuse.
-- Count checks already covered by an enclosing command: a production build
-  includes type-checking; `make deploy` includes lint/build/full Jest. Use
-  `deploy-current` only under Local Deployment conditions; build identity
-  does not prove tests passed. Supplement uncovered checks such as the DOM
-  source scan. Focused PASS is not full-suite PASS; independent CI and release
-  gates still run against their required final inputs.
-- For an explicitly requested workflow/cost study, reuse recorded tool timings
-  and actual model settings; leave missing fields unknown. Keep detailed
-  execution evidence in its owning Tracker and link it from the study with
-  conclusions and limits. Do not sum parallel work into elapsed time or infer
-  speed/model causality from different tasks. Routine work needs no new timing
-  system or duplicate measurement log.
+- In the existing Tracker, map `requirement/risk → change → minimum sufficient
+  evidence/command → pass condition → rerun/expansion trigger`. A narrow fix can
+  use its task response. Before adding a check, identify the unknown, why existing
+  evidence is insufficient and which decision the result changes. No new form or gate.
+- Separate required outcomes from optional diagnostics. An unavailable optional
+  method is a limitation, not a gate; evidence proves only what it observed.
+  Preserve explicit comparisons, named choices, unresolved ACs and required
+  integration, phase, app/device, CI and release gates.
+- Verify the intended test group actually ran. Wrong selection or a missing build
+  is not a reason to test everything. Collect coverage only when required.
+- Reuse evidence with known relevant source/tests/fixtures/config/dependencies,
+  command/scope, result/natural exit and required environment/build identity.
+  Compare affected inputs, including dirty changes, with the tested baseline;
+  avoid whole-repo hash manifests and repeated SHA rituals. Unknown inputs mean no reuse.
+- Stage/commit/push, a new phase/reviewer and unrelated docs do not invalidate
+  passing checks. Changed inputs invalidate affected evidence; changed validation
+  requirements may also invalidate it. Trust invariants successful automation
+  already checked. Shared changes may require a broad rerun.
+- Count enclosing checks: build includes TypeScript; `make deploy` includes
+  lint/build/full Jest. Supplement uncovered checks such as the DOM source scan.
+  Build identity is not test success, and focused PASS is not full-suite PASS.
+- Cost studies are opt-in. Reuse original timings/model settings, keep missing
+  data unknown and detailed evidence in its owning Tracker. Do not sum parallel
+  work as elapsed time or infer model/speed causality from different tasks.
 
 ### Test Failure Diagnosis
 
-- Start from the exact failing command, assertion, inputs, and logs. Separate
-  product defects, faulty acceptance criteria, fixture/runner defects, unavailable
-  environment/device, and stale build/deployment identity before selecting a
-  targeted diagnostic.
-- Retry with a new hypothesis or changed input. A second same-cause failure
-  with no new information, or about 15 minutes of diagnosis without progress,
-  prompts a reassessment: reduce the reproduction, inspect the checker, and
-  change the diagnostic approach while continuing independent work. This is
-  not a timeout for healthy long-running tests or permission to skip a gate.
-- Do not weaken assertions, alter production behavior to satisfy a faulty
-  checker, blindly increase mocks/timeouts, or use `--forceExit` to hide open
-  handles. Diagnose suspected leaks in the affected suite. Stop expanding once
-  required current evidence is sufficient and no concrete risk remains;
-  record blocked evidence honestly and ask only for a needed decision,
-  permission, or external prerequisite.
+- Start from the exact command, assertion, inputs and logs. Distinguish product
+  defects, faulty acceptance, fixture/runner problems, unavailable environment
+  and stale build/deployment before selecting a diagnostic.
+- Retry with a new hypothesis or input. A second same-cause failure without new
+  information, or about 15 minutes without progress, calls for a smaller repro,
+  checker inspection or different diagnostic. Healthy long tests are not timed out.
+- Do not weaken assertions, alter correct behavior, blindly raise mocks/timeouts
+  or use `--forceExit`. Diagnose leaks in the affected suite. Stop expanding when
+  evidence is sufficient; report blocked evidence rather than skipping required gates.
 
 ### Multi-Agent Validation Coordination
 
-- The main agent assigns independent risk questions and disjoint file ownership
-  for parallel edits. Reviewers may read shared dependencies; no two agents
-  write the same file concurrently. Review-only work remains zero-write.
-- Contributors return findings and relevant focused-check evidence, including
-  commands, inputs, results, and gaps. They do not each run the full gate.
-  The main agent consolidates evidence under Validation Planning And Reuse and
-  schedules expensive full-suite, build, and deployment work once per required
-  input state, either directly or through one designated executor.
-- Before a final build/full-test/deploy gate, coordinate a freeze of its source,
-  tests, fixtures, config, dependencies, and generated inputs. Read-only review
-  can continue; route required fixes to the main agent instead of editing those
-  inputs mid-run. Finish the run or explicitly stop it as superseded before
-  applying the fix, then reassess invalidated checks. An unexpected concurrent
-  change invalidates affected evidence; do not label a mixed-state run PASS.
-- Shared scheduling does not remove required phase, device, CI, or release
-  gates. Do not add a lock service, cache, or receipt system for coordination.
+- Assign independent risk questions and disjoint edit ownership. Read-only reviewers
+  do not write; contributors return focused results, commands, inputs and gaps.
+- One designated executor runs expensive full-test/build/deploy gates per required
+  input state. Freeze relevant source/tests/fixtures/config/dependencies/generated
+  inputs; reviews can continue, fixes wait until the run finishes or is stopped
+  as superseded. Concurrent changes invalidate affected evidence.
+- Consolidate and reuse evidence without removing required gates. Do not add a
+  coordination lock service, cache or receipt system.
 
 ### Local Validation Gate
 
-The standard local validation gate for code/DOM changes. Skills reference this by name rather than inlining the commands.
+For code/DOM changes, scoped to the changed surface and reusing covered checks:
 
 ```bash
 npm test -- --runInBand <focused suites>
@@ -391,17 +219,28 @@ git diff --check
 rg -n "createElement\([\"']style[\"']\)|\.innerHTML\s*=|\.outerHTML\s*=" src
 ```
 
-For the `rg` community-scan command, exit code 1 with no output means no matches were found and should be treated as a pass.
+For this `rg`, exit 1 with no output is PASS. Inspect matches. Use the matching
+source/tooling/artifact group; artifact and full suites require a current
+production build first. Docs-only follows Testing Instructions above.
 
-For tooling suites use `test:tooling`, or `test:all` for a focused selection
-spanning groups. The default source group excludes these suites. Receipt/probe
-suites in `test:artifacts` bind `dist/main.js` and require a current production
-build. Run `npm run build` first when `dist/` is absent or stale; full `make deploy`,
-CI, and release gates enforce this ordering automatically.
+## Local Deployment
 
-Use `make deploy` when app-runtime confidence is needed — it runs lint, a
-production build, full Jest, and deploys assets to `test/`. Reuse `deploy-current`
-under the Local Deployment conditions when those checks already passed.
+- `make deploy` runs platform guards, lint, production build and full Jest, then
+  verifies/copies `dist/{main.js,manifest.json,manifest-beta.json,styles.css}` to
+  `test/.obsidian/plugins/personal-assistant/`.
+- If required checks already passed for current inputs and a current production
+  build exists, use `make deploy-current`. It checks asset identity, not tests;
+  stale/missing assets are rejected before modifying the target. Changed tests
+  or configuration still need their checks.
+- `make deploy-icloud-current` reuses the build for an authorized iCloud test vault.
+  When both targets are authorized, `make deploy deploy-icloud` shares one full gate.
+- For app smoke, use [obsidian-test-vault-smoke](.agents/skills/obsidian-test-vault-smoke/SKILL.md).
+  Deploy, reload/re-enable the plugin, use `command -v obsidian` and CLI/deep links
+  to prepare the exact test-vault target, then observe/exercise affected actions.
+  Use [iPhone smoke](.agents/skills/obsidian-ios-real-device-smoke/SKILL.md) only
+  under the real-device condition in Testing Instructions.
+- Packaging must work with `main.js`, `manifest.json` and `styles.css`. New
+  worker/WASM assets require coordinated build/deploy/release/install/docs handling.
 
 ## Architecture Rules
 
@@ -478,121 +317,61 @@ under the Local Deployment conditions when those checks already passed.
 
 ## Documentation Instructions
 
-- Use `.agents/skills/pa-docs-lifecycle-manager` as the default low-burden
-  entrypoint when the user expresses PA ideas, decisions, planning,
-  implementation, continuation, status, closeout, or archive intent in ordinary
-  language. Infer the lane, IDs, artifacts, and status transitions; ask the user
-  only for product judgment or explicit implementation/Git/release authority.
-- Do not use Linear or another external tracker as PA's default idea inbox,
-  planning mirror, or synchronization gate. Casual ideas stay conversation-local;
-  an explicit request to record/preserve an idea creates or reuses a minimal
-  repo Backlog item. Existing external links are historical provenance only.
-- For architecture or plan work, prefer durable docs in `docs/` over chat-only analysis when the user asks for a plan or design.
-- Follow `docs/development/documentation-workflow.md` for document roles,
-  active-package placement, closeout, archive, Backlog extraction, and docs
-  validation. Run `npm run docs:check` after moves or lifecycle cleanup.
-- Treat repo docs as the current authority: external chat, issues, email, or
-  machine-local memory may provide input, but decisions and active product work
-  must be recorded in Backlog, Discovery, Decision, Product Spec, or an Active
-  Package before they drive implementation.
-- Use `docs/development/governance/` for substantial repo-only documentation,
-  checker, CI/release-tooling, or Agent-skill contracts that do not change PA
-  runtime or user behavior. Do not create a Product Decision/Spec merely to
-  satisfy Active Package metadata; use the Governance Contract lane defined by
-  the Documentation Workflow. Closed governance tracks keep delivered GOV
-  contracts current; Cancelled/Superseded GOV contracts move to the annual
-  Archive. Superseded records must link a new Current successor GOV; without a
-  successor, use `Cancelled`.
-- Use `docs/development/templates/` for new lifecycle artifacts. Preserve stable
-  `B-xxx`, `DEC-xxx`, `B-xxx/REQ-xx`, and `B-xxx/AC-xx` traceability across
-  closeout.
-- Keep Tracker as the only delivery-status authority. Active Registry and
-  Feature Home are link-only; do not mirror phase, date, target, or validation
-  status across them.
-- Start cross-session execution with only Feature Home + Tracker. Add Plan for
-  phased/risky delivery and SDD for complex design, data/lifecycle/
-  compatibility, or multi-module changes.
-- At closeout, absorb stable outcomes into current contracts, Backlog, or
-  tests, then delete process artifacts by default. Archive only unique
-  rationale, migration/release/incident, or validation evidence still linked
-  from current source or documentation; do not preserve a complete package by
-  default.
-- Use Mermaid diagrams inside Markdown for architecture and flow visualizations unless the user explicitly asks for image assets.
-- Keep architecture docs separate from implementation trackers when both are needed.
-- Make docs match actual commands and behavior; do not document aspirational flows as current behavior.
-- For release process changes, update `docs/operations/release-process.md`.
-- For VSS/Memory behavior changes, update relevant VSS docs such as:
-  - `docs/architecture/vss-sqlite-wasm-architecture.md`
-  - `docs/architecture/vss-embedding-refresh.md`
+- For PA idea/decision/planning/implementation/continuation/status/closeout intent,
+  use [pa-docs-lifecycle-manager](.agents/skills/pa-docs-lifecycle-manager/SKILL.md)
+  as the low-burden entry point. Casual ideas stay in chat; explicit capture uses
+  a minimal repo Backlog item. No default external tracker or synchronization gate.
+- [Documentation Workflow](docs/development/documentation-workflow.md) owns document
+  roles, authority, templates, execution packages and closeout/archive rules. Read
+  its relevant section when creating, moving, updating authority or closing docs.
+  Repo docs hold durable decisions; external material is input/provenance, not approval.
+- Tracker alone owns execution status; Feature Home/registry link to it. Use the
+  lightest applicable lane and existing records, not new lifecycle artifacts for
+  narrow contract restoration. Plan/SDD follow actual complexity.
+- For requested architecture/plans, prefer durable docs in `docs/`. Use Mermaid
+  unless image assets are requested. Keep current behavior distinct from proposals
+  and historical evidence; archived work does not provide current approval/status.
+- Update the affected authority when behavior, commands, packaging, release process
+  or architecture changes. Release: [release process](docs/operations/release-process.md);
+  Memory/VSS: [SQLite/WASM architecture](docs/architecture/vss-sqlite-wasm-architecture.md)
+  and [embedding refresh](docs/architecture/vss-embedding-refresh.md).
+
+## SDD-Driven Development
+
+Establish product scope before runtime implementation; use the Governance lane
+for repo-only work. Follow [Documentation Workflow](docs/development/documentation-workflow.md)
+for the owning contract and minimum artifacts, and
+[sdd-lifecycle](.agents/skills/sdd-lifecycle/SKILL.md) for substantial delivery.
+Use [Pagelet SDD guide](docs/development/workflows/pagelet-sdd-guide.md) for Pagelet
+delivery and [write/action design](docs/architecture/write-action-framework-sdd.md)
+plus the current Command Architecture Contract for action boundaries.
 
 ## Refactor Workflow
 
-- For repo-scale refactors, follow `docs/development/workflows/refactor-workflow.md`.
-- Start with a plan doc and a separate development tracker.
-- Each phase loops through `dev -> test -> review -> fix`; include Obsidian
-  smoke for affected app runtime/UI, reusing valid evidence for unchanged inputs.
-  Repeat affected steps only for a change, confirmed failure or concrete unresolved
-  risk. Close or explicitly defer confirmed P2/P1/P0 issues before completing the phase.
-- Scope phase review and subagent participation to concrete risks and reuse prior
-  findings; required independent reviews under GPT-6 And GLM Delivery remain binding.
-- Runtime/UI changes require deployment under Local Deployment and real Obsidian
-  test-vault smoke before the phase is marked done. Use eligible `deploy-current`
-  and existing interaction evidence when their inputs and required behavior are unchanged.
-- Keep tracker status, risk table, verification log, open decisions, and `docs/backlog.md` aligned with the actual final behavior.
-- Split commits by intent: runtime/tests, docs/tracker, TODO/future milestones, and release automation.
+For repo-scale refactors, use [Refactor Workflow](docs/development/workflows/refactor-workflow.md).
+Create a separate Plan only when its content cannot fit clearly in the Tracker.
+Review concrete risks, resolve/defer confirmed blockers and reuse valid evidence;
+affected runtime/UI phase exits require deployed test-vault interaction. This
+does not require repeating every step after each edit.
 
 ## Release Instructions
 
-- `master` is the repository integration authority. All accepted runtime code,
-  tests, research/design docs, governance, and release-tooling changes must land
-  on and be verified from `master`, either through PR merge or an explicitly
-  authorized direct commit.
-- Work branches may be used for isolation and review, but they are not beta or
-  stable release sources. Merge accepted work to `master` before packaging.
-- Before a beta publish, local `master` and `origin/master` must identify the
-  same verified commit. Pushing `master` still requires explicit authorization.
-- Every BRAT `beta/<version>` branch must be created from the exact verified
-  `master` HEAD. It may contain only the generated prerelease packaging commit
-  and tag; put beta feedback fixes on `master`, then cut a new beta version.
-- Never merge or rebase beta release commits back to `master`, and never rewrite
-  a published beta branch or tag without explicit maintainer authorization.
-- See `docs/operations/release-process.md` for the full release workflow.
-- Release gates validate only release-critical documentation through
-  `npm run docs:check:release`; they must not depend on Backlog, Discovery,
-  Active Package, Tracker, Decision, or other lifecycle status.
-- Keep the full `npm run docs:check` in documentation maintenance and as an
-  advisory step in regular CI. Keep lifecycle findings visible, but do not let
-  them stop Test/Lint/Build/Audit or fail the CI job by themselves. Do not use
-  them to block a beta or stable release whose source, runtime, packaging,
-  legal, and Community gates pass.
-- Preview without writing files: `make release-dry-run VERSION=x.y.z`.
-- Create local release commit and annotated tag: `make release VERSION=x.y.z`.
-- Publish only after explicit user request or confirmation: `make publish VERSION=x.y.z`.
-- `make changelog VERSION=x.y.z` writes `CHANGELOG.md`; do not use it for inspect-only tasks.
-- Read-only changelog preview can use `node scripts/changelog.mjs --target-version x.y.z`.
-- `make release` requires a clean worktree and validates version/tag availability.
-  Beta preparation reuses only exact synchronized master CI with a successful
-  full `validate` job; missing or invalid evidence falls back to full local
-  checks. It retains cheap local diff/notice/release-doc checks. Stable defaults
-  to full local checks; `RELEASE_LOCAL_CHECKS=1` forces them for beta. A normal
-  beta tag reuses full successful master CI for its exact packaging parent
-  after proving the commit only changes generated packaging. It still installs,
-  builds the tagged assets and runs artifact/legal/release checks; missing or
-  invalid evidence falls back to full lint/tests/coverage. Stable tag CI keeps
-  full checks. Do not run an
-  extra full gate before this command or treat `SKIP_CHECKS` as CI reuse.
-  The command updates release metadata and creates the release commit/tag.
-- After beta publish, verify successful tag workflow, non-draft prerelease,
-  all six assets and the downloaded manifest version. Full asset downloads,
-  hashes and local JS syntax checks are diagnostic/explicit-request work.
-  Wait for downloads to finish before checking files. Beta packaging reuses
-  completed feature acceptance; do not repeat deploy/Obsidian/BRAT/device smoke
-  by default. Trigger installation smoke for changed runtime asset layout or
-  packaging/install behavior, plugin identity/platform changes, a concrete
-  load/update/download failure,
-  or an explicit request. Only claim BRAT/app testing when actually observed.
-- Do not delete, rewrite, or move release tags unless explicitly requested.
-- Do not publish, push tags, or create GitHub Releases unless the user clearly asked to publish or confirmed the action in the current turn.
+- For beta work use [pa-brat-beta-release](.agents/skills/pa-brat-beta-release/SKILL.md);
+  for stable releases use [stable-release](.agents/skills/stable-release/SKILL.md).
+  [Release Process](docs/operations/release-process.md) owns commands, source/CI
+  eligibility, assets and post-publish verification. Read it for release tasks.
+- `master` is the sole integration/release source, including accepted docs/governance.
+  Work branches are optional isolation; beta branches contain only generated
+  packaging above verified master. Never merge/rebase beta packaging back to master.
+- Preserve separate Git/release authority from Task Scope. Lifecycle docs findings
+  remain visible but do not block otherwise eligible releases; release-critical
+  docs use `docs:check:release`.
+- Let release automation own its gates and valid CI reuse; do not prepend another
+  full gate. Normal beta packaging reuses feature acceptance; installation smoke
+  is triggered by changed runtime asset layout, packaging/install behavior,
+  plugin identity/platform, a concrete failure or an explicit request.
+- `make changelog` writes files; use `node scripts/changelog.mjs --target-version x.y.z`
+  for read-only preview. Release preparation, dry-run and publication are distinct.
 
 ## PR And Commit Instructions
 
@@ -619,61 +398,3 @@ under the Local Deployment conditions when those checks already passed.
 - Do not invent nits if the diff is sound. Say there are no actionable findings and mention remaining verification gaps.
 - Separate must-fix correctness issues from optional polish.
 - For reported error strings, trace that exact command path before widening scope.
-
-## Specification And Deviation Authority
-
-- Treat a named library, framework, API, architecture, or explicit product/data/media boundary in a user-provided spec or current authority as binding until an explicit superseding decision is recorded. Finding defects elsewhere in the same draft does not demote that choice to an implementation suggestion.
-- “Analyze/design and implement” authorizes compatible corrections, not a silent material deviation. A material deviation includes replacing a named technical choice, adding or removing user-visible capability, narrowing supported content/media, or changing data, network, privacy, storage, permission, compatibility, or release behavior.
-- Before production code or authoritative decision/SDD changes, separate explicit requirements, verified facts, inferences, and open decisions. For a proposed deviation, present the original choice, evidence, options and tradeoffs, recommendation, and rollback; continue only after explicit user approval.
-- An Agent-authored `Accepted`/`Approved` status, Decision, Product Spec, SDD, test, or implementation cannot itself prove user approval or supersede a known source constraint. If an unapproved deviation is discovered after implementation, label it honestly and ask whether to restore the original constraint or accept a new dated decision; never backdate approval. Retain the source until the resolved outcome is absorbed under the documentation lifecycle.
-
-## SDD-Driven Development
-
-This project follows SPEC-Driven Development (SDD), scaled by the lanes in
-`docs/development/documentation-workflow.md`. Establish product scope before
-runtime implementation; use the owning Governance Contract for repo-only work.
-A narrow restoration of an existing contract needs only the affected files and
-focused evidence, without a new lifecycle package. Cross-session execution
-starts with Feature Home + Tracker; add Plan/SDD when delivery or design
-complexity requires them. Complete justified design before implementation, then
-run focused tests/review and the smoke required by the changed runtime surface.
-
-Current entry points:
-
-- Low-burden natural-language orchestration:
-  `.agents/skills/pa-docs-lifecycle-manager/SKILL.md`.
-- Product and release priority: `docs/development-roadmap.md` and `docs/backlog.md`.
-- Documentation lifecycle and closeout rules:
-  `docs/development/documentation-workflow.md`.
-- Active/current product specs: `docs/product/specs/` files linked from
-  `docs/product/README.md` and `docs/index.md`.
-- Discovery and decision entry points:
-  `docs/development/discovery/README.md`,
-  `docs/product/active-decisions.md`, and
-  `docs/product/decisions/README.md`.
-- Active feature execution packages start with
-  `docs/development/active/<feature>/{README,tracker}.md`; add `plan.md` or
-  `sdd.md` only when delivery/design complexity requires them.
-- Completed/cancelled closeout absorbs durable outcomes into current
-  authorities and deletes process artifacts by default. Retain only compact,
-  current-linked historical evidence in `docs/archive/`.
-- Pagelet feature delivery: `docs/development/workflows/pagelet-sdd-guide.md`.
-- Write/action boundary: `docs/architecture/write-action-framework-sdd.md`,
-  `docs/development/proposals/operations-agent/operations-agent-plan.md`, and `docs/development/proposals/operations-agent/operations-agent-mode-sdd.md`.
-- Reusable repo-scale refactor workflow: `docs/development/workflows/refactor-workflow.md`.
-
-Archive is opt-in historical evidence, not a complete process log. Treat an
-archived document as provenance only when a current Product Spec, Architecture
-doc, Governance Contract, Active Tracker, Backlog, or Roadmap explicitly links
-it; otherwise prefer deletion after absorption. Archive never supplies current
-approval or execution status.
-
-## Final Checklist For Agents
-
-- Read nearby code before editing.
-- Keep changes scoped to the request.
-- Run focused tests first, then broader checks when the change touches shared behavior.
-- Update docs when behavior, commands, release process, packaging, or Memory/VSS architecture changes.
-- For UI work, verify lifecycle cleanup and CSS scope.
-- For VSS work, verify durable/fallback behavior, locking, dirty state, reconcile, and chat non-blocking paths.
-- For release work, verify dry-run/changelog behavior and never publish without explicit confirmation.
