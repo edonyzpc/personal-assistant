@@ -8,6 +8,7 @@ Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governa
 
 | Track | Work item | Feature Home | Tracker |
 | --- | --- | --- | --- |
+| Note image removal | B-160 | [Feature Home](./note-image-removal/README.md) | [Tracker](./note-image-removal/tracker.md) |
 | Agent command contract | B-158 | [Feature Home](./agent-command-contract/README.md) | [Tracker](./agent-command-contract/tracker.md) |
 | Context action continuity | B-157 | [Feature Home](./context-reliability-and-action-continuity/README.md) | [Tracker](./context-reliability-and-action-continuity/tracker.md) |
 | Agent responsive execution | B-155 | [Feature Home](./agent-responsive-execution/README.md) | [Tracker](./agent-responsive-execution/tracker.md) |

@@ -45,6 +45,7 @@
 
 ## Share And Reuse
 
+- [Note Image Removal](./specs/pa-note-image-removal-product-spec.md) — B-160：联合移除笔记图片与附件、共享引用保护和临时一键撤销。
 - [Ghost Blog Publishing](./specs/pa-ghost-blog-publishing-product-spec.md) — B-153：笔记转 Ghost 草稿、真实预览与确认更新；实施设计见 Spec 入口。
 - [Share Card](./specs/pa-share-card-product-spec.md)
 - [Share Card Print Styles](./specs/pa-share-card-print-styles-product-spec.md)

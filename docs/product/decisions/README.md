@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-050 | 笔记图片联合删除与一键撤销 | Accepted | 共享引用阻止删除、临时快照一键撤销；不授予运行代码实施 | [Record](./dec-050-note-image-removal-and-undo.md) |
 | DEC-049 | Command、Agent、Host、Tool 统一契约 | Accepted | 架构与工作流先行，再公共框架及领域迁移；既有权限保持 | [Record](./dec-049-command-agent-host-tool-contract.md) |
 | DEC-048 | Context 保留合法执行事实 | Accepted | B-157 四域状态、来源准入与压缩摘要；不新增 Host 意图分类器 | [Record](./dec-048-action-facts-and-context-continuity.md) |
 | DEC-047 | Agent 执行不能阻塞 Obsidian 原生操作 | Accepted | 分层来源准入、有界 renderer 工作、保留来源撤销与已读快照；最低充分桌面/mobile 验证 | [Record](./dec-047-agent-responsive-execution.md) |

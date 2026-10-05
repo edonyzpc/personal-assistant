@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-10-04
+Updated: 2026-10-05
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -16,7 +16,7 @@ Default runtime boundary:
 - Memory and Context Used remain source-visible.
 - No provider built-in web-search fallback.
 - No arbitrary MCP endpoint, shell, script, local executable, or hidden note mutation.
-- When the live Operations controller and policy are available, the same main Agent may propose only the four approved vault writes; every write still requires its existing preview and explicit confirmation. The old persisted Operations setting is retained for compatibility but is no longer a planning gate.
+- When the live Operations controller and policy are available, the same main Agent may propose the four core vault writes and the approved note-image removal operation; every write still requires its existing preview and explicit confirmation. The old persisted Operations setting is retained for compatibility but is no longer a planning gate.
 
 ## Runtime Map
 
@@ -410,7 +410,31 @@ other calls, and an invalid report receives bounded correction under the run bud
 
 ### Operations Agent providers
 
-`OPERATIONS_AGENT_RUNTIME_ENABLED=true` is a build-availability gate, not user consent. With a live controller and eligible policy, the same main Agent may propose exactly `vault_create`, `vault_append`, `vault_process`, and `frontmatter_update` according to the user's goal; the old persisted `operationsAgentEnabled` value no longer gates planning or admission. There is no separate local write-intent classifier, old append/selection action, or fifth write tool.
+`OPERATIONS_AGENT_RUNTIME_ENABLED=true` is a build-availability gate, not user consent. With a live controller and eligible policy, the same main Agent may propose `vault_create`, `vault_append`, `vault_process`, `frontmatter_update`, and the approved composite `remove_note_image` according to the user's goal; the old persisted `operationsAgentEnabled` value no longer gates planning or admission. There is no separate local write-intent classifier or old append/selection action.
+
+Under [DEC-050](../product/decisions/dec-050-note-image-removal-and-undo.md),
+`remove_note_image` binds the original source authority, exact note reference and
+attachment identity into the existing immutable intent. `keep` changes only the
+note and uses ordinary text Undo. `delete` requires current complete reference
+coverage, permitted attachment access and private recovery bytes before the
+first write. Shared references or incomplete coverage block the whole proposal;
+a later conflict preserves the already-applied note fact and stops deletion.
+The controller applies the note with `Vault.process`, then uses the official
+`FileManager.trashFile` only after fresh admission. These effects are sequential;
+an uncertain native outcome remains unknown and grants no automatic replay.
+
+Temporary recovery resources belong to the live Operations owner. Undo restores
+or verifies the original bytes with `Vault.createBinary` before note CAS, never
+overwrites a collision, and retains a verified attachment-restored checkpoint
+for a permitted retry of the remaining note step. Shared capacity, expiry and
+in-flight leases are owned by `note-image-removal-resources.ts`; binary bytes
+never enter model context or persistent chat history. Disposal prevents new
+effects while an already-started native call settles its factual result into
+the original bound history sink. A receipt proves an effect, not current Undo
+availability. `get_operations_status` reads only the visible original
+conversation/run/intent owner through the Host boundary and cannot confirm,
+retry, restore authority or create another intent. The [Product Spec](../product/specs/pa-note-image-removal-product-spec.md)
+and [SDD](../development/active/note-image-removal/sdd.md) own the detailed contract.
 
 Calls from one assistant tool phase stage one immutable intent. Chat groups that
 intent by normalized note path and shows the first frozen baseline to the last
@@ -465,7 +489,7 @@ with isolated Chat/Pagelet sessions. A user-opened, source-backed Pagelet Panel
 may stage only one deterministic `frontmatter_update` that adds a one-way
 `pa-related` link; complex or uncertain work carries the complete visible
 context into Chat without auto-sending or granting write authority. Every
-write outside the four core tools and every broader Pagelet direct action
+write outside the approved Operations tools and every broader Pagelet direct action
 remain closed. See [DEC-014](../product/decisions/dec-014-defer-operations-agent.md),
 [Step 2 SDD](../development/proposals/operations-agent/operations-agent-step2-sdd.md),
 [Step 3 SDD](../development/proposals/operations-agent/operations-agent-step3-sdd.md),

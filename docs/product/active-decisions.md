@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-050 | 笔记图片联合删除与一键撤销 | 共享引用阻止联合删除并提示；当前 Undo 窗口恢复原附件与笔记，不增持久恢复目录 | [Decision](./decisions/dec-050-note-image-removal-and-undo.md), [Product Spec](./specs/pa-note-image-removal-product-spec.md) | 需要跨重载恢复、新引用核查权限或改变平台/删除设置边界 |
 | DEC-049 | PA Agent command统一职责与交互 | command任务契约、Agent语义/纠错、Host harness、Tool领域事实；先设计/流程，再框架/领域，权限保持 | [Decision](./decisions/dec-049-command-agent-host-tool-contract.md), [Product Spec](./specs/pa-agent-command-contract-product-spec.md) | 需要改变领域权限、费用、数据、兼容或引入新运行/存储层 |
 | DEC-048 | Context 保留合法执行事实 | 四域统一获准状态、现有会话最小落盘与压缩摘要；不扩大权限或新增 ledger | [Decision](./decisions/dec-048-action-facts-and-context-continuity.md), [Product Spec](./specs/pa-action-continuity-product-spec.md) | 需要新存储层、扩大来源或动作权限时先交 Owner 决定 |
 | DEC-047 | Agent 非阻塞执行 | 原生 UI、编辑和保存优先；分层来源准入、有界工作；快照与撤销保持；GPT 本次完成设计实施 | [Decision](./decisions/dec-047-agent-responsive-execution.md), [Product Spec](./specs/pa-agent-responsive-execution-product-spec.md) | 实际仍有不可分割纯计算阻塞 renderer 时，仅隔离该计算 |
