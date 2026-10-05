@@ -52,6 +52,10 @@ runtime and is licensed with the project source. Reference attribution:
 | `skills/obsidian-dataview/SKILL.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
 | `skills/obsidian-dataview/references/dataviewjs-api.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
 | `skills/obsidian-templater/SKILL.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
+| `skills/obsidian-templater/references/command-types.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
+| `skills/obsidian-templater/references/common-patterns.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
+| `skills/obsidian-templater/references/module-reference.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
+| `skills/obsidian-templater/references/user-scripts.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
 | `skills/obsidian-templater/references/templater-modules-api.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
 
 ## Bundled Binary Resource Provenance

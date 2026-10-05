@@ -138,6 +138,34 @@ const bundledResourceNoticeByPath = new Map([
     },
   ],
   [
+    "skills/obsidian-templater/references/command-types.md",
+    {
+      license: "AGPL-3.0-only",
+      provenance: "Project-authored compatibility guidance; no third-party text intentionally copied.",
+    },
+  ],
+  [
+    "skills/obsidian-templater/references/common-patterns.md",
+    {
+      license: "AGPL-3.0-only",
+      provenance: "Project-authored compatibility guidance; no third-party text intentionally copied.",
+    },
+  ],
+  [
+    "skills/obsidian-templater/references/module-reference.md",
+    {
+      license: "AGPL-3.0-only",
+      provenance: "Project-authored compatibility guidance; no third-party text intentionally copied.",
+    },
+  ],
+  [
+    "skills/obsidian-templater/references/user-scripts.md",
+    {
+      license: "AGPL-3.0-only",
+      provenance: "Project-authored compatibility guidance; no third-party text intentionally copied.",
+    },
+  ],
+  [
     "skills/obsidian-templater/references/templater-modules-api.md",
     {
       license: "AGPL-3.0-only",
