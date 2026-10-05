@@ -269,8 +269,10 @@ production build first. Docs-only follows Testing Instructions above.
 
 ## UI And React Rules
 
-- For `ItemView` or command UI, create a container and call `createRoot(container).render(...)`.
-- Always call `root.unmount()` in `onClose`, teardown, or toggle paths.
+- For React-based `ItemView` or command UI, mount with `createRoot(container).render(...)`
+  and unmount that root in `onClose`, teardown, or toggle paths.
+- Preserve the existing rendering approach in other interfaces unless the task
+  requires changing it.
 - Pass `app` and `plugin` through props or context; avoid new globals.
 - Keep CSS scoped and avoid leaking styles into Obsidian core UI.
 - Prefer existing `pa-` classes and local style conventions.

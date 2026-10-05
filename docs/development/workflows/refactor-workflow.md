@@ -185,19 +185,24 @@ Do not claim Obsidian validation unless it was actually deployed and observed in
 
 ## Rollout Pattern
 
-For provider, backend, or high-risk runtime rollouts:
+For provider, backend, or high-risk runtime rollouts, select safeguards for the
+actual compatibility, privacy, or recovery risks. The following are reference
+strategies, not a mandatory sequence:
 
-1. Add the implementation behind a gate.
-2. Keep the old path as fallback.
-3. Add diagnostics with redacted metadata only.
-4. Add focused tests for unsupported/unvalidated combinations.
-5. Add equivalence tests for source boundary and observations.
-6. Run hidden canary/smoke first.
-7. Promote only the validated tuple/configuration to default.
-8. Keep unverified combinations on fallback.
-9. Update plan/tracker status from historical decision to current reality.
+- Use an activation gate when controlled enablement or rollback is needed.
+- Retain the old path as fallback when the approved compatibility or recovery
+  requirements need it and that path remains safe to use.
+- Add diagnostics only when existing observations cannot answer a concrete
+  rollout question; keep diagnostic metadata redacted.
+- Select focused tests for affected unsupported combinations, source boundaries,
+  or observation equivalence. Reuse valid evidence rather than adding every test type.
+- Use a canary or staged rollout when the specific rollout risk requires it;
+  do not add a hidden execution path merely to follow this pattern.
 
-Never let stale tracker wording say the old no-go/default state is still active after a follow-up rollout changes it.
+Existing acceptance, app smoke and release gates still apply. Promote only a
+validated tuple/configuration to default; where the approved design includes a
+fallback, keep unverified combinations on it. Update existing Plan/Tracker records
+to reflect the actual rollout state, without creating extra rollout artifacts.
 
 ## Commit Strategy
 
