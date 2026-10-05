@@ -8,6 +8,9 @@ Product spec: [Product Spec](../../../product/specs/pa-note-image-removal-produc
 SDD: [Software Design](./sdd.md)
 Tracker: [Development Tracker](./tracker.md)
 
+2026-10-05 contract amendment: 下文不再要求固定 Operations/恢复额度作为业务准入。
+本轮仅清理文档；运行代码与历史验证的边界见 Tracker，整体 Host 去留后续讨论。
+
 ## Goal And Non-goals
 
 按 DEC-050 的已确认范围，在现有 Operations/harness 中交付可审阅的图片联合删除：
@@ -28,7 +31,7 @@ Tracker: [Development Tracker](./tracker.md)
 | --- | --- | --- |
 | 操作声明、输入、准备 | [types](../../../../src/ai-services/operations/types.ts)、[validation](../../../../src/ai-services/operations/input-validation.ts)、[provider](../../../../src/ai-services/operations/operations-tool-provider.ts)、[executor](../../../../src/ai-services/operations/operations-tool-executor.ts) | 最小判别联合、真实 selector、冻结提案；最终阶段才开放新能力 |
 | 来源与身份准入 | [read plans](../../../../src/ai-services/task-source-read-plans.ts)、[read guard](../../../../src/ai-services/task-source-read-guard.ts)、[source executor](../../../../src/ai-services/task-source-executor.ts) | 接通 Proposed notePath，现有读计划固定 input.path；不只修改 schema |
-| 领域与恢复资源 | [service](../../../../src/ai-services/operations/operations-service.ts)、[controller](../../../../src/ai-services/operations/operations-intent-controller.ts)、[UndoStore](../../../../src/ai-services/operations/operations-undo-store.ts)、[image policy](../../../../src/chat/image-policy.ts) | 当前引用核查、官方删除、私有快照、容量/TTL/执行租约、分效果事实 |
+| 领域与恢复资源 | [service](../../../../src/ai-services/operations/operations-service.ts)、[controller](../../../../src/ai-services/operations/operations-intent-controller.ts)、[UndoStore](../../../../src/ai-services/operations/operations-undo-store.ts) | 当前引用核查、官方删除、私有快照、资源归属/TTL/执行租约、分效果事实 |
 | 确认与可见结果 | [review model](../../../../src/ai-services/operations/operations-review-model.ts)、[review session](../../../../src/ai-services/operations/operations-review-session.ts)、[review UI](../../../../src/chat/operations-review/OperationsReviewView.tsx)、[Chat](../../../../src/chat/chat-view.ts) | 同一预览/确认、冲突、partial/unknown、有效 Undo；附件摘要不伪造文字 diff |
 | 事实、历史与模型输入 | [result facts](../../../../src/ai-services/pa-agent-result-facts.ts)、[action history](../../../../src/ai-services/pa-agent-action-history.ts)、[history](../../../../src/ai-services/pa-agent-history.ts)、[ChatService](../../../../src/ai-services/chat-service.ts)、[history store](../../../../src/chat/chat-history-store.ts) | 纠正 unknown→failed 投影，保存原 actionStates；事实收据与撤销能力分开 |
 | 实际能力与只读查询 | [Runtime](../../../../src/ai-services/pa-agent-runtime.ts)、[registry](../../../../src/ai-services/capability-registry.ts)、[policy](../../../../src/ai-services/policy-engine.ts)、[image status reference](../../../../src/ai-services/image-status-tool.ts) | Proposed get_operations_status 的注册、权限、原 run/intent、闭合观察与新鲜快照 |
@@ -93,10 +96,10 @@ GPT 使用[任务模板](../../templates/glm-worker-task.md)和
    partial、failed、unknown 与恢复检查点。删除可用前修正现有 unknown→failed
    投影；不能等删除执行后再补历史事实。旧 Operations 收据与新 unknown 效果混合
    后，经持久化、重载及压缩仍须保留已有事实；缺少新恢复字段不制造 Undo 能力。
-2. 实现共享容量预留、实际二进制快照与 lease：单图沿用 IMAGE_POLICY，独立总额
-   的拟实施初值为 64 MiB，由源代码常量拥有；该值不是实测性能承诺。TTL 沿用
-   DEFAULT_UNDO_TTL_MS，起点与 receipt 一致。计入预留和保留，不淘汰有效快照；
-   任一准备失败或超额在首笔写入前拒绝。快照只归原 Undo owner，不进入公开结果。
+2. 管理实际二进制快照、预留资源与 lease；2026-10-05 撤销沿用 IMAGE_POLICY 单图
+   阈值、64 MiB 总额及超额拒绝要求。TTL 沿用 DEFAULT_UNDO_TTL_MS，起点与
+   receipt 一致。不淘汰有效快照；实际快照读取/分配失败在首笔写入前报告，不能
+   静默执行不可撤销删除。快照只归原 Undo owner，不进入公开结果。
 3. 确认后重新核对目标、来源/权限/版本与引用；vault.process 修改笔记后立即记录
    其效果，再核对附件条件，调用官方 fileManager.trashFile。首笔前冲突零写；
    首笔后才出现冲突停止附件步骤、保留 partial。不能从异常推定未发生，不盲回滚。
@@ -121,7 +124,7 @@ P2 的独立 review 分为引用/删除/恢复资源与 harness/历史/查询两
 | --- | --- | --- | --- |
 | 选错附件或遗漏共享引用 | 真实引用/身份、覆盖矩阵、当前获准完整检查；keep/delete 分支 | 同名/重复、缓存落后/不完整、剩余引用和权限负例 | 首笔前拒绝；不得改为警告后继续删除 |
 | 两项效果或恢复只完成一项 | note/attachment 及恢复检查点先固定，顺序调用保留事实 | 后置冲突、API 拒绝/未知、恢复后笔记漂移 | 停止后续效果并查询原操作；不盲重放/自动删恢复文件 |
-| 图片快照提前释放或占用无界 | 首笔前共享预留、TTL 计时清理、执行 lease、dispose | 容量边界、自然 settle、到期无访问、并发与卸载负例 | 拒绝新增删除；保留有效已有快照，失效后释放资源 |
+| 图片快照提前释放或资源未释放 | 真实资源准备、TTL 计时清理、执行 lease、dispose | 实际准备失败、自然 settle、到期无访问、并发与卸载负例 | 如实报告准备失败；保留有效已有快照，失效后释放资源 |
 | 禁止来源或二进制泄漏 | 沿既有 Data Boundary，公开结果只有限事实 | history/Debug/模型输入/序列化负例，排除来源的零读断言 | 停止受影响接入；不建立新读取例外或持久恢复目录 |
 | 注册/历史把未知伪装成失败或完成 | 完整闭合链后注册；原 run/intent 查询不恢复权限 | 实际 Runtime→fact→history/压缩回归 | 撤下新 capability 与 UI，保留用户文件和已有事实 |
 | 平台与权限证据不足 | 公共 API，按原 both 平台规划；真实目标与调用授权单列 | 实际桌面/iOS 删除、恢复、过期/重载及模型语义证据 | 保留未验证；不静默改为 desktop-only 或合成证明 |

@@ -3,7 +3,7 @@
 Document status: Current
 Design status: Approved
 Delivery status: Closed
-Updated: 2026-08-01
+Updated: 2026-10-05
 Work item: B-101
 Implementation step: Step 2 — Operations Phase 1 / Chat conclusions to vault
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md) and [Operations capability direction](./agent-operations-capability.md); owner authorized implementation on 2026-08-01.
@@ -15,6 +15,11 @@ Successor contract: [DEC-046](../../../product/decisions/dec-046-note-change-rev
 审计且不探测或清理旧 audit；本文保留原实现设计证据，不要求 B-154 恢复已退役功能。
 当前实现边界见 [Product Spec](../../../product/specs/pa-note-change-review-product-spec.md)，
 本地验证见 [B-154 验证记录](../../../archive/2026/b154-note-change-review-validation.md)。
+
+2026-10-05 scoped amendment: the Owner withdrew this document's fixed Operations
+count/content caps; see the [current contract](../../../architecture/pa-agent-architecture-plan.md#2026-10-05-contract-cleanup).
+The original delivery evidence remains historical. Runtime removal is pending;
+this document amendment is not proof of changed execution behavior.
 
 ## 1. Outcome And Scope
 
@@ -136,12 +141,11 @@ Rules:
 - The other three tools require an existing `TFile` Markdown target.
 - Each action also re-checks the shared Data Boundary path decision when the
   host exposes one; a denied target does not reach preview or audit.
-- Per-operation supplied and actual generated content are each capped at
-  50,000 characters. For `replace/all`, actual generated characters are
-  `matchCount × replacement length` and are checked before constructing output.
-  A single transformation may grow its target by at most 200,000 characters;
-  one intent contains at most 16 operations and 200,000 actual generated
-  characters in total.
+- Withdrawn on 2026-10-05: the historical 50,000-character per-operation cap,
+  200,000-character growth/intent caps and 16-operation intent cap are not
+  requirements for future implementation or acceptance. Valid operations must
+  not be rejected solely for crossing those internal thresholds. Actual resource
+  use may be reported; an actual preparation failure must not be hidden.
 - `vault_process.replace` uses literal string matching only; regular
   expressions are neither accepted nor constructed (T13).
 - Heading parameters are visible heading text without a `#` prefix. Markdown

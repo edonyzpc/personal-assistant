@@ -1,7 +1,7 @@
 # PA Agent Command Contract Development Tracker
 
 Document status: Current
-Delivery status: Implementing
+Delivery status: Validated
 Updated: 2026-10-04
 Work item: B-158
 Authority: 本track唯一执行状态、finding、证据与跨会话接续。
@@ -10,6 +10,10 @@ Plan: [Delivery Plan](./plan.md)
 SDD: [Software Design](./sdd.md)
 
 ## Current Snapshot
+
+- 2026-10-05 contract cleanup: Owner 要求先撤销 Host 关键词读取判断和 Operations 人为容量硬拒绝约定，再讨论去掉 Host。当前仅文档修订；[新约定](../../../architecture/pa-agent-architecture-plan.md#2026-10-05-contract-cleanup)与[本切片记录](../../../architecture/pa-agent-harness/pa-agent-harness-optimization-plan-2026-10-04.md#16-2026-10-05-规则与合同清理)优先于下列原阶段记录。源码限制尚未移除，原 Validated 不证明新合同实现；不恢复 F-24 模型排查或改变其历史判定。
+
+- Status reconciliation: 2026-10-04 Owner 启动 B-160 全部开发任务；为落实 1 Now + 1 Next，按已批准且 F-24 明确延期后的工程范围将本 track 整理为 Validated。只读 reviewer 核原最终 gate 364 suites/8900 tests、独立/app 恢复及后续 §15 工程验收；不重跑或重启本 track，不 closeout。F-24 Deferred、首次模型 FAIL/Host PASS 及 B-159 启动条件保持。后续 harness 采用全量与定向补验组合证据；摘要规划 5 项补验原日志归档不足，不以 final-recovery-checks 中的 2 FAIL 冒充 PASS，也不外推真实远端服务/iOS/私人 vault 或发布。
 
 - Later follow-up: Owner 随后在同一会话授权更广的 harness 重构及可靠性优化，当前接续与评分校正见[该任务收尾](../../../architecture/pa-agent-harness/pa-agent-harness-optimization-plan-2026-10-04.md#15-owner-校正与本地收尾)。以下 F-24 停止记录属于前序 B-158 决策，不限制已获授权的后续工作；其原模型回复 FAIL／Host 防重放 PASS 仍保留，不因后续工程完成而关闭。
 - Current phase: P1/P2完成；P3域迁移及P4文档/源码一致性已实现并独立审查，最终共享gate及test恢复完成。Owner于2026-10-04将F-24按恢复交互提示问题延期至B-159，不在当前解决；原模型回复FAIL仍保留，延期不等于修复或验收PASS。
@@ -33,8 +37,8 @@ SDD: [Software Design](./sdd.md)
 | T-01 | B-158/REQ-01 / B-158/AC-01; B-158/REQ-02 / B-158/AC-02 | 四角色与交互架构 | [x] | review_ghost_command实际文档终审通过；唯一架构来源与规范/实现差异明确 |
 | T-02 | B-158/REQ-04 / B-158/AC-04 | 方案/SDD/派工/review流程落实 | [x] | review_writing_command终审一项SDD落点措辞已按建议修正；docs gate通过，未增加必填文档/gates |
 | T-03 | B-158/REQ-03 / B-158/AC-03; B-158/REQ-05 / B-158/AC-05 | 公共设计与框架重构 | [x] | SDD、focused/独立review、最终make deploy自然0、真实Chat接入与恢复PASS；兼容旧domain，无领域行为迁移 |
-| T-04 | B-158/REQ-06 / B-158/AC-06 | 逐domain迁移 | [~] | Ghost/Writing/Image迁移及独立source/shared gate通过，代表性模型/app证据见Validation Log；F24按Owner延期B-159，不再作为当前修复目标，历史回复FAIL保留；本轮不改整体验收状态 |
-| T-05 | B-158/REQ-01 / B-158/AC-01; B-158/REQ-02 / B-158/AC-02; B-158/REQ-03 / B-158/AC-03; B-158/REQ-04 / B-158/AC-04; B-158/REQ-05 / B-158/AC-05; B-158/REQ-06 / B-158/AC-06 | 实现与合同最终一致性 | [~] | Current合同/源码/流程独立核一致；B153/T08仅路由本Tracker。F24延期记录见B-159，不把延期写成模型PASS；本轮仅登记，不进行整体closeout |
+| T-04 | B-158/REQ-06 / B-158/AC-06 | 逐domain迁移 | [x] | Ghost/Writing/Image 迁移及独立 source/shared gate 与代表性模型/app 证据充分；F24 按 Owner 延期 B-159，原模型 FAIL 保留，不把延期写成修复 |
+| T-05 | B-158/REQ-01 / B-158/AC-01; B-158/REQ-02 / B-158/AC-02; B-158/REQ-03 / B-158/AC-03; B-158/REQ-04 / B-158/AC-04; B-158/REQ-05 / B-158/AC-05; B-158/REQ-06 / B-158/AC-06 | 实现与合同最终一致性 | [x] | Current 合同/源码/流程独立核一致，后续工程验收见 §15；F24 延期及实际语义局限保留；未 closeout |
 
 ## Findings
 
@@ -97,7 +101,7 @@ SDD: [Software Design](./sdd.md)
 ## Closeout Readiness
 
 - [x] Owning contract与实际实现一致；不声称模型语义无误。
-- [ ] 必要独立review、模型/app与共享gate证据充分。
+- [x] 已批准且 F24 明确延期后的工程范围有必要独立 review、代表性模型/app 与共享 gate 证据；原模型局限及后续日志归档缺口保持。
 - [ ] 稳定结论已吸收，剩余事项和过程文档按授权处置。
 - 当前仅有本地master commit授权，无push、发布或closeout授权；不提前标Validated或删除既有证据。
 - Owner scope update 2026-10-04：F24延期至B-159，当前不继续解决；本次只记录意图与延期，不修改运行行为或整体交付状态。

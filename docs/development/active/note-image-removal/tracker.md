@@ -11,6 +11,8 @@ SDD: [Software Design](./sdd.md)
 
 ## Current Snapshot
 
+- 2026-10-05 contract cleanup: Owner 后续要求清理 Operations 人为容量硬拒绝及相关合同；Decision/Product Spec/SDD/Plan 已撤销固定额度作为业务前提。本轮仅文档修改，原 Validated 和下列“无剩余源码任务”只对应原交付范围；源码仍待后续调整，不能据旧验收宣称已支持新合同。整体 Host 去留先讨论，接续见[本切片记录](../../../architecture/pa-agent-harness/pa-agent-harness-optimization-plan-2026-10-04.md#16-2026-10-05-规则与合同清理)。
+
 - Current phase: P0–P3 已完成，实施与设计独立接受；F-01–21 Closed。本地完整门禁、桌面交互、获准真实文本模型与 CLI mobile simulator 验收通过；状态为 Validated。
 - Next action: 开发与验收交付完成，无剩余源码修复或验证任务。2026-10-05 Owner 授权创建本地 commit，按规范拆分代码/测试与配套文档；当前范围没有 iOS 专有能力，按 Owner 约束不另要求真机。未授权 push、发布或 closeout。
 - Authority: B-160 源码/测试/必要契约与 repo test 本地验证已授权；2026-10-05 用户另授权真实文本模型验收，并明确除 iOS 系统特有能力外使用 CLI mobile simulator，随后授权为本次修改创建本地 commit。现有 pa-glm/ZAI 仅接收必要公开仓库材料与脱敏结果；iCloud/device 部署仍单列，push、发布与 closeout 未授权。

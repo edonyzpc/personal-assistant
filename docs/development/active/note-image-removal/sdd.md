@@ -8,6 +8,9 @@ Product spec: [Product Spec](../../../product/specs/pa-note-image-removal-produc
 Plan: [Delivery Plan](./plan.md)
 Tracker: [Development Tracker](./tracker.md)
 
+2026-10-05 contract amendment: Owner 已撤销自设容量硬拒绝要求。本文资源管理约定
+不再要求单图/总额阈值阻止合法操作；源码尚待对齐，既有验证只证明当时实现。
+
 ## Current Source Baseline
 
 实施起点为本地 master `22cf028e`：
@@ -53,7 +56,7 @@ delete 产生一个联合预览，原领域内部拥有笔记与附件两个效�
 1. 解析实际引用到本地 TFile，冻结唯一目标、原文、拟修改文本及附件身份。
    歧义不猜；缺少旧 Chat asset registry 不等于无法选择实际笔记附件。
 2. keep 仅核对当前笔记的选中引用与文字修改，沿用文字快照及普通文字 Undo；
-   不进入跨笔记共享删除核查、二进制快照/额度或附件删除流程。
+   不进入跨笔记共享删除核查、二进制快照准备或附件删除流程。
    以下第 3–7 步仅用于 delete。
 3. 对必要引用关系进行当前、完整且获准的核查，复用 Obsidian metadata/link
    resolution 与现有来源边界；不能用 asset.owners 或未同步的缓存宣称无其他引用。
@@ -64,8 +67,8 @@ delete 产生一个联合预览，原领域内部拥有笔记与附件两个效�
    完整获准核查的冲突冻结在 prepared operation 的 block 中，复用原 pending intent；
    整组执行入口在状态转换及任何写入前硬阻，引用随后消失也不解锁旧提案。
    冲突列表只进入 Host 审阅，不进入模型回执；不完整核查不保留累计冲突路径或数量。
-5. 用户确认后重新核对全部边界；先预留恢复容量，读取实际附件字节、核对 hash/
-   文件版本并保留笔记快照。读失败、超额、漂移或共享冲突均发生在首笔写入之前。
+5. 用户确认后重新核对全部边界；准备实际恢复资源，读取实际附件字节、核对 hash/
+   文件版本并保留笔记快照。读取或分配失败、漂移或共享冲突均在首笔写入前处理。
 6. 在 vault.process 内核对笔记基线并移除选中引用，立刻保留笔记效果事实和恢复
    资源；再次核对引用、附件身份与权限，之后调用 fileManager.trashFile。
 7. 正常返回与目标核查共同支持附件已从 vault 移除的事实；不把结果笼统标为
@@ -106,15 +109,15 @@ PA 可协调自身对这些目标的重复操作与 Undo，不能锁住同步、
 delete 的 Proposed 私有图片快照附着原 Operations Undo owner；不进入公开 intent、模型输出、
 Chat history/Debug 或序列化状态。快照来自本次实际附件，不用历史 Chat 原图替代。
 
-- 在共享 OperationsService 的恢复资源 owner 统一核算预留与保留字节，使用独立
-  明确的源代码常量，不借用媒体缓存上限。单图沿用已有图片大小限制。
-  超额拒绝新删除，不淘汰仍有效快照，不静默降级为不可撤销。
+- 在共享 OperationsService 的恢复资源 owner 管理预留与保留字节。撤销独立固定
+  总额和借用图片大小阈值拒绝删除的要求；记录实际用量，不将内部额度当成业务条件。
+  实际读取或分配失败仍报告准备失败，不淘汰仍有效快照，不静默降级为不可撤销。
 - 保留现有 Undo TTL/会话能力边界；加入必要的到期释放，不能仅依赖下一次访问。
   正在执行的删除或恢复持有私有资源租约，过期阻止新 Undo，不中途释放使用中的
   buffer。正常 settle 只归还执行租约和未使用的临时预留；已发生效果所需的快照
   转由 Undo owner 保留，直到完整撤销成功、TTL 到期或能力失效。部分恢复继续
   保留尚需的快照与检查点。expire/dispose 先停止新准入；执行中资源待原 Promise
-  settle 后再释放，最终归还保留额度、buffer 引用及计时器。
+  settle 后再释放，最终清理保留资源、buffer 引用及计时器。
 - 一键 Undo 先检查笔记仍等于冻结 after、操作有效、附件目标可安全恢复。
   原附件已在原路径且字节一致时复用；存在冲突时不覆盖。
 - 先 createBinary 恢复附件并核对结果，再在 vault.process 内再次核对笔记 after
@@ -163,11 +166,11 @@ Proposed `get_operations_status({intentId})` 绑定当前会话可见的原操�
 | Requirement / AC | Minimum evidence | App / failure condition |
 | --- | --- | --- |
 | B-160/REQ-01 / B-160/AC-01 | 实际引用/同名/重复/混合 callout→联合预览 | 公开 Featured Image callout，笔记 diff 与实际附件同时可见 |
-| B-160/REQ-02 / B-160/AC-02 | 共享、缓存未同步/不完整、核查权限与中途变化；keep 分支 | delete 共享冲突首笔零写、中途停止与 partial；keep 保留附件且不受删除专用核查/额度阻挡 |
+| B-160/REQ-02 / B-160/AC-02 | 共享、缓存未同步/不完整、核查权限与中途变化；keep 分支 | delete 共享冲突首笔零写、中途停止与 partial；keep 保留附件且不受删除专用核查/快照准备阻挡 |
 | B-160/REQ-03 / B-160/AC-03 | 真实 policy/controller确认、失效/替换/重复 | 准备/取消零删除，确认一次执行，保持其他工具 |
 | B-160/REQ-04 / B-160/AC-04 | note成功+附件failed/unknown→history/runtime；原ID查询 | Chat追问如实反馈，query零写、不重提 |
 | B-160/REQ-05 / B-160/AC-05 | 实际字节与原文恢复、碰撞/部分恢复/未知 | 实际确认后一次Undo；漂移不覆盖，不重建已恢复附件 |
-| B-160/REQ-06 / B-160/AC-06 | 容量预留/TTL/in-flight lease/dispose与泄漏扫描 | 重载失效不恢复能力；验证所支持平台的公共API/交互 |
+| B-160/REQ-06 / B-160/AC-06 | 实际资源准备/TTL/in-flight lease/dispose与泄漏扫描 | 重载失效不恢复能力；验证所支持平台的公共API/交互 |
 
 最终集中 gate 及 test vault 实际 Chat 见 Tracker；真实模型门须另获明确调用授权，
 并符合 Product Spec 的费用边界，仅测自然语言选图、共享冲突、正常撤销与部分

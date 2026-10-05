@@ -83,6 +83,20 @@ alignment of existing code is tracked by [B-158](../development/active/agent-com
 not implied by this document's status. Other workflows reference this section
 rather than maintaining another definition.
 
+### 2026-10-05 Contract Cleanup
+
+The Owner withdrew Host keyword-based read/reuse decisions and arbitrary
+Operations count, content-size and recovery-quota rejection requirements.
+Whether to read again belongs to the Agent; an existing implementation constant
+or passing test does not establish a product limit. Complete operation facts
+must remain readable without a separate effect-count cap. Actual resource
+failures remain facts to report, not a basis for silently reducing the task.
+
+This is a contract change only: the keyword branch and capacity guards still
+exist in runtime code. The Owner wants to discuss removing the Host next;
+the remaining architecture below describes the existing system, not a mandate
+to preserve its Host rules in that discussion.
+
 ### Roles And Ownership
 
 A command is a domain task contract and working guidance executed by the same
@@ -179,7 +193,7 @@ Reuse `PaAgentToolExecutionResult.executionState` and `recovery`, existing domai
 operation receipts and result facts. Keep attempt outcome and operation state
 as separate axes. Do not infer `not_started` from an error string, clear all
 failure reservations, add a second command ledger, or introduce automatic
-cross-reload execution. Missing facts remain unknown within the existing limits.
+cross-reload execution. Missing facts remain unknown.
 
 ### Results And Completion
 
@@ -192,8 +206,9 @@ completed user task are distinct. A conversational claim cannot replace a receip
 Recoverable errors are observations with a specific reason and available next
 actions. They do not permanently consume permission for an operation that never
 started. Real ambiguity, missing authority or indispensable user judgment may
-require clarification. Retry/repair stays within existing budgets and effects;
-this contract does not promise unlimited retries or guaranteed model understanding.
+require clarification. Retry/repair respects actual execution state and resource
+availability; internal capacity defaults do not establish product requirements.
+This contract does not guarantee model understanding.
 
 Actual domain events update the existing safe result projection/history/context
 chain under DEC-048. Previous results preserve continuity but grant no new
@@ -369,8 +384,11 @@ every physical provider request, the Host rebuilds the actual admitted input
 from the run's read snapshots and rechecks live authorization. Ordinary note
 edits and background Memory refresh do not rewrite an already-read snapshot;
 deletion, exclusion, Forget, Data Boundary or lost identity still withdraw it.
-An explicit request for the latest/current version executes a new read rather
-than reusing an exact successful duplicate.
+The Agent decides whether another read is needed. User-text keywords do not
+decide execution or cache reuse. Reuse must have an explicit version/snapshot
+basis compatible with the requested read. The current executor still checks
+latest/current and similar words; that branch is an implementation gap under
+the 2026-10-05 contract cleanup, not the required behavior.
 
 For writing, Chat binds `get_writing_context` only after the user selects the
 `@Writing` action or explicitly continues an existing writing version. Ordinary
@@ -427,7 +445,7 @@ Temporary recovery resources belong to the live Operations owner. Undo restores
 or verifies the original bytes with `Vault.createBinary` before note CAS, never
 overwrites a collision, and retains a verified attachment-restored checkpoint
 for a permitted retry of the remaining note step. Shared capacity, expiry and
-in-flight leases are owned by `note-image-removal-resources.ts`; binary bytes
+in-flight leases are currently owned by `note-image-removal-resources.ts`; binary bytes
 never enter model context or persistent chat history. Disposal prevents new
 effects while an already-started native call settles its factual result into
 the original bound history sink. A receipt proves an effect, not current Undo
@@ -435,6 +453,12 @@ availability. `get_operations_status` reads only the visible original
 conversation/run/intent owner through the Host boundary and cannot confirm,
 retry, restore authority or create another intent. The [Product Spec](../product/specs/pa-note-image-removal-product-spec.md)
 and [SDD](../development/active/note-image-removal/sdd.md) own the detailed contract.
+
+The existing operation/content/recovery quota guards are pending removal from
+runtime; they are no longer required admission conditions. Actual snapshot
+preparation and truthful Undo availability remain separate from these quotas.
+An admitted intent's full effect facts must survive status queries and context
+projection, regardless of the number of operations or effects.
 
 Calls from one assistant tool phase stage one immutable intent. Chat groups that
 intent by normalized note path and shows the first frozen baseline to the last
