@@ -149,11 +149,19 @@ artifact tests 使用当前 build。不改变原有阶段、CI、release 或实�
 不能为提前 smoke 绕过 `make deploy` 或 `deploy-current` 的复用前提。
 
 GLM 在工具与权限已验证时执行获派 focused/full tests、lint、build、docs 和本地部署。
-最终昂贵 gate 由一个执行者对冻结输入运行；只因新改动、失败或具体未解风险重跑。
+最终昂贵 gate 由一个执行者对冻结输入运行；重跑须有相关输入变化或具体的新诊断假设，
+失败本身不是重跑理由。
 证据复用和失效条件统一按 AGENTS Validation Planning And Reuse 执行，
 独立验收核对真实差异和原始结果，只补缺失或失效的证明；发布要求仍由发布门禁执行。
 复用 `make deploy` 已覆盖的检查；满足条件时使用 `deploy-current`，不把构建身份
 当作测试通过。部署前核对实际 vault 与已加载插件，worker 构建成功不等于目标 app 已更新。
+
+共享工作树并行时，在已有任务单中区分 worker 的局部验证和统一检查。全仓 TypeScript
+检查由指定执行者在相关输入冻结后收口，生产 build 已覆盖时复用；因具体跨模块风险
+安排的提前诊断仍可执行，但不要求每个 worker 在他人持续修改时取得共享树全绿。
+新增并行任务或改变验证分工时，将变化实际送达受影响的在途 worker，不能只更新
+Tracker、新 worker 或下一轮任务。若当前 CLI 无法即时送达，原任务中的外部阻塞
+停止条件仍须生效；主控在下一次可送达时更新分工，不假定 worker 已获知。
 
 UI 任务按改动面验收：纯样式用已验证 CLI/deep link 准备真实组件状态，再观察并
 操作受影响动作；修改菜单、入口、焦点或选区时必须实际走该入口。CLI/DOM 准备
