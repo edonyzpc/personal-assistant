@@ -416,7 +416,6 @@
     "plugin.shareCard.resourcePlaceholder": "视觉内容无法加载：{label}",
     "plugin.shareCard.renderFallback": "部分格式无法显示，已改用纯文本。",
     "plugin.shareCard.prepareFailed": "无法准备分享卡片，请关闭后重试。",
-    "plugin.shareCard.tooLarge": "这段内容过长，无法生成分享卡片。请缩短后重试。",
     "plugin.shareCard.pageIndicator": "第 {current} / {total} 页",
     "plugin.shareCard.previousPage": "上一页",
     "plugin.shareCard.nextPage": "下一页",

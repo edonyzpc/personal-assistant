@@ -12,10 +12,18 @@ import {
     ShareCardRenderReadinessError,
     type ShareCardStaticDomBoundary,
 } from "../src/share-card/share-card-renderer";
-import { paginateShareCardMarkdown } from "../src/share-card/share-card-paginator";
 import {
+    type ShareCardFitPredicate,
+    paginateShareCardMarkdown,
+    ShareCardPaginationCancelledError,
+} from "../src/share-card/share-card-paginator";
+import {
+    ShareCardTestCommentNode,
     ShareCardTestDocument,
     type ShareCardTestElement,
+    ShareCardTestRange,
+    ShareCardTestTextNode,
+    ShareCardTestTreeWalker,
     asDocument,
     asElement,
 } from "./helpers/share-card-dom";
@@ -27,6 +35,66 @@ function withoutShareCardBoundaryMarkers(markdown: string): string {
             "",
         )
         .replace(/\uE000pa-share-static-boundary-\d+(?:-\d+)+\uE001\n?/gu, "");
+}
+
+function enableShareCardTestRanges(
+    document: ShareCardTestDocument,
+): void {
+    document.enableRealDomClones = true;
+    Object.assign(document.defaultView, { NodeFilter: { SHOW_TEXT: 4 } });
+    Object.assign(document, {
+        createTextNode: (data: string) => new ShareCardTestTextNode(data),
+        createComment: (data: string) => new ShareCardTestCommentNode(data),
+        createRange: () => new ShareCardTestRange(),
+        createTreeWalker: (root: ShareCardTestElement, show: number) => (
+            new ShareCardTestTreeWalker(root, show)
+        ),
+    });
+    const createElement = document.createElement.bind(document);
+    document.createElement = ((tagName: string) => {
+        const element = createElement(tagName);
+        Object.defineProperty(element, "cloneNode", {
+            value: (deep = false) => (
+                element.cloneForRanges(deep)
+            ),
+        });
+        return element;
+    }) as typeof document.createElement;
+}
+
+function createMeasuredRangeDocument(capacity: number): ShareCardTestDocument {
+    const document = new ShareCardTestDocument();
+    enableShareCardTestRanges(document);
+    const createElement = document.createElement.bind(document);
+    document.createElement = ((tagName: string) => {
+        const element = createElement(tagName);
+        if (tagName.toLowerCase() === "div") {
+            Object.defineProperties(element, {
+                clientHeight: { configurable: true, get: () => capacity - 1 },
+                scrollHeight: { configurable: true, get: () => element.textContent.length },
+            });
+        }
+        return element;
+    }) as typeof document.createElement;
+    return document;
+}
+
+function appendInstrumentedText(body: ShareCardTestElement, markdown: string): void {
+    const marker = /<span data-pa-share-boundary="([^"]+)"><\/span>/gu;
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+    while ((match = marker.exec(markdown)) !== null) {
+        if (match.index > cursor) {
+            body.appendTextNode(new ShareCardTestTextNode(markdown.slice(cursor, match.index)));
+        }
+        const sentinel = body.ownerDocument.createElement("span");
+        sentinel.setAttribute("data-pa-share-boundary", match[1]!);
+        body.appendChild(sentinel);
+        cursor = match.index + match[0].length;
+    }
+    if (cursor < markdown.length) {
+        body.appendTextNode(new ShareCardTestTextNode(markdown.slice(cursor)));
+    }
 }
 
 type SemanticNodeList = SemanticNode[] & { item(index: number): SemanticNode | null };
@@ -725,6 +793,186 @@ describe("ShareCardRenderer", () => {
         expect(unload).toHaveBeenCalledTimes(1);
         unload.mockRestore();
     });
+
+    it("refines a very long plain block through real static boundaries in one processor pass", async () => {
+        const document = createMeasuredRangeDocument(100);
+        renderMock.mockImplementation(async (_app, markdown, element) => {
+            const body = element as unknown as ShareCardTestElement;
+            body.textContent = "";
+            appendInstrumentedText(body, markdown);
+        });
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => undefined,
+        });
+        const source = Array.from({ length: 25_000 }, (_, index) => (
+            `${index.toString().padStart(9, "0")}甲`
+        )).join("");
+        const options = { theme: "light" as const };
+        await renderer.prepareBlocks([source], options);
+        const measuredFit = renderer.createPreparedFitPredicate(options);
+        const controller = new AbortController();
+        const fits: ShareCardFitPredicate = measuredFit;
+        const refine = jest.fn((
+            blockIndex: number,
+            sourceStart: number,
+            sourceEnd: number,
+        ) => renderer.prepareBlockBoundaryWindow(
+            blockIndex,
+            sourceStart,
+            sourceEnd,
+            options,
+        ));
+
+        const pages = await paginateShareCardMarkdown([source], fits, {
+            signal: controller.signal,
+            yieldToPlatform: async () => undefined,
+            refineBoundaries: refine,
+        });
+
+        expect(refine.mock.calls.length).toBeGreaterThan(1);
+        expect(pages.length).toBeGreaterThan(24);
+        expect(pages.every((page) => page.content.length > 0)).toBe(true);
+        expect(pages.map((page) => page.content).join("")).toBe(source);
+        const renderedText: string[] = [];
+        for (const page of pages) {
+            const rendered = await renderer.renderPage(page, options);
+            expect(rendered.bodyEl.textContent).toBe(page.content);
+            expect(rendered.fits()).toBe(true);
+            expect(rendered.usedPlainTextFallback).toBe(false);
+            renderedText.push(rendered.bodyEl.textContent ?? "");
+            rendered.cleanup();
+        }
+        expect(renderedText.join("")).toBe(source);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        renderer.cleanup();
+    }, 20_000);
+
+    it("refines a long fenced block without losing body text or code wrappers", async () => {
+        const document = createMeasuredRangeDocument(2);
+        renderMock.mockImplementation(async (_app, markdown, element) => {
+            const body = element as unknown as ShareCardTestElement;
+            body.textContent = "";
+            const pre = document.createElement("pre");
+            const code = document.createElement("code");
+            code.textContent = markdown.slice(6, -3);
+            pre.appendChild(code);
+            body.appendChild(pre);
+        });
+        const bodyText = Array.from({ length: 1_000 }, (_, index) => (
+            `${index.toString().padStart(4, "0")}乙`
+        )).join("");
+        const source = `\`\`\`ts\n${bodyText}\n\`\`\``;
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => undefined,
+        });
+        const options = { theme: "light" as const };
+        await renderer.prepareBlocks([source], options);
+        const refine = jest.fn((
+            blockIndex: number,
+            sourceStart: number,
+            sourceEnd: number,
+        ) => renderer.prepareBlockBoundaryWindow(
+            blockIndex,
+            sourceStart,
+            sourceEnd,
+            options,
+        ));
+
+        const pages = await paginateShareCardMarkdown(
+            [source],
+            renderer.createPreparedFitPredicate(options),
+            {
+                yieldToPlatform: async () => undefined,
+                refineBoundaries: refine,
+            },
+        );
+
+        expect(refine.mock.calls.length).toBeGreaterThan(1);
+        expect(pages.length).toBeGreaterThan(24);
+        expect(pages.every((page) => page.content.trim().length > 0)).toBe(true);
+        expect(pages.every((page) => (
+            page.content.startsWith("```ts\n") && page.content.endsWith("```")
+        ))).toBe(true);
+        const segments = pages.flatMap((page) => page.renderPlan?.segments ?? []);
+        expect(segments.every((segment) => (
+            segment.sourceStart >= 6
+            && segment.sourceEnd <= source.length - 3
+            && segment.sourceEnd > segment.sourceStart
+        ))).toBe(true);
+        expect(segments.map((segment) => source.slice(segment.sourceStart, segment.sourceEnd)).join(""))
+            .toBe(`${bodyText}\n`);
+        const renderedText: string[] = [];
+        for (const page of pages) {
+            const rendered = await renderer.renderPage(page, options);
+            const segment = page.renderPlan!.segments[0]!;
+            expect(rendered.bodyEl.textContent).toBe(source.slice(segment.sourceStart, segment.sourceEnd));
+            expect(rendered.bodyEl.textContent?.trim().length).toBeGreaterThan(0);
+            expect(rendered.bodyEl.querySelector("pre")?.querySelector("code")).not.toBeNull();
+            expect(rendered.fits()).toBe(true);
+            expect(rendered.usedPlainTextFallback).toBe(false);
+            renderedText.push(rendered.bodyEl.textContent ?? "");
+            rendered.cleanup();
+        }
+        expect(renderedText.join("")).toBe(`${bodyText}\n`);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        renderer.cleanup();
+    }, 20_000);
+
+    it("keeps refined emphasis ranges intact and releases a cancelled refinement", async () => {
+        const document = createMeasuredRangeDocument(1);
+        renderMock.mockImplementation(async (_app, markdown, element) => {
+            const body = element as unknown as ShareCardTestElement;
+            body.textContent = "";
+            const strong = document.createElement("strong");
+            appendInstrumentedText(strong, markdown.slice(2, -2));
+            body.appendChild(strong);
+        });
+        const unload = jest.spyOn(Component.prototype, "unload");
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => undefined,
+        });
+        const content = "甲乙丙丁戊".repeat(500);
+        const source = `**${content}**`;
+        const options = { theme: "light" as const };
+        await renderer.prepareBlocks([source], options);
+        const refine = jest.fn((block: number, start: number, end: number) => (
+            renderer.prepareBlockBoundaryWindow(block, start, end, options)
+        ));
+        const pages = await paginateShareCardMarkdown(
+            [source], renderer.createPreparedFitPredicate(options), { refineBoundaries: refine },
+        );
+        expect(refine.mock.calls.length).toBeGreaterThan(1);
+        const renderedText: string[] = [];
+        for (const page of pages) {
+            const rendered = await renderer.renderPage(page, options);
+            expect(rendered.bodyEl.querySelector("strong")?.textContent).toBe(rendered.bodyEl.textContent);
+            expect(rendered.usedPlainTextFallback).toBe(false);
+            renderedText.push(rendered.bodyEl.textContent ?? "");
+            rendered.cleanup();
+        }
+        expect(renderedText.join("")).toBe(content);
+
+        const controller = new AbortController();
+        const cancelledRefine = jest.fn(async (block: number, start: number, end: number) => {
+            const boundaries = await renderer.prepareBlockBoundaryWindow(block, start, end, options);
+            controller.abort();
+            renderer.cleanup();
+            return boundaries;
+        });
+        await expect(paginateShareCardMarkdown(
+            [source], renderer.createPreparedFitPredicate(options), {
+                signal: controller.signal,
+                refineBoundaries: cancelledRefine,
+            },
+        )).rejects.toBeInstanceOf(ShareCardPaginationCancelledError);
+        expect(cancelledRefine).toHaveBeenCalledTimes(1);
+        expect(document.body.children).toHaveLength(0);
+        await expect(renderer.prepareBlockBoundaryWindow(0, 1, 10, options))
+            .rejects.toBeInstanceOf(ShareCardRenderCancelledError);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        expect(unload).toHaveBeenCalledTimes(1);
+        unload.mockRestore();
+    }, 20_000);
 
     it("does not apply the crop constraint to text surrounding an inline image", async () => {
         const document = new ShareCardTestDocument();

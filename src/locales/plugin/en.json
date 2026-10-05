@@ -416,7 +416,6 @@
     "plugin.shareCard.resourcePlaceholder": "Visual unavailable: {label}",
     "plugin.shareCard.renderFallback": "Some formatting could not be shown. Plain text is used instead.",
     "plugin.shareCard.prepareFailed": "Could not prepare the share card. Close it and try again.",
-    "plugin.shareCard.tooLarge": "This content is too long for a share card. Shorten it and try again.",
     "plugin.shareCard.pageIndicator": "Page {current} of {total}",
     "plugin.shareCard.previousPage": "Previous page",
     "plugin.shareCard.nextPage": "Next page",

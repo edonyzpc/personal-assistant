@@ -6,13 +6,10 @@ import {
     isPureShareCardVisualBlock,
     paginateShareCardMarkdown,
     MAX_SHARE_CARD_FRAGMENT_BOUNDARIES,
+    ShareCardPaginationCancelledError,
     ShareCardPaginationError,
-    ShareCardTooLargeError,
+    type ShareCardPaginationOptions,
 } from "../src/share-card/share-card-paginator";
-import {
-    MAX_SHARE_CARD_CHARACTERS,
-    MAX_SHARE_CARD_PAGES,
-} from "../src/share-card/share-card-types";
 import { prepareShareCardMarkdown } from "../src/share-card/share-card-markdown";
 
 function removeRepeatedWrapper(
@@ -53,15 +50,12 @@ describe("paginateShareCardMarkdown", () => {
             .rejects.toMatchObject({ code: "unpageable-content" });
     });
 
-    it("uses the original Markdown length before resource data URLs are inlined", async () => {
-        const localized = `![image](data:image/png;base64,${"A".repeat(
-            MAX_SHARE_CARD_CHARACTERS + 1,
-        )})`;
+    it("accepts localized resource data URLs larger than the retired text limit", async () => {
+        const localized = `![image](data:image/png;base64,${"A".repeat(50_001)})`;
 
         await expect(paginateShareCardMarkdown(
             [localized],
             () => true,
-            { originalCharacterCount: 16 },
         )).resolves.toEqual([
             { pageIndex: 0, totalPages: 1, content: localized },
         ]);
@@ -172,8 +166,8 @@ describe("paginateShareCardMarkdown", () => {
         expect(pages.every((page) => !page.content.includes("�"))).toBe(true);
     });
 
-    it("bounds 50k CJK sentinels while preserving measured progress and all content", async () => {
-        const original = "甲".repeat(MAX_SHARE_CARD_CHARACTERS);
+    it("bounds dense-code-point sentinels without bounding page count", async () => {
+        const original = "甲".repeat(60_000);
         const boundaryPlan = createShareCardFragmentBoundaryPlan(original);
 
         expect(boundaryPlan).not.toBeNull();
@@ -182,10 +176,10 @@ describe("paginateShareCardMarkdown", () => {
         );
         const pages = await paginateShareCardMarkdown(
             [original],
-            (markdown) => Array.from(markdown).length <= 3_000,
+            (markdown) => Array.from(markdown).length <= 2_000,
         );
         expect(pages.length).toBeGreaterThan(1);
-        expect(pages.length).toBeLessThanOrEqual(MAX_SHARE_CARD_PAGES);
+        expect(pages.length).toBeGreaterThan(24);
         expect(pages.map((page) => page.content).join("")).toBe(original);
         const instrumentedOffsets = new Set(boundaryPlan?.boundaries ?? []);
         for (const segment of pages.flatMap((page) => page.renderPlan?.segments ?? [])) {
@@ -711,11 +705,14 @@ describe("paginateShareCardMarkdown", () => {
         )).rejects.toMatchObject({ code: "unpageable-content" });
     });
 
-    it("fails closed instead of silently dropping trailing whitespace", async () => {
-        await expect(paginateShareCardMarkdown(
+    it("keeps trailing whitespace with visible text instead of creating an empty final page", async () => {
+        const pages = await paginateShareCardMarkdown(
             ["abc  "],
             (markdown) => markdown.length <= 3,
-        )).rejects.toMatchObject({ code: "unpageable-content" });
+        );
+        expect(pages.map((page) => page.content).join("")).toBe("abc  ");
+        expect(pages.every((page) => page.content.length <= 3 && page.content.trim().length > 0))
+            .toBe(true);
     });
 
     it("fails closed for complex oversized Markdown it cannot safely fragment", async () => {
@@ -749,54 +746,115 @@ describe("paginateShareCardMarkdown", () => {
             .toBe(prepared.blocks.join("\n\n"));
     });
 
-    it("accepts exactly 50k characters and rejects 50k plus one", async () => {
-        await expect(paginateShareCardMarkdown(
-            ["x".repeat(MAX_SHARE_CARD_CHARACTERS)],
-            () => true,
-        )).resolves.toHaveLength(1);
+    it("keeps a mixed representative batch beyond both retired limits complete", async () => {
+        const filler = "Share Card keeps every ordered source character. ".repeat(21);
+        const textBlocks = Array.from({ length: 48 }, (_, index) => (
+            `## Complete section ${index + 1}\n\n${filler}Section ${index + 1} continues.`
+        ));
+        const blocks = [
+            "# Complete long Share Card",
+            "![visual](data:image/png;base64,AAAA)",
+            "- first ordered item\n- second ordered item\n- final list item",
+            "> The quotation remains in source order.",
+            "```ts\nconst orderedSource = true;\n```",
+            ...textBlocks,
+            "The final sentence remains exactly intact.",
+        ];
+        const expected = blocks.join("\n\n");
 
-        await expect(paginateShareCardMarkdown(
-            ["x".repeat(MAX_SHARE_CARD_CHARACTERS + 1)],
-            () => true,
-        )).rejects.toMatchObject({ code: "content-too-large" });
-    });
-
-    it("accepts exactly 24 measured pages before rejecting a twenty-fifth", async () => {
+        expect(expected.length).toBeGreaterThan(50_000);
         const pages = await paginateShareCardMarkdown(
-            Array.from({ length: MAX_SHARE_CARD_PAGES }, () => "x"),
-            (markdown) => markdown === "x",
+            blocks,
+            (markdown) => markdown.length <= 1_200,
         );
-        expect(pages).toHaveLength(MAX_SHARE_CARD_PAGES);
+
+        expect(pages.length).toBeGreaterThan(24);
+        expect(pages.every((page) => page.content.trim().length > 0)).toBe(true);
+        expect(pages.map((page) => page.content).join("\n\n")).toBe(expected);
+        expect(pages[pages.length - 1]?.content.endsWith(
+            "The final sentence remains exactly intact.",
+        )).toBe(true);
+        expect(pages.map(({ pageIndex, totalPages }) => ({ pageIndex, totalPages }))).toEqual(
+            pages.map((_, index) => ({ pageIndex: index, totalPages: pages.length })),
+        );
+    });
+
+    it("refines long-block boundaries on demand without a whole-block sentinel cap", async () => {
+        const source = "甲".repeat(250_000);
+        const requestedRanges: Array<[number, number]> = [];
+        const recordedBoundaries = new Set<number>();
+        for (const boundary of createShareCardFragmentBoundaryPlan(source)?.boundaries ?? []) {
+            recordedBoundaries.add(boundary);
+        }
+        const refineBoundaries = jest.fn(async (
+            _blockIndex: number,
+            start: number,
+            end: number,
+        ) => {
+            requestedRanges.push([start, end]);
+            const boundaries: number[] = [];
+            for (let offset = start + 1; offset < end; offset += 1) {
+                boundaries.push(offset);
+                recordedBoundaries.add(offset);
+            }
+            return boundaries;
+        });
+
+        const pages = await paginateShareCardMarkdown(
+            [source],
+            (markdown) => markdown.length <= 100,
+            { refineBoundaries } as unknown as ShareCardPaginationOptions,
+        );
+
+        expect(pages.length).toBeGreaterThan(24);
+        expect(pages.every((page) => page.content.length > 0)).toBe(true);
+        expect(pages.map((page) => page.content).join("")).toBe(source);
+        expect(pages[pages.length - 1]?.content.endsWith("甲")).toBe(true);
+        expect(refineBoundaries.mock.calls.length).toBeGreaterThan(1);
+        expect(requestedRanges.at(-1)?.[1]).toBeLessThanOrEqual(source.length);
+        const plannedSegments = pages.flatMap((page) => page.renderPlan?.segments ?? []);
+        for (const segment of plannedSegments) {
+            if (segment.sourceStart > 0) {
+                expect(recordedBoundaries.has(segment.sourceStart)).toBe(true);
+            }
+            if (segment.sourceEnd < source.length) {
+                expect(recordedBoundaries.has(segment.sourceEnd)).toBe(true);
+            }
+        }
+    });
+
+    it("reports cancellation without calling it a measurement failure", async () => {
+        const controller = new AbortController();
+        const fits = jest.fn(() => {
+            controller.abort();
+            return true;
+        });
 
         await expect(paginateShareCardMarkdown(
-            Array.from({ length: MAX_SHARE_CARD_PAGES + 1 }, () => "x"),
-            (markdown) => markdown === "x",
-        )).rejects.toMatchObject({ code: "page-limit-exceeded" });
+            ["one"],
+            fits,
+            { signal: controller.signal, yieldToPlatform: async () => undefined },
+        )).rejects.toBeInstanceOf(ShareCardPaginationCancelledError);
+        expect(fits).toHaveBeenCalledTimes(1);
     });
 
-    it("rejects input above the character limit without returning partial pages", async () => {
-        const promise = paginateShareCardMarkdown(
-            ["x".repeat(MAX_SHARE_CARD_CHARACTERS + 1)],
-            () => true,
-        );
-
-        await expect(promise).rejects.toMatchObject({
-            name: "ShareCardTooLargeError",
-            code: "content-too-large",
-            reason: "character-limit",
+    it("cancels a pending platform yield before the next measurement", async () => {
+        const controller = new AbortController();
+        const fits = jest.fn((markdown: string) => markdown.length <= 1);
+        const yieldToPlatform = jest.fn(async () => {
+            if (fits.mock.calls.length >= 3) {
+                controller.abort();
+                return new Promise<void>(() => undefined);
+            }
         });
-    });
 
-    it("rejects a twenty-fifth measured page with a typed too-large error", async () => {
-        const blocks = Array.from({ length: MAX_SHARE_CARD_PAGES + 1 }, () => "x");
-        const promise = paginateShareCardMarkdown(blocks, (markdown) => markdown === "x");
-
-        await expect(promise).rejects.toBeInstanceOf(ShareCardTooLargeError);
-        await expect(promise).rejects.toMatchObject({
-            code: "page-limit-exceeded",
-            reason: "page-limit",
-            limit: MAX_SHARE_CARD_PAGES,
-        });
+        await expect(paginateShareCardMarkdown(
+            ["a", "b", "c"],
+            fits,
+            { signal: controller.signal, yieldToPlatform },
+        )).rejects.toBeInstanceOf(ShareCardPaginationCancelledError);
+        expect(yieldToPlatform).toHaveBeenCalledTimes(4);
+        expect(fits).toHaveBeenCalledTimes(3);
     });
 
     it("wraps measurement failure and impossible progress as typed errors", async () => {

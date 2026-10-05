@@ -3,8 +3,6 @@
 import {
     attachShareCardRenderPlan,
     type CardPage,
-    MAX_SHARE_CARD_CHARACTERS,
-    MAX_SHARE_CARD_PAGES,
     type ShareCardRenderPlan,
     type ShareCardRenderPlanSegment,
     stripInlineCode,
@@ -26,16 +24,23 @@ export interface ShareCardFitContext {
 }
 
 export interface ShareCardPaginationOptions {
+    /** Cancels pagination before or between render measurements. */
+    signal?: AbortSignal;
+    /** Lets the owning platform paint or run other work between measurements. */
+    yieldToPlatform?: () => Promise<void>;
     /**
-     * Character limit authority before resource data URLs are inlined. When
-     * omitted, the paginator retains its standalone input-length guard.
+     * Records another bounded set of legal source boundaries in the real
+     * renderer. Ranges are source offsets; returned boundaries must be offsets
+     * the renderer can locate in its retained static DOM.
      */
-    originalCharacterCount?: number;
+    refineBoundaries?: (
+        blockIndex: number,
+        sourceStart: number,
+        sourceEnd: number,
+    ) => Promise<readonly number[]>;
 }
 
 export type ShareCardPaginationErrorCode =
-    | "content-too-large"
-    | "page-limit-exceeded"
     | "measurement-failed"
     | "unpageable-content";
 
@@ -54,20 +59,11 @@ export class ShareCardPaginationError extends Error {
     }
 }
 
-/** Typed, user-recoverable signal that the v1 content/page limit was exceeded. */
-export class ShareCardTooLargeError extends ShareCardPaginationError {
-    constructor(
-        public readonly reason: "character-limit" | "page-limit",
-        public readonly limit: number,
-        public readonly actual: number,
-    ) {
-        super(
-            reason === "character-limit" ? "content-too-large" : "page-limit-exceeded",
-            reason === "character-limit"
-                ? `Share Card content exceeds ${limit} characters.`
-                : `Share Card content exceeds ${limit} pages.`,
-        );
-        this.name = "ShareCardTooLargeError";
+/** Typed cancellation for an owner-closed pagination attempt. */
+export class ShareCardPaginationCancelledError extends Error {
+    constructor(public readonly reason?: unknown) {
+        super("Share Card pagination was cancelled.");
+        this.name = "ShareCardPaginationCancelledError";
     }
 }
 
@@ -349,6 +345,7 @@ async function measuredFit(
     try {
         return await fits(markdown, pageIndex, { renderPlan });
     } catch (error) {
+        if (error instanceof ShareCardPaginationCancelledError) throw error;
         throw new ShareCardPaginationError(
             "measurement-failed",
             "Unable to measure Share Card content.",
@@ -376,6 +373,12 @@ async function largestFittingBoundary(
         const prefix = text.slice(0, boundary);
         if (!hasText(prefix)) {
             low = middle + 1;
+            continue;
+        }
+        if (!hasText(text.slice(boundary))) {
+            // Leave visible text with trailing whitespace for the final page.
+            // Otherwise a long code block can end with a newline-only card.
+            high = middle - 1;
             continue;
         }
 
@@ -489,6 +492,8 @@ interface SafeFragmentPlan {
     codePointBoundaries: number[];
     literalBoundaries: ReadonlySet<number>;
     render(start: number, end: number): string;
+    renderText(start: number, end: number): string;
+    boundariesInWindow(start: number, end: number): readonly number[];
     hasText(start: number, end: number): boolean;
 }
 
@@ -501,6 +506,10 @@ export interface ShareCardFragmentBoundaryPlan {
         sourceOffset: number;
     }[];
     kind: "markdown" | "fenced-code";
+    /** @internal Source-to-static-DOM text mapping; never serialized. */
+    renderText?: (start: number, end: number) => string;
+    /** Reuse the parsed safety rules without growing the sentinel DOM. */
+    boundariesInWindow?: (start: number, end: number) => readonly number[];
     virtualBoundaries?: readonly {
         edge: "start" | "end";
         sourceOffset: number;
@@ -511,7 +520,9 @@ export interface ShareCardFragmentBoundaryPlan {
 export const MAX_SHARE_CARD_FRAGMENT_BOUNDARIES = 2_048;
 const MAX_PRIORITY_LINE_BOUNDARIES = 512;
 const MAX_PRIORITY_WORD_BOUNDARIES = 768;
-const MIN_DENSE_CODE_POINT_BOUNDARIES = MAX_SHARE_CARD_PAGES;
+// Keep early dense split candidates available before line and word samples are
+// selected. This is a sampling floor, not an output-page or content limit.
+const MIN_DENSE_CODE_POINT_BOUNDARIES = 24;
 
 function createRenderPlan(
     segments: readonly ShareCardRenderPlanSegment[],
@@ -1453,6 +1464,24 @@ function createSafeFragmentPlan(source: string): SafeFragmentPlan {
             ? source.slice(line.start, line.prefixEnd)
             : "";
     };
+    const includedSourceUnits = new Uint8Array(source.length);
+    for (const range of contentRanges) {
+        for (let index = range.start; index < range.end; index += 1) {
+            includedSourceUnits[index] = 1;
+        }
+    }
+    const renderedPieces: string[] = [];
+    const sourceToRenderedPrefix = new Uint32Array(source.length + 1);
+    let renderedLength = 0;
+    for (let index = 0; index < source.length; index += 1) {
+        if (includedSourceUnits[index] === 1) {
+            const character = source.charAt(index);
+            renderedPieces.push(character);
+            renderedLength += character.length;
+        }
+        sourceToRenderedPrefix[index + 1] = renderedLength;
+    }
+    const renderedText = renderedPieces.join("");
 
     return {
         source,
@@ -1460,6 +1489,17 @@ function createSafeFragmentPlan(source: string): SafeFragmentPlan {
         wordBoundaries: rawWordBoundaries.filter((boundary) => instrumentedSet.has(boundary)),
         codePointBoundaries: instrumentedBoundaries,
         literalBoundaries,
+        renderText(start, end) {
+            return renderedText.slice(
+                sourceToRenderedPrefix[start] ?? 0,
+                sourceToRenderedPrefix[end] ?? 0,
+            );
+        },
+        boundariesInWindow(start, end) {
+            return selectInstrumentedBoundaries(
+                [], [], allBoundaries.filter((boundary) => boundary > start && boundary < end),
+            );
+        },
         render(start, end): string {
             const opening = activeAt(start).map((span) => span.opening).join("");
             const closing = activeAt(end).reverse().map((span) => span.closing).join("");
@@ -1471,11 +1511,8 @@ function createSafeFragmentPlan(source: string): SafeFragmentPlan {
             return `${prefixAt(start)}${leading}${opening}${core}${closing}${trailing}`;
         },
         hasText(start, end): boolean {
-            return contentRanges.some((range) => (
-                range.end > start
-                && range.start < end
-                && source.slice(Math.max(start, range.start), Math.min(end, range.end)).trim().length > 0
-            ));
+            return renderedText.slice(sourceToRenderedPrefix[start], sourceToRenderedPrefix[end])
+                .trim().length > 0;
         },
     };
 }
@@ -1495,7 +1532,9 @@ export function createShareCardFragmentBoundaryPlan(
     const fence = parseFence(block, previousBlock);
     if (fence) {
         const bodyLineBoundaries = lineBoundaries(fence.body);
-        const bodyWordBoundaries = fence.containerized ? [] : wordBoundaries(fence.body);
+        const bodyWordBoundaries = fence.containerized
+            ? []
+            : wordBoundaries(fence.body);
         const bodyCodePointBoundaries = fence.containerized
             ? bodyLineBoundaries
             : codePointBoundaries(fence.body);
@@ -1513,6 +1552,12 @@ export function createShareCardFragmentBoundaryPlan(
         return {
             kind: "fenced-code",
             boundaries: sourceBoundaries,
+            renderText: (start, end) => block.slice(start, end),
+            boundariesInWindow: (start, end) => selectInstrumentedBoundaries(
+                [], [], bodyCodePointBoundaries
+                    .map((boundary) => fence.bodySourceStart + boundary)
+                    .filter((boundary) => boundary > start && boundary < end),
+            ),
             insertions: sourceBoundaries.slice(1, -1).map((offset) => ({
                 insertionOffset: offset,
                 kind: "literal" as const,
@@ -1534,6 +1579,8 @@ export function createShareCardFragmentBoundaryPlan(
         return {
             kind: "markdown",
             boundaries,
+            renderText: safePlan.renderText,
+            boundariesInWindow: safePlan.boundariesInWindow,
             insertions: boundaries.map((sourceOffset) => {
                 const line = lines.find((candidate) => candidate.start === sourceOffset);
                 return {
@@ -1597,6 +1644,8 @@ async function largestSafeFragmentEnd(
         const markdown = plan.render(start, end);
         if (!plan.hasText(start, end)) {
             low = middle + 1;
+        } else if (!plan.hasText(end, plan.source.length)) {
+            high = middle - 1;
         } else if (await measuredFit(
             fits,
             markdown,
@@ -1639,6 +1688,11 @@ async function fittingSafeFragmentEnd(
     return start;
 }
 
+function mergeRefinedBoundaries(plan: SafeFragmentPlan, boundaries: readonly number[]): void {
+    const refined = new Set([...plan.codePointBoundaries, ...boundaries]);
+    plan.codePointBoundaries = [...refined].sort((left, right) => left - right);
+}
+
 function joinBlocks(left: string, right: string): string {
     return left.length > 0 ? `${left}\n\n${right}` : right;
 }
@@ -1662,9 +1716,8 @@ interface FittingBlockPrefix {
  * every intermediate prefix. The accepted candidate is always measured; the
  * search changes only how many block-boundary candidates are probed.
  *
- * Non-empty blocks plus the 50k character limit bound the search to at most
- * 16 binary probes per page, and the existing 24-page limit bounds the whole
- * short-block path. Block text and order are unchanged.
+ * Non-empty blocks bound each page search to logarithmic block probes. Block
+ * text and order are unchanged.
  */
 async function largestFittingBlockPrefix(
     blocks: readonly string[],
@@ -1725,12 +1778,6 @@ async function largestFittingBlockPrefix(
     }
 
     return { content: bestContent, count: bestCount, segments: bestSegments };
-}
-
-function characterCount(blocks: readonly string[]): number {
-    if (blocks.length === 0) return 0;
-    return blocks.reduce((total, block) => total + block.length, 0)
-        + ((blocks.length - 1) * 2);
 }
 
 /**
@@ -1806,7 +1853,6 @@ export function isPureShareCardVisualBlock(block: string): boolean {
         .test(lines[lines.length - 1] ?? "");
 }
 
-
 /**
  * Greedily paginate semantic Markdown blocks using the injected final-render
  * measurement. Oversize blocks make monotonic progress at line, word, then
@@ -1817,15 +1863,83 @@ export async function paginateShareCardMarkdown(
     fits: ShareCardFitPredicate,
     options: ShareCardPaginationOptions = {},
 ): Promise<CardPage[]> {
-    const inputCharacters = options.originalCharacterCount ?? characterCount(blocks);
-    if (inputCharacters > MAX_SHARE_CARD_CHARACTERS) {
-        throw new ShareCardTooLargeError(
-            "character-limit",
-            MAX_SHARE_CARD_CHARACTERS,
-            inputCharacters,
-        );
-    }
+    const signal = options.signal;
+    const yieldToPlatform = options.yieldToPlatform ?? (async () => undefined);
+    const assertActive = (): void => {
+        if (signal?.aborted) throw new ShareCardPaginationCancelledError(signal.reason);
+    };
+    const yieldCooperatively = (): Promise<void> => {
+        let removeAbortListener: () => void = () => undefined;
+        const aborted = new Promise<never>((_, reject) => {
+            if (!signal) return;
+            if (signal.aborted) {
+                reject(new ShareCardPaginationCancelledError(signal.reason));
+                return;
+            }
+            const listener = () => {
+                reject(new ShareCardPaginationCancelledError(signal.reason));
+            };
+            signal.addEventListener("abort", listener, { once: true });
+            removeAbortListener = () => signal.removeEventListener("abort", listener);
+        });
+        return Promise.race([yieldToPlatform(), aborted]).finally(() => {
+            removeAbortListener();
+        });
+    };
+    const awaitRefinementYield = async (): Promise<void> => {
+        try {
+            await yieldCooperatively();
+        } catch (error) {
+            if (signal?.aborted) {
+                throw new ShareCardPaginationCancelledError(signal.reason);
+            }
+            throw new ShareCardPaginationError(
+                "measurement-failed",
+                "Unable to yield before Share Card measurement.",
+                { cause: error },
+            );
+        }
+    };
+    const requestRefinedBoundaries = async (
+        blockIndex: number,
+        sourceStart: number,
+        sourceEnd: number,
+    ): Promise<readonly number[]> => {
+        const refine = options.refineBoundaries;
+        if (!refine) return [];
+        assertActive();
+        await awaitRefinementYield();
+        assertActive();
+        const boundaries = await refine(blockIndex, sourceStart, sourceEnd);
+        assertActive();
+        return boundaries.filter((boundary) => boundary > sourceStart && boundary < sourceEnd);
+    };
+    const cooperativeFit: ShareCardFitPredicate = async (
+        markdown,
+        pageIndex,
+        context,
+    ) => {
+        assertActive();
+        await awaitRefinementYield();
+        assertActive();
+        try {
+            const result = await fits(markdown, pageIndex, context);
+            assertActive();
+            return result;
+        } catch (error) {
+            if (error instanceof ShareCardPaginationCancelledError) throw error;
+            if (signal?.aborted) {
+                throw new ShareCardPaginationCancelledError(signal.reason);
+            }
+            throw new ShareCardPaginationError(
+                "measurement-failed",
+                "Unable to measure Share Card content.",
+                { cause: error },
+            );
+        }
+    };
 
+    assertActive();
     const semanticBlocks = blocks.filter((block) => block.trim().length > 0);
     if (semanticBlocks.length === 0) {
         return [{ pageIndex: 0, totalPages: 1, content: "" }];
@@ -1838,16 +1952,6 @@ export async function paginateShareCardMarkdown(
     let current = "";
     let currentSegments: ShareCardRenderPlanSegment[] = [];
 
-    const assertPageAvailable = (): void => {
-        if (pageContents.length >= MAX_SHARE_CARD_PAGES) {
-            throw new ShareCardTooLargeError(
-                "page-limit",
-                MAX_SHARE_CARD_PAGES,
-                pageContents.length + 1,
-            );
-        }
-    };
-
     const flush = (
         content: string,
         segments: readonly ShareCardRenderPlanSegment[],
@@ -1858,7 +1962,6 @@ export async function paginateShareCardMarkdown(
                 "Pagination attempted to create an empty Share Card page.",
             );
         }
-        assertPageAvailable();
         pageContents.push({
             content,
             renderPlan: createRenderPlan([...segments]),
@@ -1867,7 +1970,7 @@ export async function paginateShareCardMarkdown(
 
     let blockIndex = 0;
     while (blockIndex < semanticBlocks.length) {
-        assertPageAvailable();
+        assertActive();
         const nextBlock = semanticBlocks[blockIndex]!;
         if (current.length === 0 && isAtomicShareCardVisualBlock(nextBlock)) {
             const segment = createRenderSegment(
@@ -1877,7 +1980,7 @@ export async function paginateShareCardMarkdown(
                 nextBlock,
             );
             if (!await measuredFit(
-                fits,
+                cooperativeFit,
                 nextBlock,
                 pageContents.length,
                 createRenderPlan([segment]),
@@ -1897,7 +2000,7 @@ export async function paginateShareCardMarkdown(
             blockIndex,
             current,
             currentSegments,
-            fits,
+            cooperativeFit,
             pageContents.length,
         );
         if (fittingPrefix.count > 0) {
@@ -1930,7 +2033,7 @@ export async function paginateShareCardMarkdown(
                 block,
             );
             if (await measuredFit(
-                fits,
+                cooperativeFit,
                 withoutDefinitions,
                 pageContents.length,
                 createRenderPlan([wholeSegment]),
@@ -1967,7 +2070,7 @@ export async function paginateShareCardMarkdown(
         }
 
         while (remaining.length > 0) {
-            assertPageAvailable();
+            assertActive();
             const wholeRemainder = fragmentPlan
                 ? fragmentPlan.render(sourceOffset, block.length)
                 : decorate(remaining);
@@ -1982,7 +2085,7 @@ export async function paginateShareCardMarkdown(
                 wholeRemainder,
             );
             if (await measuredFit(
-                fits,
+                cooperativeFit,
                 wholeRemainder,
                 pageContents.length,
                 createRenderPlan([wholeSegment]),
@@ -1993,18 +2096,18 @@ export async function paginateShareCardMarkdown(
                 break;
             }
 
-            const safeEnd = fragmentPlan
+            let safeEnd = fragmentPlan
                 ? await fittingSafeFragmentEnd(
                     fragmentPlan,
                     sourceOffset,
-                    fits,
+                    cooperativeFit,
                     pageContents.length,
                     blockIndex,
                 )
                 : sourceOffset + await fittingPrefixLength(
                     remaining,
                     decorate,
-                    fits,
+                    cooperativeFit,
                     pageContents.length,
                     (boundary, markdown) => createRenderPlan([
                         createRenderSegment(
@@ -2022,6 +2125,63 @@ export async function paginateShareCardMarkdown(
                         ? (prefix) => fencedBodyHasText(fence, prefix)
                         : undefined,
                 );
+            let refinedSafeEnd = safeEnd;
+            if (refinedSafeEnd <= sourceOffset && options.refineBoundaries) {
+                const windowStart = fence
+                    ? fence.bodySourceStart + sourceOffset
+                    : sourceOffset;
+                const windowEnd = Math.min(
+                    block.length,
+                    windowStart + MAX_SHARE_CARD_FRAGMENT_BOUNDARIES,
+                );
+                const refinedBoundaries = await requestRefinedBoundaries(
+                    blockIndex,
+                    windowStart,
+                    windowEnd,
+                );
+                if (refinedBoundaries.length > 0) {
+                    if (fragmentPlan) {
+                        mergeRefinedBoundaries(fragmentPlan, refinedBoundaries);
+                        refinedSafeEnd = await fittingSafeFragmentEnd(
+                            fragmentPlan,
+                            sourceOffset,
+                            cooperativeFit,
+                            pageContents.length,
+                            blockIndex,
+                        );
+                    } else if (fence) {
+                        const absoluteBoundaries = new Set([
+                            ...(fenceBoundaryPlan?.boundaries ?? []),
+                            ...refinedBoundaries,
+                        ]);
+                        if (fenceBoundaryPlan) {
+                            fenceBoundaryPlan.boundaries = [...absoluteBoundaries]
+                                .sort((left, right) => left - right);
+                        }
+                        const relativeBoundaries = [...absoluteBoundaries]
+                            .map((boundary) => boundary - fence.bodySourceStart - sourceOffset)
+                            .filter((boundary) => boundary > 0 && boundary < remaining.length);
+                        refinedSafeEnd = sourceOffset + await fittingPrefixLength(
+                            remaining,
+                            decorate,
+                            cooperativeFit,
+                            pageContents.length,
+                            (boundary, markdown) => createRenderPlan([
+                                createRenderSegment(
+                                    blockIndex,
+                                    fence.bodySourceStart + sourceOffset,
+                                    fence.bodySourceStart + sourceOffset + boundary,
+                                    markdown,
+                                ),
+                            ]),
+                            relativeBoundaries,
+                            fence.containerized,
+                            (prefix) => fencedBodyHasText(fence, prefix),
+                        );
+                    }
+                }
+            }
+            safeEnd = refinedSafeEnd;
             const consumed = safeEnd - sourceOffset;
             if (consumed <= 0) {
                 throw new ShareCardPaginationError(

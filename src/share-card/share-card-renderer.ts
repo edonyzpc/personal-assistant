@@ -8,6 +8,7 @@ import {
     isPureShareCardVisualBlock,
     type ShareCardFitContext,
     type ShareCardFitPredicate,
+    type ShareCardFragmentBoundaryPlan,
 } from "./share-card-paginator";
 import {
     attachShareCardRenderPlan,
@@ -229,6 +230,8 @@ interface ShareCardRenderPrototype {
 interface PreparedShareCardBlock {
     source: string;
     prototype: ShareCardRenderPrototype;
+    boundaryPlan: ShareCardFragmentBoundaryPlan | null;
+    deriveBoundary?: (sourceOffset: number) => ShareCardStaticDomBoundary | null;
 }
 
 export interface ShareCardStaticDomBoundary {
@@ -519,7 +522,7 @@ export class ShareCardRenderer {
                     pageIndex: 0,
                     totalPages: 1,
                 }, options, false, source, instrumentation);
-                prepared.push({ source, prototype });
+                prepared.push({ source, prototype, boundaryPlan });
             }
         } catch (error) {
             for (const block of prepared) this.disposePrototype(block.prototype);
@@ -528,6 +531,55 @@ export class ShareCardRenderer {
         this.preparedBlocks = prepared;
         this.preparedPrototypeKey = staticPrototypeKey(options);
         this.constrainedPreparedPages.clear();
+    }
+
+    /**
+     * Derive another bounded set of boundaries from the one static prototype.
+     * No Markdown processor or sanitizer runs here; the original DOM and its
+     * already-recorded source anchors remain authoritative.
+     */
+    async prepareBlockBoundaryWindow(
+        blockIndex: number,
+        sourceStart: number,
+        sourceEnd: number,
+        options: Omit<ShareCardRenderOptions, "host">,
+    ): Promise<readonly number[]> {
+        this.assertActive();
+        if (!this.hasPreparedAppearance(options)) {
+            throw new ShareCardRenderReadinessError(
+                "Share Card blocks are not prepared for this appearance.",
+            );
+        }
+        const block = this.preparedBlocks?.[blockIndex];
+        if (
+            !block
+            || sourceStart < 0
+            || sourceEnd <= sourceStart
+            || sourceEnd > block.source.length
+        ) {
+            throw new ShareCardRenderReadinessError(
+                "Share Card boundary refinement range is invalid.",
+            );
+        }
+        if (block.prototype.sourceOnlyTestFallback) return [];
+        const { boundaryPlan } = block;
+        if (!boundaryPlan?.boundariesInWindow || !boundaryPlan.renderText) return [];
+        block.deriveBoundary ??= createShareCardStaticBoundaryResolver(
+            block.prototype.bodyEl,
+            block.source.length,
+            block.prototype.sourceBoundaries,
+            boundaryPlan.renderText,
+        );
+        const sourceBoundaries = new Map(block.prototype.sourceBoundaries);
+        const mapped: number[] = [];
+        for (const sourceOffset of boundaryPlan.boundariesInWindow(sourceStart, sourceEnd)) {
+            const boundary = sourceBoundaries.get(sourceOffset) ?? block.deriveBoundary(sourceOffset);
+            if (!boundary) continue;
+            sourceBoundaries.set(sourceOffset, boundary);
+            mapped.push(sourceOffset);
+        }
+        block.prototype.sourceBoundaries = sourceBoundaries;
+        return mapped;
     }
 
     cleanup(): void {
@@ -1490,6 +1542,83 @@ function resolveNodePath(root: Node, path: readonly number[]): Node | null {
         current = child;
     }
     return current;
+}
+
+function createShareCardStaticBoundaryResolver(
+    bodyEl: HTMLElement,
+    sourceLength: number,
+    existingBoundaries: ReadonlyMap<number, ShareCardStaticDomBoundary>,
+    renderText: (start: number, end: number) => string,
+): (sourceOffset: number) => ShareCardStaticDomBoundary | null {
+    // Index the original inert DOM once. Derived points never alter it, so both
+    // its original anchors and all previously selected page ranges stay valid.
+    const textNodes: Array<{ start: number; end: number; path: readonly number[] }> = [];
+    const nodeOffsets = new Map<Node, { start: number; end: number }>();
+    const pieces: string[] = [];
+    let cursor = 0;
+    const visit = (node: Node, path: readonly number[]): void => {
+        const start = cursor;
+        if (node.nodeType === 3) {
+            const text = (node as Text).data;
+            cursor += text.length;
+            pieces.push(text);
+            if (text.length > 0) textNodes.push({ start, end: cursor, path });
+        } else {
+            Array.from(node.childNodes).forEach((child, index) => visit(child, [...path, index]));
+        }
+        nodeOffsets.set(node, { start, end: cursor });
+    };
+    visit(bodyEl, []);
+    const text = pieces.join("");
+    const textOffset = (point: { node: Node; offset: number }): number | null => {
+        const location = nodeOffsets.get(point.node);
+        if (!location) return null;
+        if (point.node.nodeType === 3) return location.start + point.offset;
+        const child = point.node.childNodes.item(point.offset);
+        return child ? nodeOffsets.get(child)?.start ?? null : location.end;
+    };
+    const anchors = [...new Set([
+        0,
+        ...existingBoundaries.keys(),
+        sourceLength,
+    ])].sort((left, right) => left - right);
+    const intervals = new Map<number, { start: number; end: number } | null>();
+    return (sourceOffset) => {
+        let low = 0;
+        let high = anchors.length - 1;
+        while (low + 1 < high) {
+            const middle = Math.floor((low + high) / 2);
+            if (anchors[middle]! <= sourceOffset) low = middle;
+            else high = middle;
+        }
+        const start = anchors[low]!;
+        const end = anchors[high]!;
+        if (!intervals.has(start)) {
+            const from = resolveStaticBoundary(bodyEl, existingBoundaries, start, sourceLength);
+            const to = resolveStaticBoundary(bodyEl, existingBoundaries, end, sourceLength);
+            const fromOffset = from ? textOffset(from) : null;
+            const toOffset = to ? textOffset(to) : null;
+            // A processor may transform text. Only derive points where source
+            // and the actual static DOM agree; never guess from string length.
+            intervals.set(start, fromOffset !== null && toOffset !== null
+                && text.slice(fromOffset, toOffset) === renderText(start, end)
+                ? { start: fromOffset, end: toOffset } : null);
+        }
+        const interval = intervals.get(start);
+        if (!interval) return null;
+        const offset = interval.start + renderText(start, sourceOffset).length;
+        if (offset > interval.end) return null;
+        let left = 0;
+        let right = textNodes.length - 1;
+        while (left < right) {
+            const middle = Math.floor((left + right) / 2);
+            if (textNodes[middle]!.end < offset) left = middle + 1;
+            else right = middle;
+        }
+        const node = textNodes[left];
+        return node && offset >= node.start && offset <= node.end
+            ? { nodePath: node.path, offset: offset - node.start } : null;
+    };
 }
 
 /** @internal Deterministic DOM-range clone used by prepared pagination pages. */

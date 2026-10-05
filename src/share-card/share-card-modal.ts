@@ -16,12 +16,12 @@ import {
 } from "./share-card-resources";
 import {
     paginateShareCardMarkdown,
-    ShareCardTooLargeError,
+    type ShareCardFitPredicate,
+    type ShareCardPaginationOptions,
 } from "./share-card-paginator";
 import {
     CARD_HEIGHT,
     CARD_WIDTH,
-    MAX_SHARE_CARD_CHARACTERS,
     type CardPage,
     type ShareCardData,
     type ShareCardPrintStyle,
@@ -46,6 +46,16 @@ const MIN_PREVIEW_SCALE = 0.45;
 
 function t(key: string, params?: Readonly<Record<string, string | number>>): string {
     return pluginT(key, getPluginUiLanguage(), params);
+}
+
+function waitForShareCardPaginationFrame(ownerDocument: Document): Promise<void> {
+    const ownerWindow = ownerDocument.defaultView;
+    if (ownerWindow && typeof ownerWindow.requestAnimationFrame === "function") {
+        return new Promise((resolve) => {
+            ownerWindow.requestAnimationFrame(() => resolve());
+        });
+    }
+    return Promise.resolve();
 }
 
 export interface ShareCardModalDependencies {
@@ -202,9 +212,7 @@ export class ShareCardModal extends Modal {
             if (error instanceof ShareCardResourceAbortedError || !this.isCurrent(token)) return;
             console.error("Share Card preparation failed.", error);
             this.contentEl.setAttribute("aria-busy", "false");
-            this.setStatus(t(error instanceof ShareCardTooLargeError
-                ? "plugin.shareCard.tooLarge"
-                : "plugin.shareCard.prepareFailed"), "error");
+            this.setStatus(t("plugin.shareCard.prepareFailed"), "error");
             this.updateControls();
         });
     }
@@ -250,13 +258,6 @@ export class ShareCardModal extends Modal {
     private async prepare(token: number): Promise<void> {
         const renderer = this.renderer;
         if (!renderer) return;
-        if (this.data.content.length > MAX_SHARE_CARD_CHARACTERS) {
-            throw new ShareCardTooLargeError(
-                "character-limit",
-                MAX_SHARE_CARD_CHARACTERS,
-                this.data.content.length,
-            );
-        }
         const controller = this.resourceController;
         const cache = this.resourceCache;
         if (!controller || !cache) throw new ShareCardResourceAbortedError();
@@ -302,11 +303,43 @@ export class ShareCardModal extends Modal {
             : (content: string, pageIndex: number) => (
                 renderer.fits(content, pageIndex, renderOptions)
             );
-        let pages = await (this.dependencies.paginate ?? paginateShareCardMarkdown)(
-            prepared.blocks,
-            fit,
-            { originalCharacterCount: this.data.content.length },
+        const paginationOptions: ShareCardPaginationOptions = {
+            signal: controller.signal,
+            yieldToPlatform: () => waitForShareCardPaginationFrame(
+                this.contentEl.ownerDocument,
+            ),
+            refineBoundaries: typeof renderer.prepareBlockBoundaryWindow === "function"
+                ? (blockIndex, sourceStart, sourceEnd) => renderer.prepareBlockBoundaryWindow(
+                    blockIndex,
+                    sourceStart,
+                    sourceEnd,
+                    renderOptions,
+                )
+                : undefined,
+        };
+        const runPagination = (
+            candidateFit: ShareCardFitPredicate,
+            candidateOptions: ShareCardExportAppearance,
+        ) => (
+            (this.dependencies.paginate ?? paginateShareCardMarkdown)(
+                prepared.blocks,
+                candidateFit,
+                {
+                    ...paginationOptions,
+                    refineBoundaries: typeof renderer.prepareBlockBoundaryWindow === "function"
+                        ? (blockIndex, sourceStart, sourceEnd) => (
+                            renderer.prepareBlockBoundaryWindow(
+                                blockIndex,
+                                sourceStart,
+                                sourceEnd,
+                                candidateOptions,
+                            )
+                        )
+                        : undefined,
+                },
+            )
         );
+        let pages = await runPagination(fit, renderOptions);
         if (!this.isCurrent(token)) return;
 
         let finalRenderOptions = renderOptions;
@@ -318,13 +351,7 @@ export class ShareCardModal extends Modal {
                 let reducedPages: CardPage[];
                 try {
                     const reducedFit = renderer.createPreparedFitPredicate(reducedOptions);
-                    reducedPages = await (
-                        this.dependencies.paginate ?? paginateShareCardMarkdown
-                    )(
-                        prepared.blocks,
-                        reducedFit,
-                        { originalCharacterCount: this.data.content.length },
-                    );
+                    reducedPages = await runPagination(reducedFit, reducedOptions);
                 } catch (error) {
                     if (!this.isCurrent(token)) return;
                     console.warn(
@@ -349,13 +376,7 @@ export class ShareCardModal extends Modal {
                 const enlargedOptions = { ...renderOptions, fontSize };
                 try {
                     const enlargedFit = renderer.createPreparedFitPredicate(enlargedOptions);
-                    const enlargedPages = await (
-                        this.dependencies.paginate ?? paginateShareCardMarkdown
-                    )(
-                        prepared.blocks,
-                        enlargedFit,
-                        { originalCharacterCount: this.data.content.length },
-                    );
+                    const enlargedPages = await runPagination(enlargedFit, enlargedOptions);
                     if (!this.isCurrent(token)) return;
                     if (enlargedPages.length === 1) {
                         pages = enlargedPages;

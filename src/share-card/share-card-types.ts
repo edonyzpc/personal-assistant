@@ -77,14 +77,6 @@ export const CARD_OUTPUT_HEIGHT = CARD_HEIGHT * CARD_DPR;
 /** Compatibility alias for capture adapters that describe DPR as scale. */
 export const CARD_SCALE = CARD_DPR;
 
-/** Hard, non-truncating v1 limits. */
-export const MAX_SHARE_CARD_CHARACTERS = 50_000;
-export const MAX_SHARE_CARD_PAGES = 24;
-
-/** Compatibility aliases for callers that use shorter constant names. */
-export const MAX_CONTENT_CHARS = MAX_SHARE_CARD_CHARACTERS;
-export const MAX_CARD_PAGES = MAX_SHARE_CARD_PAGES;
-
 /** Strip backtick-delimited inline code spans, preserving surrounding text. */
 export function stripInlineCode(line: string): string {
     let output = "";

@@ -26,7 +26,6 @@ import {
     type ShareCardResourceContext,
 } from "../src/share-card/share-card-resources";
 import {
-    MAX_SHARE_CARD_CHARACTERS,
     type CardPage,
     type ShareCardData,
 } from "../src/share-card/share-card-types";
@@ -896,7 +895,10 @@ describe("ShareCardModal", () => {
         expect(paginate).toHaveBeenCalledWith(
             [localized.markdown],
             expect.any(Function),
-            { originalCharacterCount: "share me".length },
+            {
+                signal: expect.any(AbortSignal),
+                yieldToPlatform: expect.any(Function),
+            },
         );
         const status = document.body.querySelector(".pa-share-card-status")!;
         expect(status.textContent).toContain("placeholder (1)");
@@ -1174,6 +1176,50 @@ describe("ShareCardModal", () => {
         modal.onClose();
     });
 
+    it("bases preview, Copy, and Save on one complete long batch", async () => {
+        const document = new ShareCardTestDocument();
+        const pages = Array.from({ length: 30 }, (_, pageIndex) => ({
+            content: pageIndex === 29
+                ? "final ordered page with the last sentence"
+                : `ordered page ${pageIndex + 1}`,
+            pageIndex,
+            totalPages: 30,
+        }));
+        const copyCurrentPage = jest.fn(async () => undefined);
+        const savePages = jest.fn(async (received: readonly CardPage[]) => ({
+            savedPaths: received.map((_, index) => `PA-Cards/card-${index + 1}.png`),
+            attempted: received.length,
+        }));
+        const renderer = createRenderer(document, []);
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "long", blocks: ["long"] }),
+            paginate: async () => pages,
+            createRenderer: () => renderer,
+            createExporter: () => createExporter({ copyCurrentPage, savePages }),
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        const actions = document.body.querySelector(".pa-share-card-actions")!;
+
+        actions.children[0]!.click();
+        await flushShareCardTasks();
+        actions.children[1]!.click();
+        await flushShareCardTasks();
+
+        expect(pages).toHaveLength(30);
+        expect(renderer.renderPage).toHaveBeenCalledWith(
+            expect.objectContaining({ pageIndex: 0, totalPages: 30 }),
+            expect.objectContaining({ host: expect.anything() }),
+        );
+        expect(copyCurrentPage).toHaveBeenCalledWith(pages[0]);
+        expect(savePages).toHaveBeenCalledTimes(1);
+        expect(savePages).toHaveBeenCalledWith(pages, expect.any(String));
+        expect(savePages.mock.calls[0]?.[0]?.[29]).toEqual(pages[29]);
+        expect(String(notices[1]!.message)).toContain("Images saved: 30");
+        modal.onClose();
+    });
+
     it("reports one truthful partial result and remains retryable", async () => {
         const document = new ShareCardTestDocument();
         const pages = [0, 1].map((pageIndex) => ({
@@ -1256,29 +1302,54 @@ describe("ShareCardModal", () => {
         expect(notices).toHaveLength(2);
     });
 
-    it("rejects the original input limit before Markdown preprocessing", async () => {
+    it("passes one live cancellation signal to every pagination attempt", async () => {
         const document = new ShareCardTestDocument();
-        const prepareMarkdown = jest.fn(() => ({ markdown: "short", blocks: ["short"] }));
-        const paginate = jest.fn(async () => [{ content: "short", pageIndex: 0, totalPages: 1 }]);
+        const renderer = createRenderer(document, []);
+        const prepareBlocks = jest.fn(async () => undefined);
+        const createPreparedFitPredicate = jest.fn((options: { fontSize?: number }) => (
+            Object.assign(jest.fn(async () => true), {
+                fontSize: options.fontSize ?? 16,
+            })
+        ));
+        Object.assign(renderer, { createPreparedFitPredicate, prepareBlocks });
+        let resolveCandidate!: (pages: CardPage[]) => void;
+        const paginate = jest.fn(async (
+            _blocks: readonly string[],
+            fit: { fontSize: number },
+            options: { signal: AbortSignal; yieldToPlatform: () => Promise<void> },
+        ) => {
+            await options.yieldToPlatform();
+            if (fit.fontSize === 16) return createPages(3);
+            return new Promise<CardPage[]>((resolve) => {
+                resolveCandidate = resolve;
+            });
+        });
+        const createExporterMock = jest.fn(() => createExporter());
         const modal = createModal(document, {
-            prepareMarkdown,
-            paginate,
-            createRenderer: () => createRenderer(document, []),
-            createExporter: () => createExporter(),
-        }, {
-            content: "x".repeat(MAX_SHARE_CARD_CHARACTERS + 1),
-            source: "chat",
+            prepareMarkdown: () => ({ markdown: "one\n\ntwo", blocks: ["one", "two"] }),
+            paginate: paginate as unknown as NonNullable<
+                ShareCardModalDependencies["paginate"]
+            >,
+            createRenderer: () => renderer,
+            createExporter: createExporterMock,
         });
 
         modal.onOpen();
         await flushShareCardTasks();
+        await flushShareCardTasks();
+        expect(resolveCandidate).toBeDefined();
+        expect(paginate).toHaveBeenCalledTimes(2);
+        expect(paginate.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
+        expect(paginate.mock.calls[0]?.[2]?.signal)
+            .toBe(paginate.mock.calls[1]?.[2]?.signal);
+        expect(paginate.mock.calls[0]?.[2]?.signal.aborted).toBe(false);
 
-        expect(prepareMarkdown).not.toHaveBeenCalled();
-        expect(paginate).not.toHaveBeenCalled();
-        expect(document.body.querySelector(".pa-share-card-status")?.textContent)
-            .toContain("too long");
-        expect((modal.contentEl as unknown as ShareCardTestElement).getAttribute("aria-busy"))
-            .toBe("false");
+        modal.onClose();
+        expect(paginate.mock.calls[0]?.[2]?.signal.aborted).toBe(true);
+        resolveCandidate(createPages(2));
+        await flushShareCardTasks();
+        expect(renderer.renderPage).not.toHaveBeenCalled();
+        expect(createExporterMock).not.toHaveBeenCalled();
         modal.onClose();
     });
 
