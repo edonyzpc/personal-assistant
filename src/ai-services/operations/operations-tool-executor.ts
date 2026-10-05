@@ -11,7 +11,9 @@ import type { CapabilityRegistry } from "../capability-registry";
 import { isCoreWriteToolName } from "./input-validation";
 import {
     OPERATIONS_STAGED_MESSAGE,
+    OPERATIONS_BLOCKED_MESSAGE,
 } from "./operations-tool-provider";
+import { getOperationsBlockedReason } from "./types";
 import type {
     OperationsIntent,
     StageOperationsIntentInput,
@@ -187,6 +189,7 @@ async function prepareOperationsBatch(
             },
             input.signal,
         );
+        const blockedReason = getOperationsBlockedReason(intent.operations);
         for (const toolCall of actionCalls) {
             const capability = options.registry.get(toolCall.name);
             if (capability) {
@@ -199,8 +202,10 @@ async function prepareOperationsBatch(
             }
             toolResults.set(toolCall.id, {
                 outcome: "success",
-                promptText: OPERATIONS_STAGED_MESSAGE,
-                previewText: `Staged ${toolCall.name} for inline review; no write occurred.`,
+                promptText: blockedReason ? OPERATIONS_BLOCKED_MESSAGE : OPERATIONS_STAGED_MESSAGE,
+                previewText: blockedReason
+                    ? `Blocked ${toolCall.name} proposal shown for review; no write occurred.`
+                    : `Staged ${toolCall.name} for inline review; no write occurred.`,
                 resultFact: { kind: "approval_pending", intentId: intent.id },
                 metadata: {
                     outcome: "success",
@@ -208,6 +213,7 @@ async function prepareOperationsBatch(
                     operationCount: intent.operations.length,
                     staged: true,
                     wrote: false,
+                    ...(blockedReason ? { blockedReason } : {}),
                 },
             });
         }

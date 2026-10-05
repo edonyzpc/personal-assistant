@@ -129,6 +129,52 @@ function makeFixture() {
 }
 
 describe("OperationsReviewSession", () => {
+    it("keeps a shared-reference proposal reviewable and cancellable without admitting confirmation", async () => {
+        const intent: OperationsIntent = {
+            ...reviewIntent("shared-image"),
+            operations: [{
+                kind: "note_image_removal",
+                id: "shared-image-operation",
+                toolCallId: "shared-image-call",
+                name: "remove_note_image",
+                input: { notePath: "notes/a.md", imageReference: "![[assets/a.png]]", attachmentAction: "delete" },
+                path: "notes/a.md",
+                expectedBefore: "![[assets/a.png]]",
+                expectedAfter: "",
+                effects: {
+                    note: { path: "notes/a.md", status: "not_started" },
+                    attachment: { path: "assets/a.png", action: "delete", plannedAction: "remove", status: "not_started" },
+                },
+                coverage: { kind: "scoped_vault_search", complete: true },
+                undoLimitation: "temporary-attachment-and-note",
+                block: {
+                    reason: "shared_reference",
+                    conflicts: [{ sourcePath: "notes/shared.md", syntax: "wiki-embed", remainsInSelectedNote: false }],
+                },
+            }],
+        };
+        const confirm = jest.fn(async (_intentId: string): Promise<never> => { throw new Error("Blocked confirmation was admitted"); });
+        const cancel = jest.fn((_intentId: string) => ({ ...intent, state: "cancelled" as const }));
+        const session = new OperationsReviewSession({
+            intent,
+            controller: { confirm, cancel, undoMany: async () => [] },
+            sessionIdentity: "blocked-view",
+            isSourceCurrent: () => true,
+        });
+
+        session.activate();
+        expect(session.getSnapshot().model?.blockers).toHaveLength(1);
+        expect(session.getSnapshot().status).toBe("pending");
+        expect(session.canConfirm()).toBe(false);
+        await expect(session.confirm()).resolves.toBeNull();
+        await expect(session.confirm()).resolves.toBeNull();
+        expect(confirm).not.toHaveBeenCalled();
+        expect(session.canCancel()).toBe(true);
+        expect(session.cancel()?.state).toBe("cancelled");
+        expect(cancel).toHaveBeenCalledWith(intent.id);
+        session.invalidate();
+    });
+
     it("requires activation and routes competing confirms through the controller once", async () => {
         const fixture = makeFixture();
         const session = await fixture.makeSession();

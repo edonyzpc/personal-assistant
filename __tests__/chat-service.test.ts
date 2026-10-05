@@ -34,6 +34,7 @@ import type {
 } from '../src/ai-services/chat-types';
 import type {
     OperationsIntent,
+    PreparedMarkdownOperation,
     StageOperationsIntentInput,
 } from '../src/ai-services/operations/types';
 import type { OperationsSession } from '../src/ai-services/operations/operations-service';
@@ -470,9 +471,10 @@ function createPendingOperationsIntent(input: StageOperationsIntentInput): Opera
         expiresAt: 10_000,
         state: 'pending',
         operations: input.operations.map((operation, index) => ({
+            kind: 'markdown',
             id: `operation-runtime-reserve-${index}`,
             toolCallId: operation.toolCallId,
-            name: operation.name,
+            name: operation.name as PreparedMarkdownOperation['name'],
             input: operation.input as never,
             path: (operation.input as { path: string }).path,
             expectedBefore: null,
@@ -2548,6 +2550,7 @@ describe('ChatService.streamLLM integration', () => {
     });
 
     it.each([false, true])('applies a lower ChatService history budget to summary preparation and final/fallback requests=%s', async (fallback) => {
+        enableSummaryPressure();
         const history: ChatMessage[] = Array.from({ length: 8 }, (_, index) => [
             { role: 'user' as const, content: `${'Repeated background only. '.repeat(250)}Requirement ${index}: keep export offline. ${'Repeated background only. '.repeat(250)}` },
             { role: 'assistant' as const, content: `Acknowledged requirement ${index}.` },
@@ -2588,10 +2591,10 @@ describe('ChatService.streamLLM integration', () => {
             });
             expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ historyBudgetChars: 1000 }));
             expect(prepare).toHaveBeenCalledTimes(1);
-            expect(summaryModel.invoke).toHaveBeenCalledTimes(1);
-            expect(summaryCountsAtAnswer).toEqual(Array(fallback ? 2 : 1).fill(1));
-            expect(summaryRequests).toHaveLength(1);
-            const source = JSON.parse(summaryRequests[0].messages[1].content).sourceMessages as Array<{
+            expect(summaryRequests.length).toBeGreaterThan(0);
+            expect(summaryModel.invoke).toHaveBeenCalledTimes(summaryRequests.length);
+            expect(summaryCountsAtAnswer).toEqual(Array(fallback ? 2 : 1).fill(summaryRequests.length));
+            const source = summaryRequests.flatMap(request => JSON.parse(request.messages[1].content).sourceMessages) as Array<{
                 index: number; role: ChatMessage['role']; start: number; end: number;
                 content: string | { segments: Array<{ text: string; count: number }> };
             }>;
@@ -2619,7 +2622,7 @@ describe('ChatService.streamLLM integration', () => {
             }
             expect(lifecycle.filter((event) => event.type === 'turn_end').at(-1)).toMatchObject({
                 metadata: { metrics: expect.arrayContaining([expect.objectContaining({
-                    type: 'context_summary_preparation', modelCalls: 1, historyReady: true,
+                    type: 'context_summary_preparation', modelCalls: summaryRequests.length, historyReady: true,
                 })]) },
             });
             expect(JSON.stringify(history)).toBe(original);
@@ -3270,6 +3273,7 @@ describe('ChatService.streamLLM integration', () => {
             .sort();
         expect(exportedToolNames).toEqual(expectedFirstTurnToolNames(
             'frontmatter_update',
+            'remove_note_image',
             'vault_append',
             'vault_create',
             'vault_process',

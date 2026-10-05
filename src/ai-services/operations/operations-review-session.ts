@@ -16,6 +16,8 @@ export type OperationsReviewStatus =
     | "completed"
     | "partial"
     | "failed"
+    | "unknown"
+    | "undone"
     | "cancelled"
     | "expired"
     | "discarded"
@@ -123,6 +125,7 @@ export class OperationsReviewSession {
         return this.isSourceCurrent()
             && this.activated
             && this.status === "pending"
+            && !this.model?.blockers?.length
             && this.actionInFlight === null;
     }
 
@@ -211,7 +214,12 @@ export class OperationsReviewSession {
 
     activeReceiptIds(): string[] {
         return this.operationResults
-            .filter((result) => result.status === "succeeded" && result.receiptId)
+            .filter((result) => result.receiptId
+                && !this.undoResults.some(candidate => candidate.receiptId === result.receiptId
+                    && candidate.status === "undone")
+                && result.undoAvailable !== false
+                && (result.status === "succeeded"
+                    || result.effects?.some(effect => effect.status === "applied" || effect.status === "removed")))
             .map((result) => result.receiptId!);
     }
 
@@ -319,11 +327,20 @@ export class OperationsReviewSession {
             else this.undoResults.push(result);
             const receiptId = result.receiptId;
             const operation = this.operationResults.find((candidate) => candidate.receiptId === receiptId);
-            if (operation && result.status === "undone") {
+            if (operation) {
                 this.operationResults[this.operationResults.indexOf(operation)] = {
                     ...operation,
-                    receiptId: undefined,
+                    ...(result.effects ? { effects: result.effects } : {}),
+                    ...(result.checkpoint ? { checkpoint: result.checkpoint } : {}),
+                    undoAvailable: result.status === "undone"
+                        ? false
+                        : result.undoAvailable ?? operation.undoAvailable,
                 };
+            }
+            if (this.operationResults.length
+                && this.operationResults.every(candidate => candidate.undoAvailable === false)
+                && this.undoResults.every(candidate => candidate.status === "undone")) {
+                this.status = "undone";
             }
         }
     }

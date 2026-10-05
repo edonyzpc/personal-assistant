@@ -131,7 +131,8 @@ describe("OperationsIntentController", () => {
         const contextResult = controller.getContextResult(intent.id);
         expect(contextResult).toMatchObject({ pending: false, executing: false, terminal: 'completed', execution: { state: 'completed' } });
         expect(contextResult.execution?.operations[0]).toEqual({ operationId: result.operations[0].operationId,
-            toolCallId: 'call-1', name: 'vault_append', path: '', status: 'succeeded', receiptId: result.operations[0].receiptId });
+            toolCallId: 'call-1', name: 'vault_append', path: '', status: 'succeeded', receiptId: result.operations[0].receiptId,
+            undoAvailable: true });
         contextResult.execution!.operations[0].status = 'failed';
         expect(controller.getContextResult(intent.id).execution?.operations[0].status).toBe('succeeded');
         controller.dispose();

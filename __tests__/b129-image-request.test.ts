@@ -6,7 +6,7 @@ import type { ImageAssetService } from "../src/chat/image-assets";
 import type { MessageImage } from "../src/chat/image-types";
 import { PaAgentContextSummarizer } from "../src/ai-services/context/PaAgentContextSummarizer";
 import { isCurrentHistorySummary } from "../src/ai-services/context/PaAgentContextSummaryTypes";
-import { formatHistoryMessages } from "../src/ai-services/context/PaAgentHistoryContextPlan";
+import { formatHistoryMessages, historySummaryContent } from "../src/ai-services/context/PaAgentHistoryContextPlan";
 import type { ChatMessage } from "../src/ai-services/chat-types";
 
 const image = (index: number): MessageImage => ({ ref: { assetId: `image-${index}`, contentHash: index.toString(16).repeat(64).slice(0, 64) }, ordinal: index, label: `Image ${index}` });
@@ -294,11 +294,29 @@ describe("B-129 B-128 image identity continuity", () => {
             { role: "user", content: "Keep the latest exchange intact." },
             { role: "assistant", content: "The earlier image can be summarized by reference." },
         ];
+        const expectedSource = historySummaryContent(history[0]);
         const seen: string[] = []; const summarizer = new PaAgentContextSummarizer();
-        const result = await summarizer.prepareHistory({ history, historyBudgetChars: 1500, invoke: async (payload) => {
-            seen.push(JSON.stringify(payload)); history[0].images![0].ref.contentHash = "f".repeat(64);
-            return JSON.stringify({ goals: [], constraints: [], decisions: [], completed: [], open_questions: [], facts: [{ text: "Image ref", sourceMessages: [1] }] });
-        } });
-        expect(result).toBeUndefined(); expect(seen.join("")).toContain("reference_only_not_pixels"); expect(seen.join("")).not.toMatch(/data:image|base64/); summarizer.dispose();
+        try {
+            const result = await summarizer.prepareHistory({ history, historyBudgetChars: 1500, invoke: async (payload) => {
+                seen.push(JSON.stringify(payload)); history[0].images![0].ref.contentHash = "f".repeat(64);
+                return JSON.stringify({ goals: [], constraints: [], decisions: [], completed: [], open_questions: [], facts: [{ text: "Image ref", sourceMessages: [1] }] });
+            } });
+            const sourceParts = seen.flatMap(payload => {
+                const body = JSON.parse(JSON.parse(payload).messages[1].content) as {
+                    sourceMessages: Array<{ index: number; content: string | {
+                        segments: Array<{ text: string; count: number }>;
+                    } }>;
+                };
+                return body.sourceMessages;
+            }).filter(part => part.index === 1);
+            const sourceText = sourceParts.map(part => typeof part.content === "string"
+                ? part.content : part.content.segments.map(segment => segment.text.repeat(segment.count)).join("")).join("");
+            expect(result).toBeUndefined();
+            expect(sourceText).toEqual(expectedSource);
+            expect(sourceText).toContain("reference_only_not_pixels");
+            expect(seen.join("")).not.toMatch(/data:image|base64/);
+        } finally {
+            summarizer.dispose();
+        }
     });
 });

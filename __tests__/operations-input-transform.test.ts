@@ -5,6 +5,7 @@ import {
     MAX_OPERATION_SELECTOR_CHARS,
     OperationsValidationError,
     validateCoreWriteInput,
+    validateRemoveNoteImageInput,
 } from "../src/ai-services/operations/input-validation";
 import { OperationsPathError, validateOperationsVaultPath } from "../src/ai-services/operations/vault-path";
 import {
@@ -23,6 +24,35 @@ const jsonFrontmatterCodec = {
 };
 
 describe("Operations core input validation", () => {
+    it("strictly validates the internal remove_note_image shape without authority fields", () => {
+        expect(validateRemoveNoteImageInput({
+            notePath: "notes/a.md",
+            imageReference: "![[assets/a.png]]",
+            attachmentAction: "delete",
+        })).toEqual({
+            notePath: "notes/a.md",
+            imageReference: "![[assets/a.png]]",
+            attachmentAction: "delete",
+        });
+
+        expect(() => validateRemoveNoteImageInput({
+            notePath: "notes/a.md",
+            imageReference: "![[assets/a.png]]",
+            attachmentAction: "delete",
+            confirmed: true,
+        })).toThrow(OperationsValidationError);
+        expect(() => validateRemoveNoteImageInput({
+            notePath: "/tmp/a.md",
+            imageReference: "![[assets/a.png]]",
+            attachmentAction: "keep",
+        })).toThrow(OperationsPathError);
+        expect(() => validateRemoveNoteImageInput({
+            notePath: "notes/a.md",
+            imageReference: " ![[assets/a.png]] ",
+            attachmentAction: "keep",
+        })).toThrow("exact selected reference");
+    });
+
     it("strictly validates the four core tool shapes", () => {
         expect(validateCoreWriteInput("vault_create", { path: "notes/new.md", content: "# New" })).toEqual({
             path: "notes/new.md",

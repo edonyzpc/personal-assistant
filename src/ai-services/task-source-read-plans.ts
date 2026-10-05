@@ -8,7 +8,12 @@ import {
     validateQueryNotesInput,
 } from './chat-tool-guards';
 import { extractInputPath, readFirstString, toInputRecord } from './chat-tool-prepare-helpers';
-import { isCoreWriteToolName, validateCoreWriteInput } from './operations/input-validation';
+import {
+    isCoreWriteToolName,
+    validateCoreWriteInput,
+    validateRemoveNoteImageInput,
+} from './operations/input-validation';
+import { REMOVE_NOTE_IMAGE_TOOL_NAME } from './operations/types';
 import { validateOperationsVaultPath } from './operations/vault-path';
 import type { ParsedBufferedToolCall } from './pa-agent-types';
 import type { TaskSourceReadPlan } from './task-source-executor';
@@ -54,9 +59,22 @@ export function resolveTaskSourceReadPlans(
     for (const call of calls) {
         try {
             let plan: TaskSourceReadPlan;
-            if (isCoreWriteToolName(call.name)) {
+            if (call.name === REMOVE_NOTE_IMAGE_TOOL_NAME) {
+                // P1 keeps this name internal: no provider exports it yet. The
+                // Host plan still names the real note and, only for delete,
+                // the complete scoped reference search required by the domain.
+                const input = validateRemoveNoteImageInput(call.input);
+                const notePlan = planNote(input.notePath, host);
+                plan = input.attachmentAction === 'delete'
+                    ? { reads: [...notePlan.reads, { kind: 'scoped_vault_search' }] }
+                    : notePlan;
+            } else if (isCoreWriteToolName(call.name)) {
                 const input = validateCoreWriteInput(call.name, call.input);
-                const path = validateOperationsVaultPath(input.path);
+                const path = validateOperationsVaultPath(
+                    call.name === REMOVE_NOTE_IMAGE_TOOL_NAME
+                        ? (input as { notePath: string }).notePath
+                        : (input as { path: string }).path,
+                );
                 const baseline = operationBaselines.get(path);
                 plan = baseline ?? (call.name === 'vault_create'
                     ? { reads: [], outputTargetPaths: [path] }

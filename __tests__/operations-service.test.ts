@@ -16,6 +16,7 @@ import type {
     OperationsControllerEvent,
     OperationsVault,
     OperationsVaultFile,
+    PreparedMarkdownOperation,
     PreparedOperation,
 } from "../src/ai-services/operations/types";
 
@@ -89,6 +90,31 @@ function sharedChatServices(vault: MemoryVault, options: { now?: () => number; p
 }
 
 describe("Operations context across Chat sessions", () => {
+    it("preserves remaining Undo ability and current status when only one legacy operation is undone", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        vault.files.set("notes/b.md", "B");
+        const h = sharedChatServices(vault);
+        try {
+            const intent = await h.owner.stage({ runId: "run-1", turnId: "turn-1", operations: [
+                { toolCallId: "call-1", name: "vault_append", input: { path: "notes/a.md", content: "first" } },
+                { toolCallId: "call-2", name: "vault_append", input: { path: "notes/b.md", content: "second" } },
+            ] });
+            const executed = await h.a.confirmOperationsIntent(intent.id);
+            const completed = h.a.refreshOperationsActionState(pendingContext(intent.id));
+            await h.a.undoOperations([executed.operations[0].receiptId!]);
+            const partial = h.a.refreshOperationsActionState(completed);
+            expect(partial).toMatchObject({ phase: "partial", operationsUndoAvailable: true });
+            expect(h.a.getVisibleOperationsStatus(intent.id, "run-1")).toMatchObject({ state: "partial", undoAvailable: true });
+            expect(h.a.refreshOperationsActionState(partial)).toEqual(partial);
+            await h.a.undoOperations([executed.operations[1].receiptId!]);
+            const undone = h.a.refreshOperationsActionState(partial);
+            expect(undone).toMatchObject({ phase: "undone", operationsUndoAvailable: false });
+            expect(h.a.getVisibleOperationsStatus(intent.id, "run-1")).toMatchObject({ state: "undone", undoAvailable: false });
+            expect(h.a.refreshOperationsActionState(undone)).toEqual(undone);
+        } finally { h.a.dispose(); h.b.dispose(); h.operations.dispose(); }
+    });
+
     it("reads the live original owner without granting another session confirmation or Undo", async () => {
         const vault = new MemoryVault(); vault.files.set("notes/a.md", "A");
         const h = sharedChatServices(vault);
@@ -107,9 +133,10 @@ describe("Operations context across Chat sessions", () => {
             expect(await manager.updateActionStatesForOperation(conversation.id, pending.origin.runId, "operations", intent.id,
                 states => states.map(state => h.b.refreshOperationsActionState(state)))).toEqual([pending]);
             const pendingWrites: Promise<unknown>[] = [];
-            h.a.registerOperationsContextPersistence(intent.id, () => {
+            h.a.registerOperationsContextPersistence(intent.id, execution => {
                 const write = manager.updateActionStatesForOperation(conversation.id, pending.origin.runId, "operations", intent.id,
-                    states => states.map(state => h.a.refreshOperationsActionState(state)));
+                    states => states.map(state => execution ? applyOperationsExecutionResult(state, execution) ?? state
+                        : h.a.refreshOperationsActionState(state)));
                 pendingWrites.push(write);
                 return write.then(() => undefined);
             });
@@ -122,7 +149,8 @@ describe("Operations context across Chat sessions", () => {
             expect(completed).toMatchObject({ phase: "completed", actions: [{ phase: "applied", receiptId: result.operations[0].receiptId }] });
             expect(completed.inputLineage).toEqual(pending.inputLineage);
             expect((await store.getTurns(conversation.id))[0].assistant.actionStates).toEqual([expect.objectContaining({
-                phase: "completed", origin: pending.origin, inputLineage: pending.inputLineage })]);
+                phase: "completed", origin: pending.origin, inputLineage: pending.inputLineage,
+                operationsUndoAvailable: true })]);
             const receiptId = result.operations[0].receiptId!;
             expect((await h.b.undoOperations([receiptId]))[0].status).not.toBe("undone");
             expect(vault.files.get("notes/a.md")).toBe("A\nB");
@@ -208,15 +236,21 @@ describe("Operations context across Chat sessions", () => {
 });
 
 describe("OperationsToolProvider shared identity", () => {
-    it("returns the same four capability objects across repeated loads", async () => {
+    it("returns the same five Operations capability objects across repeated loads", async () => {
         const provider = new OperationsToolProvider();
         const first = await provider.load(providerContext());
         const second = await provider.load(providerContext());
 
         expect(first.status).toBe("available");
         expect(second.status).toBe("available");
-        expect(first.capabilities).toHaveLength(4);
-        expect(second.capabilities).toHaveLength(4);
+        expect(first.capabilities.map(capability => capability.name)).toEqual([
+            "vault_create",
+            "vault_append",
+            "vault_process",
+            "frontmatter_update",
+            "remove_note_image",
+        ]);
+        expect(second.capabilities).toHaveLength(5);
         first.capabilities.forEach((capability, index) => {
             expect(second.capabilities[index]).toBe(capability);
         });
@@ -450,9 +484,10 @@ describe("formatOperationsPreview", () => {
 });
 
 function operation(
-    input: Pick<PreparedOperation, "name" | "input" | "expectedBefore" | "expectedAfter">,
+    input: Pick<PreparedMarkdownOperation, "name" | "input" | "expectedBefore" | "expectedAfter">,
 ): PreparedOperation {
     return {
+        kind: "markdown",
         id: "operation-1",
         toolCallId: "call-1",
         path: input.input.path,

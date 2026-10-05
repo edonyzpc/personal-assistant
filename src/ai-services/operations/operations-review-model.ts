@@ -1,4 +1,4 @@
-import type { OperationsIntent, PreparedOperation } from "./types";
+import type { OperationsIntent, PreparedNoteImageRemovalOperation, PreparedOperation } from "./types";
 
 const MAX_DIFF_SEQUENCE_ITEMS = 20_000;
 const MAX_DIFF_EDIT_DISTANCE = 1_200;
@@ -52,6 +52,18 @@ export interface OperationsReviewFileGroup {
 export interface OperationsReviewModel {
     intentId: string;
     groups: readonly OperationsReviewFileGroup[];
+    blockers?: readonly (NonNullable<PreparedNoteImageRemovalOperation["block"]> & {
+        operationId: string;
+        attachmentPath: string;
+    })[];
+    attachments?: readonly {
+        id: string;
+        path: string;
+        action: "keep" | "delete";
+        plannedAction: "retain" | "remove";
+        undoLimitation: "markdown-only" | "temporary-attachment-and-note";
+        blocked?: true;
+    }[];
 }
 
 interface DiffLine {
@@ -103,6 +115,26 @@ export function createOperationsReviewModel(intent: OperationsIntent): Operation
     return {
         intentId: intent.id,
         groups: [...groupsByPath.values()],
+        blockers: Object.freeze(intent.operations.flatMap(operation => {
+            if (operation.kind !== "note_image_removal" || !operation.block) return [];
+            return [Object.freeze({
+                operationId: operation.id,
+                attachmentPath: operation.effects.attachment.path,
+                reason: operation.block.reason,
+                conflicts: operation.block.conflicts,
+            })];
+        })),
+        attachments: Object.freeze(intent.operations.flatMap(operation => {
+            if (operation.kind !== "note_image_removal") return [];
+            return [Object.freeze({
+                id: `${operation.id}:attachment`,
+                path: operation.effects.attachment.path,
+                action: operation.effects.attachment.action,
+                plannedAction: operation.effects.attachment.plannedAction,
+                undoLimitation: operation.undoLimitation,
+                ...(operation.block ? { blocked: true as const } : {}),
+            })];
+        })),
     };
 }
 

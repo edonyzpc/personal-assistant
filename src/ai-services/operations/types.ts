@@ -1,10 +1,30 @@
 import type { TaskSourceReadGuard } from "../task-source-read-guard";
 
+export const REMOVE_NOTE_IMAGE_TOOL_NAME = "remove_note_image" as const;
+export type NoteImageRemovalAttachmentAction = "keep" | "delete";
+
+export interface RemoveNoteImageInput {
+    notePath: string;
+    /** Exact source reference selected by the user; never a filename guess. */
+    imageReference: string;
+    attachmentAction: NoteImageRemovalAttachmentAction;
+}
+
+export const MARKDOWN_WRITE_TOOL_NAMES = [
+    "vault_create",
+    "vault_append",
+    "vault_process",
+    "frontmatter_update",
+] as const;
+
+export type MarkdownWriteToolName = typeof MARKDOWN_WRITE_TOOL_NAMES[number];
+
 export const CORE_WRITE_TOOL_NAMES = [
     "vault_create",
     "vault_append",
     "vault_process",
     "frontmatter_update",
+    REMOVE_NOTE_IMAGE_TOOL_NAME,
 ] as const;
 
 export type CoreWriteToolName = typeof CORE_WRITE_TOOL_NAMES[number];
@@ -60,24 +80,108 @@ export interface CoreWriteInputMap {
     vault_append: VaultAppendInput;
     vault_process: VaultProcessInput;
     frontmatter_update: FrontmatterUpdateInput;
+    remove_note_image: RemoveNoteImageInput;
 }
 
 export type CoreWriteInput = CoreWriteInputMap[CoreWriteToolName];
+export type MarkdownWriteInput = CoreWriteInputMap[MarkdownWriteToolName];
+
+export interface NoteImageRemovalFileIdentity {
+    readonly path: string;
+    readonly extension: string;
+    /** Live host file object; used only for identity, never serialized. */
+    readonly file: object;
+    readonly version: { readonly mtime: number; readonly size: number };
+}
+
+export interface NoteImageRemovalSourceScope {
+    readonly allowedPaths: readonly string[] | null;
+    readonly excludedPaths: readonly string[];
+}
+
+export type NoteImageRemovalEffectStatus =
+    | "not_started"
+    | "applied"
+    | "removed"
+    | "failed"
+    | "unknown"
+    | "restored";
+
+export interface NoteImageRemovalPreparedEffects {
+    readonly note: {
+        readonly path: string;
+        readonly status: Extract<NoteImageRemovalEffectStatus, "not_started">;
+    };
+    readonly attachment: {
+        readonly path: string;
+        readonly action: NoteImageRemovalAttachmentAction;
+        readonly plannedAction: "retain" | "remove";
+        readonly status: Extract<NoteImageRemovalEffectStatus, "not_started">;
+    };
+}
+
+export interface NoteImageRemovalCoverage {
+    readonly kind: "current_note" | "scoped_vault_search";
+    readonly complete: boolean;
+    readonly candidateCount?: number;
+    readonly readCount?: number;
+    readonly excludedCount?: number;
+    readonly canvasCount?: number;
+    readonly reason?: string;
+}
+
+export interface PreparedMarkdownOperation {
+    /** Existing Markdown operations predate the internal discriminated union. */
+    readonly kind?: "markdown";
+    readonly id: string;
+    readonly toolCallId: string;
+    readonly name: MarkdownWriteToolName;
+    readonly input: MarkdownWriteInput;
+    readonly path: string;
+    readonly expectedBefore: string | null;
+    readonly expectedAfter: string;
+}
+
+export interface PreparedNoteImageRemovalOperation {
+    readonly kind: "note_image_removal";
+    readonly id: string;
+    readonly toolCallId: string;
+    readonly name: typeof REMOVE_NOTE_IMAGE_TOOL_NAME;
+    readonly input: RemoveNoteImageInput;
+    readonly path: string;
+    readonly expectedBefore: string;
+    readonly expectedAfter: string;
+    readonly effects: NoteImageRemovalPreparedEffects;
+    readonly coverage: NoteImageRemovalCoverage;
+    readonly undoLimitation: "markdown-only" | "temporary-attachment-and-note";
+    /** Complete, authorized shared-reference evidence; this proposal cannot be confirmed. */
+    readonly block?: {
+        readonly reason: "shared_reference";
+        readonly conflicts: readonly import("./note-image-removal").NoteImageRemovalConflict[];
+    };
+}
+
+export interface NoteImageRemovalEffectResult {
+    readonly key: "note" | "attachment";
+    readonly status: NoteImageRemovalEffectStatus;
+    readonly failureCategory?: OperationsFailureCategory;
+    readonly message?: string;
+    readonly checkpoint?: "attachment-restored";
+}
+
+export type PreparedOperation = PreparedMarkdownOperation | PreparedNoteImageRemovalOperation;
+
+export function getOperationsBlockedReason(
+    operations: readonly PreparedOperation[],
+): "shared_reference" | undefined {
+    return operations.some(operation => operation.kind === "note_image_removal" && operation.block)
+        ? "shared_reference" : undefined;
+}
 
 export interface OperationsToolCall {
     toolCallId: string;
-    name: CoreWriteToolName;
+    name: CoreWriteToolName | typeof REMOVE_NOTE_IMAGE_TOOL_NAME;
     input: unknown;
-}
-
-export interface PreparedOperation {
-    id: string;
-    toolCallId: string;
-    name: CoreWriteToolName;
-    input: CoreWriteInput;
-    path: string;
-    expectedBefore: string | null;
-    expectedAfter: string;
 }
 
 export type OperationsIntentState =
@@ -86,7 +190,8 @@ export type OperationsIntentState =
     | "executing"
     | "completed"
     | "partial"
-    | "failed";
+    | "failed"
+    | "unknown";
 
 export interface OperationsIntent {
     id: string;
@@ -114,22 +219,25 @@ export type OperationsFailureCategory =
     | "undo_unavailable"
     | "unknown";
 
-export type OperationExecutionStatus = "succeeded" | "failed" | "stale" | "skipped";
+export type OperationExecutionStatus = "succeeded" | "failed" | "stale" | "skipped" | "partial" | "unknown";
 
 export interface OperationExecutionResult {
     operationId: string;
     toolCallId: string;
-    name: CoreWriteToolName;
+    name: CoreWriteToolName | typeof REMOVE_NOTE_IMAGE_TOOL_NAME;
     path: string;
     status: OperationExecutionStatus;
     failureCategory?: OperationsFailureCategory;
     message?: string;
     receiptId?: string;
+    effects?: readonly NoteImageRemovalEffectResult[];
+    undoAvailable?: boolean;
+    checkpoint?: "attachment-restored";
 }
 
 export interface OperationsExecutionResult {
     intentId: string;
-    state: Extract<OperationsIntentState, "completed" | "partial" | "failed">;
+    state: Extract<OperationsIntentState, "completed" | "partial" | "failed" | "unknown">;
     operations: readonly OperationExecutionResult[];
     /** Issued only after actual confirm execution, from operation receipts. */
     resultFact?: import("../pa-agent-result-facts").PaAgentResultFact;
@@ -140,14 +248,14 @@ export interface UndoReceipt {
     intentId: string;
     operationId: string;
     path: string;
-    kind: CoreWriteToolName;
+    kind: CoreWriteToolName | typeof REMOVE_NOTE_IMAGE_TOOL_NAME;
     before: string | null;
     expectedAfter: string;
     createdAt: number;
     expiresAt: number;
 }
 
-export type UndoStatus = "undone" | "failed" | "stale" | "expired" | "unavailable";
+export type UndoStatus = "undone" | "failed" | "stale" | "expired" | "unavailable" | "unknown";
 
 export interface UndoResult {
     receiptId: string;
@@ -156,6 +264,9 @@ export interface UndoResult {
     status: UndoStatus;
     failureCategory?: OperationsFailureCategory;
     message?: string;
+    effects?: readonly NoteImageRemovalEffectResult[];
+    checkpoint?: "attachment-restored";
+    undoAvailable?: boolean;
 }
 
 export interface OperationsVaultFile {

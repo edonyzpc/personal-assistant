@@ -42,6 +42,7 @@ import {
 import {
     CORE_WRITE_TOOL_NAMES,
     type OperationsIntent,
+    type PreparedMarkdownOperation,
     type OperationsVault,
     type OperationsVaultFile,
     type StageOperationsIntentInput,
@@ -1101,9 +1102,10 @@ function fakeIntent(input: StageOperationsIntentInput): OperationsIntent {
         expiresAt: 2,
         state: "pending",
         operations: input.operations.map((operation, index) => ({
+            kind: "markdown",
             id: `op-${index + 1}`,
             toolCallId: operation.toolCallId,
-            name: operation.name,
+            name: operation.name as PreparedMarkdownOperation["name"],
             input: operation.input as never,
             path: (operation.input as { path: string }).path,
             expectedBefore: null,

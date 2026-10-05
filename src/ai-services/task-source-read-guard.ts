@@ -12,6 +12,8 @@ export interface TaskSourceReadGuard {
     isNoteDomainAllowed?(): boolean;
     /** Source-only receipt survives the run so queued work can recheck its prompt ancestry. */
     captureSourceValidity?(): () => boolean;
+    /** Source ancestry/permission without observation-epoch freshness. */
+    captureSourceAuthority?(): () => boolean;
     /** Host-resolved query boundary; absence cannot fall back to an unrestricted search. */
     getNoteSearchScope?(): NoteSearchScope;
 }

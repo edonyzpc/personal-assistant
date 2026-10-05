@@ -37,6 +37,7 @@ import {
     type UndoResult,
     type OperationsVault,
 } from "./ai-services/operations";
+import { createObsidianNoteImageHost } from "./ai-services/operations/obsidian-note-image-host";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
@@ -5598,6 +5599,11 @@ export class PluginManager extends Plugin {
             },
             isOperationsAgentEnabled: () => this.isOperationsAgentEnabled,
             isPathAllowed: (path) => this.isDataBoundaryAllowedPath(path),
+            noteImageRemovalHost: createObsidianNoteImageHost({
+                app: this.app,
+                isPathAllowed: (path) => this.isDataBoundaryAllowedPath(path),
+                isAttachmentPathAllowed: (path) => this.isDataBoundaryAllowedPath(path),
+            }),
         });
         return this.operationsService;
     }

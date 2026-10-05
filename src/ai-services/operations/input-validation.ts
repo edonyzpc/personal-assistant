@@ -4,10 +4,12 @@ import {
     type CoreWriteToolName,
     type FrontmatterUpdateInput,
     type JsonLikeValue,
+    type RemoveNoteImageInput,
     type VaultAppendInput,
     type VaultCreateInput,
     type VaultProcessInput,
 } from "./types";
+import { validateOperationsVaultPath } from "./vault-path";
 import { isRecord } from "../../pa/helpers";
 
 export const MAX_OPERATION_CONTENT_CHARS = 50_000;
@@ -55,12 +57,41 @@ export function validateCoreWriteInput<Name extends CoreWriteToolName>(
             return validateVaultProcessInput(raw) as CoreWriteInputMap[Name];
         case "frontmatter_update":
             return validateFrontmatterUpdateInput(raw) as CoreWriteInputMap[Name];
+        case "remove_note_image":
+            return validateRemoveNoteImageInput(raw) as CoreWriteInputMap[Name];
     }
 }
 
 /** Non-generic runtime alias for provider and dispatcher adapters. */
 export function validateCoreWriteToolInput(name: CoreWriteToolName, raw: unknown): CoreWriteInputMap[CoreWriteToolName] {
     return validateCoreWriteInput(name, raw);
+}
+
+export function validateRemoveNoteImageInput(raw: unknown): RemoveNoteImageInput {
+    const input = expectObject(raw, "remove_note_image");
+    expectExactKeys(
+        input,
+        ["notePath", "imageReference", "attachmentAction"],
+        ["notePath", "imageReference", "attachmentAction"],
+        "remove_note_image",
+    );
+    const notePath = validateOperationsVaultPath(input.notePath);
+    const imageReference = expectCappedString(
+        input.imageReference,
+        "remove_note_image.imageReference",
+        false,
+    );
+    if (imageReference.trim() !== imageReference) {
+        throw new OperationsValidationError(
+            "remove_note_image.imageReference must be the exact selected reference without surrounding whitespace.",
+        );
+    }
+    const attachmentAction = expectEnum(
+        input.attachmentAction,
+        ["keep", "delete"] as const,
+        "remove_note_image.attachmentAction",
+    );
+    return Object.freeze({ notePath, imageReference, attachmentAction });
 }
 
 export function validateVaultCreateInput(raw: unknown): VaultCreateInput {

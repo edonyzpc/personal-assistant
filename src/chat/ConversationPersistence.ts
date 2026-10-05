@@ -237,6 +237,20 @@ export class ConversationPersistence {
         };
     }
 
+    async captureOperationsSourceLifetime(
+        conversationId: string,
+        signal?: AbortSignal,
+    ): Promise<(() => boolean) | undefined> {
+        throwIfAborted(signal);
+        if (this.activeId !== conversationId) return undefined;
+        const manager = await this.getReadyManager();
+        if (this.activeId !== conversationId || this.options.getManager() !== manager || !manager) return undefined;
+        const sourceCurrent = manager.captureSourceLifetime(conversationId);
+        return () => this.activeId === conversationId
+            && this.options.getManager() === manager
+            && sourceCurrent();
+    }
+
     async prepareWritingCandidates(versions: Pick<WritingVersionService, 'get'>, input: {
         getAllowedVersionIds(): readonly string[];
         isCurrent(): boolean;

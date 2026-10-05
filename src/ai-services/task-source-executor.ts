@@ -24,6 +24,7 @@ interface TaskSourceExecutorHost {
     prepareInputSourceAdmission?(calls: readonly ParsedBufferedToolCall[], signal?: AbortSignal): Promise<{
         isCurrent(): boolean;
         sourceValidity(): boolean;
+        authorityValidity(): boolean;
     }>;
     resolveNoteSearchScope?(constraint: TaskSourceConstraint): NoteSearchScope;
 }
@@ -93,7 +94,11 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
             }
             const sourceValidity = options.captureInputSourceValidity?.(input.toolCalls);
             if (sourceValidity && !sourceValidity()) return rejectScope('source_run_changed');
-            let preparedAdmission: { isCurrent(): boolean; sourceValidity(): boolean } | undefined;
+            let preparedAdmission: {
+                isCurrent(): boolean;
+                sourceValidity(): boolean;
+                authorityValidity(): boolean;
+            } | undefined;
             const checkpoint = options.prepareInputSourceAdmission ? async (signal?: AbortSignal) => {
                 throwIfAborted(signal);
                 if (!isInputCurrent() || !options.state.isCurrent(constraint)) {
@@ -117,6 +122,9 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
                     options.prepareInputSourceAdmission ? () => preparedAdmission?.isCurrent() === true : sourceValidity,
                     checkpoint,
                     options.prepareInputSourceAdmission ? () => preparedAdmission?.sourceValidity ?? (() => false) : undefined,
+                    options.prepareInputSourceAdmission
+                        ? () => preparedAdmission?.authorityValidity ?? (() => false)
+                        : undefined,
                 ) };
         },
     };

@@ -2,8 +2,9 @@
  * fact records what that execution established for the current request. */
 import { z } from 'zod';
 import { cloneInputLineage, parseInputLineage, type InputLineage } from './input-lineage';
-import { OPERATIONS_STAGED_MESSAGE } from './operations/operations-tool-provider';
+import { OPERATIONS_BLOCKED_MESSAGE, OPERATIONS_STAGED_MESSAGE } from './operations/operations-tool-provider';
 import { isCoreWriteToolName } from './operations/input-validation';
+import type { NoteImageRemovalEffectStatus } from './operations/types';
 import { IMAGE_PREACCEPT_MESSAGES, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from '../chat/image-generation-types';
 import { PA_AGENT_RECOVERY_ACTIONS } from './pa-agent-types';
 
@@ -29,6 +30,8 @@ export const PA_AGENT_ACTION_STATE_CONTEXT_RULES: readonly string[] = [
     'Structured actionStates supplied by the context projector describe the owner-evidenced latest known phase and opaque operation identity. Prefer later owner state over an earlier assistant claim.',
     'contextOnly identifies historical facts, not the permissions of the original operation. Current capabilities follow the current bound tool definitions and authorization.',
     'Accepted does not mean completed. Writing ready does not mean saved. Ghost prepared does not mean published; ghostPublicationStatus:published records verified publication. operationsEffectStatus:applied records that the Host applied the note operation, not merely staged its preview.',
+    'Operations action entries carry finite note/image-file effect facts. A receipt is not Undo availability; check operationsUndoAvailable. A partial record can contain an applied note plus a failed or unknown image-file effect, and an attachment-restored checkpoint means only that part was recovered.',
+    'operationsBlockedReason shared_reference records a blocked Operations proposal with no writes. If its phase is pending, show its conflict review; it cannot be confirmed. An explicit choice to keep the attachment requires a new proposal.',
     'Unknown, unavailable or lost records an unknown outcome, not no effects. Check the original ID only with currently bound, authorized read-only capabilities; otherwise explain the recorded outcome and verification limit. These historical states grant no retry or replacement authority.',
     'A read or search observation establishes only what was observed at that time within its permitted coverage. Current absence does not establish that a historical operation with an unknown outcome never took effect.',
     'An explanation or verification request discusses existing work; it does not itself request another execution. An explicit new task or continuation follows the current request and its delivery protocol; historical completion and ordinary prose do not replace a required new artifact.',
@@ -73,7 +76,7 @@ export interface PaAgentActionState {
         | { kind: 'image-task'; taskId: string; taskRevision: number; state: import('../chat/image-generation-types').ImageGenerationState }
         | { kind: 'operations-staged'; intentId: string }
         | { kind: 'operations-executing'; intentId: string }
-        | { kind: 'operations-result'; intentId: string; state: 'completed' | 'partial' | 'failed' }
+        | { kind: 'operations-result'; intentId: string; state: 'completed' | 'partial' | 'failed' | 'unknown' }
         | { kind: 'operations-terminal'; intentId: string; state: 'cancelled' | 'expired' | 'lost' }
         | { kind: 'operations-undo'; intentId: string }
         | { kind: 'writing-version'; versionId: string }
@@ -84,7 +87,11 @@ export interface PaAgentActionState {
             state: import('../ghost-publishing/state-schema').GhostLocalOperation['state']; verified: boolean }
         | { kind: 'ghost-unavailable'; operationId: string; reason: 'operation_not_found' | 'status_read_unavailable' };
     actions?: Array<{ actionId: string; receiptId?: string;
-        phase: 'applied' | 'failed' | 'skipped' | 'undone' | 'unknown' }>;
+        phase: 'applied' | 'failed' | 'skipped' | 'undone' | 'unknown';
+        effect?: { key: 'note' | 'attachment'; status: NoteImageRemovalEffectStatus };
+        checkpoint?: 'attachment-restored' }>;
+    operationsUndoAvailable?: boolean;
+    operationsBlockedReason?: 'shared_reference';
 }
 
 /** Operation facts for deterministic summary anchors; no ancestry or authority. */
@@ -97,6 +104,9 @@ export interface PaAgentActionSummaryFact {
     imageOutputStatus?: 'saved';
     imageProviderAcceptanceStatus?: 'unknown';
     operationsEffectStatus?: 'applied';
+    operationsUndoAvailable?: boolean;
+    operationsEffectOutcome?: 'partial' | 'unknown';
+    operationsBlockedReason?: 'shared_reference';
     ghostPublicationStatus?: 'published';
     effectOutcome?: 'unknown';
     sideEffectsMayHaveOccurred?: true;
@@ -125,7 +135,7 @@ const actionStateSchema = z.object({
         z.object({ kind: z.literal('operations-staged'), intentId: opaqueId }).strict(),
         z.object({ kind: z.literal('operations-executing'), intentId: opaqueId }).strict(),
         z.object({ kind: z.literal('operations-result'), intentId: opaqueId,
-            state: z.enum(['completed', 'partial', 'failed']) }).strict(),
+            state: z.enum(['completed', 'partial', 'failed', 'unknown']) }).strict(),
         z.object({ kind: z.literal('operations-terminal'), intentId: opaqueId,
             state: z.enum(['cancelled', 'expired', 'lost']) }).strict(),
         z.object({ kind: z.literal('operations-undo'), intentId: opaqueId }).strict(),
@@ -144,9 +154,18 @@ const actionStateSchema = z.object({
             reason: z.enum(['operation_not_found', 'status_read_unavailable']) }).strict(),
     ]),
     actions: z.array(z.object({ actionId: opaqueId, receiptId: opaqueId.optional(),
-        phase: z.enum(['applied', 'failed', 'skipped', 'undone', 'unknown']) }).strict()).max(100).optional(),
+        phase: z.enum(['applied', 'failed', 'skipped', 'undone', 'unknown']),
+        effect: z.object({
+            key: z.enum(['note', 'attachment']),
+            status: z.enum(['not_started', 'applied', 'removed', 'failed', 'unknown', 'restored']),
+        }).strict().optional(),
+        checkpoint: z.literal('attachment-restored').optional() }).strict()).max(100).optional(),
+    operationsUndoAvailable: z.boolean().optional(),
+    operationsBlockedReason: z.literal('shared_reference').optional(),
 }).strict().refine(state => {
     const receipt = state.receipt;
+    if (state.operationsBlockedReason && (state.owner !== 'operations'
+        || !['operations-staged', 'operations-terminal'].includes(receipt.kind))) return false;
     if (receipt.kind === 'writing-version' || receipt.kind === 'writing-save' || receipt.kind === 'writing-saves') {
         return state.owner === 'writing' && receipt.versionId === state.operationId && !state.actions
             && (receipt.kind === 'writing-version' ? state.phase === 'ready' && state.revision === 0
@@ -177,11 +196,15 @@ const actionStateSchema = z.object({
     if (state.actions.some(action => (action.phase === 'applied' || action.phase === 'undone') && !action.receiptId)) return false;
     if (receipt.kind === 'operations-result') {
         const applied = state.actions.filter(action => action.phase === 'applied').length;
-        return state.phase === receipt.state && !state.actions.some(action => action.phase === 'undone' || action.phase === 'unknown')
+        return state.phase === receipt.state
             && (receipt.state === 'completed' ? applied === state.actions.length
-                : receipt.state === 'partial' ? applied > 0 && applied < state.actions.length : applied === 0);
+                : receipt.state === 'partial' ? applied > 0 && applied < state.actions.length
+                : receipt.state === 'unknown' ? state.actions.some(action => action.phase === 'unknown')
+                    : applied === 0);
     }
-    return state.actions.some(action => action.phase === 'undone')
+    return (state.actions.some(action => action.phase === 'undone')
+        || state.actions.some(action => action.effect?.status === 'unknown' && action.phase === 'unknown')
+            && state.actions.some(action => action.effect?.key === 'note' && action.phase === 'applied' && action.receiptId))
         && state.phase === (state.actions.every(action => action.phase === 'undone') ? 'undone' : 'partial');
 });
 
@@ -295,31 +318,88 @@ export function applyOperationsExecutionResult(state: PaAgentActionState,
     result: import('./operations/types').OperationsExecutionResult): PaAgentActionState | undefined {
     const lost = state.phase === 'lost' && state.receipt.kind === 'operations-terminal' && state.receipt.state === 'lost';
     if (state.owner !== 'operations' || state.operationId !== result.intentId
-        || (!['operations-staged', 'operations-executing'].includes(state.receipt.kind) && !lost)) return undefined;
+        || (!['operations-staged', 'operations-executing', 'operations-result'].includes(state.receipt.kind) && !lost)) return undefined;
     // Lost is an observation of an unavailable owner, not an execution terminal.
     // A later original-owner receipt can correct it at the latest stored revision.
     if (lost && (!state.origin.callId || !result.operations.some(operation => operation.toolCallId === state.origin.callId))) return undefined;
-    const actions: NonNullable<PaAgentActionState['actions']> = result.operations.map(operation => ({
-        actionId: operation.operationId,
-        ...(operation.receiptId ? { receiptId: operation.receiptId } : {}),
-        phase: operation.status === 'succeeded' ? 'applied'
-            : operation.status === 'skipped' ? 'skipped' : 'failed',
-    }));
-    return cloneActionStates([{ ...state, phase: result.state, revision: state.revision + 1, actions,
+    const actions: NonNullable<PaAgentActionState['actions']> = result.operations
+        .flatMap(operation => operationActions(operation));
+    const candidate = cloneActionStates([{ ...state, phase: result.state, revision: state.revision + 1, actions,
+        operationsUndoAvailable: result.operations.some(operation => operation.undoAvailable === true),
         receipt: { kind: 'operations-result', intentId: result.intentId, state: result.state } }])[0];
+    return isSameOperationsFacts(state, candidate) ? state : candidate;
 }
 
-/** A failed or unavailable undo leaves the original applied fact intact. */
+function operationActions(operation: import('./operations/types').OperationExecutionResult):
+NonNullable<PaAgentActionState['actions']> {
+    if (!operation.effects?.length) {
+        return [{
+            actionId: operation.operationId,
+            ...(operation.receiptId ? { receiptId: operation.receiptId } : {}),
+            phase: operation.status === 'succeeded' ? 'applied'
+                : operation.status === 'skipped' ? 'skipped'
+                    : operation.status === 'unknown' ? 'unknown' : 'failed',
+        }];
+    }
+        return operation.effects.map((effect, index) => ({
+            actionId: index === 0 ? operation.operationId : `${operation.operationId}:${effect.key}`,
+            ...((operation.receiptId
+                && (effect.key === 'note'
+                    || (effect.key === 'attachment' && effect.status === 'removed')))
+            ? { receiptId: operation.receiptId }
+            : {}),
+            phase: effect.status === 'applied' || effect.status === 'removed' ? 'applied'
+                : effect.status === 'unknown' ? 'unknown'
+                    : effect.status === 'restored' ? 'undone'
+                        : effect.status === 'not_started' ? 'skipped' : 'failed',
+            effect: { key: effect.key, status: effect.status },
+        }));
+}
+
+/** Undo adds observed restoration facts without erasing prior completed effects. */
 export function applyOperationsUndoResult(state: PaAgentActionState,
-    result: import('./operations/types').UndoResult): PaAgentActionState | undefined {
-    if (state.owner !== 'operations' || !state.actions || result.status !== 'undone') return undefined;
-    const matched = state.actions.find(action => action.receiptId === result.receiptId
-        && action.actionId === result.operationId && action.phase === 'applied');
-    if (!matched) return undefined;
-    const actions = state.actions.map(action => action === matched ? { ...action, phase: 'undone' as const } : { ...action });
-    return cloneActionStates([{ ...state, actions, revision: state.revision + 1,
-        phase: actions.every(action => action.phase === 'undone') ? 'undone' : 'partial',
+    result: import('./operations/types').UndoResult,
+    undoAvailable = result.undoAvailable === true): PaAgentActionState | undefined {
+    if (state.owner !== 'operations' || !state.actions
+        || (result.status !== 'undone' && result.checkpoint !== 'attachment-restored'
+            && !result.effects?.some(effect => effect.status === 'unknown'))) return undefined;
+    if (!state.actions.some(action => action.receiptId === result.receiptId
+        && action.actionId === result.operationId)) return undefined;
+    const matched = state.actions.filter(action => (action.receiptId === result.receiptId
+        || (!action.receiptId && result.effects?.some(effect => effect.key === action.effect?.key)))
+        && (action.actionId === result.operationId || action.actionId.startsWith(`${result.operationId}:`)));
+    if (!matched.length) return undefined;
+    const resultEffects = new Map((result.effects ?? []).map(effect => [effect.key, effect]));
+    const actions = state.actions.map(action => {
+        if (!matched.includes(action)) return { ...action };
+        const effect = action.effect ? resultEffects.get(action.effect.key) : undefined;
+        const restored = action.phase === 'undone' || result.status === 'undone' || effect?.status === 'restored';
+        return {
+            ...action,
+            phase: restored ? 'undone' as const : effect?.status === 'unknown' ? 'unknown' as const : action.phase,
+            ...(restored && !action.receiptId ? { receiptId: result.receiptId } : {}),
+            ...(effect ? { effect: { ...action.effect!, status: restored ? 'restored' as const : effect.status } } : {}),
+            ...(result.status === 'undone' ? { checkpoint: undefined }
+                : result.checkpoint && action.effect?.key === 'attachment' ? { checkpoint: result.checkpoint } : {}),
+        };
+    });
+    const candidate = cloneActionStates([{ ...state, actions, revision: state.revision + 1,
+        phase: actions.every(action => action.phase === 'undone')
+            ? 'undone' : 'partial',
+        operationsUndoAvailable: undoAvailable,
         receipt: { kind: 'operations-undo', intentId: state.operationId } }])[0];
+    return isSameOperationsFacts(state, candidate) ? state : candidate;
+}
+
+function isSameOperationsFacts(
+    previous: PaAgentActionState,
+    next: PaAgentActionState | undefined,
+): boolean {
+    if (!next) return false;
+    return previous.phase === next.phase
+        && previous.operationsUndoAvailable === next.operationsUndoAvailable
+        && JSON.stringify(previous.actions) === JSON.stringify(next.actions)
+        && JSON.stringify(previous.receipt) === JSON.stringify(next.receipt);
 }
 
 /** Persisted state is a boundary: reject the entire malformed envelope, preserving absence. */
@@ -353,7 +433,12 @@ export function projectActionStates(states: readonly PaAgentActionState[]): PaAg
             && state.receipt.state === 'submission_unknown' ? { imageProviderAcceptanceStatus: 'unknown' as const } : {}),
         ...(state.owner === 'operations' && state.phase === 'completed' && state.receipt.kind === 'operations-result'
             && state.actions?.length && state.actions.every(action => action.phase === 'applied')
-            ? { operationsEffectStatus: 'applied' as const } : {}),
+                ? { operationsEffectStatus: 'applied' as const } : {}),
+        ...(state.operationsUndoAvailable !== undefined ? { operationsUndoAvailable: state.operationsUndoAvailable } : {}),
+        ...(state.operationsBlockedReason ? { operationsBlockedReason: state.operationsBlockedReason } : {}),
+        ...(state.owner === 'operations' && state.receipt.kind === 'operations-result'
+            && (state.phase === 'partial' || state.phase === 'unknown')
+            ? { operationsEffectOutcome: state.phase } : {}),
         ...(['unknown', 'unavailable', 'lost'].includes(state.phase)
             ? { effectOutcome: 'unknown' as const, sideEffectsMayHaveOccurred: true } : {}),
         ...(state.owner === 'ghost' && state.phase === 'completed' && state.receipt.kind === 'ghost-operation'
@@ -364,17 +449,20 @@ export function projectActionStates(states: readonly PaAgentActionState[]): PaAg
 }
 
 /** Reuse the validated owner projection rather than infer effects from tool success.
- * Completed all-applied operations already have an exact effect alias; every
- * other substep remains necessary to describe partial, failed or undone work. */
+ * Completed legacy operations already have an exact effect alias. Compound
+ * file effects and incomplete or undone substeps remain explicit. */
 export function projectActionSummaryFacts(states: readonly PaAgentActionState[]): PaAgentActionSummaryFact[] {
     return projectActionStates(states).map(state => ({ owner: state.owner, operationId: state.operationId,
         phase: state.phase,
-        ...(state.actions && !(state.phase === 'completed' && state.operationsEffectStatus === 'applied')
-            ? { actions: state.actions } : {}),
+        ...(state.actions && (state.operationsEffectStatus !== 'applied'
+            || state.actions.some(action => action.effect)) ? { actions: state.actions } : {}),
         ...(state.saves ? { saves: state.saves } : {}),
         ...(state.imageOutputStatus ? { imageOutputStatus: state.imageOutputStatus } : {}),
         ...(state.imageProviderAcceptanceStatus ? { imageProviderAcceptanceStatus: state.imageProviderAcceptanceStatus } : {}),
         ...(state.operationsEffectStatus ? { operationsEffectStatus: state.operationsEffectStatus } : {}),
+        ...(state.operationsUndoAvailable !== undefined ? { operationsUndoAvailable: state.operationsUndoAvailable } : {}),
+        ...(state.operationsEffectOutcome ? { operationsEffectOutcome: state.operationsEffectOutcome } : {}),
+        ...(state.operationsBlockedReason ? { operationsBlockedReason: state.operationsBlockedReason } : {}),
         ...(state.ghostPublicationStatus ? { ghostPublicationStatus: state.ghostPublicationStatus } : {}),
         ...(state.effectOutcome ? { effectOutcome: state.effectOutcome } : {}),
         ...(state.sideEffectsMayHaveOccurred ? { sideEffectsMayHaveOccurred: state.sideEffectsMayHaveOccurred } : {}),
@@ -388,22 +476,26 @@ export function isSafeOperationsStagedObservation(message: Extract<import('./cha
     const content = message.content;
     const fact = content.resultFact;
     const metadata = content.metadata;
+    const blocked = metadata?.blockedReason === 'shared_reference';
     if (!isCoreWriteToolName(message.toolName) || message.isError || !content.includeInNextPrompt
         || Object.keys(content).some(key => !['promptText', 'previewText', 'includeInNextPrompt',
             'sourceRecords', 'contextUsed', 'resultFact', 'metadata'].includes(key))
         || content.sourceRecords?.length || content.contextUsed?.length
-        || content.promptText !== OPERATIONS_STAGED_MESSAGE
-        || content.previewText !== `Staged ${message.toolName} for inline review; no write occurred.`
+        || content.promptText !== (blocked ? OPERATIONS_BLOCKED_MESSAGE : OPERATIONS_STAGED_MESSAGE)
+        || content.previewText !== (blocked
+            ? `Blocked ${message.toolName} proposal shown for review; no write occurred.`
+            : `Staged ${message.toolName} for inline review; no write occurred.`)
         || fact?.kind !== 'approval_pending' || !opaqueId.safeParse(fact.intentId).success
         || Object.keys(fact).some(key => !['kind', 'intentId'].includes(key))
         || !metadata || Object.keys(metadata).some(key => !['outcome', 'intentId', 'operationCount',
-            'staged', 'wrote', 'originalLength', 'observationChars', 'retrySafety'].includes(key))
+            'staged', 'wrote', 'blockedReason', 'originalLength', 'observationChars', 'retrySafety'].includes(key))
+        || (metadata.blockedReason !== undefined && !blocked)
         || (metadata.retrySafety !== undefined && metadata.retrySafety !== 'side_effect')) return false;
     return metadata.outcome === 'success' && metadata.intentId === fact.intentId
         && Number.isInteger(metadata.operationCount) && (metadata.operationCount as number) > 0
         && metadata.staged === true && metadata.wrote === false
-        && metadata.originalLength === OPERATIONS_STAGED_MESSAGE.length
-        && metadata.observationChars === OPERATIONS_STAGED_MESSAGE.length;
+        && metadata.originalLength === content.promptText.length
+        && metadata.observationChars === content.promptText.length;
 }
 
 /** Empty source records alone never qualify an arbitrary accepted observation. */
@@ -540,7 +632,9 @@ export function collectActionStates(input: { runId: string; turnId: string;
             states.push({ schemaVersion: 1, owner: 'operations', operationId: fact.intentId, phase: 'pending',
                 origin: { runId: input.runId, turnId: input.turnId, assistantId,
                     callId: message.toolCallId, resultId: message.id }, revision: 0, inputLineage: lineage,
-                receipt: { kind: 'operations-staged', intentId: fact.intentId } });
+                receipt: { kind: 'operations-staged', intentId: fact.intentId },
+                ...(metadata?.blockedReason === 'shared_reference'
+                    ? { operationsBlockedReason: 'shared_reference' as const } : {}) });
             continue;
         }
         if (!isSafeImageAcceptedObservation(message) || fact?.kind !== 'accepted') continue;

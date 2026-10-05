@@ -555,7 +555,8 @@ export function createPaAgentCapabilityToolExecutor(
                 : "read_only";
         },
         canReuseSuccessfulResult: (toolCall, context): boolean => {
-            if (toolCall.name === 'get_image_status' || toolCall.name === 'read_writing_history') return false;
+            if (toolCall.name === 'get_image_status' || toolCall.name === 'get_operations_status'
+                || toolCall.name === 'read_writing_history') return false;
             if (toolCall.name === "get_writing_context") {
                 const prepared = options.registry.prepareAndValidate(toolCall.name, toolCall.input, context);
                 return prepared.ok && options.isWritingSelectionCurrent?.(prepared.input) === true;

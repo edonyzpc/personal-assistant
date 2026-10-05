@@ -13,7 +13,7 @@ import { PA_AGENT_ACTION_STATE_CONTEXT_RULES, projectActionStates, refreshGhostA
 import { completeInputLineage } from '../src/ai-services/input-lineage';
 
 // Keep default cache/lifecycle cases within one request; chunking cases set larger sizes explicitly.
-function history(turns = 12, size = 150): ChatMessage[] {
+function history(turns = 12, size = 120): ChatMessage[] {
     return Array.from({ length: turns }, (_, index): ChatMessage[] => [
         { role: "user", content: `User requirement ${index}. ${"u".repeat(size)}` },
         { role: "assistant", content: `Assistant claim ${index}. ${"a".repeat(size)}` },
@@ -1470,15 +1470,19 @@ describe("PaAgentContextSummarizer", () => {
             return new Promise((resolve) => { finish = resolve; });
         };
         const coordinator = new PaAgentContextSummarizer();
-        const pending = coordinator.prepareHistory({ history: input, historyBudgetChars: 3_000, invoke });
-        await startedPromise;
-        if (action === "source-change") input[0].content = "edited while provider was running";
-        else coordinator[action]();
-        finish(schema());
-        expect(await pending).toBeUndefined();
-        const next = jest.fn(respond);
-        await coordinator.prepareHistory({ history: input, historyBudgetChars: 3_000, invoke: next });
-        expect(next).toHaveBeenCalledTimes(action === "dispose" ? 0 : 1);
+        try {
+            const pending = coordinator.prepareHistory({ history: input, historyBudgetChars: 3_000, invoke });
+            await startedPromise;
+            if (action === "source-change") input[0].content = "edited while provider was running";
+            else coordinator[action]();
+            finish(schema());
+            expect(await pending).toBeUndefined();
+            const next = jest.fn(respond);
+            await coordinator.prepareHistory({ history: input, historyBudgetChars: 3_000, invoke: next });
+            expect(next).toHaveBeenCalledTimes(action === "dispose" ? 0 : 1);
+        } finally {
+            coordinator.dispose();
+        }
     });
 
     it("times out an uncooperative provider and releases timers", async () => {

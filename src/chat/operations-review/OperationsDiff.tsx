@@ -38,6 +38,29 @@ export function OperationsDiff({ model, mode, activeGroupIndex }: OperationsDiff
 
     return (
         <div className={`pa-operations-diff pa-operations-diff--${mode}`} data-mode={mode}>
+            {(model.blockers?.length ?? 0) > 0 && (
+                <section className="pa-operations-review-results" role="alert">
+                    {model.blockers!.map(blocker => (
+                        <div key={blocker.operationId} className="pa-operations-review-result" data-blocked={blocker.reason}>
+                            <div className="pa-operations-review-result__target">
+                                <span>{t('plugin.chat.operations.intent.image')}</span>
+                                <code>{blocker.attachmentPath}</code>
+                            </div>
+                            <span>{t('plugin.chat.operations.intent.sharedReferenceBlocked')}</span>
+                            <ul>
+                                {blocker.conflicts.map((conflict, index) => (
+                                    <li key={`${conflict.sourcePath}:${index}`}>
+                                        <code>{conflict.sourcePath}</code>
+                                        {conflict.remainsInSelectedNote && (
+                                            <span> · {t('plugin.chat.operations.intent.remainingNoteReference')}</span>
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    ))}
+                </section>
+            )}
             {mode === 'compact' && omittedChanges > 0 && (
                 <div className="pa-operations-diff__omitted" role="status">
                     {t('plugin.chat.operations.review.omitted', { count: omittedChanges })}

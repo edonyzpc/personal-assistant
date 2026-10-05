@@ -28,6 +28,11 @@ import { WritingContextRun, writingContextObservation, type WritingContextRunHos
 import { createWritingContextCapability, GET_WRITING_CONTEXT } from "./writing-context-tool";
 import { createWritingHistoryTool, type WritingHistoryHost, type WritingHistoryAdmission } from './writing-history-tool';
 import { createImageStatusTool, isImageStatusObservation, type ImageStatusHost } from './image-status-tool';
+import {
+    createOperationsStatusTool,
+    isOperationsStatusObservation,
+    type OperationsStatusHost,
+} from './operations-status-tool';
 import { createTaskSourceConstrainedExecutor } from "./task-source-executor";
 import { ChatMemoryRecoveryCoordinator } from "./retrieval-recovery-coordinator";
 import type { RetrievalDiagnosticEventInput } from "./retrieval-diagnostics";
@@ -232,6 +237,7 @@ export interface PaAgentRunOptions {
     writingContextHost?: Omit<WritingContextRunHost, "runId" | "verifyImages">;
     writingHistoryHost?: Omit<WritingHistoryHost, 'admitVersion' | 'onObservation'> & { isSourceCurrent?: () => boolean };
     imageStatus?: ImageStatusHost & { conversationId: string };
+    operationsStatus?: OperationsStatusHost & { conversationId: string };
     /** Host-owned model/conversation epoch; checked at physical dispatch. */
     isCurrent?: () => boolean;
     /** Existing or reserved Chat conversation identity; never fabricated for standalone runs. */
@@ -1333,6 +1339,7 @@ export class PaAgentRuntime {
         let writingContextCapability: AgentCapability | undefined;
         let writingHistoryCapability: AgentCapability | undefined;
         let imageStatusCapability: AgentCapability | undefined;
+        let operationsStatusCapability: AgentCapability | undefined;
         let ghostPublishingCapability: AgentCapability | undefined;
         let commandCapabilities: PaAgentCommandCapabilityScope | undefined;
         let writingContextBudget = { remainingTextChars: 0, remainingMemoryChars: 0 };
@@ -1798,6 +1805,16 @@ export class PaAgentRuntime {
             imageStatusCapability = createChatToolCapability(createImageStatusTool(options.imageStatus), { providerId: 'chat-image-status' });
             if (!commandCapabilities.register(imageStatusCapability)) throw new Error('Image status capability unavailable');
         }
+        if (options.operationsStatus) {
+            if (!options.conversationId || options.operationsStatus.conversationId !== options.conversationId) {
+                throw new Error('Operations status is not bound to this conversation');
+            }
+            operationsStatusCapability = createChatToolCapability(
+                createOperationsStatusTool(options.operationsStatus),
+                { providerId: 'operations-status' },
+            );
+            if (!commandCapabilities.register(operationsStatusCapability)) throw new Error('Operations status capability unavailable');
+        }
         if (writingContextHost) {
             const candidates = runSourceSelection ? (await Promise.all(writingContextHost.candidates.map(async candidate => {
                 const lineage = await resolveWritingVersionInputLineage(candidate,
@@ -1907,6 +1924,7 @@ export class PaAgentRuntime {
         }
         if (writingHistoryCapability) availableMetaToolNames.add('read_writing_history');
         if (imageStatusCapability) availableMetaToolNames.add('get_image_status');
+        if (operationsStatusCapability) availableMetaToolNames.add('get_operations_status');
         const hostPolicy = createPaAgentHostPolicy();
         // Structured host controls apply before dispatch. Natural-language task
         // boundaries are interpreted by the same main Agent and admitted below.
@@ -3119,6 +3137,7 @@ export class PaAgentRuntime {
                 return {
                     isCurrent: () => admission.isCurrent() && attachmentsCurrent(),
                     sourceValidity: () => admission.sourceValidity() && attachmentsCurrent(),
+                    authorityValidity: () => admission.authorityValidity() && attachmentsCurrent(),
                 };
             },
             resolveNoteSearchScope: sourceRun.resolveNoteSearchScope,
@@ -3141,6 +3160,7 @@ export class PaAgentRuntime {
                         || capability === imageGenerationCapability
                         || capability === ghostPublishingCapability
                         || capability === imageStatusCapability
+                        || capability === operationsStatusCapability
                         || capability === writingHistoryCapability
                         || insightRead
                         || insightAction
@@ -3368,6 +3388,9 @@ export class PaAgentRuntime {
                                 } else if (message.toolName === 'get_image_status'
                                     && this.toolRegistry.get(message.toolName) === imageStatusCapability
                                     && isImageStatusObservation(payload.observation)) writingContextLineage = completeInputLineage();
+                                else if (message.toolName === 'get_operations_status'
+                                    && this.toolRegistry.get(message.toolName) === operationsStatusCapability
+                                    && isOperationsStatusObservation(payload.observation)) writingContextLineage = completeInputLineage();
                             } catch { /* Unmatched observations remain unknown. */ }
                         }
                         if (runSourceSelection && message.toolName === GET_WRITING_CONTEXT

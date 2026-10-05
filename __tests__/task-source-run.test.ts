@@ -236,6 +236,29 @@ function executorFor(run: TaskSourceRun, userInput = userText) {
 }
 
 describe('Task source run host', () => {
+    it('keeps original Memory authority after a self-note observation epoch advance', async () => {
+        const h = fixture();
+        const run = new TaskSourceRun({
+            ...h.host,
+            getTaskSourceAuthorityEpoch: () => 'authority-1',
+        });
+        const lineage = completeInputLineage([
+            { kind: 'vault', path: h.a.path, via: 'note' },
+            { kind: 'run-notes-observation', runId: 'run-1', owner: 'memory',
+                sourceEpoch: 'epoch-1', memoryEnabled: true },
+        ]);
+        const admission = await run.prepareLineageAdmission(lineage);
+        expect(admission.sourceValidity()).toBe(true);
+        expect(admission.authorityValidity()).toBe(true);
+
+        h.setSourceEpoch('epoch-2');
+        expect(admission.sourceValidity()).toBe(false);
+        expect(admission.authorityValidity()).toBe(true);
+
+        h.setMemoryAllowed(false);
+        expect(admission.authorityValidity()).toBe(false);
+    });
+
     it.each(['notes', 'web', 'combined'] as const)('keeps cooperative admission equivalent to the complete %s admission', async scope => {
         const h = fixture();
         const run = new TaskSourceRun({ ...h.host, getTaskSourceAuthorityEpoch: () => 'authority-1',

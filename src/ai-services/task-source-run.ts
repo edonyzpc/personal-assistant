@@ -802,7 +802,7 @@ export class TaskSourceRun {
 
     /** Execution proof is cheap; the independent source-only receipt remains a full check. */
     readonly prepareLineageAdmission = async (lineage: InputLineage | undefined, signal?: AbortSignal): Promise<{
-        isCurrent(): boolean; sourceValidity(): boolean;
+        isCurrent(): boolean; sourceValidity(): boolean; authorityValidity(): boolean;
     }> => {
         throwIfAborted(signal);
         const owned = this.ownedLineage(lineage);
@@ -810,10 +810,22 @@ export class TaskSourceRun {
         const constraint = this.state.snapshot();
         const task = createCooperativeTask(signal);
         const needsLineage = !!scope || owned?.dependencies.some(dependency => dependency.kind === 'run-notes-observation') === true;
+        const authorityObservations = owned?.dependencies.filter((
+            dependency
+        ): dependency is Extract<InputDependency, { kind: 'run-notes-observation' }> =>
+            dependency.kind === 'run-notes-observation') ?? [];
+        const authorityLineage = owned?.dependencies.every(dependency => dependency.kind === 'run-notes-observation')
+            ? undefined
+            : completeInputLineage(owned?.dependencies.filter(dependency =>
+                dependency.kind !== 'run-notes-observation') ?? []);
         if (!this.getTaskSourceAuthorityEpoch) {
             if (!this.admitsLineage(owned)) throw new Error('Task source input ancestry is no longer current.');
             const sourceValidity = this.captureLineageSourceValidity(owned);
-            return { isCurrent: () => this.isCurrent() && this.admitsLineage(owned), sourceValidity };
+            return {
+                isCurrent: () => this.isCurrent() && this.admitsLineage(owned),
+                sourceValidity,
+                authorityValidity: () => this.hostSourcesAreCurrent() && this.state.snapshot() === constraint,
+            };
         }
         while (this.isCurrent() && this.state.snapshot() === constraint) {
             const epoch = this.currentAuthorityEpoch();
@@ -849,7 +861,29 @@ export class TaskSourceRun {
                 } catch { return false; }
             };
             return { isCurrent: () => this.isCurrent() && this.state.snapshot() === constraint
-                && this.currentAuthorityEpoch() === epoch, sourceValidity };
+                && this.currentAuthorityEpoch() === epoch, sourceValidity,
+                authorityValidity: () => {
+                    try {
+                        if (!this.hostSourcesAreCurrent() || this.state.snapshot() !== constraint) return false;
+                        if (authorityObservations.some(observation => observation.runId !== constraint.runId
+                            || (observation.owner === 'memory'
+                                && observation.memoryEnabled !== this.isMemoryAllowed()))) return false;
+                        if (!authorityLineage) return true;
+                        return admitsInputLineage(authorityLineage, scope ?? 'combined', {
+                            ...this.lineageAdmission,
+                            isVaultAllowed: (path, via) => {
+                                if (via === 'memory' && !this.isMemoryAllowed()) return false;
+                                const source = vaultSources.get(path);
+                                return source?.noteId !== undefined && source.file !== undefined
+                                    && this.identities.pathForNoteId(source.noteId) === path
+                                    && this.getFileByPath(path) === source.file && source.file.path === path
+                                    && this.isPathAllowed?.(path) !== false
+                                    && this.state.allows({ kind: 'note', noteId: source.noteId }, constraint);
+                            },
+                            isWebAllowed: () => this.isWebAllowed() && this.state.allows({ kind: 'web' }, constraint),
+                        });
+                    } catch { return false; }
+                } };
         }
         throwIfAborted(signal);
         throw new Error('Task source admission is no longer current.');

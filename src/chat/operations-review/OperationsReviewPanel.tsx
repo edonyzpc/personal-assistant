@@ -42,7 +42,6 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
     const groupCount = snapshot.model.groups.length;
     const activeIndex = Math.min(activeGroupIndex, Math.max(0, groupCount - 1));
     const decisionVisible = snapshot.status === 'pending';
-    const canAct = snapshot.activated && snapshot.actionInFlight === null;
 
     return (
         <div className="pa-operations-review-view">
@@ -75,6 +74,26 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
 
             <main className="pa-operations-review-view__content">
                 <OperationsDiff model={snapshot.model} mode="full" activeGroupIndex={activeIndex} />
+                {(snapshot.model.attachments?.length ?? 0) > 0 && (
+                    <section className="pa-operations-review-results">
+                        {(snapshot.model.attachments ?? []).map(attachment => (
+                            <div key={attachment.id} className="pa-operations-review-result">
+                                <div className="pa-operations-review-result__target">
+                                    <span>{t('plugin.chat.operations.intent.image')}</span>
+                                    <code>{attachment.path}</code>
+                                </div>
+                                <span>
+                                    {attachment.blocked
+                                        ? t('plugin.chat.operations.intent.attachmentDeleteBlocked')
+                                        : attachment.action === 'delete'
+                                        ? t('plugin.chat.operations.intent.attachmentDelete')
+                                        : t('plugin.chat.operations.intent.attachmentKeep')}
+                                </span>
+                                <span>{t('plugin.chat.operations.intent.temporaryUndo')}</span>
+                            </div>
+                        ))}
+                    </section>
+                )}
                 {snapshot.operationResults.length > 0 && (
                     <section className="pa-operations-review-results">
                         {projectOperationsReviewResultRows(snapshot).map(row => (
@@ -88,7 +107,9 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
                                     <code>{row.operationResult.path}</code>
                                 </div>
                                 <span>{row.message}</span>
-                                {row.operationResult.receiptId && (
+                                {row.operationResult.receiptId
+                                    && row.operationResult.undoAvailable !== false
+                                    && row.undoResult?.status !== "undone" && (
                                     <button
                                         type="button"
                                         className="pa-operations-review-secondary-button"
@@ -110,7 +131,7 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
                         <button
                             type="button"
                             className="pa-operations-review-primary-button"
-                            disabled={!canAct}
+                            disabled={!session.canConfirm()}
                             onClick={() => { void session.confirm(); }}
                         >
                             {t('plugin.chat.operations.intent.confirm')}
@@ -118,7 +139,7 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
                         <button
                             type="button"
                             className="pa-operations-review-secondary-button"
-                            disabled={!canAct}
+                            disabled={!session.canCancel()}
                             onClick={() => session.cancel()}
                         >
                             {t('plugin.chat.operations.intent.cancel')}
@@ -148,6 +169,8 @@ function statusText(status: string): string {
         case 'completed': return t('plugin.chat.operations.intent.completed');
         case 'partial': return t('plugin.chat.operations.intent.partial');
         case 'failed': return t('plugin.chat.operations.intent.failed');
+        case 'unknown': return t('plugin.chat.operations.intent.unknown');
+        case 'undone': return t('plugin.chat.operations.intent.undone');
         case 'cancelled': return t('plugin.chat.operations.intent.cancelled');
         case 'discarded': return t('plugin.chat.operations.intent.discarded');
         case 'expired': return t('plugin.chat.operations.intent.expired');
@@ -160,6 +183,8 @@ function operationStatusText(status: string): string {
         case 'succeeded': return t('plugin.chat.operations.intent.succeeded');
         case 'stale': return t('plugin.chat.operations.intent.stale');
         case 'skipped': return t('plugin.chat.operations.intent.skipped');
+        case 'unknown': return t('plugin.chat.operations.intent.unknown');
+        case 'partial': return t('plugin.chat.operations.intent.partial');
         default: return t('plugin.chat.operations.intent.failed');
     }
 }
@@ -169,6 +194,7 @@ function operationKindText(name: string): string {
         case 'vault_create': return t('plugin.chat.operations.intent.create');
         case 'vault_append': return t('plugin.chat.operations.intent.append');
         case 'frontmatter_update': return t('plugin.chat.operations.intent.properties');
+        case 'remove_note_image': return t('plugin.chat.operations.intent.image');
         default: return t('plugin.chat.operations.intent.edit');
     }
 }
@@ -184,16 +210,44 @@ export function projectOperationsReviewResultRows(
         const pathOperationNumber = snapshot.operationResults
             .filter(candidate => candidate.path === result.path)
             .findIndex(candidate => candidate.operationId === result.operationId) + 1;
+        const effects = undoResult?.effects ?? result.effects;
+        const message = effects?.length
+            ? [
+                effects.map(effect => effectText(effect)).join('; '),
+                undoResult?.message ?? (undoResult ? undefined : result.message),
+                undoResult?.checkpoint ? t('plugin.chat.operations.intent.attachmentRestored') : undefined,
+            ].filter(Boolean).join('; ')
+            : undoResult
+                ? undoResult.status === 'undone'
+                    ? t('plugin.chat.operations.intent.undone')
+                    : [
+                        undoResult.message ?? t('plugin.chat.operations.intent.undoFailed'),
+                        ...(undoResult.checkpoint
+                            ? [t('plugin.chat.operations.intent.attachmentRestored')] : []),
+                    ].join(' ')
+                : result.message ?? operationStatusText(result.status);
         return {
             operationResult: result,
             ...(undoResult ? { undoResult } : {}),
             status: undoResult?.status ?? result.status,
-            message: undoResult
-                ? undoResult.status === 'undone'
-                    ? t('plugin.chat.operations.intent.undone')
-                    : undoResult.message ?? t('plugin.chat.operations.intent.undoFailed')
-                : result.message ?? operationStatusText(result.status),
+            message,
             pathOperationNumber,
         };
     });
+}
+
+function effectText(effect: NonNullable<OperationsReviewSnapshot["operationResults"][number]["effects"]>[number]): string {
+    const target = effect.key === 'note'
+        ? t('plugin.chat.operations.intent.noteEffect')
+        : t('plugin.chat.operations.intent.attachmentEffect');
+    const status = effect.status === 'applied' || effect.status === 'removed'
+        ? t('plugin.chat.operations.intent.succeeded')
+        : effect.status === 'unknown'
+            ? t('plugin.chat.operations.intent.unknown')
+            : effect.status === 'restored'
+                ? t('plugin.chat.operations.intent.undone')
+                : effect.status === 'not_started'
+                    ? t('plugin.chat.operations.intent.effectNotStarted')
+                    : t('plugin.chat.operations.intent.failed');
+    return `${target}: ${status}`;
 }

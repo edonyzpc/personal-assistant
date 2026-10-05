@@ -25,6 +25,7 @@ export interface OperationsUndoStoreOptions {
 export class OperationsUndoStore {
     private readonly receipts = new Map<string, UndoReceipt>();
     private readonly used = new Set<string>();
+    private readonly expired = new Set<string>();
     private readonly now: () => number;
     private readonly ttlMs: number;
     private readonly createId: () => string;
@@ -55,10 +56,12 @@ export class OperationsUndoStore {
 
     get(id: string): UndoReceiptLookup {
         if (this.used.has(id)) return { ok: false, reason: "used" };
+        if (this.expired.has(id)) return { ok: false, reason: "expired" };
         const receipt = this.receipts.get(id);
         if (!receipt) return { ok: false, reason: "missing" };
         if (receipt.expiresAt <= this.now()) {
             this.receipts.delete(id);
+            this.expired.add(id);
             return { ok: false, reason: "expired" };
         }
         return { ok: true, receipt };
@@ -82,12 +85,16 @@ export class OperationsUndoStore {
     clear(): void {
         this.receipts.clear();
         this.used.clear();
+        this.expired.clear();
     }
 
     private pruneExpired(): void {
         const now = this.now();
         for (const [id, receipt] of this.receipts) {
-            if (receipt.expiresAt <= now) this.receipts.delete(id);
+            if (receipt.expiresAt <= now) {
+                this.receipts.delete(id);
+                this.expired.add(id);
+            }
         }
     }
 }

@@ -4,6 +4,8 @@ import {
     OperationsIntentController,
 } from "./operations-intent-controller";
 import { OperationsToolProvider } from "./operations-tool-provider";
+import type { NoteImageRemovalHost } from "./note-image-removal";
+import { NoteImageRemovalResourceOwner } from "./note-image-removal-resources";
 import type { FrontmatterCodec } from "./vault-transform";
 import type {
     OperationsEventListener,
@@ -26,6 +28,8 @@ export interface OperationsServiceOptions {
     now?: () => number;
     createId?: () => string;
     pendingTtlMs?: number;
+    noteImageRemovalHost?: NoteImageRemovalHost;
+    noteImageRemovalResources?: NoteImageRemovalResourceOwner;
 }
 
 export interface CreateOperationsSessionOptions {
@@ -45,11 +49,16 @@ export class OperationsService {
     readonly capabilityProvider: CapabilityProvider;
 
     private readonly sessions = new Set<OperationsSession>();
+    private readonly noteImageRemovalResources: NoteImageRemovalResourceOwner;
     private disposed = false;
 
     constructor(private readonly options: OperationsServiceOptions) {
         this.provider = new OperationsToolProvider();
         this.capabilityProvider = this.provider;
+        this.noteImageRemovalResources = this.options.noteImageRemovalResources
+            ?? new NoteImageRemovalResourceOwner({
+                ...(this.options.now ? { now: this.options.now } : {}),
+            });
     }
 
     createSession(options: CreateOperationsSessionOptions): OperationsSession {
@@ -65,13 +74,19 @@ export class OperationsService {
             ...(this.options.now ? { now: this.options.now } : {}),
             ...(this.options.createId ? { createId: this.options.createId } : {}),
             ...(this.options.pendingTtlMs !== undefined ? { pendingTtlMs: this.options.pendingTtlMs } : {}),
+            ...(this.options.noteImageRemovalHost
+                ? { noteImageRemovalHost: this.options.noteImageRemovalHost }
+                : {}),
+            noteImageRemovalResources: this.noteImageRemovalResources,
         });
         const session = new OperationsSession({
             controller,
             isOperationsAgentEnabled: this.options.isOperationsAgentEnabled,
             capabilityProvider: this.provider,
             readContextResult: (intentId, runId) => this.readContextResult(intentId, runId),
-            onDispose: () => this.sessions.delete(session),
+            onDispose: () => {
+                this.sessions.delete(session);
+            },
         });
         this.sessions.add(session);
         return session;
@@ -82,6 +97,7 @@ export class OperationsService {
         this.disposed = true;
         for (const session of [...this.sessions]) session.dispose();
         this.sessions.clear();
+        this.noteImageRemovalResources.dispose();
     }
 
     /** Read-only context may follow a live owner on another Chat surface.
@@ -91,7 +107,7 @@ export class OperationsService {
             const observed = session.getOwnedContextResult(intentId, runId);
             if (observed.pending || observed.executing || observed.execution || observed.terminal) return observed;
         }
-        return { undoneReceiptIds: [], pending: false, executing: false };
+        return { undoneReceiptIds: [], undoResults: [], pending: false, executing: false };
     }
 
 }
@@ -114,6 +130,10 @@ export class OperationsSession {
     private readonly onDispose: () => void;
     private readonly readContextResult: OperationsSessionOptions['readContextResult'];
     private disposed = false;
+
+    get isDisposed(): boolean {
+        return this.disposed;
+    }
 
     constructor(options: OperationsSessionOptions) {
         this.controller = options.controller;

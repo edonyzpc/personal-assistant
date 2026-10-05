@@ -40,6 +40,70 @@ function intent(operations: readonly PreparedOperation[]): OperationsIntent {
 }
 
 describe("OperationsReviewModel", () => {
+    it("exposes an independent attachment impact for a compound note-image operation", () => {
+        const model = createOperationsReviewModel(intent([{
+            kind: "note_image_removal",
+            id: "image-operation",
+            toolCallId: "call-image",
+            name: "remove_note_image",
+            input: {
+                notePath: "notes/a.md",
+                imageReference: "![[assets/a.png]]",
+                attachmentAction: "delete",
+            },
+            path: "notes/a.md",
+            expectedBefore: "![[assets/a.png]]",
+            expectedAfter: "",
+            effects: {
+                note: { path: "notes/a.md", status: "not_started" },
+                attachment: {
+                    path: "assets/a.png",
+                    action: "delete",
+                    plannedAction: "remove",
+                    status: "not_started",
+                },
+            },
+            coverage: { kind: "scoped_vault_search", complete: true },
+            undoLimitation: "temporary-attachment-and-note",
+        }]));
+
+        expect(model.groups[0]).toMatchObject({
+            before: "![[assets/a.png]]",
+            after: "",
+        });
+        expect(model.attachments).toEqual([{
+            id: "image-operation:attachment",
+            path: "assets/a.png",
+            action: "delete",
+            plannedAction: "remove",
+            undoLimitation: "temporary-attachment-and-note",
+        }]);
+
+        const original = model.groups[0]!.operations[0]!;
+        if (original.kind !== "note_image_removal") throw new Error("Expected image removal fixture");
+        const conflicts = Object.freeze(Array.from({ length: 50 }, (_value, index) => Object.freeze({
+            sourcePath: `notes/shared-${index}.md`,
+            syntax: "wiki-embed" as const,
+            remainsInSelectedNote: index === 0,
+        })));
+        const blockedModel = createOperationsReviewModel(intent([{
+            ...original,
+            block: { reason: "shared_reference" as const, conflicts },
+        }]));
+        expect(blockedModel.blockers).toEqual([{
+            operationId: "image-operation",
+            attachmentPath: "assets/a.png",
+            reason: "shared_reference",
+            conflicts,
+        }]);
+        expect(blockedModel.blockers?.[0]?.conflicts).toHaveLength(50);
+        expect(Object.isFrozen(blockedModel.blockers)).toBe(true);
+        expect(blockedModel.attachments).toEqual([{
+            ...model.attachments![0],
+            blocked: true,
+        }]);
+    });
+
     it("groups by normalized path in first-seen order and preserves operation order", () => {
         const model = createOperationsReviewModel(intent([
             operation("a1", "notes/A.md", "A0", "A1"),

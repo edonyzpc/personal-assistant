@@ -725,6 +725,8 @@ export type ChatToolName =
     | "vault_append"
     | "vault_process"
     | "frontmatter_update"
+    | "remove_note_image"
+    | "get_operations_status"
     | "replace_selection"
     | "webSearch"
     | "load_skill";

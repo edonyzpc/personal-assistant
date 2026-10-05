@@ -60,6 +60,7 @@ const OPERATIONS_TOOL_NAMES = new Set([
     "vault_append",
     "vault_process",
     "frontmatter_update",
+    "remove_note_image",
 ]);
 
 export function createOperationsPromptGuidance(

@@ -5,7 +5,7 @@ import { parseGhostCommand } from '../ghost-publishing/entry';
 import { renderGhostPublishingCard } from '../ghost-publishing/card';
 import type { ChatSourceScope } from '../ai-services/chat-source-scope';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
-import { cloneActionStates, markGhostStatusUnavailable, refreshGhostActionState, refreshImageActionState, refreshWritingSaveStates } from '../ai-services/pa-agent-result-facts';
+import { applyOperationsExecutionResult, applyOperationsUndoResult, cloneActionStates, markGhostStatusUnavailable, refreshGhostActionState, refreshImageActionState, refreshWritingSaveStates } from '../ai-services/pa-agent-result-facts';
 import { cloneInputLineage, completeInputLineage, generationInputSnapshotInputLineage, resolveWritingVersionInputLineage,
     unionInputLineages, unknownInputLineage, type InputLineage } from '../ai-services/input-lineage';
 import { PaAgentContextOverflowError } from '../ai-services/context';
@@ -72,6 +72,7 @@ import type {
     UndoResult,
 } from '../ai-services/operations/types';
 import { OperationsReviewSession } from '../ai-services/operations/operations-review-session';
+import type { OperationsStatusObservation } from '../ai-services/operations-status-tool';
 import { formatOperationsPreview } from '../ai-services/operations/operations-presentation';
 import { mountOperationsDiff } from './operations-review/mount';
 import { ShareCardModal } from '../share-card/share-card-modal';
@@ -3522,6 +3523,27 @@ export class LLMView extends ItemView {
                     model: initialModel,
                     mode: 'compact',
                 }));
+                for (const attachment of initialModel.attachments ?? []) {
+                    const attachmentRow = list.createDiv({
+                        cls: 'pa-operations-intent-card__operation',
+                    });
+                    attachmentRow.createEl('code', {
+                        cls: 'pa-operations-intent-card__path',
+                        text: attachment.path,
+                    });
+                    attachmentRow.createSpan({
+                        cls: 'pa-operations-intent-card__operation-status',
+                        text: attachment.blocked
+                            ? t('plugin.chat.operations.intent.attachmentDeleteBlocked')
+                            : attachment.action === 'delete'
+                            ? t('plugin.chat.operations.intent.attachmentDelete')
+                            : t('plugin.chat.operations.intent.attachmentKeep'),
+                    });
+                    attachmentRow.createSpan({
+                        cls: 'pa-operations-intent-card__undo',
+                        text: t('plugin.chat.operations.intent.temporaryUndo'),
+                    });
+                }
                 for (const operation of intent.operations) {
                     const row = list.createDiv({ cls: 'pa-operations-intent-card__operation' });
                     row.hidden = true;
@@ -3603,20 +3625,52 @@ export class LLMView extends ItemView {
                 unregisterCardTeardown();
             };
             unregisterCardTeardown = this.registerViewTeardown(cleanupCard);
+            const effectsText = (effects: NonNullable<OperationExecutionResult['effects']>) => effects.map(effect => {
+                const target = effect.key === 'note'
+                    ? t('plugin.chat.operations.intent.noteEffect')
+                    : t('plugin.chat.operations.intent.attachmentEffect');
+                const status = effect.status === 'applied' || effect.status === 'removed'
+                    ? t('plugin.chat.operations.intent.succeeded')
+                    : effect.status === 'restored'
+                        ? t('plugin.chat.operations.intent.undone')
+                        : effect.status === 'unknown'
+                            ? t('plugin.chat.operations.intent.unknown')
+                            : effect.status === 'not_started'
+                                ? t('plugin.chat.operations.intent.effectNotStarted')
+                                : t('plugin.chat.operations.intent.failed');
+                return `${target}: ${status}`;
+            }).join('; ');
             const resultText = (result: OperationExecutionResult) => {
+                if (result.effects?.length) {
+                    return [effectsText(result.effects), result.message].filter(Boolean).join('; ');
+                }
                 if (result.status === 'succeeded') return t('plugin.chat.operations.intent.succeeded');
                 if (result.status === 'stale') return t('plugin.chat.operations.intent.stale');
                 if (result.status === 'skipped') return t('plugin.chat.operations.intent.skipped');
+                if (result.status === 'unknown') return t('plugin.chat.operations.intent.unknown');
                 return result.message || t('plugin.chat.operations.intent.failed');
             };
-            const undoText = (result: UndoResult) => result.status === 'undone'
-                ? t('plugin.chat.operations.intent.undone')
-                : result.message || t('plugin.chat.operations.intent.undoFailed');
+            const undoText = (result: UndoResult, operation: OperationExecutionResult) => {
+                const effects = result.effects ?? operation.effects;
+                if (effects?.length) {
+                    return [
+                        effectsText(effects),
+                        result.message,
+                        result.checkpoint === 'attachment-restored'
+                            ? t('plugin.chat.operations.intent.attachmentRestored') : undefined,
+                    ].filter(Boolean).join('; ');
+                }
+                if (result.status === 'undone') return t('plugin.chat.operations.intent.undone');
+                if (result.checkpoint === 'attachment-restored') return t('plugin.chat.operations.intent.attachmentRestored');
+                return result.message || t('plugin.chat.operations.intent.undoFailed');
+            };
             const statusText = (status: string) => {
                 if (status === 'executing') return t('plugin.chat.operations.intent.executing');
                 if (status === 'completed') return t('plugin.chat.operations.intent.completed');
                 if (status === 'partial') return t('plugin.chat.operations.intent.partial');
                 if (status === 'failed') return t('plugin.chat.operations.intent.failed');
+                if (status === 'unknown') return t('plugin.chat.operations.intent.unknown');
+                if (status === 'undone') return t('plugin.chat.operations.intent.undone');
                 if (status === 'cancelled') return t('plugin.chat.operations.intent.cancelled');
                 if (status === 'discarded') return t('plugin.chat.operations.intent.discarded');
                 if (status === 'expired') return t('plugin.chat.operations.intent.expired');
@@ -3652,16 +3706,16 @@ export class LLMView extends ItemView {
                     row.status.hidden = false;
                     row.status.setText(resultText(result));
                     row.status.dataset.status = result.status;
-                    row.undo.hidden = !result.receiptId;
+                    row.undo.hidden = !result.receiptId || result.undoAvailable === false;
                     row.undo.disabled = !reviewSession.canUndo() || snapshot.actionInFlight !== null;
                     const receiptId = result.receiptId;
                     const undoResult = (receiptId ? undoByReceipt.get(receiptId) : undefined)
                         ?? undoByOperation.get(result.operationId);
                     if (!receiptId && !undoResult) continue;
                     if (undoResult) {
-                        row.status.setText(undoText(undoResult));
+                        row.status.setText(undoText(undoResult, result));
                         row.status.dataset.status = undoResult.status;
-                        row.undo.hidden = true;
+                        row.undo.hidden = undoResult.status === 'undone' || undoResult.undoAvailable === false;
                     }
                     row.undo.onclick = () => {
                         if (row.undo.disabled || !receiptId) return;
@@ -5299,6 +5353,47 @@ export class LLMView extends ItemView {
                             signal,
                         }),
                     } : undefined;
+                const operationsStatus = conversationIdForMemoryActions
+                    ? {
+                        conversationId: conversationIdForMemoryActions,
+                        read: async (
+                            input: { intentId: string },
+                            signal?: AbortSignal,
+                        ): Promise<OperationsStatusObservation> => {
+                            if (controller.signal.aborted || signal?.aborted || !isLiveTurn()) {
+                                return { intentId: input.intentId, available: false, reason: 'not_visible' };
+                            }
+                            const entriesSnapshot = timelineEntries;
+                            const visibleStates = entriesSnapshot
+                                .flatMap(entry => entry.kind === 'history'
+                                    ? entry.assistant.actionStates ?? entry.assistant.canonicalTurn?.actionStates ?? []
+                                    : [])
+                                .filter(state => state.owner === 'operations' && state.operationId === input.intentId);
+                            const visibleOrigins = new Map(visibleStates.map(state => [
+                                JSON.stringify([state.origin.runId, state.origin.turnId, state.origin.assistantId]),
+                                state.origin,
+                            ]));
+                            const [sourceOrigin] = visibleOrigins.values();
+                            if (!sourceOrigin || visibleOrigins.size !== 1) {
+                                return { intentId: input.intentId, available: false, reason: 'not_visible' };
+                            }
+                            const sourceLifetime = await this.conversationPersistence.captureOperationsSourceLifetime(
+                                conversationIdForMemoryActions,
+                                signal,
+                            );
+                            if (!sourceLifetime
+                                || !sourceLifetime()
+                                || timelineEntries !== entriesSnapshot
+                                || !isLiveTurn()) {
+                                return { intentId: input.intentId, available: false, reason: 'owner_unavailable' };
+                            }
+                            return this.chatService.getVisibleOperationsStatus(
+                                input.intentId,
+                                sourceOrigin.runId,
+                            );
+                        },
+                    }
+                    : undefined;
                 if (nativeWriting) {
                     const versions = this.host.writingVersions!;
                     const getAllowedVersionIds = () => [...new Set([
@@ -5640,6 +5735,7 @@ export class LLMView extends ItemView {
                         writingContextHost,
                         writingHistoryHost,
                         imageStatus,
+                        operationsStatus,
                         writingOutputProtocol: nativeWriting ? 'native' : undefined,
                         writingContext: turn.writingParent ? {
                             parentVersionId: turn.writingParent.id, text: turn.writingParent.text,
@@ -5654,9 +5750,14 @@ export class LLMView extends ItemView {
                                 const conversationId = conversationIdForMemoryActions;
                                 const persistence = this.conversationPersistence;
                                 const service = this.chatService;
-                                service.registerOperationsContextPersistence(intent.id, async () => {
+                                service.registerOperationsContextPersistence(intent.id, async (execution, undoResults) => {
                                     await persistence.updateActionStatesForOperation(conversationId, intent.runId, 'operations', intent.id,
-                                        states => states.map(state => service.refreshOperationsActionState(state)));
+                                        states => states.map(state => execution
+                                            ? applyOperationsExecutionResult(state, execution) ?? state
+                                            : undoResults
+                                                ? undoResults.reduce((current, result) =>
+                                                    applyOperationsUndoResult(current, result, false) ?? current, state)
+                                                : service.refreshOperationsActionState(state)));
                                 });
                             }
                             const handle = renderOperationsIntentCard(turn.assistantMessage, intent);

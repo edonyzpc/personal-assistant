@@ -4,12 +4,26 @@ import {
     MAX_OPERATION_RESULT_GROWTH_CHARS,
     OperationsValidationError,
     isCoreWriteToolName,
-    validateCoreWriteInput,
+    validateVaultAppendInput,
+    validateVaultCreateInput,
+    validateVaultProcessInput,
+    validateFrontmatterUpdateInput,
+    validateRemoveNoteImageInput,
 } from "./input-validation";
 import { OperationsUndoStore } from "./operations-undo-store";
+import { IMAGE_POLICY, imageSourceHash } from "../../chat/image-policy";
+import {
+    createRetainedNoteImageReadGuard,
+    prepareNoteImageRemoval,
+    verifyNoteImageReferenceCoverage,
+    type NoteImageRemovalHost,
+    type NoteImageRemovalPrivatePreparation,
+} from "./note-image-removal";
+import {
+    NoteImageRemovalResourceError,
+    NoteImageRemovalResourceOwner,
+} from "./note-image-removal-resources";
 import type {
-    CoreWriteInput,
-    CoreWriteToolName,
     FrontmatterUpdateInput,
     OperationExecutionResult,
     OperationsControllerEvent,
@@ -20,6 +34,8 @@ import type {
     OperationsIntentState,
     OperationsVault,
     OperationsVaultFile,
+    NoteImageRemovalEffectResult,
+    PreparedMarkdownOperation,
     PreparedOperation,
     StageOperationsIntentInput,
     UndoReceipt,
@@ -27,7 +43,9 @@ import type {
     VaultAppendInput,
     VaultCreateInput,
     VaultProcessInput,
+    RemoveNoteImageInput,
 } from "./types";
+import { getOperationsBlockedReason, REMOVE_NOTE_IMAGE_TOOL_NAME } from "./types";
 import { OperationsPathError, parentVaultPath, validateOperationsVaultPath } from "./vault-path";
 import {
     assertTaskSourceReadCurrent,
@@ -71,12 +89,20 @@ export interface OperationsIntentControllerOptions {
     createId?: () => string;
     pendingTtlMs?: number;
     onEvent?: OperationsEventListener;
+    noteImageRemovalHost?: NoteImageRemovalHost;
+    noteImageRemovalResources?: NoteImageRemovalResourceOwner;
 }
 
 interface VirtualTarget {
     exists: boolean;
     content: string | null;
 }
+
+type MarkdownWriteTool =
+    | { name: "vault_create"; input: VaultCreateInput }
+    | { name: "vault_append"; input: VaultAppendInput }
+    | { name: "vault_process"; input: VaultProcessInput }
+    | { name: "frontmatter_update"; input: FrontmatterUpdateInput };
 
 /**
  * Memory-only staging/execution boundary used by both the runtime wrapper and
@@ -92,12 +118,16 @@ export class OperationsIntentController {
     private readonly now: () => number;
     private readonly createId: () => string;
     private readonly pendingTtlMs: number;
+    private readonly noteImageRemovalHost?: NoteImageRemovalHost;
+    private readonly noteImageRemovalResources?: NoteImageRemovalResourceOwner;
+    private readonly noteImageProposals = new Map<string, NoteImageRemovalPrivatePreparation>();
     private readonly listeners = new Set<OperationsEventListener>();
     private readonly intents = new Map<string, OperationsIntent>();
     private readonly terminalStates = new Map<string, { state: OperationsIntentState; runId: string }>();
     /** Finite domain results for context; no note contents or undo capabilities. */
     private readonly contextResults = new Map<string, { result: OperationsExecutionResult; runId: string }>();
     private readonly contextUndone = new Map<string, Set<string>>();
+    private readonly contextUndoResults = new Map<string, UndoResult[]>();
     private readonly expiredIntentIds = new Map<string, string>();
     private readonly expirationTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private disposed = false;
@@ -113,6 +143,8 @@ export class OperationsIntentController {
         this.now = options.now ?? Date.now;
         this.createId = options.createId ?? defaultId;
         this.pendingTtlMs = options.pendingTtlMs ?? DEFAULT_PENDING_INTENT_TTL_MS;
+        this.noteImageRemovalHost = options.noteImageRemovalHost;
+        this.noteImageRemovalResources = options.noteImageRemovalResources;
         if (options.onEvent) this.listeners.add(options.onEvent);
     }
 
@@ -160,43 +192,87 @@ export class OperationsIntentController {
             if (!isCoreWriteToolName(call.name as string)) {
                 throw new OperationsControllerError("schema_invalid", `Unsupported Operations tool: ${String(call.name)}.`);
             }
-            let validated: CoreWriteInput;
+            let tool: MarkdownWriteTool | { name: typeof REMOVE_NOTE_IMAGE_TOOL_NAME; input: RemoveNoteImageInput };
             let path: string;
             try {
-                validated = validateCoreWriteInput(call.name, call.input);
-                path = validateOperationsVaultPath(validated.path);
+                if (call.name === REMOVE_NOTE_IMAGE_TOOL_NAME) {
+                    const input = validateRemoveNoteImageInput(call.input);
+                    path = validateOperationsVaultPath(input.notePath);
+                    tool = { name: call.name, input };
+                } else if (call.name === "vault_create") {
+                    const input = validateVaultCreateInput(call.input);
+                    path = validateOperationsVaultPath(input.path);
+                    tool = { name: call.name, input };
+                } else if (call.name === "vault_append") {
+                    const input = validateVaultAppendInput(call.input);
+                    path = validateOperationsVaultPath(input.path);
+                    tool = { name: call.name, input };
+                } else if (call.name === "vault_process") {
+                    const input = validateVaultProcessInput(call.input);
+                    path = validateOperationsVaultPath(input.path);
+                    tool = { name: call.name, input };
+                } else {
+                    const input = validateFrontmatterUpdateInput(call.input);
+                    path = validateOperationsVaultPath(input.path);
+                    tool = { name: call.name, input };
+                }
             } catch (error) {
                 throw normalizeStageError(error);
             }
-            const normalizedInput = Object.freeze({ ...validated, path }) as CoreWriteInput;
             // Later operations on this path use the virtual baseline produced
             // in this batch; create does not grant permission to read old text.
             const readKind = initialReadKinds.get(path)
                 ?? (call.name === "vault_create" ? "output_target_exists" : "task_material");
             initialReadKinds.set(path, readKind);
             if (taskSourceReadGuard) assertReadAllowed(path, readKind);
-            return { call, normalizedInput, path, readKind };
+            return { ...tool, call, path, readKind };
         });
 
-        for (const { call, normalizedInput, path, readKind } of normalizedCalls) {
+        for (const normalizedCall of normalizedCalls) {
+            const { call, path, readKind } = normalizedCall;
             assertReadAllowed(path, readKind);
+            if (normalizedCall.name === REMOVE_NOTE_IMAGE_TOOL_NAME) {
+                if (!this.noteImageRemovalHost || !taskSourceReadGuard) {
+                    throw new OperationsControllerError(
+                        "boundary_denied",
+                        "The Host boundary required for note-image removal is unavailable.",
+                    );
+                }
+                const operationId = this.createId();
+                const preparation = await prepareNoteImageRemoval({
+                    runId: input.runId,
+                    turnId: input.turnId,
+                    toolCallId: call.toolCallId,
+                    input: normalizedCall.input,
+                    host: this.noteImageRemovalHost,
+                    taskSourceReadGuard,
+                    createId: () => operationId,
+                });
+                assertReadAllowed(path, readKind);
+                assertExpectedAfterGrowth(
+                    preparation.operation.expectedBefore,
+                    preparation.operation.expectedAfter,
+                );
+                this.noteImageProposals.set(operationId, preparation.privatePreparation);
+                prepared.push(preparation.operation);
+                const target = virtualTargets.get(path) ?? { exists: true, content: null };
+                target.content = preparation.operation.expectedAfter;
+                virtualTargets.set(path, target);
+                continue;
+            }
             let target = virtualTargets.get(path);
             if (!target) {
-                target = await this.readInitialTarget(path, call.name !== "vault_create", () => assertReadAllowed(path, readKind));
+                target = await this.readInitialTarget(path, normalizedCall.name !== "vault_create", () => assertReadAllowed(path, readKind));
                 assertReadAllowed(path, readKind);
                 virtualTargets.set(path, target);
             }
             const expectedBefore = target.exists ? target.content : null;
             let expectedAfter: string;
             try {
-                expectedAfter = await this.prepareExpectedAfter(call.name, normalizedInput, path, target);
+                expectedAfter = await this.prepareExpectedAfter(normalizedCall, path, target);
                 assertReadAllowed(path, readKind);
                 assertExpectedAfterGrowth(expectedBefore, expectedAfter);
-                generatedChars += countPreparedGeneratedCharacters(
-                    call.name,
-                    normalizedInput,
-                    expectedBefore,
-                );
+                generatedChars += countPreparedGeneratedCharacters(normalizedCall, expectedBefore);
                 if (generatedChars > MAX_INTENT_GENERATED_CHARS) {
                     throw new OperationsControllerError(
                         "schema_invalid",
@@ -210,10 +286,11 @@ export class OperationsIntentController {
             target.exists = true;
             target.content = expectedAfter;
             prepared.push(deepFreeze({
+                kind: "markdown",
                 id: this.createId(),
                 toolCallId: call.toolCallId,
-                name: call.name,
-                input: normalizedInput,
+                name: normalizedCall.name,
+                input: normalizedCall.input,
                 path,
                 expectedBefore,
                 expectedAfter,
@@ -260,20 +337,55 @@ export class OperationsIntentController {
         return [...this.intents.values()].filter((intent) => intent.state === "pending");
     }
 
-    getContextResult(intentId: string, runId?: string): { execution?: OperationsExecutionResult; undoneReceiptIds: string[];
-        terminal?: OperationsIntentState | 'expired'; pending: boolean; executing: boolean } {
+    getContextResult(intentId: string, runId?: string): {
+        execution?: OperationsExecutionResult;
+        undoneReceiptIds: string[];
+        undoResults: readonly UndoResult[];
+        terminal?: OperationsIntentState | 'expired';
+        pending: boolean;
+        executing: boolean;
+        blockedReason?: "shared_reference";
+    } {
         const intent = this.getIntent(intentId);
         const completed = this.contextResults.get(intentId);
         const terminal = this.terminalStates.get(intentId);
         const recordedRunId = intent?.runId ?? completed?.runId ?? terminal?.runId ?? this.expiredIntentIds.get(intentId);
         if (runId !== undefined && recordedRunId !== runId) {
-            return { undoneReceiptIds: [], pending: false, executing: false };
+            return { undoneReceiptIds: [], undoResults: [], pending: false, executing: false };
         }
         const execution = completed?.result;
-        return { ...(execution ? { execution: { ...execution, operations: execution.operations.map(operation => ({ ...operation })) } } : {}),
+        const recordedUndoResults = this.contextUndoResults.get(intentId) ?? [];
+        const availableReceiptIds = new Set(this.undoStore.listAvailable().map(receipt => receipt.id));
+        const projectedExecution = execution ? {
+            ...execution,
+            operations: execution.operations.map(operation => {
+                const undoResult = [...recordedUndoResults]
+                    .reverse()
+                    .find(candidate => candidate.receiptId === operation.receiptId);
+                return {
+                    ...operation,
+                    undoAvailable: !this.disposed && undoResult?.status !== "undone"
+                        && undoResult?.undoAvailable !== false
+                        && (this.noteImageProposals.get(operation.operationId)?.revalidateUndo() ?? true)
+                        && operation.receiptId !== undefined
+                        && availableReceiptIds.has(operation.receiptId)
+                        && (!operation.effects?.some(effect => effect.key === "attachment" && effect.status === "removed")
+                            || this.noteImageRemovalResources?.has(operation.receiptId) === true),
+                };
+            }),
+        } : undefined;
+        const undoResults = recordedUndoResults.map(result => ({
+            ...result,
+            undoAvailable: projectedExecution?.operations.find(operation =>
+                operation.receiptId === result.receiptId)?.undoAvailable === true,
+        }));
+        return { ...(projectedExecution ? { execution: projectedExecution } : {}),
             undoneReceiptIds: [...(this.contextUndone.get(intentId) ?? [])],
+            undoResults,
             terminal: this.expiredIntentIds.has(intentId) ? 'expired' : terminal?.state,
-            pending: intent?.state === 'pending', executing: intent?.state === 'executing' };
+            pending: intent?.state === 'pending', executing: intent?.state === 'executing',
+            ...(intent?.state === 'pending' && getOperationsBlockedReason(intent.operations)
+                ? { blockedReason: "shared_reference" as const } : {}) };
     }
 
     cancelIntent(intentId: string): OperationsIntent {
@@ -291,6 +403,9 @@ export class OperationsIntentController {
         this.assertUsable();
         const lifecycleEpoch = this.lifecycleEpoch;
         const pending = this.requirePendingIntent(intentId);
+        if (getOperationsBlockedReason(pending.operations)) {
+            throw new Error("This proposal is blocked by a shared image reference. Submit a new proposal to continue.");
+        }
         this.clearExpiration(intentId);
         const executing = replaceIntentState(pending, "executing");
         this.intents.set(intentId, executing);
@@ -316,22 +431,51 @@ export class OperationsIntentController {
             }
 
             const result = await this.executeOperation(executing, operation, lifecycleEpoch);
+            if (!this.isExecutionActive(lifecycleEpoch) && operation.kind === "note_image_removal") {
+                this.emit({ type: "operation-result", intentId, result });
+                const settled: OperationExecutionResult[] = [...results, result, ...executing.operations.slice(results.length + 1)
+                    .map(remaining => ({ operationId: remaining.id, toolCallId: remaining.toolCallId,
+                        name: remaining.name, path: remaining.path, status: "skipped" as const }))]
+                    .map(operationResult => ({ ...operationResult, undoAvailable: false }));
+                const applied = settled.some(operationResult => operationResult.status === "succeeded"
+                    || operationResult.effects?.some(effect => effect.status === "applied" || effect.status === "removed"));
+                const unknown = settled.some(operationResult => operationResult.status === "unknown"
+                    || operationResult.effects?.some(effect => effect.status === "unknown"));
+                const state: OperationsExecutionResult["state"] = settled.every(operationResult => operationResult.status === "succeeded")
+                    ? "completed" : applied ? "partial" : unknown ? "unknown" : "failed";
+                const executionResult = Object.freeze({
+                    intentId,
+                    state,
+                    operations: Object.freeze(settled),
+                });
+                this.contextResults.set(intentId, { runId: executing.runId, result: executionResult });
+                this.terminalStates.set(intentId, { state, runId: executing.runId });
+                this.emit({ type: "intent-state-changed", intent: replaceIntentState(executing, state) });
+                this.emit({ type: "intent-result", result: executionResult });
+                return executionResult;
+            }
             this.assertExecutionActive(lifecycleEpoch);
             results.push(result);
             this.emit({ type: "operation-result", intentId, result });
             if (result.status !== "succeeded") stop = true;
         }
 
-        const succeeded = results.filter((result) => result.status === "succeeded").length;
-        const failed = results.some((result) => result.status === "failed" || result.status === "stale");
-        const state: OperationsExecutionResult["state"] = failed
-            ? (succeeded > 0 ? "partial" : "failed")
+        const succeeded = results.filter(result => result.status === "succeeded"
+            || result.effects?.some(effect => effect.status === "applied" || effect.status === "removed")).length;
+        const failed = results.some(result => result.status === "failed" || result.status === "stale"
+            || result.effects?.some(effect => effect.status === "failed"));
+        const unknown = results.some(result => result.status === "unknown"
+            || result.effects?.some(effect => effect.status === "unknown"));
+        const state: OperationsExecutionResult["state"] = failed || unknown
+            ? (succeeded > 0 ? "partial" : failed && !unknown ? "failed" : "unknown")
             : "completed";
         this.assertExecutionActive(lifecycleEpoch);
         const finalIntent = replaceIntentState(executing, state);
         this.intents.delete(intentId);
         this.terminalStates.set(intentId, { state, runId: executing.runId });
-        const completedRefs = results.flatMap(result => result.status === "succeeded" && result.receiptId
+        const completedRefs = results.flatMap(result => (result.status === "succeeded"
+            || result.effects?.some(effect => effect.status === "applied" || effect.status === "removed"))
+            && result.receiptId
             ? [result.receiptId] : []);
         const remainingRefs = results.flatMap(result => result.status !== "succeeded" ? [result.operationId] : []);
         const resultFact = state === "completed" && completedRefs.length === results.length
@@ -339,12 +483,17 @@ export class OperationsIntentController {
                 receiptId: JSON.stringify({ intentId, receipts: completedRefs }) }
             : state === "partial"
                 ? { kind: "partial" as const, completedRefs, remainingRefs }
+                : state === "unknown"
+                    ? { kind: "unknown" as const, operationId: intentId }
                 : undefined;
         const executionResult = Object.freeze({ intentId, state, operations: Object.freeze(results),
             ...(resultFact ? { resultFact } : {}) });
         this.contextResults.set(intentId, { runId: executing.runId, result: { intentId, state, operations: results.map(result => ({
             operationId: result.operationId, toolCallId: result.toolCallId, name: result.name,
-            path: '', status: result.status, ...(result.receiptId ? { receiptId: result.receiptId } : {}),
+            path: '', status: result.status,
+            ...(result.effects ? { effects: result.effects.map(effect => ({ ...effect })) } : {}),
+            ...(result.undoAvailable !== undefined ? { undoAvailable: result.undoAvailable } : {}),
+            ...(result.receiptId ? { receiptId: result.receiptId } : {}),
         })) } });
         this.emit({ type: "intent-state-changed", intent: finalIntent });
         this.emit({ type: "intent-result", result: executionResult });
@@ -368,15 +517,29 @@ export class OperationsIntentController {
 
         const receipt = lookup.receipt;
         let result: UndoResult;
+        let compoundUndoResult: UndoResult | undefined;
         try {
             this.assertPathAllowed(receipt.path);
-            if (receipt.kind === "vault_create") await this.undoCreate(receipt);
+            if (receipt.kind === REMOVE_NOTE_IMAGE_TOOL_NAME) {
+                const proposal = this.noteImageProposals.get(receipt.operationId);
+                const undone = proposal?.attachmentAction === "keep"
+                    ? await this.undoMarkdownImageRemoval(receipt, proposal)
+                    : await this.undoNoteImageRemoval(receipt);
+                if (undone.status !== "undone") {
+                    result = undone;
+                    result = this.recordUndoResult(receipt.intentId, result);
+                    this.emit({ type: "undo-result", result });
+                    return result;
+                }
+                result = undone;
+                compoundUndoResult = undone;
+            } else if (receipt.kind === "vault_create") await this.undoCreate(receipt);
             else await this.undoExisting(receipt);
             this.undoStore.markUsed(receipt.id);
             const undone = this.contextUndone.get(receipt.intentId) ?? new Set<string>();
             undone.add(receipt.id);
             this.contextUndone.set(receipt.intentId, undone);
-            result = {
+            result = compoundUndoResult ?? {
                 receiptId,
                 operationId: receipt.operationId,
                 path: receipt.path,
@@ -394,8 +557,230 @@ export class OperationsIntentController {
             };
         }
 
+        result = this.recordUndoResult(receipt.intentId, result);
         this.emit({ type: "undo-result", result });
         return result;
+    }
+
+    private recordUndoResult(intentId: string, result: UndoResult): UndoResult {
+        const results = this.contextUndoResults.get(intentId) ?? [];
+        const previous = results.find(candidate => candidate.receiptId === result.receiptId);
+        const retainedCheckpoint = previous?.checkpoint === "attachment-restored" && result.status !== "undone"
+            && result.checkpoint !== "attachment-restored";
+        const current: UndoResult = {
+            ...result,
+            ...(retainedCheckpoint ? { checkpoint: previous.checkpoint,
+                effects: previous.effects?.map(effect => ({ ...effect })) } : {}),
+        };
+        if (current.undoAvailable !== undefined) {
+            current.undoAvailable = current.undoAvailable && !this.disposed
+                && this.undoStore.listAvailable().some(receipt => receipt.id === result.receiptId)
+                && (!current.effects?.some(effect => effect.key === "attachment")
+                    || this.noteImageRemovalResources?.has(result.receiptId) === true);
+        }
+        this.contextUndoResults.set(intentId, [
+            ...results.filter(candidate => candidate.receiptId !== result.receiptId), current,
+        ]);
+        return current;
+    }
+
+    private async undoMarkdownImageRemoval(
+        receipt: UndoReceipt,
+        proposal: NoteImageRemovalPrivatePreparation,
+    ): Promise<UndoResult> {
+        const base = { receiptId: receipt.id, operationId: receipt.operationId, path: receipt.path };
+        if (!proposal.revalidateUndo()) {
+            return { ...base, status: "unavailable", failureCategory: "boundary_denied" };
+        }
+        try {
+            await this.undoExisting(receipt);
+            return {
+                ...base,
+                status: "undone",
+                effects: [
+                    { key: "note", status: "restored" },
+                ],
+                undoAvailable: false,
+            };
+        } catch (error) {
+            const normalized = normalizeExecutionError(error);
+            return {
+                ...base,
+                status: normalized.category === "stale_target" ? "stale" : "failed",
+                failureCategory: normalized.category,
+                message: normalized.message,
+                undoAvailable: true,
+            };
+        }
+    }
+
+    private async undoNoteImageRemoval(
+        receipt: UndoReceipt,
+    ): Promise<UndoResult> {
+        const base = { receiptId: receipt.id, operationId: receipt.operationId, path: receipt.path };
+        if (!this.noteImageRemovalHost || !this.noteImageRemovalResources) {
+            return { ...base, status: "unavailable", failureCategory: "undo_unavailable" };
+        }
+        const proposal = this.noteImageProposals.get(receipt.operationId);
+        if (!proposal) {
+            return { ...base, status: "unavailable", failureCategory: "undo_unavailable" };
+        }
+        let leased = false;
+        let restoreAttempted = false;
+        let attachmentRestored = false;
+        let noteRestoreAttempted = false;
+        try {
+            this.assertPathAllowed(receipt.path);
+            if (!proposal.revalidateUndo()) {
+                return { ...base, status: "unavailable", failureCategory: "boundary_denied" };
+            }
+            const noteFileBeforeRestore = this.vault.getAbstractFileByPath(receipt.path);
+            if (!noteFileBeforeRestore
+                || await this.readFreshFile(noteFileBeforeRestore) !== receipt.expectedAfter) {
+                return {
+                    ...base,
+                    status: "stale",
+                    failureCategory: "stale_target",
+                    effects: [
+                        { key: "note", status: "applied" },
+                        { key: "attachment", status: "removed" },
+                    ],
+                    undoAvailable: true,
+                };
+            }
+            if (!proposal.revalidateUndo()) {
+                return {
+                    ...base,
+                    status: "unavailable",
+                    failureCategory: "boundary_denied",
+                    effects: [
+                        { key: "note", status: "applied" },
+                        { key: "attachment", status: "removed" },
+                    ],
+                    undoAvailable: false,
+                };
+            }
+            const snapshot = this.noteImageRemovalResources.acquire(receipt.id);
+            leased = true;
+            if (!this.noteImageRemovalHost.isAttachmentPathAllowed(snapshot.attachment.path)) {
+                return { ...base, status: "unavailable", failureCategory: "boundary_denied" };
+            }
+            const existing = this.noteImageRemovalHost.getAttachmentFileByPath?.(snapshot.attachment.path);
+            if (existing) {
+                const currentBytes = await this.noteImageRemovalHost.readAttachmentFile?.(snapshot.attachment);
+                if (!currentBytes) {
+                    return { ...base, status: "unavailable", failureCategory: "undo_unavailable" };
+                }
+                const bytes = currentBytes instanceof Uint8Array ? currentBytes.slice().buffer : currentBytes.slice(0);
+                if (bytes.byteLength !== snapshot.bytes.byteLength
+                    || await imageSourceHash(bytes) !== snapshot.contentHash) {
+                    throw new OperationsControllerError("target_collision", "Another file now uses the original attachment path.");
+                }
+            } else {
+                restoreAttempted = true;
+                const restored = await this.noteImageRemovalHost.restoreAttachmentFile?.(
+                    snapshot.attachment,
+                    snapshot.bytes,
+                );
+                const restoredBytes = restored
+                    ? await this.noteImageRemovalHost.readAttachmentFile?.(restored)
+                    : undefined;
+                if (!restored || !restoredBytes) {
+                    return { ...base, status: "unknown", failureCategory: "unknown", message: "Attachment restoration result is unknown.",
+                        effects: [{ key: "note", status: "applied" }, { key: "attachment", status: "unknown" }],
+                        undoAvailable: true };
+                }
+                const bytes = restoredBytes instanceof Uint8Array ? restoredBytes.slice().buffer : restoredBytes.slice(0);
+                if (bytes.byteLength !== snapshot.bytes.byteLength
+                    || await imageSourceHash(bytes) !== snapshot.contentHash) {
+                    return {
+                        ...base,
+                        status: "failed",
+                        failureCategory: "fs_error",
+                        message: "Restored attachment bytes did not match.",
+                        effects: [
+                            { key: "note", status: "applied" },
+                            { key: "attachment", status: "unknown" },
+                        ],
+                        undoAvailable: true,
+                    };
+                }
+            }
+            attachmentRestored = true;
+
+            if (!proposal.revalidateUndo()) {
+                return {
+                    ...base,
+                    status: "unavailable",
+                    failureCategory: "boundary_denied",
+                    checkpoint: "attachment-restored",
+                    effects: [
+                        { key: "note", status: "applied" },
+                        { key: "attachment", status: "restored" },
+                    ],
+                    undoAvailable: false,
+                };
+            }
+            if (this.disposed) {
+                return {
+                    ...base,
+                    status: "unavailable",
+                    failureCategory: "cancelled",
+                    checkpoint: "attachment-restored",
+                    effects: [
+                        { key: "note", status: "applied" },
+                        { key: "attachment", status: "restored" },
+                    ],
+                    undoAvailable: false,
+                };
+            }
+
+            const noteFile = this.vault.getAbstractFileByPath(receipt.path);
+            if (!noteFile) throw new StaleTargetError("The modified note no longer exists.");
+            this.markSelfWrite?.(receipt.path);
+            noteRestoreAttempted = true;
+            await this.vault.process(noteFile, current => {
+                if (current !== receipt.expectedAfter) throw new StaleTargetError();
+                return receipt.before ?? "";
+            });
+            this.undoStore.markUsed(receipt.id);
+            this.noteImageRemovalResources.releaseLease(receipt.id);
+            this.noteImageRemovalResources.release(receipt.id);
+            leased = false;
+            return {
+                ...base,
+                status: "undone",
+                effects: [
+                    { key: "note", status: "restored" },
+                    { key: "attachment", status: "restored" },
+                ],
+                undoAvailable: false,
+            };
+        } catch (error) {
+            const normalized = normalizeExecutionError(error);
+            return {
+                ...base,
+                status: normalized.category === "stale_target" || normalized.category === "target_collision"
+                    ? "stale"
+                    : normalized.category === "boundary_denied" ? "unavailable" : "unknown",
+                failureCategory: normalized.category,
+                message: normalized.category === "stale_target"
+                    ? "The attachment was restored, but the note changed. Recovery remains available."
+                    : normalized.message,
+                ...(attachmentRestored ? {
+                    checkpoint: "attachment-restored",
+                    effects: [
+                        { key: "note", status: noteRestoreAttempted && normalized.category !== "stale_target" ? "unknown" : "applied" },
+                        { key: "attachment", status: "restored" },
+                    ],
+                    undoAvailable: normalized.category !== "boundary_denied",
+                } : restoreAttempted ? { effects: [
+                    { key: "note", status: "applied" }, { key: "attachment", status: "unknown" }],
+                    undoAvailable: normalized.category !== "boundary_denied" } : {}),
+            };
+        } finally {
+            if (leased) this.noteImageRemovalResources.releaseLease(receipt.id);
+        }
     }
 
     async undoMany(receiptIds: readonly string[]): Promise<UndoResult[]> {
@@ -419,31 +804,34 @@ export class OperationsIntentController {
         this.contextResults.clear();
         this.contextUndone.clear();
         this.expiredIntentIds.clear();
+        for (const receipt of this.undoStore.listAvailable()) {
+            if (receipt.kind === REMOVE_NOTE_IMAGE_TOOL_NAME) this.noteImageRemovalResources?.retire(receipt.id);
+        }
         this.undoStore.clear();
         this.emit({ type: "disposed" });
         this.listeners.clear();
     }
 
     private async prepareExpectedAfter(
-        name: CoreWriteToolName,
-        input: CoreWriteInput,
+        tool: MarkdownWriteTool,
         path: string,
         target: VirtualTarget,
     ): Promise<string> {
+        const { name, input } = tool;
         if (name === "vault_create") {
             if (target.exists) throw new OperationsControllerError("target_collision", `Target already exists: ${path}.`);
             const parent = parentVaultPath(path);
             if (parent && !this.resolveFolder(parent)) {
                 throw new OperationsControllerError("parent_missing", `Parent folder does not exist: ${parent}.`);
             }
-            return (input as VaultCreateInput).content;
+            return input.content;
         }
         if (!target.exists || target.content === null) {
             throw new OperationsControllerError("target_missing", `Target note does not exist: ${path}.`);
         }
-        if (name === "vault_append") return appendMarkdown(target.content, (input as VaultAppendInput).content);
-        if (name === "vault_process") return transformVaultProcess(target.content, input as VaultProcessInput);
-        return transformFrontmatter(target.content, input as FrontmatterUpdateInput, this.frontmatterCodec);
+        if (name === "vault_append") return appendMarkdown(target.content, input.content);
+        if (name === "vault_process") return transformVaultProcess(target.content, input);
+        return transformFrontmatter(target.content, input, this.frontmatterCodec);
     }
 
     private async executeOperation(
@@ -451,6 +839,9 @@ export class OperationsIntentController {
         operation: PreparedOperation,
         lifecycleEpoch: number,
     ): Promise<OperationExecutionResult> {
+        if (operation.kind === "note_image_removal") {
+            return await this.executeNoteImageRemoval(intent, operation, lifecycleEpoch);
+        }
         let result: OperationExecutionResult;
         try {
             this.assertExecutionActive(lifecycleEpoch);
@@ -497,7 +888,402 @@ export class OperationsIntentController {
         return result;
     }
 
-    private async executeCreate(operation: PreparedOperation, lifecycleEpoch: number): Promise<void> {
+    private async executeNoteImageRemoval(
+        intent: OperationsIntent,
+        operation: PreparedOperation & { kind: "note_image_removal" },
+        lifecycleEpoch: number,
+    ): Promise<OperationExecutionResult> {
+        if (!this.noteImageRemovalHost) {
+            return this.noteImageFailure(operation, [], "failed", "boundary_denied", "The note-image Host boundary is unavailable.");
+        }
+        const proposal = this.noteImageProposals.get(operation.id);
+        if (!proposal) {
+            return this.noteImageFailure(operation, [], "failed", "unknown", "The staged note-image evidence is unavailable.");
+        }
+
+        const effects: NoteImageRemovalEffectResult[] = [
+            { key: "note", status: "not_started" },
+            {
+                key: "attachment",
+                status: "not_started",
+                ...(operation.input.attachmentAction === "keep"
+                    ? {}
+                    : {}),
+            },
+        ];
+        let bytes: ArrayBuffer | undefined;
+        let contentHash: string | undefined;
+        let reservation: import("./note-image-removal-resources").NoteImageRemovalReservation | undefined;
+        let receiptId: string | undefined;
+        let noteApplied = false;
+        let executionLease = false;
+        let noteWriteAttempted = false;
+        let trashAttempted = false;
+        let readAttachmentFile: NonNullable<NoteImageRemovalHost["readAttachmentFile"]> | undefined;
+
+        try {
+            this.assertExecutionActive(lifecycleEpoch);
+            this.assertPathAllowed(operation.path);
+            if (!proposal.revalidate()) {
+                throw new OperationsControllerError("boundary_denied", "The staged note-image source evidence is no longer current.");
+            }
+            const before = await this.readNoteImageSource(operation.path);
+            if (before.source.file !== proposal.note.file
+                || before.source.version.mtime !== proposal.note.version.mtime
+                || before.source.version.size !== proposal.note.version.size
+                || before.content !== operation.expectedBefore) {
+                throw new StaleTargetError("The selected note changed after preview.");
+            }
+            this.assertExecutionActive(lifecycleEpoch);
+
+            if (operation.input.attachmentAction === "delete") {
+                const guard = createRetainedNoteImageReadGuard(this.noteImageRemovalHost, proposal);
+                const preScan = await verifyNoteImageReferenceCoverage({
+                    host: this.noteImageRemovalHost,
+                    guard,
+                    sourceValidity: proposal.sourceValidity,
+                    selectedNote: before.source,
+                    selectedAttachmentPath: proposal.attachment.path,
+                    expectedAfter: operation.expectedAfter,
+                });
+                if (preScan.conflicts.length) {
+                    throw new OperationsControllerError("boundary_denied", "Another reference now uses the selected attachment.");
+                }
+                if (!preScan.coverage.complete) {
+                    throw new OperationsControllerError("boundary_denied", `Reference coverage is incomplete: ${preScan.coverage.reason ?? "unknown"}`);
+                }
+                if (!this.noteImageRemovalResources || !this.noteImageRemovalHost.readAttachmentFile) {
+                    throw new OperationsControllerError("undo_unavailable", "Temporary image recovery is unavailable.");
+                }
+                readAttachmentFile = this.noteImageRemovalHost.readAttachmentFile;
+                if (!this.noteImageRemovalHost.isAttachmentPathAllowed(proposal.attachment.path)) {
+                    throw new OperationsControllerError("boundary_denied", "The selected attachment is no longer allowed.");
+                }
+                const exactAttachment = this.noteImageRemovalHost.getAttachmentFileByPath?.(proposal.attachment.path);
+                if (!exactAttachment || exactAttachment.file !== proposal.attachment.file
+                    || exactAttachment.version.mtime !== proposal.attachment.version.mtime
+                    || exactAttachment.version.size !== proposal.attachment.version.size) {
+                    throw new StaleTargetError("The selected attachment changed after preview.");
+                }
+                if (proposal.attachment.version.size > IMAGE_POLICY.maxOriginalBytes) {
+                    throw new OperationsControllerError("undo_unavailable", "The selected attachment exceeds the temporary recovery size limit.");
+                }
+                reservation = this.noteImageRemovalResources.reserve(
+                    proposal.attachment.version.size,
+                    this.createId,
+                );
+                const readBytes = await readAttachmentFile(proposal.attachment);
+                bytes = readBytes instanceof Uint8Array
+                    ? readBytes.slice().buffer
+                    : readBytes.slice(0);
+                if (bytes.byteLength !== proposal.attachment.version.size) {
+                    throw new StaleTargetError("The selected attachment changed while being read.");
+                }
+                const postReadAttachment = this.noteImageRemovalHost.getAttachmentFileByPath?.(proposal.attachment.path);
+                if (!postReadAttachment || postReadAttachment.file !== proposal.attachment.file
+                    || postReadAttachment.version.mtime !== proposal.attachment.version.mtime
+                    || postReadAttachment.version.size !== proposal.attachment.version.size) {
+                    throw new StaleTargetError("The selected attachment changed while being read.");
+                }
+                contentHash = await imageSourceHash(bytes);
+                this.assertExecutionActive(lifecycleEpoch);
+                if (!proposal.revalidate()) {
+                    throw new OperationsControllerError("boundary_denied", "The staged source authority changed while the attachment was prepared.");
+                }
+                if (!this.noteImageRemovalHost.isAttachmentPathAllowed(proposal.attachment.path)) {
+                    throw new OperationsControllerError("boundary_denied", "The selected attachment is no longer allowed.");
+                }
+                const preparedAttachment = this.noteImageRemovalHost.getAttachmentFileByPath?.(proposal.attachment.path);
+                if (!preparedAttachment || preparedAttachment.file !== proposal.attachment.file
+                    || preparedAttachment.version.mtime !== proposal.attachment.version.mtime
+                    || preparedAttachment.version.size !== proposal.attachment.version.size) {
+                    throw new StaleTargetError("The selected attachment changed while its recovery snapshot was prepared.");
+                }
+                const verifyBytes = await readAttachmentFile(proposal.attachment);
+                const verifyBuffer = verifyBytes instanceof Uint8Array
+                    ? verifyBytes.slice().buffer
+                    : verifyBytes.slice(0);
+                if (verifyBuffer.byteLength !== bytes.byteLength
+                    || await imageSourceHash(verifyBuffer) !== contentHash) {
+                    throw new StaleTargetError("The selected attachment changed while its recovery snapshot was prepared.");
+                }
+                if (!proposal.revalidate()) {
+                    throw new OperationsControllerError("boundary_denied", "The staged source authority changed before the note write.");
+                }
+                if (!this.noteImageRemovalHost.isAttachmentPathAllowed(proposal.attachment.path)) {
+                    throw new OperationsControllerError("boundary_denied", "The selected attachment is no longer allowed.");
+                }
+                const finalPreNoteAttachment = this.noteImageRemovalHost.getAttachmentFileByPath?.(proposal.attachment.path);
+                if (!finalPreNoteAttachment || finalPreNoteAttachment.file !== proposal.attachment.file
+                    || finalPreNoteAttachment.version.mtime !== proposal.attachment.version.mtime
+                    || finalPreNoteAttachment.version.size !== proposal.attachment.version.size) {
+                    throw new StaleTargetError("The selected attachment changed before the note write.");
+                }
+            }
+
+            this.assertExecutionActive(lifecycleEpoch);
+            if (!proposal.revalidate()) {
+                throw new OperationsControllerError("boundary_denied", "The original source is no longer current before the note write.");
+            }
+            const noteFile = this.vault.getAbstractFileByPath(operation.path);
+            if (!noteFile) throw new StaleTargetError("The selected note no longer exists.");
+            this.markSelfWrite?.(operation.path);
+            noteWriteAttempted = true;
+            await this.vault.process(noteFile, current => {
+                if (current !== operation.expectedBefore) throw new StaleTargetError();
+                return operation.expectedAfter;
+            });
+            if (!this.isExecutionActive(lifecycleEpoch)) {
+                reservation?.release();
+                const nativeFactReceipt = this.undoStore.create({
+                    intentId: intent.id,
+                    operationId: operation.id,
+                    path: operation.path,
+                    kind: operation.name,
+                    before: operation.expectedBefore,
+                    expectedAfter: operation.expectedAfter,
+                });
+                this.undoStore.markUsed(nativeFactReceipt.id);
+                receiptId = nativeFactReceipt.id;
+                noteApplied = true;
+                effects[0] = { key: "note", status: "applied" };
+                effects[1] = { key: "attachment", status: "not_started" };
+                return this.noteImageResult(operation, "partial", effects, nativeFactReceipt.id, false);
+            }
+            noteApplied = true;
+            proposal.markNoteApplied();
+
+            const receipt = this.undoStore.create({
+                intentId: intent.id,
+                operationId: operation.id,
+                path: operation.path,
+                kind: operation.name,
+                before: operation.expectedBefore,
+                expectedAfter: operation.expectedAfter,
+            });
+            receiptId = receipt.id;
+            effects[0] = { key: "note", status: "applied" };
+
+            if (operation.input.attachmentAction === "keep") {
+                return this.noteImageResult(
+                    operation,
+                    "succeeded",
+                    [effects[0]],
+                    receipt.id,
+                    true,
+                );
+            }
+
+            if (!this.noteImageRemovalResources || !bytes || !contentHash || !reservation) {
+                throw new OperationsControllerError("undo_unavailable", "Temporary image recovery is unavailable.");
+            }
+            this.noteImageRemovalResources.retain(reservation, {
+                receiptId: receipt.id,
+                bytes,
+                contentHash,
+                attachment: proposal.attachment,
+                expiresAt: receipt.expiresAt,
+            });
+            reservation = undefined;
+            bytes = undefined;
+            const recoverySnapshot = this.noteImageRemovalResources.acquire(receipt.id);
+            executionLease = true;
+
+            const after = await this.readNoteImageSource(operation.path);
+            if (!proposal.revalidateAfterSelfWrite()) {
+                effects[1] = { key: "attachment", status: "failed", failureCategory: "boundary_denied", message: "The staged source authority changed after the note was applied." };
+                return this.noteImageResult(operation, "partial", effects, receipt.id, true);
+            }
+            const postGuard = createRetainedNoteImageReadGuard(
+                this.noteImageRemovalHost,
+                proposal,
+                "after_self_write",
+            );
+            const postScan = await verifyNoteImageReferenceCoverage({
+                host: this.noteImageRemovalHost,
+                guard: postGuard,
+                sourceValidity: proposal.sourceAuthority,
+                selectedNote: after.source,
+                selectedAttachmentPath: proposal.attachment.path,
+                expectedAfter: after.content,
+            });
+            if (postScan.conflicts.length || !postScan.coverage.complete) {
+                effects[1] = {
+                    key: "attachment",
+                    status: "failed",
+                    failureCategory: "boundary_denied",
+                    message: postScan.conflicts.length
+                        ? "A new reference stopped attachment deletion."
+                        : `Reference coverage became incomplete: ${postScan.coverage.reason ?? "unknown"}`,
+                };
+                return this.noteImageResult(operation, "partial", effects, receipt.id, true);
+            }
+            if (!this.isExecutionActive(lifecycleEpoch) || !proposal.revalidateAfterSelfWrite()) {
+                effects[1] = { key: "attachment", status: "not_started" };
+                return this.noteImageResult(operation, "partial", effects, receipt.id, false);
+            }
+
+            const trashTarget = this.noteImageRemovalHost.getAttachmentFileByPath?.(proposal.attachment.path);
+            if (!trashTarget || trashTarget.file !== proposal.attachment.file
+                || trashTarget.version.mtime !== proposal.attachment.version.mtime
+                || trashTarget.version.size !== proposal.attachment.version.size
+                || !this.noteImageRemovalHost.isAttachmentPathAllowed(proposal.attachment.path)) {
+                effects[1] = { key: "attachment", status: "failed", failureCategory: "stale_target" };
+                return this.noteImageResult(operation, "partial", effects, receipt.id, true);
+            }
+            if (!readAttachmentFile) {
+                effects[1] = { key: "attachment", status: "failed", failureCategory: "undo_unavailable" };
+                return this.noteImageResult(operation, "partial", effects, receipt.id, false);
+            }
+            const finalBytes = await readAttachmentFile(proposal.attachment);
+            const finalBuffer = finalBytes instanceof Uint8Array
+                ? finalBytes.slice().buffer
+                : finalBytes.slice(0);
+            if (finalBuffer.byteLength !== recoverySnapshot.bytes.byteLength
+                || await imageSourceHash(finalBuffer) !== recoverySnapshot.contentHash) {
+                effects[1] = { key: "attachment", status: "failed", failureCategory: "stale_target" };
+                return this.noteImageResult(operation, "partial", effects, receipt.id, true);
+            }
+            if (!proposal.revalidateAfterSelfWrite()
+                || !this.noteImageRemovalHost.isAttachmentPathAllowed(proposal.attachment.path)) {
+                effects[1] = { key: "attachment", status: "failed", failureCategory: "boundary_denied" };
+                return this.noteImageResult(operation, "partial", effects, receipt.id, false);
+            }
+            const finalPreTrashAttachment = this.noteImageRemovalHost.getAttachmentFileByPath?.(proposal.attachment.path);
+            if (!finalPreTrashAttachment || finalPreTrashAttachment.file !== proposal.attachment.file
+                || finalPreTrashAttachment.version.mtime !== proposal.attachment.version.mtime
+                || finalPreTrashAttachment.version.size !== proposal.attachment.version.size) {
+                effects[1] = { key: "attachment", status: "failed", failureCategory: "stale_target" };
+                return this.noteImageResult(operation, "partial", effects, receipt.id, true);
+            }
+            if (!this.isExecutionActive(lifecycleEpoch)) {
+                effects[1] = { key: "attachment", status: "not_started" };
+                return this.noteImageResult(operation, "partial", effects, receipt.id, false);
+            }
+            this.markSelfWrite?.(proposal.attachment.path);
+            trashAttempted = true;
+            await this.trashFile(proposal.attachment.file as unknown as OperationsVaultFile);
+            const remained = this.noteImageRemovalHost.getAttachmentFileByPath?.(proposal.attachment.path);
+            if (remained) {
+                effects[1] = {
+                    key: "attachment",
+                    status: "failed",
+                    failureCategory: "fs_error",
+                    message: "The attachment is still present after deletion.",
+                };
+                return this.noteImageResult(operation, "partial", effects, receipt.id, true);
+            }
+            if (!this.isExecutionActive(lifecycleEpoch)) {
+                effects[1] = { key: "attachment", status: "removed" };
+                return this.noteImageResult(operation, "succeeded", effects, receipt.id, false);
+            }
+            effects[1] = { key: "attachment", status: "removed" };
+            return this.noteImageResult(operation, "succeeded", effects, receipt.id, true);
+        } catch (error) {
+            if (reservation) reservation.release();
+            if (!this.isExecutionActive(lifecycleEpoch)) {
+                if (noteApplied) {
+                    effects[0] = { key: "note", status: "applied" };
+                    effects[1] = { key: "attachment", status: trashAttempted ? "unknown" : "not_started",
+                        ...(trashAttempted ? { failureCategory: "unknown" as const } : {}) };
+                    return this.noteImageResult(
+                        operation,
+                        trashAttempted ? "unknown" : "partial",
+                        effects,
+                        receiptId,
+                        receiptId !== undefined && this.noteImageRemovalResources?.has(receiptId) === true,
+                    );
+                }
+                effects[0] = { key: "note", status: noteWriteAttempted ? "unknown" : "not_started" };
+                effects[1] = { key: "attachment", status: "not_started" };
+                return this.noteImageResult(operation, noteWriteAttempted ? "unknown" : "failed", effects, receiptId, false);
+            }
+            const normalized = error instanceof NoteImageRemovalResourceError && error.code === "capacity_exceeded"
+                ? new OperationsControllerError("undo_unavailable", error.message)
+                : normalizeExecutionError(error);
+            if (noteApplied) {
+                effects[0] = { key: "note", status: "applied" };
+                effects[1] = {
+                    key: "attachment",
+                    status: trashAttempted ? "unknown" : "failed",
+                    failureCategory: normalized.category,
+                    message: normalized.message,
+                };
+                return this.noteImageResult(
+                    operation,
+                    effects[1].status === "failed" ? "partial" : "unknown",
+                    effects,
+                    receiptId,
+                    receiptId !== undefined && this.noteImageRemovalResources?.has(receiptId) === true,
+                );
+            }
+            effects[0] = {
+                key: "note",
+                status: !noteWriteAttempted || normalized.category === "stale_target" ? "failed" : "unknown",
+                failureCategory: normalized.category,
+                message: normalized.message,
+            };
+            effects[1] = { key: "attachment", status: "failed", failureCategory: normalized.category, message: normalized.message };
+            return this.noteImageResult(
+                operation,
+                effects[0].status === "failed" ? "failed" : "unknown",
+                effects,
+            );
+        }
+        finally {
+            if (executionLease) this.noteImageRemovalResources?.releaseLease(receiptId!);
+        }
+    }
+
+    private async readNoteImageSource(path: string): Promise<{
+        source: import("./note-image-removal").NoteImageRemovalSourceFile;
+        content: string;
+    }> {
+        if (!this.noteImageRemovalHost) throw new OperationsControllerError("boundary_denied", "The note-image Host boundary is unavailable.");
+        const source = this.noteImageRemovalHost.getSourceFile(path);
+        if (!source) throw new StaleTargetError("The selected note no longer exists.");
+        const content = await this.noteImageRemovalHost.readSourceFile(source);
+        return { source, content };
+    }
+
+    private noteImageFailure(
+        operation: PreparedOperation & { kind: "note_image_removal" },
+        effects: NoteImageRemovalEffectResult[],
+        status: OperationExecutionResult["status"],
+        failureCategory: OperationsFailureCategory,
+        message: string,
+    ): OperationExecutionResult {
+        return this.noteImageResult(operation, status, [
+            effects[0] ?? { key: "note", status: "failed", failureCategory, message },
+            effects[1] ?? { key: "attachment", status: "failed", failureCategory, message },
+        ], undefined, false, failureCategory, message);
+    }
+
+    private noteImageResult(
+        operation: PreparedOperation & { kind: "note_image_removal" },
+        status: OperationExecutionResult["status"],
+        effects: readonly NoteImageRemovalEffectResult[],
+        receiptId?: string,
+        undoAvailable = false,
+        failureCategory?: OperationsFailureCategory,
+        message?: string,
+    ): OperationExecutionResult {
+        return {
+            operationId: operation.id,
+            toolCallId: operation.toolCallId,
+            name: operation.name,
+            path: operation.path,
+            status,
+            ...(failureCategory ? { failureCategory } : {}),
+            ...(message ? { message } : {}),
+            ...(receiptId ? { receiptId } : {}),
+            effects: Object.freeze(effects.filter(effect => operation.input.attachmentAction === "delete" || effect.key === "note")
+                .map(effect => Object.freeze({ ...effect }))),
+            ...(receiptId ? { undoAvailable } : {}),
+        };
+    }
+
+    private async executeCreate(operation: PreparedMarkdownOperation, lifecycleEpoch: number): Promise<void> {
         if (await this.pathExists(operation.path)) {
             throw new OperationsControllerError("target_collision", `Target already exists: ${operation.path}.`);
         }
@@ -511,7 +1297,7 @@ export class OperationsIntentController {
         await this.vault.create(operation.path, operation.expectedAfter);
     }
 
-    private async executeExisting(operation: PreparedOperation): Promise<void> {
+    private async executeExisting(operation: PreparedMarkdownOperation): Promise<void> {
         const file = this.resolveFile(operation.path);
         if (!file) throw new StaleTargetError("The target note no longer exists.");
         this.markSelfWrite?.(operation.path);
@@ -733,17 +1519,17 @@ function assertExpectedAfterGrowth(expectedBefore: string | null, expectedAfter:
 }
 
 function countPreparedGeneratedCharacters(
-    name: CoreWriteToolName,
-    input: CoreWriteInput,
+    tool: MarkdownWriteTool,
     expectedBefore: string | null,
 ): number {
+    const { name, input } = tool;
     if (name === "vault_create" || name === "vault_append") {
-        return (input as VaultCreateInput | VaultAppendInput).content.length;
+        return input.content.length;
     }
     if (name === "frontmatter_update") {
-        return JSON.stringify((input as FrontmatterUpdateInput).set ?? {}).length;
+        return JSON.stringify(input.set ?? {}).length;
     }
-    const process = input as VaultProcessInput;
+    const process = input;
     if (process.operation === "insert") return process.params.content.length;
     if (process.operation === "delete") return 0;
     if (expectedBefore === null) return process.params.replace.length;

@@ -28,6 +28,8 @@ import {
 export const OPERATIONS_TOOL_PROVIDER_ID = "operations-core-write-tools";
 export const OPERATIONS_STAGED_MESSAGE =
     "The proposal for the latest user request is staged in the current inline confirmation card; no write has occurred. This result describes only the current proposal and does not report the state of any earlier proposal.";
+export const OPERATIONS_BLOCKED_MESSAGE =
+    "The latest proposal is shown for review but the entire proposal is blocked by a shared image reference. No write has occurred and it cannot be confirmed. The permitted reference paths are shown in its review. If the user explicitly chooses to keep the attachment, stage a new note-only proposal; never change or execute this blocked proposal.";
 
 const COMMON_GUIDANCE = [
     "This tool stages a proposal only. It never completes a vault write during the model turn.",
@@ -44,6 +46,7 @@ const TOOL_DESCRIPTIONS: Record<CoreWriteToolName, string> = {
     vault_append: "Stage appending Markdown content to one existing Markdown note.",
     vault_process: "Stage a literal replace, anchored insert, or bounded delete in one existing Markdown note.",
     frontmatter_update: "Stage setting or deleting YAML frontmatter properties in one existing Markdown note.",
+    remove_note_image: "Stage removing one selected note image reference and, when explicitly requested, its actual local attachment.",
 };
 
 const TOOL_GUIDANCE: Record<CoreWriteToolName, readonly string[]> = {
@@ -61,6 +64,10 @@ const TOOL_GUIDANCE: Record<CoreWriteToolName, readonly string[]> = {
     ],
     frontmatter_update: [
         "Use frontmatter_update only for JSON-compatible property values and explicit property deletions.",
+    ],
+    remove_note_image: [
+        "Use the exact selected image reference from the current note; never guess from a filename.",
+        "Use delete only when the user explicitly asked to remove the local attachment too. Use keep when only the note reference should change.",
     ],
 };
 
@@ -207,6 +214,22 @@ function schemaFor(name: CoreWriteToolName): ChatToolInputSchema {
                 } as ChatToolInputSchema["properties"][string],
             },
             required: ["path"],
+            additionalProperties: false,
+        };
+    }
+    if (name === "remove_note_image") {
+        return {
+            type: "object",
+            properties: {
+                notePath: path,
+                imageReference: {
+                    type: "string",
+                    minLength: 1,
+                    maxLength: MAX_OPERATION_CONTENT_CHARS,
+                },
+                attachmentAction: { type: "string", enum: ["keep", "delete"] },
+            },
+            required: ["notePath", "imageReference", "attachmentAction"],
             additionalProperties: false,
         };
     }

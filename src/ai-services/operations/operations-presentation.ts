@@ -15,6 +15,9 @@ export function formatOperationsPreview(
     operation: PreparedOperation,
     formatter: OperationsPreviewFormatter = {},
 ): string {
+    if (operation.kind === "note_image_removal") {
+        return formatOperationsBeforeAfterPreview(operation.expectedBefore, operation.expectedAfter);
+    }
     if (operation.name === "vault_create") {
         return operation.expectedAfter;
     }

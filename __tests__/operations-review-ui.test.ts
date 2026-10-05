@@ -7,7 +7,10 @@ import {
     getOperationsEolChangeLabel,
     OperationsDiff,
 } from "../src/chat/operations-review/OperationsDiff";
-import { projectOperationsReviewResultRows } from "../src/chat/operations-review/OperationsReviewPanel";
+import {
+    OperationsReviewPanel,
+    projectOperationsReviewResultRows,
+} from "../src/chat/operations-review/OperationsReviewPanel";
 import type { OperationsReviewSnapshot } from "../src/ai-services/operations/operations-review-session";
 import type { OperationExecutionResult, UndoResult } from "../src/ai-services/operations/types";
 import {
@@ -66,6 +69,239 @@ function group(id: string, changeCount: number, firstBlockChanges = changeCount)
 }
 
 describe("OperationsDiff presentation calculations", () => {
+    it.each(["compact", "full"] as const)("keeps all shared-reference conflicts visible in %s review regardless of diff budgets or file pagination", (mode) => {
+        const conflicts = Array.from({ length: 35 }, (_value, index) => ({
+            sourcePath: `notes/shared-${index}.md`,
+            syntax: "wiki-embed" as const,
+            remainsInSelectedNote: index === 34,
+        }));
+        const model: OperationsReviewModel = {
+            intentId: "blocked-intent",
+            groups: [group("first", 30), group("second", 30), group("third", 30)],
+            blockers: [{ operationId: "blocked-image", attachmentPath: "assets/a.png", reason: "shared_reference", conflicts }],
+        };
+        const html = renderToStaticMarkup(createElement(OperationsDiff, { model, mode, activeGroupIndex: 2 }));
+
+        expect(html).toContain('data-blocked="shared_reference"');
+        expect(html).toContain("The note and attachment have not been changed.");
+        expect(html).toContain("explicitly choose to keep the attachment and propose a new operation.");
+        for (const conflict of conflicts) expect(html).toContain(`<code>${conflict.sourcePath}</code>`);
+        expect(html).toContain("Another reference remains in the selected note");
+        if (mode === "compact") {
+            expect(html.indexOf('data-blocked="shared_reference"')).toBeLessThan(html.indexOf("pa-operations-diff__omitted"));
+        } else {
+            expect(html).not.toContain('aria-label="notes/first.md"');
+            expect(html).toContain('aria-label="notes/third.md"');
+        }
+    });
+
+    it("disables full-review confirmation for a blocked proposal while leaving Cancel available", () => {
+        const snapshot: OperationsReviewSnapshot = {
+            reviewId: "blocked-review",
+            intentId: "blocked-intent",
+            status: "pending",
+            activated: true,
+            actionInFlight: null,
+            model: {
+                intentId: "blocked-intent",
+                groups: [group("first", 2)],
+                blockers: [{
+                    operationId: "blocked-image",
+                    attachmentPath: "assets/a.png",
+                    reason: "shared_reference",
+                    conflicts: [{ sourcePath: "notes/shared.md", syntax: "wiki-embed", remainsInSelectedNote: false }],
+                }],
+                attachments: [{ id: "blocked-image:attachment", path: "assets/a.png", action: "delete", plannedAction: "remove", undoLimitation: "temporary-attachment-and-note", blocked: true }],
+            },
+            execution: null,
+            operationResults: [],
+            undoResults: [],
+            error: null,
+        };
+        const session = {
+            getSnapshot: () => snapshot,
+            subscribe: () => () => undefined,
+            canConfirm: () => false,
+            canCancel: () => true,
+            canUndo: () => false,
+        };
+        const html = renderToStaticMarkup(createElement(OperationsReviewPanel, { session: session as never }));
+
+        expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Confirm changes<\/button>/);
+        expect(html).toMatch(/<button type="button" class="pa-operations-review-secondary-button">Cancel<\/button>/);
+        expect(html).toContain("notes/shared.md");
+        expect(html).toContain("Attachment deletion is blocked.");
+        expect(html).not.toContain("The local image file will be deleted");
+    });
+
+    it("projects compound effects and an attachment-restored checkpoint without treating a receipt as Undo", () => {
+        const operationResult: OperationExecutionResult = {
+            operationId: "operation",
+            toolCallId: "call",
+            name: "remove_note_image",
+            path: "notes/a.md",
+            status: "partial",
+            receiptId: "receipt",
+            effects: [
+                { key: "note", status: "applied" },
+                { key: "attachment", status: "restored" },
+            ],
+            undoAvailable: true,
+            checkpoint: "attachment-restored",
+        };
+        const undoResult: UndoResult = {
+            receiptId: "receipt",
+            operationId: "operation",
+            path: "notes/a.md",
+            status: "stale",
+            checkpoint: "attachment-restored",
+            effects: [
+                { key: "note", status: "applied" },
+                { key: "attachment", status: "restored" },
+            ],
+            undoAvailable: true,
+        };
+        const snapshot: OperationsReviewSnapshot = {
+            reviewId: "opr-review",
+            intentId: "intent",
+            status: "partial",
+            activated: true,
+            actionInFlight: null,
+            model: null,
+            execution: null,
+            operationResults: [operationResult],
+            undoResults: [undoResult],
+            error: null,
+        };
+
+        expect(projectOperationsReviewResultRows(snapshot)).toEqual([expect.objectContaining({
+            status: "stale",
+            operationResult,
+            undoResult,
+        })]);
+        expect(projectOperationsReviewResultRows(snapshot)[0]?.message).toContain("restored");
+        expect(projectOperationsReviewResultRows(snapshot)[0]?.message).toContain("Note: Applied");
+        expect(projectOperationsReviewResultRows(snapshot)[0]?.message).toContain("Image file: Undone");
+    });
+
+    it("preserves known note effects alongside an unknown attachment outcome and its error in full review", () => {
+        const snapshot: OperationsReviewSnapshot = {
+            reviewId: "unknown-review",
+            intentId: "unknown-intent",
+            status: "partial",
+            activated: true,
+            actionInFlight: null,
+            model: { intentId: "unknown-intent", groups: [group("unknown", 2)] },
+            execution: null,
+            operationResults: [{
+                operationId: "unknown-image",
+                toolCallId: "unknown-call",
+                name: "remove_note_image",
+                path: "notes/a.md",
+                status: "unknown",
+                message: "Attachment deletion outcome could not be verified.",
+                effects: [{ key: "note", status: "applied" }, { key: "attachment", status: "unknown" }],
+                undoAvailable: true,
+            }],
+            undoResults: [],
+            error: null,
+        };
+
+        expect(projectOperationsReviewResultRows(snapshot)[0]?.message).toBe(
+            "Note: Applied; Image file: Outcome unknown; Attachment deletion outcome could not be verified.",
+        );
+        const session = { getSnapshot: () => snapshot, subscribe: () => () => undefined, canUndo: () => false };
+        const html = renderToStaticMarkup(createElement(OperationsReviewPanel, { session: session as never }));
+        expect(html).toContain("Note: Applied; Image file: Outcome unknown; Attachment deletion outcome could not be verified.");
+        snapshot.operationResults = [{ ...snapshot.operationResults[0]!, effects: [{ key: "note", status: "not_started" }, { key: "attachment", status: "not_started" }] }];
+        expect(projectOperationsReviewResultRows(snapshot)[0]?.message).toContain("Note: Not started; Image file: Not started");
+    });
+
+    it.each(["expired", "failed"] as const)("keeps current compound effects visible after a receipt-only %s Undo result", status => {
+        const snapshot: OperationsReviewSnapshot = {
+            reviewId: "receipt-only-review",
+            intentId: "receipt-only-intent",
+            status: "partial",
+            activated: true,
+            actionInFlight: null,
+            model: { intentId: "receipt-only-intent", groups: [group("receipt-only", 2)] },
+            execution: null,
+            operationResults: [{
+                operationId: "receipt-only-image",
+                toolCallId: "receipt-only-call",
+                name: "remove_note_image",
+                path: "notes/a.md",
+                status: "unknown",
+                receiptId: "receipt-only",
+                effects: [{ key: "note", status: "applied" }, { key: "attachment", status: "unknown" }],
+                undoAvailable: false,
+            }],
+            undoResults: [{
+                receiptId: "receipt-only",
+                operationId: "receipt-only-image",
+                path: "notes/a.md",
+                status,
+                message: "Recovery is no longer available.",
+                undoAvailable: false,
+            }],
+            error: null,
+        };
+        expect(projectOperationsReviewResultRows(snapshot)[0]?.message).toBe(
+            "Note: Applied; Image file: Outcome unknown; Recovery is no longer available.",
+        );
+        const session = { getSnapshot: () => snapshot, subscribe: () => () => undefined, canUndo: () => false };
+        const html = renderToStaticMarkup(createElement(OperationsReviewPanel, { session: session as never }));
+        expect(html).toContain("Note: Applied; Image file: Outcome unknown; Recovery is no longer available.");
+    });
+
+    it("hides an already undone row while leaving another valid row Undo-able", () => {
+        const model: OperationsReviewModel = { intentId: "intent", groups: [group("undo-rows", 2)] };
+        const snapshot: OperationsReviewSnapshot = {
+            reviewId: "opr-undo-rows",
+            intentId: "intent",
+            status: "partial",
+            activated: true,
+            actionInFlight: null,
+            model,
+            execution: null,
+            operationResults: [
+                {
+                    operationId: "undone-operation",
+                    toolCallId: "call-undone",
+                    name: "vault_append",
+                    path: "notes/undo-rows.md",
+                    status: "succeeded",
+                    receiptId: "receipt-undone",
+                    undoAvailable: false,
+                },
+                {
+                    operationId: "active-operation",
+                    toolCallId: "call-active",
+                    name: "vault_append",
+                    path: "notes/undo-rows.md",
+                    status: "succeeded",
+                    receiptId: "receipt-active",
+                    undoAvailable: true,
+                },
+            ],
+            undoResults: [{
+                receiptId: "receipt-undone",
+                operationId: "undone-operation",
+                path: "notes/undo-rows.md",
+                status: "undone",
+            }],
+            error: null,
+        };
+        const session = {
+            getSnapshot: () => snapshot,
+            subscribe: () => () => undefined,
+            canUndo: () => true,
+        };
+        const html = renderToStaticMarkup(createElement(OperationsReviewPanel, { session: session as never }));
+        expect(html).toContain('data-status="undone"');
+        expect(html.match(/<button[^>]*>Undo<\/button>/g)).toHaveLength(1);
+    });
+
     it("counts only the first compact block as visible and reports later changes as omitted", () => {
         const model: OperationsReviewModel = {
             intentId: "intent",

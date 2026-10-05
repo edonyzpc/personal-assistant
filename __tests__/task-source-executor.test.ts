@@ -32,9 +32,10 @@ describe('Task source Host batch admission', () => {
         const h = setup();
         let epoch = 1;
         const fullValidity = jest.fn(() => true);
+        const authorityValidity = jest.fn(() => true);
         const prepare = jest.fn(async () => {
             const admittedEpoch = epoch;
-            return { isCurrent: () => epoch === admittedEpoch, sourceValidity: fullValidity };
+            return { isCurrent: () => epoch === admittedEpoch, sourceValidity: fullValidity, authorityValidity };
         });
         const executor = createTaskSourceConstrainedExecutor({ baseExecutor: { execute: jest.fn() }, state: h.state,
             resolveHostNoteId: path => h.ids.get(path), isHostCurrent: () => true,

@@ -72,6 +72,7 @@ export class TaskSourceConstraintState {
         captureSourceValidity?: () => boolean,
         checkpoint?: (signal?: AbortSignal) => Promise<void>,
         captureSourceReceipt?: () => (() => boolean),
+        captureSourceAuthorityReceipt?: () => (() => boolean),
     ): TaskSourceReadGuard {
         const current = () => {
             try {
@@ -89,6 +90,7 @@ export class TaskSourceConstraintState {
             isNoteDomainAllowed: () => current() && this.sourceScope !== 'web',
             ...(captureSourceReceipt ? { captureSourceValidity: captureSourceReceipt }
                 : captureSourceValidity ? { captureSourceValidity: () => captureSourceValidity } : {}),
+            ...(captureSourceAuthorityReceipt ? { captureSourceAuthority: captureSourceAuthorityReceipt } : {}),
             isPathAllowed: (path: string, kind = 'task_material') => {
                 if (!current()) return false;
                 if (kind === 'output_target_exists' && isOutputTargetAllowed) return isOutputTargetAllowed(path);

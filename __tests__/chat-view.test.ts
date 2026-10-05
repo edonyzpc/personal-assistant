@@ -23,6 +23,8 @@ import { ImagePreacceptError, type ImageGenerationTask } from '../src/chat/image
 import { createCreateImageTool, type ChatToolContext } from '../src/ai-services/chat-tools';
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
 import { ChatImageRequestError } from '../src/ai-services/image-capability';
+import { collectActionStates } from '../src/ai-services/pa-agent-result-facts';
+import { OPERATIONS_BLOCKED_MESSAGE } from '../src/ai-services/operations/operations-tool-provider';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
 import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
 import type { ComposerDraft, ComposerImageTextSource } from '../src/chat/composer-draft';
@@ -5591,6 +5593,174 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(card)).toContain('Undone');
     });
 
+    it.each(['checkpoint', 'expired', 'failed'] as const)('shows compound image effects and retains them through %s Undo feedback inline', async undoScenario => {
+        const { view, containerEl } = createView({ operationsEnabled: true });
+        await view.onOpen();
+        const operation: PreparedOperation = {
+            kind: 'note_image_removal',
+            id: 'operation_image_inline',
+            toolCallId: 'call_image_inline',
+            name: 'remove_note_image',
+            input: {
+                notePath: 'notes/image-inline.md',
+                imageReference: '![[assets/image-inline.png]]',
+                attachmentAction: 'delete',
+            },
+            path: 'notes/image-inline.md',
+            expectedBefore: 'Before ![[assets/image-inline.png]] after',
+            expectedAfter: 'Before  after',
+            effects: {
+                note: { path: 'notes/image-inline.md', status: 'not_started' },
+                attachment: {
+                    path: 'assets/image-inline.png',
+                    action: 'delete',
+                    plannedAction: 'remove',
+                    status: 'not_started',
+                },
+            },
+            coverage: { kind: 'scoped_vault_search', complete: true },
+            undoLimitation: 'temporary-attachment-and-note',
+        };
+        const intent: OperationsIntent = {
+            id: 'intent_image_inline',
+            runId: 'run_image_inline',
+            turnId: 'turn_image_inline',
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 60_000,
+            operations: [operation],
+            state: 'pending',
+        };
+        mockConfirmOperationsIntent.mockResolvedValue({
+            intentId: intent.id,
+            state: 'partial',
+            operations: [{
+                operationId: operation.id,
+                toolCallId: operation.toolCallId,
+                name: operation.name,
+                path: operation.path,
+                status: 'unknown',
+                receiptId: 'receipt_image_inline',
+                message: 'Attachment deletion outcome could not be verified.',
+                effects: [
+                    { key: 'note', status: 'applied' },
+                    { key: 'attachment', status: 'unknown' },
+                ],
+                undoAvailable: true,
+            }],
+        });
+        mockUndoOperations.mockResolvedValue([{
+            receiptId: 'receipt_image_inline',
+            operationId: operation.id,
+            path: operation.path,
+            status: undoScenario === 'checkpoint' ? 'stale' : undoScenario,
+            ...(undoScenario === 'checkpoint' ? {
+                checkpoint: 'attachment-restored' as const,
+                effects: [
+                    { key: 'note' as const, status: 'applied' as const },
+                    { key: 'attachment' as const, status: 'restored' as const },
+                ],
+            } : { message: 'Recovery is no longer available.' }),
+            undoAvailable: undoScenario === 'checkpoint',
+        }]);
+
+        getTextArea(containerEl).value = 'Remove this image and its file';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onOperationsIntentStaged?.(intent);
+        const card = getElementByClass(containerEl, 'pa-operations-intent-card');
+
+        expect(allText(card)).toContain('assets/image-inline.png');
+        expect(allText(card)).toContain('will be deleted according to your Obsidian delete setting');
+        expect(allText(card)).toContain('Temporary Undo is available only in this session');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+        runAnimationFrames(true);
+        const confirmButton = getButtonByText(card, 'Confirm changes');
+        await confirmButton.click();
+        await flushPromises();
+
+        expect(mockConfirmOperationsIntent).toHaveBeenCalledWith(intent.id);
+        expect(allText(card)).toContain('Some changes were applied');
+        expect(allText(card)).toContain('Note: Applied');
+        expect(allText(card)).toContain('Image file: Outcome unknown');
+        expect(allText(card)).toContain('Attachment deletion outcome could not be verified.');
+        const undoButton = getButtonByText(card, 'Undo');
+        expect(undoButton.hidden).toBe(false);
+        await undoButton.click();
+        await flushPromises();
+
+        expect(mockUndoOperations).toHaveBeenCalledWith(['receipt_image_inline']);
+        if (undoScenario === 'checkpoint') {
+            expect(allText(card)).toContain('The image file was restored; the note still needs recovery');
+            expect(allText(card)).toContain('Image file: Undone');
+        } else {
+            expect(allText(card)).toContain('Note: Applied');
+            expect(allText(card)).toContain('Image file: Outcome unknown');
+            expect(allText(card)).toContain('Recovery is no longer available.');
+            expect(undoButton.hidden).toBe(true);
+        }
+    });
+
+    it('shows shared-image conflicts in the inline preview and leaves only review and Cancel available', async () => {
+        const { view, containerEl, plugin } = createView({ operationsEnabled: true });
+        await view.onOpen();
+        const intent: OperationsIntent = {
+            id: 'intent_shared_image',
+            runId: 'run_shared_image',
+            turnId: 'turn_shared_image',
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 60_000,
+            state: 'pending',
+            operations: [{
+                kind: 'note_image_removal',
+                id: 'operation_shared_image',
+                toolCallId: 'call_shared_image',
+                name: 'remove_note_image',
+                input: { notePath: 'notes/image.md', imageReference: '![[assets/image.png]]', attachmentAction: 'delete' },
+                path: 'notes/image.md',
+                expectedBefore: '![[assets/image.png]]',
+                expectedAfter: '',
+                effects: {
+                    note: { path: 'notes/image.md', status: 'not_started' },
+                    attachment: { path: 'assets/image.png', action: 'delete', plannedAction: 'remove', status: 'not_started' },
+                },
+                coverage: { kind: 'scoped_vault_search', complete: true },
+                undoLimitation: 'temporary-attachment-and-note',
+                block: {
+                    reason: 'shared_reference',
+                    conflicts: [{ sourcePath: 'notes/shared.md', syntax: 'wiki-embed', remainsInSelectedNote: false }],
+                },
+            }],
+        };
+        mockCancelOperationsIntent.mockReturnValue({ ...intent, state: 'cancelled' });
+        getTextArea(containerEl).value = 'Remove the image and attachment';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onOperationsIntentStaged?.(intent);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+        runAnimationFrames(true);
+
+        const card = getElementByClass(containerEl, 'pa-operations-intent-card');
+        expect(allText(card)).toContain('notes/shared.md');
+        expect(allText(card)).toContain('The note and attachment have not been changed.');
+        expect(allText(card)).toContain('Attachment deletion is blocked.');
+        expect(allText(card)).not.toContain('The local image file will be deleted');
+        const confirmButton = getButtonByText(card, 'Confirm changes');
+        expect(confirmButton.disabled).toBe(true);
+        await confirmButton.click();
+        expect(mockConfirmOperationsIntent).not.toHaveBeenCalled();
+        getButtonByText(card, 'Open full review').click();
+        await flushPromises();
+        expect(plugin.openOperationsReview).toHaveBeenCalledTimes(1);
+        const cancelButton = getButtonByText(card, 'Cancel');
+        expect(cancelButton.disabled).toBe(false);
+        cancelButton.click();
+        expect(mockCancelOperationsIntent).toHaveBeenCalledWith(intent.id);
+    });
+
     it('shows a full-review route failure without writing the pending proposal', async () => {
         const { view, containerEl, plugin } = createView({ operationsEnabled: true });
         await view.onOpen();
@@ -10934,6 +11104,90 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('Read-only tool');
         expect(allText(containerEl)).not.toContain('0.unsorted/Dog.md');
     });
+
+    it.each(['same', 'run', 'turn', 'assistant', 'none'] as const)(
+        'binds a mixed-batch Operations status query to one original owner (history binding: %s)',
+        async bindingCase => {
+            const intentId = 'blocked-mixed-intent';
+            const collectBinding = (runId: string, turnId: string, assistantId: string) => {
+                const names = ['vault_append', 'remove_note_image'] as const;
+                const results = names.map((toolName, index): PaAgentMessage => ({
+                    role: 'toolResult',
+                    id: `${assistantId}-result-${index}`,
+                    toolCallId: `${assistantId}-call-${index}`,
+                    toolName,
+                    isError: false,
+                    timestamp: 1,
+                    inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'mixed-user' }]),
+                    content: {
+                        promptText: OPERATIONS_BLOCKED_MESSAGE,
+                        previewText: `Blocked ${toolName} proposal shown for review; no write occurred.`,
+                        includeInNextPrompt: true,
+                        resultFact: { kind: 'approval_pending', intentId },
+                        metadata: {
+                            outcome: 'success', intentId, operationCount: 2, staged: true, wrote: false,
+                            blockedReason: 'shared_reference', originalLength: OPERATIONS_BLOCKED_MESSAGE.length,
+                            observationChars: OPERATIONS_BLOCKED_MESSAGE.length,
+                        },
+                    },
+                }));
+                return collectActionStates({ runId, turnId, messages: [{
+                    role: 'assistant', id: assistantId, timestamp: 1,
+                    content: names.map((name, index) => ({ type: 'toolCall' as const,
+                        id: `${assistantId}-call-${index}`, name, input: {} })),
+                }, ...results] });
+            };
+            const original = { runId: 'mixed-run', turnId: 'mixed-turn', assistantId: 'mixed-assistant' };
+            const states = collectBinding(original.runId, original.turnId, original.assistantId);
+            expect(states).toHaveLength(2);
+            expect(states.map(state => state.origin.callId)).toEqual(['mixed-assistant-call-0', 'mixed-assistant-call-1']);
+            expect(states.every(state => state.operationsBlockedReason === 'shared_reference')).toBe(true);
+
+            const store = new MemoryChatHistoryStore();
+            const manager = new ChatHistoryManager({ store, generateId: () => 'mixed-history-conversation' });
+            await manager.initialize();
+            let conversation = await manager.startConversation('Prepare a mixed proposal');
+            const save = async (turnIndex: number, runId: string, turnId: string, actionStates: typeof states) => {
+                conversation = await manager.recordTurn({ conversationId: conversation.id, turnIndex, conversation,
+                    userPrompt: 'Prepare a mixed proposal', entry: { kind: 'history',
+                        user: { role: 'user', content: 'Prepare a mixed proposal' },
+                        assistant: { role: 'assistant', content: 'Blocked proposal ready for review.', actionStates,
+                            actionStateBinding: { conversationId: conversation.id, turnIndex, runId, turnId } },
+                    } });
+            };
+            await save(0, original.runId, original.turnId, bindingCase === 'none' ? [] : states);
+            if (bindingCase !== 'same' && bindingCase !== 'none') {
+                const other = { ...original, [`${bindingCase}Id`]: `other-${bindingCase}` };
+                await save(1, other.runId, other.turnId, collectBinding(other.runId, other.turnId, other.assistantId));
+            }
+            const { view, plugin, containerEl } = createView({ chatHistoryManager: manager, operationsEnabled: true });
+            const observation = { intentId, available: true, state: 'blocked', blockedReason: 'shared_reference' as const,
+                undoAvailable: false };
+            const readOwner = jest.fn((_intentId: string, _runId: string) => observation);
+            Object.assign(plugin.createChatService.mock.results[0].value as object, { getVisibleOperationsStatus: readOwner });
+            await view.onOpen();
+            for (let index = 0; index < 8; index++) await flushPromises();
+            if (bindingCase !== 'none') expect(view.chatHistory[1].actionStates).toHaveLength(2);
+            getTextArea(containerEl).value = 'Refresh the original blocked operation status';
+            void getButtonByText(containerEl, 'Ask').click();
+            await flushPromises();
+            const call = streamCalls[0];
+            const host = call.options.operationsStatus!;
+            expect(host.conversationId).toBe(conversation.id);
+            const result = await host.read({ intentId });
+
+            if (bindingCase === 'same') {
+                expect(result).toEqual(observation);
+                expect(readOwner).toHaveBeenCalledTimes(1);
+                expect(readOwner).toHaveBeenCalledWith(intentId, original.runId);
+            } else {
+                expect(result).toEqual({ intentId, available: false, reason: 'not_visible' });
+                expect(readOwner).not.toHaveBeenCalled();
+            }
+            call.resolve();
+            await flushPromises();
+        },
+    );
 
     it('uses product language for Obsidian Operations read-only tool statuses', async () => {
         const { view, containerEl } = createView();

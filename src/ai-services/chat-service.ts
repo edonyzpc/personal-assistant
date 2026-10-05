@@ -24,6 +24,7 @@ import {
 import type { CapabilityProvider } from './capability-types';
 import type { AgentEvent, ChatAgentStatus, ChatContextUsedItem, ChatMessage, ChatTurnMemoryMetadata, LegacyAgentEvent } from './chat-types';
 import { OperationsService, OperationsSession } from './operations/operations-service';
+import { createObsidianNoteImageHost } from './operations/obsidian-note-image-host';
 import { PaAgentContextSummarizer } from './context/PaAgentContextSummarizer';
 import { createAbortError, throwIfAborted } from './chat-utils';
 import { createAgentDebugLog, traceAgentPhase } from './pa-agent-debug';
@@ -70,6 +71,7 @@ export interface StreamLLMOptions {
     writingContextHost?: import('./pa-agent-runtime').PaAgentRunOptions['writingContextHost'];
     writingHistoryHost?: import('./pa-agent-runtime').PaAgentRunOptions['writingHistoryHost'];
     imageStatus?: import('./pa-agent-runtime').PaAgentRunOptions['imageStatus'];
+    operationsStatus?: import('./pa-agent-runtime').PaAgentRunOptions['operationsStatus'];
     /** Explicit compatibility candidate; no default protocol switch. */
     writingOutputProtocol?: 'native';
     memoryMode?: MemoryMode;
@@ -110,10 +112,12 @@ export class ChatService {
     private contextModelKey: string | undefined;
     private contextEpoch = 0;
     private readonly imageCapabilities = new ChatImageCapabilityRegistry();
-    private readonly operationsContextObservers = new Map<string, () => Promise<void>>();
+    private readonly operationsContextObservers = new Map<string,
+        (execution?: OperationsExecutionResult, undoResults?: readonly UndoResult[]) => Promise<void>>();
     private operationsContextUnsubscribe?: () => void;
 
-    registerOperationsContextPersistence(intentId: string, persist: () => Promise<void>): void {
+    registerOperationsContextPersistence(intentId: string,
+        persist: (execution?: OperationsExecutionResult, undoResults?: readonly UndoResult[]) => Promise<void>): void {
         this.operationsContextObservers.set(intentId, persist);
         if (this.operationsContextUnsubscribe) return;
         this.operationsContextUnsubscribe = this.operationsSession.subscribe(() => {
@@ -144,13 +148,31 @@ export class ChatService {
             ...(host.isDataBoundaryAllowedPath
                 ? { isPathAllowed: (path: string) => host.isDataBoundaryAllowedPath?.(path) === true }
                 : {}),
+            ...(host.app.metadataCache
+                ? {
+                    noteImageRemovalHost: createObsidianNoteImageHost({
+                        app: host.app,
+                        isPathAllowed: (path: string) => host.isDataBoundaryAllowedPath?.(path) === true,
+                        isAttachmentPathAllowed: (path: string) => host.isDataBoundaryAllowedPath?.(path) === true,
+                    }),
+                }
+                : {}),
         });
         this.ownedOperationsService = service;
         this.operationsSession = service.createSession({ surface: "chat-fallback" });
     }
 
     async confirmOperationsIntent(intentId: string): Promise<OperationsExecutionResult> {
-        return await this.operationsSession.confirm(intentId);
+        const persist = this.operationsContextObservers.get(intentId);
+        const result = await this.operationsSession.confirm(intentId);
+        // The admitted native call can settle after the surface closes. Its finite
+        // fact belongs to the original history sink; it does not restore authority.
+        if (persist) {
+            const settled = this.operationsSession.isDisposed ? { ...result,
+                operations: result.operations.map(operation => ({ ...operation, undoAvailable: false })) } : undefined;
+            await persist(settled).catch(error => this.host.log('Could not persist Operations context state', error));
+        }
+        return result;
     }
 
     cancelOperationsIntent(intentId: string): OperationsIntent {
@@ -162,22 +184,63 @@ export class ChatService {
     }
 
     async undoOperations(receiptIds: readonly string[]): Promise<UndoResult[]> {
-        return await this.operationsSession.undoMany(receiptIds);
+        const persist = [...this.operationsContextObservers.values()];
+        const result = await this.operationsSession.undoMany(receiptIds);
+        if (this.operationsSession.isDisposed) {
+            for (const sink of persist) await sink(undefined, result)
+                .catch(error => this.host.log('Could not persist Operations context state', error));
+        }
+        return result;
     }
 
     subscribeOperations(listener: (event: OperationsControllerEvent) => void): () => void {
         return this.operationsSession.subscribe(listener);
     }
 
+    getVisibleOperationsStatus(
+        intentId: string,
+        runId: string,
+    ): import('./operations-status-tool').OperationsStatusObservation {
+        const observed = this.operationsSession.getContextResult(intentId, runId);
+        const execution = observed.execution;
+        if (!execution && !observed.terminal && !observed.pending && !observed.executing) {
+            return { intentId, available: false, undoAvailable: false, reason: 'owner_unavailable' };
+        }
+        if (observed.blockedReason) {
+            return { intentId, available: true, state: 'blocked', undoAvailable: false,
+                blockedReason: observed.blockedReason };
+        }
+        const latestUndoResults = new Map(observed.undoResults.map(result => [result.receiptId, result]));
+        const projectedOperations = execution?.operations.map(operation => {
+            const undoResult = latestUndoResults.get(operation.receiptId ?? "");
+            return undoResult?.effects ? { ...operation, effects: undoResult.effects } : operation;
+        }) ?? [];
+        const allEffects = projectedOperations.flatMap(operation => operation.effects ?? []);
+        const undoneOperations = execution?.operations.filter(operation =>
+            latestUndoResults.get(operation.receiptId ?? "")?.status === 'undone').length ?? 0;
+        const hasRecovery = undoneOperations > 0 || allEffects.some(effect => effect.status === 'restored')
+            || observed.undoResults.some(result => result.effects?.some(effect => effect.status === 'unknown'));
+        const state = hasRecovery
+            ? (undoneOperations === execution?.operations.length ? "undone" : "partial")
+            : execution?.state
+            ?? (observed.executing ? 'executing' : observed.pending ? 'pending' : observed.terminal);
+        const effects = allEffects.map(effect => ({ key: effect.key, status: effect.status }));
+        return {
+            intentId,
+            available: true,
+            ...(state ? { state } : {}),
+            ...(effects.length ? { effects } : {}),
+            undoAvailable: execution?.operations.some(operation => operation.undoAvailable === true) ?? false,
+        };
+    }
+
     refreshOperationsActionState(state: PaAgentActionState): PaAgentActionState {
         if (state.owner !== 'operations') return state;
         const observed = this.operationsSession.getContextResult(state.operationId, state.origin.runId);
         let refreshed = observed.execution ? applyOperationsExecutionResult(state, observed.execution) ?? state : state;
-        for (const receiptId of observed.undoneReceiptIds) {
-            const action = refreshed.actions?.find(item => item.receiptId === receiptId);
-            if (action) refreshed = applyOperationsUndoResult(refreshed, {
-                receiptId, operationId: action.actionId, status: 'undone',
-            }) ?? refreshed;
+        const undoAvailable = observed.execution?.operations.some(operation => operation.undoAvailable === true) ?? false;
+        for (const undoResult of observed.undoResults) {
+            refreshed = applyOperationsUndoResult(refreshed, undoResult, undoAvailable) ?? refreshed;
         }
         const lost = refreshed.phase === 'lost' && refreshed.receipt.kind === 'operations-terminal'
             && refreshed.receipt.state === 'lost';
@@ -347,6 +410,7 @@ export class ChatService {
                 writingContextHost: options.writingContextHost,
                 writingHistoryHost: options.writingHistoryHost,
                 imageStatus: options.imageStatus,
+                ...(options.operationsStatus ? { operationsStatus: options.operationsStatus } : {}),
                 writingOutputProtocol: options.writingOutputProtocol,
                 isCurrent: () => contextEpoch === this.contextEpoch && imageModelKey === chatImageModelKey(this.host.settings),
                 imageCapability: {

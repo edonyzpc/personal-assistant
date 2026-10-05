@@ -90,6 +90,29 @@ describe('Task source raw batch read plans', () => {
         expect(Object.isFrozen(plans.get('outline')!.reads[0])).toBe(true);
     });
 
+    it('plans the internal note-image note and adds a scoped search only for delete', () => {
+        const { host } = fixture();
+        const input = {
+            notePath: 'notes/a.md',
+            imageReference: '![[assets/a.png]]',
+        };
+        const plans = plansFor([
+            call('keep', 'remove_note_image', { ...input, attachmentAction: 'keep' }),
+            call('delete', 'remove_note_image', { ...input, attachmentAction: 'delete' }),
+        ], host);
+
+        expect(plans.get('keep')).toEqual({ reads: [{ kind: 'note', noteId: 'note-a' }] });
+        expect(plans.get('delete')).toEqual({
+            reads: [
+                { kind: 'note', noteId: 'note-a' },
+                { kind: 'scoped_vault_search' },
+            ],
+        });
+        expect(resolveTaskSourceReadPlans([
+            call('invalid', 'remove_note_image', { ...input, attachmentAction: 'destroy' }),
+        ], host)).toEqual({ ok: false, toolCallId: 'invalid', reason: 'invalid_call' });
+    });
+
     it.each([
         ['read_note_outline', createReadNoteOutlineTool, 'notes/a.md', 'note-a'],
         ['inspect_obsidian_note', createInspectObsidianNoteTool, 'notes/a.md', 'note-a'],

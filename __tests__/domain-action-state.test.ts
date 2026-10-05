@@ -101,6 +101,13 @@ describe('closed action summary facts', () => {
             { owner: 'operations', operationId: 'intent', phase: 'completed', operationsEffectStatus: 'applied' },
         ]);
         expect(projectActionStates([operations])).toEqual([expect.objectContaining({ actions: operations.actions })]);
+        const compound = applyOperationsExecutionResult(
+            state('operations', 'compound', { kind: 'operations-staged', intentId: 'compound' }, 'pending'),
+            { intentId: 'compound', state: 'completed', operations: [{ operationId: 'remove', toolCallId: 'call',
+                name: 'remove_note_image', path: '', status: 'succeeded', receiptId: 'receipt-remove', undoAvailable: true,
+                effects: [{ key: 'note', status: 'applied' }, { key: 'attachment', status: 'removed' }] }] })!;
+        expect(projectActionSummaryFacts([compound])[0]).toMatchObject({ actions: compound.actions,
+            operationsEffectStatus: 'applied', operationsUndoAvailable: true });
     });
 
     it('preserves each incomplete and undone Operations substep without claiming the whole intent was applied', () => {
@@ -117,6 +124,7 @@ describe('closed action summary facts', () => {
         const states = [partial, failed, undone, partialUndo];
         expect(projectActionSummaryFacts(states)).toEqual(states.map(item => ({
             owner: 'operations', operationId: item.operationId, phase: item.phase, actions: item.actions,
+            ...(item === partial ? { operationsEffectOutcome: 'partial' } : {}),
         })));
     });
 
