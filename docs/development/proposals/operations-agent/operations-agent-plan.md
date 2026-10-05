@@ -7,6 +7,13 @@ Work item: B-101
 Authority: Historical proposal boundary; superseded by the delivered [Operations capability](./agent-operations-capability.md) and Step 2/3 SDDs.
 Restart condition: Do not restart this plan; additional scope requires a new work item and explicit owner authorization under the current capability contract.
 
+Current successors also include [Essential Capabilities](../../../product/specs/pa-agent-essential-capabilities-product-spec.md)
+(retired opt-in/intent tool-exposure gates), [DEC-046](../../../product/decisions/dec-046-note-change-review-and-audit-retirement.md)
+(no persistent Operations audit or old-directory management), and
+[DEC-051](../../../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+(no compulsory second confirmation for a current explicit modification).
+The old preview/audit plans below remain historical, not authority to restore them.
+
 ## Status
 
 | Field | Value |

@@ -1,11 +1,17 @@
 # Pagelet Bubble Readiness & Recall Product Spec
 
 Document status: Current
-Updated: 2026-08-30
+Updated: 2026-10-05
 Work item: B-108
 Scoped work items: B-118, B-121, B-124, B-125
 Decisions: [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-027](../decisions/dec-027-bounded-retrieval-recovery.md)
 Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delivery、empty-state 与 progressive-disclosure contract。
+
+2026-10-05 applicability：[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+接续旧候选数/语言重试与预算适用性。当前命令走统一 Deep Discover；本文独立 Recall
+evaluator 仅描述仍有生产消费者时的旧实现约束，不恢复旧管线。旧 10/50 provider-call
+桶不同于自动 Deep Discover 可调默认 12/36 started runs，手动不扣自动池；新运行对齐
+见 [B-161 Tracker](../../development/active/contract-alignment/tracker.md)。
 
 ## Status
 
@@ -258,8 +264,10 @@ relationship reasoning. The three layers are fused, not phased:
 All three layers are executed together. L1 produces candidates; for each
 candidate, L2 and L3 are generated together in one candidate-scoped initial
 call. Candidates are not batch-judged:
-[DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md) permits
-at most 5 independent initial calls plus one language retry per candidate. The
+[DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md), as amended
+by DEC-051, uses an adjustable default of 5 candidates for any retained legacy
+consumer, with no character-regex language rejection or retry. JSON/required
+fields and the applicable legacy provider-call budget remain. The
 user sees L3 (why now) and L2 (source excerpt). L1 scores are internal and not
 displayed.
 

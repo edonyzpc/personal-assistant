@@ -4,6 +4,15 @@ Document status: Current
 Delivery status: Closed
 Updated: 2026-08-01
 Work item: B-123
+
+2026-10-05 scoped successor: [DEC-051](../../../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+supersedes the predecessor quota described below. Explicit requests do not have
+accumulated-count caps or consume automatic quota; automatic Deep Discover uses
+adjustable defaults of 12/hour and 36/day started runs, without new settings UI.
+Old mixed usage expires naturally, without resetting or reclassifying it; the
+legacy Quiet Recall 10/50 provider-call bucket remains separate. This closed
+proposal and its experiment results stay historical; [B-161](../../active/contract-alignment/tracker.md)
+owns the new alignment and verification.
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)
 Restart condition: B-123 已由 owner 于 2026-08-01 关闭；仅在新的 Pagelet Deep Discover 证据触发独立 work item 时重开。
 Implementation SDD: [Pagelet Agent Deep Discover](./pagelet-agent-deep-discover-sdd.md)

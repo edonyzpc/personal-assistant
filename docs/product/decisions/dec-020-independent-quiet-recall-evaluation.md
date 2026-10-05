@@ -2,10 +2,16 @@
 
 Decision ID: DEC-020
 Status: Accepted
-Updated: 2026-07-21
+Updated: 2026-10-05
 Authority: 用户于 2026-07-18 在 Pagelet v2.9 正式验证后的逐项产品讨论中选择方案 A
 Work item: B-108
 Scoped amendment: [DEC-024 — Quiet Recall 冷语义检索计入既有实际调用预算](./dec-024-quiet-recall-cold-semantic-retrieval.md)
+
+## 2026-10-05 Scoped Successor
+
+[DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md) 将旧管线的5候选改为
+可调整默认，撤销字符正则语言拒绝及其重试。当前主入口已转统一发现；本文不是恢复旧
+evaluator的依据。合法旧消费者的结构校验及10/50实际调用预算边界仍保留，实施见B-161。
 
 ## Context
 
@@ -13,10 +19,10 @@ Quiet Recall 先用本地检索和评分找出少量候选，再由 AI 判断“
 现在值得出现”。需要决定的是：把所有候选放进一次 batch、先 batch 再逐条补强，
 还是保持每个候选一次独立判断。
 
-当前 runtime 最多生成 5 个候选，并逐条调用 provider；若 why-now 语言与来源笔记
+本决定形成时的 runtime 最多生成 5 个候选，并逐条调用 provider；若 why-now 语言与来源笔记
 不一致，该候选最多重试一次。因此一个 evaluation round 的显式最坏情况是 10 次
 provider call。60 秒 cooldown 只限制 round 的启动频率，并不等于一次 round 只有一次
-调用；当前 Recall 路径也没有专属的小时/日调用硬上限。
+调用；当时 Recall 路径也没有专属的小时/日调用硬上限。
 
 ## Options Considered
 
@@ -28,8 +34,9 @@ provider call。60 秒 cooldown 只限制 round 的启动频率，并不等于�
 
 ## Decision
 
-选择 Option A：Quiet Recall 保持逐候选独立 AI 评估。这里的“独立”指每次初始
-provider call 只判断一个候选；单个候选的失败、拒绝或语言重试不得让已完成的其他
+以下仅适用于仍有合法生产消费者的旧 evaluator；无消费者的专用分支按 B-161 退役。
+选择 Option A：旧 Quiet Recall 保持逐候选独立 AI 评估。这里的“独立”指每次初始
+provider call 只判断一个候选；单个候选的失败或拒绝不得让已完成的其他
 候选失效，也不得把整轮视为失败。
 
 正式边界：
@@ -37,19 +44,22 @@ provider call 只判断一个候选；单个候选的失败、拒绝或语言重
 - 候选检索与排序继续在本地 index/runtime 完成。根据 DEC-024，冷 semantic query
   可能先用一次受控 provider call 生成 query embedding，再在本地 index 检索；这次
   retrieval attempt 不是 evaluator，也不能由 metadata-only 结果冒充。每个 eligible
-  evaluation round 最多取排名最高的 5 个候选进入 AI 质量判断。
+  evaluation round 默认取排名最高的 5 个候选进入 AI 质量判断；5 是可调整实现默认，
+  不是产品硬上限，不新增普通设置 UI。
 - 每个候选只有在 AI 返回具体、可信、与当前上下文相关且有来源支撑的 why-now 后，
   才能成为主动 Recall Delivery。相似度或规则模板本身只表示“可发现”，不表示
   “现在值得提醒”。
-- 每个候选最多进行 1 次初始调用；仅在 why-now 语言不匹配时允许再重试 1 次。
-  因此 evaluator 阶段硬上限为 5 次初始调用、5 次语言重试。DEC-024 的冷 query
-  embedding 另属 retrieval stage，但不得获得额外小时/日额度。
-- 小时/日限额必须按全部实际 Quiet Recall provider call（冷 query embedding、初始
-  evaluator 与语言重试）计数，而不是按 round 计数。
+- 每个候选独立初始调用，模型遵循用户的输出语言设置。取消按字符/正则判语言而
+  拒绝结果或自动重试，不新增语言评审模型；保留 JSON 和必要字段校验。
+  DEC-024 的冷 query embedding 另属 retrieval stage，不获得额外小时/日额度。
+- 小时/日限额按全部实际旧 Quiet Recall provider call（冷 query embedding、初始
+  evaluator）计数，而不是按 round 计数；保留历史 10/hour、50/day 桶，不与当前
+  Deep Discover 的自动 run 桶合并或换算。
   精确额度、退避、并发与 timeout 由 B-108 SDD 在不改变逐候选语义的前提下固化；
   预算不足时按本地排名顺序评估，未评估候选保持静默，不用模板 why-now 补位。
 - 60 秒 cooldown 是 evaluation round 的最低间隔，不替代实际 call 计数、小时/日
-  限额或成本归因。诊断必须能区分 round、candidate attempt 与语言 retry。
+  限额或成本归因。诊断必须能区分 round 与 candidate attempt；旧语言 retry 记录可读，
+  但不产生新的语言拒绝重试。
 - provider 未配置/不可用、预算耗尽、cooldown 阻止本轮 AI 判断，或某候选调用失败、
   空结果、格式错误、质量拒绝时，该候选不得形成主动 nudge。已有本地匹配仍可作为
   用户显式进入 `Discover` 的线索，但不能冒充质量已验证的 Recall。
@@ -62,10 +72,10 @@ provider call 只判断一个候选；单个候选的失败、拒绝或语言重
 
 - Product behavior: 用户看到的主动 Recall 保持高质量、具体且来源可核验；预算或
   provider 不可用时宁可安静，也不显示模板关联。
-- Architecture / data / safety: runtime 需要为每次 Recall provider call（含冷 query
-  embedding 与语言重试）接入同一个有界 limiter/cost tracker，并将“semantic candidate
+- Architecture / data / safety: 若旧 evaluator 仍有消费者，每次 Recall provider call（含冷 query
+  embedding）使用其原有 limiter/cost tracker，并将“semantic candidate
   exists”“metadata-only local clue”与“已通过 AI why-now 门”分开。
-- Compatibility / migration: 当前逐候选主路径可以保留；cooldown 下回退规则候选并
+- Compatibility / migration: 旧逐候选路径不得重新接回当前统一发现入口；cooldown 下回退规则候选并
   继续 nudge、以及 Recall 只有 60 秒 round cooldown 而没有小时/日 hard cap 的行为
   不符合完整目标。
 - Work created or removed: B-108 承接 limiter、质量门、缓存/去重、focused tests 与

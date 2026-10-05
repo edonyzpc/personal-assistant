@@ -15,6 +15,14 @@
 > honest empty feedback; no generic raw-preload producer or Prepared Panel remains.
 > Archive discussions are provenance only, never the current baseline.
 
+> [DEC-051](./decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+> now owns necessary confirmation and manual/automatic budgets: source count is
+> not a risk gate; explicit requests do not consume automatic quota; automatic
+> Deep Discover defaults to 12/hour and 36/day started runs. These are adjustable
+> defaults, with no new settings UI. The old Quiet Recall 10/50 provider-call
+> bucket is historical and is not merged with this run counter. Runtime alignment
+> and verification belong to [B-161](../development/active/contract-alignment/tracker.md).
+
 ## Status
 
 | Field | Value |
@@ -23,12 +31,12 @@
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
 | Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. B-121 three-action Ring evidence covers automated、review、local/iCloud deployment、desktop and iPhone portrait gates；its physical landscape waiver remains historical only. B-121 core runtime is included in BRAT `2.9.0-beta.5`. The 2026-08-06 DEC-025/DEC-026 amendment adds Share as the fourth Ring action；the 2026-08-07 owner amendment accepts the current `master` compact layout fallback. B-124 is closed, with current behavior in DEC-026, its Product Spec, Architecture, tests and the smoke checklist. DEC-027/B-125 defines the current implemented 0–2 insight and single-recovery contract；its validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../archive/2026/b-125-retrieval-optimization-closeout.md). |
-| Last revised | 2026-09-13 |
+| Last revised | 2026-10-05 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |
-| Write boundary | Current B-108 delivery is read-only; existing user-confirmed review-note creation uses the **Write Action Framework**; there is no current standalone Periodic Summary save contract |
+| Write boundary | Background Deep Discover stays read-only. Current explicit Operations requests follow DEC-051 with source/permission checks and real receipts; optional preview remains non-executing. There is no standalone Periodic Summary save contract. |
 | Background preparation engine | Current automatic Deep Discover uses note-trigger scheduling and source admission. DEC-035 retires the unreachable generic timer/change-detector/preload chain; persisted settings remain compatible. |
-| Prepared Scope Recap | A distinct product behavior from generic review preload; default on after provider setup when the capability is enabled and sources are allowed, bounded to high-intent scope, and persistently disableable. The first actual Pagelet provider call uses one shared non-blocking notice; high-risk runs still block before any call ([DEC-017](./decisions/dec-017-default-background-recap-preparation.md), [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md)) |
+| Prepared Scope Recap history | DEC-017/018/019 describe the predecessor behavior. The current Scope Recap command aliases explicit active-note Deep Discover; this row does not revive its old preparation pipeline or controls. Shared first-use disclosure and current source boundaries still apply. |
 | Historical reference | [review-assistant-product-design.md](../archive/review-assistant-product-design.md) |
 | Current decisions | D001-D041 as reconciled in this document, with DEC-017 through DEC-027 and the owning Scope Recap/Quiet Recall/B-121/B-124/B-125 contracts taking precedence for their scopes |
 | Historical decisions provenance | [review-assistant-decisions.md](../archive/review-assistant-decisions.md) (non-authoritative) |
@@ -206,7 +214,7 @@ Pagelet does NOT try to solve (preserved from historical design):
 
 7. **Vault-local and transparent.** Settings, pending review drafts, and feedback state are scoped to the current vault. Included and skipped notes should be inspectable. **[PRESERVED]**
 
-8. **Narrow write boundary.** Pagelet keeps Deep Discover read-only. Under the explicitly enabled **Operations Agent** contract, a user-opened, source-backed insight may stage one deterministic source-note action for inline confirmation; multi-file, judgment-heavy, or uncertain work must move to Chat with complete visible context. Pagelet never writes in the background or without confirmation. **[CHANGED — DEC-014 / B-101 Step 3]**
+8. **Narrow write boundary.** Pagelet keeps Deep Discover read-only. Basic Operations follow the [essential-capabilities contract](./specs/pa-agent-essential-capabilities-product-spec.md), without the retired opt-in gate. A user-opened, source-backed insight may prepare its bounded deterministic action; multi-file, judgment-heavy, or uncertain work moves to Chat with complete visible context. DEC-051 permits current explicit modification requests to execute without a second confirmation; merely opening or staging a proposal never authorizes execution. No background writes. **[CHANGED — DEC-037 / DEC-051]**
 
 9. **Quiet and non-intrusive.** Pagelet's voice and presence prioritise calm. No urgency, no interruption, no claim of being indispensable. The Pet never pops up a modal, plays a sound, or demands attention. **[PRESERVED]**
 
@@ -645,9 +653,15 @@ or nudge. The last valid artifact is retained separately from last attempt
 status and remains usable only while its scope/source snapshot, Data Boundary,
 TTL, and freshness still match. Background retry is silent and budgeted.
 
-### Cost Control — [CHANGED from historical design D018-D023]
+### Cost Control — Historical D018–D036 Pools
 
-Pagelet introduces separate rate limits for background preparation (background) vs foreground AI calls.
+The following table records retired generic preparation and old foreground
+limits; it does not define current discovery admission. B-106 removed these
+ordinary settings controls. DEC-051 removes accumulated-count limits from
+explicit tasks, including the still-reachable local Maintenance/Graph commands.
+Current automatic Deep Discover uses its separate adjustable 12/hour, 36/day
+started-run defaults. Its old mixed manual/automatic timestamps expire naturally;
+new manual runs do not consume that pool or depend on its storage availability.
 
 | Dimension | Background preparation (background) | Foreground (user-triggered) | historical design comparison |
 | --- | --- | --- | --- |
@@ -655,7 +669,7 @@ Pagelet introduces separate rate limits for background preparation (background) 
 | Hard ceiling | Current generic preparation: 4K input + 1K output; users may configure lower values only | 36K total (same as historical design) | historical design: 36K unified |
 | Per-hour cap | 2 actual background provider calls | 10 foreground calls | historical design: 10 unified |
 | Per-day cap | 20 actual background provider calls | 100 foreground calls | historical design: 100 unified |
-| On ceiling hit | Silently skip cycle | Show a foreground limit notice; user can adjust settings and retry | historical design: reject + override |
+| On ceiling hit | Historical silent skip | Historical foreground notice; no current UI to adjust these fields | historical design: reject + override |
 
 **Key rule**: Foreground user-triggered calls are NOT constrained by background preparation quota. The two pools are independent.
 
@@ -665,7 +679,8 @@ future broader background analysis mode requires a new explicit contract; it
 cannot obtain authority through a legacy setting or a blocking dialog from a
 timer.
 
-Decisions D018-D023 are **preserved** for the foreground pool. Background preparation pool limits follow **D036** — Background preparation engine cost control.
+D018–D036 explain the predecessor pools only. They must not restore foreground
+10/100 limits, generic preload, or removed settings controls.
 
 ### Result Caching
 

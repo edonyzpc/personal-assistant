@@ -5,6 +5,17 @@ Design status: Approved
 Delivery status: Closed
 Updated: 2026-08-01
 Work item: B-123
+
+2026-10-05 scoped successor: [DEC-051](../../../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+supersedes the shared manual/automatic quota in §10 and the explicit-limit
+conclusions in the original validation below. Automatic Deep Discover retains
+adjustable 12/hour and 36/day **started-run** defaults; explicit requests bypass
+that counter, including its storage failure, but retain source/provider admission
+and lifecycle checks. Existing mixed timestamps expire naturally; no reset,
+guessed reclassification or conversion from the legacy Quiet Recall 10/50
+provider-call bucket. No new settings UI. §10 and the original tests/dogfood
+remain predecessor evidence; [B-161](../../active/contract-alignment/tracker.md)
+owns current implementation and verification, without reopening B-123.
 Implementation step: Step 1 — Pagelet Agent Deep Discover
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)
 Restart condition: B-123 已由 owner 于 2026-08-01 关闭；本文永久保留为 Step 1 source-verified design 与最终验证依据。

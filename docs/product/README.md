@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [必要确认与合同接续](./specs/pa-contract-alignment-product-spec.md) — B-161：本轮确认的直接执行、选源、预算、容量与旧合同接续；目标合同及实施差异见对应开发入口。
 - [PA Agent Command Contract](./specs/pa-agent-command-contract-product-spec.md) — B-158：统一职责、SDD/验收与公共框架后领域迁移。
 - [执行事实连续性](./specs/pa-action-continuity-product-spec.md) — B-157：合法动作状态、保存重开与压缩摘要，实施状态见 Tracker。
 

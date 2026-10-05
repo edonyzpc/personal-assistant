@@ -16,6 +16,12 @@ Successor contract: [DEC-046](../../../product/decisions/dec-046-note-change-rev
 当前实现边界见 [Product Spec](../../../product/specs/pa-note-change-review-product-spec.md)，
 本地验证见 [B-154 验证记录](../../../archive/2026/b154-note-change-review-validation.md)。
 
+[Essential Capabilities](../../../product/specs/pa-agent-essential-capabilities-product-spec.md)
+另已接续旧 vault opt-in/工具意图暴露门；[DEC-051](../../../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+取消当前明确修改请求的必经二次确认。本文的旧开关、确认步骤和审计设计保留为原交付
+证据，不作为恢复这些限制的依据；预览请求不执行，来源、原子检查、真实结果与 Undo
+继续保留。B-161 的新实现与验收不由下文历史 PASS 证明。
+
 2026-10-05 scoped amendment: the Owner withdrew this document's fixed Operations
 count/content caps; see the [current contract](../../../architecture/pa-agent-architecture-plan.md#2026-10-05-contract-cleanup).
 The original delivery evidence remains historical. Runtime removal is pending;

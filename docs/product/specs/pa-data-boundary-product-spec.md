@@ -1,7 +1,7 @@
 # PA Data Boundary Product Spec
 
 Document status: Current
-Updated: 2026-08-30
+Updated: 2026-10-05
 Work item: B-118
 Scope note: DEC-023/DEC-024 reconciliation is owned by B-118; DEC-027/B-125 adds one narrow local-topology exception without changing excluded content/provider/output eligibility; DEC-028's narrow Memory exception is owned by B-126; the base cross-feature contract predates stable Backlog IDs.
 Scoped decisions: [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md)、[DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-027](../decisions/dec-027-bounded-retrieval-recovery.md)、[DEC-028](../decisions/dec-028-silent-memory-auto-prepare.md)
@@ -43,12 +43,12 @@ controls.
 | DB-D3 | Excluded folders/tags are global hard content、identity、candidate、output and provider boundaries by default, with explicit per-run override. | A run may read or expose an excluded scope only after user-visible one-time authorization; DEC-027's zero-content opaque topology bridge is not such an override. |
 | DB-D4 | AI-generated notes are excluded by default, with configurable inclusion policy. | Prevents self-reference and summary drift while allowing user-confirmed generated artifacts to become sources. |
 | DB-D5 | Data cleanup is unified and grouped by data type. | Cache, queues, graph state, replay, unconfirmed memory, and confirmed memory are cleared separately. |
-| DB-D6 | Provider disclosure is first-use plus actual-input-based high-risk disclosure. | Small scopes stay low-friction; foreground Review uses filtered actual source count, while consequential runs show scope/provider/cost before continuing. |
+| DB-D6 | Provider disclosure is first-use plus necessary scope/cost confirmation under DEC-051. | Clarify unclear targets/sources/scope; explain and confirm actual changes beyond existing authorization or accepted cost. Source count alone never requires another confirmation. |
 | DB-D7 | Data Boundary needs its own spec. | Privacy and local-first behavior must be consistent across all PA surfaces. |
 | DB-D8 | Quiet Recall cold semantic query embedding is a real bounded provider call. | It uses DEC-023 disclosure and the existing 10/hour、50/day Quiet Recall total budget; an empty retrieval makes no downstream evaluator/generation call. |
 | DB-D9 (historical generic lane) | Narrow generic background preload was standard bounded; any envelope breach failed closed silently. | Its explicit opt-in and numeric envelope describe the superseded generic implementation, not the current background discovery preference; see the scoped successor below. |
 | DB-D10 | Generic preload sensitivity comes from explicit shared Data Boundary rules, not content inference. | Every actual source must pass the configured folder/tag/generated-source policy with no override; unmarked allowed notes are treated as ordinary, and a caller-provided `sensitive=false` is not evidence. |
-| DB-D11 | Provider-bound sources are rechecked from the exact latest Markdown body. | Explicit body tags/frontmatter and path policy are enforced at the provider seam; MetadataCache lag or malformed leading frontmatter fails closed, and model findings must cite an exact actual-input path. |
+| DB-D11 | Newly materialized retrieval and Pagelet current-evidence sources are checked against the exact latest Markdown body. | Explicit body tags/frontmatter and path policy are enforced; MetadataCache lag or malformed leading frontmatter fails closed, and findings cite an actual-input path. Ordinary Chat may retain an authorized read snapshot under DEC-040/B-149; revocation still blocks reuse. |
 | DB-D12 | Derived Pagelet text inherits every live source boundary. | All Pagelet provider inputs combine shared and Pagelet-local source rules; a cold embedding validates its primary latest body first, and a Saved Insight reaches an evaluator only when every sourceRef is live-readable, unchanged, and allowed. |
 | DB-D13 | DEC-028 authorizes one narrow silent Memory admission path. | A first-use Chat may schedule one whole eligible vault Memory rebuild without a blocking Modal; reset/provider work requires hydrated known absence or durable marker invalidation, this authority does not derive from Pagelet provider trust, and recovery/manual/costly Memory runs still block. |
 | DB-D14 | PPR may locally traverse at most one excluded Markdown node as an opaque bridge. | The bridge contributes only transient link topology; it never becomes a seed/candidate/result/source or exposes body、excerpt、title、path、metadata. Generated notes、attachments and excluded chains cannot bridge. |
@@ -61,6 +61,16 @@ keys. Generic preload opt-in and its old envelope references in this document
 are historical; they must not recreate a removed switch or override the
 current Agent admission and budget. Explicit discovery and all effective
 source, disclosure, write, and lifecycle boundaries remain enforced.
+
+[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+also supersedes the old foreground one-source/multiple-source risk split. Current
+explicit discovery has no accumulated-count cap and does not consume automatic
+quota; automatic Deep Discover defaults to 12/hour and 36/day started runs,
+internally adjustable without new UI. DB-D8's 10/50 budget describes the old
+Quiet Recall provider-call bucket only; it neither activates that pipeline nor
+becomes the current discovery quota. New implementation/validation belongs to
+[B-161](../../development/active/contract-alignment/tracker.md); B-118 evidence
+in the status and history sections remains evidence for the old inputs.
 
 ## 1. Product Decision
 
@@ -230,14 +240,15 @@ Provider disclosure has two levels:
    provider uses one shared, non-blocking notification and continues the
    requested/eligible run. Features must not create or reset parallel first-use
    authorization state.
-2. Broad, costly, sensitive, whole-vault, or excluded-scope-override runs use a
-   blocking per-run disclosure before any provider call or cost reservation.
+2. A real change beyond existing authorization or disclosed/accepted cost needs
+   explanation and confirmation before that effect. Real target/source/scope
+   ambiguity needs clarification; broad labels or source counts alone do not.
 
 This first-use rule is owned by
 [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md) and covers
 standard bounded Scope Recap, Quiet Recall, Discover, and B-119 Graph、Pattern、
-Maintenance runs. The second rule applies as soon as a run exceeds its standard
-envelope. Provider trust does not grant Memory admission, vault write, Markdown,
+Maintenance runs; those B-119 references do not activate its future scope. The
+second rule follows DEC-051's current authority/cost boundary. Provider trust does not grant Memory admission, vault write, Markdown,
 or external-action authority.
 
 [DEC-028](../decisions/dec-028-silent-memory-auto-prepare.md) is a separate,
@@ -265,27 +276,27 @@ provider, allowed source/query, index-ready, cooldown, existing Quiet Recall
 attempt consumes that existing bucket without increasing it. If local search
 then returns no candidates, downstream evaluator/generation calls are 0.
 
-If the first actual Pagelet provider call is itself broad, sensitive, costly,
-whole-vault, out-of-envelope, or an excluded-scope override, its blocking
+If the first actual Pagelet provider call needs new authorization or exceeds the
+already disclosed and accepted cost scope under DEC-051, its blocking
 disclosure also satisfies the shared first-use disclosure when it fully covers
 the allowed note excerpts/data, provider, possible cost, and capability opt-out.
 Do not stack a second non-blocking notice onto that confirmed run.
 
-Risk classification uses the post-filter, de-duplicated input that is actually
-eligible to be sent, not the requested time-range label:
+Confirmation uses actual requested scope and authority, not source count or a
+requested time-range label. Agent reasoning owns semantic ambiguity; source
+admission still enforces the actual allow/exclusion decisions:
 
 | Pagelet path | Standard bounded envelope | Out-of-envelope behavior |
 | --- | --- | --- |
-| Foreground Review | Actual included allowed sources `<=1`; `current` or requested `last7` are equivalent when only one source remains | Actual included allowed sources `>1` requires per-run `Run / Adjust / Cancel`; before affirmative confirmation, provider call、quota/cost reservation and shared-flag mutation are all 0 |
-| Generic background preload | Explicit opt-in; changed-only; recent 7 days; actual provider input `<=4K`; requested output `<=1K`; actual calls `<=2` per rolling hour and `<=20` per local day; `allowWrite=false`; no sensitive、whole-vault or excluded-scope override | Silently skip / fail closed; no blocking confirmation UI、provider call、quota/cost reservation or shared-flag mutation |
+| Explicit Review / discovery | Actual sources pass the selected scope and Data Boundary; no accumulated-count cap or automatic-pool debit | Clarify real ambiguity; explain and confirm a change beyond existing authority or accepted cost before the new effect; no count-based second confirmation |
+| Current automatic Deep Discover | Source/provider admission, lifecycle and adjustable 12/hour, 36/day started-run defaults | Quietly skip when admission fails; do not create a blocking background dialog |
+| Historical generic preload | Old opt-in, changed-only, 7-day, 4K/1K and 2/20 provider-call envelope | Retired lane only; not a current discovery gate or setting |
 
-The phrase “broad / weekly scan is high-risk” does **not** include the narrow
-changed-only preload envelope above. Other foreground Review runs are classified
-by actual allowed source count. A background preload that breaches any envelope
-condition is not promoted into an interactive high-risk run; it stays silent and
-does no work.
+Broad/weekly labels and multiple sources do not themselves require confirmation.
+Already accepted authority is not requested again. A background task that cannot
+be admitted stays quiet rather than becoming an interactive confirmation flow.
 
-For this background envelope, “no sensitive source” is an explicit-boundary
+In the historical generic envelope, “no sensitive source” was an explicit-boundary
 statement rather than automatic content classification. Runtime must derive it
 from the current decisions for every actual source under shared excluded-folder,
 excluded-tag, and generated-source policy, with no per-run override. It must not
@@ -321,28 +332,26 @@ the reranker request.
 | --- | --- |
 | Standard bounded Pagelet provider note reading | One shared first-use non-blocking notification; eligible run continues |
 | Cold Quiet Recall semantic query embedding | Same shared first-use admission; one actual call in the existing Quiet Recall 10/hour、50/day bucket, followed by local vector search |
-| First actual Pagelet provider call is high-risk | One complete blocking disclosure may also satisfy shared first-use; no extra non-blocking notice |
-| Foreground Review, actual allowed sources `<=1` | Standard bounded shared first-use admission, even when requested scope is `last7` |
-| Foreground Review, actual allowed sources `>1` | Blocking per-run `Run / Adjust / Cancel`; no quota/cost reservation before confirmation |
-| Generic background preload inside the exact narrow envelope | Standard bounded shared admission; read-only and explicitly opted in |
-| Generic background preload outside any envelope condition | Silent skip / fail closed; no blocking prompt, call, reservation, cost, or flag mutation |
-| Broad / sensitive / costly / whole-vault / out-of-envelope / excluded override | Blocking per-run `run / adjust / cancel` before provider call or cost reservation, even when the shared flag is already true |
+| First actual Pagelet provider call needs new scope/cost confirmation | One complete disclosure may also satisfy shared first-use; no extra non-blocking notice |
+| Explicit Review with one or multiple allowed sources | Shared first-use admission; no count-based risk gate, accumulated-count cap, or automatic-pool debit |
+| Historical generic background preload inside the exact narrow envelope | Predecessor evidence only: standard bounded shared admission, read-only and explicitly opted in; not a current discovery gate |
+| Historical generic background preload outside any envelope condition | Predecessor evidence only: silent skip / fail closed, no blocking prompt, call, reservation, cost, or flag mutation; does not restore the retired lane |
+| Actual request exceeds existing authorization or accepted cost; excluded override lacks authorization | Explain the change and obtain the necessary confirmation before proceeding; the shared flag cannot grant that new authority |
 | First Chat with uninitialized Memory | DEC-028 narrow exception: schedule a non-blocking whole eligible vault rebuild and answer-now; reset/provider work requires hydrated known absence or durable marker invalidation, with auto enable only after durable usable success plus policy/lifecycle admission |
 | Missing local index, profile/settings stale, manual Prepare/Update, or other costly Memory rebuild | Blocking Memory-specific confirmation and cost disclosure before provider call |
-| Vault mutation, Markdown, or external action | Separate effect-based preview / confirmation contract; provider notice is insufficient |
+| Vault mutation, Markdown, or external action | Domain authorization remains separate from provider notice. DEC-051 permits current explicit Operations requests without a second confirmation; Ghost concrete-version and other domain boundaries remain |
 
 Disclosure should happen:
 
 - on first use of provider-backed note reading
 - immediately before an admitted cold Quiet Recall query embedding when it is
   the first actual Pagelet provider call
-- before admitted foreground or explicitly initiated broad/costly/sensitive
-  runs; an out-of-envelope generic background preload skips instead of prompting
+- before an effect goes beyond existing authorization or accepted cost; background
+  admission failure stays quiet instead of prompting
 - persistently in Settings before DEC-028 silent first-use is eligible; all non-first-use Prepare/Update paths retain blocking Memory-specific disclosure
-- before foreground Pagelet Review whose filtered, de-duplicated actual allowed
-  source set contains more than one source
-- before Maintenance scan over broad scope
-- before runs that generate Memory Candidates or Confirmed Memory
+- when an actual target/source/scope ambiguity requires clarification; neither
+  multiple Review sources nor a broad local Maintenance scan alone adds a gate
+- for Memory changes when required by the [Memory Control Center effect/risk contract](./pa-memory-control-center-product-spec.md), not merely because a candidate exists
 - when excluded/sensitive scopes are temporarily included
 
 The shared first-use notification should show, in ordinary product language:
@@ -351,7 +360,7 @@ The shared first-use notification should show, in ordinary product language:
 - that API credits/cost may be used
 - where the capability can be disabled
 
-Blocking broad/costly/sensitive disclosure should show:
+Necessary scope/cost confirmation should explain the actual change, including:
 
 - allowed note excerpts/data that may be sent
 - included scope
@@ -362,12 +371,12 @@ Blocking broad/costly/sensitive disclosure should show:
 - where the capability can be disabled
 - run / adjust / cancel
 
-For a first high-risk call, set `pageletProviderFirstUseNotified=true` only after
+For a first call that needs new confirmation, set `pageletProviderFirstUseNotified=true` only after
 the user explicitly chooses `Run`, every gate passes, and the provider invocation
 is immediately next. `Cancel` or passive close leaves it false. `Adjust` must be
-re-evaluated: a still-high-risk run repeats the blocking gate, while a run reduced
-to the standard bounded envelope uses the ordinary shared notice. Later high-risk
-runs still require per-run confirmation regardless of the shared flag.
+re-evaluated against the adjusted scope. Do not repeat authorization already
+accepted; use the ordinary shared notice if no new confirmation is needed. Later
+changes beyond authority/cost still require confirmation regardless of the flag.
 
 Eligible bounded runs, after the shared first-use notice has been shown when
 needed, should not repeat heavy disclosure each time.
@@ -435,7 +444,7 @@ must not create or update vault files by default.
 | Surface | Data boundary behavior |
 | --- | --- |
 | Chat | honors exclusions; broad/sensitive questions use scope/provider disclosure; sources shown after answer; DEC-027 retry hint paths remain non-evidence and opaque bridges never enter the model observation |
-| Pagelet | shows included/skipped sources; all provider inputs combine shared Data Boundary and Pagelet-local source exclusions; generated notes excluded by default; foreground Review uses actual allowed-source count (`<=1` standard, `>1` blocking); narrow opted-in changed-only preload uses the 7-day/4K/2-hour/20-day/read-only envelope and silently skips on breach; Quiet Recall cold embeddings validate the primary live body before DEC-023 admission and use the existing 10/50 budget; Saved Insight text requires every sourceRef to pass live all-or-nothing validation; metadata-only fallback stays local Discover-only; each B-125 insight independently passes live source/currentness checks and bridge/hint paths do not count as sources |
+| Pagelet | shows included/skipped sources; provider inputs combine shared and Pagelet-local exclusions; generated notes remain excluded by default. DEC-051 replaces source-count confirmation and manual caps; automatic Deep Discover uses adjustable 12/36 started-run defaults. Generic preload is historical; old Recall's 10/50 call bucket is separate. Saved Insight inputs require all sourceRefs allowed/current; metadata-only fallback stays local. B-125 delivery checks live evidence; bridge/hint paths are not sources |
 | Memory | candidates require sourceRefs; Confirmed Memory managed separately; excluded scopes do not create candidates |
 | Maintenance Review | scans respect excluded scopes; affected scope shown; write actions have separate confirmation |
 | Active Vault Indexer | centralizes exclusions, generated note policy, sourceRefs, and retrieval outcomes |
@@ -515,13 +524,17 @@ Quality gates:
   exactly one excluded Markdown bridge, while generated/attachment/second-
   excluded cases remain unreachable and every bridge leakage spy stays empty
 - generated notes are excluded by default
-- provider disclosure appears for admitted foreground/explicit broad、sensitive、
-  costly runs; out-of-envelope generic background preload remains silent
+- shared first-use provider disclosure remains; under DEC-051, further confirmation
+  explains an actual change beyond existing authorization or disclosed/accepted
+  cost, rather than treating broad/sensitive/costly labels as automatic gates.
+  Current background admission failure stays quiet; the generic preload envelope
+  describes historical behavior only
 - first-use disclosure is recorded only at an imminent real provider call;
-  high-risk Cancel/close/unpassed Adjust leaves the shared flag unchanged
-- foreground Review requested as `last7` but reduced to one actual allowed source
-  remains standard bounded; more than one actual source reserves no quota/cost
-  before affirmative per-run confirmation
+  Cancel/close/unpassed Adjust during a necessary scope/cost confirmation leaves
+  the shared flag unchanged; already accepted authority is not requested again
+- clear foreground requests with one or multiple allowed sources have no source-count
+  gate; actual ambiguity or changes beyond accepted scope/cost are handled before
+  the newly unauthorized effect, without repeating valid authorization
 - the historical generic background preload ran only inside the complete opt-in、changed-only、
   recent-7-day、4K input/1K output、2/rolling-hour、20/local-day、read-only、
   actual-source shared-boundary-allow envelope; any single
@@ -588,8 +601,8 @@ Status: this document.
 - No full privacy control center in v1.
 - No per-feature privacy rule divergence.
 - No hidden provider calls over broad/sensitive scopes.
-- No treating a requested `last7` label as high-risk when only one actual allowed
-  foreground source remains.
+- No treating source count or a requested `last7` label as sufficient risk or
+  permission evidence.
 - No blocking prompt or background call when generic preload exceeds any part of
   its narrow standard envelope.
 - No metadata-only candidate masquerading as semantic/proactive Quiet Recall.

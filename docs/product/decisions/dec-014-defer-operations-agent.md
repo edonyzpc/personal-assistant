@@ -2,7 +2,7 @@
 
 Decision ID: DEC-014
 Status: Accepted
-Updated: 2026-08-01
+Updated: 2026-10-05
 Authority: Owner 于 2026-08-01 授权 B-101 Step 2 与 Step 3；两步均已交付，本记录限定 Operations Agent 的用户开放与 write/action 边界。
 Work item: B-101
 
@@ -17,13 +17,23 @@ Operations 审计落盘，且不处理旧 audit 目录。下文保留原决定�
 
 ## Context
 
-DEC-014 原先在 action runtime、prompt、Settings 与确认边界不完整时延期 Operations Agent。B-101 Step 2/3 均已交付：`OPERATIONS_AGENT_RUNTIME_ENABLED=true` 只表示当前 build 具备该能力，不是用户授权；持久化的 `operationsAgentEnabled` 仍默认为 `false`，必须在每个 vault 显式 opt in。
+2026-10-05 applicability: the opt-in and intent-based tool exposure below are
+historical B-101 choices, superseded by [DEC-037](./dec-037-pa-agent-essential-capabilities.md)
+and the [essential-capabilities spec](../specs/pa-agent-essential-capabilities-product-spec.md).
+Basic Operations are not hidden behind the retired vault switch or a Host intent
+classifier. [DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md)
+also supersedes compulsory second confirmation for a current explicit modification
+request. Preview-only requests remain non-executing; real permissions, frozen
+targets, effect receipts and Undo still apply. Runtime alignment is tracked in
+[B-161](../../development/active/contract-alignment/tracker.md), not proved here.
+
+DEC-014 原先在 action runtime、prompt、Settings 与确认边界不完整时延期 Operations Agent。B-101 Step 2/3 交付时：`OPERATIONS_AGENT_RUNTIME_ENABLED=true` 只表示 build 具备该能力，不是用户授权；当时持久化的 `operationsAgentEnabled` 默认为 `false`，要求 per-vault opt-in。此历史开放方式已由上述后继合同取代。
 
 该授权不等于开放通用写入 Agent。第一个产品切片必须保持可预览、可拒绝、可恢复、对并发变更 fail closed，且不默认持久化笔记内容。
 
 ## Decision
 
-接受 B-101 Step 2 与 Step 3 的已交付边界，且仅接受以下有界产品面：
+以下保留 B-101 Step 2/3 当时的决定；第 1–3、5 条分别受上述基础能力、DEC-051 确认与 DEC-046 审计后继约束，不作为恢复旧 gate 的依据：
 
 1. build availability 为 `OPERATIONS_AGENT_RUNTIME_ENABLED=true`；实际开放仍要求持久化的 `operationsAgentEnabled=true`，其默认值为 `false`，且是 per-vault opt-in。
 2. 仅提供 `vault_create`、`vault_append`、`vault_process` 与 `frontmatter_update` 四个 core tools；它们只在当前用户请求被识别为写入意图时按需暴露。

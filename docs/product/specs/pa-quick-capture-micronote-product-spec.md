@@ -1,6 +1,6 @@
 # PA Quick Capture And Micronote Product Spec
 
-Updated: 2026-09-22
+Updated: 2026-10-05
 
 ## Status
 
@@ -9,7 +9,7 @@ Updated: 2026-09-22
 | Document type | Product spec / current durable contract |
 | Status | Raw capture and optional post-save enrichment slices implemented |
 | Feature family | Quick Capture / Micronote / AI post-processing |
-| Primary surfaces | Quick Capture command, optional Pagelet Review Queue, Daily Note, Memory panel |
+| Primary surfaces | Quick Capture command, optional Pagelet Review Queue, Daily Note, Memory Control Center |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
 | Related specs | [PA Product Information Architecture spec](../pa-product-information-architecture-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Weekly Review spec](../../archive/pa-weekly-review-product-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [Pagelet Trust Layer spec](../../archive/pagelet-trust-layer-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
 | Related Pagelet docs | [Pagelet product design](../pagelet-product-design.md), [Pagelet Trust Layer spec](../../archive/pagelet-trust-layer-product-spec.md) |
@@ -18,6 +18,15 @@ Updated: 2026-09-22
 This spec defines how PA participates in the first moment of personal knowledge
 capture. Raw capture and bounded optional post-save enrichment are implemented;
 future automation cannot take ownership of the original thought.
+
+Memory admission follows the existing
+[Memory Control Center effect-based contract](./pa-memory-control-center-product-spec.md#5-effect-based-admission-and-disclosure).
+It supersedes this spec's earlier blanket confirmation and standalone Memory
+panel assumptions. Capture never grants Memory authority by itself: governed
+admission still checks source, sensitivity, scope, effect and reversibility.
+This is a documentation alignment under
+[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md),
+not a claim that new B-161 runtime work has passed validation.
 
 Quick Capture is the missing front door between Obsidian's raw note-taking and
 PA's later review, memory, retrieval, and maintenance capabilities.
@@ -37,12 +46,12 @@ This spec reflects the one-question-at-a-time product decisions confirmed on
 | CAP-D1 | Use B+: lightweight Quick Capture now, preserve part of AI inbox as background capability. | v1 saves immutable micronotes first; AI post-processing appears as reviewable suggestions, not as a foreground inbox product. |
 | CAP-D2 | Original capture destination is configurable, defaulting to Daily Note. | Users get low-friction default behavior while Obsidian power users can choose Inbox folder or current file. |
 | CAP-D3 | Capture feedback uses lightweight mixed feedback. | After saving, show a small "saved" signal; only durable or user-kept suggestions enter Pagelet Review Queue. |
-| CAP-D4 | v1 AI post-processing has restrained queue scope. | Queue Memory Candidate and task-like suggestions first; keep title, tag, related-note, and expansion as future preview/Keep flows until an explicit UI exists. Exclude archive/move/rewrite/replacement/project flow. |
+| CAP-D4 | v1 AI post-processing has restrained queue scope. | Route Memory Candidates through governed admission and queue task-like suggestions; only Memory cases requiring review enter the queue. Keep title, tag, related-note, and expansion as future preview/Keep flows until an explicit UI exists. Exclude archive/move/rewrite/replacement/project flow. |
 | CAP-D5 | Task-like detection creates a task suggestion in Review Queue. | PA can identify potential tasks, but user confirmation is required before writing Markdown tasks. |
 | CAP-D6 | AI expansion is suggestion-only and visually separated by callout. | PA never rewrites the original micronote; accepted expansion content uses an Obsidian callout to distinguish AI text. |
 | CAP-D7 | Accepted expansion uses a mixed save strategy. | Short expansions append as callouts near the original; long or structured expansions become companion/review notes with links. |
 | CAP-D8 | Design for voice/mobile later, but v1 implements desktop text only. | The data model keeps input source and provenance fields without expanding v1 implementation scope. |
-| CAP-D9 | Quick Capture does not directly create Confirmed Memory. | PA may create Memory Candidates from captures; only user-confirmed candidates become Confirmed Memory. |
+| CAP-D9 | Quick Capture does not bypass governed Memory admission. | PA may create source-backed Memory Candidates from captures; Memory Control Center decides quiet admission or prior review by effect/risk, rather than requiring confirmation for every candidate. |
 
 ## 1. Product Decision
 
@@ -92,7 +101,7 @@ Therefore v1 should optimize for:
 - visible provenance
 - reviewable enrichment
 - delayed structure
-- no silent memory admission
+- no Memory admission outside governed effect/risk rules
 
 ## 3. Core Flow
 
@@ -103,9 +112,10 @@ Suggested v1 flow:
 3. PA immediately saves the original text to the configured destination.
 4. PA shows a small saved confirmation.
 5. PA optionally starts asynchronous post-processing.
-6. Post-processing produces restrained review suggestions.
-7. Only durable suggestions or suggestions the user explicitly keeps enter
-   Pagelet Review Queue.
+6. Post-processing produces restrained suggestions; Memory Candidates use
+   governed admission described in §10.
+7. Only suggestions requiring review or suggestions the user explicitly keeps
+   enter Pagelet Review Queue; eligible quiet Memory updates create no queue debt.
 8. User can review, accept, edit, dismiss, or ignore suggestions later.
 
 ```mermaid
@@ -114,11 +124,12 @@ flowchart LR
   Save --> Feedback["Small saved feedback"]
   Save --> Async["Async AI post-processing"]
   Async --> Preview["Optional suggestions"]
-  Preview --> Queue["Durable / kept suggestions"]
+  Async --> Admission["Governed Memory admission"]
+  Admission --> Memory["Eligible quiet update / required prior review"]
+  Preview --> Queue["Review-required / kept suggestions"]
   Queue --> Accept["Accept or edit"]
   Queue --> Dismiss["Dismiss or ignore"]
   Accept --> Note["Write accepted enrichment"]
-  Accept --> Memory["Memory Candidate review"]
 ```
 
 ## 4. Capture Destination
@@ -261,7 +272,7 @@ Included:
 | Title suggestion | Helps future retrieval and skimming | Future preview/Keep UI; not requested or queued automatically today |
 | Tag suggestion | Adds lightweight structure | Future preview/Keep UI; not requested or queued automatically today |
 | Related notes | Connects capture to existing vault context | Future preview/Keep UI; not requested or queued automatically today |
-| Memory Candidate | Identifies durable preference, decision, project context, task constraint, or open question | Must go through Trust Layer confirmation |
+| Memory Candidate | Identifies durable preference, decision, project context, task constraint, or open question | Governed Memory Control Center admission; eligible low-risk understanding may update quietly, while conflicts, sensitive inference and durable task constraints require prior review or rejection |
 | Task-like suggestion | Identifies possible action item | Must be confirmed before Markdown task write |
 | AI expansion | Turns fragment into richer reflection | Future preview/Keep UI; accepted content must be visually separated |
 
@@ -289,7 +300,7 @@ Initial queueable item types:
 | Queue item type | Examples | Primary surface |
 | --- | --- | --- |
 | `task_suggestion` | "This may be a task" | Pagelet Panel or Tab |
-| `memory_candidate` | "This preference may be worth remembering" | Pagelet Panel, then Memory panel after confirmation |
+| `memory_candidate` | "This preference may be worth remembering" | Pagelet when prior review is required; admitted Memory is governed in Memory Control Center, with eligible quiet changes in Recent changes |
 
 Planned item types after a visible preview/Keep UI exists:
 
@@ -403,8 +414,8 @@ capture can receive a backlink only after user confirmation.
 
 Quick Capture is not memory.
 
-Capture can contain memory-worthy content, but it should enter the Trust Layer
-as a Memory Candidate.
+Capture can contain memory-worthy content, but it must enter governed admission
+as a source-backed Memory Candidate, not directly become durable understanding.
 
 Examples:
 
@@ -419,10 +430,13 @@ Memory flow:
 
 1. PA detects memory-worthy content.
 2. PA creates Memory Candidate with sourceRefs.
-3. Candidate enters Pagelet Review Queue.
-4. User accepts, edits, scopes, or dismisses.
-5. Accepted candidate becomes Confirmed Memory.
-6. Confirmed Memory is governed in Memory panel.
+3. Memory Control Center evaluates effect, sensitivity, source, scope and reversibility.
+4. Eligible source-backed, low-sensitivity, current-vault, reversible understanding
+   may update quietly with Recent changes and correction/undo; it creates no review debt.
+5. Conflicts, sensitive inference and durable task constraints are surfaced before
+   affecting future behavior or rejected as required by the Memory contract.
+6. Admitted Memory is governed through Correct, Undo recent change, Pause use and
+   Forget, according to each action's actual availability.
 
 This avoids the common AI product mistake of treating every utterance as a
 durable personal truth.
@@ -447,7 +461,7 @@ Important distinction:
 | Save raw capture | No | User already initiated it |
 | Generate suggestions | Yes, if AI-backed | First-use/provider disclosure; per-run if broad/sensitive |
 | Save accepted title/tag/expansion/task | No or maybe, depending on edit path | Yes |
-| Create Memory Candidate | Yes, if AI-backed | Candidate creation can be automatic; confirmation required for memory admission |
+| Create Memory Candidate | Yes, if AI-backed | Candidate creation can be automatic; admission follows Memory Control Center effect/risk, without bypassing provider disclosure or Data Boundary |
 
 ## 12. Data Model Notes
 
@@ -512,7 +526,7 @@ Suggested eval cases:
 | Case | Expected behavior |
 | --- | --- |
 | Simple thought | Raw capture saved; no forced classification |
-| Preference capture | Memory Candidate created; no Confirmed Memory without user action |
+| Preference capture | Source-backed candidate follows Memory Control Center admission; eligible quiet admission remains inspectable/reversible, and higher-risk candidates cannot bypass prior review |
 | Task-like sentence | Task suggestion created; no Markdown task written automatically |
 | Ambiguous sentence | Conservative suggestions; false positives measurable |
 | Sensitive capture | Provider disclosure/boundary respected |
@@ -525,7 +539,7 @@ Deterministic checks:
 - original capture text remains unchanged
 - queue items include source capture id
 - generated content is visually distinguished
-- no memory admission without confirmation
+- no memory admission outside Memory Control Center effect/risk and recovery rules
 - no task write without confirmation
 
 ## 15. Roadmap
@@ -562,8 +576,8 @@ Deterministic checks:
 
 ### Phase 4: Memory And Task Integration
 
-- Route Memory Candidates through Trust Layer.
-- Route accepted memory to Memory panel governance.
+- Route Memory Candidates through governed Memory Control Center admission.
+- Route admitted Memory to its current lifecycle and Recent changes surfaces.
 - Route accepted task suggestions through Write Action Framework.
 - Ensure original capture remains unchanged.
 

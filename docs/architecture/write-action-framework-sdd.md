@@ -1,5 +1,18 @@
 # Write Action Framework v1 — Software Design Document (SDD)
 
+> **Scoped successors (2026-10-05):** This document retains the v1 framework and
+> historical implementation rationale. Its future Operations audit plans in
+> §2.4/§6/§10 are superseded by [DEC-046](../product/decisions/dec-046-note-change-review-and-audit-retirement.md):
+> no Operations audit persistence, replacement log, or access/cleanup of old audit
+> directories. A second caller or issue count is not authority to restore them.
+> [DEC-051](../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+> supersedes universal preview-then-confirm for current explicit Operations
+> requests; optional preview remains non-executing. Existing framework callers
+> retain their own domain confirmation contracts, including Ghost's concrete
+> version boundary. Frozen targets, permission checks, real effects and Undo are
+> unchanged. [B-161](../development/active/contract-alignment/tracker.md) owns the
+> new runtime alignment; the historic v1 evidence below does not validate it.
+
 > **Status (2026-07-11): Current implemented framework contract.** The original
 > `0.1 Draft` label below records the implementation-era spec version; v1 is
 > implemented and any new action family still requires a separately reviewed

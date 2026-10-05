@@ -1,12 +1,21 @@
 # Pagelet UI/UX Hardening Product Spec
 
 Document status: Approved
-Updated: 2026-09-12
+Updated: 2026-10-05
 Work item: B-118
 Decision: [DEC-021 — 按真实界面证据分阶段修复 Pagelet UI/UX 漂移](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)
 Scoped decision: [DEC-023 — Pagelet provider 首次使用采用共享非阻断通知](../decisions/dec-023-shared-pagelet-provider-first-use.md)
 Quiet Recall retrieval decision: [DEC-024 — 冷语义检索计入既有实际调用预算](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)
 Authority: B-118 的已授权修复范围、证据边界、非目标与验收标准；现有 Scope Recap、Quiet Recall、Bubble、Data Boundary、Retrieval Habit Profile 与 Saved Insight 合同继续定义其余行为。
+
+2026-10-05 scoped successor：[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+取消下文旧 REQ-03、AC-03/10 及 SG-05/06 中的来源篇数风险门；只澄清真实歧义，
+并确认超出已有授权或已接受费用范围的变化。Generic preload 的 opt-in、7 日、4K/1K、
+2/20 与 watermark 是已退役管线的历史合同；当前显式入口走 Deep Discover，不设
+累计次数硬限或扣自动池；自动默认 12/36 started runs 可调整且不加 UI。旧 Recall
+10/50 physical-call 桶不合并，候选默认 5 可调、无语言正则拒绝/重试，且不复活旧管线。
+下文旧验收和产品选择记录保留原判定，不是新实现门；新验收见
+[B-161 Tracker](../../development/active/contract-alignment/tracker.md)。
 Approval boundary: SG-01 至 SG-04、SG-07a/SG-07b 已由用户于 2026-07-20
 解决，SG-07c 当时延期且不阻断 B-118；其后续已由独立的
 [DEC-025/B-121](./pagelet-attention-aware-delivery-product-spec.md) 接续，不重开
@@ -57,13 +66,11 @@ foreground Review / generic background preload 风险分类选择 DEC-023 方案
 - B-118/REQ-03: 标准有界 Scope Recap 不显示授权 Modal。provider 已配置、能力未
   关闭且来源合规时，第一次实际 Pagelet provider 调用显示一次共享非阻断通知并
   继续；通知说明可能发送允许范围的笔记摘录、可能消耗 API credits/cost，以及可在
-  Settings 关闭。broad/sensitive/costly/whole-vault 或 excluded override 仍必须在
-  provider call 和 cost reservation 前提供 blocking `run / adjust / cancel`。若第一次
-  实际调用恰为高风险，完整 blocking disclosure 在用户明确 Run、全部 gate 通过且调用
+  Settings 关闭。实际超出已有授权或已接受费用范围时，说明变化并在执行前确认；
+  来源排除继续有效。若第一次实际调用恰好需要确认，完整 disclosure 在用户明确 Run、全部 gate 通过且调用
   即将发生时同时完成 shared first-use，不追加第二条 notice；Cancel/close/未完成的
-  Adjust 不改 shared flag。Foreground Review 必须在 Data Boundary 过滤、去重后按本次
-  实际允许来源数分类：`<=1` 为 standard bounded，`>1` 为高风险；请求 `last7` 但实际
-  只有 1 个允许来源仍不阻断，高风险确认前不预留 quota/cost。
+  Adjust 不改 shared flag。Foreground Review 不按篇数或 last7 等标签判高风险；
+  目标、来源或范围真正不清才澄清，已接受授权不重复询问。
 - B-118/REQ-04: `prefers-reduced-motion: reduce` 覆盖 Pagelet Pet、通知点、blink、
   working dots、resting zzz、nudge、hold ring/menu 等装饰动画，以及 Bubble
   open/close scale/translate 与 rich action hover 位移；内容、状态和触控仍可用。
@@ -178,14 +185,13 @@ Pet 处于 insights-ready/nudge 时，用户点击后首先看到一条具体、
 
 标准有界 Scope Recap 不再显示授权 Modal。第一次实际 Pagelet provider 调用共用
 一次轻量非阻断通知并继续，后续 eligible bounded runs 不重复重型披露，也不得由
-任一 feature 重置通知状态。用户已有 opt-out 继续有效。高风险范围仍在任何 provider
-call 或 cost reservation 前阻断，并提供 run / adjust / cancel。若它同时是第一次实际
+任一 feature 重置通知状态。当前有效 opt-out 继续有效。需要超出已有授权或已接受费用
+范围时，先说明变化并确认；不是按篇数阻断。若它同时是第一次实际
 调用，完整阻断披露只在 affirmative Run 后的 imminent-call seam 写 shared flag，且不
-叠加普通 notice；后续高风险运行仍逐次确认。Foreground Review 的风险只看过滤、去重
-后的实际允许来源：1 个来源（包括 `last7` 请求最终只剩 1 个）走 standard bounded；
-2 个或更多来源才先阻断，并在确认前保持 quota/cost reservation 为 0。
+叠加普通 notice；后续已接受范围不重复确认，真正的新变化才需确认。Foreground Review
+与多个允许来源的明确请求同样遵守此规则，不再按 1 篇/多篇分类。
 
-### Generic Background Preload
+### Generic Background Preload — Historical, Retired Lane
 
 用户显式 opt in 后，generic preload 可以在 changed-only、最近 7 天、实际输入 `<=4K`、
 请求输出 `<=1K`、实际调用 `<=2/hour` 与 `<=20/day`、`allowWrite=false` 且无 sensitive、whole-vault、

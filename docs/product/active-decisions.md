@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-10-04
+Updated: 2026-10-05
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-051 | 必要确认与合同接续 | 明确请求不重复确认；手动无累计额度；自动12/36默认；旧合同按真实入口接续；Writing/Ghost/来源边界保留 | [Decision](./decisions/dec-051-proportionate-confirmation-and-contract-alignment.md), [Product Spec](./specs/pa-contract-alignment-product-spec.md) | 实际成本/资源证据支持调整，或需要扩大数据/发布/恢复范围 |
 | DEC-050 | 笔记图片联合删除与一键撤销 | 共享引用阻止联合删除并提示；当前 Undo 窗口恢复原附件与笔记，不增持久恢复目录 | [Decision](./decisions/dec-050-note-image-removal-and-undo.md), [Product Spec](./specs/pa-note-image-removal-product-spec.md) | 需要跨重载恢复、新引用核查权限或改变平台/删除设置边界 |
 | DEC-049 | PA Agent command统一职责与交互 | command任务契约、Agent语义/纠错、Host harness、Tool领域事实；先设计/流程，再框架/领域，权限保持 | [Decision](./decisions/dec-049-command-agent-host-tool-contract.md), [Product Spec](./specs/pa-agent-command-contract-product-spec.md) | 需要改变领域权限、费用、数据、兼容或引入新运行/存储层 |
 | DEC-048 | Context 保留合法执行事实 | 四域统一获准状态、现有会话最小落盘与压缩摘要；不扩大权限或新增 ledger | [Decision](./decisions/dec-048-action-facts-and-context-continuity.md), [Product Spec](./specs/pa-action-continuity-product-spec.md) | 需要新存储层、扩大来源或动作权限时先交 Owner 决定 |

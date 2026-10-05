@@ -7,6 +7,13 @@ Work item: B-101
 Authority: Historical proposal evidence; superseded by the delivered [Operations capability](./agent-operations-capability.md) and Step 2/3 SDDs.
 Restart condition: Do not restart this SDD; additional scope requires a new work item and explicit owner authorization under the current capability contract.
 
+Current successors: [Essential Capabilities](../../../product/specs/pa-agent-essential-capabilities-product-spec.md)
+replaces opt-in/intent tool-exposure gates; [DEC-046](../../../product/decisions/dec-046-note-change-review-and-audit-retirement.md)
+retires persistent Operations audit and forbids managing old audit directories;
+[DEC-051](../../../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+replaces compulsory second confirmation for current explicit modifications.
+This historical design does not restore those gates or authorize broader writes.
+
 > Historical note: this SDD preserves the original PA-level Operations Agent
 > mode design and is superseded by the current
 > [Operations capability](./agent-operations-capability.md),

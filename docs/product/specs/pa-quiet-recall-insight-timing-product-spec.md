@@ -1,12 +1,19 @@
 # PA Quiet Recall And Insight Timing Product Spec
 
 Document status: Current
-Updated: 2026-07-27
+Updated: 2026-10-05
 Work item: B-108
 Scoped work items: B-118, B-121
 Decision: [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md)
 Scoped decisions: [DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)、[DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md)、[DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-025](../decisions/dec-025-consumption-aware-pagelet-delivery.md)
 Authority: Quiet Recall 的候选、触发、质量、成本、数据、交付、反馈与无自动写入边界。
+
+2026-10-05 applicability：[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+将本文旧 evaluator 的候选 5 改为可调默认，撤销字符正则语言拒绝及自动重试。当前
+Review/Quiet Recall 等命令已走统一 Deep Discover；下文独立 evaluator/10–50 调用桶仅
+约束确有合法消费者的旧路径，不要求复活无调用代码。自动 Deep Discover 的 12/36
+按启动 run 计数，手动不扣自动池，两者不可合并或换算。旧交付事实保留，新对齐见
+[B-161 Tracker](../../development/active/contract-alignment/tracker.md)。
 
 > [!note] Current implementation includes the 2026-07-02 amendments: the
 > candidate pool spans the eligible vault and triggers are note open/switch,
@@ -62,7 +69,7 @@ embedding as one disclosed, budgeted Quiet Recall provider call.
 | QR-D8 | Quiet Recall has one Off/On setting, with Off as the default. | No display/context frequency tier or cap is exposed. Quiet Recall, generic hints, and Recap remain independently controlled. |
 | QR-D9 | Bubble shows only a line and why-shown; `View` navigates to or expands current evidence without rerunning the provider. | Recall detail lives in Tab; explicit Discover continues into Panel. |
 | QR-D10 | Recall is not a queue item by default. | Closing, ignoring, or dismissing creates no queue item. Only user-chosen `Later` expresses return intent and enters the existing Review Queue; Link/Save remain in Tab. |
-| QR-D11 | Each eligible Recall candidate receives an independent AI why-now evaluation. | Local ranking may nominate at most 5 candidates per round; each candidate fails independently, receives at most one language retry, and never falls back to a template proactive nudge. |
+| QR-D11 | Where the legacy evaluator still has a production consumer, each eligible candidate receives an independent AI why-now evaluation. | Candidate count defaults to 5 and is internally adjustable, without new UI; no character-regex language rejection/retry. Failures remain isolated; no template proactive nudge. |
 | QR-D12 | Pure-semantic candidate discovery is retained; a cold query embedding is one real Quiet Recall provider call. | It passes DEC-023 admission and consumes the existing 10/hour、50/day bucket without increasing it. Empty retrieval makes no downstream evaluator/generation call; metadata-only fallback is explicit-Discover-only and never proactive Recall. |
 | QR-D13 | A Recall card carrying its exact transient receipt becomes visible in Bubble, or that receipt's target successfully renders in Detail, before it is seen for proactive-delivery purposes on this device. | The receipt is submitted, not persisted; while the corresponding seen ledger entry is retained, the same normalized Recall cannot nudge or enter proactive Bubble again after reload/rerun. Seen stays separate from Dismiss/Later/RHP and does not filter explicit entry or source navigation; generated-card availability still follows its existing lifecycle. |
 
@@ -191,20 +198,20 @@ quality/cost tradeoff for provider-backed why-now evaluation:
   eligible source/query, index-ready, cooldown, actual-call budget and
   source/current-run revalidation before DEC-023 shared first-use admission at
   the invocation seam
-- local retrieval and mixed ranking select at most 5 candidates per eligible
-  evaluation round
+- local retrieval and mixed ranking default to 5 candidates per eligible
+  evaluation round; this is adjustable, not a product maximum
 - each candidate is sent in its own initial provider call; one candidate's
   failure or rejection does not invalidate another candidate
-- only a why-now language mismatch permits one retry for that candidate
-- the evaluator stage has a hard ceiling of 5 initial calls plus 5 language
-  retries; the cold retrieval call is separate but receives no additional
-  quota and therefore reduces evaluator capacity when the same 10/hour bucket
-  would otherwise be exhausted
+- the model follows the configured output language; remove character-regex
+  rejection and its retry, retain JSON/necessary-field validation, and add no
+  language-evaluation model
+- a cold retrieval call receives no additional quota and reduces remaining
+  evaluator capacity in the legacy 10/hour bucket
 - the current 60-second cooldown limits rounds, not calls; hour/day limits must
   count actual provider calls, including retries
 - Quiet Recall uses one persisted total actual-call bucket: 10 calls per rolling
-  hour and 50 calls per local day. Every cold query embedding, initial evaluator
-  call and language retry commits its slot at the imminent invocation seam after
+  hour and 50 calls per local day. Every cold query embedding and initial evaluator
+  call commits its slot at the imminent invocation seam after
   applicable DEC-023 admission; high-risk `Run` precedes that commit. Failures, timeouts,
   malformed/rejected output, and wrong-language calls consume the slot
 - Recap, generic preload, and foreground review have separate buckets and do
@@ -658,11 +665,12 @@ Deterministic checks:
   quiet Bubble empty state
 - no vault writes occur without user action
 - no Confirmed Memory is created by recall alone
-- an evaluator stage makes at most 5 initial calls and 5 language retries
+- any retained evaluator uses the adjustable default of 5 candidates and no
+  character-regex language rejection/retry
 - actual provider calls, not rounds, are reserved before invocation and counted
   against one independent 10-per-rolling-hour / 50-per-local-day Quiet Recall
-  budget; cold query embeddings, initial evaluators and retries all consume it
-- failed calls and language retries consume capacity; Recap, generic preload,
+  budget; cold query embeddings and initial evaluators consume it
+- failed calls consume capacity; historical retry usage is not erased. Recap, generic preload,
   and foreground review do not share the Quiet Recall bucket
 - cold retrieval with zero candidates performs exactly one embedding attempt
   when uncached and admitted, then zero evaluator/generation calls; all
@@ -750,8 +758,8 @@ The durable contract:
 - Bubble surfaces low-frequency recall cues
 - ignored recall creates no user debt
 - triggers follow explicit context changes
-- eligible candidates receive independent AI why-now evaluation under a
-  5-initial / 5-language-retry per-round ceiling
+- retained legacy candidates receive independent AI why-now evaluation with an
+  adjustable 5-candidate default, structural checks and no language-regex retry
 - pure-semantic retrieval is retained; a cold query embedding is one real call
   in the unchanged 10/hour、50/day Quiet Recall budget, and an empty retrieval
   makes no downstream evaluator/generation call

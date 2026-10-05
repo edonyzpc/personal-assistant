@@ -1,7 +1,7 @@
 # PA Eval Harness Product Spec
 
 Document status: Current
-Updated: 2026-09-04
+Updated: 2026-10-05
 Work item: B-118
 Scope note: DEC-024 deterministic coverage is owned by B-118; DEC-027/B-125 adds lexical-correctness、retrieval、rerank、retry and opaque-bridge gates. Their implementation/validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md). DEC-031 extends B-125 with the shipping default and owns its affected-slice current-artifact revalidation.
 Scoped decisions: [DEC-024 — Quiet Recall cold semantic retrieval](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-027 — bounded retrieval recovery](../decisions/dec-027-bounded-retrieval-recovery.md)、[DEC-031 — platform-scoped retrieval shipping default](../decisions/dec-031-b125-retrieval-shipping-default.md)
@@ -23,6 +23,15 @@ engineering gate rather than an ordinary user-facing product surface.
 
 The harness exists to keep PA's evidence, memory, and action systems reliable
 as retrieval, Pagelet, Memory, Maintenance, and graph-aware discovery evolve.
+
+Applicability: historical B-108/B-118/B-125 checks below retain their original
+validation meaning. They are not proof of current entry-point reachability or
+authority to restore retired products. The [product index](../README.md) records
+independent Weekly Review as retired and wider B-112 Trust/Maintenance proposals
+as inactive; existing bounded Maintenance remains in scope. B-119 AI enhancement
+is not activated by this matrix. Current successors are identified below;
+[B-161 delivery evidence](../../development/active/contract-alignment/tracker.md)
+owns implementation status for the newly approved alignment.
 
 ## Confirmed Decisions
 
@@ -55,7 +64,9 @@ Some risks must be proven with deterministic assertions:
 - excluded folders are not used
 - sourceRefs point to existing notes/blocks
 - retrieval outcomes return the expected state
-- Memory Candidates do not become Confirmed Memory without user confirmation
+- Memory Candidates follow Memory Control Center effect/risk admission; eligible
+  quiet admission has Recent changes and correction/undo, and higher-risk cases
+  cannot bypass prior review or rejection
 - stale/conflicting memory is not silently overwritten
 - action preview contains affected paths and diffs
 - rollback restores the expected state
@@ -143,12 +154,24 @@ Fixture categories:
 Example hard assertions:
 
 - candidate has sourceRefs
-- candidate is not Confirmed Memory until confirmed
+- candidate is not governed Memory until admitted under the
+  [Memory Control Center contract](./pa-memory-control-center-product-spec.md#5-effect-based-admission-and-disclosure)
 - stale memory is not auto-included without gate result
 - conflicting memory creates a conflict item
 - private source does not generate candidate
 
 ### 4.3 Maintenance Action
+
+Apply these fixtures to the concrete bounded capability under test, not to the
+whole archived Maintenance Review proposal. Historical preview/selected-only,
+hard-delete and action-log assumptions below do not override current Operations
+contracts: [DEC-046](../decisions/dec-046-note-change-review-and-audit-retirement.md)
+retired persistent audit, [DEC-050](../decisions/dec-050-note-image-removal-and-undo.md)
+owns supported recoverable image deletion, and
+[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+permits a clear current modification request without a second whole-batch
+confirmation. Keep tests for actual authority, effects and recovery; do not
+reactivate B-112 or treat target behavior as already validated.
 
 Fixture categories:
 
@@ -174,21 +197,35 @@ Example hard assertions:
 This matrix is the first implementation planning contract. It should be updated
 when a product spec adds a new hard boundary.
 
+Rows marked historical preserve the named phase's evidence only and no longer
+block current runtime against the superseded rule. For Pagelet, the
+[Data Boundary spec](./pa-data-boundary-product-spec.md) already supersedes generic
+preload's narrow envelope for Agent-driven discovery.
+[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+removes source-count confirmation, makes the old Recall five-candidate limit an
+adjustable default, and removes its character-regex language rejection/retry.
+The historical Quiet Recall 10/hour, 50/day bucket counts provider calls; it is
+not automatic Deep Discover's adjustable 12/hour, 36/day started-run default.
+Explicit tasks do not consume the automatic pool or have accumulated-count hard
+limits. These are current target requirements, with implementation evidence owned
+by B-161; do not rerun old checks to reintroduce their superseded assertions or
+revive the legacy evaluator when it has no production consumers.
+
 | Spec / surface | Deterministic checks | Blocks |
 | --- | --- | --- |
 | Product IA / Review Queue | canonical queue type accepted; unknown type rejected; required shared fields present | Shared Review Queue data model |
 | Active Vault Indexer | real sqlite-wasm MATCH fixtures prove shared CJK index/query normalization across Chinese、English、mixed CJK/kana、title、heading、path basename、error code and long-note cases；quality/cost reports cover FTS Recall@K、hybrid Recall@12、final Recall@8/MRR、unique-path and index/rebuild/update cost before lexical/fusion constants are selected；Darwin/Linux exact-renderer receipts prove normalization parity；Desktop current-App evidence owns six frozen selected-reranker rankings、structured explicit-temporal acceptance and Pagelet 0/1/2；the owner-accepted current real-iPhone proxy runs 3 core plus at most 1 conditional targeted canary for ordinary Provider、the exact Recovery readiness/approval/timeout + graph-safety path、cancellation/queue release and Pagelet first-use only when same-artifact evidence is absent, with loaded identity and iOS normalization fingerprint as setup probes；record absolute deadline、raw latency/UI/index、hang/termination and cancel safety without a p95 claim；33/47-episode performance profiles、process footprint、Xcode/Instruments and statistical certification are non-blocking B-127 work；sourceRefs resolve; excluded paths absent from seed/candidate/result/source/provider/replay identity; reranker policy-or-Chat selection and fail-open matrix passes, including valid cross-origin mixing versus direct-hybrid-first + graph-cosine fail-open with no score decay/reservation; Local cosine-before-truncation、Deep Breadth exclusion-only-at-selection、Convergence overlap and membership-aware lane nominations pass; 12 direct + 6 graph + 18 reranker limits hold；recovery fixtures prove same-query/frozen-plan reuse、episode-local exact-evidence fingerprints、novel-before-changed admission、cap-before-repeat filtering、rejected-path propagation and zero-fresh-only topology roots；a standard/retry recovery episode exposes one cumulative projection of at most 8 final documents; retrieval outcome status matches fixture | B-125 retrieval substrate phase |
 | Data Boundary | excluded/generated/self-write sources do not reach provider/candidate paths; `allowed A → excluded Markdown B → allowed C` may surface only C through one opaque bridge; generated/attachment/two-excluded variants remain unreachable; provider、DTO、source、log、telemetry and replay spies contain no B path/title/body/metadata; per-run override recorded; cleanup groups separate cache/user data | Any provider-backed broad scan or memory extraction, including B-125 |
-| Pagelet Review / generic preload admission | foreground Review uses the post-filter/de-duplicated actual allowed-source count: current=1 and requested `last7` reduced to 1 are standard, while `>1` blocks before any call/quota/cost reservation; generic background preload is standard only with explicit opt-in、changed-only、recent 7 days、input `<=4K`、output `<=1K`、calls `<=2/rolling-hour` and `<=20/local-day`、`allowWrite=false` and every actual source allowed by the explicit shared Data Boundary without override; violate each condition independently and assert silent skip with zero blocking UI/call/reservation/flag mutation; reconstruct the limiter、cross local midnight and corrupt storage to prove caps persist/fail closed; the narrow envelope is never classified high-risk merely as `weekly` | B-118 DEC-023 foreground Review and background preload runtime admission |
+| Pagelet Review / generic preload admission (historical) | Original B-118 checks: foreground Review uses the post-filter/de-duplicated actual allowed-source count: current=1 and requested `last7` reduced to 1 are standard, while `>1` blocks before any call/quota/cost reservation; generic background preload is standard only with explicit opt-in、changed-only、recent 7 days、input `<=4K`、output `<=1K`、calls `<=2/rolling-hour` and `<=20/local-day`、`allowWrite=false` and every actual source allowed by the explicit shared Data Boundary without override; violate each condition independently and assert silent skip with zero blocking UI/call/reservation/flag mutation; reconstruct the limiter、cross local midnight and corrupt storage to prove caps persist/fail closed; the narrow envelope is never classified high-risk merely as `weekly` | Historical B-118 DEC-023 admission only; current applicability follows Data Boundary and DEC-051 above |
 | Context Pager | displayed used/skipped/dropped counts match retrieval/memory outcomes; why-dropped labels match actual decision reasons | Context transparency UI |
-| Pagelet Trust Layer | Memory Candidate has sourceRefs/type/scope/sensitivity; high-sensitivity inference suppressed; conflict creates review item; B-125 Pagelet runs end validly with 0/1/2 independently gated insights and consume at most one Host-owned relaxed retry | Memory admission flow and B-125 Pagelet recovery |
-| Memory Type Taxonomy | candidate uses canonical memory type; archive/forget/export transitions preserve lifecycle contract; tombstone has no raw text | Memory panel / Confirmed Memory |
-| Maintenance Review | preview includes affected paths/diff/reason; forbidden action rejected; apply selected only; undo/recovery metadata present | Any source-note mutation |
-| Quick Capture | capture writes original user note; AI expansion separated; task/memory suggestions stay queue-only until confirmed | Quick Capture AI post-processing |
-| Quiet Recall | no nudge when evidence is weak/stale; a zero-metadata-overlap semantic fixture remains discoverable; at most 5 candidates receive independent evaluation and only language mismatch retries once, so 5 initial + 5 retry is the evaluator-stage ceiling; a cold query embedding passes DEC-023 admission after applicable zero-call gates/source revalidation, then embedding/evaluator/retry all consume the unchanged 10/hour、50/day total bucket; uncached empty retrieval is embedding=1 and evaluator/generation=0, while no source/query、index-not-ready、capability/provider/Data Boundary deny、pre-retrieval cooldown/budget deny or pre-invocation drift is total call=0; index-unavailable metadata appears only as explicit-Discover `Local related clue`, never semantic/proactive Recall; stale results are discarded; query/profile changes and failed attempts cannot reuse embedding cache, while a hit must rerun local search and revalidate current source/Data Boundary/run | Recall nudges, B-108 DEC-020 cost/quality gate, and [B-118 DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md) |
+| Pagelet evidence / Memory admission | Memory Candidate has sourceRefs/type/scope/sensitivity and follows Memory Control Center effect/risk; high-sensitivity inference suppressed; conflict requires review; historical B-125 Pagelet recovery evidence retains its 0/1/2 insight and one Host-owned relaxed-retry scope | Existing Memory admission and named B-125 evidence; not activation of the wider B-112 Trust Layer |
+| Memory Type Taxonomy | candidate uses canonical memory type internally; lifecycle follows Memory Control Center Correct/Undo/Pause/Forget semantics; tombstone has no raw text | Governed Memory; taxonomy already identifies its lifecycle successor |
+| Bounded Maintenance | actual requested action has allowed scope and truthful affected paths/diff/results; forbidden action rejected; applicable undo/recovery metadata present; current action contracts in §4.3 own execution authority | Existing bounded capability or explicitly scoped action implementation, not the wider B-112 proposal |
+| Quick Capture | capture writes original user note; AI expansion separated; unaccepted task suggestions do not write tasks; Memory candidates follow effect/risk admission rather than a blanket queue/confirmation gate | Quick Capture AI post-processing |
+| Quiet Recall (historical pipeline) | Original B-108/B-118 checks: no nudge when evidence is weak/stale; a zero-metadata-overlap semantic fixture remains discoverable; at most 5 candidates receive independent evaluation and only language mismatch retries once, so 5 initial + 5 retry is the evaluator-stage ceiling; a cold query embedding passes DEC-023 admission after applicable zero-call gates/source revalidation, then embedding/evaluator/retry all consume the unchanged 10/hour、50/day total bucket; uncached empty retrieval is embedding=1 and evaluator/generation=0, while no source/query、index-not-ready、capability/provider/Data Boundary deny、pre-retrieval cooldown/budget deny or pre-invocation drift is total call=0; index-unavailable metadata appears only as explicit-Discover `Local related clue`, never semantic/proactive Recall; stale results are discarded; query/profile changes and failed attempts cannot reuse embedding cache, while a hit must rerun local search and revalidate current source/Data Boundary/run | Historical B-108 DEC-020 and [B-118 DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md); DEC-051 successor above owns candidate/language rules and current versus legacy reachability |
 | Saved Insight Ledger | PA-generated insight has sourceRefs; user-authored insight marked unsourced/user-authored; promotion creates explicit target item | Insight save/promotion |
 | Scope Recap / Theme Summary | important claim has sourceRefs; stale recap flagged; generated recap not used as source unless policy allows; failed/empty/rejected attempt creates no ready/delivery/nudge and preserves any still-valid artifact; explicit open without one returns only local scope/source explanation plus Retry/View sources; local overview cannot enter insight, DeliveryCandidate, or hint pools | Recap generation/write and B-108 prepared-delivery fallback |
-| Weekly Review | scope disclosure present; accepted-only items enter Markdown note; dismissed/unconfirmed items stay out | Weekly Review write |
+| Weekly Review (historical, retired) | Original design checks: scope disclosure present; accepted-only items enter Markdown note; dismissed/unconfirmed items stay out | No current implementation gate; does not restore the independent product |
 | Lightweight Graph Discovery | graph suggestions have sourceRefs; `theme_chain` does not become memory directly; rejected edge remains local; opaque bridge never becomes an item/edge/source/why-shown and generated/attachment/excluded-chain bridges fail | Graph-aware discovery and B-125 PPR boundary |
 | Retrieval Habit Profile | disabled mode has no influence; weak signal cannot cross explicit scope/Data Boundary/evidence strength | Retrieval adaptation |
 

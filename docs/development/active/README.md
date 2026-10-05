@@ -1,13 +1,14 @@
 # Active Development Registry
 
 Document status: Current
-Updated: 2026-10-04
+Updated: 2026-10-05
 Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governance/tooling track 索引。
 
 新 track 只登记 Work item、Feature Home 与 Tracker。执行状态唯一权威是 Tracker，本索引不复制状态、目标、日期或 task 明细。
 
 | Track | Work item | Feature Home | Tracker |
 | --- | --- | --- | --- |
+| Contract alignment | B-161 | [Feature Home](./contract-alignment/README.md) | [Tracker](./contract-alignment/tracker.md) |
 | Note image removal | B-160 | [Feature Home](./note-image-removal/README.md) | [Tracker](./note-image-removal/tracker.md) |
 | Agent command contract | B-158 | [Feature Home](./agent-command-contract/README.md) | [Tracker](./agent-command-contract/tracker.md) |
 | Context action continuity | B-157 | [Feature Home](./context-reliability-and-action-continuity/README.md) | [Tracker](./context-reliability-and-action-continuity/tracker.md) |

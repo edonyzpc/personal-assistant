@@ -1,5 +1,15 @@
 # Obsidian Operations Agent Plan
 
+> Current applicability: this read-side plan does not authorize future write
+> behavior through an archived handoff. Current Operations boundaries come from
+> [Essential Capabilities](../product/specs/pa-agent-essential-capabilities-product-spec.md),
+> [DEC-046](../product/decisions/dec-046-note-change-review-and-audit-retirement.md)
+> (no persistent Operations audit; leave old directories untouched), and
+> [DEC-051](../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+> (current explicit modifications need no compulsory second confirmation).
+> Historical preview/confirmation/audit references below remain design provenance;
+> they do not revive opt-in gates, audit writers or unrestricted command execution.
+
 ## Status And Source Of Truth
 
 This document is the contract source of truth for adding Obsidian operations knowledge and read-only Obsidian context tools to Personal Assistant Chat.

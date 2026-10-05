@@ -1,6 +1,6 @@
 # PA Saved Insight And Insight Ledger Product Spec
 
-Updated: 2026-07-11
+Updated: 2026-10-05
 
 ## Status
 
@@ -9,7 +9,7 @@ Updated: 2026-07-11
 | Document type | Product spec / current durable contract |
 | Status | Saved Insight ledger and bounded Memory-candidate handoff implemented |
 | Feature family | Saved Insight / Insight Ledger |
-| Primary surfaces | Pagelet Tab, Pagelet Panel, Weekly Review note, review notes |
+| Primary surfaces | Pagelet Tab, Pagelet Panel, review notes; Weekly Review references below are historical |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
 | Related specs | [PA Product Information Architecture spec](../pa-product-information-architecture-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Weekly Review spec](../../archive/pa-weekly-review-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Pagelet Trust Layer spec](../../archive/pagelet-trust-layer-product-spec.md), [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
 | Related Pagelet docs | [Pagelet product design](../pagelet-product-design.md), [Pagelet Maintenance Review spec](../../archive/pagelet-maintenance-review-product-spec.md) |
@@ -18,6 +18,17 @@ Updated: 2026-07-11
 This spec defines Saved Insight as PA's durable but lightweight thought object.
 The bounded ledger and Memory-candidate handoff are implemented; future actions
 still require their own product and write-boundary review.
+
+Current applicability: the
+[Memory Control Center](./pa-memory-control-center-product-spec.md#5-effect-based-admission-and-disclosure)
+supersedes blanket Memory confirmation and standalone panel assumptions. Saving
+an insight remains distinct from admitting Memory; the latter follows its own
+effect/risk rules. As recorded in the [product index](../README.md), independent
+Weekly Review is retired, and the wider B-112 Trust/Maintenance proposals remain
+inactive. Weekly Review references below preserve the original design context,
+not a current entry point or an instruction to restore it. This alignment under
+[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+does not activate B-119 AI enhancement or claim B-161 runtime completion.
 
 Saved Insight exists because PA often discovers something valuable that should
 not disappear into a chat transcript, but also should not immediately become
@@ -35,7 +46,7 @@ This document records the one-question-at-a-time product decisions confirmed on
 | ID | Decision | Product consequence |
 | --- | --- | --- |
 | INS-D1 | Saved Insight uses a mixed shape. | It starts as a local source-backed object and can later be explicitly written to Weekly Review note, review note, or independent Markdown. |
-| INS-D2 | The key distinction from Memory Candidate is whether it affects PA future behavior. | Insight is a reviewable thought asset; Memory Candidate may become future behavioral context after confirmation. |
+| INS-D2 | The key distinction from Memory Candidate is whether it affects PA future behavior. | Insight is a reviewable thought asset; Memory Candidate may become future behavioral context only through Memory Control Center effect/risk admission. |
 | INS-D3 | v1 insight types use a medium taxonomy. | `observation`, `theme`, `tension`, `question`, `decision`, and `opportunity` cover most review cases without over-classification. |
 | INS-D4 | Insight candidates are ignorable until the user chooses durability. | User-saved insights go directly to Insight Ledger; PA-discovered candidates stay ephemeral unless the user saves, keeps for later, promotes, or PA proposes a durable action. |
 | INS-D5 | Markdown write target follows triggering context, with independent note as an option. | Weekly Review insights default to Weekly Review note; Pagelet review insights may be explicitly added to a review note; important insights can become independent notes. |
@@ -84,8 +95,8 @@ The difference is not simply wording. The difference is authority.
 | Object | What it represents | Future PA behavior |
 | --- | --- | --- |
 | Saved Insight | A thought, pattern, tension, question, or opportunity the user may want to revisit | Weak influence only: recall candidate, theme signal, ranking hint |
-| Memory Candidate | A possible durable fact, preference, decision, or constraint | May become Confirmed Memory after user confirmation |
-| Confirmed Memory | User-approved durable context | Can influence PA answers, retrieval, recommendations, and actions |
+| Memory Candidate | A possible durable fact, preference, decision, or constraint | May become governed Memory after effect/risk admission; prior review is required only where the Memory contract requires it |
+| Confirmed Memory | Durable context admitted by the Memory governance contract | Can influence PA answers, retrieval and recommendations; it grants no vault-write or external-action permission |
 
 Product rule:
 
@@ -102,7 +113,7 @@ v1 should use a medium-size taxonomy.
 | `theme` | A recurring topic across notes | "Quiet automation and user trust keep recurring together." |
 | `tension` | A contradiction, tradeoff, or counterexample | "PA needs hands, but source-note mutation threatens trust." |
 | `question` | A question worth revisiting | "When should scoped autonomy replace review?" |
-| `decision` | A product or personal decision worth preserving | "Weekly Review lives in Pagelet Tab." |
+| `decision` | A product or personal decision worth preserving | "Saved insights remain source-backed." |
 | `opportunity` | A possible next move or product opportunity | "Turn repeated accepted maintenance into scoped autonomy." |
 
 Avoid over-classifying v1 with many subtle categories. Types should help users
@@ -117,8 +128,8 @@ Saved Insight behavior depends on how it is created.
 | User manually saves an insight | Save directly to Insight Ledger | The save action is already confirmation |
 | PA discovers an insight automatically | Show ephemerally or discard if low confidence | AI-generated candidates should not become user assets or queue debt without intent |
 | User chooses `Later` / `Keep` on a PA-discovered insight | Create a Review Queue item or lightweight saved draft | The user has expressed intent to return |
-| PA proposes durable save, Memory promotion, or maintenance action from an insight | Create the appropriate confirmed flow | Durable consequence needs confirmation before it affects the vault or future PA behavior |
-| Weekly Review section | User selects, saves, or edits, then save | Weekly Review is an intentional review session |
+| PA proposes durable save, Memory promotion, or maintenance action from an insight | Route to the relevant save, Memory or action owner | Ledger saving, Memory admission and vault writes have distinct authority; a proposal alone grants no action permission |
+| Weekly Review section (historical) | User selected, saved, or edited, then saved | Retired integration; not a current entry point |
 | Quiet Recall Panel | User saves from evidence view, then save | The user has inspected or chosen the cue |
 | Chat | Chat can create a save action, but structured review routes to Pagelet when evidence is complex | Chat should invoke, not become the ledger |
 
@@ -134,9 +145,15 @@ Saved Insight must preserve optionality:
 - Ignoring an insight preview does not create queue state.
 - Dismissing an insight preview does not require a reason.
 - Saving an insight is confirmation for ledger storage only.
-- Promoting an insight to Memory requires separate Memory confirmation.
-- Turning an insight into maintenance requires preview/diff and action
-  confirmation.
+- Promoting an insight to Memory requires separate governed admission, not a
+  blanket second confirmation. Eligible low-risk, source-backed, current-vault,
+  reversible understanding may update quietly with Recent changes and
+  correction/undo; conflicts, sensitive inference and durable task constraints
+  require prior review or rejection.
+- Turning an insight into maintenance requires actual action authority and
+  reviewable effects. For Operations, DEC-051 permits a clear current modification
+  request to execute directly; a save action or unaccepted suggestion is not such
+  a request. Keep user-requested preview, final differences and valid Undo.
 
 ## 5. Insight Ledger
 
@@ -175,10 +192,10 @@ Default target follows triggering context:
 
 | Triggering context | Default Markdown target |
 | --- | --- |
-| Weekly Review | Weekly Review note |
+| Weekly Review (historical, retired) | Weekly Review note; no current automatic target |
 | Pagelet review | Current review note only after an explicit insight-save/export action |
 | Quick Capture post-processing | Review note or source-linked companion note |
-| Quiet Recall | Review note or Weekly Review note if inside weekly session |
+| Quiet Recall | Review note; the earlier weekly-session target is historical |
 | User explicitly promotes | Independent Insight note |
 
 User can choose an independent Insight note when an insight deserves long-term
@@ -219,7 +236,7 @@ Allowed influence:
 - theme signal
 - rerank hint
 - related-note bridge
-- Pagelet/Weekly Review resurfacing
+- Pagelet resurfacing; Weekly Review integration remains historical
 
 Not allowed:
 
@@ -237,7 +254,8 @@ Example:
   insight."
 
 If an insight should affect PA behavior, it must be promoted into a Memory
-Candidate and confirmed through the Trust Layer.
+Candidate and admitted through Memory Control Center effect/risk rules. Ledger
+storage itself grants neither Memory admission nor action authority.
 
 ## 8. Lifecycle
 
@@ -330,9 +348,11 @@ rules and require stricter review or avoid saving.
 
 ## 12. Relationship To Weekly Review
 
-Weekly Review is the main compounding surface for Saved Insights.
+Independent Weekly Review has been retired. The following preserves the earlier
+integration design and is not a current capability or delivery gate. Existing
+Saved Insight and explicitly requested Markdown writes do not depend on it.
 
-Weekly Review can:
+The original design allowed Weekly Review to:
 
 - show candidate insights
 - let users select/save/edit/dismiss or simply skip sections
@@ -364,7 +384,9 @@ promoted into a durable Memory, Markdown, or maintenance/action flow.
 
 ## 14. Relationship To Trust Layer
 
-Trust Layer supplies evidence and promotion boundaries.
+The current Memory Control Center and action contracts own evidence, admission
+and promotion boundaries. The wider archived Trust Layer proposal remains
+inactive; this section does not reopen B-112.
 
 Saved Insight may be promoted to:
 
@@ -372,11 +394,11 @@ Saved Insight may be promoted to:
 - Memory Conflict item
 - Maintenance Proposal
 - review note
-- Weekly Review note
+- Weekly Review note (historical retired integration)
 - independent Markdown note
 
 Promotion to Memory Candidate is special because it may influence future PA
-behavior after confirmation. The insight itself remains weak-influence only.
+behavior after governed admission. The insight itself remains weak-influence only.
 
 ## 15. Evaluation
 
@@ -391,8 +413,8 @@ Suggested cases:
 | PA-generated insight ignored by user | Does not create Ledger or Review Queue state |
 | User-authored insight | Can be saved without sourceRefs and marked user-authored |
 | Saved insight retrieval | Weakly influences recall but not behavior constraint |
-| Insight promoted to Memory Candidate | Requires Trust Layer confirmation |
-| Weekly Review note | Includes selected insights only |
+| Insight promoted to Memory Candidate | Follows Memory Control Center effect/risk admission; ledger saving alone does not confer Memory authority |
+| Weekly Review note (historical) | Original selected-insights-only expectation; not a current product gate |
 | Archived insight | Does not proactively recall by default |
 
 Deterministic checks:
@@ -405,6 +427,10 @@ Deterministic checks:
 - Markdown write requires user action
 
 ## 16. Roadmap
+
+The phases below retain design history, not current execution status. Phase 3
+is retired with independent Weekly Review; future promotion/AI enhancement work
+requires its own active authority and does not activate B-112 or B-119.
 
 ### Phase 0: Product Contract
 
@@ -426,6 +452,8 @@ Deterministic checks:
 - Support browse, filter, search, archive, promote.
 
 ### Phase 3: Weekly Review Integration
+
+Historical and retired; these steps are not current work.
 
 - Save user-selected Weekly Review insights to Ledger.
 - Write user-selected insights to optional Weekly Review note.

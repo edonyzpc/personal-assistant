@@ -7,6 +7,12 @@ Work item: B-101
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)、[DEC-014](../../../product/decisions/dec-014-defer-operations-agent.md) 与 [DEC-011](../../../product/decisions/dec-011-capability-policy-boundary.md)。
 Restart condition: Step 2/3 已关闭；额外写工具或 Pagelet 直接动作仍需独立需求证据、新 work item 与 owner 授权。
 
+2026-10-05 current successors：[Essential Capabilities](../../../product/specs/pa-agent-essential-capabilities-product-spec.md)
+接续旧 vault opt-in/意图加载门；[DEC-046](../../../product/decisions/dec-046-note-change-review-and-audit-retirement.md)
+已退役 Operations 持久审计且不处理旧目录；[DEC-051](../../../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+取消当前明确修改请求的二次确认。下文 Step 2/3 的比较、任务和决定表为历史记录，
+不能据此恢复旧开关、Host 意图分类或审计。新运行对齐见 [B-161 Tracker](../../active/contract-alignment/tracker.md)。
+
 > 定义 PA Agent 在 Obsidian vault 中的写操作能力。
 > 核心场景：Chat 对话结论落地到 vault + Pagelet insight 的推荐动作执行。
 > 出发点：Agent 能力必要性——成熟的 Obsidian AI 助手必须能操作 vault。
@@ -221,12 +227,18 @@ Agent 根据以下信号判断写到哪：
 
 ### 6.1 内联确认（非弹窗）
 
-所有写操作确认内联在交互流程中：
+当前明确修改请求直接经领域执行，不要求第二次整批确认；仅讨论/预览不执行。
+用户从未执行预览主动点击执行时，可复用内联动作，不强制另开弹窗。下列是 Step 2/3
+历史确认流程，不再是明确请求的必经步骤：
 
 **Chat 场景**：Agent 展示目标和内容摘要 → [确认] [取消]
 **Pagelet 场景（Step 3）**：用户打开完整 insight card，确定性单文件动作切换为确认态 → [确认] [取消]
 
 ### 6.2 风险分级
+
+下表记录原风险呈现，不为每次动作创建额外确认，也不由篇数或关键词判权。
+当前必要确认遵循 DEC-051：真实歧义先澄清，超授权或超已接受费用时说明变化并确认；
+来源、目标、并发与真实效果校验仍保留，其他领域按自身契约。
 
 | 操作 | 风险 | 确认方式 |
 |------|------|---------|
@@ -237,7 +249,10 @@ Agent 根据以下信号判断写到哪：
 | 重命名/移动 | 高 | 展示影响范围（多少 backlinks 会更新） |
 | 删除 | 高 | 明确标注 + 展示 |
 
-### 6.3 审计
+### 6.3 审计 — 已退役的历史设计
+
+DEC-046 已替代本节：停止 Operations 审计持久化，不另建日志，不探测、读取、迁移、
+清理或删除旧 audit。以下格式/保留期只解释旧方案，不是当前实施任务。
 
 - 所有写操作记录到 `.obsidian/plugins/personal-assistant/audit/`
 - 每次操作一个独立 JSON 文件（防多设备 conflict）
@@ -271,8 +286,9 @@ frontmatter_update: { path: string; set?: Record; delete?: string[] } → { succ
 ### 7.2 按需加载
 
 - 读工具：常驻（~1.5K tokens）
-- 写工具：每个 run 按需暴露——仅当最新用户消息命中显式写意图时加载
-- 后续 turn 重新判断写意图；不会因为同一对话曾加载过就持续暴露
+- 获许可的基础写工具从首轮可用，不用 retired opt-in 或 Host 关键词意图门隐藏。
+- 主 Agent 判断当前请求是执行还是讨论/预览；领域核验真实权限、目标和效果，
+  不能因历史曾用过写工具而自动执行新副作用。
 
 ### 7.3 内容生成指导
 

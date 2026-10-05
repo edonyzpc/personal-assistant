@@ -1,10 +1,16 @@
 # PA Share Card Product Spec
 
 Document status: Approved
-Updated: 2026-09-18
+Updated: 2026-10-05
 Work item: B-124
 Decision: [DEC-026 — Share Card 采用本地、显式导出的完整渲染卡片](../decisions/dec-026-local-share-card.md)
 Authority: Share Card 的入口、可分享内容、视觉、分页、导出、失败、数据与兼容性边界。
+
+> [!note] Owner amendment 2026-10-05
+> [DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+> 取消 50,000 字符/24 页整批拒绝；保留完整分页、取消、真实资源失败和 SnapDOM。
+> 下列 REQ-04/08、AC-05/09 已接续目标合同；新实现与验收仅见
+> [B-161 Tracker](../../development/active/contract-alignment/tracker.md)，旧证据不证明本次交付。
 
 > [!note] Owner decision 2026-08-05
 > 用户选择完整渲染保真（方案 C）与 SnapDOM 窄例外（方案 A）。REQ-04、REQ-05、
@@ -79,11 +85,11 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 - B-124/REQ-04: 渲染型 Markdown 支持 headings、paragraphs、emphasis、lists、quotes、
   links、inline/fenced code 及可捕获的视觉内容。分页必须使用最终 card CSS 的实际 rendered height，优先语义
   块边界；超高单块可继续拆分但不得丢字、重排页序或产生空页。原始内容不得因
-  frontmatter-like 开头或 thematic break 被静默删除。v1 最多处理 50,000 characters / 24
-  pages；超限明确提示缩短内容，不产生截断卡片。分页先以 `16px` 建立有效 baseline；
+  frontmatter-like 开头或 thematic break 被静默删除。不以固定字符数或页数拒绝整批，
+  不静默截断；真实资源不足时准确报告。分页先以 `16px` 建立有效 baseline；
   多页内容只有完整 batch 重分页确实减少页数时才按 `15px`、`14px` 的顺序接受更小字号，
   并选择最大的有效值。结果为单页时，再依次评估 `18px`、`20px`、`22px`，选择仍保持
-  单页的最大字号。所有候选须通过同一套 no-loss、overflow 与 24-page 安全门，失败时
+  单页的最大字号。所有候选须通过同一套 no-loss 与实际 overflow 校验，失败时
   保留最近的有效结果。选定字号必须在同一 batch 的全部页面、preview、copy 与 save
   中一致。
 - B-124/REQ-05: 远程图片、Vault 图片与 Markdown note embed、Mermaid/Canvas/SVG 图表及
@@ -106,7 +112,8 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 - B-124/REQ-08: preview loading、render fallback、pagination/export failure 与 busy state
   都有可读状态。前后页按钮与保存目录输入具备本地化 accessible name，按钮保留
   disabled state 和页码；放大预览具备可访问名称、键盘进入和关闭路径，关闭后焦点
-  返回预览；action 在导出期间 exactly once，关闭 Modal 后不得继续写 UI。
+  返回预览；action 在导出期间 exactly once。分页、测量、资源准备和导出均可取消，
+  关闭 Modal 或取消后停止后续工作并释放临时资源，不得继续写 UI；已完成保存如实报告。
 - B-124/REQ-09: Share Card 从调用方已经持有的内容开始，只能解析该内容明确引用的
   远程或 Vault 资源；不调用 AI provider、不上传、不扫描无关 Vault、不使用未批准的
   CORS proxy，也不新增设置/ledger。capture 精确锁定 `@zumer/snapdom@2.23.2`，使用
@@ -206,7 +213,8 @@ flowchart TD
   `16/15/14px` 的多页 fixture 证明只在页数减少时缩小；短单页 fixture 覆盖
   `18/20/22px` 最大可容纳选择、候选失败回退，以及 preview/copy/save 整批一致。
 - B-124/AC-05: 覆盖中英文、列表、引用、代码块、长段落与 50+ 行内容的测试证明顺序
-  保持、无丢字/空页；运行时测量 smoke 证明每页 body 无 vertical overflow。
+  保持、无丢字/空页；代表内容超过 50,000 字符且超过 24 页时仍完整到末尾，
+  preview/copy/save 使用同一完整批次；运行时测量 smoke 证明每页 body 无 vertical overflow。
 - B-124/AC-06: remote image、Vault image、Markdown note embed（整篇、heading/block anchor、
   嵌套、cycle/depth）与 Mermaid/Canvas/SVG fixtures 能进入预览和 PNG，且只请求/读取
   显式引用资源；网络/CORS/解码/processor 失败产生明确占位或可重试 capture error，
@@ -218,7 +226,8 @@ flowchart TD
   均按契约工作，文件占位和命名冲突 fail safe；同名文件永不覆盖，成功/失败 notice 与
   真实结果一致。
 - B-124/AC-09: 快速切页、重复点击、导出中 close 与 Modal reopen 不产生并发写、stale
-  preview、遗漏 cleanup 或 unhandled rejection。
+  preview、遗漏 cleanup 或 unhandled rejection；分页与导出取消停止后续工作，实际资源
+  失败或部分保存不冒充完整成功，不承诺任何设备拥有无限资源。
 - B-124/AC-10: focused Jest、typecheck、docs/community scan、lint/build/bundle audit 通过；
   依赖精确为 SnapDOM 2.23.2，测试锁定 REQ-09 的完整选项（包括 `cache:"disabled"`）、
   无剩余 HTTP(S) resource/external font 进入 capture，并在已部署 Obsidian test vault 观察

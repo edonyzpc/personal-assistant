@@ -10,6 +10,20 @@ Authority: [Owner decision record](../proposal-review-response-2026-07-28.md), [
 Restart condition: Step 3 is closed. Any additional direct action or write capability requires a new work item, independent demand evidence, and explicit owner authorization.
 Handoff: [Implementation Handoff Brief](../implementation-handoff.md)
 
+## Current Successors
+
+This closed Step 3 design and its validation below are historical evidence.
+[Essential Capabilities](../../../product/specs/pa-agent-essential-capabilities-product-spec.md)
+supersedes its per-vault opt-in and tool-exposure intent gate;
+[DEC-046](../../../product/decisions/dec-046-note-change-review-and-audit-retirement.md)
+supersedes persistent Operations audit, with no access or cleanup of old audit
+directories. [DEC-051](../../../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+supersedes compulsory second confirmation for a current explicit modification.
+It does not make Pagelet background discovery writable or auto-execute a staged
+proposal. User-opened actions, surface isolation, actual source/permission checks,
+effect receipts and drift-safe Undo remain. Follow [B-161](../../active/contract-alignment/tracker.md)
+for alignment evidence; do not recreate the old switch, classifier or audit writer.
+
 ## 1. Outcome And Scope
 
 Step 3 completes one bounded companion flow:

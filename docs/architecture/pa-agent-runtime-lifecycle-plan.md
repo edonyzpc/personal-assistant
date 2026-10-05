@@ -1,6 +1,6 @@
 # PA Agent Runtime Lifecycle Contract
 
-Updated: 2026-09-25
+Updated: 2026-10-05
 
 Status: Current canonical lifecycle contract. The long implementation plan and phase evidence are archived at [pa-agent-runtime-lifecycle-plan-implementation-record.md](../archive/pa-agent-runtime-lifecycle-plan-implementation-record.md).
 
@@ -156,21 +156,27 @@ XML/JSON examples remain ordinary data and never grant execution authority.
 
 ## Budgets And Timeouts
 
+The [Context contract](../product/specs/pa-context-management-product-spec.md)
+supersedes the earlier hard character partitions and per-run auxiliary-summary
+quotas. The values below are implementation pressure targets where noted, not
+permission to reject a complete, otherwise authorized request. Historical B-149
+validation remains evidence for its original inputs, not for this successor.
+
 | Limit | Default | Enforcement |
 | --- | ---: | --- |
-| Model turns | 256 | Planning guard; ordinary completion and no-progress policy normally stop earlier. |
-| Tool calls | 1,024 | Planning guard; duplicate/recovery policy normally stops earlier. |
+| Model turns | No default accumulated-count cutoff | Current runtime defaults to unbounded; task completion, cancellation and real resource/domain conditions still apply. |
+| Tool calls | No default accumulated-count cutoff | Current runtime defaults to unbounded; do not restore the historical 1,024-call guard as product authority. |
 | Run wall clock | unbounded | No legacy 180-second forced finalization; an embedding host may explicitly configure a bound. |
 | Assistant idle | unbounded | No generic 60-second silence cutoff; user cancellation and the physical-attempt deadline remain active. |
 | Model/ordinary remote-tool attempt | 1,800,000 ms | Starts at each physical dispatch/execution and includes full response consumption; a capability may override it. |
 | Tool abort grace | 2,000 ms | Late unresolved tool becomes `abort_timeout`; late result is ignored. |
-| Loop observations | 64,000 chars | Aggregate prompt observation budget. |
-| Chat history | 60,000 chars | Runtime/context projection budget. |
-| Read-only tool context | 24,000 chars | Separate bounded context injection layer. |
-| Answer input | Verified model window minus verified output reserve and 512-token safety margin; otherwise 120,000 chars | Estimate includes rendered messages and bound schemas; unknown metadata uses the character fallback. |
-| Auxiliary summaries per run | 30 physical requests / 60 minutes active wait / 90,000 estimated-or-known reserved tokens | Retries count as physical attempts; optional work stops at the first limit, and irreducible required context fails with an explicit recoverable Context result. |
+| Loop observations | Read current source value | Soft aggregate prompt pressure target; not a hard rejection threshold. |
+| Chat history | Read current source value | Soft projection pressure target; preserve complete fitting history. |
+| Read-only tool context | Read current source value | Soft reduction target; preserve required evidence and effect facts. |
+| Answer input | Model input-window estimate including rendered messages and bound schemas | Local estimates trigger preparation; one real provider overflow may recover through compression without replaying effects. |
+| Auxiliary summaries per run | Read current source pressure targets | Record physical attempts and known usage; former 30-request / 60-minute / 90,000-token totals do not deny otherwise required preparation. |
 
-Changing a default requires runtime, tests, `AGENTS.md`, and current architecture docs to move together.
+Changing a default requires the affected runtime, tests and current contract to stay aligned; numeric values remain in source rather than being mirrored in `AGENTS.md`.
 
 The dispatcher records the absolute individual-Tool deadline at the same point it
 registers the timeout timer and passes that timestamp through the Host-only
@@ -286,7 +292,7 @@ the installed SDK retry policy and recheck admission on each physical attempt.
 Every physical start resets only that attempt's deadline; a failed attempt ends
 its clock before SDK backoff. Host-level recovery honors a real `Retry-After`
 after releasing the per-turn coordinator lease.
-The auxiliary limits admit new summary attempts; they do not shorten a request
+Auxiliary pressure targets do not impose a summary-admission cutoff or shorten a request
 already dispatched under its 30-minute physical deadline. A run-local usage
 ledger distinguishes physical attempts from logical calls, records known
 provider usage once per attributable physical response, and leaves missing or

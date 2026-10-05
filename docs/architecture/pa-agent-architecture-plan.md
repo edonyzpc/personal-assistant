@@ -99,6 +99,11 @@ to preserve its Host rules in that discussion.
 
 ### Roles And Ownership
 
+2026-10-05 的进一步产品选择见[DEC-051](../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)：
+必要确认、当前明确Operations直接执行、自然语言图片来源与前后台预算的目标行为已确认，
+现有实现尚待[B-161](../development/active/contract-alignment/README.md)对齐。
+本节职责不要求沿用旧的必经确认；来源/身份/真实效果边界仍成立，整体移除Host尚未决定。
+
 A command is a domain task contract and working guidance executed by the same
 main PA Agent. Relatively fixed means its goal, necessary domain conditions,
 inputs, deliverables and confirmation boundaries remain stable. The Agent may
@@ -298,16 +303,20 @@ One standard invocation follows these boundaries:
    state; candidates, excerpts, scores, lane membership, PPR state, and retry
    ledgers never enter the transcript.
 
-Before reranker exposure, before every later Chat/Pagelet provider request, and
-before final delivery, the Host re-reads each source and rechecks its current
-content identity, anchor, combined Data Boundary and retrieval-policy epoch. Model
-or tool binding may suspend, so once the real chain is ready the runtime repeats
-this check and rebuilds the canonical prompt immediately before the first actual
-stream request. A pre-output stream-to-invoke fallback independently repeats the
-same admission and prompt rebuild. A source that changed、became denied or cannot
-be verified is dropped fail-closed；an older serialized observation is never
-reused. The same exact materialized set feeds reranking, the rejection ledger and
-final projection.
+Before initial reranker exposure/materialization, retrieval validates current
+content identity, anchor, combined Data Boundary and retrieval-policy epoch. The
+same materialized set feeds reranking, the rejection ledger and final projection.
+
+For ordinary Chat, the later [recoverable-execution contract](../product/specs/pa-recoverable-agent-execution-product-spec.md)
+and [runtime-evolution contract](../product/specs/pa-agent-runtime-evolution-product-spec.md)
+supersede the old requirement to re-read and drop every previously read source
+before each provider request or final delivery. `read_snapshot` may keep the
+already-read A snapshot after the file becomes B; subsequent physical sends and
+fallback rebuilds still recheck source authorization. Revocation blocks reuse;
+an ordinary file edit alone does not revoke the snapshot. The Agent decides
+whether a new read is needed, and an explicit new read must obtain current facts.
+Pagelet current-evidence delivery, Writing versions, writes and paid image
+submission retain their own freshness rules; this exception does not relax them.
 
 [DEC-031, the dated B-125 shipping-default amendment](../product/decisions/dec-031-b125-retrieval-shipping-default.md)
 controls these retrieval paths through an internal versioned rollout profile.

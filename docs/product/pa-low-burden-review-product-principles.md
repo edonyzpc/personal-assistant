@@ -1,13 +1,13 @@
 # PA Low-Burden Review Product Principles
 
-Updated: 2026-07-21
+Updated: 2026-10-05
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product doctrine / cross-surface design constraint |
-| Scope | Pagelet, AI Insight, Quiet Recall, Saved Insight, Weekly Review, Maintenance Review, Memory Candidate |
+| Scope | Pagelet, AI Insight, Quiet Recall, Saved Insight, bounded Maintenance, Memory Candidate; independent Weekly Review is historical |
 | Role | Defines how PA creates review value without turning review into user workload |
 | Related north star | [PA Product North Star](./pa-product-north-star.md) |
 | Related specs | [Memory Control Center spec](./specs/pa-memory-control-center-product-spec.md), [Pagelet product design](./pagelet-product-design.md), [Quiet Recall and Insight Timing spec](./specs/pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./specs/pa-saved-insight-ledger-product-spec.md), [Weekly Review spec](../archive/pa-weekly-review-product-spec.md), [Pagelet Maintenance Review spec](../archive/pagelet-maintenance-review-product-spec.md) |
@@ -22,6 +22,16 @@ Insight:
 PA should not turn safety, provenance, or human control into a new inbox of AI
 outputs the user must confirm, classify, clean up, or dismiss. In a personal
 knowledge product, too much review is itself a product failure.
+
+Current applicability follows the [product index](./README.md): independent
+Weekly Review is retired, while the wider B-112 Trust/Maintenance proposals
+remain inactive. Existing bounded Maintenance is still available. Historical
+Weekly Review principles below do not restore that product, activate B-119 AI
+enhancement, or create new delivery gates. Memory admission follows
+[Memory Control Center](./specs/pa-memory-control-center-product-spec.md#5-effect-based-admission-and-disclosure);
+Operations confirmation and review follow
+[DEC-051](./decisions/dec-051-proportionate-confirmation-and-contract-alignment.md).
+These authority references do not claim B-161 runtime implementation is complete.
 
 ## 1. Why Pagelet And AI Insight Exist
 
@@ -62,7 +72,7 @@ Valid outcomes:
 - the user ignores the hint
 - the user dismisses without a reason
 - the user opens sources and saves nothing
-- the user finishes a weekly review without handling every item
+- the user finishes a digest without handling every item
 
 These outcomes are not failures. They are part of a quiet product.
 
@@ -77,9 +87,9 @@ separate confirmation/authorization boundaries.
 | --- | --- | --- |
 | Recall | old note cue, related thought, source-backed hint | no confirmation |
 | Digest | weekly summary preview, theme recap, source-backed overview | no confirmation until saved |
-| Save | Saved Insight, review note, Weekly Review note | light confirmation |
+| Save | Saved Insight, review note | explicit save intent; do not repeat existing authority |
 | Memory | Source-backed understanding affecting future answers | quiet only when low-risk, current-vault, reversible, visible in Recent changes, and correctable/undoable; otherwise prior review |
-| Maintenance | rename, move, archive, link, frontmatter, content patch | preview/diff + confirmation |
+| Maintenance | rename, move, archive, link, frontmatter, content patch | actual action authority; Operations may execute a clear current request directly, retaining user-requested preview, reviewable results and valid Undo |
 | External action | send, publish, pay, API write | explicit authorization |
 
 User friction is for consequential risk, not for every AI sentence or every
@@ -117,8 +127,8 @@ Product shape:
 - optional save/export
 - ignored content does not become debt
 
-Weekly Review should primarily be a digest that can lead to action, not a
-checklist that must be cleared.
+A digest may lead to action without becoming a checklist that must be cleared.
+This principle survives the retirement of independent Weekly Review.
 
 ### 3.3 Action
 
@@ -131,7 +141,8 @@ Product shape:
 - preview or diff
 - confirmation appropriate to risk
 - undo or recovery path when possible
-- activity log
+- truthful effect results and the recovery evidence required by the current
+  action contract; no new persistent Operations audit log
 
 Action is where PA earns trust. It should be powerful, but it should be entered
 deliberately.
@@ -200,12 +211,16 @@ Rules:
 - PA-discovered candidates should not silently fill the Insight Ledger.
 - The Review Queue is for durable proposed changes, not every candidate.
 - User-saved insight is already confirmation for ledger storage.
-- Promotion to Memory requires a separate Memory confirmation.
+- Promotion to Memory requires separate Memory Control Center admission by
+  effect/risk. Saving an insight is not admission; eligible low-risk understanding
+  may update quietly with Recent changes and correction/undo, while higher-risk
+  cases retain prior review or rejection.
 
 ### 4.5 Weekly Review
 
-Weekly Review is a low-frequency compounding ritual, not a forced inbox-zero
-loop.
+Independent Weekly Review was retired as recorded in the product index. The
+following preserves its original design intent, not a current surface or gate:
+it was intended as a low-frequency compounding ritual, not an inbox-zero loop.
 
 Rules:
 
@@ -226,15 +241,22 @@ the user leave with a clearer sense of their own recent thinking?"
 
 Maintenance Review is an explicit cleanup mode, not a default weekly burden.
 
+The principles apply to existing bounded Maintenance capabilities. The wider
+archived Maintenance Review proposal is not activated by this section.
+
 Rules:
 
 - Manual or scope-invoked first.
 - Category overview before note-level proposal cards.
 - No queue growth from weak signals by default.
 - Batch only inside an intentional scope.
-- Durable mutations require preview/diff, confirmation, log, and undo/recovery.
-- Long-term autonomy can reduce repeated confirmations only after scoped trust
-  is earned.
+- Durable mutations require actual authority, reviewable effects and applicable
+  undo/recovery. Under DEC-051, a clear current Operations modification request
+  does not require a second whole-batch confirmation; analysis, preview-only or
+  unaccepted proposals still do not authorize execution.
+- Ask when the actual source/target/scope is unclear, or explain and confirm a
+  change beyond existing authority or accepted cost. Note count alone is not
+  high risk, and valid authority does not require a new trust counter.
 
 ### 4.7 Memory Candidate
 
@@ -342,7 +364,7 @@ Useful signals:
 - low queue growth over time
 - short time from hint to useful source opening
 - low edit and undo rate for applied maintenance
-- Weekly Review note contains only selected material
+- explicitly saved digest notes contain only selected material
 - users can keep capturing notes without feeling they must manage PA output
 
 Anti-signals:
@@ -350,7 +372,7 @@ Anti-signals:
 - growing Review Queue without user intent
 - many candidates shown, few acted on
 - repeated confirmations for read-only information
-- Weekly Review completion blocked by unhandled items
+- reading a digest is blocked by unhandled items
 - Pagelet feels like a second task manager
 - users stop capturing because PA creates cleanup work
 

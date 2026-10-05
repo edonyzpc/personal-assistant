@@ -2,9 +2,15 @@
 
 Decision ID: DEC-044
 Status: Accepted
-Updated: 2026-09-28
+Updated: 2026-10-05
 Authority: Owner 确认单一 @CreateImage、明确来源、统一提交顺序，要求保留 Featured 专用提示词能力，并同意原 command 改为 Chat 快捷入口；随后授权落地设计文档。
 Work item: B-152
+
+## 2026-10-05 Scoped Successor
+
+[DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md) 允许Agent依据明确
+自然语言笔记指代查找并绑定真实来源，不再强制先点全文/选区控件。来源身份、专用提炼、
+实际提交及回执边界保持；代码对齐和验收见 [B-161 Tracker](../../development/active/contract-alignment/tracker.md)。
 
 ## Context
 
@@ -27,7 +33,8 @@ Chat 的调用顺序不能替代它。源码依据见 [SDD](../../development/ac
 
 1. 只保留 `@CreateImage` 生图动作；来源为不附加笔记、当前全文或选中文字。
    有选区时默认携带可预览/移除的选区；普通 Chat 入口无选区时不自动附加全文。
-   范围控件是确定依据；文字与范围冲突时澄清，不静默换源。
+   用户明确选定的范围控件是确定依据；未选控件时，Agent 可依据自然语言查找并绑定
+   实际笔记来源。真实歧义或文字与既有选择冲突才澄清，不猜测当前页或静默换源。
 2. 全文/选区配图沿用现有 Featured 专用提示词，首版保留独立图片描述生成调用。
    同一提示词基线接收不同内容范围及补充要求；普通完整画面描述不强制经过此额外调用。
 3. 主 Agent 处理请求并调用生图工具；宿主完成必要的专用描述准备后才创建图片任务。

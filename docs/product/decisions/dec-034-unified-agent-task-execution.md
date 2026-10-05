@@ -2,7 +2,7 @@
 
 Decision ID: DEC-034
 Status: Accepted
-Updated: 2026-09-24
+Updated: 2026-10-05
 Authority: Owner 于 2026-09-08 确认主 Agent 语义决策和统一写作方向；2026-09-09 明确默认学习与个性化边界并将全部新增工作归 B-135。B-135 已完成实现与验证，本记录承担稳定产品选择，历史证据见验证归档。
 Work item: B-135
 
@@ -52,7 +52,7 @@ PA 的个性化来自对用户的持续理解。只用当前笔记取材，不�
 
 2026-09-09 补充决定：Owner 选择“采用专用作品通道，兼容验证通过后切换（推荐）”。同一主 Agent 可在最终阶段直接交付一个作品，无需额外一轮完成回复；纯输出不取得新增取材或动作权限。T-03 必须先验证当前模型、增量预览、完成证据及旧 reader 兼容，失败时停止切换并重新讨论。此次确认不代表技术验证完成。
 
-2026-09-09 D5 补充决定：Owner 同意将 Operations 提议判断交给同一主 Agent，替代本地操作意图规则；保留当前 vault 的启用门、四个核心工具、逐次确认、目标变化检查、取消、Undo 和审计。准备操作时的读取仍受本轮来源限制。模型理解不清时应澄清，提出方案不等于获准写入；全部增量由 B-135/T-15 承担。
+2026-09-09 D5 补充决定（当时范围）：Owner 同意将 Operations 提议判断交给同一主 Agent，替代本地操作意图规则；当时保留 vault 启用门、四个核心工具、逐次确认、目标变化检查、取消、Undo 和审计。准备操作时的读取仍受本轮来源限制。模型理解不清时应澄清，提出方案不等于获准写入；全部增量由 B-135/T-15 承担。启用门、确认和审计的现行接续见下文，不改写 B-135 验证证据。
 
 2026-09-09 D8 补充决定：Owner 明确“默认开启，旧的false如果不是明确用户关闭也设置为开启”。长期提取与习惯学习分别迁移：无明确用户关闭证据的旧 false（含来源不明）采用新默认开启；明确关闭或有效暂停保持原状态，不额外询问。该选择覆盖先前保留未知 false 关闭的推荐；未知记录仍是未知，不标为用户同意或伪造 confirmedAt。迁移后用户明确关闭必须在后续 load/save/reload 保留，不反复重启能力。迁移本身不触发额外提取、回填或整库重建，验证归 B-135/T-08/T-09。
 
@@ -67,7 +67,7 @@ B-135实施、真实provider、部署和阶段验收已完成，最终范围见�
 - 本决定承接 2026-09-09 对 [DEC-033](./dec-033-simple-settings-and-unified-defaults.md)、[DEC-005](./dec-005-memory-governance.md)、[DEC-021](./dec-021-evidence-led-pagelet-ui-ux-hardening.md)及对应设置/习惯 Product Spec 的默认学习修订。旧默认关闭验收是历史事实；新增迁移、实现与组合验收归 B-135/REQ-17、AC-17。
 - [DEC-030](./dec-030-multimodal-chat-image-copywriting.md) 的作品、图片、保存与风格产品边界保留。文本JSON输出已在兼容验证后由native作品通道替换为生产Chat默认，旧reader继续保留；D15不引入自动fallback或provider特判。不扩大支持媒体范围，不改动B-132/B-133的延期边界。
 - [DEC-032](./dec-032-context-reliability-and-conversation-continuity.md) 的完整原文优先、有来源摘要和长期 Memory 独立继续有效。B-135 修改相关接缝并独立补证据，不重新开启 B-128。
-- [DEC-014](./dec-014-defer-operations-agent.md) 的 vault opt-in、四个核心工具、逐次确认、stale-safe、Undo 和审计保留。语义提议按上述 D5 补充决定调整，不扩大执行权限。
+- Operations 的基础能力开放由 [DEC-037](./dec-037-pa-agent-essential-capabilities.md) / [Essential Capabilities Spec](../specs/pa-agent-essential-capabilities-product-spec.md)接续旧 vault opt-in/意图暴露门；[DEC-046](./dec-046-note-change-review-and-audit-retirement.md)已退役持久审计，旧目录不扫描或清理；[DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md)取消当前明确修改请求的必经第二次确认。仅提议/预览不执行，来源、目标变化检查、取消、真实结果和 Undo 保留；代码对齐与验收见 [B-161 Tracker](../../development/active/contract-alignment/tracker.md)。
 
 ## Consequences
 

@@ -4,6 +4,16 @@
 > Purpose: Provide all product, UX, and architectural constraints needed to implement Pagelet as an Obsidian plugin feature inside PA.
 > Source of truth: `pagelet-product-design.md` + `pagelet-prototype.html`
 
+> Current applicability (2026-10-05): use the current
+> [Pagelet product design](../../product/pagelet-product-design.md) and
+> [DEC-051](../../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md).
+> Review/Quick Review/Recall/Recap commands route to explicit active-note Deep
+> Discover; automatic discovery uses its note-trigger scheduler. DEC-035 retired
+> Panel scope controls and generic preload. Older scenario diagrams, settings
+> shapes and numeric envelopes below are historical, not instructions to restore
+> them. New budget/confirmation alignment is tracked in
+> [B-161](../active/contract-alignment/tracker.md), not validated by this guide.
+
 ---
 
 ## 1. System Context
@@ -312,7 +322,15 @@ Command Palette "Pagelet: Generate periodic summary" or Panel header trigger
 
 ---
 
-## 5. Background Preparation Engine
+## 5. Background Preparation Engine — Historical Generic Lane
+
+This section preserves the old timer/change-detector design. Its 7-day,
+4K/1K and 2/20 envelope does not constrain current Deep Discover. Current
+automatic discovery defaults to 12/hour and 36/day **started runs**; explicit
+requests, including local Maintenance/Graph, have no accumulated-count limit
+and do not debit the automatic pool. Defaults are internally adjustable; no new
+settings UI is required. The old Quiet Recall 10/50 bucket counted physical
+provider calls and is neither merged nor converted into started runs.
 
 ### Architecture
 
@@ -354,16 +372,17 @@ Pet State Update (eligible insight + relevant hint setting ON → nudge;
 | Cache lifetime | In-memory only. Generic cache may be replaced by a new successful run. Scope Recap failure/empty/rejection records attempt status but cannot clear a still-valid artifact; vault close and explicit user clear still apply. |
 | NOT persisted to disk | Privacy consideration. |
 
-### Foreground vs Background preparation — Independent Pools
+### Foreground vs Background preparation — Historical Independent Pools
 
 | Dimension | Background preparation (background) | Foreground (user-triggered) |
 | --- | --- | --- |
 | Token budget | 4K + 1K | 8K + 2K (default) |
 | Per-hour cap | 2 | 10 |
 | Per-day cap | 20 | 100 |
-| On ceiling | Silent skip | Show a foreground limit notice; user can adjust settings and retry |
+| On ceiling | Historical silent skip | Historical foreground notice; the old adjustment UI is retired |
 
-Pools are **independent**. Foreground calls are NOT constrained by background preparation quota.
+This table is predecessor evidence. DEC-051 supersedes its manual 10/100 caps;
+do not reintroduce them or ask users to adjust settings that no longer exist.
 
 ---
 
@@ -393,26 +412,22 @@ Pools are **independent**. Foreground calls are NOT constrained by background pr
 
 ### Foreground Scope
 
-Default: **current note** for click/hotkey interactions.
-
-Expandable via Panel:
-- Current note (default).
-- Yesterday.
-- Last 3 days.
-- Last 7 days.
-
-Custom range/date-picker scope is future work.
+Current explicit Review/Quick Review/Recall/Recap uses the active Markdown note
+as the Deep Discover anchor. DEC-035 retired Panel current/yesterday/3-day/7-day
+selection; do not recreate that UI. Global exclusions and real task-source
+boundaries remain. Any future range selector needs its own product authority.
 
 ### Background preparation Scope
 
-- Recent notes in the 7-day scope that changed since last background preparation cycle.
-- Subject to exclusion rules.
+- Current automatic discovery follows note-trigger scheduling and source admission.
+- The old recent-7-day changed-only rule belongs only to retired generic preload.
+- Exclusion rules remain effective.
 
 ### Periodic Summary Scope
 
-- Default: last 7 days (configurable: 3d / 7d / 14d).
-- No manual include/exclude. AI decides based on time range.
-- Preview shows which notes were included.
+The independent Periodic Summary/Weekly Review product and command are retired.
+Its earlier 3d/7d/14d diagram above is historical, not an available entry point or
+an implementation task. Existing local Maintenance functionality is unaffected.
 
 ### Exclusion Rules
 

@@ -105,12 +105,15 @@ Renderer 移除 script、runtime style、事件处理器、交互控件和外部
 
 固定 card surface 为 `540×720` CSS px。分页使用最终卡片 CSS、来源标签占位和实际 DOM
 高度，不使用字符数估算；优先语义块边界，超高普通文本只在可证明安全的 Markdown
-边界拆分，视觉块保持原子。原始输入最多 50,000 characters、输出最多 24 个非空页面；
-超过上限或无法无损分页时返回可恢复错误，不截断尾部。
+边界拆分，视觉块保持原子。实现基线原有 50,000 characters / 24 页整批拒绝，已由
+[DEC-051](../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
+撤销：目标是完整分页与可取消，不因固定字符数/页数拒绝或截断尾部；真实无法无损
+分页或资源失败仍准确报告。移除实现门、解耦边界采样参数和传播取消信号由
+[B-161](../development/active/contract-alignment/tracker.md)验收，本文不先行宣称已交付。
 
 字号选择是 batch-level 决策：
 
-- 先用 `16px` 得到完整且通过同一套 no-loss、overflow、非空页与页数门的 baseline。
+- 先用 `16px` 得到完整且通过同一套 no-loss、overflow 与非空页校验的 baseline；旧固定页数门按上述 successor 移除。
 - Baseline 为多页时，依次试 `15px`、`14px`；只有候选减少 baseline 页数时才接受，并在
   第一个有效候选处停止，因此选择最大的有效缩小字号。候选失败保留已验证 baseline。
 - 当前有效结果为单页时（包括 `16px` baseline 或缩小后变为单页），依次试 `18px`、

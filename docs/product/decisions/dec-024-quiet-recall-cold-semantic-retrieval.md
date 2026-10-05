@@ -2,9 +2,15 @@
 
 Decision ID: DEC-024
 Status: Accepted
-Updated: 2026-07-27
+Updated: 2026-10-05
 Authority: 用户于 2026-07-21 在 B-118 runtime 修复的逐项产品讨论中选择方案 A
 Work item: B-118
+
+## 2026-10-05 Applicability
+
+[DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md) 保留本旧管线10/50
+实际provider调用预算的边界，但不要求复活无生产消费者的代码。当前Deep Discover按
+启动任务计数，自动默认12/36、手动不占自动池；两者不能合并或换算。
 
 ## Context
 
@@ -37,16 +43,16 @@ call 为 0，就无法在当前 API 下先发现纯语义候选。需要在保�
    revalidation；真实 invocation
    必须经过 [DEC-023](./dec-023-shared-pagelet-provider-first-use.md) 的共享 first-use
    admission。只有 admission 完成且 invocation immediately next 时才落账实际调用 slot；
-   高风险 affirmative Run 前不得落账 call/cost。任何调用前 gate 失败都不显示 notice、
+   必要授权尚未获得前不得落账 call/cost；必要确认按 DEC-051，不按篇数分类。任何调用前 gate 失败都不显示 notice、
    不写 shared flag、不产生调用或成本。高风险 UI 前的 capacity check 只用于决定是否
    值得询问；affirmative Run 后必须重新做 final capacity/source revalidation。最终 check、
    shared flag/slot commit 与 invocation 必须由同一 serialized admission seam 协调；
    notice/flag 后不得再留下可失败或可等待的 no-call gate。
 3. 这次 embedding attempt 计入 Quiet Recall 现有 `10 / rolling hour`、`50 / local day`
-   总实际调用预算，不新增额度或独立 bucket。后续每候选初始 evaluator 与允许的一次
-   language retry 继续计入同一 bucket；预算不足时按本地排名停止，不能超额补齐。
-   DEC-020 的 evaluator 阶段仍最多 5 次初始调用加 5 次语言重试，但冷 embedding 已
-   消耗一个现有小时/日 slot，因此不会形成额外的第 11 个可用小时额度。
+   总实际调用预算，不新增额度或独立 bucket。合法旧消费者的每候选初始 evaluator
+   计入同一 bucket；预算不足时按本地排名停止。按 DEC-051，候选 5 是可调默认，
+   不再按字符正则语言拒绝/重试；冷 embedding 已消费的 slot 不因取消重试而退还。
+   本条不要求保留或恢复无生产消费者的旧 evaluator。
 4. 若冷语义检索返回零候选，本轮 downstream evaluator/generation call 为 0；已经发生
    的 embedding attempt 仍计数，若它也是 Pagelet 首次实际调用，则 DEC-023 shared
    first-use flag 保持已通知状态。网络失败、timeout 或 provider 拒绝同样按真实 attempt
@@ -64,14 +70,14 @@ call 为 0，就无法在当前 API 下先发现纯语义候选。需要在保�
    `Local related clue / 本地关联线索` fallback。它不得标记为 semantic relevance，
    不得获得 AI why-now/Recall styling，不得进入主动 Recall stack 或触发 `nudge`。
 8. 本决定不扩大可发送来源、provider 信任、Memory admission、持久化、vault/Markdown
-   写入或外部 action 权限；broad/sensitive/costly/whole-vault/out-of-envelope/excluded
-   override 仍遵守现行逐次阻断合同。
+   写入或外部 action 权限；必要澄清及超授权/超已接受费用的确认按 DEC-051，
+   excluded override 仍须真实授权，不因明确手动入口而绕过来源边界。
 
 ## Consequences
 
 - Product behavior: Quiet Recall 能继续发现真正的语义关联；用户可能在最终零候选时
   仍消耗一次已披露的冷检索调用，但不会再发生 evaluator/generation 调用。
-- Architecture / data / safety: query embedding、candidate evaluator 与 language retry
+- Architecture / data / safety: 合法旧消费者的 query embedding 与 candidate evaluator
   必须共用 Quiet Recall 实际调用 limiter，并在每个 provider seam 复用 DEC-023
   admission 与 source/current-run revalidation；metadata fallback 与 semantic result
   必须是不同类型和呈现路径。
@@ -98,4 +104,4 @@ call 为 0，就无法在当前 API 下先发现纯语义候选。需要在保�
 - Product Specs: [Quiet Recall](../specs/pa-quiet-recall-insight-timing-product-spec.md)、[Bubble](../specs/pagelet-bubble-readiness-and-recall-product-spec.md)、[B-118](../specs/pagelet-ui-ux-hardening-product-spec.md)、[Data Boundary](../specs/pa-data-boundary-product-spec.md)、[Eval Harness](../specs/pa-eval-harness-product-spec.md)
 - Architecture: [Pagelet Product Design](../pagelet-product-design.md)
 - Final delivery evidence: [B-118 compact closeout](../../archive/2026/pagelet-b118-ui-ux-hardening-closeout.md)
-- Supersedes / superseded by: narrows B-118 `RR-05` only; none otherwise
+- Supersedes / superseded by: narrows B-118 `RR-05`; DEC-051 接续确认、候选默认、语言重试及旧管线适用性，保留未涉及的来源与真实调用事实。

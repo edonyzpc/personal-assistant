@@ -2,10 +2,18 @@
 
 Decision ID: DEC-023
 Status: Accepted
-Updated: 2026-07-27
-Authority: 用户于 2026-07-21 选择方案 A，确认 SG-05/SG-06、B-119 1A、“首次实际调用恰为高风险时由完整阻断披露同时完成共享首次告知”、本记录定义的 foreground Review / generic background preload 风险分类，以及 generic preload 的显式 Data Boundary 敏感性判定是现行统一规则
+Updated: 2026-10-05
+Authority: 用户于 2026-07-21 确认的共享首次告知与当时 foreground Review / generic preload 规则；现行适用性按下文 dated successors，DEC-051 已接续必要确认与前后台预算，不激活 B-119。
 Work item: B-118
 Related work item: B-119
+
+## 2026-10-05 Scoped Successor
+
+[DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md) 撤销按来源篇数要求
+确认，必要确认改按真实歧义、超授权或超已接受费用范围。下文旧foreground Review与
+generic preload envelope不覆盖当前统一发现入口；来源权限、必要外发告知继续适用。
+旧条款已按下文接续；代码与验证由 [B-161 Tracker](../../development/active/contract-alignment/tracker.md)
+管理，不能将文档修订视为已验证运行行为。B-119 在本记录中的引用不激活其未启动范围。
 
 ## Context
 
@@ -73,7 +81,7 @@ runtime：用户请求 `last7` 不代表实际会发送多份来源，而一个�
 2026-09-08 scoped successor：[DEC-033](./dec-033-simple-settings-and-unified-defaults.md)
 仅对其明确撤销的旧设置取代本节的历史 opt-out 保留要求；B-106 实施后按新规则
 运行，不保留旧关闭值分支。仍有效的功能控制、provider 透明说明、Data Boundary
-和高风险确认继续适用；此说明不是运行时已完成的声明。
+和必要确认继续适用；必要确认的条件以下述 DEC-051 修订为准。
 
 选择 Option A，并规定：
 
@@ -88,27 +96,27 @@ runtime：用户请求 `last7` 不代表实际会发送多份来源，而一个�
 4. 用户已经关闭的 capability 或后台准备偏好在 reload/upgrade 后继续关闭；本决定不把
    opt-out 静默改回开启，也不绕过 provider missing、无 eligible sources 或 Data Boundary
    deny 的 fail-closed gate。
-5. broad、sensitive、costly、whole-vault、超出标准 envelope 或 excluded-scope override
-   运行，仍必须在任何 provider call 或 cost reservation 前逐次显示 allowed note
-   excerpts/data、scope、provider、可能成本、capability 关闭入口，并提供
-   `run / adjust / cancel`。
-6. 若第一次实际 Pagelet provider 调用恰为上述高风险运行，且该阻断披露完整覆盖第 5
+5. 按 DEC-051，目标、来源或范围不明确时先澄清；实际执行超出已有授权，或实际费用
+   超出已说明并接受的范围时，说明具体变化并确认。已有授权不重复询问，不按来源
+   篇数、固定次数/金额或关键词判定。来源排除仍是确定性边界，必要的 override 必须
+   取得明确授权，不能由模型输出制造权限。
+6. 若第一次实际 Pagelet provider 调用恰好需要上述确认，且该披露完整覆盖第 5
    条内容，它同时完成 shared first-use disclosure，不再追加普通非阻断 notice。只有用户
    明确选择 `Run`、所有 gate 通过且真实 provider invocation 即将发生时，才把
    `pageletProviderFirstUseNotified` 设为 `true`。`Cancel`、被动关闭或未重新通过 gate
-   的 `Adjust` 不改 flag；`Adjust` 后仍为高风险则再次通过高风险 gate，降为标准有界则走
-   普通 shared notice。该 flag 已为 `true` 也不免除后续高风险运行的逐次确认。
+   的 `Adjust` 不改 flag；调整后按真实范围重新检查，已接受的范围不再重复问。
+   该 flag 只表示告知完成，不授予新的来源、写入或发布权限。
 7. provider 信任不等于持久化或写权限。Memory Prepare/Update、Memory admission、vault
    mutation、Markdown、外部 action 与其他高后果行为继续遵守各自的明确确认合同。
 8. 本决定只替代 DEC-017 的“首次阻断授权 / 被动 Notice 不足”条款；Scope Recap 默认
    有界后台准备、独立预算、质量门、持久 opt-out、只读 derived artifact 等其余决定继续
    有效。
-9. Foreground Review 在 Data Boundary 过滤、排除与去重后，按本次即将发送的**实际允许
-   来源数**分类：`<=1` 为 standard bounded；`>1` 为高风险，必须逐次显示
-   `Run / Adjust / Cancel`。请求标签不替代实际计数；例如请求 `last7` 但最终只有 1 个
-   实际允许来源，仍为 standard bounded。高风险确认前不得预留调用 quota 或成本；
-   `Adjust` 后必须用新的实际允许来源集合重新分类。
-10. Generic background preload 只有同时满足以下全部条件时才是 standard bounded：用户已
+9. 取消 Foreground Review 的 `<=1` / `>1` 篇数分类。当前 Review/Quick Review/Quiet
+   Recall/Scope Recap 显式入口走统一 Deep Discover，必要确认遵循第 5 条；明确手动
+   请求不设累计次数硬限、不消费自动后台池。自动 Deep Discover 默认 12/hour、36/day，
+   按启动 run 计数，可调整实现参数且不增 UI；与旧 Quiet Recall 10/50 调用桶不同。
+10. **历史 generic preload envelope（已退役，不约束当前统一发现）**：当时只有同时
+    满足以下全部条件才是 standard bounded：用户已
     显式 opt in；只处理 changed-only；来源限定最近 7 天；本次实际 provider 输入不超过
     既有 4K 上限且请求输出不超过既有 1K 上限；本任务实际 provider 调用不超过
     2 次/滚动小时、20 次/本地日；
@@ -131,16 +139,16 @@ runtime：用户请求 `last7` 不代表实际会发送多份来源，而一个�
     `sourceFile` 精确匹配本次实际允许输入路径时才可接纳；缺失、未知或幻觉引用直接丢弃。
     Related-note enrichment 不得把本轮 changed batch 之外的来源加入后台 prompt；当前
     generic preload 因而不另做全索引 semantic enrichment。
-11. 本合同中“broad / weekly scan 属于高风险”不包含第 10 条完整 envelope 内的窄
-    changed-only preload。其他 foreground broad/weekly Review 仍按第 9 条实际来源数分类；
-    其他后台 preload 越界按第 10 条安静跳过，不能升级为打断用户的交互式高风险运行。
+11. 第 10 条的 opt-in、7 日、4K/1K、2/20、watermark 和 generic enrichment 限制只解释
+    旧管线；[Data Boundary 后继说明](../specs/pa-data-boundary-product-spec.md)与
+    DEC-035 已接续其适用性。当前后台仍守来源、权限、生命周期并安静处理无法准入，
+    不能把定时任务升级成打断用户的交互式确认；前台不再按 broad/weekly 标签或篇数判权。
 
 ## Consequences
 
 - Product behavior: 标准有界 Pagelet 能力在 provider 配置后低摩擦工作，首次透明告知；
-  首次恰为高风险时由完整阻断披露一次完成共享告知；用户仍可分别关闭能力，广范围或
-  高风险 foreground 运行仍需逐次决定；严格有界的后台 preload 安静工作，越界则安静
-  跳过。
+  首次恰需确认时由完整披露一次完成共享告知；真实超授权或超已接受费用才确认，
+  不以广范围或篇数单独触发。当前后台统一发现按自身准入安静工作。
 - Architecture / data / safety: 共享 first-use state 只表达通知已展示，不授予写权限；所有
   来源过滤、实际来源计数、scope override、预算和 durable action gate 保持独立；generic
   preload 的非敏感证明必须由本次实际来源的共享 Data Boundary decision 推导，不能由
