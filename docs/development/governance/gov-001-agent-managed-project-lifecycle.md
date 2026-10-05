@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-001
-Updated: 2026-10-02
+Updated: 2026-10-05
 Work item: B-115
 Authority: PA 仓库的 repo-only idea intake、docs authority、Agent 自动维护、工程授权与信息连续性规则；不定义 PA runtime 或用户产品行为。
 
@@ -65,27 +65,59 @@ smoke 按复杂度与既有验证规则选择；模板不能自行声明所有�
 
 ## Validation Evidence And Diagnosis
 
-每个行为切片在已有 Tracker 简记需求/风险、变化、最低充分证据、通过条件与
-扩测触发；窄修无需为此新建文档。证据复用必须能核实相关输入与实际结果，
-测试失败先区分产品、工具、环境与构建身份问题，无新增信息时调整诊断路径。
-具体规则统一在 [AGENTS.md](../../../AGENTS.md#validation-planning-and-reuse)
-及其 [异常诊断规则](../../../AGENTS.md#test-failure-diagnosis)，供 SDD、重构与
-smoke 流程引用；不以放宽断言、缺失自然退出或未观察设备行为换取 PASS。
+2026-10-05，Owner 确认按具体职责读取指导，并授权将 AGENTS 的验证执行细节下沉
+到本节；不改变既有验收、权限或发布门禁。根文件保留核心约束和入口，现有锚点继续
+路由到此。规划/复用证据时读本节；失败诊断与多人协调只在对应场景读取。
+测试命令与分组仍见 [AGENTS.md](../../../AGENTS.md#testing-instructions)，构建前置、
+部署复用及独立 CI/发布门由 [GOV-002](./gov-002-master-first-branch-and-beta-packaging.md#proportional-validation-and-deployment)
+承接。
 
-测试分组、构建前置、部署复用与独立 CI/发布门仍由
-[GOV-002](./gov-002-master-first-branch-and-beta-packaging.md#proportional-validation-and-deployment)
-约束。本轮只统一 Agent 如何选择和复用证据，不改变命令行为、测试系统或门禁。
+### Validation Planning And Reuse
 
-流程试点复用上述规则：先核实规则确实作用于目标工作树，再区分历史对照与新样本。
-需求结果和必要 gate 与参考/诊断方法分开；可选方法不可用时记录限制，以实际取得
-的证据判断对应结果，用户单项反馈不得扩大为其他路径通过。明确指定的比较、技术
-选择及未满足的 AC/设备门仍有效，具体执行由 AGENTS 的验证规划承接。
+- In the existing Tracker, map `requirement/risk → change → minimum sufficient
+  evidence/command → pass condition → rerun/expansion trigger`. A narrow fix can
+  use its task response. Before adding a check, identify the unknown, why existing
+  evidence is insufficient and which decision the result changes. No new form or gate.
+- Separate required outcomes from optional diagnostics. An unavailable optional
+  method is a limitation, not a gate; evidence proves only what it observed.
+  Preserve explicit comparisons, named choices, unresolved ACs and required
+  integration, phase, app/device, CI and release gates.
+- Verify the intended test group actually ran. Wrong selection or a missing build
+  is not a reason to test everything. Collect coverage only when required.
+- Reuse evidence with known relevant source/tests/fixtures/config/dependencies,
+  command/scope, result/natural exit and required environment/build identity.
+  Compare affected inputs, including dirty changes, with the tested baseline;
+  avoid whole-repo hash manifests and repeated SHA rituals. Unknown inputs mean no reuse.
+- Stage/commit/push, a new phase/reviewer and unrelated docs do not invalidate
+  passing checks. Changed inputs invalidate affected evidence; changed validation
+  requirements may also invalidate it. Trust invariants successful automation
+  already checked. Shared changes may require a broad rerun.
+- Count enclosing checks: build includes TypeScript; `make deploy` includes
+  lint/build/full Jest. Supplement uncovered checks such as the DOM source scan.
+  Build identity is not test success, and focused PASS is not full-suite PASS.
+- Cost studies are opt-in. Reuse original timings/model settings, keep missing
+  data unknown and detailed evidence in its owning Tracker. Do not sum parallel
+  work as elapsed time or infer model/speed causality from different tasks.
 
-成本仅用已有原始记录，缺失字段保持未知，不从不同任务或并行耗时推算提速/模型
-因果。详细命令/计时保留在执行方 Tracker，研究方链接后记结论与限制，遵守
+流程试点先核实规则确实作用于目标工作树，再区分历史对照与新样本；用户单项反馈
+不得扩大为其他路径通过。
+
+专项研究方链接执行方 Tracker 后记录结论与限制，遵守
 [Documentation Workflow](../documentation-workflow.md#目标) 的单一事实来源；
-常规 feature 不因此承担额外计时平台或双份日志。仅有一次已解决适配时，先用现有
-能力和准确说明消除误用；没有重复或可定位的持续成本，不为提速扩大 checker/测试系统。
+常规 feature 不承担额外计时平台或双份日志。仅有一次已解决适配时，先用现有能力
+和准确说明消除误用；没有重复或可定位的持续成本，不为提速扩大 checker/测试系统。
+
+### Test Failure Diagnosis
+
+- Start from the exact command, assertion, inputs and logs. Distinguish product
+  defects, faulty acceptance, fixture/runner problems, unavailable environment
+  and stale build/deployment before selecting a diagnostic.
+- Retry with a new hypothesis or input. A second same-cause failure without new
+  information, or about 15 minutes without progress, calls for a smaller repro,
+  checker inspection or different diagnostic. Healthy long tests are not timed out.
+- Do not weaken assertions, alter correct behavior, blindly raise mocks/timeouts
+  or use `--forceExit`. Diagnose leaks in the affected suite. Stop expanding when
+  evidence is sufficient; report blocked evidence rather than skipping required gates.
 
 ## Independent Review And Validation Coordination
 
@@ -96,10 +128,16 @@ smoke 流程引用；不以放宽断言、缺失自然退出或未观察设备�
 [followup](../../../.agents/skills/personal-assistant-review-followup/SKILL.md) 承接，
 保持既有严重度与只读/修复授权边界，不为角色凑 finding 或实现假想未来功能。
 
-并行编辑保持不重叠的文件归属；主 agent 统一调度昂贵验证并归并证据。
-最终 gate 冻结相关输入，新增修复由主 agent 协调结束/失效当前验证后应用。
-规则见 [AGENTS.md](../../../AGENTS.md#multi-agent-validation-coordination)，
-不新增协调平台，也不免除阶段、设备、CI 或发布门禁。
+### Multi-Agent Validation Coordination
+
+- Assign independent risk questions and disjoint edit ownership. Read-only reviewers
+  do not write; contributors return focused results, commands, inputs and gaps.
+- One designated executor runs expensive full-test/build/deploy gates per required
+  input state. Freeze relevant source/tests/fixtures/config/dependencies/generated
+  inputs; reviews can continue, fixes wait until the run finishes or is stopped
+  as superseded. Concurrent changes invalidate affected evidence.
+- Consolidate and reuse evidence without removing required gates. Do not add a
+  coordination lock service, cache or receipt system.
 
 ## GPT-6 / GLM Delivery Allocation
 

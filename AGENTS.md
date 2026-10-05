@@ -81,10 +81,12 @@ stated task applies. Use repository commands and paths, not machine-local assump
 
 > 随手记下，需要时自然浮现。 — Capture lightly. Let the right notes return when they matter.
 
-Design philosophy: **安静且可信**. Before product design, UX, planning, SDD, Pagelet,
-Memory, Capture, Review, Maintenance or PA Agent behavior work, read the current
-[Product North Star](docs/product/pa-product-north-star.md). It owns the detailed
-product principles and tradeoffs; prefer it unless the user chooses another direction.
+Design philosophy: **安静且可信**. Read the relevant
+[Product North Star](docs/product/pa-product-north-star.md) guidance when a task
+involves product behavior, user experience or product tradeoffs. Pure engineering
+planning, documentation maintenance and local fixes without such decisions use
+these root rules and the affected contracts. The North Star remains the product
+standard unless the user explicitly chooses another direction.
 
 ## Dev Environment Tips
 
@@ -160,53 +162,26 @@ Read current limits in `src/ai-services/pa-agent-runtime.ts` and
 
 ### Validation Planning And Reuse
 
-- In the existing Tracker, map `requirement/risk → change → minimum sufficient
-  evidence/command → pass condition → rerun/expansion trigger`. A narrow fix can
-  use its task response. Before adding a check, identify the unknown, why existing
-  evidence is insufficient and which decision the result changes. No new form or gate.
-- Separate required outcomes from optional diagnostics. An unavailable optional
-  method is a limitation, not a gate; evidence proves only what it observed.
-  Preserve explicit comparisons, named choices, unresolved ACs and required
-  integration, phase, app/device, CI and release gates.
-- Verify the intended test group actually ran. Wrong selection or a missing build
-  is not a reason to test everything. Collect coverage only when required.
-- Reuse evidence with known relevant source/tests/fixtures/config/dependencies,
-  command/scope, result/natural exit and required environment/build identity.
-  Compare affected inputs, including dirty changes, with the tested baseline;
-  avoid whole-repo hash manifests and repeated SHA rituals. Unknown inputs mean no reuse.
-- Stage/commit/push, a new phase/reviewer and unrelated docs do not invalidate
-  passing checks. Changed inputs invalidate affected evidence; changed validation
-  requirements may also invalidate it. Trust invariants successful automation
-  already checked. Shared changes may require a broad rerun.
-- Count enclosing checks: build includes TypeScript; `make deploy` includes
-  lint/build/full Jest. Supplement uncovered checks such as the DOM source scan.
+- Select evidence by affected behavior and inputs. Add checks only for a concrete
+  unknown or regression; reuse valid results across commits, phases and reviewers.
   Build identity is not test success, and focused PASS is not full-suite PASS.
-- Cost studies are opt-in. Reuse original timings/model settings, keep missing
-  data unknown and detailed evidence in its owning Tracker. Do not sum parallel
-  work as elapsed time or infer model/speed causality from different tasks.
+- Keep a compact requirement/risk-to-evidence mapping in the existing Tracker or
+  narrow task response; do not create another test plan. Preserve required phase,
+  app/device, CI and release gates and distinguish them from optional diagnostics.
+- When planning or reusing validation, read [GOV-001 validation details](docs/development/governance/gov-001-agent-managed-project-lifecycle.md#validation-evidence-and-diagnosis).
+  It owns evidence fields, invalidation, enclosing-check reuse and opt-in cost studies.
 
 ### Test Failure Diagnosis
 
-- Start from the exact command, assertion, inputs and logs. Distinguish product
-  defects, faulty acceptance, fixture/runner problems, unavailable environment
-  and stale build/deployment before selecting a diagnostic.
-- Retry with a new hypothesis or input. A second same-cause failure without new
-  information, or about 15 minutes without progress, calls for a smaller repro,
-  checker inspection or different diagnostic. Healthy long tests are not timed out.
-- Do not weaken assertions, alter correct behavior, blindly raise mocks/timeouts
-  or use `--forceExit`. Diagnose leaks in the affected suite. Stop expanding when
-  evidence is sufficient; report blocked evidence rather than skipping required gates.
+Use [GOV-001 failure diagnosis](docs/development/governance/gov-001-agent-managed-project-lifecycle.md#test-failure-diagnosis)
+when a check fails: distinguish product, acceptance, tooling, environment and build
+issues. Retry with new information; never weaken correct assertions to obtain PASS.
 
 ### Multi-Agent Validation Coordination
 
-- Assign independent risk questions and disjoint edit ownership. Read-only reviewers
-  do not write; contributors return focused results, commands, inputs and gaps.
-- One designated executor runs expensive full-test/build/deploy gates per required
-  input state. Freeze relevant source/tests/fixtures/config/dependencies/generated
-  inputs; reviews can continue, fixes wait until the run finishes or is stopped
-  as superseded. Concurrent changes invalidate affected evidence.
-- Consolidate and reuse evidence without removing required gates. Do not add a
-  coordination lock service, cache or receipt system.
+For parallel work, use [GOV-001 coordination](docs/development/governance/gov-001-agent-managed-project-lifecycle.md#independent-review-and-validation-coordination).
+Assign disjoint writers; one executor runs expensive gates against frozen inputs.
+Read-only review remains zero-write, and valid contributor evidence is reused.
 
 ### Local Validation Gate
 
@@ -266,17 +241,18 @@ production build first. Docs-only follows Testing Instructions above.
   lifecycle understandable without the implementation conversation. Use clear
   intermediate steps and local helpers when they make changes easier to follow;
   comments should explain non-obvious constraints and choices.
-- Keep user-facing Memory behavior in `MemoryManager`.
-- Keep low-level vector/index operations behind `VSS` and `VectorIndex`.
-- `VSS` is the internal facade for `searchSimilarity`, refresh, rebuild, reset, reconcile, and local index maintenance.
-- All VSS writes that mutate the local index must go through the VSS operation queue / exclusive lock. This includes flush, rebuild, reset, delete, rename, and reconcile upsert/delete.
-- SQLite/WASM OPFS is the durable backend for automatic Memory maintenance.
-- OPFS data is device-local cache data, not user source data and not synced state.
-- The Markdown vault is the source of truth.
-- Fallback `MemoryVectorIndex` is read-only for automatic maintenance. Do not add automatic background writes to fallback memory.
-- Cross-device note changes are handled through vault events, startup/resume reconcile, and low-frequency rolling hash verification.
-- Chat should not block on background changed-note refresh when auto policy and durable ready state are available. It may use the previous Memory snapshot while background maintenance catches up.
-- [DEC-028](docs/product/decisions/dec-028-silent-memory-auto-prepare.md) is the narrow first-use exception: the first Chat may schedule one silent background whole-eligible-vault rebuild while Chat answers immediately. Destructive reset/provider work may proceed only after marker truth is hydrated as known absent or the prior/unknown marker is durably invalidated. Missing local index, profile/settings stale, manual, and other potentially costly rebuild paths still require explicit user confirmation.
+- Memory behavior belongs in `MemoryManager`; vector/index operations stay behind
+  `VSS` and `VectorIndex`. Markdown is source truth; OPFS is device-local cache.
+  All index mutations use the VSS queue/exclusive lock. Fallback automatic
+  maintenance stays read-only.
+- For Memory/VSS implementation or review, read the relevant
+  [architecture](docs/architecture/vss-sqlite-wasm-architecture.md#authority-and-product-boundary)
+  and [refresh/maintenance](docs/architecture/vss-embedding-refresh.md#当前关键机制)
+  sections. They own readiness, policy/lifecycle admission, recovery and scheduling.
+  Apply [DEC-028](docs/product/decisions/dec-028-silent-memory-auto-prepare.md) for
+  first-use/rebuild changes: its exception permits one silent first-use eligible-vault
+  rebuild; other recovery/manual/costly rebuild paths retain confirmation. Unknown
+  marker truth does not authorize destructive reset or provider work.
 
 ## Memory/VSS Product Rules
 
@@ -286,12 +262,10 @@ production build first. Docs-only follows Testing Instructions above.
   - Data: notes are not modified or deleted.
   - AI provider: note text may be sent to the configured AI provider when preparing Memory.
   - Cost: AI credits/API calls may be used; unchanged notes are skipped when possible.
-- After the user approves, or after the DEC-028 silent first-use path completes, `memoryApprovalPolicy` may upgrade to `auto-refresh-after-prepare` only when durable usable ready and policy/lifecycle admission both succeed.
-- Destructive rebuild must fail closed while durable marker truth is unknown or cannot be invalidated: do not reset the index or call the provider, let Chat answer now, and wait for local state recovery. Failed or cancelled rebuilds retain their original recovery reason; admission failure must not leave usable ready state.
-- `changed-notes + auto-refresh-after-prepare + durable ready` should schedule background reconcile/flush and continue chat without a blocking modal.
-- In fallback or non-durable states, do not claim background updates are running if maintenance cannot actually run.
-- Manual `Update memory now` remains a force/manual refresh path and should preserve progress and error feedback.
-- Background failures should keep dirty state and retry with backoff without repeatedly showing intrusive notices.
+- Chat stays responsive during permitted background updates; do not claim
+  maintenance is running when the backend cannot perform it. Manual update retains
+  progress/error feedback. Background failures retain dirty state and retry with
+  backoff without repeated intrusive notices.
 
 ## UI And React Rules
 
@@ -317,10 +291,12 @@ production build first. Docs-only follows Testing Instructions above.
 
 ## Documentation Instructions
 
-- For PA idea/decision/planning/implementation/continuation/status/closeout intent,
-  use [pa-docs-lifecycle-manager](.agents/skills/pa-docs-lifecycle-manager/SKILL.md)
-  as the low-burden entry point. Casual ideas stay in chat; explicit capture uses
-  a minimal repo Backlog item. No default external tracker or synchronization gate.
+- Use [pa-docs-lifecycle-manager](.agents/skills/pa-docs-lifecycle-manager/SKILL.md)
+  when the task requires durable idea capture, creating/updating task records,
+  authority changes or lifecycle transitions such as closeout/archive. Ordinary
+  discussion, read-only status lookup and local fixes use these root rules and
+  relevant existing records/contracts without loading a lifecycle workflow merely
+  for their task label. Casual ideas stay in chat; no default external tracker.
 - [Documentation Workflow](docs/development/documentation-workflow.md) owns document
   roles, authority, templates, execution packages and closeout/archive rules. Read
   its relevant section when creating, moving, updating authority or closing docs.

@@ -1,11 +1,14 @@
 ---
 name: pa-docs-lifecycle-manager
-description: Route Personal Assistant ideas, decisions, planning, implementation, continuation, status, closeout, and archive requests from ordinary language. Use for requests such as "记录一个 PA idea", "继续推进", "先规划并实现", "需要我决定什么", or "帮我收尾". Keep casual ideas conversation-local, persist only explicit capture or promoted work, use the lightest repo authority lane, route substantial delivery to sdd-lifecycle, and keep Git/release authority explicit.
+description: Maintain PA task records and documentation lifecycle. Use for explicit idea capture, creating or updating execution records, authority changes, or closeout/archive. Ordinary discussion, read-only status lookup and local fixes use AGENTS.md and relevant existing contracts.
 ---
 
 # PA Docs Lifecycle Manager
 
 ## Contract
+
+Use this router only for task-record or documentation lifecycle work. Ordinary
+discussion, read-only status lookup and local fixes use AGENTS and existing contracts.
 
 Act as a low-burden router. Infer lanes, IDs, paths, and status transitions; do
 not ask the user to operate the documentation system. Resolve routine choices

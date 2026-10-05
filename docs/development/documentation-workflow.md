@@ -1,7 +1,7 @@
 # Product Documentation Workflow
 
 Document status: Current
-Updated: 2026-09-07
+Updated: 2026-10-05
 Authority: PA 需求、决策、工程治理、开发状态、验证与历史证据的唯一文档治理规则。
 
 ## 目标
@@ -20,7 +20,11 @@ Authority: PA 需求、决策、工程治理、开发状态、验证与历史证
 
 ## 自然语言入口与授权
 
-默认由 [`pa-docs-lifecycle-manager`](../../.agents/skills/pa-docs-lifecycle-manager/SKILL.md) 解析用户意图。用户不需要选择 lane、ID、模板或目录。
+需要持久记录 idea、建立/更新任务记录、变更权威文档或执行 closeout/archive 等生命周期
+操作时，由 [`pa-docs-lifecycle-manager`](../../.agents/skills/pa-docs-lifecycle-manager/SKILL.md)
+解析相应意图。普通讨论、只读状态查询和局部修复按 AGENTS 与相关现有记录/契约执行，
+不因 planning/implementation/status 等任务名称自动加载生命周期流程。任务实际需要
+维护上述记录时再进入本流程；用户不需要选择 lane、ID、模板或目录。
 
 - 随口 idea 留在当前对话，不创建 `B-xxx`。
 - 明确“记录/保存”时，查重后只创建或复用一条最小 Backlog。
