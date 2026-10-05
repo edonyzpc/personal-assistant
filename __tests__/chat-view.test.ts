@@ -147,6 +147,12 @@ jest.mock('../src/utils', () => ({
     isPluginEnabled: jest.fn(() => false),
 }));
 
+// Load the real ChatService module once before timed cases; its dependency cold load
+// should not consume the first Operations completion scenario's Jest deadline.
+const { ChatService: RealChatService } = jest.requireActual<typeof import('../src/ai-services/chat-service')>(
+    '../src/ai-services/chat-service',
+);
+
 type ClassInput = string | string[];
 type CreateOptions = ClassInput | {
     cls?: ClassInput;
@@ -11209,8 +11215,6 @@ describe('LLMView turn lifecycle', () => {
             };
             const operations = new OperationsService({ vault, trashFile: async () => {}, isOperationsAgentEnabled: () => true });
             const session = operations.createSession({ surface: 'chat' });
-            const { ChatService: RealChatService } = jest.requireActual<typeof import('../src/ai-services/chat-service')>(
-                '../src/ai-services/chat-service');
             const service = new RealChatService(createAiServiceHost(), session);
             Object.assign(plugin.createChatService.mock.results[0].value as object, {
                 registerOperationsContextPersistence: service.registerOperationsContextPersistence.bind(service),
