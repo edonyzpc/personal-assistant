@@ -1,0 +1,79 @@
+/* Draft A. Scoped to the isolated design sample, never loaded by the plugin. */
+.sample-viewport .pa-design-candidate .llm-message.assistant {
+  background: transparent;
+  border-color: transparent;
+  border-radius: 0;
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
+.sample-viewport .pa-design-candidate .message-content {
+  line-height: 1.65;
+}
+
+.sample-viewport .pa-design-candidate .message-role {
+  color: var(--text-muted);
+}
+
+.sample-viewport .pa-design-candidate .message-content blockquote {
+  margin-block: 12px 0;
+  font-size: var(--font-ui-medium);
+  line-height: 1.6;
+}
+
+.sample-viewport .pa-design-candidate .pa-operations-save-suggestion {
+  margin: 18px 0 0;
+  padding: 12px 0 0;
+  border: 0;
+  border-top: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.sample-viewport .pa-design-candidate .pa-operations-save-suggestion__text {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+}
+
+.sample-viewport .pa-design-candidate:not(.sample-accent-save) .pa-operations-save-suggestion button.mod-cta {
+  color: var(--text-normal);
+  background: var(--background-secondary);
+  border-color: var(--background-modifier-border);
+  font-weight: 500;
+}
+
+.sample-viewport .pa-design-candidate .pa-operations-save-suggestion__actions {
+  margin-top: 8px;
+  gap: 8px;
+}
+
+.sample-viewport .pa-design-candidate .pa-operations-save-suggestion button:not(.mod-cta) {
+  background: var(--background-primary);
+  border-color: var(--background-modifier-border);
+}
+
+.sample-viewport .pa-design-candidate .message-actions {
+  margin-top: 12px;
+  opacity: 1;
+}
+
+.sample-viewport .pa-design-candidate .llm-buttons button.pa-chat-icon-button {
+  background: transparent;
+  border-color: transparent;
+}
+
+.sample-viewport .pa-design-candidate .llm-buttons button.pa-chat-icon-button:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+}
+
+.sample-viewport .pa-design-candidate .llm-buttons button.pa-chat-memory-chip {
+  background: var(--background-secondary);
+  border-color: var(--background-modifier-border);
+}
+
+/* Candidate touch spacing; the source reference keeps its original spacing. */
+.sample-viewport .pa-design-candidate.sample-mobile .llm-buttons {
+  gap: 16px;
+  padding-inline: 12px;
+}

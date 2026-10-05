@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PA · 正文与边注 · Draft 对照样板</title>
+  <link rel="stylesheet" href="baseline.css">
+  <link rel="stylesheet" href="candidate.css">
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      --background-primary: light-dark(#ffffff, #202020);
+      --background-secondary: light-dark(#f4f4f4, #262626);
+      --background-modifier-border: light-dark(#dedede, #414141);
+      --background-modifier-hover: light-dark(#ebebeb, #343434);
+      --text-normal: light-dark(#242424, #e1e1e1);
+      --text-muted: light-dark(#666666, #b0b0b0);
+      --text-faint: light-dark(#777777, #a0a0a0);
+      --text-accent: light-dark(#2379b5, #66b5ee);
+      --interactive-accent: light-dark(#008ed8, #4e9dcc);
+      --text-on-accent: light-dark(#ffffff, #111111);
+      --font-text-size: 16px;
+      --font-ui-smaller: 12px;
+      --font-ui-small: 13px;
+      --font-ui-medium: 14px;
+      --font-text: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-interface: var(--font-text);
+      --radius-s: 4px;
+      --radius-m: 8px;
+      --size-4-2: 8px;
+      --size-4-3: 12px;
+      --size-4-4: 16px;
+      --sample-width: 420px;
+      margin: 0;
+      padding: 24px;
+      font: 14px/1.5 var(--font-interface);
+      background: var(--background-primary);
+      color: var(--text-normal);
+    }
+    body[data-theme="light"] { color-scheme: light; }
+    body[data-theme="dark"] { color-scheme: dark; }
+    body[data-font="large"] { --font-text-size: 20px; }
+    .sample-shell { max-width: 1500px; margin: auto; }
+    .sample-shell > header { margin-bottom: 20px; }
+    .sample-kicker { margin: 0 0 8px; color: var(--text-muted); font-size: 12px; }
+    .sample-shell h1 { margin: 0 0 8px; font-size: 24px; font-weight: 600; }
+    .sample-intro { max-width: 78ch; margin: 0; color: var(--text-muted); }
+    .sample-controls { display: flex; gap: 12px 16px; flex-wrap: wrap; margin: 20px 0 24px; }
+    .sample-controls label { display: grid; gap: 5px; font-size: 12px; color: var(--text-muted); }
+    .sample-controls select { max-width: 220px; min-height: 34px; padding: 5px 24px 5px 8px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-primary); color: var(--text-normal); font: 13px var(--font-interface); }
+    .sample-controls select:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+    .sample-comparison { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--sample-width)), var(--sample-width))); gap: 24px; align-items: start; }
+    .sample-comparison > section { min-width: 0; }
+    .sample-panel-heading { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+    .sample-panel-caption { min-height: 40px; margin: 0 0 12px; color: var(--text-muted); font-size: 12px; }
+    .sample-viewport { box-sizing: border-box; width: 100%; height: 860px; border: 1px solid var(--background-modifier-border); border-radius: 8px; overflow: hidden; }
+    .sample-viewport .llm-view { font-family: var(--font-text); font-size: var(--font-text-size); }
+    .sample-viewport p { margin: 0 0 1em; }
+    .sample-viewport blockquote { margin: 1em 0; padding-left: 12px; border-left: 2px solid var(--background-modifier-border); color: var(--text-muted); }
+    .sample-viewport a { color: var(--text-accent); text-decoration: underline; text-underline-offset: 3px; }
+    .sample-viewport a:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+    .sample-viewport button { font-family: var(--font-interface); min-height: 28px; padding: 4px 8px; border: 1px solid var(--background-modifier-border); border-radius: 6px; color: var(--text-normal); background: var(--background-modifier-hover); cursor: pointer; box-shadow: none; }
+    .sample-viewport button.mod-cta { border-color: transparent; background: var(--interactive-accent); color: var(--text-on-accent); }
+    .sample-viewport button:disabled { opacity: .45; cursor: default; }
+    .sample-viewport [hidden] { display: none !important; }
+    .sample-viewport .pa-chat-role-identicon { flex-shrink: 0; }
+    .sample-viewport textarea { font-family: var(--font-text); }
+    .sample-viewport textarea::placeholder { color: var(--text-faint); }
+    .sample-viewport .sample-mobile button.message-action-button { width: 44px; height: 44px; min-width: 44px; min-height: 44px; max-width: 44px; max-height: 44px; flex-basis: 44px; }
+    .sample-viewport .sample-mobile .message-actions { opacity: 1; }
+    .sample-footer { max-width: 94ch; margin: 24px 0 0; color: var(--text-muted); font-size: 12px; }
+    .sample-feedback { min-height: 20px; margin: 14px 0 0; color: var(--text-muted); font-size: 12px; }
+    .sample-note-dialog { box-sizing: border-box; width: min(520px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--background-modifier-border); border-radius: 10px; background: var(--background-primary); color: var(--text-normal); }
+    .sample-note-dialog::backdrop { background: #00000070; }
+    .sample-note-dialog h2 { margin-top: 0; font-size: 20px; }
+    .sample-note-dialog button { min-height: 36px; padding: 6px 12px; font: inherit; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-secondary); color: var(--text-normal); }
+    .sample-icon { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .sample-svg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+    @media (max-width: 700px) { body { padding: 16px; } .sample-comparison { grid-template-columns: minmax(0, var(--sample-width)); } .sample-panel-caption { min-height: auto; } }
+  </style>
+</head>
+<body data-theme="light">
+  <svg class="sample-svg-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+    <symbol id="icon-file-plus" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M12 12v6M9 15h6"/></symbol>
+    <symbol id="icon-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.7 10.5 6.6-4M8.7 13.5l6.6 4"/></symbol>
+    <symbol id="icon-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="icon-image" viewBox="0 0 24 24"><path d="M16 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M16 3h6M19 0v6M3 17l6-6 4 4 3-3 3 3"/><circle cx="8" cy="7" r="1"/></symbol>
+    <symbol id="icon-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4zM22 2 11 13"/></symbol>
+    <symbol id="icon-brain" viewBox="0 0 24 24"><path d="M12 18V5a3 3 0 0 0-5.8-1 4 4 0 0 0-3 6.5 4 4 0 0 0 1 7.3A4 4 0 0 0 12 18ZM12 5a3 3 0 0 1 5.8-1 4 4 0 0 1 3 6.5 4 4 0 0 1-1 7.3A4 4 0 0 1 12 18M7 8c0 2 1 3 3 3M17 8c0 2-1 3-3 3"/></symbol>
+    <symbol id="icon-book" viewBox="0 0 24 24"><path d="M12 7v14M3 3h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5v17h-5a4 4 0 0 0-4 1 4 4 0 0 0-4-1H3z"/></symbol>
+    <symbol id="icon-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></symbol>
+  </svg>
+  <main class="sample-shell">
+    <header>
+      <p class="sample-kicker">PERSONAL ASSISTANT · DESIGN DRAFT</p>
+      <h1>正文与边注</h1>
+      <p class="sample-intro">同一段内容、来源与动作，比较阅读层级和操作强调。这里是独立设计样板，源码参考版也不是当前 Obsidian 截图；所有动作均为受控演示。</p>
+    </header>
+    <div class="sample-controls" aria-label="样板比较条件">
+      <label>视口<select id="sample-width"><option value="420">420px · 桌面侧栏</option><option value="320">320px · 窄栏</option><option value="360-mobile">360px · 移动布局模拟</option><option value="720">720px · 宽栏</option></select></label>
+      <label>外观<select id="sample-theme"><option value="light">浅色</option><option value="dark">深色</option></select></label>
+      <label>正文字号<select id="sample-font"><option value="normal">16px · 参考</option><option value="large">20px · 增大</option></select></label>
+      <label>同步状态<select id="sample-state"><option value="offered">回答完成 · 保存建议</option><option value="draft">已有草稿 · 保存反馈</option><option value="declined">暂不 · 已收束</option><option value="accepted">准备预览 · 动作已隐藏</option></select></label>
+      <label>来源标题<select id="sample-title"><option value="normal">Cat</option><option value="long">长标题压力检查</option></select></label>
+      <label>A 的 Save 强调<select id="sample-emphasis"><option value="quiet">克制次级按钮</option><option value="accent">保留主色强调</option></select></label>
+    </div>
+    <div class="sample-comparison">
+      <section aria-labelledby="baseline-title">
+        <h2 id="baseline-title" class="sample-panel-heading">源码参考</h2>
+        <p class="sample-panel-caption">当前消息容器、内嵌建议和控件规则；宿主主题变量采用独立预览映射。</p>
+        <div class="sample-viewport" id="baseline-viewport"></div>
+      </section>
+      <section aria-labelledby="candidate-title">
+        <h2 id="candidate-title" class="sample-panel-heading">A · 正文与边注</h2>
+        <p class="sample-panel-caption">正文获得主要重量；用分隔与间距收束建议，工具保持清楚可见。</p>
+        <div class="sample-viewport" id="candidate-viewport"></div>
+      </section>
+    </div>
+    <p class="sample-feedback" id="sample-feedback" role="status" aria-live="polite"></p>
+    <p class="sample-footer">固定来源摘录来自仓库 test/Cat.md；问题与结论是样板文案。来源在现有正文链接位置展示，没有新增来源栏。debug 关闭；两版能力相同；≤360px 沿用 compact 隐藏 Memory 的条件。角色标识为固定示意，宿主主题未实际加载。生成、错误、完整菜单与真实服务行为尚未纳入此样板；按钮和来源展示不能证明 Obsidian 跳转、保存、权限或 iPhone 触摸行为。</p>
+  </main>
+  <template id="chat-template">
+    <div class="llm-view pa-chat-view is-narrow">
+      <div class="llm-chat-container pa-chat-container">
+        <div class="llm-message pa-chat-message user">
+          <div class="message-role"><span class="pa-chat-role-identicon pa-chat-role-identicon-fill-blue" aria-hidden="true"><svg class="pa-chat-role-identicon-svg" viewBox="0 0 24 24"><path class="pa-chat-role-identicon-cell" d="M3 3h6v6H3zm12 0h6v6h-6zM9 9h6v6H9zM3 15h6v6H3zm12 0h6v6h-6z"/></svg></span><span class="pa-chat-role-text">You</span></div>
+          <div class="message-content"><p>Cat 笔记里，哪些特点解释了猫既亲近人又独自狩猎？</p></div>
+          <div class="message-actions message-action-toolbar" role="group" aria-label="Message actions"><button class="message-action-button copy-message-button" type="button" aria-label="Copy message" title="Copy message" data-demo="copy"><svg class="sample-icon" aria-hidden="true"><use href="#icon-copy"/></svg></button><button class="message-action-button message-more-button" type="button" aria-label="More message actions" title="More message actions" data-demo="more"><svg class="sample-icon" aria-hidden="true"><use href="#icon-more"/></svg></button></div>
+        </div>
+        <div class="llm-message pa-chat-message assistant">
+          <div class="message-role"><span class="pa-chat-role-identicon pa-chat-role-identicon-assistant pa-chat-role-identicon-fill-purple" aria-hidden="true"><svg class="pa-chat-role-identicon-svg" viewBox="0 0 24 24"><path class="pa-chat-role-identicon-cell" d="M3 3h6v6H3zm12 0h6v6h-6zM3 9h18v6H3zM9 15h6v6H9z"/></svg></span><span class="pa-chat-role-text">Assistant</span></div>
+          <div class="message-content sample-answer">
+            <p>笔记把猫描述为社会性动物，同时也指出它通常独自狩猎。<strong>这两种特点描述的是不同的行为。</strong> 与人或同类建立关系，并不要求一起获取食物。</p>
+            <p>如果继续整理这条线索，可以把“社会互动”和“狩猎方式”分开记录。这样下次需要理解它的行为时，可以回到具体依据，而不用把它归为单一的“独居”或“群居”标签。</p>
+            <p>这条结论依据你的笔记 <a class="internal-link sample-source" href="#sample-note" data-demo="source">Cat</a> 中的描述：</p>
+            <blockquote><p>“It is a social species, but a solitary hunter.”</p></blockquote>
+          </div>
+          <div class="pa-operations-save-suggestion" role="group" aria-label="Save this conclusion">
+            <div class="pa-operations-save-suggestion__text">This conclusion may be worth keeping in your vault.</div>
+            <div class="pa-operations-save-suggestion__actions">
+              <button class="mod-cta" type="button" data-demo="save">Save</button>
+              <button type="button" data-demo="decline">Not now</button>
+              <div class="pa-operations-save-suggestion__status" role="status" aria-live="polite" hidden></div>
+            </div>
+          </div>
+          <div class="message-actions message-action-toolbar" role="group" aria-label="Message actions">
+            <button class="message-action-button copy-message-button" type="button" aria-label="Copy message" title="Copy message" data-demo="copy"><svg class="sample-icon" aria-hidden="true"><use href="#icon-copy"/></svg></button>
+            <button class="message-action-button add-to-editor-message-button" type="button" aria-label="Add to editor" title="Add to editor" data-demo="editor"><svg class="sample-icon" aria-hidden="true"><use href="#icon-file-plus"/></svg></button>
+            <button class="message-action-button share-card-message-button" type="button" aria-label="Share as card" title="Share as card" data-demo="share"><svg class="sample-icon" aria-hidden="true"><use href="#icon-share"/></svg></button>
+            <button class="message-action-button message-more-button" type="button" aria-label="More message actions" title="More message actions" aria-expanded="false" data-demo="more"><svg class="sample-icon" aria-hidden="true"><use href="#icon-more"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <div class="llm-input pa-chat-input">
+        <div class="pa-chat-composer-row">
+          <textarea rows="3" aria-label="Ask about your notes" placeholder="Ask about your notes..."></textarea>
+          <div class="llm-buttons pa-chat-buttons pa-chat-composer-actions">
+            <button class="pa-chat-icon-button pa-chat-add-images" type="button" aria-label="Add images" title="Add images" data-demo="image"><svg class="sample-icon" aria-hidden="true"><use href="#icon-image"/></svg></button>
+            <button class="pa-chat-icon-button send-button-visible" type="button" aria-label="Ask" title="Ask" data-demo="send" disabled><svg class="sample-icon" aria-hidden="true"><use href="#icon-send"/></svg></button>
+            <span class="pa-chat-memory-control"><button class="pa-chat-icon-button pa-chat-memory-chip" type="button" aria-label="Show Memory status" title="Show Memory status" data-demo="memory"><svg class="sample-icon" aria-hidden="true"><use href="#icon-brain"/></svg></button></span>
+            <button class="pa-chat-icon-button cancel-button cancel-button-hidden" type="button" aria-label="Stop generation" title="Stop generation" data-demo="stop"><svg class="sample-icon" aria-hidden="true"><use href="#icon-stop"/></svg></button>
+            <span class="pa-chat-source-scope-control"><button class="pa-chat-icon-button pa-chat-source-scope-button" type="button" aria-label="Answer sources: My notes" title="Answer sources: My notes — Find evidence in my notes" data-demo="scope"><svg class="sample-icon" aria-hidden="true"><use href="#icon-book"/></svg></button></span>
+            <span class="pa-chat-more-control"><button class="pa-chat-icon-button" type="button" aria-label="More chat actions" title="More chat actions" data-demo="options"><svg class="sample-icon" aria-hidden="true"><use href="#icon-more"/></svg></button></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+  <dialog class="sample-note-dialog" id="sample-note">
+    <h2>Cat · 测试笔记摘录</h2>
+    <p>It is a social species, but a solitary hunter.</p>
+    <p>本窗口仅展示固定来源摘录，没有打开 Obsidian 笔记。</p>
+    <button type="button" id="close-note">关闭</button>
+  </dialog>
+  <script>
+    (() => {
+      const template = document.getElementById('chat-template');
+      const frames = ['baseline-viewport', 'candidate-viewport'].map(id => {
+        const viewport = document.getElementById(id);
+        viewport.append(template.content.cloneNode(true));
+        return viewport.querySelector('.llm-view');
+      });
+      frames[1].classList.add('pa-design-candidate');
+      const controls = Object.fromEntries(['width', 'theme', 'font', 'state', 'title', 'emphasis'].map(name => [name, document.getElementById('sample-' + name)]));
+      const note = document.getElementById('sample-note');
+      const feedback = document.getElementById('sample-feedback');
+      let draft = '';
+      const announce = text => { feedback.textContent = text; };
+      function render() {
+        const width = parseInt(controls.width.value, 10);
+        const mobile = controls.width.value.endsWith('-mobile');
+        document.body.style.setProperty('--sample-width', width + 'px');
+        document.body.dataset.theme = controls.theme.value;
+        document.body.dataset.font = controls.font.value;
+        document.body.classList.toggle('is-mobile', mobile);
+        frames[1].classList.toggle('sample-accent-save', controls.emphasis.value === 'accent');
+        frames.forEach(frame => {
+          const state = controls.state.value;
+          frame.classList.toggle('is-narrow', width <= 520);
+          frame.classList.toggle('is-compact', width <= 360);
+          frame.classList.toggle('sample-mobile', mobile);
+          frame.querySelectorAll('.sample-source').forEach(link => { link.textContent = controls.title.value === 'long' ? 'Cat — 社会互动与独自狩猎的观察记录 / Social behaviour and solitary hunting' : 'Cat'; });
+          const status = frame.querySelector('.pa-operations-save-suggestion__status');
+          const suggestion = frame.querySelector('.pa-operations-save-suggestion');
+          suggestion.hidden = false;
+          const settled = state === 'declined' || state === 'accepted';
+          frame.querySelectorAll('[data-demo="save"], [data-demo="decline"]').forEach(button => { button.hidden = settled; });
+          status.hidden = !(settled || state === 'draft');
+          status.textContent = state === 'declined' ? 'Okay — I won’t suggest saving again in this conversation.' : state === 'accepted' ? 'Preparing a save preview…' : state === 'draft' ? 'Send your current draft first, then choose Save again.' : '';
+          const textarea = frame.querySelector('textarea');
+          textarea.value = draft;
+          const send = frame.querySelector('[data-demo="send"]');
+          send.disabled = !draft.trim();
+        });
+      }
+      Object.values(controls).forEach(control => control.addEventListener('change', () => {
+        if (control === controls.state) draft = control.value === 'draft' ? '我还想补充一个问题…' : '';
+        announce('');
+        render();
+      }));
+      frames.forEach(frame => {
+        frame.querySelector('textarea').addEventListener('input', event => {
+          draft = event.target.value;
+          frames.forEach(other => {
+            if (other !== frame) other.querySelector('textarea').value = draft;
+            other.querySelector('[data-demo="send"]').disabled = !draft.trim();
+          });
+        });
+        frame.addEventListener('click', event => {
+          const trigger = event.target.closest('[data-demo]');
+          if (!trigger || trigger.disabled) return;
+          const action = trigger.dataset.demo;
+          if (action === 'source') { event.preventDefault(); note.showModal(); return; }
+          if (action === 'save') {
+            controls.state.value = draft.trim() ? 'draft' : 'accepted';
+            render();
+            announce(draft.trim() ? '受控展示：草稿保留，两版显示相同反馈。' : '受控展示：准备写入预览；没有调用 AI、创建预览或写入笔记。');
+          } else if (action === 'decline') {
+            controls.state.value = 'declined'; render(); announce('受控展示：动作隐藏，结果反馈保留；没有持久化会话状态。');
+          } else if (action === 'more') {
+            announce('保留 More message actions 入口；完整菜单待真实组件验证。');
+          } else {
+            announce('样板动作：' + (trigger.getAttribute('aria-label') || trigger.textContent) + '。保留入口；未执行真实功能。');
+          }
+        });
+      });
+      document.getElementById('close-note').addEventListener('click', () => note.close());
+      render();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+/* Draft control-spacing trial. Only used by the isolated preview. */
+.sample-viewport .pa-control-candidate.sample-mobile .llm-buttons {
+  gap: 16px;
+  padding: 8px;
+}
+
+.sample-viewport .pa-control-candidate.sample-mobile .llm-buttons button.pa-chat-icon-button::before {
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
