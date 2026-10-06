@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.4](https://github.com/edonyzpc/personal-assistant/compare/2.10.3...2.10.4) (2026-10-07)
+
+### Features
+- ghost: use GHOST_ID-only binding and human previews, removing legacy recovery
+
+### Fix
+- chat: consume Ghost command token after activation
+
 ## [2.10.3](https://github.com/edonyzpc/personal-assistant/compare/2.10.2...2.10.3) (2026-10-06)
 
 ### Fix
