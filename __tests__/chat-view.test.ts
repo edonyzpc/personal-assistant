@@ -4782,6 +4782,9 @@ describe('LLMView turn lifecycle', () => {
         Object.assign(plugin, { createGhostPublishingBinding: createBinding });
         await view.onOpen();
         view.prefillComposer('@blog2ghost 将当前笔记发布到ghost平台');
+        const ghostIntent = getElementByClass(containerEl, 'pa-chat-ghost-intent');
+        expect(ghostIntent.hidden).toBe(false);
+        expect(allText(ghostIntent)).toContain('Ghost publishing');
         getElementByClass(containerEl, 'send-button-visible').click();
         plugin.app.workspace.getActiveFile.mockReturnValue({ path: 'Other.md', basename: 'Other', extension: 'md' });
         for (let index = 0; index < 5; index++) await flushPromises();
@@ -4792,6 +4795,36 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls[0].options.writingRequest).toBeUndefined();
         streamCalls[0].resolve();
         await flushPromises();
+        await view.onClose();
+    });
+
+    it('shows the Ghost composer intent only for a complete desktop command', async () => {
+        const { view, plugin, containerEl } = createView();
+        Object.assign(plugin, { createGhostPublishingBinding: jest.fn() });
+        await view.onOpen();
+        const ghostIntent = getElementByClass(containerEl, 'pa-chat-ghost-intent');
+        const area = getTextArea(containerEl);
+        expect(ghostIntent.hidden).toBe(true);
+
+        area.value = '@blog2ghost';
+        area.dispatchEvent('input');
+        expect(ghostIntent.hidden).toBe(false);
+        expect(allText(ghostIntent)).toBe('Ghost publishing');
+
+        area.value = '@Blog2Ghost publish this note';
+        area.dispatchEvent('input');
+        expect(ghostIntent.hidden).toBe(false);
+
+        area.value = '@blog2ghosted';
+        area.dispatchEvent('input');
+        expect(ghostIntent.hidden).toBe(true);
+
+        area.value = 'publish @blog2ghost';
+        area.dispatchEvent('input');
+        expect(ghostIntent.hidden).toBe(true);
+        area.value = '';
+        area.dispatchEvent('input');
+        expect(ghostIntent.hidden).toBe(true);
         await view.onClose();
     });
 
@@ -4815,6 +4848,7 @@ describe('LLMView turn lifecycle', () => {
         area.dispatchEvent('input');
         getButtonByText(actions, 'blog2ghost').click();
         expect(area.value).toBe('@blog2ghost ');
+        expect(getElementByClass(containerEl, 'pa-chat-ghost-intent').hidden).toBe(false);
         expect(streamCalls).toHaveLength(0);
         area.value = '发布当前笔记 @blog2';
         Object.assign(area, { selectionStart: area.value.length, selectionEnd: area.value.length });
@@ -4826,6 +4860,7 @@ describe('LLMView turn lifecycle', () => {
             area.value = '';
             area.dispatchEvent('input');
             view.prefillComposer('@blog2ghost 发布当前笔记');
+            expect(getElementByClass(containerEl, 'pa-chat-ghost-intent').hidden).toBe(true);
             getElementByClass(containerEl, 'send-button-visible').click();
             await flushPromises();
             expect(streamCalls).toHaveLength(0);
@@ -9752,6 +9787,7 @@ describe('LLMView turn lifecycle', () => {
             getElementByClass(containerEl, 'pa-chat-image-draft'),
             getElementByClass(containerEl, 'pa-chat-create-image-intent'),
             getElementByClass(containerEl, 'pa-chat-writing-intent'),
+            getElementByClass(containerEl, 'pa-chat-ghost-intent'),
             getTextArea(containerEl), actions,
         ]);
         expect(actions.parentElement).toBe(composerRow);

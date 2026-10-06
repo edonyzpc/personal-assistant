@@ -636,6 +636,8 @@ export class LLMView extends ItemView {
         imageIntentEl.hidden = true;
         const writingIntentEl = composerRow.createDiv({ cls: 'pa-chat-writing-intent' });
         writingIntentEl.hidden = true;
+        const ghostIntentEl = composerRow.createDiv({ cls: 'pa-chat-ghost-intent' });
+        ghostIntentEl.hidden = true;
         const textArea = composerRow.createEl('textarea', {
             attr: { rows: '3', placeholder: t("plugin.chat.placeholder.askAboutNotes") }
         });
@@ -1350,6 +1352,12 @@ export class LLMView extends ItemView {
             const generating = isGenerating();
             const commandPrompt = parseCreateImageCommand(textArea.value);
             const writingCommandPrompt = parseWritingCommand(textArea.value);
+            const ghostCommandAvailable = Platform.isDesktop && !Platform.isMobile
+                && Boolean(this.host.createGhostPublishingBinding);
+            const hasGhostCommand = ghostCommandAvailable && parseGhostCommand(textArea.value) !== null;
+            ghostIntentEl.empty();
+            ghostIntentEl.hidden = !hasGhostCommand;
+            if (hasGhostCommand) ghostIntentEl.createSpan({ text: t('plugin.ghost.card.title') });
             const commandHasImageSource = composerDraft.snapshot(textArea.value).imageIntent?.textSource !== undefined;
             const hasDraft = composerDraft.canSend(textArea.value)
                 && (commandPrompt === null || commandPrompt.length > 0 || commandHasImageSource)
