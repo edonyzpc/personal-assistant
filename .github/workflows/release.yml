@@ -100,11 +100,11 @@ jobs:
         run: npm run check:third-party-notices
       - name: Check release documentation
         run: npm run docs:check:release
-      - name: Check beta source CI
+      - name: Check release source CI
         id: source-ci
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/check-beta-tag-ci.mjs
+        run: node scripts/check-release-tag-ci.mjs
       - name: Lint
         if: steps.source-ci.outputs.reuse_source_ci != 'true'
         run: npm run lint

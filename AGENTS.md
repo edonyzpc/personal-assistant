@@ -345,7 +345,9 @@ does not require repeating every step after each edit.
   remain visible but do not block otherwise eligible releases; release-critical
   docs use `docs:check:release`.
 - Let release automation own its gates and valid CI reuse; do not prepend another
-  full gate. Normal beta packaging reuses feature acceptance; installation smoke
+  full gate. Beta/stable preparation and tags reuse eligible full master CI;
+  pure generated stable packaging pushes use the guarded lightweight path.
+  Normal beta packaging reuses feature acceptance; installation smoke
   is triggered by changed runtime asset layout, packaging/install behavior,
   plugin identity/platform, a concrete failure or an explicit request.
 - `make changelog` writes files; use `node scripts/changelog.mjs --target-version x.y.z`

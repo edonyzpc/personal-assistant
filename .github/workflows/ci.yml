@@ -7,6 +7,7 @@ on:
       - master
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -26,20 +27,23 @@ jobs:
         with:
           node-version-file: package.json
           cache: npm
+      - name: Install dependencies
+        run: npm ci
       - name: Classify validation scope
         id: validation_scope
         # Missing output or a classifier failure takes the full path below.
         continue-on-error: true
         env:
           CI_VALIDATION_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_VALIDATION_EVENT: ${{ github.event_name }}
+          CI_VALIDATION_REF: ${{ github.ref }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/ci-validation-scope.mjs
-      - name: Install dependencies
-        run: npm ci
       - name: Check platform guards
-        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
+        if: ${{ steps.validation_scope.outcome != 'success' || (steps.validation_scope.outputs.scope != 'docs' && steps.validation_scope.outputs.scope != 'packaging') }}
         run: bash scripts/check-platform-guards.sh
       - name: Self-test platform guards
-        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
+        if: ${{ steps.validation_scope.outcome != 'success' || (steps.validation_scope.outputs.scope != 'docs' && steps.validation_scope.outputs.scope != 'packaging') }}
         run: bash scripts/test-platform-guards.sh
       - name: Check third-party notices
         if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
@@ -56,18 +60,24 @@ jobs:
       - name: Test documentation contracts
         if: ${{ steps.validation_scope.outcome == 'success' && steps.validation_scope.outputs.scope == 'docs' }}
         run: npm run test:docs -- --runInBand
+      - name: Check release packaging diff
+        if: ${{ steps.validation_scope.outcome == 'success' && steps.validation_scope.outputs.scope == 'packaging' }}
+        run: git diff --check HEAD^ HEAD
+      - name: Check release documentation
+        if: ${{ steps.validation_scope.outcome == 'success' && steps.validation_scope.outputs.scope == 'packaging' }}
+        run: npm run docs:check:release
       - name: Lint
-        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
+        if: ${{ steps.validation_scope.outcome != 'success' || (steps.validation_scope.outputs.scope != 'docs' && steps.validation_scope.outputs.scope != 'packaging') }}
         run: npm run lint
       - name: Build
-        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
+        if: ${{ steps.validation_scope.outcome != 'success' || (steps.validation_scope.outputs.scope != 'docs' && steps.validation_scope.outputs.scope != 'packaging') }}
         run: npm run build
       - name: Test
-        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
+        if: ${{ steps.validation_scope.outcome != 'success' || (steps.validation_scope.outputs.scope != 'docs' && steps.validation_scope.outputs.scope != 'packaging') }}
         # Leave CPU and memory headroom for coverage and native SDK I/O.
         run: /usr/bin/time -v npm run test:all -- --maxWorkers=2 --coverage --logHeapUsage --json --outputFile=/tmp/pa-ci-tests.json
       - name: Report test resource evidence
-        if: ${{ always() && (steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs') }}
+        if: ${{ always() && (steps.validation_scope.outcome != 'success' || (steps.validation_scope.outputs.scope != 'docs' && steps.validation_scope.outputs.scope != 'packaging')) }}
         run: |
           node <<'NODE'
           const os = require('node:os');
@@ -90,5 +100,5 @@ jobs:
           }
           NODE
       - name: Audit bundle
-        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
+        if: ${{ steps.validation_scope.outcome != 'success' || (steps.validation_scope.outputs.scope != 'docs' && steps.validation_scope.outputs.scope != 'packaging') }}
         run: npm run audit:bundle

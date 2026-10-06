@@ -55,7 +55,7 @@ function createFixture(options: {
     git(repo, ["update-ref", "refs/remotes/origin/master", sourceCommit]);
 
     const tag = options.tag ?? betaVersion;
-    git(repo, ["switch", "-c", `beta/${tag}`]);
+    if (tag.includes("-")) git(repo, ["switch", "-c", `beta/${tag}`]);
     for (const file of ["package.json", "package-lock.json", "manifest.json", "manifest-beta.json"]) {
         const data = JSON.parse(readFileSync(join(repo, file), "utf8"));
         data.version = tag;
@@ -76,7 +76,7 @@ function createFixture(options: {
         git(repo, ["add", "."]);
         git(repo, ["commit", "-m", "feat: advance master"]);
         git(repo, ["update-ref", "refs/remotes/origin/master", "HEAD"]);
-        git(repo, ["switch", `beta/${tag}`]);
+        if (tag.includes("-")) git(repo, ["switch", `beta/${tag}`]);
     }
 
     const evidence = options.evidence ?? "valid";
@@ -141,9 +141,9 @@ function changeJson(repo: string, file: string, change: (value: any) => void): v
     writeFileSync(join(repo, file), JSON.stringify(value, null, 2));
 }
 
-describe("beta tag source CI gate", () => {
-    it("reuses exact parent CI through committed packaging and real Git ancestry even after master advances", () => {
-        const fixture = createFixture({ advanceMaster: true });
+describe("release tag source CI gate", () => {
+    it.each(["2.10.0", betaVersion])("reuses exact parent CI for %s through real Git ancestry even after master advances", tag => {
+        const fixture = createFixture({ tag, advanceMaster: true });
         const { outputs, calls } = fixture.check();
         expect(outputs).toMatchObject({ reuse_source_ci: "true", ci_url: "https://github.com/release-tests/personal-assistant/actions/runs/42" });
         expect(calls).toHaveLength(3);
@@ -151,7 +151,7 @@ describe("beta tag source CI gate", () => {
         expect(calls[1][3]).toContain("/attempts/1/jobs");
     });
 
-    it.each(["2.10.0", "2.10.0+stable-build", "2.10.0-rc.1", "v2.10.0-beta.19"])("keeps %s on full validation without consulting CI", tag => {
+    it.each(["2.10.0-rc.1", "2.10.0-alpha.2", "v2.10.0-beta.19"])("keeps unsupported channel %s on full validation without consulting CI", tag => {
         const { outputs, calls } = createFixture({ tag }).check();
         expect(outputs.reuse_source_ci).toBe("false");
         expect(calls).toEqual([]);

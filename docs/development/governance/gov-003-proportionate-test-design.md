@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-003
-Updated: 2026-10-02
+Updated: 2026-10-06
 Work item: B-142
 Authority: 测试精简与执行优化的设计约束；不改变 PA runtime、用户行为或 GOV-002 发布资格。
 
@@ -18,8 +18,8 @@ Bootstrap source: Owner 于 2026-09-19 要求调查发布测试耗时与重复�
 集成负责文件/CLI/构建身份，实机负责宿主能力和交互。
 
 [GOV-002](./gov-002-master-first-branch-and-beta-packaging.md) 的 build-before-full-test、
-完整 coverage、beta 精确来源 CI 复用与最终 tag 产物验证继续生效。正常仅包装 beta
-可复用 parent 的成功完整 master CI；缺失或无效证据回退完整验证，stable 仍完整。
+完整 coverage、beta/stable 精确来源 CI 复用与最终 tag 产物验证继续生效。正常仅包装
+beta/stable 可复用 parent 的成功完整 master CI；缺失或无效证据回退完整验证。
 
 ## Requirements
 
@@ -46,14 +46,17 @@ Bootstrap source: Owner 于 2026-09-19 要求调查发布测试耗时与重复�
 - 不改变 coverage 频率/工具、结果复用政策或 release source；外部源码传输仍须任务级
   明确授权。
 
-## Current Validation Rules — 2026-10-02
+## Current Validation Rules — 2026-10-06
 
 上文 B-142 范围与下文交付记录保留当时事实。当前常规 CI、stable tag 与 beta 的
 完整回退路径使用 `--maxWorkers=2 --coverage`；本地完整验证使用 `--runInBand`。
-正常 beta 的功能验收在 master 完成，tag 复用精确 parent 的成功完整 master CI，
+2026-10-06 用户授权将正式发布的重复验证优化纳入 GOV-002。正常 beta/stable 的
+功能验收在 master 完成，tag 复用精确 parent 的成功完整 master CI，
 只补版本化 build、artifact、发布与法律检查；不重复部署或功能 UI smoke。安装/
 资产布局、插件 ID、platform 变化，具体下载/加载/升级故障或明确要求才触发对应
-smoke。此规则替代历史上 beta tag 无条件完整测试的要求，不改变 coverage 门槛。
+smoke。纯生成版本包装的 stable master push 走严格证明后的轻量检查路径；其他
+master 源码 CI 继续完整验证。此规则替代历史上 beta/stable tag 无条件完整测试的
+要求，不改变 coverage 门槛。
 
 当前同范围ZAI派工沿用[GOV-001](./gov-001-agent-managed-project-lifecycle.md#gpt-6--glm-delivery-allocation)的持续授权；上文B-142的任务级授权描述是历史交付范围。
 

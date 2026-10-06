@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-002
-Updated: 2026-10-02
+Updated: 2026-10-06
 Work item: B-117
 Authority: PA 仓库的代码、测试、研究/设计文档、工程治理与 BRAT beta 分支来源规则；不定义 PA runtime 或用户产品行为。
 
@@ -28,7 +28,7 @@ flowchart LR
 - B-117/REQ-03: beta 分支只允许由 release tooling 创建一个版本/CHANGELOG/NOTICE 等 prerelease 包装提交及对应 tag；该提交不得合并或 rebase 回 `master`。
 - B-117/REQ-04: beta 反馈修复必须先进入 `master`；需要重新测试时从更新后的 `master` 创建新的 `beta/<next-version>`，不得改写已发布 beta 分支或 tag。
 - B-117/REQ-05: stable release 始终直接从已验证 `master` 创建；允许 PR merge 或用户授权的 direct commit，两者不形成不同发布通道。
-- B-117/REQ-06: beta/stable 发布只把 source/tag、版本/包装完整性、公开与法律文档、适用测试与 lint 证据、build/bundle 及 Community `Error` 作为硬门；正常 beta 复用已验收 master 的源码验证，最终 tag 按下节只验证包装与产物。Backlog、Discovery、Active Package、Tracker、Decision/Spec/Governance 状态和跨 tag 文档连续性只由独立 docs/CI gate 管理，不得阻断发布。
+- B-117/REQ-06: beta/stable 发布只把 source/tag、版本/包装完整性、公开与法律文档、适用测试与 lint 证据、build/bundle 及 Community `Error` 作为硬门；正常 beta/stable 复用已验收 master 的源码验证，最终 tag 按下节验证包装与产物。Backlog、Discovery、Active Package、Tracker、Decision/Spec/Governance 状态和跨 tag 文档连续性只由独立 docs/CI gate 管理，不得阻断发布。
 
 ## Proportional Validation And Deployment
 
@@ -39,17 +39,18 @@ contract 下的同会话工程维护，不创建产品 Decision 或新的跨会�
   当前 production bundle 的测试分别提供显式入口。`test:all` 保留全部测试，
   CI 的完整路径、本地完整验证和发布的完整回退路径都必须在 build 后调用它。覆盖率阈值不变，
   完整门禁在一次 Jest invocation 中统计，不能用分组覆盖率代替。
-- 常规 CI 保持同一个 `validate` job。只有全部变更路径属于明确允许的仓库
-  文档范围，才运行文档契约测试而跳过 runtime gates；完整 `docs:check` 始终
-  advisory。未知路径、混合修改、缺失/无效 diff 基线回退完整验证。
+- 常规 CI 保持同一个 `validate` job。全部变更路径属于明确允许的仓库
+  文档范围时运行文档契约测试而跳过 runtime gates；另有下节严格证明的生成包装
+  路径。完整 `docs:check` 始终 advisory。其他未知路径、混合修改、缺失/无效 diff
+  基线回退完整验证。
   被打包的 `skills/**`、公开/法律/发布文档、workflow 和脚本不走文档捷径。
 - 默认 `make deploy` / `make deploy-icloud` 继续完整验证。新增显式复用部署
   入口，只复制与当前 checkout 匹配的 production 产物；复用既有 build provenance
   校验 main.js，并比对 styles 与两个 manifest 的源/产物内容。
   校验失败必须在修改目标目录前退出。该入口仅证明构建身份，不代表测试已通过；
   仅在当前改动已经完成相应验证、构建输入未变时使用。
-- 最终 tag 独立验证版本、来源、包装、构建与产物。stable 与无有效源码证据的 beta
-  继续完整测试；正常 beta 按下节复用已验收 master 的完整 CI。预先验证的旧版本
+- 最终 tag 独立验证版本、来源、包装、构建与产物。无有效源码证据的 beta/stable
+  继续完整测试；正常 beta/stable 按下节复用已验收 master 的完整 CI。预先验证的旧版本
   `dist/` 不能替代版本更新后的 tag 构建；不增加无证据的默认 skip-checks 或跨提交绿色缓存。
 
 验证映射：CI classifier 用真实临时 Git 仓库覆盖重命名、删除、混合与未知基线；
@@ -58,7 +59,7 @@ contract 下的同会话工程维护，不创建产品 Decision 或新的跨会�
 回滚只需恢复 CI 的无条件完整路径、`npm test` 的完整入口及默认部署调用；无 PA
 数据迁移或产品行为变化。
 
-## Beta Preparation CI Reuse
+## Release Preparation And Packaging CI Reuse
 
 2026-09-09 用户根据 beta.6 的耗时分析授权优化 beta 发布流程。本轮沿用本
 contract 的同会话工程维护入口，不创建新的产品或跨会话过程包。已核实 beta.6
@@ -66,24 +67,32 @@ contract 的同会话工程维护入口，不创建新的产品或跨会话过�
 成功 CI。当时选择复用 master CI 的源码验证，保留最终标签独立完整门禁。
 2026-10-02，Owner 明确 beta 发布前功能验收已在 master 完成；以下当前规则将复用
 延伸到仅包装的 beta tag，替代此前每个 beta tag 无条件重跑完整测试的要求。
+2026-10-06，用户根据 2.10.2 重复执行源码 CI、本地完整门禁、包装 master CI 和 tag CI
+的事实授权扩展至 stable preparation/tag 与纯包装 master push。复用既有证据判定，
+保留最终版本构建与资产检查；此同会话维护不创建新的跨会话过程包。
 
-- B-117/REQ-07: beta 本地 preparation 默认查询 origin 所属 GitHub 仓库的
+- B-117/REQ-07: beta/stable 本地 preparation 默认查询 origin 所属 GitHub 仓库的
   `.github/workflows/ci.yml`，只复用与干净 checkout、local master 和实时
   origin/master 完全相同 SHA 的 master push CI。最新 run/attempt 必须完成且成功，
   `validate` job 的依赖安装、Lint、Build、Test、Audit bundle 均必须成功；
-  docs-only、跳过/缺失步骤、旧 SHA、旧成功 run、PR/fork、未知状态均不算证据。
+  docs-only、packaging-only、跳过/缺失步骤、旧 SHA、旧成功 run、PR/fork、未知状态均不算证据。
 - B-117/REQ-08: 查询有界，证据不可用时说明原因并回退本地完整门禁；显式
-  `RELEASE_LOCAL_CHECKS=1` 或 `--local-checks` 可强制本地完整门禁。stable 保持
-  原完整验证。dry-run 不查询网络或执行门禁。既有手动 skip-checks 不作为复用途径。
+  `RELEASE_LOCAL_CHECKS=1` 或 `--local-checks` 可强制本地完整门禁。dry-run 不查询
+  网络或执行门禁。既有手动 skip-checks 不作为复用途径。
 - B-117/REQ-09: 复用成功仍执行本地 diff、notice 和发布文档检查，由 release/publish
   脚本确认来源、分支、版本与包装完整性，正常结果不再由操作者逐个 SHA 重验。
-  beta tag 只有生成包装变化且其精确 parent 具有同仓库 master push 的成功完整 CI
+  beta/stable tag 只有生成包装变化且其精确 parent 具有同仓库 master push 的成功完整 CI
   时，复用该源码证据，重新安装依赖、构建版本化产物，运行 artifact、release-doc、
   notice 与 bundle 检查；不重复 lint、完整 Jest 或 coverage。parent 仍在 master
   历史内的正常快进不使证据失效。缺失、失败、旧 attempt、docs-only、API 不可用
-  或输入不等价时回退 build 后的完整 lint/Jest coverage 与审计；stable 始终完整。
+  或输入不等价时回退 build 后的完整 lint/Jest coverage 与审计。
   无法确认来源或包装边界时直接拒绝发布。复用不声明本机旧 node_modules/dist 有效，
   不创建本地 receipt/cache 服务。
+- B-117/REQ-13: master push 只有 event base 等于 HEAD 的唯一直接 parent、HEAD 为
+  工具生成的纯版本包装提交、精确 parent 具有成功完整 master CI 时，才走轻量 packaging
+  路径。PR、多个提交、额外路径、依赖/配置/插件身份等非版本变化或证据失败均走完整
+  路径。保留 diff、notice、release-doc 和常规 advisory docs 检查；Lint/Build/Test/
+  Audit bundle 在该路径明确跳过，不能被后续 verifier 识别为完整源码成功证据。
 - B-117/REQ-10: 发布后默认核实工作流成功、非草稿 prerelease、完整资产列表和
   下载的 manifest 版本；全资产下载/hash/语法验证用于明确请求或具体诊断。
   必须等下载自然完成再读取文件，轮询等待不计为额外测试时间。
@@ -100,8 +109,9 @@ contract 的同会话工程维护入口，不创建新的产品或跨会话过�
 | Risk / requirement | Change | Minimum evidence | Pass / expansion trigger |
 | --- | --- | --- | --- |
 | REQ-07 错误复用 | CI 身份与完整步骤校验 | `release-ci-evidence-script` 表驱动反例 | exact success 接受；不完整、漂移、旧 run/attempt 拒绝；API schema 改动重跑 |
-| REQ-08/09 门禁绕过或漂移 | release CLI 分支与写前复核 | `release-script` 临时 Git + fake API/npm | 成功只跑轻检查；无证据回退；stable/force-local 完整；漂移不创建发布状态 |
-| REQ-09 最终发布包 | beta tag 精确 parent CI 复用与完整回退 | release/publish、CI evidence 与 tag workflow 契约 | 正常 beta build 后 artifact；无有效证据及 stable build 后完整 coverage；来源/包装不合法拒绝 |
+| REQ-08/09 门禁绕过或漂移 | release CLI 分支与写前复核 | `release-script` 临时 Git + fake API/npm | beta/stable 成功只跑轻检查；无证据或 force-local 完整；漂移不创建发布状态 |
+| REQ-09 最终发布包 | beta/stable tag 精确 parent CI 复用与完整回退 | release/publish、CI evidence 与 tag workflow 契约 | 正常 tag build 后 artifact；无有效证据 build 后完整 coverage；来源/包装不合法拒绝 |
+| REQ-13 包装 push 错误跳过 | 共享提交语义证明和 CI classifier | 真实临时 Git + fake API 与 workflow 契约 | 只接受单个 master 包装 push + 完整 parent CI；其他输入走 full；轻量 run 不算完整证据 |
 | REQ-10 核验过重 | operations docs + BRAT skill | docs/release-docs + 定向文档审查 | 默认下载仅 manifest，实机证据仍独立；核验要求变化重审 |
 | REQ-11/12 重复验收 | 触发型 smoke 与现有命令回执复用 | operations docs + BRAT skill 定向审查 | 正常包装不重跑功能 UI；安装变化、故障、明确请求或远端状态依赖时补对应证据 |
 

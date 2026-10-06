@@ -109,15 +109,20 @@ gate unless the user explicitly asked to submit the hosted scan.
 
 ## Create Local Release
 
-For a fresh `local-release` or `publish` flow, run the complete release gate:
+For a fresh `local-release` or `publish` flow, run the release automation:
 
 ```bash
 make release VERSION=<target-version>
 ```
 
 Do not pass `SKIP_CHECKS=1` or `--skip-checks`. Do not use `make deploy` as a
-substitute: `make release` must run its own whitespace, notices, coverage test,
-release-critical docs, lint, build, and bundle-audit checks. Full lifecycle
+substitute: `make release` owns its whitespace, notices and release-critical
+docs checks. It reuses complete successful CI for the exact synchronized master
+source when eligible; otherwise it runs local lint, build, coverage and bundle
+audit. `RELEASE_LOCAL_CHECKS=1` forces the full local gate for diagnosis.
+The final tag always builds versioned assets and runs artifact tests with valid
+parent CI, or full coverage without it, plus legal/docs/version/bundle/asset checks.
+Do not prepend another full gate to the automated evidence lookup. Full lifecycle
 `docs:check` findings are reported separately and do not block publication.
 
 Trust the successful release command's version, commit/tag and worktree checks.

@@ -39,7 +39,8 @@ Sources:
 - Beta publication follows completed functionality acceptance on `master`.
   Normal packaging reuses successful full master CI for the exact source parent;
   tag CI builds and checks artifacts, packaging, release docs and legal assets.
-  Missing or invalid evidence falls back to the full gate; stable remains full.
+  Missing or invalid evidence falls back to the full gate. Stable releases use
+  the same evidence rules in [Release Process](./release-process.md).
   This replaces the former full-test and app-smoke default for every beta.
 
 ## Version Pattern
@@ -124,7 +125,7 @@ for the exact source SHA, then falls back to full local checks if evidence is
 unavailable. Reuse keeps local diff/notice/release-doc checks and the independent
 final-tag build/packaging/artifact checks. Tag CI independently verifies full
 master CI for the exact source parent; missing or invalid evidence uses the
-full gate. See [CI reuse conditions](./release-process.md#beta-preparation-reuse-exact-master-ci).
+full gate. See [CI reuse conditions](./release-process.md#release-preparation-reuse-exact-master-ci).
 
 ```bash
 make release-dry-run VERSION=2.9.0-beta.1

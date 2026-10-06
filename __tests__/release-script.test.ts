@@ -110,6 +110,10 @@ describe("scripts/release.mjs", () => {
         expect(readMakeTarget(makefile, "deploy-icloud").prerequisites).toContain("bin");
         // Read step structure so adding a safe CI condition does not require
         // mirroring whitespace or line placement in the test.
+        const ciFull = "${{ steps.validation_scope.outcome != 'success' || (steps.validation_scope.outputs.scope != 'docs' && steps.validation_scope.outputs.scope != 'packaging') }}";
+        const ciDocs = "${{ steps.validation_scope.outcome == 'success' && steps.validation_scope.outputs.scope == 'docs' }}";
+        const ciPackaging = "${{ steps.validation_scope.outcome == 'success' && steps.validation_scope.outputs.scope == 'packaging' }}";
+        const ciNotDocs = "${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}";
         for (const [workflow, job, testCommand] of [
             [ciWorkflow, "validate", "/usr/bin/time -v npm run test:all -- --maxWorkers=2 --coverage --logHeapUsage --json --outputFile=/tmp/pa-ci-tests.json"],
             [releaseWorkflow, "build", "npm run test:all -- --maxWorkers=2 --coverage"],
@@ -127,6 +131,38 @@ describe("scripts/release.mjs", () => {
             if (job === "validate") {
                 expect(steps[testIndex].if).toBe(steps[buildIndex].if);
                 expect(steps[lintIndex].if).toBe(steps[buildIndex].if);
+                expect(steps[lintIndex].if).toBe(ciFull);
+                expect(steps[buildIndex].if).toBe(ciFull);
+                expect(steps[testIndex].if).toBe(ciFull);
+                const installIndex = steps.findIndex((step: { name: string }) => step.name === "Install dependencies");
+                const classifyIndex = steps.findIndex((step: { name: string }) => step.name === "Classify validation scope");
+                expect(installIndex).toBeGreaterThan(-1);
+                expect(classifyIndex).toBeGreaterThan(installIndex);
+                expect(steps[classifyIndex]).toMatchObject({
+                    "continue-on-error": true,
+                    run: "node scripts/ci-validation-scope.mjs",
+                });
+                expect(steps[classifyIndex].env).toMatchObject({
+                    CI_VALIDATION_EVENT: "${{ github.event_name }}",
+                    CI_VALIDATION_REF: "${{ github.ref }}",
+                    GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}",
+                });
+                for (const [name, condition] of [
+                    ["Check platform guards", ciFull],
+                    ["Self-test platform guards", ciFull],
+                    ["Check third-party notices", ciNotDocs],
+                    ["Test documentation contracts", ciDocs],
+                    ["Check release packaging diff", ciPackaging],
+                    ["Check release documentation", ciPackaging],
+                    ["Lint", ciFull],
+                    ["Build", ciFull],
+                    ["Test", ciFull],
+                    ["Audit bundle", ciFull],
+                ] as const) {
+                    const matchingSteps = steps.filter((step: { name: string }) => step.name === name);
+                    expect(matchingSteps).toHaveLength(1);
+                    expect(matchingSteps[0].if).toBe(condition);
+                }
             } else {
                 const fullCondition = "steps.source-ci.outputs.reuse_source_ci != 'true'";
                 expect(steps[lintIndex].if).toBe(fullCondition);
@@ -145,8 +181,8 @@ describe("scripts/release.mjs", () => {
                     expect(matchingSteps).toHaveLength(1);
                     expect(matchingSteps[0].if).toBeUndefined();
                 }
-                const gate = steps.find((step: { name: string }) => step.name === "Check beta source CI");
-                expect(gate).toMatchObject({ id: "source-ci", run: "node scripts/check-beta-tag-ci.mjs" });
+                const gate = steps.find((step: { name: string }) => step.name === "Check release source CI");
+                expect(gate).toMatchObject({ id: "source-ci", run: "node scripts/check-release-tag-ci.mjs" });
             }
         }
         expectSnippetsInOrder(releaseScript, [
@@ -202,7 +238,21 @@ describe("scripts/release.mjs", () => {
         expect(workflow).toContain('if [[ "${version_core}" == *-* ]]');
     });
 
-    describe("beta validation evidence through the release CLI", () => {
+    describe("release validation evidence through the release CLI", () => {
+        it("reuses successful exact-master CI for a stable release without source revalidation", () => {
+            const fixture = createReleaseCliFixture({ version: "2.9.0" });
+            const result = fixture.release();
+
+            expect(result.status).toBe(0);
+            expect(fixture.npmCalls()).toEqual([
+                ["run", "check:third-party-notices"],
+                ["run", "docs:check:release"],
+                ["version", "2.9.0", "--no-git-tag-version"],
+            ]);
+            expect(fixture.ghCalls().length).toBeGreaterThanOrEqual(2);
+            expect(git(fixture.repo, ["rev-parse", "HEAD^"]).trim()).toBe(fixture.masterSha);
+        });
+
         it("reuses successful exact-master CI and creates only the release commit and annotated tag", () => {
             const fixture = createReleaseCliFixture();
             const result = fixture.release();
@@ -254,8 +304,11 @@ describe("scripts/release.mjs", () => {
             },
         );
 
-        it("keeps stable releases on complete local checks without querying GitHub", () => {
+        it("keeps a stable source away from local master on complete local checks without querying GitHub", () => {
             const fixture = createReleaseCliFixture({ version: "2.9.0" });
+            git(fixture.repo, ["switch", "-c", "feature/release-source"]);
+            commit(fixture.repo, "feat(pagelet): release-only source");
+
             expect(fixture.release().status).toBe(0);
             expect(fixture.npmCalls()).toEqual(fullReleaseNpmCalls("2.9.0"));
             expect(fixture.ghCalls()).toEqual([]);

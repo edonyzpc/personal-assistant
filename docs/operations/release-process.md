@@ -37,14 +37,14 @@ make publish VERSION="<prepared-version>"
 2. Verifies the target version is valid, greater than `package.json`, and not already tagged. For prereleases, it also requires the matching `beta/<VERSION>` branch with pre-release `HEAD` exactly equal to local `master`.
 3. Verifies the current `package.json` version already has a local release tag, so the new changelog starts from the previous release instead of duplicating older entries.
 4. Generates the `CHANGELOG.md` section from the latest semantic tag through `HEAD`.
-5. For beta preparation, first tries to reuse successful full CI for the exact synchronized master commit, as described below. Reuse still runs `git diff --check`, `npm run check:third-party-notices` and `npm run docs:check:release` locally. Otherwise (including stable releases), also runs `npm run lint`, `npm run build`, `npm run test:all -- --runInBand --coverage`, and `npm run audit:bundle`. The production build precedes Jest because receipt suites bind the current `dist/main.js` and its production provenance.
+5. For beta and stable preparation, first tries to reuse successful full CI for the exact synchronized master commit, as described below. Reuse still runs `git diff --check`, `npm run check:third-party-notices` and `npm run docs:check:release` locally. Without eligible evidence, also runs `npm run lint`, `npm run build`, `npm run test:all -- --runInBand --coverage`, and `npm run audit:bundle`. The production build precedes Jest because receipt suites bind the current `dist/main.js` and its production provenance.
 6. Updates `package.json`, `package-lock.json`, `manifest.json`, `manifest-beta.json`, `versions.json`, `CHANGELOG.md`, and release-tag references in `NOTICE`.
 7. Creates `[release] vx.y.z, check the CHANGELOG.md for details`.
 8. Creates annotated tag `x.y.z`.
 
 Set `SKIP_CHECKS=1` or pass `--skip-checks` only when checks have already been run in the same workspace and no files changed afterward.
 
-### Beta Preparation: Reuse Exact Master CI
+### Release Preparation: Reuse Exact Master CI
 
 Before creating the beta branch, refresh master and require
 `git rev-list --left-right --count master...origin/master` to report two zero
@@ -54,10 +54,10 @@ only enforces the local source identity and falls back to local checks for a
 live master mismatch; `make publish` rejects that mismatch later. Stop before
 branch creation if master is not synchronized; pushing master needs authority.
 
-Ordinary `make release VERSION=x.y.z-beta.N` automatically checks the GitHub
+Ordinary `make release VERSION=x.y.z` and `make release VERSION=x.y.z-beta.N` check the GitHub
 repository identified by `origin` (github.com SSH or HTTPS URLs). Reuse requires:
 
-- A clean matching beta branch at local master, with live `origin/master` at
+- Clean `master` for stable, or a matching beta branch at local master, with live `origin/master` at
   that exact SHA. Source, tests, fixtures, configuration and lockfile therefore
   match the tested commit; a nearby commit or PR merge SHA is insufficient.
 - The latest run for that SHA from `.github/workflows/ci.yml`, triggered by a
@@ -65,7 +65,7 @@ repository identified by `origin` (github.com SSH or HTTPS URLs). Reuse requires
   or running attempt cannot be replaced with an older green result.
 - That run's current attempt has a successful `validate` job with successful
   Install dependencies, Lint, Build, Test and Audit bundle steps. A docs-only
-  green run or skipped/missing Test does not qualify. Keep those step names tied
+  or packaging-only green run or skipped/missing Test does not qualify. Keep those step names tied
   to their full gate commands when changing CI.
 
 The command prints the reused run URL and SHA. API failure, unsupported origin,
@@ -83,31 +83,35 @@ node scripts/release.mjs --local-checks x.y.z-beta.N
 
 Do not combine this with `SKIP_CHECKS` / `--skip-checks`. The manual skip option
 is not the CI reuse mechanism. Dry-run performs neither network lookup nor
-validation. Stable releases retain full local validation by default.
+validation. The same source evidence rules apply to stable preparation.
 
 Reused CI proves source validation on the CI runner; it does not validate this
 machine's installed dependencies or old `dist/`. Do not run another full gate
 before or after `make release` without changed inputs or a concrete failure.
 Normal beta packaging does not require a local deployment or repeated app smoke.
 
-### Beta Tag: Reuse The Accepted Source
+### Release Tag: Reuse The Accepted Source
 
-Beta publication starts after functionality has been accepted on master. The
+Beta and stable publication start after functionality has been accepted on master. The
 tag workflow verifies that the release commit contains only the generated
 packaging changes, then looks for successful full master push CI for its exact
-parent SHA in the same repository. The current run/attempt and required full
+parent SHA in the same repository. A release-shaped subject or file list alone
+does not qualify: committed JSON must change only the generated version fields
+and `versions.json` entry, including both root package-lock versions. Dependency,
+configuration, plugin identity or platform changes take the full path.
+The current run/attempt and required full
 validation steps must qualify as above; docs-only, skipped, failed, incomplete
 or stale evidence does not qualify. A normal master advance is allowed while
 the source parent remains in master history.
 
-With valid evidence, the beta tag installs dependencies, builds the versioned
+With valid evidence, the beta or stable tag installs dependencies, builds the versioned
 assets, runs `npm run test:artifacts -- --runInBand`, and retains notice,
 release-doc, metadata, bundle audit and asset checks. It reuses source lint and
 full Jest/coverage instead of repeating them. Missing or invalid evidence,
 unavailable API data or unequal source inputs takes the full lint/build/Jest
 coverage path. Invalid source or packaging identity rejects the release.
-Stable tags always use the full path. These rules replace the earlier default
-of complete tests on every beta tag; coverage thresholds remain unchanged.
+These rules replace the earlier default of complete tests on every stable tag
+and extend the beta reuse policy; coverage thresholds remain unchanged.
 
 The final tag always builds its own assets. A pre-version-bump local build is
 not release evidence. BRAT/app/device checks are triggered by installation or
@@ -120,8 +124,8 @@ before packaging; ordinary beta publication does not repeat that acceptance.
 Routine open-source client releases should stay lightweight. Every release
 keeps source validation evidence plus automated package/license, notice,
 release-critical documentation, versioned build and bundle checks green.
-Normal beta tags reuse accepted source lint/full-test evidence and run artifact
-checks; stable and beta fallback paths run full tests. Dependency changes also
+Normal beta/stable tags reuse accepted source lint/full-test evidence and run artifact
+checks; fallback paths run full tests. Dependency changes also
 require regenerating third-party notices with `npm run generate:third-party-notices`.
 
 `npm run docs:check:release` verifies only public/release-critical documents and
@@ -150,9 +154,9 @@ future service gate into ordinary plugin release preparation.
 | Scripts, offline fixture and documentation contracts | `npm run test:tooling -- --runInBand` | No |
 | Current-bundle receipt and runtime probe contracts | `npm run test:artifacts -- --runInBand` | Yes |
 | Complete regular CI coverage | `npm run test:all -- --maxWorkers=2 --coverage` | Yes |
-| Accepted-source beta tag artifacts | `npm run test:artifacts -- --runInBand` | Yes |
-| Stable tag or beta fallback coverage | `npm run test:all -- --maxWorkers=2 --coverage` | Yes |
-| Complete local release-preparation coverage | `npm run test:all -- --runInBand --coverage` | Yes |
+| Accepted-source beta/stable tag artifacts | `npm run test:artifacts -- --runInBand` | Yes |
+| Beta/stable tag fallback coverage | `npm run test:all -- --maxWorkers=2 --coverage` | Yes |
+| Local release-preparation fallback coverage | `npm run test:all -- --runInBand --coverage` | Yes |
 | Documentation checker and skill contracts | `npm run test:docs -- --runInBand` | No |
 
 Use `--runTestsByPath <suite>` with the matching group for focused checks.
@@ -173,6 +177,17 @@ missing/invalid Git baselines, and classifier errors take the complete path.
 Public/legal/release docs, bundled `skills/**`, `.agents/**`, build configuration,
 scripts, and workflows take the complete path.
 
+A master push consisting of one generated stable packaging commit has a separate
+`packaging` path. Its event base must be the exact direct parent of `HEAD`, and
+the same committed metadata proof used by tag CI must succeed. The exact parent
+must have successful full master CI; PRs, multiple commits, non-version JSON
+changes, missing evidence or classifier failure take the complete path.
+The packaging path installs dependencies and checks whitespace, notices and
+release docs, retaining advisory `docs:check`. Lint, Build, Test and Audit bundle
+are explicitly skipped so its green result cannot be reused as full source CI.
+The final tag builds and validates the versioned assets. No recursive evidence
+chain or search for an older green ancestor is used.
+
 `make deploy` and `make deploy-icloud` still run full validation. When the
 required validation has already passed for the current changes, reuse the current
 production build with `make deploy-current` or `make deploy-icloud-current`.
@@ -184,7 +199,7 @@ deployments are authorized together, `make deploy deploy-icloud` shares one
 full validation run.
 
 The tag release workflow always rebuilds the final versioned assets. Accepted
-source beta tags use artifact checks; stable and beta fallback tags run full
+source beta/stable tags use artifact checks; fallback tags run full
 coverage with two Jest workers. This does not authorize publishing or weaken
 the source, packaging or coverage requirements.
 

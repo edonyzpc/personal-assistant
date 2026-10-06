@@ -173,9 +173,17 @@ function runChecks() {
   assertCleanWorktree("after validation checks");
 }
 
+function localMasterMatches(sourceCommit) {
+  try {
+    return capture("git", ["rev-parse", "--verify", "refs/heads/master^{commit}"]) === sourceCommit;
+  } catch {
+    return false;
+  }
+}
+
 function runReleaseChecks(targetVersion, options, sourceCommit) {
   if (options.skipChecks) return;
-  if (semver.prerelease(targetVersion) === null || options.localChecks) {
+  if (options.localChecks || !localMasterMatches(sourceCommit)) {
     console.log("Release validation: full local checks.");
     runChecks();
     return;
@@ -197,7 +205,7 @@ function runReleaseChecks(targetVersion, options, sourceCommit) {
   }
 
   console.log(`Release validation: reusing master CI ${evidence.url} for ${sourceCommit}.`);
-  console.log("Final beta tag CI will build and audit the versioned release, using artifact tests with verified source CI or full coverage checks otherwise.");
+  console.log("Final tag CI will build and audit the versioned release, using artifact tests with verified source CI or full coverage checks otherwise.");
   run("git", ["diff", "--check"]);
   run("npm", ["run", "check:third-party-notices"]);
   run("npm", ["run", "docs:check:release"]);
@@ -274,7 +282,7 @@ async function main() {
 
   if (options.dryRun) {
     printDryRunPlan({ currentVersion, targetVersion, changelog, releaseSection });
-    console.log("Validation is not run by dry-run. Beta preparation tries exact-master CI reuse; otherwise full local checks run.");
+    console.log("Validation is not run by dry-run. Release preparation tries exact-master CI reuse; otherwise full local checks run.");
     return;
   }
 

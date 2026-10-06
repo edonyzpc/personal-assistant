@@ -107,7 +107,7 @@ cannot substitute. The script prints the accepted run URL/SHA or fallback reason
 Reuse retains local diff, third-party notice and release-doc checks. Missing
 evidence, unsupported origin, missing `gh` or a bounded API timeout falls back
 to the existing local full gate. `RELEASE_LOCAL_CHECKS=1 make release VERSION=...`
-forces full local checks for diagnosis. Stable defaults remain unchanged;
+forces full local checks for diagnosis. Stable uses the same evidence rules;
 dry-run does not query CI or execute checks. Do not use `SKIP_CHECKS` as a
 substitute for this evidence check.
 
@@ -120,7 +120,8 @@ assets, runs artifact tests, and retains metadata, notice, release-doc, bundle
 audit and asset checks; it does not repeat source lint/full Jest/coverage.
 Missing, invalid, failed, docs-only, incomplete or unavailable evidence falls
 back to the full gate; invalid source/packaging identity rejects publication.
-Stable remains full. This replaces the earlier always-full beta tag rule.
+Stable also uses exact parent CI reuse under the release runbook. This replaces
+the earlier always-full beta tag rule.
 
 Reused CI does not prove this machine's node_modules or old dist is valid for
 deployment. Do not add another test/build before or after `make release`, or
