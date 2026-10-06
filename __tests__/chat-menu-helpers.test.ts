@@ -4,13 +4,15 @@ import { updateChatMenuAvailableWidth } from '../src/chat/menu-helpers';
 jest.mock('obsidian');
 
 function createMenu({ paneLeft = 800, paneRight = 1100, menuLeft = 780, menuRight = 1080,
-    viewport = 1200, message = false, growsRight = false, hidden = false } = {}) {
+    viewport = 1200, message = false, growsRight = false, hidden = false,
+    classes = [] as string[] } = {}) {
     const bounds = { left: paneLeft, right: paneRight };
     const setProperty = jest.fn();
     const menu = {
         hidden,
         ownerDocument: { defaultView: { innerWidth: viewport } },
-        classList: { contains: () => message },
+        classList: { contains: (className: string) =>
+            (message && className === 'pa-chat-message-menu') || classes.includes(className) },
         closest: (selector: string) => {
             if (selector === '.llm-message.assistant, .llm-message.system') return growsRight ? {} : null;
             if (selector === '.llm-chat-container' && !message) return null;
@@ -43,6 +45,20 @@ describe('anchored chat menu width', () => {
         const { menu, setProperty } = createMenu({ message: true, growsRight, menuLeft: 830, menuRight: 970 });
         updateChatMenuAvailableWidth(menu);
         expect(setProperty).toHaveBeenLastCalledWith('--pa-chat-menu-available-width', growsRight ? '262px' : '162px');
+    });
+
+    it.each([
+        'pa-chat-create-image-source-menu',
+        'pa-chat-create-image-options-menu',
+    ])('bounds rightward Create-image popovers without changing leftward composer menus (%s)', (className) => {
+        const geometry = { paneLeft: 0, paneRight: 320, menuLeft: 120, menuRight: 400, viewport: 320 };
+        const rightward = createMenu({ ...geometry, classes: [className] });
+        updateChatMenuAvailableWidth(rightward.menu);
+        expect(rightward.setProperty).toHaveBeenLastCalledWith('--pa-chat-menu-available-width', '188px');
+
+        const leftward = createMenu({ ...geometry, classes: ['pa-chat-composer-menu'] });
+        updateChatMenuAvailableWidth(leftward.menu);
+        expect(leftward.setProperty).toHaveBeenLastCalledWith('--pa-chat-menu-available-width', '388px');
     });
 
     it('intersects pane bounds with a smaller viewport', () => {

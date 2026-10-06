@@ -53,10 +53,12 @@ export function updateChatMenuAvailableWidth(menu: HTMLElement): void {
     const rect = menu.getBoundingClientRect();
     const left = Math.max(bounds.left + 8, 12);
     const right = Math.min(bounds.right - 8, win.innerWidth - 12);
-    // Assistant/system action menus grow rightward; composer, Memory and user
-    // action menus grow leftward from their existing CSS anchors.
-    const growsRight = menu.classList.contains('pa-chat-message-menu')
-        && Boolean(menu.closest('.llm-message.assistant, .llm-message.system'));
+    // Assistant/system action menus and the two Create-image composer popovers
+    // grow rightward; other composer, Memory and user action menus grow leftward.
+    const growsRight = menu.classList.contains('pa-chat-create-image-source-menu')
+        || menu.classList.contains('pa-chat-create-image-options-menu')
+        || (menu.classList.contains('pa-chat-message-menu')
+            && Boolean(menu.closest('.llm-message.assistant, .llm-message.system')));
     const available = growsRight ? right - rect.left : rect.right - left;
     menu.style.setProperty('--pa-chat-menu-available-width', `${Math.max(0, Math.floor(available))}px`);
 }

@@ -80,6 +80,7 @@ import {
     captureComposerImageTextSource,
     ComposerDraft,
     type ComposerImageIntent,
+    type ComposerImageGenerationOptions,
     type ComposerImageTextSource,
     type SentComposerDraft,
     type ComposerSnapshot,
@@ -634,6 +635,39 @@ export class LLMView extends ItemView {
         imageDraftEl.hidden = true;
         const imageIntentEl = composerRow.createDiv({ cls: 'pa-chat-create-image-intent' });
         imageIntentEl.hidden = true;
+        const imageIntentTitle = imageIntentEl.createSpan({ cls: 'pa-chat-create-image-title' });
+        const imageSourceControl = imageIntentEl.createSpan({ cls: 'pa-chat-popover-control' });
+        const imageSourceButton = imageSourceControl.createEl('button', {
+            cls: 'pa-chat-icon-button pa-chat-create-image-source-button',
+            attr: {
+                type: 'button',
+                'aria-haspopup': 'dialog',
+                'aria-expanded': 'false',
+                'aria-label': t('plugin.chat.createImage.source.control'),
+                title: t('plugin.chat.createImage.source.control'),
+            },
+        });
+        const imageSourceMenu = imageSourceControl.createDiv({
+            cls: 'pa-chat-menu pa-chat-create-image-source-menu',
+            attr: {
+                role: 'dialog',
+                'aria-modal': 'false',
+                'aria-label': t('plugin.chat.createImage.source.control'),
+                tabindex: '-1',
+            },
+        });
+        imageSourceMenu.hidden = true;
+        imageSourceButton.setAttribute('aria-controls', `pa-chat-create-image-source-menu-${sessionId}`);
+        imageSourceMenu.id = `pa-chat-create-image-source-menu-${sessionId}`;
+        const imageCloseButton = imageIntentEl.createEl('button', {
+            cls: 'pa-chat-icon-button pa-chat-create-image-close',
+            attr: {
+                type: 'button',
+                title: t('plugin.chat.createImage.removeAction'),
+                'aria-label': t('plugin.chat.createImage.removeAction'),
+            },
+        });
+        setIcon(imageCloseButton, 'x');
         const writingIntentEl = composerRow.createDiv({ cls: 'pa-chat-writing-intent' });
         writingIntentEl.hidden = true;
         const ghostIntentEl = composerRow.createDiv({ cls: 'pa-chat-ghost-intent' });
@@ -704,15 +738,64 @@ export class LLMView extends ItemView {
         });
 
         const buttonDiv = composerRow.createDiv({ cls: 'llm-buttons pa-chat-buttons pa-chat-composer-actions' });
-        const addImageButton = buttonDiv.createEl('button', {
+        const imageActionsControl = buttonDiv.createSpan({ cls: 'pa-chat-composer-action-group pa-chat-image-actions' });
+        const addImageButton = imageActionsControl.createEl('button', {
             cls: 'pa-chat-icon-button pa-chat-add-images',
             attr: { type: 'button', title: t('plugin.chat.images.add'), 'aria-label': t('plugin.chat.images.add') },
         });
         setIcon(addImageButton, 'image-plus');
+        const imageOptionsControl = imageActionsControl.createSpan({ cls: 'pa-chat-popover-control' });
+        imageOptionsControl.hidden = true;
+        const imageOptionsButton = imageOptionsControl.createEl('button', {
+            cls: 'pa-chat-icon-button pa-chat-image-options-button',
+            attr: {
+                type: 'button',
+                title: t('plugin.chat.createImage.optionsControl'),
+                'aria-label': t('plugin.chat.createImage.optionsControl'),
+                'aria-haspopup': 'dialog',
+                'aria-expanded': 'false',
+            },
+        });
+        setIcon(imageOptionsButton, 'sliders-horizontal');
+        const imageOptionsMenu = imageOptionsControl.createDiv({
+            cls: 'pa-chat-menu pa-chat-create-image-options-menu',
+            attr: {
+                role: 'dialog',
+                'aria-modal': 'false',
+                'aria-label': t('plugin.chat.createImage.optionsControl'),
+                tabindex: '-1',
+            },
+        });
+        imageOptionsMenu.hidden = true;
+        imageOptionsButton.setAttribute('aria-controls', `pa-chat-create-image-options-menu-${sessionId}`);
+        imageOptionsMenu.id = `pa-chat-create-image-options-menu-${sessionId}`;
         const imagePicker = buttonDiv.createEl('input', { attr: { type: 'file', accept: 'image/*,.heic,.heif,.svg', multiple: '' } });
         imagePicker.hidden = true;
         const originalPicker = buttonDiv.createEl('input', { attr: { type: 'file', multiple: '' } });
         originalPicker.hidden = true;
+        createChatMenuLabel(imageOptionsMenu, t('plugin.chat.createImage.options'), 'sliders-horizontal');
+        const imageOptionsSummary = imageOptionsMenu.createDiv({
+            cls: 'pa-chat-create-image-options-summary',
+        });
+        const imageOptionsRow = imageOptionsMenu.createDiv({ cls: 'pa-chat-create-image-option-row' });
+        const imageModelLabel = imageOptionsRow.createEl('label', { text: t('plugin.chat.createImage.model') });
+        const imageModelSelect = imageModelLabel.createEl('select', {
+            cls: 'pa-chat-create-image-model-select',
+        });
+        for (const value of ['wan2.7-image', 'wan2.7-image-pro'] as const) {
+            imageModelSelect.createEl('option', { text: value, attr: { value } });
+        }
+        const imageCountLabel = imageOptionsRow.createEl('label', { text: t('plugin.chat.createImage.count') });
+        const imageCountSelect = imageCountLabel.createEl('select', {
+            cls: 'pa-chat-create-image-count-select',
+        });
+        for (const value of [1, 2, 3, 4] as const) {
+            imageCountSelect.createEl('option', { text: String(value), attr: { value: String(value) } });
+        }
+        const imagePlainOptionsNote = imageOptionsMenu.createDiv({
+            cls: 'pa-chat-create-image-plain-options',
+            text: t('plugin.chat.createImage.plainDefaults', { model: 'wan2.7-image', count: 1 }),
+        });
         const sourceScopeControl = buttonDiv.createSpan({ cls: 'pa-chat-source-scope-control' });
         const sourceScopeButton = sourceScopeControl.createEl('button', {
             cls: 'pa-chat-icon-button pa-chat-source-scope-button',
@@ -768,7 +851,8 @@ export class LLMView extends ItemView {
                 else openVaultImagePicker();
             }).open();
         };
-        const sendButton = buttonDiv.createEl('button', {
+        const transportControl = buttonDiv.createSpan({ cls: 'pa-chat-composer-action-group pa-chat-transport-actions' });
+        const sendButton = transportControl.createEl('button', {
             text: t("plugin.chat.action.ask"),
             cls: 'pa-chat-icon-button send-button-visible',
             attr: {
@@ -806,7 +890,7 @@ export class LLMView extends ItemView {
         memoryMenu.hidden = true;
         memoryChip.setAttribute('aria-controls', memoryMenuId);
         memoryChip.setAttribute('aria-expanded', 'false');
-        const cancelButton = buttonDiv.createEl('button', {
+        const cancelButton = transportControl.createEl('button', {
             cls: 'pa-chat-icon-button cancel-button',
             attr: {
                 type: 'button',
@@ -1087,6 +1171,32 @@ export class LLMView extends ItemView {
             const target = boundSource ? findBoundImageSourceEditor(boundSource) : getActiveMarkdownEditorView();
             return target ? captureComposerImageTextSource(target.editor, target.view, kind) : null;
         };
+        const imageSourceSummary = imageSourceMenu.createDiv({
+            cls: 'pa-chat-create-image-source-summary',
+        });
+        const imageSourcePreview = imageSourceMenu.createEl('details', {
+            cls: 'pa-chat-create-image-source-preview',
+        });
+        imageSourcePreview.createEl('summary', { text: t('plugin.chat.createImage.source.preview') });
+        const imageSourcePreviewText = imageSourcePreview.createDiv({
+            cls: 'pa-chat-create-image-source-text',
+        });
+        createChatMenuDivider(imageSourceMenu);
+        const imageUseNoteButton = createChatMenuItem(imageSourceMenu, {
+            text: t('plugin.chat.createImage.source.useNote'),
+            icon: 'file-text',
+            cls: 'pa-chat-create-image-use-note',
+        });
+        const imageUseSelectionButton = createChatMenuItem(imageSourceMenu, {
+            text: t('plugin.chat.createImage.source.useSelection'),
+            icon: 'text-cursor-input',
+            cls: 'pa-chat-create-image-use-selection',
+        });
+        const imageRemoveSourceButton = createChatMenuItem(imageSourceMenu, {
+            text: t('plugin.chat.createImage.source.remove'),
+            icon: 'trash-2',
+            cls: 'pa-chat-menu-item-danger pa-chat-create-image-remove-source',
+        });
         const selectionHintDocument = getOptionalPlatformDocument();
         const selectionHintEvents = ['selectionchange', 'keyup', 'pointerup', 'focusin'];
         if (
@@ -1347,6 +1457,7 @@ export class LLMView extends ItemView {
             if (readiness?.issue === "token_unknown") return null;
             return this.host.getAISetupIssue?.() ?? null;
         };
+        let closeImageComposerMenus: () => void = () => undefined;
         const syncComposerControls = () => {
             debugButton.hidden = !this.host.settings.debug || !this.host.openAgentDebug;
             const generating = isGenerating();
@@ -1358,12 +1469,16 @@ export class LLMView extends ItemView {
             ghostIntentEl.empty();
             ghostIntentEl.hidden = !hasGhostCommand;
             if (hasGhostCommand) ghostIntentEl.createSpan({ text: t('plugin.ghost.card.title') });
-            const commandHasImageSource = composerDraft.snapshot(textArea.value).imageIntent?.textSource !== undefined;
+            const currentDraft = composerDraft.snapshot(textArea.value);
+            const commandHasImageSource = currentDraft.imageIntent?.textSource !== undefined;
+            const imageOptionsActive = currentDraft.imageIntent !== undefined || commandPrompt !== null;
+            imageOptionsControl.hidden = !imageOptionsActive;
+            if (!imageOptionsActive) closeImageComposerMenus();
             const hasDraft = composerDraft.canSend(textArea.value)
                 && (commandPrompt === null || commandPrompt.length > 0 || commandHasImageSource)
                 && (writingCommandPrompt === null || writingCommandPrompt.length > 0);
             const setupIssue = getBlockingAISetupIssue();
-            const imagesUnsupported = composerDraft.snapshot(textArea.value).images.length > 0
+            const imagesUnsupported = currentDraft.images.length > 0
                 && this.chatService.getImageCapability?.() === 'unsupported'
                 && (!this.host.imageGenerationService || !textArea.value.trim());
             sendButton.disabled = generating || !hasDraft || setupIssue !== null || imagesUnsupported;
@@ -1400,144 +1515,94 @@ export class LLMView extends ItemView {
                 imageDraftEl.scrollLeft += item.right - visible.right;
             }
         };
+        const changeImageTextSource = (kind: 'note' | 'selection') => {
+            const source = composerDraft.snapshot(textArea.value).imageIntent?.textSource;
+            const next = captureImageTextSource(kind, source);
+            if (source && next?.path !== source.path) {
+                showComposerHint(t('plugin.chat.createImage.source.boundNoteUnavailable'));
+                return false;
+            }
+            if (!next) {
+                showComposerHint(t(kind === 'selection'
+                    ? 'plugin.chat.createImage.source.selectionUnavailable' : 'plugin.chat.createImage.source.noteUnavailable'));
+                return false;
+            }
+            composerDraft.setImageTextSource(next);
+            renderImageDraft();
+            syncComposerControls();
+            return true;
+        };
+        const isSourceBasedImageRequest = () => {
+            const intent = composerDraft.snapshot(textArea.value).imageIntent;
+            return Boolean(intent?.textSource || intent?.promptOrigin);
+        };
+        const syncImageOptionsMenu = () => {
+            const intent = composerDraft.snapshot(textArea.value).imageIntent;
+            const sourceBasedRequest = isSourceBasedImageRequest();
+            const currentOptions = sourceBasedRequest
+                ? intent?.generationOptions ?? this.host.getImageGenerationOptions?.()
+                : { model: 'wan2.7-image', count: 1 };
+            const model = currentOptions?.model ?? 'wan2.7-image';
+            const count = currentOptions?.count ?? 1;
+            imageOptionsSummary.setText(`${model} · ${count}`);
+            imageModelSelect.value = model;
+            imageCountSelect.value = String(count);
+            imageModelSelect.disabled = !sourceBasedRequest;
+            imageCountSelect.disabled = !sourceBasedRequest;
+            imagePlainOptionsNote.hidden = sourceBasedRequest;
+            imageOptionsMenu.setAttribute('data-editable', String(sourceBasedRequest));
+        };
+        const changeImageGenerationOptions = (
+            update: (base: ComposerImageGenerationOptions) => ComposerImageGenerationOptions,
+        ): boolean => {
+            const intent = composerDraft.snapshot(textArea.value).imageIntent;
+            if (!intent || (!intent.textSource && !intent.promptOrigin)) return false;
+            const base = intent.generationOptions ?? this.host.getImageGenerationOptions?.();
+            if (!base) return false;
+            composerDraft.setImageGenerationOptions(update(base));
+            renderImageDraft();
+            syncComposerControls();
+            return true;
+        };
         const renderImageDraft = (revealEntryId?: number) => {
             const draft = composerDraft.snapshot(textArea.value);
             const imageIntent = draft.imageIntent;
-            imageIntentEl.empty();
+            const imageCommandPrompt = parseCreateImageCommand(textArea.value);
+            closeImageComposerMenus();
+            imageOptionsControl.hidden = !(imageIntent !== undefined || imageCommandPrompt !== null);
             imageIntentEl.hidden = !imageIntent;
-            if (!imageIntent && parseCreateImageCommand(textArea.value) !== null) {
+            if (!imageIntent && imageCommandPrompt !== null) {
                 imageIntentEl.hidden = false;
-                imageIntentEl.createSpan({ text: t('plugin.chat.createImage.title') });
-                imageIntentEl.createSpan({
-                    cls: 'pa-chat-create-image-plain-options',
-                    text: t('plugin.chat.createImage.plainDefaults', {
-                        model: 'wan2.7-image', count: 1,
-                    }),
-                });
+                imageIntentTitle.setText(t('plugin.chat.createImage.title'));
             }
             if (imageIntent) {
-                imageIntentEl.createSpan({ text: t(imageIntent.operation === 'edit'
-                    ? 'plugin.chat.createImage.edit' : 'plugin.chat.createImage.title') });
+                imageIntentTitle.setText(t(imageIntent.operation === 'edit'
+                    ? 'plugin.chat.createImage.edit' : 'plugin.chat.createImage.title'));
                 const source = imageIntent.textSource;
+                const sourceLabel = source
+                    ? t(source.kind === 'selection'
+                        ? 'plugin.chat.createImage.source.selection' : 'plugin.chat.createImage.source.note',
+                        { source: source.displayName })
+                    : t('plugin.chat.createImage.source.none');
+                imageSourceButton.setAttribute('aria-label', `${t('plugin.chat.createImage.source.control')} — ${sourceLabel}`);
+                imageSourceButton.setAttribute('title', `${t('plugin.chat.createImage.source.control')} — ${sourceLabel}`);
+                setIcon(imageSourceButton, source ? 'file-text' : 'file-plus');
+                imageSourceSummary.setText(sourceLabel);
+                imageSourcePreview.hidden = !source;
                 if (source) {
-                    imageIntentEl.createSpan({
-                        cls: 'pa-chat-create-image-source',
-                        text: t(source.kind === 'selection'
-                            ? 'plugin.chat.createImage.source.selection' : 'plugin.chat.createImage.source.note',
-                            { source: source.displayName }),
-                    });
-                    const preview = imageIntentEl.createEl('details', {
-                        cls: 'pa-chat-create-image-source-preview',
-                    });
-                    preview.createEl('summary', { text: t('plugin.chat.createImage.source.preview') });
-                    preview.createDiv({
-                        cls: 'pa-chat-create-image-source-text',
-                        text: source.text.length > 1200
-                            ? `${source.text.slice(0, 1200)}…` : source.text,
-                    });
+                    imageSourcePreviewText.setText(source.text.length > 1200
+                        ? `${source.text.slice(0, 1200)}…` : source.text);
                 }
-                const sourceBasedRequest = Boolean(source || imageIntent.promptOrigin);
-                if (!sourceBasedRequest) {
-                    imageIntentEl.createSpan({
-                        cls: 'pa-chat-create-image-plain-options',
-                        text: t('plugin.chat.createImage.plainDefaults', {
-                            model: 'wan2.7-image', count: 1,
-                        }),
-                    });
-                }
-                const sourceControls = imageIntentEl.createDiv({ cls: 'pa-chat-create-image-source-controls' });
-                const setSource = (kind: 'note' | 'selection') => {
-                    const next = captureImageTextSource(kind, source);
-                    if (source && next?.path !== source.path) {
-                        showComposerHint(t('plugin.chat.createImage.source.boundNoteUnavailable'));
-                        return;
-                    }
-                    if (!next) {
-                        showComposerHint(t(kind === 'selection'
-                            ? 'plugin.chat.createImage.source.selectionUnavailable' : 'plugin.chat.createImage.source.noteUnavailable'));
-                        return;
-                    }
-                    composerDraft.setImageTextSource(next);
-                    renderImageDraft();
-                    syncComposerControls();
-                };
-                const fullButton = sourceControls.createEl('button', {
-                    text: t('plugin.chat.createImage.source.useNote'),
-                    attr: { type: 'button' },
-                });
-                fullButton.onclick = () => setSource('note');
-                const selectionButton = sourceControls.createEl('button', {
-                    text: t('plugin.chat.createImage.source.useSelection'),
-                    attr: { type: 'button' },
-                });
-                selectionButton.onclick = () => setSource('selection');
-                if (source) {
-                    const removeSource = sourceControls.createEl('button', {
-                        text: t('plugin.chat.createImage.source.remove'),
-                        attr: { type: 'button' },
-                    });
-                    removeSource.onclick = () => {
-                        composerDraft.setImageTextSource(undefined);
-                        renderImageDraft();
-                        syncComposerControls();
-                        textArea.focus();
-                    };
-                }
-                const options = imageIntentEl.createEl('details', { cls: 'pa-chat-create-image-options' });
-                options.hidden = !sourceBasedRequest;
-                const currentOptionsForSummary = imageIntent.generationOptions
-                    ?? this.host.getImageGenerationOptions?.();
-                options.createEl('summary', { text: `${t('plugin.chat.createImage.options')} · ${
-                    currentOptionsForSummary?.model ?? 'wan2.7-image'} · ${currentOptionsForSummary?.count ?? 1}` });
-                const optionRow = options.createDiv({ cls: 'pa-chat-create-image-option-row' });
-                const modelLabel = optionRow.createEl('label', { text: t('plugin.chat.createImage.model') });
-                const modelSelect = modelLabel.createEl('select');
-                for (const value of ['wan2.7-image', 'wan2.7-image-pro'] as const) {
-                    modelSelect.createEl('option', {
-                        text: value,
-                        attr: { value },
-                    });
-                }
-                const currentOptions = imageIntent.generationOptions ?? this.host.getImageGenerationOptions?.();
-                if (currentOptions) {
-                    modelSelect.value = currentOptions.model;
-                    modelSelect.onchange = () => {
-                        const base = imageIntent.generationOptions ?? this.host.getImageGenerationOptions?.();
-                        if (!base) return;
-                        composerDraft.setImageGenerationOptions({
-                            ...base,
-                            model: modelSelect.value === 'wan2.7-image-pro' ? 'wan2.7-image-pro' : 'wan2.7-image',
-                        });
-                        renderImageDraft();
-                    };
-                }
-                const countLabel = optionRow.createEl('label', { text: t('plugin.chat.createImage.count') });
-                const countSelect = countLabel.createEl('select');
-                for (const value of [1, 2, 3, 4] as const) {
-                    countSelect.createEl('option', { text: String(value), attr: { value: String(value) } });
-                }
-                if (currentOptions) {
-                    countSelect.value = String(currentOptions.count);
-                    countSelect.onchange = () => {
-                        const base = imageIntent.generationOptions ?? this.host.getImageGenerationOptions?.();
-                        const value = Number(countSelect.value);
-                        if (!base || (value !== 1 && value !== 2 && value !== 3 && value !== 4)) return;
-                        composerDraft.setImageGenerationOptions({ ...base, count: value });
-                        renderImageDraft();
-                    };
-                }
-                const removeIntent = imageIntentEl.createEl('button', {
-                    attr: { type: 'button', title: t('plugin.chat.createImage.removeAction'),
-                        'aria-label': t('plugin.chat.createImage.removeAction') },
-                });
-                setIcon(removeIntent, 'x');
-                removeIntent.onclick = () => {
-                    composerDraft.clearImageIntent();
-                    renderImageDraft();
-                    syncComposerControls();
-                    textArea.focus();
-                };
+                imageRemoveSourceButton.hidden = !source;
+                imageSourceControl.hidden = false;
+                imageCloseButton.hidden = false;
+                syncImageOptionsMenu();
             }
+            if (!imageIntent) {
+                imageSourceControl.hidden = true;
+                imageCloseButton.hidden = true;
+            }
+            syncImageOptionsMenu();
             writingIntentEl.empty();
             writingIntentEl.hidden = !draft.writingIntent;
             if (draft.writingIntent) {
@@ -6160,6 +6225,123 @@ export class LLMView extends ItemView {
         };
         const sourceScopeMenuAutoClose = createIdleMenuAutoClose(
             sourceScopeMenu, sourceScopeButton, closeSourceScopeMenu);
+        const closeImageSourceMenu = (focusTrigger = false) => {
+            imageSourceMenuAutoClose.clear();
+            imageSourceMenu.hidden = true;
+            imageSourceButton.setAttribute('aria-expanded', 'false');
+            if (focusTrigger) imageSourceButton.focus();
+        };
+        const imageSourceMenuAutoClose = createIdleMenuAutoClose(
+            imageSourceMenu, imageSourceButton, () => closeImageSourceMenu());
+        const closeImageOptionsMenu = (focusTrigger = false) => {
+            imageOptionsMenuAutoClose.clear();
+            imageOptionsMenu.hidden = true;
+            imageOptionsButton.setAttribute('aria-expanded', 'false');
+            if (focusTrigger) imageOptionsButton.focus();
+        };
+        const imageOptionsMenuAutoClose = createIdleMenuAutoClose(
+            imageOptionsMenu, imageOptionsButton, () => closeImageOptionsMenu());
+        closeImageComposerMenus = () => {
+            closeImageSourceMenu();
+            closeImageOptionsMenu();
+        };
+        const closeCompetingComposerMenus = () => {
+            composerMenuAutoClose.close();
+            memoryMenuAutoClose.close();
+            sourceScopeMenuAutoClose.close();
+        };
+        const openImageSourceMenu = () => {
+            if (imageIntentEl.hidden || imageSourceControl.hidden) return;
+            closeImageOptionsMenu();
+            closeCompetingComposerMenus();
+            imageSourceMenu.hidden = false;
+            imageSourceButton.setAttribute('aria-expanded', 'true');
+            updateChatMenuAvailableWidth(imageSourceMenu);
+            imageSourceMenuAutoClose.schedule();
+            imageUseNoteButton.focus();
+        };
+        const openImageOptionsMenu = () => {
+            if (imageOptionsControl.hidden) return;
+            closeImageSourceMenu();
+            closeCompetingComposerMenus();
+            syncImageOptionsMenu();
+            imageOptionsMenu.hidden = false;
+            imageOptionsButton.setAttribute('aria-expanded', 'true');
+            updateChatMenuAvailableWidth(imageOptionsMenu);
+            imageOptionsMenuAutoClose.schedule();
+            imageOptionsMenu.focus();
+        };
+        imageSourceButton.onclick = () => {
+            if (imageSourceMenu.hidden) openImageSourceMenu();
+            else closeImageSourceMenu(true);
+        };
+        imageOptionsButton.onclick = () => {
+            if (imageOptionsMenu.hidden) openImageOptionsMenu();
+            else closeImageOptionsMenu(true);
+        };
+        for (const [control, closeMenu] of [
+            [imageSourceControl, () => closeImageSourceMenu(true)],
+            [imageOptionsControl, () => closeImageOptionsMenu(true)],
+        ] as const) {
+            control.addEventListener('keydown', (event: Event) => {
+                const keyboardEvent = event as KeyboardEvent;
+                if (keyboardEvent.key !== 'Escape') return;
+                keyboardEvent.preventDefault?.();
+                closeMenu();
+            });
+        }
+        imageUseNoteButton.onclick = () => {
+            changeImageTextSource('note');
+            closeImageSourceMenu(true);
+        };
+        imageUseSelectionButton.onclick = () => {
+            changeImageTextSource('selection');
+            closeImageSourceMenu(true);
+        };
+        imageRemoveSourceButton.onclick = () => {
+            composerDraft.setImageTextSource(undefined);
+            renderImageDraft();
+            syncComposerControls();
+            imageSourceButton.focus();
+        };
+        imageCloseButton.onclick = () => {
+            closeImageComposerMenus();
+            composerDraft.clearImageIntent();
+            renderImageDraft();
+            syncComposerControls();
+            textArea.focus();
+        };
+        imageModelSelect.onchange = () => {
+            const changed = changeImageGenerationOptions(base => ({
+                ...base,
+                model: imageModelSelect.value === 'wan2.7-image-pro' ? 'wan2.7-image-pro' : 'wan2.7-image',
+            }));
+            closeImageOptionsMenu(changed ? false : true);
+            if (changed) imageOptionsButton.focus();
+        };
+        imageCountSelect.onchange = () => {
+            const value = Number(imageCountSelect.value);
+            const changed = value === 1 || value === 2 || value === 3 || value === 4
+                ? changeImageGenerationOptions(base => ({ ...base, count: value }))
+                : false;
+            closeImageOptionsMenu(changed ? false : true);
+            if (changed) imageOptionsButton.focus();
+        };
+        const imagePopoverDocument = containerEl.ownerDocument ?? getOptionalPlatformDocument();
+        const onImagePopoverOutsidePointer = (event: Event) => {
+            const target = event.target as Node;
+            if (!imageSourceMenu.hidden && !imageSourceControl.contains(target)) closeImageSourceMenu();
+            if (!imageOptionsMenu.hidden && !imageOptionsControl.contains(target)) closeImageOptionsMenu();
+        };
+        for (const event of ['pointerdown', 'click']) {
+            imagePopoverDocument?.addEventListener?.(event, onImagePopoverOutsidePointer, true);
+        }
+        this.registerViewTeardown(() => {
+            closeImageComposerMenus();
+            for (const event of ['pointerdown', 'click']) {
+                imagePopoverDocument?.removeEventListener?.(event, onImagePopoverOutsidePointer, true);
+            }
+        });
         const selectedScopeChoice = () => scopeChoices.find(choice =>
             choice.scope === this.conversationPersistence.currentSourceSelection.scope) ?? scopeChoices[0];
         const syncSourceScopeControl = () => {
@@ -6178,6 +6360,7 @@ export class LLMView extends ItemView {
         const openSourceScopeMenu = () => {
             composerMenuAutoClose.close();
             memoryMenuAutoClose.close();
+            closeImageComposerMenus();
             syncSourceScopeControl();
             sourceScopeMenu.hidden = false;
             sourceScopeButton.setAttribute('aria-expanded', 'true');
@@ -6548,6 +6731,7 @@ export class LLMView extends ItemView {
             if (willOpen) {
                 sourceScopeMenuAutoClose.close();
                 memoryMenuAutoClose.close();
+                closeImageComposerMenus();
                 pendingSavesButton.hidden = true;
                 composerMenu.hidden = false;
                 updateChatMenuAvailableWidth(composerMenu);
@@ -6584,6 +6768,7 @@ export class LLMView extends ItemView {
             const willOpen = memoryMenu.hidden;
             sourceScopeMenuAutoClose.close();
             composerMenuAutoClose.close();
+            closeImageComposerMenus();
             if (!willOpen) {
                 memoryMenuAutoClose.close();
                 return;

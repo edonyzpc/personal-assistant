@@ -1,7 +1,7 @@
 # PA Unified Chat Image Creation Product Spec
 
 Document status: Approved
-Updated: 2026-10-05
+Updated: 2026-10-06
 Work item: B-152
 Decision: [DEC-044](../decisions/dec-044-unified-chat-image-creation.md)
 Authority: Owner 已确认的统一生图、专用提炼及 command 收敛目标；不表示实现或验收完成。
@@ -58,6 +58,13 @@ Authority: Owner 已确认的统一生图、专用提炼及 command 收敛目标
 - 自动替换正文/frontmatter、自动插图、跨设备任务同步或放宽来源权限。
 
 ## User Flow And States
+
+2026-10-06，Owner 确认紧凑的输入框布局：来源摘要、预览及全文/选区/移除操作默认
+收起，通过 Create image 标题后的来源图标打开。模型和数量合并到左下方图片按钮旁的
+单一设置图标，桌面与移动端默认均不常驻参数文字；点击后检查或调整本次参数，保留
+普通描述与来源型请求各自已有的参数规则。移动端优先单行图标，实际空间不足时整组
+换行，保留所有原有按钮与互不重叠的点击区域。打开入口和选择控件只操作草稿，不执行
+模型或生图调用。
 
 Chat 选择 CreateImage → 检查来源与本次选项 → 可选补充要求 → 发送。自然语言生图
 继续由 Agent 判断；完整画面描述保持可用。用户明确指向笔记时，Agent 可先查找定位，

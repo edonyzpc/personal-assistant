@@ -3953,9 +3953,14 @@ describe('LLMView turn lifecycle', () => {
             },
         });
         expect(draft.canSend('')).toBe(true);
-        const sourceChip = getElementByClass(containerEl, 'pa-chat-create-image-source');
-        expect(allText(sourceChip)).toContain('Source: selection · Dog');
-        expect(allText(containerEl)).toContain('INSIDE-ACTION-SELECTION');
+        const sourceTrigger = getButtonByClass(containerEl, 'pa-chat-create-image-source-button');
+        const sourceMenu = getElementByClass(containerEl, 'pa-chat-create-image-source-menu');
+        expect(sourceMenu.hidden).toBe(true);
+        expect(sourceTrigger.getAttribute('aria-label')).toBe('Image source — Source: selection · Dog');
+        sourceTrigger.click();
+        expect(sourceMenu.hidden).toBe(false);
+        expect(allText(sourceMenu)).toContain('Source: selection · Dog');
+        expect(allText(sourceMenu)).toContain('INSIDE-ACTION-SELECTION');
 
         const otherFile = { path: '0.unsorted/Other.md', basename: 'Other', extension: 'md' };
         app.workspace.getActiveViewOfType.mockReturnValue({
@@ -3966,7 +3971,7 @@ describe('LLMView turn lifecycle', () => {
                 getSelection: () => '',
             },
         } as never);
-        getButtonByText(containerEl, 'Use full note').click();
+        getButtonByText(sourceMenu, 'Use full note').click();
         expect(draft.snapshot('').imageIntent?.textSource).toMatchObject({
             kind: 'note',
             path: '0.unsorted/Dog.md',
@@ -3976,6 +3981,104 @@ describe('LLMView turn lifecycle', () => {
         draft.setImageTextSource(undefined);
         expect(draft.canSend('')).toBe(false);
         await view.onClose();
+    });
+
+    it('keeps image settings in one popover and only edits source-based requests', async () => {
+        const documentListeners = new Map<string, Array<(event: { target: MockElement }) => void>>();
+        const documentLike = {
+            activeElement: null as MockElement | null,
+            addEventListener: jest.fn((event: string, listener: (event: { target: MockElement }) => void) => {
+                const listeners = documentListeners.get(event) ?? [];
+                listeners.push(listener);
+                documentListeners.set(event, listeners);
+            }),
+            removeEventListener: jest.fn((event: string, listener: (event: { target: MockElement }) => void) => {
+                const listeners = documentListeners.get(event) ?? [];
+                const index = listeners.indexOf(listener);
+                if (index !== -1) listeners.splice(index, 1);
+            }),
+        };
+        Object.defineProperty(globalThis, 'document', { configurable: true, value: documentLike });
+        const { view, plugin, containerEl } = createView();
+        await view.onOpen();
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        const imageActions = getElementByClass(containerEl, 'pa-chat-image-actions');
+        const optionsControl = getElementsByClass(imageActions, 'pa-chat-popover-control')[0];
+        const optionsTrigger = getButtonByClass(containerEl, 'pa-chat-image-options-button');
+        const optionsMenu = getElementByClass(containerEl, 'pa-chat-create-image-options-menu');
+        const modelSelect = getElementByClass(optionsMenu, 'pa-chat-create-image-model-select') as MockElement & {
+            onchange: (() => void) | null;
+        };
+
+        expect(imageActions.children).toEqual([
+            getButtonByClass(containerEl, 'pa-chat-add-images'),
+            optionsControl,
+        ]);
+        expect(optionsMenu.hidden).toBe(true);
+        expect(optionsControl.hidden).toBe(true);
+        optionsTrigger.click();
+        expect(optionsMenu.hidden).toBe(true);
+
+        getTextArea(containerEl).value = '@CreateImage';
+        expect(optionsControl.hidden).toBe(false);
+        getTextArea(containerEl).value = 'ordinary compose';
+        expect(optionsControl.hidden).toBe(true);
+        getTextArea(containerEl).value = '';
+
+        expect(view.prefillImageDraft('a blue bird')).toBe(true);
+        expect(optionsControl.hidden).toBe(false);
+        optionsTrigger.click();
+        expect(optionsMenu.hidden).toBe(false);
+        expect(documentLike.activeElement).toBe(optionsMenu);
+        expect(modelSelect.disabled).toBe(true);
+        expect(allText(optionsMenu)).toContain('Plain image defaults: wan2.7-image · 1');
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+
+        getButtonByClass(containerEl, 'pa-chat-create-image-close').click();
+        expect(optionsControl.hidden).toBe(true);
+        expect(optionsMenu.hidden).toBe(true);
+        getTextArea(containerEl).value = '';
+
+        view.prefillImageDraft('', createImageTextSource());
+        optionsTrigger.click();
+        expect(optionsMenu.hidden).toBe(false);
+        expect(modelSelect.disabled).toBe(false);
+        expect(getElementByClass(optionsMenu, 'pa-chat-create-image-plain-options').hidden).toBe(true);
+        modelSelect.value = 'wan2.7-image-pro';
+        modelSelect.onchange?.();
+        expect(optionsMenu.hidden).toBe(true);
+        expect(documentLike.activeElement).toBe(optionsTrigger);
+        expect(draft.snapshot('').imageIntent?.generationOptions).toMatchObject({
+            model: 'wan2.7-image-pro', count: 1,
+        });
+        expect(plugin.getImageGenerationOptions).toHaveBeenLastCalledWith();
+
+        getButtonByClass(containerEl, 'pa-chat-more-button').click();
+        expect(getElementByClass(containerEl, 'pa-chat-composer-menu').hidden).toBe(false);
+        optionsTrigger.click();
+        expect(getElementByClass(containerEl, 'pa-chat-composer-menu').hidden).toBe(true);
+        expect(optionsMenu.hidden).toBe(false);
+
+        const sourceTrigger = getButtonByClass(containerEl, 'pa-chat-create-image-source-button');
+        sourceTrigger.click();
+        expect(optionsMenu.hidden).toBe(true);
+        const sourceMenu = getElementByClass(containerEl, 'pa-chat-create-image-source-menu');
+        expect(sourceMenu.hidden).toBe(false);
+        expect(documentLike.activeElement).toBe(getButtonByText(sourceMenu, 'Use full note'));
+        sourceTrigger.parentElement?.dispatchEvent('keydown', { key: 'Escape', preventDefault: jest.fn() });
+        expect(sourceMenu.hidden).toBe(true);
+        expect(documentLike.activeElement).toBe(sourceTrigger);
+
+        sourceTrigger.click();
+        expect(sourceMenu.hidden).toBe(false);
+        for (const listener of [...documentListeners.get('click') ?? []]) {
+            listener({ target: new MockElement('div') });
+        }
+        expect(sourceMenu.hidden).toBe(true);
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+
+        await view.onClose();
+        expect(documentListeners.get('click')).toHaveLength(0);
     });
 
     it('keeps the captured source after sending even if another note becomes active', async () => {
@@ -9792,12 +9895,22 @@ describe('LLMView turn lifecycle', () => {
         ]);
         expect(actions.parentElement).toBe(composerRow);
         expect(actions.children.filter((child) => child.tagName !== 'input')).toEqual([
-            getButtonByClass(containerEl, 'pa-chat-add-images'), askButton,
-            getButtonByClass(containerEl, 'pa-chat-debug-button'), memoryControl, cancelButton,
+            getElementByClass(containerEl, 'pa-chat-image-actions'),
+            getElementByClass(containerEl, 'pa-chat-transport-actions'),
+            getButtonByClass(containerEl, 'pa-chat-debug-button'), memoryControl,
             sourceScopeControl, moreControl,
         ]);
-        expect(actions.children.indexOf(getButtonByClass(containerEl, 'pa-chat-debug-button'))).toBe(actions.children.indexOf(askButton) + 1);
-        expect(actions.children.indexOf(memoryControl)).toBe(actions.children.indexOf(askButton) + 2);
+        const imageActions = getElementByClass(containerEl, 'pa-chat-image-actions');
+        const transportActions = getElementByClass(containerEl, 'pa-chat-transport-actions');
+        expect(imageActions.children).toEqual([
+            getButtonByClass(containerEl, 'pa-chat-add-images'),
+            getElementsByClass(imageActions, 'pa-chat-popover-control')[0],
+        ]);
+        expect(transportActions.children).toEqual([askButton, cancelButton]);
+        expect(actions.children.indexOf(getButtonByClass(containerEl, 'pa-chat-debug-button')))
+            .toBe(actions.children.indexOf(transportActions) + 1);
+        expect(actions.children.indexOf(memoryControl))
+            .toBe(actions.children.indexOf(getButtonByClass(containerEl, 'pa-chat-debug-button')) + 1);
         expect(actions.children.indexOf(moreControl)).toBe(actions.children.length - 1);
         expect(getButtonsByText(actions, 'Add to Editor')).toHaveLength(0);
         expect(memoryControl.children).toContain(memoryChip);
