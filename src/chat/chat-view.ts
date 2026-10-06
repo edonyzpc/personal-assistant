@@ -1414,6 +1414,7 @@ export class LLMView extends ItemView {
             closeMenu: () => void,
         ) => {
             let idleTimer: PlatformTimeoutHandle | null = null;
+            let disposed = false;
             const clear = () => {
                 if (idleTimer === null) return;
                 clearPlatformTimeout(idleTimer);
@@ -1437,20 +1438,35 @@ export class LLMView extends ItemView {
                 if (!menu.hidden) schedule();
             };
             const idleEvents = ['mousemove', 'focusin', 'keydown', 'click'];
-            for (const element of [menu, toggleButton]) {
-                for (const eventName of idleEvents) {
-                    element.addEventListener(eventName, refresh);
-                }
-            }
-            this.registerViewTeardown(() => {
-                clear();
+            const removeIdleListeners = () => {
                 for (const element of [menu, toggleButton]) {
                     for (const eventName of idleEvents) {
                         element.removeEventListener(eventName, refresh);
                     }
                 }
+            };
+            for (const element of [menu, toggleButton]) {
+                for (const eventName of idleEvents) {
+                    element.addEventListener(eventName, refresh);
+                }
+            }
+            const unregisterTeardown = this.registerViewTeardown(() => {
+                clear();
+                removeIdleListeners();
             });
-            return { clear, close, schedule };
+            const dispose = () => {
+                if (disposed) return;
+                disposed = true;
+                clear();
+                removeIdleListeners();
+                unregisterTeardown();
+            };
+            return {
+                clear,
+                close,
+                schedule,
+                dispose,
+            };
         };
         const getBlockingAISetupIssue = () => {
             const readiness = this.host.getAIReadiness?.("chat");
@@ -1924,7 +1940,11 @@ export class LLMView extends ItemView {
         const canDeliverImageTask = (task: ImageGenerationTask): boolean =>
             !task.deliverySuppressed && task.recoveryReason !== 'source_changed'
                 && (imageGeneration?.canDeliverTask?.(task) ?? !task.requiresSourceReceipt);
-        type ImageTaskCardTarget = { parent: HTMLElement; before?: HTMLElement };
+        type ImageTaskCardTarget = {
+            parent: HTMLElement;
+            before?: HTMLElement;
+            rendered?: RenderedMessage;
+        };
         const imageTaskCards = new Map<string, HTMLElement>();
         const imageTaskMessageTargets = new Map<string, ImageTaskCardTarget>();
         const imageTaskCardTargets = new Map<string, ImageTaskCardTarget>();
@@ -1964,12 +1984,56 @@ export class LLMView extends ItemView {
             imageTaskMessageTargets.clear();
             imageTaskCardTargets.clear();
         };
+        const activateImageFirstMessage = (target: ImageTaskCardTarget) => {
+            const rendered = target.rendered;
+            if (!rendered || !rendered.contentDiv.isConnected) return;
+            let details = rendered.imageResponseDetails;
+            if (
+                !details
+                || details.parentElement !== rendered.messageDiv
+                || rendered.contentDiv.parentElement !== details
+            ) {
+                details?.remove();
+                details = rendered.messageDiv.createEl('details', {
+                    cls: 'pa-chat-image-response-details',
+                });
+                details.createEl('summary', { text: t('plugin.chat.createImage.responseText') });
+                rendered.messageDiv.insertBefore(details, rendered.contentDiv);
+                // Keep the Markdown owner, render token, live-render state, and
+                // observers bound to this same content element while moving only
+                // its parent in the assistant message.
+                details.appendChild(rendered.contentDiv);
+                rendered.imageResponseDetails = details;
+                details.open = false;
+            }
+            target.before = details;
+            rendered.actionDiv.classList.add('pa-chat-image-response-actions');
+            rendered.actionDiv.hidden = true;
+        };
+        const deactivateImageFirstMessage = (rendered?: RenderedMessage) => {
+            if (!rendered) return;
+            const details = rendered.imageResponseDetails;
+            if (!details) return;
+            if (rendered.contentDiv.parentElement === details) {
+                rendered.messageDiv.insertBefore(rendered.contentDiv, details);
+            }
+            details.remove();
+            rendered.imageResponseDetails = undefined;
+            rendered.actionDiv.classList.remove('pa-chat-image-response-actions');
+            rendered.actionDiv.hidden = false;
+        };
         const dropImageTaskCard = (taskId: string) => {
             for (const cleanup of imageCardCleanups.get(taskId) ?? []) cleanup();
             imageCardCleanups.delete(taskId);
             imageTaskCards.get(taskId)?.remove();
             imageTaskCards.delete(taskId);
             imageTaskCardTargets.delete(taskId);
+        };
+        const deactivateImageFirstMessageWithoutTasks = (rendered?: RenderedMessage) => {
+            if (!rendered) return;
+            const hasTask = [...imageTaskCards.values()]
+                .some(card => card.parentElement === rendered.messageDiv);
+            if (!hasTask) deactivateImageFirstMessage(rendered);
         };
         this.registerViewTeardown(clearImageTaskCards);
         const taskStateLabel = (task: ImageGenerationTask): string => t(`plugin.chat.createImage.state.${task.state}`);
@@ -1989,19 +2053,45 @@ export class LLMView extends ItemView {
         };
         const renderImageTaskCard = (task: ImageGenerationTask) => {
             if (!imageGeneration || !isCurrentSession() || task.conversationId !== imageTasksConversationId) return;
-            if (task.deliverySuppressed) { dropImageTaskCard(task.taskId); return; }
+            if (task.deliverySuppressed) {
+                const suppressedTarget = imageTaskMessageTargets.get(task.stableMessageId);
+                dropImageTaskCard(task.taskId);
+                deactivateImageFirstMessageWithoutTasks(suppressedTarget?.rendered);
+                return;
+            }
             let card = imageTaskCards.get(task.taskId);
             if (!card) {
                 card = this.responseDiv.createDiv({ cls: 'pa-chat-image-task-card' });
                 imageTaskCards.set(task.taskId, card);
             }
             const target = imageTaskMessageTargets.get(task.stableMessageId) ?? imageTaskFallbackTarget;
+            activateImageFirstMessage(target);
+            card.setAttribute('data-created-at', task.createdAt);
+            card.setAttribute('data-task-id', task.taskId);
+            let insertionPoint: Element | undefined = target.before;
+            if (insertionPoint) {
+                let previous = insertionPoint.previousElementSibling;
+                while (
+                    previous?.classList.contains('pa-chat-image-task-card')
+                    && ((previous.getAttribute('data-created-at') ?? '') > task.createdAt
+                        || (previous.getAttribute('data-created-at') === task.createdAt
+                            && (previous.getAttribute('data-task-id') ?? '') > task.taskId))
+                ) {
+                    insertionPoint = previous;
+                    previous = insertionPoint.previousElementSibling;
+                }
+            }
+            const currentChildren = Array.from(target.parent.children);
+            const currentNext = card.parentElement === target.parent
+                ? currentChildren[currentChildren.indexOf(card) + 1]
+                : undefined;
             if (
                 !card.isConnected
                 || card.parentElement !== target.parent
                 || imageTaskCardTargets.get(task.taskId) !== target
+                || (insertionPoint !== undefined && currentNext !== insertionPoint)
             ) {
-                if (target.before) target.parent.insertBefore(card, target.before);
+                if (insertionPoint) target.parent.insertBefore(card, insertionPoint);
                 else target.parent.appendChild(card);
                 imageTaskCardTargets.set(task.taskId, target);
             }
@@ -2012,15 +2102,178 @@ export class LLMView extends ItemView {
             card.setAttribute('data-task-id', task.taskId);
             card.setAttribute('data-state', task.state);
             const header = card.createDiv({ cls: 'pa-chat-image-task-card__header' });
-            header.createSpan({ cls: 'pa-chat-image-task-card__title', text: t('plugin.chat.createImage.title') });
-            header.createSpan({ cls: 'pa-chat-image-task-card__state', text: taskStateLabel(task),
+            const headerText = header.createSpan({ cls: 'pa-chat-image-task-card__header-text' });
+            headerText.createSpan({ cls: 'pa-chat-image-task-card__title', text: t('plugin.chat.createImage.title') });
+            headerText.createSpan({ cls: 'pa-chat-image-task-card__state', text: taskStateLabel(task),
                 attr: { role: 'status', 'aria-live': 'polite' } });
+            const headerControls = header.createSpan({ cls: 'pa-chat-image-task-card__header-controls' });
             if (task.recoveryReason) card.createDiv({ cls: 'pa-chat-image-task-card__recovery', text: imageRecoveryText(task.recoveryReason) });
             if (task.inputWhiteBackgroundApplied) card.createDiv({ cls: 'pa-chat-image-task-card__recovery',
                 text: t('plugin.chat.createImage.whiteBackgroundApplied') });
             const outputs = card.createDiv({ cls: 'pa-chat-image-task-card__outputs' });
             const canDeliverOutputs = canDeliverImageTask(task);
             outputs.hidden = task.outputs.length === 0 || !canDeliverOutputs;
+            const hasSavedOutputs = canDeliverOutputs
+                && task.outputs.some(output => output.saveState === 'saved' && output.assetRef);
+            const regenerateImageTask = () => {
+                if (composerDraft.hasDraft(textArea.value) || isGenerating()) {
+                    showComposerHint(t('plugin.chat.createImage.finishDraft')); return;
+                }
+                composerDraft.setImageIntent({ operation: task.request.operation,
+                    referenceImageRefs: task.request.inputRefs.map(cloneImageRef),
+                    ...(task.request.parentVersionId ? { parentVersionId: task.request.parentVersionId } : {}),
+                    ...(task.request.promptOrigin ? { promptOrigin: task.request.promptOrigin } : {}),
+                    promptLineage: imageGeneration.getSourceReceipt?.(task.taskId)
+                        ? cloneInputLineage(task.request.inputLineage
+                            ?? task.request.promptOrigin?.inputLineage)
+                            ?? unknownInputLineage()
+                        : unknownInputLineage(),
+                    preparedPrompt: task.request.submittedPrompt,
+                    reusePreparedPrompt: true,
+                    ...(imageGeneration.getSourceReceipt?.(task.taskId) ? {
+                        sourceReceipt: imageGeneration.getSourceReceipt(task.taskId)!,
+                    } : {}),
+                    generationOptions: {
+                        model: task.request.model,
+                        count: task.request.count,
+                        attachmentPathHint: task.request.attachmentPathHint ?? '',
+                    },
+                });
+                clearSelectedWritingParent();
+                textArea.value = task.request.submittedPrompt;
+                composerDraft.touchText();
+                renderImageDraft();
+                syncComposerControls();
+                textArea.focus();
+            };
+            const createTaskMoreControl = (parent: HTMLElement) => {
+                const control = parent.createSpan({
+                    cls: 'pa-chat-popover-control pa-chat-image-task-card__more-control',
+                });
+                const moreButton = createMessageActionButton(control, {
+                    cls: 'pa-chat-image-task-card__more',
+                    icon: 'ellipsis',
+                    label: t('plugin.chat.createImage.moreTaskActions'),
+                });
+                moreButton.setAttribute('aria-haspopup', 'menu');
+                moreButton.setAttribute('aria-expanded', 'false');
+                const menu = control.createDiv({
+                    cls: 'pa-chat-menu pa-chat-message-menu pa-chat-image-task-card__menu',
+                    attr: { role: 'menu' },
+                });
+                menu.hidden = true;
+                const autoClose = createIdleMenuAutoClose(menu, moreButton, () => {
+                    menu.hidden = true;
+                    moreButton.setAttribute('aria-expanded', 'false');
+                });
+                const closeTaskMenu = (focusTrigger = false) => {
+                    autoClose.close();
+                    if (focusTrigger) moreButton.focus();
+                };
+                const appendMessageAction = (
+                    source: HTMLButtonElement | undefined,
+                    icon: string,
+                    danger = false,
+                ) => {
+                    if (!source) return;
+                    const label = source.getAttribute('aria-label') ?? source.getAttribute('title');
+                    if (!label) return;
+                    const item = createChatMenuItem(menu, {
+                        text: label,
+                        icon,
+                        cls: danger ? 'pa-chat-menu-item-danger' : '',
+                    });
+                    item.disabled = source.disabled;
+                    item.onclick = () => {
+                        autoClose.close();
+                        source.click();
+                    };
+                };
+                const rebuildMenu = () => {
+                    menu.empty();
+                    const regenerate = createChatMenuItem(menu, {
+                        text: t('plugin.chat.createImage.regenerate'),
+                        icon: 'refresh-cw',
+                    });
+                    regenerate.onclick = () => {
+                        autoClose.close();
+                        regenerateImageTask();
+                    };
+                    const rendered = target.rendered;
+                    if (rendered) {
+                        createChatMenuDivider(menu);
+                        createChatMenuLabel(menu, t('plugin.chat.createImage.responseText'), 'message-square');
+                        appendMessageAction(rendered.copyButton, 'copy');
+                        appendMessageAction(rendered.addMessageButton, 'file-plus');
+                        appendMessageAction(rendered.shareButton, 'share-2');
+                        appendMessageAction(rendered.writingButton, 'file-pen-line');
+                        appendMessageAction(rendered.retryMessageButton, 'rotate-cw');
+                        appendMessageAction(rendered.deleteButton, 'trash-2', true);
+                    }
+                };
+                const menuButtons = () => Array.from(menu.children).filter(child =>
+                    child.classList.contains('pa-chat-menu-item') && !(child as HTMLButtonElement).disabled
+                        && !(child as HTMLElement).hidden) as HTMLButtonElement[];
+                const handleMenuKeydown = (button: HTMLButtonElement, event: Event) => {
+                    const keyboardEvent = event as KeyboardEvent;
+                    if (keyboardEvent.key === 'Escape') {
+                        keyboardEvent.preventDefault?.();
+                        closeTaskMenu(true);
+                        return;
+                    }
+                    if (keyboardEvent.key !== 'ArrowDown' && keyboardEvent.key !== 'ArrowUp'
+                        && keyboardEvent.key !== 'Home' && keyboardEvent.key !== 'End') return;
+                    keyboardEvent.preventDefault?.();
+                    const items = menuButtons();
+                    if (!items.length) return;
+                    const currentIndex = items.indexOf(button);
+                    let nextIndex = keyboardEvent.key === 'Home' ? 0
+                        : keyboardEvent.key === 'End' ? items.length - 1
+                            : currentIndex + (keyboardEvent.key === 'ArrowDown' ? 1 : -1);
+                    if (nextIndex < 0) nextIndex = items.length - 1;
+                    if (nextIndex >= items.length) nextIndex = 0;
+                    items[nextIndex].focus();
+                };
+                const handleControlKeydown = (event: Event) => {
+                    const keyboardEvent = event as KeyboardEvent;
+                    if (keyboardEvent.key !== 'Escape' || menu.hidden) return;
+                    keyboardEvent.preventDefault?.();
+                    closeTaskMenu(true);
+                };
+                control.addEventListener('keydown', handleControlKeydown);
+                const taskMenuDocument = containerEl.ownerDocument ?? getOptionalPlatformDocument();
+                const onTaskMenuOutsidePointer = (event: Event) => {
+                    if (menu.hidden || control.contains(event.target as Node)) return;
+                    closeTaskMenu();
+                };
+                for (const event of ['pointerdown', 'click']) {
+                    taskMenuDocument?.addEventListener?.(event, onTaskMenuOutsidePointer, true);
+                }
+                moreButton.onclick = () => {
+                    if (menu.hidden) {
+                        rebuildMenu();
+                        for (const item of menuButtons()) {
+                            item.addEventListener('keydown', event => handleMenuKeydown(item, event));
+                        }
+                        menu.hidden = false;
+                        updateChatMenuAvailableWidth(menu);
+                        positionMessageActionMenu(control, menu);
+                        moreButton.setAttribute('aria-expanded', 'true');
+                        autoClose.schedule();
+                        menuButtons()[0]?.focus();
+                    } else {
+                        closeTaskMenu();
+                    }
+                };
+                cleanups.push(() => {
+                    for (const event of ['pointerdown', 'click']) {
+                        taskMenuDocument?.removeEventListener?.(event, onTaskMenuOutsidePointer, true);
+                    }
+                    control.removeEventListener('keydown', handleControlKeydown);
+                    autoClose.dispose();
+                });
+                return control;
+            };
             for (const output of canDeliverOutputs ? task.outputs : []) {
                 const outputRow = outputs.createDiv({ cls: 'pa-chat-image-task-card__output' });
                 if (output.saveState !== 'saved' || !output.assetRef) {
@@ -2067,13 +2320,12 @@ export class LLMView extends ItemView {
                     }
                 }).catch(error => { this.host.log('Could not open generated image', error); new Notice(t('plugin.chat.createImage.imageUnavailable')); }); };
 
-                const editButton = createMessageActionButton(imageFrame, {
-                    cls: 'pa-chat-image-task-card__image-action pa-chat-image-task-card__image-action--edit',
+                const outputActions = outputRow.createDiv({ cls: 'pa-chat-image-task-card__output-actions' });
+                const editButton = createMessageActionButton(outputActions, {
+                    cls: 'pa-chat-image-task-card__output-action pa-chat-image-task-card__output-action--edit',
                     icon: 'pencil',
                     label: t('plugin.chat.createImage.editThis'),
                 });
-                editButton.createSpan({ cls: 'pa-chat-image-task-card__image-action-text',
-                    text: t('plugin.chat.createImage.editThis') });
                 editButton.onclick = () => { void imageGeneration.getVersionForOutput(task.taskId, output.outputId).then(version => {
                     if (!version || !isCurrentSession() || !canDeliverImageTask(task)) {
                         new Notice(t('plugin.chat.createImage.versionUnavailable')); return;
@@ -2087,8 +2339,8 @@ export class LLMView extends ItemView {
                     renderImageDraft(); syncComposerControls(); textArea.focus();
                 }).catch(error => { this.host.log('Could not prepare image edit', error); new Notice(t('plugin.chat.createImage.versionUnavailable')); }); };
 
-                const downloadButton = createMessageActionButton(imageFrame, {
-                    cls: 'pa-chat-image-task-card__image-action pa-chat-image-task-card__image-action--download',
+                const downloadButton = createMessageActionButton(outputActions, {
+                    cls: 'pa-chat-image-task-card__output-action pa-chat-image-task-card__output-action--download',
                     icon: 'download',
                     label: t('plugin.chat.createImage.download'),
                 });
@@ -2100,7 +2352,6 @@ export class LLMView extends ItemView {
                     this.host.log('Could not export generated image', error); new Notice(t('plugin.chat.createImage.downloadFailed'));
                 }); };
 
-                const outputActions = outputRow.createDiv({ cls: 'pa-chat-image-task-card__output-actions' });
                 const copyButton = createMessageActionButton(outputActions, {
                     cls: 'pa-chat-image-task-card__output-action',
                     icon: 'copy',
@@ -2140,93 +2391,76 @@ export class LLMView extends ItemView {
                         }).open();
                     };
                 }
+                createTaskMoreControl(outputActions);
             }
 
-            const actions = card.createDiv({ cls: 'pa-chat-image-task-card__actions' });
-            const button = (label: string, icon: string, action: () => void) => {
-                const result = createMessageActionButton(actions, {
-                    cls: 'pa-chat-image-task-card__action',
-                    icon,
-                    label,
-                });
-                result.createSpan({ text: label });
-                result.onclick = action;
-                return result;
-            };
-            if (['prepared', 'submitting', 'running', 'saving', 'partial'].includes(task.state)
-                || (task.state === 'not_submitted' && task.recoveryReason === 'transparent_input_needs_confirmation')) {
-                button(t('plugin.chat.createImage.stop'), 'square', () => { void imageGeneration.stop(task.taskId).catch(error => {
+            const needsStopAction = ['prepared', 'submitting', 'running', 'saving', 'partial'].includes(task.state)
+                || (task.state === 'not_submitted' && task.recoveryReason === 'transparent_input_needs_confirmation');
+            const needsWhiteBackgroundAction = task.recoveryReason === 'transparent_input_needs_confirmation'
+                && ['prepared', 'not_submitted'].includes(task.state);
+            const needsResumeAction = ['not_submitted', 'partial', 'running', 'saving'].includes(task.state)
+                && task.recoveryReason !== 'transparent_input_needs_confirmation';
+            if (needsStopAction || needsWhiteBackgroundAction || needsResumeAction) {
+                const actions = card.createDiv({ cls: 'pa-chat-image-task-card__actions' });
+                const button = (label: string, icon: string, action: () => void) => {
+                    const result = createMessageActionButton(actions, {
+                        cls: 'pa-chat-image-task-card__action',
+                        icon,
+                        label,
+                    });
+                    result.createSpan({ text: label });
+                    result.onclick = action;
+                    return result;
+                };
+                if (needsStopAction) {
+                    button(t('plugin.chat.createImage.stop'), 'square', () => { void imageGeneration.stop(task.taskId).catch(error => {
                     this.host.log('Could not stop image task', error); new Notice(t('plugin.chat.createImage.stopFailed'));
-                }); });
-            }
-            if (task.recoveryReason === 'transparent_input_needs_confirmation'
-                && ['prepared', 'not_submitted'].includes(task.state)) {
-                button(t('plugin.chat.createImage.approveWhiteBackground'), 'check', () => {
+                    }); });
+                }
+                if (needsWhiteBackgroundAction) {
+                    button(t('plugin.chat.createImage.approveWhiteBackground'), 'check', () => {
                     void imageGeneration.approveWhiteBackground(task.taskId).catch(error => {
                         this.host.log('Could not approve white-backed image input', error);
                         new Notice(t('plugin.chat.createImage.recoverFailed'));
                     });
-                });
-            }
-            if (['not_submitted', 'partial', 'running', 'saving'].includes(task.state)
-                && task.recoveryReason !== 'transparent_input_needs_confirmation') {
-                button(t(task.state === 'not_submitted' ? 'plugin.chat.createImage.continue' : 'plugin.chat.createImage.recover'), 'rotate-cw', () => {
+                    });
+                }
+                if (needsResumeAction) {
+                    button(t(task.state === 'not_submitted' ? 'plugin.chat.createImage.continue' : 'plugin.chat.createImage.recover'), 'rotate-cw', () => {
                     void imageGeneration.resume(task.taskId).catch(error => {
                         this.host.log('Could not resume image task', error); new Notice(t('plugin.chat.createImage.recoverFailed'));
                     });
-                });
-            }
-            button(t('plugin.chat.createImage.regenerate'), 'refresh-cw', () => {
-                if (composerDraft.hasDraft(textArea.value) || isGenerating()) {
-                    showComposerHint(t('plugin.chat.createImage.finishDraft')); return;
+                    });
                 }
-                composerDraft.setImageIntent({ operation: task.request.operation,
-                    referenceImageRefs: task.request.inputRefs.map(cloneImageRef),
-                    ...(task.request.parentVersionId ? { parentVersionId: task.request.parentVersionId } : {}),
-                    ...(task.request.promptOrigin ? { promptOrigin: task.request.promptOrigin } : {}),
-                    promptLineage: imageGeneration.getSourceReceipt?.(task.taskId)
-                        ? cloneInputLineage(task.request.inputLineage
-                            ?? task.request.promptOrigin?.inputLineage)
-                            ?? unknownInputLineage()
-                        : unknownInputLineage(),
-                    preparedPrompt: task.request.submittedPrompt,
-                    reusePreparedPrompt: true,
-                    ...(imageGeneration.getSourceReceipt?.(task.taskId) ? {
-                        sourceReceipt: imageGeneration.getSourceReceipt(task.taskId)!,
-                    } : {}),
-                    generationOptions: {
-                        model: task.request.model,
-                        count: task.request.count,
-                        attachmentPathHint: task.request.attachmentPathHint ?? '',
-                    },
-                });
-                clearSelectedWritingParent();
-                textArea.value = task.request.submittedPrompt;
-                composerDraft.touchText();
-                renderImageDraft();
-                syncComposerControls();
-                textArea.focus();
-            });
+            }
+            if (!hasSavedOutputs) createTaskMoreControl(headerControls);
             const details = card.createEl('details', { cls: 'pa-chat-image-task-card__details' });
             details.createEl('summary', { text: t('plugin.chat.createImage.details') });
-            details.createDiv({ text: t(task.request.promptOrigin?.defaultUserPrompt
-                ? 'plugin.chat.createImage.defaultRequest' : 'plugin.chat.createImage.prompt',
-                { prompt: task.request.userPrompt }) });
-            if (canDeliverOutputs) details.createDiv({ text: t('plugin.chat.createImage.submitted',
-                { prompt: task.request.submittedPrompt }) });
-            if (task.request.promptOrigin) details.createDiv({ text: t('plugin.chat.createImage.source.detail', {
-                kind: t(task.request.promptOrigin.kind === 'selection'
-                    ? 'plugin.chat.createImage.source.selectionKind' : 'plugin.chat.createImage.source.noteKind'),
-                source: task.request.promptOrigin.displayName,
-                path: task.request.promptOrigin.path,
-            }) });
-            details.createDiv({ text: t('plugin.chat.createImage.modelCount', { model: task.request.model,
-                count: task.request.count, createdAt: task.createdAt }) });
-            if (task.request.size) details.createDiv({ text: t('plugin.chat.createImage.size', { size: task.request.size }) });
-            if (task.request.inputRefs.length) details.createDiv({ text: t('plugin.chat.createImage.inputCount',
-                { count: task.request.inputRefs.length }) });
-            if (task.request.parentVersionId) details.createDiv({ text: t('plugin.chat.createImage.parentVersion',
-                { version: task.request.parentVersionId }) });
+            const detailField = (label: string, value: string) => {
+                const field = details.createDiv({ cls: 'pa-chat-image-task-card__detail-field' });
+                field.createSpan({ cls: 'pa-chat-image-task-card__detail-label', text: label });
+                field.createSpan({ cls: 'pa-chat-image-task-card__detail-value', text: value });
+            };
+            detailField(t(task.request.promptOrigin?.defaultUserPrompt
+                ? 'plugin.chat.createImage.detail.defaultOriginalRequest'
+                : 'plugin.chat.createImage.detail.originalRequest'), task.request.userPrompt);
+            if (canDeliverOutputs) detailField(t('plugin.chat.createImage.detail.submittedRequest'),
+                task.request.submittedPrompt);
+            if (task.request.promptOrigin) detailField(t('plugin.chat.createImage.detail.source'),
+                t('plugin.chat.createImage.source.detail', {
+                    kind: t(task.request.promptOrigin.kind === 'selection'
+                        ? 'plugin.chat.createImage.source.selectionKind' : 'plugin.chat.createImage.source.noteKind'),
+                    source: task.request.promptOrigin.displayName,
+                    path: task.request.promptOrigin.path,
+                }));
+            detailField(t('plugin.chat.createImage.detail.model'), task.request.model);
+            detailField(t('plugin.chat.createImage.detail.count'), String(task.request.count));
+            if (task.request.size) detailField(t('plugin.chat.createImage.detail.size'), task.request.size);
+            detailField(t('plugin.chat.createImage.detail.createdAt'), task.createdAt);
+            if (task.request.inputRefs.length) detailField(t('plugin.chat.createImage.detail.inputCount'),
+                t('plugin.chat.createImage.inputCount', { count: task.request.inputRefs.length }));
+            if (task.request.parentVersionId) detailField(t('plugin.chat.createImage.detail.parentVersion'),
+                t('plugin.chat.createImage.parentVersion', { version: task.request.parentVersionId }));
         };
         const loadImageTaskCards = async () => {
             const conversationId = imageTasksConversationId;
@@ -3999,6 +4233,7 @@ export class LLMView extends ItemView {
                             cls: 'message-action-button retry-message-button',
                             attr: { 'aria-label': t("plugin.chat.action.retryMessage"), title: t("plugin.chat.action.retryMessage") },
                         });
+                        assistantRendered.retryMessageButton = resume;
                         setIcon(resume, 'rotate-cw');
                         resume.onclick = () => {
                             if (resume.disabled || isGenerating()) return;
@@ -4040,6 +4275,7 @@ export class LLMView extends ItemView {
                     if (stableMessageId) imageTaskMessageTargets.set(stableMessageId, {
                         parent: assistantRendered.messageDiv,
                         before: assistantRendered.actionDiv,
+                        rendered: assistantRendered,
                     });
                     return;
                 }
@@ -5334,6 +5570,7 @@ export class LLMView extends ItemView {
                     imageTaskMessageTargets.set(turn.userProvenance.messageId, {
                         parent: turn.assistantMessage.messageDiv,
                         before: turn.assistantMessage.actionDiv,
+                        rendered: turn.assistantMessage,
                     });
                     void loadImageTaskCards();
                 }

@@ -30,6 +30,7 @@ export type RenderedMessage = {
     roleEl: HTMLElement;
     loaderEl?: HTMLElement;
     contentDiv: HTMLElement;
+    imageResponseDetails?: HTMLDetailsElement;
     actionDiv: HTMLDivElement;
     actionMenu: HTMLDivElement;
     actionMenuButton: HTMLButtonElement;
@@ -38,6 +39,7 @@ export type RenderedMessage = {
     shareButton?: HTMLButtonElement;
     deleteButton?: HTMLButtonElement;
     writingButton?: HTMLButtonElement;
+    retryMessageButton?: HTMLButtonElement;
     writingRecoveryNotice?: HTMLElement;
     renderToken: number;
     copyContent: string;

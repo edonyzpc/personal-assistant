@@ -4603,34 +4603,206 @@ describe('LLMView turn lifecycle', () => {
         expect(card.getAttribute('data-state')).toBe('completed');
         expect(card.parentElement!.classList.contains('llm-message')).toBe(true);
         const cardSiblings = card.parentElement!.children;
-        expect(cardSiblings[cardSiblings.indexOf(card) + 1].classList.contains('message-action-toolbar')).toBe(true);
+        const responseDetails = cardSiblings[cardSiblings.indexOf(card) + 1];
+        expect(responseDetails.classList.contains('pa-chat-image-response-details')).toBe(true);
+        expect(responseDetails.getAttribute('open')).toBe(null);
+        expect(getElementByClass(responseDetails, 'message-content')).toBeTruthy();
+        expect(cardSiblings[cardSiblings.indexOf(card) + 2].classList.contains('message-action-toolbar')).toBe(true);
+        expect(getElementByClass(card.parentElement!, 'message-action-toolbar').hidden).toBe(true);
         const output = getElementByClass(card, 'pa-chat-image-task-card__output');
         const imageFrame = getElementByClass(output, 'pa-chat-image-task-card__image-frame');
         const preview = getButtonByClass(imageFrame, 'pa-chat-image-task-card__preview');
-        const editButton = getButtonByClass(imageFrame, 'pa-chat-image-task-card__image-action--edit');
-        const downloadButton = getButtonByClass(imageFrame, 'pa-chat-image-task-card__image-action--download');
+        const editButton = getButtonByClass(output, 'pa-chat-image-task-card__output-action--edit');
+        const downloadButton = getButtonByClass(output, 'pa-chat-image-task-card__output-action--download');
         const outputActions = getElementByClass(output, 'pa-chat-image-task-card__output-actions');
-        const frameChildren = imageFrame.children;
-        expect(frameChildren.indexOf(preview)).toBeLessThan(frameChildren.indexOf(editButton));
-        expect(frameChildren.indexOf(preview)).toBeLessThan(frameChildren.indexOf(downloadButton));
+        const moreButton = getButtonByClass(outputActions, 'pa-chat-image-task-card__more');
         expect(output.children.indexOf(imageFrame)).toBeLessThan(output.children.indexOf(outputActions));
-        expect(getElementsByClass(outputActions, 'message-action-button')).toHaveLength(1);
+        expect(getElementsByClass(outputActions, 'message-action-button')).toHaveLength(4);
+        expect([preview, editButton, downloadButton, moreButton].every(button => button.textContent === '')).toBe(true);
+        moreButton.click();
+        const taskMenu = getElementByClass(card, 'pa-chat-image-task-card__menu');
+        expect(taskMenu.hidden).toBe(false);
+        const menuText = getElementsByClass(taskMenu, 'pa-chat-menu-item').map(allText);
+        expect(menuText).toContain('Regenerate');
+        expect(menuText).toContain('Copy message');
+        expect(menuText).toContain('Add to editor');
+        expect(menuText).toContain('Delete');
+        expect(getButtonsByText(taskMenu, 'Delete').every(item => item.disabled)).toBe(true);
         expect(allText(output)).not.toContain('View image');
         expect(allText(output)).not.toContain('Saved');
-        const actions = getElementByClass(card, 'pa-chat-image-task-card__actions');
         const details = getElementByClass(card, 'pa-chat-image-task-card__details');
-        expect(card.children.indexOf(actions)).toBeGreaterThan(card.children.indexOf(getElementByClass(card, 'pa-chat-image-task-card__outputs')));
-        expect(card.children.indexOf(details)).toBeGreaterThan(card.children.indexOf(actions));
-        notifyTask?.({ ...task, taskId: 'background_task_2', revision: 3 });
+        expect(walk(card, element => element.classList.contains('pa-chat-image-task-card__actions'))).toBe(null);
+        expect(card.children.indexOf(details)).toBeGreaterThan(card.children.indexOf(getElementByClass(card, 'pa-chat-image-task-card__outputs')));
+        expect(details.getAttribute('open')).toBe(null);
+        expect(allText(details)).toContain('Original request');
+        expect(allText(details)).toContain('Submitted description');
+        expect(allText(details)).toContain('Model');
+        expect(allText(details)).toContain('Count');
+        expect(allText(details)).toContain('Created');
+
+        task = { ...task!, state: 'submission_unknown', revision: 3, outputs: [],
+            recoveryReason: 'provider_acceptance_unknown' };
+        notifyTask?.(task);
+        expect(allText(card)).toContain('Could not confirm whether the image service accepted this request.');
+        expect(allText(card)).not.toContain('%');
+        expect(getElementByClass(card.parentElement!, 'pa-chat-image-response-details').getAttribute('open'))
+            .toBe(null);
+
+        task = { ...task!, state: 'partial', revision: 4, recoveryReason: 'provider_failed',
+            outputs: [
+                { outputId: 'output_1', providerOrdinal: 0,
+                    saveState: 'saved', assetRef: { assetId: 'image_1', contentHash: 'a'.repeat(64) } },
+                { outputId: 'output_2', providerOrdinal: 1, saveState: 'failed',
+                    recoveryReason: 'provider_failed' },
+            ] };
+        notifyTask?.(task);
+        expect(allText(card)).toContain('The image service could not complete this request.');
+        expect(allText(card)).toContain('Image 2: Save failed');
+        expect(getButtonByText(card, 'Stop')).toBeTruthy();
+        expect(getButtonByText(card, 'Recover result')).toBeTruthy();
+
+        task = { ...task!, state: 'not_submitted', revision: 5, outputs: [],
+            recoveryReason: 'transparent_input_needs_confirmation' };
+        notifyTask?.(task);
+        expect(getButtonByText(card, 'Confirm white-backed copy and continue')).toBeTruthy();
+        expect(getButtonByClass(getElementByClass(card, 'pa-chat-image-task-card__header-controls'),
+            'pa-chat-image-task-card__more')).toBeTruthy();
+
+        const secondTask = { ...task, taskId: 'background_task_2', revision: 3 };
+        notifyTask?.(secondTask);
+        notifyTask?.({ ...task, revision: 6 });
+        notifyTask?.({ ...secondTask, revision: 4 });
         expect(getElementsByClass(containerEl, 'pa-chat-image-task-card')
             .map(item => item.getAttribute('data-task-id'))).toEqual(['background_task', 'background_task_2']);
+        expect(getElementsByClass(containerEl, 'pa-chat-image-response-details')).toHaveLength(1);
         expect(allText(card.parentElement!)).toContain('Image request is running.');
         expect(allText(card.parentElement!)).not.toContain('Watercolor paper is textured.');
         expect(editor.value).toBe(draftBeforeCompletion);
         expect(streamCalls[1].prompt).toContain('Tell me about watercolor paper');
         streamCalls[1].resolve();
         for (let i = 0; i < 5; i++) await flushPromises();
+        expect(allText(getElementByClass(responseDetails, 'message-content')))
+            .toBe('Image request is running.');
         expect(editor.value).toBe(draftBeforeCompletion);
+        await view.onClose();
+    });
+
+    it('keeps interrupted-message retry in image-task More with keyboard and outside dismissal', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'interrupted-image-response' });
+        await manager.initialize();
+        let conversation = await manager.startConversation('Interrupted image request');
+        conversation = await manager.recordTurn({
+            conversationId: conversation.id, turnIndex: 0, conversation,
+            userPrompt: 'Interrupted image request',
+            entry: { kind: 'history',
+                user: {
+                    role: 'user', content: 'Interrupted image request',
+                    hostProvenance: { version: 1, messageId: 'interrupted_image_message', kind: 'ordinary_user_statement' },
+                },
+                assistant: {
+                    role: 'assistant', content: 'Partial image answer', shareCardEligible: false,
+                    agentExecution: { runId: 'interrupted-image', state: 'running' },
+                } },
+        });
+        await manager.setActiveConversationId(conversation.id);
+        let task: ImageGenerationTask = {
+            schemaVersion: 1, taskId: 'interrupted_image_task', operationId: 'interrupted_operation',
+            conversationId: conversation.id, stableMessageId: 'interrupted_image_message',
+            createdAt: '2026-09-18T00:00:00.000Z', updatedAt: '2026-09-18T00:00:00.000Z', revision: 1,
+            request: { userPrompt: 'Interrupted image request', submittedPrompt: 'SUBMITTED IMAGE REQUEST',
+                operation: 'generate', model: 'wan2.7-image', count: 1, inputRefs: [] },
+            connection: { mode: 'inherit-chat', endpointIdentity: 'https://dashscope.aliyuncs.com',
+                credentialSlot: 'chat', revision: 0 },
+            state: 'completed', outputs: [{ outputId: 'output_1', providerOrdinal: 0, saveState: 'saved',
+                assetRef: { assetId: 'interrupted_image', contentHash: 'a'.repeat(64) } }],
+        };
+        let notifyTask: ((updated: ImageGenerationTask) => void) | undefined;
+        const resumeImageTask = jest.fn(async () => undefined);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { imageGenerationService: {
+            list: async (conversationId: string) => conversationId === conversation.id ? [task] : [],
+            subscribe: (listener: (updated: ImageGenerationTask) => void) => {
+                notifyTask = listener; return () => { notifyTask = undefined; };
+            },
+            resume: resumeImageTask,
+        } });
+        const taskMenuListeners = new Map<string, Array<(event: { target: unknown }) => void>>();
+        const taskMenuDocument = {
+            addEventListener: (type: string, listener: (event: { target: unknown }) => void) => {
+                const listeners = taskMenuListeners.get(type) ?? [];
+                listeners.push(listener);
+                taskMenuListeners.set(type, listeners);
+            },
+            removeEventListener: (type: string, listener: (event: { target: unknown }) => void) => {
+                const listeners = (taskMenuListeners.get(type) ?? [])
+                    .filter(current => current !== listener);
+                taskMenuListeners.set(type, listeners);
+            },
+        };
+        (containerEl as MockElement & { ownerDocument?: unknown }).ownerDocument = taskMenuDocument;
+        await view.onOpen();
+        for (let index = 0; index < 5
+            && !getElementsByClass(containerEl, 'pa-chat-image-task-card__more').length; index++) {
+            await flushPromises();
+        }
+        const activeDocument = {
+            activeElement: undefined as MockElement | undefined,
+            createElement: (tagName: string) => new MockElement(tagName),
+        };
+        Object.defineProperty(globalThis, 'document', { configurable: true, value: activeDocument });
+
+        const card = getElementByClass(containerEl, 'pa-chat-image-task-card');
+        const footer = getElementByClass(card.parentElement!, 'message-action-toolbar');
+        expect(footer.hidden).toBe(true);
+        expect(footer.classList.contains('pa-chat-image-response-actions')).toBe(true);
+        getButtonByClass(footer, 'copy-message-button').disabled = true;
+        const moreButton = getButtonByClass(containerEl, 'pa-chat-image-task-card__more');
+        moreButton.click();
+        const menu = getElementByClass(containerEl, 'pa-chat-image-task-card__menu');
+        expect(menu.hidden).toBe(false);
+        const menuItems = getElementsByClass(menu, 'pa-chat-menu-item');
+        expect(activeDocument.activeElement).toBe(menuItems[0]);
+        expect(menuItems[1].disabled).toBe(true);
+        menuItems[0].dispatchEvent('keydown', { key: 'ArrowDown', preventDefault: jest.fn() });
+        const nextAvailableItem = menuItems.find((item, index) => index > 0 && !item.disabled)!;
+        expect(activeDocument.activeElement).toBe(nextAvailableItem);
+        nextAvailableItem.dispatchEvent('keydown', { key: 'Escape', preventDefault: jest.fn() });
+        expect(menu.hidden).toBe(true);
+        expect(activeDocument.activeElement).toBe(moreButton);
+        expect(moreButton.getAttribute('aria-expanded')).toBe('false');
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+
+        moreButton.click();
+        expect(menu.hidden).toBe(false);
+        for (const listener of taskMenuListeners.get('pointerdown') ?? []) {
+            listener({ target: getTextArea(containerEl) });
+        }
+        expect(menu.hidden).toBe(true);
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+
+        const listenerCountBeforeRedraw = taskMenuListeners.get('pointerdown')?.length ?? 0;
+        const teardown = (view as unknown as { viewTeardownCallbacks: Set<() => void> }).viewTeardownCallbacks;
+        const teardownCountWithMenu = teardown.size;
+        task = { ...task, revision: 2 };
+        notifyTask?.(task);
+        expect(taskMenuListeners.get('pointerdown')).toHaveLength(listenerCountBeforeRedraw);
+        expect(teardown.size).toBe(teardownCountWithMenu);
+
+        const redrawnMore = getButtonByClass(containerEl, 'pa-chat-image-task-card__more');
+        redrawnMore.click();
+        const redrawnMenu = getElementByClass(containerEl, 'pa-chat-image-task-card__menu');
+        expect(allText(redrawnMenu)).toContain('Retry message');
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+        const retryMenuItem = getButtonByText(redrawnMenu, 'Retry message');
+        expect(retryMenuItem.disabled).toBe(false);
+        retryMenuItem.click();
+        await waitForStreamCallCount(streamCalls, 1);
+        expect(streamCalls[0].prompt).toContain('Continue the interrupted task from the safe conversation history.');
+        expect(streamCalls[0].prompt).toContain('Original goal: Interrupted image request');
+        expect(resumeImageTask).not.toHaveBeenCalled();
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
         await view.onClose();
     });
 
@@ -4666,17 +4838,37 @@ describe('LLMView turn lifecycle', () => {
         };
         const submit = jest.fn(async (_request?: unknown) => ({ taskId: 'regenerated_task' }));
         const prepare = jest.fn(async () => 'UNEXPECTED-REPREPARATION');
+        let notifyTask: ((updated: ImageGenerationTask) => void) | undefined;
         Object.assign(plugin, { imageGenerationService: {
-            list: async () => [task], subscribe: () => () => undefined, submit,
+            list: async () => [task], subscribe: (listener: (updated: ImageGenerationTask) => void) => {
+                notifyTask = listener; return () => { notifyTask = undefined; };
+            }, submit,
             getSourceReceipt: () => () => true,
         }, prepareFeaturedImagePrompt: prepare, confirmImageGenerationFirstUse: async () => true });
         await view.onOpen();
-        for (let index = 0; index < 5 && !getButtonsByText(containerEl, 'Regenerate').length; index++) {
+        for (let index = 0; index < 5
+            && !getElementsByClass(containerEl, 'pa-chat-image-task-card__more').length; index++) {
             await flushPromises();
         }
-        getButtonByText(containerEl, 'Regenerate').click();
+        const secondTask = { ...task, taskId: 'regenerate_source_task_2' };
+        notifyTask?.(secondTask);
+        notifyTask?.({ ...task, revision: 2 });
+        notifyTask?.({ ...secondTask, revision: 2 });
+        expect(getElementsByClass(containerEl, 'pa-chat-image-task-card')
+            .map(card => card.getAttribute('data-task-id')))
+            .toEqual(['regenerate_source_task', 'regenerate_source_task_2']);
         const textArea = getTextArea(containerEl);
         const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        const moreButton = getButtonByClass(containerEl, 'pa-chat-image-task-card__more');
+        textArea.value = 'Unsent follow-up';
+        moreButton.click();
+        getButtonByText(getElementByClass(containerEl, 'pa-chat-image-task-card__menu'), 'Regenerate').click();
+        expect(textArea.value).toBe('Unsent follow-up');
+        expect(allText(getElementByClass(containerEl, 'pa-chat-composer-hint')))
+            .toContain('Finish or clear the current draft before regenerating.');
+        textArea.value = '';
+        moreButton.click();
+        getButtonByText(getElementByClass(containerEl, 'pa-chat-image-task-card__menu'), 'Regenerate').click();
         const intent = draft.snapshot(textArea.value).imageIntent;
         expect(textArea.value).toBe('PRIOR-SUBMITTED-SENTINEL');
         expect(intent).toMatchObject({
@@ -4778,7 +4970,8 @@ describe('LLMView turn lifecycle', () => {
             expect(getElementsByClass(containerEl, 'pa-chat-image-task-card__preview')).toHaveLength(1);
             const outputRow = getElementByClass(containerEl, 'pa-chat-image-task-card__output');
             Object.assign(outputRow, { ownerDocument: copyDocument });
-            const copyButton = getElementByClass(outputRow, 'pa-chat-image-task-card__output-action');
+            const copyButton = getButtonsByClass(outputRow, 'pa-chat-image-task-card__output-action')
+                .find(button => button.getAttribute('aria-label') === 'Copy image')!;
             copyButton.click();
             await flushPromises();
             expect(pendingConversions).toHaveLength(1);
@@ -4800,7 +4993,7 @@ describe('LLMView turn lifecycle', () => {
             expect(releasePreview).toHaveBeenCalledTimes(1);
             notifyTask?.(task);
             expect(getElementsByClass(containerEl, 'pa-chat-image-task-card__preview')).toHaveLength(0);
-            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card__image-action--download')).toHaveLength(0);
+            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card__output-action--download')).toHaveLength(0);
             expect(getElementsByClass(containerEl, 'pa-chat-image-task-card__output-action')).toHaveLength(0);
             expect(allText(containerEl)).not.toContain('DERIVED_NOTE_SENTINEL');
             streamCalls[0].resolve();

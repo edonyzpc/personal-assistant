@@ -61,6 +61,18 @@ describe('anchored chat menu width', () => {
         expect(leftward.setProperty).toHaveBeenLastCalledWith('--pa-chat-menu-available-width', '388px');
     });
 
+    it('bounds an image-task menu leftward even inside an assistant message', () => {
+        const { menu, setProperty } = createMenu({
+            message: true,
+            growsRight: true,
+            menuLeft: 760,
+            menuRight: 1088,
+            classes: ['pa-chat-image-task-card__menu'],
+        });
+        updateChatMenuAvailableWidth(menu);
+        expect(setProperty).toHaveBeenLastCalledWith('--pa-chat-menu-available-width', '280px');
+    });
+
     it('intersects pane bounds with a smaller viewport', () => {
         const { menu, setProperty } = createMenu({ paneLeft: -40, paneRight: 500, menuLeft: 20,
             menuRight: 400, viewport: 320, message: true, growsRight: true });
