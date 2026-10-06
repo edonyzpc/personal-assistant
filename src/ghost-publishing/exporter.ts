@@ -74,20 +74,6 @@ export async function prepareGhostExport(options: PrepareGhostExportOptions): Pr
             });
         }
     }
-    const needsProfileCheck = (converted.capabilities.codeLanguages.length > 0
-        && (!options.siteProfile.prism || options.siteProfile.prism.evidence === "unknown"))
-        || (converted.capabilities.hasMermaid
-            && (!options.siteProfile.mermaid || options.siteProfile.mermaid.evidence === "unknown"))
-        || ((converted.capabilities.hasInlineMath || converted.capabilities.hasDisplayMath)
-            && (!options.siteProfile.katex || options.siteProfile.katex.evidence === "unknown"));
-    if (needsProfileCheck) {
-        warnings.push({
-            code: "profile-page-check-required",
-            path: source.targetPath,
-            line: 0,
-            message: "Site library profile requires an actual page check before preview readiness.",
-        });
-    }
 
     const identity = {
         schemaVersion: 1,

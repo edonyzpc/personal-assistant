@@ -5076,7 +5076,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager, withMarkdownLeaf: true });
         const createBinding = jest.fn<NonNullable<ChatHost['createGhostPublishingBinding']>>(request => ({
             conversationId: request.conversationId, stableMessageId: request.stableMessageId,
-            submit: async () => ({ status: 'prepared', operationId: 'synthetic-operation' }),
+            submit: async () => ({ status: 'prepared', executionState: 'succeeded', operationId: 'synthetic-operation' }),
         }));
         Object.assign(plugin, { createGhostPublishingBinding: createBinding });
         await view.onOpen();
@@ -5199,7 +5199,7 @@ describe('LLMView turn lifecycle', () => {
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager, withMarkdownLeaf: true });
         const createBinding = jest.fn<NonNullable<ChatHost['createGhostPublishingBinding']>>(request => ({
             conversationId: request.conversationId, stableMessageId: request.stableMessageId,
-            submit: async () => ({ status: 'prepared', operationId: 'synthetic-operation' }),
+            submit: async () => ({ status: 'prepared', executionState: 'succeeded', operationId: 'synthetic-operation' }),
         }));
         Object.assign(plugin, { createGhostPublishingBinding: createBinding });
         await view.onOpen();

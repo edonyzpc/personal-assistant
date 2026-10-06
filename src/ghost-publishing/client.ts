@@ -1,5 +1,4 @@
 import type { GhostDesktopTransport } from "./desktop-transport";
-import { GHOST_INTERNAL_MARKER } from "./markers";
 
 export type GhostPostStatus = "draft" | "published" | "scheduled" | "sent";
 export type GhostVisibility = "public" | "members" | "paid" | "tiers";
@@ -63,7 +62,7 @@ export interface GhostPostWrite {
 }
 
 export interface GhostRequestGate {
-    /** Host rechecks the complete current source/candidate/connection after all awaits. */
+    /** Host rechecks source authority, identity, connection and cancellation after awaits. */
     beforeSend(): Promise<void>;
     /** Synchronous final check immediately before the transport calls request.end. */
     assertCurrent(): void;
@@ -74,7 +73,7 @@ export type GhostClientErrorCode =
     | "unsupported-platform" | "invalid-input" | "invalid-credentials"
     | "gate-rejected" | "cancelled" | "timeout" | "network"
     | "response-too-large" | "invalid-response" | "redirect"
-    | "http" | "conflict";
+    | "http" | "conflict" | "post-not-found";
 
 export class GhostClientError extends Error {
     constructor(
@@ -322,30 +321,6 @@ export class GhostClient {
         return this.onePost(response, false, id);
     }
 
-    async findPostsByMarker(marker: string, gate: GhostRequestGate, requireComplete = false): Promise<GhostPost[]> {
-        if (!GHOST_INTERNAL_MARKER.test(marker)) invalidInput();
-        const limit = requireComplete ? 100 : 2;
-        const query = new URLSearchParams({
-            filter: `tags.name:'${marker}'+status:[draft,published,scheduled,sent]`,
-            limit: String(limit),
-        });
-        const response = await this.admin("GET", "posts/", gate, undefined, query);
-        return this.parseResponse(response, false, (body) => {
-            if (!Array.isArray(body.posts) || body.posts.length > limit) throw new Error("Invalid posts");
-            const posts = body.posts.map(parsePost);
-            if (posts.some((post) => !post.tags.some((tag) => tag.name === marker && tag.visibility === "internal"))) {
-                throw new Error("Marker mismatch");
-            }
-            const pagination = object(object(body.meta)?.pagination);
-            const total = pagination?.total;
-            if (typeof total !== "number" || !Number.isSafeInteger(total) || total < posts.length
-                || posts.length !== Math.min(total, limit) || requireComplete && total !== posts.length) throw new Error("Incomplete marker result");
-            // Two results already prove ambiguity; never turn a truncated page into a unique match.
-            // Binding scans may ignore obsolete drafts, so they require a complete bounded result.
-            return posts;
-        });
-    }
-
     async createDraft(fields: GhostPostWrite, gate: GhostRequestGate): Promise<GhostPost> {
         const post = postWrite(fields);
         post.status = "draft";
@@ -471,7 +446,7 @@ export class GhostClient {
                 ...(body ? { "Content-Type": multipart?.contentType ?? "application/json" } : {}),
             },
         }, desktop, method !== "GET");
-        this.checkStatus(response, method !== "GET");
+        this.checkStatus(response, method !== "GET", method === "GET" && /^posts\/[a-f\d]{24}\/$/i.test(path));
         const expectedStatus = method === "POST" ? 201 : method === "DELETE" ? 204 : 200;
         if (response.status !== expectedStatus) {
             throw new GhostClientError("invalid-response", method === "GET" ? "failed" : "unknown", response.status);
@@ -507,9 +482,21 @@ export class GhostClient {
         }
     }
 
-    private checkStatus(response: GhostTransportResponse, write: boolean): void {
+    private checkStatus(response: GhostTransportResponse, write: boolean, exactPostRead = false): void {
         if (response.status >= 200 && response.status < 300) return;
         if (response.status === 409) throw new GhostClientError("conflict", "failed", 409);
+        if (exactPostRead && response.status === 404) {
+            // A route/proxy HTML 404 is not evidence that this exact post is absent.
+            try {
+                const body = object(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(response.body)));
+                const errors = body?.errors;
+                if (Array.isArray(errors) && errors.length === 1 && object(errors[0])?.type === "NotFoundError") {
+                    throw new GhostClientError("post-not-found", "failed", 404);
+                }
+            } catch (error) {
+                if (error instanceof GhostClientError) throw error;
+            }
+        }
         const redirect = response.status >= 300 && response.status < 400;
         // A proxy/request timeout is not proof the upstream rejected a write.
         const knownFailure = [400, 401, 403, 404, 405, 406, 410, 411, 413, 414, 415, 422, 429].includes(response.status);

@@ -138,16 +138,6 @@ export interface ExportBlock {
     nodeIndex: number;
 }
 
-export type BaselineExportBlock = ExportBlock & {
-    remoteBlockId?: string;
-};
-
-export interface RemoteExportBlock {
-    id: string;
-    semanticSignature: string;
-    node: LexicalNodeJson;
-}
-
 export interface ExportCapabilities {
     codeLanguages: string[];
     hasMermaid: boolean;
@@ -221,8 +211,7 @@ export interface ExportWarning {
         | "unpublished-wiki-link"
         | "ambiguous-wiki-link"
         | "wiki-link-anchor-fallback"
-        | "unknown-highlight-language"
-        | "profile-page-check-required";
+        | "unknown-highlight-language";
     path: string;
     line: number;
     message: string;

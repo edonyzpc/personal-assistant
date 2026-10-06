@@ -2,9 +2,14 @@
 
 Decision ID: DEC-045
 Status: Accepted
-Updated: 2026-10-01
+Updated: 2026-10-06
 Authority: Owner 于 2026-09-28 确认产品范围；2026-09-29 修订原生预览与多桌面边界并授权开发测试。2026-10-01 根据 beta.17 实际试用反馈，同意标题/注释/封面整理及“人工优先，缺失摘要和 SEO 描述自动生成一次，主动重新生成才替换”的策略，并要求优化卡片按钮布局。
 Work item: B-153
+
+2026-10-06 scoped successor：[DEC-053](./dec-053-lean-ghost-publishing.md) 接续本文的格式保留、
+自动预览检查、完成基线、恢复/续接、字段补齐、关联元数据（含第 14 项多属性）和卡片流程；以下 Decision 保留原批准的历史
+含义，不再用于重新引入已取消规则。当前目标以 [Product Spec](../specs/pa-ghost-blog-publishing-product-spec.md)
+为准；B-153 历史验收不等于精简方案已实现。
 
 ## Context
 

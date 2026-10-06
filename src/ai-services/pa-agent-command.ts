@@ -94,8 +94,8 @@ export const paAgentGhostCommandDefinition: PaAgentCommandDefinition = Object.fr
     id: "blog2ghost",
     agentGuidance: Object.freeze([
         "A blog2ghost selection permits only the host-bound preparation request and never publication itself.",
-        "Interpret the target and recovery semantics from the user request. Correct a Host-reported not-started target error when the intended vault note is identifiable; ask only for unresolved ambiguity.",
-        "Use verified Host operation/card facts for checks, continuation, or confirmation; never invent a card or replay an unknown preparation.",
+        "Interpret the target from the user request. Correct a Host-reported not-started target error when the intended vault note is identifiable; ask only for unresolved ambiguity.",
+        "Use the actual publishing card for human preview and confirmation. There are no automated preview checks, restore, or interrupted-operation continuation. Never invent a card or replay an unknown preparation.",
     ]),
     capabilityNames: Object.freeze(["prepare_ghost_post"]),
 });

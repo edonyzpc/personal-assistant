@@ -22,7 +22,7 @@ import { resolveImageGenerationConnection } from '../src/ai-services/image-gener
 import { WanImageProvider } from '../src/ai-services/wan-image-provider';
 import { GhostClientError } from '../src/ghost-publishing/client';
 import { GhostPublishingService } from '../src/ghost-publishing/service';
-import { GhostOperationStore } from '../src/ghost-publishing/state-store';
+import { GhostPreviewStore } from '../src/ghost-publishing/state-store';
 import { createGhostActionContext } from '../src/ghost-publishing/action-context';
 import { GhostPublishingIntegration } from '../src/ghost-publishing/host-integration';
 import { FakeGovernanceIndexedDbFactory } from '../__tests__/helpers/fake-governance-indexeddb';
@@ -488,28 +488,18 @@ export function recordingGhostRuntime(appInstance, record, options = {}) {
   if (!['http:', 'https:'].includes(siteUrl.protocol) || siteUrl.username || siteUrl.password
     || !(siteUrl.hostname.endsWith('.invalid') || ['localhost', '127.0.0.1', '[::1]'].includes(siteUrl.hostname))) fail('CONTROLLED_GHOST_SITE_REQUIRED');
   const siteId = 'b157-synthetic-site', profile = { siteId };
-  const operations = new GhostOperationStore({ dbName: `b157_${record.id}`,
+  const previews = new GhostPreviewStore({ dbName: `b157_${record.id}`,
     isDesktop: () => true, indexedDb: new FakeGovernanceIndexedDbFactory() });
-  const completedRecords = new Map(), remote = new Map();
-  let ordinal = 0, unknown = options.unknown === true;
+  const remote = new Map();
+  let ordinal = 0, unknown = options.unknown === true, observe;
   const now = () => new Date(Date.UTC(2026, 9, 2) + ++ordinal * 1000).toISOString();
-  const records = {
-    read: async (_siteId, noteUid) => completedRecords.has(noteUid) ? copy(completedRecords.get(noteUid)) : null,
-    write: async (next, checksum) => {
-      if ((completedRecords.get(next.binding.noteUid)?.checksum ?? null) !== checksum) fail('GHOST_RECORD_CONFLICT');
-      completedRecords.set(next.binding.noteUid, copy(next));
-      record.domainEvents.push({ owner: 'ghost-record', revision: next.revision, completed: copy(next.completed) });
-    },
-  };
   const send = async (method, gate, fields) => {
-    record.submissions.push({ domain: 'ghost', method, ...(fields ? { fields: copy(fields) } : {}) });
     await gate.beforeSend(); gate.assertCurrent();
+    record.submissions.push({ domain: 'ghost', method, ...(fields ? { fields: copy(fields) } : {}) });
   };
   const client = {
     readPost: async (id, gate) => { await send('read', gate); const post = remote.get(id);
-      if (!post) throw new GhostClientError('http', 'failed', 404); return copy(post); },
-    findPostsByMarker: async (marker, gate) => { await send('find', gate);
-      return [...remote.values()].filter(post => post.tags.some(tag => tag.name === marker)).map(copy); },
+      if (!post) throw new GhostClientError('post-not-found', 'failed', 404); return copy(post); },
     createDraft: async (fields, gate) => {
       await send('create', gate, fields);
       const id = (++ordinal).toString(16).padStart(24, '0');
@@ -517,7 +507,7 @@ export function recordingGhostRuntime(appInstance, record, options = {}) {
         title: '', lexical: null, slug: fields.slug ?? `b157-${ordinal}`, status: 'draft',
         authors: [{ id: '2'.repeat(24) }], visibility: 'public', custom_template: null,
         feature_image: null, feature_image_alt: null, feature_image_caption: null,
-        custom_excerpt: null, codeinjection_head: null, codeinjection_foot: null, published_at: null,
+        custom_excerpt: null, meta_description: null, codeinjection_head: null, codeinjection_foot: null, published_at: null,
         ...copy(fields), tags: copy(fields.tags ?? []), created_at: now(), updated_at: now(),
         url: `${site}${fields.slug ?? `b157-${ordinal}`}/` };
       remote.set(id, post);
@@ -532,7 +522,11 @@ export function recordingGhostRuntime(appInstance, record, options = {}) {
     downloadImage: async () => fail('GHOST_FIXTURE_HAS_NO_IMAGES'),
   };
   const service = new GhostPublishingService({ siteId, site, isDesktop: () => true,
-    client, operations, records, newId: () => `b157-ghost-${++ordinal}`, now });
+    client, previews, newId: () => `b157-ghost-${++ordinal}`, now, onUpdate: operation => {
+      record.domainEvents.push({ owner: 'ghost-session', operationId: operation.operationId,
+        revision: operation.revision, state: operation.state, verified: Boolean(operation.verified) });
+      observe?.(operation);
+    } });
   const contextFor = (path, guard, sourceValidity, signal) => createGhostActionContext({
     selection: { path }, host: { vault: appInstance.vault, metadataCache: appInstance.metadataCache,
       fileManager: appInstance.fileManager, getFrontMatterInfo,
@@ -541,25 +535,38 @@ export function recordingGhostRuntime(appInstance, record, options = {}) {
     getConnectionIdentity: () => 'b157-recording-connection', getProfile: () => profile,
     getSourceRevision: path => appInstance.vault.getAbstractFileByPath(path)?.stat?.mtime ?? 0,
     defaultVisibility: 'public', signal,
-    readCompletedRecord: records.read,
-    getCompletedRecordRevision: (_siteId, noteUid) => completedRecords.get(noteUid)?.revision ?? 0,
     generateMetadata: async () => ({ customExcerpt: 'Synthetic B157 article.', metaDescription: 'Synthetic B157 article.', slug: `b157-${ordinal}` }),
   });
-  return { client, service, operations, records, site, siteId, profile, contextFor,
+  return { client, service, previews, site, siteId, profile, contextFor,
+    setObserver(listener) { observe = listener; },
     setUnknown(value) { unknown = value; },
+    async seedPublishedSource(path = `${PREFIX}source.md`) {
+      if (!appInstance.synthetic.allowed(path)) fail('SYNTHETIC_PATH_ONLY');
+      const source = appInstance.vault.getAbstractFileByPath(path);
+      if (!(source instanceof TFile)) fail('SYNTHETIC_FILE_MISSING');
+      const id = 'a'.repeat(24);
+      remote.set(id, { id, uuid: '00000000-0000-4000-8000-000000000000',
+        title: 'Earlier synthetic published article', lexical: null, slug: 'b157-original', status: 'published',
+        authors: [{ id: '2'.repeat(24) }], visibility: 'public', custom_template: null,
+        feature_image: null, feature_image_alt: null, feature_image_caption: null,
+        custom_excerpt: null, meta_description: null, codeinjection_head: null, codeinjection_foot: null,
+        tags: [], published_at: now(), created_at: now(), updated_at: now(), url: `${site}b157-original/` });
+      await appInstance.fileManager.processFrontMatter(source, fields => { fields.GHOST_ID = id; });
+      return id;
+    },
     async readPreviewMaterial(operationId) {
-      const operation = await operations.findForContext(siteId, operationId);
+      const operation = service.get(operationId);
       const post = operation?.target.previewId ? remote.get(operation.target.previewId) : undefined;
       if (!post) fail('GHOST_RECORDING_POST_MISSING');
       return { operationId, postId: post.id, uuid: post.uuid, title: post.title, lexical: post.lexical,
         slug: post.slug, status: post.status, codeinjection_head: post.codeinjection_head,
         codeinjection_foot: post.codeinjection_foot, snapshot: copy(operation.candidate),
-        evidence: 'actual_recording_remote_draft; preview_gate_unmodified_and_unverified' };
+        evidence: 'actual_recording_remote_draft; no_preview_probe_or_confirmation_gate' };
     },
     publishRecordingRemote(id) { const post = remote.get(id); if (!post) fail('GHOST_RECORDING_POST_MISSING');
       post.status = 'published'; post.published_at = post.updated_at = now();
       record.domainEvents.push({ owner: 'ghost-recording-remote', postId: id, status: 'published' }); },
-    dispose() { service.invalidate(); operations.close(); } };
+    dispose() { service.close(); previews.close(); } };
 }
 
 export function createControlledDomains(appInstance, store, record, options = {}) {
@@ -621,27 +628,16 @@ export function createControlledDomains(appInstance, store, record, options = {}
             const path = input.path ?? `${PREFIX}source.md`;
             if (!allowed(path) || !guard.isPathAllowed(path, 'task_material') || !sourceValidity()) fail('SOURCE_REVOKED');
             const created = await ghost.contextFor(path, guard, sourceValidity, signal);
-            const existingIds = new Set((await ghost.operations.list(ghost.siteId, created.noteUid))
-              .map(operation => operation.operationId));
             created.context.gate.assertCurrent();
-            let operation;
-            try {
-              operation = await ghost.service.prepare(created.noteUid, created.postId, created.context, input.intent === 'restore');
-            } catch (error) {
-              // PublishingSession.initialize reloads persisted state after a lost
-              // response. This headless binding admits only this request's unique
-              // new unknown operation; existing or ambiguous records prove nothing.
-              created.context.gate.assertCurrent();
-              const added = (await ghost.operations.list(ghost.siteId, created.noteUid))
-                .filter(candidate => !existingIds.has(candidate.operationId));
-              created.context.gate.assertCurrent();
-              if (added.length !== 1 || added[0].site !== ghost.site || added[0].state !== 'outcome_unknown') throw error;
-              operation = added[0];
-              record.domainEvents.push({ owner: 'ghost-binding', operationId: operation.operationId,
-                revision: operation.revision, state: operation.state, evidence: 'actual-new-owned-persisted-operation' });
-            }
+            // Only this call's typed result establishes an effect. Historical
+            // receipts remain Context facts and cannot recover a live operation.
+            const operation = await ghost.service.prepare(created.noteKey, created.postId, created.context);
+            record.domainEvents.push({ owner: 'ghost-binding', operationId: operation.operationId,
+              revision: operation.revision, state: operation.state, evidence: 'actual-owned-session-result' });
             pendingGhost.set(operation.operationId, { ...created, path, guard, sourceValidity });
-            return { status: operation.state === 'outcome_unknown' ? 'outcome_unknown' : 'prepared', operationId: operation.operationId };
+            return { status: operation.state === 'outcome_unknown' ? 'outcome_unknown'
+              : operation.state === 'prepared' || operation.state === 'draft_saved' ? 'prepared' : 'needs_attention',
+              operationId: operation.operationId, executionState: operation.executionState };
           } },
       };
     },
@@ -677,9 +673,9 @@ export function createControlledDomains(appInstance, store, record, options = {}
           else if (state.owner === 'writing') next = refreshWritingSaveStates(state,
             (await save.listReceipts()).filter(receipt => receipt.writingVersionId === state.operationId)) ?? state;
           else if (state.owner === 'ghost') {
-            const operation = await ghost.operations.findForContext(ghost.siteId, state.operationId);
+            const operation = ghost.service.get(state.operationId);
             if (operation) next = refreshGhostActionState(state, { operationId: operation.operationId,
-              revision: operation.revision, state: operation.state, verified: operation.verified?.status === 'published' }) ?? state;
+              revision: operation.revision, state: operation.state, verified: Boolean(operation.verified) }) ?? state;
           }
           updates.push(next);
         }
@@ -718,15 +714,15 @@ export function createControlledDomains(appInstance, store, record, options = {}
           try { original.context.gate.assertCurrent(); } catch { rejected = true; }
           if (!rejected) fail('GHOST_OLD_CONTEXT_NOT_REJECTED');
           record.domainEvents.push({ owner: 'ghost-action-authority', oldRunGuardCurrent: false, oldContextRejected: true });
-          const operation = await ghost.operations.findForContext(ghost.siteId, state.operationId);
-          ghost.publishRecordingRemote(operation.target.previewId);
+          const operation = ghost.service.get(state.operationId);
           record.confirmations.push({ domain: 'ghost', operationId: operation.operationId,
-            boundary: 'recording-external-manual-publish-then-real-refresh' });
+            boundary: 'actual-session-confirm-original-published-id' });
           const authority = await freshGhostActionAuthority(context, original.path, operation.operationId);
           try {
             const created = await ghost.contextFor(original.path, authority.guard, authority.sourceValidity, authority.signal);
-            if (created.noteUid !== original.noteUid) fail('GHOST_SOURCE_IDENTITY_CHANGED');
-            await ghost.service.refresh(created.noteUid, operation.operationId, created.context);
+            if (created.noteKey !== original.noteKey) fail('GHOST_SOURCE_IDENTITY_CHANGED');
+            const updated = await ghost.service.confirm(created.noteKey, operation.operationId, created.context);
+            if (updated.state !== 'updated') fail('GHOST_CONFIRM_NOT_UPDATED');
             record.domainEvents.push({ owner: 'ghost-action-authority', freshAuthority: true,
               sourceScope: authority.selection.scope, sourceSelectionRevision: authority.selection.revision });
           } finally { authority.release(); }
@@ -785,6 +781,7 @@ async function newEpisodeContext({ item, plugin, identity, control, resources, s
   const conversation = await manager.startConversation(item.initial);
   const service = isolatedChatService(plugin, syntheticApp, identity, record, control);
   const domains = createControlledDomains(syntheticApp, store, record, { unknown: item.settle === 'unknown' });
+  if (item.domain === 'ghost' && item.settle === 'complete') await domains.ghost.seedPublishedSource();
   const context = { item, plugin, identity, control, resources, signal, record, syntheticApp, store,
     manager, conversation, service, domains, turnIndex: 0 };
   domains.attach(context); resources.add(service); resources.add(domains);
@@ -1123,13 +1120,16 @@ export function installB157ContextEval(appInstance) {
         isWebAllowed: () => false,
         generateMetadata: async () => ({ customExcerpt: 'Synthetic B157 article.', metaDescription: 'Synthetic B157 article.', slug: 'b157-ui' }) });
       // This is an explicit test-only instance seam. Native scope/session/card
-      // and preview gates still execute; no production permission switch exists.
+      // and current-source admission still execute; no production permission switch exists.
       const configuration = integration.configuration;
       configuration.getIdentity = () => 'b157-recording-connection';
       configuration.connection = async () => ({ siteId: domains.ghost.siteId, siteUrl: domains.ghost.site,
         identity: 'b157-recording-connection', profile: domains.ghost.profile, defaultVisibility: 'public' });
       configuration.getAdminKey = async () => fail('SECRET_ACCESS_BLOCKED');
       integration.controller.runtimes.set(domains.ghost.siteId, domains.ghost);
+      domains.ghost.setObserver(operation => {
+        for (const session of integration.controller.sessions) session.observe(domains.ghost.siteId, operation);
+      });
       const originalFactory = plugin.createChatHost;
       const ownDescriptor = Object.getOwnPropertyDescriptor(plugin, 'createChatHost');
       plugin.createChatHost = function () {
@@ -1202,14 +1202,14 @@ export function installB157ContextEval(appInstance) {
       resources.add(integration); resources.add(domains);
       state.results.push(record); state.model = { provider: identity.provider, model: identity.model };
       state.uiAdapterStatus = 'installed_requires_new_chat_view';
-      state.uiEvidenceBoundary = 'real ChatView and domain events are observable; native Ghost preview remains required and is never mocked';
+      state.uiEvidenceBoundary = 'real ChatView and domain events are observable; preview navigation opens its URL without a page probe';
       handle.nativeAdapters = {
         releaseImage: () => domains.releaseImage(),
         readGhostPreviewMaterial: operationId => domains.ghost.readPreviewMaterial(operationId),
         setImageUnknown: () => fail('SELECT_UNKNOWN_EPISODE_BEFORE_SUBMISSION'),
         setGhostUnknown: value => domains.ghost.setUnknown(Boolean(value)),
         async publishGhostRecordingRemote(operationId) {
-          const operation = await domains.ghost.operations.findForContext(domains.ghost.siteId, operationId);
+          const operation = domains.ghost.service.get(operationId);
           if (!operation?.target.previewId) fail('GHOST_RECORDING_POST_MISSING');
           domains.ghost.publishRecordingRemote(operation.target.previewId);
         },

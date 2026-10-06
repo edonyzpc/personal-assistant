@@ -50,16 +50,15 @@ function fixture() {
 }
 
 describe("Ghost resource preparation", () => {
-    it("hashes the actual bytes and reuses verified same-site bytes across paths, never stale metadata", async () => {
+    it("hashes the actual bytes on every preparation without reading a historical baseline", async () => {
         const f = fixture();
         const first = await prepareGhostResource(local(), f.options);
         expect(first.metadata).toMatchObject({ byteHash: digest(image), byteLength: image.byteLength, mimeType: "image/png" });
         expect(first.filename).toBe(`${digest(image)}.png`);
         expect(first.metadata.url).toBeUndefined();
-        const url = "https://cdn.example/uploaded.png";
-        f.options.baseline = { siteId: "site-a", site: "https://blog.example/blog", resources: [{ ...first.metadata, url }] };
         const moved = await prepareGhostResource(local("elsewhere/copy.png"), f.options);
-        expect(moved.metadata).toMatchObject({ resolvedPath: "elsewhere/copy.png", byteHash: digest(image), url });
+        expect(moved.metadata).toMatchObject({ resolvedPath: "elsewhere/copy.png", byteHash: digest(image) });
+        expect(moved.metadata.url).toBeUndefined();
         const changed = image.slice();
         changed[changed.length - 1] = 9;
         f.readBinary.mockResolvedValue(changed.buffer);
@@ -170,14 +169,6 @@ describe("Ghost resource preparation", () => {
         ]) {
             const result = await prepareGhostResource(remote(other), f.options);
             expect(result.metadata.url).toBeUndefined();
-        }
-        for (const baseline of [
-            { siteId: "site-b", site: f.options.siteUrl },
-            { siteId: "site-a", site: "https://other.example/blog/" },
-            { siteId: "site-a", site: "https://blog.example/another/" },
-        ]) {
-            f.options.baseline = { ...baseline, resources: [direct.metadata] };
-            expect((await prepareGhostResource(local(), f.options)).metadata.url).toBeUndefined();
         }
         f.downloadImage.mockResolvedValue({ bytes: image, mimeType: "text/html" });
         await expect(prepareGhostResource(remote(url), f.options)).rejects.toMatchObject({ code: "unsupported-image" });

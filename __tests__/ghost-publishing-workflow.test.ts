@@ -1,170 +1,152 @@
-import fs from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
-import { buildRecipeInjection } from "../src/ghost-publishing/recipe";
-import { prepareGhostExport } from "../src/ghost-publishing/exporter";
-import {
-    decodeCompletedRecord, encodeCompletedRecord, ghostOperationKey, ghostRecordPath,
-    GhostStateError, parseLocalOperation, sealCompletedRecord, sealLocalOperation,
-    ghostStateHash,
-    type GhostSnapshot,
-} from "../src/ghost-publishing/state-schema";
-import { ghostDatabaseName, GhostCompletedRecordStore, GhostOperationStore } from "../src/ghost-publishing/state-store";
+import { parsePreviewPointer, type GhostPreviewPointer } from "../src/ghost-publishing/state-schema";
+import { GhostPreviewStore, ghostDatabaseName } from "../src/ghost-publishing/state-store";
 import { FakeGovernanceIndexedDbFactory } from "./helpers/fake-governance-indexeddb";
 
-const now = "2026-09-29T09:00:00.000Z";
-function snapshot(): GhostSnapshot {
-    return {
-        content: {
-            title: "Synthetic publishing note",
-            lexical: JSON.stringify({ root: { type: "root", version: 1, children: [{ type: "paragraph", version: 1, children: [{ type: "extended-text", version: 1, text: "Original content" }] }] } }),
-            tags: [{ name: "Example" }], authors: [{ id: "synthetic-author" }], visibility: "public",
-            feature_image: null, feature_image_alt: null, feature_image_caption: null,
-            custom_excerpt: null, custom_template: null, codeinjection_head: null, codeinjection_foot: null, published_at: null,
-        },
-        managedFields: ["title", "lexical"],
-        source: { targetPath: "A.md", dependencies: [{ path: "A.md", kind: "main", subpath: "", contentHash: "ab".repeat(32) }] },
-        blocks: [{ id: "block-1", nodeKind: "paragraph", sourcePath: "A.md", sourceDependencyIndex: 0, sourceStartLine: 0, sourceEndLine: 1, sourceHash: "abcdef12", semanticSignature: "12345678", nodeIndex: 0 }],
-        resources: [], profile: { siteId: "test-site" },
-        recipe: buildRecipeInjection({ codeLanguages: [], hasMermaid: false, hasInlineMath: false, hasDisplayMath: false }, { siteId: "test-site" }).selection,
-    };
-}
-function completed() {
-    return sealCompletedRecord({
-        schemaVersion: 1, revision: 1,
-        binding: { siteId: "test-site", site: "http://127.0.0.1:2371/", noteUid: "note-1", postId: "post-1", postUrl: "http://127.0.0.1:2371/synthetic/" },
-        completed: { postId: "post-1", postUrl: "http://127.0.0.1:2371/synthetic/", status: "published", updatedAt: now, verifiedAt: now },
-        baseline: snapshot(),
-    });
-}
-function operation() {
-    return sealLocalOperation({
-        schemaVersion: 1, revision: 1, operationId: "operation-1", siteId: "test-site", site: "http://127.0.0.1:2371/", noteUid: "note-1",
-        kind: "create", state: "prepared", candidate: snapshot(), baselineRevision: null, target: {}, confirmation: null, updatedAt: now,
-    });
+const POST = "a".repeat(24);
+const PREVIEW = "b".repeat(24);
+const pointer: GhostPreviewPointer = { siteId: "test-site", postId: POST, previewId: PREVIEW };
+const stores: GhostPreviewStore[] = [];
+
+function openStore(factory: FakeGovernanceIndexedDbFactory, isDesktop = () => true): GhostPreviewStore {
+    const store = new GhostPreviewStore({ dbName: "ghost-preview-test", indexedDb: factory as unknown as IDBFactory, isDesktop });
+    stores.push(store);
+    return store;
 }
 
-const ownedDirectories: string[] = [];
-afterEach(async () => {
-    jest.restoreAllMocks();
-    await Promise.all(ownedDirectories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
-});
+afterEach(() => { stores.splice(0).forEach(store => store.close()); });
 
-describe("Ghost publishing durable state", () => {
-    it("accepts the real exporter manifest and block hashes without losing its content", async () => {
-        const file = { path: "A.md", extension: "md", stat: { mtime: 1, size: 12 } };
-        const exported = await prepareGhostExport({
-            targetPath: "A.md", siteProfile: { siteId: "test-site" },
-            host: { vault: { getAbstractFileByPath: () => file, read: async () => "Real content" }, parseYaml: () => ({}) },
-            guard: { isCurrent: () => true, isPathAllowed: () => true, isNoteDomainAllowed: () => true, captureSourceValidity: () => () => true },
-        });
-        const candidate = {
-            ...snapshot(), source: exported.sourceManifest, blocks: exported.blocks, recipe: exported.recipe.selection,
-            content: { ...snapshot().content, lexical: JSON.stringify(exported.lexical) },
-        };
-        const saved = sealLocalOperation({ ...operation(), candidate });
-        expect(parseLocalOperation(JSON.parse(JSON.stringify(saved))).candidate).toEqual(candidate);
-    });
-
-    it("round-trips complete nested data and rejects corruption, unknown schemas, or stored confirmation", () => {
-        const record = completed();
-        const text = encodeCompletedRecord(record);
-        expect(text).toContain("pa_system: ghost-publishing");
-        expect(decodeCompletedRecord(text, "test-site", "note-1")).toEqual(record);
-        expect(() => decodeCompletedRecord(text.replace("Original content", "Tampered content"), "test-site", "note-1")).toThrow(GhostStateError);
-        expect(() => decodeCompletedRecord(text, "other-site", "note-1")).toThrow(GhostStateError);
-        const local = operation();
-        expect(parseLocalOperation(JSON.parse(JSON.stringify(local)))).toEqual(local);
-        expect(() => parseLocalOperation({ ...local, schemaVersion: 2 })).toThrow(GhostStateError);
-        expect(() => parseLocalOperation({ ...local, confirmation: true })).toThrow(GhostStateError);
-        expect(() => sealLocalOperation({ ...local, state: "cleanup_pending" })).toThrow(GhostStateError);
-        expect(() => sealLocalOperation({ ...local, candidate: { ...snapshot(), blocks: [{ ...snapshot().blocks[0], sourceDependencyIndex: 5 }] } })).toThrow(GhostStateError);
-        expect(() => sealCompletedRecord({ ...record, baseline: { ...snapshot(), content: { ...snapshot().content, lexical: '{"root":{"type":"root","version":1,"children":[{"type":"paragraph"}]}}' } } })).toThrow(GhostStateError);
-    });
-
-    it("reads a beta.17 record without inserting an SEO field or changing its checksum", () => {
-        const old = completed();
-        const checksum = old.checksum;
-        expect(old.baseline.content).not.toHaveProperty("meta_description");
-        const parsed = JSON.parse(JSON.stringify(old)) as typeof old;
-        expect(parsed.baseline.content).not.toHaveProperty("meta_description");
-        expect(parsed.checksum).toBe(checksum);
-        const { checksum: _removed, ...body } = parsed;
-        expect(ghostStateHash(body)).toBe(checksum);
-        expect(decodeCompletedRecord(encodeCompletedRecord(old), "test-site", "note-1")).toEqual(old);
-    });
-
-    it("reads committed IndexedDB data from a new instance, rolls back failed commits, and rejects stale/overlapping operations", async () => {
+describe("Ghost preview resource pointers", () => {
+    it("persists only the pointer and reopens, replaces and removes its exact site/post key", async () => {
         const factory = new FakeGovernanceIndexedDbFactory();
-        const options = { dbName: "ghost-state-test", indexedDb: factory as unknown as IDBFactory, isDesktop: () => true };
-        const first = new GhostOperationStore(options);
-        const local = operation();
-        await first.save(local, 0);
-        local.candidate.content.title = "Mutated caller copy";
+        const first = openStore(factory);
+        expect(await first.read(pointer.siteId, POST)).toBeUndefined();
+        const input = { ...pointer };
+        await first.write(input);
+        input.previewId = "c".repeat(24);
         first.close();
-        const reopened = new GhostOperationStore(options);
-        const [saved] = await reopened.list("test-site", "note-1");
-        expect(saved.candidate.content.title).toBe("Synthetic publishing note");
-        expect(saved.confirmation).toBeNull();
-        const pending = sealLocalOperation({ ...saved, revision: 2, state: "pending", pending: { kind: "create_draft", marker: "#pa-ghost-op-operation-1", payloadHash: "ab".repeat(32) } });
-        factory.backend.failNextWriteCommit = true;
-        await expect(reopened.save(pending, 1)).rejects.toMatchObject({ code: "storage-unavailable" });
-        expect((await reopened.list("test-site", "note-1"))[0]).toEqual(saved);
-        await reopened.save(pending, 1);
-        await expect(reopened.save(pending, 1)).rejects.toMatchObject({ code: "operation-conflict" });
-        await expect(reopened.save(sealLocalOperation({ ...operation(), operationId: "operation-2" }), 0)).rejects.toMatchObject({ code: "operation-conflict" });
-        const terminal = sealLocalOperation({ ...pending, revision: 3, state: "terminal", pending: undefined });
-        await reopened.save(terminal, 2);
-        const next = sealLocalOperation({ ...operation(), operationId: "operation-2" });
-        await reopened.save(next, 0);
-        expect(await reopened.list("test-site", "note-1")).toEqual([next]);
-        factory.backend.getStore("operations").set(ghostOperationKey(next), { ...next, confirmation: true });
-        await expect(reopened.list("test-site", "note-1")).rejects.toMatchObject({ code: "invalid-state" });
-        reopened.close();
+
+        const reopened = openStore(factory);
+        expect(await reopened.read(pointer.siteId, POST)).toEqual(pointer);
+        const stored = factory.backend.getStore("previews").get(`${pointer.siteId}/${POST}`);
+        expect(stored).toEqual(pointer);
+        expect(Object.keys(stored as object).sort()).toEqual(["postId", "previewId", "siteId"]);
+        expect([...factory.backend.stores.keys()]).toEqual(["previews"]);
+        expect(await reopened.read("other-site", POST)).toBeUndefined();
+
+        const other = { ...pointer, postId: "d".repeat(24), previewId: "e".repeat(24) };
+        const updated = { ...pointer, previewId: "c".repeat(24) };
+        await reopened.write(other);
+        await reopened.write(updated);
+        expect(await reopened.read(pointer.siteId, POST)).toEqual(updated);
+        await reopened.remove(pointer.siteId, POST);
+        expect(await reopened.read(pointer.siteId, POST)).toBeUndefined();
+        expect(await reopened.read(other.siteId, other.postId)).toEqual(other);
+        await reopened.remove(pointer.siteId, POST);
     });
 
-    it("keeps device scopes distinct and refuses storage access on mobile", async () => {
-        const base = { pluginId: "personal-assistant", vaultId: "test", configDir: ".obsidian", localPath: "/desktop-a/test" };
-        expect(ghostDatabaseName(base)).not.toBe(ghostDatabaseName({ ...base, localPath: "/desktop-b/test" }));
+    it("rejects invalid identities and any operation, candidate, or confirmation fields before storage", async () => {
         const factory = new FakeGovernanceIndexedDbFactory();
-        const store = new GhostOperationStore({ dbName: "mobile", indexedDb: factory as unknown as IDBFactory, isDesktop: () => false });
-        await expect(store.list("test-site", "note-1")).rejects.toMatchObject({ code: "desktop-required" });
-        expect(factory.openCalls).toHaveLength(0);
-        await expect(new GhostCompletedRecordStore({ vaultPath: "/unavailable", isDesktop: () => false }).read("test-site", "note-1")).rejects.toMatchObject({ code: "desktop-required" });
-    });
-
-    it("atomically creates and replaces one complete vault record and retains old data on failure", async () => {
-        const directory = await fs.mkdtemp(join(tmpdir(), "pa-b153-record-test-"));
-        ownedDirectories.push(directory);
-        const store = new GhostCompletedRecordStore({ vaultPath: directory, isDesktop: () => true });
-        const record = completed();
-        await store.write(record, null);
-        const path = join(directory, ghostRecordPath("test-site", "note-1"));
-        const originalText = await fs.readFile(path, "utf8");
-        const reopened = new GhostCompletedRecordStore({ vaultPath: directory, isDesktop: () => true });
-        expect(await reopened.read("test-site", "note-1")).toEqual(record);
-        const next = sealCompletedRecord({ ...record, revision: 2, baseline: { ...snapshot(), content: { ...snapshot().content, title: "Updated" } }, lastUndo: snapshot() });
-        await expect(reopened.write(next, "wrong-checksum")).rejects.toMatchObject({ code: "record-conflict" });
-        expect(await fs.readFile(path, "utf8")).toBe(originalText);
-        jest.spyOn(fs, "rename").mockRejectedValueOnce(Object.assign(new Error("synthetic rename failure"), { code: "EPERM" }));
-        await expect(reopened.write(next, record.checksum)).rejects.toMatchObject({ code: "storage-unavailable" });
-        expect(await fs.readFile(path, "utf8")).toBe(originalText);
-        await reopened.write(next, record.checksum);
-        expect(await reopened.read("test-site", "note-1")).toEqual(next);
-        expect((await fs.readdir(join(directory, "PA System/Ghost Publishing/test-site"))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
-    });
-
-    it("does not overwrite an occupied user file or a damaged system record", async () => {
-        const directory = await fs.mkdtemp(join(tmpdir(), "pa-b153-record-test-"));
-        ownedDirectories.push(directory);
-        const target = join(directory, ghostRecordPath("test-site", "note-1"));
-        await fs.mkdir(join(directory, "PA System/Ghost Publishing/test-site"), { recursive: true });
-        const store = new GhostCompletedRecordStore({ vaultPath: directory, isDesktop: () => true });
-        for (const existing of ["My own note", encodeCompletedRecord(completed()).replace('"schemaVersion": 1', '"schemaVersion": 7')]) {
-            await fs.writeFile(target, existing);
-            await expect(store.write(completed(), null)).rejects.toBeInstanceOf(GhostStateError);
-            expect(await fs.readFile(target, "utf8")).toBe(existing);
+        const store = openStore(factory);
+        for (const input of [
+            { ...pointer, siteId: "../site" }, { ...pointer, postId: "article-slug" },
+            { ...pointer, previewId: "invalid" }, { ...pointer, previewId: POST },
+            { ...pointer, candidate: { content: "Article text" } },
+            { ...pointer, operationId: "old-operation" }, { ...pointer, confirmation: true },
+        ]) {
+            expect(() => parsePreviewPointer(input)).toThrow();
+            await expect(store.write(input)).rejects.toMatchObject({ code: "invalid-state" });
         }
+        expect(factory.openCalls).toHaveLength(0);
+        expect(factory.backend.stores.size).toBe(0);
+    });
+
+    it("reports corrupt or mismatched stored pointers without repairing or deleting them", async () => {
+        const factory = new FakeGovernanceIndexedDbFactory();
+        const store = openStore(factory);
+        await store.write(pointer);
+        const key = `${pointer.siteId}/${POST}`;
+        for (const corrupt of [
+            { ...pointer, previewId: POST }, { ...pointer, siteId: "other-site" },
+            { ...pointer, postId: "c".repeat(24) }, { ...pointer, candidate: "Old content" },
+        ]) {
+            factory.backend.getStore("previews").set(key, corrupt);
+            await expect(store.read(pointer.siteId, POST)).rejects.toMatchObject({ code: "invalid-state" });
+            expect(factory.backend.getStore("previews").get(key)).toEqual(corrupt);
+        }
+    });
+
+    it("waits for the IndexedDB commit and retains the prior pointer when writes or deletion abort", async () => {
+        const factory = new FakeGovernanceIndexedDbFactory();
+        const first = openStore(factory);
+        await first.write(pointer);
+        factory.backend.failNextWriteCommit = true;
+        await expect(first.write({ ...pointer, previewId: "c".repeat(24) })).rejects.toMatchObject({ code: "storage-unavailable" });
+        first.close();
+
+        const reopened = openStore(factory);
+        expect(await reopened.read(pointer.siteId, POST)).toEqual(pointer);
+        factory.backend.failNextWriteCommit = true;
+        await expect(reopened.remove(pointer.siteId, POST)).rejects.toMatchObject({ code: "storage-unavailable" });
+        expect(await reopened.read(pointer.siteId, POST)).toEqual(pointer);
+        await reopened.remove(pointer.siteId, POST);
+        expect(await reopened.read(pointer.siteId, POST)).toBeUndefined();
+    });
+
+    it("uses a new device/config namespace without opening or altering the old operation database", async () => {
+        const base = { pluginId: "personal-assistant", vaultId: "test", configDir: ".obsidian", localPath: "/desktop-a/test" };
+        const currentName = ghostDatabaseName(base);
+        const oldName = currentName.replace("ghost-previews-v1-", "ghost-publishing-v1-");
+        expect(currentName).not.toBe(oldName);
+        for (const override of [{ pluginId: "other-plugin" }, { vaultId: "other-vault" },
+            { configDir: ".obsidian-alt" }, { localPath: "/desktop-b/test" }]) {
+            expect(ghostDatabaseName({ ...base, ...override })).not.toBe(currentName);
+        }
+        expect(() => ghostDatabaseName({ ...base, localPath: "" })).toThrow();
+
+        const oldDatabase = new FakeGovernanceIndexedDbFactory();
+        const oldRecord = { operationId: "legacy-op", candidate: { content: "Historical article" }, confirmation: null };
+        oldDatabase.backend.upgraded = true;
+        oldDatabase.backend.version = 1;
+        oldDatabase.backend.getStore("operations").set("legacy-key", oldRecord);
+        const currentDatabase = new FakeGovernanceIndexedDbFactory();
+        // Route the existing transactional fake by database name, as a real factory does.
+        const open = jest.fn((name: string, version?: number) =>
+            (name === oldName ? oldDatabase : currentDatabase).open(name, version));
+        const store = new GhostPreviewStore({ dbName: currentName, indexedDb: { open } as unknown as IDBFactory, isDesktop: () => true });
+        stores.push(store);
+        await store.write(pointer);
+        await store.remove(pointer.siteId, POST);
+        expect(open.mock.calls).toEqual([[currentName, 1]]);
+        expect(oldDatabase.openCalls).toHaveLength(0);
+        expect([...oldDatabase.backend.stores.keys()]).toEqual(["operations"]);
+        expect(oldDatabase.backend.getStore("operations").get("legacy-key")).toEqual(oldRecord);
+    });
+
+    it("refuses mobile and closed-store access before opening IndexedDB", async () => {
+        const factory = new FakeGovernanceIndexedDbFactory();
+        const mobile = openStore(factory, () => false);
+        await expect(mobile.read(pointer.siteId, POST)).rejects.toMatchObject({ code: "desktop-required" });
+        await expect(mobile.write(pointer)).rejects.toMatchObject({ code: "desktop-required" });
+        await expect(mobile.remove(pointer.siteId, POST)).rejects.toMatchObject({ code: "desktop-required" });
+        const closed = openStore(factory);
+        closed.close();
+        await expect(closed.read(pointer.siteId, POST)).rejects.toMatchObject({ code: "storage-unavailable" });
+        expect(factory.openCalls).toHaveLength(0);
+    });
+
+    it("reports blocked storage and an occupied incompatible database without replacing it", async () => {
+        const blockedFactory = new FakeGovernanceIndexedDbFactory();
+        blockedFactory.blockedOpenCount = 1;
+        await expect(openStore(blockedFactory).read(pointer.siteId, POST)).rejects.toMatchObject({ code: "storage-unavailable" });
+
+        const incompatible = new FakeGovernanceIndexedDbFactory();
+        incompatible.backend.upgraded = true;
+        incompatible.backend.version = 1;
+        incompatible.backend.getStore("unrelated").set("owner", "Existing data");
+        await expect(openStore(incompatible).write(pointer)).rejects.toMatchObject({ code: "storage-unavailable" });
+        expect([...incompatible.backend.stores.keys()]).toEqual(["unrelated"]);
+        expect(incompatible.backend.getStore("unrelated").get("owner")).toBe("Existing data");
+        expect(incompatible.connections[0].closeCalls).toBe(1);
     });
 });

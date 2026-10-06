@@ -2,7 +2,7 @@
 
 Decision ID: DEC-051
 Status: Accepted
-Updated: 2026-10-05
+Updated: 2026-10-06
 Authority: Owner 在本次 PA 合同审计中逐项确认第 1—11 项及第 1 项必要确认条件，并于 2026-10-05 要求制定优化方案和 SDD 开发任务。产品选择已获确认；本次授权终点是方案与任务设计，不是运行代码实施或 Git/release。
 Work item: B-161
 
@@ -48,6 +48,10 @@ Work item: B-161
 完整恢复快照未准备成功时不能把不可撤销删除当作成功执行。
 
 ## Supersession And Preserved Boundaries
+
+2026-10-06，[DEC-053](./dec-053-lean-ghost-publishing.md) 局部接续第 6 项的 Ghost 专用恢复
+能力并精简准备/预览；保留新文在 Ghost Publish、已发布更新经 PA 人工确认的上线边界。
+其他领域的恢复和效果事实规则不随 Ghost 专项精简而取消。
 
 本决定局部接续 DEC-023 的多来源确认、DEC-020 的候选/语言约束、DEC-024 的旧管线
 适用性说明、DEC-044 的控件唯一选源、DEC-046/DEC-050 的必经整批确认，以及当前

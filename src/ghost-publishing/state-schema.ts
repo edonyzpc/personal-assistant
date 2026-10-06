@@ -1,6 +1,4 @@
 import { z } from "zod";
-import { stableStringify } from "../ai-services/agent-utils";
-import { stableHash } from "../pa/helpers";
 
 export const GHOST_RECORD_LIMIT = 16 * 1024 * 1024;
 const identity = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/);
@@ -15,7 +13,6 @@ const webUrl = z.string().url().refine((value) => {
 });
 const nullableText = z.string().nullable();
 const requestedSlug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(80);
-const verifiedRemoteSlug = z.string().min(1);
 
 function validLexical(value: string): boolean {
     try {
@@ -50,7 +47,7 @@ export const ghostContentSchema = z.object({
     published_at: date.nullable(),
 }).strict();
 
-export const managedGhostFields = ["title", "lexical", "tags", "feature_image", "custom_excerpt", "meta_description", "codeinjection_head", "codeinjection_foot", "visibility"] as const;
+export const managedGhostFields = ["title", "lexical", "tags", "feature_image", "custom_excerpt", "meta_description", "codeinjection_head", "codeinjection_foot"] as const;
 const sourceSchema = z.object({
     targetPath: notePath,
     dependencies: z.array(z.object({
@@ -105,151 +102,50 @@ export const ghostSnapshotSchema = z.object({
     block.sourceDependencyIndex < value.source.dependencies.length
     && value.source.dependencies[block.sourceDependencyIndex].path === block.sourcePath));
 
-export const ghostBindingSchema = z.object({
-    noteUid: identity, siteId: identity, site: webUrl, postId: identity, postUrl: webUrl,
-}).strict();
-const verifiedSchema = z.object({ postId: identity, postUrl: webUrl, updatedAt: date, status: z.enum(["draft", "published"]) }).strict();
-const recordBodySchema = z.object({
-    schemaVersion: z.literal(1), revision: z.number().int().positive(), binding: ghostBindingSchema,
-    completed: verifiedSchema.extend({ verifiedAt: date }).strict(),
-    baseline: ghostSnapshotSchema, lastUndo: ghostSnapshotSchema.optional(),
-}).strict();
-const recordSchema = recordBodySchema.extend({ checksum: digest }).strict();
-
-const operationBodySchema = z.object({
-    schemaVersion: z.literal(1), operationId: identity, revision: z.number().int().positive(),
-    siteId: identity, site: webUrl, noteUid: identity, kind: z.enum(["create", "update", "restore"]),
-    state: z.enum(["prepared", "ready", "pending", "outcome_unknown", "succeeded_remote_pending_record", "cleanup_pending", "terminal"]),
-    markerVersion: z.literal(2).optional(),
-    slugCandidate: requestedSlug.optional(),
-    resolvedSlug: verifiedRemoteSlug.optional(),
-    candidate: ghostSnapshotSchema, baselineRevision: z.number().int().positive().nullable(),
-    /** Current source is checked separately when the candidate restores historical material. */
-    currentSource: sourceSchema.optional(),
-    currentIntentHash: sha256Digest.optional(),
-    currentNonSlugIntentHash: sha256Digest.optional(),
-    baselineChecksum: digest.optional(),
-    visibilityChange: z.object({ from: z.enum(["public", "members", "paid"]), to: z.enum(["public", "members", "paid"]) }).strict().optional(),
-    target: z.object({
-        postId: identity.optional(), postUrl: webUrl.optional(), postVersion: date.optional(),
-        previewId: identity.optional(), previewUuid: identity.optional(), previewVersion: date.optional(), previewHash: sha256Digest.optional(),
-        postStatus: z.enum(["draft", "published"]).optional(),
-    }).strict(),
-    pending: z.object({
-        kind: z.enum(["resource_upload", "create_draft", "save_preview", "final_put", "change_draft_slug", "cleanup"]),
-        marker: z.string(), targetId: identity.optional(), payloadHash: sha256Digest,
-        slug: requestedSlug.optional(),
-        beforeVersion: date.optional(),
-        beforeUrl: webUrl.optional(),
-        beforePublishedAt: date.nullable().optional(),
-        nonSlugHash: sha256Digest.optional(),
-        resource: ghostResourceSchema.optional(),
-    }).strict().optional(),
-    preUpdate: ghostSnapshotSchema.optional(), verified: verifiedSchema.optional(),
-    completedRecord: recordSchema.optional(),
-    cleanup: z.object({ postId: identity, marker: z.string(), updatedAt: date, payloadHash: sha256Digest }).strict().optional(),
-    confirmation: z.null(), updatedAt: date,
-}).strict();
-const operationSchema = operationBodySchema.extend({ checksum: digest }).strict();
-
+/** A frozen candidate and real effects belonging only to the current desktop session. */
 export type GhostStoredContent = z.infer<typeof ghostContentSchema>;
 export type GhostSnapshot = z.infer<typeof ghostSnapshotSchema>;
 export type GhostStoredResource = z.infer<typeof ghostResourceSchema>;
-export type GhostBinding = z.infer<typeof ghostBindingSchema>;
-export type GhostCompletedRecord = z.infer<typeof recordSchema>;
-export type GhostLocalOperation = z.infer<typeof operationSchema>;
+export type GhostOperationState = "preparing" | "prepared" | "draft_saved" | "updated" | "failed" | "outcome_unknown";
+
+export interface GhostLocalOperation {
+    operationId: string;
+    revision: number;
+    siteId: string;
+    site: string;
+    noteKey: string;
+    /** GHOST_ID observed when this action began, including a failed association write. */
+    sourcePostId?: string;
+    kind: "create" | "update";
+    state: GhostOperationState;
+    executionState: "not_started" | "succeeded" | "failed" | "acceptance_unknown";
+    candidate?: GhostSnapshot;
+    target: {
+        postId?: string; postUrl?: string; postVersion?: string; postStatus?: "draft" | "published";
+        previewId?: string; previewUuid?: string; previewVersion?: string; previewHash?: string;
+    };
+    verified?: { postId: string; postUrl: string; updatedAt: string; status: "draft" | "published" };
+    warnings?: Array<"binding-failed" | "cleanup-failed" | "preview-pointer-failed">;
+    error?: string;
+    updatedAt: string;
+}
+
+export const ghostPreviewPointerSchema = z.object({
+    siteId: identity,
+    postId: z.string().regex(/^[a-f\d]{24}$/i),
+    previewId: z.string().regex(/^[a-f\d]{24}$/i),
+}).strict();
+export type GhostPreviewPointer = z.infer<typeof ghostPreviewPointerSchema>;
 
 export class GhostStateError extends Error {
-    constructor(readonly code: "invalid-state" | "storage-unavailable" | "record-conflict" | "operation-conflict" | "desktop-required") {
+    constructor(readonly code: "invalid-state" | "storage-unavailable" | "desktop-required") {
         super(`Ghost publishing: ${code}.`);
         this.name = "GhostStateError";
     }
 }
 
-export function ghostStateHash(value: unknown): string {
-    return stableHash(stableStringify(JSON.parse(JSON.stringify(value))));
-}
-
-function hasChecksum(value: { checksum: string }): boolean {
-    const { checksum, ...body } = value;
-    return checksum === ghostStateHash(body);
-}
-
-function bounded(value: unknown): void {
-    if (new TextEncoder().encode(JSON.stringify(value)).byteLength > GHOST_RECORD_LIMIT) throw new GhostStateError("invalid-state");
-}
-
-export function parseCompletedRecord(value: unknown): GhostCompletedRecord {
-    bounded(value);
-    const parsed = recordSchema.safeParse(value);
-    if (!parsed.success) throw new GhostStateError("invalid-state");
-    const record = parsed.data;
-    if (!hasChecksum(record) || record.binding.postId !== record.completed.postId
-        || record.binding.postUrl !== record.completed.postUrl || record.binding.siteId !== record.baseline.profile.siteId
-        || (record.lastUndo && record.lastUndo.profile.siteId !== record.binding.siteId)) throw new GhostStateError("invalid-state");
-    return record;
-}
-
-export function sealCompletedRecord(value: z.infer<typeof recordBodySchema> & { checksum?: string }): GhostCompletedRecord {
-    const body = { ...value };
-    delete body.checksum;
-    return parseCompletedRecord({ ...body, checksum: ghostStateHash(body) });
-}
-
-export function parseLocalOperation(value: unknown): GhostLocalOperation {
-    bounded(value);
-    const parsed = operationSchema.safeParse(value);
-    if (!parsed.success) throw new GhostStateError("invalid-state");
-    const operation = parsed.data;
-    if (!hasChecksum(operation) || operation.siteId !== operation.candidate.profile.siteId
-        || (operation.preUpdate && operation.siteId !== operation.preUpdate.profile.siteId)
-        || (["pending", "outcome_unknown"].includes(operation.state) && !operation.pending)
-        || (operation.pending?.kind === "change_draft_slug" && (!operation.pending.slug || !operation.pending.targetId
-            || !operation.pending.beforeVersion || !operation.pending.beforeUrl
-            || operation.pending.beforePublishedAt === undefined || !operation.pending.nonSlugHash))
-        || (operation.state === "cleanup_pending" && (!operation.verified || !operation.completedRecord || !operation.cleanup))
-        || (operation.state === "succeeded_remote_pending_record" && (!operation.verified || !operation.completedRecord))) {
-        throw new GhostStateError("invalid-state");
-    }
-    if (operation.completedRecord) {
-        const record = parseCompletedRecord(operation.completedRecord);
-        if (record.binding.noteUid !== operation.noteUid || record.binding.siteId !== operation.siteId
-            || record.binding.site !== operation.site) throw new GhostStateError("invalid-state");
-    }
-    return operation;
-}
-
-export function isGhostPublicationActive(operation: GhostLocalOperation): boolean {
-    return operation.state !== "terminal" && operation.state !== "cleanup_pending";
-}
-
-export function sealLocalOperation(value: z.infer<typeof operationBodySchema> & { checksum?: string }): GhostLocalOperation {
-    const body = { ...value };
-    delete body.checksum;
-    return parseLocalOperation({ ...body, checksum: ghostStateHash(body) });
-}
-
-export function ghostOperationKey(value: Pick<GhostLocalOperation, "siteId" | "noteUid" | "operationId">): string {
-    return `${value.siteId}/${value.noteUid}/${value.operationId}`;
-}
-
-export function ghostRecordPath(siteId: string, noteUid: string): string {
-    if (!identity.safeParse(siteId).success || !identity.safeParse(noteUid).success) throw new GhostStateError("invalid-state");
-    return `PA System/Ghost Publishing/${siteId}/${noteUid}.md`;
-}
-
-export function encodeCompletedRecord(input: GhostCompletedRecord): string {
-    const record = parseCompletedRecord(input);
-    return `---\npa_system: ghost-publishing\nschemaVersion: 1\nsite: ${record.binding.siteId}\nnote_uid: ${record.binding.noteUid}\n---\n\n\`\`\`json\n${JSON.stringify(record, null, 2)}\n\`\`\`\n`;
-}
-
-export function decodeCompletedRecord(text: string, siteId: string, noteUid: string): GhostCompletedRecord {
-    if (new TextEncoder().encode(text).byteLength > GHOST_RECORD_LIMIT) throw new GhostStateError("invalid-state");
-    const prefix = `---\npa_system: ghost-publishing\nschemaVersion: 1\nsite: ${siteId}\nnote_uid: ${noteUid}\n---\n\n\`\`\`json\n`;
-    if (!text.startsWith(prefix) || !text.endsWith("\n```\n")) throw new GhostStateError("invalid-state");
-    try {
-        const record = parseCompletedRecord(JSON.parse(text.slice(prefix.length, -5)));
-        if (record.binding.siteId !== siteId || record.binding.noteUid !== noteUid) throw new GhostStateError("invalid-state");
-        return record;
-    } catch { throw new GhostStateError("invalid-state"); }
+export function parsePreviewPointer(value: unknown): GhostPreviewPointer {
+    const parsed = ghostPreviewPointerSchema.safeParse(value);
+    if (!parsed.success || parsed.data.postId === parsed.data.previewId) throw new GhostStateError("invalid-state");
+    return parsed.data;
 }

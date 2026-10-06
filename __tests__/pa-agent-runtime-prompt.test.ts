@@ -272,7 +272,7 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
             });
         }) as typeof fetch;
         const submit: GhostHostBinding["submit"] = jest.fn(async () => ({
-            status: "prepared" as const, operationId: "ghost-operation",
+            status: "prepared" as const, operationId: "ghost-operation", executionState: "succeeded" as const,
         }));
         try {
             await new ChatService(host).streamLLM(
@@ -349,7 +349,7 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
                     recovery: { code: "ghost_target_missing", allowedActions: ["correct_input"] },
                 });
             }
-            return { status: "prepared", operationId: "ghost-r2-operation" };
+            return { status: "prepared", operationId: "ghost-r2-operation", executionState: "succeeded" };
         });
         try {
             await runtime.streamTurn({
@@ -495,9 +495,10 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
     });
 
     it.each([
-        { status: "needs_attention", operationId: "ghost-owned-attention" },
-        { status: "needs_attention" },
-        { status: "outcome_unknown", operationId: "ghost-unknown-operation" },
+        { status: "needs_attention", operationId: "ghost-owned-attention", executionState: "failed" },
+        { status: "needs_attention", operationId: "ghost-saved-attention", executionState: "succeeded" },
+        { status: "needs_attention", executionState: "not_started" },
+        { status: "outcome_unknown", operationId: "ghost-unknown-operation", executionState: "acceptance_unknown" },
     ] as const)("projects the closed Ghost owner execution for %s/%j through Runtime", async receipt => {
         const submit = jest.fn<GhostHostBinding["submit"]>(async () => receipt);
         const trace = await runGhostRuntimeTrace(submit, [{ intent: "prepare", path: "notes/target.md" }]);
@@ -506,18 +507,18 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         const feedback = trace.providerTexts[1];
         expect(feedback).toContain(rawGhostUserText);
         expect(feedback).toContain(`"status": "${receipt.status}"`);
-        expect(feedback).toContain('"executionState": "acceptance_unknown"');
+        expect(feedback).toContain(`"executionState": "${receipt.executionState}"`);
         expect(feedback).toContain(`"code": "${receipt.status === "outcome_unknown" ? "ghost_preparation_outcome_unknown" : "ghost_attention_required"}"`);
         expect(feedback).toContain('"allowedActions": [');
-        expect(feedback).toContain('"query_operation"');
+        if (receipt.executionState === "acceptance_unknown") expect(feedback).toContain('"query_operation"');
         expect(feedback).toContain('"needs_user"');
         const toolResult = trace.toolResults[0];
         expect(toolResult?.isError).toBe(false);
         expect(toolResult?.content.metadata).toMatchObject({
-            executionState: "acceptance_unknown",
+            executionState: receipt.executionState,
             recovery: {
                 code: receipt.status === "outcome_unknown" ? "ghost_preparation_outcome_unknown" : "ghost_attention_required",
-                allowedActions: ["query_operation", "needs_user"],
+                allowedActions: receipt.executionState === "acceptance_unknown" ? ["query_operation", "needs_user"] : ["needs_user"],
             },
         });
         expect(toolResult?.inputLineage).toMatchObject({
@@ -759,7 +760,7 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         const ghostBinding: GhostHostBinding = {
             conversationId: ghostInvocation.conversationId,
             stableMessageId: ghostInvocation.stableMessageId,
-            submit: jest.fn(async () => ({ status: "prepared" as const, operationId: "ghost-operation" })),
+            submit: jest.fn(async () => ({ status: "prepared" as const, operationId: "ghost-operation", executionState: "succeeded" as const })),
         };
         try {
             await runtime.streamTurn({
@@ -899,7 +900,7 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
             activation: { kind: "typed-token", token: "@blog2ghost" },
         };
         const ghostSubmit: GhostHostBinding["submit"] = jest.fn(async () => ({
-            status: "prepared" as const, operationId: "ghost-operation",
+            status: "prepared" as const, operationId: "ghost-operation", executionState: "succeeded" as const,
         }));
         try {
             const run = runtime.streamTurn({

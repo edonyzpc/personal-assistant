@@ -292,17 +292,3 @@ export function buildRecipeInjection(
         manualFootPreserved: foot.manualPreserved,
     };
 }
-
-/** Restore only PA's verified region; current manual injection remains byte-for-byte. */
-export function restoreRecipeInjection(current: string | null, historical: string | null, kind: "head" | "foot"): string {
-    const old = historical ?? "";
-    const historicalRegion = removeVerifiedManagedRegion(old, kind);
-    const managed = historicalRegion.hadRegion
-        ? old.slice(historicalRegion.before.length, old.length - historicalRegion.after.length)
-        : "";
-    if (!managed) {
-        const split = removeVerifiedManagedRegion(current ?? "", kind);
-        return split.before + split.after;
-    }
-    return mergeInjection(current ?? "", managed, kind).value;
-}

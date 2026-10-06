@@ -7,7 +7,7 @@ import type { GhostActionAuthority, GhostPublishingController } from "../src/gho
 
 type ControllerOptions = ConstructorParameters<typeof GhostPublishingController>[0];
 type PrepareOptions = Parameters<GhostPublishingController["prepare"]>[0];
-const mockPrepared = jest.fn<(options: PrepareOptions) => Promise<{ status: "prepared"; operationId: string }>>(async () => ({ status: "prepared", operationId: "synthetic-op" }));
+const mockPrepared = jest.fn<(options: PrepareOptions) => Promise<{ status: "prepared"; operationId: string; executionState: "succeeded" }>>(async () => ({ status: "prepared", operationId: "synthetic-op", executionState: "succeeded" }));
 const mockDisposed = jest.fn<() => void>();
 let mockControllerOptions: ControllerOptions;
 jest.mock("../src/ghost-publishing/controller", () => ({ GhostPublishingController: class {
@@ -140,18 +140,6 @@ describe("Ghost Obsidian Host bridge", () => {
         fixture.integration.dispose();
         expect(fixture.app.vault.offref).toHaveBeenCalledTimes(4);
         expect(mockDisposed).toHaveBeenCalledTimes(1);
-    });
-
-    it("fails closed when the desktop external opener capability is unavailable", async () => {
-        const fixture = setup();
-        jest.doMock("electron", () => ({ shell: {} }), { virtual: true });
-        try {
-            await expect(mockControllerOptions.openExternal("https://synthetic.example/"))
-                .rejects.toThrow("Ghost publishing external opener is unavailable.");
-        } finally {
-            jest.dontMock("electron");
-            fixture.integration.dispose();
-        }
     });
 
 });

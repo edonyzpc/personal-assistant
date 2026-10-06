@@ -170,33 +170,6 @@ describe("Ghost Admin desktop requests", () => {
         expect(calls).toBe(1);
     });
 
-    it("returns zero or ambiguous marker results and verifies exact internal ownership plus pagination", async () => {
-        const replies = [
-            { posts: [], meta: { pagination: { total: 0 } } },
-            { posts: [post(), post({ id: SECOND_ID })], meta: { pagination: { total: 5 } } },
-            { posts: [post()], meta: { pagination: { total: 2 } } },
-            { posts: [post({ tags: [{ name: `${MARKER}-wrong`, visibility: "internal" }] })], meta: { pagination: { total: 1 } } },
-            { posts: [post({ tags: [{ name: MARKER, visibility: "public" }] })], meta: { pagination: { total: 1 } } },
-        ];
-        const requests: Array<{ method?: string; query: URLSearchParams }> = [];
-        const site = await serve((request, response) => {
-            requests.push({ method: request.method, query: new URL(request.url ?? "", "http://local").searchParams });
-            json(response, 200, replies.shift());
-        });
-        const ghost = client(site);
-        expect(await ghost.findPostsByMarker(MARKER, gate())).toEqual([]);
-        expect((await ghost.findPostsByMarker(MARKER, gate())).map((found) => found.id)).toEqual([POST_ID, SECOND_ID]);
-        for (let i = 0; i < 3; i++) {
-            expect(await failure(ghost.findPostsByMarker(MARKER, gate()))).toMatchObject({ code: "invalid-response", outcome: "failed" });
-        }
-        expect(requests).toHaveLength(5);
-        for (const request of requests) {
-            expect(request.method).toBe("GET");
-            expect(request.query.get("limit")).toBe("2");
-            expect(request.query.get("filter")).toBe(`tags.name:'${MARKER}'+status:[draft,published,scheduled,sent]`);
-        }
-    });
-
     it("projects a read response to the necessary fields without retaining credentials or author email", async () => {
         const remote = { ...post(), secret: PRIVATE_PAYLOAD, newsletter: { id: "forbidden" }, authors: [{ id: KEY_ID, name: "Author", slug: "author", email: "private@example.com" }] };
         const site = await serve((_request, response) => json(response, 200, { posts: [remote] }));
@@ -204,57 +177,6 @@ describe("Ghost Admin desktop requests", () => {
         expect(result).toEqual(post());
         expect(JSON.stringify(result)).not.toContain("private@example.com");
         expect(JSON.stringify(result)).not.toContain(PRIVATE_PAYLOAD);
-    });
-
-    it("requires complete bounded binding results before callers may ignore old drafts", async () => {
-        const matches = Array.from({ length: 100 }, (_, index) => post({ id: (index + 1).toString(16).padStart(24, "0") }));
-        const replies = [
-            { posts: matches.slice(0, 3), meta: { pagination: { total: 3 } } },
-            { posts: matches, meta: { pagination: { total: 101 } } },
-        ];
-        const limits: string[] = [];
-        const site = await serve((request, response) => {
-            limits.push(new URL(request.url!, "http://local").searchParams.get("limit")!);
-            json(response, 200, replies.shift());
-        });
-        const ghost = client(site);
-        const complete = await ghost.findPostsByMarker(MARKER, gate(), true);
-        expect(complete).toHaveLength(3);
-        expect(complete[0].created_at).toBe(VERSION);
-        expect(await failure(ghost.findPostsByMarker(MARKER, gate(), true)))
-            .toMatchObject({ code: "invalid-response", outcome: "failed" });
-        expect(limits).toEqual(["100", "100"]);
-    });
-
-    it("sends readable versioned role markers through the real client filter", async () => {
-        const markers = [
-            `#PA Draft ${POST_ID}`,
-            `#PA Note ${SECOND_ID}`,
-            `#PA Preview ${SECOND_ID}`,
-            "#pa-ghost-op-valid_uid",
-            `#pa-ghost-preview-${"a".repeat(128)}`,
-        ];
-        for (const marker of markers) {
-            const requests: GhostTransportRequest[] = [];
-            const transport: GhostTransport = async request => {
-                requests.push(request);
-                return {
-                    status: 200,
-                    headers: {},
-                    body: Buffer.from(JSON.stringify({
-                        posts: [post({ tags: [{ name: marker, visibility: "internal" }] })],
-                        meta: { pagination: { total: 1 } },
-                    })),
-                };
-            };
-            const ghost = client("https://ghost.example", { transport });
-            const result = await ghost.findPostsByMarker(marker, gate(), true);
-            expect(result).toHaveLength(1);
-            expect(result[0].tags[0]?.name).toBe(marker);
-            expect(requests).toHaveLength(1);
-            const filter = new URL(requests[0].url).searchParams.get("filter");
-            expect(filter).toBe(`tags.name:'${marker}'+status:[draft,published,scheduled,sent]`);
-        }
     });
 
     it.each([
@@ -519,12 +441,24 @@ describe("final dispatch admission and lifecycle", () => {
         expect(calls).toBe(1);
     });
 
-    it("rejects arbitrary post paths, marker filters and invalid write values before reading secrets", async () => {
+    it.each([
+        { body: JSON.stringify({ errors: [{ type: "NotFoundError", message: "Post not found." }] }), code: "post-not-found" },
+        { body: JSON.stringify({ errors: [{ message: "Unknown endpoint" }] }), code: "http" },
+        { body: "<html>404</html>", code: "http" },
+        { body: "", code: "http" },
+    ])("only identifies a structured exact-post absence ($code)", async ({ body: responseBody, code }) => {
+        const transport = jest.fn<GhostTransport>(async () => ({ status: 404, headers: {}, body: Buffer.from(responseBody) }));
+        const error = await failure(client("https://ghost.example", { transport }).readPost(POST_ID, gate()));
+        expect(error).toMatchObject({ code, outcome: "failed", status: 404 });
+        expect(transport).toHaveBeenCalledTimes(1);
+        expect(transport.mock.calls[0][0].method).toBe("GET");
+    });
+
+    it("rejects arbitrary post paths and invalid write values before reading secrets", async () => {
         const secret = jest.fn<() => Promise<string>>().mockResolvedValue(KEY);
         const ghost = client("https://ghost.example", { getAdminKey: secret });
         for (const operation of [
             ghost.readPost("../settings", gate()),
-            ghost.findPostsByMarker(`${MARKER}',status:published`, gate()),
             ghost.updatePost(POST_ID, "invalid", { title: "a" }, gate()),
             ghost.updatePost(POST_ID, VERSION, { status: "scheduled" } as unknown as GhostPostWrite, gate()),
         ]) expect(await failure(operation)).toMatchObject({ code: "invalid-input", outcome: "not-sent" });

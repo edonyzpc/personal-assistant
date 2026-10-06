@@ -1159,29 +1159,31 @@ describe('B157 independent context harness contracts (offline)', () => {
         }, 20_000,
     );
 
-    it('uses actual Ghost preparation, remote draft material and refresh to establish completed state', async () => {
+    it('uses actual Ghost preparation, remote draft material and manual confirmation to update the original published article', async () => {
         const record: any = { id: 'ghost-offline', submissions: [], domainEvents: [] };
         const app = harness.createSyntheticApp();
         const ghost = harness.recordingGhostRuntime(app, record, { site: 'http://127.0.0.1:15700/' });
         const guard = { isCurrent: () => true, isPathAllowed: (path: string) => path.startsWith(fixture.syntheticPrefix),
             isNoteDomainAllowed: () => true, isWebAllowed: () => false, captureSourceValidity: () => () => true };
         try {
+            const originalId = await ghost.seedPublishedSource();
             const source = await ghost.contextFor('B157-context-eval/source.md', guard, () => true);
-            const prepared = await ghost.service.prepare(source.noteUid, source.postId, source.context, false);
+            const prepared = await ghost.service.prepare(source.noteKey, source.postId, source.context);
             expect(prepared.state).toBe('prepared');
             const material = await ghost.readPreviewMaterial(prepared.operationId);
             expect(material.status).toBe('draft');
             expect(material.lexical).toContain('合成银杏');
             expect(material.snapshot.recipe.contentHash).toBe(prepared.candidate.recipe.contentHash);
-            ghost.publishRecordingRemote(material.postId);
-            const refreshed = await ghost.service.refresh(source.noteUid, prepared.operationId, source.context);
-            expect(refreshed).toMatchObject({ state: 'terminal', verified: { status: 'published' } });
-            expect(record.domainEvents).toEqual(expect.arrayContaining([expect.objectContaining({ owner: 'ghost-record' })]));
+            expect(material.postId).not.toBe(originalId);
+            const fresh = await ghost.contextFor('B157-context-eval/source.md', guard, () => true);
+            const updated = await ghost.service.confirm(fresh.noteKey, prepared.operationId, fresh.context);
+            expect(updated).toMatchObject({ state: 'updated', verified: { postId: originalId, status: 'published' } });
+            expect(record.domainEvents).toEqual(expect.arrayContaining([expect.objectContaining({ owner: 'ghost-session', state: 'updated' })]));
             expect(record.submissions).toEqual(expect.arrayContaining([expect.objectContaining({ domain: 'ghost', method: 'create' })]));
         } finally { ghost.dispose(); }
     });
 
-    it('ends the real Ghost Agent run, rejects its old guard, then uses fresh Host authority for refresh before history reload', async () => {
+    it('ends the real Ghost Agent run, rejects its old guard, then manually confirms with fresh Host authority before history reload', async () => {
         const setup = offlineServicePlugin((_body, index) => index === 0 ? { role: 'assistant', content: '', tool_calls: [{
             index: 0, id: 'actual-ghost-prepare', type: 'function', function: { name: 'prepare_ghost_post',
                 arguments: '{"intent":"prepare","path":"B157-context-eval/source.md"}' },
@@ -1196,7 +1198,7 @@ describe('B157 independent context harness contracts (offline)', () => {
             expect(episode.domainEvents).toEqual(expect.arrayContaining([
                 expect.objectContaining({ owner: 'ghost-action-authority', oldRunGuardCurrent: false, oldContextRejected: true }),
                 expect.objectContaining({ owner: 'ghost-action-authority', freshAuthority: true, sourceScope: 'notes', sourceSelectionRevision: 0 }),
-                expect.objectContaining({ owner: 'ghost-record' }),
+                expect.objectContaining({ owner: 'ghost-session', state: 'updated', verified: true }),
             ]));
             expect(episode.submissions.filter((item: any) => item.domain === 'ghost' && item.method === 'create')).toHaveLength(1);
             expect(episode.submissions.some((item: any) => item.domain === 'ghost' && item.method === 'read')).toBe(true);
@@ -1213,7 +1215,7 @@ describe('B157 independent context harness contracts (offline)', () => {
         } finally { await handle.cleanup(); }
     }, 20_000);
 
-    it('projects a real Ghost lost-response operation as typed unknown across store and service reload without another submission', async () => {
+    it('retains a real Ghost lost-response receipt as Context-only history after Chat reload without another submission', async () => {
         const setup = offlineServicePlugin((_body, index) => index === 0 ? { role: 'assistant', content: '', tool_calls: [{
             index: 0, id: 'actual-ghost-unknown', type: 'function', function: { name: 'prepare_ghost_post',
                 arguments: '{"intent":"prepare","path":"B157-context-eval/source.md"}' },
@@ -1225,7 +1227,7 @@ describe('B157 independent context harness contracts (offline)', () => {
             expect({ status: report.status, error: report.error }).toEqual({ status: 'recorded_for_review', error: null });
             const episode = report.results[0];
             const operation = episode.domainEvents.find((event: any) => event.owner === 'ghost-binding');
-            expect(operation).toMatchObject({ state: 'outcome_unknown', evidence: 'actual-new-owned-persisted-operation' });
+            expect(operation).toMatchObject({ state: 'outcome_unknown', evidence: 'actual-owned-session-result' });
             const result = episode.turns[0].canonical.messages.find((message: any) => message.role === 'toolResult'
                 && message.toolName === 'prepare_ghost_post');
             expect(result).toMatchObject({ isError: false, content: { resultFact: {
@@ -1266,8 +1268,8 @@ describe('B157 independent context harness contracts (offline)', () => {
         } finally { await handle.cleanup(); }
     }, 20_000);
 
-    it('never recovers an existing, ambiguous or revoked Ghost operation as this request\'s unknown receipt', async () => {
-        for (const boundary of ['existing', 'ambiguous', 'revoked']) {
+    it('uses only this call\'s typed Ghost result and never scans previous operations to recover a failed admission', async () => {
+        for (const boundary of ['existing', 'thrown', 'revoked']) {
             const record: any = { id: `ghost-${boundary}`, submissions: [], domainEvents: [] };
             const app = harness.createSyntheticApp(), store = new MemoryChatHistoryStore();
             await store.initialize();
@@ -1281,25 +1283,43 @@ describe('B157 independent context harness contracts (offline)', () => {
             try {
                 if (boundary === 'existing') {
                     expect(await submit()).toMatchObject({ status: 'outcome_unknown' });
-                } else if (boundary === 'ambiguous') {
-                    const list = domains.ghost.operations.list.bind(domains.ghost.operations);
-                    domains.ghost.operations.list = async (...args: any[]) => {
-                        const result = await list(...args);
-                        return result.some((operation: any) => operation.state === 'outcome_unknown')
-                            ? [...result, { ...result[0], operationId: 'ambiguous-extra-operation' }] : result;
-                    };
+                } else if (boundary === 'thrown') {
+                    const prior = await domains.ghost.contextFor('B157-context-eval/source.md', guard, () => current);
+                    await domains.ghost.service.prepare(prior.noteKey, prior.postId, prior.context);
+                    domains.ghost.service.prepare = async () => { throw new Error('Current call failed before returning an operation.'); };
                 } else {
-                    const create = domains.ghost.client.createDraft.bind(domains.ghost.client);
-                    domains.ghost.client.createDraft = async (...args: any[]) => {
-                        try { return await create(...args); } finally { current = false; }
-                    };
+                    current = false;
                 }
-                await expect(submit()).rejects.toMatchObject(boundary === 'existing' ? { code: 'operation-active' }
-                    : boundary === 'ambiguous' ? { name: 'GhostClientError', outcome: 'unknown' } : { code: 'source-revoked' });
-                expect(record.submissions.filter((event: any) => event.method === 'create')).toHaveLength(1);
+                if (boundary === 'existing') await expect(submit()).rejects.toMatchObject({ code: 'result-unknown' });
+                else await expect(submit()).rejects.toThrow(boundary === 'thrown'
+                    ? 'Current call failed before returning an operation.' : 'SOURCE_REVOKED');
+                expect(record.submissions.filter((event: any) => event.method === 'create')).toHaveLength(boundary === 'revoked' ? 0 : 1);
                 expect(record.domainEvents.filter((event: any) => event.owner === 'ghost-binding')).toHaveLength(boundary === 'existing' ? 1 : 0);
             } finally { await domains.dispose(); await store.dispose(); }
         }
+    });
+
+    it('preserves this call\'s real unknown effect even if the source run ends after dispatch', async () => {
+        const record: any = { id: 'ghost-revoked-after-send', submissions: [], domainEvents: [] };
+        const app = harness.createSyntheticApp(), store = new MemoryChatHistoryStore();
+        await store.initialize();
+        const domains = harness.createControlledDomains(app, store, record, { unknown: true });
+        domains.attach({ conversation: { id: 'conversation-revoked-after-send' } });
+        let current = true;
+        const guard = { isCurrent: () => current, isPathAllowed: (path: string) => current && path.startsWith(fixture.syntheticPrefix),
+            isNoteDomainAllowed: () => current, isWebAllowed: () => false, captureSourceValidity: () => () => current };
+        const create = domains.ghost.client.createDraft.bind(domains.ghost.client);
+        domains.ghost.client.createDraft = async (...args: any[]) => {
+            try { return await create(...args); } finally { current = false; }
+        };
+        try {
+            const result = await domains.bindings('Prepare this fixture.', 0).ghostPublishing.submit(
+                { intent: 'prepare', path: 'B157-context-eval/source.md' }, guard, () => current);
+            expect(result).toMatchObject({ status: 'outcome_unknown', executionState: 'acceptance_unknown' });
+            expect(domains.ghost.service.get(result.operationId)).toMatchObject({ state: 'outcome_unknown' });
+            expect(record.submissions.filter((event: any) => event.method === 'create')).toHaveLength(1);
+            expect(record.domainEvents.filter((event: any) => event.owner === 'ghost-binding')).toHaveLength(1);
+        } finally { await domains.dispose(); await store.dispose(); }
     });
 
     it('keeps original Operations disabled while the authorized fixture stages and confirms a real operation', async () => {

@@ -98,10 +98,10 @@ export function buildGhostPublishingFields(
 export function ghostFieldsForCandidate(fields: GhostPublishingFields): {
     title: string;
     slug?: string;
-    tags?: string[] | null;
-    feature_image?: string | null;
-    custom_excerpt?: string | null;
-    meta_description?: string | null;
+    tags: string[];
+    feature_image: string | null;
+    custom_excerpt: string | null;
+    meta_description: string | null;
 } {
     if (fields.title.mode !== "manage" || typeof fields.title.value !== "string") {
         throw new GhostExportError("field-invalid", "A managed title is required.");
@@ -109,21 +109,9 @@ export function ghostFieldsForCandidate(fields: GhostPublishingFields): {
     return {
         title: fields.title.value,
         slug: fields.slug.mode === "manage" && typeof fields.slug.value === "string" ? fields.slug.value : undefined,
-        tags: fields.tags.mode === "unmanaged" ? undefined : fields.tags.mode === "clear" ? null : fields.tags.value,
-        feature_image: fields.featureImage.mode === "unmanaged"
-            ? undefined
-            : fields.featureImage.mode === "clear"
-                ? null
-                : fields.featureImage.value,
-        custom_excerpt: fields.customExcerpt.mode === "unmanaged"
-            ? undefined
-            : fields.customExcerpt.mode === "clear"
-                ? null
-                : fields.customExcerpt.value,
-        meta_description: fields.metaDescription.mode === "unmanaged"
-            ? undefined
-            : fields.metaDescription.mode === "clear"
-                ? null
-                : fields.metaDescription.value,
+        tags: fields.tags.mode === "manage" ? fields.tags.value ?? [] : [],
+        feature_image: fields.featureImage.mode === "manage" ? fields.featureImage.value ?? null : null,
+        custom_excerpt: fields.customExcerpt.mode === "manage" ? fields.customExcerpt.value ?? null : null,
+        meta_description: fields.metaDescription.mode === "manage" ? fields.metaDescription.value ?? null : null,
     };
 }

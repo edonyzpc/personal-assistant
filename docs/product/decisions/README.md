@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-053 | 精简 Ghost 同步与人工上线 | Accepted | note 全量同步；草稿 Ghost Publish，已发布临时预览后 PA 确认；取消历史/恢复与自动 probe，目标尚待实施 | [Record](./dec-053-lean-ghost-publishing.md) |
 | DEC-052 | Open prepared review 沿用深度发现 | Accepted | 2026-10-06 接受现有显式发现路由及其可能的网络/额度使用；Open Pagelet 仍零调用，不回填旧批准或验收 | [Record](./dec-052-prepared-review-deep-discover-route.md) |
 | DEC-051 | 必要确认、前后台预算与合同接续 | Accepted | 局部接续旧确认/容量条款，保留来源、Writing与Ghost边界；设计不等于实现 | [Record](./dec-051-proportionate-confirmation-and-contract-alignment.md) |
 | DEC-050 | 笔记图片联合删除与一键撤销 | Accepted | 共享引用阻止删除、临时快照一键撤销；不授予运行代码实施 | [Record](./dec-050-note-image-removal-and-undo.md) |
@@ -15,7 +16,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 | DEC-048 | Context 保留合法执行事实 | Accepted | B-157 四域状态、来源准入与压缩摘要；不新增 Host 意图分类器 | [Record](./dec-048-action-facts-and-context-continuity.md) |
 | DEC-047 | Agent 执行不能阻塞 Obsidian 原生操作 | Accepted | 分层来源准入、有界 renderer 工作、保留来源撤销与已读快照；最低充分桌面/mobile 验证 | [Record](./dec-047-agent-responsive-execution.md) |
 | DEC-046 | 笔记最终差异审阅与 Operations 审计退役 | Accepted | Chat 紧凑差异、手动完整审阅 tab；确认由 DEC-051 接续，停写审计且不处理旧目录 | [Record](./dec-046-note-change-review-and-audit-retirement.md) |
-| DEC-045 | Ghost 预览确认发布 | Accepted | Obsidian 主源；原生 Preview、PA 确认；每次操作同桌面完成，完成后可换桌面发起新更新 | [Record](./dec-045-ghost-blog-publishing.md) |
+| DEC-045 | Ghost 预览确认发布 | Accepted | B-153 历史选择；转换/媒体边界保留，流程、字段与恢复由 DEC-053 局部接续 | [Record](./dec-045-ghost-blog-publishing.md) |
 | DEC-044 | Unified Chat image creation | Accepted | 单一 CreateImage、明确文字来源、保留专用提炼；原 command 成为 Chat 快捷入口 | [Record](./dec-044-unified-chat-image-creation.md) |
 | DEC-043 | PA Agent 问答范围硬约束与 Runtime 演进 | Accepted | B-149 已交付三种显式范围、默认笔记、派生上下文准入、切换取舍与五项架构演进；局部接续 DEC-042 | [Record](./dec-043-agent-runtime-evolution-and-source-scope.md) |
 | DEC-042 | PA Agent task source boundary and revisable plan | Accepted | B-146 已本地验收：Agent 遵循自由语言取材限制、Host 不硬拦普通读取；独立权限和高后果保护保留 | [Record](./dec-042-agent-task-source-boundary.md) |

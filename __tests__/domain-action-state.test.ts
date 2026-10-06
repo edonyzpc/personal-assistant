@@ -14,7 +14,7 @@ import type { PaAgentMessage } from '../src/ai-services/chat-types';
 
 async function ghostAttentionTranscript(operationId: string | null = 'attention-operation') {
     const tool = createPrepareGhostPostTool({ conversationId: 'conversation', stableMessageId: 'user',
-        submit: async () => ({ status: 'needs_attention', ...(operationId ? { operationId } : {}) }) });
+        submit: async () => ({ status: 'needs_attention', executionState: 'succeeded', ...(operationId ? { operationId } : {}) }) });
     const call = { type: 'toolCall' as const, id: 'ghost-call', index: 0, name: 'prepare_ghost_post', input: { intent: 'prepare' as const } };
     const result = await tool.execute(call.input, { host: { log: () => undefined },
         taskSourceReadGuard: { isCurrent: () => true, isNoteDomainAllowed: () => true, isPathAllowed: () => true } } as unknown as ChatToolContext);
@@ -91,7 +91,7 @@ describe('closed action summary facts', () => {
             'conversation', 'user')!;
         const ghost = refreshGhostActionState(state('ghost', 'ghost-op',
             { kind: 'ghost-preparation', operationId: 'ghost-op', status: 'prepared' }, 'prepared'),
-            { operationId: 'ghost-op', revision: 2, state: 'terminal', verified: true })!;
+            { operationId: 'ghost-op', revision: 2, state: 'updated', verified: true })!;
         const operations = { ...state('operations', 'intent', { kind: 'operations-result', intentId: 'intent', state: 'completed' }, 'completed'),
             revision: 1, actions: [{ actionId: 'operation-a', phase: 'applied' as const, receiptId: 'receipt-a' },
                 { actionId: 'operation-b', phase: 'applied' as const, receiptId: 'receipt-b' }] };
@@ -169,14 +169,14 @@ describe('domain receipt lifecycle projection', () => {
     it('retains only the matched Host operation identity from an attention-required Ghost result', async () => {
         const messages = await ghostAttentionTranscript(), input = { runId: 'run', turnId: 'turn', messages };
         const states = collectActionStates(input);
-        expect(states).toEqual([expect.objectContaining({ owner: 'ghost', operationId: 'attention-operation', phase: 'unknown', revision: 0,
+        expect(states).toEqual([expect.objectContaining({ owner: 'ghost', operationId: 'attention-operation', phase: 'prepared', revision: 0,
             origin: { runId: 'run', turnId: 'turn', assistantId: 'assistant', callId: 'ghost-call', resultId: 'ghost-result' },
-            receipt: { kind: 'ghost-preparation', operationId: 'attention-operation', status: 'needs_attention' } })]);
+            receipt: { kind: 'ghost-preparation', operationId: 'attention-operation', status: 'needs_attention', executionState: 'succeeded' } })]);
         expect(cloneActionStates(states)).toEqual(states);
-        expect(projectActionStates(states)).toEqual([expect.objectContaining({ phase: 'unknown', effectOutcome: 'unknown',
-            sideEffectsMayHaveOccurred: true, contextOnly: true })]);
+        expect(projectActionStates(states)).toEqual([expect.objectContaining({ phase: 'prepared', contextOnly: true })]);
+        expect(JSON.stringify(projectActionStates(states))).not.toContain('sideEffectsMayHaveOccurred');
         expect(JSON.stringify(projectActionStates(states))).not.toContain('ghostPublicationStatus');
-        for (const phase of ['prepared', 'completed'] as const) expect(cloneActionStates([{ ...states[0], phase }])).toEqual([]);
+        for (const phase of ['unknown', 'completed'] as const) expect(cloneActionStates([{ ...states[0], phase }])).toEqual([]);
         expect(collectActionStates({ ...input, messages: await ghostAttentionTranscript(null) })).toEqual([]);
     });
 
@@ -301,7 +301,7 @@ describe('domain receipt lifecycle projection', () => {
         ]) expect(cloneActionStates([{ ...legacy, phase: receipt.state, receipt }])).toEqual([]);
     });
     it('preserves verified Ghost publication in direct and summary projection without raw owner data', () => {
-        for (const ownerState of ['terminal', 'cleanup_pending'] as const) {
+        for (const ownerState of ['updated'] as const) {
             const prepared = state('ghost', 'ghost-op', { kind: 'ghost-preparation', operationId: 'ghost-op', status: 'prepared' }, 'prepared');
             const completed = refreshGhostActionState(prepared, { operationId: 'ghost-op', revision: 2,
                 state: ownerState, verified: true })!;
@@ -330,14 +330,14 @@ describe('domain receipt lifecycle projection', () => {
 
     it('keeps Ghost preparation and unverified terminal results distinct from verified publication', () => {
         const prepared = state('ghost', 'ghost-op', { kind: 'ghost-preparation', operationId: 'ghost-op', status: 'prepared' }, 'prepared');
-        const unknown = refreshGhostActionState(prepared, { operationId: 'ghost-op', revision: 2, state: 'terminal', verified: false })!;
+        const unknown = refreshGhostActionState(prepared, { operationId: 'ghost-op', revision: 2, state: 'updated', verified: false })!;
         expect(unknown.phase).toBe('unknown');
         for (const candidate of [prepared, unknown, { ...unknown, phase: 'completed' as const }]) {
             expect(JSON.stringify(projectActionStates([candidate]))).not.toContain('ghostPublicationStatus');
             expect(JSON.stringify(projectPaAgentRetainedActionFacts([{ role: 'assistant', content: 'Preparation', actionStates: [candidate] }])))
                 .not.toContain('ghostPublicationStatus');
         }
-        const completed = refreshGhostActionState(unknown, { operationId: 'ghost-op', revision: 3, state: 'terminal', verified: true })!;
+        const completed = refreshGhostActionState(unknown, { operationId: 'ghost-op', revision: 3, state: 'updated', verified: true })!;
         expect(completed.phase).toBe('completed');
         expect(refreshGhostActionState(completed, { operationId: 'ghost-op', revision: 2, state: 'prepared', verified: false })).toEqual(completed);
         expect(cloneActionStates([{ ...unknown, phase: 'completed' }])).toEqual([]);

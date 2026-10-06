@@ -60,4 +60,33 @@ describe('Task source Host admission', () => {
         expect(guard.isCurrent()).toBe(false);
         expect(guard.isPathAllowed('a.md')).toBe(false);
     });
+
+    it('captures authority for fixed candidates without weakening the ordinary freshness guard', async () => {
+        const admission = state('notes');
+        let fresh = true;
+        let authorized = true;
+        let alive = true;
+        let pathAllowed = true;
+        const guard = admission.createReadGuard(admission.snapshot(),
+            path => pathAllowed && path === 'a.md' ? 'note-a' : undefined,
+            () => alive, undefined, undefined, () => true, () => true,
+            () => fresh, undefined, () => () => fresh, () => () => authorized);
+        const candidateGuard = guard.captureAuthorityGuard!();
+        fresh = false; // Another note changed, or this operation wrote GHOST_ID.
+        expect(guard.isCurrent()).toBe(false);
+        expect(() => guard.captureAuthorityGuard!()).toThrow();
+        expect(candidateGuard.isCurrent()).toBe(true);
+        expect(candidateGuard.isPathAllowed('a.md')).toBe(true);
+        expect(candidateGuard.isPathAllowed('other.md')).toBe(false);
+        expect(candidateGuard.isWebAllowed?.()).toBe(false);
+        await expect(candidateGuard.checkpoint?.()).resolves.toBeUndefined();
+        pathAllowed = false;
+        expect(candidateGuard.isPathAllowed('a.md')).toBe(false);
+        authorized = false;
+        expect(candidateGuard.isCurrent()).toBe(false);
+        await expect(candidateGuard.checkpoint?.()).rejects.toThrow();
+        authorized = true;
+        alive = false;
+        expect(candidateGuard.isCurrent()).toBe(false);
+    });
 });

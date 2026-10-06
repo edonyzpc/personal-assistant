@@ -14,6 +14,8 @@ export interface TaskSourceReadGuard {
     captureSourceValidity?(): () => boolean;
     /** Source ancestry/permission without observation-epoch freshness. */
     captureSourceAuthority?(): () => boolean;
+    /** Fixed-candidate domains still enforce live authority, without an unrelated observation epoch. */
+    captureAuthorityGuard?(): TaskSourceReadGuard;
     /** Host-resolved query boundary; absence cannot fall back to an unrestricted search. */
     getNoteSearchScope?(): NoteSearchScope;
 }

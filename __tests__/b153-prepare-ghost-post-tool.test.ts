@@ -7,7 +7,7 @@ import { createPrepareGhostPostTool, isChatToolName, type ChatToolContext,
     type GhostHostBinding, type GhostPostToolReceipt } from "../src/ai-services/chat-tools";
 import { GhostHostAdmissionError } from "../src/ghost-publishing/types";
 
-function fixture(submit: GhostHostBinding["submit"] = async () => ({ status: "prepared", operationId: "opaque-operation" })) {
+function fixture(submit: GhostHostBinding["submit"] = async () => ({ status: "prepared", operationId: "opaque-operation", executionState: "succeeded" })) {
     let current = true;
     let inherited = true;
     const signal = new AbortController();
@@ -41,7 +41,7 @@ describe("B-153 fixed Ghost preparation capability", () => {
     });
 
     it.each([
-        { intent: "prepare", confirmed: true }, { intent: "restore", postId: "article" },
+        { intent: "prepare", confirmed: true }, { intent: "restore" }, { intent: "restore", postId: "article" },
         { intent: "prepare", body: "private body" }, { intent: "prepare", url: "https://other.invalid/" },
         { intent: "prepare", injection: "script" }, { intent: "publish" },
         { intent: "prepare", path: "A.md", name: "B" }, { intent: "prepare", path: "../A.md" },
@@ -51,13 +51,13 @@ describe("B-153 fixed Ghost preparation capability", () => {
 
     it("preserves the three locator forms without expanding an absent target", () => {
         const { tool } = fixture();
-        for (const input of [{ intent: "prepare" }, { intent: "prepare", path: "folder/A.md" }, { intent: "restore", name: "A" }]) {
+        for (const input of [{ intent: "prepare" }, { intent: "prepare", path: "folder/A.md" }, { intent: "prepare", name: "A" }]) {
             expect(tool.validateInput(input)).toEqual(input);
         }
     });
 
     it("submits once with live boundaries and only returns a safe preparation fact", async () => {
-        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "prepared", operationId: "opaque-operation",
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "prepared", operationId: "opaque-operation", executionState: "succeeded",
             payload: "PRIVATE_BODY", previewUrl: "https://private.invalid/secret", message: "UNTRUSTED_MESSAGE" }));
         const app = fixture(submit);
         const input = app.tool.validateInput({ intent: "prepare", path: "private/note.md" });
@@ -78,7 +78,7 @@ describe("B-153 fixed Ghost preparation capability", () => {
     });
 
     it.each(["missing", "revoked", "web-only", "aborted"])("refuses %s admission before Host submission", async state => {
-        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "prepared", operationId: "opaque-operation" }));
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "prepared", operationId: "opaque-operation", executionState: "succeeded" }));
         const app = fixture(submit);
         if (state === "missing") delete app.context.taskSourceReadGuard;
         if (state === "revoked") app.revoke();
@@ -95,7 +95,7 @@ describe("B-153 fixed Ghost preparation capability", () => {
     });
 
     it("keeps unknown results non-published and does not automatically retry", async () => {
-        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "outcome_unknown", operationId: "pending-operation" }));
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "outcome_unknown", operationId: "pending-operation", executionState: "acceptance_unknown" }));
         const app = fixture(submit);
         const result = await app.tool.execute({ intent: "prepare" }, app.context);
         expect(result.resultFact).toEqual({ kind: "unknown", operationId: "pending-operation" });
@@ -105,12 +105,13 @@ describe("B-153 fixed Ghost preparation capability", () => {
         expect(submit).toHaveBeenCalledTimes(1);
     });
 
-    it("retains an owned attention-required operation as unresolved without resubmitting", async () => {
-        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "needs_attention", operationId: "attention-operation" }));
+    it("reports a known preparation failure without inventing an unknown write or resubmitting", async () => {
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "needs_attention", operationId: "attention-operation", executionState: "failed" }));
         const app = fixture(submit);
         const result = await app.tool.execute({ intent: "prepare" }, app.context);
         expect(result.ok).toBe(true);
-        expect(result.resultFact).toEqual({ kind: "unknown", operationId: "attention-operation" });
+        expect(result.resultFact).toEqual({ kind: "unavailable", capability: "prepare_ghost_post", reason: "ghost_attention_required" });
+        expect(result.executionState).toBe("failed");
         expect(result.content).toMatchObject({ status: "needs_attention", operationId: "attention-operation" });
         expect(JSON.stringify(result)).not.toContain('"status":"prepared"');
         expect(JSON.stringify(result)).not.toContain('"status":"published"');
@@ -119,28 +120,29 @@ describe("B-153 fixed Ghost preparation capability", () => {
     });
 
     it("does not invent an operation identity when attention is required before ownership exists", async () => {
-        const app = fixture(async () => ({ status: "needs_attention" }));
+        const app = fixture(async () => ({ status: "needs_attention", executionState: "not_started" }));
         const result = await app.tool.execute({ intent: "prepare" }, app.context);
         expect(result.ok).toBe(true);
         expect(result.resultFact).toEqual({ kind: "unavailable", capability: "prepare_ghost_post", reason: "ghost_attention_required" });
         expect(result.content).not.toHaveProperty('operationId');
     });
 
-    it("does not retain an attention-required receipt after its captured source is revoked", async () => {
+    it("retains a known remote save even if source authority changes after its response", async () => {
         let revoke = () => {};
         const app = fixture(async () => {
             revoke();
-            return { status: "needs_attention", operationId: "attention-operation" };
+            return { status: "needs_attention", operationId: "attention-operation", executionState: "succeeded" };
         });
         revoke = app.revokeInherited;
         const result = await app.tool.execute({ intent: "prepare" }, app.context);
-        expect(result.ok).toBe(false);
-        expect(result.resultFact).toBeUndefined();
-        expect(result.content).toBeNull();
+        expect(result.ok).toBe(true);
+        expect(result.executionState).toBe("succeeded");
+        expect(result.resultFact).toEqual({ kind: "approval_pending", intentId: "attention-operation" });
+        expect(result.content).toMatchObject({ status: "needs_attention", operationId: "attention-operation" });
     });
 
     it("rejects a receipt containing a URL as its opaque identity", async () => {
-        const app = fixture(async () => ({ status: "prepared", operationId: "https://private.invalid/token" }));
+        const app = fixture(async () => ({ status: "prepared", operationId: "https://private.invalid/token", executionState: "succeeded" }));
         const result = await app.tool.execute({ intent: "prepare" }, app.context);
         expect(result.ok).toBe(false);
         expect(JSON.stringify(result)).not.toContain("private.invalid");

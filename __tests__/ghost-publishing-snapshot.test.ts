@@ -1,9 +1,9 @@
 import { describe, expect, it } from "@jest/globals";
 import { prepareGhostExport } from "../src/ghost-publishing/exporter";
-import { buildRecipeInjection, restoreRecipeInjection } from "../src/ghost-publishing/recipe";
+import { buildRecipeInjection } from "../src/ghost-publishing/recipe";
 import {
-    acceptGhostFormatting, fillGhostResourceUrls, ghostContentFromPost, ghostManagedContentMatches,
-    ghostManagedWrite, ghostPayloadHash, ghostPreviewWrite, prepareGhostRestore, prepareGhostSnapshot,
+    fillGhostResourceUrls, ghostContentFromPost, ghostManagedContentMatches,
+    ghostManagedWrite, ghostPayloadHash, ghostPreviewWrite, materializeGhostSnapshot, prepareGhostSnapshot,
 } from "../src/ghost-publishing/snapshot";
 import type { GhostPost } from "../src/ghost-publishing/client";
 import type { GhostSnapshot, GhostStoredResource } from "../src/ghost-publishing/state-schema";
@@ -11,14 +11,13 @@ import type { LexicalDocumentJson } from "../src/ghost-publishing/types";
 
 const profile = { siteId: "test-site" };
 const now = "2026-09-29T09:00:00.000Z";
-const capabilities = { codeLanguages: [], hasMermaid: false, hasInlineMath: false, hasDisplayMath: false };
-async function exported(body = "Keep paragraph.\n\nChange this.", frontmatter: Record<string, unknown> = {}, path = "A.md") {
+async function exported(body = "Current note body.", frontmatter: Record<string, unknown> = {}, path = "A.md") {
     const note = { path, extension: "md" };
     const image = { path: "cover.png", extension: "png" };
     return prepareGhostExport({
         targetPath: path, siteProfile: profile,
         host: {
-            vault: { getAbstractFileByPath: (target) => target === path ? note : image, read: async () => `---\nfixture: true\n---\n${body}` },
+            vault: { getAbstractFileByPath: (target) => target === path ? note : image, read: async () => "---\nfixture: true\n---\n" + body },
             metadataCache: { getFirstLinkpathDest: () => image }, parseYaml: () => frontmatter,
         },
         guard: { isCurrent: () => true, isPathAllowed: () => true, isNoteDomainAllowed: () => true, captureSourceValidity: () => () => true },
@@ -32,8 +31,8 @@ function post(value: GhostSnapshot, changes: Partial<GhostPost> = {}): GhostPost
         url: "https://example.test/stable-slug/", slug: "stable-slug", ...changes };
 }
 
-describe("Ghost candidate snapshots", () => {
-    it("stores only known warning locations, excluding raw messages and link targets", async () => {
+describe("Ghost current publication candidates", () => {
+    it("keeps diagnostic locations without storing raw messages or link targets", async () => {
         const result = await exported("[[Unpublished|Visible]]");
         result.warnings[0].message = "Host-only raw target detail";
         const value = prepareGhostSnapshot({ exported: result, profile, resources: [], defaultVisibility: "public" });
@@ -41,135 +40,80 @@ describe("Ghost candidate snapshots", () => {
         expect(JSON.stringify(value.warnings)).not.toContain("Host-only");
     });
 
-    it("keeps remote rendering fields and distinguishes unmanaged, set and cleared fields", async () => {
-        const baseline = await candidate();
-        const remote = post(baseline, { tags: [{ id: "a".repeat(24), name: "Old" }, { name: "#manual" }],
+    it("overwrites complete managed content without a baseline while preserving operational fields", async () => {
+        const previous = await candidate("Ghost-only old body");
+        const remote = post(previous, { lexical: null, tags: [{ id: "a".repeat(24), name: "Old" }, { name: "#manual" }],
             authors: [{ id: "b".repeat(24) }], visibility: "members", custom_template: "custom",
-            feature_image: "https://example.test/old.png", feature_image_alt: "Owner alt", custom_excerpt: "Owner summary", published_at: now });
-        const updated = prepareGhostSnapshot({ exported: await exported(), baseline, remote, profile, resources: [], defaultVisibility: "public" });
-        expect(updated.content).toMatchObject({ tags: remote.tags, authors: remote.authors, visibility: "members", custom_template: "custom", custom_excerpt: "Owner summary", published_at: now });
-        const changed = prepareGhostSnapshot({ exported: await exported(undefined, { ghost: { title: "New title", tags: ["New"], feature_image: null, custom_excerpt: null } }), baseline, remote, profile, resources: [], defaultVisibility: "public" });
-        expect(changed.content).toMatchObject({ title: "New title", tags: [{ name: "New" }, { name: "#manual" }], feature_image: null, custom_excerpt: null, feature_image_alt: "Owner alt" });
-        expect(ghostManagedWrite(changed)).not.toHaveProperty("slug");
-        expect(ghostManagedWrite(changed)).not.toHaveProperty("authors");
-        expect(ghostManagedWrite(changed)).not.toHaveProperty("visibility");
-        const preview = ghostPreviewWrite(changed, "#pa-ghost-preview-note");
+            feature_image: "https://example.test/old.png", feature_image_alt: "Owner alt", feature_image_caption: "Owner caption",
+            custom_excerpt: "Remote summary", meta_description: "Remote SEO", published_at: now });
+        const updated = prepareGhostSnapshot({ exported: await exported(), remote, profile, resources: [], defaultVisibility: "public" });
+        expect(updated.content).toMatchObject({
+            tags: [{ name: "#manual" }], authors: remote.authors, visibility: "members", custom_template: "custom",
+            feature_image: null, custom_excerpt: null, meta_description: null, feature_image_alt: "Owner alt",
+            feature_image_caption: "Owner caption", published_at: now,
+        });
+        expect(updated.content.lexical).toContain("Current note body.");
+        expect(updated.content.lexical).not.toContain("Ghost-only");
+        expect(ghostManagedWrite(updated)).toMatchObject({ tags: [{ name: "#manual" }], feature_image: null, custom_excerpt: null, meta_description: null });
+        for (const field of ["slug", "authors", "visibility", "published_at", "custom_template", "feature_image_alt", "feature_image_caption"]) {
+            expect(ghostManagedWrite(updated)).not.toHaveProperty(field);
+        }
+        const preview = ghostPreviewWrite(updated, "#pa-ghost-preview-note");
         expect(preview).toMatchObject({ status: "draft", authors: remote.authors, visibility: "members", custom_template: "custom", published_at: now });
         expect(preview.tags?.at(-1)).toEqual({ name: "#pa-ghost-preview-note", visibility: "internal" });
-        expect(changed.content.tags).toHaveLength(2);
+        expect(updated.content.tags).toHaveLength(1);
         expect(() => ghostContentFromPost({ ...remote, visibility: "tiers" })).toThrow("unsupported-remote");
     });
 
-    it("persists independent SEO metadata, managed writes, restore, and old checksum records", async () => {
-        const generated = await candidate(undefined, {
-            ghost: { custom_excerpt: "Generated summary", meta_description: "Generated SEO description" },
+    it("uses current explicit or generated metadata and never copies remote managed metadata", async () => {
+        const remote = post(await candidate(), { custom_excerpt: "Old summary", meta_description: "Old SEO", tags: [{ name: "Old" }] });
+        const updated = prepareGhostSnapshot({ exported: await exported("New note", {
+            ghost: { title: "Exact title", tags: ["New"], custom_excerpt: "Generated summary", meta_description: "Generated SEO" },
+        }), remote, profile, resources: [], defaultVisibility: "public" });
+        expect(ghostManagedWrite(updated)).toMatchObject({
+            title: "Exact title", tags: [{ name: "New" }], custom_excerpt: "Generated summary", meta_description: "Generated SEO",
         });
-        expect(generated.content).toMatchObject({
-            custom_excerpt: "Generated summary",
-            meta_description: "Generated SEO description",
-        });
-        expect(generated.managedFields).toEqual(expect.arrayContaining(["custom_excerpt", "meta_description"]));
-        expect(ghostPreviewWrite(generated, "#pa-ghost-preview-note")).toMatchObject({
-            custom_excerpt: "Generated summary",
-            meta_description: "Generated SEO description",
-        });
-        expect(ghostManagedWrite(generated)).toEqual(expect.objectContaining({
-            custom_excerpt: "Generated summary",
-            meta_description: "Generated SEO description",
-        }));
-
-        const remote = post(generated, {
-            custom_excerpt: "Remote summary",
-            meta_description: "Remote SEO",
-            feature_image_alt: "Unmanaged alt",
-        });
-        const restored = prepareGhostRestore(generated, remote, profile);
-        expect(restored.content).toMatchObject({
-            custom_excerpt: "Generated summary",
-            meta_description: "Generated SEO description",
-            feature_image_alt: "Unmanaged alt",
-        });
+        expect(updated.managedFields).toEqual(expect.arrayContaining(["tags", "feature_image", "custom_excerpt", "meta_description"]));
     });
 
-    it("retains actual remote formatting only for unchanged blocks, including a uniquely renamed main note", async () => {
-        const initial = await candidate();
-        const lexical = JSON.parse(initial.content.lexical);
-        lexical.root.children[0].format = "center";
-        lexical.root.children[0].children = [
-            { type: "text", version: 1, text: "Keep ", format: 1 },
-            { type: "extended-text", version: 1, text: "paragraph.", format: 0 },
-        ];
-        const remote = post(initial, { lexical: JSON.stringify(lexical) });
-        const baseline = acceptGhostFormatting(initial, remote);
-        expect(baseline.content.lexical).toBe(remote.lexical);
-        expect(baseline.blocks.every((block) => block.remoteBlockId === undefined)).toBe(true);
-        const updated = prepareGhostSnapshot({ exported: await exported("Keep paragraph.\n\nChanged locally.", {}, "Renamed.md"), profile, resources: [], baseline, remote, defaultVisibility: "public" });
-        const nodes = JSON.parse(updated.content.lexical).root.children;
-        expect(nodes[0]).toEqual(lexical.root.children[0]);
-        expect(nodes[1].children[0].text).toBe("Changed locally.");
-        expect(updated.source.targetPath).toBe("Renamed.md");
+    it("rebuilds PA injection and preserves injection outside its region", async () => {
+        const old = buildRecipeInjection({ codeLanguages: ["ts"], hasMermaid: false, hasInlineMath: false, hasDisplayMath: false },
+            { ...profile, manualHeadInjection: "<!-- owner head -->", manualFootInjection: "<!-- owner foot -->" });
+        const remote = post(await candidate(), { codeinjection_head: old.head, codeinjection_foot: old.foot });
+        const updated = prepareGhostSnapshot({ exported: await exported(), remote, profile, resources: [], defaultVisibility: "public" });
+        expect(updated.content.codeinjection_head).toContain("<!-- owner head -->");
+        expect(updated.content.codeinjection_foot).toContain("<!-- owner foot -->");
+        expect(updated.recipe.needsPrism).toBe(false);
+        expect(updated.content.codeinjection_head).not.toContain("prism.min.js");
     });
 
-    it("stops on remote content changes or ambiguous duplicates and allows only an explicit replacement", async () => {
-        const baseline = await candidate();
-        const remote = post(baseline);
-        const lexical = JSON.parse(remote.lexical!);
-        lexical.root.children[0].children[0].text = "Different remote content";
-        remote.lexical = JSON.stringify(lexical);
-        const options = { exported: await exported("A new local version"), profile, resources: [], baseline, remote, defaultVisibility: "public" as const };
-        expect(() => prepareGhostSnapshot(options)).toThrow("content-conflict");
-        expect(prepareGhostSnapshot({ ...options, replacement: "replace-all" }).content.lexical).toContain("A new local version");
-        const duplicates = await candidate("Same\n\nSame");
-        expect(() => prepareGhostSnapshot({ ...options, exported: { ...options.exported }, baseline: duplicates, remote: post(duplicates) })).toThrow("content-conflict");
-        expect(() => acceptGhostFormatting(baseline, remote)).toThrow("content-conflict");
-    });
-
-    it("uses bytes rather than the unchanged filename as image identity and substitutes only image URLs", async () => {
-        const source = await exported("![cover](cover.png)\n\n| picture |\n|---|\n| ![cover](cover.png) |\n\n`pending-resource://resource-1`");
-        const resource: GhostStoredResource = { id: source.resources[0].id, source: "cover.png", resolvedPath: "cover.png", byteHash: "ab".repeat(32), byteLength: 10, mimeType: "image/png", url: "https://example.test/images/old.png" };
-        const baseline = prepareGhostSnapshot({ exported: source, profile, resources: [resource], defaultVisibility: "public" });
-        expect(baseline.content.lexical).toContain("pending-resource://resource-1");
-        expect(baseline.content.lexical).toContain("https://example.test/images/old.png");
-        const remoteLexical = JSON.parse(baseline.content.lexical);
-        remoteLexical.root.children[0].cardWidth = "wide";
-        const remote = post(baseline, { lexical: JSON.stringify(remoteLexical) });
-        const retained = prepareGhostSnapshot({ exported: source, profile, resources: [resource], defaultVisibility: "public", baseline, remote });
-        expect(JSON.parse(retained.content.lexical).root.children[0].cardWidth).toBe("wide");
-        const next = { ...resource, byteHash: "cd".repeat(32), url: "https://example.test/images/new.png" };
-        const updated = prepareGhostSnapshot({ exported: source, profile, resources: [next], defaultVisibility: "public", baseline, remote });
-        expect(JSON.parse(updated.content.lexical).root.children[0]).toMatchObject({ src: next.url, cardWidth: "regular" });
-        expect(updated.content.lexical).not.toContain("https://example.test/images/old.png");
+    it("replaces only actual image URLs, including table images and the cover, without retaining remote formatting", async () => {
+        const inlineCode = String.fromCharCode(96) + "pending-resource://resource-1" + String.fromCharCode(96);
+        const source = await exported("![cover](cover.png)\n\n| picture |\n|---|\n| ![cover](cover.png) |\n\n" + inlineCode,
+            { ghost: { feature_image: "cover.png" } });
+        const resource: GhostStoredResource = { id: source.resources[0].id, source: "cover.png", resolvedPath: "cover.png",
+            byteHash: "ab".repeat(32), byteLength: 10, mimeType: "image/png", url: "https://example.test/images/current.png" };
+        const updated = prepareGhostSnapshot({ exported: source, profile, resources: [resource], defaultVisibility: "public" });
+        expect(updated.content.lexical).toContain("pending-resource://resource-1");
+        expect(updated.content.lexical).toContain(resource.url);
+        expect(updated.content.feature_image).toBe(resource.url);
+        expect(JSON.parse(updated.content.lexical).root.children[0].cardWidth).toBe("regular");
         expect(() => fillGhostResourceUrls(source.lexical, [])).toThrow("resource-unavailable");
-        const literal: LexicalDocumentJson = { ...source.lexical, root: { ...source.lexical.root, children: [{ type: "codeblock", version: 1, code: `pending-resource://${resource.id}`, language: "" }] } };
+        const literal: LexicalDocumentJson = { ...source.lexical, root: { ...source.lexical.root,
+            children: [{ type: "codeblock", version: 1, code: "pending-resource://" + resource.id, language: "" }] } };
         expect(fillGhostResourceUrls(literal, [resource])).toEqual(literal);
+        const pending = prepareGhostSnapshot({ exported: source, profile, resources: [{ ...resource, url: undefined }],
+            defaultVisibility: "public", allowPendingResources: true });
+        expect(materializeGhostSnapshot(pending, [resource]).content.feature_image).toBe(resource.url);
     });
 
-    it("restores only the previous managed scope and PA region while keeping current manual fields", async () => {
-        const history = await candidate("Historical body", { ghost: { custom_excerpt: "Historical summary", tags: ["Old"] } });
-        const oldRecipe = buildRecipeInjection(capabilities, { ...profile, manualHeadInjection: "<!-- old manual -->" });
-        history.content.codeinjection_head = oldRecipe.head;
-        const current = await candidate("Current note is different", { ghost: { custom_excerpt: "Current summary", tags: ["New"] } });
-        const liveHead = buildRecipeInjection(capabilities, { ...profile, manualHeadInjection: "<!-- keep current -->" }).head;
-        const remote = post(current, { codeinjection_head: liveHead, tags: [{ name: "New" }, { name: "#owner" }], authors: [{ id: "owner" }], visibility: "paid" });
-        const restored = prepareGhostRestore(history, remote, profile);
-        expect(restored.content.lexical).toContain("Historical body");
-        expect(restored.content.custom_excerpt).toBe("Historical summary");
-        expect(restored.content.tags).toEqual([{ name: "Old" }, { name: "#owner" }]);
-        expect(restored.content).toMatchObject({ authors: [{ id: "owner" }], visibility: "paid" });
-        expect(restored.content.codeinjection_head).toContain("<!-- keep current -->");
-        expect(restored.content.codeinjection_head).not.toContain("<!-- old manual -->");
-        expect(current.content.lexical).toContain("Current note is different");
-        expect(restoreRecipeInjection("manual", null, "head")).toBe("manual");
-        expect(() => prepareGhostRestore(history, { ...remote, codeinjection_head: liveHead.replace("hash=", "hash=broken") }, profile)).toThrow("marker");
-    });
-
-    it("compares actual managed payloads without tag-ID or object-order noise, but never ignores code text", async () => {
-        const value = await candidate("```ts\nconst  x = 1;\n```", { ghost: { tags: ["Example"] } });
-        const remote = post(value, { tags: [{ id: "a".repeat(24), name: "Example" }, { name: "#pa-ghost-op-synthetic" }] });
-        expect(ghostManagedContentMatches(value, remote, ["#pa-ghost-op-synthetic"])).toBe(true);
+    it("compares current managed payloads without tag-ID or object-order noise but detects real content changes", async () => {
+        const value = await candidate("    const  x = 1;", { ghost: { tags: ["Example"] } });
+        const remote = post(value, { tags: [{ id: "a".repeat(24), name: "Example" }, { name: "#pa-ghost-preview-note" }] });
+        expect(ghostManagedContentMatches(value, remote, ["#pa-ghost-preview-note"])).toBe(true);
         expect(ghostManagedContentMatches(value, remote)).toBe(false);
         const changed = { ...remote, lexical: remote.lexical!.replace("const  x", "const x") };
-        expect(() => acceptGhostFormatting(value, changed, ["#pa-ghost-op-synthetic"])).toThrow("content-conflict");
+        expect(ghostManagedContentMatches(value, changed, ["#pa-ghost-preview-note"])).toBe(false);
         expect(await ghostPayloadHash(ghostManagedWrite(value))).toMatch(/^[a-f0-9]{64}$/);
         expect(await ghostPayloadHash({ a: 1, b: 2 })).toBe(await ghostPayloadHash({ b: 2, a: 1 }));
     });

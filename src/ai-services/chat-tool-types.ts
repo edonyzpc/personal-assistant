@@ -156,7 +156,7 @@ export interface CreateImageToolInput {
 }
 
 export interface GhostPostToolInput {
-    intent: "prepare" | "restore";
+    intent: "prepare";
     /** Omit both locators to use the note captured by the Chat host at submission. */
     path?: string;
     name?: string;
@@ -165,6 +165,7 @@ export interface GhostPostToolInput {
 export interface GhostPostToolReceipt {
     status: "prepared" | "needs_attention" | "outcome_unknown";
     operationId?: string;
+    executionState: "not_started" | "succeeded" | "failed" | "acceptance_unknown";
 }
 
 /** Granted only by the Chat host for one explicit publishing request. */

@@ -56,7 +56,7 @@ Updated: 2026-10-06
 | T-007 | Pagelet 取消与临时额度 reservation | admission 接口的人工异步 reserve 反例已显示 abort 后 lease 未被捕获，rollback 未执行；当前默认同步 localStorage 与私有 timer 路径未证实际可达。新增异步存储/调用方、出现真实取消耗额度，或 Owner 单独授权生产修复时，先补真实 caller 反例，再决定最小修复 | [B-150 独立追溯](./archive/2026/b150-test-audit/final-report.md#production-follow-ups), [admission owner](../src/pagelet/provider-call-admission.ts) |
 | T-008 | 已退役 append 与测试专用生产入口清理 | 在单独授权生产清理后，完整核对导出、历史和非测试调用；不得删除仍被 Quick Capture 使用的 confinement，或被生产入口调用的 WithHost renderer。B-150 仅纠正测试证据，不执行此清理 | [B-150 候选边界](./archive/2026/b150-test-audit/final-report.md#production-follow-ups), [GOV-004](./development/governance/gov-004-test-audit-quality-preservation.md) |
 | T-009 | 全量Jest异步清理提示定位 | 下次测试基础设施维护、自然退出失败或测试进程持续存活时，以`--detectOpenHandles`定位受影响suite；当前357 suites/8655 tests自然exit0，本次3个tooling suites的92 tests诊断无未释放资源报告。保留真实退出证据，不用forceExit或弱化测试消除提示 | [B-156验证与限制](./development/governance/gov-006-lean-delivery-and-beta-validation.md#final-validation-and-limits) |
-| T-010 | Ghost 来源变化观察与真实双桌面同步补验 | B-153/F-28 未复现且根因未知；只有新证据复现来源变化才定位。真实双桌面同步仅在用户要求或实际同步失败时补验，同机 test/test2 不冒称两设备通过；不自动改来源策略或发布生产文章 | [B-153 原观察与限制](./archive/2026/b153-ghost-blog-publishing-validation.md) |
+| T-010 | Ghost 来源变化的历史观察 | B-153/F-28 的具体事件仍未复现且根因未知，不用源码机制推断改写历史结论；当前来源时效精简由 B-163 承接。真实双桌面补验已由 DEC-053 取消，只有新的明确需求才重开 | [B-153 原观察与限制](./archive/2026/b153-ghost-blog-publishing-validation.md)、[DEC-053](./product/decisions/dec-053-lean-ghost-publishing.md) |
 | T-011 | Agent 历史解释精度与重复动作提示体验 | B-157 按 Owner 判读为非阻塞：没有实际执行的纯重做邀请、无依据的过程/UI细节不改记成重放；用户明确要求优化，或新的可复现输出影响效果判断/当前授权时再启动。先用已有回答/工具事实核对，不自动扩展Host语义门、自检模型或重跑全矩阵 | [B-157 原判读及限制](./archive/2026/b157-context-action-continuity-validation.md#residual-and-later-continuity) |
 
 ## 维护规则

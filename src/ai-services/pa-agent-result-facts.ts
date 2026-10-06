@@ -7,6 +7,12 @@ import { isCoreWriteToolName } from './operations/input-validation';
 import type { NoteImageRemovalEffectStatus } from './operations/types';
 import { IMAGE_PREACCEPT_MESSAGES, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from '../chat/image-generation-types';
 import { PA_AGENT_RECOVERY_ACTIONS } from './pa-agent-types';
+import { ghostPreparationMessage } from './ghost-tool-receipt';
+
+// Historical Chat receipts remain readable; these names cannot resume an operation.
+type GhostReceiptState = import('../ghost-publishing/state-schema').GhostLocalOperation['state']
+    | 'ready' | 'pending' | 'succeeded_remote_pending_record' | 'cleanup_pending' | 'terminal';
+type GhostPreparationExecution = import('./chat-tool-types').GhostPostToolReceipt['executionState'];
 
 export const PA_AGENT_RECOVERY_CODE_CHARS = 64;
 
@@ -82,9 +88,9 @@ export interface PaAgentActionState {
         | { kind: 'writing-version'; versionId: string }
         | { kind: 'writing-save'; versionId: string; saveId: string; state: 'prepared' | 'partial' | 'completed' | 'failed'; noteState?: 'pending' | 'created' | 'completed' }
         | { kind: 'writing-saves'; versionId: string; saves: Array<{ saveId: string; state: 'prepared' | 'partial' | 'completed' | 'failed'; noteState?: 'pending' | 'created' | 'completed' }> }
-        | { kind: 'ghost-preparation'; operationId: string; status: 'prepared' | 'outcome_unknown' | 'needs_attention' }
+        | { kind: 'ghost-preparation'; operationId: string; status: 'prepared' | 'outcome_unknown' | 'needs_attention'; executionState?: GhostPreparationExecution }
         | { kind: 'ghost-operation'; operationId: string; operationRevision: number;
-            state: import('../ghost-publishing/state-schema').GhostLocalOperation['state']; verified: boolean }
+            state: GhostReceiptState; verified: boolean }
         | { kind: 'ghost-unavailable'; operationId: string; reason: 'operation_not_found' | 'status_read_unavailable' };
     actions?: Array<{ actionId: string; receiptId?: string;
         phase: 'applied' | 'failed' | 'skipped' | 'undone' | 'unknown';
@@ -146,9 +152,10 @@ const actionStateSchema = z.object({
             saves: z.array(z.object({ saveId: opaqueId, state: z.enum(['prepared', 'partial', 'completed', 'failed']),
                 noteState: z.enum(['pending', 'created', 'completed']).optional() }).strict()).min(1).max(100) }).strict(),
         z.object({ kind: z.literal('ghost-preparation'), operationId: opaqueId,
-            status: z.enum(['prepared', 'outcome_unknown', 'needs_attention']) }).strict(),
+            status: z.enum(['prepared', 'outcome_unknown', 'needs_attention']),
+            executionState: z.enum(['not_started', 'succeeded', 'failed', 'acceptance_unknown']).optional() }).strict(),
         z.object({ kind: z.literal('ghost-operation'), operationId: opaqueId, operationRevision: z.number().int().positive(),
-            state: z.enum(['prepared', 'ready', 'pending', 'outcome_unknown', 'succeeded_remote_pending_record', 'cleanup_pending', 'terminal']),
+            state: z.enum(['preparing', 'prepared', 'draft_saved', 'updated', 'failed', 'ready', 'pending', 'outcome_unknown', 'succeeded_remote_pending_record', 'cleanup_pending', 'terminal']),
             verified: z.boolean() }).strict(),
         z.object({ kind: z.literal('ghost-unavailable'), operationId: opaqueId,
             reason: z.enum(['operation_not_found', 'status_read_unavailable']) }).strict(),
@@ -177,7 +184,7 @@ const actionStateSchema = z.object({
     if (receipt.kind === 'ghost-preparation' || receipt.kind === 'ghost-operation' || receipt.kind === 'ghost-unavailable') {
         return state.owner === 'ghost' && receipt.operationId === state.operationId && !state.actions
             && (receipt.kind === 'ghost-preparation' ? state.revision === 0
-                && state.phase === (receipt.status === 'prepared' ? 'prepared' : 'unknown')
+                && state.phase === ghostPreparationPhase(receipt.status, receipt.executionState)
                 : receipt.kind === 'ghost-unavailable' ? state.revision > 0
                     && state.phase === (receipt.reason === 'operation_not_found' ? 'lost' : 'unavailable')
                     : state.revision > 0 && state.phase === ghostOperationPhase(receipt.state, receipt.verified));
@@ -254,10 +261,17 @@ export function refreshWritingSaveStates(state: PaAgentActionState,
         receipt: { kind: 'writing-saves', versionId: state.operationId, saves: ordered } }])[0];
 }
 
-function ghostOperationPhase(state: import('../ghost-publishing/state-schema').GhostLocalOperation['state'],
+function ghostPreparationPhase(status: string, executionState?: GhostPreparationExecution): PaAgentActionState['phase'] {
+    if (executionState === 'failed' || executionState === 'not_started') return 'failed';
+    return executionState === 'succeeded' || status === 'prepared' ? 'prepared' : 'unknown';
+}
+
+function ghostOperationPhase(state: GhostReceiptState,
     verified: boolean): PaAgentActionState['phase'] {
-    if ((state === 'terminal' || state === 'cleanup_pending') && verified) return 'completed';
-    if (state === 'prepared' || state === 'ready') return 'prepared';
+    if (['updated', 'terminal', 'cleanup_pending'].includes(state) && verified) return 'completed';
+    if (state === 'draft_saved' || state === 'prepared' || state === 'ready') return 'prepared';
+    if (state === 'failed') return 'failed';
+    if (state === 'preparing') return 'running';
     return 'unknown';
 }
 
@@ -272,9 +286,9 @@ export function refreshGhostActionState(state: PaAgentActionState,
 
 export function markGhostStatusUnavailable(state: PaAgentActionState,
     reason: 'operation_not_found' | 'status_read_unavailable'): PaAgentActionState {
-    if (state.owner !== 'ghost' || state.phase === 'completed') return state;
+    if (state.owner !== 'ghost' || state.phase === 'completed' || reason === 'operation_not_found') return state;
     if (state.receipt.kind === 'ghost-unavailable' && state.receipt.reason === reason) return state;
-    return cloneActionStates([{ ...state, phase: reason === 'operation_not_found' ? 'lost' : 'unavailable', revision: state.revision + 1,
+    return cloneActionStates([{ ...state, phase: 'unavailable', revision: state.revision + 1,
         receipt: { kind: 'ghost-unavailable', operationId: state.operationId, reason } }])[0] ?? state;
 }
 
@@ -447,7 +461,7 @@ export function projectActionStates(states: readonly PaAgentActionState[]): PaAg
         ...(['unknown', 'unavailable', 'lost'].includes(state.phase)
             ? { effectOutcome: 'unknown' as const, sideEffectsMayHaveOccurred: true } : {}),
         ...(state.owner === 'ghost' && state.phase === 'completed' && state.receipt.kind === 'ghost-operation'
-            && ['terminal', 'cleanup_pending'].includes(state.receipt.state) && state.receipt.verified
+            && ['updated', 'terminal', 'cleanup_pending'].includes(state.receipt.state) && state.receipt.verified
             ? { ghostPublicationStatus: 'published' as const } : {}),
         contextOnly: true,
     }));
@@ -598,11 +612,21 @@ export function collectActionStates(input: { runId: string; turnId: string;
                 const envelope = JSON.parse(message.content.promptText);
                 const observation = envelope.observation;
                 const status = observation?.status;
-                const operationId = status === 'prepared' && fact?.kind === 'approval_pending' ? fact.intentId
-                    : (status === 'outcome_unknown' || status === 'needs_attention') && fact?.kind === 'unknown'
-                        ? fact.operationId : undefined;
                 const execution = envelope.execution;
-                const ownerRecovery = metadata.recovery as { code?: string; allowedActions?: string[] } | undefined;
+                const executionState = metadata.executionState as GhostPreparationExecution | undefined;
+                const currentMessage = ghostPreparationMessage(status, executionState);
+                const isCurrentReceipt = currentMessage !== undefined && observation?.message === currentMessage;
+                const operationId = (status === 'prepared' || isCurrentReceipt && executionState === 'succeeded')
+                    && fact?.kind === 'approval_pending' ? fact.intentId
+                    : (status === 'outcome_unknown' || status === 'needs_attention') && fact?.kind === 'unknown'
+                        && (!isCurrentReceipt || executionState === 'acceptance_unknown')
+                        ? fact.operationId
+                        : isCurrentReceipt && status === 'needs_attention' && fact?.kind === 'unavailable'
+                            && (executionState === 'failed' || executionState === 'not_started')
+                            && fact.capability === 'prepare_ghost_post' && fact.reason === 'ghost_attention_required'
+                            && typeof observation.operationId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(observation.operationId)
+                            ? observation.operationId : undefined;
+                const ownerRecovery = metadata.recovery as { code?: string; allowedActions?: string[]; operationId?: string } | undefined;
                 const executionValid = execution === undefined ? status === 'prepared'
                     : execution && typeof execution === 'object' && !Array.isArray(execution)
                         && execution.executionState === metadata.executionState
@@ -610,25 +634,29 @@ export function collectActionStates(input: { runId: string; turnId: string;
                             ? Object.keys(execution).sort().join(',') === 'executionState'
                                 && execution.executionState === 'succeeded'
                             : Object.keys(execution).sort().join(',') === 'executionState,recovery'
-                                && execution.executionState === 'acceptance_unknown'
+                                && (isCurrentReceipt || execution.executionState === 'acceptance_unknown')
                                 && execution.recovery?.code === ownerRecovery?.code
+                                && (!isCurrentReceipt || ownerRecovery?.operationId === operationId)
                                 && ['ghost_attention_required', 'ghost_preparation_outcome_unknown'].includes(execution.recovery?.code)
-                                && JSON.stringify(execution.recovery?.allowedActions) === '["query_operation","needs_user"]'
-                                && JSON.stringify(ownerRecovery?.allowedActions) === '["query_operation","needs_user"]');
+                                && JSON.stringify(execution.recovery?.allowedActions) === JSON.stringify(ownerRecovery?.allowedActions)
+                                && JSON.stringify(ownerRecovery?.allowedActions) === (isCurrentReceipt && executionState !== 'acceptance_unknown'
+                                    ? '["needs_user"]' : '["query_operation","needs_user"]'));
                 if (operationId && envelope.tool === 'prepare_ghost_post' && envelope.status === 'ok'
                     && envelope.input === metadata.inputSummary && observation.operationId === operationId
                     && executionValid
                     && Object.keys(envelope).sort().join(',') === (execution
                         ? 'execution,input,observation,status,tool' : 'input,observation,status,tool')
                     && Object.keys(observation).sort().join(',') === 'message,operationId,status'
-                    && observation.message === (status === 'prepared'
+                    && (isCurrentReceipt || observation.message === (status === 'prepared'
                         ? 'A draft or restoration preview is prepared. Check its publishing card and preview; publication has not been confirmed.'
                         : status === 'outcome_unknown'
                             ? 'The preparation result needs verification in its publishing card. Do not repeat the request or claim it is published.'
-                            : 'Preparation needs attention. Check its publishing card before continuing; publication has not been confirmed.')) {
-                    states.push({ schemaVersion: 1, owner: 'ghost', operationId, phase: status === 'prepared' ? 'prepared' : 'unknown',
+                            : 'Preparation needs attention. Check its publishing card before continuing; publication has not been confirmed.'))) {
+                    states.push({ schemaVersion: 1, owner: 'ghost', operationId,
+                        phase: ghostPreparationPhase(status, isCurrentReceipt ? executionState : undefined),
                         origin: { runId: input.runId, turnId: input.turnId, assistantId, callId: message.toolCallId, resultId: message.id },
-                        revision: 0, inputLineage: lineage, receipt: { kind: 'ghost-preparation', operationId, status } });
+                        revision: 0, inputLineage: lineage, receipt: { kind: 'ghost-preparation', operationId, status,
+                            ...(isCurrentReceipt ? { executionState } : {}) } });
                     continue;
                 }
             } catch { /* An invalid boundary envelope supplies no state proof. */ }

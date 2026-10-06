@@ -25,8 +25,6 @@ export interface GhostResourceOptions {
     gate: GhostRequestGate;
     siteId: string;
     siteUrl: string;
-    /** Only resources from a previously verified, completed baseline. */
-    baseline?: { siteId: string; site: string; resources: readonly GhostStoredResource[] };
 }
 
 export interface GhostPreparedResource {
@@ -86,20 +84,6 @@ function directImageUrl(value: string, site: URL): string | undefined {
     return url.href;
 }
 
-function reusableUrl(
-    baseline: GhostResourceOptions["baseline"], siteId: string, site: URL,
-    hash: string, length: number, mimeType: string,
-): string | undefined {
-    if (!baseline || baseline.siteId !== siteId) return;
-    try {
-        if (siteUrl(baseline.site).href !== site.href) return;
-        for (const resource of baseline.resources) {
-            if (resource.byteHash !== hash || resource.byteLength !== length || resource.mimeType !== mimeType || !resource.url) continue;
-            try { return webUrl(resource.url).href; } catch { /* A malformed entry cannot authorize reuse. */ }
-        }
-    } catch { /* An invalid baseline cannot authorize reuse. */ }
-}
-
 /** Reads only an explicit export resource; never uploads or changes durable state. */
 export async function prepareGhostResource(
     plan: ExportResourcePlan, options: GhostResourceOptions,
@@ -150,9 +134,6 @@ async function prepareResource(plan: ExportResourcePlan, options: GhostResourceO
     if (!id || typeof source !== "string" || !source || !ownerPaths.length || !["local", "remote"].includes(kind)) fail("invalid-resource");
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(siteId)) fail("invalid-resource");
     const site = siteUrl(options.siteUrl);
-    const baseline = options.baseline && {
-        ...options.baseline, resources: options.baseline.resources.map((resource) => ({ ...resource })),
-    };
     let bytes: Uint8Array;
     let mimeType: string;
     if (kind === "local") {
@@ -201,8 +182,7 @@ async function prepareResource(plan: ExportResourcePlan, options: GhostResourceO
         byteHash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
     } catch { assertCurrent(); return fail("hash-failed"); }
     assertCurrent();
-    const url = reusableUrl(baseline, siteId, site, byteHash, bytes.byteLength, mimeType)
-        ?? (network ? directImageUrl(source, site) : undefined);
+    const url = network ? directImageUrl(source, site) : undefined;
     return {
         metadata: { id, source, ...(kind === "local" ? { resolvedPath } : {}), byteHash, byteLength: bytes.byteLength, mimeType, ...(url ? { url } : {}) },
         bytes,

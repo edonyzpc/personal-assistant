@@ -1,14 +1,13 @@
 import { stableStringify } from "../ai-services/agent-utils";
 import type { GhostPost, GhostPostWrite, GhostVisibility } from "./client";
 import { ghostFieldsForCandidate } from "./fields";
-import { planFormatPreservation, type FormatReplacementMode } from "./format-preservation";
 import { lexicalSemanticSignature, type LexicalContentIdentity } from "./lexical-content";
-import { buildRecipeInjection, restoreRecipeInjection } from "./recipe";
+import { buildRecipeInjection } from "./recipe";
 import { ghostContentSchema, ghostSnapshotSchema, type GhostSnapshot, type GhostStoredContent, type GhostStoredResource } from "./state-schema";
 import type { GhostExportResult, LexicalDocumentJson, LexicalNodeJson, SitePublishingProfile } from "./types";
 
 export class GhostCandidateError extends Error {
-    constructor(readonly code: "invalid-content" | "unsupported-remote" | "resource-unavailable" | "content-conflict" | "missing-baseline") {
+    constructor(readonly code: "invalid-content" | "unsupported-remote" | "resource-unavailable") {
         super(`Ghost publishing: ${code}.`);
         this.name = "GhostCandidateError";
     }
@@ -103,66 +102,48 @@ export interface PrepareGhostSnapshotOptions {
     profile: SitePublishingProfile;
     resources: GhostStoredResource[];
     remote?: GhostPost;
-    baseline?: GhostSnapshot;
     defaultVisibility: GhostVisibility;
-    replacement?: FormatReplacementMode;
     /** Only exact operation markers confirmed by the owning service may be omitted. */
     ignoredMarkers?: string[];
-    /** Only for a durable prepared operation before the service uploads its resources. */
+    /** Resource URLs are materialized before any article write. */
     allowPendingResources?: boolean;
 }
 
 export function prepareGhostSnapshot(options: PrepareGhostSnapshotOptions): GhostSnapshot {
-    const { exported, resources, baseline, remote, profile } = options;
-    if (remote && !baseline) throw new GhostCandidateError("missing-baseline");
-    const content = remote ? ghostContentFromPost(remote, options.ignoredMarkers) : emptyContent(options.defaultVisibility);
+    const { exported, resources, remote, profile } = options;
+    const content = emptyContent(remote?.visibility ?? options.defaultVisibility);
+    if (remote) {
+        // Preserve only operational fields and injection outside PA's managed region.
+        // Old body and managed metadata never fill gaps in the current note.
+        content.tags = remote.tags.filter((tag) => tag.name.startsWith("#") && !options.ignoredMarkers?.includes(tag.name))
+            .map(({ id, name }) => id ? { id, name } : { name });
+        content.authors = remote.authors.map(({ id }) => ({ id }));
+        content.feature_image_alt = remote.feature_image_alt;
+        content.feature_image_caption = remote.feature_image_caption;
+        content.custom_template = remote.custom_template;
+        content.published_at = remote.published_at;
+        content.codeinjection_head = remote.codeinjection_head;
+        content.codeinjection_foot = remote.codeinjection_foot;
+    }
     const lexical = fillGhostResourceUrls(exported.lexical, resources, options.allowPendingResources);
     const identity = resourceIdentity(resources);
     const blocks = exported.blocks.map((block) => ({ ...block,
         semanticSignature: lexicalSemanticSignature(lexical.root.children[block.nodeIndex], identity),
     }));
-    if (baseline && remote) {
-        if (baseline.profile.siteId !== profile.siteId) throw new GhostCandidateError("missing-baseline");
-        const metadataFields = baseline.managedFields.filter((field) => !["lexical", "codeinjection_head", "codeinjection_foot"].includes(field));
-        if (options.replacement !== "replace-all" && stableStringify(comparable(baseline.content, metadataFields)) !== stableStringify(comparable(content, metadataFields))) {
-            throw new GhostCandidateError("content-conflict");
-        }
-        const remoteNodes = documentOf(content.lexical).root.children;
-        const previousIdentity = resourceIdentity(baseline.resources);
-        const remoteBlocks = remoteNodes.map((node, index) => ({
-            id: `read-${index}`, node, semanticSignature: lexicalSemanticSignature(node, previousIdentity),
-        }));
-        // A binding survives a main-note rename. Embedded paths retain their separate identity.
-        const priorBlocks = baseline.blocks.map(({ remoteBlockId: _unused, ...block }) => ({ ...block,
-            sourcePath: block.sourcePath === baseline.source.targetPath ? exported.sourceManifest.targetPath : block.sourcePath,
-        }));
-        const plan = planFormatPreservation(blocks, remoteBlocks, priorBlocks, options.replacement);
-        if (plan.status !== "ok") throw new GhostCandidateError("content-conflict");
-        for (const preserved of plan.preservedNodes) {
-            const block = blocks.find((item) => item.id === preserved.blockId);
-            if (block) lexical.root.children[block.nodeIndex] = copy(preserved.node);
-        }
-    }
     const fields = ghostFieldsForCandidate(exported.fields);
-    const managedFields: GhostSnapshot["managedFields"] = ["title", "lexical", "codeinjection_head", "codeinjection_foot"];
+    const managedFields: GhostSnapshot["managedFields"] = ["title", "lexical", "tags", "feature_image", "custom_excerpt", "meta_description", "codeinjection_head", "codeinjection_foot"];
     content.title = fields.title;
     content.lexical = JSON.stringify(lexical);
-    if (fields.tags !== undefined) {
-        const publicTags = (fields.tags ?? []).map((name) => {
-            if (!name.trim() || name.startsWith("#")) throw new GhostCandidateError("invalid-content");
-            return content.tags.find((tag) => tag.name === name) ?? { name };
-        });
-        content.tags = [...publicTags, ...content.tags.filter((tag) => tag.name.startsWith("#"))];
-        managedFields.push("tags");
-    }
-    if (fields.feature_image !== undefined) {
-        const resource = resources.find((item) => `pending-resource://${item.id}` === fields.feature_image);
-        content.feature_image = fields.feature_image === null ? null : resource?.url ?? (options.allowPendingResources && resource ? fields.feature_image : null);
-        if (fields.feature_image !== null && !content.feature_image) throw new GhostCandidateError("resource-unavailable");
-        managedFields.push("feature_image");
-    }
-    if (fields.custom_excerpt !== undefined) { content.custom_excerpt = fields.custom_excerpt; managedFields.push("custom_excerpt"); }
-    if (fields.meta_description !== undefined) { content.meta_description = fields.meta_description; managedFields.push("meta_description"); }
+    const publicTags = fields.tags.map((name) => {
+        if (!name.trim() || name.startsWith("#")) throw new GhostCandidateError("invalid-content");
+        return { name };
+    });
+    content.tags = [...publicTags, ...content.tags];
+    const resource = resources.find((item) => `pending-resource://${item.id}` === fields.feature_image);
+    content.feature_image = fields.feature_image === null ? null : resource?.url ?? (options.allowPendingResources && resource ? fields.feature_image : null);
+    if (fields.feature_image !== null && !content.feature_image) throw new GhostCandidateError("resource-unavailable");
+    content.custom_excerpt = fields.custom_excerpt;
+    content.meta_description = fields.meta_description;
     const injection = buildRecipeInjection(exported.capabilities, {
         ...profile, manualHeadInjection: content.codeinjection_head ?? "", manualFootInjection: content.codeinjection_foot ?? "",
     });
@@ -189,42 +170,6 @@ export function materializeGhostSnapshot(candidate: GhostSnapshot, resources: Gh
     return snapshot({ ...candidate, content, resources });
 }
 
-/** Re-preparing a local operation keeps reliable formatting from its own edited draft. */
-export function preserveGhostPreviewFormatting(next: GhostSnapshot, previous: GhostSnapshot, preview: GhostPost, markers: string[], replaceAll = false): GhostSnapshot {
-    if (replaceAll) return next;
-    if (!ghostRenderingMatches(previous, preview, markers)) throw new GhostCandidateError("content-conflict");
-    const lexical = documentOf(next.content.lexical);
-    const remote = documentOf(ghostContentFromPost(preview, markers).lexical).root.children;
-    const identity = resourceIdentity(previous.resources);
-    const remoteBlocks = remote.map((node, index) => ({ id: `read-${index}`, node, semanticSignature: lexicalSemanticSignature(node, identity) }));
-    const prior = previous.blocks.map(({ remoteBlockId: _unused, ...block }) => ({ ...block,
-        sourcePath: block.sourcePath === previous.source.targetPath ? next.source.targetPath : block.sourcePath,
-    }));
-    const plan = planFormatPreservation(next.blocks, remoteBlocks, prior);
-    if (plan.status !== "ok") throw new GhostCandidateError("content-conflict");
-    for (const item of plan.preservedNodes) {
-        const block = next.blocks.find((candidate) => candidate.id === item.blockId);
-        if (block) lexical.root.children[block.nodeIndex] = copy(item.node);
-    }
-    return snapshot({ ...next, content: { ...next.content, lexical: JSON.stringify(lexical) } });
-}
-
-export function ghostRenderingMatches(candidate: GhostSnapshot, post: GhostPost, markers: string[] = [], initialCreate = false): boolean {
-    const actual = ghostContentFromPost(post, markers);
-    const expected = copy(candidate.content);
-    if (initialCreate && expected.authors.length === 0) expected.authors = actual.authors;
-    const fields = Object.keys(expected).filter((key) => key !== "lexical") as Array<keyof GhostStoredContent>;
-    for (const field of fields) {
-        const normalize = (content: GhostStoredContent) => field === "tags" ? content.tags.map((tag) => tag.name) : content[field];
-        if (stableStringify(normalize(expected)) !== stableStringify(normalize(actual))) return false;
-    }
-    const identity = resourceIdentity(candidate.resources);
-    const expectedNodes = documentOf(expected.lexical).root.children;
-    const actualNodes = documentOf(actual.lexical).root.children;
-    return expectedNodes.length === actualNodes.length && expectedNodes.every((node, index) =>
-        lexicalSemanticSignature(node, identity) === lexicalSemanticSignature(actualNodes[index], identity));
-}
-
 export function ghostManagedWrite(candidate: GhostSnapshot): GhostPostWrite {
     const result: Record<string, unknown> = {};
     for (const field of candidate.managedFields) result[field] = copy(candidate.content[field]);
@@ -247,40 +192,4 @@ export async function ghostPayloadHash(value: unknown): Promise<string> {
 export function ghostManagedContentMatches(candidate: GhostSnapshot, post: GhostPost, markers: string[] = []): boolean {
     const content = ghostContentFromPost(post, markers);
     return stableStringify(comparable(candidate.content, candidate.managedFields)) === stableStringify(comparable(content, candidate.managedFields));
-}
-
-/** Used after manual Ghost formatting/publish, and before accepting an edited preview. */
-export function acceptGhostFormatting(candidate: GhostSnapshot, post: GhostPost, markers: string[] = []): GhostSnapshot {
-    const content = ghostContentFromPost(post, markers);
-    const identity = resourceIdentity(candidate.resources);
-    const currentNodes = documentOf(candidate.content.lexical).root.children;
-    const remoteNodes = documentOf(content.lexical).root.children;
-    if (currentNodes.length !== remoteNodes.length || currentNodes.some((node, index) =>
-        lexicalSemanticSignature(node, identity) !== lexicalSemanticSignature(remoteNodes[index], identity))) {
-        throw new GhostCandidateError("content-conflict");
-    }
-    const otherFields = candidate.managedFields.filter((field) => field !== "lexical");
-    if (stableStringify(comparable(candidate.content, otherFields)) !== stableStringify(comparable(content, otherFields))) {
-        throw new GhostCandidateError("content-conflict");
-    }
-    return snapshot({ ...candidate, content, blocks: candidate.blocks.map(({ remoteBlockId: _unused, ...block }) => ({
-        ...block, semanticSignature: lexicalSemanticSignature(remoteNodes[block.nodeIndex], identity),
-    })) });
-}
-
-export function prepareGhostRestore(lastUndo: GhostSnapshot, remote: GhostPost, profile: SitePublishingProfile): GhostSnapshot {
-    if (lastUndo.profile.siteId !== profile.siteId) throw new GhostCandidateError("missing-baseline");
-    const content = ghostContentFromPost(remote);
-    for (const field of lastUndo.managedFields) {
-        if (field === "codeinjection_head" || field === "codeinjection_foot") {
-            content[field] = restoreRecipeInjection(content[field], lastUndo.content[field], field === "codeinjection_head" ? "head" : "foot");
-        } else if (field === "tags") {
-            content.tags = [...copy(lastUndo.content.tags.filter((tag) => !tag.name.startsWith("#"))), ...content.tags.filter((tag) => tag.name.startsWith("#"))];
-        } else {
-            Object.assign(content, { [field]: copy(lastUndo.content[field]) });
-        }
-    }
-    // The historical manifest stays authoritative for restored material. Current-note
-    // source validity is a separate per-operation Host gate, never an equality test.
-    return snapshot({ ...lastUndo, content, profile });
 }

@@ -398,8 +398,8 @@ async function runTamperedGhostResult(mutation: 'body' | 'url' | 'fact' | 'sourc
     const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
     const submit = jest.fn<import('../src/ai-services/chat-tool-types').GhostHostBinding['submit']>(
         async () => mutation.startsWith('attention-')
-            ? { status: 'needs_attention' as const, ...(mutation === 'attention-no-id' ? {} : { operationId: 'ghost-operation' }) }
-            : { status: 'prepared' as const, operationId: 'ghost-operation' });
+            ? { status: 'needs_attention' as const, executionState: 'failed' as const, ...(mutation === 'attention-no-id' ? {} : { operationId: 'ghost-operation' }) }
+            : { status: 'prepared' as const, executionState: 'succeeded' as const, operationId: 'ghost-operation' });
     const originalExecute = CapabilityRegistry.prototype.execute;
     const executeSpy = jest.spyOn(CapabilityRegistry.prototype, 'execute').mockImplementation(async function (
         this: CapabilityRegistry, name: string, input: unknown, context: unknown,
@@ -1199,7 +1199,7 @@ describe('ChatService.streamLLM integration', () => {
                     ghostPublishing: {
                         conversationId: commandInvocation.conversationId,
                         stableMessageId: commandInvocation.stableMessageId,
-                        submit: jest.fn(async () => ({ status: 'prepared' as const, operationId: 'ghost-operation' })),
+                        submit: jest.fn(async () => ({ status: 'prepared' as const, executionState: 'succeeded' as const, operationId: 'ghost-operation' })),
                     },
                 },
             );
@@ -1528,7 +1528,7 @@ describe('ChatService.streamLLM integration', () => {
             expect(guard.isCurrent()).toBe(true);
             expect(guard.isNoteDomainAllowed?.()).toBe(true);
             expect(validity()).toBe(true);
-            return { status: 'prepared', operationId: 'ghost-operation' };
+            return { status: 'prepared', executionState: 'succeeded', operationId: 'ghost-operation' };
         });
         const unregister = jest.spyOn(CapabilityRegistry.prototype, 'unregister');
         try {
@@ -1560,11 +1560,11 @@ describe('ChatService.streamLLM integration', () => {
     });
 
     it.each([
-        { name: 'prepared', receipt: { status: 'prepared', operationId: 'ghost-operation' },
-            expected: ['ghost-operation', 'prepared', 'publication has not been confirmed'] },
-        { name: 'needs attention', receipt: { status: 'needs_attention', operationId: 'ghost-operation' },
-            expected: ['ghost-operation', 'needs_attention', 'Check its publishing card before continuing'] },
-        { name: 'outcome unknown', receipt: { status: 'outcome_unknown', operationId: 'ghost-operation' },
+        { name: 'prepared', receipt: { status: 'prepared', executionState: 'succeeded', operationId: 'ghost-operation' },
+            expected: ['ghost-operation', 'prepared', 'Open its publishing card to review'] },
+        { name: 'needs attention', receipt: { status: 'needs_attention', executionState: 'failed', operationId: 'ghost-operation' },
+            expected: ['ghost-operation', 'needs_attention', 'specific failure and advice'] },
+        { name: 'outcome unknown', receipt: { status: 'outcome_unknown', executionState: 'acceptance_unknown', operationId: 'ghost-operation' },
             expected: ['ghost-operation', 'outcome_unknown', 'needs verification in its publishing card'] },
         { name: 'target missing', errorCode: 'target-missing',
             expected: ['unavailable', 'ghost_target_missing', 'not_started', 'correct_input'] },

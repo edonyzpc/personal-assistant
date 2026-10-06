@@ -807,7 +807,7 @@ describe("PaAgentContextSummarizer", () => {
             expect(request.messages[1].content).not.toContain('inputLineage');
             expect(request.messages[1].content).not.toContain('"revision"');
 
-            const verified = refreshGhostActionState(unknown!, { operationId, revision: 5, state: 'terminal', verified: true });
+            const verified = refreshGhostActionState(unknown!, { operationId, revision: 5, state: 'updated', verified: true });
             expect(verified).toBeDefined();
             expect(verified!.revision).toBe(2);
             input[1] = { ...input[1], actionStates: [verified!] };

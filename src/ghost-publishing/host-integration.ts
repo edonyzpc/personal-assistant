@@ -35,22 +35,12 @@ export class GhostPublishingIntegration {
         saveSettings(settings: GhostPublishingSettings): Promise<void>;
         isCurrent(): boolean;
         isPathAllowed(path: string): boolean;
-    isContentAllowed(path: string, markdown: string): boolean;
-    isWebAllowed(): boolean;
-    generateMetadata?: GhostControllerOptions["generateMetadata"];
+        isContentAllowed(path: string, markdown: string): boolean;
+        isWebAllowed(): boolean;
+        generateMetadata?: GhostControllerOptions["generateMetadata"];
     }) {
         const { app, vaultPath, pluginId } = dependencies;
         const isDesktop = () => Platform.isDesktop && !Platform.isMobile && !this.disposed && dependencies.isCurrent();
-        const openExternal = async (url: string) => {
-            if (!isDesktop()) throw new Error("Ghost publishing desktop is unavailable.");
-            // Obsidian's renderer captures window.open for its Web viewer. Electron's
-            // shell API is the explicit system-browser/editor path on desktop.
-            // eslint-disable-next-line @typescript-eslint/no-require-imports -- Never loaded by mobile.
-            const electron: { shell?: { openExternal?: (target: string) => void | Promise<void> } } = require("electron");
-            const shell = electron.shell;
-            if (typeof shell?.openExternal !== "function") throw new Error("Ghost publishing external opener is unavailable.");
-            await shell.openExternal(url);
-        };
         this.configuration = new GhostPublishingConfiguration({
             isDesktop, localScope: `${vaultPath}\n${getVaultConfigDir(app.vault)}`,
             getSettings: dependencies.getSettings, saveSettings: dependencies.saveSettings,
@@ -64,7 +54,6 @@ export class GhostPublishingIntegration {
             getSourceRevision: path => this.revisions.get(path) ?? 0,
             isPathAllowed: dependencies.isPathAllowed,
             isContentAllowed: dependencies.isContentAllowed,
-            openExternal,
             isCurrent: () => !this.disposed && dependencies.isCurrent(),
             generateMetadata: dependencies.generateMetadata,
             isWebViewerEnabled: () => {

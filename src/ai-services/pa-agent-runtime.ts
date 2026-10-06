@@ -19,6 +19,7 @@ import type { PageletChatHandoffContext } from "./pagelet-handoff";
 import { stableHash } from "../pa/helpers";
 import { MemorySearchTool } from "./memory-search-tool";
 import { TaskSourceRun, historyInputLineage } from "./task-source-run";
+import { ghostPreparationMessage } from "./ghost-tool-receipt";
 import { ImagePreacceptError } from '../chat/image-generation-types';
 import { parseRunSourceSelection } from './chat-source-scope';
 import { cloneInputLineage, completeInputLineage, sourceRecordsInputLineage,
@@ -748,7 +749,11 @@ function isSafeGhostPublishingStatusObservation(
     const validOperationId = typeof operationId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(operationId);
     if (!observation) return false;
     const metadataRecovery = asRecord(metadata.recovery);
-    const expectedExecutionState = observation.status === "prepared" ? "succeeded" : "acceptance_unknown";
+    const actualExecutionState = executionState ?? metadata.executionState;
+    const currentMessage = ghostPreparationMessage(observation.status, actualExecutionState);
+    const isCurrentReceipt = currentMessage !== undefined && observation.message === currentMessage;
+    const expectedExecutionState = isCurrentReceipt ? actualExecutionState
+        : observation.status === "prepared" ? "succeeded" : "acceptance_unknown";
     if (executionState !== undefined && executionState !== expectedExecutionState) return false;
     if (execution) {
         if (!hasOnlyKeys(execution, executionRecovery ? ["executionState", "recovery"] : ["executionState"])
@@ -759,8 +764,13 @@ function isSafeGhostPublishingStatusObservation(
                     !== JSON.stringify(metadataRecovery?.allowedActions)) return false;
     } else if (observation.status !== "prepared"
         || metadata.executionState !== expectedExecutionState) return false;
+    if (isCurrentReceipt && observation.status !== "prepared"
+        && (executionRecovery?.code !== (observation.status === "outcome_unknown"
+            ? "ghost_preparation_outcome_unknown" : "ghost_attention_required")
+            || JSON.stringify(executionRecovery?.allowedActions) !== (actualExecutionState === "acceptance_unknown"
+                ? '["query_operation","needs_user"]' : '["needs_user"]'))) return false;
     if (!observation || !hasOnlyKeys(observation, ["status", "operationId", "message"])
-        || observation.message !== (observation.status === "prepared" ? GHOST_STATUS_MESSAGES.prepared
+        || !isCurrentReceipt && observation.message !== (observation.status === "prepared" ? GHOST_STATUS_MESSAGES.prepared
             : observation.status === "outcome_unknown" ? GHOST_STATUS_MESSAGES.outcome_unknown
                 : observation.status === "needs_attention"
                     ? validOperationId ? GHOST_STATUS_MESSAGES.needs_attention_owned
@@ -774,8 +784,11 @@ function isSafeGhostPublishingStatusObservation(
         return validOperationId && fact?.kind === "approval_pending" && fact.intentId === operationId;
     }
     if (observation.status === "needs_attention") {
+        if (isCurrentReceipt && actualExecutionState === "succeeded") {
+            return validOperationId && fact?.kind === "approval_pending" && fact.intentId === operationId;
+        }
         if (fact?.kind === "unknown") {
-            return validOperationId && fact.operationId === operationId;
+            return !isCurrentReceipt && validOperationId && fact.operationId === operationId;
         }
         // Older source-free observations remain readable; only the typed owned
         // operation above can establish an action state for later Host updates.

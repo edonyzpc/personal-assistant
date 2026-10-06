@@ -91,6 +91,18 @@ export class TaskSourceConstraintState {
             ...(captureSourceReceipt ? { captureSourceValidity: captureSourceReceipt }
                 : captureSourceValidity ? { captureSourceValidity: () => captureSourceValidity } : {}),
             ...(captureSourceAuthorityReceipt ? { captureSourceAuthority: captureSourceAuthorityReceipt } : {}),
+            ...(captureSourceAuthorityReceipt ? { captureAuthorityGuard: () => {
+                if (!current()) throw new Error('Task source admission is no longer current.');
+                const authority = captureSourceAuthorityReceipt();
+                const guard = this.createReadGuard(constraint, resolveHostNoteId, isHostCurrent,
+                    isOutputTargetAllowed, getNoteSearchScope, isWebAllowed, isMemoryAllowed,
+                    authority, async signal => {
+                        if (signal?.aborted || !guard.isCurrent()) {
+                            throw new Error('Task source authority is no longer current.');
+                        }
+                    }, () => authority);
+                return guard;
+            } } : {}),
             isPathAllowed: (path: string, kind = 'task_material') => {
                 if (!current()) return false;
                 if (kind === 'output_target_exists' && isOutputTargetAllowed) return isOutputTargetAllowed(path);

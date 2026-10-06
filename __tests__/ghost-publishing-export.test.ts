@@ -7,7 +7,6 @@ import {
     ghostFieldsForCandidate,
 } from "../src/ghost-publishing/fields";
 import { prepareGhostExport } from "../src/ghost-publishing/exporter";
-import { planFormatPreservation } from "../src/ghost-publishing/format-preservation";
 import { buildRecipeInjection } from "../src/ghost-publishing/recipe";
 import { GhostExportError } from "../src/ghost-publishing/errors";
 import { loadGhostSourceTree } from "../src/ghost-publishing/source-loader";
@@ -517,14 +516,14 @@ describe("Ghost publishing deterministic export", () => {
 
     it("keeps field three-states explicit", () => {
         const unmanaged = buildGhostPublishingFields({ ghost: {} }, "Note.md");
-        expect(ghostFieldsForCandidate(unmanaged)).toEqual({ title: "Note" });
+        expect(ghostFieldsForCandidate(unmanaged)).toEqual({ title: "Note", tags: [], feature_image: null, custom_excerpt: null, meta_description: null });
 
         const cleared = buildGhostPublishingFields({
             ghost: { tags: null, feature_image: "", custom_excerpt: null, meta_description: "" },
         }, "Note.md");
         expect(ghostFieldsForCandidate(cleared)).toEqual({
             title: "Note",
-            tags: null,
+            tags: [],
             feature_image: null,
             custom_excerpt: null,
             meta_description: null,
@@ -1499,137 +1498,4 @@ describe("Ghost publishing deterministic export", () => {
         expect(katexWindow.__paGhostRecipe).toMatchObject({ math: "loaded" });
     });
 
-    it("uses actual export semantics for reliable format preservation", async () => {
-        const exportBlock = async (markdown: string) => prepareGhostExport({
-            targetPath: "Format.md",
-            host: createHost([fakeFile("Format.md", markdown)]),
-            guard: allowAllGuard(),
-            siteProfile: profile,
-        });
-        const plain = await exportBlock("Hello world");
-        const bold = await exportBlock("Hello **world**");
-        expect(plain.blocks[0]?.semanticSignature).toBe(bold.blocks[0]?.semanticSignature);
-
-        const linkedPlain = await exportBlock("[Hello world](https://example.invalid)");
-        const linkedBold = await exportBlock("[Hello **world**](https://example.invalid)");
-        expect(linkedPlain.blocks[0]?.semanticSignature).toBe(linkedBold.blocks[0]?.semanticSignature);
-
-        const baseline = { ...plain.blocks[0]!, remoteBlockId: "remote-styled" };
-        const styledRemote = {
-            id: "remote-styled",
-            semanticSignature: plain.blocks[0]!.semanticSignature,
-            node: bold.lexical.root.children[0]!,
-        };
-        const preservedStyle = planFormatPreservation(
-            plain.blocks,
-            [styledRemote],
-            [baseline],
-        );
-        expect(preservedStyle.status).toBe("ok");
-        expect(preservedStyle.preservedNodes[0]?.node).toBe(bold.lexical.root.children[0]);
-
-        const deleted = planFormatPreservation(plain.blocks, [], [baseline]);
-        expect(deleted.status).toBe("needs-explicit-replace");
-        expect(deleted.conflicts).toContainEqual({
-            blockId: plain.blocks[0]!.id,
-            reason: "remote-missing-block",
-        });
-
-        const duplicateCurrent = { ...plain.blocks[0]!, id: "block-duplicate", nodeIndex: 1 };
-        const duplicateBaselines = [
-            { ...plain.blocks[0]!, remoteBlockId: "remote-one" },
-            { ...duplicateCurrent, remoteBlockId: "remote-two" },
-        ];
-        const duplicateRemotes = [
-            { id: "remote-one", semanticSignature: plain.blocks[0]!.semanticSignature, node: plain.lexical.root.children[0]! },
-            { id: "remote-two", semanticSignature: plain.blocks[0]!.semanticSignature, node: bold.lexical.root.children[0]! },
-        ];
-        const ambiguous = planFormatPreservation(
-            [plain.blocks[0]!, duplicateCurrent],
-            duplicateRemotes,
-            duplicateBaselines,
-        );
-        expect(ambiguous.status).toBe("needs-explicit-replace");
-        expect(ambiguous.preservedNodes).toEqual([]);
-        expect(ambiguous.conflicts).toContainEqual({
-            blockId: plain.blocks[0]!.id,
-            reason: "ambiguous-signature",
-        });
-
-        const linkOne = await exportBlock("[site](https://example.invalid/one)");
-        const linkTwo = await exportBlock("[site](https://example.invalid/two)");
-        const changedLink = planFormatPreservation(linkOne.blocks, [{
-            id: "remote-link",
-            semanticSignature: linkTwo.blocks[0]!.semanticSignature,
-            node: linkTwo.lexical.root.children[0]!,
-        }], [{ ...linkOne.blocks[0]!, remoteBlockId: "remote-link" }]);
-        expect(changedLink.status).toBe("needs-explicit-replace");
-        expect(changedLink.conflicts[0]).toMatchObject({ reason: "remote-semantic-change" });
-    });
-
-    it("preserves only unique semantically matching remote blocks", () => {
-        const block = {
-            id: "block-1",
-            nodeKind: "paragraph",
-            sourcePath: "A.md",
-            sourceDependencyIndex: 0,
-            sourceStartLine: 0,
-            sourceEndLine: 1,
-            sourceHash: "source",
-            semanticSignature: "semantic",
-            nodeIndex: 0,
-        };
-        const remoteNode = { type: "paragraph", version: 1 };
-        const baseline = { ...block, remoteBlockId: "remote-1" };
-        const preserved = planFormatPreservation([block], [{
-            id: "remote-1",
-            semanticSignature: "semantic",
-            node: remoteNode,
-        }], [baseline]);
-        expect(preserved.status).toBe("ok");
-        expect(preserved.preservedNodes[0]?.node).toBe(remoteNode);
-
-        const changed = planFormatPreservation([block], [{
-            id: "remote-1",
-            semanticSignature: "different",
-            node: remoteNode,
-        }], [baseline]);
-        expect(changed.status).toBe("needs-explicit-replace");
-        expect(changed.conflicts).toEqual([{ blockId: "block-1", reason: "remote-semantic-change" }]);
-
-        const locallyChanged = { ...block, id: "block-local", sourceHash: "new-source", semanticSignature: "local-new" };
-        const normalLocalEdit = planFormatPreservation([locallyChanged], [{
-            id: "remote-1",
-            semanticSignature: "semantic",
-            node: remoteNode,
-        }], [baseline]);
-        expect(normalLocalEdit.status).toBe("ok");
-        expect(normalLocalEdit.newBlocks).toEqual(["block-local"]);
-
-        const inserted = { ...block, id: "block-inserted", sourceHash: "inserted", semanticSignature: "inserted" };
-        const withInsert = planFormatPreservation([inserted, block], [{
-            id: "remote-1",
-            semanticSignature: "semantic",
-            node: remoteNode,
-        }], [baseline]);
-        expect(withInsert.status).toBe("ok");
-        expect(withInsert.newBlocks).toEqual(["block-inserted"]);
-        expect(withInsert.preservedNodes.map((entry) => entry.blockId)).toEqual(["block-1"]);
-
-        const duplicate = { ...block, id: "block-2" };
-        const ambiguous = planFormatPreservation([block, duplicate], [
-            { id: "remote-1", semanticSignature: "semantic", node: remoteNode },
-            { id: "remote-2", semanticSignature: "semantic", node: remoteNode },
-        ], [{ ...block }]);
-        expect(ambiguous.status).toBe("needs-explicit-replace");
-        expect(ambiguous.conflicts).toContainEqual({
-            blockId: "block-1",
-            reason: "ambiguous-signature",
-        });
-        expect(ambiguous.conflicts).toContainEqual({
-            blockId: "remote-1",
-            reason: "remote-extra-block",
-        });
-        expect(planFormatPreservation([block], [], [baseline], "replace-all").status).toBe("ok");
-    });
 });
