@@ -2,6 +2,260 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.2...2.10.2) (2026-10-06)
+
+### Features
+- memory: harden first-run setup and preparation
+- skill: add PM needs analysis framework and skill
+- retrieval: complete B-125 retrieval optimization
+- retrieval: enable platform-scoped B-125 defaults
+- context: preserve conversation continuity within request budgets
+- chat: persist and display context reduction receipts
+- context: merge B-128 continuity and closeout into master
+- multimodal-chat: add runtime multimodal image and writing paths
+- chat: simplify image composer and note saving
+- settings: unify runtime defaults and retire redundant toggles
+- chat: preserve delivered images and move originals on note save
+- settings: add simple settings controls for memory workflows
+- memory: enable governed learning and preserve source lifetimes
+- agent: unify scoped source execution and writing delivery
+- agent: bind writing output to current sources and conversation
+- agent: capture physical writing input sources
+- writing: persist generation input snapshots
+- writing: revalidate persisted generation sources
+- chat: enable native writing output
+- share-card: add editor context menu entry
+- share-card: add per-export print styles
+- pa-agent: deliver essential note, memory, and insight capabilities
+- chat: add built-in Wan image generation and editing
+- agent: complete recoverable execution
+- add PA Agent debug trace and local history
+- agent: deliver B-146 task source boundary
+- pa-agent: deliver B-149 runtime evolution
+- chat: unify image creation with bound sources and featured prompts
+- ghost: add desktop note publishing and recovery
+- operations: add batch note review and retire audit persistence
+- ghost: refine draft export and native metadata
+- operations: remove note images and attachments with undo
+- operations: execute authorized changes and retain action results
+
+### Fix
+- settings: guard mobile getLeaf and cache hasToken to avoid iOS keychain freeze
+- memory: harden first-run readiness and setup
+- docs: quarantine inherited lifecycle debt exactly
+- memory: enforce prepared rebuild ownership
+- ai: serialize provider and credential transitions
+- validation: build artifacts before receipt tests
+- agent: enforce terminal Memory policy
+- retrieval: bound path-evidence repair lifecycle
+- validation: size profiler samples to runtime window
+- agent: gate Memory citation eligibility on evidence
+- dependencies: patch nanoid high-severity vulnerabilities
+- memory: surface lexical stale state and keyword diagnostics
+- chat: preserve IME confirmation before sending
+- multimodal-chat: complete version reference details
+- chat: bound menus and consolidate image actions
+- chat: guard queued image reads against revocation
+- memory: preserve selected writing source validity
+- chat: validate writing sources through final storage
+- chat: verify sources when recovering legacy writing
+- agent: accept anchored empty-id writing continuations
+- agent: reflect accepted source scope in model guidance
+- chat: preserve legacy cancellation status
+- share-card: remove fixed inline code typography
+- settings: preserve continuous text editing
+- share-card: render xerox effects in exported images
+- share-card: keep actions visible and add preview zoom
+- pagelet: remove static model gate from deep discovery
+- pagelet: restore compact corner action ring
+- chat: keep composer actions below draft text
+- chat: align image results and anchor CreateImage suggestions
+- chat: shorten image edit action label
+- agent: prevent stalled and falsely completed chat turns
+- capture: preserve Markdown in Record templates
+- agent: use Bailian EnhancedSearch for web search
+- agent: close B-146 runtime review gaps
+- licenses: register bundled blog2ghost provenance
+- agent: keep Obsidian responsive during source processing
+- agent: reuse validated scalar source admission
+- tests: pin Jest to avoid async context accumulation
+- chat: align conversation button sizing and hidden state
+- agent: preserve action facts across chat context
+- ghost: show saved admin key status
+- share-card: export long content without fixed size limits
+- ci: register bundled Templater resource notices
+
+### Improvements
+- vss: parallelize embedding batches and raise safe TPM to 1M
+- keep lifecycle findings advisory
+- ci: optimize validation scopes and current-build deploy reuse
+- Merge branch 'master' into codex/context-management-research-b128
+- chat: integrate B-129 image management
+- release: reuse verified master CI for beta preparation
+- integrate B-135 unified task execution
+- pagelet: retire legacy scope controls and dead code
+- integrate B-140 PA Agent essential capabilities
+- plugin: split shell into lifecycle owners
+- release: refresh bundle size budget
+- audit: set approved 10 MiB bundle budget
+- leave headroom for coverage workers and report test costs
+- bundle: inline loaders and narrow dependency imports
+- release: reuse verified source CI for beta tags
+- agent: separate command semantics from host execution
+- agent: simplify harness and recover context pressure
+- pagelet: separate manual discovery from automatic budgets
+
+### Docs
+- discovery: add first-run and platform robustness analysis brief
+- architecture: add episodic memory and attunement design
+- memory: codify silent first-use authority
+- memory: codify inline setup authority
+- memory: update first-run user guidance
+- memory: record PR 378 validation
+- memory: record PR 378 remediation evidence
+- memory: record PR 378 publication gate
+- decision: DEC-028 multimodal chat + image copywriting
+- decision: resolve multimodal decision identity
+- workflow: index PM needs analysis framework
+- agent: add context management research
+- retrieval: record B-125 shipping-default continuation
+- retrieval: record B-125 iPhone validation
+- retrieval: record B-125 beta publication
+- skills: refine agent lifecycle and authorization contracts
+- decisions: add DEC-030 proposed entry
+- agent: align context proposal with PA runtime
+- context: reconcile B-128 contracts and validation evidence
+- context: close B-128 and preserve follow-up evidence
+- multimodal-chat: add B129 evidence and product specs
+- multimodal-chat: preserve current contracts and validation evidence
+- multimodal-chat: close B129 after AC09 validation
+- codex: streamline Astra feature delivery workflow
+- codex: clarify evidence reuse and workflow sampling
+- close image experience and Astra workflow tracks
+- simple-settings: add B-106 simple settings design handoff
+- simple-settings: sync migration plan, sdd and tracker
+- chat: define image attachment lifecycle simplification
+- chat: record image lifecycle validation and Mac handoff
+- agent: plan unified execution and reliable writing delivery
+- simple-settings: update settings and pagelet product documentation
+- chat: closeout B-129 chat image management validation
+- release: align beta validation and asset verification
+- agent: record B135 decisions and delivery evidence
+- agent: record B135 validation and paused handoff
+- agent: consolidate B135 development branch
+- agent: record B135 source admission validation
+- agent: checkpoint B135 reload recovery before pause
+- agent: record B135 recovery decision and validation
+- agent: separate B135 model quality and protocol validation
+- agent: record B135 DeepSeek compatibility validation
+- memory: record real downgrade matrix
+- memory: close default learning host validation
+- agent: record B-135 writing host evidence
+- agent: record Qwen interruption recovery
+- agent: close B-135 reliability phase
+- agent: record B-135 learning exit smoke
+- agent: record B-135 semantic task smoke
+- agent: close B-135 semantic phase
+- agent: record B-135 native desktop rollout
+- agent: audit B-135 quality and cost evidence
+- agent: close B-135 continuation task
+- agent: sync B-135 current architecture
+- agent: audit B-135 acceptance completion
+- agent: finalize B-135 local acceptance
+- agent: validate B-135 platform evidence
+- agent: close out B-135
+- development: add GPT-6 GLM delivery workflow
+- pagelet: record bounded cleanup decisions and validation
+- pagelet: close out B-136 bounded cleanup
+- pa-agent: plan essential tools and GLM delivery
+- share-card: close out B-137 print styles
+- pa-agent: record B-140 contracts and validation
+- pa-agent: close out B-140 and track Pagelet follow-up
+- share-card: define visible xerox image behavior
+- pagelet: explain discovery model capability checks
+- pagelet: record compact ring label behavior
+- b133: record design, validation, and mobile acceptance steps
+- b133: close out image generation after iPhone acceptance
+- chat: record image UI behavior in current contracts
+- close out B-142 test optimization
+- plugin: record B-143 validated architecture
+- plugin: close out B-143 shell refactor
+- agent: record empty-answer diagnosis and validated fixes
+- agent: design recoverable task execution
+- agent: close out B-144
+- capture B-145 design and validation
+- close out B-145 agent debug delivery
+- agent: close out B-146 source boundary
+- agent: record B-146 review fixes and validation
+- pa-agent: record B-149 contracts and validation
+- pa-agent: close out B-149
+- close out B-150 test audit
+- record B-151 test reduction validation
+- add reusable test optimization workflow
+- design B-152 unified chat image creation
+- design B-153 Ghost blog publishing
+- record B-152 implementation and independent acceptance
+- ghost: record publishing design and acceptance
+- ghost: record CI followup acceptance
+- operations: record B-154 contracts and acceptance
+- ghost: record beta feedback contracts and acceptance
+- agent: record responsive execution design and acceptance
+- agent: record coverage CI fixture correction
+- agent: record timer fixture evidence and limits
+- agent: record late timer driver correction
+- agent: record release gate diagnosis and scalar fix
+- agent: clarify source SDK phase validation boundary
+- record CI resource review and controlled validation
+- explain measured CI failures and test responsibility gaps
+- record focused test repair and final CI gate
+- record Jest timeout root cause and validation
+- record beta.18 CI and native acceptance
+- dev: close B-156 and streamline delivery rules
+- backlog: record context continuity proposal and follow-ups
+- agent: detail B-157 implementation and validation plan
+- agent: record B-157 continuity contracts and validation
+- agent: define command architecture and delivery contracts
+- backlog: defer image recovery interaction follow-up
+- agent: record harness architecture and corrected acceptance
+- note-image-removal: record B-160 contracts and acceptance
+- workflow: clarify validation reuse and mobile smoke routing
+- workflow: enforce proportionate design and validation
+- agent: retire keyword rules and arbitrary operations limits
+- agent: simplify repository instructions and workflow routing
+- agent: scope instruction loading and separate validation details
+- agent: scope React guidance and rollout safeguards
+- contracts: align B-161 product boundaries and record validation
+- workflow: coordinate shared validation and stop redundant retries
+- lifecycle: close out completed development tasks
+- align current behavior and retire obsolete documentation
+
+### Tests
+- multimodal-chat: add b129 prototype and runtime probe suites
+- chat: await macOS converter lifecycle events
+- chat: await writing persistence in topic restoration tests
+- chat: clarify historical native replay evidence
+- agent: close physical input source matrix
+- share-card: add light print export prototype
+- streamline B-142 coverage
+- streamline tests and release validation
+- chat: wait for Writing stream dispatch
+- strengthen B-150 regression coverage
+- remove redundant B-151 test cases
+- make retrieval habit fixtures independent of wall clock
+- chat: wait for writing lifecycle readiness
+- agent: make cooperative runtime fixtures deterministic
+- agent: advance idle timers in source integration fixtures
+- agent: keep SDK timers driven across native I/O
+- agent: expose stalled source admission stage in CI
+- agent: validate continuous SDK runs by request phase
+- remove duplicate source checks and separate recovery runs
+- ci: measure SDK phase CPU and wall time
+- ci: isolate worker reuse in SDK timing probe
+- ci: sample SDK response in the full run
+- ci: count retained async storage in SDK probe
+- strengthen image, Ghost and Operations regressions
+- chat: load real service before timed operations scenarios
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
