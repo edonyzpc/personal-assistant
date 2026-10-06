@@ -123,4 +123,24 @@ describe("image composer ownership", () => {
         draft.clearWritingIntent();
         expect(draft.snapshot("Draft an invitation").writingIntent).toBeUndefined();
     });
+
+    test("Ghost selection can send without text and is restored without its consumed token", () => {
+        const draft = new ComposerDraft<string>();
+        draft.setGhostIntent();
+        expect(draft.hasDraft("")).toBe(true);
+        expect(draft.canSend("")).toBe(true);
+        const sent = draft.take("")!;
+        expect(draft.hasDraft("")).toBe(false);
+        expect(draft.restore(sent, "")).toBe("");
+        expect(draft.snapshot("").ghostIntent).toBe(true);
+        draft.clearGhostIntent();
+        expect(draft.canSend("")).toBe(false);
+
+        draft.setGhostIntent();
+        draft.setWritingIntent();
+        expect(draft.snapshot("").ghostIntent).toBeUndefined();
+        draft.setGhostIntent();
+        draft.setImageIntent({ referenceImageRefs: [] });
+        expect(draft.snapshot("").ghostIntent).toBeUndefined();
+    });
 });

@@ -691,7 +691,11 @@ export class LLMView extends ItemView {
         let chooseActionTypeahead: (() => void) | undefined;
         let composing = false;
         textArea.addEventListener('compositionstart', () => { composing = true; hideActionTypeahead(); });
-        textArea.addEventListener('compositionend', () => { composing = false; renderSkillTypeahead(); });
+        textArea.addEventListener('compositionend', () => {
+            composing = false;
+            syncComposerControls();
+            renderSkillTypeahead();
+        });
 
         textArea.addEventListener('keydown', (e: KeyboardEvent) => {
             // IME confirmation can arrive after compositionend with keyCode 229.
@@ -1481,11 +1485,34 @@ export class LLMView extends ItemView {
             const writingCommandPrompt = parseWritingCommand(textArea.value);
             const ghostCommandAvailable = Platform.isDesktop && !Platform.isMobile
                 && Boolean(this.host.createGhostPublishingBinding);
-            const hasGhostCommand = ghostCommandAvailable && parseGhostCommand(textArea.value) !== null;
+            if (!composing && ghostCommandAvailable && parseGhostCommand(textArea.value) !== null) {
+                const trigger = /^\s*@blog2ghost(?:\s+|$)/i.exec(textArea.value)!;
+                const selectionStart = textArea.selectionStart;
+                const selectionEnd = textArea.selectionEnd;
+                composerDraft.setGhostIntent();
+                textArea.value = textArea.value.slice(trigger[0].length);
+                textArea.selectionStart = Math.max(0, selectionStart - trigger[0].length);
+                textArea.selectionEnd = Math.max(0, selectionEnd - trigger[0].length);
+                hideActionTypeahead();
+            }
+            const currentDraft = composerDraft.snapshot(textArea.value);
+            const hasGhostCommand = ghostCommandAvailable && currentDraft.ghostIntent === true;
             ghostIntentEl.empty();
             ghostIntentEl.hidden = !hasGhostCommand;
-            if (hasGhostCommand) ghostIntentEl.createSpan({ text: t('plugin.ghost.card.title') });
-            const currentDraft = composerDraft.snapshot(textArea.value);
+            if (hasGhostCommand) {
+                ghostIntentEl.createSpan({ text: t('plugin.ghost.card.title') });
+                const removeIntent = ghostIntentEl.createEl('button', {
+                    cls: 'pa-chat-icon-button',
+                    attr: { type: 'button', title: t('plugin.chat.action.close'),
+                        'aria-label': `${t('plugin.chat.action.close')} ${t('plugin.ghost.card.title')}` },
+                });
+                setIcon(removeIntent, 'x');
+                removeIntent.onclick = () => {
+                    composerDraft.clearGhostIntent();
+                    syncComposerControls();
+                    textArea.focus();
+                };
+            }
             const commandHasImageSource = currentDraft.imageIntent?.textSource !== undefined;
             const imageOptionsActive = currentDraft.imageIntent !== undefined || commandPrompt !== null;
             imageOptionsControl.hidden = !imageOptionsActive;
@@ -5300,6 +5327,17 @@ export class LLMView extends ItemView {
 
         const sendPrompt = async (rawPrompt: string, retryImages?: MessageImage[], retryTurnId?: number, retryWritingParent?: WritingVersion,
             retryWritingMaterialContext?: ChatWritingMaterialContext, retryWritingIntent = false) => {
+            const currentDraftBeforeCommand = composerDraft.snapshot(rawPrompt);
+            if (retryImages === undefined && currentDraftBeforeCommand.ghostIntent
+                && parseGhostCommand(rawPrompt) === null) {
+                if (parseCreateImageCommand(rawPrompt) !== null || parseWritingCommand(rawPrompt) !== null) {
+                    showComposerHint(t('plugin.chat.action.conflict'));
+                    return;
+                }
+                // The visible command selection retains the user's explicit activation.
+                // Keep the existing Host request protocol after consuming its composer token.
+                rawPrompt = `@blog2ghost${rawPrompt ? ` ${rawPrompt}` : ''}`;
+            }
             const ghostCommand = parseGhostCommand(rawPrompt);
             // Resolve the current-note entry synchronously, before any model or persistence await.
             const ghostCapturedPath = ghostCommand === null ? '' : retryTurnId === undefined
@@ -5308,7 +5346,6 @@ export class LLMView extends ItemView {
                 showComposerHint(t('plugin.ghost.settings.desktopOnly'));
                 return;
             }
-            const currentDraftBeforeCommand = composerDraft.snapshot(rawPrompt);
             if (ghostCommand !== null && (currentDraftBeforeCommand.imageIntent || currentDraftBeforeCommand.writingIntent)) {
                 showComposerHint(t('plugin.chat.action.conflict'));
                 return;
@@ -5417,6 +5454,10 @@ export class LLMView extends ItemView {
                 sentDraft.snapshot.imageIntent = explicitImageIntent;
             }
             if (sentDraft && writingCommandPrompt !== null) sentDraft.snapshot.writingIntent = true;
+            if (sentDraft && ghostCommand !== null) {
+                sentDraft.snapshot.ghostIntent = true;
+                sentDraft.snapshot.text = ghostCommand;
+            }
             // Writing is an explicit composer action, including a selected version
             // or a retry of that action. Ordinary Chat never binds writing tools.
             const explicitWritingIntent = !explicitImageIntent && Boolean(sentDraft?.snapshot.writingIntent

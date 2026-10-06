@@ -97,6 +97,7 @@ export interface ComposerSnapshot<T> {
     text: string;
     imageIntent?: ComposerImageIntent;
     writingIntent?: true;
+    ghostIntent?: true;
     images: ComposerImageEntry<T>[];
     draftId: number;
     revision: number;
@@ -115,6 +116,7 @@ export class ComposerDraft<T> {
     private readonly imports = new Map<number, AbortController>();
     private imageIntent: ComposerImageIntent | undefined;
     private writingIntent = false;
+    private ghostIntent = false;
     private disposed = false;
 
     constructor(private readonly maxImages = 8) {}
@@ -127,6 +129,7 @@ export class ComposerDraft<T> {
             text, draftId: this.draftId, revision: this.revision,
             ...(this.imageIntent ? { imageIntent: cloneImageIntent(this.imageIntent) } : {}),
             ...(this.writingIntent ? { writingIntent: true as const } : {}),
+            ...(this.ghostIntent ? { ghostIntent: true as const } : {}),
             images: [...this.entries.values()].map((entry) => ({ ...entry })),
         };
     }
@@ -135,6 +138,7 @@ export class ComposerDraft<T> {
         if (this.disposed) throw new Error('Composer is closed');
         this.imageIntent = cloneImageIntent(intent);
         this.writingIntent = false;
+        this.ghostIntent = false;
         this.revision += 1;
     }
 
@@ -142,6 +146,20 @@ export class ComposerDraft<T> {
         if (this.disposed) throw new Error('Composer is closed');
         this.writingIntent = true;
         this.imageIntent = undefined;
+        this.ghostIntent = false;
+        this.revision += 1;
+    }
+
+    setGhostIntent(): void {
+        if (this.disposed) throw new Error('Composer is closed');
+        if (this.ghostIntent) return;
+        this.ghostIntent = true;
+        this.revision += 1;
+    }
+
+    clearGhostIntent(): void {
+        if (!this.ghostIntent) return;
+        this.ghostIntent = false;
         this.revision += 1;
     }
 
@@ -183,7 +201,7 @@ export class ComposerDraft<T> {
 
     hasDraft(text: string): boolean {
         return text.trim().length > 0 || this.entries.size > 0
-            || this.imageIntent !== undefined || this.writingIntent;
+            || this.imageIntent !== undefined || this.writingIntent || this.ghostIntent;
     }
 
     canSend(text: string): boolean {
@@ -244,6 +262,7 @@ export class ComposerDraft<T> {
         for (const entry of sent.snapshot.images) this.entries.set(entry.id, { ...entry });
         this.imageIntent = sent.snapshot.imageIntent ? cloneImageIntent(sent.snapshot.imageIntent) : undefined;
         this.writingIntent = sent.snapshot.writingIntent === true;
+        this.ghostIntent = sent.snapshot.ghostIntent === true;
         this.revision += 1;
         return sent.snapshot.text;
     }
@@ -258,6 +277,7 @@ export class ComposerDraft<T> {
         this.entries.clear();
         this.imageIntent = undefined;
         this.writingIntent = false;
+        this.ghostIntent = false;
         this.draftId += 1;
         this.revision += 1;
     }

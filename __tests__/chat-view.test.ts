@@ -5068,7 +5068,10 @@ describe('LLMView turn lifecycle', () => {
         await restored.view.onClose();
     });
 
-    it('binds @blog2ghost to the note at submission even when the active tab changes before dispatch', async () => {
+    it.each([
+        ['@blog2ghost 将当前笔记发布到ghost平台', '将当前笔记发布到ghost平台'],
+        ['@blog2ghost', ''],
+    ])('binds the consumed %s command to the submission note without activating later messages', async (request, visibleText) => {
         const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'ghost-conversation' });
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager, withMarkdownLeaf: true });
         const createBinding = jest.fn<NonNullable<ChatHost['createGhostPublishingBinding']>>(request => ({
@@ -5077,24 +5080,33 @@ describe('LLMView turn lifecycle', () => {
         }));
         Object.assign(plugin, { createGhostPublishingBinding: createBinding });
         await view.onOpen();
-        view.prefillComposer('@blog2ghost 将当前笔记发布到ghost平台');
+        view.prefillComposer(request);
         const ghostIntent = getElementByClass(containerEl, 'pa-chat-ghost-intent');
         expect(ghostIntent.hidden).toBe(false);
         expect(allText(ghostIntent)).toContain('Ghost publishing');
+        expect(getTextArea(containerEl).value).toBe(visibleText);
         getElementByClass(containerEl, 'send-button-visible').click();
         plugin.app.workspace.getActiveFile.mockReturnValue({ path: 'Other.md', basename: 'Other', extension: 'md' });
         for (let index = 0; index < 5; index++) await flushPromises();
         expect(createBinding).toHaveBeenCalledTimes(1);
         expect(createBinding.mock.calls[0][0]).toMatchObject({ capturedPath: '0.unsorted/Dog.md',
-            userText: '@blog2ghost 将当前笔记发布到ghost平台', conversationId: 'ghost-conversation' });
+            userText: request, conversationId: 'ghost-conversation' });
         expect(streamCalls[0].options.ghostPublishing).toBeDefined();
         expect(streamCalls[0].options.writingRequest).toBeUndefined();
         streamCalls[0].resolve();
         await flushPromises();
+        expect(ghostIntent.hidden).toBe(true);
+        view.prefillComposer('继续讨论这篇笔记');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        for (let index = 0; index < 5; index++) await flushPromises();
+        expect(createBinding).toHaveBeenCalledTimes(1);
+        expect(streamCalls[1].options.ghostPublishing).toBeUndefined();
+        streamCalls[1].resolve();
+        await flushPromises();
         await view.onClose();
     });
 
-    it('shows the Ghost composer intent only for a complete desktop command', async () => {
+    it('consumes a complete Ghost command after composition and preserves the remaining text until deselected', async () => {
         const { view, plugin, containerEl } = createView();
         Object.assign(plugin, { createGhostPublishingBinding: jest.fn() });
         await view.onOpen();
@@ -5102,22 +5114,37 @@ describe('LLMView turn lifecycle', () => {
         const area = getTextArea(containerEl);
         expect(ghostIntent.hidden).toBe(true);
 
+        for (const text of ['@blog2ghosted', 'publish @blog2ghost']) {
+            area.value = text;
+            area.dispatchEvent('input');
+            expect(ghostIntent.hidden).toBe(true);
+            expect(area.value).toBe(text);
+        }
+
+        area.dispatchEvent('compositionstart');
         area.value = '@blog2ghost';
         area.dispatchEvent('input');
+        expect(area.value).toBe('@blog2ghost');
+        expect(ghostIntent.hidden).toBe(true);
+        area.dispatchEvent('compositionend');
+        expect(area.value).toBe('');
         expect(ghostIntent.hidden).toBe(false);
         expect(allText(ghostIntent)).toBe('Ghost publishing');
+        expect(getElementByClass(containerEl, 'send-button-visible').disabled).toBe(false);
 
         area.value = '@Blog2Ghost publish this note';
+        Object.assign(area, { selectionStart: area.value.length, selectionEnd: area.value.length });
         area.dispatchEvent('input');
+        expect(area.value).toBe('publish this note');
+        expect(area).toMatchObject({ selectionStart: area.value.length, selectionEnd: area.value.length });
         expect(ghostIntent.hidden).toBe(false);
 
-        area.value = '@blog2ghosted';
+        area.value = 'publish a different note';
         area.dispatchEvent('input');
+        expect(ghostIntent.hidden).toBe(false);
+        getButtonByClass(ghostIntent, 'pa-chat-icon-button').click();
         expect(ghostIntent.hidden).toBe(true);
-
-        area.value = 'publish @blog2ghost';
-        area.dispatchEvent('input');
-        expect(ghostIntent.hidden).toBe(true);
+        expect(area.value).toBe('publish a different note');
         area.value = '';
         area.dispatchEvent('input');
         expect(ghostIntent.hidden).toBe(true);
@@ -5143,13 +5170,14 @@ describe('LLMView turn lifecycle', () => {
         area.dispatchEvent('compositionend');
         area.dispatchEvent('input');
         getButtonByText(actions, 'blog2ghost').click();
-        expect(area.value).toBe('@blog2ghost ');
+        expect(area.value).toBe('');
         expect(getElementByClass(containerEl, 'pa-chat-ghost-intent').hidden).toBe(false);
         expect(streamCalls).toHaveLength(0);
         area.value = '发布当前笔记 @blog2';
         Object.assign(area, { selectionStart: area.value.length, selectionEnd: area.value.length });
         area.dispatchEvent('input');
         expect(actions.hidden).toBe(true);
+        getButtonByClass(getElementByClass(containerEl, 'pa-chat-ghost-intent'), 'pa-chat-icon-button').click();
         const before = { desktop: Platform.isDesktop, mobile: Platform.isMobile };
         try {
             Platform.isDesktop = false; Platform.isMobile = true;
@@ -5175,6 +5203,9 @@ describe('LLMView turn lifecycle', () => {
         }));
         Object.assign(plugin, { createGhostPublishingBinding: createBinding });
         await view.onOpen();
+        // Native value assignment does not emit input; the legacy mock setter does.
+        const area = getTextArea(containerEl);
+        Object.defineProperty(area, 'value', { configurable: true, writable: true, value: '' });
         getButtonByText(containerEl, 'New Chat').click();
         for (let index = 0; index < 5; index++) await flushPromises();
         for (const [index, path] of ['B.md', 'C.md'].entries()) {
@@ -5186,6 +5217,8 @@ describe('LLMView turn lifecycle', () => {
             else streamCalls[index].reject(new Error('offline'));
             for (let flush = 0; flush < 5; flush++) await flushPromises();
         }
+        expect(getTextArea(containerEl).value).toBe('发布当前笔记');
+        expect(getElementByClass(containerEl, 'pa-chat-ghost-intent').hidden).toBe(false);
         plugin.app.workspace.getActiveFile.mockReturnValue({ path: 'Later.md', basename: 'Later', extension: 'md' });
         getElementByClass(containerEl, 'retry-message-button').click();
         for (let index = 0; index < 5; index++) await flushPromises();
