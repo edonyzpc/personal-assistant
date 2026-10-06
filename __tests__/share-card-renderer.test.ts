@@ -20,10 +20,11 @@ import {
 import {
     ShareCardTestCommentNode,
     ShareCardTestDocument,
-    type ShareCardTestElement,
+    ShareCardTestElement,
     ShareCardTestRange,
     ShareCardTestTextNode,
     ShareCardTestTreeWalker,
+    type ShareCardTestChildNode,
     asDocument,
     asElement,
 } from "./helpers/share-card-dom";
@@ -40,6 +41,37 @@ function withoutShareCardBoundaryMarkers(markdown: string): string {
 function enableShareCardTestRanges(
     document: ShareCardTestDocument,
 ): void {
+    type ElementWithInsertBefore = ShareCardTestElement & {
+        insertBefore?: (
+            child: ShareCardTestElement,
+            reference: ShareCardTestChildNode | null,
+        ) => ShareCardTestElement;
+    };
+    const prototype = ShareCardTestElement.prototype as ElementWithInsertBefore;
+    prototype.insertBefore = function insertBefore(
+        this: ShareCardTestElement,
+        child: ShareCardTestElement,
+        reference: ShareCardTestChildNode | null,
+    ): ShareCardTestElement {
+        this.appendChild(child);
+        if (!reference) return child;
+
+        const nodeIndex = this.allChildNodes.indexOf(child);
+        if (nodeIndex >= 0) this.allChildNodes.splice(nodeIndex, 1);
+        const childIndex = this.children.indexOf(child);
+        if (childIndex >= 0) this.children.splice(childIndex, 1);
+
+        const referenceIndex = reference ? this.allChildNodes.indexOf(reference) : -1;
+        const insertionIndex = referenceIndex >= 0
+            ? referenceIndex
+            : this.allChildNodes.length;
+        this.allChildNodes.splice(insertionIndex, 0, child);
+        const elementInsertionIndex = this.children.filter((element) => (
+            this.allChildNodes.indexOf(element) < insertionIndex
+        )).length;
+        this.children.splice(elementInsertionIndex, 0, child);
+        return child;
+    };
     document.enableRealDomClones = true;
     Object.assign(document.defaultView, { NodeFilter: { SHOW_TEXT: 4 } });
     Object.assign(document, {

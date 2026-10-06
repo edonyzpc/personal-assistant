@@ -1,10 +1,20 @@
 # PA Share Card Product Spec
 
 Document status: Approved
-Updated: 2026-10-05
+Updated: 2026-10-06
 Work item: B-124
 Decision: [DEC-026 — Share Card 采用本地、显式导出的完整渲染卡片](../decisions/dec-026-local-share-card.md)
 Authority: Share Card 的入口、可分享内容、视觉、分页、导出、失败、数据与兼容性边界。
+
+> [!note] Owner amendment 2026-10-06
+> 用户要求放大 Share Card 文字，使常规预览可以辨认 Xerox 效果；正文基准改为
+> `24px`，多页不再以缩小文字减少页数，短单页依次试 `26/28/30/32px` 并取仍能完整
+> 容纳的最大字号。整批分页、preview、Copy、Save 共享最终字号；固定导出尺寸不变。
+> 用户要求笔记右上三点菜单提供 Share Card：Markdown 笔记菜单直接分享对应笔记，
+> 有对应编辑器时采用非空选区优先，否则采用完整当前正文；复用有效 frontmatter
+> 剥离、basename 和资源解析语义。原有编辑器选区入口继续有效。
+> 已确认 iOS 的旧 Export image 菜单由独立 Export Image 插件注册；用户后续选择
+> 暂不处理并保持该插件启用。本轮不修改该插件；PA 不按菜单文案删除其他插件的条目。
 
 > [!note] Owner amendment 2026-10-05
 > [DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
@@ -55,16 +65,18 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 
 ### In Scope
 
-- B-124/REQ-01: 四个入口使用同一 `ShareCardData` 契约。Chat 仅为已完成、非空的
+- B-124/REQ-01: 所有入口使用同一 `ShareCardData` 契约。Chat 仅为已完成、非空的
   assistant 回复显示低优先级 action；Pagelet 仅提交当前 visible findings，Prepared
   read-only Panel 不可分享；编辑器命令和 PA 专属右键菜单项仅在 selection trim 后非空时
   可执行/显示，payload 保留原始 selection 的空白、缩进与 Markdown。右键菜单明确标注
   `PA`，与第三方图片导出菜单区分，并复用相同的 Share Card Modal；Pagelet Action Ring 的第四项 Share 在
   点击时优先采用当前 active Markdown editor 的非空 selection，否则采用当前 Markdown
-  note。用户 Chat 消息、生成中内容、dismissed finding、隐藏缓存与空内容不进入卡片。
+  note。Markdown 笔记菜单也提供 PA 分享入口，含移动端右上三点；分享菜单对应的
+  file，有对应 editor 时非空选区优先，否则分享当前正文（含未保存内容）；没有对应
+  editor 时读取该 file。用户 Chat 消息、生成中内容、dismissed finding、隐藏缓存与空内容不进入卡片。
   `completed_with_warning` 只有在 warning 不代表 provider error、assistant idle timeout
   或 wall-clock interruption 时才属于已完成；带部分文本的上述中断必须 fail closed。
-- B-124/REQ-02: Chat/Pagelet 卡片保留稳定产品来源文案。Ring 的 selection payload 原样
+- B-124/REQ-02: Chat/Pagelet 卡片保留稳定产品来源文案。Ring/笔记菜单的 selection payload 原样
   保留且永不显示文件名或 Vault path；note fallback 只在 leading frontmatter 被 Obsidian
   识别且其中 YAML 语法有效时剥离该 frontmatter，其余正文原样保留，并显示 active file
   的 basename，不显示目录或 `.md`。无 active Markdown note 或有效正文时 Share 不打开
@@ -86,9 +98,8 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   links、inline/fenced code 及可捕获的视觉内容。分页必须使用最终 card CSS 的实际 rendered height，优先语义
   块边界；超高单块可继续拆分但不得丢字、重排页序或产生空页。原始内容不得因
   frontmatter-like 开头或 thematic break 被静默删除。不以固定字符数或页数拒绝整批，
-  不静默截断；真实资源不足时准确报告。分页先以 `16px` 建立有效 baseline；
-  多页内容只有完整 batch 重分页确实减少页数时才按 `15px`、`14px` 的顺序接受更小字号，
-  并选择最大的有效值。结果为单页时，再依次评估 `18px`、`20px`、`22px`，选择仍保持
+  不静默截断；真实资源不足时准确报告。分页先以 `24px` 建立有效 baseline；
+  多页内容保持该字号。结果为单页时，再依次评估 `26px`、`28px`、`30px`、`32px`，选择仍保持
   单页的最大字号。所有候选须通过同一套 no-loss 与实际 overflow 校验，失败时
   保留最近的有效结果。选定字号必须在同一 batch 的全部页面、preview、copy 与 save
   中一致。
@@ -205,13 +216,17 @@ flowchart TD
   生成 `source:"selection"` payload；否则从 active Markdown note 生成 `source:"note"` payload，
   只剥离有效 YAML frontmatter 并显示 basename；invalid/frontmatter-like 开头原样保留，
   无 active Markdown 或空正文时不打开 Modal。
+  Markdown 笔记菜单（含移动端右上三点）显示 PA 分享项，分享菜单对应文件；匹配
+  leaf 的非空选区优先，否则使用其未保存正文；无匹配 editor 时读取菜单文件，不能
+  混用其他 active note。空正文/读取失败提供可恢复提示，插件卸载后的读取结果不再
+  打开 Modal。非 Markdown 或目录不显示该项。
 - B-124/AC-04: light/dark 预览和 PNG 均显示图形 logo 与 `Personal Assistant`；Source Han
   Serif 只由本地 data URL 提供，font network request 为 0。窄桌面/
   移动 viewport 可完整查看预览与 44px actions；常见窗口无需滚动即可发现保存路径和
   主要操作，极小窗口仍优先保证操作可见。点击预览放大后可查看当前页细节，退出后
   回到原缩略图；导出 blob 为 `1080×1440`。覆盖
-  `16/15/14px` 的多页 fixture 证明只在页数减少时缩小；短单页 fixture 覆盖
-  `18/20/22px` 最大可容纳选择、候选失败回退，以及 preview/copy/save 整批一致。
+  `24px` 的多页 fixture 证明不会为减少页数而缩小正文；短单页 fixture 覆盖
+  `26/28/30/32px` 最大可容纳选择、候选失败回退，以及 preview/copy/save 整批一致。
 - B-124/AC-05: 覆盖中英文、列表、引用、代码块、长段落与 50+ 行内容的测试证明顺序
   保持、无丢字/空页；代表内容超过 50,000 字符且超过 24 页时仍完整到末尾，
   preview/copy/save 使用同一完整批次；运行时测量 smoke 证明每页 body 无 vertical overflow。

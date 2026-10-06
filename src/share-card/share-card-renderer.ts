@@ -365,7 +365,7 @@ export class ShareCardRenderer {
         }
         const cardEl = this.createCardElement(page, options, bodyEl);
         try {
-            applyShareCardPrintStyle(cardEl, bodyEl, options.printStyle ?? "original");
+            applyShareCardPrintStyle(cardEl, bodyEl);
         } catch (error) {
             if (ownsHost) host.remove();
             throw error;

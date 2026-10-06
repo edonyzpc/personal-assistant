@@ -1464,6 +1464,10 @@ export class PluginManager extends Plugin {
         createModal: (data) => new ShareCardModal(this.app, data),
         closeAllModals: () => closeAllShareCardModals(),
         getMenuTitle: () => this.t('plugin.menu.shareSelectionAsCard'),
+        getFileMenuTitle: () => this.t('plugin.menu.shareNoteAsCard'),
+        readFile: (file) => this.app.vault.cachedRead(file),
+        notifyEmpty: () => new Notice(this.t('plugin.shareCard.empty')),
+        notifyReadFailed: () => new Notice(this.t('plugin.shareCard.noteReadFailed')),
         menuIcon: 'image',
     });
     private settingTab: SettingTab = new SettingTab(this.app, this);
@@ -2257,6 +2261,15 @@ export class PluginManager extends Plugin {
 
         this.registerEvent(this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
             this.shareCardActions.handleEditorMenu(menu, editor, info);
+        }));
+
+        this.registerEvent(this.app.workspace.on('file-menu', (
+            menu: Menu,
+            file: TAbstractFile,
+            _source: string,
+            leaf?: WorkspaceLeaf,
+        ) => {
+            this.shareCardActions.handleFileMenu(menu, file, leaf);
         }));
 
         this.addCommand({

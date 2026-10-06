@@ -9,10 +9,8 @@
  */
 
 import {
-    getFrontMatterInfo,
     MarkdownView,
     Notice,
-    parseYaml,
     normalizePath,
 } from "obsidian";
 import type { WorkspaceLeaf } from "obsidian";
@@ -61,6 +59,10 @@ import { ReviewNoteSaveFlow } from "./ReviewNoteSaveFlow";
 import type { PageletHost } from "./PageletHost";
 import { serializePageletFindings } from "../share-card/share-card-markdown";
 import { ShareCardModal } from "../share-card/share-card-modal";
+import {
+    createShareCardNoteData,
+    createShareCardSelectionData,
+} from "../share-card/share-card-source";
 import type { ShareCardData } from "../share-card/share-card-types";
 import {
     pageletAgentCollectionToDeliveryCandidates,
@@ -1792,23 +1794,10 @@ export class PageletOrchestrator {
         const editor = view.editor;
         const rawSelection = editor?.getSelection?.() ?? "";
         const basePath = file.path;
-        if (rawSelection.trim().length > 0) {
-            return {
-                content: rawSelection,
-                source: "selection",
-                ...(basePath ? { resourceContext: { basePath } } : {}),
-            };
-        }
-
+        const selectionData = createShareCardSelectionData(rawSelection, basePath);
+        if (selectionData) return selectionData;
         const rawNote = editor?.getValue?.() ?? "";
-        const content = stripValidYamlFrontmatter(rawNote);
-        if (content.trim().length === 0) return null;
-        return {
-            content,
-            source: "note",
-            sourceLabel: file.basename,
-            ...(basePath ? { resourceContext: { basePath } } : {}),
-        };
+        return createShareCardNoteData(rawNote, file.basename, basePath);
     }
 
     private syncPetVisibility(): void {
@@ -2334,21 +2323,6 @@ export class PageletOrchestrator {
 
     /** Handle Bubble dismiss. Hook exists for future telemetry. */
     private handleBubbleDismiss(): void { /* no-op */ }
-}
-
-function stripValidYamlFrontmatter(markdown: string): string {
-    const info = getFrontMatterInfo(markdown);
-    if (!info.exists) return markdown;
-    try {
-        parseYaml(info.frontmatter);
-    } catch {
-        return markdown;
-    }
-    const contentStart = Math.min(
-        markdown.length,
-        Math.max(0, info.contentStart ?? 0),
-    );
-    return markdown.slice(contentStart);
 }
 
 function successfulReceiptIds(result: OperationsExecutionResult): string[] {

@@ -24,7 +24,6 @@ import {
     CARD_WIDTH,
     type CardPage,
     type ShareCardData,
-    type ShareCardPrintStyle,
     type ShareCardTheme,
 } from "./share-card-types";
 import {
@@ -69,7 +68,6 @@ export interface ShareCardModalDependencies {
         ownerDocument: Document,
         renderer: ShareCardRenderer,
         appearance: ShareCardExportAppearance,
-        signal?: AbortSignal,
     ) => ShareCardExporter;
 }
 
@@ -80,7 +78,6 @@ export class ShareCardModal extends Modal {
     private renderer: ShareCardRenderer | null = null;
     private exporter: ShareCardExporter | null = null;
     private appearance: ShareCardExportAppearance | null = null;
-    private printStyle: ShareCardPrintStyle = "original";
     private fontRegistrationHeld = false;
     private previewRender: ShareCardRenderHandle | null = null;
     private statusEl: HTMLElement | null = null;
@@ -97,7 +94,6 @@ export class ShareCardModal extends Modal {
     private copyButton: HTMLButtonElement | null = null;
     private saveButton: HTMLButtonElement | null = null;
     private folderInputEl: HTMLInputElement | null = null;
-    private printStyleButtons: HTMLButtonElement[] = [];
     private ownerWindow: Window | null = null;
     private resourceController: AbortController | null = null;
     private resourceCache: ShareCardResourceCache | null = null;
@@ -138,8 +134,6 @@ export class ShareCardModal extends Modal {
         this.pages = [];
         this.currentPageIndex = 0;
         this.appearance = null;
-        this.printStyle = "original";
-        this.printStyleButtons = [];
         this.fontRegistrationHeld = false;
         this.completenessReport = null;
         this.preparedCompleteness = {
@@ -176,8 +170,6 @@ export class ShareCardModal extends Modal {
         this.statusEl.setAttribute("aria-live", "polite");
         this.statusEl.textContent = t("plugin.shareCard.preparing");
         this.contentEl.appendChild(this.statusEl);
-
-        this.createPrintStyleControls(ownerDocument);
 
         this.viewportEl = ownerDocument.createElement("div");
         this.viewportEl.classList.add("pa-share-card-preview-viewport");
@@ -248,8 +240,6 @@ export class ShareCardModal extends Modal {
         this.renderer = null;
         this.exporter = null;
         this.appearance = null;
-        this.printStyle = "original";
-        this.printStyleButtons = [];
         this.pages = [];
         this.resetElementReferences();
         clearElement(this.contentEl);
@@ -290,8 +280,8 @@ export class ShareCardModal extends Modal {
             theme: this.theme,
             sourceLabel: this.data.sourceLabel,
             sourcePath: this.data.resourceContext?.basePath,
-            fontSize: 16,
-            printStyle: this.printStyle,
+            fontSize: 24,
+            printStyle: "xerox" as const,
         };
         const usesPreparedRenderer = typeof renderer.createPreparedFitPredicate === "function";
         if (usesPreparedRenderer) {
@@ -343,34 +333,9 @@ export class ShareCardModal extends Modal {
         if (!this.isCurrent(token)) return;
 
         let finalRenderOptions = renderOptions;
-        if (pages.length > 1 && usesPreparedRenderer) {
-            const REDUCED_FONT_SIZES = [15, 14] as const;
-            for (const fontSize of REDUCED_FONT_SIZES) {
-                if (!this.isCurrent(token)) return;
-                const reducedOptions = { ...renderOptions, fontSize };
-                let reducedPages: CardPage[];
-                try {
-                    const reducedFit = renderer.createPreparedFitPredicate(reducedOptions);
-                    reducedPages = await runPagination(reducedFit, reducedOptions);
-                } catch (error) {
-                    if (!this.isCurrent(token)) return;
-                    console.warn(
-                        "Share Card adaptive sizing failed; using validated 16px pagination.",
-                        error,
-                    );
-                    break;
-                }
-                if (!this.isCurrent(token)) return;
-                if (reducedPages.length < pages.length) {
-                    pages = reducedPages;
-                    finalRenderOptions = reducedOptions;
-                    break;
-                }
-            }
-        }
 
         if (pages.length === 1 && usesPreparedRenderer) {
-            const ENLARGED_FONT_SIZES = [18, 20, 22] as const;
+            const ENLARGED_FONT_SIZES = [26, 28, 30, 32] as const;
             for (const fontSize of ENLARGED_FONT_SIZES) {
                 if (!this.isCurrent(token)) return;
                 const enlargedOptions = { ...renderOptions, fontSize };
@@ -437,69 +402,24 @@ export class ShareCardModal extends Modal {
         controlsEl.appendChild(navEl);
     }
 
-    private createPrintStyleControls(ownerDocument: Document): void {
-        const groupEl = ownerDocument.createElement("div");
-        groupEl.classList.add("pa-share-card-print-style-group");
-        groupEl.setAttribute("role", "group");
-        groupEl.setAttribute("aria-label", t("plugin.shareCard.printStyle"));
-
-        const labelEl = ownerDocument.createElement("span");
-        labelEl.classList.add("pa-share-card-print-style-label");
-        labelEl.textContent = t("plugin.shareCard.printStyle");
-        groupEl.appendChild(labelEl);
-
-        const optionsEl = ownerDocument.createElement("div");
-        optionsEl.classList.add("pa-share-card-print-style-options");
-        const styles: readonly ShareCardPrintStyle[] = ["original", "light-print", "xerox"];
-        for (const style of styles) {
-            const button = ownerDocument.createElement("button");
-            button.type = "button";
-            button.classList.add("pa-share-card-print-style-option");
-            button.dataset.printStyle = style;
-            button.textContent = t(`plugin.shareCard.printStyle.${style}`);
-            button.setAttribute("aria-pressed", String(style === this.printStyle));
-            button.disabled = true;
-            button.addEventListener("click", () => {
-                void this.selectPrintStyle(style);
-            });
-            optionsEl.appendChild(button);
-            this.printStyleButtons.push(button);
-        }
-        groupEl.appendChild(optionsEl);
-        this.contentEl.appendChild(groupEl);
-    }
-
-    private createExporterForAppearance(
-        appearance: ShareCardExportAppearance,
-        signal?: AbortSignal,
-    ): ShareCardExporter {
+    private createExporterForAppearance(appearance: ShareCardExportAppearance): ShareCardExporter {
         const renderer = this.renderer;
         if (!renderer) throw new Error("Share Card renderer is unavailable.");
         const dependencyExporter = this.dependencies.createExporter;
         if (dependencyExporter) {
-            // Keep the initial four-argument dependency call compatible. A
-            // replacement exporter provides its live signal as the fifth argument.
-            return signal === undefined
-                ? dependencyExporter(
-                    this.app,
-                    this.contentEl.ownerDocument,
-                    renderer,
-                    appearance,
-                )
-                : dependencyExporter(
-                    this.app,
-                    this.contentEl.ownerDocument,
-                    renderer,
-                    appearance,
-                    signal,
-                );
+            return dependencyExporter(
+                this.app,
+                this.contentEl.ownerDocument,
+                renderer,
+                appearance,
+            );
         }
         return new ShareCardExporter(
             this.app,
             this.contentEl.ownerDocument,
             renderer,
             appearance,
-            { signal: signal ?? this.resourceController?.signal },
+            { signal: this.resourceController?.signal },
         );
     }
 
@@ -627,54 +547,13 @@ export class ShareCardModal extends Modal {
         }
     }
 
-    private async selectPrintStyle(style: ShareCardPrintStyle): Promise<void> {
-        const renderer = this.renderer;
-        const currentAppearance = this.appearance;
-        if (
-            this.busy
-            || !renderer
-            || !currentAppearance
-            || style === this.printStyle
-        ) return;
-        const signal = this.resourceController?.signal;
-        if (!signal) return;
-
-        const candidateAppearance: ShareCardExportAppearance = {
-            ...currentAppearance,
-            printStyle: style,
-        };
-        let candidateExporter: ShareCardExporter;
-        try {
-            candidateExporter = this.createExporterForAppearance(candidateAppearance, signal);
-        } catch (error) {
-            console.error("Share Card print-style exporter creation failed.", error);
-            this.setStatus(t("plugin.shareCard.prepareFailed"), "error");
-            return;
-        }
-
-        const token = this.nextToken();
-        this.updatePrintStyleControls(style);
-        const rendered = await this.renderPreview({
-            appearance: candidateAppearance,
-            exporter: candidateExporter,
-            printStyle: style,
-        }, token);
-        if (!this.isCurrent(token)) return;
-        if (!rendered) this.updatePrintStyleControls();
-    }
-
     private async renderPreview(
-        replacement?: {
-            appearance: ShareCardExportAppearance;
-            exporter: ShareCardExporter;
-            printStyle: ShareCardPrintStyle;
-        },
         token = this.nextToken(),
     ): Promise<boolean> {
         const renderer = this.renderer;
         const host = this.previewScaleEl;
         const page = this.pages[this.currentPageIndex];
-        const appearance = replacement?.appearance ?? this.appearance;
+        const appearance = this.appearance;
         if (!renderer || !host || !page || !appearance) return false;
 
         const previousRender = this.previewRender;
@@ -702,12 +581,6 @@ export class ShareCardModal extends Modal {
 
         previousRender?.cleanup();
         this.previewRender = render;
-        if (replacement) {
-            this.appearance = replacement.appearance;
-            this.exporter = replacement.exporter;
-            this.printStyle = replacement.printStyle;
-            this.updatePrintStyleControls();
-        }
         this.pageCompleteness.set(page.pageIndex, {
             sanitizationIssueCount: render.sanitizationIssues?.length ?? 0,
             usedPlainTextFallback: render.usedPlainTextFallback,
@@ -810,9 +683,6 @@ export class ShareCardModal extends Modal {
 
     private updateControls(rendering = false): void {
         const unavailable = rendering || this.pages.length === 0;
-        for (const button of this.printStyleButtons) {
-            button.disabled = unavailable || this.busy;
-        }
         if (this.copyButton) this.copyButton.disabled = unavailable || this.busy;
         if (this.saveButton) {
             this.saveButton.disabled = unavailable || this.busy;
@@ -834,17 +704,6 @@ export class ShareCardModal extends Modal {
                 current: this.currentPageIndex + 1,
                 total: this.pages.length,
             });
-        }
-    }
-
-    private updatePrintStyleControls(
-        pendingStyle: ShareCardPrintStyle = this.printStyle,
-    ): void {
-        for (const button of this.printStyleButtons) {
-            button.setAttribute(
-                "aria-pressed",
-                String(button.dataset.printStyle === pendingStyle),
-            );
         }
     }
 
@@ -943,7 +802,6 @@ export class ShareCardModal extends Modal {
         this.copyButton = null;
         this.saveButton = null;
         this.folderInputEl = null;
-        this.printStyleButtons = [];
     }
 }
 

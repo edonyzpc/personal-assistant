@@ -2,9 +2,17 @@
 
 Decision ID: DEC-026
 Status: Accepted
-Updated: 2026-09-18
+Updated: 2026-10-06
 Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外），于 2026-08-06 修订 Action Ring 入口、来源优先级、品牌、字体、标签、布局与分页字号，并于 2026-08-07 明确以当前 `master` 行为作为最终规则；2026-09-17 确认预览与操作的可见性边界及点击放大查看；2026-09-18 允许可悬停端 Ring 默认只显示图标，悬停时显示文字
 Work item: B-124
+
+> [!note] Owner amendment 2026-10-06
+> 用户要求放大正文并增加移动端笔记右上三点 Share Card 入口。当前正文基准为 24px，
+> 多页不缩小，短单页在 26/28/30/32px 中选最大可完整容纳字号；标题保持相对层级。
+> 笔记菜单采用对应笔记的非空选区优先/正文回退，复用有效 frontmatter 与 basename
+> 投影；取代下述旧字号和仅四类入口约定。当前具体行为与验收由
+> [Share Card Product Spec](../specs/pa-share-card-product-spec.md) 承接；本地字体、
+> 固定尺寸、内容完整性、资源与显式导出边界不因本次修订扩大。
 
 > [!note] Owner decision 2026-08-05
 > 用户选择完整渲染保真：尽量保留 Obsidian 实际渲染结果，包括远程图片、Vault Embed

@@ -1,60 +1,47 @@
 # PA Share Card Print Styles Product Spec
 
 Document status: Approved
-Updated: 2026-09-17
+Updated: 2026-10-06
 Work item: B-137
 Decision: [DEC-036 — Share Card 本次导出印刷样式](../decisions/dec-036-share-card-print-styles.md)
-Authority: 用户于 2026-09-13 明确确认三档样式、正文作用范围、默认与不记忆行为，以及复印标题强度；2026-09-17 要求增强复印图片与原纸的可见差异。本文是 B-137 的当前产品行为与验收权威。
+Authority: 用户于 2026-10-06 明确要求增强 Xerox 文字效果、取消 Original/Light 选项并直接显示 Xerox；取代 2026-09 的三档选择和默认原纸约定。
 
 ## Problem And Product Outcome
 
-- User problem: Share Card 只有一种固定印刷外观；用户无法在保持内容、品牌和导出可靠性的同时选择更轻或更明显的复印质感。
-- Product outcome: 每次打开 Share Card 都可在 `原纸 / 轻印 / 复印` 三档之间即时选择，预览即导出结果。
-- North Star fit: 选择安静地停留在当前分享动作里，不产生设置管理负担；效果可见、可撤回且不改变原笔记。
+- User problem: Xerox 正文质感偏弱，缩小预览后更难辨认；每次还需要从原纸切换。
+- Product outcome: 打开 Share Card 即显示清晰可辨认的 Xerox 文字效果，预览与 PNG 一致。
+- North Star fit: 分享动作直接、安静，不增加配置和持久状态，不修改源笔记。
 
 ## Scope
 
 ### In Scope
 
-- B-137/REQ-01: Modal 提供本地化的 `原纸 / 轻印 / 复印` 三档选择。每个新 Modal 均以 `原纸` 开始，选择只存活于该 Modal，不写入设置、历史或跨设备状态。
-- B-137/REQ-02: `原纸` 保持当前生产卡片像素和排版；`轻印` 对 H1–H3 普通文字使用已验证的轻效果，并对其他普通正文使用更收敛的轻效果；`复印` 对 H1–H3 保留用户提供的原始 `scale 4/1` 与 `-3/-3px` 套印偏移，再显示淡的原位套印残影。复印普通正文使用区别于轻印、仍弱于标题的轻度起伏和淡复影；即使没有 H1–H3，预览和 PNG 也应与原纸有可见差异，同时保持 14px 正文可读。
+- B-137/REQ-01: 每个新 Modal 直接显示 Xerox，不提供 Original、Light 或印刷样式选择器，不写入设置、历史或跨设备状态。
+- B-137/REQ-02: H1–H3 保留原始 `scale 4/1`、`-3/-3px` 套印偏移和淡的原位残影；普通正文使用增强的起伏与淡复影，仍弱于标题。没有 H1–H3 的卡片也需在常规预览和 PNG 中显现复印质感并保持可读。
 - B-137/REQ-03: `code`、`pre`、`kbd`、`samp`、图片、picture、SVG、canvas、视觉占位/视觉块、品牌、来源、页码、装饰和纸张纹理不受文字滤镜影响。强调、链接、列表、引用和表格中的普通文字仍按所在标题/正文档位处理。
-- B-137/REQ-04: 样式切换即时更新当前预览；分页、批次字号、当前页 Copy 和整批 Save 使用同一已提交样式。快速切换、失败、close/reopen 或并发 Modal 不产生样式串用、stale preview 或错误导出。
-- B-137/REQ-05: 效果完全由卡片内确定性 SVG filter 和现有本地字体实现；不新增网络、外部字体、runtime style element、HTML 注入、设置或 provider 调用。滤镜 ID 对每张卡片唯一且引用可解析，card cleanup 一并移除定义。导出时可将同一卡片的滤镜定义编码成本地 `data:image/svg+xml` 引用，以通过 SnapDOM 的 `foreignObject` 栅格化；PNG 完成或失败后恢复原引用，解析失败不得静默输出原纸效果。
-- B-137/REQ-06: 选择器在中英文、light/dark Obsidian、桌面和窄屏/移动布局中可发现、可聚焦、可点击，状态可由辅助技术识别；不改变宿主主题或 Obsidian chrome。
+- B-137/REQ-04: 分页、批次字号、预览、当前页 Copy 和整批 Save 使用同一 Xerox 效果。失败、关闭/重开或并发 Modal 不产生 stale preview、错误导出或滤镜串用。
+- B-137/REQ-05: 效果完全由卡片内确定性 SVG filter 和现有本地字体实现；不新增网络、外部字体、runtime style element、HTML 注入、设置或 provider 调用。滤镜 ID 对每张卡片唯一，cleanup 一并移除定义。导出时将同一卡片滤镜定义编码为本地 `data:image/svg+xml` 引用，通过 SnapDOM 的 `foreignObject` 栅格化；PNG 完成或失败后恢复原引用，解析失败不得静默输出无滤镜图片。
+- B-137/REQ-06: 中英文、light/dark、桌面和移动布局均直接显示卡片，保持导航、放大预览、Copy/Save 和关闭可操作，不改变宿主主题或 Obsidian chrome。
 
 ### Non-goals
 
-- NG-01: 不提供自定义参数、颜色、纸张、字体、比例、模板或持久默认值。
-- NG-02: 不把滤镜用于代码、图片、图表、品牌、页码或整个 Modal/Obsidian 容器。
-- NG-03: 不改变 Share Card 四个入口、资源权限、SnapDOM 版本、目录规则、Copy/Save 语义或发布流程。
+- 不提供自定义参数、颜色、纸张、字体、比例、模板或持久默认值。
+- 不把滤镜用于代码、图片、图表、品牌、页码或整个 Modal/Obsidian 容器。
+- 字号与笔记菜单入口由 [Share Card Product Spec](./pa-share-card-product-spec.md) 承接；资源权限、SnapDOM、目录和显式导出语义保持现有约定。
 
 ## User Flow And States
 
-用户从任一现有入口打开 Share Card。标题下方显示 `印刷效果 / Print style` 与三档选择，`原纸` 初始选中。准备完成后，用户点击 `轻印` 或 `复印`，当前页预览更新；多页导航继续使用同一档位。Copy/Save 忙碌期间选择器禁用，完成后恢复。关闭并重新打开时回到 `原纸`。切换失败时保留最后一套预览和导出一致的样式，并显示现有可恢复错误。
-
-## Trust, Data And Authority
-
-- Source evidence: 只处理当前 Share Card 已持有并已按 DEC-026 获准渲染的静态 DOM。
-- Data sent / stored: 无新增发送或持久状态；显式 Save 仍只创建 PNG。
-- User disclosure / confirmation: 用户于 2026-09-13 明确选择正文也应用适当轻效果、每次默认原纸且不记忆，并指定复印标题使用原始 `scale 4/1` 与 `-3px` 偏移。
-- Reversibility / recovery: 当前 Modal 随时切回原纸；关闭即丢弃选择；失败不改源笔记和设置。
+从任一获准入口打开卡片，准备完成后直接查看 Xerox 预览。多页导航沿用整批字号与效果；Copy 当前页或 Save 全部页只在用户点击时执行。关闭取消后不回写 UI，不修改源笔记；重开仍显示 Xerox。
 
 ## Acceptance Criteria
 
-- B-137/AC-01: 四个入口打开的每个新 Modal 均显示三档本地化选择，只有原纸初始选中；选择、关闭、重开和插件 reload 后仍不产生持久字段。
-- B-137/AC-02: 中英文短内容的三档预览与 PNG 对比证明：原纸与变更前基线一致；轻印标题和普通正文产生确定性变化；复印标题比轻印有明显更强位移/毛边，正文保持比标题收敛但可见的起伏与淡复影；无标题纯正文卡片仍能区分复印和原纸。
-- B-137/AC-03: inline/fenced code、图片、SVG/canvas、视觉占位、品牌、来源、页码和选定区域外的像素差异为 0；强调/链接/列表/引用的普通文字仍有预期变化，无文字丢失、重排或裁切。
-- B-137/AC-04: 单页、13+ 页长内容与 14px 候选均 fit、非空、顺序/末句完整；切换后 preview、Copy 和 Save 的 style/font/page contract 一致，重复导出相同 PNG。
-- B-137/AC-05: 两个不同样式 Modal 并存时 filter ID 与结果不串用；导出中的本地 SVG 引用可解析并在成功/失败后恢复；close/unload 后无 SVG defs、wrapper、离屏 host、listener 或 operation state 泄漏；宿主 theme class、背景变量和网络 hooks 不变。
-- B-137/AC-06: focused Share Card tests、TypeScript、lint/build/full Jest、DOM/community source scan 与 whitespace 通过；当前构建部署到 `test/` 后，真实 Obsidian 可见入口、三档点击、Escape/reopen、Save image、dark/light 和 mobile emulation 不出现阻塞或新增插件错误。真实 iOS 不在本轮验收范围，不冒充已验证。
+- B-137/AC-01: 新 Modal 与重开均直接显示 Xerox，无三档选择器，无持久字段。
+- B-137/AC-02: 中英文标题、无标题正文的预览和 PNG 均有可辨认的复印质感，正文保持可读。复印与同字号无滤镜对照有确定性文字差异。
+- B-137/AC-03: 代码、视觉内容、品牌/来源/页码和装饰不受文字滤镜影响；普通文字无丢失、重排或裁切。
+- B-137/AC-04: 单页和多页完整、非空、顺序/末句正确，preview/Copy/Save 共享字号、页面和 Xerox 效果，重复导出确定。
+- B-137/AC-05: 并发卡片滤镜 ID 唯一；capture 引用可解析且成功/失败后恢复；close/unload 释放 defs、wrapper、离屏 host、listener 和 operation state；宿主与网络边界不变。
+- B-137/AC-06: 受影响 focused tests 与本地部署门通过；当前构建部署到 `test/` 后观察桌面和移动模拟器的默认效果、放大、关闭/重开与 Save。移动模拟器证据不等于 iPhone 实机证据。
 
-## Open Decisions
+## Evidence Boundary
 
-无。强度、作用范围、默认和记忆策略均已由用户确认。
-
-## Delivery State
-
-- 2026-09-14 的 B-137 基线曾报告 focused/full automated gates、PNG 对比及 Obsidian desktop/mobile、light/dark 可见验收。2026-09-17 重新以生产 SnapDOM 选项对照 `原纸` 与 `复印` 的纯正文 PNG，发现两者像素相同；此前的图片差异结论不能作为本次印刷效果的证明。本次增强需以修复后的 PNG 差异和应用验收单独判断。
-- Current architecture: [Share Card Architecture](../../architecture/share-card-architecture.md)
-- Commit、push、beta/stable packaging 与 release 仍分别遵循仓库授权边界。
+旧三档样式的历史验收不证明本次增强。2026-09-17 曾观察到原纸/复印正文 PNG 像素相同，因此本次需独立核对实际 PNG 效果。当前技术契约见 [Share Card Architecture](../../architecture/share-card-architecture.md)；commit、push 和 release 仍为独立授权。

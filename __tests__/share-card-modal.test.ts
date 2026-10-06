@@ -207,235 +207,65 @@ describe("ShareCardModal", () => {
         expect(document.body.querySelector(".pa-share-card-zoom")).toBeNull();
     });
 
-    it("shows a non-persistent print-style selector that starts at original", async () => {
+    it("opens directly with Xerox preview and export without a style selector", async () => {
         const document = new ShareCardTestDocument();
         const renderer = createRenderer(document, []);
         const exporter = createExporter();
+        const createExporterForAppearance = jest.fn(() => exporter);
         const modal = createModal(document, {
             prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
             paginate: async () => [{ content: "one", pageIndex: 0, totalPages: 1 }],
             createRenderer: () => renderer,
-            createExporter: () => exporter,
+            createExporter: createExporterForAppearance,
         });
 
         modal.onOpen();
         await flushShareCardTasks();
 
-        const group = document.body.querySelector(".pa-share-card-print-style-group")!;
-        const label = group.querySelector(".pa-share-card-print-style-label")!;
-        const buttons = group.querySelectorAll("button");
-        expect(label.textContent).toBe("Print style");
-        expect(buttons.map((button) => button.textContent)).toEqual([
-            "Original",
-            "Light print",
-            "Xerox",
-        ]);
-        expect(buttons.map((button) => button.getAttribute("aria-pressed"))).toEqual([
-            "true",
-            "false",
-            "false",
-        ]);
+        expect(document.body.querySelector(".pa-share-card-print-style-group")).toBeNull();
+        expect(document.body.querySelector("[data-print-style]")).toBeNull();
+        expect(document.body.textContent).not.toContain("Original");
+        expect(document.body.textContent).not.toContain("Light print");
         expect(renderer.renderPage).toHaveBeenCalledWith(
             expect.anything(),
-            expect.objectContaining({ printStyle: "original" }),
+            expect.objectContaining({ printStyle: "xerox" }),
+        );
+        expect(createExporterForAppearance).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.anything(),
+            renderer,
+            expect.objectContaining({ printStyle: "xerox" }),
         );
         const modalData = (modal as unknown as { data: ShareCardData }).data;
         expect(JSON.stringify(modalData)).not.toContain("printStyle");
 
-        modal.onClose();
-        modal.onOpen();
-        await flushShareCardTasks();
-        const reopenedGroup = document.body.querySelector(".pa-share-card-print-style-group")!;
-        expect(reopenedGroup.querySelectorAll("button")
-            .map((button) => button.getAttribute("aria-pressed"))).toEqual([
-            "true",
-            "false",
-            "false",
-        ]);
-        modal.onClose();
-    });
-
-    it("commits one print style to preview and exporter without rerunning preparation", async () => {
-        const document = new ShareCardTestDocument();
-        const renderer = createRenderer(document, []);
-        const originalExporter = createExporter();
-        const lightExporter = createExporter();
-        const xeroxExporter = createExporter();
-        const createExporterForStyle = jest.fn(
-            (_app: App, _ownerDocument: Document, _renderer: ShareCardRenderer, appearance: {
-                printStyle?: string;
-            }) => {
-                if (appearance.printStyle === "light-print") return lightExporter;
-                if (appearance.printStyle === "xerox") return xeroxExporter;
-                return originalExporter;
-            },
-        );
-        const localizeResources = jest.fn(async () => ({
-            markdown: "one",
-            report: {
-                complete: true,
-                resolvedCount: 0,
-                placeholderCount: 0,
-                failedCount: 0,
-                uniqueResourceCount: 0,
-                totalResolvedBytes: 0,
-                resources: [],
-            },
-        })) as unknown as NonNullable<ShareCardModalDependencies["localizeResources"]>;
-        const prepareMarkdown = jest.fn(() => ({ markdown: "one", blocks: ["one"] }));
-        const modal = createModal(document, {
-            localizeResources,
-            prepareMarkdown,
-            paginate: async () => [{ content: "one", pageIndex: 0, totalPages: 1 }],
-            createRenderer: () => renderer,
-            createExporter: createExporterForStyle,
-        });
-
-        modal.onOpen();
-        await flushShareCardTasks();
-        const buttons = document.body
-            .querySelector(".pa-share-card-print-style-group")!
-            .querySelectorAll("button");
-
-        buttons[1]!.click();
-        await flushShareCardTasks();
-        buttons[2]!.click();
-        await flushShareCardTasks();
-
-        expect(localizeResources).toHaveBeenCalledTimes(1);
-        expect(prepareMarkdown).toHaveBeenCalledTimes(1);
-        expect(renderer.renderPage).toHaveBeenCalledTimes(3);
-        expect(renderer.renderPage.mock.calls.map(([, options]) => options.printStyle))
-            .toEqual(["original", "light-print", "xerox"]);
-        expect(createExporterForStyle.mock.calls.map(([, , , appearance]) => appearance.printStyle))
-            .toEqual(["original", "light-print", "xerox"]);
-        expect(buttons.map((button) => button.getAttribute("aria-pressed"))).toEqual([
-            "false",
-            "false",
-            "true",
-        ]);
-
         document.body.querySelector(".pa-share-card-actions")!.children[0]!.click();
         await flushShareCardTasks();
-        expect(originalExporter.copyCurrentPage).not.toHaveBeenCalled();
-        expect(lightExporter.copyCurrentPage).not.toHaveBeenCalled();
-        expect(xeroxExporter.copyCurrentPage).toHaveBeenCalledTimes(1);
         document.body.querySelector(".pa-share-card-actions")!.children[1]!.click();
         await flushShareCardTasks();
-        expect(xeroxExporter.savePages).toHaveBeenCalledTimes(1);
-        modal.onClose();
-    });
+        expect(exporter.copyCurrentPage).toHaveBeenCalledTimes(1);
+        expect(exporter.savePages).toHaveBeenCalledTimes(1);
 
-    it("keeps the previous coherent style when a print-style preview fails", async () => {
-        const document = new ShareCardTestDocument();
-        const renderer = createRenderer(document, []);
-        const originalExporter = createExporter();
-        const lightExporter = createExporter();
-        const createExporterForStyle = jest.fn(
-            (_app: App, _ownerDocument: Document, _renderer: ShareCardRenderer, appearance: {
-                printStyle?: string;
-            }) => appearance.printStyle === "light-print" ? lightExporter : originalExporter,
+        modal.onClose();
+        modal.onOpen();
+        await flushShareCardTasks();
+        expect(document.body.querySelector(".pa-share-card-print-style-group")).toBeNull();
+        expect(renderer.renderPage).toHaveBeenLastCalledWith(
+            expect.anything(),
+            expect.objectContaining({ printStyle: "xerox" }),
         );
-        const modal = createModal(document, {
-            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
-            paginate: async () => [{ content: "one", pageIndex: 0, totalPages: 1 }],
-            createRenderer: () => renderer,
-            createExporter: createExporterForStyle,
-        });
-
-        modal.onOpen();
-        await flushShareCardTasks();
-        renderer.renderPage.mockRejectedValueOnce(new Error("style render failed"));
-        const buttons = document.body
-            .querySelector(".pa-share-card-print-style-group")!
-            .querySelectorAll("button");
-
-        buttons[1]!.click();
-        await flushShareCardTasks();
-
-        expect(renderer.renderPage.mock.calls.map(([, options]) => options.printStyle))
-            .toEqual(["original", "light-print"]);
-        expect(buttons.map((button) => button.getAttribute("aria-pressed"))).toEqual([
-            "true",
-            "false",
-            "false",
-        ]);
-        expect(document.body.querySelector(".pa-share-card-preview-scale")!
-            .querySelectorAll(".pa-share-card")).toHaveLength(1);
-
-        document.body.querySelector(".pa-share-card-actions")!.children[0]!.click();
-        await flushShareCardTasks();
-        expect(originalExporter.copyCurrentPage).toHaveBeenCalledTimes(1);
-        expect(lightExporter.copyCurrentPage).not.toHaveBeenCalled();
         modal.onClose();
     });
 
-    it("passes the live Modal abort signal to replacement print-style exporters", async () => {
-        const document = new ShareCardTestDocument();
-        const renderer = createRenderer(document, []);
-        let preparationSignal: AbortSignal | undefined;
-        let replacementSignal: AbortSignal | undefined;
-        const localizeResources = jest.fn(async (
-            _app: App,
-            _markdown: string,
-            context: ShareCardResourceContext,
-        ) => {
-            preparationSignal = context.signal;
-            return {
-                markdown: "one",
-                report: {
-                    complete: true,
-                    resolvedCount: 0,
-                    placeholderCount: 0,
-                    failedCount: 0,
-                    uniqueResourceCount: 0,
-                    totalResolvedBytes: 0,
-                    resources: [],
-                },
-            } satisfies LocalizedShareCardResources;
-        });
-        const createExporterForStyle = jest.fn((
-            _app: App,
-            _ownerDocument: Document,
-            _renderer: ShareCardRenderer,
-            appearance: { printStyle?: string },
-            signal?: AbortSignal,
-        ) => {
-            if (appearance.printStyle === "light-print") replacementSignal = signal;
-            return createExporter();
-        });
-        const modal = createModal(document, {
-            localizeResources: localizeResources as unknown as NonNullable<
-                ShareCardModalDependencies["localizeResources"]
-            >,
-            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
-            paginate: async () => [{ content: "one", pageIndex: 0, totalPages: 1 }],
-            createRenderer: () => renderer,
-            createExporter: createExporterForStyle,
-        });
-
-        modal.onOpen();
-        await flushShareCardTasks();
-        const buttons = document.body
-            .querySelector(".pa-share-card-print-style-group")!
-            .querySelectorAll("button");
-
-        buttons[1]!.click();
-        await flushShareCardTasks();
-
-        expect(replacementSignal).toBe(preparationSignal);
-        expect(replacementSignal?.aborted).toBe(false);
-        modal.onClose();
-
-        expect(replacementSignal?.aborted).toBe(true);
-    });
-
-    it("discards and cleans a stale print-style render after close", async () => {
+    it("discards and cleans a stale page render after close", async () => {
         const document = new ShareCardTestDocument();
         const renderer = createRenderer(document, []);
         const modal = createModal(document, {
             prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
-            paginate: async () => [{ content: "one", pageIndex: 0, totalPages: 1 }],
+            paginate: async () => [
+                { content: "one", pageIndex: 0, totalPages: 2 },
+                { content: "two", pageIndex: 1, totalPages: 2 },
+            ],
             createRenderer: () => renderer,
             createExporter: () => createExporter(),
         });
@@ -463,24 +293,22 @@ describe("ShareCardModal", () => {
                 cleanup,
             };
         });
-        const buttons = document.body
-            .querySelector(".pa-share-card-print-style-group")!
-            .querySelectorAll("button");
-
-        buttons[1]!.click();
+        const nextButton = document.body
+            .querySelector(".pa-share-card-nav")!.children[2]!;
+        nextButton.click();
         await Promise.resolve();
-        expect(buttons.every((button) => button.disabled)).toBe(true);
+        expect(nextButton.disabled).toBe(true);
 
         modal.onClose();
         finishRender(null);
         await flushShareCardTasks();
         const pendingCall = renderer.renderPage.mock.calls[1];
-        expect(pendingCall?.[1].printStyle).toBe("light-print");
+        expect(pendingCall?.[1].printStyle).toBe("xerox");
         const pendingHandle = await (renderer.renderPage.mock.results[1]!.value as Promise<{
             cleanup: jest.Mock;
         }>);
         expect(pendingHandle.cleanup).toHaveBeenCalledTimes(1);
-        expect(document.body.querySelectorAll(".pa-share-card-print-style-group")).toHaveLength(0);
+        expect(document.body.querySelectorAll(".pa-share-card")).toHaveLength(0);
     });
 
     it.each([
@@ -550,24 +378,17 @@ describe("ShareCardModal", () => {
         modal.onClose();
     });
 
-    it.each([
-        ["uses 15px when it is the largest size that reduces page count", { 16: 3, 15: 2, 14: 1 }, 15, [16, 15]],
-        ["uses 14px only when 15px does not reduce page count", { 16: 3, 15: 3, 14: 2 }, 14, [16, 15, 14]],
-        ["keeps the validated 16px baseline when neither smaller size reduces pages", { 16: 3, 15: 3, 14: 3 }, 16, [16, 15, 14]],
-    ])("%s", async (_label, counts, expectedFontSize, expectedProbedFontSizes) => {
+    it("keeps multi-page content at the 24px baseline without smaller probes", async () => {
         const document = new ShareCardTestDocument();
         const renderer = createRenderer(document, []);
         const createPreparedFitPredicate = jest.fn((
             options: { fontSize?: number },
         ) => Object.assign(jest.fn(async () => true), {
-            fontSize: options.fontSize ?? 16,
+            fontSize: options.fontSize ?? 24,
         }));
         const prepareBlocks = jest.fn(async () => undefined);
         Object.assign(renderer, { createPreparedFitPredicate, prepareBlocks });
-        const paginate = jest.fn(async (
-            _blocks: readonly string[],
-            fit: { fontSize: number },
-        ) => createPages(counts[fit.fontSize as keyof typeof counts]));
+        const paginate = jest.fn(async () => createPages(3));
         const exporter = createExporter();
         const createExporterMock = jest.fn(() => exporter);
         const modal = createModal(document, {
@@ -581,48 +402,49 @@ describe("ShareCardModal", () => {
         await flushShareCardTasks();
         await flushShareCardTasks();
 
+        expect(createPreparedFitPredicate.mock.calls.map(([options]) => options.fontSize))
+            .toEqual([24]);
+        expect(prepareBlocks).toHaveBeenCalledWith(
+            ["one", "two"],
+            expect.objectContaining({ fontSize: 24 }),
+        );
         expect(createExporterMock).toHaveBeenCalledWith(
             expect.anything(),
             asDocument(document),
             renderer,
-            expect.objectContaining({ fontSize: expectedFontSize }),
+            expect.objectContaining({ fontSize: 24 }),
         );
         expect(renderer.recordPreparedFinalPages).toHaveBeenCalledWith(
             expect.any(Array),
-            expect.objectContaining({ fontSize: expectedFontSize }),
+            expect.objectContaining({ fontSize: 24 }),
         );
         expect(renderer.renderPage).toHaveBeenLastCalledWith(
             expect.objectContaining({ pageIndex: 0 }),
-            expect.objectContaining({ fontSize: expectedFontSize }),
+            expect.objectContaining({ fontSize: 24 }),
         );
 
         const nav = document.body.querySelector(".pa-share-card-nav")!;
         nav.children[2]!.click();
         await flushShareCardTasks();
         for (const [, options] of renderer.renderPage.mock.calls) {
-            expect(options).toEqual(expect.objectContaining({ fontSize: expectedFontSize }));
+            expect(options).toEqual(expect.objectContaining({ fontSize: 24 }));
         }
         expect(prepareBlocks).toHaveBeenCalledTimes(1);
-        expect(prepareBlocks).toHaveBeenCalledWith(
-            ["one", "two"],
-            expect.objectContaining({ fontSize: 16 }),
-        );
-        expect(createPreparedFitPredicate.mock.calls.map(([options]) => options.fontSize))
-            .toEqual(expectedProbedFontSizes);
         modal.onClose();
     });
 
     it.each([
-        ["uses 22px when every enlarged candidate fits", { 16: 1, 18: 1, 20: 1, 22: 1 }, 22, [16, 18, 20, 22]],
-        ["uses 20px when 22px no longer fits", { 16: 1, 18: 1, 20: 1, 22: 2 }, 20, [16, 18, 20, 22]],
-        ["uses 18px when 20px no longer fits", { 16: 1, 18: 1, 20: 2, 22: 2 }, 18, [16, 18, 20]],
-        ["keeps 16px when 18px no longer fits", { 16: 1, 18: 2, 20: 2, 22: 2 }, 16, [16, 18]],
+        ["uses 32px when every enlarged candidate fits", { 24: 1, 26: 1, 28: 1, 30: 1, 32: 1 }, 32, [24, 26, 28, 30, 32]],
+        ["uses 30px when 32px no longer fits", { 24: 1, 26: 1, 28: 1, 30: 1, 32: 2 }, 30, [24, 26, 28, 30, 32]],
+        ["uses 28px when 30px no longer fits", { 24: 1, 26: 1, 28: 1, 30: 2, 32: 2 }, 28, [24, 26, 28, 30]],
+        ["uses 26px when 28px no longer fits", { 24: 1, 26: 1, 28: 2, 30: 2, 32: 2 }, 26, [24, 26, 28]],
+        ["keeps 24px when 26px no longer fits", { 24: 1, 26: 2, 28: 2, 30: 2, 32: 2 }, 24, [24, 26]],
     ])("%s", async (_label, counts, expectedFontSize, expectedProbedFontSizes) => {
         const document = new ShareCardTestDocument();
         const renderer = createRenderer(document, []);
         const createPreparedFitPredicate = jest.fn((options: { fontSize?: number }) => (
             Object.assign(jest.fn(async () => true), {
-                fontSize: options.fontSize ?? 16,
+                fontSize: options.fontSize ?? 24,
             })
         ));
         const prepareBlocks = jest.fn(async () => undefined);
@@ -667,9 +489,10 @@ describe("ShareCardModal", () => {
     });
 
     it.each([
-        [18, 16, [16, 18]],
-        [20, 18, [16, 18, 20]],
-        [22, 20, [16, 18, 20, 22]],
+        [26, 24, [24, 26]],
+        [28, 26, [24, 26, 28]],
+        [30, 28, [24, 26, 28, 30]],
+        [32, 30, [24, 26, 28, 30, 32]],
     ])(
         "keeps the last validated size when the %ipx enlarged-size probe fails",
         async (failedFontSize, expectedFontSize, expectedProbedFontSizes) => {
@@ -677,7 +500,7 @@ describe("ShareCardModal", () => {
             const renderer = createRenderer(document, []);
             const createPreparedFitPredicate = jest.fn((options: { fontSize?: number }) => (
                 Object.assign(jest.fn(async () => true), {
-                    fontSize: options.fontSize ?? 16,
+                    fontSize: options.fontSize ?? 24,
                 })
             ));
             Object.assign(renderer, {
@@ -726,63 +549,6 @@ describe("ShareCardModal", () => {
             modal.onClose();
         },
     );
-
-    it("keeps the validated 16px batch when a smaller-size probe fails", async () => {
-        const document = new ShareCardTestDocument();
-        const renderer = createRenderer(document, []);
-        const prepareBlocks = jest.fn(async () => undefined);
-        const createPreparedFitPredicate = jest.fn((options: { fontSize?: number }) => (
-            Object.assign(jest.fn(async () => true), {
-                fontSize: options.fontSize ?? 16,
-            })
-        ));
-        Object.assign(renderer, { createPreparedFitPredicate, prepareBlocks });
-        const candidateError = new Error("15px probe failed");
-        const paginate = jest.fn(async (
-            _blocks: readonly string[],
-            fit: { fontSize: number },
-        ) => {
-            if (fit.fontSize === 15) throw candidateError;
-            return createPages(3);
-        });
-        const createExporterMock = jest.fn(() => createExporter());
-        const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
-        const modal = createModal(document, {
-            prepareMarkdown: () => ({ markdown: "one\n\ntwo", blocks: ["one", "two"] }),
-            paginate: paginate as unknown as NonNullable<ShareCardModalDependencies["paginate"]>,
-            createRenderer: () => renderer,
-            createExporter: createExporterMock,
-        });
-
-        modal.onOpen();
-        await flushShareCardTasks();
-        await flushShareCardTasks();
-
-        expect(prepareBlocks).toHaveBeenCalledTimes(1);
-        expect(createPreparedFitPredicate.mock.calls.map(([options]) => options.fontSize))
-            .toEqual([16, 15]);
-        expect(renderer.recordPreparedFinalPages).toHaveBeenCalledWith(
-            createPages(3),
-            expect.objectContaining({ fontSize: 16 }),
-        );
-        expect(createExporterMock).toHaveBeenCalledWith(
-            expect.anything(),
-            asDocument(document),
-            renderer,
-            expect.objectContaining({ fontSize: 16 }),
-        );
-        expect(renderer.renderPage).toHaveBeenCalledWith(
-            expect.objectContaining({ pageIndex: 0 }),
-            expect.objectContaining({ fontSize: 16 }),
-        );
-        expect(warn).toHaveBeenCalledWith(
-            "Share Card adaptive sizing failed; using validated 16px pagination.",
-            candidateError,
-        );
-
-        modal.onClose();
-        warn.mockRestore();
-    });
 
     it("fails closed when the bundled preview font cannot load", async () => {
         const document = new ShareCardTestDocument();
@@ -1308,7 +1074,7 @@ describe("ShareCardModal", () => {
         const prepareBlocks = jest.fn(async () => undefined);
         const createPreparedFitPredicate = jest.fn((options: { fontSize?: number }) => (
             Object.assign(jest.fn(async () => true), {
-                fontSize: options.fontSize ?? 16,
+                fontSize: options.fontSize ?? 24,
             })
         ));
         Object.assign(renderer, { createPreparedFitPredicate, prepareBlocks });
@@ -1319,7 +1085,7 @@ describe("ShareCardModal", () => {
             options: { signal: AbortSignal; yieldToPlatform: () => Promise<void> },
         ) => {
             await options.yieldToPlatform();
-            if (fit.fontSize === 16) return createPages(3);
+                if (fit.fontSize === 24) return createPages(1);
             return new Promise<CardPage[]>((resolve) => {
                 resolveCandidate = resolve;
             });

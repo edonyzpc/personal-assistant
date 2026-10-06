@@ -1266,6 +1266,12 @@ describe('plugin startup view registration', () => {
             createModal: (data) => new ShareCardModal(plugin.app, data),
             closeAllModals: () => closeAllShareCardModals(),
             getMenuTitle: () => pluginT('plugin.menu.shareSelectionAsCard', getPluginUiLanguage()),
+            getFileMenuTitle: () => pluginT('plugin.menu.shareNoteAsCard', getPluginUiLanguage()),
+            readFile: (file) => plugin.app.vault.cachedRead(file),
+            notifyEmpty: () => new Notice(pluginT('plugin.shareCard.empty', getPluginUiLanguage())),
+            notifyReadFailed: () => new Notice(
+                pluginT('plugin.shareCard.noteReadFailed', getPluginUiLanguage()),
+            ),
             menuIcon: 'image',
         });
         plugin.log = jest.fn();
@@ -1462,6 +1468,31 @@ describe('plugin startup view registration', () => {
             expect(plugin.registerEvent.mock.calls.some(
                 ([registeredReference]: unknown[]) => registeredReference === editorMenuReference,
             )).toBe(true);
+            const fileMenuRegistrationIndex = workspaceOn.mock.calls.findIndex(
+                ([event]) => event === 'file-menu',
+            );
+            expect(fileMenuRegistrationIndex).toBeGreaterThanOrEqual(0);
+            const fileMenuRegistration = workspaceOn.mock.calls[fileMenuRegistrationIndex];
+            const fileMenuReference = (
+                workspaceOn.mock.results[fileMenuRegistrationIndex] as { value: unknown }
+            ).value;
+            expect(plugin.registerEvent.mock.calls.some(
+                ([registeredReference]: unknown[]) => registeredReference === fileMenuReference,
+            )).toBe(true);
+            const fileMenuCallback = fileMenuRegistration[1] as (
+                menu: { addItem: jest.Mock },
+                file: unknown,
+            ) => void;
+            const nonMarkdownMenu = { addItem: jest.fn() };
+            const nonMarkdownFile = Object.create(TFile.prototype) as TFile;
+            nonMarkdownFile.path = 'Attachments/Image.png';
+            nonMarkdownFile.extension = 'png';
+            nonMarkdownFile.name = 'Image.png';
+            fileMenuCallback(
+                nonMarkdownMenu,
+                nonMarkdownFile,
+            );
+            expect(nonMarkdownMenu.addItem).not.toHaveBeenCalled();
             const editorMenuCallback = editorMenuRegistration[1] as (
                 menu: { addItem: (builder: (item: {
                     setTitle: (title: string) => unknown;
@@ -1920,6 +1951,12 @@ describe('Memory governance plugin bootstrap', () => {
             createModal: (data) => new ShareCardModal(plugin.app, data),
             closeAllModals: () => mockCloseAllShareCardModals(),
             getMenuTitle: () => pluginT('plugin.menu.shareSelectionAsCard', getPluginUiLanguage()),
+            getFileMenuTitle: () => pluginT('plugin.menu.shareNoteAsCard', getPluginUiLanguage()),
+            readFile: (file) => plugin.app.vault.cachedRead(file),
+            notifyEmpty: () => new Notice(pluginT('plugin.shareCard.empty', getPluginUiLanguage())),
+            notifyReadFailed: () => new Notice(
+                pluginT('plugin.shareCard.noteReadFailed', getPluginUiLanguage()),
+            ),
             menuIcon: 'image',
         });
         plugin.log = jest.fn();

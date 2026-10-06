@@ -1,6 +1,6 @@
 # Share Card Architecture
 
-Updated: 2026-09-18
+Updated: 2026-10-06
 
 | Field | Value |
 | --- | --- |
@@ -11,8 +11,7 @@ Updated: 2026-09-18
 
 > [!note] Owner amendment 2026-08-07
 > 用户选择方案 A，并明确以当前 `master` 实现作为最终行为基线：短单页内容从
-> `18 → 20 → 22px` 选择仍能保持单页的最大字号；多页内容从 `16px` 起，仅在
-> `15px` 或 `14px` 能减少页数时选择最大的有效字号，且整批字号一致。保存目录在
+> 字号规则已由 2026-10-06 用户修订取代，见下文 batch-level 决策。保存目录在
 > 每次 Modal 打开时优先采用有效的 Vault attachment folder，否则回退 `PA-Cards`；
 > 用户可在当前 Modal 中选择已有目录、输入新目录或 Vault 根目录，但该选择不持久化。
 > Action Ring 优先采用朝向内容区的内向弧，空间不足时整组降级为紧凑横排或竖排。
@@ -50,6 +49,7 @@ flowchart LR
 | Module | Responsibility |
 | --- | --- |
 | `share-card-types.ts` | `ShareCardData`、页面、固定尺寸、输出密度与硬上限 |
+| `share-card-source.ts` | 共享选区/笔记来源投影、有效 YAML frontmatter 剥离与 basename 标签 |
 | `share-card-markdown.ts` | 将 Markdown 准备为语义块，保留允许的文字与视觉结构 |
 | `share-card-resources.ts` | 仅解析显式引用；有界读取远程/Vault 资源并本地化为 data URL；生成完整性报告 |
 | `share-card-font.ts` | 注册随包的 Source Han Serif 子集、本地 data URL 字体与引用计数清理 |
@@ -57,14 +57,14 @@ flowchart LR
 | `share-card-paginator.ts` | 基于最终卡片 DOM 高度分页，维护 no-loss、顺序、非空页和安全上限 |
 | `share-card-export.ts` | 自包含审计、SnapDOM adapter、clipboard、Vault 串行写入和唯一命名 |
 | `share-card-modal.ts` | 编排资源、字体、分页、预览、Copy/Save、目录选择、状态与取消生命周期 |
-| `plugin.ts`、Chat 与 Pagelet integration | eligibility、来源投影和四个显式入口 |
+| `plugin.ts`、`plugin/share-card-actions.ts`、Chat 与 Pagelet integration | eligibility、显式入口与对应文件/编辑器接线 |
 | `pagelet/pet/PetView.ts` | 四项 Ring 的逻辑顺序、完整本地化名称、内向布局与整组 fallback |
 
 这些职责不得被新的平行 renderer、capture engine 或持久化目录设置绕开。
 
 ## Input And Source Projection
 
-四个入口共享一个不可变 `ShareCardData` snapshot：
+所有入口共享一个不可变 `ShareCardData` snapshot：
 
 - Chat 仅分享已完成且可分享的 assistant 回复；生成中、用户消息和中断型 partial
   output fail closed。
@@ -76,6 +76,10 @@ flowchart LR
 - Action Ring 在点击时读取一次 current editor：非空 selection 优先；否则读取 current
   Markdown note。Note 只剥离 Obsidian 能识别且 YAML 有效的 leading frontmatter，并只显示
   basename；selection 不显示文件名或 Vault path。
+- Markdown 笔记菜单（含移动端右上三点）分享菜单对应的 file；只有对应 leaf 的
+  MarkdownView 才能提供 selection 或未保存正文，否则从该 file 读取正文。复用 Ring
+  的 selection-first、有效 frontmatter 剥离和 basename 投影；非 Markdown/目录不加入口。
+  空正文或读取失败提供可恢复提示；卸载后返回的异步读取不能打开新 Modal。
 
 `resourceContext.basePath` 只提供相对资源解析权限，不进入卡片、Notice 或 Pagelet
 finding payload。来源准备不调用 provider、不搜索无关 Vault，也不产生 durable write。
@@ -116,11 +120,10 @@ Renderer 移除 script、runtime style、事件处理器、交互控件和外部
 
 字号选择是 batch-level 决策：
 
-- 先用 `16px` 得到完整且通过同一套 no-loss、overflow 与非空页校验的 baseline；旧固定页数门按上述 successor 移除。
-- Baseline 为多页时，依次试 `15px`、`14px`；只有候选减少 baseline 页数时才接受，并在
-  第一个有效候选处停止，因此选择最大的有效缩小字号。候选失败保留已验证 baseline。
-- 当前有效结果为单页时（包括 `16px` baseline 或缩小后变为单页），依次试 `18px`、
-  `20px`、`22px`，保留仍能完整容纳在单页的最大值；第一个不再适合的候选终止放大。
+- 先用 `24px` 得到完整且通过同一套 no-loss、overflow 与非空页校验的 baseline；多页
+  保持该字号，不再缩小文字以减少页数。旧固定页数门按上述 successor 移除。
+- Baseline 为单页时依次试 `26px`、`28px`、`30px`、`32px`，保留仍能完整容纳在单页
+  的最大值；第一个不再适合或失败的候选终止放大。标题按正文比例保持层级。
 - 同一 batch 的全部页面、preview、Copy 和 Save 必须复用一个最终字号；禁止逐页缩放、
   export-only 重分页或混合字号。
 
@@ -141,14 +144,14 @@ data URL，必须在测量前就绪。SnapDOM 的 document-wide font discovery �
   只读放大层，以原 CSS 尺寸检查并允许滚动，关闭后回到缩略图与原焦点。固定尺寸
   capture DOM 不受 preview/zoom scale 影响。
 - 卡片与全部后代冻结 animation/transition，确保 preview 与 PNG 使用同一静态视觉状态。
-- 每次 Modal 提供 `original / light-print / xerox` 三档本地 appearance，默认 original 且不
-  持久化。Light-print 对标题使用已验证轻效果，对普通正文使用更收敛轻效果；Xerox 对
+- 每次 Modal 直接应用 Xerox，不显示印刷样式选择器，不增加持久状态。Xerox 对
   标题保留 `scale 4/1` 和 `-3/-3px` 原始强度，并叠加淡原位残影；正文使用独立的轻度
-  起伏与淡复影，让无标题卡片也能区分，同时保留小字号可读性。代码、视觉资源、
+  起伏与淡复影（低频位移 2、高频位移 0.65、复影偏移 1.1/0.8px、透明度 0.28），
+  让无标题卡片也能辨认复印质感，同时保留可读性。代码、视觉资源、
   placeholder、footer、品牌、来源、页码、装饰和纸纹不进入文字滤镜。
 - 生产 renderer 在 final card clone 内用 `createElementNS` 建立 card-local 确定性 SVG defs，
   连续 Text siblings 合为 inline run，并在保护元素边界停止递归。Prepared Markdown prototype
-  保持无样式，可跨三档复用；fit、preview 和 exporter 都使用同一 `printStyle` appearance。
+  保持无样式，测量、preview 和 exporter 复用；final card clone 一律应用 Xerox。
   每张卡片清理时 defs/wrappers 一并离开，宿主 theme class 与 CSS variables 始终只读。
 - SnapDOM 的 SVG `foreignObject` 图片不解析内部 HTML 的 `url(#id)` 滤镜。进入 SnapDOM
   前只把该 export card 的文字 wrapper 引用切为从同张卡片 defs 序列化的本地 SVG data URI；

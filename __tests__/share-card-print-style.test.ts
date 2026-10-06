@@ -1,9 +1,7 @@
 import { MarkdownRenderer, type App } from "obsidian";
 import {
     applyShareCardPrintStyle,
-    SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS,
     SHARE_CARD_BODY_XEROX_PARAMETERS,
-    SHARE_CARD_HEADING_LIGHT_PRINT_PARAMETERS,
 } from "../src/share-card/share-card-print-style";
 import { assertShareCardElementIsSelfContained } from "../src/share-card/share-card-export";
 import { ShareCardRenderer } from "../src/share-card/share-card-renderer";
@@ -276,11 +274,7 @@ describe("Share Card print styles", () => {
         const { body, card } = createPrintFixture();
         const beforeText = collectText(body);
 
-        const report = applyShareCardPrintStyle(
-            asElement(card),
-            asElement(body),
-            "light-print",
-        );
+        const report = applyShareCardPrintStyle(asElement(card), asElement(body));
 
         const wrappers = body.querySelectorAll(".pa-share-card-print-text");
         expect(report.headingRunCount).toBe(4);
@@ -308,95 +302,9 @@ describe("Share Card print styles", () => {
             .querySelectorAll(".pa-share-card-print-text")).toHaveLength(0);
     });
 
-    it("keeps original cards unwrapped and definition-free", () => {
-        const { body, card } = createPrintFixture();
-        const elementCount = body.querySelectorAll("*").length;
-
-        const report = applyShareCardPrintStyle(
-            asElement(card),
-            asElement(body),
-            "original",
-        );
-
-        expect(report).toEqual({ headingRunCount: 0, bodyRunCount: 0, filterIds: [] });
-        expect(body.querySelectorAll("*")).toHaveLength(elementCount);
-        expect(body.querySelectorAll(".pa-share-card-print-text")).toHaveLength(0);
-        expect(card.querySelectorAll(".pa-share-card-print-defs")).toHaveLength(0);
-    });
-
-    it("uses the exact light heading chain and a reduced shared body chain", () => {
-        const { body, card } = createPrintFixture();
-        const report = applyShareCardPrintStyle(
-            asElement(card),
-            asElement(body),
-            "light-print",
-        );
-        const definitions = card.querySelectorAll(".pa-share-card-print-defs");
-        expect(definitions).toHaveLength(2);
-        const headingFilter = filterElement(definitions[0]!);
-        const bodyFilter = filterElement(definitions[1]!);
-        expect(childTags(headingFilter)).toEqual([
-            "feTurbulence",
-            "feDisplacementMap",
-            "feTurbulence",
-            "feDisplacementMap",
-        ]);
-        expect(attributes(headingFilter)).toEqual(expect.objectContaining({
-            "color-interpolation-filters": "sRGB",
-            filterUnits: "objectBoundingBox",
-            ...SHARE_CARD_HEADING_LIGHT_PRINT_PARAMETERS.filterBounds,
-        }));
-        expect(headingFilter.children.map((child) => attributes(child))).toEqual([
-            expect.objectContaining({
-                baseFrequency: "0.01 0.02",
-                numOctaves: "2",
-                result: "lowNoise",
-                seed: "0",
-                type: "turbulence",
-            }),
-            expect.objectContaining({
-                in: "SourceGraphic",
-                in2: "lowNoise",
-                result: "lowDisplaced",
-                scale: "1.8",
-                xChannelSelector: "R",
-                yChannelSelector: "G",
-            }),
-            expect.objectContaining({
-                baseFrequency: "1",
-                numOctaves: "2",
-                result: "highNoise",
-                seed: "0",
-            }),
-            expect.objectContaining({
-                in: "lowDisplaced",
-                in2: "highNoise",
-                scale: "0.5",
-            }),
-        ]);
-        expect(attributes(bodyFilter)).toEqual(expect.objectContaining({
-            ...SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS.filterBounds,
-        }));
-        expect(bodyFilter.children[1]!.getAttribute("scale")).toBe(
-            String(SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS.lowScale),
-        );
-        expect(bodyFilter.children[3]!.getAttribute("scale")).toBe(
-            String(SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS.highScale),
-        );
-
-        const filterIds = new Set(report.filterIds);
-        const references = body.querySelectorAll(".pa-share-card-print-text")
-            .map((wrapper) => wrapper.style.values.get("filter"));
-        expect(references).toHaveLength(report.headingRunCount + report.bodyRunCount);
-        expect(references.every((reference) => {
-            const match = /^url\(#([^)]+)\)$/u.exec(reference ?? "");
-            return match && filterIds.has(match[1]!);
-        })).toBe(true);
-    });
-
     it("keeps the approved Xerox heading displacement and adds a quiet registration ghost", () => {
         const { body, card } = createPrintFixture();
-        const report = applyShareCardPrintStyle(asElement(card), asElement(body), "xerox");
+        const report = applyShareCardPrintStyle(asElement(card), asElement(body));
         const definitions = card.querySelectorAll(".pa-share-card-print-defs");
         expect(definitions).toHaveLength(2);
         const headingFilter = filterElement(definitions[0]!);
@@ -468,32 +376,31 @@ describe("Share Card print styles", () => {
         expect(attributes(headingFilter.children[7]!.children[0]!)).toEqual({
             type: "linear", slope: "0.28",
         });
-        expect(bodyFilter.children[1]!.getAttribute("scale")).toBe("1");
-        expect(bodyFilter.children[3]!.getAttribute("scale")).toBe("0.35");
+        expect(bodyFilter.children[1]!.getAttribute("scale")).toBe(
+            String(SHARE_CARD_BODY_XEROX_PARAMETERS.lowScale),
+        );
+        expect(bodyFilter.children[3]!.getAttribute("scale")).toBe(
+            String(SHARE_CARD_BODY_XEROX_PARAMETERS.highScale),
+        );
         expect(report.filterIds).toHaveLength(2);
     });
 
     it("makes a body-only Xerox card visibly distinct while preserving its text", () => {
-        const original = createPrintFixture();
-        const light = createPrintFixture();
-        const xerox = createPrintFixture();
-        for (const fixture of [original, light, xerox]) {
+        const fixtures = [createPrintFixture(), createPrintFixture()];
+        for (const fixture of fixtures) {
             for (const heading of fixture.body.querySelectorAll("h1, h2")) heading.remove();
         }
-        const beforeText = collectText(xerox.body);
-        applyShareCardPrintStyle(asElement(original.card), asElement(original.body), "original");
-        applyShareCardPrintStyle(asElement(light.card), asElement(light.body), "light-print");
-        const report = applyShareCardPrintStyle(asElement(xerox.card), asElement(xerox.body), "xerox");
+        const [first, second] = fixtures;
+        const beforeText = collectText(second.body);
+        const report = applyShareCardPrintStyle(asElement(second.card), asElement(second.body));
 
         expect(report.headingRunCount).toBe(0);
         expect(report.bodyRunCount).toBeGreaterThan(0);
-        expect(collectText(xerox.body)).toBe(beforeText);
-        expect(original.card.querySelectorAll(".pa-share-card-print-defs")).toHaveLength(0);
-        const lightFilter = filterElement(light.card.querySelectorAll(".pa-share-card-print-defs")[0]!);
-        const xeroxFilter = filterElement(xerox.card.querySelectorAll(".pa-share-card-print-defs")[0]!);
-        expect(childTags(lightFilter)).toEqual([
-            "feTurbulence", "feDisplacementMap", "feTurbulence", "feDisplacementMap",
-        ]);
+        expect(collectText(second.body)).toBe(beforeText);
+        expect(collectText(first.body)).toBe(beforeText);
+        expect(first.card.querySelectorAll(".pa-share-card-print-defs")).toHaveLength(0);
+        const xeroxFilter = filterElement(second.card
+            .querySelectorAll(".pa-share-card-print-defs")[0]!);
         expect(childTags(xeroxFilter)).toEqual([
             "feTurbulence", "feDisplacementMap", "feTurbulence", "feDisplacementMap",
             "feOffset", "feComponentTransfer", "feComposite",
@@ -517,28 +424,15 @@ describe("Share Card print styles", () => {
         expect(attributes(xeroxFilter.children[6]!)).toEqual({
             in: "grained", in2: "faintEcho", operator: "over",
         });
-        expect(attributes(xeroxFilter.children[1]!)).not.toEqual(attributes(lightFilter.children[1]!));
     });
 
     it("allocates unique card-local filters for concurrent cards", () => {
         const first = createPrintFixture();
         const second = createPrintFixture();
-        const repeatLight = createPrintFixture();
-        const firstReport = applyShareCardPrintStyle(
-            asElement(first.card),
-            asElement(first.body),
-            "light-print",
-        );
-        const secondReport = applyShareCardPrintStyle(
-            asElement(second.card),
-            asElement(second.body),
-            "xerox",
-        );
-        const repeatReport = applyShareCardPrintStyle(
-            asElement(repeatLight.card),
-            asElement(repeatLight.body),
-            "light-print",
-        );
+        const repeat = createPrintFixture();
+        const firstReport = applyShareCardPrintStyle(asElement(first.card), asElement(first.body));
+        const secondReport = applyShareCardPrintStyle(asElement(second.card), asElement(second.body));
+        const repeatReport = applyShareCardPrintStyle(asElement(repeat.card), asElement(repeat.body));
 
         const ids = [
             ...firstReport.filterIds,
@@ -552,7 +446,7 @@ describe("Share Card print styles", () => {
                 tag: child.tagName,
                 attributes: attributes(child),
             })));
-        expect(filterSignature(repeatLight)).toEqual(filterSignature(first));
+        expect(filterSignature(repeat)).toEqual(filterSignature(first));
         for (const fixture of [first, second]) {
             const localIds = new Set(
                 fixture.card.querySelectorAll(".pa-share-card-print-defs")
@@ -589,26 +483,31 @@ describe("Share Card print styles", () => {
         });
         const page = { content: "# Title\n\nBody", pageIndex: 0, totalPages: 1 };
 
-        const original = await renderer.renderPage(page, { theme: "light" });
-        const light = await renderer.renderPage(page, { theme: "light", printStyle: "light-print" });
+        const implicitXerox = await renderer.renderPage(page, { theme: "light" });
+        const explicitXerox = await renderer.renderPage(page, {
+            theme: "light",
+            printStyle: "xerox",
+        });
         const fitsAt14px = await renderer.fits(page.content, 0, {
             theme: "light",
             fontSize: 14,
-            printStyle: "light-print",
+            printStyle: "xerox",
         });
         expect(renderMock).toHaveBeenCalledTimes(1);
         expect(fitsAt14px).toBe(true);
-        expect(original.bodyEl.querySelectorAll(".pa-share-card-print-text")).toHaveLength(0);
-        expect(original.cardEl.querySelectorAll(".pa-share-card-print-defs")).toHaveLength(0);
-        expect(light.bodyEl.querySelectorAll(".pa-share-card-print-text").length).toBeGreaterThan(0);
-        expect(light.cardEl.querySelectorAll(".pa-share-card-print-defs")).toHaveLength(2);
-        expect(() => assertShareCardElementIsSelfContained(light.cardEl)).not.toThrow();
+        expect(implicitXerox.bodyEl.querySelectorAll(".pa-share-card-print-text").length)
+            .toBeGreaterThan(0);
+        expect(implicitXerox.cardEl.querySelectorAll(".pa-share-card-print-defs")).toHaveLength(2);
+        expect(explicitXerox.bodyEl.querySelectorAll(".pa-share-card-print-text").length)
+            .toBeGreaterThan(0);
+        expect(explicitXerox.cardEl.querySelectorAll(".pa-share-card-print-defs")).toHaveLength(2);
+        expect(() => assertShareCardElementIsSelfContained(explicitXerox.cardEl)).not.toThrow();
         expect(document.documentElement.classList.contains("theme-dark")).toBe(true);
 
-        original.cleanup();
-        light.cleanup();
-        expect(original.cardEl.isConnected).toBe(false);
-        expect(light.cardEl.isConnected).toBe(false);
+        implicitXerox.cleanup();
+        explicitXerox.cleanup();
+        expect(implicitXerox.cardEl.isConnected).toBe(false);
+        expect(explicitXerox.cardEl.isConnected).toBe(false);
         expect(document.body.querySelectorAll(".pa-share-card-capture-host")).toHaveLength(0);
         renderer.cleanup();
     });

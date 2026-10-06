@@ -1,45 +1,16 @@
 /* Copyright 2023 edonyzpc */
 
-import type { ShareCardPrintStyle } from "./share-card-types";
-
-export const SHARE_CARD_HEADING_LIGHT_PRINT_PARAMETERS = {
-    lowFrequency: "0.01 0.02",
-    lowOctaves: 2,
-    lowScale: 1.8,
-    highFrequency: "1",
-    highOctaves: 2,
-    highScale: 0.5,
-    seed: 0,
-    filterBounds: { x: "-5%", y: "-15%", width: "110%", height: "130%" },
-} as const;
-
-/**
- * Body text keeps the two-frequency texture while staying readable at
- * 14-22px: each stage is 33-40% of the approved heading stage and below one
- * displacement scale unit.
- */
-export const SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS = {
-    lowFrequency: "0.01 0.02",
-    lowOctaves: 2,
-    lowScale: 0.6,
-    highFrequency: "1",
-    highOctaves: 2,
-    highScale: 0.2,
-    seed: 0,
-    filterBounds: { x: "-5%", y: "-15%", width: "110%", height: "130%" },
-} as const;
-
 /** Xerox needs a visible trace even when the shared card has no H1-H3. */
 export const SHARE_CARD_BODY_XEROX_PARAMETERS = {
     lowFrequency: "0.01 0.02",
     lowOctaves: 2,
-    lowScale: 1,
+    lowScale: 2,
     highFrequency: "0.6",
     highOctaves: 2,
-    highScale: 0.35,
-    echoDx: 0.8,
-    echoDy: 0.6,
-    echoOpacity: 0.18,
+    highScale: 0.65,
+    echoDx: 1.1,
+    echoDy: 0.8,
+    echoOpacity: 0.28,
     seed: 0,
     filterBounds: { x: "-8%", y: "-18%", width: "116%", height: "136%" },
 } as const;
@@ -161,43 +132,6 @@ function appendFilterDefinition(
     svg.appendChild(defs);
     cardEl.appendChild(svg);
     return filter;
-}
-
-function appendLightFilterDefinition(
-    cardEl: HTMLElement,
-    filterId: string,
-    parameters: typeof SHARE_CARD_HEADING_LIGHT_PRINT_PARAMETERS
-        | typeof SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS,
-): void {
-    const filter = appendFilterDefinition(cardEl, filterId, parameters.filterBounds);
-    appendTurbulence(
-        filter,
-        "lowNoise",
-        parameters.lowFrequency,
-        parameters.lowOctaves,
-        parameters.seed,
-    );
-    appendDisplacement(
-        filter,
-        "SourceGraphic",
-        "lowNoise",
-        "lowDisplaced",
-        parameters.lowScale,
-    );
-    appendTurbulence(
-        filter,
-        "highNoise",
-        parameters.highFrequency,
-        parameters.highOctaves,
-        parameters.seed,
-    );
-    appendDisplacement(
-        filter,
-        "lowDisplaced",
-        "highNoise",
-        "grained",
-        parameters.highScale,
-    );
 }
 
 function appendXeroxFilterDefinition(cardEl: HTMLElement, filterId: string): void {
@@ -337,17 +271,13 @@ export function prepareShareCardPrintStyleForCapture(cardEl: HTMLElement): () =>
 }
 
 /**
- * Apply the selected print texture to one final card clone. Prepared Markdown
- * prototypes stay unstyled, so switching styles never reruns a processor.
+ * Apply the fixed Xerox texture to one final card clone. Prepared Markdown
+ * prototypes stay unstyled, so print styling never reruns a processor.
  */
 export function applyShareCardPrintStyle(
     cardEl: HTMLElement,
     bodyEl: HTMLElement,
-    printStyle: ShareCardPrintStyle = "original",
 ): ShareCardPrintStyleReport {
-    if (printStyle === "original") {
-        return { headingRunCount: 0, bodyRunCount: 0, filterIds: [] };
-    }
     if (bodyEl.querySelector(".pa-share-card-print-text")) {
         return { headingRunCount: 0, bodyRunCount: 0, filterIds: [] };
     }
@@ -404,27 +334,11 @@ export function applyShareCardPrintStyle(
     visit(bodyEl, false);
     const filterIds: string[] = [];
     if (headingRunCount > 0) {
-        if (printStyle === "light-print") {
-            appendLightFilterDefinition(
-                cardEl,
-                headingFilterId,
-                SHARE_CARD_HEADING_LIGHT_PRINT_PARAMETERS,
-            );
-        } else {
-            appendXeroxFilterDefinition(cardEl, headingFilterId);
-        }
+        appendXeroxFilterDefinition(cardEl, headingFilterId);
         filterIds.push(headingFilterId);
     }
     if (bodyRunCount > 0) {
-        if (printStyle === "xerox") {
-            appendXeroxBodyFilterDefinition(cardEl, bodyFilterId);
-        } else {
-            appendLightFilterDefinition(
-                cardEl,
-                bodyFilterId,
-                SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS,
-            );
-        }
+        appendXeroxBodyFilterDefinition(cardEl, bodyFilterId);
         filterIds.push(bodyFilterId);
     }
     return { headingRunCount, bodyRunCount, filterIds };
