@@ -5,7 +5,7 @@ import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-s
 import type { AgentEvent, LegacyAgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, formatOperationsPreview, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
 import { mergeContextUsedItems, normalizeContextUsedItems } from '../src/chat/formatters';
-import { ChatConfirmationModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
+import { ChatConfirmationModal, ChatHistoryPickerModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
 import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 import type { ChatHost } from '../src/chat/ChatHost';
@@ -8694,6 +8694,142 @@ describe('LLMView turn lifecycle', () => {
             { role: 'user', content: 'first prompt' },
             { role: 'assistant', content: 'first answer' },
         ]);
+    });
+
+    it('brackets clear-current deletion with a local image delivery boundary', async () => {
+        const store = new MemoryChatHistoryStore();
+        let nextConversationId = 0;
+        const manager = new ChatHistoryManager({ store,
+            generateId: () => `clear-image-${++nextConversationId}` });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const boundary = { confirmConversationDeleted: jest.fn(), abandonConversationDeletion: jest.fn() };
+        const beginConversationDeletionBoundary = jest.fn((_conversationId: string) => boundary);
+        Object.assign(plugin, { imageGenerationService: {
+            list: async () => [],
+            subscribe: () => () => undefined,
+            clearContextPersistence: jest.fn(),
+            beginConversationDeletionBoundary,
+        } });
+        await view.onOpen();
+
+        view.prefillComposer('first ordinary chat');
+        getButtonByText(containerEl, 'Ask').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
+        getButtonByText(containerEl, 'New Chat').click();
+        await flushPromises();
+        await flushPromises();
+        view.prefillComposer('ordinary continuation');
+        getButtonByText(containerEl, 'Ask').click();
+        await waitForStreamCallCount(streamCalls, 2);
+        streamCalls[1].resolve();
+        await waitForTurnCompletion(view);
+        expect(beginConversationDeletionBoundary).not.toHaveBeenCalled();
+
+        const conversationId = (view as unknown as { conversationPersistence: ConversationPersistence })
+            .conversationPersistence.activeConversationId;
+        if (!conversationId) throw new Error('Clear boundary test conversation was not persisted');
+        await getButtonByText(containerEl, 'Clear Chat').click() as unknown as Promise<void>;
+        expect(beginConversationDeletionBoundary).toHaveBeenCalledTimes(1);
+        expect(beginConversationDeletionBoundary).toHaveBeenCalledWith(conversationId);
+        expect(boundary.confirmConversationDeleted).toHaveBeenCalledTimes(1);
+        expect(boundary.abandonConversationDeletion).not.toHaveBeenCalled();
+
+        view.prefillComposer('second clear image');
+        getButtonByText(containerEl, 'Ask').click();
+        await waitForStreamCallCount(streamCalls, 3);
+        streamCalls[2].resolve();
+        await waitForTurnCompletion(view);
+        jest.spyOn(manager, 'deleteConversation')
+            .mockRejectedValueOnce(new Error('disk unavailable'));
+        await expect(getButtonByText(containerEl, 'Clear Chat').click() as unknown as Promise<void>)
+            .rejects.toThrow('disk unavailable');
+        expect(beginConversationDeletionBoundary).toHaveBeenCalledTimes(2);
+        expect(boundary.confirmConversationDeleted).toHaveBeenCalledTimes(1);
+        expect(boundary.abandonConversationDeletion).toHaveBeenCalledTimes(1);
+    });
+
+    it('brackets history deletion with a local image delivery boundary', async () => {
+        const store = new MemoryChatHistoryStore();
+        let nextConversationId = 0;
+        const manager = new ChatHistoryManager({ store,
+            generateId: () => `history-image-${++nextConversationId}` });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const boundary = { confirmConversationDeleted: jest.fn(), abandonConversationDeletion: jest.fn() };
+        const beginConversationDeletionBoundary = jest.fn((_conversationId: string) => boundary);
+        Object.assign(plugin, { imageGenerationService: {
+            list: async () => [],
+            subscribe: () => () => undefined,
+            clearContextPersistence: jest.fn(),
+            beginConversationDeletionBoundary,
+        } });
+        await view.onOpen();
+        view.prefillComposer('history image');
+        getButtonByText(containerEl, 'Ask').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
+        const conversationId = (view as unknown as { conversationPersistence: ConversationPersistence })
+            .conversationPersistence.activeConversationId;
+        if (!conversationId) throw new Error('History boundary test conversation was not persisted');
+
+        const documentLike = { activeElement: null as MockElement | null,
+            addEventListener: jest.fn(), removeEventListener: jest.fn() };
+        Object.defineProperty(globalThis, 'document', { configurable: true, value: documentLike });
+        const opened: Modal[] = [];
+        const open = jest.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
+            opened.push(this);
+        });
+        try {
+            getButtonByText(containerEl, 'History').click();
+            await flushPromises();
+            const picker = opened[0] as ChatHistoryPickerModal;
+            (picker as unknown as { contentEl: MockElement }).contentEl = new MockElement('div');
+            picker.onOpen();
+            Object.defineProperty(globalThis, 'document', { configurable: true, value: undefined });
+            getElementsByClass((picker as unknown as { contentEl: MockElement }).contentEl,
+                'pa-chat-history-delete')[0].click();
+            await flushPromises();
+            await flushPromises();
+        } finally {
+            open.mockRestore();
+        }
+
+        expect(beginConversationDeletionBoundary).toHaveBeenCalledTimes(1);
+        expect(beginConversationDeletionBoundary).toHaveBeenCalledWith(conversationId);
+        expect(boundary.confirmConversationDeleted).toHaveBeenCalledTimes(1);
+        expect(boundary.abandonConversationDeletion).not.toHaveBeenCalled();
+
+        view.prefillComposer('second history image');
+        getButtonByText(containerEl, 'Ask').click();
+        await waitForStreamCallCount(streamCalls, 2);
+        streamCalls[1].resolve();
+        await waitForTurnCompletion(view);
+        Object.defineProperty(globalThis, 'document', { configurable: true, value: documentLike });
+        const secondOpened: Modal[] = [];
+        const secondOpen = jest.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
+            secondOpened.push(this);
+        });
+        jest.spyOn(manager, 'deleteConversation').mockRejectedValueOnce(new Error('disk unavailable'));
+        try {
+            getButtonByText(containerEl, 'History').click();
+            await flushPromises();
+            const picker = secondOpened[0] as ChatHistoryPickerModal;
+            (picker as unknown as { contentEl: MockElement }).contentEl = new MockElement('div');
+            picker.onOpen();
+            Object.defineProperty(globalThis, 'document', { configurable: true, value: undefined });
+            getElementsByClass((picker as unknown as { contentEl: MockElement }).contentEl,
+                'pa-chat-history-delete')[0].click();
+            await flushPromises();
+            await flushPromises();
+        } finally {
+            secondOpen.mockRestore();
+        }
+
+        expect(beginConversationDeletionBoundary).toHaveBeenCalledTimes(2);
+        expect(boundary.confirmConversationDeleted).toHaveBeenCalledTimes(1);
+        expect(boundary.abandonConversationDeletion).toHaveBeenCalledTimes(1);
     });
 
     it('scopes chat confirmation modal styles to the chat confirmation shell', () => {

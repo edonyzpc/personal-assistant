@@ -674,11 +674,218 @@ describe('image generation service admission and recovery', () => {
             await expect(service.readOutput(taskId, 'output_0')).rejects.toThrow('image_generation:source_changed');
             expect(await service.getVersionForOutput(taskId, 'output_0')).toBeNull();
             expect((await service.get(taskId))?.state).toBe('completed');
+            const revoked = (await service.get(taskId))!;
+            await store.putImageGenerationTask({ ...revoked, revision: revoked.revision + 1,
+                recoveryReason: 'source_changed',
+                updatedAt: new Date(Date.parse(revoked.updatedAt) + 1).toISOString() }, revoked.revision);
             const restarted = makeService(store, provider, { assets: { readOriginal } as unknown as ImageAssetService });
             try {
+                expect(restarted.canDeliverTask((await restarted.get(taskId))!)).toBe(false);
+                await expect(restarted.readOutput(taskId, 'output_0')).rejects.toThrow('image_generation:source_changed');
+                expect(await restarted.getVersionForOutput(taskId, 'output_0')).toBeNull();
+
+                const suppressed = (await restarted.get(taskId))!;
+                await store.putImageGenerationTask({ ...suppressed, revision: suppressed.revision + 1,
+                    deliverySuppressed: true, recoveryReason: undefined,
+                    updatedAt: new Date(Date.parse(suppressed.updatedAt) + 1).toISOString() }, suppressed.revision);
+                expect(restarted.canDeliverTask((await restarted.get(taskId))!)).toBe(false);
                 await expect(restarted.readOutput(taskId, 'output_0')).rejects.toThrow('image_generation:source_changed');
                 expect(await restarted.getVersionForOutput(taskId, 'output_0')).toBeNull();
             } finally { restarted.dispose(); }
+        } finally { service.dispose(); }
+    });
+
+    it('rejects a late completed output read after delivery suppression', async () => {
+        const store = await readyStore();
+        const ref = { assetId: 'scoped_suppressed_original', contentHash: await imageSourceHash(png) };
+        const provider = { submit: jest.fn(async () => ({ taskId: 'wan_scoped_suppressed', status: 'PENDING' as const, imageUrls: [] })),
+            query: jest.fn(async () => ({ taskId: 'wan_scoped_suppressed', status: 'SUCCEEDED' as const, imageUrls: ['unused'] })),
+            cancel: jest.fn(async () => ({ cancellationAccepted: false })) };
+        const readOriginal = jest.fn(async () => ({ bytes: png }));
+        const service = makeService(store, provider, { assets: { importFile: jest.fn(async () => ({ ref })), readOriginal } as unknown as ImageAssetService,
+            download: async () => png });
+        try {
+            const { taskId } = await service.submit({ ...input, isSourceCurrent: () => true });
+            await settle(async () => (await service.get(taskId))?.state === 'completed');
+            const staleTask = (await service.get(taskId))!;
+            let finishRead!: () => void;
+            readOriginal.mockImplementationOnce(() => new Promise(resolve => {
+                finishRead = () => resolve({ bytes: png });
+            }));
+            const pendingRead = service.readOutput(taskId, 'output_0');
+            await settle(async () => Boolean(finishRead));
+            await service.suppress(taskId);
+            expect(service.canDeliverTask(staleTask)).toBe(false);
+            finishRead();
+            await expect(pendingRead).rejects.toThrow('image_generation:source_changed');
+        } finally { service.dispose(); }
+    });
+
+    it('rejects late reads for a deleted conversation until this service instance is disposed', async () => {
+        const store = await readyStore();
+        await store.upsertConversation({ id: 'conversation_two', title: 'A blue bird',
+            createdAt: '2026-09-18T12:00:00.000Z', updatedAt: '2026-09-18T12:00:00.000Z',
+            turnCount: 0, preview: '' });
+        const ref = { assetId: 'scoped_conversation_deleted_original', contentHash: await imageSourceHash(png) };
+        const provider = { submit: jest.fn(async () => ({ taskId: 'wan_scoped_conversation_deleted', status: 'PENDING' as const, imageUrls: [] })),
+            query: jest.fn(async () => ({ taskId: 'wan_scoped_conversation_deleted', status: 'SUCCEEDED' as const, imageUrls: ['unused'] })),
+            cancel: jest.fn(async () => ({ cancellationAccepted: false })) };
+        const readOriginal = jest.fn(async () => ({ bytes: png }));
+        const assets = { importFile: jest.fn(async () => ({ ref })), readOriginal } as unknown as ImageAssetService;
+        const service = makeService(store, provider, { assets, download: async () => png });
+        const completeTask = async (request: { conversationId: string; stableMessageId: string; operationId: string }) => {
+            const { taskId } = await service.submit({ ...input, ...request, isSourceCurrent: () => true });
+            await settle(async () => (await service.get(taskId))?.state === 'completed');
+            return taskId;
+        };
+        try {
+            const taskId = await completeTask({ conversationId: input.conversationId,
+                stableMessageId: 'message_conversation_deleted', operationId: 'operation_conversation_deleted' });
+            const otherTaskId = await completeTask({ conversationId: 'conversation_two',
+                stableMessageId: 'message_other_conversation', operationId: 'operation_other_conversation' });
+            let finishRead!: () => void;
+            readOriginal.mockImplementationOnce(() => new Promise(resolve => {
+                finishRead = () => resolve({ bytes: png });
+            }));
+            const pendingRead = service.readOutput(taskId, 'output_0');
+            await settle(async () => Boolean(finishRead));
+
+            const boundary = service.beginConversationDeletionBoundary(input.conversationId);
+            const staleTask = (await service.get(taskId))!;
+            expect(service.canDeliverTask(staleTask)).toBe(false);
+            finishRead();
+            await expect(pendingRead).rejects.toThrow('image_generation:source_changed');
+            expect((await service.readOutput(otherTaskId, 'output_0')).bytes).toBe(png);
+
+            boundary.confirmConversationDeleted();
+            expect(service.canDeliverTask((await service.get(taskId))!)).toBe(false);
+            expect(service.canDeliverTask((await service.get(otherTaskId))!)).toBe(true);
+        } finally { service.dispose(); }
+
+        const restarted = makeService(store, provider, { assets, download: async () => png });
+        try {
+            const taskId = (await store.listImageGenerationTasks(input.conversationId))[0].taskId;
+            expect((await restarted.readOutput(taskId, 'output_0')).bytes).toBe(png);
+        } finally { restarted.dispose(); }
+    });
+
+    it('restores a failed conversation deletion boundary without unlocking a concurrent deletion', async () => {
+        const store = await readyStore();
+        const ref = { assetId: 'scoped_conversation_failed_original', contentHash: await imageSourceHash(png) };
+        const provider = { submit: jest.fn(async () => ({ taskId: 'wan_scoped_conversation_failed', status: 'PENDING' as const, imageUrls: [] })),
+            query: jest.fn(async () => ({ taskId: 'wan_scoped_conversation_failed', status: 'SUCCEEDED' as const, imageUrls: ['unused'] })),
+            cancel: jest.fn(async () => ({ cancellationAccepted: false })) };
+        const service = makeService(store, provider, { assets: {
+            importFile: jest.fn(async () => ({ ref })), readOriginal: jest.fn(async () => ({ bytes: png })),
+        } as unknown as ImageAssetService, download: async () => png });
+        try {
+            const { taskId } = await service.submit({ ...input,
+                stableMessageId: 'message_conversation_failed', operationId: 'operation_conversation_failed',
+                isSourceCurrent: () => true });
+            await settle(async () => (await service.get(taskId))?.state === 'completed');
+
+            const failed = service.beginConversationDeletionBoundary(input.conversationId);
+            expect(service.canDeliverTask((await service.get(taskId))!)).toBe(false);
+            failed.abandonConversationDeletion();
+            expect(service.canDeliverTask((await service.get(taskId))!)).toBe(true);
+            expect((await service.readOutput(taskId, 'output_0')).bytes).toBe(png);
+
+            const first = service.beginConversationDeletionBoundary(input.conversationId);
+            const second = service.beginConversationDeletionBoundary(input.conversationId);
+            expect(service.canDeliverTask((await service.get(taskId))!)).toBe(false);
+            first.abandonConversationDeletion();
+            expect(service.canDeliverTask((await service.get(taskId))!)).toBe(false);
+            second.confirmConversationDeleted();
+            expect(service.canDeliverTask((await service.get(taskId))!)).toBe(false);
+            expect(provider.cancel).not.toHaveBeenCalled();
+        } finally { service.dispose(); }
+    });
+
+    it('keeps a completed scoped output locally deliverable after service restart', async () => {
+        const store = await readyStore();
+        const ref = { assetId: 'scoped_restart_original', contentHash: await imageSourceHash(png) };
+        const provider = { submit: jest.fn(async () => ({ taskId: 'wan_scoped_restart', status: 'PENDING' as const, imageUrls: [] })),
+            query: jest.fn(async () => ({ taskId: 'wan_scoped_restart', status: 'SUCCEEDED' as const, imageUrls: ['unused'] })),
+            cancel: jest.fn(async () => ({ cancellationAccepted: false })) };
+        const service = makeService(store, provider, { assets: { importFile: jest.fn(async () => ({ ref })),
+            readOriginal: jest.fn(async () => ({ bytes: png })) } as unknown as ImageAssetService,
+            download: async () => png });
+        try {
+            const { taskId } = await service.submit({ ...input, isSourceCurrent: () => true });
+            await settle(async () => (await service.get(taskId))?.state === 'completed');
+            const version = await service.getVersionForOutput(taskId, 'output_0');
+            service.dispose();
+
+            const restarted = makeService(store, provider,
+                { assets: { readOriginal: jest.fn(async () => ({ bytes: png })) } as unknown as ImageAssetService });
+            try {
+                await restarted.recover();
+                expect(restarted.canDeliverTask((await restarted.get(taskId))!)).toBe(true);
+                expect((await restarted.readOutput(taskId, 'output_0')).bytes).toBe(png);
+                expect(await restarted.getVersionForOutput(taskId, 'output_0')).toEqual(version);
+                expect(await restarted.getVersion(version!.versionId)).toEqual(version);
+            } finally { restarted.dispose(); }
+        } finally { service.dispose(); }
+    });
+
+    it('rejects a late output read from a disposed service', async () => {
+        const store = await readyStore();
+        const ref = { assetId: 'scoped_disposed_original', contentHash: await imageSourceHash(png) };
+        const provider = { submit: jest.fn(async () => ({ taskId: 'wan_scoped_disposed', status: 'PENDING' as const, imageUrls: [] })),
+            query: jest.fn(async () => ({ taskId: 'wan_scoped_disposed', status: 'SUCCEEDED' as const, imageUrls: ['unused'] })),
+            cancel: jest.fn(async () => ({ cancellationAccepted: false })) };
+        const readOriginal = jest.fn(async () => ({ bytes: png }));
+        const service = makeService(store, provider, { assets: { importFile: jest.fn(async () => ({ ref })), readOriginal } as unknown as ImageAssetService,
+            download: async () => png });
+        try {
+            const { taskId } = await service.submit({ ...input, isSourceCurrent: () => true });
+            await settle(async () => (await service.get(taskId))?.state === 'completed');
+            let finishRead!: () => void;
+            readOriginal.mockImplementationOnce(() => new Promise(resolve => {
+                finishRead = () => resolve({ bytes: png });
+            }));
+            const pendingRead = service.readOutput(taskId, 'output_0');
+            await settle(async () => Boolean(finishRead));
+            service.dispose();
+            expect(service.canDeliverTask((await service.get(taskId))!)).toBe(false);
+            finishRead();
+            await expect(pendingRead).rejects.toThrow('image_generation:source_changed');
+        } finally { service.dispose(); }
+    });
+
+    it('relinks a completed scoped output version after restart without a transient receipt', async () => {
+        const store = await readyStore();
+        const ref = { assetId: 'scoped_missing_version_original', contentHash: await imageSourceHash(png) };
+        const task: ImageGenerationTask = { schemaVersion: 1, taskId: 'task_scoped_missing_version',
+            operationId: 'operation_scoped_missing_version', conversationId: input.conversationId,
+            stableMessageId: input.stableMessageId, createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z', revision: 0,
+            request: { userPrompt: input.userPrompt, submittedPrompt: input.submittedPrompt,
+                operation: 'generate', model: 'wan2.7-image', count: 1, inputRefs: [] },
+            connection: { mode: connection.mode, endpointIdentity: connection.baseURL,
+                credentialSlot: connection.credentialSlot, revision: connection.revision },
+            state: 'prepared', requiresSourceReceipt: true, outputs: [] };
+        await store.putImageGenerationTask(task);
+        const claimed = await store.claimImageGenerationSubmission(task.taskId, 0, task.updatedAt);
+        await store.putImageGenerationTask({ ...claimed!, state: 'running', revision: 2,
+            providerTaskId: 'wan_scoped_missing_version' }, 1);
+        await store.putImageGenerationTask({ ...claimed!, state: 'saving', revision: 3,
+            providerTaskId: 'wan_scoped_missing_version',
+            outputs: [{ outputId: 'output_0', providerOrdinal: 0, saveState: 'saved', assetRef: ref }] }, 2);
+        await store.putImageGenerationTask({ ...claimed!, state: 'completed', revision: 4,
+            providerTaskId: 'wan_scoped_missing_version',
+            outputs: [{ outputId: 'output_0', providerOrdinal: 0, saveState: 'saved', assetRef: ref }] }, 3);
+        const provider = { submit: jest.fn(async () => ({ taskId: 'wan_unused', status: 'PENDING' as const, imageUrls: [] })),
+            query: jest.fn(async () => ({ taskId: 'wan_unused', status: 'PENDING' as const, imageUrls: [] })),
+            cancel: jest.fn(async () => ({ cancellationAccepted: false })) };
+        const service = makeService(store, provider, { assets: { readOriginal: jest.fn(async () => ({ bytes: png })) } as unknown as ImageAssetService });
+        try {
+            await service.recover();
+            const version = await service.getVersionForOutput(task.taskId, 'output_0');
+            expect(version).toMatchObject({ taskId: task.taskId, outputId: 'output_0', assetRef: ref });
+            expect(await service.getVersion(version!.versionId)).toEqual(version);
+            expect(provider.submit).not.toHaveBeenCalled();
+            expect(provider.query).not.toHaveBeenCalled();
         } finally { service.dispose(); }
     });
 

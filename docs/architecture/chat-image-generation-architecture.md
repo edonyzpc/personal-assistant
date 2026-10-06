@@ -1,7 +1,7 @@
 # Chat Image Generation Architecture
 
 Document status: Current
-Updated: 2026-09-29
+Updated: 2026-10-06
 Work item: B-133 / B-152
 Authority: 已实现的 Chat 图片生成、版本、统一连接、恢复和导出技术契约；源码是具体参数与类型的事实依据。
 Product contract: [DEC-038](../product/decisions/dec-038-chat-image-generation.md) / [Product Spec](../product/specs/pa-chat-image-generation-product-spec.md)
@@ -145,6 +145,11 @@ Regenerate 预填已提交描述并沿用来源依赖，不重新读取新活动
 文件对象身份、冻结 scope、动态权限以及原附件的内容/权限凭据；真正删除、替换、撤销
 仍停止后续外发。普通 Chat 与 Writing receipt 的生命周期不因此放宽。
 
+已完成且已保存的任务重开历史时，瞬时来源 receipt 缺失不阻止本地图片读取或版本补链；
+仍存在但失效的 receipt、持久化的 `source_changed` / `deliverySuppressed` 继续阻止交付。
+本地读取仍由图片资产服务核验原件身份、路径权限和内容哈希；未完成任务恢复和新请求
+外发保留来源守卫，历史可读不恢复旧请求的外发授权。
+
 卡片由 conversationId/stableMessageId 投影，不依赖会变动的 turn index，也不在 Chat
 消息中重复存任务 refs。图片先受理而文字轮失败时，重开仍能从任务表恢复原提示和卡片。
 新 Chat 在构建原生 Writing host 前预留会话 ID，仅放行同轮 `null → 确切预留 ID`；
@@ -191,7 +196,7 @@ stateDiagram-v2
 | 插件重开 | prepared 显示未提交；有 ID 的 running/saving/partial 只查询/保存；未知受理不重发，主动 stopped 不复活 |
 | 用户 Stop | 持久化本地停止，保留已写结果；与下载/导入竞争时复核当前任务，既有唯一文件关联正确，不误报远端取消 |
 | 连接变化/缺失或结果过期 | 明确恢复原因；可核验的本地原件优先补链，不暗换密钥或追加生成 |
-| 删除会话或对应消息 | 删除所属任务、版本、操作绑定、prompt 与输入引用；迟到回调不得重建；只保留文件及通用资产管理记录 |
+| 删除会话或对应消息 | 删除前阻止所属图片的本地交付，包括在途读取、复制和导出；删除所属任务、版本、操作绑定、prompt 与输入引用，迟到回调不得交付或重建；整会话删除失败时撤回本次本地阻止；只保留文件及通用资产管理记录 |
 | 清理缓存 | 只处理可重建变体，保留原件、活动持有和正式笔记附件 |
 
 ## Image Fidelity, Export And Note Saving

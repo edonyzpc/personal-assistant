@@ -52,6 +52,11 @@ interface ImageGenerationServiceOptions {
     onSyncNotice?: (receipt: ImageSyncReceipt) => void;
 }
 
+export interface ImageGenerationConversationDeletionBoundary {
+    confirmConversationDeleted(): void;
+    abandonConversationDeletion(): void;
+}
+
 function identity(): string {
     return globalThis.crypto.randomUUID().replace(/-/g, '');
 }
@@ -107,6 +112,9 @@ export class ImageGenerationService {
     private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
     private readonly failures = new Map<string, number>();
     private readonly sourceReceipts = new Map<string, () => boolean>();
+    private readonly deliverySuppressedTaskIds = new Set<string>();
+    private readonly pendingConversationDeletions = new Map<string, number>();
+    private readonly deletedConversations = new Set<string>();
     private readonly listeners = new Set<(task: ImageGenerationTask) => void>();
     private readonly contextPersistors = new Map<string, { conversationId: string; persist: (task: ImageGenerationTask) => Promise<void> }>();
     private disposed = false;
@@ -130,6 +138,19 @@ export class ImageGenerationService {
 
     unregisterContextPersistence(taskId: string): void { this.contextPersistors.delete(taskId); }
     hasContextPersistence(taskId: string): boolean { return this.contextPersistors.has(taskId); }
+
+    /** Keep late local delivery out of a conversation whose confirmed deletion is in progress. */
+    beginConversationDeletionBoundary(conversationId: string): ImageGenerationConversationDeletionBoundary {
+        this.pendingConversationDeletions.set(conversationId,
+            (this.pendingConversationDeletions.get(conversationId) ?? 0) + 1);
+        return {
+            confirmConversationDeleted: () => {
+                this.deletedConversations.add(conversationId);
+                this.finishConversationDeletion(conversationId);
+            },
+            abandonConversationDeletion: () => this.finishConversationDeletion(conversationId),
+        };
+    }
 
     list(conversationId: string): Promise<ImageGenerationTask[]> {
         return this.options.store.listImageGenerationTasks(conversationId);
@@ -421,8 +442,18 @@ export class ImageGenerationService {
         this.disposed = true;
         for (const taskId of this.timers.keys()) this.clearTimer(taskId);
         this.sourceReceipts.clear();
+        this.deliverySuppressedTaskIds.clear();
+        this.pendingConversationDeletions.clear();
+        this.deletedConversations.clear();
         this.listeners.clear();
         this.contextPersistors.clear();
+    }
+
+    private finishConversationDeletion(conversationId: string): void {
+        const pending = this.pendingConversationDeletions.get(conversationId);
+        if (pending === undefined) return;
+        if (pending <= 1) this.pendingConversationDeletions.delete(conversationId);
+        else this.pendingConversationDeletions.set(conversationId, pending - 1);
     }
 
     private now(): number { return this.options.now?.() ?? Date.now(); }
@@ -466,10 +497,9 @@ export class ImageGenerationService {
             const updated: ImageGenerationTask = { ...next, updatedAt: new Date(this.now()).toISOString(), revision: previous.revision + 1 };
             try {
                 await this.options.store.putImageGenerationTask(updated, previous.revision);
+                if (updated.deliverySuppressed) this.deliverySuppressedTaskIds.add(taskId);
                 this.emit(updated);
-                if (updated.deliverySuppressed) {
-                    this.sourceReceipts.delete(taskId);
-                }
+                if (updated.deliverySuppressed) this.sourceReceipts.delete(taskId);
                 return updated;
             } catch (error) {
                 if (attempt === 2 || !(error instanceof Error) || !error.message.includes('revision')) throw error;
@@ -622,10 +652,14 @@ export class ImageGenerationService {
         try { return receipt() === true; } catch { return false; }
     }
 
-    /** A persisted scoped task needs its live receipt even after completion. */
+    /** Completed local history remains deliverable when its transient receipt did not survive restart. */
     canDeliverTask(task: ImageGenerationTask): boolean {
-        return !task.deliverySuppressed && task.recoveryReason !== 'source_changed'
-            && this.isSourceCurrent(task.taskId, task);
+        return !this.disposed && !this.pendingConversationDeletions.has(task.conversationId)
+            && !this.deletedConversations.has(task.conversationId)
+            && !this.deliverySuppressedTaskIds.has(task.taskId)
+            && !task.deliverySuppressed && task.recoveryReason !== 'source_changed'
+            && (task.state === 'completed' && !this.sourceReceipts.has(task.taskId)
+                || this.isSourceCurrent(task.taskId, task));
     }
 
     private async stopIfSourceChanged(taskId: string, task: ImageGenerationTask): Promise<boolean> {
@@ -778,16 +812,16 @@ export class ImageGenerationService {
     private async ensureVersion(task: ImageGenerationTask, outputId: string): Promise<void> {
         const output = task.outputs.find((item) => item.outputId === outputId);
         if (!output?.assetRef || output.saveState !== 'saved') throw new Error('image_generation:output_unavailable');
-        if (!this.isSourceCurrent(task.taskId, task)) throw new Error('image_generation:source_changed');
+        if (!this.canDeliverTask(task)) throw new Error('image_generation:source_changed');
         const versionId = `version_${task.taskId}_${outputId}`;
         if (await this.getVersion(versionId)) return;
-        if (!this.isSourceCurrent(task.taskId, task)) throw new Error('image_generation:source_changed');
+        if (!this.canDeliverTask(task)) throw new Error('image_generation:source_changed');
         const version: GeneratedImageVersion = { schemaVersion: 1, versionId, taskId: task.taskId,
             outputId, assetRef: output.assetRef, inputRefs: task.request.inputRefs,
             parentVersionId: task.request.parentVersionId, createdAt: new Date(this.now()).toISOString(),
             model: task.request.model, submittedPrompt: task.request.submittedPrompt };
         await this.options.store.putGeneratedImageVersion(version, () => {
-            if (!this.isSourceCurrent(task.taskId, task)) throw new Error('image_generation:source_changed');
+            if (!this.canDeliverTask(task)) throw new Error('image_generation:source_changed');
         });
     }
 }

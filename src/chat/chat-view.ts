@@ -6091,10 +6091,13 @@ export class LLMView extends ItemView {
             syncComposerControls();
             renderEmptyState();
             if (conversationIdToDelete) {
-                await this.conversationPersistence.deleteConversation(conversationIdToDelete);
-                imageGeneration?.clearContextPersistence(conversationIdToDelete);
-                this.host.writingSave?.clearContextPersistence(conversationIdToDelete);
-                this.host.clearGhostContextPersistence?.(conversationIdToDelete);
+                await this.deleteConversationWithImageDeliveryBoundary(
+                    conversationIdToDelete,
+                    async () => {
+                        const manager = await getReadyHistoryManager();
+                        if (manager) await manager.deleteConversation(conversationIdToDelete);
+                    },
+                );
             } else {
                 await this.conversationPersistence.clearActiveConversationPointer();
             }
@@ -6506,10 +6509,10 @@ export class LLMView extends ItemView {
                     });
                     if (!confirmed) return;
                     if (!isCurrentSession()) return;
-                    await manager.deleteConversation(selection.conversationId);
-                    imageGeneration?.clearContextPersistence(selection.conversationId);
-                    this.host.writingSave?.clearContextPersistence(selection.conversationId);
-                    this.host.clearGhostContextPersistence?.(selection.conversationId);
+                    await this.deleteConversationWithImageDeliveryBoundary(
+                        selection.conversationId,
+                        () => manager.deleteConversation(selection.conversationId),
+                    );
                     if (!isCurrentSession()) return;
                     if (selection.conversationId === this.conversationPersistence.activeConversationId) {
                         await startNewConversation();
@@ -6609,6 +6612,24 @@ export class LLMView extends ItemView {
         void refreshMemoryChipState();
 
         // vss cache updates are now handled globally in the plugin
+    }
+
+    private async deleteConversationWithImageDeliveryBoundary(
+        conversationId: string,
+        deleteConversation: () => Promise<void>,
+    ): Promise<void> {
+        const deliveryBoundary = this.host.imageGenerationService
+            ?.beginConversationDeletionBoundary(conversationId);
+        try {
+            await deleteConversation();
+            deliveryBoundary?.confirmConversationDeleted();
+        } catch (error) {
+            deliveryBoundary?.abandonConversationDeletion();
+            throw error;
+        }
+        this.host.imageGenerationService?.clearContextPersistence(conversationId);
+        this.host.writingSave?.clearContextPersistence(conversationId);
+        this.host.clearGhostContextPersistence?.(conversationId);
     }
 
     async onClose() {
