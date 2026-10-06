@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.3](https://github.com/edonyzpc/personal-assistant/compare/2.10.2...2.10.3) (2026-10-06)
+
+### Fix
+- share-card: enhance xerox cards and add note menu
+- chat: restore generated image history after restart
+- share-card: open folder suggestions only on user input
+- chat: highlight blog2ghost composer action
+- chat: simplify image creation composer controls
+- chat: simplify image responses and align controls
+
+### Improvements
+- release: reuse verified master CI for stable packaging
+
 ## [2.10.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.2...2.10.2) (2026-10-06)
 
 ### Features
