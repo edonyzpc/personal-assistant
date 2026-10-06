@@ -94,6 +94,7 @@ export class ShareCardModal extends Modal {
     private copyButton: HTMLButtonElement | null = null;
     private saveButton: HTMLButtonElement | null = null;
     private folderInputEl: HTMLInputElement | null = null;
+    private folderSuggest: FolderSuggestController | null = null;
     private ownerWindow: Window | null = null;
     private resourceController: AbortController | null = null;
     private resourceCache: ShareCardResourceCache | null = null;
@@ -131,6 +132,8 @@ export class ShareCardModal extends Modal {
         openShareCardModals.add(this);
         this.openState = true;
         this.busy = false;
+        this.folderSuggest?.detach();
+        this.folderSuggest = null;
         this.pages = [];
         this.currentPageIndex = 0;
         this.appearance = null;
@@ -241,6 +244,8 @@ export class ShareCardModal extends Modal {
         this.exporter = null;
         this.appearance = null;
         this.pages = [];
+        this.folderSuggest?.detach();
+        this.folderSuggest = null;
         this.resetElementReferences();
         clearElement(this.contentEl);
     }
@@ -441,7 +446,7 @@ export class ShareCardModal extends Modal {
         folderRow.appendChild(folderInput);
         this.folderInputEl = folderInput;
         controlsEl.appendChild(folderRow);
-        attachFolderSuggest(this.app, folderInput);
+        this.folderSuggest = attachFolderSuggest(this.app, folderInput);
 
         const actionsEl = ownerDocument.createElement("div");
         actionsEl.classList.add("pa-share-card-actions");
@@ -846,8 +851,12 @@ function resolveShareCardDefaultFolder(app: App): string {
     return SHARE_CARD_FOLDER;
 }
 
-function attachFolderSuggest(app: App, inputEl: HTMLInputElement): void {
-    if (!AbstractInputSuggest) return;
+interface FolderSuggestController {
+    detach(): void;
+}
+
+function attachFolderSuggest(app: App, inputEl: HTMLInputElement): FolderSuggestController | null {
+    if (!AbstractInputSuggest) return null;
     class FolderSuggest extends AbstractInputSuggest<TFolder> {
         getSuggestions(query: string): TFolder[] {
             const lowerQuery = query.toLowerCase();
@@ -868,5 +877,33 @@ function attachFolderSuggest(app: App, inputEl: HTMLInputElement): void {
             this.close();
         }
     }
-    new FolderSuggest(app, inputEl);
+
+    let folderSuggest: FolderSuggest | null = null;
+    const handleInput = () => {
+        refreshFromUser();
+    };
+    const handleKeyboardActivation = (event: KeyboardEvent) => {
+        if (event.key !== "ArrowDown") return;
+        refreshFromUser();
+    };
+    const refreshFromUser = () => {
+        if (!folderSuggest) {
+            folderSuggest = new FolderSuggest(app, inputEl);
+            inputEl.removeEventListener("input", handleInput);
+            inputEl.removeEventListener("keydown", handleKeyboardActivation);
+        }
+        inputEl.dispatchEvent(new Event("input"));
+    };
+    const detach = () => {
+        inputEl.removeEventListener("click", refreshFromUser);
+        inputEl.removeEventListener("input", handleInput);
+        inputEl.removeEventListener("keydown", handleKeyboardActivation);
+        folderSuggest?.close();
+        folderSuggest = null;
+    };
+
+    inputEl.addEventListener("click", refreshFromUser);
+    inputEl.addEventListener("input", handleInput);
+    inputEl.addEventListener("keydown", handleKeyboardActivation);
+    return { detach };
 }

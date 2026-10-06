@@ -115,7 +115,9 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   单页保存当前页；`Save all pages` 按页捕获并按顺序写入用户在本次 Modal 选择的目录，
   最终只汇总一次。Modal 默认使用有效的 Vault attachment folder；配置不可用、为空或
   使用以 `.` 开头的相对路径时回退 `PA-Cards`。用户可选择已有目录、输入新目录或选择
-  Vault 根目录；该选择不持久化为插件设置。
+  Vault 根目录；该选择不持久化为插件设置。目录建议仅在用户主动点击或键盘操作
+  `Save to` 输入框时展开，锚定输入框的当前位置；打开 Modal 或程序化初始焦点不展开
+  建议，选择目录或关闭 Modal 后收起建议。
 - B-124/REQ-07: 保存使用 timestamp batch name 和确定性 page suffix，整批避让 Vault
   已有 path，不覆盖旧文件。目标被文件占用或目录创建失败时明确失败；完整成功提示
   数量和实际目录，部分失败提示已保存数量，不把 partial success 冒充完整成功，也不
@@ -239,7 +241,8 @@ flowchart TD
 - B-124/AC-08: 单页与多页保存数量、顺序、suffix、unique batch 与 partial failure 有
   focused tests；默认 attachment folder、`PA-Cards` 回退、已有/新建/root 目录与空输入
   均按契约工作，文件占位和命名冲突 fail safe；同名文件永不覆盖，成功/失败 notice 与
-  真实结果一致。
+  真实结果一致。首次打开和关闭重开不自动展开目录建议；主动操作 `Save to` 后建议
+  贴近输入框，输入筛选、键盘选择与关闭均正常，Modal 关闭后不残留浮层。
 - B-124/AC-09: 快速切页、重复点击、导出中 close 与 Modal reopen 不产生并发写、stale
   preview、遗漏 cleanup 或 unhandled rejection；分页与导出取消停止后续工作，实际资源
   失败或部分保存不冒充完整成功，不承诺任何设备拥有无限资源。

@@ -3,7 +3,25 @@ jest.mock("../src/share-card/share-card-font", () => ({
     unregisterShareCardFontFace: jest.fn(),
 }));
 
-import { Notice, type App } from "obsidian";
+jest.mock("obsidian", () => {
+    const actual = jest.requireActual<typeof import("../__mocks__/obsidian")>(
+        "../__mocks__/obsidian",
+    );
+    type AbstractInputSuggestConstructor = typeof actual.AbstractInputSuggest;
+    class LocalAbstractInputSuggest<T = unknown> extends actual.AbstractInputSuggest<T> {
+        static instances: unknown[] = [];
+        constructor(
+            app: ConstructorParameters<AbstractInputSuggestConstructor>[0],
+            inputEl: ConstructorParameters<AbstractInputSuggestConstructor>[1],
+        ) {
+            super(app, inputEl);
+            LocalAbstractInputSuggest.instances.push(this);
+        }
+    }
+    return { ...actual, AbstractInputSuggest: LocalAbstractInputSuggest };
+});
+
+import { AbstractInputSuggest, Notice, type App, type TFolder } from "obsidian";
 import {
     ShareCardModal,
     closeAllShareCardModals,
@@ -41,19 +59,58 @@ type NoticeConstructor = typeof Notice & {
     messages: Array<{ message?: unknown; timeout?: number }>;
 };
 
+type FolderSuggestProbe = {
+    getSuggestions(query: string): TFolder[];
+    open(): void;
+    close(): void;
+    selectSuggestion(folder: TFolder): void;
+};
+
 describe("ShareCardModal", () => {
     const notices = (Notice as NoticeConstructor).messages;
     const registerFont = jest.mocked(registerShareCardFontFace);
     const unregisterFont = jest.mocked(unregisterShareCardFontFace);
+    const openedFolderSuggests: FolderSuggestProbe[] = [];
+    const suggestLifecycle: string[] = [];
+    const constructedFolderSuggests = (
+        AbstractInputSuggest as unknown as { instances: FolderSuggestProbe[] }
+    ).instances;
+    const openFolderSuggest = jest.fn(function (this: FolderSuggestProbe) {
+        openedFolderSuggests.push(this);
+        suggestLifecycle.push("open");
+    });
+    const closeFolderSuggest = jest.fn(() => {
+        suggestLifecycle.push("close");
+    });
+    const originalFolderSuggestClose = AbstractInputSuggest.prototype.close;
 
     beforeEach(() => {
         notices.length = 0;
         registerFont.mockReset().mockResolvedValue(undefined);
         unregisterFont.mockReset();
+        openedFolderSuggests.length = 0;
+        suggestLifecycle.length = 0;
+        constructedFolderSuggests.length = 0;
+        openFolderSuggest.mockClear();
+        closeFolderSuggest.mockClear();
+        Object.defineProperty(AbstractInputSuggest.prototype, "open", {
+            value: openFolderSuggest,
+            configurable: true,
+        });
+        Object.defineProperty(AbstractInputSuggest.prototype, "close", {
+            value: closeFolderSuggest,
+            configurable: true,
+        });
     });
 
     afterEach(() => {
         closeAllShareCardModals();
+        delete (AbstractInputSuggest.prototype as { open?: unknown }).open;
+        Object.defineProperty(AbstractInputSuggest.prototype, "close", {
+            value: originalFolderSuggestClose,
+            writable: true,
+            configurable: true,
+        });
     });
 
     it("shows preparing state, renders responsive navigation, and cleans the Modal owner", async () => {
@@ -341,6 +398,113 @@ describe("ShareCardModal", () => {
         expect((folderInput as unknown as { value: string }).value).toBe(expectedFolder);
         expect(getConfig).toHaveBeenCalledWith("attachmentFolderPath");
         modal.onClose();
+    });
+
+    it("gates folder suggestions behind explicit Save-to input actions", async () => {
+        const document = new ShareCardTestDocument();
+        const folders = [
+            { path: "" },
+            { path: "Cards" },
+            { path: "Notes/Daily" },
+        ] as TFolder[];
+        const app = {
+            vault: {
+                getConfig: () => "Cards",
+                getAllFolders: jest.fn(() => folders),
+            },
+        } as unknown as App;
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => createPages(1),
+            createRenderer: () => createRenderer(document, []),
+            createExporter: () => createExporter(),
+        }, undefined, app);
+
+        modal.onOpen();
+        const folderInput = document.body.querySelector(".pa-share-card-folder-input")!;
+        const nativeInputQueries: string[] = [];
+        const installNativeInputWiring = (inputEl: ShareCardTestElement) => {
+            inputEl.addEventListener("input", () => {
+                if (document.activeElement !== inputEl) return;
+                const suggestEl = constructedFolderSuggests.at(-1);
+                if (!suggestEl) return;
+                const query = (inputEl as unknown as HTMLInputElement).value;
+                nativeInputQueries.push(query);
+                if (suggestEl.getSuggestions(query).length === 0) {
+                    suggestEl.close();
+                } else {
+                    suggestEl.open();
+                }
+            });
+            (inputEl as unknown as { dispatchEvent: (event: Event) => boolean }).dispatchEvent
+                = jest.fn((event: Event) => {
+                    inputEl.listeners.get("input")![0]!(event);
+                    return true;
+                });
+        };
+        installNativeInputWiring(folderInput);
+        folderInput.focus();
+        await flushShareCardTasks();
+        expect(openFolderSuggest).not.toHaveBeenCalled();
+
+        folderInput.click();
+        expect(openFolderSuggest).toHaveBeenCalledTimes(1);
+        expect(nativeInputQueries).toEqual(["Cards"]);
+        const suggest = openedFolderSuggests[0]!;
+        expect(suggest.getSuggestions("notes")).toEqual([folders[2]]);
+        expect(suggest.getSuggestions("")).toEqual(folders);
+
+        suggest.selectSuggestion(folders[2]!);
+        expect((folderInput as unknown as HTMLInputElement).value).toBe("Notes/Daily");
+        expect(nativeInputQueries).toEqual(["Cards", "Notes/Daily"]);
+        expect(closeFolderSuggest).toHaveBeenCalledTimes(1);
+        expect(openFolderSuggest).toHaveBeenCalledTimes(2);
+        expect(suggestLifecycle.at(-1)).toBe("close");
+
+        (folderInput as unknown as HTMLInputElement).value = "Missing";
+        folderInput.click();
+        expect(nativeInputQueries).toEqual(["Cards", "Notes/Daily", "Missing"]);
+        expect(openFolderSuggest).toHaveBeenCalledTimes(2);
+        expect(suggestLifecycle.at(-1)).toBe("close");
+
+        (folderInput as unknown as HTMLInputElement).value = "Notes/Daily";
+        folderInput.click();
+        expect(nativeInputQueries).toEqual([
+            "Cards",
+            "Notes/Daily",
+            "Missing",
+            "Notes/Daily",
+        ]);
+        expect(openFolderSuggest).toHaveBeenCalledTimes(3);
+        const inputClickListeners = folderInput.listeners.get("click")?.length ?? 0;
+        modal.onClose();
+        expect(closeFolderSuggest).toHaveBeenCalledTimes(3);
+        expect(inputClickListeners).toBe(1);
+        expect(folderInput.listeners.get("click")).toHaveLength(0);
+
+        modal.onOpen();
+        const reopenedInput = document.body.querySelector(".pa-share-card-folder-input")!;
+        reopenedInput.focus();
+        await flushShareCardTasks();
+        expect(openFolderSuggest).toHaveBeenCalledTimes(3);
+        reopenedInput.keydown("a");
+        expect(openFolderSuggest).toHaveBeenCalledTimes(3);
+        installNativeInputWiring(reopenedInput);
+        (reopenedInput as unknown as HTMLInputElement).value = "Notes";
+        (reopenedInput as unknown as HTMLInputElement).dispatchEvent(new Event("input"));
+        expect(openFolderSuggest).toHaveBeenCalledTimes(4);
+        modal.onClose();
+        expect(closeFolderSuggest).toHaveBeenCalledTimes(4);
+
+        modal.onOpen();
+        const keyboardInput = document.body.querySelector(".pa-share-card-folder-input")!;
+        keyboardInput.focus();
+        await flushShareCardTasks();
+        installNativeInputWiring(keyboardInput);
+        keyboardInput.keydown("ArrowDown");
+        expect(openFolderSuggest).toHaveBeenCalledTimes(5);
+        modal.onClose();
+        expect(closeFolderSuggest).toHaveBeenCalledTimes(5);
     });
 
     it("routes custom, Vault-root, and empty save destinations without persisting them", async () => {

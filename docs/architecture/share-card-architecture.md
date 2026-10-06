@@ -197,6 +197,9 @@ batch name、确定性 page suffix 和整批 collision avoidance 防止覆盖。
   使用 `PA-Cards`。
 - 输入建议列出已有 Vault folders，并把 Vault root 显示为 `/`；用户也可输入尚不存在的
   normalized folder path，Save 时按需创建。
+- `AbstractInputSuggest` 仅由用户主动点击或键盘操作目录输入触发展开；Modal 打开及
+  程序化初始 focus 不展开。展开时使用输入框的当前几何位置，选择目录或关闭 Modal
+  时关闭建议，并在 Modal 关闭时释放本次监听。
 - 空输入回退 `PA-Cards`。已有同名 file 占据目标 path 时 fail closed。
 - 目录不写入 plugin settings、ledger 或其他 persisted state；重开 Modal 重新计算默认值。
 
