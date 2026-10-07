@@ -52,7 +52,7 @@
     "@typescript-eslint/parser": "8.58.2",
     "esbuild": "^0.28.1",
     "esbuild-plugin-copy": "2.1.1",
-    "eslint": "10.2.1",
+    "eslint": "10.12.0",
     "eslint-plugin-obsidianmd": "0.4.2",
     "fontkit": "2.0.4",
     "jest": "30.1.3",
