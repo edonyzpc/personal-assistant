@@ -142,16 +142,42 @@ Personal Assistant does not upload telemetry or analytics. An optional, default-
 | Memory changed-note maintenance | Memory has been prepared and background updates are enabled | Changed note text | Configured AI provider | Yes | Memory background setting |
 | Qwen web search | You enable web search for Qwen responses | Question and final prompt context | DashScope/Bailian | No | Qwen response setting |
 | Featured image generation | You run image generation | Current note content for prompt generation, then image prompt and task requests | Configured AI provider and DashScope/Bailian | Polls task status after your request | User action and AI settings |
-| Chat image generation/editing | You explicitly request an image or edit | Image description and authorized reference-image copies; selected note text when used to prepare the description | Configured Chat/image connections | Task status may be polled after submission | Explicit request, source selection, and image connection settings |
+| Chat image generation/editing | You explicitly request an image or edit | Image description and authorized reference-image copies; selected note text when used to prepare the description; GET requests to retrieve completed images | Configured Chat/image connections; service-provided Alibaba Cloud OSS image-result URLs | Task status may be polled after submission; completed images are downloaded for local saving | Explicit request, source selection, and image connection settings |
+| Share Card remote images | You open Share Card for content containing remote image references | GET requests to the referenced image URLs; the plugin does not add the note body or AI credentials to these requests | The image hosts referenced by the content, including supported image references within SVG | Resource preparation starts when the Share Card opens | User action and the content's image references |
 | Pagelet discovery | You run discovery or enable its automatic preparation | Permitted anchor/source note text and optional web queries | Configured AI provider; configured supported web search | Automatic preparation may run in background | Pagelet settings and Data Boundary exclusions |
 | Ghost preparation/update | You explicitly use `@blog2ghost` | Selected article and required media to Ghost; note text used for metadata preparation to the configured AI provider | Configured Ghost site and AI provider | No | Explicit workflow, desktop-local key, first publication in Ghost, and exact-candidate update confirmation |
 | Plugin/theme updater | You run the updater/install flow | Plugin or theme IDs and download requests | GitHub and jsDelivr | No | User action |
 
 See [image chat and storage](./docs/guides/multimodal-chat-user-guide.md) and the [Ghost workflow](./skills/blog2ghost/SKILL.md) for their data, storage, and publication boundaries.
 
+Image hosts receive the requested URL, including any query parameters already present in the image reference, and normal request metadata.
+
+The bundled LangChain dependency contains an optional tokenizer-dictionary loader for `https://tiktoken.pages.dev/js/<encoding>.json`. Personal Assistant currently estimates prompt sizes locally and does not invoke that loader in its Chat call paths. If a dependency token-counting path invokes it, it downloads the public encoding dictionary without sending prompts, note text, or AI credentials; the server still receives normal request metadata. A domain appearing in the bundle identifies a potential dependency request, not an observed request on every Chat interaction.
+
+### Base64 usage note
+
+Personal Assistant and its bundled dependencies use Base64 for binary transport and local asset loading: encoding processed image attachments and reference images as data URLs, reading supported inline raster images in SVG and Share Card resources, carrying bundled fonts as data URLs, and decoding the SQLite WASM binary. A local worker data-URL compatibility path also decodes Base64. Worker code and the WASM module are executable packaged assets; the SQLite integration and its dependency are described below.
+
+Memory pagination also uses Base64url to carry JSON query state, a state fingerprint, and an offset between tool calls. These cursors may contain query filters; Base64 is reversible encoding, not encryption or a credential-protection mechanism. Dependency utilities also contain Base64 conversion/validation paths, such as binary embedding-response decoding.
+
 ### VSS SQLite/WASM dependency note
 
-The local VSS SQLite backend uses the official `@sqlite.org/sqlite-wasm` package pinned to `3.53.0-build1`. Before publishing a release with this backend, review the upstream package license and release terms for your distribution scenario.
+The local Memory index uses `sqlite3.wasm` from the official [`@sqlite.org/sqlite-wasm`](https://github.com/sqlite/sqlite-wasm) package, pinned to `3.53.0-build1`. SQLite stores local Memory metadata, note chunks, and embeddings. The build embeds the package's WASM binary and JavaScript loader together with PA's SQLite worker code in `main.js`; when needed, the plugin creates local Blob URLs for the worker source and decoded WASM bytes, then starts the worker. It does not download the WASM module from an external server. Preparing or updating Memory can still send note text to the configured AI provider, as disclosed above.
+
+The WASM module imports nine functions from `wasi_snapshot_preview1`: `clock_time_get`, `environ_get`, `environ_sizes_get`, `fd_close`, `fd_fdstat_get`, `fd_read`, `fd_seek`, `fd_sync`, and `fd_write`. These provide clock, environment, and file-descriptor support through the bundled Emscripten JavaScript implementations. In PA's worker integration, file descriptors refer to the Emscripten virtual filesystem and streams; environment values are constructed by the runtime. They are not bindings to the host operating system's filesystem, environment variables, or process-launch APIs. SQLite database persistence uses a separate browser OPFS VFS in the worker. This module has no socket or process-launch imports. The WASI import names alone do not establish broader host access or a malware verdict.
+
+Raw WASM fingerprint (verified on 2026-10-07):
+
+| Field | Value |
+| --- | --- |
+| Package | `@sqlite.org/sqlite-wasm@3.53.0-build1` |
+| File inside the package | `dist/sqlite3.wasm` |
+| Raw byte length | `864752` |
+| SHA-256 of the raw WASM bytes | `02d7e48164395fa68f81c6ec33e9da5461be397dc57602ac0cd89b4bbba1d312` |
+
+The cached npm archive was checked against the SHA-512 integrity recorded in `package-lock.json`. Its WASM file, the installed dependency file, and the sole WASM module decoded from the local `dist/main.js` were byte-for-byte identical and had the fingerprint above. This verifies package-to-bundle byte consistency; it does not prove a reproducible build from upstream C source or identify a Community scan's module without that scan's artifact fingerprint. Recheck the fingerprint when the dependency or binary changes.
+
+See the [SQLite WASM documentation](https://sqlite.org/wasm/doc/trunk/index.md), [Emscripten filesystem overview](https://emscripten.org/docs/porting/files/file_systems_overview.html), and [third-party notices](./THIRD_PARTY_NOTICES.md) for provenance and licensing. Before publishing a release with this backend, review the upstream package license and release terms for your distribution scenario.
 
 ### License and commercial boundary
 

@@ -123,16 +123,42 @@ Personal Assistant 不上传 telemetry 或 analytics。可选的能力使用统�
 | Memory changed-note maintenance | Memory 已准备且后台更新开启 | Changed note text | 配置的 AI provider | 是 | Memory 后台设置 |
 | Qwen web search | 你开启 Qwen web search | 问题和最终 prompt context | DashScope/Bailian | 否 | Qwen response 设置 |
 | Featured image generation | 你运行图片生成 | 用于生成图片 prompt 的当前 note content，以及图片 prompt 和 task 请求 | 配置的 AI provider 和 DashScope/Bailian | 请求后会轮询 task 状态 | 用户操作和 AI 设置 |
-| Chat 图片生成/编辑 | 你明确请求生成或编辑图片 | 图片描述、获授权的参考图片副本；用笔记准备描述时的已选笔记文本 | 配置的 Chat/图片连接 | 提交后可能轮询任务状态 | 明确请求、来源选择和图片连接设置 |
+| Chat 图片生成/编辑 | 你明确请求生成或编辑图片 | 图片描述、获授权的参考图片副本；用笔记准备描述时的已选笔记文本；获取已完成图片的 GET 请求 | 配置的 Chat/图片连接；服务返回的阿里云 OSS 图片结果 URL | 提交后可能轮询任务状态；完成后下载图片以保存到本地 | 明确请求、来源选择和图片连接设置 |
+| Share Card 远程图片 | 你为包含远程图片引用的内容打开 Share Card | 对所引用图片 URL 的 GET 请求；插件不向这些请求添加笔记正文或 AI 凭据 | 内容引用的图片服务器，包括 SVG 内受支持的图片引用 | 打开 Share Card 时开始准备资源 | 用户操作与内容中的图片引用 |
 | 拾页发现 | 你运行发现或开启自动准备 | 允许范围内的锚点/来源笔记文本，以及可选网页查询 | 配置的 AI provider；配置且受支持的网页搜索 | 自动准备可在后台运行 | 拾页设置和 Data Boundary 排除规则 |
 | Ghost 准备/更新 | 你明确使用 `@blog2ghost` | 选中文章及所需媒体发送到 Ghost；准备元数据所用的笔记文本发送到配置的 AI provider | 配置的 Ghost 站点与 AI provider | 否 | 显式工作流、本桌面凭据、在 Ghost 首发，以及确切候选版本的更新确认 |
 | Plugin/theme updater | 你运行 updater/install 流程 | Plugin 或 theme ID 以及下载请求 | GitHub 和 jsDelivr | 否 | 用户操作 |
 
 图片的数据、存储与同步边界见[图片聊天指南](./docs/guides/multimodal-chat-user-guide.md)；Ghost 的准备与正式发布边界见[Ghost 工作流](./skills/blog2ghost/SKILL.md)。
 
+图片服务器会收到请求的 URL，包括图片引用中已有的查询参数，以及常规请求元数据。
+
+打包的 LangChain 依赖包含一个可选的 tokenizer 词典加载路径，目标为 `https://tiktoken.pages.dev/js/<encoding>.json`。Personal Assistant 当前在本地估算 prompt 大小，Chat 调用链不调用这个加载路径。如果依赖的 token 计数路径调用它，会下载公开的编码词典，不发送 prompt、笔记文本或 AI 凭据；服务器仍会收到常规请求元数据。打包产物出现该域名表示存在潜在的依赖请求路径，不代表每次 Chat 都实际发起请求。
+
+### Base64 用途说明
+
+Personal Assistant 及其打包依赖使用 Base64 进行二进制传输与本地资源加载：把处理后的图片附件和参考图片编码为 data URL，读取 SVG 与 Share Card 资源中受支持的内嵌位图，把打包字体作为 data URL 使用，以及解码 SQLite WASM 二进制。本地 worker 的 data URL 兼容路径也使用 Base64 解码。Worker 代码与 WASM 模块是随包分发的可执行资源，SQLite 集成与依赖来源见下方说明。
+
+Memory 分页还使用 Base64url 在工具调用之间传递 JSON 查询状态、状态指纹和偏移量。这些游标可能包含查询过滤条件；Base64 是可逆编码，不是加密或凭据保护机制。依赖工具中也存在 Base64 转换或校验路径，例如解码二进制 embedding 响应。
+
 ### VSS SQLite/WASM 依赖说明
 
-本地 VSS SQLite 后端使用官方 `@sqlite.org/sqlite-wasm` 包，固定版本为 `3.53.0-build1`。发布包含该后端的版本前，需要复核上游包的许可证和发布条款是否符合分发场景。
+本地 Memory 索引使用官方 [`@sqlite.org/sqlite-wasm`](https://github.com/sqlite/sqlite-wasm) 包中的 `sqlite3.wasm`，固定版本为 `3.53.0-build1`。SQLite 保存本地 Memory 元数据、笔记分块与 embedding。构建时，包中的 WASM 二进制与 JavaScript 加载器连同 PA 的 SQLite worker 代码被内嵌到 `main.js`；需要时，插件为 worker 源码和解码后的 WASM 字节创建本地 Blob URL，再启动 worker，不从外部服务器下载 WASM 模块。准备或更新 Memory 仍可能向配置的 AI provider 发送笔记文本，详见上方披露。
+
+WASM 模块从 `wasi_snapshot_preview1` 导入九个函数：`clock_time_get`、`environ_get`、`environ_sizes_get`、`fd_close`、`fd_fdstat_get`、`fd_read`、`fd_seek`、`fd_sync` 和 `fd_write`。这些接口通过随包的 Emscripten JavaScript 实现提供时钟、环境信息与文件描述符支持。在 PA 的 worker 集成中，文件描述符对应 Emscripten 虚拟文件系统与流，环境值由运行时构造，并非直接绑定到宿主操作系统的文件系统、环境变量或进程启动接口。SQLite 数据库通过 worker 中独立的浏览器 OPFS VFS 持久化。该模块没有 socket 或进程启动导入；仅凭 WASI 导入名称不能认定它拥有更广的宿主权限，也不能作出恶意软件结论。
+
+原始 WASM 指纹（2026-10-07 核对）：
+
+| 字段 | 值 |
+| --- | --- |
+| 依赖包 | `@sqlite.org/sqlite-wasm@3.53.0-build1` |
+| 包内文件 | `dist/sqlite3.wasm` |
+| 原始字节长度 | `864752` |
+| 原始 WASM 字节的 SHA-256 | `02d7e48164395fa68f81c6ec33e9da5461be397dc57602ac0cd89b4bbba1d312` |
+
+已按 `package-lock.json` 中记录的 SHA-512 integrity 核对缓存的 npm 发布包；包内 WASM、已安装依赖文件，以及从本地 `dist/main.js` 解码出的唯一 WASM 模块逐字节一致，指纹如上。这证明依赖包到打包产物的字节一致性，不证明从上游 C 源码进行可复现构建；缺少社区扫描产物的指纹时，也不能据此认定该次扫描中的模块身份。依赖或二进制变化后，需要重新核对指纹。
+
+来源与许可信息见 [SQLite WASM 文档](https://sqlite.org/wasm/doc/trunk/index.md)、[Emscripten 文件系统说明](https://emscripten.org/docs/porting/files/file_systems_overview.html)和[第三方声明](./THIRD_PARTY_NOTICES.md)。发布包含该后端的版本前，需要复核上游包的许可证和发布条款是否符合分发场景。
 
 ### License 与商业化边界
 
