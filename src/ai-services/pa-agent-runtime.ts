@@ -19,7 +19,7 @@ import type { PageletChatHandoffContext } from "./pagelet-handoff";
 import { stableHash } from "../pa/helpers";
 import { MemorySearchTool } from "./memory-search-tool";
 import { TaskSourceRun, historyInputLineage } from "./task-source-run";
-import { ghostPreparationMessage } from "./ghost-tool-receipt";
+import { isGhostPreparationMessage } from "./ghost-tool-receipt";
 import { ImagePreacceptError } from '../chat/image-generation-types';
 import { parseRunSourceSelection } from './chat-source-scope';
 import { cloneInputLineage, completeInputLineage, sourceRecordsInputLineage,
@@ -750,8 +750,7 @@ function isSafeGhostPublishingStatusObservation(
     if (!observation) return false;
     const metadataRecovery = asRecord(metadata.recovery);
     const actualExecutionState = executionState ?? metadata.executionState;
-    const currentMessage = ghostPreparationMessage(observation.status, actualExecutionState, observation.failureReason);
-    const isCurrentReceipt = currentMessage !== undefined && observation.message === currentMessage;
+    const isCurrentReceipt = isGhostPreparationMessage(observation.status, actualExecutionState, observation.message, observation.failureReason);
     if (observation.failureReason !== undefined && !isCurrentReceipt) return false;
     const expectedExecutionState = isCurrentReceipt ? actualExecutionState
         : observation.status === "prepared" ? "succeeded" : "acceptance_unknown";
@@ -3085,6 +3084,10 @@ export class PaAgentRuntime {
                 parentId: `${turnId}:tool:${toolCallId}`, turnId,
             }),
             getImageRequestLineage: turnId => cloneInputLineage(answerLineageByTurn.get(turnId ?? '')),
+            getGhostMetadataDebugScope: (turnId, toolCallId) => ({
+                recorder: debugRecorder, usageLedger,
+                parentId: `${turnId}:tool:${toolCallId}`, turnId,
+            }),
             getCreateImageRuntime: turnId => ({
                 recorder: debugRecorder, usageLedger,
                 parentId: turnId ?? `${runId}:image-preparation`,

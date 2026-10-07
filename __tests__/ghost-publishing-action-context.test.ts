@@ -1,9 +1,11 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { createGhostActionContext, type GhostActionContextOptions, type GhostActionHost, type GhostMetadataGenerator } from "../src/ghost-publishing/action-context";
-import type { GhostPost, GhostRequestGate } from "../src/ghost-publishing/client";
+import type { GhostPost, GhostRequestGate, GhostTag } from "../src/ghost-publishing/client";
 import type { GhostActionContext } from "../src/ghost-publishing/service";
 import type { GhostLocalOperation } from "../src/ghost-publishing/state-schema";
 import type { GhostPublishingSourceFile, SitePublishingProfile } from "../src/ghost-publishing/types";
+import { PA_GENERATED_FEATURE_IMAGE_CAPTION } from "../src/ghost-publishing/fields";
+import { ghostManagedWrite, ghostPreviewWrite } from "../src/ghost-publishing/snapshot";
 
 const SITE = "https://ghost.example/";
 const POST = "a".repeat(24);
@@ -67,13 +69,18 @@ function fixture(content = "Current paragraph.") {
         await gate.beforeSend(); gate.assertCurrent();
         return remotePost(id);
     });
+    const listTags = jest.fn(async (gate: GhostRequestGate): Promise<GhostTag[]> => {
+        await gate.beforeSend(); gate.assertCurrent();
+        return [];
+    });
     const generateMetadata = jest.fn<GhostMetadataGenerator>(async input => ({
         ...(input.needed.customExcerpt ? { customExcerpt: "Generated article summary" } : {}),
         ...(input.needed.metaDescription ? { metaDescription: "Generated independent SEO description" } : {}),
         ...(input.needed.slug ? { slug: "generated-article-url" } : {}),
+        ...(input.needed.tags ? { tags: ["Generated topic"] } : {}),
     }));
     const options: GhostActionContextOptions = {
-        selection: { path: "Article.md" }, host, client: { downloadImage, readPost }, isDesktop: () => state.desktop,
+        selection: { path: "Article.md" }, host, client: { downloadImage, readPost, listTags }, isDesktop: () => state.desktop,
         guard: { isCurrent: () => state.current, isPathAllowed: (path) => path !== state.denied,
             isNoteDomainAllowed: () => true, isWebAllowed: () => state.web, captureSourceValidity: () => () => state.receipt },
         sourceValidity: () => state.receipt, siteId: "site-a", siteUrl: SITE,
@@ -81,7 +88,7 @@ function fixture(content = "Current paragraph.") {
         getSourceRevision: (path) => files.find((file) => file.path === path)?.revision ?? "missing",
         defaultVisibility: "public", signal: controller.signal, generateMetadata,
     };
-    return { files, state, controller, replace, read, readBinary, processFrontMatter, downloadImage, readPost, generateMetadata, options };
+    return { files, state, controller, replace, read, readBinary, processFrontMatter, downloadImage, readPost, listTags, generateMetadata, options };
 }
 
 
@@ -99,6 +106,27 @@ function remotePost(id = POST): GhostPost {
         custom_excerpt: "Old summary", meta_description: "Old SEO", codeinjection_head: null, codeinjection_foot: null, published_at: NOW };
 }
 describe("Ghost current-source preparation and frozen candidate authority", () => {
+    it.each([true, false])("attributes a YAML cover using only its admitted path and actual byte hash (generated: %s)", async generated => {
+        const f = fixture();
+        f.replace(f.files[0], body(f.files[0]), { feature_image: "cover.png" });
+        const lookup = jest.fn(async (_path: string, _hash: string) => generated);
+        f.options.isPaGeneratedImage = lookup;
+        const action = await createGhostActionContext(f.options);
+        const prepared = await action.context.prepare(null);
+        expect(lookup).toHaveBeenCalledWith("cover.png", prepared.images[0].metadata.byteHash);
+        expect(lookup).toHaveBeenCalledTimes(1);
+        expect(prepared.candidate.content.feature_image_caption).toBe(generated ? PA_GENERATED_FEATURE_IMAGE_CAPTION : null);
+        expect(prepared.candidate.managedFields.includes("feature_image_caption")).toBe(generated);
+    });
+
+    it("rechecks source permission after cover provenance lookup", async () => {
+        const f = fixture();
+        f.replace(f.files[0], body(f.files[0]), { feature_image: "cover.png" });
+        f.options.isPaGeneratedImage = async () => { f.state.receipt = false; return true; };
+        const action = await createGhostActionContext(f.options);
+        await expect(action.context.prepare(null)).rejects.toMatchObject({ code: "source-revoked" });
+        expect(f.processFrontMatter).not.toHaveBeenCalled();
+    });
     it("captures the selected note with no UID or initial property writes", async () => {
         const f = fixture();
         const selected = await createGhostActionContext(f.options);
@@ -120,7 +148,7 @@ describe("Ghost current-source preparation and frozen candidate authority", () =
     });
     it("prefers manual fields and honors explicit clearing without regeneration", async () => {
         const f = fixture();
-        f.replace(f.files[0], body(f.files[0]), { GHOST_ID: POST, ghost: { custom_excerpt: "", meta_description: null } });
+        f.replace(f.files[0], body(f.files[0]), { GHOST_ID: POST, ghost: { custom_excerpt: "", meta_description: null, tags: [] } });
         const action = await createGhostActionContext(f.options);
         const prepared = await action.context.prepare(remotePost());
         expect(prepared.candidate.content.custom_excerpt).toBeNull();
@@ -133,6 +161,112 @@ describe("Ghost current-source preparation and frozen candidate authority", () =
         const prepared = await action.context.prepare(null);
         expect(prepared.slugCandidate).toBe("generated-article-url");
         expect(f.generateMetadata.mock.calls[0][0].needed.slug).toBe(true);
+    });
+    it("selects existing tags in the metadata call and merges only main-note frontmatter tags", async () => {
+        const f = fixture("Current article.\n\n![[Embed]]");
+        f.replace(f.files[0], body(f.files[0]), { tags: ["#AI", "Workflow", "workflow", "PA"] });
+        f.replace(f.files[1], body(f.files[1]), { tags: ["EmbeddedOnly"] });
+        f.listTags.mockResolvedValue(["AI", "Agents", "Other"].map((name, index) => ({
+            id: String(index + 1).repeat(24), name, visibility: "public",
+        })));
+        f.generateMetadata.mockResolvedValue({ customExcerpt: "Summary", metaDescription: "SEO", slug: "article", tags: ["Agents", "AI"] });
+        const action = await createGhostActionContext(f.options);
+        const prepared = await action.context.prepare(null);
+        const tags = ["Agents", "AI", "Workflow", "PA"].map(name => ({ name }));
+        expect(prepared.candidate.content.tags).toEqual(tags);
+        expect(ghostManagedWrite(prepared.candidate).tags).toEqual(tags);
+        expect(ghostPreviewWrite(prepared.candidate, "#preview").tags).toEqual([...tags, { name: "#preview", visibility: "internal" }]);
+        expect(f.generateMetadata).toHaveBeenCalledTimes(1);
+        expect(f.generateMetadata.mock.calls[0][0]).toMatchObject({
+            needed: { tags: true }, tagSelection: { existingTags: ["AI", "Agents", "Other"], allowKeywords: false },
+        });
+        f.replace(f.files[0], "Later article", { tags: ["LaterTag"] });
+        f.listTags.mockResolvedValue([]);
+        await action.context.validate(operation(prepared));
+        expect(prepared.candidate.content.tags).toEqual(tags);
+        expect(f.listTags).toHaveBeenCalledTimes(1);
+        expect(f.generateMetadata).toHaveBeenCalledTimes(1);
+        expect(f.processFrontMatter).not.toHaveBeenCalled();
+    });
+    it("uses note tags when AI finds no related existing tags without generating keywords", async () => {
+        const f = fixture();
+        f.replace(f.files[0], body(f.files[0]), { tags: ["NoteTopic"] });
+        f.listTags.mockResolvedValue([{ id: POST, name: "Unrelated", visibility: "public" }]);
+        f.generateMetadata.mockResolvedValue({ customExcerpt: "Summary", metaDescription: "SEO", slug: "article", tags: [] });
+        const action = await createGhostActionContext(f.options);
+        const prepared = await action.context.prepare(null);
+        expect(prepared.candidate.content.tags).toEqual([{ name: "NoteTopic" }]);
+        expect(f.generateMetadata.mock.calls[0][0].tagSelection?.allowKeywords).toBe(false);
+        expect(f.generateMetadata).toHaveBeenCalledTimes(1);
+    });
+    it("preserves an existing Ghost tag's exact name when merging an equivalent note tag", async () => {
+        const f = fixture();
+        f.replace(f.files[0], body(f.files[0]), { tags: ["#AI"] });
+        f.listTags.mockResolvedValue([{ id: POST, name: " AI ", visibility: "public" }]);
+        f.generateMetadata.mockResolvedValue({ customExcerpt: "Summary", metaDescription: "SEO", slug: "article", tags: [" AI "] });
+        const action = await createGhostActionContext(f.options);
+        const prepared = await action.context.prepare(null);
+        expect(f.generateMetadata.mock.calls[0][0].tagSelection?.existingTags).toEqual([" AI "]);
+        expect(prepared.candidate.content.tags).toEqual([{ name: " AI " }]);
+    });
+    it("uses note tags directly when the catalog is empty and other metadata is manual", async () => {
+        const f = fixture();
+        f.replace(f.files[0], body(f.files[0]), {
+            tags: ["#NoteTopic"], ghost_slug: "article", ghost: { custom_excerpt: "Summary", meta_description: "SEO" },
+        });
+        const action = await createGhostActionContext(f.options);
+        const prepared = await action.context.prepare(null);
+        expect(prepared.candidate.content.tags).toEqual([{ name: "NoteTopic" }]);
+        expect(f.listTags).toHaveBeenCalledTimes(1);
+        expect(f.generateMetadata).not.toHaveBeenCalled();
+    });
+    it("generates keyword tags in the same metadata pipeline when both sources are empty", async () => {
+        const f = fixture("Full current article.\n\n%% hidden comment %%");
+        f.replace(f.files[0], body(f.files[0]), {
+            ghost_slug: "article", ghost: { custom_excerpt: "Summary", meta_description: "SEO" },
+        });
+        f.generateMetadata.mockResolvedValue({ tags: ["Topic", "Agent"] });
+        const action = await createGhostActionContext(f.options);
+        const prepared = await action.context.prepare(null);
+        expect(prepared.candidate.content.tags).toEqual([{ name: "Topic" }, { name: "Agent" }]);
+        expect(f.generateMetadata).toHaveBeenCalledTimes(1);
+        expect(f.generateMetadata.mock.calls[0][0]).toMatchObject({
+            needed: { customExcerpt: false, metaDescription: false, slug: false, tags: true },
+            tagSelection: { existingTags: [], allowKeywords: true },
+        });
+        expect(f.generateMetadata.mock.calls[0][0].articleText).toContain("Full current article.");
+        expect(f.generateMetadata.mock.calls[0][0].articleText).not.toContain("hidden comment");
+    });
+    it.each([{ tags: ["Manual"] }, { tags: [] }, { tags: null }, { tags: "" }])("keeps explicit ghost.tags $tags over defaults and clearing", async ({ tags }) => {
+        const f = fixture();
+        f.replace(f.files[0], body(f.files[0]), {
+            tags: ["NoteTopic"], ghost_slug: "article", ghost: { tags, custom_excerpt: "Summary", meta_description: "SEO" },
+        });
+        const action = await createGhostActionContext(f.options);
+        const prepared = await action.context.prepare(null);
+        expect(prepared.candidate.content.tags).toEqual(Array.isArray(tags) ? tags.map(name => ({ name })) : []);
+        expect(f.listTags).not.toHaveBeenCalled();
+        expect(f.generateMetadata).not.toHaveBeenCalled();
+    });
+    it("does not treat a failed tag catalog request as an empty catalog", async () => {
+        const f = fixture();
+        const error = Object.assign(new Error("Ghost request failed"), { code: "http-error", status: 403 });
+        f.listTags.mockRejectedValue(error);
+        const action = await createGhostActionContext(f.options);
+        await expect(action.context.prepare(null)).rejects.toBe(error);
+        expect(f.generateMetadata).not.toHaveBeenCalled();
+        expect(f.processFrontMatter).not.toHaveBeenCalled();
+    });
+    it.each(["permission", "revision"] as const)("rechecks %s after reading the tag catalog", async kind => {
+        const f = fixture();
+        f.listTags.mockImplementation(async () => {
+            if (kind === "permission") f.state.receipt = false;
+            else f.replace(f.files[0], "Changed during catalog request");
+            return [];
+        });
+        const action = await createGhostActionContext(f.options);
+        await expect(action.context.prepare(null)).rejects.toMatchObject({ code: kind === "permission" ? "source-revoked" : "source-changed" });
+        expect(f.generateMetadata).not.toHaveBeenCalled();
     });
     it("uses a current linked note GHOST_ID and real published URL without a completed record", async () => {
         const f = fixture("Read [[Embed]].");
@@ -222,6 +356,18 @@ describe("Ghost current-source preparation and frozen candidate authority", () =
         f.generateMetadata.mockImplementation(async () => { f.replace(f.files[1], "Changed during preparation"); return result; });
         const action = await createGhostActionContext(f.options);
         await expect(action.context.prepare(null)).rejects.toMatchObject({ code: "source-changed" });
+    });
+    it("binds metadata Debug to the actual main and embedded article sources", async () => {
+        const f = fixture("Main.\n\n![[Embed]]");
+        f.options.metadataDebug = { parentId: "turn:tool:ghost-call", turnId: "turn",
+            lineage: { sourcePaths: ["Unused.md"], unknown: true } };
+        const action = await createGhostActionContext(f.options);
+        await action.context.prepare(null);
+        expect(f.generateMetadata.mock.calls[0][0].debug).toEqual({
+            parentId: "turn:tool:ghost-call", turnId: "turn",
+            lineage: { sourcePaths: ["Article.md", "Embed.md"], domains: ["vault_notes"], unknown: false },
+        });
+        expect(f.generateMetadata).toHaveBeenCalledTimes(1);
     });
     it("checks source permission again after an awaited metadata generation", async () => {
         const f = fixture();

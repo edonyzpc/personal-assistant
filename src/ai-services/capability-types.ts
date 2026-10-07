@@ -102,6 +102,7 @@ export interface AgentCapabilityContext {
     memoryActionRequest?: import("./memory-action-types").MemoryActionHostBinding;
     imageRequestLineage?: import("./input-lineage").InputLineage;
     createImageRuntime?: import("./chat-tool-types").CreateImageHostRuntime;
+    ghostMetadataDebug?: import("./ghost-metadata").GhostMetadataDebugScope;
 }
 
 export interface AgentCapabilityResult {

@@ -1,8 +1,8 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import { GhostTabPreview, ghostPreviewUrl, type GhostNativeLeaf, type GhostPreviewHost } from "../src/ghost-publishing/preview";
+import { GhostTabPreview, type GhostNativeLeaf, type GhostPreviewHost } from "../src/ghost-publishing/preview";
 
 const UUID = "f36fb365-bd7c-40b5-a77a-de5cd5cebb95";
-const SITE = "https://ghost.example/blog/";
+const PREVIEW_URL = `https://public.example/blog/p/${UUID}/`;
 
 function fixture() {
     const leaves: GhostNativeLeaf[] = [];
@@ -24,18 +24,9 @@ function fixture() {
 }
 
 describe("Ghost URL tab navigation", () => {
-    it("uses Ghost's UUID preview address and preserves a configured subdirectory", () => {
-        expect(ghostPreviewUrl(SITE, UUID)).toBe(`https://ghost.example/blog/p/${UUID}/`);
-        for (const value of ["6ac4f4e0910d6f00010bb89b", "article-slug", "../other"]) {
-            expect(() => ghostPreviewUrl(SITE, value)).toThrow("Invalid preview identity");
-        }
-        expect(() => ghostPreviewUrl("https://ghost.example/?token=x", UUID)).toThrow();
-        expect(() => ghostPreviewUrl("https://user:secret@ghost.example/", UUID)).toThrow();
-    });
-
     it("opens preview and editor URLs directly and reveals a reused tab every time", async () => {
         const f = fixture();
-        const url = ghostPreviewUrl(SITE, UUID);
+        const url = PREVIEW_URL;
         await f.preview.open(url);
         await f.preview.open("https://ghost.example/blog/ghost/#/editor/post/6ac4f4e0910d6f00010bb89b");
         expect(f.getLeaf).toHaveBeenCalledTimes(1);
@@ -50,26 +41,26 @@ describe("Ghost URL tab navigation", () => {
 
     it("creates a new tab when the user's previous tab was closed and leaves tabs alone on dispose", async () => {
         const f = fixture();
-        await f.preview.open(ghostPreviewUrl(SITE, UUID));
+        await f.preview.open(PREVIEW_URL);
         f.leaves.splice(0);
-        await f.preview.open(ghostPreviewUrl(SITE, UUID));
+        await f.preview.open(PREVIEW_URL);
         expect(f.getLeaf).toHaveBeenCalledTimes(2);
         f.preview.dispose();
         expect(f.leaves).toHaveLength(1);
-        await expect(f.preview.open(ghostPreviewUrl(SITE, UUID))).rejects.toMatchObject({ code: "cancelled" });
+        await expect(f.preview.open(PREVIEW_URL)).rejects.toMatchObject({ code: "cancelled" });
     });
 
     it("reports unavailable navigation without executing page code or requiring a rendering result", async () => {
         const f = fixture();
         f.state.enabled = false;
-        await expect(f.preview.open(ghostPreviewUrl(SITE, UUID))).rejects.toMatchObject({ code: "enable-web-viewer" });
+        await expect(f.preview.open(PREVIEW_URL)).rejects.toMatchObject({ code: "enable-web-viewer" });
         expect(f.getLeaf).not.toHaveBeenCalled();
         f.state.enabled = true;
         f.state.desktop = false;
-        await expect(f.preview.open(ghostPreviewUrl(SITE, UUID))).rejects.toMatchObject({ code: "desktop-required" });
+        await expect(f.preview.open(PREVIEW_URL)).rejects.toMatchObject({ code: "desktop-required" });
         f.state.desktop = true;
         f.state.failOpen = true;
-        await expect(f.preview.open(ghostPreviewUrl(SITE, UUID))).rejects.toThrow("navigation failed");
+        await expect(f.preview.open(PREVIEW_URL)).rejects.toThrow("navigation failed");
         expect(f.revealLeaf).not.toHaveBeenCalled();
     });
 

@@ -5,11 +5,13 @@ import { describe, expect, it, jest } from "@jest/globals";
 import {
     buildGhostPublishingFields,
     ghostFieldsForCandidate,
+    PA_GENERATED_FEATURE_IMAGE_CAPTION,
 } from "../src/ghost-publishing/fields";
 import { prepareGhostExport } from "../src/ghost-publishing/exporter";
 import { buildRecipeInjection } from "../src/ghost-publishing/recipe";
 import { GhostExportError } from "../src/ghost-publishing/errors";
 import { loadGhostSourceTree } from "../src/ghost-publishing/source-loader";
+import { stableHash } from "../src/pa/helpers";
 import type {
     GhostPublishingHost,
     GhostPublishingSourceFile,
@@ -514,6 +516,20 @@ describe("Ghost publishing deterministic export", () => {
         expect(parentChildHeading.markdown).toBe("# Target\nIntro\n## Child\nChild body");
     });
 
+    it.each([
+        { tags: ["#AI", "ai", " Agent/Workflow ", ""] },
+        { tags: "#AI, ai Agent/Workflow" },
+    ])("captures ordinary frontmatter tag names for automatic defaults: $tags", ({ tags }) => {
+        const fields = buildGhostPublishingFields({ tags }, "Note.md");
+        expect(fields.tags).toEqual({ mode: "unmanaged" });
+        expect(fields.noteTags).toEqual(["AI", "Agent/Workflow"]);
+    });
+    it.each([42, ["AI", 42], { topic: "AI" }, ["a".repeat(192)]].map(tags => ({ tags })))("rejects malformed automatic tag sources: $tags", ({ tags }) => {
+        expect(() => buildGhostPublishingFields({ tags }, "Note.md")).toThrow(expect.objectContaining({ code: "field-invalid" }));
+        const manual = buildGhostPublishingFields({ tags, ghost: { tags: ["Manual"] } }, "Note.md");
+        expect(manual.tags).toEqual({ mode: "manage", value: ["Manual"] });
+        expect(manual.noteTags).toBeUndefined();
+    });
     it("keeps field three-states explicit", () => {
         const unmanaged = buildGhostPublishingFields({ ghost: {} }, "Note.md");
         expect(ghostFieldsForCandidate(unmanaged)).toEqual({ title: "Note", tags: [], feature_image: null, custom_excerpt: null, meta_description: null });
@@ -901,12 +917,24 @@ describe("Ghost publishing deterministic export", () => {
         });
 
         expect(result.fields.featureImage).toEqual({ mode: "manage", value: "pending-resource://resource-1" });
+        expect(result.fields.featureImageCaption).toEqual({ mode: "manage", value: PA_GENERATED_FEATURE_IMAGE_CAPTION });
         expect(result.resources).toHaveLength(1);
         expect(result.resources[0]).toMatchObject({ source: "images/cover.png", resolvedPath: "images/cover.png" });
         expect(result.resources[0].occurrences).toEqual([{ path: "Main.md", line: 0, field: "feature_image" }]);
         expect(JSON.stringify(result.lexical)).toContain("Article body.");
         expect(JSON.stringify(result.lexical)).not.toContain("personal-assistant");
         expect(note.content).toBe(main);
+    });
+
+    it("credits a YAML-selected image only when it resolves to the main PA declaration", async () => {
+        const result = await prepareGhostExport({
+            targetPath: "Main.md", host: createHost([
+                fakeFile("Main.md", "---\nfeature_image: cover.png\n---\n> [!personal-assistant]+ Featured Images\n> ![[images/cover.png]]\n\nBody."),
+                fakeFile("images/cover.png", "cover"),
+            ]), guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(result.resources[0].resolvedPath).toBe("images/cover.png");
+        expect(result.fields.featureImageCaption).toEqual({ mode: "manage", value: PA_GENERATED_FEATURE_IMAGE_CAPTION });
     });
 
     it.each(["Featured Image", "Featured Images"])("does not treat an embedded PA %s callout inside an ordinary main quote as main cover management", async (title) => {
@@ -923,6 +951,7 @@ describe("Ghost publishing deterministic export", () => {
         expect(serialized).toContain("Intro");
         expect(serialized).toContain("Embedded body");
         expect(result.fields.featureImage).toEqual({ mode: "unmanaged" });
+        expect(result.fields.featureImageCaption).toBeUndefined();
         expect(result.resources).toHaveLength(1);
         expect(result.resources[0]).toMatchObject({ source: "embed-cover.png", resolvedPath: "embed-cover.png" });
         expect(result.resources[0].occurrences).toEqual([{ path: "Embed.md", line: 1 }]);
@@ -1028,6 +1057,7 @@ describe("Ghost publishing deterministic export", () => {
         });
         expect(explicit.fields.featureImage).toMatchObject({ mode: "manage", value: "pending-resource://resource-1" });
         expect(explicit.resources[0]).toMatchObject({ source: "explicit.png" });
+        expect(explicit.fields.featureImageCaption).toBeUndefined();
 
         const cleared = await prepareGhostExport({
             targetPath: "Main.md",
@@ -1036,6 +1066,7 @@ describe("Ghost publishing deterministic export", () => {
         });
         expect(cleared.fields.featureImage).toEqual({ mode: "clear" });
         expect(cleared.resources).toEqual([]);
+        expect(cleared.fields.featureImageCaption).toBeUndefined();
 
         const ordinary = await prepareGhostExport({
             targetPath: "Main.md",
@@ -1353,6 +1384,57 @@ describe("Ghost publishing deterministic export", () => {
         expect(changed.resources[0]).toMatchObject({ source: "https://example.invalid/two.png" });
     });
 
+    it("omits PA injection without rendering work and preserves manual injection exactly", () => {
+        const capabilities = { codeLanguages: [], hasMermaid: false, hasInlineMath: false, hasDisplayMath: false };
+        const empty = buildRecipeInjection(capabilities, profile);
+        expect(empty.head).toBe("");
+        expect(empty.foot).toBe("");
+        const manualHead = "\n\t<!-- owner head -->\n";
+        const manualFoot = "<script>window.owner=true;</script>";
+        const manual = buildRecipeInjection(capabilities, {
+            ...profile, manualHeadInjection: manualHead, manualFootInjection: manualFoot,
+        });
+        expect(manual.head).toBe(manualHead);
+        expect(manual.foot).toBe(manualFoot);
+        expect(manual.manualHeadPreserved).toBe(true);
+        expect(manual.manualFootPreserved).toBe(true);
+    });
+
+    it("clears verified legacy no-op regions but rejects damaged regions without rendering work", () => {
+        const capabilities = { codeLanguages: [], hasMermaid: false, hasInlineMath: false, hasDisplayMath: false };
+        const selection = buildRecipeInjection(capabilities, profile).selection;
+        const legacyRegion = (kind: "head" | "foot", inner: string) => [
+            `<!-- pa-ghost:begin recipe ${kind} b153-v1 hash=${stableHash(inner)} -->`,
+            inner,
+            `<!-- pa-ghost:end recipe ${kind} b153-v1 -->`,
+        ].join("\n");
+        const diagnostics = `<script>window.__paGhostRecipe={version:"b153-v1",contentHash:"${selection.contentHash}"};window.__paGhostRecipe.prism="reused-unverified";</script>`;
+        const head = legacyRegion("head", diagnostics);
+        const foot = legacyRegion("foot", "");
+        const cleared = buildRecipeInjection(capabilities, {
+            ...profile, manualHeadInjection: head, manualFootInjection: foot,
+        });
+        expect(cleared.head).toBe("");
+        expect(cleared.foot).toBe("");
+
+        const before = "\n\t<!-- owner before -->\n";
+        const after = "\n<!-- owner after -->\t";
+        const retained = buildRecipeInjection(capabilities, {
+            ...profile, manualHeadInjection: before + head + after, manualFootInjection: before + foot + after,
+        });
+        expect(retained.head).toBe(before + after);
+        expect(retained.foot).toBe(before + after);
+        expect(retained.manualHeadPreserved).toBe(true);
+        expect(retained.manualFootPreserved).toBe(true);
+
+        expect(() => buildRecipeInjection(capabilities, {
+            ...profile, manualHeadInjection: head.replace("reused-unverified", "changed"),
+        })).toThrow(GhostExportError);
+        expect(() => buildRecipeInjection(capabilities, {
+            ...profile, manualFootInjection: foot.replace("<!-- pa-ghost:end recipe foot b153-v1 -->", ""),
+        })).toThrow(GhostExportError);
+    });
+
     it("builds a fixed recipe and preserves manual injection verbatim", () => {
         const capabilities = {
             codeLanguages: ["typescript"],
@@ -1416,7 +1498,8 @@ describe("Ghost publishing deterministic export", () => {
         });
         expect(reused.selection.reuse).toEqual({ prism: true, mermaid: true, katex: true });
         expect(reused.selection.footAssets).toEqual([]);
-        expect(reused.head).not.toContain("window.Prism.manual=true");
+        expect(reused.head).toBe("");
+        expect(reused.foot).toBe("");
 
         const modified = result.head.replace("prism.min.css", "changed.css");
         expect(() => buildRecipeInjection(capabilities, {
@@ -1466,8 +1549,8 @@ describe("Ghost publishing deterministic export", () => {
         expect(explicit.selection.initializesPrism).toBe(true);
         expect(explicit.selection.footAssets).toEqual([]);
         expect(auto.selection.initializesPrism).toBe(false);
-        expect(auto.head).toContain('window.__paGhostRecipe.prism="reused-auto"');
-        expect(auto.head).not.toContain("window.Prism.manual=true");
+        expect(auto.head).toBe("");
+        expect(auto.foot).toBe("");
 
         const scripts = (value: string) => [...value.matchAll(/<script>([\s\S]*?)<\/script>/g)]
             .map((match) => match[1] ?? "");

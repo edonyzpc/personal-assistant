@@ -75,6 +75,8 @@ export function cleanObsidianComments(text: string, sourcePath: string): Cleaned
 export interface PreparedMainBody {
     markdown: string;
     featureImageOrigin?: { path: string; line: number };
+    /** Only images explicitly declared by main-source PA Featured Image blocks. */
+    paFeatureImageSources: string[];
 }
 
 /** Applies Host-only cleanup to the expanded export copy; never the vault source. */
@@ -111,7 +113,8 @@ export function prepareMainBodyForExport(options: {
         );
     }
     markdown = removeMatchingMainHeading({ ...options, markdown });
-    return { markdown, ...(featureImageOrigin ? { featureImageOrigin } : {}) };
+    return { markdown, ...(featureImageOrigin ? { featureImageOrigin } : {}),
+        paFeatureImageSources: [...new Set(management.flatMap(block => block.imageSources))] };
 }
 
 function protectedCodeCharacters(text: string): Uint8Array {

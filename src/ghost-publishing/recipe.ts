@@ -264,6 +264,9 @@ function mergeInjection(
     kind: "head" | "foot",
 ): { value: string; manualPreserved: boolean } {
     const split = removeVerifiedManagedRegion(manual ?? "", kind);
+    if (!managed) {
+        return { value: split.before + split.after, manualPreserved: true };
+    }
     const value = split.hadRegion
         ? `${split.before}${managed}${split.after}`
         : (manual ?? "").length > 0
@@ -282,8 +285,12 @@ export function buildRecipeInjection(
     profile: SitePublishingProfile,
 ): GhostPublishingRecipeInjection {
     const selection = selectRecipe(capabilities, profile);
-    const head = mergeInjection(profile.manualHeadInjection, managedRegion("head", selection, profile), "head");
-    const foot = mergeInjection(profile.manualFootInjection, managedRegion("foot", selection, profile), "foot");
+    const requiresInjection = selection.headAssets.length > 0 || selection.footAssets.length > 0
+        || selection.initializesPrism || selection.initializesMermaid || selection.initializesKatex;
+    const head = mergeInjection(profile.manualHeadInjection,
+        requiresInjection ? managedRegion("head", selection, profile) : "", "head");
+    const foot = mergeInjection(profile.manualFootInjection,
+        requiresInjection ? managedRegion("foot", selection, profile) : "", "foot");
     return {
         head: head.value,
         foot: foot.value,

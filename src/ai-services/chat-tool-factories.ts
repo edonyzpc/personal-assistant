@@ -2041,7 +2041,7 @@ export function createPrepareGhostPostTool(binding: GhostHostBinding): ChatToolD
                         ...(submission.facts ? submission.facts : {}) };
                 }
                 submission ??= { input: { ...input }, receipt: Promise.resolve().then(() => {
-                    return binding.submit(input, guard, sourceValidity, context.signal);
+                    return binding.submit(input, guard, sourceValidity, context.signal, context.ghostMetadataDebug);
                 }) };
                 const receipt = await submission.receipt;
                 if (!receipt || !["prepared", "needs_attention", "outcome_unknown"].includes(receipt.status)

@@ -3,7 +3,7 @@ import { ghostMetadataFailureReason } from "../ai-services/ghost-tool-receipt";
 import { GhostNoteBindingAdapter, type GhostBindingHost, type GhostNoteSelection } from "./binding";
 import type { GhostClient, GhostPost, GhostRequestGate, GhostVisibility } from "./client";
 import { prepareGhostExport } from "./exporter";
-import { GHOST_CUSTOM_EXCERPT_MAX, GHOST_META_DESCRIPTION_MAX } from "./fields";
+import { GHOST_CUSTOM_EXCERPT_MAX, GHOST_META_DESCRIPTION_MAX, mergeGhostTagNames, PA_GENERATED_FEATURE_IMAGE_CAPTION } from "./fields";
 import { isValidGhostSlug } from "./slug";
 import { resolveGhostWikiLinks } from "./wiki-links";
 import { prepareGhostResource, type GhostResourceOptions } from "./resources";
@@ -17,17 +17,19 @@ export type GhostActionHost = GhostBindingHost & GhostPublishingHost & GhostReso
 export interface GhostMetadataGeneratorInput {
     title: string;
     articleText: string;
-    needed: { customExcerpt: boolean; metaDescription: boolean; slug: boolean };
+    needed: { customExcerpt: boolean; metaDescription: boolean; slug: boolean; tags?: boolean };
+    tagSelection?: { existingTags: string[]; allowKeywords: boolean };
     signal: AbortSignal;
     isSourceCurrent(): boolean;
     isConnectionCurrent?(): boolean;
+    debug?: import("../ai-services/ghost-metadata").GhostMetadataDebugScope;
 }
-export type GhostMetadataGenerator = (input: GhostMetadataGeneratorInput) => Promise<{ customExcerpt?: string; metaDescription?: string; slug?: string }>;
+export type GhostMetadataGenerator = (input: GhostMetadataGeneratorInput) => Promise<{ customExcerpt?: string; metaDescription?: string; slug?: string; tags?: string[] }>;
 
 export interface GhostActionContextOptions {
     selection: GhostNoteSelection;
     host: GhostActionHost;
-    client: Pick<GhostClient, "downloadImage" | "readPost">;
+    client: Pick<GhostClient, "downloadImage" | "readPost" | "listTags">;
     isDesktop(this: void): boolean;
     guard: GhostPublishingSourceGuard;
     sourceValidity(): boolean;
@@ -41,6 +43,9 @@ export interface GhostActionContextOptions {
     signal?: AbortSignal;
     wikiLinks?: Record<string, WikiLinkTarget>;
     generateMetadata?: GhostMetadataGenerator;
+    metadataDebug?: import("../ai-services/ghost-metadata").GhostMetadataDebugScope;
+    /** Body-free provenance for the already admitted local cover bytes. */
+    isPaGeneratedImage?(path: string, byteHash: string): Promise<boolean>;
 }
 
 export class GhostActionContextError extends Error {
@@ -160,13 +165,23 @@ export async function createGhostActionContext(options: GhostActionContextOption
     const gate: GhostRequestGate = { signal, assertCurrent: assertPreparing, beforeSend: async () => assertPreparing() };
 
     async function prepareMetadata(exported: GhostExportResult, remote: GhostPost | null): Promise<void> {
+        const automaticTags = exported.fields.tags.mode === "unmanaged";
+        const noteTags = exported.fields.noteTags ?? [];
+        let tagSelection: GhostMetadataGeneratorInput["tagSelection"];
+        if (automaticTags) {
+            const catalog = await options.client.listTags(gate);
+            assertPreparing();
+            tagSelection = { existingTags: mergeGhostTagNames(catalog.map(tag => tag.name)), allowKeywords: noteTags.length === 0 };
+            exported.fields.tags = { mode: "manage", value: noteTags };
+        }
         const needed = {
             customExcerpt: exported.fields.customExcerpt.mode === "unmanaged",
             metaDescription: exported.fields.metaDescription.mode === "unmanaged",
             slug: remote === null && exported.fields.slug.mode === "unmanaged",
+            tags: automaticTags && (Boolean(tagSelection?.existingTags.length) || noteTags.length === 0),
         };
         if (remote) exported.fields.slug = { mode: "unmanaged" };
-        if (!needed.customExcerpt && !needed.metaDescription && !needed.slug) return;
+        if (!needed.customExcerpt && !needed.metaDescription && !needed.slug && !needed.tags) return;
         if (!options.generateMetadata) fail("metadata-unavailable");
         const title = exported.fields.title.value;
         const articleText = lexicalPlainText(exported.lexical.root).trim();
@@ -179,8 +194,13 @@ export async function createGhostActionContext(options: GhostActionContextOption
         try {
             generated = await options.generateMetadata({
                 title, articleText, needed, signal: signal ?? new AbortController().signal,
+                ...(needed.tags ? { tagSelection } : {}),
                 isSourceCurrent: () => { try { assertPreparing(); return true; } catch { return false; } },
                 isConnectionCurrent: () => { try { assertCore(); return true; } catch { return false; } },
+                ...(options.metadataDebug ? { debug: { ...options.metadataDebug,
+                    lineage: { sourcePaths: exported.sourceManifest.dependencies.map(dependency => dependency.path),
+                        domains: ["vault_notes"], unknown: false },
+                } } : {}),
             });
         } catch (error) {
             assertPreparing();
@@ -198,6 +218,10 @@ export async function createGhostActionContext(options: GhostActionContextOption
         if (needed.slug) {
             if (typeof generated.slug !== "string" || !isValidGhostSlug(generated.slug)) fail("metadata-invalid");
             exported.fields.slug = { mode: "manage", value: generated.slug };
+        }
+        if (needed.tags) {
+            if (!Array.isArray(generated.tags)) fail("metadata-invalid");
+            exported.fields.tags = { mode: "manage", value: mergeGhostTagNames([...generated.tags, ...noteTags]) };
         }
     }
     async function resource(plan: ExportResourcePlan): Promise<GhostPreparedImage> {
@@ -238,6 +262,15 @@ export async function createGhostActionContext(options: GhostActionContextOption
             await prepareMetadata(exported, remote);
             const images: GhostPreparedImage[] = [];
             for (const plan of exported.resources) images.push(await resource(plan));
+            if (exported.fields.featureImageCaption?.mode !== "manage" && options.isPaGeneratedImage) {
+                const cover = images.find(image => `pending-resource://${image.metadata.id}` === exported.fields.featureImage.value);
+                if (cover?.metadata.resolvedPath) {
+                    assertPreparing();
+                    const generated = await options.isPaGeneratedImage(cover.metadata.resolvedPath, cover.metadata.byteHash);
+                    assertPreparing();
+                    if (generated) exported.fields.featureImageCaption = { mode: "manage", value: PA_GENERATED_FEATURE_IMAGE_CAPTION };
+                }
+            }
             const candidate = prepareGhostSnapshot({ exported, profile, resources: images.map(image => image.metadata),
                 remote: remote ?? undefined, defaultVisibility: options.defaultVisibility, allowPendingResources: true });
             assertPreparing();

@@ -39,6 +39,7 @@ export class GhostPublishingIntegration {
         isContentAllowed(this: void, path: string, markdown: string): boolean;
         isWebAllowed(this: void): boolean;
         generateMetadata?: GhostControllerOptions["generateMetadata"];
+        isPaGeneratedImage?: GhostControllerOptions["isPaGeneratedImage"];
     }) {
         const { app, vaultPath, pluginId } = dependencies;
         const isDesktop = () => Platform.isDesktop && !Platform.isMobile && !this.disposed && dependencies.isCurrent();
@@ -57,6 +58,7 @@ export class GhostPublishingIntegration {
             isContentAllowed: dependencies.isContentAllowed,
             isCurrent: () => !this.disposed && dependencies.isCurrent(),
             generateMetadata: dependencies.generateMetadata,
+            isPaGeneratedImage: dependencies.isPaGeneratedImage,
             isWebViewerEnabled: () => {
                 const internal = app as unknown as { internalPlugins?: {
                     getPluginById?(id: string): { enabled?: boolean } | undefined;
@@ -98,7 +100,7 @@ export class GhostPublishingIntegration {
         };
         return {
             conversationId: request.conversationId, stableMessageId: request.stableMessageId,
-            submit: async (input, guard, sourceValidity, signal) => {
+            submit: async (input, guard, sourceValidity, signal, debug) => {
                 let path: string;
                 try {
                     if (!current() || !guard.isCurrent() || !sourceValidity()) {
@@ -138,7 +140,7 @@ export class GhostPublishingIntegration {
                     });
                 }
                 return this.controller.prepare({ path, intent: input.intent,
-                    authority: { guard, sourceValidity, signal }, createActionAuthority,
+                    authority: { guard, sourceValidity, signal, metadataDebug: debug }, createActionAuthority,
                     onSession: session => {
                         if (!current()) { session.dispose(); return; }
                         request.onSession(session);

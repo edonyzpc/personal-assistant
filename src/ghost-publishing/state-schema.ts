@@ -47,7 +47,7 @@ export const ghostContentSchema = z.object({
     published_at: date.nullable(),
 }).strict();
 
-export const managedGhostFields = ["title", "lexical", "tags", "feature_image", "custom_excerpt", "meta_description", "codeinjection_head", "codeinjection_foot"] as const;
+export const managedGhostFields = ["title", "lexical", "tags", "feature_image", "feature_image_caption", "custom_excerpt", "meta_description", "codeinjection_head", "codeinjection_foot"] as const;
 const sourceSchema = z.object({
     targetPath: notePath,
     dependencies: z.array(z.object({
@@ -122,7 +122,7 @@ export interface GhostLocalOperation {
     candidate?: GhostSnapshot;
     target: {
         postId?: string; postUrl?: string; postVersion?: string; postStatus?: "draft" | "published";
-        previewId?: string; previewUuid?: string; previewVersion?: string; previewHash?: string;
+        previewId?: string; previewUuid?: string; previewUrl?: string; previewVersion?: string; previewHash?: string;
     };
     verified?: { postId: string; postUrl: string; updatedAt: string; status: "draft" | "published" };
     warnings?: Array<"binding-failed" | "cleanup-failed" | "preview-pointer-failed">;

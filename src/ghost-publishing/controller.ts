@@ -3,7 +3,7 @@ import { getVaultConfigDir } from "../obsidian-paths";
 import { createGhostActionContext, type GhostActionContextOptions, type GhostActionHost } from "./action-context";
 import { GhostClient } from "./client";
 import { GhostPublishingConfiguration, type GhostConnection } from "./configuration";
-import { GhostTabPreview, ghostPreviewUrl } from "./preview";
+import { GhostTabPreview } from "./preview";
 import { GhostPublishingService, type GhostActionContext } from "./service";
 import { GhostPreviewStore, ghostDatabaseName } from "./state-store";
 import type { GhostLocalOperation } from "./state-schema";
@@ -11,7 +11,12 @@ import type { GhostNoteSelection } from "./binding";
 import type { GhostPublishingSourceGuard } from "./types";
 import { ghostMetadataFailureReason, type GhostMetadataFailureReason } from "../ai-services/ghost-tool-receipt";
 
-export interface GhostActionAuthority { guard: GhostPublishingSourceGuard; sourceValidity(): boolean; signal?: AbortSignal }
+export interface GhostActionAuthority {
+    guard: GhostPublishingSourceGuard;
+    sourceValidity(): boolean;
+    signal?: AbortSignal;
+    metadataDebug?: import("../ai-services/ghost-metadata").GhostMetadataDebugScope;
+}
 export type GhostCardAction = "confirm" | "open-editor" | "open-preview" | "open-post";
 export interface GhostCardState {
     title: string;
@@ -50,6 +55,7 @@ export interface GhostControllerOptions {
     isPathAllowed(path: string): boolean;
     isContentAllowed(path: string, markdown: string): boolean;
     generateMetadata?: GhostActionContextOptions["generateMetadata"];
+    isPaGeneratedImage?: GhostActionContextOptions["isPaGeneratedImage"];
 }
 export interface GhostControllerRequest {
     path: string;
@@ -176,7 +182,8 @@ export class GhostPublishingController {
                 siteId: connection.siteId, siteUrl: connection.siteUrl, getConnectionIdentity: () => this.options.configuration.getIdentity(),
                 getProfile: () => connection.profile, getSourceRevision: path => this.options.getSourceRevision(path),
                 isResourcePathAllowed: (resourcePath, ownerPath) => this.options.isPathAllowed(ownerPath) && this.options.isPathAllowed(resourcePath),
-                defaultVisibility: connection.defaultVisibility, signal: abort.signal, generateMetadata: this.options.generateMetadata });
+                defaultVisibility: connection.defaultVisibility, signal: abort.signal, generateMetadata: this.options.generateMetadata,
+                metadataDebug: authority.metadataDebug, isPaGeneratedImage: this.options.isPaGeneratedImage });
             return { ...created, release };
         } catch (error) { release(); throw error; }
     }
@@ -280,7 +287,7 @@ class PublishingSession implements GhostPublishingSession {
         else status = "needs-attention";
         const actions: GhostCardAction[] = [];
         if (operation?.state === "updated" && operation.target.postUrl) actions.push("open-post");
-        if (operation?.target.previewUuid && (operation.state !== "updated" || operation.warnings?.includes("cleanup-failed"))) actions.push("open-preview");
+        if (operation?.target.previewUrl && (operation.state !== "updated" || operation.warnings?.includes("cleanup-failed"))) actions.push("open-preview");
         if (operation?.state === "prepared") actions.push("confirm");
         if (operation?.target.postId && operation.state !== "prepared") actions.push("open-editor");
         const warningKeys = [...new Set(operation?.candidate?.warnings?.map(warning => warning.code).filter(code => WARNING_CODES.has(code)) ?? [])]
@@ -322,8 +329,9 @@ class PublishingSession implements GhostPublishingSession {
                 await scope.context.validate(this.operation);
                 let url: string;
                 if (action === "open-preview") {
-                    if (!this.operation.target.previewUuid) throw failure("preview-required");
-                    url = ghostPreviewUrl(connection.siteUrl, this.operation.target.previewUuid);
+                    const previewUrl = this.operation.target.previewUrl;
+                    if (!previewUrl) throw failure("preview-required");
+                    url = previewUrl;
                 } else if (action === "open-editor") {
                     const id = this.operation.target.postId;
                     if (!id || !/^[a-f\d]{24}$/i.test(id)) throw failure("operation-missing");

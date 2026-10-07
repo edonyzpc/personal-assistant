@@ -7,7 +7,7 @@ import { isCoreWriteToolName } from './operations/input-validation';
 import type { NoteImageRemovalEffectStatus } from './operations/types';
 import { IMAGE_PREACCEPT_MESSAGES, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from '../chat/image-generation-types';
 import { PA_AGENT_RECOVERY_ACTIONS } from './pa-agent-types';
-import { ghostPreparationMessage } from './ghost-tool-receipt';
+import { isGhostPreparationMessage } from './ghost-tool-receipt';
 
 // Historical Chat receipts remain readable; these names cannot resume an operation.
 type GhostReceiptState = import('../ghost-publishing/state-schema').GhostLocalOperation['state']
@@ -614,8 +614,7 @@ export function collectActionStates(input: { runId: string; turnId: string;
                 const status = observation?.status;
                 const execution = envelope.execution;
                 const executionState = metadata.executionState as GhostPreparationExecution | undefined;
-                const currentMessage = ghostPreparationMessage(status, executionState, observation?.failureReason);
-                const isCurrentReceipt = currentMessage !== undefined && observation?.message === currentMessage;
+                const isCurrentReceipt = isGhostPreparationMessage(status, executionState, observation?.message, observation?.failureReason);
                 const operationId = (status === 'prepared' || isCurrentReceipt && executionState === 'succeeded')
                     && fact?.kind === 'approval_pending' ? fact.intentId
                     : (status === 'outcome_unknown' || status === 'needs_attention') && fact?.kind === 'unknown'

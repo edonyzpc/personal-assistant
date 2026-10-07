@@ -168,6 +168,33 @@ describe('closed action summary facts', () => {
 });
 
 describe('domain receipt lifecycle projection', () => {
+    it.each([
+        { reason: 'metadata-unavailable', message: 'Article metadata preparation is unavailable. No Ghost post or image writes were started. Check the text AI settings or fill in the missing summary, SEO description, and slug. This result does not diagnose Ghost authentication or site configuration.' },
+        { reason: 'metadata-invalid', message: 'The article or required metadata is invalid for preparation. No Ghost post or image writes were started. Check the article and its summary, SEO description, and slug. This result does not diagnose Ghost authentication or site configuration.' },
+    ] as const)('keeps the old $reason receipt after making its metadata advice inclusive', async ({ reason, message }) => {
+        const messages = await ghostAttentionTranscript('legacy-tags', reason);
+        const result = messages[1] as Extract<PaAgentMessage, { role: 'toolResult' }>;
+        const envelope = JSON.parse(result.content.promptText);
+        envelope.observation.message = message;
+        result.content.promptText = JSON.stringify(envelope);
+        expect(collectActionStates({ runId: 'run', turnId: 'turn', messages }))
+            .toEqual([expect.objectContaining({ operationId: 'legacy-tags', phase: 'failed' })]);
+        envelope.observation.failureReason = 'provider_failure';
+        result.content.promptText = JSON.stringify(envelope);
+        expect(collectActionStates({ runId: 'run', turnId: 'turn', messages })).toEqual([]);
+    });
+    it('keeps the previously persisted invalid-result receipt after correcting its explanation', async () => {
+        const messages = await ghostAttentionTranscript('legacy-metadata', 'invalid_result');
+        const result = messages[1] as Extract<PaAgentMessage, { role: 'toolResult' }>;
+        const envelope = JSON.parse(result.content.promptText);
+        envelope.observation.message = 'The text AI returned unusable article metadata. No Ghost post or image writes were started. Fill in the missing summary, SEO description, and slug. This result does not diagnose Ghost authentication or site configuration.';
+        result.content.promptText = JSON.stringify(envelope);
+        expect(collectActionStates({ runId: 'run', turnId: 'turn', messages }))
+            .toEqual([expect.objectContaining({ operationId: 'legacy-metadata', phase: 'failed' })]);
+        envelope.observation.failureReason = 'provider_failure';
+        result.content.promptText = JSON.stringify(envelope);
+        expect(collectActionStates({ runId: 'run', turnId: 'turn', messages })).toEqual([]);
+    });
     it('retains the owned not-started metadata failure and rejects forged reasons or messages in history', async () => {
         const messages = await ghostAttentionTranscript('metadata-operation', 'provider_failure');
         const input = { runId: 'run', turnId: 'turn', messages };

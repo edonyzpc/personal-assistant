@@ -29,7 +29,7 @@ function post(id = POST, status: GhostPost["status"] = "published"): GhostPost {
         status, updated_at: NOW, url: `${SITE}original-url/`, slug: "original-url" };
 }
 function error(code: string): Error { return Object.assign(new Error(code), { code }); }
-function fixture(remote?: GhostPost) {
+function fixture(remote?: GhostPost, publicSite = SITE) {
     let version = 0, sequence = 0;
     const nextVersion = () => new Date(Date.parse(NOW) + ++version * 1000).toISOString();
     const posts = new Map<string, GhostPost>(remote ? [[remote.id, structuredClone(remote)]] : []);
@@ -56,7 +56,7 @@ function fixture(remote?: GhostPost) {
             const id = (++sequence).toString(16).padStart(24, "0");
             const saved = { ...post(id, "draft"), ...fields, id, status: "draft" as const,
                 tags: (fields.tags ?? []).map(tag => ({ ...tag, name: tag.name! })), updated_at: nextVersion(),
-                slug: fields.slug ?? "preview", url: `${SITE}p/11111111-1111-1111-1111-111111111111/` };
+                slug: fields.slug ?? "preview", url: `${publicSite}p/11111111-1111-1111-1111-111111111111/` };
             posts.set(id, saved);
             return structuredClone(saved);
         }),
@@ -126,6 +126,28 @@ describe("Ghost session publishing service", () => {
         expect(fields).toMatchObject({ title: "Current note", status: "draft", feature_image: null });
         for (const field of ["slug", "authors", "visibility", "published_at", "custom_template"]) expect(fields).not.toHaveProperty(field);
         expect(f.client.createDraft).not.toHaveBeenCalled();
+    });
+    it.each(["new", "draft", "published"] as const)("keeps the saved frontend preview URL for a %s article", async status => {
+        const publicSite = "https://public.example/";
+        const remote = status === "new" ? undefined : { ...post(POST, status), url: `${publicSite}original-url/` };
+        const f = fixture(remote, publicSite);
+        const saved = await f.service.prepare("Note.md", remote?.id, f.context);
+        const preview = f.posts.get(saved.target.previewId!)!;
+        expect(saved.site).toBe(SITE);
+        expect(saved.target).toMatchObject({ previewId: preview.id, previewUuid: preview.uuid,
+            previewUrl: preview.url, previewVersion: preview.updated_at });
+        expect(new URL(saved.target.previewUrl!).origin).toBe(new URL(publicSite).origin);
+        if (status === "published") {
+            expect(saved.target.postUrl).toBe(remote!.url);
+            expect(saved.target.previewUrl).not.toBe(saved.target.postUrl);
+            expect(saved.target.previewId).not.toBe(remote!.id);
+            expect(f.pointers.get(`site-a/${remote!.id}`)).toEqual({ siteId: "site-a", postId: remote!.id, previewId: preview.id });
+        } else {
+            expect(saved.target.postUrl).toBe(preview.url);
+            if (remote) expect(f.changes).toContainEqual(expect.objectContaining({ target: expect.objectContaining({
+                previewUrl: remote.url, previewVersion: remote.updated_at,
+            }) }));
+        }
     });
     it.each([
         { failure: new GhostClientError("http", "failed", 404), expected: "http-404" },

@@ -158,6 +158,8 @@ export interface ChatHistoryStore {
 
     getImageAsset(id: string): Promise<ImageAsset | null>;
     listImageAssets(): Promise<ImageAsset[]>;
+    /** Body-free source evidence for the exact current image; never reads generation prompts. */
+    isGeneratedImageAtPath(path: string, byteHash: string): Promise<boolean>;
     /** State/path updates preserve the owners maintained by turn/save transactions. */
     putImageAsset(asset: ImageAsset): Promise<void>;
     updateImageAssetOwner(ref: ImageRef, owner: ImageAssetOwner, add: boolean): Promise<void>;
@@ -444,6 +446,10 @@ export class MemoryChatHistoryStore extends ChatDebugDeletionNotifications imple
     }
 
     async listImageAssets(): Promise<ImageAsset[]> { return [...this.assets.values()].map(cloneImageAsset); }
+
+    async isGeneratedImageAtPath(path: string, byteHash: string): Promise<boolean> {
+        return hasSavedGeneratedImageAtPath(this.assets.values(), this.imageGenerationTasks.values(), path, byteHash);
+    }
 
     async putImageAsset(asset: ImageAsset): Promise<void> {
         const copy = cloneImageAsset(asset);
@@ -837,6 +843,14 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
     }
     async listImageAssets(): Promise<ImageAsset[]> {
         return (await requestToPromise<unknown[]>(this.getStore(ASSETS_STORE, "readonly").getAll())).map(cloneImageAsset);
+    }
+    async isGeneratedImageAtPath(path: string, byteHash: string): Promise<boolean> {
+        const transaction = this.getTransaction([ASSETS_STORE, IMAGE_GENERATION_TASKS_STORE], "readonly");
+        const [assets, tasks] = await Promise.all([
+            requestToPromise<unknown[]>(transaction.objectStore(ASSETS_STORE).getAll()),
+            requestToPromise<unknown[]>(transaction.objectStore(IMAGE_GENERATION_TASKS_STORE).getAll()),
+        ]);
+        return hasSavedGeneratedImageAtPath(assets, tasks, path, byteHash);
     }
     async putImageAsset(asset: ImageAsset): Promise<void> {
         const copy = cloneImageAsset(asset);
@@ -1315,6 +1329,7 @@ export class UnavailableChatHistoryStore implements ChatHistoryStore {
 
     async getImageAsset(_id: string): Promise<ImageAsset | null> { throw this.error; }
     async listImageAssets(): Promise<ImageAsset[]> { throw this.error; }
+    async isGeneratedImageAtPath(_path: string, _byteHash: string): Promise<boolean> { return false; }
     async putImageAsset(_asset: ImageAsset): Promise<void> { throw this.error; }
     async updateImageAssetOwner(_ref: ImageRef, _owner: ImageAssetOwner, _add: boolean): Promise<void> { throw this.error; }
     async getImageVariant(_id: string): Promise<ImageVariantRecord | null> { throw this.error; }
@@ -1418,6 +1433,37 @@ function assertImageGenerationTaskUpdate(
         const saved = output.saveState === 'saved';
         if (saved && current.saveState !== 'saved') throw new Error('Saved image output cannot move backward.');
     }
+}
+
+/** Only asset metadata and saved output refs participate; request bodies are deliberately untouched. */
+function hasSavedGeneratedImageAtPath(
+    assets: Iterable<unknown>, tasks: Iterable<unknown>, path: string, byteHash: string,
+): boolean {
+    const assetIds = new Set<string>();
+    for (const value of assets) {
+        try {
+            const asset = cloneImageAsset(value);
+            if (asset.originalPath === path && asset.originalHash === byteHash) assetIds.add(asset.id);
+        } catch { /* Damaged metadata cannot establish an image's source. */ }
+    }
+    if (!assetIds.size) return false;
+    for (const value of tasks) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+        const task = value as Record<string, unknown>;
+        if (task.schemaVersion !== 1 || typeof task.taskId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(task.taskId)
+            || !Array.isArray(task.outputs)) continue;
+        for (const value of task.outputs) {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+            const output = value as Record<string, unknown>;
+            if (output.saveState !== 'saved') continue;
+            try {
+                const ref = cloneImageRef(output.assetRef);
+                if (assetIds.has(ref.assetId) && ref.contentHash === byteHash
+                    && (output.expectedContentHash === undefined || output.expectedContentHash === byteHash)) return true;
+            } catch { /* Ignore an invalid persisted output without reading its prompt. */ }
+        }
+    }
+    return false;
 }
 
 function assertGeneratedImageVersion(

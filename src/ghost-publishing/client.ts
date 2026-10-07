@@ -134,6 +134,8 @@ const POST_UUID = /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_IMAGE_REDIRECTS = 3;
+const TAG_PAGE_SIZE = 100;
+const TAG_NAME_MAX = 191;
 const NULLABLE_FIELDS = [
     "custom_template", "feature_image", "feature_image_alt", "feature_image_caption",
     "custom_excerpt", "codeinjection_head", "codeinjection_foot", "published_at",
@@ -319,6 +321,47 @@ export class GhostClient {
         this.checkId(id);
         const response = await this.admin("GET", `posts/${id}/`, gate);
         return this.onePost(response, false, id);
+    }
+
+    async listTags(gate: GhostRequestGate): Promise<GhostTag[]> {
+        const tags: GhostTag[] = [];
+        let page = 1;
+        for (;;) {
+            const query = new URLSearchParams({
+                page: String(page), limit: String(TAG_PAGE_SIZE),
+                fields: "id,name,visibility", filter: "visibility:public",
+            });
+            const response = await this.admin("GET", "tags/", gate, undefined, query);
+            const batch = this.parseResponse(response, false, (body) => {
+                const pagination = object(object(body.meta)?.pagination);
+                if (!Array.isArray(body.tags) || !pagination || pagination.page !== page
+                    || pagination.limit !== TAG_PAGE_SIZE
+                    || typeof pagination.pages !== "number" || !Number.isSafeInteger(pagination.pages) || pagination.pages < 1
+                    || typeof pagination.total !== "number" || !Number.isSafeInteger(pagination.total) || pagination.total < 0
+                    || pagination.pages !== Math.max(1, Math.ceil(pagination.total / TAG_PAGE_SIZE))
+                    || page > pagination.pages) throw new Error("Invalid tag pagination");
+                const next = page < pagination.pages ? page + 1 : null;
+                const prev = page > 1 ? page - 1 : null;
+                const expectedCount = Math.min(TAG_PAGE_SIZE, pagination.total - (page - 1) * TAG_PAGE_SIZE);
+                if (pagination.next !== next || pagination.prev !== prev || body.tags.length !== expectedCount) {
+                    throw new Error("Invalid tag page");
+                }
+                const projected: GhostTag[] = [];
+                for (const raw of body.tags) {
+                    const tag = object(raw);
+                    if (!tag || typeof tag.id !== "string" || !POST_ID.test(tag.id)
+                        || typeof tag.name !== "string" || !tag.name.trim() || Array.from(tag.name).length > TAG_NAME_MAX
+                        || tag.visibility !== "public" && tag.visibility !== "internal") throw new Error("Invalid tag");
+                    if (tag.visibility === "public" && !tag.name.trim().startsWith("#")) {
+                        projected.push({ id: tag.id, name: tag.name, visibility: "public" });
+                    }
+                }
+                return { tags: projected, next };
+            });
+            tags.push(...batch.tags);
+            if (batch.next === null) return tags;
+            page = batch.next;
+        }
     }
 
     async createDraft(fields: GhostPostWrite, gate: GhostRequestGate): Promise<GhostPost> {

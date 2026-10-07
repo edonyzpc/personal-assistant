@@ -15,6 +15,7 @@ const POST = "6ac4f4e0910d6f00010bb89b";
 const PREVIEW = "6ac4f4e0910d6f00010bb89c";
 const UUID = "f36fb365-bd7c-40b5-a77a-de5cd5cebb95";
 const SITE = "https://ghost.example/";
+const PUBLIC_SITE = "https://public.example/blog/";
 let mockOperation: GhostLocalOperation | undefined;
 let mockServiceOptions: { onUpdate?(operation: GhostLocalOperation): void };
 const mockService = {
@@ -52,7 +53,8 @@ function operation(state: GhostLocalOperation["state"] = "prepared"): GhostLocal
         operationId: "current-op", revision: 1, siteId: "site-a", site: SITE, noteKey: "Note.md",
         kind: "update", state, executionState: "succeeded", candidate: {} as GhostLocalOperation["candidate"],
         target: { postId: POST, postUrl: `${SITE}article/`, postStatus: state === "draft_saved" ? "draft" : "published",
-            previewId: state === "draft_saved" ? POST : PREVIEW, previewUuid: UUID },
+            previewId: state === "draft_saved" ? POST : PREVIEW, previewUuid: UUID,
+            previewUrl: `${PUBLIC_SITE}p/${UUID}/` },
         verified: { postId: state === "prepared" ? PREVIEW : POST, postUrl: `${SITE}article/`,
             updatedAt: "2026-10-06T13:00:00.000Z", status: state === "updated" ? "published" : "draft" },
         updatedAt: "2026-10-06T13:00:00.000Z",
@@ -135,13 +137,15 @@ describe("Lean Ghost controller and human actions", () => {
         expect(mockService.confirm).not.toHaveBeenCalled();
     });
 
-    it("saves drafts without PA publication confirmation and opens preview/editor directly in tabs", async () => {
-        mockService.prepare.mockImplementation(async () => { mockOperation = operation("draft_saved"); return mockOperation; });
+    it.each(["draft_saved", "prepared"] as const)("opens the returned public preview for %s and keeps the editor on the admin site", async state => {
+        mockService.prepare.mockImplementation(async () => { mockOperation = operation(state); return mockOperation; });
         const f = fixture();
         await f.controller.prepare(f.request);
-        expect(f.session().getState().actions).toEqual(["open-preview", "open-editor"]);
+        expect(f.session().getState().actions).toEqual(state === "draft_saved"
+            ? ["open-preview", "open-editor"] : ["open-preview", "confirm"]);
         await f.session().run("open-preview");
-        expect(f.setViewState).toHaveBeenLastCalledWith({ type: "webviewer", state: { url: `${SITE}p/${UUID}/` }, active: true });
+        expect(f.setViewState).toHaveBeenLastCalledWith({ type: "webviewer", state: { url: `${PUBLIC_SITE}p/${UUID}/` }, active: true });
+        if (state === "prepared") return;
         await f.session().run("open-editor");
         expect(f.setViewState).toHaveBeenLastCalledWith({ type: "webviewer", state: { url: `${SITE}ghost/#/editor/post/${POST}` }, active: true });
         expect(f.revealLeaf).toHaveBeenCalledTimes(2);

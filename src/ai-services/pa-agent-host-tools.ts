@@ -89,6 +89,7 @@ export interface PaAgentCapabilityToolExecutorOptions {
     memoryActionRequest?: MemoryActionHostBinding;
     getImageRequestLineage?: (turnId?: string) => import("./input-lineage").InputLineage | undefined;
     getCreateImageRuntime?: (turnId?: string) => import("./chat-tool-types").CreateImageHostRuntime | undefined;
+    getGhostMetadataDebugScope?: (turnId: string, toolCallId: string) => import("./ghost-metadata").GhostMetadataDebugScope | undefined;
     revalidateMemorySearch?: (
         result: MemorySearchResult,
         signal?: AbortSignal,
@@ -644,6 +645,8 @@ export function createPaAgentCapabilityToolExecutor(
                         memoryActionRequest: options.memoryActionRequest,
                         imageRequestLineage: options.getImageRequestLineage?.(input.turnId),
                         createImageRuntime: options.getCreateImageRuntime?.(input.turnId),
+                        ghostMetadataDebug: toolCall.name === "prepare_ghost_post"
+                            ? options.getGhostMetadataDebugScope?.(input.turnId, toolCall.id) : undefined,
                         ...(!hidden && options.onBeforeVssSearch
                             ? { onBeforeVssSearch: options.onBeforeVssSearch }
                             : {}),

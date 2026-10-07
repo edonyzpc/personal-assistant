@@ -8,6 +8,7 @@ import {
 import type { GhostPost } from "../src/ghost-publishing/client";
 import type { GhostSnapshot, GhostStoredResource } from "../src/ghost-publishing/state-schema";
 import type { LexicalDocumentJson } from "../src/ghost-publishing/types";
+import { PA_GENERATED_FEATURE_IMAGE_CAPTION } from "../src/ghost-publishing/fields";
 
 const profile = { siteId: "test-site" };
 const now = "2026-09-29T09:00:00.000Z";
@@ -32,6 +33,21 @@ function post(value: GhostSnapshot, changes: Partial<GhostPost> = {}): GhostPost
 }
 
 describe("Ghost current publication candidates", () => {
+    it("carries PA cover attribution through draft writes, published updates and readback", async () => {
+        const source = await exported("> [!personal-assistant]+ Featured Images\n> ![[cover.png]]\n\nCurrent body.");
+        const resource: GhostStoredResource = { id: source.resources[0].id, source: "cover.png", resolvedPath: "cover.png",
+            byteHash: "ab".repeat(32), byteLength: 10, mimeType: "image/png", url: "https://example.test/images/current.png" };
+        const remote = post(await candidate(), { feature_image_caption: "Old caption" });
+        const value = prepareGhostSnapshot({ exported: source, remote, profile, resources: [resource], defaultVisibility: "public" });
+        expect(ghostManagedWrite(value)).toMatchObject({ feature_image: resource.url,
+            feature_image_caption: PA_GENERATED_FEATURE_IMAGE_CAPTION });
+        expect(ghostPreviewWrite(value, "#pa-preview").feature_image_caption).toBe(PA_GENERATED_FEATURE_IMAGE_CAPTION);
+        expect(ghostManagedContentMatches(value, post(value))).toBe(true);
+        expect(ghostManagedContentMatches(value, post(value, { feature_image_caption: null }))).toBe(false);
+        const ordinary = await exported("Current body.");
+        const cleared = prepareGhostSnapshot({ exported: ordinary, remote: post(value), profile, resources: [], defaultVisibility: "public" });
+        expect(ghostManagedWrite(cleared)).toMatchObject({ feature_image: null, feature_image_caption: null });
+    });
     it("keeps diagnostic locations without storing raw messages or link targets", async () => {
         const result = await exported("[[Unpublished|Visible]]");
         result.warnings[0].message = "Host-only raw target detail";
@@ -81,10 +97,38 @@ describe("Ghost current publication candidates", () => {
             { ...profile, manualHeadInjection: "<!-- owner head -->", manualFootInjection: "<!-- owner foot -->" });
         const remote = post(await candidate(), { codeinjection_head: old.head, codeinjection_foot: old.foot });
         const updated = prepareGhostSnapshot({ exported: await exported(), remote, profile, resources: [], defaultVisibility: "public" });
-        expect(updated.content.codeinjection_head).toContain("<!-- owner head -->");
-        expect(updated.content.codeinjection_foot).toContain("<!-- owner foot -->");
+        expect(updated.content.codeinjection_head).toBe("<!-- owner head -->\n");
+        expect(updated.content.codeinjection_foot).toBe("<!-- owner foot -->\n");
         expect(updated.recipe.needsPrism).toBe(false);
-        expect(updated.content.codeinjection_head).not.toContain("prism.min.js");
+        expect(updated.content.codeinjection_head).not.toContain("pa-ghost:");
+        expect(updated.content.codeinjection_foot).not.toContain("pa-ghost:");
+    });
+
+    it("writes null injection for a new article without rendering work", async () => {
+        const value = await candidate();
+        expect(ghostManagedWrite(value)).toMatchObject({ codeinjection_head: null, codeinjection_foot: null });
+        expect(ghostPreviewWrite(value, "#pa-preview")).toMatchObject({ codeinjection_head: null, codeinjection_foot: null });
+        expect(ghostManagedContentMatches(value, post(value))).toBe(true);
+    });
+
+    it.each(["draft", "published"] as const)("clears obsolete PA injection in the fixed candidate for a %s article", async status => {
+        const old = buildRecipeInjection({ codeLanguages: ["ts"], hasMermaid: true, hasInlineMath: true, hasDisplayMath: false }, profile);
+        const remote = post(await candidate(), { status, codeinjection_head: old.head, codeinjection_foot: old.foot });
+        const updated = prepareGhostSnapshot({ exported: await exported(), remote, profile, resources: [], defaultVisibility: "public" });
+        expect(ghostManagedWrite(updated)).toMatchObject({ codeinjection_head: null, codeinjection_foot: null });
+        expect(ghostPreviewWrite(updated, "#pa-preview")).toMatchObject({ codeinjection_head: null, codeinjection_foot: null });
+        expect(ghostManagedContentMatches(updated, post(updated, { status }))).toBe(true);
+        expect(ghostManagedContentMatches(updated, remote)).toBe(false);
+        expect(remote.codeinjection_head).toBe(old.head);
+        expect(remote.codeinjection_foot).toBe(old.foot);
+    });
+
+    it("preserves manual injection exactly, including whitespace-only content", async () => {
+        const remote = post(await candidate(), { codeinjection_head: " \n\t", codeinjection_foot: "<!-- manual foot -->\n" });
+        const updated = prepareGhostSnapshot({ exported: await exported(), remote, profile, resources: [], defaultVisibility: "public" });
+        expect(ghostManagedWrite(updated)).toMatchObject({ codeinjection_head: remote.codeinjection_head,
+            codeinjection_foot: remote.codeinjection_foot });
+        expect(ghostManagedContentMatches(updated, post(updated))).toBe(true);
     });
 
     it("replaces only actual image URLs, including table images and the cover, without retaining remote formatting", async () => {

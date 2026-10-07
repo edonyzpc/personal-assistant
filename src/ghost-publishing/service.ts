@@ -178,7 +178,7 @@ export class GhostPublishingService {
                     ...(!remote ? { visibility: candidate.content.visibility } : {}) };
                 const destination = remote?.status === "draft" ? remote : preview;
                 if (destination) operation = this.patch(operation, { target: { ...operation.target,
-                    previewId: destination.id, previewUuid: destination.uuid, previewVersion: destination.updated_at } });
+                    previewId: destination.id, previewUuid: destination.uuid, previewUrl: destination.url, previewVersion: destination.updated_at } });
                 writeAttempted = true;
                 const saved = destination
                     ? await this.options.client.updatePost(destination.id, destination.updated_at, fields, this.gate(operation, context))
@@ -187,7 +187,7 @@ export class GhostPublishingService {
                 operation = this.patch(operation, { executionState: "succeeded", verified: this.verified(saved), target: {
                     ...operation.target,
                     ...(!marker ? { postId: saved.id, postUrl: saved.url, postVersion: saved.updated_at, postStatus: "draft" as const } : {}),
-                    previewId: saved.id, previewUuid: saved.uuid, previewVersion: saved.updated_at,
+                    previewId: saved.id, previewUuid: saved.uuid, previewUrl: saved.url, previewVersion: saved.updated_at,
                 } });
                 if (saved.status !== "draft" || !ghostManagedContentMatches(candidate, saved, marker ? [marker] : [])) {
                     throw new GhostWorkflowError("remote-conflict");

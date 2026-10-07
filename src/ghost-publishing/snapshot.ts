@@ -1,7 +1,7 @@
 import { stableStringify } from "../ai-services/agent-utils";
 import { getPlatformCrypto } from "../platform-dom";
 import type { GhostPost, GhostPostWrite, GhostVisibility } from "./client";
-import { ghostFieldsForCandidate } from "./fields";
+import { ghostFieldsForCandidate, PA_GENERATED_FEATURE_IMAGE_CAPTION } from "./fields";
 import { lexicalSemanticSignature, type LexicalContentIdentity } from "./lexical-content";
 import { buildRecipeInjection } from "./recipe";
 import { ghostContentSchema, ghostSnapshotSchema, type GhostSnapshot, type GhostStoredContent, type GhostStoredResource } from "./state-schema";
@@ -143,13 +143,22 @@ export function prepareGhostSnapshot(options: PrepareGhostSnapshotOptions): Ghos
     const resource = resources.find((item) => `pending-resource://${item.id}` === fields.feature_image);
     content.feature_image = fields.feature_image === null ? null : resource?.url ?? (options.allowPendingResources && resource ? fields.feature_image : null);
     if (fields.feature_image !== null && !content.feature_image) throw new GhostCandidateError("resource-unavailable");
+    const caption = exported.fields.featureImageCaption;
+    if (caption && caption.mode !== "unmanaged") {
+        content.feature_image_caption = caption.mode === "manage" ? caption.value ?? null : null;
+        managedFields.push("feature_image_caption");
+    } else if (content.feature_image_caption === PA_GENERATED_FEATURE_IMAGE_CAPTION) {
+        // An old PA attribution must not follow a cover whose current source is unknown.
+        content.feature_image_caption = null;
+        managedFields.push("feature_image_caption");
+    }
     content.custom_excerpt = fields.custom_excerpt;
     content.meta_description = fields.meta_description;
     const injection = buildRecipeInjection(exported.capabilities, {
         ...profile, manualHeadInjection: content.codeinjection_head ?? "", manualFootInjection: content.codeinjection_foot ?? "",
     });
-    content.codeinjection_head = injection.head;
-    content.codeinjection_foot = injection.foot;
+    content.codeinjection_head = injection.head === "" ? null : injection.head;
+    content.codeinjection_foot = injection.foot === "" ? null : injection.foot;
     return snapshot({ content, managedFields, source: exported.sourceManifest, blocks, resources,
         profile, recipe: injection.selection, warnings: exported.warnings.map(({ code, path, line }) => ({ code, path, line })),
         ...(fields.slug !== undefined ? { slug: fields.slug } : {}) });

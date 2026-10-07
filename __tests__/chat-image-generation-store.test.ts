@@ -1,14 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
 import {
-    CHAT_HISTORY_IDB_VERSION, IndexedDbChatHistoryStore, MemoryChatHistoryStore,
+    CHAT_HISTORY_IDB_VERSION, IndexedDbChatHistoryStore, MemoryChatHistoryStore, UnavailableChatHistoryStore,
     type ChatHistoryStore,
 } from '../src/chat/chat-history-store';
 import { cloneImageGenerationTask, type GeneratedImageVersion, type ImageGenerationTask } from '../src/chat/image-generation-types';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
+import type { ImageAsset } from '../src/chat/image-types';
 
 const now = '2026-09-18T12:00:00.000Z';
 const later = '2026-09-18T12:01:00.000Z';
 const imageRef = { assetId: 'generated_one', contentHash: 'a'.repeat(64) };
+const imageAsset: ImageAsset = { id: imageRef.assetId, originalHash: imageRef.contentHash,
+    originalPath: 'images/cover.png', source: 'imported', importDirectory: 'images', byteLength: 12,
+    detectedMime: 'image/png', acquisition: 'original_file', state: 'available', anchorPath: 'PA Chat.md',
+    anchorKind: 'logical_root', createdAt: 0, owners: [] };
 
 function task(overrides: Partial<ImageGenerationTask> = {}): ImageGenerationTask {
     return {
@@ -140,6 +145,8 @@ it('leaves image history unavailable when IndexedDB cannot open instead of accep
     const store = new IndexedDbChatHistoryStore('unwritable-image-task-test', factory);
     await expect(store.initialize()).rejects.toThrow('storage unavailable');
     await expect(store.putImageGenerationTask(task())).rejects.toThrow();
+    await expect(new UnavailableChatHistoryStore().isGeneratedImageAtPath(imageAsset.originalPath, imageRef.contentHash))
+        .resolves.toBe(false);
 });
 
 describe.each(['memory', 'indexeddb'] as const)('image generation task store (%s)', (backend) => {
@@ -273,6 +280,45 @@ describe.each(['memory', 'indexeddb'] as const)('image generation task store (%s
         expect(await store.listGeneratedImageVersions('task_one')).toHaveLength(0);
         await store.deleteConversation('conversation_one');
         await expect(store.putImageGenerationTask(task())).rejects.toThrow('conversation is unavailable');
+    });
+
+    it('attributes only saved generation outputs at the current asset path and hash', async () => {
+        const { store } = await open();
+        await store.putImageAsset(imageAsset);
+        await expect(store.isGeneratedImageAtPath(imageAsset.originalPath, imageRef.contentHash)).resolves.toBe(false);
+        await store.putImageGenerationTask(task({ request: { ...task().request, inputRefs: [imageRef] } }));
+        await expect(store.isGeneratedImageAtPath(imageAsset.originalPath, imageRef.contentHash)).resolves.toBe(false);
+        const claimed = (await store.claimImageGenerationSubmission('task_one', 0, later))!;
+        const saved = { ...claimed, state: 'saving' as const, revision: 2,
+            outputs: [{ outputId: 'output_one', providerOrdinal: 0, saveState: 'saved' as const, assetRef: imageRef }] };
+        await store.putImageGenerationTask(saved, 1);
+        await expect(store.isGeneratedImageAtPath(imageAsset.originalPath, imageRef.contentHash)).resolves.toBe(true);
+        await expect(store.isGeneratedImageAtPath(imageAsset.originalPath, 'b'.repeat(64))).resolves.toBe(false);
+        await store.putImageGenerationTask({ ...saved, state: 'partial', revision: 3 }, 2);
+        await expect(store.isGeneratedImageAtPath(imageAsset.originalPath, imageRef.contentHash)).resolves.toBe(true);
+        await store.putImageGenerationTask({ ...saved, state: 'stopped', stopIntent: true, revision: 4 }, 3);
+        await expect(store.isGeneratedImageAtPath(imageAsset.originalPath, imageRef.contentHash)).resolves.toBe(true);
+        await store.putImageAsset({ ...imageAsset, originalPath: 'images/renamed.png' });
+        await expect(store.isGeneratedImageAtPath(imageAsset.originalPath, imageRef.contentHash)).resolves.toBe(false);
+        await expect(store.isGeneratedImageAtPath('images/renamed.png', imageRef.contentHash)).resolves.toBe(true);
+        await store.deleteImageGenerationTasks('conversation_one');
+        await expect(store.isGeneratedImageAtPath('images/renamed.png', imageRef.contentHash)).resolves.toBe(false);
+    });
+
+    it('projects only provenance metadata without requiring or accessing prompt fields', async () => {
+        const { store, factory } = await open();
+        await store.putImageAsset(imageAsset);
+        const records = factory ? factory.db.stores.get('imageGenerationTasks')!
+            : (store as unknown as { imageGenerationTasks: Map<string, unknown> }).imageGenerationTasks;
+        const record = { schemaVersion: 1, taskId: 'task_one',
+            outputs: [{ saveState: 'saved', assetRef: imageRef }] };
+        if (!factory) Object.defineProperty(record, 'request', { get: () => { throw new Error('Prompt fields must stay unread'); } });
+        records.set('task_one', record);
+        await expect(store.isGeneratedImageAtPath(imageAsset.originalPath, imageRef.contentHash)).resolves.toBe(true);
+        records.set('task_one', { ...record, outputs: [{ saveState: 'saved', assetRef: { assetId: imageRef.assetId, contentHash: 'invalid' } }] });
+        await expect(store.isGeneratedImageAtPath(imageAsset.originalPath, imageRef.contentHash)).resolves.toBe(false);
+        records.set('task_one', { schemaVersion: 99, taskId: 'task_one', outputs: record.outputs });
+        await expect(store.isGeneratedImageAtPath(imageAsset.originalPath, imageRef.contentHash)).resolves.toBe(false);
     });
 
     it('rejects unknown persisted state rather than pretending the task is resumable', async () => {

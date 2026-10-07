@@ -31,7 +31,8 @@ jest.mock("obsidian");
 
 const rawGhostUserText = "@blog2ghost 发布我刚才排除当前笔记后提到的那篇";
 
-async function runGhostRuntimeTrace(submit: GhostHostBinding["submit"], calls: Array<{ intent: "prepare" | "restore"; path?: string; name?: string }>) {
+async function runGhostRuntimeTrace(submit: GhostHostBinding["submit"], calls: Array<{ intent: "prepare" | "restore"; path?: string; name?: string }>,
+    debugRecorder?: import("../src/ai-services/agent-debug-port").AgentDebugRunRecorder) {
     const host = createPromptHost();
     const inputLineage = completeInputLineage([{ kind: "user-text", messageId: "ghost-r2b-user" }]);
     const providerTexts: string[] = [];
@@ -75,6 +76,7 @@ async function runGhostRuntimeTrace(submit: GhostHostBinding["submit"], calls: A
                 userMessageId: "ghost-r2b-user" },
             ghostPublishing: { conversationId: invocation.conversationId, stableMessageId: "ghost-r2b-user", submit },
             onLifecycleEvent: event => lifecycle.push(event as never),
+            debugRecorder,
         });
     } finally {
         runtime.dispose();
@@ -538,6 +540,21 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(trace.providerTexts[1]).toContain('"executionState": "not_started"');
         expect(trace.providerTexts[1]).not.toContain("PRIVATE_PROVIDER_DETAIL");
         expect(trace.toolResults[0].content.resultFact).toEqual({ kind: "unavailable", capability: "prepare_ghost_post", reason: "ghost_attention_required" });
+        expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("passes the current Ghost tool's Debug ownership through the real capability loop", async () => {
+        const recorder = { captureId: "ghost-debug", enabled: () => true,
+            bindRun: jest.fn(), observe: jest.fn(), finish: jest.fn() };
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "needs_attention",
+            operationId: "metadata-operation", executionState: "not_started", failureReason: "invalid_result" }));
+        const trace = await runGhostRuntimeTrace(submit, [{ intent: "prepare", path: "notes/target.md" }], recorder);
+        const debug = submit.mock.calls[0][4];
+        expect(debug?.recorder).toBe(recorder);
+        expect(debug?.usageLedger).toBeDefined();
+        expect(debug?.parentId).toBe(`${debug?.turnId}:tool:ghost-runtime-call-1`);
+        expect(trace.providerTexts[1]).toContain("Automatic article metadata generation ran");
+        expect(trace.toolResults[0].content.promptText).not.toContain("ghost-debug");
         expect(submit).toHaveBeenCalledTimes(1);
     });
 

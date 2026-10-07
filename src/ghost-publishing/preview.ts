@@ -6,14 +6,6 @@ function safeUrl(value: string): string {
     } catch { throw new Error("Invalid Ghost URL"); }
 }
 
-export function ghostPreviewUrl(site: string, uuid: string): string {
-    if (!/^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(uuid)) throw new Error("Invalid preview identity");
-    const base = new URL(safeUrl(site));
-    if (base.search || base.hash) throw new Error("Invalid preview site");
-    base.pathname = `${base.pathname.replace(/\/+$/, "")}/`;
-    return new URL(`p/${uuid}/`, base).href;
-}
-
 export interface GhostNativeLeaf {
     setViewState(state: { type: "webviewer"; state: { url: string }; active: true }): Promise<void>;
 }

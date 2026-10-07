@@ -37,6 +37,8 @@ export interface ChatToolContext {
     imageRequestLineage?: InputLineage;
     /** Existing Debug/usage ownership for a host-side image preparation model call. */
     createImageRuntime?: CreateImageHostRuntime;
+    /** Current tool's observation ownership for automatic Ghost metadata generation. */
+    ghostMetadataDebug?: import("./ghost-metadata").GhostMetadataDebugScope;
 }
 
 export type ChatToolPermission = "read-only" | "network-read" | "memory-management" | "insight-management" | "image-generation" | "ghost-publishing";
@@ -175,7 +177,8 @@ export interface GhostHostBinding {
     stableMessageId: string;
     /** The domain adapter rechecks these boundaries at each physical read/upload/write. */
     submit(input: GhostPostToolInput, guard: import("./task-source-read-guard").TaskSourceReadGuard,
-        sourceValidity: () => boolean, signal?: AbortSignal): Promise<GhostPostToolReceipt>;
+        sourceValidity: () => boolean, signal?: AbortSignal,
+        debug?: import("./ghost-metadata").GhostMetadataDebugScope): Promise<GhostPostToolReceipt>;
 }
 
 export interface CreateImageHostRuntime {

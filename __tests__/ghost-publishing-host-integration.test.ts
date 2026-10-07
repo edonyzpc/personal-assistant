@@ -63,14 +63,16 @@ describe("Ghost Obsidian Host bridge", () => {
             facts: { executionState: "not_started", recovery: { allowedActions: ["correct_input"] } } });
         expect(mockPrepared).not.toHaveBeenCalled();
         const tool = createPrepareGhostPostTool(binding);
+        const debug = { parentId: "turn:tool:ghost-call", turnId: "turn" };
         const context = { host: { log: () => undefined }, taskSourceReadGuard: fixture.initial.guard,
-            signal: new AbortController().signal } as unknown as ChatToolContext;
+            signal: new AbortController().signal, ghostMetadataDebug: debug } as unknown as ChatToolContext;
         const rejected = await tool.execute({ intent: "prepare", path: "missing.md" }, context);
         const corrected = await tool.execute({ intent: "prepare", path: "A.md" }, context);
         expect(rejected).toMatchObject({ ok: false, executionState: "not_started",
             recovery: { allowedActions: ["correct_input"] } });
         expect(corrected.ok).toBe(true);
         expect(mockPrepared.mock.calls[0][0].path).toBe("A.md");
+        expect(mockPrepared.mock.calls[0][0].authority.metadataDebug).toBe(debug);
         expect(mockPrepared).toHaveBeenCalledTimes(1);
         fixture.integration.dispose();
     });

@@ -1,6 +1,6 @@
 import { stableHash } from "../pa/helpers";
 import { getPlatformCrypto } from "../platform-dom";
-import { buildGhostPublishingFields } from "./fields";
+import { buildGhostPublishingFields, PA_GENERATED_FEATURE_IMAGE_CAPTION } from "./fields";
 import { buildRecipeInjection } from "./recipe";
 import { loadGhostSourceTree } from "./source-loader";
 import { prepareMainBodyForExport } from "./source-cleanup";
@@ -60,6 +60,11 @@ export async function prepareGhostExport(options: PrepareGhostExportOptions): Pr
             mode: "manage",
             value: converted.fieldResourceReferences.featureImage,
         };
+        const cover = converted.resources.find(resource => `pending-resource://${resource.id}` === fields.featureImage.value);
+        const declaredByPa = cover && preparedBody.paFeatureImageSources.some(imageSource =>
+            imageSource.trim() === cover.source || cover.kind === "local" && cover.resolvedPath
+                && options.host.metadataCache?.getFirstLinkpathDest?.(imageSource, source.targetPath)?.path === cover.resolvedPath);
+        if (declaredByPa) fields.featureImageCaption = { mode: "manage", value: PA_GENERATED_FEATURE_IMAGE_CAPTION };
     }
 
     const warnings = [...converted.warnings];

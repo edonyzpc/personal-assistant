@@ -398,6 +398,7 @@ export function createChatToolCapability<Input, Output>(
                 memoryActionRequest: context.memoryActionRequest,
                 imageRequestLineage: context.imageRequestLineage,
                 createImageRuntime: context.createImageRuntime,
+                ghostMetadataDebug: context.ghostMetadataDebug,
             };
             try {
                 const result = await definition.execute(validatedInput, chatContext);

@@ -34,6 +34,13 @@ function post(overrides: Partial<GhostPost> = {}): GhostPost {
     };
 }
 
+function tagsPage(tags: unknown[], page = 1, total = tags.length) {
+    const pages = Math.max(1, Math.ceil(total / 100));
+    return { tags, meta: { pagination: {
+        page, limit: 100, pages, total, next: page < pages ? page + 1 : null, prev: page > 1 ? page - 1 : null,
+    } } };
+}
+
 function gate(overrides: Partial<GhostRequestGate> = {}): GhostRequestGate {
     return { beforeSend: async () => {}, assertCurrent: () => {}, ...overrides };
 }
@@ -252,6 +259,104 @@ describe("Ghost Admin desktop requests", () => {
         });
         await client(site).deleteDraft(POST_ID, gate());
         expect(calls).toEqual([`DELETE /ghost/api/admin/posts/${POST_ID}/`]);
+    });
+});
+
+describe("Ghost public tag directory", () => {
+    const tag = { id: POST_ID, name: "Topic", visibility: "public" };
+
+    it("reads every page from the fixed subdirectory endpoint and returns only public tag metadata", async () => {
+        const firstPage = Array.from({ length: 100 }, (_, index) => ({
+            id: index.toString(16).padStart(24, "0"), name: index === 0 ? "模型与笔记" : `Tag ${index}`,
+            visibility: "public", description: PRIVATE_PAYLOAD, slug: "unused-slug",
+        }));
+        firstPage[1].visibility = "internal";
+        firstPage[2].name = "#private";
+        const received: Array<{ url?: string; method?: string; headers: IncomingMessage["headers"] }> = [];
+        const site = await serve((request, response) => {
+            received.push({ url: request.url, method: request.method, headers: request.headers });
+            const page = Number(new URL(request.url ?? "", "http://localhost").searchParams.get("page"));
+            json(response, 200, page === 1 ? tagsPage(firstPage, 1, 101)
+                : tagsPage([{ ...tag, id: SECOND_ID, name: "Last topic", description: PRIVATE_PAYLOAD }], 2, 101));
+        });
+        const result = await client(`${site}/blog/`).listTags(gate());
+        expect(result).toHaveLength(99);
+        expect(result[0]).toEqual({ id: "0".repeat(24), name: "模型与笔记", visibility: "public" });
+        expect(result.at(-1)).toEqual({ id: SECOND_ID, name: "Last topic", visibility: "public" });
+        expect(result.some(item => item.visibility === "internal" || item.name.startsWith("#"))).toBe(false);
+        expect(JSON.stringify(result)).not.toContain(PRIVATE_PAYLOAD);
+        expect(JSON.stringify(result)).not.toContain("unused-slug");
+        expect(received.map(item => item.url)).toEqual([
+            "/blog/ghost/api/admin/tags/?page=1&limit=100&fields=id%2Cname%2Cvisibility&filter=visibility%3Apublic",
+            "/blog/ghost/api/admin/tags/?page=2&limit=100&fields=id%2Cname%2Cvisibility&filter=visibility%3Apublic",
+        ]);
+        for (const request of received) {
+            expect(request.method).toBe("GET");
+            expect(request.headers.authorization).toMatch(/^Ghost /);
+            expect(request.headers["accept-version"]).toBe("v6.0");
+            expect(request.headers.cookie).toBeUndefined();
+        }
+    });
+
+    it("accepts the documented empty first page", async () => {
+        let calls = 0;
+        const site = await serve((_request, response) => { calls++; json(response, 200, tagsPage([])); });
+        expect(await client(site).listTags(gate())).toEqual([]);
+        expect(calls).toBe(1);
+    });
+
+    it.each([
+        { name: "invalid tag ID", value: tagsPage([{ ...tag, id: "../settings" }]) },
+        { name: "empty tag name", value: tagsPage([{ ...tag, name: " " }]) },
+        { name: "invalid visibility", value: tagsPage([{ ...tag, visibility: "private" }]) },
+        { name: "missing pagination", value: { tags: [tag] } },
+        { name: "looping next page", value: { tags: [tag], meta: { pagination: { ...tagsPage([tag]).meta.pagination, next: 1 } } } },
+        { name: "arbitrary next URL", value: { tags: [tag], meta: { pagination: { ...tagsPage([tag]).meta.pagination, next: "https://other.example/tags/" } } } },
+        { name: "empty tags with a positive total", value: tagsPage([], 1, 1) },
+    ])("rejects $name instead of returning an empty or partial directory", async ({ value }) => {
+        let calls = 0;
+        const site = await serve((_request, response) => { calls++; json(response, 200, value); });
+        const error = await failure(client(site).listTags(gate()));
+        expect(error).toMatchObject({ code: "invalid-response", outcome: "failed", status: 200 });
+        expect(calls).toBe(1);
+    });
+
+    it.each([
+        { status: 500, code: "http" },
+        { status: 302, code: "redirect" },
+    ])("reports read failure for HTTP $status without following or retrying", async ({ status, code }) => {
+        let calls = 0;
+        const site = await serve((_request, response) => {
+            calls++;
+            response.writeHead(status, { Location: "/another" });
+            response.end(PRIVATE_PAYLOAD);
+        });
+        const error = await failure(client(site).listTags(gate()));
+        expect(error).toMatchObject({ code, outcome: "failed", status });
+        expect(error.message + JSON.stringify(error)).not.toContain(PRIVATE_PAYLOAD);
+        expect(calls).toBe(1);
+    });
+
+    it("keeps the existing JSON response limit", async () => {
+        const site = await serve((_request, response) => json(response, 200, tagsPage([{ ...tag, description: PRIVATE_PAYLOAD }])));
+        expect(await failure(client(site, { maxResponseBytes: 64 }).listTags(gate())))
+            .toMatchObject({ code: "response-too-large", outcome: "failed" });
+    });
+
+    it("stops before requesting another page after source authority is revoked", async () => {
+        let current = true;
+        let calls = 0;
+        const firstPage = Array.from({ length: 100 }, () => tag);
+        const site = await serve((_request, response) => {
+            calls++;
+            current = false;
+            json(response, 200, tagsPage(firstPage, 1, 101));
+        });
+        const error = await failure(client(site).listTags(gate({
+            assertCurrent: () => { if (!current) throw new Error(PRIVATE_PAYLOAD); },
+        })));
+        expect(error).toMatchObject({ code: "gate-rejected", outcome: "not-sent" });
+        expect(calls).toBe(1);
     });
 });
 
