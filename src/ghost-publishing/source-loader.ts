@@ -1,4 +1,5 @@
 import { GhostExportError } from "./errors";
+import { getPlatformCrypto } from "../platform-dom";
 import { createGhostMarkdownIt, GHOST_EMBED_TOKEN, parseGhostMarkdown } from "./markdown-parser";
 import { cleanObsidianComments } from "./source-cleanup";
 import { mapInlineRangeToSource } from "./source-position";
@@ -51,7 +52,7 @@ type SourceValidity = (() => boolean) | undefined;
 
 async function sha256(value: string): Promise<string> {
     const bytes = new TextEncoder().encode(value);
-    const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+    const digest = await getPlatformCrypto()!.subtle.digest("SHA-256", bytes);
     return [...new Uint8Array(digest)]
         .map((byte) => byte.toString(16).padStart(2, "0"))
         .join("");

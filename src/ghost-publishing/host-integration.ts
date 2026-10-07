@@ -3,6 +3,7 @@ import type { GhostHostBinding } from "../ai-services/chat-tool-types";
 import type { RunSourceSelection } from "../ai-services/chat-source-scope";
 import { TaskSourceConstraintState } from "../ai-services/task-source-constraint";
 import { getVaultConfigDir } from "../obsidian-paths";
+import { getPlatformCrypto } from "../platform-dom";
 import { GhostPublishingConfiguration, type GhostPublishingSettings } from "./configuration";
 import { GhostPublishingController, type GhostActionAuthority, type GhostControllerOptions, type GhostPublishingSession } from "./controller";
 import { GhostEntryError, parseGhostCommand, resolveGhostRequestedNote } from "./entry";
@@ -84,7 +85,7 @@ export class GhostPublishingIntegration {
                 && request.getSourceSelection().scope === selection.scope
                 && request.getSourceSelection().selectionId === selection.selectionId;
             const state = new TaskSourceConstraintState({
-                runId: `ghost-action-${request.stableMessageId}-${globalThis.crypto.randomUUID()}`,
+                runId: `ghost-action-${request.stableMessageId}-${getPlatformCrypto()!.randomUUID()}`,
                 userMessageId: request.stableMessageId, userText: request.userText,
                 noteHandles: new Map(), sourceScope: selection.scope,
             });

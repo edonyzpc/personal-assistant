@@ -123,7 +123,7 @@ export function waitForInterruptibleMacrotask(
 }
 
 function defaultMacrotask(): Promise<void> {
-    const taskScheduler = (globalThis as typeof globalThis & {
+    const taskScheduler = (self as typeof self & {
         scheduler?: {
             postTask?: (
                 callback: () => void,

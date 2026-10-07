@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { stableStringify } from "../ai-services/agent-utils";
+import { getPlatformCrypto } from "../platform-dom";
 import type { SitePublishingProfile } from "./types";
 
 const librarySchema = z.object({
@@ -33,7 +34,7 @@ export function normalizeGhostSettings(value: unknown): GhostPublishingSettings 
 }
 
 async function hash(value: string): Promise<string> {
-    const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+    const digest = await getPlatformCrypto()!.subtle.digest("SHA-256", new TextEncoder().encode(value));
     return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 

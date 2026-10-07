@@ -120,6 +120,28 @@ describe("bounded graph boundary snapshot", () => {
         expect("snapshot" in result).toBe(false);
     });
 
+    it("yields through the platform scheduler with its required receiver", async () => {
+        const descriptor = Object.getOwnPropertyDescriptor(self, "scheduler");
+        const scheduler = {
+            postTask: jest.fn(function (this: unknown, callback: () => void): Promise<void> {
+                if (this !== scheduler) throw new TypeError("Illegal invocation");
+                return Promise.resolve().then(callback);
+            }),
+        };
+        Object.defineProperty(self, "scheduler", {
+            configurable: true,
+            value: scheduler,
+        });
+        try {
+            await expect(waitForInterruptibleMacrotask({ now: () => 0 }))
+                .resolves.toBe("yielded");
+            expect(scheduler.postTask).toHaveBeenCalledTimes(1);
+        } finally {
+            if (descriptor) Object.defineProperty(self, "scheduler", descriptor);
+            else Reflect.deleteProperty(self, "scheduler");
+        }
+    });
+
     it("interrupts a throttled macrotask immediately on parent abort and detaches its listener", async () => {
         const controller = new AbortController();
         const addListener = jest.spyOn(controller.signal, "addEventListener");

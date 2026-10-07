@@ -1,3 +1,4 @@
+import { getPlatformCrypto } from "../../platform-dom";
 import {
     OperationsValidationError,
     isCoreWriteToolName,
@@ -1489,5 +1490,5 @@ function safeError(error: unknown, fallback: string): string {
 }
 
 function defaultId(): string {
-    return globalThis.crypto?.randomUUID?.() ?? `operations-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return getPlatformCrypto()?.randomUUID?.() ?? `operations-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

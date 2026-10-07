@@ -1,4 +1,5 @@
 import { type ImageGenerationConnection } from '../ai-services/image-generation-connection';
+import { getPlatformCrypto } from '../platform-dom';
 import { WanImageProvider, WanImageProviderError, type WanImageTask } from '../ai-services/wan-image-provider';
 import { inspectImage } from './image-format';
 import { prepareWanImageInput } from './image-generation-input';
@@ -58,7 +59,7 @@ export interface ImageGenerationConversationDeletionBoundary {
 }
 
 function identity(): string {
-    return globalThis.crypto.randomUUID().replace(/-/g, '');
+    return getPlatformCrypto()!.randomUUID().replace(/-/g, '');
 }
 
 function sameStatusQueryTarget(previous: ImageGenerationTask, current: ImageGenerationTask): boolean {

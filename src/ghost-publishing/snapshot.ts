@@ -1,4 +1,5 @@
 import { stableStringify } from "../ai-services/agent-utils";
+import { getPlatformCrypto } from "../platform-dom";
 import type { GhostPost, GhostPostWrite, GhostVisibility } from "./client";
 import { ghostFieldsForCandidate } from "./fields";
 import { lexicalSemanticSignature, type LexicalContentIdentity } from "./lexical-content";
@@ -185,7 +186,7 @@ function comparable(content: GhostStoredContent, fields: GhostSnapshot["managedF
 
 export async function ghostPayloadHash(value: unknown): Promise<string> {
     const bytes = new TextEncoder().encode(stableStringify(value));
-    return Array.from(new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    return Array.from(new Uint8Array(await getPlatformCrypto()!.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /** Tag IDs assigned by Ghost do not change the intended ordered relationship. */

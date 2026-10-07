@@ -35,7 +35,7 @@ export const NOOP_DEBUG_OBSERVER: DebugObserver = new NoopDebugObserver();
 export class ConsoleDebugObserver implements DebugObserver {
     constructor(
         private readonly logger: (...args: unknown[]) => void = (...args) => {
-            const consoleLogger = globalThis.console;
+            const consoleLogger = console;
             if (typeof consoleLogger?.debug === "function") {
                 consoleLogger.debug(...args);
             }

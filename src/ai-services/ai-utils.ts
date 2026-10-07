@@ -411,7 +411,7 @@ export class AIUtils {
                         // Request objects / non-string bodies stay unknown; do not read
                         // or consume their streams just to obtain optional diagnostics.
                         try {
-                            const response = await traceProviderDispatch(() => globalThis.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled,
+                            const response = await traceProviderDispatch(() => self.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled,
                                 { call: providerRequestOptions.agentDebugCall, diagnostic: providerRequestOptions.onProviderRequestDiagnostic, signal });
                             if (!response.ok) providerRequestOptions.onProviderRequestFailed?.();
                             return response;
@@ -426,7 +426,7 @@ export class AIUtils {
                 // Request objects / non-string bodies stay unknown; do not read
                 // or consume their streams just to obtain optional diagnostics.
                 try {
-                    const request = traceProviderDispatch(() => globalThis.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled,
+                    const request = traceProviderDispatch(() => self.fetch(input, init), 'native', onProviderRequestTrace, init?.body, isProviderRequestTraceEnabled,
                         { call: providerRequestOptions.agentDebugCall, diagnostic: providerRequestOptions.onProviderRequestDiagnostic, signal });
                     void request.then(
                         response => { if (!response.ok) providerRequestOptions.onProviderRequestFailed?.(); },

@@ -8,6 +8,7 @@ import type {
 } from '../src/vss/sqlite-worker-protocol';
 
 type MockWorkerScope = {
+    crypto: Crypto;
     onmessage?: (event: MessageEvent<SqliteWorkerMessage>) => void;
     postMessage: jest.Mock<(response: SqliteWorkerResponse) => void>;
 };
@@ -53,6 +54,7 @@ describe('sqlite worker OPFS lifecycle', () => {
             installOpfsSAHPoolVfs,
         }));
         const workerScope: MockWorkerScope = {
+            crypto: globalThis.crypto,
             postMessage: jest.fn(),
         };
         Object.defineProperty(globalThis, 'self', {
@@ -120,6 +122,7 @@ describe('sqlite worker OPFS lifecycle', () => {
             installOpfsSAHPoolVfs,
         }));
         const workerScope: MockWorkerScope = {
+            crypto: globalThis.crypto,
             postMessage: jest.fn(),
         };
         Object.defineProperty(globalThis, 'self', {
@@ -219,6 +222,7 @@ describe('sqlite worker OPFS lifecycle', () => {
                 };
             });
             const workerScope: MockWorkerScope = {
+                crypto: globalThis.crypto,
                 postMessage: jest.fn(),
             };
             Object.defineProperty(globalThis, 'self', {
@@ -898,7 +902,7 @@ async function setupGraphRankingWorker(
             return db;
         }
     }
-    const workerScope: MockWorkerScope = { postMessage: jest.fn() };
+    const workerScope: MockWorkerScope = { crypto: globalThis.crypto, postMessage: jest.fn() };
     Object.defineProperty(globalThis, 'self', { configurable: true, value: workerScope });
     jest.doMock('@sqlite.org/sqlite-wasm', () => ({
         __esModule: true,

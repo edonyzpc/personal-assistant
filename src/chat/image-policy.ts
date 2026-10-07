@@ -1,3 +1,5 @@
+import { getPlatformCrypto } from '../platform-dom';
+
 /** Device-local media admission. Model limits may be stricter. */
 export const IMAGE_POLICY = Object.freeze({
     maxOriginalBytes: 20 * 1024 * 1024,
@@ -33,7 +35,7 @@ export function imagePolicyFingerprint(purpose: ImagePurpose): string {
 }
 
 export async function imageSourceHash(bytes: ArrayBuffer): Promise<string> {
-    return Array.from(new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', bytes)))
+    return Array.from(new Uint8Array(await getPlatformCrypto()!.subtle.digest('SHA-256', bytes)))
         .map((value) => value.toString(16).padStart(2, '0')).join('');
 }
 

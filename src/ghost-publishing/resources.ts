@@ -1,4 +1,5 @@
 import type { TaskSourceReadGuard } from "../ai-services/task-source-read-guard";
+import { getPlatformCrypto } from "../platform-dom";
 import type { GhostClient, GhostRequestGate } from "./client";
 import type { GhostStoredResource } from "./state-schema";
 import type { ExportResourcePlan, GhostPublishingSourceFile } from "./types";
@@ -178,7 +179,7 @@ async function prepareResource(plan: ExportResourcePlan, options: GhostResourceO
     if (!extension) fail("unsupported-image");
     let byteHash: string;
     try {
-        const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+        const digest = await getPlatformCrypto()!.subtle.digest("SHA-256", bytes);
         byteHash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
     } catch { assertCurrent(); return fail("hash-failed"); }
     assertCurrent();

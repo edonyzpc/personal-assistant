@@ -1,4 +1,5 @@
 import { stableHash } from "../pa/helpers";
+import { getPlatformCrypto } from "../platform-dom";
 import { buildGhostPublishingFields } from "./fields";
 import { buildRecipeInjection } from "./recipe";
 import { loadGhostSourceTree } from "./source-loader";
@@ -15,7 +16,7 @@ import type {
 
 async function sha256(value: string): Promise<string> {
     const bytes = new TextEncoder().encode(value);
-    const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+    const digest = await getPlatformCrypto()!.subtle.digest("SHA-256", bytes);
     return [...new Uint8Array(digest)]
         .map((byte) => byte.toString(16).padStart(2, "0"))
         .join("");

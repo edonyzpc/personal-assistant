@@ -19,7 +19,7 @@
  * whether you're in UTC, JST, or PT.
  */
 
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it, jest } from "@jest/globals";
 
 import {
     InMemoryRateLimitStorage,
@@ -314,15 +314,20 @@ describe("PageletRateLimiter.reserve (atomic check + commit)", () => {
         await expect(limiter.reserve()).resolves.toEqual({ ok: true });
     });
 
-    it("serializes separate hot-reload instances that share a persisted bucket", async () => {
+    it("shares reservation serialization across module reload and window focus changes", async () => {
         let releaseFirstLoad = (): void => undefined;
         const firstLoadGate = new Promise<void>((resolve) => { releaseFirstLoad = resolve; });
+        let notifyFirstLoad = (): void => undefined;
+        const firstLoadStarted = new Promise<void>((resolve) => { notifyFirstLoad = resolve; });
         let loadCount = 0;
         const cell: { persisted: PageletRateLimitState | null } = { persisted: null };
         const storage: PageletRateLimitStorage = {
             async load() {
                 loadCount += 1;
-                if (loadCount === 1) await firstLoadGate;
+                if (loadCount === 1) {
+                    notifyFirstLoad();
+                    await firstLoadGate;
+                }
                 return cell.persisted
                     ? { ...cell.persisted, hourlyTimestamps: [...cell.persisted.hourlyTimestamps] }
                     : null;
@@ -334,26 +339,45 @@ describe("PageletRateLimiter.reserve (atomic check + commit)", () => {
                 };
             },
         };
-        const makeLimiter = () => new PageletRateLimiter({
+        const options = {
             storage,
             coordinationKey: "vault:test:scope-recap",
             config: { hourlyCap: 1, dailyCap: 1 },
             now: () => 1_000,
             nextLocalMidnight: midnightAfter,
-        });
-        const oldInstance = makeLimiter();
-        const reloadedInstance = makeLimiter();
+        };
+        const originalActiveWindow = Object.getOwnPropertyDescriptor(globalThis, "activeWindow");
+        const pending: Promise<unknown>[] = [];
+        try {
+            Object.defineProperty(globalThis, "activeWindow", { configurable: true, value: {} });
+            const first = new PageletRateLimiter(options).reserve();
+            pending.push(first);
+            await firstLoadStarted;
 
-        const first = oldInstance.reserve();
-        const second = reloadedInstance.reserve();
-        releaseFirstLoad();
+            Object.defineProperty(globalThis, "activeWindow", { configurable: true, value: {} });
+            let ReloadedLimiter!: typeof PageletRateLimiter;
+            jest.isolateModules(() => {
+                ReloadedLimiter = require("../src/pagelet/pa-review-rate-limit").PageletRateLimiter;
+            });
+            expect(ReloadedLimiter).not.toBe(PageletRateLimiter);
+            const second = new ReloadedLimiter(options).reserve();
+            pending.push(second);
+            await Promise.resolve();
+            expect(loadCount).toBe(1);
+            releaseFirstLoad();
 
-        const decisions = await Promise.all([first, second]);
-        expect(decisions.filter((decision) => decision.ok)).toHaveLength(1);
-        expect(decisions.filter((decision) => !decision.ok)).toHaveLength(1);
-        expect(cell.persisted?.dailyCount).toBe(1);
-        expect(cell.persisted?.hourlyTimestamps).toHaveLength(1);
-        expect(loadCount).toBe(2);
+            const [firstDecision, secondDecision] = await Promise.all([first, second]);
+            expect(firstDecision).toEqual({ ok: true });
+            expect(secondDecision).toMatchObject({ ok: false, reason: "hr-cap" });
+            expect(cell.persisted?.dailyCount).toBe(1);
+            expect(cell.persisted?.hourlyTimestamps).toHaveLength(1);
+            expect(loadCount).toBe(2);
+        } finally {
+            releaseFirstLoad();
+            await Promise.allSettled(pending);
+            if (originalActiveWindow) Object.defineProperty(globalThis, "activeWindow", originalActiveWindow);
+            else Reflect.deleteProperty(globalThis, "activeWindow");
+        }
     });
 
     it("rejects the 11th reservation in a 1-hour window with hr-cap", async () => {

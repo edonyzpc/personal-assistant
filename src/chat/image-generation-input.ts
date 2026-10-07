@@ -84,7 +84,7 @@ function encodeBase64(bytes: ArrayBuffer): string {
     const chunks: string[] = [];
     // Each chunk length is divisible by three, so padding only appears once.
     for (let offset = 0; offset < values.length; offset += 24_576) {
-        chunks.push(globalThis.btoa(String.fromCharCode(...values.subarray(offset, offset + 24_576))));
+        chunks.push(self.btoa(String.fromCharCode(...values.subarray(offset, offset + 24_576))));
     }
     return chunks.join('');
 }

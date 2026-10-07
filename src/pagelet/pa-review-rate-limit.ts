@@ -402,7 +402,7 @@ export class PageletRateLimiter {
 const SHARED_RESERVE_TAILS_KEY = "__personalAssistantPageletRateLimitReserveTailsV1";
 
 function getSharedReserveTails(): Map<string, Promise<void>> {
-    const processGlobal = globalThis as typeof globalThis & {
+    const processGlobal = self as typeof self & {
         [SHARED_RESERVE_TAILS_KEY]?: Map<string, Promise<void>>;
     };
     processGlobal[SHARED_RESERVE_TAILS_KEY] ??= new Map<string, Promise<void>>();

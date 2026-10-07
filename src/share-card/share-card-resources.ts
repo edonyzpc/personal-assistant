@@ -691,7 +691,7 @@ function encodeArrayBufferBase64(arrayBuffer: ArrayBuffer): string {
         const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
         chunks.push(String.fromCharCode(...chunk));
     }
-    const encoder = typeof globalThis.btoa === "function" ? globalThis.btoa.bind(globalThis) : undefined;
+    const encoder = typeof self.btoa === "function" ? self.btoa.bind(self) : undefined;
     if (!encoder) {
         throw new ShareCardResourceError(
             "invalid-data-url",
@@ -774,7 +774,7 @@ function validateSvgElement(element: Element): void {
 }
 
 function validateSvgWithDomParser(markup: string): boolean {
-    const Parser = globalThis.DOMParser;
+    const Parser = self.DOMParser;
     if (typeof Parser !== "function") return false;
     const document = new Parser().parseFromString(markup, "image/svg+xml");
     if (
@@ -876,7 +876,7 @@ function decodeBase64Data(payload: string): Uint8Array {
     if (!/^[a-z0-9+/]*={0,2}$/i.test(normalized) || normalized.length % 4 === 1) {
         throw new ShareCardResourceError("invalid-data-url", "Invalid base64 image data URL.");
     }
-    const decoder = typeof globalThis.atob === "function" ? globalThis.atob.bind(globalThis) : undefined;
+    const decoder = typeof self.atob === "function" ? self.atob.bind(self) : undefined;
     if (!decoder) {
         throw new ShareCardResourceError(
             "invalid-data-url",

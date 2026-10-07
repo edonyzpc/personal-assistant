@@ -1790,7 +1790,7 @@ function advanceLexicalMaintenanceEpoch(kind: string, operationId?: string): num
 }
 
 function createLexicalMaintenanceOperationId(prefix: "lexinc" | "lexreb"): string {
-    const cryptoApi = globalThis.crypto;
+    const cryptoApi = ctx.crypto;
     if (typeof cryptoApi?.getRandomValues !== "function") {
         throw createWorkerError(
             "lexical-maintenance-random-unavailable",
@@ -1806,7 +1806,7 @@ async function createLexicalMaintenanceScopeBinding(
     operationId: string,
     paths: string[],
 ): Promise<string> {
-    const subtle = globalThis.crypto?.subtle;
+    const subtle = ctx.crypto?.subtle;
     if (!subtle || typeof subtle.digest !== "function") {
         throw createWorkerError(
             "lexical-maintenance-digest-unavailable",
@@ -1942,7 +1942,7 @@ function assertLexicalMaintenanceContinuity(
 }
 
 function createDatabaseInstanceId(): string | null {
-    const cryptoApi = globalThis.crypto as (Crypto & { randomUUID?: () => string }) | undefined;
+    const cryptoApi = ctx.crypto as (Crypto & { randomUUID?: () => string }) | undefined;
     if (typeof cryptoApi?.randomUUID === "function") {
         return cryptoApi.randomUUID();
     }

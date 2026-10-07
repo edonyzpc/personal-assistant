@@ -3,6 +3,7 @@ import { ghostContentFromPost, ghostManagedContentMatches, ghostManagedWrite, gh
 import type { GhostLocalOperation, GhostSnapshot, GhostStoredResource } from "./state-schema";
 import type { GhostPreviewStore } from "./state-store";
 import { ghostPreviewMarker } from "./markers";
+import { getPlatformCrypto } from "../platform-dom";
 
 type PublishingClient = Pick<GhostClient, "readPost" | "createDraft" | "updatePost" | "deleteDraft" | "uploadImage">;
 type PreviewStore = Pick<GhostPreviewStore, "read" | "write" | "remove">;
@@ -123,7 +124,7 @@ export class GhostPublishingService {
                 if (operation.noteKey === noteKey || knownId && operation.target.postId === knownId) this.invalidate(operation.operationId);
             }
             let operation: GhostLocalOperation = {
-                operationId: this.options.newId?.() ?? globalThis.crypto.randomUUID(), revision: 0,
+                operationId: this.options.newId?.() ?? getPlatformCrypto()!.randomUUID(), revision: 0,
                 siteId: this.options.siteId, site: this.options.site, noteKey, sourcePostId: postId,
                 kind: knownId ? "update" : "create", state: "preparing", executionState: "not_started",
                 target: knownId ? { postId: knownId } : {}, updatedAt: this.now(),

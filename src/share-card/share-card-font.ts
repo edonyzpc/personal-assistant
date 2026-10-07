@@ -86,7 +86,7 @@ function createDocumentFontState(doc: Document): DocumentFontState {
     };
     state.loading = (async () => {
         const url = await loadShareCardFont();
-        const FontFaceCtor = doc.defaultView?.FontFace ?? globalThis.FontFace;
+        const FontFaceCtor = doc.defaultView?.FontFace ?? self.FontFace;
         if (typeof FontFaceCtor !== "function") {
             throw new Error("FontFace API is unavailable for Share Card rendering.");
         }

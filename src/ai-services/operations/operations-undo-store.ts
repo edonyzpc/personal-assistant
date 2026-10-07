@@ -1,3 +1,4 @@
+import { getPlatformCrypto } from "../../platform-dom";
 import type { CoreWriteToolName, UndoReceipt } from "./types";
 
 export const DEFAULT_UNDO_TTL_MS = 30 * 60 * 1_000;
@@ -100,5 +101,5 @@ export class OperationsUndoStore {
 }
 
 function defaultId(): string {
-    return globalThis.crypto?.randomUUID?.() ?? `undo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return getPlatformCrypto()?.randomUUID?.() ?? `undo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

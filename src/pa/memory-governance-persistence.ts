@@ -2236,7 +2236,7 @@ function getBroadcastChannelName(dbName: string): string {
 }
 
 function getDefaultBroadcastChannelFactory(): MemoryGovernanceBroadcastChannelFactory | null {
-    const ctor = (globalThis as typeof globalThis & {
+    const ctor = (self as typeof self & {
         BroadcastChannel?: new (name: string) => MemoryGovernanceBroadcastChannel;
     }).BroadcastChannel;
     return typeof ctor === "function" ? (name) => new ctor(name) : null;

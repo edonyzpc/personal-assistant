@@ -31,6 +31,7 @@ import { RETRIEVAL_CALIBRATION_PROFILE } from "../src/vss/retrieval-calibration"
 // ---------------------------------------------------------------------------
 
 type MockWorkerScope = {
+    crypto: Crypto;
     onmessage?: (event: MessageEvent<SqliteWorkerRequest>) => void;
     postMessage: jest.Mock<(response: SqliteWorkerResponse) => void>;
 };
@@ -789,7 +790,7 @@ function createInMemoryMockDb() {
 }
 
 function setupWorkerScope(): MockWorkerScope {
-    return { postMessage: jest.fn() };
+    return { crypto: globalThis.crypto, postMessage: jest.fn() };
 }
 
 async function initializeWorker(

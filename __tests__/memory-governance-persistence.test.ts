@@ -11,6 +11,7 @@ import {
     normalizeDeviceMemoryGovernanceStateV1,
     validateDeviceMemoryGovernanceStateV1,
     type DeviceMemoryGovernanceStateV1,
+    type MemoryGovernanceBroadcastChannel,
 } from "../src/pa/memory-governance-persistence";
 
 describe("Memory governance V1 state", () => {
@@ -305,6 +306,49 @@ describe("InMemoryMemoryGovernanceRepository", () => {
 });
 
 describe("IndexedDbMemoryGovernanceRepository", () => {
+    it("keeps default commit channels in the execution realm when focus changes", async () => {
+        const originalConstructor = Object.getOwnPropertyDescriptor(globalThis, "BroadcastChannel");
+        const originalActiveWindow = Object.getOwnPropertyDescriptor(globalThis, "activeWindow");
+        const channels: Array<MemoryGovernanceBroadcastChannel & { close: jest.Mock }> = [];
+        const stableConstructor = jest.fn((_name: string) => {
+            const channel = { onmessage: null, postMessage: jest.fn(), close: jest.fn() };
+            channels.push(channel);
+            return channel;
+        });
+        const firstFocusedConstructor = jest.fn();
+        const secondFocusedConstructor = jest.fn();
+        const repositories: IndexedDbMemoryGovernanceRepository[] = [];
+        const dbName = "memory-governance-execution-realm-test";
+        const factory = new FakeGovernanceIndexedDbFactory();
+        try {
+            Object.defineProperty(globalThis, "BroadcastChannel", { configurable: true, value: stableConstructor });
+            for (const focusedConstructor of [firstFocusedConstructor, secondFocusedConstructor]) {
+                Object.defineProperty(globalThis, "activeWindow", {
+                    configurable: true, value: { BroadcastChannel: focusedConstructor },
+                });
+                const repository = new IndexedDbMemoryGovernanceRepository(dbName, factory as unknown as IDBFactory);
+                repositories.push(repository);
+                await repository.initialize();
+            }
+            expect(stableConstructor).toHaveBeenCalledTimes(2);
+            expect(stableConstructor).toHaveBeenNthCalledWith(1, `${dbName}:commits`);
+            expect(stableConstructor).toHaveBeenNthCalledWith(2, `${dbName}:commits`);
+            expect(firstFocusedConstructor).not.toHaveBeenCalled();
+            expect(secondFocusedConstructor).not.toHaveBeenCalled();
+            await Promise.all(repositories.map(repository => repository.dispose()));
+            for (const channel of channels) {
+                expect(channel.onmessage).toBeNull();
+                expect(channel.close).toHaveBeenCalledTimes(1);
+            }
+        } finally {
+            await Promise.all(repositories.map(repository => repository.dispose()));
+            if (originalConstructor) Object.defineProperty(globalThis, "BroadcastChannel", originalConstructor);
+            else Reflect.deleteProperty(globalThis, "BroadcastChannel");
+            if (originalActiveWindow) Object.defineProperty(globalThis, "activeWindow", originalActiveWindow);
+            else Reflect.deleteProperty(globalThis, "activeWindow");
+        }
+    });
+
     it.each([1, 2] as const)('does not strip an unsupported receipt during V%s upgrade', async (oldVersion) => {
         const factory = new FakeGovernanceIndexedDbFactory();
         seedLegacyFactory(factory, createReceiptState());

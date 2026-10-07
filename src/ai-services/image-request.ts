@@ -308,7 +308,7 @@ async function jpegDataUrl(blob: Blob, signal?: AbortSignal): Promise<string> {
     const chunks: string[] = [];
     // A multiple of three lets us join independently encoded bounded chunks.
     for (let offset = 0; offset < bytes.length; offset += 24_576) {
-        chunks.push(globalThis.btoa(String.fromCharCode(...bytes.subarray(offset, offset + 24_576))));
+        chunks.push(self.btoa(String.fromCharCode(...bytes.subarray(offset, offset + 24_576))));
     }
     return `data:image/jpeg;base64,${chunks.join("")}`;
 }
