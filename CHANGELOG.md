@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.6](https://github.com/edonyzpc/personal-assistant/compare/2.10.5...2.10.6) (2026-10-08)
+
+### Features
+- chat: show message actions on hover and mobile long press
+
+### Fix
+- ghost: improve cover support and metadata failure reporting
+- ghost: complete draft metadata and preview handling
+- ghost: preserve saved draft receipts in chat
+- share-card: apply selected Xerox ink parameters
+- ghost: retain saved attention receipts across observation changes
+
+### Docs
+- release: remove stable source preview and define recovery
+
+### Tests
+- consolidate redundant coverage and streamline offline probes
+
 ## [2.10.5](https://github.com/edonyzpc/personal-assistant/compare/2.10.4...2.10.5) (2026-10-07)
 
 ### Fix
