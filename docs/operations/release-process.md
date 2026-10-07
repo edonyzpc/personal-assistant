@@ -272,11 +272,18 @@ Starting with version `2.8.0`, release notes for license and compliance releases
 
 ### Stable Release: Official Recognition
 
+Stable releases do not run a hosted source `Preview`, either as a mandatory
+gate or an optional diagnostic step. Release automation retains its local source
+validation, eligible exact-master CI reuse, final tag build and artifact checks.
+The Community review occurs after GitHub publication. This saves the duplicate
+source scan but means hosted-only defects may require a subsequent patch release.
+
 Complete a stable publication in this order:
 
-1. Pass the hosted `Preview` scan for the exact accepted source commit before
-   creating the local release. This is the source gate used by
-   [stable-release](../../.agents/skills/stable-release/SKILL.md).
+1. From verified, synchronized `master`, run the dry run and create the local
+   release through [stable-release](../../.agents/skills/stable-release/SKILL.md)
+   and `make release VERSION=<target-version>` within authorized scope. Let the
+   automation own validation and eligible evidence reuse.
 2. Publish the bare version tag, wait for the release workflow to succeed, and
    verify the non-draft, non-prerelease GitHub Release, the six canonical assets
    above, and the downloaded `manifest.json` version.
@@ -297,8 +304,7 @@ Complete a stable publication in this order:
 A matching `Failed` review or any `Error` requires diagnosis; do not repeatedly
 submit the same release to bypass the result.
 
-A successful source preview does not make the official service discover a new
-GitHub Release. Clicking the button or seeing `Pending` proves only submission,
+Clicking the button or seeing `Pending` proves only submission,
 not completion. Report GitHub publication and official recognition separately;
 claim the stable release flow complete only after both are verified. Official
 recognition does not itself prove installation or update delivery to a user's
@@ -351,4 +357,14 @@ Key constraints:
 - If GitHub publication succeeded but official stable recognition is missing,
   resume [official release recognition](#stable-release-official-recognition)
   for the existing release; do not rerun release preparation.
+- If the post-publication Community review reports a confirmed code defect,
+  repair and validate it on `master`, then run the stable flow for a new higher
+  patch version within authorized scope. The earlier GitHub Release is already
+  public: preserve its assets and tag, and report official recognition as blocked.
+  Do not overwrite assets, reuse the version or delete/move its tag. A new version
+  or publication outside the user's authorized scope needs explicit approval.
+- For a suspected false positive or scanner/environment failure, diagnose before
+  changing code or resubmitting. Retry only with new evidence or changed inputs.
+  `Pending`, discovery delays and login/network failures resume the existing
+  release review; they do not require a new release or a source `Preview`.
 - If a tag was created incorrectly, do not delete or retag without an explicit maintainer decision.

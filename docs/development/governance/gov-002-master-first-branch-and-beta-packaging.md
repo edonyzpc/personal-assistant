@@ -70,6 +70,10 @@ contract 的同会话工程维护入口，不创建新的产品或跨会话过�
 2026-10-06，用户根据 2.10.2 重复执行源码 CI、本地完整门禁、包装 master CI 和 tag CI
 的事实授权扩展至 stable preparation/tag 与纯包装 master push。复用既有证据判定，
 保留最终版本构建与资产检查；此同会话维护不创建新的跨会话过程包。
+2026-10-07，用户在比较两次 Community 扫描后授权进一步简化 stable 流程：取消
+发布前源码 `Preview`，包括按需分支，只保留 GitHub 发布后的 release review 与官方
+识别。保留 source/CI、最终 tag 构建与产物验证；接受 hosted-only 问题可能在 GitHub
+发布后才发现、修复时需要新补丁版本的取舍。独立明确请求的 Preview 不属于正式发布流程。
 
 - B-117/REQ-07: beta/stable 本地 preparation 默认查询 origin 所属 GitHub 仓库的
   `.github/workflows/ci.yml`，只复用与干净 checkout、local master 和实时
@@ -99,8 +103,13 @@ contract 的同会话工程维护入口，不创建新的产品或跨会话过�
   stable 还须核实 Obsidian 官方版本识别：GitHub 正式 Release 可访问后，通过
   authenticated account 页复用目标 release check，缺失时点击 `Check for new releases`；
   要求目标 `Version` 与 tag commit 匹配、`Completed` 且无 `Error`、`Current release`
-  为目标版本且缺失 release 的 banner 消失。源码 `Preview` 与 GitHub 发布不能代替
-  官方识别证据；pending/blocked 时分别报告已发布与未完成识别，恢复时不重新发版。
+  为目标版本且缺失 release 的 banner 消失。stable preparation、publication 与 recovery
+  均不执行源码 `Preview`；GitHub 发布不能代替官方识别证据。pending、发现延迟或登录/
+  网络受阻时分别报告已发布与未完成识别，恢复原版本识别，不重新发版。发布后确认的
+  Community 代码缺陷先修复并验证于 `master`，再在用户授权版本与发布范围内执行新的
+  更高 patch 版本流程；保留已发布 Release、资产与 tag，不覆盖、不复用版本或改写 tag。
+  疑似误报、scanner/environment 故障先诊断，只在有新证据或输入变化时重试；未解决
+  的 Community `Error` 仍阻断官方识别完成与后续发布。
 - B-117/REQ-11: 正常仅包装 beta 不重复部署或 Obsidian/BRAT 功能 smoke。只有安装/
   资产布局、插件 ID、platform 能力变化，具体下载/加载/升级故障或明确要求时，才做
   对应安装、app 或设备验证；新增功能修复先回到 master 的功能验收。只有从已发布

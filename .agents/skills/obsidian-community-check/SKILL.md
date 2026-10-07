@@ -20,6 +20,10 @@ description: Trigger and inspect Obsidian Community checks for personal-assistan
   [Stable Release Recognition](#stable-release-recognition). A completed
   `Preview` is not official release recognition, even if its ref is a tag.
 
+The stable release workflow uses only `release` mode after GitHub publication.
+Do not add a mandatory or optional `preview` to stable preparation, publication
+or recovery. Preview remains available for a separately requested source scan.
+
 The project review form is:
 
 ```text
@@ -127,7 +131,7 @@ for the canonical publication and asset checks. Use this mode only after the
 target's release workflow and non-draft, non-prerelease GitHub Release have
 been verified, including the canonical assets and downloaded manifest version.
 Reuse their successful evidence; resolve the published tag's commit, not its
-annotated tag-object SHA or the source parent scanned before packaging.
+annotated tag-object SHA or the source parent before packaging.
 
 1. Open the authenticated Personal Assistant account page:
 
@@ -162,6 +166,12 @@ or source preview completion alone is insufficient. Report GitHub publication
 separately when recognition is pending or blocked, retain the handoff page,
 and resume this check without republishing or changing the tag. Hosted
 recognition does not prove client installation or update delivery.
+
+For a confirmed code defect after publication, follow the runbook's
+[Recovery](../../../docs/operations/release-process.md#recovery): fix on `master`
+and use a new higher patch release within authorized scope. Preserve the existing
+release and tag. A pending check or unavailable login/network access only needs
+resumption of this existing release's recognition.
 
 ## Short-Batch Polling
 

@@ -19,8 +19,8 @@ Classify the current request before changing state:
 
 - `prepare`: inspect state and show the dry run. Do not create a release commit
   or tag, push anything, create a GitHub Release, or submit a hosted community
-  scan unless the user explicitly requested that scan.
-- `local-release`: prepare, pass the hosted community gate, then create the
+  review.
+- `local-release`: prepare, then let release automation validate and create the
   local release commit and annotated tag. Do not push.
 - `publish`: complete the local release when needed, push `master` and the tag,
   wait for the workflow, verify the GitHub Release, then verify official
@@ -46,8 +46,8 @@ because the dry run finished. Ask before mutation only when:
 - Never publish without explicit publish intent in the current turn.
 - Never delete, rewrite, or move release tags without an explicit maintainer
   decision.
-- Stop on failed validation, hosted community `Error`, or workflow failure.
-  Report the evidence; do not bypass the gate.
+- Stop on failed validation, unresolved hosted community `Error`, or workflow
+  failure. Report the evidence; do not bypass the gate.
 - Preserve unrelated user changes. Do not stash, clean, switch branches, or
   reconcile divergence without authorization.
 
@@ -70,10 +70,10 @@ Stop if the worktree is dirty or the branch is not `master`.
 Resolve one of these states:
 
 - Fresh source state: the target is greater than `package.json`, its tag does
-  not exist, and `HEAD` equals `origin/master`. Use `HEAD` as `source_head`.
+  not exist, and `HEAD` equals `origin/master`.
 - Existing local-release state: `package.json` equals the target, the target tag
-  points to `HEAD`, and `HEAD^` equals `origin/master`. Use `HEAD^` as
-  `source_head`; do not recreate the release commit.
+  points to `HEAD`, and `HEAD^` equals `origin/master`. Do not recreate the
+  release commit.
 
 Stop on any other local/remote or version/tag relationship and ask the user how
 to reconcile it. If no version was supplied, use the read-only changelog preview
@@ -83,7 +83,7 @@ to propose one, then obtain approval before changing release state:
 node scripts/changelog.mjs --target-version <candidate>
 ```
 
-## Preview Fresh Releases
+## Dry Run Fresh Releases
 
 For a fresh source state, always run:
 
@@ -97,20 +97,16 @@ generated section. Continue directly when they match an already-authorized
 cannot be dry-run again with the same version; validate its release commit and
 tag instead.
 
-## Hosted Community Gate
+## Community Review Policy
 
-Before `local-release` or `publish`, use `obsidian-community-check` to trigger or
-inspect the hosted scan for the exact `source_head` commit.
+Stable preparation and publication do not run a hosted source `Preview`,
+including an optional preview. Release automation retains source validation,
+eligible CI reuse and final tag/asset checks. Use `obsidian-community-check`
+only in `release` mode after GitHub publication, as described below.
 
-Verify all of the following:
-
-- `source_head` equals `origin/master`.
-- The hosted result reports the same commit SHA as `source_head`.
-- The scan completed successfully and contains no `Error` findings.
-
-Wait for a pending matching scan. Treat `Error` or `Failed` as a blocker. Do not
-reuse a result for another commit. For `prepare`, only report this as a remaining
-gate unless the user explicitly asked to submit the hosted scan.
+Hosted-only defects may therefore be discovered after GitHub publication.
+Diagnose them and follow the recovery section; do not claim official recognition
+while an `Error` remains unresolved.
 
 ## Create Local Release
 
@@ -131,16 +127,8 @@ Do not prepend another full gate to the automated evidence lookup. Full lifecycl
 `docs:check` findings are reported separately and do not block publication.
 
 Trust the successful release command's version, commit/tag and worktree checks.
-Retain the one association it cannot prove: the release commit's parent must
-equal the hosted Community scan's recorded `source_head`:
-
-```bash
-git rev-parse HEAD^
-```
-
-Stop if that parent differs from the scanned `source_head`; a scan of another
-commit is not evidence for this release. Recheck other state only after a
-concurrent change, an ambiguous command result or a concrete failure.
+Recheck state only after a concurrent change, an ambiguous command result or a
+concrete failure.
 
 Stop here for `local-release`.
 
@@ -180,8 +168,7 @@ Reuse a matching completed or pending release review. Otherwise click
 Stop and diagnose a matching `Failed` review or `Error` before resubmission.
 Require a release row with `Version: <target-version>`, the published tag's
 commit, `Completed`, and no `Error`; also require `Current release` to show the
-target version and the missing-release banner to be absent. The pre-publication
-source `Preview` is separate evidence and cannot satisfy this step.
+target version and the missing-release banner to be absent.
 
 Report GitHub publication and official recognition separately. Do not claim
 the stable release flow complete after the button click or while recognition
@@ -189,11 +176,27 @@ is `Pending`/`BLOCKED`. Keep a blocked account page available for handoff and
 resume recognition for the existing release; do not recreate, repush or retag.
 Do not claim client installation or update delivery from hosted recognition.
 
+## Recover And Resume
+
+Before GitHub publication, diagnose a failed gate, fix its cause and resume the
+affected step using the runbook's recovery procedure. Revalidate changed inputs
+through release automation; reuse still-valid evidence.
+
+After publication, a confirmed Community code defect requires a fix on `master`
+and a new higher patch release through this flow. Preserve the published release,
+assets and tag; do not overwrite, delete or retag them. Keep the new version and
+publication within the user's authorized scope; a different target outside that
+scope requires approval.
+
+For `Pending`, discovery delays or unavailable login/network access, resume
+recognition for the existing release. For suspected scanner/environment failures
+or false positives, diagnose first; rerun only with new evidence or changed inputs.
+Do not add a source `Preview` to recovery or repeatedly resubmit unchanged reviews.
+
 ## Related Skills
 
 - Use `pa-brat-beta-release` for BRAT prereleases.
 - Use `personal-assistant-review` for code-level release readiness.
-- Use `obsidian-community-check` for the source preview gate and post-publication
-  official release recognition.
+- Use `obsidian-community-check` for post-publication official release recognition.
 - Use `obsidian-test-vault-smoke` for app smoke evidence.
 - Use `obsidian-ios-real-device-smoke` for real-device iOS evidence.
