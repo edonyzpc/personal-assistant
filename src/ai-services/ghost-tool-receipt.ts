@@ -1,6 +1,8 @@
+import type { ChatToolResult } from "./chat-types";
+
 /** Closed, source-free text shared by the tool and its history admission readers. */
 export const GHOST_PREPARATION_MESSAGES = {
-    prepared: "A draft or update preview is saved. Open its publishing card to review and choose the human publishing action.",
+    prepared: "A draft or update preview is saved. Preparation is complete. Open its publishing card to review, then publish a draft in Ghost or confirm a published article's update in PA. This does not confirm publication. Do not repeat preparation just to verify this result.",
     outcome_unknown: "The preparation result needs verification in its publishing card. Do not repeat the request or claim it is published.",
     saved_attention: "The Ghost content was saved, but a follow-up step needs attention. Use the saved article shown in the card; do not create another draft.",
     failed_attention: "Preparation did not finish. Read the publishing card for the specific failure and advice; publication has not been confirmed.",
@@ -16,6 +18,7 @@ export const GHOST_METADATA_FAILURE_MESSAGES = {
 
 export type GhostMetadataFailureReason = keyof typeof GHOST_METADATA_FAILURE_MESSAGES;
 
+const LEGACY_PREPARED_MESSAGE = "A draft or update preview is saved. Open its publishing card to review and choose the human publishing action.";
 const LEGACY_METADATA_FAILURE_MESSAGES: Partial<Record<GhostMetadataFailureReason, string>> = {
     "metadata-unavailable": "Article metadata preparation is unavailable. No Ghost post or image writes were started. Check the text AI settings or fill in the missing summary, SEO description, and slug. This result does not diagnose Ghost authentication or site configuration.",
     "metadata-invalid": "The article or required metadata is invalid for preparation. No Ghost post or image writes were started. Check the article and its summary, SEO description, and slug. This result does not diagnose Ghost authentication or site configuration.",
@@ -48,5 +51,25 @@ export function isGhostPreparationMessage(status: unknown, executionState: unkno
     const reason = ghostMetadataFailureReason(failureReason);
     const legacy = reason ? LEGACY_METADATA_FAILURE_MESSAGES[reason] : undefined;
     return current !== undefined && (message === current
+        || status === "prepared" && executionState === "succeeded" && failureReason === undefined && message === LEGACY_PREPARED_MESSAGE
         || legacy !== undefined && message === legacy);
+}
+
+/** Only this closed owner receipt can outlive source observation freshness. */
+export function isGhostPreparationResult(result: ChatToolResult<unknown>): boolean {
+    const allowed = ["ok", "tool", "inputSummary", "content", "sources", "sourceRecords", "resultFact", "executionState"];
+    const record = result as unknown as Record<string, unknown>;
+    if (Object.keys(result).some(key => record[key] !== undefined && !allowed.includes(key))
+        || result.ok !== true || result.tool !== "prepare_ghost_post" || result.inputSummary !== "prepare"
+        || result.executionState !== "succeeded" || !Array.isArray(result.sources) || result.sources.length !== 0
+        || result.sourceRecords !== undefined && (!Array.isArray(result.sourceRecords) || result.sourceRecords.length !== 0)) return false;
+    const content = result.content;
+    if (!content || typeof content !== "object" || Array.isArray(content)) return false;
+    const value = content as Record<string, unknown>;
+    if (Object.keys(value).length !== 3 || Object.keys(value).some(key => !["status", "operationId", "message"].includes(key))
+        || value.status !== "prepared" || typeof value.operationId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value.operationId)
+        || !isGhostPreparationMessage(value.status, result.executionState, value.message)) return false;
+    const fact = result.resultFact;
+    return fact?.kind === "approval_pending" && fact.intentId === value.operationId
+        && Object.keys(fact).length === 2;
 }

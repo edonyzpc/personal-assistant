@@ -13,7 +13,7 @@ import {
     type CapabilityProvider,
 } from "../src/ai-services/capability-types";
 import { createCoreToolCapabilities, createChatToolCapability } from "../src/ai-services/capability-adapter";
-import { createReadNoteTool } from '../src/ai-services/chat-tool-factories';
+import { createPrepareGhostPostTool, createReadNoteTool } from '../src/ai-services/chat-tool-factories';
 import { createPaAgentHostPolicy } from '../src/ai-services/pa-agent-host-policy';
 import {
     createCurrentNoteContextTool,
@@ -61,6 +61,7 @@ import { ChatMemoryRecoveryCoordinator } from "../src/ai-services/retrieval-reco
 import { createProviderRequestScope } from "../src/ai-services/obsidian-fetch";
 import { MemorySearchTool } from "../src/ai-services/memory-search-tool";
 import type { TaskSourceReadGuard } from "../src/ai-services/task-source-read-guard";
+import { GHOST_PREPARATION_MESSAGES } from "../src/ai-services/ghost-tool-receipt";
 
 jest.mock("obsidian");
 
@@ -176,6 +177,145 @@ describe('ordinary read-tool dispatch freshness', () => {
         expect(second?.promptText).toContain('REPLACED BRAVO');
         expect(second?.promptText).not.toContain('ORIGINAL ALPHA');
         expect(second?.metadata?.outcome).toBe('success');
+    });
+});
+
+describe('Ghost source-free preparation receipt freshness', () => {
+    function fixture() {
+        const state = { observationCurrent: true, authorityCurrent: true };
+        const authorityGuard: TaskSourceReadGuard = {
+            isCurrent: () => state.authorityCurrent,
+            isPathAllowed: path => state.authorityCurrent && path === 'notes/Ghost.md',
+            isNoteDomainAllowed: () => state.authorityCurrent,
+            captureSourceValidity: () => () => state.authorityCurrent,
+        };
+        const guard: TaskSourceReadGuard = {
+            isCurrent: () => state.observationCurrent && state.authorityCurrent,
+            isPathAllowed: path => state.observationCurrent && state.authorityCurrent && path === 'notes/Ghost.md',
+            isNoteDomainAllowed: () => state.observationCurrent && state.authorityCurrent,
+            captureAuthorityGuard: jest.fn(() => authorityGuard),
+            captureSourceAuthority: () => () => state.authorityCurrent,
+        };
+        const receipt = { status: 'prepared', operationId: 'ghost-operation', executionState: 'succeeded' } as const;
+        const submit = jest.fn(async () => {
+            state.observationCurrent = false;
+            return receipt;
+        });
+        const registry = new CapabilityRegistry();
+        const capability = createChatToolCapability(createPrepareGhostPostTool({
+            conversationId: 'ghost-conversation', stableMessageId: 'ghost-message', submit,
+        }), { providerId: 'chat-ghost-publishing', platform: 'desktop' });
+        capability.executionMode = 'sequential';
+        registry.register(capability);
+        const executor = createPaAgentCapabilityToolExecutor({ registry, host: { settings: {}, log: jest.fn() } as never });
+        const controller = new AbortController();
+        const input = {
+            runId: 'ghost-run', turnId: 'ghost-turn', turnIndex: 0, userInput: '@blog2ghost notes/Ghost.md',
+            toolCall: { type: 'toolCall' as const, id: 'ghost-call', index: 0, name: 'prepare_ghost_post',
+                input: { intent: 'prepare', path: 'notes/Ghost.md' } },
+            signal: controller.signal, taskSourceReadGuard: guard,
+        };
+        return { state, guard, authorityGuard, submit, receipt, registry, executor, controller, input };
+    }
+
+    it('keeps the saved receipt through the real dispatcher after only its observation epoch expires', async () => {
+        const f = fixture();
+        const dispatcher = new ToolExecutionDispatcher({
+            toolExecutor: { ...f.executor, preflightBatch: () => ({ kind: 'admitted' as const, taskSourceReadGuard: f.guard }) },
+            toolExecutionMode: 'hybrid', runId: f.input.runId, userInput: f.input.userInput,
+            toolTimeoutMs: 1000, toolTimeoutOutcome: 'recoverable_error', toolAbortGraceMs: 1,
+            maxToolCalls: 20, now: () => 1, isAborted: () => false, isWallClockExceeded: () => false,
+            wallClockRemainingMs: () => 1000,
+            events: new AgentLifecycleEventEmitter({ runId: f.input.runId, now: () => 1 }),
+            emitToolResult: (_turn, call, result) => ({ role: 'toolResult', id: `result-${call.id}`,
+                toolCallId: call.id, toolName: call.name, timestamp: 1, isError: result.outcome !== 'success',
+                content: { ...result, includeInNextPrompt: result.includeInNextPrompt ?? true },
+            }) as Extract<PaAgentMessage, { role: 'toolResult' }>,
+        });
+        const summary = await dispatcher.executeBufferedToolCalls(f.input.turnId, 0, [{
+            key: 'ghost-call', id: 'ghost-call', name: 'prepare_ghost_post', index: 0, partIndex: 0,
+            argsText: JSON.stringify(f.input.toolCall.input), hasStructuredInput: false,
+        }], undefined, undefined);
+        const result = summary.toolResults[0]?.content;
+        expect(f.state.observationCurrent).toBe(false);
+        expect(f.state.authorityCurrent).toBe(true);
+        expect(f.submit).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({ outcome: 'success', executionState: 'succeeded',
+            resultFact: { kind: 'approval_pending', intentId: 'ghost-operation' }, sourceRecords: [] });
+        expect(JSON.parse(result!.promptText)).toMatchObject({ observation: {
+            status: 'prepared', operationId: 'ghost-operation', message: GHOST_PREPARATION_MESSAGES.prepared,
+        } });
+        expect(result?.metadata?.reason).not.toBe('task_source_changed_after_execution');
+    });
+
+    it('retains the original pre-invocation source guard', async () => {
+        const f = fixture();
+        f.state.observationCurrent = false;
+        await expect(f.executor.execute(f.input)).rejects.toThrow('Task source scope is no longer current.');
+        expect(f.submit).not.toHaveBeenCalled();
+        expect(f.guard.captureAuthorityGuard).not.toHaveBeenCalled();
+    });
+
+    it('rejects a saved receipt after real source authority is revoked', async () => {
+        const f = fixture();
+        f.submit.mockImplementationOnce(async () => {
+            f.state.observationCurrent = false;
+            f.state.authorityCurrent = false;
+            return f.receipt;
+        });
+        await expect(f.executor.execute(f.input)).rejects.toThrow('Task source scope is no longer current.');
+        expect(f.submit).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the original freshness check when no authority guard can be captured', async () => {
+        const f = fixture();
+        delete f.guard.captureAuthorityGuard;
+        await expect(f.executor.execute(f.input)).rejects.toThrow('Task source scope is no longer current.');
+        expect(f.submit).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not deliver a saved receipt after cancellation', async () => {
+        const f = fixture();
+        f.submit.mockImplementationOnce(async () => {
+            f.state.observationCurrent = false;
+            f.controller.abort();
+            return f.receipt;
+        });
+        await expect(f.executor.execute(f.input)).rejects.toMatchObject({ name: 'AbortError' });
+        expect(f.submit).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['body', 'source', 'message', 'fact', 'recovery'] as const)(
+        'keeps epoch protection when a Ghost result contains an unclosed %s field', async mutation => {
+            const f = fixture();
+            const execute = f.registry.execute.bind(f.registry);
+            jest.spyOn(f.registry, 'execute').mockImplementation(async (...args) => {
+                const result = await execute(...args);
+                if (mutation === 'body') result.content = { ...(result.content as object), body: 'PRIVATE_NOTE_BODY' };
+                if (mutation === 'source') result.sources = [{ path: 'notes/Ghost.md' }];
+                if (mutation === 'message') result.content = { ...(result.content as object), message: 'PRIVATE_NOTE_BODY' };
+                if (mutation === 'fact') result.resultFact = { kind: 'approval_pending', intentId: 'different-operation' };
+                if (mutation === 'recovery') result.recovery = { code: 'unverified', allowedActions: ['needs_user'] };
+                return result;
+            });
+            await expect(f.executor.execute(f.input)).rejects.toThrow('Task source scope is no longer current.');
+            expect(f.submit).toHaveBeenCalledTimes(1);
+        },
+    );
+
+    it('does not use Ghost authority freshness for an ordinary note body', async () => {
+        const f = fixture();
+        const note = { path: 'notes/Ghost.md', extension: 'md', stat: { mtime: 1, size: 17 } };
+        const host = { settings: {}, log: jest.fn(), app: { vault: {
+            getAbstractFileByPath: () => note, getMarkdownFiles: () => [note],
+            cachedRead: async () => { f.state.observationCurrent = false; return 'PRIVATE_NOTE_BODY'; },
+        } } };
+        f.registry.register(createChatToolCapability(createReadNoteTool(), { providerId: 'core-tools' }));
+        const executor = createPaAgentCapabilityToolExecutor({ registry: f.registry, host: host as never });
+        await expect(executor.execute({ ...f.input,
+            toolCall: { ...f.input.toolCall, name: 'read_note', input: { path: note.path } },
+        })).rejects.toThrow('Task source scope is no longer current.');
+        expect(f.guard.captureAuthorityGuard).not.toHaveBeenCalled();
     });
 });
 

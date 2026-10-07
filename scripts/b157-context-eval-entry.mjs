@@ -500,6 +500,7 @@ export function recordingGhostRuntime(appInstance, record, options = {}) {
   const client = {
     readPost: async (id, gate) => { await send('read', gate); const post = remote.get(id);
       if (!post) throw new GhostClientError('post-not-found', 'failed', 404); return copy(post); },
+    listTags: async gate => { await send('read-tags', gate); return []; },
     createDraft: async (fields, gate) => {
       await send('create', gate, fields);
       const id = (++ordinal).toString(16).padStart(24, '0');
@@ -535,7 +536,12 @@ export function recordingGhostRuntime(appInstance, record, options = {}) {
     getConnectionIdentity: () => 'b157-recording-connection', getProfile: () => profile,
     getSourceRevision: path => appInstance.vault.getAbstractFileByPath(path)?.stat?.mtime ?? 0,
     defaultVisibility: 'public', signal,
-    generateMetadata: async () => ({ customExcerpt: 'Synthetic B157 article.', metaDescription: 'Synthetic B157 article.', slug: `b157-${ordinal}` }),
+    generateMetadata: async ({ needed }) => ({
+      ...(needed.customExcerpt ? { customExcerpt: 'Synthetic B157 article.' } : {}),
+      ...(needed.metaDescription ? { metaDescription: 'Synthetic B157 article.' } : {}),
+      ...(needed.slug ? { slug: `b157-${ordinal}` } : {}),
+      ...(needed.tags ? { tags: ['合成评测'] } : {}),
+    }),
   });
   return { client, service, previews, site, siteId, profile, contextFor,
     setObserver(listener) { observe = listener; },
@@ -1118,7 +1124,12 @@ export function installB157ContextEval(appInstance) {
         saveSettings: async () => fail('SETTINGS_WRITE_BLOCKED'), isCurrent: () => !controller.signal.aborted,
         isPathAllowed: scopedApp.synthetic.allowed, isContentAllowed: path => scopedApp.synthetic.allowed(path),
         isWebAllowed: () => false,
-        generateMetadata: async () => ({ customExcerpt: 'Synthetic B157 article.', metaDescription: 'Synthetic B157 article.', slug: 'b157-ui' }) });
+        generateMetadata: async ({ needed }) => ({
+          ...(needed.customExcerpt ? { customExcerpt: 'Synthetic B157 article.' } : {}),
+          ...(needed.metaDescription ? { metaDescription: 'Synthetic B157 article.' } : {}),
+          ...(needed.slug ? { slug: 'b157-ui' } : {}),
+          ...(needed.tags ? { tags: ['合成评测'] } : {}),
+        }) });
       // This is an explicit test-only instance seam. Native scope/session/card
       // and current-source admission still execute; no production permission switch exists.
       const configuration = integration.configuration;

@@ -69,6 +69,7 @@ async function fixture(options: { loseDraftResponse?: boolean; newNote?: boolean
     const client = {
         readPost: async (id: string, gate: GhostRequestGate) => { await send(gate);
             const post = remote.get(id); if (!post) throw new GhostClientError('post-not-found', 'failed', 404); return copy(post); },
+        listTags: async (gate: GhostRequestGate) => { await send(gate); return []; },
         createDraft,
         updatePost: async (id: string, version: string, fields: GhostPostWrite, gate: GhostRequestGate) => {
             await send(gate); const post = remote.get(id)!;
@@ -107,7 +108,12 @@ async function fixture(options: { loseDraftResponse?: boolean; newNote?: boolean
         getSettings: () => ({ siteUrl: site, defaultVisibility: 'public', profile: {} }),
         saveSettings: async () => { throw new Error('Settings writes forbidden'); }, isCurrent: () => true,
         isPathAllowed: path => path === notePath, isContentAllowed: path => path === notePath, isWebAllowed: () => false,
-        generateMetadata: async () => ({ customExcerpt: 'Synthetic article.', metaDescription: 'Synthetic article.', slug: 'synthetic-article' }) });
+        generateMetadata: async ({ needed }) => ({
+            ...(needed.customExcerpt ? { customExcerpt: 'Synthetic article.' } : {}),
+            ...(needed.metaDescription ? { metaDescription: 'Synthetic article.' } : {}),
+            ...(needed.slug ? { slug: 'synthetic-article' } : {}),
+            ...(needed.tags ? { tags: ['合成评测'] } : {}),
+        }) });
     jest.spyOn(integration.configuration, 'getIdentity').mockReturnValue('b157-recording-connection');
     jest.spyOn(integration.configuration, 'connection').mockResolvedValue({ siteId, siteUrl: site,
         identity: 'b157-recording-connection', profile: { siteId }, defaultVisibility: 'public' });
@@ -140,7 +146,7 @@ describe('Ghost action continuity (controlled Ghost responses and recorded model
             await session.run('open-preview');
             await session.run('open-editor');
             expect(session.getState().errorKey).toBeUndefined();
-            expect(f.openedUrls).toEqual([`${site}p/00000000-0000-4000-8000-000000000001/`,
+            expect(f.openedUrls).toEqual([`${site}synthetic-article/`,
                 `${site}ghost/#/editor/post/${operation.target.postId}`]);
             expect(f.createDraft).toHaveBeenCalledTimes(1);
             expect(f.remote.get(operation.target.postId!)?.status).toBe('draft');

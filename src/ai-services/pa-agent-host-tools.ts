@@ -61,6 +61,7 @@ import type { MemoryActionHostBinding } from "./memory-action-types";
 import { parseVaultObservationEvidence } from "./vault-observation-evidence";
 import { cloneResultFact, memoryResultFact, projectPaAgentRecoveryControl } from "./pa-agent-result-facts";
 import { isQueryTemporalIntent } from "./query-rewriter";
+import { isGhostPreparationResult } from "./ghost-tool-receipt";
 
 const MAX_PREVIEW_CHARS = 1200;
 const MAX_EXECUTION_RECOVERY_PARTS = 8;
@@ -628,8 +629,14 @@ export function createPaAgentCapabilityToolExecutor(
                     },
                 };
             }
+            const isGhostPreparation = toolCall.name === "prepare_ghost_post"
+                && options.registry.get(toolCall.name)?.permission === "ghost-publishing";
+            let postExecutionGuard = input.taskSourceReadGuard;
             const executeCapability = async (signal: AbortSignal, hidden = false) => {
                 assertTaskSourceReadCurrent(input.taskSourceReadGuard);
+                const ghostAuthorityGuard = isGhostPreparation
+                    ? input.taskSourceReadGuard?.captureAuthorityGuard?.() ?? input.taskSourceReadGuard
+                    : undefined;
                 const result = await options.registry.execute(
                     toolCall.name,
                     preparedResult.input,
@@ -655,7 +662,13 @@ export function createPaAgentCapabilityToolExecutor(
                             : {}),
                     },
                 );
-                assertTaskSourceReadCurrent(input.taskSourceReadGuard);
+                if (isGhostPreparation && isGhostPreparationResult(result)) {
+                    if (signal.aborted) throw createAbortError();
+                    // Ghost freezes and validates its own note dependencies. This
+                    // closed status reports the saved operation, not note material.
+                    postExecutionGuard = ghostAuthorityGuard;
+                }
+                assertTaskSourceReadCurrent(postExecutionGuard);
                 return result;
             };
             const memoryQuery = toolCall.name === "search_memory"
@@ -719,7 +732,8 @@ export function createPaAgentCapabilityToolExecutor(
                     ),
                 })
                 : await executeCapability(input.signal);
-            assertTaskSourceReadCurrent(input.taskSourceReadGuard);
+            if (isGhostPreparation && input.signal.aborted) throw createAbortError();
+            assertTaskSourceReadCurrent(postExecutionGuard);
             const normalizedResult = normalizeChatToolExecutionFacts(
                 result,
                 options.registry.get(toolCall.name),

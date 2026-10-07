@@ -19,7 +19,7 @@ import { CapabilityRegistry } from "../src/ai-services/capability-registry";
 import type { ChatToolDefinition } from "../src/ai-services/chat-tools";
 import { createCreateImageTool } from "../src/ai-services/chat-tool-factories";
 import { completeInputLineage } from "../src/ai-services/input-lineage";
-import { PA_AGENT_ACTION_STATE_CONTEXT_RULES, PA_AGENT_EFFECT_RECOVERY_RULES, isSafeImageFailureObservation } from '../src/ai-services/pa-agent-result-facts';
+import { collectActionStates, PA_AGENT_ACTION_STATE_CONTEXT_RULES, PA_AGENT_EFFECT_RECOVERY_RULES, isSafeImageFailureObservation } from '../src/ai-services/pa-agent-result-facts';
 import { GHOST_METADATA_FAILURE_MESSAGES } from "../src/ai-services/ghost-tool-receipt";
 
 import {
@@ -32,20 +32,27 @@ jest.mock("obsidian");
 const rawGhostUserText = "@blog2ghost 发布我刚才排除当前笔记后提到的那篇";
 
 async function runGhostRuntimeTrace(submit: GhostHostBinding["submit"], calls: Array<{ intent: "prepare" | "restore"; path?: string; name?: string }>,
-    debugRecorder?: import("../src/ai-services/agent-debug-port").AgentDebugRunRecorder) {
-    const host = createPromptHost();
+    debugRecorder?: import("../src/ai-services/agent-debug-port").AgentDebugRunRecorder,
+    options: { host?: AiServiceHost; precedingRead?: 'vault' | 'memory'; callText?: string; reuseCallId?: boolean;
+        readBetweenPreparations?: boolean; onGhostResult?: () => void } = {}) {
+    const host = options.host ?? createPromptHost();
     const inputLineage = completeInputLineage([{ kind: "user-text", messageId: "ghost-r2b-user" }]);
     const providerTexts: string[] = [];
     const lifecycle: Array<{ type: string; turnId?: string; message?: PaAgentMessage }> = [];
+    const modelCalls = calls.map(input => ({ name: "prepare_ghost_post", input: input as Record<string, unknown> }));
+    const readCall = { name: options.precedingRead === 'memory' ? "search_memory" : "search_vault_metadata",
+        input: { query: "absent synthetic note" } };
+    if (options.precedingRead) modelCalls.unshift(readCall);
+    if (options.readBetweenPreparations) modelCalls.splice(1, 0, readCall);
     let providerTurn = 0;
     const boundModel = RunnableLambda.from(async function* (input: unknown) {
         providerTexts.push(String(input));
         providerTurn += 1;
-        const call = calls[providerTurn - 1];
+        const call = modelCalls[providerTurn - 1];
         if (call) {
-            yield new AIMessageChunk({ content: "", tool_call_chunks: [{
-                id: `ghost-runtime-call-${providerTurn}`, index: 0,
-                name: "prepare_ghost_post", args: JSON.stringify(call),
+            yield new AIMessageChunk({ content: call.name === "prepare_ghost_post" ? options.callText ?? "" : "", tool_call_chunks: [{
+                id: `ghost-runtime-call-${options.reuseCallId && call.name === "prepare_ghost_post" ? 1 : providerTurn}`, index: 0,
+                name: call.name, args: JSON.stringify(call.input),
             }] });
         } else {
             yield new AIMessageChunk({ content: "The Host-owned Ghost result is checked." });
@@ -68,14 +75,18 @@ async function runGhostRuntimeTrace(submit: GhostHostBinding["submit"], calls: A
         await runtime.streamTurn({
             prompt: rawGhostUserText,
             userText: rawGhostUserText,
-            memoryMode: "skip-memory",
+            memoryMode: options.precedingRead === 'memory' ? "use-memory" : "skip-memory",
             conversationId: invocation.conversationId,
             commandInvocation: invocation,
             inputLineage,
             runSourceSelection: { schemaVersion: 1, scope: "notes", selectionId: "ghost-r2b-selection",
                 userMessageId: "ghost-r2b-user" },
             ghostPublishing: { conversationId: invocation.conversationId, stableMessageId: "ghost-r2b-user", submit },
-            onLifecycleEvent: event => lifecycle.push(event as never),
+            onLifecycleEvent: event => {
+                lifecycle.push(event as never);
+                if (event.type === 'message_end' && event.message.role === 'toolResult'
+                    && event.message.toolName === 'prepare_ghost_post') options.onGhostResult?.();
+            },
             debugRecorder,
         });
     } finally {
@@ -541,6 +552,74 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(trace.providerTexts[1]).not.toContain("PRIVATE_PROVIDER_DETAIL");
         expect(trace.toolResults[0].content.resultFact).toEqual({ kind: "unavailable", capability: "prepare_ghost_post", reason: "ghost_attention_required" });
         expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("retains only the saved Ghost receipt after preparation changes the note observation epoch", async () => {
+        const host = createPromptHost();
+        let epoch = "before-ghost-save";
+        host.getMemoryEvidenceEpoch = () => epoch;
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => {
+            epoch = "after-ghost-save";
+            return { status: "prepared", operationId: "saved-draft-operation", executionState: "succeeded" };
+        });
+        const trace = await runGhostRuntimeTrace(submit, [{ intent: "prepare", path: "notes/target.md" }], undefined,
+            { host, precedingRead: 'vault', callText: "OLD_OBSERVATION_DERIVED_PROSE" });
+        expect(trace.providerTexts).toHaveLength(3);
+        expect(trace.providerTexts[1]).toContain('"matches": []');
+        expect(trace.providerTexts[2]).toContain('"operationId": "saved-draft-operation"');
+        expect(trace.providerTexts[2]).toMatch(/"executionState":\s*"succeeded"/);
+        expect(trace.providerTexts[2]).not.toContain("result is unknown");
+        expect(trace.providerTexts[2]).not.toContain("OLD_OBSERVATION_DERIVED_PROSE");
+        expect(trace.providerTexts[2]).not.toContain('"matches": []');
+        expect(trace.providerTexts[2]).toContain("draft_saved awaits human publishing in Ghost");
+        expect(trace.toolResults[0].content.resultFact).toEqual({ kind: "approval_pending", intentId: "saved-draft-operation" });
+        const messages = trace.lifecycle.flatMap(event => event.type === "message_end" && event.message ? [event.message] : []);
+        expect(collectActionStates({ runId: "fixture-run", turnId: "fixture-turn", messages })).toEqual([
+            expect.objectContaining({ owner: "ghost", operationId: "saved-draft-operation", phase: "prepared" }),
+        ]);
+        expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not apply an earlier saved receipt to another assistant reusing its provider call ID", async () => {
+        const host = createPromptHost();
+        let epoch = "before-first-save";
+        host.getMemoryEvidenceEpoch = () => epoch;
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => {
+            epoch = "after-first-save";
+            return { status: "prepared", operationId: "first-owned-operation", executionState: "succeeded" };
+        });
+        let ghostResults = 0;
+        const trace = await runGhostRuntimeTrace(submit, [
+            { intent: "prepare", path: "notes/target.md" },
+            { intent: "restore", name: "INVALID_SECOND_TARGET" },
+        ], undefined, { host, readBetweenPreparations: true, reuseCallId: true,
+            onGhostResult: () => { if (++ghostResults === 2) epoch = "after-later-result"; } });
+        expect(trace.providerTexts).toHaveLength(4);
+        expect(trace.providerTexts[3]).not.toContain("INVALID_SECOND_TARGET");
+        expect(trace.providerTexts[3]).toContain("first-owned-operation");
+        expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not restore Memory-derived Ghost ancestry when Memory permission is withdrawn", async () => {
+        const host = createPromptHost();
+        host.settings.memoryEnabled = true;
+        let epoch = "memory-enabled-before-save";
+        host.getMemoryEvidenceEpoch = () => epoch;
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => {
+            epoch = "memory-withdrawn-after-save";
+            host.settings.memoryEnabled = false;
+            return { status: "prepared", operationId: "memory-withdrawn-operation", executionState: "succeeded" };
+        });
+        const trace = await runGhostRuntimeTrace(submit, [{ intent: "prepare", path: "notes/target.md" }], undefined,
+            { host, precedingRead: 'memory', callText: "WITHDRAWN_MEMORY_DERIVED_PROSE" });
+        const memoryResult = trace.lifecycle.flatMap(event => event.type === "message_end" && event.message?.role === "toolResult"
+            && event.message.toolName === "search_memory" ? [event.message] : [])[0];
+        expect(memoryResult.inputLineage?.dependencies).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "run-notes-observation", owner: "memory", memoryEnabled: true }),
+        ]));
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(trace.providerTexts[2]).not.toContain("WITHDRAWN_MEMORY_DERIVED_PROSE");
+        expect(trace.providerTexts[2]).not.toContain("memory-withdrawn-operation");
     });
 
     it("passes the current Ghost tool's Debug ownership through the real capability loop", async () => {

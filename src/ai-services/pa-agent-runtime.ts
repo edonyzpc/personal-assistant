@@ -1618,6 +1618,27 @@ export class PaAgentRuntime {
         const answerLineageByTurn = new Map<string, InputLineage>();
         const answerAttachmentValidityByTurn = new Map<string, () => boolean>();
         const callLineageById = new Map<string, InputLineage>();
+        const ghostPreparationReceiptLineageByCall = new Map<string, InputLineage>();
+        const ghostCallAssistantById = new Map<string, string>();
+        const ghostReceiptKey = (assistantId: string, callId: string) => JSON.stringify([assistantId, callId]);
+        let validateGhostPreparationInput: ((raw: unknown) => unknown) | undefined;
+        const projectGhostPreparationCalls = (messages: readonly PaAgentMessage[]): PaAgentMessage[] => messages.map(message => {
+            if (message.role !== 'assistant' || sourceRun.admitsLineage(message.inputLineage)) return message;
+            const calls = message.content.flatMap(part => {
+                if (part.type !== 'toolCall' || !part.id || part.name !== 'prepare_ghost_post'
+                    || !validateGhostPreparationInput
+                    || !sourceRun.admitsLineage(ghostPreparationReceiptLineageByCall.get(ghostReceiptKey(message.id, part.id)))) return [];
+                try {
+                    validateGhostPreparationInput(typeof part.input === 'string' ? JSON.parse(part.input) : part.input);
+                    return [{ ...part, id: part.id }];
+                } catch { return []; }
+            });
+            if (!calls.length) return message;
+            // Keep one call group for downstream pairing. A saved status can
+            // survive an observation refresh; the old assistant prose cannot.
+            return { ...message, content: calls, inputLineage: unionInputLineages(...calls.map(part =>
+                ghostPreparationReceiptLineageByCall.get(ghostReceiptKey(message.id, part.id)))) };
+        });
         const callNotesObservationStateById = new Map<string, {
             sourceEpoch?: string; memoryEnabled?: boolean;
         }>();
@@ -1829,7 +1850,9 @@ export class PaAgentRuntime {
             if (!options.conversationId || binding.conversationId !== options.conversationId || !binding.stableMessageId) {
                 throw new Error("Ghost publishing host identity is unavailable.");
             }
-            ghostPublishingCapability = createChatToolCapability(createPrepareGhostPostTool(binding), {
+            const ghostTool = createPrepareGhostPostTool(binding);
+            validateGhostPreparationInput = raw => ghostTool.validateInput(raw);
+            ghostPublishingCapability = createChatToolCapability(ghostTool, {
                 providerId: "chat-ghost-publishing", platform: "desktop",
             });
             ghostPublishingCapability.executionMode = "sequential";
@@ -3255,7 +3278,7 @@ export class PaAgentRuntime {
                 if (input.signal?.aborted) failClosedOnAbort();
                 try {
                     let transcript = await sourceRun.projectTranscriptAsync(await traceAgentPhase(debug, 'memory_evidence_prepare',
-                        () => memoryEvidenceRegistry.prepareTranscript(input.transcript, input.signal), { turnId: input.turnId }), input.signal);
+                        () => memoryEvidenceRegistry.prepareTranscript(projectGhostPreparationCalls(input.transcript), input.signal), { turnId: input.turnId }), input.signal);
                     if (writingContextRun) transcript = await writingContextRun.projectTranscript(transcript, input.signal);
                     const primaryVaultProjection = await traceAgentPhase(debug, 'vault_evidence_prepare',
                         () => sourceRun.prepareVaultObservationProjection(transcript, [], input.signal), { turnId: input.turnId });
@@ -3307,6 +3330,7 @@ export class PaAgentRuntime {
                             ?? unknownInputLineage();
                         for (const part of message.content) if (part.type === 'toolCall' && part.id) {
                             callLineageById.set(part.id, message.inputLineage);
+                            if (part.name === 'prepare_ghost_post') ghostCallAssistantById.set(part.id, message.id);
                             callNotesObservationStateById.set(part.id, {
                                 sourceEpoch: sourceRun.currentNotesObservationEpoch(),
                                 ...(part.name === 'search_memory'
@@ -3392,6 +3416,26 @@ export class PaAgentRuntime {
                                         : unknownInputLineage());
                         message.inputLineage = unionInputLineages(
                             callLineageById.get(message.toolCallId), resultLineage);
+                        if (sourceFreeNotesObservation && message.toolName === 'prepare_ghost_post'
+                            && message.content.metadata?.executionState === 'succeeded') {
+                            const envelope = asRecord(JSON.parse(message.content.promptText));
+                            const observation = asRecord(envelope?.observation);
+                            const epoch = sourceRun.currentNotesObservationEpoch();
+                            if (observation?.status === 'prepared' && epoch
+                                && isGhostPreparationMessage('prepared', 'succeeded', observation.message)) {
+                                const lineage = cloneInputLineage(message.inputLineage)!;
+                                // This is a new owner-confirmed status observation,
+                                // not a refresh of the earlier note/search result.
+                                // Preserve source identity, Memory mode and permissions.
+                                lineage.dependencies = lineage.dependencies.map(dependency => dependency.kind === 'run-notes-observation'
+                                    ? { ...dependency, sourceEpoch: epoch } : dependency);
+                                if (sourceRun.admitsLineage(lineage)) {
+                                    message.inputLineage = lineage;
+                                    const assistantId = ghostCallAssistantById.get(message.toolCallId);
+                                    if (assistantId) ghostPreparationReceiptLineageByCall.set(ghostReceiptKey(assistantId, message.toolCallId), lineage);
+                                }
+                            }
+                        }
                     }
                 }
                 observeAgentDebugLifecycle(debugRecorder, event);

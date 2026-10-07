@@ -13,9 +13,10 @@ import { chatToolResultToPaAgentToolExecutionResult } from '../src/ai-services/p
 import type { PaAgentMessage } from '../src/ai-services/chat-types';
 import type { GhostMetadataFailureReason } from '../src/ai-services/ghost-tool-receipt';
 
-async function ghostAttentionTranscript(operationId: string | null = 'attention-operation', failureReason?: GhostMetadataFailureReason) {
+async function ghostAttentionTranscript(operationId: string | null = 'attention-operation', failureReason?: GhostMetadataFailureReason,
+    status: 'needs_attention' | 'prepared' = 'needs_attention') {
     const tool = createPrepareGhostPostTool({ conversationId: 'conversation', stableMessageId: 'user',
-        submit: async () => ({ status: 'needs_attention', executionState: failureReason ? 'not_started' : 'succeeded',
+        submit: async () => ({ status, executionState: failureReason ? 'not_started' : 'succeeded',
             ...(failureReason ? { failureReason } : {}), ...(operationId ? { operationId } : {}) }) });
     const call = { type: 'toolCall' as const, id: 'ghost-call', index: 0, name: 'prepare_ghost_post', input: { intent: 'prepare' as const } };
     const result = await tool.execute(call.input, { host: { log: () => undefined },
@@ -168,6 +169,18 @@ describe('closed action summary facts', () => {
 });
 
 describe('domain receipt lifecycle projection', () => {
+    it('keeps the previous closed prepared receipt readable after clarifying human publication', async () => {
+        const messages = await ghostAttentionTranscript('legacy-prepared', undefined, 'prepared');
+        const result = messages[1] as Extract<PaAgentMessage, { role: 'toolResult' }>;
+        const envelope = JSON.parse(result.content.promptText);
+        envelope.observation.message = 'A draft or update preview is saved. Open its publishing card to review and choose the human publishing action.';
+        result.content.promptText = JSON.stringify(envelope);
+        expect(collectActionStates({ runId: 'run', turnId: 'turn', messages }))
+            .toEqual([expect.objectContaining({ operationId: 'legacy-prepared', phase: 'prepared' })]);
+        envelope.observation.message += ' PRIVATE_ARTICLE_BODY';
+        result.content.promptText = JSON.stringify(envelope);
+        expect(collectActionStates({ runId: 'run', turnId: 'turn', messages })).toEqual([]);
+    });
     it.each([
         { reason: 'metadata-unavailable', message: 'Article metadata preparation is unavailable. No Ghost post or image writes were started. Check the text AI settings or fill in the missing summary, SEO description, and slug. This result does not diagnose Ghost authentication or site configuration.' },
         { reason: 'metadata-invalid', message: 'The article or required metadata is invalid for preparation. No Ghost post or image writes were started. Check the article and its summary, SEO description, and slug. This result does not diagnose Ghost authentication or site configuration.' },
