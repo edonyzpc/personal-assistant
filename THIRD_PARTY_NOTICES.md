@@ -248,7 +248,7 @@ SOFTWARE.
 | `react-chartjs-2` | `5.3.1` | `MIT` | `node_modules/react-chartjs-2` |
 | `react-dom` | `18.3.1` | `MIT` | `node_modules/react-dom` |
 | `scheduler` | `0.23.2` | `MIT` | `node_modules/scheduler` |
-| `semver` | `7.6.3` | `ISC` | `node_modules/semver` |
+| `semver` | `7.8.5` | `ISC` | `node_modules/semver` |
 | `uc.micro` | `3.0.0` | `MIT` | `node_modules/uc.micro` |
 | `uuid` | `11.1.1` | `MIT` | `node_modules/@langchain/core/node_modules/uuid` |
 | `zod` | `3.25.76` | `MIT` | `node_modules/zod` |
@@ -1664,7 +1664,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~
 
-### semver@7.6.3
+### semver@7.8.5
 
 - License: `ISC`
 - Lockfile path: `node_modules/semver`
