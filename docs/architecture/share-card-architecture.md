@@ -1,6 +1,6 @@
 # Share Card Architecture
 
-Updated: 2026-10-06
+Updated: 2026-10-07
 
 | Field | Value |
 | --- | --- |
@@ -144,11 +144,18 @@ data URL，必须在测量前就绪。SnapDOM 的 document-wide font discovery �
   只读放大层，以原 CSS 尺寸检查并允许滚动，关闭后回到缩略图与原焦点。固定尺寸
   capture DOM 不受 preview/zoom scale 影响。
 - 卡片与全部后代冻结 animation/transition，确保 preview 与 PNG 使用同一静态视觉状态。
-- 每次 Modal 直接应用 Xerox，不显示印刷样式选择器，不增加持久状态。Xerox 对
-  标题保留 `scale 4/1` 和 `-3/-3px` 原始强度，并叠加淡原位残影；正文使用独立的轻度
-  起伏与淡复影（低频位移 2、高频位移 0.65、复影偏移 1.1/0.8px、透明度 0.28），
-  让无标题卡片也能辨认复印质感，同时保留可读性。代码、视觉资源、
+- 每次 Modal 直接应用 Xerox，不显示印刷样式选择器，不增加持久状态。按
+  2026-10-07 用户选定预览，标题使用 `scale 5/1.4`、`-3/-3px` 偏移及 `0.28`
+  原位残影；正文使用低频位移 `1.6`、高频位移 `1.25`、复影偏移 `1.3/0.9px`、
+  透明度 `0.25`。两套低频频率为 `0.01 0.02`，高频频率分别为标题 `1`、正文
+  `0.6`，所有 octave 为 `2`、seed 为 `6`。让无标题卡片也能辨认复印质感，
+  同时保留可读性。代码、视觉资源、
   placeholder、footer、品牌、来源、页码、装饰和纸纹不进入文字滤镜。
+- 两套文字滤镜在原有复合结果之后，用 `feMorphology(dilate, radius=0.05)`
+  扩张墨迹；再以频率 `0.9`、octave `2`、seed `6` 的 turbulence 红色通道作为
+  alpha，经线性映射 `slope=8, intercept=1-0.05*12` 生成缺墨 mask，使用
+  `feComposite(in)` 留下墨迹，最后零偏移输出。该链与用户选定 HTML 预览一致，
+  使用现有 capture 序列化，不改变纸张、批次字号或主题。
 - 生产 renderer 在 final card clone 内用 `createElementNS` 建立 card-local 确定性 SVG defs，
   连续 Text siblings 合为 inline run，并在保护元素边界停止递归。Prepared Markdown prototype
   保持无样式，测量、preview 和 exporter 复用；final card clone 一律应用 Xerox。

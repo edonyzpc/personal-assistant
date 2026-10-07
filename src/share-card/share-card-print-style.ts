@@ -4,15 +4,33 @@
 export const SHARE_CARD_BODY_XEROX_PARAMETERS = {
     lowFrequency: "0.01 0.02",
     lowOctaves: 2,
-    lowScale: 2,
+    lowScale: 1.6,
     highFrequency: "0.6",
     highOctaves: 2,
-    highScale: 0.65,
-    echoDx: 1.1,
-    echoDy: 0.8,
-    echoOpacity: 0.28,
-    seed: 0,
+    highScale: 1.25,
+    echoDx: 1.3,
+    echoDy: 0.9,
+    echoOpacity: 0.25,
+    seed: 6,
     filterBounds: { x: "-8%", y: "-18%", width: "116%", height: "136%" },
+} as const;
+
+const SHARE_CARD_HEADING_XEROX_PARAMETERS = {
+    lowFrequency: "0.01 0.02",
+    lowOctaves: 2,
+    lowScale: 5,
+    highFrequency: "1",
+    highOctaves: 2,
+    highScale: 1.4,
+    dx: -3,
+    dy: -3,
+    ghostOpacity: 0.28,
+    seed: 6,
+} as const;
+
+const SHARE_CARD_INK_PARAMETERS = {
+    spread: 0.05,
+    dropout: 0.05,
 } as const;
 
 export interface ShareCardPrintStyleReport {
@@ -133,14 +151,15 @@ function appendFilterDefinition(
 }
 
 function appendXeroxFilterDefinition(cardEl: HTMLElement, filterId: string): void {
+    const parameters = SHARE_CARD_HEADING_XEROX_PARAMETERS;
     const filter = appendFilterDefinition(cardEl, filterId, {
         x: "-10%",
         y: "-25%",
         width: "120%",
         height: "500%",
     });
-    appendTurbulence(filter, "lowNoise", "0.01 0.02", 2, 0);
-    appendDisplacement(filter, "SourceGraphic", "lowNoise", "warped", 4);
+    appendTurbulence(filter, "lowNoise", parameters.lowFrequency, parameters.lowOctaves, parameters.seed);
+    appendDisplacement(filter, "SourceGraphic", "lowNoise", "warped", parameters.lowScale);
     const firstComposite = createElement(cardEl.ownerDocument, "feComposite", {
         in: "SourceGraphic",
         in2: "warped",
@@ -148,8 +167,8 @@ function appendXeroxFilterDefinition(cardEl: HTMLElement, filterId: string): voi
         result: "mergedBase",
     });
     filter.appendChild(firstComposite);
-    appendTurbulence(filter, "highNoise", "1", 2, 0);
-    appendDisplacement(filter, "mergedBase", "highNoise", "grained", 1);
+    appendTurbulence(filter, "highNoise", parameters.highFrequency, parameters.highOctaves, parameters.seed);
+    appendDisplacement(filter, "mergedBase", "highNoise", "grained", parameters.highScale);
     const secondComposite = createElement(cardEl.ownerDocument, "feComposite", {
         in: "mergedBase",
         in2: "grained",
@@ -159,8 +178,8 @@ function appendXeroxFilterDefinition(cardEl: HTMLElement, filterId: string): voi
     filter.appendChild(secondComposite);
     const offset = createElement(cardEl.ownerDocument, "feOffset", {
         in: "offsetBase",
-        dx: "-3",
-        dy: "-3",
+        dx: String(parameters.dx),
+        dy: String(parameters.dy),
         result: "shiftedInk",
     });
     filter.appendChild(offset);
@@ -170,14 +189,16 @@ function appendXeroxFilterDefinition(cardEl: HTMLElement, filterId: string): voi
     });
     ghost.appendChild(createElement(cardEl.ownerDocument, "feFuncA", {
         type: "linear",
-        slope: "0.28",
+        slope: String(parameters.ghostOpacity),
     }));
     filter.appendChild(ghost);
     filter.appendChild(createElement(cardEl.ownerDocument, "feComposite", {
         in: "shiftedInk",
         in2: "registrationGhost",
         operator: "over",
+        result: "printedInk",
     }));
+    appendInkTexture(filter, parameters.seed);
 }
 
 function appendXeroxBodyFilterDefinition(cardEl: HTMLElement, filterId: string): void {
@@ -208,6 +229,47 @@ function appendXeroxBodyFilterDefinition(cardEl: HTMLElement, filterId: string):
         in: "grained",
         in2: "faintEcho",
         operator: "over",
+        result: "printedInk",
+    }));
+    appendInkTexture(filter, parameters.seed);
+}
+
+/** Keep the owner's selected preview algorithm on both heading and body ink. */
+function appendInkTexture(filter: SVGElement, seed: number): void {
+    const parameters = SHARE_CARD_INK_PARAMETERS;
+    filter.appendChild(createElement(filter.ownerDocument, "feMorphology", {
+        in: "printedInk",
+        operator: "dilate",
+        radius: String(parameters.spread),
+        result: "spreadInk",
+    }));
+    appendTurbulence(filter, "tonerNoise", ".9", 2, seed);
+    filter.appendChild(createElement(filter.ownerDocument, "feColorMatrix", {
+        in: "tonerNoise",
+        type: "matrix",
+        values: "0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  1 0 0 0 0",
+        result: "tonerAlpha",
+    }));
+    const tonerMask = createElement(filter.ownerDocument, "feComponentTransfer", {
+        in: "tonerAlpha",
+        result: "tonerMask",
+    });
+    tonerMask.appendChild(createElement(filter.ownerDocument, "feFuncA", {
+        type: "linear",
+        slope: "8",
+        intercept: String(1 - parameters.dropout * 12),
+    }));
+    filter.appendChild(tonerMask);
+    filter.appendChild(createElement(filter.ownerDocument, "feComposite", {
+        in: "spreadInk",
+        in2: "tonerMask",
+        operator: "in",
+        result: "wornInk",
+    }));
+    filter.appendChild(createElement(filter.ownerDocument, "feOffset", {
+        in: "wornInk",
+        dx: "0",
+        dy: "0",
     }));
 }
 

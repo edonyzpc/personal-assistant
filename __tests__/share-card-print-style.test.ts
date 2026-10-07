@@ -302,7 +302,7 @@ describe("Share Card print styles", () => {
             .querySelectorAll(".pa-share-card-print-text")).toHaveLength(0);
     });
 
-    it("keeps the approved Xerox heading displacement and adds a quiet registration ghost", () => {
+    it("uses the owner-selected Xerox heading displacement and registration ghost", () => {
         const { body, card } = createPrintFixture();
         const report = applyShareCardPrintStyle(asElement(card), asElement(body));
         const definitions = card.querySelectorAll(".pa-share-card-print-defs");
@@ -332,19 +332,21 @@ describe("Share Card print styles", () => {
             "feOffset",
             "feComponentTransfer",
             "feComposite",
+            "feMorphology", "feTurbulence", "feColorMatrix", "feComponentTransfer",
+            "feComposite", "feOffset",
         ]);
-        expect(headingFilter.children.map((child) => attributes(child))).toEqual([
+        expect(headingFilter.children.slice(0, 9).map((child) => attributes(child))).toEqual([
             expect.objectContaining({
                 baseFrequency: "0.01 0.02",
                 numOctaves: "2",
-                seed: "0",
+                seed: "6",
                 type: "turbulence",
             }),
             expect.objectContaining({
                 in: "SourceGraphic",
                 in2: "lowNoise",
                 result: "warped",
-                scale: "4",
+                scale: "5",
             }),
             expect.objectContaining({
                 in: "SourceGraphic",
@@ -355,13 +357,13 @@ describe("Share Card print styles", () => {
             expect.objectContaining({
                 baseFrequency: "1",
                 numOctaves: "2",
-                seed: "0",
+                seed: "6",
             }),
             expect.objectContaining({
                 in: "mergedBase",
                 in2: "highNoise",
                 result: "grained",
-                scale: "1",
+                scale: "1.4",
             }),
             expect.objectContaining({
                 in: "mergedBase",
@@ -377,6 +379,7 @@ describe("Share Card print styles", () => {
             }),
             expect.objectContaining({
                 in: "shiftedInk", in2: "registrationGhost", operator: "over",
+                result: "printedInk",
             }),
         ]);
         expect(attributes(headingFilter.children[7]!.children[0]!)).toEqual({
@@ -410,7 +413,20 @@ describe("Share Card print styles", () => {
         expect(childTags(xeroxFilter)).toEqual([
             "feTurbulence", "feDisplacementMap", "feTurbulence", "feDisplacementMap",
             "feOffset", "feComponentTransfer", "feComposite",
+            "feMorphology", "feTurbulence", "feColorMatrix", "feComponentTransfer",
+            "feComposite", "feOffset",
         ]);
+        expect(SHARE_CARD_BODY_XEROX_PARAMETERS).toMatchObject({
+            lowFrequency: "0.01 0.02", lowOctaves: 2, lowScale: 1.6,
+            highFrequency: "0.6", highOctaves: 2, highScale: 1.25,
+            echoDx: 1.3, echoDy: 0.9, echoOpacity: 0.25, seed: 6,
+        });
+        expect(attributes(xeroxFilter.children[0]!)).toMatchObject({
+            baseFrequency: "0.01 0.02", numOctaves: "2", seed: "6",
+        });
+        expect(attributes(xeroxFilter.children[2]!)).toMatchObject({
+            baseFrequency: "0.6", numOctaves: "2", seed: "6",
+        });
         expect(attributes(xeroxFilter)).toEqual(expect.objectContaining({
             ...SHARE_CARD_BODY_XEROX_PARAMETERS.filterBounds,
         }));
@@ -429,7 +445,35 @@ describe("Share Card print styles", () => {
         });
         expect(attributes(xeroxFilter.children[6]!)).toEqual({
             in: "grained", in2: "faintEcho", operator: "over",
+            result: "printedInk",
         });
+    });
+
+    it("applies the selected ink spread and deterministic toner mask to both text scopes", () => {
+        const { body, card } = createPrintFixture();
+        applyShareCardPrintStyle(asElement(card), asElement(body));
+        for (const definition of card.querySelectorAll(".pa-share-card-print-defs")) {
+            const inkStages = filterElement(definition).children.slice(-6);
+            expect(inkStages.map((stage) => attributes(stage))).toEqual([
+                { in: "printedInk", operator: "dilate", radius: "0.05", result: "spreadInk" },
+                {
+                    type: "turbulence", baseFrequency: ".9", numOctaves: "2",
+                    seed: "6", stitchTiles: "noStitch", result: "tonerNoise",
+                },
+                {
+                    in: "tonerNoise", type: "matrix",
+                    values: "0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  1 0 0 0 0",
+                    result: "tonerAlpha",
+                },
+                { in: "tonerAlpha", result: "tonerMask" },
+                { in: "spreadInk", in2: "tonerMask", operator: "in", result: "wornInk" },
+                { in: "wornInk", dx: "0", dy: "0" },
+            ]);
+            expect(attributes(inkStages[3]!.children[0]!)).toEqual({
+                type: "linear", slope: "8", intercept: String(1 - 0.05 * 12),
+            });
+        }
+        expect(() => assertShareCardElementIsSelfContained(asElement(card))).not.toThrow();
     });
 
     it("allocates unique card-local filters for concurrent cards", () => {
