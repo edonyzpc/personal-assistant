@@ -886,12 +886,35 @@ describe("Ghost publishing deterministic export", () => {
         expect(result.resources[0].occurrences).toEqual([{ path: "Main.md", line: 4, field: "feature_image" }]);
     });
 
-    it("does not treat an embedded PA callout inside an ordinary main quote as main cover management", async () => {
+    it.each([
+        ["+", "Featured Image"],
+        ["-", "Featured Image"],
+        ["+", "Featured Images"],
+        ["+", "题图"],
+    ])("uses the main PA %s %s block as a cover without exporting the management block", async (fold, title) => {
+        const main = `> [!personal-assistant]${fold} ${title}\n> ![[images/cover.png]]\n\nArticle body.`;
+        const note = fakeFile("Main.md", main);
+        const result = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([note, fakeFile("images/cover.png", "cover")]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+
+        expect(result.fields.featureImage).toEqual({ mode: "manage", value: "pending-resource://resource-1" });
+        expect(result.resources).toHaveLength(1);
+        expect(result.resources[0]).toMatchObject({ source: "images/cover.png", resolvedPath: "images/cover.png" });
+        expect(result.resources[0].occurrences).toEqual([{ path: "Main.md", line: 0, field: "feature_image" }]);
+        expect(JSON.stringify(result.lexical)).toContain("Article body.");
+        expect(JSON.stringify(result.lexical)).not.toContain("personal-assistant");
+        expect(note.content).toBe(main);
+    });
+
+    it.each(["Featured Image", "Featured Images"])("does not treat an embedded PA %s callout inside an ordinary main quote as main cover management", async (title) => {
         const result = await prepareGhostExport({
             targetPath: "Main.md",
             host: createHost([
                 fakeFile("Main.md", "> Intro\n> ![[Embed.md]]"),
-                fakeFile("Embed.md", ">[!personal-assistant]+ Featured Images\n> ![[embed-cover.png]]\n\nEmbedded body"),
+                fakeFile("Embed.md", `>[!personal-assistant]+ ${title}\n> ![[embed-cover.png]]\n\nEmbedded body`),
                 fakeFile("embed-cover.png", "embedded"),
             ]),
             guard: allowAllGuard(), siteProfile: profile,
@@ -905,9 +928,9 @@ describe("Ghost publishing deterministic export", () => {
         expect(result.resources[0].occurrences).toEqual([{ path: "Embed.md", line: 1 }]);
     });
 
-    it("rejects multiple main management cover candidates before resolving either image", async () => {
+    it.each(["Featured Image", "Featured Images"])("rejects multiple main management cover candidates including %s before resolving either image", async (title) => {
         const main = [
-            ">[!personal-assistant]+ Featured Images",
+            `>[!personal-assistant]+ ${title}`,
             "> ![[one.png]]",
             "",
             ">[!personal-assistant]- 题图",

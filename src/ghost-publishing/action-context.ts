@@ -1,4 +1,5 @@
 import { stableStringify } from "../ai-services/agent-utils";
+import { ghostMetadataFailureReason } from "../ai-services/ghost-tool-receipt";
 import { GhostNoteBindingAdapter, type GhostBindingHost, type GhostNoteSelection } from "./binding";
 import type { GhostClient, GhostPost, GhostRequestGate, GhostVisibility } from "./client";
 import { prepareGhostExport } from "./exporter";
@@ -45,7 +46,7 @@ export interface GhostActionContextOptions {
 export class GhostActionContextError extends Error {
     constructor(readonly code: "desktop-required" | "cancelled" | "source-revoked" | "source-changed"
         | "connection-changed" | "invalid-operation" | "resource-changed" | "source-unavailable"
-        | "metadata-unavailable" | "metadata-invalid") {
+        | "metadata-unavailable" | "metadata-invalid" | "provider_failure" | "input_too_large" | "invalid_result") {
         super(`Ghost publishing context: ${code}.`);
         this.name = "GhostActionContextError";
     }
@@ -181,9 +182,10 @@ export async function createGhostActionContext(options: GhostActionContextOption
                 isSourceCurrent: () => { try { assertPreparing(); return true; } catch { return false; } },
                 isConnectionCurrent: () => { try { assertCore(); return true; } catch { return false; } },
             });
-        } catch {
+        } catch (error) {
             assertPreparing();
-            fail("metadata-unavailable");
+            const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+            fail(ghostMetadataFailureReason(code) ?? "metadata-unavailable");
         }
         assertPreparing();
         const assign = (field: "customExcerpt" | "metaDescription", value: string | undefined, maxLength: number): void => {

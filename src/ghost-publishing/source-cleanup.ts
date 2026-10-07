@@ -5,7 +5,7 @@ import { getTokenSourceRange, mapInlineRangeToSource } from "./source-position";
 import type { GhostPublishingFields, SourceMapSpan } from "./types";
 
 const markdownIt = createGhostMarkdownIt();
-const MANAGEMENT_TITLE = /^\[!personal-assistant\][+-]?\s+(?:Featured Images|题图)\s*$/;
+const MANAGEMENT_TITLE = /^\[!personal-assistant\][+-]?\s+(?:Featured Images?|题图)\s*$/;
 
 export interface CleanedMarkdown {
     text: string;

@@ -11,10 +11,12 @@ import { OperationsIntentController } from '../src/ai-services/operations/operat
 import { createPrepareGhostPostTool, type ChatToolContext } from '../src/ai-services/chat-tools';
 import { chatToolResultToPaAgentToolExecutionResult } from '../src/ai-services/pa-agent-host-tools';
 import type { PaAgentMessage } from '../src/ai-services/chat-types';
+import type { GhostMetadataFailureReason } from '../src/ai-services/ghost-tool-receipt';
 
-async function ghostAttentionTranscript(operationId: string | null = 'attention-operation') {
+async function ghostAttentionTranscript(operationId: string | null = 'attention-operation', failureReason?: GhostMetadataFailureReason) {
     const tool = createPrepareGhostPostTool({ conversationId: 'conversation', stableMessageId: 'user',
-        submit: async () => ({ status: 'needs_attention', executionState: 'succeeded', ...(operationId ? { operationId } : {}) }) });
+        submit: async () => ({ status: 'needs_attention', executionState: failureReason ? 'not_started' : 'succeeded',
+            ...(failureReason ? { failureReason } : {}), ...(operationId ? { operationId } : {}) }) });
     const call = { type: 'toolCall' as const, id: 'ghost-call', index: 0, name: 'prepare_ghost_post', input: { intent: 'prepare' as const } };
     const result = await tool.execute(call.input, { host: { log: () => undefined },
         taskSourceReadGuard: { isCurrent: () => true, isNoteDomainAllowed: () => true, isPathAllowed: () => true } } as unknown as ChatToolContext);
@@ -166,6 +168,21 @@ describe('closed action summary facts', () => {
 });
 
 describe('domain receipt lifecycle projection', () => {
+    it('retains the owned not-started metadata failure and rejects forged reasons or messages in history', async () => {
+        const messages = await ghostAttentionTranscript('metadata-operation', 'provider_failure');
+        const input = { runId: 'run', turnId: 'turn', messages };
+        expect(collectActionStates(input)).toEqual([expect.objectContaining({ owner: 'ghost', operationId: 'metadata-operation', phase: 'failed',
+            receipt: { kind: 'ghost-preparation', operationId: 'metadata-operation', status: 'needs_attention', executionState: 'not_started' } })]);
+        const result = messages[1] as Extract<PaAgentMessage, { role: 'toolResult' }>;
+        const originalPromptText = result.content.promptText;
+        for (const changed of ['reason', 'message'] as const) {
+            const envelope = JSON.parse(originalPromptText);
+            if (changed === 'reason') envelope.observation.failureReason = 'PRIVATE_CODE';
+            else envelope.observation.message = 'It is published.';
+            result.content.promptText = JSON.stringify(envelope);
+            expect(collectActionStates(input)).toEqual([]);
+        }
+    });
     it('retains only the matched Host operation identity from an attention-required Ghost result', async () => {
         const messages = await ghostAttentionTranscript(), input = { runId: 'run', turnId: 'turn', messages };
         const states = collectActionStates(input);

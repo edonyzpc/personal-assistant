@@ -169,7 +169,6 @@ export async function prepareGhostMetadata(
     let model: Awaited<ReturnType<AIUtils["createChatModel"]>>;
     try {
         model = await aiUtils.createChatModel(0.2, {
-            maxTokens: 1_000,
             expectedModelIdentity: {
                 provider: connection.aiProvider,
                 model: connection.chatModelName,

@@ -166,6 +166,7 @@ export interface GhostPostToolReceipt {
     status: "prepared" | "needs_attention" | "outcome_unknown";
     operationId?: string;
     executionState: "not_started" | "succeeded" | "failed" | "acceptance_unknown";
+    failureReason?: import("./ghost-tool-receipt").GhostMetadataFailureReason;
 }
 
 /** Granted only by the Chat host for one explicit publishing request. */

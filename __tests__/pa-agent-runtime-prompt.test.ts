@@ -20,6 +20,7 @@ import type { ChatToolDefinition } from "../src/ai-services/chat-tools";
 import { createCreateImageTool } from "../src/ai-services/chat-tool-factories";
 import { completeInputLineage } from "../src/ai-services/input-lineage";
 import { PA_AGENT_ACTION_STATE_CONTEXT_RULES, PA_AGENT_EFFECT_RECOVERY_RULES, isSafeImageFailureObservation } from '../src/ai-services/pa-agent-result-facts';
+import { GHOST_METADATA_FAILURE_MESSAGES } from "../src/ai-services/ghost-tool-receipt";
 
 import {
     PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES,
@@ -525,6 +526,19 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
             completeness: "complete",
             dependencies: [{ kind: "user-text", messageId: "ghost-r2b-user" }],
         });
+    });
+
+    it("keeps the specific text AI metadata failure in the actual next provider request", async () => {
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "needs_attention", operationId: "ghost-metadata-failed",
+            executionState: "not_started", failureReason: "provider_failure", message: "PRIVATE_PROVIDER_DETAIL" }));
+        const trace = await runGhostRuntimeTrace(submit, [{ intent: "prepare", path: "notes/target.md" }]);
+        expect(trace.providerTexts).toHaveLength(2);
+        expect(trace.providerTexts[1]).toContain(GHOST_METADATA_FAILURE_MESSAGES.provider_failure);
+        expect(trace.providerTexts[1]).toContain('"failureReason": "provider_failure"');
+        expect(trace.providerTexts[1]).toContain('"executionState": "not_started"');
+        expect(trace.providerTexts[1]).not.toContain("PRIVATE_PROVIDER_DETAIL");
+        expect(trace.toolResults[0].content.resultFact).toEqual({ kind: "unavailable", capability: "prepare_ghost_post", reason: "ghost_attention_required" });
+        expect(submit).toHaveBeenCalledTimes(1);
     });
 
     it("keeps an entered-domain unknown Ghost failure visible without replay after changed arguments", async () => {

@@ -2046,13 +2046,14 @@ export function createPrepareGhostPostTool(binding: GhostHostBinding): ChatToolD
                 const receipt = await submission.receipt;
                 if (!receipt || !["prepared", "needs_attention", "outcome_unknown"].includes(receipt.status)
                     || !["not_started", "succeeded", "failed", "acceptance_unknown"].includes(receipt.executionState)
-                    || !ghostPreparationMessage(receipt.status, receipt.executionState)
+                    || !ghostPreparationMessage(receipt.status, receipt.executionState, receipt.failureReason)
                     || (receipt.operationId !== undefined && (typeof receipt.operationId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(receipt.operationId)))
                     || (receipt.status !== "needs_attention" && !receipt.operationId)) {
                     throw new Error("Ghost preparation receipt is invalid.");
                 }
                 const content = { status: receipt.status, ...(receipt.operationId ? { operationId: receipt.operationId } : {}),
-                    message: ghostPreparationMessage(receipt.status, receipt.executionState)! };
+                    ...(receipt.failureReason ? { failureReason: receipt.failureReason } : {}),
+                    message: ghostPreparationMessage(receipt.status, receipt.executionState, receipt.failureReason)! };
                 const resultFact = receipt.executionState === "succeeded" && receipt.operationId
                     ? { kind: "approval_pending" as const, intentId: receipt.operationId }
                     : receipt.executionState === "acceptance_unknown" && receipt.operationId

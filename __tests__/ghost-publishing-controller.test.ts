@@ -215,6 +215,26 @@ describe("Lean Ghost controller and human actions", () => {
             expect(await f.controller.prepare(f.request)).toMatchObject({ status, executionState, operationId: "current-op" });
         }
     });
+    it.each([
+        ["provider_failure", "metadataProvider"], ["input_too_large", "metadataInput"],
+        ["invalid_result", "metadataInvalid"], ["metadata-invalid", "metadataInvalid"], ["metadata-unavailable", "metadata"],
+    ])("preserves %s as a safe metadata receipt and card error", async (failureReason, key) => {
+        mockService.prepare.mockImplementation(async () => {
+            mockOperation = { ...operation("failed"), executionState: "not_started", verified: undefined, error: failureReason };
+            return mockOperation;
+        });
+        const f = fixture();
+        expect(await f.controller.prepare(f.request)).toMatchObject({ status: "needs_attention", executionState: "not_started", failureReason });
+        expect(f.session().getState().errorKey).toBe(`plugin.ghost.card.error.${key}`);
+    });
+    it("retains metadata failure before an operation exists without exposing the raw exception", async () => {
+        const f = fixture();
+        mockCreateContext.mockRejectedValueOnce(Object.assign(new Error("PRIVATE_PROVIDER_DETAIL"), { code: "provider_failure" }));
+        const result = await f.controller.prepare(f.request);
+        expect(result).toEqual({ status: "needs_attention", executionState: "not_started", failureReason: "provider_failure" });
+        expect(f.session().getState().errorKey).toBe("plugin.ghost.card.error.metadataProvider");
+        expect(JSON.stringify(result)).not.toContain("PRIVATE_PROVIDER_DETAIL");
+    });
 
     it("blocks revoked permissions before a confirm or navigation and prevents concurrent confirm clicks", async () => {
         const f = fixture();

@@ -614,7 +614,7 @@ export function collectActionStates(input: { runId: string; turnId: string;
                 const status = observation?.status;
                 const execution = envelope.execution;
                 const executionState = metadata.executionState as GhostPreparationExecution | undefined;
-                const currentMessage = ghostPreparationMessage(status, executionState);
+                const currentMessage = ghostPreparationMessage(status, executionState, observation?.failureReason);
                 const isCurrentReceipt = currentMessage !== undefined && observation?.message === currentMessage;
                 const operationId = (status === 'prepared' || isCurrentReceipt && executionState === 'succeeded')
                     && fact?.kind === 'approval_pending' ? fact.intentId
@@ -642,11 +642,13 @@ export function collectActionStates(input: { runId: string; turnId: string;
                                 && JSON.stringify(ownerRecovery?.allowedActions) === (isCurrentReceipt && executionState !== 'acceptance_unknown'
                                     ? '["needs_user"]' : '["query_operation","needs_user"]'));
                 if (operationId && envelope.tool === 'prepare_ghost_post' && envelope.status === 'ok'
+                    && (observation.failureReason === undefined || isCurrentReceipt)
                     && envelope.input === metadata.inputSummary && observation.operationId === operationId
                     && executionValid
                     && Object.keys(envelope).sort().join(',') === (execution
                         ? 'execution,input,observation,status,tool' : 'input,observation,status,tool')
-                    && Object.keys(observation).sort().join(',') === 'message,operationId,status'
+                    && Object.keys(observation).sort().join(',') === (observation.failureReason === undefined
+                        ? 'message,operationId,status' : 'failureReason,message,operationId,status')
                     && (isCurrentReceipt || observation.message === (status === 'prepared'
                         ? 'A draft or restoration preview is prepared. Check its publishing card and preview; publication has not been confirmed.'
                         : status === 'outcome_unknown'

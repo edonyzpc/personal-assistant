@@ -236,6 +236,29 @@ describe("Ghost current-source preparation and frozen candidate authority", () =
         await expect(action.context.prepare(null)).rejects.toMatchObject({ code: "metadata-unavailable" });
         expect(f.processFrontMatter).not.toHaveBeenCalled();
     });
+    it.each(["provider_failure", "input_too_large", "invalid_result"])("retains the safe metadata failure %s before preparing images", async code => {
+        const f = fixture("Article.\n\n![Local](cover.png)");
+        f.generateMetadata.mockRejectedValue(Object.assign(new Error("PRIVATE_PROVIDER_DETAIL"), { code }));
+        const action = await createGhostActionContext(f.options);
+        await expect(action.context.prepare(null)).rejects.toMatchObject({ code });
+        expect(f.readBinary).not.toHaveBeenCalled();
+        expect(f.processFrontMatter).not.toHaveBeenCalled();
+    });
+    it("prioritizes revoked source authority over a metadata provider failure", async () => {
+        const f = fixture();
+        f.generateMetadata.mockImplementation(async () => {
+            f.state.receipt = false;
+            throw Object.assign(new Error("PRIVATE_PROVIDER_DETAIL"), { code: "provider_failure" });
+        });
+        const action = await createGhostActionContext(f.options);
+        await expect(action.context.prepare(null)).rejects.toMatchObject({ code: "source-revoked" });
+    });
+    it("does not expose an unknown metadata provider code", async () => {
+        const f = fixture();
+        f.generateMetadata.mockRejectedValue(Object.assign(new Error("PRIVATE_PROVIDER_DETAIL"), { code: "PRIVATE_PROVIDER_CODE" }));
+        const action = await createGhostActionContext(f.options);
+        await expect(action.context.prepare(null)).rejects.toMatchObject({ code: "metadata-unavailable" });
+    });
     it("admits an explicit image from an allowed Markdown owner even when the note guard excludes binaries", async () => {
         const f = fixture("Article.\n\n![Local](cover.png)");
         f.options.guard.isPathAllowed = path => path.endsWith(".md");

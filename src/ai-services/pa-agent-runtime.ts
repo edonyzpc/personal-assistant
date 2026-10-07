@@ -750,8 +750,9 @@ function isSafeGhostPublishingStatusObservation(
     if (!observation) return false;
     const metadataRecovery = asRecord(metadata.recovery);
     const actualExecutionState = executionState ?? metadata.executionState;
-    const currentMessage = ghostPreparationMessage(observation.status, actualExecutionState);
+    const currentMessage = ghostPreparationMessage(observation.status, actualExecutionState, observation.failureReason);
     const isCurrentReceipt = currentMessage !== undefined && observation.message === currentMessage;
+    if (observation.failureReason !== undefined && !isCurrentReceipt) return false;
     const expectedExecutionState = isCurrentReceipt ? actualExecutionState
         : observation.status === "prepared" ? "succeeded" : "acceptance_unknown";
     if (executionState !== undefined && executionState !== expectedExecutionState) return false;
@@ -769,7 +770,7 @@ function isSafeGhostPublishingStatusObservation(
             ? "ghost_preparation_outcome_unknown" : "ghost_attention_required")
             || JSON.stringify(executionRecovery?.allowedActions) !== (actualExecutionState === "acceptance_unknown"
                 ? '["query_operation","needs_user"]' : '["needs_user"]'))) return false;
-    if (!observation || !hasOnlyKeys(observation, ["status", "operationId", "message"])
+    if (!observation || !hasOnlyKeys(observation, ["status", "operationId", "message", "failureReason"])
         || !isCurrentReceipt && observation.message !== (observation.status === "prepared" ? GHOST_STATUS_MESSAGES.prepared
             : observation.status === "outcome_unknown" ? GHOST_STATUS_MESSAGES.outcome_unknown
                 : observation.status === "needs_attention"

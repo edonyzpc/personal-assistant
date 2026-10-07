@@ -6,6 +6,7 @@ import { PolicyEngine } from "../src/ai-services/policy-engine";
 import { createPrepareGhostPostTool, isChatToolName, type ChatToolContext,
     type GhostHostBinding, type GhostPostToolReceipt } from "../src/ai-services/chat-tools";
 import { GhostHostAdmissionError } from "../src/ghost-publishing/types";
+import { GHOST_METADATA_FAILURE_MESSAGES, type GhostMetadataFailureReason } from "../src/ai-services/ghost-tool-receipt";
 
 function fixture(submit: GhostHostBinding["submit"] = async () => ({ status: "prepared", operationId: "opaque-operation", executionState: "succeeded" })) {
     let current = true;
@@ -125,6 +126,29 @@ describe("B-153 fixed Ghost preparation capability", () => {
         expect(result.ok).toBe(true);
         expect(result.resultFact).toEqual({ kind: "unavailable", capability: "prepare_ghost_post", reason: "ghost_attention_required" });
         expect(result.content).not.toHaveProperty('operationId');
+    });
+    it.each(Object.keys(GHOST_METADATA_FAILURE_MESSAGES) as GhostMetadataFailureReason[])("reports the exact safe %s metadata failure without repeating preparation", async failureReason => {
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "needs_attention", executionState: "not_started", failureReason,
+            operationId: "metadata-operation", message: "PRIVATE_PROVIDER_DETAIL", payload: "PRIVATE_BODY" }));
+        const app = fixture(submit);
+        const result = await app.tool.execute({ intent: "prepare" }, app.context);
+        expect(result.content).toEqual({ status: "needs_attention", operationId: "metadata-operation", failureReason,
+            message: GHOST_METADATA_FAILURE_MESSAGES[failureReason] });
+        expect(result.executionState).toBe("not_started");
+        expect(result.recovery).toMatchObject({ code: "ghost_attention_required", allowedActions: ["needs_user"] });
+        expect(JSON.stringify(result)).not.toMatch(/PRIVATE_PROVIDER_DETAIL|PRIVATE_BODY/);
+        expect(await app.tool.execute({ intent: "prepare" }, app.context)).toEqual(result);
+        expect(submit).toHaveBeenCalledTimes(1);
+    });
+    it.each([
+        { status: "needs_attention", executionState: "not_started", failureReason: "PRIVATE_CODE" },
+        { status: "needs_attention", executionState: "succeeded", failureReason: "provider_failure" },
+    ])("rejects an invalid metadata failure receipt %#", async receipt => {
+        const app = fixture(async () => ({ ...receipt, operationId: "metadata-operation" }) as GhostPostToolReceipt);
+        const result = await app.tool.execute({ intent: "prepare" }, app.context);
+        expect(result.ok).toBe(false);
+        expect(JSON.stringify(result)).not.toContain("PRIVATE_CODE");
+        expect(JSON.stringify(result)).not.toContain("No Ghost post or image writes were started");
     });
 
     it("retains a known remote save even if source authority changes after its response", async () => {

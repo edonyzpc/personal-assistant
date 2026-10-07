@@ -9,6 +9,7 @@ import { GhostPreviewStore, ghostDatabaseName } from "./state-store";
 import type { GhostLocalOperation } from "./state-schema";
 import type { GhostNoteSelection } from "./binding";
 import type { GhostPublishingSourceGuard } from "./types";
+import { ghostMetadataFailureReason, type GhostMetadataFailureReason } from "../ai-services/ghost-tool-receipt";
 
 export interface GhostActionAuthority { guard: GhostPublishingSourceGuard; sourceValidity(): boolean; signal?: AbortSignal }
 export type GhostCardAction = "confirm" | "open-editor" | "open-preview" | "open-post";
@@ -61,6 +62,7 @@ export interface GhostControllerResult {
     status: "prepared" | "needs_attention" | "outcome_unknown";
     operationId?: string;
     executionState: "not_started" | "succeeded" | "failed" | "acceptance_unknown";
+    failureReason?: GhostMetadataFailureReason;
 }
 
 const KEY = "plugin.ghost.card.";
@@ -86,7 +88,10 @@ function errorKey(code: string): string {
     if (code === "comment-unclosed") return `${KEY}error.commentUnclosed`;
     if (code === "cover-ambiguous") return `${KEY}error.coverChoice`;
     if (code === "enable-web-viewer") return `${KEY}error.webViewer`;
-    if (["metadata-unavailable", "metadata-invalid", "provider_failure", "input_too_large", "invalid_result"].includes(code)) return `${KEY}error.metadata`;
+    if (code === "provider_failure") return `${KEY}error.metadataProvider`;
+    if (code === "input_too_large") return `${KEY}error.metadataInput`;
+    if (code === "invalid_result" || code === "metadata-invalid") return `${KEY}error.metadataInvalid`;
+    if (code === "metadata-unavailable") return `${KEY}error.metadata`;
     return `${KEY}error.generic`;
 }
 interface Runtime { client: GhostClient; service: GhostPublishingService; previews: GhostPreviewStore }
@@ -197,7 +202,8 @@ export class GhostPublishingController {
                 busy: false, errorKey: errorKey(errorCode(error)), actions: [] };
             request.onSession({ getState: () => ({ ...state, actions: [] }), getContextReceipt: () => undefined,
                 subscribe: () => () => {}, run: async () => {}, dispose: () => {} });
-            return { status: "needs_attention", executionState: "not_started" };
+            const failureReason = ghostMetadataFailureReason(errorCode(error));
+            return { status: "needs_attention", executionState: "not_started", ...(failureReason ? { failureReason } : {}) };
         } finally { scope?.release(); }
     }
 
@@ -220,6 +226,7 @@ class PublishingSession implements GhostPublishingSession {
     private confirming = false;
     private disposed = false;
     private error?: string;
+    private errorCode?: string;
     private noteKey: string;
     private selection: GhostNoteSelection;
     private contextPersistence?: { conversationId: string; persist: (receipt: GhostContextReceipt) => Promise<boolean> };
@@ -245,7 +252,7 @@ class PublishingSession implements GhostPublishingSession {
             });
         }
     }
-    report(error: unknown): void { this.error = errorKey(errorCode(error)); this.emit(); }
+    report(error: unknown): void { this.errorCode = errorCode(error); this.error = errorKey(this.errorCode); this.emit(); }
     async initialize(scope: ActionScope): Promise<void> {
         try { this.operation = await this.runtime.service.prepare(scope.noteKey, scope.postId, scope.context); }
         catch (error) { this.report(error); }
@@ -253,9 +260,13 @@ class PublishingSession implements GhostPublishingSession {
     }
     result(): GhostControllerResult {
         const operation = this.operation;
+        const executionState = operation?.executionState ?? "not_started";
+        const failureReason = executionState === "not_started"
+            ? ghostMetadataFailureReason(this.errorCode ?? operation?.error) : undefined;
         return { status: operation?.state === "outcome_unknown" ? "outcome_unknown"
             : this.error || operation?.state === "failed" || operation?.warnings?.length ? "needs_attention" : "prepared",
-            ...(operation ? { operationId: operation.operationId } : {}), executionState: operation?.executionState ?? "not_started" };
+            ...(operation ? { operationId: operation.operationId } : {}), executionState,
+            ...(failureReason ? { failureReason } : {}) };
     }
     getState(): GhostCardState {
         const operation = this.operation;
@@ -293,6 +304,7 @@ class PublishingSession implements GhostPublishingSession {
         this.busy = true;
         this.confirming = action === "confirm";
         this.error = undefined;
+        this.errorCode = undefined;
         this.emit();
         let scope: ActionScope | undefined;
         try {
