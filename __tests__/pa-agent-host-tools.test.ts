@@ -181,7 +181,7 @@ describe('ordinary read-tool dispatch freshness', () => {
 });
 
 describe('Ghost source-free preparation receipt freshness', () => {
-    function fixture() {
+    function fixture(status: 'prepared' | 'needs_attention' = 'prepared') {
         const state = { observationCurrent: true, authorityCurrent: true };
         const authorityGuard: TaskSourceReadGuard = {
             isCurrent: () => state.authorityCurrent,
@@ -196,7 +196,7 @@ describe('Ghost source-free preparation receipt freshness', () => {
             captureAuthorityGuard: jest.fn(() => authorityGuard),
             captureSourceAuthority: () => () => state.authorityCurrent,
         };
-        const receipt = { status: 'prepared', operationId: 'ghost-operation', executionState: 'succeeded' } as const;
+        const receipt = { status, operationId: 'ghost-operation', executionState: 'succeeded' } as const;
         const submit = jest.fn(async () => {
             state.observationCurrent = false;
             return receipt;
@@ -218,8 +218,8 @@ describe('Ghost source-free preparation receipt freshness', () => {
         return { state, guard, authorityGuard, submit, receipt, registry, executor, controller, input };
     }
 
-    it('keeps the saved receipt through the real dispatcher after only its observation epoch expires', async () => {
-        const f = fixture();
+    it.each(['prepared', 'needs_attention'] as const)('keeps the saved %s receipt through the real dispatcher after only its observation epoch expires', async status => {
+        const f = fixture(status);
         const dispatcher = new ToolExecutionDispatcher({
             toolExecutor: { ...f.executor, preflightBatch: () => ({ kind: 'admitted' as const, taskSourceReadGuard: f.guard }) },
             toolExecutionMode: 'hybrid', runId: f.input.runId, userInput: f.input.userInput,
@@ -243,8 +243,12 @@ describe('Ghost source-free preparation receipt freshness', () => {
         expect(result).toMatchObject({ outcome: 'success', executionState: 'succeeded',
             resultFact: { kind: 'approval_pending', intentId: 'ghost-operation' }, sourceRecords: [] });
         expect(JSON.parse(result!.promptText)).toMatchObject({ observation: {
-            status: 'prepared', operationId: 'ghost-operation', message: GHOST_PREPARATION_MESSAGES.prepared,
+            status, operationId: 'ghost-operation',
+            message: GHOST_PREPARATION_MESSAGES[status === 'prepared' ? 'prepared' : 'saved_attention'],
         } });
+        if (status === 'needs_attention') expect(result?.metadata?.recovery).toEqual({
+            code: 'ghost_attention_required', allowedActions: ['needs_user'], operationId: 'ghost-operation',
+        });
         expect(result?.metadata?.reason).not.toBe('task_source_changed_after_execution');
     });
 
@@ -256,8 +260,8 @@ describe('Ghost source-free preparation receipt freshness', () => {
         expect(f.guard.captureAuthorityGuard).not.toHaveBeenCalled();
     });
 
-    it('rejects a saved receipt after real source authority is revoked', async () => {
-        const f = fixture();
+    it.each(['prepared', 'needs_attention'] as const)('rejects a saved %s receipt after real source authority is revoked', async status => {
+        const f = fixture(status);
         f.submit.mockImplementationOnce(async () => {
             f.state.observationCurrent = false;
             f.state.authorityCurrent = false;
@@ -274,8 +278,8 @@ describe('Ghost source-free preparation receipt freshness', () => {
         expect(f.submit).toHaveBeenCalledTimes(1);
     });
 
-    it('does not deliver a saved receipt after cancellation', async () => {
-        const f = fixture();
+    it.each(['prepared', 'needs_attention'] as const)('does not deliver a saved %s receipt after cancellation', async status => {
+        const f = fixture(status);
         f.submit.mockImplementationOnce(async () => {
             f.state.observationCurrent = false;
             f.controller.abort();
@@ -296,6 +300,24 @@ describe('Ghost source-free preparation receipt freshness', () => {
                 if (mutation === 'message') result.content = { ...(result.content as object), message: 'PRIVATE_NOTE_BODY' };
                 if (mutation === 'fact') result.resultFact = { kind: 'approval_pending', intentId: 'different-operation' };
                 if (mutation === 'recovery') result.recovery = { code: 'unverified', allowedActions: ['needs_user'] };
+                return result;
+            });
+            await expect(f.executor.execute(f.input)).rejects.toThrow('Task source scope is no longer current.');
+            expect(f.submit).toHaveBeenCalledTimes(1);
+        },
+    );
+
+    it.each(['missing', 'code', 'actions', 'operation', 'extra'] as const)(
+        'keeps epoch protection for a saved attention receipt with invalid recovery: %s', async mutation => {
+            const f = fixture('needs_attention');
+            const execute = f.registry.execute.bind(f.registry);
+            jest.spyOn(f.registry, 'execute').mockImplementation(async (...args) => {
+                const result = await execute(...args);
+                if (mutation === 'missing') delete result.recovery;
+                if (mutation === 'code') result.recovery!.code = 'unverified';
+                if (mutation === 'actions') result.recovery!.allowedActions.push('query_operation');
+                if (mutation === 'operation') result.recovery!.operationId = 'different-operation';
+                if (mutation === 'extra') Object.assign(result.recovery!, { detail: 'PRIVATE_NOTE_BODY' });
                 return result;
             });
             await expect(f.executor.execute(f.input)).rejects.toThrow('Task source scope is no longer current.');
@@ -2948,15 +2970,6 @@ describe("registry.prepareAndValidate (Phase A pi-style per-tool prepareArgument
         return createCoreRegistry();
     }
 
-    it("search_memory: maps `q` alias to canonical `query`", () => {
-        const registry = makeCoreRegistryWithStubMemory();
-        const result = registry.prepareAndValidate("search_memory", { q: "find launch notes" }, { userInput: "find launch notes" });
-        expect(result.ok).toBe(true);
-        if (result.ok) {
-            expect(result.input).toEqual({ query: "find launch notes" });
-        }
-    });
-
     it("search_memory: empty input → schema_invalid (Phase A fail-loud, no userInput fallback)", () => {
         const registry = makeCoreRegistryWithStubMemory();
         const result = registry.prepareAndValidate("search_memory", {}, { userInput: "according to my notes" });
@@ -3000,35 +3013,12 @@ describe("registry.prepareAndValidate (Phase A pi-style per-tool prepareArgument
         }
     });
 
-    it("get_current_note_context: preserves legal model mode despite exact-token wording", () => {
-        const registry = makeCoreRegistryWithStubMemory();
-        const result = registry.prepareAndValidate(
-            "get_current_note_context",
-            { mode: "outline" },
-            { userInput: "in the current note only find the exact token PA-123" },
-        );
-        expect(result.ok).toBe(true);
-        if (result.ok) {
-            expect((result.input as { mode: string }).mode).toBe("outline");
-        }
-    });
-
     it("search_vault_metadata: maps `keyword` alias to `query`", () => {
         const registry = makeCoreRegistryWithStubMemory();
         const result = registry.prepareAndValidate("search_vault_metadata", { keyword: "project" }, { userInput: "" });
         expect(result.ok).toBe(true);
         if (result.ok) {
             expect((result.input as { query: string }).query).toBe("project");
-        }
-    });
-
-    it("inspect_obsidian_note: empty input is allowed (reads current open note)", () => {
-        const registry = makeCoreRegistryWithStubMemory();
-        const result = registry.prepareAndValidate("inspect_obsidian_note", {}, { userInput: "" });
-        // Permissive contract: empty {} passes validateInput → reads current open note at execute time
-        expect(result.ok).toBe(true);
-        if (result.ok) {
-            expect(result.input).toEqual({});
         }
     });
 
@@ -3096,11 +3086,12 @@ describe("registry.prepareAndValidate (Phase A pi-style per-tool prepareArgument
         }
     });
 
-    it("Phase 4: search_memory alias `q` → repaired metadata with originalKeys + summary", () => {
+    it("search_memory: maps `q` to `query` with repaired metadata", () => {
         const registry = makeCoreRegistryWithStubMemory();
         const result = registry.prepareAndValidate("search_memory", { q: "use q alias" }, { userInput: "" });
         expect(result.ok).toBe(true);
         if (result.ok && result.repaired) {
+            expect(result.input).toEqual({ query: "use q alias" });
             expect(result.repaired.originalKeys).toBe("q");
             expect(result.repaired.originalInputSummary).toContain('"q":"use q alias"');
             expect(result.repaired.reason).toBe("alias mapping or normalization applied");
@@ -3124,7 +3115,7 @@ describe("registry.prepareAndValidate (Phase A pi-style per-tool prepareArgument
         }
     });
 
-    it("Phase 4: legal get_current_note_context mode needs no repaired metadata", () => {
+    it("get_current_note_context: preserves legal mode despite exact-token wording without repaired metadata", () => {
         const registry = makeCoreRegistryWithStubMemory();
         const result = registry.prepareAndValidate(
             "get_current_note_context",
@@ -3133,15 +3124,17 @@ describe("registry.prepareAndValidate (Phase A pi-style per-tool prepareArgument
         );
         expect(result.ok).toBe(true);
         if (result.ok) {
+            expect((result.input as { mode: string }).mode).toBe("outline");
             expect(result.repaired).toBeUndefined();
         }
     });
 
-    it("Phase 4: inspect_obsidian_note with empty input → no repaired metadata (raw passes through)", () => {
+    it("inspect_obsidian_note: allows empty input unchanged without repaired metadata", () => {
         const registry = makeCoreRegistryWithStubMemory();
         const result = registry.prepareAndValidate("inspect_obsidian_note", {}, { userInput: "" });
         expect(result.ok).toBe(true);
         if (result.ok) {
+            expect(result.input).toEqual({});
             expect(result.repaired).toBeUndefined();
         }
     });

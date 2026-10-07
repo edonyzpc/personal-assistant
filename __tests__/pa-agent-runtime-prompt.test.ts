@@ -554,19 +554,20 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(submit).toHaveBeenCalledTimes(1);
     });
 
-    it("retains only the saved Ghost receipt after preparation changes the note observation epoch", async () => {
+    it.each(['prepared', 'needs_attention'] as const)("retains only the saved Ghost %s receipt after preparation changes the note observation epoch", async status => {
         const host = createPromptHost();
         let epoch = "before-ghost-save";
         host.getMemoryEvidenceEpoch = () => epoch;
         const submit = jest.fn<GhostHostBinding["submit"]>(async () => {
             epoch = "after-ghost-save";
-            return { status: "prepared", operationId: "saved-draft-operation", executionState: "succeeded" };
+            return { status, operationId: "saved-draft-operation", executionState: "succeeded" };
         });
         const trace = await runGhostRuntimeTrace(submit, [{ intent: "prepare", path: "notes/target.md" }], undefined,
             { host, precedingRead: 'vault', callText: "OLD_OBSERVATION_DERIVED_PROSE" });
         expect(trace.providerTexts).toHaveLength(3);
         expect(trace.providerTexts[1]).toContain('"matches": []');
         expect(trace.providerTexts[2]).toContain('"operationId": "saved-draft-operation"');
+        expect(trace.providerTexts[2]).toContain(`"status": "${status}"`);
         expect(trace.providerTexts[2]).toMatch(/"executionState":\s*"succeeded"/);
         expect(trace.providerTexts[2]).not.toContain("result is unknown");
         expect(trace.providerTexts[2]).not.toContain("OLD_OBSERVATION_DERIVED_PROSE");
@@ -575,7 +576,8 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(trace.toolResults[0].content.resultFact).toEqual({ kind: "approval_pending", intentId: "saved-draft-operation" });
         const messages = trace.lifecycle.flatMap(event => event.type === "message_end" && event.message ? [event.message] : []);
         expect(collectActionStates({ runId: "fixture-run", turnId: "fixture-turn", messages })).toEqual([
-            expect.objectContaining({ owner: "ghost", operationId: "saved-draft-operation", phase: "prepared" }),
+            expect.objectContaining({ owner: "ghost", operationId: "saved-draft-operation", phase: "prepared",
+                receipt: { kind: "ghost-preparation", operationId: "saved-draft-operation", status, executionState: "succeeded" } }),
         ]);
         expect(submit).toHaveBeenCalledTimes(1);
     });
@@ -600,7 +602,7 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(submit).toHaveBeenCalledTimes(1);
     });
 
-    it("does not restore Memory-derived Ghost ancestry when Memory permission is withdrawn", async () => {
+    it.each(['prepared', 'needs_attention'] as const)("does not restore Memory-derived Ghost %s ancestry when Memory permission is withdrawn", async status => {
         const host = createPromptHost();
         host.settings.memoryEnabled = true;
         let epoch = "memory-enabled-before-save";
@@ -608,7 +610,7 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         const submit = jest.fn<GhostHostBinding["submit"]>(async () => {
             epoch = "memory-withdrawn-after-save";
             host.settings.memoryEnabled = false;
-            return { status: "prepared", operationId: "memory-withdrawn-operation", executionState: "succeeded" };
+            return { status, operationId: "memory-withdrawn-operation", executionState: "succeeded" };
         });
         const trace = await runGhostRuntimeTrace(submit, [{ intent: "prepare", path: "notes/target.md" }], undefined,
             { host, precedingRead: 'memory', callText: "WITHDRAWN_MEMORY_DERIVED_PROSE" });

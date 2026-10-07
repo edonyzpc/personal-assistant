@@ -57,7 +57,7 @@ export function isGhostPreparationMessage(status: unknown, executionState: unkno
 
 /** Only this closed owner receipt can outlive source observation freshness. */
 export function isGhostPreparationResult(result: ChatToolResult<unknown>): boolean {
-    const allowed = ["ok", "tool", "inputSummary", "content", "sources", "sourceRecords", "resultFact", "executionState"];
+    const allowed = ["ok", "tool", "inputSummary", "content", "sources", "sourceRecords", "resultFact", "executionState", "recovery"];
     const record = result as unknown as Record<string, unknown>;
     if (Object.keys(result).some(key => record[key] !== undefined && !allowed.includes(key))
         || result.ok !== true || result.tool !== "prepare_ghost_post" || result.inputSummary !== "prepare"
@@ -67,8 +67,16 @@ export function isGhostPreparationResult(result: ChatToolResult<unknown>): boole
     if (!content || typeof content !== "object" || Array.isArray(content)) return false;
     const value = content as Record<string, unknown>;
     if (Object.keys(value).length !== 3 || Object.keys(value).some(key => !["status", "operationId", "message"].includes(key))
-        || value.status !== "prepared" || typeof value.operationId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value.operationId)
+        || value.status !== "prepared" && value.status !== "needs_attention"
+        || typeof value.operationId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value.operationId)
         || !isGhostPreparationMessage(value.status, result.executionState, value.message)) return false;
+    const recovery = result.recovery;
+    if (value.status === "prepared") {
+        if (recovery !== undefined) return false;
+    } else if (!recovery || Object.keys(recovery).length !== 3
+        || recovery.code !== "ghost_attention_required" || recovery.operationId !== value.operationId
+        || !Array.isArray(recovery.allowedActions) || recovery.allowedActions.length !== 1
+        || recovery.allowedActions[0] !== "needs_user") return false;
     const fact = result.resultFact;
     return fact?.kind === "approval_pending" && fact.intentId === value.operationId
         && Object.keys(fact).length === 2;

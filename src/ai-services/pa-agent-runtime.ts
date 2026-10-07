@@ -3421,8 +3421,8 @@ export class PaAgentRuntime {
                             const envelope = asRecord(JSON.parse(message.content.promptText));
                             const observation = asRecord(envelope?.observation);
                             const epoch = sourceRun.currentNotesObservationEpoch();
-                            if (observation?.status === 'prepared' && epoch
-                                && isGhostPreparationMessage('prepared', 'succeeded', observation.message)) {
+                            if (observation && epoch
+                                && isGhostPreparationMessage(observation.status, 'succeeded', observation.message, observation.failureReason)) {
                                 const lineage = cloneInputLineage(message.inputLineage)!;
                                 // This is a new owner-confirmed status observation,
                                 // not a refresh of the earlier note/search result.
