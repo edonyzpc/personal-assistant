@@ -136,7 +136,7 @@ export interface ChatToolDefinition<Input, Output> {
      */
     prepareArguments?: (raw: unknown, ctx: PrepareToolArgumentsContext) => unknown;
     validateInput(input: unknown): Input;
-    execute(input: Input, context: ChatToolContext): Promise<ChatToolResult<Output>>;
+    execute(this: void, input: Input, context: ChatToolContext): Promise<ChatToolResult<Output>>;
 }
 
 /** Only semantic choices are model-visible. Identity and source/cost admission belong to the host. */

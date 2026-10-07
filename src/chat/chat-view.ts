@@ -1484,7 +1484,7 @@ export class LLMView extends ItemView {
             const commandPrompt = parseCreateImageCommand(textArea.value);
             const writingCommandPrompt = parseWritingCommand(textArea.value);
             const ghostCommandAvailable = Platform.isDesktop && !Platform.isMobile
-                && Boolean(this.host.createGhostPublishingBinding);
+                && !!this.host.createGhostPublishingBinding;
             if (!composing && ghostCommandAvailable && parseGhostCommand(textArea.value) !== null) {
                 const trigger = /^\s*@blog2ghost(?:\s+|$)/i.exec(textArea.value)!;
                 const selectionStart = textArea.selectionStart;

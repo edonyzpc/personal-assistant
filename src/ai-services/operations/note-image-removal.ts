@@ -50,7 +50,7 @@ export interface NoteImageRemovalHost {
     /** Separate attachment read/delete boundary; never inferred from note scope. */
     isAttachmentPathAllowed(path: string): boolean;
     /** P2-only local snapshot port. P1 preparation must never call it. */
-    readAttachmentFile?(file: NoteImageRemovalAttachmentFile): Promise<ArrayBuffer | Uint8Array>;
+    readAttachmentFile?(this: void, file: NoteImageRemovalAttachmentFile): Promise<ArrayBuffer | Uint8Array>;
     /** Exact-path identity lookup for restore collision checks. */
     getAttachmentFileByPath?(path: string): NoteImageRemovalAttachmentFile | null | undefined;
     restoreAttachmentFile?(

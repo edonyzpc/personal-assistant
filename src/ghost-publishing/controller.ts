@@ -42,9 +42,9 @@ export interface GhostControllerOptions {
     configuration: GhostPublishingConfiguration;
     vaultPath: string;
     pluginId: string;
-    isDesktop(): boolean;
+    isDesktop(this: void): boolean;
     isCurrent(): boolean;
-    isWebViewerEnabled(): boolean;
+    isWebViewerEnabled(this: void): boolean;
     getSourceRevision(path: string): string | number;
     isPathAllowed(path: string): boolean;
     isContentAllowed(path: string, markdown: string): boolean;

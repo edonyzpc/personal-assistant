@@ -31,12 +31,12 @@ export class GhostPublishingIntegration {
         app: App;
         pluginId: string;
         vaultPath: string;
-        getSettings(): GhostPublishingSettings;
-        saveSettings(settings: GhostPublishingSettings): Promise<void>;
+        getSettings(this: void): GhostPublishingSettings;
+        saveSettings(this: void, settings: GhostPublishingSettings): Promise<void>;
         isCurrent(): boolean;
-        isPathAllowed(path: string): boolean;
-        isContentAllowed(path: string, markdown: string): boolean;
-        isWebAllowed(): boolean;
+        isPathAllowed(this: void, path: string): boolean;
+        isContentAllowed(this: void, path: string, markdown: string): boolean;
+        isWebAllowed(this: void): boolean;
         generateMetadata?: GhostControllerOptions["generateMetadata"];
     }) {
         const { app, vaultPath, pluginId } = dependencies;

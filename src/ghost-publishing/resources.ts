@@ -18,10 +18,10 @@ export interface GhostResourceOptions {
         };
     };
     client: Pick<GhostClient, "downloadImage">;
-    isDesktop(): boolean;
+    isDesktop(this: void): boolean;
     guard: TaskSourceReadGuard;
     /** The receipt captured when the export's source tree was loaded. */
-    sourceValidity(): boolean;
+    sourceValidity(this: void): boolean;
     gate: GhostRequestGate;
     siteId: string;
     siteUrl: string;

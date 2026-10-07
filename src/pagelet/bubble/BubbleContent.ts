@@ -231,9 +231,9 @@ export function buildQuietRecallNudgeContent(
 }
 
 interface ProactiveRecallActionCallbacks {
-    onView(): void;
-    onLater(): void;
-    onDismiss(): void;
+    onView(this: void): void;
+    onLater(this: void): void;
+    onDismiss(this: void): void;
 }
 
 function proactiveRecallActions(

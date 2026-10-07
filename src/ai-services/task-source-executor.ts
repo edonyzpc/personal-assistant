@@ -15,16 +15,16 @@ export interface TaskSourceReadPlan {
 interface TaskSourceExecutorHost {
     baseExecutor: PaAgentToolExecutor;
     state: TaskSourceConstraintState;
-    resolveHostNoteId(path: string): string | undefined;
+    resolveHostNoteId(this: void, path: string): string | undefined;
     isHostCurrent(): boolean;
-    isWebAllowed?(): boolean;
-    isMemoryAllowed?(): boolean;
+    isWebAllowed?(this: void): boolean;
+    isMemoryAllowed?(this: void): boolean;
     isInputCurrent?(calls: readonly ParsedBufferedToolCall[]): boolean;
     captureInputSourceValidity?(calls: readonly ParsedBufferedToolCall[]): (() => boolean) | undefined;
     prepareInputSourceAdmission?(calls: readonly ParsedBufferedToolCall[], signal?: AbortSignal): Promise<{
         isCurrent(): boolean;
-        sourceValidity(): boolean;
-        authorityValidity(): boolean;
+        sourceValidity(this: void): boolean;
+        authorityValidity(this: void): boolean;
     }>;
     resolveNoteSearchScope?(constraint: TaskSourceConstraint): NoteSearchScope;
 }
@@ -96,8 +96,8 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
             if (sourceValidity && !sourceValidity()) return rejectScope('source_run_changed');
             let preparedAdmission: {
                 isCurrent(): boolean;
-                sourceValidity(): boolean;
-                authorityValidity(): boolean;
+                sourceValidity(this: void): boolean;
+                authorityValidity(this: void): boolean;
             } | undefined;
             const checkpoint = options.prepareInputSourceAdmission ? async (signal?: AbortSignal) => {
                 throwIfAborted(signal);

@@ -112,7 +112,7 @@ export interface AiServiceHost {
     isPersonalSourceCurrent?(source: Extract<import('./generation-input-snapshot').GenerationInputPersonalSource,
         { state: 'identified' }>): boolean;
     /** Capture governed style revisions before admitting historical Writing material. */
-    captureWritingStyleSourceValidity?(revisionIds: readonly string[]): Promise<{ isCurrent(): boolean }>;
+    captureWritingStyleSourceValidity?(revisionIds: readonly string[]): Promise<{ isCurrent(this: void): boolean }>;
 
     /** Search/read Memory through a narrow port. */
     readonly memorySearch: MemorySearchPort;
@@ -147,7 +147,7 @@ export interface AiServiceHost {
     getTaskSourceAuthorityEpoch?(): string;
 
     /** Whether a vault path may be used as Memory evidence under current privacy settings. */
-    isDataBoundaryAllowedPath?(path: string): boolean;
+    isDataBoundaryAllowedPath?(this: void, path: string): boolean;
 
     /** Stable latest Markdown read after the current consumer's full Data Boundary policy. */
     readLatestMemorySource?(path: string, signal?: AbortSignal): Promise<LatestMemorySourceMaterial | null>;

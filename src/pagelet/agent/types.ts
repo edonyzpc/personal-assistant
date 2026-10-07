@@ -213,11 +213,11 @@ export interface PageletAgentModelContext {
     signal?: AbortSignal;
     /** Shared by every Provider request in this Pagelet run. */
     providerRequestScope: ProviderRequestScope;
-    bindVaultObservationProjection(transcript: readonly PaAgentMessage[]): {
+    bindVaultObservationProjection(this: void, transcript: readonly PaAgentMessage[]): {
         prepare(signal?: AbortSignal | null): Promise<void>;
         assertCurrent(): void;
     };
-    recordPromptProjection(transcript: readonly PaAgentMessage[], turnIndex?: number): void;
+    recordPromptProjection(this: void, transcript: readonly PaAgentMessage[], turnIndex?: number): void;
 }
 
 export interface PageletAgentRuntimeDependencies {
@@ -234,6 +234,7 @@ export interface PageletAgentRuntimeDependencies {
         },
     ): Promise<MemorySearchResult>;
     revalidateMemorySearch?(
+        this: void,
         result: MemorySearchResult,
         signal?: AbortSignal,
     ): Promise<MemorySearchResult>;
@@ -256,7 +257,7 @@ export interface PageletAgentRuntimeDependencies {
         path: string,
         signal?: AbortSignal,
     ): Promise<PageletAgentSourceMaterial | null>;
-    isPathAllowed(path: string): boolean;
+    isPathAllowed(this: void, path: string): boolean;
     webCapabilities?: readonly AgentCapability[];
     runtimePlatform?: AgentRuntimePlatform;
     providerResponseDelivery?: 'incremental' | 'buffered';

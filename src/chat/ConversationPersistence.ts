@@ -21,8 +21,8 @@ interface PendingSourceSelection {
 export interface WritingCandidateSnapshot {
     conversationId: string | null;
     candidates: WritingVersion[];
-    isParentCurrent(parent: WritingVersion): boolean;
-    isParentSourceCurrent(parent: WritingVersion): boolean;
+    isParentCurrent(this: void, parent: WritingVersion): boolean;
+    isParentSourceCurrent(this: void, parent: WritingVersion): boolean;
 }
 
 /** Current-conversation storage access; runtime separately admits each version's ancestry. */

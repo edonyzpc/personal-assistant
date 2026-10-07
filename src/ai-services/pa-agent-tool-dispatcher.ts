@@ -118,7 +118,7 @@ export class ToolExecutionDispatcher {
         const parsedToolCalls = [...buffers]
             .sort(compareBufferedToolCallOrder)
             .map((buffer) => parseBufferedToolCall(buffer));
-        const preflight = this.config.toolExecutor?.preflightBatch;
+        const preflight = this.config.toolExecutor?.preflightBatch?.bind(this.config.toolExecutor);
         let readGuard: TaskSourceReadGuard | undefined;
         if (preflight && turnToolMode !== "final_answer_only" && parsedToolCalls.length > 0) {
             if (this.config.isAborted()) return { toolResults: [], diagnostics: [], stoppedBy: "aborted" };
@@ -129,7 +129,7 @@ export class ToolExecutionDispatcher {
             let rejection: PaAgentToolExecutionResult | undefined;
             const diagnostics: Array<Record<string, unknown>> = [];
             try {
-                const result = preflight.call(this.config.toolExecutor, {
+                const result = preflight({
                     runId: this.config.runId, turnId, turnIndex, userInput: this.config.userInput,
                     toolCalls: parsedToolCalls,
                     ...(turnToolMode ? { toolMode: turnToolMode } : {}),

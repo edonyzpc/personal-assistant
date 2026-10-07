@@ -76,10 +76,10 @@ export interface PageletDeepDiscoverControllerDependencies {
     captureSourceMaterial(path: string, signal?: AbortSignal): Promise<PageletAgentSourceMaterial | null>;
     getPolicyIdentity(): PageletAgentPolicyIdentity;
     /** Host-owned content/privacy epoch used to seal grouped latest-source reads. */
-    getEvidenceEpoch(): string;
+    getEvidenceEpoch(this: void): string;
     /** Host lifecycle identity; reset/cancel invalidates already-returning results. */
     controllerEpoch: number;
-    isPathAllowed(path: string): boolean;
+    isPathAllowed(this: void, path: string): boolean;
     admitRun?(input: {
         path: string;
         triggerReason: PageletDeepDiscoverTriggerReason;
@@ -124,7 +124,7 @@ export interface PageletDeepDiscoverCommitSealState {
     evidenceEpoch: string;
     currentPolicyIdentityKey: string;
     controllerPolicyIdentityKey: string | null;
-    isPathAllowed(path: string): boolean;
+    isPathAllowed(this: void, path: string): boolean;
 }
 
 /** Host-side synchronous fence used immediately before candidate publication. */

@@ -36,4 +36,17 @@ export default [
       "@typescript-eslint/no-empty-function": "off",
     },
   },
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/**/*.{spec,test}.{ts,tsx}"],
+    languageOptions: {
+      parserOptions: {
+        project: "./tsconfig.json",
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      "@typescript-eslint/unbound-method": "error",
+    },
+  },
 ];

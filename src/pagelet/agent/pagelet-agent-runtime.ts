@@ -143,9 +143,9 @@ function preparePageletVaultProjection(
         transcript,
         history: [],
         revalidate: (evidence, options) => {
-            const revalidate = dependencies.host.revalidateVaultObservation;
+            const revalidate = dependencies.host.revalidateVaultObservation?.bind(dependencies.host);
             if (!revalidate) throw new Error("Vault observation revalidation is unavailable.");
-            return revalidate.call(dependencies.host, evidence, {
+            return revalidate(evidence, {
                 ...options,
                 isPathAllowed: options?.isPathAllowed ?? dependencies.isPathAllowed,
             });

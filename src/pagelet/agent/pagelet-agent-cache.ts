@@ -25,8 +25,8 @@ export interface PageletAgentCacheReadOptions {
         path: string,
         signal?: AbortSignal,
     ): Promise<PageletAgentSourceSnapshot | null>;
-    isPathAllowed(path: string): boolean;
-    getEvidenceEpoch?(): string;
+    isPathAllowed(this: void, path: string): boolean;
+    getEvidenceEpoch?(this: void): string;
     now?: number;
     signal?: AbortSignal;
 }

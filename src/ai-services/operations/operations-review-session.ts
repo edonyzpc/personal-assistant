@@ -49,8 +49,8 @@ export interface OperationsReviewSessionOptions {
     intent: OperationsIntent;
     controller: OperationsReviewSessionPort;
     sessionIdentity: string | number;
-    isSourceCurrent(): boolean;
-    onInvalidate?(reviewId: string): void;
+    isSourceCurrent(this: void): boolean;
+    onInvalidate?(this: void, reviewId: string): void;
 }
 
 type OperationsReviewListener = (snapshot: OperationsReviewSnapshot) => void;

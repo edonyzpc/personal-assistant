@@ -55,7 +55,7 @@ export interface ExactMemoryProjectionCleanupPort {
      * Redacts exact syncable compatibility entities. The implementation is
      * CAS-guarded and idempotent across a crash after the external write.
      */
-    prepareLegacyCompatibilityForget?(input: {
+    prepareLegacyCompatibilityForget?(this: void, input: {
         operationId: string;
         claimId: string;
         recordIdFingerprints: string[];
@@ -63,7 +63,7 @@ export interface ExactMemoryProjectionCleanupPort {
         trustedSourceHash: string;
         pendingSourceHash?: string;
     }): Promise<LegacyCompatibilityForgetPrepareResult>;
-    commitLegacyCompatibilityForget?(input: {
+    commitLegacyCompatibilityForget?(this: void, input: {
         operationId: string;
         claimId: string;
         recordIdFingerprints: string[];

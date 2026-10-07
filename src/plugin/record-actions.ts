@@ -15,7 +15,7 @@ export interface RecordActionSettings {
 export interface RecordActionDependencies {
     app: App;
     getSettings(): RecordActionSettings;
-    log(message: string, ...args: unknown[]): void;
+    log(this: void, message: string, ...args: unknown[]): void;
 }
 
 export function joinRecordPaths(...strings: string[]): string {

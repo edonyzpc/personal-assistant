@@ -69,8 +69,8 @@ export interface ChatHost {
     readonly chatHistoryManager: ChatHistoryManager | undefined;
     readonly imageAssetService?: ImageAssetService;
     readonly imageGenerationService?: ImageGenerationService;
-    confirmImageGenerationFirstUse?(): Promise<boolean>;
-    confirmFeaturedImageTextPreparationFirstUse?(): Promise<boolean>;
+    confirmImageGenerationFirstUse?(this: void): Promise<boolean>;
+    confirmFeaturedImageTextPreparationFirstUse?(this: void): Promise<boolean>;
     verifyImageTextSource?(source: ComposerImageTextSource, phase: 'before-send'): Promise<void>;
     isImageTextSourceCurrent?(source: ComposerImageTextSource): boolean;
     resolveImageNoteSource?(path: string, guard: import('../ai-services/task-source-read-guard').TaskSourceReadGuard | undefined,

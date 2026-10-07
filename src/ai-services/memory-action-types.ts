@@ -32,7 +32,7 @@ export interface MemoryActionHostBinding {
     userPrompt: string;
     userPromptHash: string;
     conversationId?: string;
-    isCurrent(): boolean;
+    isCurrent(this: void): boolean;
 }
 
 /** Bounded model input. It cannot assert confirmation, authority, or host identity. */

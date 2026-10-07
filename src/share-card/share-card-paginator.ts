@@ -492,8 +492,8 @@ interface SafeFragmentPlan {
     codePointBoundaries: number[];
     literalBoundaries: ReadonlySet<number>;
     render(start: number, end: number): string;
-    renderText(start: number, end: number): string;
-    boundariesInWindow(start: number, end: number): readonly number[];
+    renderText(this: void, start: number, end: number): string;
+    boundariesInWindow(this: void, start: number, end: number): readonly number[];
     hasText(start: number, end: number): boolean;
 }
 

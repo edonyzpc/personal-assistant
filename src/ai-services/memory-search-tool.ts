@@ -1176,9 +1176,9 @@ export class MemorySearchTool {
         signal?: AbortSignal,
         requireSameSnapshot = false,
     ): Promise<MemoryCandidate | null> {
-        const readLatest = this.host.readLatestMemorySource;
+        const readLatest = this.host.readLatestMemorySource?.bind(this.host);
         if (!readLatest) return null;
-        const source = await readLatest.call(this.host, candidate.path, signal);
+        const source = await readLatest(candidate.path, signal);
         throwIfAborted(signal);
         if (!source) return null;
         return materializeCandidateFromLatestSource(
@@ -1199,7 +1199,7 @@ export class MemorySearchTool {
         temporalFilter: MemoryTemporalFilter | null = null,
         absoluteDeadlineMs?: number,
     ): Promise<CoherentMaterializedCandidateSet | null> {
-        const getBoundaryEpoch = this.host.getMemoryEvidenceEpoch;
+        const getBoundaryEpoch = this.host.getMemoryEvidenceEpoch?.bind(this.host);
         if (!getBoundaryEpoch || !this.host.readLatestMemorySource) return null;
         const canonicalCandidates = admitRerankCandidates([...candidates]);
         if (canonicalCandidates.length === 0) return null;
@@ -1209,7 +1209,7 @@ export class MemorySearchTool {
         for (let attempt = 0; attempt < 2; attempt++) {
             throwIfAborted(signal);
             try {
-                const boundaryEpoch = getBoundaryEpoch.call(this.host);
+                const boundaryEpoch = getBoundaryEpoch();
                 const paths = canonicalCandidates.map((candidate) => candidate.path);
                 const before = await this.host.memorySearch.getPathEvidenceGenerations(paths, {
                     signal,
@@ -1218,7 +1218,7 @@ export class MemorySearchTool {
                 throwIfAborted(signal);
                 if (
                     !before.sourceEpoch
-                    || getBoundaryEpoch.call(this.host) !== boundaryEpoch
+                    || getBoundaryEpoch() !== boundaryEpoch
                 ) continue;
                 const beforeByPath = currentGenerationMap(before.paths);
                 const eligible = canonicalCandidates.filter((candidate) => {
@@ -1230,7 +1230,7 @@ export class MemorySearchTool {
                     );
                 });
                 if (eligible.length === 0) {
-                    if (getBoundaryEpoch.call(this.host) !== boundaryEpoch) continue;
+                    if (getBoundaryEpoch() !== boundaryEpoch) continue;
                     return {
                         candidates: [],
                         sourceEpoch: before.sourceEpoch,
@@ -1249,7 +1249,7 @@ export class MemorySearchTool {
                     temporalFilter,
                 );
                 throwIfAborted(signal);
-                if (getBoundaryEpoch.call(this.host) !== boundaryEpoch) continue;
+                if (getBoundaryEpoch() !== boundaryEpoch) continue;
                 if (materialized.length === 0) {
                     return {
                         candidates: [],
@@ -1270,7 +1270,7 @@ export class MemorySearchTool {
                 throwIfAborted(signal);
                 if (
                     after.sourceEpoch !== before.sourceEpoch
-                    || getBoundaryEpoch.call(this.host) !== boundaryEpoch
+                    || getBoundaryEpoch() !== boundaryEpoch
                 ) continue;
                 const afterByPath = currentGenerationMap(after.paths);
                 const generations = new Map<string, string>();
@@ -1290,7 +1290,7 @@ export class MemorySearchTool {
                     }
                     generations.set(path, beforeGeneration);
                 }
-                if (!coherent || getBoundaryEpoch.call(this.host) !== boundaryEpoch) continue;
+                if (!coherent || getBoundaryEpoch() !== boundaryEpoch) continue;
                 return {
                     candidates: materialized,
                     sourceEpoch: before.sourceEpoch,
@@ -1313,8 +1313,8 @@ export class MemorySearchTool {
         signal?: AbortSignal,
         absoluteDeadlineMs?: number,
     ): Promise<boolean> {
-        const getBoundaryEpoch = this.host.getMemoryEvidenceEpoch;
-        if (!getBoundaryEpoch || getBoundaryEpoch.call(this.host) !== sealed.boundaryEpoch) return false;
+        const getBoundaryEpoch = this.host.getMemoryEvidenceEpoch?.bind(this.host);
+        if (!getBoundaryEpoch || getBoundaryEpoch() !== sealed.boundaryEpoch) return false;
         try {
             const status = await this.host.memorySearch.getPathEvidenceGenerations(
                 sealed.candidates.map((candidate) => candidate.path),
@@ -1326,7 +1326,7 @@ export class MemorySearchTool {
             throwIfAborted(signal);
             if (
                 status.sourceEpoch !== sealed.sourceEpoch
-                || getBoundaryEpoch.call(this.host) !== sealed.boundaryEpoch
+                || getBoundaryEpoch() !== sealed.boundaryEpoch
             ) return false;
             const current = currentGenerationMap(status.paths);
             return sealed.candidates.every((candidate) => {
@@ -1336,7 +1336,7 @@ export class MemorySearchTool {
                     && current.get(path) === sealed.generations.get(path)
                     && this.host.isDataBoundaryAllowedPath?.(path) !== false,
                 );
-            }) && getBoundaryEpoch.call(this.host) === sealed.boundaryEpoch;
+            }) && getBoundaryEpoch() === sealed.boundaryEpoch;
         } catch {
             if (signal?.aborted) throw createAbortError();
             return false;

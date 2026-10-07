@@ -123,13 +123,16 @@ export interface RetrievalCancellationProbeAck {
 
 export interface RetrievalDiagnosticsSurfaceBinding {
     record(
+        this: void,
         requestedSurface: RetrievalDiagnosticSurface,
         input: RetrievalDiagnosticEventInput,
     ): void;
     createRecorder(
+        this: void,
         requestedSurface: RetrievalDiagnosticSurface,
     ): RetrievalDiagnosticRecorder | undefined;
     scheduleArmedGraphWorkerCancellation(
+        this: void,
         requestedSurface: RetrievalDiagnosticSurface,
         cancel: () => void,
     ): boolean;

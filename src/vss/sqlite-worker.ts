@@ -79,6 +79,7 @@ type SQLiteModule = {
     installOpfsSAHPoolVfs?: (options: Record<string, unknown>) => Promise<SQLiteOpfsPool>;
     capi?: {
         sqlite3_progress_handler(
+            this: void,
             database: SQLiteDatabase,
             operationInterval: number,
             callback: (() => number) | number,
@@ -1805,8 +1806,8 @@ async function createLexicalMaintenanceScopeBinding(
     operationId: string,
     paths: string[],
 ): Promise<string> {
-    const digest = globalThis.crypto?.subtle?.digest;
-    if (typeof digest !== "function") {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle || typeof subtle.digest !== "function") {
         throw createWorkerError(
             "lexical-maintenance-digest-unavailable",
             "Cryptographic scope binding is unavailable.",
@@ -1821,7 +1822,7 @@ async function createLexicalMaintenanceScopeBinding(
         operationId,
         canonicalPaths.join("\u0000"),
     ].join("\u0000"));
-    const bytes = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", payload));
+    const bytes = new Uint8Array(await subtle.digest("SHA-256", payload));
     return [...bytes].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 

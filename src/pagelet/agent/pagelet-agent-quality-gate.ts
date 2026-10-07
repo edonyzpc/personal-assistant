@@ -100,7 +100,7 @@ export interface PageletAgentQualityGateOptions {
         path: string,
         signal?: AbortSignal,
     ): Promise<PageletAgentSourceSnapshot | null>;
-    isPathAllowed(path: string): boolean;
+    isPathAllowed(this: void, path: string): boolean;
     anchorRelations?: {
         explicitLinks?: readonly string[];
         backlinks?: readonly string[];

@@ -167,6 +167,7 @@ function captureGetLines<State extends StateBlock, Result>(
     task: () => Result,
 ): { result: Result; captured: CapturedLines | null } {
     const capturedLines: CapturedLines[] = [];
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Invoked with .call(state); retain the original method identity for restoration in finally.
     const originalGetLines = state.getLines;
     state.getLines = ((begin: number, end: number, indent: number, keepLastLF: boolean) => {
         const text = originalGetLines.call(state, begin, end, indent, keepLastLF);

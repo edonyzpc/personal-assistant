@@ -82,7 +82,7 @@ export interface WritingContextRunHost {
         images: MessageImage[];
         isCurrent(): boolean;
         /** Pure source lifetime, independent of run cleanup and the temporary read signal. */
-        isSourceCurrent?(): boolean;
+        isSourceCurrent?(this: void): boolean;
     }>;
 }
 

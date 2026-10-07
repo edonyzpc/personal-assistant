@@ -45,12 +45,12 @@ export interface PageletActionPluginIntegrationDependencies {
         confirmText: string;
     }): Promise<boolean>;
     findMaintenanceQueueItem(proposalId: string): ReviewQueueItem | null;
-    exists(path: string): Promise<boolean>;
-    rename(from: string, to: string): Promise<void>;
+    exists(this: void, path: string): Promise<boolean>;
+    rename(this: void, from: string, to: string): Promise<void>;
     getFile(path: string): TFile | null;
     isMaintenanceMovePathAllowed(path: string): boolean;
     now(): Date;
-    idFactory(): string;
+    idFactory(this: void): string;
     appendMaintenanceActionLog(action: MaintenanceMoveActionLogEntry): Promise<void>;
     replaceMaintenanceActionLog(action: MaintenanceMoveActionLogEntry): Promise<void>;
     updateMaintenanceQueueStatus(id: string, status: ReviewQueueStatus): Promise<void>;

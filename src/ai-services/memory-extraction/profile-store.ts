@@ -262,9 +262,9 @@ export class IndexedDbExistingUserProfileReader implements ExistingUserProfileRe
     }
 
     async read(): Promise<UserProfileReadResult> {
-        let databases: IDBFactory["databases"];
+        let databases: IDBFactory["databases"] | undefined;
         try {
-            databases = this.indexedDb.databases;
+            databases = this.indexedDb.databases?.bind(this.indexedDb);
         } catch {
             return { state: "unknown" };
         }
@@ -275,7 +275,7 @@ export class IndexedDbExistingUserProfileReader implements ExistingUserProfileRe
         let databaseInfos: IDBDatabaseInfo[];
         try {
             databaseInfos = await withTimeout(
-                Promise.resolve().then(() => databases.call(this.indexedDb)),
+                Promise.resolve().then(() => databases()),
                 IDB_TIMEOUT_MS,
                 "database enumeration",
             );

@@ -27,14 +27,14 @@ export interface GhostActionContextOptions {
     selection: GhostNoteSelection;
     host: GhostActionHost;
     client: Pick<GhostClient, "downloadImage" | "readPost">;
-    isDesktop(): boolean;
+    isDesktop(this: void): boolean;
     guard: GhostPublishingSourceGuard;
     sourceValidity(): boolean;
     siteId: string; siteUrl: string;
     getConnectionIdentity(): string;
     getProfile(): SitePublishingProfile;
     /** Actual dependencies only, used for consistency while preparing a new candidate. */
-    getSourceRevision(path: string): string | number;
+    getSourceRevision(this: void, path: string): string | number;
     isResourcePathAllowed?(resourcePath: string, ownerPath: string): boolean;
     defaultVisibility: GhostVisibility;
     signal?: AbortSignal;
