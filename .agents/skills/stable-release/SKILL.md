@@ -23,7 +23,12 @@ Classify the current request before changing state:
 - `local-release`: prepare, pass the hosted community gate, then create the
   local release commit and annotated tag. Do not push.
 - `publish`: complete the local release when needed, push `master` and the tag,
-  wait for the workflow, and verify the GitHub Release.
+  wait for the workflow, verify the GitHub Release, then verify official
+  recognition through `Check for new releases` when needed.
+- `verify`: inspect an already-published target and complete only the
+  requested follow-up verification. Do not recreate its release commit or tag
+  or push again. For official recognition, proceed to the section below after
+  verifying the existing GitHub Release.
 
 Treat an explicit current-turn request that names the target version and asks to
 publish as authorization for the complete `publish` flow. Do not ask again only
@@ -148,7 +153,7 @@ branch, version and tag preflight rather than duplicating those checks:
 make publish VERSION=<target-version>
 ```
 
-Do not claim completion until the GitHub Actions release workflow succeeds and
+First verify that the GitHub Actions release workflow succeeds and
 the Release object is non-draft, non-prerelease, and contains the canonical
 assets:
 
@@ -162,10 +167,33 @@ Use the canonical runbook for the exact asset set and recovery procedure. If the
 workflow or Release verification is unavailable, report the push separately and
 leave publication unverified.
 
+### Verify Official Recognition
+
+After GitHub publication is verified, use `obsidian-community-check` in
+`release` mode for the same target version and published tag commit. An
+authorized stable `publish` includes this step; continue without asking again.
+For a verification-only request, inspect first and submit only when the request
+includes checking/refreshing official recognition.
+
+Reuse a matching completed or pending release review. Otherwise click
+`Check for new releases` on the authenticated Personal Assistant account page.
+Stop and diagnose a matching `Failed` review or `Error` before resubmission.
+Require a release row with `Version: <target-version>`, the published tag's
+commit, `Completed`, and no `Error`; also require `Current release` to show the
+target version and the missing-release banner to be absent. The pre-publication
+source `Preview` is separate evidence and cannot satisfy this step.
+
+Report GitHub publication and official recognition separately. Do not claim
+the stable release flow complete after the button click or while recognition
+is `Pending`/`BLOCKED`. Keep a blocked account page available for handoff and
+resume recognition for the existing release; do not recreate, repush or retag.
+Do not claim client installation or update delivery from hosted recognition.
+
 ## Related Skills
 
 - Use `pa-brat-beta-release` for BRAT prereleases.
 - Use `personal-assistant-review` for code-level release readiness.
-- Use `obsidian-community-check` for the hosted pre-publication gate.
+- Use `obsidian-community-check` for the source preview gate and post-publication
+  official release recognition.
 - Use `obsidian-test-vault-smoke` for app smoke evidence.
 - Use `obsidian-ios-real-device-smoke` for real-device iOS evidence.

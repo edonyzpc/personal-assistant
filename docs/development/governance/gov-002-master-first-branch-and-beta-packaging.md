@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-002
-Updated: 2026-10-06
+Updated: 2026-10-07
 Work item: B-117
 Authority: PA 仓库的代码、测试、研究/设计文档、工程治理与 BRAT beta 分支来源规则；不定义 PA runtime 或用户产品行为。
 
@@ -96,6 +96,11 @@ contract 的同会话工程维护入口，不创建新的产品或跨会话过�
 - B-117/REQ-10: 发布后默认核实工作流成功、非草稿 prerelease、完整资产列表和
   下载的 manifest 版本；全资产下载/hash/语法验证用于明确请求或具体诊断。
   必须等下载自然完成再读取文件，轮询等待不计为额外测试时间。
+  stable 还须核实 Obsidian 官方版本识别：GitHub 正式 Release 可访问后，通过
+  authenticated account 页复用目标 release check，缺失时点击 `Check for new releases`；
+  要求目标 `Version` 与 tag commit 匹配、`Completed` 且无 `Error`、`Current release`
+  为目标版本且缺失 release 的 banner 消失。源码 `Preview` 与 GitHub 发布不能代替
+  官方识别证据；pending/blocked 时分别报告已发布与未完成识别，恢复时不重新发版。
 - B-117/REQ-11: 正常仅包装 beta 不重复部署或 Obsidian/BRAT 功能 smoke。只有安装/
   资产布局、插件 ID、platform 能力变化，具体下载/加载/升级故障或明确要求时，才做
   对应安装、app 或设备验证；新增功能修复先回到 master 的功能验收。只有从已发布

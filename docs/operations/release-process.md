@@ -29,6 +29,10 @@ Push the current branch and tag, then watch the GitHub Actions release workflow:
 make publish VERSION="<prepared-version>"
 ```
 
+For stable releases, continue with [official release recognition](#stable-release-official-recognition)
+after verifying the published GitHub Release. `make publish` watches GitHub
+Actions; it does not trigger or verify Obsidian's hosted release check.
+
 ## What `make release` Does
 
 `make release VERSION=x.y.z` runs `scripts/release.mjs`:
@@ -266,6 +270,49 @@ Obsidian's community plugin installer and updater install only the standard runt
 
 Starting with version `2.8.0`, release notes for license and compliance releases must state that the client source is `AGPL-3.0-only` starting with that version, that historical releases are not relicensed retroactively, and that the release does not introduce an account system, license key, checkout flow, feature lock, hosted commercial service, or paid entitlement check unless a future release explicitly says otherwise. `scripts/release.mjs` includes this statement in the generated `2.8.0` changelog section and annotated tag body, and the GitHub workflow publishes the tag body through `--notes-from-tag`.
 
+### Stable Release: Official Recognition
+
+Complete a stable publication in this order:
+
+1. Pass the hosted `Preview` scan for the exact accepted source commit before
+   creating the local release. This is the source gate used by
+   [stable-release](../../.agents/skills/stable-release/SKILL.md).
+2. Publish the bare version tag, wait for the release workflow to succeed, and
+   verify the non-draft, non-prerelease GitHub Release, the six canonical assets
+   above, and the downloaded `manifest.json` version.
+3. Use [obsidian-community-check](../../.agents/skills/obsidian-community-check/SKILL.md)
+   in `release` mode to inspect the authenticated
+   [Personal Assistant account page](https://community.obsidian.md/account/plugins/personal-assistant).
+   If the target release is not already recognized or pending, click
+   `Check for new releases` after the GitHub Release is available. An authorized
+   stable publication includes this follow-up; no second release authorization
+   is needed for the same version.
+4. Inspect the release review identified by `Version: <target-version>` and
+   the published tag's commit. This is a release row, not a `Preview` row for
+   `master`, a source SHA, or even the same version tag. Wait for `Completed`,
+   review all findings, and require no `Error`. Also require `Current release`
+   to show the target version and the `No release matches your manifest version`
+   banner to be absent.
+
+A matching `Failed` review or any `Error` requires diagnosis; do not repeatedly
+submit the same release to bypass the result.
+
+A successful source preview does not make the official service discover a new
+GitHub Release. Clicking the button or seeing `Pending` proves only submission,
+not completion. Report GitHub publication and official recognition separately;
+claim the stable release flow complete only after both are verified. Official
+recognition does not itself prove installation or update delivery to a user's
+Obsidian client. BRAT prereleases do not use this official stable-release step.
+
+Use the existing authenticated browser and visible page controls. There is no
+repo-supported API or CLI for this step; do not add cookies, session files or
+credentials to CI. If login, browser access or the hosted check is unavailable,
+report `GitHub published; official recognition pending/BLOCKED`, retain the
+account-page handoff and resume this step later. Do not recreate the release,
+push again or move the tag to resolve a discovery delay. If `master` now names
+a different manifest version, report the mismatch rather than checking or
+claiming recognition for another release.
+
 ## BRAT Beta Testing
 
 Use [BRAT beta testing](./brat-beta-testing.md) for prerelease builds intended
@@ -301,4 +348,7 @@ Key constraints:
 
 - If `make release` fails before the release commit, inspect `git status --short`, fix the issue, and rerun the command.
 - If the release commit exists but the tag was not pushed, rerun `make publish VERSION=x.y.z`.
+- If GitHub publication succeeded but official stable recognition is missing,
+  resume [official release recognition](#stable-release-official-recognition)
+  for the existing release; do not rerun release preparation.
 - If a tag was created incorrectly, do not delete or retag without an explicit maintainer decision.

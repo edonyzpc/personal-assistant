@@ -1,6 +1,6 @@
 ---
 name: obsidian-community-check
-description: Trigger and inspect the Obsidian Community plugin review-branch scan for the personal-assistant plugin. Use when asked to run, trigger, poll, verify, or report the community.obsidian.md automated check for master, a branch, tag, or commit before Obsidian plugin release or publication.
+description: Trigger and inspect Obsidian Community checks for personal-assistant. Use for pre-release branch/tag/commit preview scans, or post-publication stable release recognition with Check for new releases on community.obsidian.md.
 ---
 
 # Obsidian Community Check
@@ -12,13 +12,21 @@ description: Trigger and inspect the Obsidian Community plugin review-branch sca
 - Submit only a ref whose intended local commit is proven reachable and identical on the remote. Stop on every SHA mismatch.
 - If the user explicitly asked to trigger the hosted check, that authorizes this specific submission. Still obey any browser action-time confirmation.
 
+## Choose The Check
+
+- `preview`: scan the requested remote branch, tag or commit before publication.
+  Follow the preview preflight and browser workflow below.
+- `release`: discover and check an already-published stable version. Follow
+  [Stable Release Recognition](#stable-release-recognition). A completed
+  `Preview` is not official release recognition, even if its ref is a tag.
+
 The project review form is:
 
 ```text
 https://community.obsidian.md/account/plugins/personal-assistant/review-branch
 ```
 
-## Preflight
+## Preview Preflight
 
 Run from the `personal-assistant` repo root.
 
@@ -80,7 +88,7 @@ Never push automatically. If a branch/tag is absent, ahead, divergent, or otherw
 
 4. Avoid duplicates. Before submitting, inspect the Reviews list for an existing `Pending` entry with the same ref and exact commit. Reuse it unless the user explicitly asks to resubmit.
 
-## Browser Workflow
+## Preview Browser Workflow
 
 Discover the browser tools available in this session and use one that can access
 the user's existing `community.obsidian.md` login, respecting any browser the user
@@ -112,6 +120,49 @@ logged out, blocked by browser security, or shows CAPTCHA/account prompts, stop
 and report `BLOCKED`. Do not inspect cookies, passwords, profiles, local storage,
 or session files. Keep the existing tab open for handoff when useful.
 
+## Stable Release Recognition
+
+Read [Release Process](../../../docs/operations/release-process.md#stable-release-official-recognition)
+for the canonical publication and asset checks. Use this mode only after the
+target's release workflow and non-draft, non-prerelease GitHub Release have
+been verified, including the canonical assets and downloaded manifest version.
+Reuse their successful evidence; resolve the published tag's commit, not its
+annotated tag-object SHA or the source parent scanned before packaging.
+
+1. Open the authenticated Personal Assistant account page:
+
+   `https://community.obsidian.md/account/plugins/personal-assistant`
+
+2. Inspect `Current release` and Reviews. Reuse a release row matching
+   `Version: <target-version>` and the published tag commit. Do not reuse a
+   `Preview` or another version. If a matching row is `Pending`, poll it instead
+   of submitting again; if `Completed`, review its findings and completion
+   conditions below before deciding whether any refresh is needed.
+   Stop and diagnose a matching `Failed` review or `Error`; do not repeatedly
+   submit the same release to bypass findings.
+3. If no matching release check exists, verify the visible control
+   `Check for new releases` and click it. This submission is included in an
+   authorized stable publication or an explicit request to check/refresh
+   release recognition. A read-only status request does not authorize it.
+   Follow any visible intermediate confirmation only within that same scope.
+4. Re-read the account page and inspect the matching release review. Require
+   `Version: <target-version>`, a commit link resolving to the published tag
+   commit (or a visible SHA prefix matching it), and status
+   `Pending`, `Completed`, or `Failed`. Stop on version/commit mismatch.
+5. Apply the polling and findings rules below to this release row. Complete
+   only when it is `Completed` with no `Error`, `Current release` shows the
+   target version, and `No release matches your manifest version` is absent.
+   If master's manifest has advanced to a different version, report the
+   mismatch; do not trigger or claim the other version as the requested one.
+
+Use only the authenticated browser and observed page controls. The same
+login/security/CAPTCHA `BLOCKED` rules apply; do not invent an API or CLI or
+extract browser sessions for CI. Clicking the button, clearing the banner,
+or source preview completion alone is insufficient. Report GitHub publication
+separately when recognition is pending or blocked, retain the handoff page,
+and resume this check without republishing or changing the tag. Hosted
+recognition does not prove client installation or update delivery.
+
 ## Short-Batch Polling
 
 - Reload and inspect in batches of at most six iterations or about 30 seconds.
@@ -120,6 +171,10 @@ or session files. Keep the existing tab open for handoff when useful.
 - Stop after about 90 seconds total unless the user requested a longer wait. If still `Pending`, keep the tab open and report incomplete status.
 - If browser security blocks later polling, preserve the already-verified submitted row and report the final state as unknown; do not reopen a long loop from scratch.
 - Report partial categories visible during `Pending` as incomplete.
+- In an authorized stable publication, continue observing a healthy pending
+  release check beyond the default 90-second standalone-check limit. Poll at
+  reasonable intervals and report meaningful changes; do not end the flow as
+  complete while the target release is pending.
 
 ## Result Rules
 
@@ -132,6 +187,8 @@ or session files. Keep the existing tab open for handoff when useful.
 
 ```markdown
 Community check:
+- Mode: preview / release
+- Target version: `<stable version or n/a>`
 - Ref: `<branch/tag/sha>`
 - Intended local SHA: `<full sha>`
 - Remote-scannable SHA: `<full sha>`
@@ -143,6 +200,9 @@ Community check:
   - FAIL: `<category>` - Error (release blocker)
   - WARNING: `<category>` - Warning
 - Complete: yes / no
+- GitHub publication: verified / unverified / n/a
+- Official recognition: verified / Pending / Failed / BLOCKED / n/a
+- Current release: `<visible version or unavailable>`
 - Local source scan: `<separate result or not run>`
 - Browser tab: kept open / closed
 ```
@@ -152,3 +212,4 @@ Community check:
 - Use `obsidian-test-vault-smoke` for local validation and app smoke.
 - Use `obsidian-ios-real-device-smoke` for mobile validation.
 - Use `personal-assistant-review` for code-level review gates.
+- Use `stable-release` for the full authorized stable publication flow.

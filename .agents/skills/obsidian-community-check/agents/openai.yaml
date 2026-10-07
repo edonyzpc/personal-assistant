@@ -1,4 +1,4 @@
 interface:
   display_name: "Obsidian Community Check"
-  short_description: "Trigger Obsidian community branch scans"
-  default_prompt: "Use $obsidian-community-check to trigger the Obsidian community scan for master."
+  short_description: "Preview source scans and verify official stable releases"
+  default_prompt: "Use $obsidian-community-check for the requested source preview or stable release recognition; distinguish Preview from the official release check."
