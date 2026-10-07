@@ -38,6 +38,7 @@ import type { PersistedConversation, PersistedTurn } from './chat-history-store'
 import { ConversationPersistence } from './ConversationPersistence';
 import { renderMarkdownWithOwner, containsMermaidFence, deferMermaidFences, getMermaidFenceSources, scheduleMermaidEnhancement, renderMermaidSourceWarning } from './mermaid';
 import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatChoiceMenuItem, createChatMenuDivider, createChatMenuLabel, updateChatMenuAvailableWidth } from './menu-helpers';
+import { registerMessageLongPress } from './message-long-press';
 import { formatSourceSummary, mergeContextUsedItems, normalizeContextUsedItems, normalizeSourceRecords, mergeSourceRecords, getContextUsedItemsFromStatus, formatAgentStatus, formatCanonicalToolStatus, formatCanonicalToolCompletedStatus, formatRuntimeWarningLabel, formatRuntimeWarningDetail, formatCanonicalTerminalSummary, runtimeWarningKey } from './formatters';
 import {
     createChatRoleIdenticonSessionSeed,
@@ -1098,6 +1099,7 @@ export class LLMView extends ItemView {
         let restoredTerminalDraft: { turnId: number; snapshot: ComposerSnapshot<MessageImage> } | undefined;
         let thinkingStatusId = 0;
         let historyDeleteButtons: HTMLButtonElement[] = [];
+        const mobileActionProxies = new WeakMap<HTMLButtonElement, HTMLButtonElement>();
         let timelineEntries: TimelineEntry[] = [];
         let emptyStateEl: HTMLElement | null = null;
         let isStopping = false;
@@ -1820,6 +1822,8 @@ export class LLMView extends ItemView {
         const setHistoryDeleteButtonsDisabled = (disabled: boolean) => {
             historyDeleteButtons.forEach((button) => {
                 button.disabled = disabled;
+                const proxy = mobileActionProxies.get(button);
+                if (proxy) proxy.disabled = disabled;
             });
         };
         const removeElement = (element?: HTMLElement | null) => {
@@ -3522,6 +3526,8 @@ export class LLMView extends ItemView {
         const syncMessageCopyButton = (rendered: RenderedMessage) => {
             if (!rendered.copyButton) return;
             rendered.copyButton.disabled = rendered.copyContent.length === 0;
+            const proxy = mobileActionProxies.get(rendered.copyButton);
+            if (proxy) proxy.disabled = rendered.copyButton.disabled;
         };
 
         const positionMessageActionMenu = (actionDiv: HTMLElement, actionMenu: HTMLElement) => {
@@ -3529,6 +3535,24 @@ export class LLMView extends ItemView {
             const container = actionDiv.closest('.llm-chat-container') ?? this.responseDiv;
             const actionRect = actionDiv.getBoundingClientRect();
             const containerRect = container.getBoundingClientRect();
+            if (Platform.isMobile && actionMenu.classList.contains('pa-chat-mobile-message-menu')) {
+                const message = actionDiv.parentElement!;
+                const messageRect = message.getBoundingClientRect();
+                const availableHeight = Math.max(0, containerRect.height - 16);
+                actionMenu.style.setProperty('--pa-chat-menu-available-width', `${Math.max(0, containerRect.width - 16)}px`);
+                actionMenu.style.setProperty('--pa-chat-mobile-menu-max-height', `${availableHeight}px`);
+                const menuRect = actionMenu.getBoundingClientRect();
+                const height = Math.min(menuRect.height, availableHeight);
+                const preferredLeft = message.classList.contains('user')
+                    ? messageRect.right - menuRect.width : messageRect.left;
+                const left = Math.max(containerRect.left + 8, Math.min(preferredLeft, containerRect.right - menuRect.width - 8));
+                let top = messageRect.bottom + 8;
+                if (top + height > containerRect.bottom - 8) top = messageRect.top - height - 8;
+                top = Math.max(containerRect.top + 8, Math.min(top, containerRect.bottom - height - 8));
+                actionMenu.style.setProperty('--pa-chat-mobile-menu-left', `${left - messageRect.left}px`);
+                actionMenu.style.setProperty('--pa-chat-mobile-menu-top', `${top - messageRect.top}px`);
+                return;
+            }
             const menuRect = actionMenu.getBoundingClientRect();
             const menuGap = 8;
             const roomAbove = actionRect.top - containerRect.top;
@@ -3672,6 +3696,67 @@ export class LLMView extends ItemView {
                 }, host, requiresSourceConfirmation).open();
             };
         };
+        const mobilePressTargets = new WeakMap<HTMLElement, {
+            roleEl: HTMLElement; isCurrent: () => boolean; open: () => void;
+        }>();
+        let activeMobileMessageMenu: { rendered: RenderedMessage; close: () => void } | null = null;
+        const closeMobileMessageMenu = (focusTrigger = false) => {
+            const active = activeMobileMessageMenu;
+            if (!active) return;
+            active.close();
+            if (focusTrigger) active.rendered.actionMenuButton.focus({ preventScroll: true });
+        };
+        const mobileLongPress = Platform.isMobile
+            ? registerMessageLongPress(this.responseDiv, message => mobilePressTargets.get(message)) : null;
+        if (Platform.isMobile) {
+            const doc = containerEl.ownerDocument ?? getOptionalPlatformDocument();
+            const onOutsidePointer = (event: Event) => {
+                const active = activeMobileMessageMenu;
+                if (!active || active.rendered.actionMenu.contains(event.target as Node)
+                    || active.rendered.actionMenuButton.contains(event.target as Node)) return;
+                closeMobileMessageMenu();
+            };
+            const onScroll = () => closeMobileMessageMenu();
+            const onKeydown = (event: KeyboardEvent) => {
+                if (event.key !== 'Escape' || !activeMobileMessageMenu) return;
+                event.preventDefault();
+                closeMobileMessageMenu(true);
+            };
+            for (const event of ['pointerdown', 'click']) doc?.addEventListener(event, onOutsidePointer, true);
+            this.responseDiv.addEventListener('scroll', onScroll);
+            this.responseDiv.addEventListener('keydown', onKeydown);
+            this.registerViewTeardown(() => {
+                mobileLongPress?.dispose();
+                closeMobileMessageMenu();
+                for (const event of ['pointerdown', 'click']) doc?.removeEventListener(event, onOutsidePointer, true);
+                this.responseDiv.removeEventListener('scroll', onScroll);
+                this.responseDiv.removeEventListener('keydown', onKeydown);
+            });
+        }
+        const rebuildMobileMessageMenu = (rendered: RenderedMessage, close: () => void) => {
+            rendered.actionMenu.empty();
+            const appendAction = (source: HTMLButtonElement | undefined, icon: string, danger = false) => {
+                if (!source || source.hidden) return;
+                const label = source.getAttribute('aria-label') ?? source.getAttribute('title')!;
+                if (danger) createChatMenuDivider(rendered.actionMenu);
+                const item = createChatMenuItem(rendered.actionMenu, {
+                    text: label, icon, cls: danger ? 'pa-chat-menu-item-danger' : '',
+                });
+                item.disabled = source.disabled;
+                mobileActionProxies.set(source, item);
+                item.onclick = () => {
+                    if (source.disabled) return;
+                    close();
+                    source.click();
+                };
+            };
+            appendAction(rendered.copyButton, 'copy');
+            appendAction(rendered.addMessageButton, 'file-plus');
+            appendAction(rendered.shareButton, 'share-2');
+            appendAction(rendered.writingButton, 'file-pen-line');
+            appendAction(rendered.retryMessageButton, 'rotate-cw');
+            appendAction(rendered.deleteButton, 'trash-2', true);
+        };
         const createMessageElement = (
             message: ChatMessage,
             options: {
@@ -3726,6 +3811,10 @@ export class LLMView extends ItemView {
             menuButton.setAttribute('aria-expanded', 'false');
             menuButton.hidden = true;
             const actionMenu = actionDiv.createDiv({ cls: 'pa-chat-menu pa-chat-message-menu' });
+            if (Platform.isMobile) {
+                actionDiv.classList.add('pa-chat-mobile-message-actions');
+                actionMenu.classList.add('pa-chat-mobile-message-menu');
+            }
             const sourcePath = options.sourcePath ?? this.getMarkdownRenderSourcePath();
             const rendered: RenderedMessage = {
                 messageDiv,
@@ -3747,17 +3836,28 @@ export class LLMView extends ItemView {
             const actionMenuAutoClose = createIdleMenuAutoClose(rendered.actionMenu, menuButton, () => {
                 rendered.actionMenu.hidden = true;
                 menuButton.setAttribute('aria-expanded', 'false');
+                if (activeMobileMessageMenu?.rendered === rendered) activeMobileMessageMenu = null;
             });
-            menuButton.onclick = () => {
-                if (rendered.actionMenu.hidden) {
-                    rendered.actionMenu.hidden = false;
-                    updateChatMenuAvailableWidth(rendered.actionMenu);
-                    positionMessageActionMenu(actionDiv, rendered.actionMenu);
-                    menuButton.setAttribute('aria-expanded', 'true');
-                    actionMenuAutoClose.schedule();
-                } else {
-                    actionMenuAutoClose.close();
+            const openMessageActionMenu = (focusFirst = false) => {
+                if (Platform.isMobile) {
+                    closeMobileMessageMenu();
+                    rebuildMobileMessageMenu(rendered, actionMenuAutoClose.close);
+                    activeMobileMessageMenu = { rendered, close: actionMenuAutoClose.close };
                 }
+                rendered.actionMenu.hidden = false;
+                updateChatMenuAvailableWidth(rendered.actionMenu);
+                positionMessageActionMenu(actionDiv, rendered.actionMenu);
+                menuButton.setAttribute('aria-expanded', 'true');
+                actionMenuAutoClose.schedule();
+                if (focusFirst && Platform.isMobile) {
+                    const first = Array.from(rendered.actionMenu.children).find(child =>
+                        child.classList.contains('pa-chat-menu-item') && !(child as HTMLButtonElement).disabled);
+                    (first as HTMLElement | undefined)?.focus({ preventScroll: true });
+                }
+            };
+            menuButton.onclick = event => {
+                if (rendered.actionMenu.hidden) openMessageActionMenu(event.detail === 0);
+                else actionMenuAutoClose.close();
             };
             copyButton.onclick = () => {
                 if (copyButton.disabled) return;
@@ -3770,6 +3870,14 @@ export class LLMView extends ItemView {
 
             ensureCompletedMessageActions(rendered, options);
             renderWritingActions(rendered, message);
+            if (Platform.isMobile) {
+                menuButton.hidden = false;
+                mobilePressTargets.set(messageDiv, {
+                    roleEl,
+                    isCurrent: () => isCurrentSession() && messageDiv.parentElement === this.responseDiv && !actionDiv.hidden,
+                    open: () => { if (rendered.actionMenu.hidden) openMessageActionMenu(); },
+                });
+            }
 
             if (!options.skipInitialRender) {
                 void renderMarkdownInto(rendered, message.content, options.isLive ?? (() => true), {
@@ -4188,6 +4296,8 @@ export class LLMView extends ItemView {
         };
 
         const renderTimeline = () => {
+            mobileLongPress?.cancel();
+            closeMobileMessageMenu();
             discardPendingOperations();
             this.cancelScheduledScroll();
             this.unloadAllMarkdownRenderOwners();

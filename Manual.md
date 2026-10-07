@@ -43,7 +43,7 @@ Once all fields are set, the empty-state banner disappears and the default chat 
 
 - Type a prompt in the composer at the bottom and press `Enter` to send (`Shift+Enter` for newline).
 - A streaming reply appears inline. Use the stop button to interrupt; the partial answer is preserved.
-- Hover any reply and use the copy button to copy text or the full message tree.
+- Hover a message on desktop to reveal its actions. On mobile, tap the message's top-right **⋯**, or press and hold its heading or bubble padding to open the action menu. Pressing the message text still selects text.
 
 ### 5. Citations and note context
 

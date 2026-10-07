@@ -964,6 +964,41 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 	}
 }
 
+@media (hover: hover) and (pointer: fine) {
+	/* Keep the controls outside the bubble without moving messages on hover. */
+	body:not(.is-mobile) .llm-view .llm-message:has(> .message-action-toolbar:not([hidden])) {
+		margin-bottom: 36px;
+	}
+
+	body:not(.is-mobile) .llm-view .llm-message > .message-action-toolbar {
+		position: absolute;
+		top: 100%;
+		right: 14px;
+		left: 14px;
+		margin-top: 0;
+		/* This padding connects the bubble and controls into one hover area. */
+		padding-top: 4px;
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	body:not(.is-mobile) .llm-view.is-compact .llm-message > .message-action-toolbar {
+		right: 12px;
+		left: 12px;
+	}
+
+	body:not(.is-mobile) .llm-view .llm-message:hover > .message-action-toolbar,
+	body:not(.is-mobile) .llm-view .llm-message:focus-within > .message-action-toolbar,
+	body:not(.is-mobile) .llm-view .llm-message > .message-action-toolbar:has(> .message-more-button[aria-expanded="true"]) {
+		opacity: 1;
+		pointer-events: auto;
+	}
+
+	body:not(.is-mobile) .llm-view .llm-message > .message-action-toolbar:has(> .message-more-button[aria-expanded="true"]) {
+		z-index: 3;
+	}
+}
+
 .llm-view button.message-action-button {
 	-webkit-appearance: none;
 	appearance: none;
@@ -1022,6 +1057,78 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 	flex: 0 0 auto;
 	width: var(--pa-chat-button-icon-size);
 	height: var(--pa-chat-button-icon-size);
+}
+
+body.is-mobile .llm-view .llm-message:has(> .pa-chat-mobile-message-actions:not([hidden])) {
+	padding: 8px 12px 14px;
+}
+
+body.is-mobile .llm-view .llm-message:has(> .pa-chat-mobile-message-actions:not([hidden])) > .message-role {
+	min-height: 28px;
+	margin-bottom: 8px;
+	padding-right: 36px;
+}
+
+body.is-mobile .llm-view .pa-chat-mobile-message-actions {
+	position: static;
+	margin-top: 0;
+	opacity: 1;
+}
+
+body.is-mobile .llm-view .pa-chat-mobile-message-actions > .message-action-button:not(.message-more-button) {
+	display: none;
+}
+
+body.is-mobile .llm-view .pa-chat-mobile-message-actions > .message-more-button {
+	position: absolute;
+	top: 8px;
+	right: 12px;
+	width: 28px;
+	height: 28px;
+	min-width: 28px;
+	min-height: 28px;
+	max-width: 28px;
+	max-height: 28px;
+	flex-basis: 28px;
+	padding: 5px;
+}
+
+body.is-mobile .llm-view .pa-chat-mobile-message-actions > .message-more-button::before {
+	content: "";
+	position: absolute;
+	inset: -8px;
+	border-radius: 12px;
+}
+
+body.is-mobile .llm-view .llm-message .pa-chat-mobile-message-menu {
+	--pa-chat-menu-min-width: 144px;
+	left: var(--pa-chat-mobile-menu-left, 0px);
+	top: var(--pa-chat-mobile-menu-top, 0px);
+	right: auto;
+	bottom: auto;
+	width: 144px;
+	max-height: var(--pa-chat-mobile-menu-max-height);
+	overflow-y: auto;
+	z-index: 10;
+}
+
+body.is-mobile .llm-view .pa-chat-mobile-message-menu::after {
+	display: none;
+}
+
+body.is-mobile .llm-view .pa-chat-mobile-message-menu .pa-chat-menu-item {
+	grid-template-columns: 12px minmax(0, 1fr);
+	justify-content: stretch;
+	min-height: 38px;
+	padding: 0 11px;
+	font-size: var(--pa-chat-control-font-size);
+}
+
+body.is-mobile .llm-view .pa-chat-mobile-message-menu .pa-chat-menu-item-icon,
+body.is-mobile .llm-view .pa-chat-mobile-message-menu .pa-chat-menu-item-icon svg {
+	width: 12px;
+	height: 12px;
+	flex-basis: 12px;
 }
 
 .pa-chat-view .pa-chat-source-decision-actions {

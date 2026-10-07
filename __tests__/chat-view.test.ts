@@ -509,6 +509,8 @@ class MockElement {
 
 function withMockDomHelpers<T extends object>(properties: T) {
     const documentLike = Object.assign(properties, {
+        addEventListener: 'addEventListener' in properties ? properties.addEventListener : () => {},
+        removeEventListener: 'removeEventListener' in properties ? properties.removeEventListener : () => {},
         createElement: 'createElement' in properties
             ? properties.createElement as (tagName: string) => MockElement
             : (tagName: string) => new MockElement(tagName),
@@ -11466,6 +11468,124 @@ describe('LLMView turn lifecycle', () => {
         expect(getButtonsByClass(messageMenu, 'delete-message-button')).toHaveLength(1);
         expect(getButtonsByClass(messageMenu, 'copy-message-button')).toHaveLength(0);
         expect(getButtonsByClass(messageMenu, 'add-to-editor-message-button')).toHaveLength(0);
+    });
+
+    it('routes mobile message menu actions through the existing copy, editor, share and deletion callbacks', async () => {
+        const before = { mobile: Platform.isMobile, desktop: Platform.isDesktop };
+        Platform.isMobile = true;
+        Platform.isDesktop = false;
+        try {
+            const { view, containerEl, editor } = createView({ withMarkdownLeaf: true });
+            await view.onOpen();
+            getTextArea(containerEl).value = 'mobile prompt';
+            void getButtonByText(containerEl, 'Ask').click();
+            await flushPromises();
+            streamCalls[0].onChunk('mobile answer');
+            streamCalls[0].resolve();
+            await flushPromises();
+            await flushPromises();
+            const assistant = getElementByClass(containerEl, 'assistant');
+            const menu = getElementByClass(assistant, 'pa-chat-mobile-message-menu');
+            const more = getButtonByClass(assistant, 'message-more-button');
+            expect(getElementByClass(assistant, 'message-actions').classList.contains('pa-chat-mobile-message-actions')).toBe(true);
+            more.click();
+            expect(allText(menu)).toContain('Copy message');
+            expect(allText(menu)).toContain('Add to editor');
+            getButtonByText(menu, 'Copy message').click();
+            await flushPromises();
+            expect(globalThis.navigator.clipboard.writeText).toHaveBeenCalledWith('mobile answer');
+            expect(menu.hidden).toBe(true);
+            more.click();
+            getButtonByText(menu, 'Add to editor').click();
+            expect(editor.replaceRange).toHaveBeenCalledWith('mobile answer', editor.getCursor());
+            more.click();
+            const shareLabel = getButtonByClass(assistant, 'share-card-message-button').getAttribute('aria-label')!;
+            getButtonByText(menu, shareLabel).click();
+            expect(mockShareCardModalOpen).toHaveBeenCalledTimes(1);
+            more.click();
+            getButtonByText(menu, 'Delete').click();
+            await flushPromises();
+            await flushPromises();
+            expect(view.chatHistory).toEqual([]);
+            await view.onClose();
+        } finally { Platform.isMobile = before.mobile; Platform.isDesktop = before.desktop; }
+    });
+
+    it.each(['writing', 'retry'] as const)('keeps the conditional %s action reachable in the mobile menu', async kind => {
+        const before = { mobile: Platform.isMobile, desktop: Platform.isDesktop };
+        Platform.isMobile = true;
+        Platform.isDesktop = false;
+        const open = jest.spyOn(WritingVersionModal.prototype, 'open').mockImplementation(() => {});
+        try {
+            const store = new MemoryChatHistoryStore();
+            const manager = new ChatHistoryManager({ store, generateId: () => `mobile-${kind}` });
+            await manager.initialize();
+            let conversation = await manager.startConversation('Mobile history');
+            const versions = new WritingVersionService(store);
+            const version = kind === 'writing' ? await versions.create({
+                requestId: 'mobile-writing', messageId: 'mobile-answer',
+                conversationId: conversation.id, turnIndex: 0, text: 'Historical answer', images: [],
+            }) : undefined;
+            conversation = await manager.recordTurn({
+                conversationId: conversation.id, turnIndex: 0, conversation, userPrompt: 'Mobile history',
+                entry: { kind: 'history', user: { role: 'user', content: 'Mobile history' },
+                    assistant: { role: 'assistant', content: 'Historical answer',
+                        ...(version ? { writingVersionId: version.id }
+                            : { agentExecution: { runId: 'mobile-interrupted', state: 'running' as const } }),
+                    } },
+            });
+            await manager.setActiveConversationId(conversation.id);
+            const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+            Object.assign(plugin, { writingVersions: versions });
+            await view.onOpen();
+            const sourceClass = kind === 'writing' ? 'pa-chat-writing-action' : 'retry-message-button';
+            for (let index = 0; index < 12 && !getElementsByClass(containerEl, sourceClass).length; index++) await flushPromises();
+            const assistant = getElementByClass(containerEl, 'assistant');
+            const source = getButtonByClass(assistant, sourceClass);
+            getButtonByClass(assistant, 'message-more-button').click();
+            const menu = getElementByClass(assistant, 'pa-chat-mobile-message-menu');
+            getButtonByText(menu, source.getAttribute('aria-label')!).click();
+            expect(menu.hidden).toBe(true);
+            if (kind === 'writing') expect(open).toHaveBeenCalledTimes(1);
+            else {
+                await waitForStreamCallCount(streamCalls, 1);
+                expect(streamCalls[0].prompt).toContain('Original goal: Mobile history');
+                streamCalls[0].resolve();
+                await waitForTurnCompletion(view);
+            }
+            await view.onClose();
+        } finally {
+            open.mockRestore();
+            Platform.isMobile = before.mobile;
+            Platform.isDesktop = before.desktop;
+        }
+    });
+
+    it('updates a mobile menu copy action when streamed text becomes available', async () => {
+        const before = { mobile: Platform.isMobile, desktop: Platform.isDesktop };
+        Platform.isMobile = true;
+        Platform.isDesktop = false;
+        try {
+            const { view, containerEl } = createView();
+            await view.onOpen();
+            getTextArea(containerEl).value = 'mobile streaming';
+            void getButtonByText(containerEl, 'Ask').click();
+            await flushPromises();
+            const assistant = getElementByClass(containerEl, 'assistant');
+            getButtonByClass(assistant, 'message-more-button').click();
+            const menu = getElementByClass(assistant, 'pa-chat-mobile-message-menu');
+            const copy = getButtonByText(menu, 'Copy message');
+            expect(copy.disabled).toBe(true);
+            streamCalls[0].onChunk('partial mobile answer');
+            await flushPromises();
+            expect(copy.disabled).toBe(false);
+            copy.click();
+            await flushPromises();
+            expect(globalThis.navigator.clipboard.writeText).toHaveBeenCalledWith('partial mobile answer');
+            streamCalls[0].resolve();
+            await flushPromises();
+            await view.onClose();
+        } finally { Platform.isMobile = before.mobile; Platform.isDesktop = before.desktop; }
     });
 
     it('keeps the Memory chip menu and More menu mutually exclusive', async () => {
