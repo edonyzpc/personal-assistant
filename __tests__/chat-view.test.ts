@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { readFileSync } from 'node:fs';
-import { Component, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, TFile, type App } from 'obsidian';
+import { installObsidianDocumentHelpers } from './helpers/obsidian-dom';
+import { Component, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, Setting, TFile, type App } from 'obsidian';
 import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-services/chat-service';
 import type { AgentEvent, LegacyAgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, formatOperationsPreview, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
@@ -42,6 +43,11 @@ import type {
 } from '../src/ai-services/operations/types';
 
 jest.mock('obsidian');
+jest.mock('../src/chat/modals', () => ({
+    ...jest.requireActual<typeof import('../src/chat/modals')>('../src/chat/modals'),
+    // Turn-lifecycle cases assume confirmation; modal rendering is tested separately below.
+    confirmChatAction: jest.fn(async () => true),
+}));
 
 type StreamCall = {
     prompt: string;
@@ -193,6 +199,7 @@ class MockClassList {
 
 class MockElement {
     readonly tagName: string;
+    namespaceURI = 'http://www.w3.org/1999/xhtml';
     readonly classList = new MockClassList();
     readonly children: MockElement[] = [];
     readonly attributes = new Map<string, string>();
@@ -498,6 +505,20 @@ class MockElement {
         const values = Array.isArray(input) ? input : [input];
         child.classList.add(...values);
     }
+}
+
+function withMockDomHelpers<T extends object>(properties: T) {
+    const documentLike = Object.assign(properties, {
+        createElement: 'createElement' in properties
+            ? properties.createElement as (tagName: string) => MockElement
+            : (tagName: string) => new MockElement(tagName),
+        createElementNS: (namespace: string, tagName: string) => {
+            const element = new MockElement(tagName);
+            element.namespaceURI = namespace;
+            return element;
+        },
+    });
+    return installObsidianDocumentHelpers(documentLike);
 }
 
 function matchesSelector(el: MockElement, selector: string): boolean {
@@ -1112,7 +1133,7 @@ describe('LLMView turn lifecycle', () => {
         });
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: undefined,
+            value: withMockDomHelpers({}),
         });
         Object.defineProperty(globalThis, 'navigator', {
             configurable: true,
@@ -1177,7 +1198,7 @@ describe('LLMView turn lifecycle', () => {
                 documentListeners.set(event, listener);
             }),
             removeEventListener: jest.fn((event: string) => { documentListeners.delete(event); }) };
-        Object.defineProperty(globalThis, 'document', { configurable: true, value: documentLike });
+        Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers(documentLike) });
         const { view, containerEl } = createView();
         await view.onOpen();
         const trigger = getButtonByClass(containerEl, 'pa-chat-source-scope-button');
@@ -1249,7 +1270,7 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls).toHaveLength(1);
         expect(streamCalls[0].options.runSourceSelection?.scope).toBe('notes');
         expect(await manager.findConversation('scope-failure')).not.toBeNull();
-        Object.defineProperty(globalThis, 'document', { configurable: true, value: documentLike });
+        Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers(documentLike) });
         jest.spyOn(store, 'updateConversationSourceSelection').mockRejectedValueOnce(new Error('disk unavailable'));
         getButtonByClass(containerEl, 'pa-chat-source-scope-button').click();
         const menu = getElementByClass(containerEl, 'pa-chat-source-scope-menu');
@@ -1271,7 +1292,7 @@ describe('LLMView turn lifecycle', () => {
         retry.focus();
         retry.dispatchEvent('keydown', { key: 'ArrowDown', preventDefault: jest.fn() });
         expect(documentLike.activeElement).toBe(getElementsByClass(menu, 'pa-chat-source-scope-option')[0]);
-        Object.defineProperty(globalThis, 'document', { configurable: true, value: undefined });
+        Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers({}) });
         retry.click();
         for (let i = 0; i < 5; i++) await flushPromises();
         expect(retry.hidden).toBe(true);
@@ -2861,7 +2882,7 @@ describe('LLMView turn lifecycle', () => {
             expect(allText(detailRoot)).not.toContain('original format is unverified');
             editor.value = 'Continue editing';
             const documentWithFocus = { activeElement: null as MockElement | null };
-            Object.defineProperty(globalThis, 'document', { configurable: true, value: documentWithFocus });
+            Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers(documentWithFocus) });
             const remove = getElementByClass(entries[0], 'pa-chat-image-draft__remove');
             remove.focus();
             remove.click();
@@ -3027,7 +3048,7 @@ describe('LLMView turn lifecycle', () => {
                 draftEl.scrollLeft = 190;
                 draftEl.scrollTop = 37;
                 const documentWithFocus = { activeElement: editor as MockElement | null };
-                Object.defineProperty(globalThis, 'document', { configurable: true, value: documentWithFocus });
+                Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers(documentWithFocus) });
                 getButtonByClass(context.containerEl, 'pa-chat-add-images').click();
                 const picker = walkAll(context.containerEl, (element) => element.getAttribute('type') === 'file')[1];
                 Object.assign(picker, { files: [new File(['invalid'], 'eighth.png', { type: 'image/png' })] });
@@ -3087,7 +3108,7 @@ describe('LLMView turn lifecycle', () => {
                 const draftEl = getElementByClass(context.containerEl, 'pa-chat-image-draft');
                 draftEl.clientWidth = 300;
                 const documentWithFocus = { activeElement: editor as MockElement | null };
-                Object.defineProperty(globalThis, 'document', { configurable: true, value: documentWithFocus });
+                Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers(documentWithFocus) });
                 editor.dispatchEvent('paste', { clipboardData: { files: Array.from({ length: 8 }, (_, index) =>
                     new File(['image'], `${index}.png`, { type: 'image/png' })) }, preventDefault: jest.fn() });
                 for (let i = 0; i < 6; i++) await flushPromises();
@@ -3998,7 +4019,7 @@ describe('LLMView turn lifecycle', () => {
                 if (index !== -1) listeners.splice(index, 1);
             }),
         };
-        Object.defineProperty(globalThis, 'document', { configurable: true, value: documentLike });
+        Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers(documentLike) });
         const { view, plugin, containerEl } = createView();
         await view.onOpen();
         const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
@@ -4750,7 +4771,7 @@ describe('LLMView turn lifecycle', () => {
             activeElement: undefined as MockElement | undefined,
             createElement: (tagName: string) => new MockElement(tagName),
         };
-        Object.defineProperty(globalThis, 'document', { configurable: true, value: activeDocument });
+        Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers(activeDocument) });
 
         const card = getElementByClass(containerEl, 'pa-chat-image-task-card');
         const footer = getElementByClass(card.parentElement!, 'message-action-toolbar');
@@ -4932,6 +4953,7 @@ describe('LLMView turn lifecycle', () => {
                 navigator: { clipboard: { write: clipboardWrite } } },
             createElement: (tag: string) => tag === 'img' ? decodedImage : canvas,
         };
+        installObsidianDocumentHelpers(copyDocument);
         const getVersionForOutput = jest.fn(async () => null);
         Object.assign(plugin, { imageAssetService: { resolveVariant: jest.fn(() => new Promise(resolve => {
             finishPreview = resolve;
@@ -7067,6 +7089,7 @@ describe('LLMView turn lifecycle', () => {
         expect(userIdenticon.style.getPropertyValue('--pa-chat-role-identicon-fill')).toMatch(/^var\(--pa-chat-role-identicon-/);
         const userIdenticonSvg = getElementByClass(userIdenticon, 'pa-chat-role-identicon-svg');
         expect(userIdenticonSvg.tagName).toBe('svg');
+        expect(userIdenticonSvg.namespaceURI).toBe('http://www.w3.org/2000/svg');
         expect(userIdenticonSvg.getAttribute('shape-rendering')).toBe('crispEdges');
         expect(userIdenticonSvg.getAttribute('fill')).toBe('none');
         expect(getElementsByClass(userIdenticon, 'pa-chat-role-identicon-cell').length).toBeGreaterThan(0);
@@ -7079,6 +7102,7 @@ describe('LLMView turn lifecycle', () => {
         expect(assistantIdenticon.style.getPropertyValue('--pa-chat-role-identicon-fill')).toMatch(/^var\(--pa-chat-role-identicon-/);
         const assistantIdenticonSvg = getElementByClass(assistantIdenticon, 'pa-chat-role-identicon-svg');
         expect(assistantIdenticonSvg.tagName).toBe('svg');
+        expect(assistantIdenticonSvg.namespaceURI).toBe('http://www.w3.org/2000/svg');
         expect(assistantIdenticonSvg.getAttribute('shape-rendering')).toBe('crispEdges');
         expect(getElementsByClass(assistantIdenticon, 'pa-chat-role-identicon-filled-scan').length).toBeGreaterThan(0);
         expect(getElementsByClass(assistantIdenticon, 'pa-chat-role-identicon-empty-scan').length).toBeGreaterThan(0);
@@ -7134,9 +7158,9 @@ describe('LLMView turn lifecycle', () => {
         });
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: withMockDomHelpers({
                 createElement: (tagName: string) => new MockElement(tagName),
-            },
+            }),
         });
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement, sourcePath?: string, owner?: Component) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement, _sourcePath?: string, owner?: Component) => {
             renderedMarkdown.push(markdown);
@@ -7212,9 +7236,9 @@ describe('LLMView turn lifecycle', () => {
         }> = [];
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: withMockDomHelpers({
                 createElement: (tagName: string) => new MockElement(tagName),
-            },
+            }),
         });
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement, sourcePath?: string, owner?: Component) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement, sourcePath?: string, owner?: Component) => {
             el.setText(markdown);
@@ -7277,9 +7301,9 @@ describe('LLMView turn lifecycle', () => {
         }
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: withMockDomHelpers({
                 createElement: (tagName: string) => new MockElement(tagName),
-            },
+            }),
         });
         Object.defineProperty(globalThis, 'MutationObserver', {
             configurable: true,
@@ -7376,9 +7400,9 @@ describe('LLMView turn lifecycle', () => {
         });
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: withMockDomHelpers({
                 createElement: (tagName: string) => new MockElement(tagName),
-            },
+            }),
         });
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             renderedMarkdown.push(markdown);
@@ -7431,9 +7455,9 @@ describe('LLMView turn lifecycle', () => {
     it('waits for all Mermaid candidates before binding multiple preview sources', async () => {
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: withMockDomHelpers({
                 createElement: (tagName: string) => new MockElement(tagName),
-            },
+            }),
         });
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             el.setText(markdown);
@@ -9140,7 +9164,7 @@ describe('LLMView turn lifecycle', () => {
 
         const documentLike = { activeElement: null as MockElement | null,
             addEventListener: jest.fn(), removeEventListener: jest.fn() };
-        Object.defineProperty(globalThis, 'document', { configurable: true, value: documentLike });
+        Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers(documentLike) });
         const opened: Modal[] = [];
         const open = jest.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
             opened.push(this);
@@ -9151,7 +9175,7 @@ describe('LLMView turn lifecycle', () => {
             const picker = opened[0] as ChatHistoryPickerModal;
             (picker as unknown as { contentEl: MockElement }).contentEl = new MockElement('div');
             picker.onOpen();
-            Object.defineProperty(globalThis, 'document', { configurable: true, value: undefined });
+            Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers({}) });
             getElementsByClass((picker as unknown as { contentEl: MockElement }).contentEl,
                 'pa-chat-history-delete')[0].click();
             await flushPromises();
@@ -9170,7 +9194,7 @@ describe('LLMView turn lifecycle', () => {
         await waitForStreamCallCount(streamCalls, 2);
         streamCalls[1].resolve();
         await waitForTurnCompletion(view);
-        Object.defineProperty(globalThis, 'document', { configurable: true, value: documentLike });
+        Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers(documentLike) });
         const secondOpened: Modal[] = [];
         const secondOpen = jest.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
             secondOpened.push(this);
@@ -9182,7 +9206,7 @@ describe('LLMView turn lifecycle', () => {
             const picker = secondOpened[0] as ChatHistoryPickerModal;
             (picker as unknown as { contentEl: MockElement }).contentEl = new MockElement('div');
             picker.onOpen();
-            Object.defineProperty(globalThis, 'document', { configurable: true, value: undefined });
+            Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers({}) });
             getElementsByClass((picker as unknown as { contentEl: MockElement }).contentEl,
                 'pa-chat-history-delete')[0].click();
             await flushPromises();
@@ -9216,6 +9240,41 @@ describe('LLMView turn lifecycle', () => {
 
         expect(modalLike.modalEl.classList.contains('pa-chat-confirmation-modal-shell')).toBe(true);
         expect(modalLike.contentEl.classList.contains('pa-chat-confirmation-modal')).toBe(true);
+    });
+
+    it.each(['confirm', 'cancel', 'close'] as const)('resolves the actual confirmation modal once on %s', (choice) => {
+        const buttons = new Map<string, () => void>();
+        const addButton = jest.spyOn(Setting.prototype, 'addButton').mockImplementation(function (this: Setting, callback) {
+            let label = '';
+            const button = {
+                setButtonText(text: string) { label = text; return button; },
+                setCta() { return button; },
+                setWarning() { return button; },
+                onClick(click: () => void) { buttons.set(label, click); return button; },
+            };
+            callback(button as unknown as Parameters<typeof callback>[0]);
+            return this;
+        });
+        const { app } = createView();
+        const resolved = jest.fn();
+        const modal = new ChatConfirmationModal({ app: app as never }, {
+            title: 'Confirm action', message: 'Confirmation test', confirmText: 'Confirm', cancelText: 'Cancel',
+        }, resolved);
+        const modalLike = modal as unknown as { modalEl: MockElement; contentEl: MockElement; onOpen: () => void };
+        modalLike.modalEl = new MockElement('div');
+        modalLike.contentEl = new MockElement('div');
+        const close = jest.spyOn(modal, 'close').mockImplementation(() => modal.onClose());
+        try {
+            modalLike.onOpen();
+            if (choice === 'close') modal.onClose();
+            else buttons.get(choice === 'confirm' ? 'Confirm' : 'Cancel')!();
+            modal.onClose();
+            expect(resolved).toHaveBeenCalledTimes(1);
+            expect(resolved).toHaveBeenCalledWith(choice === 'confirm');
+        } finally {
+            close.mockRestore();
+            addButton.mockRestore();
+        }
     });
 
     it('keeps terminal retry rows intact when a newer generation is active', async () => {
@@ -9338,11 +9397,12 @@ describe('LLMView turn lifecycle', () => {
         const renderJobs: Array<{ markdown: string; el: MockElement; resolve: () => void }> = [];
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: withMockDomHelpers({
                 createElement: (tagName: string) => new MockElement(tagName),
-            },
+            }),
         });
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+            expect(el.parentElement).toBeNull();
             return new Promise<void>((resolve) => {
                 renderJobs.push({
                     markdown,
@@ -9425,9 +9485,9 @@ describe('LLMView turn lifecycle', () => {
         const renderJobs: Array<{ markdown: string; el: MockElement; resolve: () => void }> = [];
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: withMockDomHelpers({
                 createElement: (tagName: string) => new MockElement(tagName),
-            },
+            }),
         });
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             return new Promise<void>((resolve) => {
@@ -9521,9 +9581,9 @@ describe('LLMView turn lifecycle', () => {
         const renderJobs: Array<{ markdown: string; el: MockElement; resolve: () => void }> = [];
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: withMockDomHelpers({
                 createElement: (tagName: string) => new MockElement(tagName),
-            },
+            }),
         });
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             return new Promise<void>((resolve) => {
@@ -9570,9 +9630,9 @@ describe('LLMView turn lifecycle', () => {
         const renderJobs: Array<{ markdown: string; el: MockElement; resolve: () => void }> = [];
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: withMockDomHelpers({
                 createElement: (tagName: string) => new MockElement(tagName),
-            },
+            }),
         });
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             return new Promise<void>((resolve) => {
@@ -9957,7 +10017,7 @@ describe('LLMView turn lifecycle', () => {
         const documentWithFocus = { activeElement: null as MockElement | null };
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: documentWithFocus,
+            value: withMockDomHelpers(documentWithFocus),
         });
         const { view, containerEl, plugin } = createView({
             setupIssue: 'Add your API token in Settings first.',
@@ -9982,7 +10042,7 @@ describe('LLMView turn lifecycle', () => {
         const documentWithFocus = { activeElement: null as MockElement | null };
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: documentWithFocus,
+            value: withMockDomHelpers(documentWithFocus),
         });
         const { view, containerEl } = createView({
             setupIssue: 'Add your API token in Settings first.',
@@ -10006,7 +10066,7 @@ describe('LLMView turn lifecycle', () => {
         const documentWithFocus = { activeElement: null as MockElement | null };
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: documentWithFocus,
+            value: withMockDomHelpers(documentWithFocus),
         });
         const { view, containerEl, plugin } = createView({
             setupIssue: 'Add your API token in Settings first.',
@@ -10205,11 +10265,11 @@ describe('LLMView turn lifecycle', () => {
         statusBar.boundingRect = { left: 600, top: 672, right: 900, bottom: 700, width: 300, height: 28 };
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: withMockDomHelpers({
                 body: {
                     querySelector: jest.fn((selector: string) => selector === '.status-bar' ? statusBar : null),
                 },
-            },
+            }),
         });
 
         await view.onOpen();
@@ -10224,11 +10284,11 @@ describe('LLMView turn lifecycle', () => {
         statusBar.boundingRect = { left: 600, top: 672, right: 900, bottom: 700, width: 300, height: 28 };
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: withMockDomHelpers({
                 body: {
                     querySelector: jest.fn((selector: string) => selector === '.status-bar' ? statusBar : null),
                 },
-            },
+            }),
         });
 
         await view.onOpen();
@@ -10262,7 +10322,7 @@ describe('LLMView turn lifecycle', () => {
         containerEl.boundingRect = { left: 0, top: 0, right: 900, bottom: 700, width: 900, height: 700 };
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: { body },
+            value: withMockDomHelpers({ body }),
         });
         Object.defineProperty(globalThis, 'MutationObserver', {
             configurable: true,
@@ -10656,7 +10716,7 @@ describe('LLMView turn lifecycle', () => {
         const documentWithFocus = { activeElement: null as MockElement | null };
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: documentWithFocus,
+            value: withMockDomHelpers(documentWithFocus),
         });
         await view.onOpen();
 
@@ -12119,9 +12179,9 @@ describe('mobile tab bar auto-hide', () => {
         });
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: withMockDomHelpers({
                 createElement: (tag: string) => new MockElement(tag),
-            },
+            }),
         });
         Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, value: undefined });
         Object.defineProperty(globalThis, 'MutationObserver', { configurable: true, value: undefined });

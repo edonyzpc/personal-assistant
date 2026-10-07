@@ -1,15 +1,11 @@
 /* Copyright 2023 edonyzpc */
 
-const SVG_NS = "http://www.w3.org/2000/svg";
-
 function createSvgElement(
     doc: Document,
-    tagName: string,
+    tagName: keyof SVGElementTagNameMap,
     attributes: Readonly<Record<string, string>>,
 ): SVGElement {
-    const element = typeof doc.createElementNS === "function"
-        ? doc.createElementNS(SVG_NS, tagName)
-        : doc.createElement(tagName) as unknown as SVGElement;
+    const element = doc.win.createSvg(tagName);
     for (const [name, value] of Object.entries(attributes)) {
         element.setAttribute(name, value);
     }

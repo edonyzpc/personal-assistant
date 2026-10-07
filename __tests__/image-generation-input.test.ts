@@ -1,6 +1,7 @@
 import { expect, it, jest } from '@jest/globals';
 import * as platformDom from '../src/platform-dom';
 import { prepareWanImageInput } from '../src/chat/image-generation-input';
+import { installObsidianDocumentHelpers } from './helpers/obsidian-dom';
 
 it('waits for approval before making an opaque white-backed Wan copy', async () => {
     const bytes = Uint8Array.from(Buffer.from(
@@ -18,7 +19,8 @@ it('waits for approval before making an opaque white-backed Wan copy', async () 
         onerror: null, set src(_value: string) { this.onload?.(); } };
     const canvas = { width: 0, height: 0, getContext: () => context,
         toBlob: (callback: (value: Blob) => void) => callback(new Blob([bytes], { type: 'image/png' })) };
-    const document = { createElement: (tag: string) => tag === 'img' ? image : canvas } as unknown as Document;
+    const createElement = (tag: string) => tag === 'img' ? image : canvas;
+    const document = installObsidianDocumentHelpers({ createElement }) as unknown as Document;
     const documentSpy = jest.spyOn(platformDom, 'getPlatformDocument').mockReturnValue(document);
     const createObjectURL = URL.createObjectURL;
     const revokeObjectURL = URL.revokeObjectURL;

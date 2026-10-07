@@ -1384,6 +1384,7 @@ describe("ShareCardRenderer", () => {
         renderMock.mockImplementationOnce(async (_app, _markdown, element) => {
             const body = element as unknown as ShareCardTestElement;
             connectedDuringRender.push(body.isConnected);
+            expect(body.ownerDocument).toBe(document);
             const iframe = document.createElement("iframe");
             iframe.setAttribute("src", "https://example.com/frame");
             const video = document.createElement("video");
@@ -1407,6 +1408,8 @@ describe("ShareCardRenderer", () => {
         }, { theme: "light" });
 
         expect(connectedDuringRender).toEqual([false]);
+        expect(render.cardEl.ownerDocument).toBe(document);
+        expect(render.bodyEl.ownerDocument).toBe(document);
         expect(render.bodyEl.querySelector("iframe")).toBeNull();
         expect(render.bodyEl.querySelector("video")).toBeNull();
         expect(render.bodyEl.querySelector("div")?.getAttribute("style")).toBeNull();

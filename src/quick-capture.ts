@@ -381,7 +381,7 @@ class QuickCaptureModal extends Modal {
         contentEl.empty();
         contentEl.addClass("pa-quick-capture-modal");
         contentEl.createEl("h2", { text: pluginT("plugin.quickCapture.modal.title", getPluginUiLanguage()) });
-        contentEl.createEl("div", {
+        contentEl.createDiv({
             text: `${pluginT("plugin.quickCapture.modal.savingTo", getPluginUiLanguage())} ${this.destinationLabel}`,
             cls: "pa-quick-capture-modal__destination",
             attr: { "aria-live": "polite" },

@@ -92,12 +92,10 @@ function appendDisplacement(
 
 function createElement(
     ownerDocument: Document,
-    tagName: string,
+    tagName: keyof SVGElementTagNameMap,
     attributes: Readonly<Record<string, string>>,
 ): SVGElement {
-    const element = typeof ownerDocument.createElementNS === "function"
-        ? ownerDocument.createElementNS(SVG_NAMESPACE, tagName)
-        : ownerDocument.createElement(tagName);
+    const element = ownerDocument.win.createSvg(tagName);
     for (const [name, value] of Object.entries(attributes)) {
         element.setAttribute(name, value);
     }
@@ -294,7 +292,7 @@ export function applyShareCardPrintStyle(
     ): void => {
         const text = run.map((node) => node.textContent ?? "").join("");
         if (text.trim().length === 0) return;
-        const wrapper = parent.ownerDocument.createElement("span");
+        const wrapper = parent.ownerDocument.win.createSpan();
         wrapper.classList.add("pa-share-card-print-text");
         wrapper.setAttribute(
             "data-pa-share-card-print-text",

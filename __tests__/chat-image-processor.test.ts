@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
 import { ImageProcessor, IMAGE_POLICY, imagePolicyFingerprint } from '../src/chat/image-processor';
 import { getPlatformDocument } from '../src/platform-dom';
+import { installObsidianDocumentHelpers } from './helpers/obsidian-dom';
 import { inspectImage } from '../src/chat/image-format';
 
-jest.mock('../src/platform-dom', () => ({ getPlatformDocument: jest.fn() }));
+jest.mock('../src/platform-dom', () => ({
+    ...jest.requireActual('../src/platform-dom'),
+    getPlatformDocument: jest.fn(),
+}));
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 async function until(check: () => boolean): Promise<void> {
     for (let i = 0; i < 100 && !check(); i++) await tick();
@@ -27,7 +31,7 @@ function browserHarness(options: { holdEncode?: boolean; wrongMime?: boolean; hu
     const revoke = jest.fn((url: string) => { if (urls.delete(url)) active--; });
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: create });
     Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revoke });
-    (getPlatformDocument as jest.Mock).mockReturnValue({ createElement: (tag: string) => {
+    const createElement = (tag: string) => {
         if (tag === 'img') {
             const image: any = { naturalWidth: 0, naturalHeight: 0, onload: null, onerror: null };
             Object.defineProperty(image, 'src', { set: (url: string) => {
@@ -52,7 +56,8 @@ function browserHarness(options: { holdEncode?: boolean; wrongMime?: boolean; hu
             if (options.holdEncode) callbacks.push(() => callback(blob)); else queueMicrotask(() => callback(blob));
         } };
         canvases.push(canvas); return canvas;
-    } });
+    };
+    (getPlatformDocument as jest.Mock).mockReturnValue(installObsidianDocumentHelpers({ createElement }));
     return { callbacks, canvases, context, encode, create, revoke, urls, active: () => active, peak: () => peak, loadCount: () => loadCount };
 }
 

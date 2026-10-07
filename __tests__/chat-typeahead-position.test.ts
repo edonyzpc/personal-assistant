@@ -1,4 +1,4 @@
-import { caretRectFromMirror, clampTypeaheadPosition, intersectRects } from '../src/chat/typeahead-position';
+import { caretRectFromMirror, clampTypeaheadPosition, intersectRects, measureTextAreaCaret } from '../src/chat/typeahead-position';
 
 describe('Chat textarea caret measurement', () => {
     it('translates mirror-relative caret geometry to the actual textarea origin', () => {
@@ -10,6 +10,64 @@ describe('Chat textarea caret measurement', () => {
             scrollTop: 12,
             height: 18,
         })).toEqual({ left: 51, top: 258, width: 1, height: 18 });
+    });
+
+    it.each([false, true])('uses the textarea document and removes its measurement mirror when measurement fails: %s', (measurementFails) => {
+        const styleValues = new Map<string, string>();
+        const marker = {
+            textContent: '',
+            getBoundingClientRect: jest.fn(() => {
+                if (measurementFails) throw new Error('measurement failed');
+                return { left: 75, top: 140, width: 1, height: 18 };
+            }),
+        };
+        const mirror = {
+            className: '',
+            style: { setProperty: (name: string, value: string) => styleValues.set(name, value) },
+            append: jest.fn(),
+            getBoundingClientRect: () => ({ left: 30, top: 90, width: 280, height: 120 }),
+            remove: jest.fn(),
+        };
+        const sourceStyle = {
+            getPropertyValue: (name: string) => ({
+                'border-left-width': '2px',
+                'border-right-width': '2px',
+                'line-height': '18px',
+                width: '280px',
+            } as Record<string, string>)[name] ?? '',
+        };
+        const ownerDocument = {
+            defaultView: { getComputedStyle: jest.fn(() => sourceStyle) },
+            win: { createDiv: jest.fn(() => mirror), createSpan: jest.fn(() => marker) },
+            createTextNode: jest.fn((text: string) => ({ textContent: text })),
+        };
+        const parent = { appendChild: jest.fn() };
+        const textArea = {
+            ownerDocument,
+            parentElement: parent,
+            value: 'hello world',
+            selectionStart: 5,
+            clientWidth: 276,
+            scrollLeft: 4,
+            scrollTop: 12,
+            getBoundingClientRect: () => ({ left: 10, top: 220, width: 280, height: 96 }),
+        } as unknown as HTMLTextAreaElement;
+
+        if (measurementFails) {
+            expect(() => measureTextAreaCaret(textArea)).toThrow('measurement failed');
+        } else {
+            expect(measureTextAreaCaret(textArea)).toEqual({ left: 51, top: 258, width: 1, height: 18 });
+        }
+
+        expect(ownerDocument.defaultView.getComputedStyle).toHaveBeenCalledWith(textArea);
+        expect(ownerDocument.win.createDiv).toHaveBeenCalledTimes(1);
+        expect(ownerDocument.win.createSpan).toHaveBeenCalledTimes(1);
+        expect(ownerDocument.createTextNode).toHaveBeenCalledWith('hello');
+        expect(mirror.append).toHaveBeenCalledWith({ textContent: 'hello' }, marker);
+        expect(styleValues.get('width')).toBe('280px');
+        expect(styleValues.get('visibility')).toBe('hidden');
+        expect(parent.appendChild).toHaveBeenCalledWith(mirror);
+        expect(mirror.remove).toHaveBeenCalledTimes(1);
     });
 });
 

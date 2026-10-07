@@ -48,7 +48,7 @@ export interface SuggestionCardDomNode {
 }
 
 export interface SuggestionCardDomHost {
-    createHtmlElement(tag: string): SuggestionCardDomNode;
+    createHtmlElement(tag: keyof HTMLElementTagNameMap): SuggestionCardDomNode;
 }
 
 class RealDomNode implements SuggestionCardDomNode {
@@ -108,8 +108,8 @@ class RealDomNode implements SuggestionCardDomNode {
 }
 
 class RealDomHost implements SuggestionCardDomHost {
-    createHtmlElement(tag: string): SuggestionCardDomNode {
-        return new RealDomNode(getPlatformDocument().createElement(tag));
+    createHtmlElement(tag: keyof HTMLElementTagNameMap): SuggestionCardDomNode {
+        return new RealDomNode(getPlatformDocument().win.createEl(tag));
     }
 }
 

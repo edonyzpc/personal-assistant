@@ -165,8 +165,8 @@ class PrintTestDocument extends ShareCardTestDocument {
         return new PrintTestElement(tagName, this);
     }
 
-    createElementNS(_namespace: string, tagName: string): PrintTestElement {
-        return this.createElement(tagName);
+    override createElementNS(namespace: string, tagName: string): PrintTestElement {
+        return super.createElementNS(namespace, tagName) as PrintTestElement;
     }
 
     createTextNode(text: string): PrintTestText {
@@ -307,6 +307,12 @@ describe("Share Card print styles", () => {
         const report = applyShareCardPrintStyle(asElement(card), asElement(body));
         const definitions = card.querySelectorAll(".pa-share-card-print-defs");
         expect(definitions).toHaveLength(2);
+        for (const definition of definitions) {
+            for (const element of [definition, ...definition.querySelectorAll("*")]) {
+                expect(element.ownerDocument).toBe(card.ownerDocument);
+                expect(element.namespaceURI).toBe("http://www.w3.org/2000/svg");
+            }
+        }
         const headingFilter = filterElement(definitions[0]!);
         const bodyFilter = filterElement(definitions[1]!);
 

@@ -78,8 +78,8 @@ jest.mock("obsidian", () => {
                     this.createdElements.push(element);
                     return element;
                 }),
-                createDiv: jest.fn(() => {
-                    const element = createMockElement("div");
+                createDiv: jest.fn((options?: { text?: string }) => {
+                    const element = createMockElement("div", options);
                     element.createEl = jest.fn((tag: string, options?: { text?: string }) => {
                         const child = createMockElement(tag, options);
                         this.createdElements.push(child);

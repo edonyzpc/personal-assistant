@@ -327,8 +327,8 @@ export class AIUtils {
     }
 
     private buildNoticeContent(title: string) {
-        const fragment = getPlatformDocument().createDocumentFragment();
-        const wrapper = fragment.createEl("div", { attr: { class: "pa-notice" } });
+        const fragment = getPlatformDocument().win.createFragment();
+        const wrapper = fragment.createDiv({ attr: { class: "pa-notice" } });
         const header = wrapper.createDiv({ cls: "pa-notice__header" });
         const spinner = header.createDiv({ cls: "pa-notice__spinner" });
         spinner.createSpan({ text: "" });

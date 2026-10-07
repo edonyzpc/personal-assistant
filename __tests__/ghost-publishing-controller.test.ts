@@ -9,6 +9,7 @@ import type { GhostLocalOperation } from "../src/ghost-publishing/state-schema";
 import type { GhostPublishingConfiguration } from "../src/ghost-publishing/configuration";
 import type { GhostNativeLeaf } from "../src/ghost-publishing/preview";
 import { DomStubNode, findAllByTag } from "./helpers/dom-stub";
+import { installObsidianDocumentHelpers } from "./helpers/obsidian-dom";
 
 const POST = "6ac4f4e0910d6f00010bb89b";
 const PREVIEW = "6ac4f4e0910d6f00010bb89c";
@@ -262,6 +263,7 @@ function domFixture() {
             return node;
         },
     };
+    installObsidianDocumentHelpers(document);
     return document.createElement("div");
 }
 
@@ -278,6 +280,10 @@ describe("Lean Ghost card rendering", () => {
             subscribe: value => { listener = value; return unsubscribe; }, run, dispose };
         const cleanup = renderGhostPublishingCard(container as unknown as HTMLElement, session, key => key);
         let buttons = findAllByTag(container, "button");
+        const ownerDocument = (container as DomStubNode & { ownerDocument: unknown }).ownerDocument;
+        expect([container.children[0], ...buttons].every(node =>
+            (node as DomStubNode & { ownerDocument: unknown }).ownerDocument === ownerDocument
+        )).toBe(true);
         expect(buttons.map(button => button.getAttribute("aria-label"))).toEqual([
             "plugin.ghost.card.action.open-preview", "plugin.ghost.card.action.confirm",
         ]);

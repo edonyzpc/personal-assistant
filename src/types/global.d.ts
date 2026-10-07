@@ -3,6 +3,16 @@
 export { };
 
 declare global {
+    // Obsidian exposes these helpers on each window, including popout windows.
+    // Its current declarations describe the globals but omit the Window members.
+    interface Window {
+        createEl: typeof createEl;
+        createDiv: typeof createDiv;
+        createSpan: typeof createSpan;
+        createSvg: typeof createSvg;
+        createFragment: typeof createFragment;
+    }
+
     namespace Intl {
         interface SegmenterOptions {
             granularity?: "grapheme" | "word" | "sentence";

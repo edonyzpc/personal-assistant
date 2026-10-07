@@ -88,7 +88,7 @@ export class ImageProcessor {
 
     private async loadImage(bytes: ArrayBuffer, mime: ChatImageMime, signal: AbortSignal): Promise<{ image: HTMLImageElement; release: () => void }> {
         checkImageOperation(signal);
-        const image = getPlatformDocument().createElement('img');
+        const image = getPlatformDocument().win.createEl('img');
         const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
         let released = false;
         const release = (): void => {
@@ -131,7 +131,7 @@ export class ImageProcessor {
         const decoded = await this.loadImage(bytes, inspected.mime, signal);
         let canvas: HTMLCanvasElement | undefined;
         try {
-            canvas = getPlatformDocument().createElement('canvas');
+            canvas = getPlatformDocument().win.createEl('canvas');
             checkImageOperation(signal, options.isCurrent);
             const width = decoded.image.naturalWidth, height = decoded.image.naturalHeight;
             const edge = options.purpose === 'preview' ? IMAGE_POLICY.maxPreviewEdge

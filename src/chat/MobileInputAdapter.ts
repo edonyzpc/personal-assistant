@@ -66,7 +66,7 @@ export class MobileInputAdapter {
         if (!tabOptions) return;
         this.mobileTabBarOptions = tabOptions;
 
-        const handle = getPlatformDocument().createElement('div');
+        const handle = getPlatformDocument().win.createDiv();
         handle.className = 'pa-tab-bar-handle';
         handle.setAttribute('aria-label', t("plugin.chat.mobile.showTabBar"));
         handle.setAttribute('aria-expanded', 'false');

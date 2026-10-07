@@ -8751,8 +8751,8 @@ export class PluginManager extends Plugin {
     }
 
     private showTechnicalMemoryNotice(model: TechnicalMemoryNoticeModel, timeout: number): void {
-        const fragment = getPlatformDocument().createDocumentFragment();
-        const wrapper = fragment.createEl("div", { attr: { class: "pa-notice pa-notice--diagnostic" } });
+        const fragment = getPlatformDocument().win.createFragment();
+        const wrapper = fragment.createDiv({ attr: { class: "pa-notice pa-notice--diagnostic" } });
         const header = wrapper.createDiv({ cls: "pa-notice__header" });
         const icon = header.createDiv({ cls: "pa-notice__icon" });
         setIcon(icon, "activity");

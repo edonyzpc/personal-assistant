@@ -78,6 +78,7 @@ export type ShareCardTestChildNode =
 
 export class ShareCardTestElement {
     readonly nodeType: number;
+    namespaceURI = "http://www.w3.org/1999/xhtml";
     readonly classList = new ShareCardTestClassList();
     readonly children: ShareCardTestElement[] = [];
     readonly allChildNodes: ShareCardTestChildNode[] = [];
@@ -513,6 +514,10 @@ export class ShareCardTestDocument {
         innerHeight: number;
         navigator: { clipboard?: { write(items: unknown[]): Promise<void> } };
         ClipboardItem?: new (items: Record<string, Blob | PromiseLike<Blob>>) => ClipboardItem;
+        createEl(tagName: string): ShareCardTestElement;
+        createDiv(): ShareCardTestElement;
+        createSpan(): ShareCardTestElement;
+        createSvg(tagName: string): ShareCardTestElement;
         requestAnimationFrame(callback: FrameRequestCallback): number;
         addEventListener(type: string, listener: () => void): void;
         removeEventListener(type: string, listener: () => void): void;
@@ -528,6 +533,10 @@ export class ShareCardTestDocument {
             innerWidth: 700,
             innerHeight: 850,
             navigator: {},
+            createEl: (tagName) => this.createElement(tagName),
+            createDiv: () => this.createElement("div"),
+            createSpan: () => this.createElement("span"),
+            createSvg: (tagName) => this.createElementNS("http://www.w3.org/2000/svg", tagName),
             requestAnimationFrame: (callback) => {
                 callback(0);
                 return 1;
@@ -548,6 +557,18 @@ export class ShareCardTestDocument {
 
     createElement(tagName: string): ShareCardTestElement {
         return new ShareCardTestElement(tagName.toLowerCase(), this);
+    }
+
+    createElementNS(namespace: string, tagName: string): ShareCardTestElement {
+        const element = this.createElement(tagName);
+        element.namespaceURI = namespace;
+        // SVG tag names preserve case, including feTurbulence and foreignObject.
+        Object.defineProperty(element, "tagName", { value: tagName });
+        return element;
+    }
+
+    get win(): typeof this.defaultView {
+        return this.defaultView;
     }
 
 

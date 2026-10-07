@@ -12,7 +12,7 @@ export function clearChildren(node: Element): void {
 }
 
 export function createHtmlElement<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
-    return getPlatformDocument().createElement(tag);
+    return getPlatformDocument().win.createEl(tag);
 }
 
 export function appendIconButtonLabel(button: HTMLButtonElement, iconText: string, labelText: string): HTMLSpanElement {
@@ -33,7 +33,7 @@ export function el<K extends keyof HTMLElementTagNameMap>(
     className?: string,
     text?: string,
 ): HTMLElementTagNameMap[K] {
-    const node = getPlatformDocument().createElement(tag);
+    const node = getPlatformDocument().win.createEl(tag);
     if (className) node.className = className;
     if (text !== undefined) node.textContent = text;
     return node;

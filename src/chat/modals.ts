@@ -126,15 +126,15 @@ export class ChatHistoryPickerModal extends Modal {
                 attr: { type: 'button' },
             });
             button.disabled = this.options.isStreaming;
-            const title = button.createEl('div', { cls: 'pa-chat-history-title', text: conversation.title });
+            const title = button.createDiv({ cls: 'pa-chat-history-title', text: conversation.title });
             if (conversation.id === this.options.activeConversationId) {
                 title.createSpan({ cls: 'pa-chat-history-active-badge', text: t("plugin.chat.history.currentBadge") });
             }
             const preview = getDistinctChatHistoryPreview(conversation.title, conversation.preview);
             if (preview) {
-                button.createEl('div', { cls: 'pa-chat-history-preview', text: preview });
+                button.createDiv({ cls: 'pa-chat-history-preview', text: preview });
             }
-            button.createEl('div', {
+            button.createDiv({
                 cls: 'pa-chat-history-meta',
                 text: `${formatTurnCount(conversation.turnCount, t)} · ${formatRelativeTime(conversation.updatedAt, t)}`,
             });

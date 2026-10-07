@@ -75,7 +75,7 @@ export class CalloutModal extends SuggestModal<Callout> {
 
     // Renders each suggestion item.
     renderSuggestion(callout: Callout, el: HTMLElement) {
-        const calloutContainerEl = el.createEl('div');
+        const calloutContainerEl = el.createDiv();
         calloutContainerEl.classList.add('calloutmanager-preview-container');
         calloutContainerEl.setAttribute('data-callout-manager-callout', callout.id);
         const { icon, id } = callout;
@@ -203,7 +203,7 @@ export class CalloutPreviewComponent extends Component {
         super();
         const { color, icon, id, title, content } = options;
 
-        const frag = getPlatformDocument().createDocumentFragment();
+        const frag = getPlatformDocument().win.createFragment();
 
         // Build the callout.
         const calloutEl = (this.calloutEl = frag.createDiv({ cls: ['callout', 'calloutmanager-preview'] }));

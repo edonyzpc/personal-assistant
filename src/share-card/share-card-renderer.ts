@@ -636,7 +636,7 @@ export class ShareCardRenderer {
     ): Promise<ShareCardRenderPrototype> {
         const deadline = Date.now() + this.readinessTimeoutMs;
         const host = this.createCaptureHost();
-        const bodyEl = this.ownerDocument.createElement("div");
+        const bodyEl = this.ownerDocument.win.createDiv();
         bodyEl.classList.add("pa-share-card-body", "pa-share-card-static");
         const cardEl = this.createCardElement(page, options, bodyEl);
         const renderComponent = this.createComponent();
@@ -676,7 +676,7 @@ export class ShareCardRenderer {
                 renderComponent.unload();
                 component = null;
                 clearElement(bodyEl);
-                const fallbackEl = this.ownerDocument.createElement("pre");
+                const fallbackEl = this.ownerDocument.win.createEl("pre");
                 fallbackEl.classList.add("pa-share-card-body-fallback");
                 fallbackEl.textContent = plainTextFallbackContent;
                 bodyEl.appendChild(fallbackEl);
@@ -851,7 +851,7 @@ export class ShareCardRenderer {
     ): ShareCardRenderPrototype | null {
         if (!this.hasPreparedAppearance(options)) return null;
         const blocks = this.preparedBlocks ?? [];
-        const bodyEl = this.ownerDocument.createElement("div");
+        const bodyEl = this.ownerDocument.win.createDiv();
         bodyEl.classList.add("pa-share-card-body", "pa-share-card-static");
         const sanitizationIssues: ShareCardSanitizationIssue[] = [];
         let usedPlainTextFallback = false;
@@ -899,7 +899,7 @@ export class ShareCardRenderer {
                     usedPlainTextFallback ||= block.prototype.usedPlainTextFallback;
                 }
             } else if (page.content.length > 0) {
-                const fallbackEl = this.ownerDocument.createElement("pre");
+                const fallbackEl = this.ownerDocument.win.createEl("pre");
                 fallbackEl.classList.add("pa-share-card-body-fallback");
                 fallbackEl.textContent = page.content;
                 bodyEl.appendChild(fallbackEl);
@@ -941,7 +941,7 @@ export class ShareCardRenderer {
         options: ShareCardRenderOptions,
         bodyEl: HTMLElement,
     ): HTMLElement {
-        const cardEl = this.ownerDocument.createElement("div");
+        const cardEl = this.ownerDocument.win.createDiv();
         cardEl.classList.add(
             "pa-share-card",
             "pa-share-card-static",
@@ -955,39 +955,39 @@ export class ShareCardRenderer {
             );
         }
 
-        const ornamentTl = this.ownerDocument.createElement("div");
+        const ornamentTl = this.ownerDocument.win.createDiv();
         ornamentTl.classList.add("pa-share-card-ornament", "is-top-left");
         ornamentTl.appendChild(createShareCardOrnament(this.ownerDocument));
         cardEl.appendChild(ornamentTl);
 
-        const ornamentBr = this.ownerDocument.createElement("div");
+        const ornamentBr = this.ownerDocument.win.createDiv();
         ornamentBr.classList.add("pa-share-card-ornament", "is-bottom-right");
         ornamentBr.appendChild(createShareCardOrnament(this.ownerDocument));
         cardEl.appendChild(ornamentBr);
 
-        const noiseEl = this.ownerDocument.createElement("div");
+        const noiseEl = this.ownerDocument.win.createDiv();
         noiseEl.classList.add("pa-share-card-noise");
         noiseEl.style.backgroundImage = `url("${SHARE_CARD_NOISE_DATA_URI}")`;
         cardEl.appendChild(noiseEl);
 
         cardEl.appendChild(bodyEl);
 
-        const footerEl = this.ownerDocument.createElement("div");
+        const footerEl = this.ownerDocument.win.createDiv();
         footerEl.classList.add("pa-share-card-footer");
 
-        const dividerEl = this.ownerDocument.createElement("div");
+        const dividerEl = this.ownerDocument.win.createDiv();
         dividerEl.classList.add("pa-share-card-divider");
         footerEl.appendChild(dividerEl);
 
-        const brandRow = this.ownerDocument.createElement("div");
+        const brandRow = this.ownerDocument.win.createDiv();
         brandRow.classList.add("pa-share-card-brand-row");
         brandRow.appendChild(createShareCardLogo(this.ownerDocument));
-        const brandName = this.ownerDocument.createElement("span");
+        const brandName = this.ownerDocument.win.createSpan();
         brandName.classList.add("pa-share-card-brand-name");
         brandName.textContent = "Personal Assistant";
         brandRow.appendChild(brandName);
         if (options.sourceLabel) {
-            const sourceHint = this.ownerDocument.createElement("span");
+            const sourceHint = this.ownerDocument.win.createSpan();
             sourceHint.classList.add("pa-share-card-source-hint");
             sourceHint.textContent = `· ${options.sourceLabel}`;
             brandRow.appendChild(sourceHint);
@@ -995,7 +995,7 @@ export class ShareCardRenderer {
         footerEl.appendChild(brandRow);
 
         if (page.totalPages > 1) {
-            const pageNumberEl = this.ownerDocument.createElement("div");
+            const pageNumberEl = this.ownerDocument.win.createDiv();
             pageNumberEl.classList.add("pa-share-card-page-number");
             pageNumberEl.textContent = `${page.pageIndex + 1} / ${page.totalPages}`;
             footerEl.appendChild(pageNumberEl);
@@ -1005,7 +1005,7 @@ export class ShareCardRenderer {
     }
 
     private createCaptureHost(): HTMLElement {
-        const host = this.ownerDocument.createElement("div");
+        const host = this.ownerDocument.win.createDiv();
         host.classList.add("pa-share-card-capture-host");
         host.setAttribute("aria-hidden", "true");
         host.setAttribute("inert", "");
@@ -2037,7 +2037,7 @@ function replaceCanvasWithStaticImage(element: HTMLCanvasElement): boolean {
     try {
         const dataUrl = element.toDataURL("image/png");
         if (!SAFE_IMAGE_DATA_URI_RE.test(dataUrl)) return false;
-        const image = element.ownerDocument.createElement("img");
+        const image = element.ownerDocument.win.createEl("img");
         image.setAttribute("src", dataUrl);
         image.setAttribute("alt", element.getAttribute("aria-label") ?? "Canvas");
         for (const dimension of ["width", "height"]) {
@@ -2110,7 +2110,7 @@ function markVisualBlockOwners(bodyEl: HTMLElement): void {
 }
 
 function replaceWithPlaceholder(element: Element, label: string): void {
-    const placeholder = element.ownerDocument.createElement("span");
+    const placeholder = element.ownerDocument.win.createSpan();
     placeholder.classList.add("pa-share-card-resource-placeholder");
     placeholder.setAttribute("aria-label", label);
     placeholder.textContent = `[${label}]`;
@@ -2127,7 +2127,7 @@ function preserveTaskListState(bodyEl: HTMLElement): void {
         );
         if (!isTaskCheckbox) continue;
 
-        const marker = bodyEl.ownerDocument.createElement("span");
+        const marker = bodyEl.ownerDocument.win.createSpan();
         marker.textContent = input.checked || input.getAttribute("checked") !== null
             ? "[x] "
             : "[ ] ";
@@ -2207,7 +2207,9 @@ function cloneElement(source: HTMLElement, ownerDocument: Document): HTMLElement
 
     // Lightweight DOM doubles used by focused tests do not implement
     // cloneNode. Keep the fallback structural and side-effect free.
-    const clone = ownerDocument.createElement(source.tagName.toLowerCase());
+    const clone = ownerDocument.win.createEl(
+        source.tagName.toLowerCase() as keyof HTMLElementTagNameMap,
+    );
     clone.textContent = source.textContent;
     for (const attributeName of source.getAttributeNames()) {
         clone.setAttribute(attributeName, source.getAttribute(attributeName) ?? "");

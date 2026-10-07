@@ -2290,7 +2290,7 @@ export class SettingTab extends PluginSettingTab {
 
     private renderHeader(parentEl: HTMLElement): void {
         parentEl.createEl('h1', { text: this.t("plugin.settings.header.title") });
-        const link = getPlatformDocument().createElement("a");
+        const link = getPlatformDocument().win.createEl("a");
         link.setText(this.t("plugin.settings.header.repo"));
         link.href = "https://github.com/edonyzpc/personal-assistant";
         link.setAttr("class", "pa-settings-header-link");

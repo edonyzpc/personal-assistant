@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import tsPlugin from "@typescript-eslint/eslint-plugin";
+import obsidianmd from "eslint-plugin-obsidianmd";
 
 const tsFiles = ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"];
 
@@ -45,8 +46,10 @@ export default [
         tsconfigRootDir: import.meta.dirname,
       },
     },
+    plugins: { obsidianmd },
     rules: {
       "@typescript-eslint/unbound-method": "error",
+      "obsidianmd/prefer-create-el": "error",
     },
   },
 ];

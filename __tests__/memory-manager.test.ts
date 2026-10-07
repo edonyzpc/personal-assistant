@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { installObsidianDocumentHelpers } from './helpers/obsidian-dom';
 import {
     MEMORY_APPROVAL_SECTIONS,
     MEMORY_USER_FORBIDDEN_TERMS,
@@ -63,7 +64,7 @@ jest.mock('obsidian', () => ({
         hide() { }
         progressBody = {
             empty: jest.fn(),
-            createEl: jest.fn((_tag: string, options?: { text?: string }) => {
+            createDiv: jest.fn((options?: { text?: string }) => {
                 if (options?.text) mockProgressSteps.push(options.text);
                 return {};
             }),
@@ -172,9 +173,9 @@ const installMockDocument = () => {
     const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
     Object.defineProperty(globalThis, 'document', {
         configurable: true,
-        value: {
+        value: installObsidianDocumentHelpers({
             createDocumentFragment: jest.fn(() => createMockDomElement()),
-        },
+        }),
     });
     return () => {
         if (originalDocument) {
@@ -1492,9 +1493,9 @@ describe('MemoryManager command decisions', () => {
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: installObsidianDocumentHelpers({
                 createDocumentFragment: jest.fn(() => createMockDomElement()),
-            },
+            }),
         });
         const plugin = createPlugin(createPlan({
             reason: 'first-use',
@@ -1553,9 +1554,9 @@ describe('MemoryManager command decisions', () => {
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: installObsidianDocumentHelpers({
                 createDocumentFragment: jest.fn(() => createMockDomElement()),
-            },
+            }),
         });
         const plan = createPlan({
             reason: 'lexical-profile-stale',
@@ -1601,9 +1602,9 @@ describe('MemoryManager command decisions', () => {
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: installObsidianDocumentHelpers({
                 createDocumentFragment: jest.fn(() => createMockDomElement()),
-            },
+            }),
         });
         const plan = createPlan({
             reason: 'lexical-profile-stale',
@@ -1648,9 +1649,9 @@ describe('MemoryManager command decisions', () => {
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: installObsidianDocumentHelpers({
                 createDocumentFragment: jest.fn(() => createMockDomElement()),
-            },
+            }),
         });
         const plugin = createPlugin(createPlan({
             reason: 'first-use',
@@ -1730,9 +1731,9 @@ describe('MemoryManager command decisions', () => {
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: installObsidianDocumentHelpers({
                 createDocumentFragment: jest.fn(() => createMockDomElement()),
-            },
+            }),
         });
         const plugin = createPlugin(createPlan({
             reason: 'first-use',
@@ -1796,9 +1797,9 @@ describe('MemoryManager command decisions', () => {
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: installObsidianDocumentHelpers({
                 createDocumentFragment: jest.fn(() => createMockDomElement()),
-            },
+            }),
         });
         const plugin = createPlugin(createPlan({
             reason: 'changed-notes',
@@ -1840,13 +1841,14 @@ describe('MemoryManager command decisions', () => {
 
     it('does not reuse a stopped lifecycle preparation after auto maintenance restarts', async () => {
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        const documentMock = {
+            createDocumentFragment: jest.fn(() => createMockDomElement()),
+            addEventListener: jest.fn(),
+            removeEventListener: jest.fn(),
+        };
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
-                createDocumentFragment: jest.fn(() => createMockDomElement()),
-                addEventListener: jest.fn(),
-                removeEventListener: jest.fn(),
-            },
+            value: installObsidianDocumentHelpers(documentMock),
         });
         const plugin = createPlugin(createPlan({
             reason: 'changed-notes',
@@ -1912,9 +1914,9 @@ describe('MemoryManager command decisions', () => {
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: installObsidianDocumentHelpers({
                 createDocumentFragment: jest.fn(() => createMockDomElement()),
-            },
+            }),
         });
         const plugin = createPlugin(createPlan({
             reason: 'first-use',
@@ -1953,9 +1955,9 @@ describe('MemoryManager command decisions', () => {
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
-            value: {
+            value: installObsidianDocumentHelpers({
                 createDocumentFragment: jest.fn(() => createMockDomElement()),
-            },
+            }),
         });
         const plugin = createPlugin(createPlan({
             reason: 'first-use',

@@ -8,6 +8,7 @@
  */
 
 import { afterAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { installObsidianDocumentHelpers } from "./helpers/obsidian-dom";
 
 jest.mock("obsidian", () => ({
     Notice: jest.fn(),
@@ -237,6 +238,7 @@ class FakeDocument {
 
     constructor() {
         this.body.isConnected = true;
+        installObsidianDocumentHelpers(this);
     }
 
     createElement(tagName: string): FakeElement {

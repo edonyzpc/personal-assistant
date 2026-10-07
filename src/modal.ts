@@ -59,7 +59,7 @@ export class PluginControlModal extends SuggestModal<Plugin> {
 
         addIcon('SWITCH_ON_STATUS', icons['SWITCH_ON_STATUS']);
         addIcon('SWITCH_OFF_STATUS', icons['SWITCH_OFF_STATUS']);
-        const div = el.createEl("div");
+        const div = el.createDiv();
         div.setCssStyles({ color });
         if (plugin.enabled) {
             setIcon(div, 'SWITCH_ON_STATUS');

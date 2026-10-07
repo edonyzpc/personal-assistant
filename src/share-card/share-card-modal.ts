@@ -161,23 +161,23 @@ export class ShareCardModal extends Modal {
         this.contentEl.setAttribute("aria-busy", "true");
 
         const titleId = `pa-share-card-title-${++shareCardModalId}`;
-        const titleEl = ownerDocument.createElement("h2");
+        const titleEl = ownerDocument.win.createEl("h2");
         titleEl.id = titleId;
         titleEl.textContent = t("plugin.shareCard.title");
         this.contentEl.appendChild(titleEl);
         this.modalEl.setAttribute("aria-labelledby", titleId);
 
-        this.statusEl = ownerDocument.createElement("div");
+        this.statusEl = ownerDocument.win.createDiv();
         this.statusEl.classList.add("pa-share-card-status");
         this.statusEl.setAttribute("role", "status");
         this.statusEl.setAttribute("aria-live", "polite");
         this.statusEl.textContent = t("plugin.shareCard.preparing");
         this.contentEl.appendChild(this.statusEl);
 
-        this.viewportEl = ownerDocument.createElement("div");
+        this.viewportEl = ownerDocument.win.createDiv();
         this.viewportEl.classList.add("pa-share-card-preview-viewport");
         this.viewportEl.hidden = true;
-        this.previewScaleEl = ownerDocument.createElement("div");
+        this.previewScaleEl = ownerDocument.win.createDiv();
         this.previewScaleEl.classList.add("pa-share-card-preview-scale");
         this.viewportEl.appendChild(this.previewScaleEl);
         this.viewportEl.setAttribute("role", "button");
@@ -194,7 +194,7 @@ export class ShareCardModal extends Modal {
         });
         this.contentEl.appendChild(this.viewportEl);
 
-        const controlsEl = ownerDocument.createElement("div");
+        const controlsEl = ownerDocument.win.createDiv();
         controlsEl.classList.add("pa-share-card-controls");
         this.contentEl.appendChild(controlsEl);
         this.createNavigation(ownerDocument, controlsEl);
@@ -372,11 +372,11 @@ export class ShareCardModal extends Modal {
     }
 
     private createNavigation(ownerDocument: Document, controlsEl: HTMLElement): void {
-        const navEl = ownerDocument.createElement("div");
+        const navEl = ownerDocument.win.createDiv();
         navEl.classList.add("pa-share-card-nav");
         navEl.hidden = true;
 
-        const previousButton = ownerDocument.createElement("button");
+        const previousButton = ownerDocument.win.createEl("button");
         previousButton.type = "button";
         previousButton.setAttribute("aria-label", t("plugin.shareCard.previousPage"));
         previousButton.title = t("plugin.shareCard.previousPage");
@@ -386,11 +386,11 @@ export class ShareCardModal extends Modal {
         });
         navEl.appendChild(previousButton);
 
-        const pageIndicatorEl = ownerDocument.createElement("span");
+        const pageIndicatorEl = ownerDocument.win.createSpan();
         pageIndicatorEl.setAttribute("aria-live", "polite");
         navEl.appendChild(pageIndicatorEl);
 
-        const nextButton = ownerDocument.createElement("button");
+        const nextButton = ownerDocument.win.createEl("button");
         nextButton.type = "button";
         nextButton.setAttribute("aria-label", t("plugin.shareCard.nextPage"));
         nextButton.title = t("plugin.shareCard.nextPage");
@@ -429,12 +429,12 @@ export class ShareCardModal extends Modal {
     }
 
     private createActions(ownerDocument: Document, titleId: string, controlsEl: HTMLElement): void {
-        const folderRow = ownerDocument.createElement("div");
+        const folderRow = ownerDocument.win.createDiv();
         folderRow.classList.add("pa-share-card-folder-row");
-        const folderLabel = ownerDocument.createElement("label");
+        const folderLabel = ownerDocument.win.createEl("label");
         folderLabel.classList.add("pa-share-card-folder-label");
         folderLabel.textContent = t("plugin.shareCard.saveFolder");
-        const folderInput = ownerDocument.createElement("input");
+        const folderInput = ownerDocument.win.createEl("input");
         const folderInputId = `${titleId}-save-folder`;
         folderLabel.setAttribute("for", folderInputId);
         folderRow.appendChild(folderLabel);
@@ -448,10 +448,10 @@ export class ShareCardModal extends Modal {
         controlsEl.appendChild(folderRow);
         this.folderSuggest = attachFolderSuggest(this.app, folderInput);
 
-        const actionsEl = ownerDocument.createElement("div");
+        const actionsEl = ownerDocument.win.createDiv();
         actionsEl.classList.add("pa-share-card-actions");
 
-        const copyButton = ownerDocument.createElement("button");
+        const copyButton = ownerDocument.win.createEl("button");
         copyButton.type = "button";
         copyButton.textContent = t("plugin.shareCard.copyCurrentPage");
         copyButton.disabled = true;
@@ -460,7 +460,7 @@ export class ShareCardModal extends Modal {
         });
         actionsEl.appendChild(copyButton);
 
-        const saveButton = ownerDocument.createElement("button");
+        const saveButton = ownerDocument.win.createEl("button");
         saveButton.type = "button";
         saveButton.classList.add("mod-cta");
         saveButton.textContent = t("plugin.shareCard.saveImage");
@@ -476,22 +476,22 @@ export class ShareCardModal extends Modal {
     }
 
     private createZoom(ownerDocument: Document): void {
-        const zoomEl = ownerDocument.createElement("div");
+        const zoomEl = ownerDocument.win.createDiv();
         zoomEl.classList.add("pa-share-card-zoom");
         zoomEl.hidden = true;
         zoomEl.setAttribute("role", "dialog");
         zoomEl.setAttribute("aria-modal", "true");
         zoomEl.setAttribute("aria-label", t("plugin.shareCard.zoomedPreview"));
 
-        const backdrop = ownerDocument.createElement("div");
+        const backdrop = ownerDocument.win.createDiv();
         backdrop.classList.add("pa-share-card-zoom-backdrop");
         backdrop.setAttribute("aria-hidden", "true");
         backdrop.addEventListener("click", () => this.closeZoom());
         zoomEl.appendChild(backdrop);
 
-        const panel = ownerDocument.createElement("div");
+        const panel = ownerDocument.win.createDiv();
         panel.classList.add("pa-share-card-zoom-panel");
-        const closeButton = ownerDocument.createElement("button");
+        const closeButton = ownerDocument.win.createEl("button");
         closeButton.type = "button";
         closeButton.classList.add("pa-share-card-zoom-close");
         closeButton.setAttribute("aria-label", t("plugin.shareCard.closePreview"));
@@ -499,7 +499,7 @@ export class ShareCardModal extends Modal {
         closeButton.addEventListener("click", () => this.closeZoom());
         panel.appendChild(closeButton);
 
-        const zoomViewport = ownerDocument.createElement("div");
+        const zoomViewport = ownerDocument.win.createDiv();
         zoomViewport.classList.add("pa-share-card-zoom-viewport");
         zoomViewport.addEventListener("click", (event) => event.preventDefault());
         panel.appendChild(zoomViewport);

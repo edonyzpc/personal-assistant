@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { installObsidianDocumentHelpers } from './helpers/obsidian-dom';
 
 jest.mock('obsidian', () => ({
     App: class { },
@@ -732,7 +733,7 @@ function installMockDocument() {
         createElement: (tagName: string) => new MockDomNode(tagName),
         createDocumentFragment: () => new MockDocumentFragment(),
     };
-    (globalThis as unknown as { document: unknown }).document = documentMock;
+    (globalThis as unknown as { document: unknown }).document = installObsidianDocumentHelpers(documentMock);
 }
 
 function makeMockApp() {
@@ -1646,10 +1647,10 @@ describe('Phase 2 P0 data integrity', () => {
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'activeDocument');
         Object.defineProperty(globalThis, 'activeDocument', {
             configurable: true,
-            value: {
+            value: installObsidianDocumentHelpers({
                 createElement: (tagName: string) => new MockDomNode(tagName),
                 createDocumentFragment: () => new ForeignDocumentFragment(),
-            },
+            }),
         });
         try {
             const plugin = makePlugin({ enableMetadataUpdating: true,

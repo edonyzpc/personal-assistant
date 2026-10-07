@@ -88,8 +88,8 @@ export function measureTextAreaCaret(textArea: HTMLTextAreaElement): BasicRect |
         Math.min(textArea.selectionStart ?? textArea.value.length, textArea.value.length),
         0,
     );
-    const mirror = ownerDocument.createElement('div');
-    const marker = ownerDocument.createElement('span');
+    const mirror = ownerDocument.win.createDiv();
+    const marker = ownerDocument.win.createSpan();
     const sourceStyle = ownerWindow.getComputedStyle(textArea);
     mirror.className = 'pa-chat-caret-measure';
     marker.textContent = '​';

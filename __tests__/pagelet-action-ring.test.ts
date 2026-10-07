@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import { readFileSync } from "fs";
+import { installObsidianDocumentHelpers } from "./helpers/obsidian-dom";
 
 import {
     computeActionRingLayout,
@@ -89,6 +90,10 @@ class FakeElement {
         this.parent = null;
     }
 
+    get isConnected(): boolean {
+        return this === this.ownerDocument.body || (this.parent?.isConnected ?? false);
+    }
+
     dispatch(type: string, extra: Record<string, unknown> = {}): Event {
         const path: FakeElement[] = [];
         let current: FakeElement | null = this;
@@ -130,6 +135,7 @@ class FakeElement {
 }
 
 class FakeDocument {
+    readonly win: Window = installObsidianDocumentHelpers(this).win;
     readonly body = new FakeElement(this);
     readonly documentElement = new FakeElement(this);
     activeElement: FakeElement | null = null;
@@ -279,6 +285,41 @@ afterEach(() => {
 });
 
 describe("Pet Action Ring public lifecycle", () => {
+    it.each([false, true])("removes the same-document safe-area probe when measurement fails: %s", (fails) => {
+        withFixture(({ doc, root, view }) => {
+            doc.body.appendChild(root);
+            Object.assign(doc.body, { classList: { contains: () => false } });
+            Object.assign(root, {
+                getBoundingClientRect: () => ({ left: 100, top: 100, width: 48, height: 48 }),
+            });
+            const probes: FakeElement[] = [];
+            const getComputedStyle = jest.fn((probe: FakeElement) => {
+                probes.push(probe);
+                expect(probe.ownerDocument).toBe(doc);
+                expect(doc.body.contains(probe as unknown as Node)).toBe(true);
+                if (fails) throw new Error("measurement failed");
+                return { paddingTop: "20px", paddingRight: "0px", paddingBottom: "12px", paddingLeft: "0px" };
+            });
+            Object.assign(doc, {
+                defaultView: {
+                    innerWidth: 1200,
+                    innerHeight: 900,
+                    getComputedStyle,
+                    addEventListener: jest.fn(),
+                    removeEventListener: jest.fn(),
+                },
+            });
+
+            if (fails) expect(() => view.openActionRing()).toThrow("measurement failed");
+            else view.openActionRing();
+
+            expect(getComputedStyle).toHaveBeenCalledTimes(1);
+            expect(probes[0].className).toBe("pa-pagelet-action-ring-safe-area-probe");
+            expect(doc.body.children).toEqual([root]);
+            expect(probes[0].isConnected).toBe(false);
+        });
+    });
+
     it("uses a stable accessible group, fixed action order, and first-item focus", () => {
         withFixture(({ doc, root, view, onWillOpen, onClosed }) => {
             view.openActionRing();

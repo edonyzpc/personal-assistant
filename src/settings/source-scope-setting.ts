@@ -43,9 +43,9 @@ export function renderSourceScopeSetting(
     if (state.draft === undefined || (!state.dirty && !state.pending && !state.failed)) {
         state.draft = read().join(", ");
     }
-    const actions = parentEl.createEl("div", { cls: "pa-settings-source-scope-actions" });
+    const actions = parentEl.createDiv({ cls: "pa-settings-source-scope-actions" });
     const button = actions.createEl("button", { text: copy.save, attr: { type: "button" } });
-    const status = actions.createEl("span", { attr: { role: "status", "aria-live": "polite" } });
+    const status = actions.createSpan({ attr: { role: "status", "aria-live": "polite" } });
     let input: SourceScopeTextControl | undefined;
     let updating = false;
     let displayedDraft = state.draft;

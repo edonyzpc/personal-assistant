@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import { readFileSync } from "fs";
+import { installObsidianDocumentHelpers } from "./helpers/obsidian-dom";
 import { Platform } from "obsidian";
 
 import { PetStateMachine } from "../src/pagelet/pet/PetStateMachine";
@@ -205,6 +206,7 @@ class HoldMenuFakeDocument {
     constructor() {
         this.body = new HoldMenuFakeElement(this);
         this.documentElement = new HoldMenuFakeElement(this);
+        installObsidianDocumentHelpers(this);
     }
 
     createElement(): HoldMenuFakeElement {

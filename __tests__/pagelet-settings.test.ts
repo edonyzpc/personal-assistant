@@ -53,6 +53,8 @@ interface StubNode {
     textContent?: string;
     children: StubNode[];
     createEl: (tag: string, options?: { text?: string; cls?: string }) => StubNode;
+    createDiv: (options?: { text?: string; cls?: string }) => StubNode;
+    createSpan: (options?: { text?: string; cls?: string }) => StubNode;
     addEventListener: (event: string, callback: () => void) => void;
     dispatch: (event: string) => void;
 }
@@ -70,6 +72,12 @@ function makeStubNode(tagName: string): StubNode {
             if (options?.cls) child.cls = options.cls;
             this.children.push(child);
             return child;
+        },
+        createDiv(options?: { text?: string; cls?: string }): StubNode {
+            return this.createEl("div", options);
+        },
+        createSpan(options?: { text?: string; cls?: string }): StubNode {
+            return this.createEl("span", options);
         },
     };
     return node;

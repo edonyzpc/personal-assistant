@@ -1131,7 +1131,7 @@ export function renderPageletPreferences(
         text: t("pagelet.settings.section.subtitle"),
         cls: "pa-settings-section-desc",
     });
-    parentEl.createEl("div", {
+    parentEl.createDiv({
         text: t("pagelet.settings.beta.callout"),
         cls: "pa-pagelet-beta-callout",
     });
@@ -1214,7 +1214,7 @@ export function renderPageletPreferences(
 
     const detailsEl = parentEl.createEl("details", { cls: "pa-settings-detail" });
     detailsEl.createEl("summary", { text: t("pagelet.settings.preferences.details") });
-    const detailsBodyEl = detailsEl.createEl("div", { cls: "pa-settings-detail__body" });
+    const detailsBodyEl = detailsEl.createDiv({ cls: "pa-settings-detail__body" });
 
     // ── Pet ────────────────────────────────────────────────────────────
 
@@ -1229,7 +1229,7 @@ export function renderPageletPreferences(
                     petCornerEl.hidden = !value;
                 })));
 
-    const petCornerEl = detailsBodyEl.createEl("div", { cls: "pa-pagelet-conditional" });
+    const petCornerEl = detailsBodyEl.createDiv({ cls: "pa-pagelet-conditional" });
     petCornerEl.hidden = !settings.petVisible;
     factory.create(petCornerEl)
         .setName(t("pagelet.settings.petCorner.name"))
@@ -1289,7 +1289,7 @@ export function renderPageletPreferences(
                     quietTimesEl.hidden = !value;
                 })));
 
-    const quietTimesEl = detailsBodyEl.createEl("div", { cls: "pa-pagelet-conditional" });
+    const quietTimesEl = detailsBodyEl.createDiv({ cls: "pa-pagelet-conditional" });
     quietTimesEl.hidden = !settings.proactiveHintsQuietHours.enabled;
     factory.create(quietTimesEl)
         .setName(t("pagelet.settings.quietHoursStart.name"))
@@ -1364,7 +1364,7 @@ function renderPageletSaveLocation(
     // Kept empty until a validator rejection fires; an empty `textContent`
     // collapses the row visually so non-error state does not look like a
     // layout shift.
-    const reviewsFolderErrorEl = parentEl.createEl("div", {
+    const reviewsFolderErrorEl = parentEl.createDiv({
         cls: "pa-pagelet-settings-error",
     });
     let updatingReviewsFolderText = false;

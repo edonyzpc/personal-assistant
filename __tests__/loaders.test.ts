@@ -2,11 +2,19 @@ import { createDotPulseLoader, createMirageLoader, createPingLoader, createQuant
 import { DomStubNode, findAllByClass, findAllByTag } from './helpers/dom-stub';
 import { readFileSync } from 'node:fs';
 import { parse } from 'postcss';
+import { installObsidianDocumentHelpers } from './helpers/obsidian-dom';
 
 class LoaderNode extends DomStubNode {
-    readonly ownerDocument = {
-        createElementNS: (_namespace: string, tag: string) => new LoaderNode(tag, 'svg'),
-    };
+    readonly ownerDocument: {
+        createElementNS(namespace: string, tag: string): LoaderNode;
+        win: Window;
+    } = installObsidianDocumentHelpers({
+        createElementNS: (_namespace: string, tag: string) => {
+            const node = new LoaderNode(tag, 'svg');
+            Object.defineProperty(node, 'ownerDocument', { value: this.ownerDocument });
+            return node;
+        },
+    });
 
     createSpan(options: { cls: string; attr?: Record<string, string> }): LoaderNode {
         const child = new LoaderNode('span');
@@ -72,6 +80,8 @@ describe('native loaders', () => {
         createMirageLoader(parent as unknown as HTMLElement);
         const svgs = findAllByTag(parent, 'svg');
         const filters = findAllByTag(parent, 'filter');
+        expect(svgs.every(svg => svg.namespace === 'svg')).toBe(true);
+        expect(svgs.every(svg => (svg as LoaderNode).ownerDocument === parent.ownerDocument)).toBe(true);
         expect(findAllByTag(parent, 'circle')).toHaveLength(10);
         expect(filters[0].getAttribute('id')).not.toBe(filters[1].getAttribute('id'));
         svgs.forEach((svg, index) => expect(svg.getAttribute('filter')).toBe(`url(#${filters[index].getAttribute('id')})`));

@@ -515,7 +515,7 @@ function readActionRingSafeAreaInsets(doc: Document): ActionRingSafeAreaInsets {
     if (!win || typeof win.getComputedStyle !== "function" || !doc.body) {
         return { top: 0, right: 0, bottom: 0, left: 0 };
     }
-    const probe = doc.createElement("span");
+    const probe = doc.win.createSpan();
     probe.className = "pa-pagelet-action-ring-safe-area-probe";
     doc.body.appendChild(probe);
     try {
@@ -1273,7 +1273,7 @@ export class PetView implements PetRenderer {
 
     private createActionRing(): HTMLElement {
         const doc = getPlatformDocument();
-        const ring = doc.createElement("div");
+        const ring = doc.win.createDiv();
         ring.id = this._actionRingId;
         ring.className = "pa-pagelet-action-ring";
         ring.setAttribute("data-corner", this._corner);
@@ -1385,13 +1385,13 @@ export class PetView implements PetRenderer {
         ];
 
         for (const item of items) {
-            const btn = doc.createElement("button");
+            const btn = doc.win.createEl("button");
             btn.className = "pa-pagelet-action-ring-item";
             btn.setAttribute("type", "button");
             btn.setAttribute("data-action", item.action);
             btn.setAttribute("aria-label", item.label);
             setIcon(btn, item.icon);
-            const visibleLabel = doc.createElement("span");
+            const visibleLabel = doc.win.createSpan();
             visibleLabel.className = "pa-pagelet-action-ring-label";
             visibleLabel.textContent = item.label;
             btn.appendChild(visibleLabel);

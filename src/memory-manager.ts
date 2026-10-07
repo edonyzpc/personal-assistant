@@ -1548,8 +1548,8 @@ function createMemoryProgressNotice(
     title: string,
     onCancel?: () => void,
 ): { notice: Notice; cancelButton?: HTMLButtonElement } {
-    const fragment = getPlatformDocument().createDocumentFragment();
-    const wrapper = fragment.createEl("div", { attr: { class: "pa-notice" } });
+    const fragment = getPlatformDocument().win.createFragment();
+    const wrapper = fragment.createDiv({ attr: { class: "pa-notice" } });
     const header = wrapper.createDiv({ cls: "pa-notice__header" });
     const spinner = header.createDiv({ cls: "pa-notice__spinner" });
     spinner.createSpan({ text: "" });
@@ -1579,7 +1579,7 @@ function setMemoryProgressStep(notice: Notice, text: string): void {
     const body = notice.messageEl.querySelector<HTMLElement>(".pa-notice__body");
     if (!body) return;
     body.empty();
-    body.createEl("div", {
+    body.createDiv({
         cls: "pa-notice__item",
         text,
     });

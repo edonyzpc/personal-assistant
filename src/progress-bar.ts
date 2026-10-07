@@ -31,7 +31,7 @@ export class ProgressBar {
         this.totalSteps = total;
         this.steps = 0;
         const doc = getPlatformDocument();
-        this.noticeEl = doc.createDocumentFragment();
+        this.noticeEl = doc.win.createFragment();
         // add progress bar:
         // ```
         // <div class='progress-bar-grid' >
@@ -41,12 +41,12 @@ export class ProgressBar {
         //   <div class='progress-bar-number' > 39.3 % </div > 
         // </div >
         // ```
-        const divPluginUpdateProgressBarGrid = this.noticeEl.createEl("div", { attr: { id: this.gridID } });
+        const divPluginUpdateProgressBarGrid = this.noticeEl.createDiv({ attr: { id: this.gridID } });
         divPluginUpdateProgressBarGrid.addClass('progress-bar-grid');
-        const divProgressBarMeter = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: this.gridDivID } });
+        const divProgressBarMeter = divPluginUpdateProgressBarGrid.createDiv({ attr: { id: this.gridDivID } });
         divProgressBarMeter.addClass('meter');
-        divProgressBarMeter.createEl('span', { attr: { id: this.gridDivSpanID } }).setCssStyles({ width: "0%" });
-        const divProgressBarText = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: this.gridTextID } });
+        divProgressBarMeter.createSpan({ attr: { id: this.gridDivSpanID } }).setCssStyles({ width: "0%" });
+        const divProgressBarText = divPluginUpdateProgressBarGrid.createDiv({ attr: { id: this.gridTextID } });
         divProgressBarText.addClass('progress-bar-number');
         divProgressBarText.setText(`0%`);
         addIcon('PLUGIN_UPDATE_STATUS', icons['PLUGIN_UPDATE_STATUS']);
@@ -58,7 +58,7 @@ export class ProgressBar {
     addDiv(itemID: string, divText: string) {
         const noticeEl = getPlatformDocument().getElementById(this.gridID);
         if (noticeEl) {
-            const div = noticeEl.parentElement?.createEl("div", { attr: { id: `div-${itemID}-${this.idNumber}` } });
+            const div = noticeEl.parentElement?.createDiv({ attr: { id: `div-${itemID}-${this.idNumber}` } });
             if (div) {
                 div.addClass('progress-bar-items-grid');
                 div.addClass('progress-bar-items-error');

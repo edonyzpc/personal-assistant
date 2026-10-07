@@ -14,13 +14,13 @@ export function renderGhostPublishingCard(
     container: HTMLElement, session: GhostPublishingSession, t: (key: string) => string,
 ): () => void {
     const document = container.ownerDocument;
-    const card = document.createElement("section");
+    const card = document.win.createEl("section");
     card.className = "pa-ghost-publishing-card setting-item-info";
     card.setAttribute("role", "group");
     card.setAttribute("aria-label", t(`${KEY}title`));
     container.appendChild(card);
     const element = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string): HTMLElementTagNameMap[K] => {
-        const node = document.createElement(tag);
+        const node = document.win.createEl(tag);
         if (text !== undefined) node.textContent = text;
         return node;
     };

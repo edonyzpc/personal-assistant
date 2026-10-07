@@ -55,6 +55,7 @@ import {
     clearPlatformTimeout,
     getOptionalPlatformDocument,
     getOptionalPlatformWindow,
+    getPlatformDocument,
     getPlatformPerformance,
     requestPlatformAnimationFrame,
     setPlatformTimeout,
@@ -189,14 +190,14 @@ async function copyGeneratedImage(ownerDocument: Document, bytes: ArrayBuffer, m
     if (mime !== 'image/png') {
         const urlApi = URL;
         const url = urlApi.createObjectURL(png);
-        const image = ownerDocument.createElement('img');
+        const image = ownerDocument.win.createEl('img');
         try {
             await new Promise<void>((resolve, reject) => {
                 image.onload = () => resolve();
                 image.onerror = () => reject(new Error('image decode failed'));
                 image.src = url;
             });
-            const canvas = ownerDocument.createElement('canvas');
+            const canvas = ownerDocument.win.createEl('canvas');
             canvas.width = image.naturalWidth;
             canvas.height = image.naturalHeight;
             const context = canvas.getContext('2d');
@@ -236,7 +237,7 @@ async function downloadGeneratedImage(ownerDocument: Document, bytes: ArrayBuffe
     }
     const url = URL.createObjectURL(blob);
     try {
-        const link = ownerDocument.createElement('a');
+        const link = ownerDocument.win.createEl('a');
         link.href = url;
         link.download = filename;
         ownerDocument.body.appendChild(link);
@@ -1842,20 +1843,8 @@ export class LLMView extends ItemView {
             });
             return wrapper;
         };
-        const createSvgChild = (parent: Element, tagName: string): Element => {
-            const doc = getOptionalPlatformDocument();
-            if (typeof doc?.createElementNS === 'function') {
-                return doc.createElementNS('http://www.w3.org/2000/svg', tagName);
-            }
-            const fallbackParent = parent as Element & { createEl?: (tagName: string) => HTMLElement };
-            if (typeof fallbackParent.createEl === 'function') {
-                return fallbackParent.createEl(tagName);
-            }
-            if (!doc) {
-                throw new Error("Document is unavailable.");
-            }
-            return doc.createElement(tagName);
-        };
+        const createSvgChild = (tagName: 'svg' | 'rect'): SVGElement =>
+            getPlatformDocument().win.createSvg(tagName);
         const createRoleIdenticon = (
             parent: HTMLElement,
             role: ChatRoleIdenticon,
@@ -1873,7 +1862,7 @@ export class LLMView extends ItemView {
             });
             identiconEl.setCssProps({ '--pa-chat-role-identicon-fill': model.fill });
 
-            const svgEl = createSvgChild(identiconEl, 'svg');
+            const svgEl = createSvgChild('svg');
             svgEl.classList.add('pa-chat-role-identicon-svg');
             svgEl.setAttribute('class', 'pa-chat-role-identicon-svg');
             svgEl.setAttribute('viewBox', model.viewBox);
@@ -1883,7 +1872,7 @@ export class LLMView extends ItemView {
             identiconEl.appendChild(svgEl);
 
             for (const cell of model.cells) {
-                const rectEl = createSvgChild(svgEl, 'rect');
+                const rectEl = createSvgChild('rect');
                 const className = active
                     ? `pa-chat-role-identicon-cell pa-chat-role-identicon-filled-cell pa-chat-role-identicon-filled-scan pa-chat-role-identicon-scan-row-${cell.row}`
                     : 'pa-chat-role-identicon-cell pa-chat-role-identicon-filled-cell';
@@ -1900,7 +1889,7 @@ export class LLMView extends ItemView {
             if (!active) return;
 
             for (const cell of model.emptyCells) {
-                const rectEl = createSvgChild(svgEl, 'rect');
+                const rectEl = createSvgChild('rect');
                 const className = `pa-chat-role-identicon-cell pa-chat-role-identicon-empty-scan pa-chat-role-identicon-scan-row-${cell.row}`;
                 rectEl.classList.add(...className.split(' '));
                 rectEl.setAttribute('class', className);
@@ -3089,7 +3078,7 @@ export class LLMView extends ItemView {
             this.registerEvent(workspaceWithEvents.on('file-open', refreshEmptyStateForWorkspace));
         }
         const createRenderBuffer = (): HTMLElement => {
-            return getOptionalPlatformDocument()?.createElement('div')
+            return getOptionalPlatformDocument()?.win.createDiv()
                 ?? this.responseDiv.createDiv({ cls: 'message-render-buffer-detached-fallback' });
         };
         const debugRenderedTurns = new WeakMap<RenderedMessage, UiTurn>();

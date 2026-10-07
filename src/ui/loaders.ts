@@ -58,8 +58,10 @@ export function createMirageLoader(parent: HTMLElement, options: LoaderOptions =
     const height = size * 0.23;
     const doc = parent.ownerDocument ?? getOptionalPlatformDocument();
     if (!doc) throw new Error('Document is unavailable.');
-    const svgNode = (tag: string, attributes: Record<string, string> = {}): SVGElement => {
-        const node = doc.createElementNS('http://www.w3.org/2000/svg', tag);
+    const svgNode = <K extends keyof SVGElementTagNameMap>(
+        tag: K, attributes: Record<string, string> = {},
+    ): SVGElementTagNameMap[K] => {
+        const node = doc.win.createSvg(tag);
         for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
         return node;
     };

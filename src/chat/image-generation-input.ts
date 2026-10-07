@@ -18,7 +18,7 @@ export async function prepareWanImageInput(bytes: ArrayBuffer, isCurrent: () => 
         throw new ImageProcessingError('pixel-limit');
     }
     checkImageOperation(undefined, isCurrent);
-    const image = getPlatformDocument().createElement('img');
+    const image = getPlatformDocument().win.createEl('img');
     const sourceUrl = URL.createObjectURL(new Blob([bytes], { type: source.mime }));
     try {
         await new Promise<void>((resolve, reject) => {
@@ -27,7 +27,7 @@ export async function prepareWanImageInput(bytes: ArrayBuffer, isCurrent: () => 
             image.src = sourceUrl;
         });
         checkImageOperation(undefined, isCurrent);
-        const canvas = getPlatformDocument().createElement('canvas');
+        const canvas = getPlatformDocument().win.createEl('canvas');
         try {
             canvas.width = image.naturalWidth;
             canvas.height = image.naturalHeight;
