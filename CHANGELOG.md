@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.5](https://github.com/edonyzpc/personal-assistant/compare/2.10.4...2.10.5) (2026-10-07)
+
+### Fix
+- resolve community unbound method findings
+- clarify platform API scopes for community review
+
+### Improvements
+- remove confirmed redundant type assertions
+- remove contextually redundant type assertions
+- use Obsidian DOM creation helpers
+
+### Docs
+- release: verify official Obsidian release recognition
+- complete community review disclosures
+- sync semver third-party license notice
+
+### Tests
+- preserve DOM lint fixture type information in CI
+
 ## [2.10.4](https://github.com/edonyzpc/personal-assistant/compare/2.10.3...2.10.4) (2026-10-07)
 
 ### Features
