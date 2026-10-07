@@ -181,7 +181,7 @@ export class OperationsIntentController {
                 throw new OperationsControllerError("schema_invalid", "Tool call ids must be non-empty and unique per intent.");
             }
             toolCallIds.add(call.toolCallId);
-            if (!isCoreWriteToolName(call.name as string)) {
+            if (!isCoreWriteToolName(call.name)) {
                 throw new OperationsControllerError("schema_invalid", `Unsupported Operations tool: ${String(call.name)}.`);
             }
             let tool: MarkdownWriteTool | { name: typeof REMOVE_NOTE_IMAGE_TOOL_NAME; input: RemoveNoteImageInput };

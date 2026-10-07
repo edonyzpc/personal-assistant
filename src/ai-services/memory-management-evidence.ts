@@ -742,12 +742,12 @@ function cloneProjectionMessage(message: PaAgentMessage): PaAgentMessage {
         return {
             ...message,
             content: message.content.map(part => ({ ...part })),
-        } as PaAgentMessage;
+        };
     }
     return {
         ...message,
         ...(Array.isArray(message.content) ? { content: message.content.map(part => ({ ...part })) } : {}),
-    } as PaAgentMessage;
+    };
 }
 
 function cloneProjectionHistoryMessage(message: ChatMessage): ChatMessage {

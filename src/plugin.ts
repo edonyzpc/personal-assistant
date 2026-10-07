@@ -2864,7 +2864,7 @@ export class PluginManager extends Plugin {
                     return getConfirmedMemoryCount();
                 },
             },
-            log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
+            log: (...args: unknown[]) => this.log(args[0], ...args.slice(1)),
             pageletFeatureScope: featureScope,
             isFeatureScopeCurrent: (scope: object) => this.isPageletFeatureScopeCurrent(scope),
             registerEvent: (ref) => featureScope.registerEvent(ref),
@@ -4655,14 +4655,14 @@ export class PluginManager extends Plugin {
         payload.memoryGovernance = {
             ...(payload.memoryGovernance && typeof payload.memoryGovernance === "object"
                 && !Array.isArray(payload.memoryGovernance)
-                ? payload.memoryGovernance as Record<string, unknown>
+                ? payload.memoryGovernance
                 : {}),
             records: projection.records.map(cloneSerializable),
         };
         payload.reviewQueue = {
             ...(payload.reviewQueue && typeof payload.reviewQueue === "object"
                 && !Array.isArray(payload.reviewQueue)
-                ? payload.reviewQueue as Record<string, unknown>
+                ? payload.reviewQueue
                 : {}),
             items: nextItems,
         };
@@ -5280,7 +5280,7 @@ export class PluginManager extends Plugin {
             app: this.app,
             pluginId: this.manifest?.id ?? "personal-assistant",
             get settings() { return getSettings(); },
-            log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
+            log: (...args: unknown[]) => this.log(args[0], ...args.slice(1)),
             registerEvent: (ref) => this.registerEvent(ref),
             saveSettings: () => this.saveSettings(),
             persistMemoryAdmissionSettings: () => this.persistMemoryAdmissionSettings(),
@@ -5303,7 +5303,7 @@ export class PluginManager extends Plugin {
             ...(surface === 'chat' ? { agentDebug: this.getAgentDebugIntegration().service } : {}),
             app: this.app,
             settings: this.settings,
-            log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
+            log: (...args: unknown[]) => this.log(args[0], ...args.slice(1)),
             recordRetrievalDiagnostic: retrievalDiagnostics.record,
             createRetrievalDiagnosticRecorder: retrievalDiagnostics.createRecorder,
             scheduleArmedGraphWorkerCancellation:

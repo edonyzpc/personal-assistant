@@ -146,7 +146,7 @@ export async function prepareFeaturedImagePrompt(
             return token;
         },
         log: host.log,
-    } as AIUtilsHost);
+    });
     const model = await aiUtils.createChatModel(0.8, {
         onProviderRequestStart: assertCurrent,
         agentDebugCall: debugCall,

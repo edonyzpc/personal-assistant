@@ -26,7 +26,6 @@ type AnimationFrameScope = {
 };
 
 type WindowTimerScope = Window & TimerScope;
-type WindowAnimationFrameScope = Window & AnimationFrameScope;
 type PlatformGlobalScope = Partial<TimerScope> & {
     document?: Document;
     localStorage?: Storage;
@@ -72,8 +71,8 @@ export function getOptionalPlatformWindow(): Window | undefined {
 
 function getAnimationFrameScope(): AnimationFrameScope | null {
     const candidates: Partial<AnimationFrameScope>[] = [];
-    if (typeof activeWindow !== "undefined") candidates.push(activeWindow as WindowAnimationFrameScope);
-    if (typeof window !== "undefined") candidates.push(window as WindowAnimationFrameScope);
+    if (typeof activeWindow !== "undefined") candidates.push(activeWindow);
+    if (typeof window !== "undefined") candidates.push(window);
     return candidates.find((candidate) =>
         typeof candidate.requestAnimationFrame === "function"
         && typeof candidate.cancelAnimationFrame === "function"

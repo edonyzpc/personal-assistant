@@ -1331,7 +1331,7 @@ export class LLMView extends ItemView {
                 const activeDocument = actionTypeahead.ownerDocument ?? actionTypeaheadDocument;
                 const activeElement = activeDocument?.activeElement;
                 if (activeElement === textArea) return;
-                if (activeElement && actionTypeahead.contains(activeElement as Node)) return;
+                if (activeElement && actionTypeahead.contains(activeElement)) return;
                 hideActionTypeahead();
             }, 0);
             (actionTypeaheadBlurTimer as unknown as { unref?: () => void }).unref?.();
@@ -1849,7 +1849,7 @@ export class LLMView extends ItemView {
             }
             const fallbackParent = parent as Element & { createEl?: (tagName: string) => HTMLElement };
             if (typeof fallbackParent.createEl === 'function') {
-                return fallbackParent.createEl(tagName) as unknown as Element;
+                return fallbackParent.createEl(tagName);
             }
             if (!doc) {
                 throw new Error("Document is unavailable.");
@@ -3090,7 +3090,7 @@ export class LLMView extends ItemView {
         }
         const createRenderBuffer = (): HTMLElement => {
             return getOptionalPlatformDocument()?.createElement('div')
-                ?? this.responseDiv.createDiv({ cls: 'message-render-buffer-detached-fallback' }) as HTMLElement;
+                ?? this.responseDiv.createDiv({ cls: 'message-render-buffer-detached-fallback' });
         };
         const debugRenderedTurns = new WeakMap<RenderedMessage, UiTurn>();
         const debugCommittedMessages = new WeakSet<RenderedMessage>();

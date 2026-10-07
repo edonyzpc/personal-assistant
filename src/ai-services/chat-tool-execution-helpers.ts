@@ -213,7 +213,7 @@ export function getMetadataCache(host: AiServiceHost): MetadataCacheLike {
 export function getOptionalMetadataCache(host: AiServiceHost): MetadataCacheLike | undefined {
     const metadataCache = host.app.metadataCache as unknown;
     return metadataCache && typeof metadataCache === "object"
-        ? metadataCache as MetadataCacheLike
+        ? metadataCache
         : undefined;
 }
 

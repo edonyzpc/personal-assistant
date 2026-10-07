@@ -250,7 +250,7 @@ export function createPaReviewRuntime(
     // remove). Explicit `null` opt-out so tests can run without a probe.
     const fsProbe: FsProbe | undefined = options.fsProbe === null
         ? undefined
-        : (options.fsProbe ?? (app.vault.adapter as unknown as FsProbe));
+        : (options.fsProbe ?? (app.vault.adapter));
 
     // Debug observer — Console when debug=true, NOOP otherwise. Caller
     // override always wins.

@@ -327,7 +327,7 @@ export function createDefaultPageletPrompt(): PageletNativePrompt {
             "{tool_observations}",
         ].join("\n")),
         HumanMessagePromptTemplate.fromTemplate("{input}"),
-    ]) as unknown as PageletNativePrompt;
+    ]);
 }
 
 function bindNativeTools(

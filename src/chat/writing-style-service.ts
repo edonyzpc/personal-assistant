@@ -95,7 +95,7 @@ export class WritingStyleService {
             suppressionMarkers: state.suppressionMarkers, pendingOperations: state.pendingOperations, claimSuppressionFingerprints: fingerprints,
             includeVaultInsights: false, vaultInsights: null, currentDataBoundaryFingerprint: '', dataBoundaryAllowed: (revision) => allowed.has(revision.id),
             sourceAllowed: (revision) => allowed.has(revision.id), scene: normalized, ...budget });
-        if (!selected.context) return { ...empty(), skipped: selected.skipped } as ChatWritingStyleResult;
+        if (!selected.context) return { ...empty(), skipped: selected.skipped };
         const isSourceCurrent = (): boolean => {
             if (this.disposed || !this.options.isRuntimeEnabled()) return false;
             const latest = this.options.getStateSnapshot();
@@ -105,7 +105,7 @@ export class WritingStyleService {
         };
         const isCurrent = (): boolean => !budget.signal?.aborted && isSourceCurrent();
         if (!isCurrent()) throw new Error('Writing style changed while preparing');
-        return { context: selected.context, revisionIds: selected.revisionIds, isCurrent, isSourceCurrent, skipped: selected.skipped } as ChatWritingStyleResult;
+        return { context: selected.context, revisionIds: selected.revisionIds, isCurrent, isSourceCurrent, skipped: selected.skipped };
     }
 
     async correct(claimId: string, exactText: string, scene: WritingStyleScene, explicitActionId: string): Promise<void> {

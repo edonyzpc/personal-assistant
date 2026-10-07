@@ -439,7 +439,7 @@ async function inspectScopedReferences(input: {
     try {
         scope = input.guard.getNoteSearchScope?.();
     } catch {
-        scope = undefined as never;
+        scope = undefined;
     }
     if (!scope || !Array.isArray(scope.excludedPaths)
         || (scope.allowedPaths !== null && !Array.isArray(scope.allowedPaths))) {

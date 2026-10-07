@@ -165,7 +165,7 @@ export async function prepareGhostMetadata(
             return token;
         },
         log: host.log,
-    } as AIUtilsHost);
+    });
     let model: Awaited<ReturnType<AIUtils["createChatModel"]>>;
     try {
         model = await aiUtils.createChatModel(0.2, {

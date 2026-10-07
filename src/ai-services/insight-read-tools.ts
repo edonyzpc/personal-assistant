@@ -86,7 +86,7 @@ export function createInsightReadTools(): Array<ChatToolDefinition<Record<string
             if (Object.keys(value).length) throw new Error("get_vault_insights input must be empty.");
             return {};
         },
-        execute: (input, context) => read("get_vault_insights", input as Record<string, never>, context),
+        execute: (input, context) => read("get_vault_insights", input, context),
     }, {
         name: "query_saved_insights",
         description: "Find existing Saved Insights by text, exact ID, or status. Reading does not save or change them.",
@@ -108,6 +108,6 @@ export function createInsightReadTools(): Array<ChatToolDefinition<Record<string
         failureBehavior: "recoverable", statusMessageText: "Reading Saved Insights",
         sourceBoundary: "read-only-tool", statusMessage: () => "Reading Saved Insights",
         validateInput: queryInput,
-        execute: (input, context) => read("query_saved_insights", input as SavedInsightQuery, context),
+        execute: (input, context) => read("query_saved_insights", input, context),
     }];
 }

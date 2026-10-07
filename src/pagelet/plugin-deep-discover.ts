@@ -600,7 +600,7 @@ export class DeepDiscoverPluginIntegration {
             const loaded = await provider.load({
                 turnId: "pagelet-deep-discover:capability-preload",
                 platform: runtimePlatform,
-                settings: host.settings as unknown as Record<string, unknown>,
+                settings: host.settings,
             });
             if (loaded.status === "available") return loaded.capabilities;
             this.dependencies.log("Pagelet Deep Discover optional WebSearch unavailable", {

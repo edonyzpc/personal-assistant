@@ -51,7 +51,7 @@ export function createPaRuntimeEvalRequestBudget(fetchImpl: typeof fetch, maximu
             if (count >= maximum) throw new Error(`B149_EVAL_PHYSICAL_REQUEST_LIMIT:${maximum}`);
             count++;
             return fetchImpl(input, init);
-        }) as typeof fetch,
+        }),
         count: () => count,
     };
 }

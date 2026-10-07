@@ -244,7 +244,7 @@ export function buildReadObservationEvidence(options: {
             part: options.output.part,
             range: { ...options.output.range },
         }],
-    }), options.signal) as Promise<ReadVaultObservationEvidence>;
+    }), options.signal);
 }
 
 export async function buildQueryObservationEvidence(options: {
@@ -265,7 +265,7 @@ export async function buildQueryObservationEvidence(options: {
         coverage: { ...options.output.coverage },
         aggregate: {
             kind: "query",
-            query: options.output.query as QueryNotesInput,
+            query: options.output.query,
             candidateSetDigest: await hashObservationValue(options.candidatePaths, options.signal),
             metadataSetDigest: await hashObservationValue(options.metadataSnapshots, options.signal),
             evaluatedCandidates: options.output.coverage.evaluatedCandidates,

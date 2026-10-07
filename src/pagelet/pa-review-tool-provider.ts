@@ -51,8 +51,6 @@ import type {
 } from "../ai-services/capability-types";
 import type {
     ChatToolName,
-    ChatToolPermission,
-    ChatToolSourceBoundary,
 } from "../ai-services/chat-tools";
 import type { SourceRecordKind } from "../ai-services/chat-types";
 import { validateAllowedRoots } from "../ai-services/write-action-framework";
@@ -581,13 +579,13 @@ function buildCapability(opts: CreatePaReviewToolProviderOptions): WriteActionCa
             // re-checks the AgentCapability.permission field (the write tier
             // above) — this registry-definition value is for the legacy chat
             // schema export and never gates the write itself.
-            permission: "read-only" as ChatToolPermission,
+            permission: "read-only",
             cost: "free",
             outputBudgetChars: 0,
             requiresConfirmation: true,
             failureBehavior: "recoverable",
             statusMessage: "Writing Pagelet review",
-            sourceBoundary: "read-only-tool" as ChatToolSourceBoundary,
+            sourceBoundary: "read-only-tool",
         }),
 
         // ── Framework gates ─────────────────────────────────────────────

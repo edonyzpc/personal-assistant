@@ -234,7 +234,7 @@ ctx.onmessage = (event: MessageEvent<SqliteWorkerMessage>) => {
                     code: "graph-rank-request-duplicate",
                     message: "Graph candidate ranking request id is already active.",
                 },
-            } as SqliteWorkerResponse);
+            } satisfies SqliteWorkerResponse);
             return;
         }
         pendingGraphRequests.add(key);
@@ -249,7 +249,7 @@ ctx.onmessage = (event: MessageEvent<SqliteWorkerMessage>) => {
                     code: "path-evidence-request-duplicate",
                     message: "Path evidence generation request id is already active.",
                 },
-            } as SqliteWorkerResponse);
+            } satisfies SqliteWorkerResponse);
             return;
         }
         pendingPathEvidenceRequests.add(key);
@@ -263,7 +263,7 @@ ctx.onmessage = (event: MessageEvent<SqliteWorkerMessage>) => {
 async function handleAndPostRequest(request: SqliteWorkerRequest): Promise<void> {
     try {
         const result = await handleRequest(request);
-        ctx.postMessage({ id: request.id, ok: true, result } as SqliteWorkerResponse);
+        ctx.postMessage({ id: request.id, ok: true, result });
     } catch (error) {
         const code = getErrorCode(error);
         lastErrorCode = code;
@@ -274,7 +274,7 @@ async function handleAndPostRequest(request: SqliteWorkerRequest): Promise<void>
                 code,
                 message: error instanceof Error ? error.message : String(error),
             },
-        } as SqliteWorkerResponse);
+        } satisfies SqliteWorkerResponse);
     } finally {
         if (request.type === "rankGraphCandidates") {
             const key = graphRequestKey(request.payload.control.requestId, request.payload.control.runEpoch);

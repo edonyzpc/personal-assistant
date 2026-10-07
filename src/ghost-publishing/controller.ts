@@ -3,7 +3,7 @@ import { getVaultConfigDir } from "../obsidian-paths";
 import { createGhostActionContext, type GhostActionContextOptions, type GhostActionHost } from "./action-context";
 import { GhostClient } from "./client";
 import { GhostPublishingConfiguration, type GhostConnection } from "./configuration";
-import { GhostTabPreview, ghostPreviewUrl, type GhostPreviewHost } from "./preview";
+import { GhostTabPreview, ghostPreviewUrl } from "./preview";
 import { GhostPublishingService, type GhostActionContext } from "./service";
 import { GhostPreviewStore, ghostDatabaseName } from "./state-store";
 import type { GhostLocalOperation } from "./state-schema";
@@ -229,7 +229,7 @@ class PublishingSession implements GhostPublishingSession {
         private readonly lifetime: AbortController, private readonly onDispose: () => void) {
         this.noteKey = scope.noteKey;
         this.selection = scope.selection;
-        this.preview = new GhostTabPreview(controller.options.app as unknown as GhostPreviewHost,
+        this.preview = new GhostTabPreview(controller.options.app,
             { isDesktop: controller.options.isDesktop, isWebViewerEnabled: controller.options.isWebViewerEnabled });
     }
     subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }

@@ -842,7 +842,7 @@ function normalizeStringArray(value: unknown, fallback: string[]): string[] {
 
 function normalizeDataBoundaryGeneratedNotePolicy(value: unknown): GeneratedNotePolicy {
     return value === "exclude-generated" || value === "include-generated"
-        ? value as GeneratedNotePolicy
+        ? value
         : DATA_BOUNDARY_DEFAULTS.generatedNotePolicy;
 }
 
@@ -1517,7 +1517,7 @@ export class SettingTab extends PluginSettingTab {
             const generation = this.memoryControlCenterGeneration;
             renderPageletNotePrivacy({ saveLocation: this.pageletSaveLocationContainer,
                 sourceExclusions: this.pageletSourceExclusionsContainer }, this.plugin,
-            { create: (container) => new Setting(container) as unknown as ReturnType<PageletSettingFactory["create"]> },
+            { create: (container) => new Setting(container) },
             getPageletUiLanguage(), { sourceScopeStates: this.sourceScopeStates.pagelet,
                 isCurrent: () => this.settingsVisible && generation === this.memoryControlCenterGeneration });
         }
@@ -3124,11 +3124,11 @@ export class SettingTab extends PluginSettingTab {
         // the Pagelet module stay free of any Obsidian dependency, which in
         // turn makes its unit tests trivial.
         const factory: PageletSettingFactory = {
-            create: (containerEl) => new Setting(containerEl) as unknown as ReturnType<PageletSettingFactory["create"]>,
+            create: (containerEl) => new Setting(containerEl),
         };
         renderPageletPreferences(
             parentEl,
-            plugin as unknown as Parameters<typeof renderPageletPreferences>[1],
+            plugin,
             factory,
             getPageletUiLanguage(),
         );

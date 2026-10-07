@@ -290,7 +290,7 @@ function schemaFor(name: CoreWriteToolName): ChatToolInputSchema {
                         type: "string",
                         minLength: 1,
                     },
-                } as ChatToolInputSchema["properties"][string],
+                },
             },
             required: ["path"],
             additionalProperties: false,

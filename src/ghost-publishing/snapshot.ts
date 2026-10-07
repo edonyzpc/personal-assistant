@@ -173,7 +173,7 @@ export function materializeGhostSnapshot(candidate: GhostSnapshot, resources: Gh
 export function ghostManagedWrite(candidate: GhostSnapshot): GhostPostWrite {
     const result: Record<string, unknown> = {};
     for (const field of candidate.managedFields) result[field] = copy(candidate.content[field]);
-    return result as GhostPostWrite;
+    return result;
 }
 
 function comparable(content: GhostStoredContent, fields: GhostSnapshot["managedFields"]): Record<string, unknown> {

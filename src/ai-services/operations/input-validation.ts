@@ -308,5 +308,5 @@ function expectEnum<const Values extends readonly string[]>(
     if (typeof value !== "string" || !(values as readonly string[]).includes(value)) {
         throw new OperationsValidationError(`${path} must be one of ${values.join(", ")}.`);
     }
-    return value as Values[number];
+    return value;
 }

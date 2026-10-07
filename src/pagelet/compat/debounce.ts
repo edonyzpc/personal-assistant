@@ -177,7 +177,7 @@ export class PageletReviewCoalescer<T> {
         // `this` confusion. The default casts to the synchronous-callback
         // 2-arg shape and returns the timer handle opaquely.
         this.setTimer = options.setTimer
-            ?? ((cb, ms) => setPlatformTimeout(cb, ms) as unknown);
+            ?? ((cb, ms) => setPlatformTimeout(cb, ms));
         this.clearTimer = options.clearTimer
             ?? ((handle) => clearPlatformTimeout(handle as PlatformTimeoutHandle));
     }

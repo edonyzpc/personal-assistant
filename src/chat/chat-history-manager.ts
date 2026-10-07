@@ -525,7 +525,7 @@ export class ChatHistoryManager {
             assistant: assistantMessage,
             ...(memoryMetadata ? { memoryMetadata: cloneMemoryMetadata(memoryMetadata) } : {}),
             ...(canonicalEvidence || canonicalEvidenceInvalid ? {
-                vaultObservationEvidence: evidenceState?.vaultObservationEvidence as VaultObservationEvidence[],
+                vaultObservationEvidence: evidenceState?.vaultObservationEvidence,
                 vaultObservationContractVersion: 1 as const,
                 ...(evidenceState?.vaultObservationEvidenceInvalid ? { vaultObservationEvidenceInvalid: true } : {}),
             } : {}),

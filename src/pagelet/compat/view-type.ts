@@ -99,6 +99,6 @@ export function getActiveMarkdownView(
     markdownViewCtor: new (...args: unknown[]) => MarkdownView,
 ): MarkdownView | null {
     const view = workspace.getActiveViewOfType(markdownViewCtor) ?? null;
-    if (!isPageletEligibleView(view as unknown as PageletObsidianViewProbe | null)) return null;
+    if (!isPageletEligibleView(view)) return null;
     return view;
 }

@@ -220,7 +220,7 @@ function optionalEnum<const Values extends readonly string[]>(
     if (typeof value !== "string" || !(values as readonly string[]).includes(value)) {
         throw new Error(`${field} must be one of ${values.join(", ")}.`);
     }
-    return value as Values[number];
+    return value;
 }
 
 function boundedEnum(value: unknown, field: string): MemoryActionToolInput["action"] {

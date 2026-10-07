@@ -141,7 +141,7 @@ export function createMigrationOwnedLegacyMemoryPayload(
         },
         confirmedMemoryCount: rawPayload.confirmedMemoryCount,
         memoryAutoAcceptPaused: rawPayload.memoryAutoAcceptPaused,
-    }) as LegacyMemoryPayload;
+    });
 }
 
 /** Returns a content hash without exposing legacy claim or queue text. */

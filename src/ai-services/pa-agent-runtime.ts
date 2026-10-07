@@ -2626,7 +2626,7 @@ export class PaAgentRuntime {
                             }
                             invokeChain = prompt.pipe(
                                 bindStreamingToolsIfAvailable(invokeLlm, schemas),
-                            ) as unknown as NativeToolStreamingAndInvocableRunnable;
+                            );
                         }
                         return invokeChain.invoke(request, config);
                     },
@@ -3553,7 +3553,7 @@ export class PaAgentRuntime {
             const loadResult = await this.toolRegistry.registerProvider(this.skillContextProvider, {
                 turnId: `${runId}:host-context`,
                 platform: this.options.runtimePlatform ?? "desktop",
-                settings: this.host.settings as unknown as Record<string, unknown>,
+                settings: this.host.settings,
                 signal,
             });
             if (loadResult.status !== "available") {
@@ -3578,7 +3578,7 @@ export class PaAgentRuntime {
             const result = await this.toolRegistry.registerProvider(provider, {
                 turnId,
                 platform: this.options.runtimePlatform ?? "desktop",
-                settings: this.host.settings as unknown as Record<string, unknown>,
+                settings: this.host.settings,
                 signal,
             });
             if (result.status === "unavailable") {

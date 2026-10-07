@@ -97,7 +97,7 @@ function wrapNativeCodeInlineRule(original: { fn: InlineRule }): InlineRule {
                 const token = state.tokens[index];
                 if (token?.type !== "code_inline") continue;
                 token.meta = {
-                    ...((token.meta as object | null | undefined) ?? {}),
+                    ...((token.meta) ?? {}),
                     rawStart,
                     rawEnd: state.pos,
                 };
@@ -175,7 +175,7 @@ function captureGetLines<State extends StateBlock, Result>(
         if (captured.text !== text) throw new Error("markdown-it block source mapping differs from native content.");
         capturedLines.push(captured);
         return text;
-    }) as StateBlock["getLines"];
+    });
     try {
         const result = task();
         return { result, captured: capturedLines.at(-1) ?? null };
@@ -192,7 +192,7 @@ function attachCapturedSourceOffsets(tokens: Token[], captured: CapturedLines | 
     for (const token of tokens) {
         if (token.type !== "inline" || token.content !== text) continue;
         token.meta = {
-            ...((token.meta as object | null | undefined) ?? {}),
+            ...((token.meta) ?? {}),
             sourceOffsets: offsets,
         };
     }
@@ -223,7 +223,7 @@ function wrapHeadingRule(original: { fn: BlockRule }): BlockRule {
             const token = state.tokens[index];
             if (token?.type !== "inline") continue;
             token.meta = {
-                ...((token.meta as object | null | undefined) ?? {}),
+                ...((token.meta) ?? {}),
                 sourceCandidates: contentCandidates(state, startLine, token.content),
             };
         }
@@ -247,7 +247,7 @@ function wrapTableRule(original: { fn: BlockRule }): BlockRule {
                 const cell = cells[cellIndex++] ?? { text: "", offsets: [] };
                 if (cell.text !== token.content) throw new Error("markdown-it table cell source mapping differs from native content.");
                 token.meta = {
-                    ...((token.meta as object | null | undefined) ?? {}),
+                    ...((token.meta) ?? {}),
                     sourceOffsets: cell.offsets,
                 };
             }

@@ -250,7 +250,7 @@ export class ChatPluginIntegration {
         const settings = this.dependencies.getSettings();
         return {
             model: normalizeFeaturedImageModel(settings.featuredImageModel),
-            count: normalizeFeaturedImageCount(settings.numFeaturedImages) as 1 | 2 | 3 | 4,
+            count: normalizeFeaturedImageCount(settings.numFeaturedImages),
             attachmentPathHint: normalizeFeaturedImageFolderPath(settings.featuredImagePath),
         };
     }
@@ -423,7 +423,7 @@ export class ChatPluginIntegration {
             writingSave: this.writingSave,
             rememberWritingStyle: (versionId, scene) => actions.rememberWritingStyle(versionId, scene),
             readWritingStyleReferences: (revisionIds, signal) =>
-                actions.readWritingStyleReferences(revisionIds, signal) as never,
+                actions.readWritingStyleReferences(revisionIds, signal),
             prepareWritingRecoverySources: (recovery, images, conversationId, metadata, scope) =>
                 this.prepareWritingRecoverySources(recovery, images, conversationId, metadata, scope),
             onWritingReferencesChanged: (listener) => actions.onWritingReferencesChanged(listener),

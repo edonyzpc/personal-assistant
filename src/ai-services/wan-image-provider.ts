@@ -100,7 +100,7 @@ export function resolveWanImageEndpoints(baseURL: string): { submit: string; tas
 
 function parseResponse(value: unknown): ProviderResponse {
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-    return value as ProviderResponse;
+    return value;
 }
 
 function outputImages(choices: unknown): string[] {
