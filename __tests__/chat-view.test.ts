@@ -8840,29 +8840,6 @@ describe('LLMView turn lifecycle', () => {
         ]);
     });
 
-    it('deletes a successful user and assistant turn as one history pair', async () => {
-        const { view, containerEl } = createView();
-        await view.onOpen();
-
-        getTextArea(containerEl).value = 'first prompt';
-        void getButtonByText(containerEl, 'Ask').click();
-        await flushPromises();
-        streamCalls[0].onChunk('first answer');
-        streamCalls[0].resolve();
-        await flushPromises();
-        await flushPromises();
-
-        const deleteButtons = getButtonsByClass(containerEl, 'delete-message-button');
-        expect(deleteButtons).toHaveLength(2);
-        deleteButtons[1].click();
-        await flushPromises();
-
-        expect(view.chatHistory).toEqual([]);
-        expect(allText(containerEl)).not.toContain('first prompt');
-        expect(allText(containerEl)).not.toContain('first answer');
-        expect(mockResetChatContext).toHaveBeenCalledTimes(1);
-    });
-
     it('does not apply enter animation when history messages are redrawn', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
@@ -11195,6 +11172,9 @@ describe('LLMView turn lifecycle', () => {
         more.click(); await flushPromises();
         expect(pending.hidden).toBe(true);
         expect(listReceipts).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps hidden menu items out of the layout', () => {
         const css = readFileSync('src/custom.pcss', 'utf8');
         expect(getCssRuleBlock(css, '.pa-chat-menu .pa-chat-menu-item[hidden]')).toContain('display: none;');
     });
@@ -11410,6 +11390,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         await flushPromises();
 
+        expect(getButtonsByClass(containerEl, 'delete-message-button')).toHaveLength(2);
         const assistantMessage = getElementsByClass(containerEl, 'llm-message')
             .find((el) => el.classList.contains('assistant'));
         if (!assistantMessage) throw new Error('assistant message not found');
@@ -11426,6 +11407,7 @@ describe('LLMView turn lifecycle', () => {
         expect(view.chatHistory).toEqual([]);
         expect(allText(containerEl)).not.toContain('first prompt');
         expect(allText(containerEl)).not.toContain('first answer');
+        expect(mockResetChatContext).toHaveBeenCalledTimes(1);
     });
 
     it('renders completed message actions as a bottom inline toolbar', async () => {

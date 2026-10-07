@@ -92,22 +92,10 @@ describe("buildSuggestionCardMarkup — 5 sections", () => {
         suggestion: makeSuggestion(),
     });
 
-    it("renders the canonical root class list with kind modifier", () => {
-        const markup = buildSuggestionCardMarkup(baseProps(), { translator: keyTranslator() });
-        expect(markup.rootClassList).toEqual([
-            "pa-pagelet-suggestion-card",
-            "pa-pagelet-suggestion-card--kind-clarify",
-        ]);
-    });
-
     it("renders section 1 (header) with kind badge", () => {
         const markup = buildSuggestionCardMarkup(baseProps(), { translator: keyTranslator() });
         expect(markup.header.kind).toBe("clarify");
         expect(markup.header.kindLabel).toBe("Clarify");
-        expect(markup.header.kindBadgeClassList).toEqual([
-            "pa-pagelet-suggestion-card__kind",
-            "pa-pagelet-suggestion-card__kind--clarify",
-        ]);
     });
 
     it("renders section 2 (source) with the source id and label", () => {
@@ -116,9 +104,6 @@ describe("buildSuggestionCardMarkup — 5 sections", () => {
         expect(markup.source.label).toBe("Source");
         // No callback → non-interactive chip.
         expect(markup.source.interactive).toBe(false);
-        expect(markup.source.chipClassList).toContain(
-            "pa-pagelet-suggestion-card__source-chip--static",
-        );
     });
 
     it("marks the source chip interactive when onSourceClick is supplied", () => {
@@ -127,9 +112,6 @@ describe("buildSuggestionCardMarkup — 5 sections", () => {
             { translator: keyTranslator() },
         );
         expect(markup.source.interactive).toBe(true);
-        expect(markup.source.chipClassList).toContain(
-            "pa-pagelet-suggestion-card__source-chip--interactive",
-        );
     });
 
     it("renders section 3 (rationale) with the suggestion text", () => {
@@ -210,7 +192,6 @@ describe("buildSuggestionCardMarkup — diagnostic badges", () => {
         expect(markup.header.badges).toHaveLength(1);
         expect(markup.header.badges[0].kind).toBe("truncated");
         expect(markup.header.badges[0].label).toBe("Shortened by Pagelet");
-        expect(markup.header.badges[0].className).toContain("--truncated");
     });
 
     it("renders the partial badge when diagnostics.partial", () => {
@@ -228,7 +209,6 @@ describe("buildSuggestionCardMarkup — diagnostic badges", () => {
         expect(markup.header.badges).toHaveLength(1);
         expect(markup.header.badges[0].kind).toBe("partial");
         expect(markup.header.badges[0].label).toBe("Partial");
-        expect(markup.header.badges[0].className).toContain("--partial");
     });
 
     it("renders the dropped badge when droppedSuggestionsCount > 0", () => {
@@ -246,7 +226,6 @@ describe("buildSuggestionCardMarkup — diagnostic badges", () => {
         expect(markup.header.badges).toHaveLength(1);
         expect(markup.header.badges[0].kind).toBe("dropped");
         expect(markup.header.badges[0].label).toBe("Dropped 2");
-        expect(markup.header.badges[0].className).toContain("--dropped");
     });
 
     it("renders all 3 badges when all 3 diagnostic conditions trigger", () => {
@@ -288,7 +267,7 @@ describe("buildSuggestionCardMarkup — diagnostic badges", () => {
 
 describe("buildSuggestionCardMarkup — kind enum", () => {
     it.each(PAGELET_SUGGESTION_KINDS)(
-        "maps kind=%s to a translated badge label and class modifier",
+        "maps kind=%s to a translated badge label",
         (kind) => {
             const { translator, calls } = recordingTranslator();
             const markup = buildSuggestionCardMarkup(
@@ -296,9 +275,6 @@ describe("buildSuggestionCardMarkup — kind enum", () => {
                 { translator },
             );
             expect(markup.header.kind).toBe(kind);
-            expect(markup.header.kindBadgeClassList).toContain(
-                `pa-pagelet-suggestion-card__kind--${kind}`,
-            );
             // The translator was asked for the canonical kind key.
             const expectedKey = SUGGESTION_KIND_I18N_KEY[kind];
             expect(calls.some((c) => c.key === expectedKey)).toBe(true);

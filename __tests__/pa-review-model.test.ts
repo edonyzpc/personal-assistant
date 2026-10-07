@@ -788,41 +788,7 @@ describe("PageletReviewModel — B4 cost ceiling (D018)", () => {
         expect(costTracker.getEntries().length).toBe(0);
     });
 
-    it("rejects with hard_cap_exceeded when input + output budget exceeds 36K hard cap (factory never called)", async () => {
-        // This branch is mathematically unreachable via the SETTINGS UI (B3
-        // clamps maxInput ≤ 32K and maxOutput ≤ 4K, so the sum is 36K which
-        // PASSES the strict `>` check). But the gate must still defend against
-        // a hand-edited data.json. We construct a budget that bypasses the UI
-        // clamp by passing values inside settings range but past the hard cap
-        // — wait, that's also impossible. So we use values that are accepted
-        // by the gate's own clamping (which clamps to maxInput/maxOutput) and
-        // then craft an input large enough to push the SUM over hardCap.
-        // Specifically: maxInputTokens=32_000 → effective 32_000, maxOutput=4_000;
-        // an input of 32_001 tokens would trip input_too_large first. So we
-        // need an estimate that fits under maxInput but pushes input+output
-        // > hardCap. That's only possible when maxOutput is at its full 4_000:
-        // input ∈ [32_001, 32_000] is empty. The frozen constants make this
-        // branch unreachable from a single set of inputs.
-        //
-        // Instead, the cleanest reachable test uses a moderate-size prompt and
-        // a maxOutputTokens larger than would naturally fit (the gate clamps
-        // to maxOutput=4_000, leaving input headroom of 32_000). We can't make
-        // hard_cap fire without making input_too_large fire first. So this
-        // test EXISTS as a defensive contract assertion: even if the constants
-        // ever shift, the orchestrator MUST forward `hard_cap_exceeded` faithfully.
-        //
-        // Construct the rejection by mocking the model to be unreachable: we
-        // call preCheckCost via a tracker scenario where input is exactly at
-        // the input cap (passes input_too_large) but output cap on the budget
-        // is artifically high enough to exceed hardCap. Because preCheckCost
-        // CLAMPS budget.maxOutputTokens to 4_000 (PAGELET_TOKEN_LIMITS.maxOutput),
-        // the unclamped value can be arbitrarily large and the clamp prevents
-        // hard_cap from firing this way too. → The path is therefore truly
-        // defensive-only at current limits. We verify the orchestrator wires
-        // the error code through correctly using a direct preCheckCost shape
-        // test in pa-review-cost.test.ts (the boundary case) and here just
-        // assert that the legitimate cost-gate happy path still allows the
-        // call through when budget == settings UI max.
+    it("allows a short input at the maximum cost budget and calls the factory once", async () => {
         let factoryCalls = 0;
         const factory: PageletChatModelFactory = async () => {
             factoryCalls += 1;

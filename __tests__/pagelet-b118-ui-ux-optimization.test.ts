@@ -39,21 +39,6 @@ describe("F-02 Recap Bubble Content", () => {
         };
     }
 
-    it("renders the default Recap body, source metadata, and why-now hint", () => {
-        const candidate = makeRecapCandidate();
-        const content = buildPreparedRecapDeliveryContent(candidate, {
-            onViewRecap: jest.fn(),
-            onLater: jest.fn(),
-        });
-
-        expect(content.type).toBe("recap-delivery");
-        expect(content.findings[0]?.text).toBe("Project notes changed this week.");
-        expect(content.findings[0]?.sourceLink).toBe("notes/project.md");
-        expect(content.findings[0]?.sourceTitle).toBe("Weekly Changes · 2 sources");
-        expect(content.inlineHint?.text).toBe("Recent activity in your vault");
-        expect(content.inlineHint?.icon).toBe("calendar");
-    });
-
     it("shows first source title when only one source exists", () => {
         const candidate = makeRecapCandidate({
             sourceRefs: [{ path: "notes/single.md", title: "Single Note" }],
@@ -64,18 +49,6 @@ describe("F-02 Recap Bubble Content", () => {
         });
 
         expect(content.findings[0]?.sourceTitle).toBe("Weekly Changes · Single Note");
-    });
-
-    it("View action calls onViewRecap with the original candidate", () => {
-        const onViewRecap = jest.fn();
-        const candidate = makeRecapCandidate();
-        const content = buildPreparedRecapDeliveryContent(candidate, {
-            onViewRecap,
-            onLater: jest.fn(),
-        });
-
-        content.actions[0]?.callback();
-        expect(onViewRecap).toHaveBeenCalledWith(candidate);
     });
 });
 

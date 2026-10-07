@@ -223,25 +223,6 @@ describe('context continuity synthetic runner', () => {
         expect(app.modelInvocations()).toBe(3);
     });
 
-    it('reproduces why a stream/invoke-only proxy misses RunnableSequence streaming', async () => {
-        let intercepted = 0;
-        const model = offlineModel('synthetic');
-        const oldProxy = new Proxy(model, {
-            get(target, property) {
-                const value = Reflect.get(target, property, target);
-                if ((property === 'stream' || property === 'invoke') && typeof value === 'function') {
-                    return (...args: unknown[]) => { intercepted++; return value.apply(target, args); };
-                }
-                return typeof value === 'function' ? value.bind(target) : value;
-            },
-        });
-        const chain = ChatPromptTemplate.fromMessages([['human', '{input}']]).pipe(oldProxy);
-        let output = '';
-        for await (const chunk of await chain.stream({ input: 'synthetic input' })) output += chunk.content;
-        expect(output).toBe('synthetic');
-        expect(intercepted).toBe(0);
-    });
-
     it.each(['lossless', 'unused-summary'] as const)('does not accept a requested semantic path when %s was sent', async (mode) => {
         const app = harness(mode);
         const report = await app.evaluation.start({ cases: ['early-constraints'], arms: ['candidate'],

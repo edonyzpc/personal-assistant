@@ -1173,7 +1173,7 @@ describe("Plugin lifecycle integration", () => {
             },
         );
 
-        it.each([" qwen-plus ", "gpt-4o"])(
+        it.each([undefined, " qwen-plus ", "gpt-4o"])(
             "fails closed for the unproven provider-less legacy model %p",
             async (modelName) => {
                 const first = createPluginHarness({

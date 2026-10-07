@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@jest/globals";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -422,10 +422,15 @@ describe("portable exact Obsidian FTS runtime evidence", () => {
     });
 });
 
+let platformReceiptTemplate: any[] | undefined;
+
 function platformReceipts(): any[] {
-    const probe = spawnSync(process.execPath, [probePath, "--json"], { encoding: "utf8" });
-    const base = JSON.parse(probe.stdout);
-    return ["darwin", "win32", "linux"].map((platform) => makePlatformReceipt(base, platform));
+    if (!platformReceiptTemplate) {
+        const probe = spawnSync(process.execPath, [probePath, "--json"], { encoding: "utf8" });
+        const base = JSON.parse(probe.stdout);
+        platformReceiptTemplate = ["darwin", "win32", "linux"].map((platform) => makePlatformReceipt(base, platform));
+    }
+    return structuredClone(platformReceiptTemplate);
 }
 
 function makePlatformReceipt(base: any, platform: string): any {
@@ -610,19 +615,23 @@ function verify(
     arguments_: string[] = [],
 ): { status: number | null; stdout: string; stderr: string } {
     const directory = mkdtempSync(join(tmpdir(), "pa-fts-runtime-receipts-"));
-    const paths = receipts.map((receipt, index) => {
-        const path = join(directory, `receipt-${index}.json`);
-        writeFileSync(path, JSON.stringify(receipt), "utf8");
-        return path;
-    });
-    const result = spawnSync(
-        process.execPath,
-        [verifierPath, "--json", ...arguments_, ...paths],
-        { encoding: "utf8" },
-    );
-    return {
-        status: result.status,
-        stdout: String(result.stdout),
-        stderr: String(result.stderr),
-    };
+    try {
+        const paths = receipts.map((receipt, index) => {
+            const path = join(directory, `receipt-${index}.json`);
+            writeFileSync(path, JSON.stringify(receipt), "utf8");
+            return path;
+        });
+        const result = spawnSync(
+            process.execPath,
+            [verifierPath, "--json", ...arguments_, ...paths],
+            { encoding: "utf8" },
+        );
+        return {
+            status: result.status,
+            stdout: String(result.stdout),
+            stderr: String(result.stderr),
+        };
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
+    }
 }

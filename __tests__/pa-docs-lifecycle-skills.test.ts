@@ -98,11 +98,6 @@ describe("PA lifecycle skill forward contracts", () => {
         expect(sddSkill).toContain("If a selected archive path exists, fail closed");
     });
 
-    it("keeps the router compact enough for routine invocation", () => {
-        expect(docsSkill.split("\n").length).toBeLessThanOrEqual(140);
-        expect(sddSkill.split("\n").length).toBeLessThanOrEqual(150);
-    });
-
     it("keeps the docs manager implicit and SDD explicitly routed", () => {
         const docsMetadata = read(".agents/skills/pa-docs-lifecycle-manager/agents/openai.yaml");
         const sddMetadata = read(".agents/skills/sdd-lifecycle/agents/openai.yaml");

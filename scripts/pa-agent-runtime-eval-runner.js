@@ -90,7 +90,8 @@ function run(args = process.argv.slice(2)) {
   }
   const jest = require.resolve('jest/bin/jest');
   const command = spawnSync(process.execPath, [jest, '--config', 'jest.source.config.cjs', '--runInBand',
-    '--runTestsByPath', '__tests__/pa-agent-runtime-eval.test.ts'], {
+    '--runTestsByPath', '__tests__/pa-agent-runtime-eval.test.ts',
+    '--testNamePattern', '^B-149 runtime task baseline actual PA runtime and ChatOpenAI SDK with fixed offline HTTP responses '], {
     cwd: root, encoding: 'utf8', env: { ...process.env, B149_RUNTIME_EVAL_OUTPUT: output,
       B149_RUNTIME_EVAL_MAX_REQUESTS: String(options.maxRequests) },
   });

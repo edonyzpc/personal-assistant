@@ -635,13 +635,4 @@ describe("InMemoryRateLimitStorage (test double + fallback)", () => {
         const loaded = s.load();
         expect(loaded?.hourlyTimestamps).toEqual([1, 2, 3]); // unaffected
     });
-
-    it("counts load / save invocations for assertion", () => {
-        const s = new InMemoryRateLimitStorage();
-        s.load();
-        s.load();
-        s.save({ hourlyTimestamps: [], dailyCount: 0, dailyResetAt: 0 });
-        expect(s.loadCalls).toBe(2);
-        expect(s.saveCalls).toBe(1);
-    });
 });

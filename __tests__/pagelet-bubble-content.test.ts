@@ -696,7 +696,7 @@ describe("Pagelet Bubble quick access content", () => {
             onLater: jest.fn(),
         };
 
-        const content = buildPreparedRecapDeliveryContent(candidate, callbacks, "en");
+        const content = buildPreparedRecapDeliveryContent(candidate, callbacks);
 
         expect(content.type).toBe("recap-delivery");
         expect(content.findings[0]?.text).toBe("Project notes changed this week.");
@@ -704,6 +704,8 @@ describe("Pagelet Bubble quick access content", () => {
             sourceLink: "Projects/A.md",
             sourceTitle: "Project recap · 2 sources",
         }));
+        expect(content.inlineHint?.text).toBe("5 source notes changed in this scope.");
+        expect(content.inlineHint?.icon).toBe("calendar");
         expect(content.deliveryReceipt).toBe(candidate.deliveryReceipt);
         expect(JSON.stringify(content)).not.toContain("Generate summary");
         expect(content.actions.map((action) => action.label)).toEqual(["View recap", "Later"]);

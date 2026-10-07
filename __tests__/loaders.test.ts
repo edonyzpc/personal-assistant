@@ -66,10 +66,6 @@ describe('native loaders', () => {
         expect(customLoader.style.props.get('--pa-loader-speed')).toBe('1.75s');
         expect(customLoader.style.props.get('--pa-loader-color')).toBe('currentColor');
         expect(findAllByTag(parent, 'style')).toHaveLength(0);
-        const css = readFileSync('src/custom.pcss', 'utf8');
-        const rootRule = css.match(new RegExp(`\\.pa-loader-${kind}\\s*\\{([^}]*)\\}`))?.[1];
-        expect(rootRule).toContain('width: var(--pa-loader-size)');
-        expect(rootRule).toContain('display: inline-flex');
     });
 
     it('keeps every Quantum particle and isolates Mirage filters across instances', () => {

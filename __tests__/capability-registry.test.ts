@@ -76,24 +76,19 @@ describe("CapabilityRegistry and core tool capabilities", () => {
         schema.function.parameters.properties.contextHandle.enum?.push("mutated");
         expect(registry.getWritingOutputSchema({ requestId: "next-context" }).function.parameters.properties.contextHandle.enum).toEqual(["next-context"]);
     });
-    it("exports the 9 core tools as provider schemas in canonical order", () => {
+    it("exports complete core tool schemas in stable canonical order", () => {
         const registry = new CapabilityRegistry();
         registry.registerMany(createCoreCapabilities());
 
-        expect(registry.exportProviderSchemas()).toEqual(buildExpectedCoreSchemas());
-        expect(registry.exportProviderSchemas()).toHaveLength(9);
-    });
-
-    it("keeps provider schema ordering stable across sequential turns", () => {
-        const registry = new CapabilityRegistry();
-        registry.registerMany(createCoreCapabilities());
-        const namesByTurn = [
-            registry.exportProviderSchemas().map((schema) => schema.function.name),
+        const schemas = registry.exportProviderSchemas();
+        expect(schemas).toEqual(buildExpectedCoreSchemas());
+        const exportedNames = [
+            schemas.map((schema) => schema.function.name),
             registry.exportProviderSchemas().map((schema) => schema.function.name),
             registry.exportProviderSchemas().map((schema) => schema.function.name),
         ];
 
-        expect(namesByTurn[0]).toEqual([
+        expect(exportedNames[0]).toEqual([
             "search_memory",
             "get_current_note_context",
             "search_vault_metadata",
@@ -104,8 +99,8 @@ describe("CapabilityRegistry and core tool capabilities", () => {
             "search_vault_snippets",
             "list_vault_tags",
         ]);
-        expect(namesByTurn[1]).toEqual(namesByTurn[0]);
-        expect(namesByTurn[2]).toEqual(namesByTurn[0]);
+        expect(exportedNames[1]).toEqual(exportedNames[0]);
+        expect(exportedNames[2]).toEqual(exportedNames[0]);
     });
 
     it("filters capabilities before provider schema generation", () => {

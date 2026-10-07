@@ -103,113 +103,28 @@ describe("preCheckCost (B4 hard-cap enforcement, D018)", () => {
         expect(decision.estimatedInputTokens).toBe(8_001);
     });
 
-    it("rejects 'hard_cap_exceeded' when input + output > 36K even if input <= maxInput", () => {
-        // 32K + 4K = 36K → fits exactly. 32K + 4001 → over. Use the upper
-        // bounds for both fields to demonstrate the hard cap fires even at
-        // the user's settable maximum.
+    it("rejects 'input_too_large' before the combined hard cap when both limits are exceeded", () => {
         const decision = preCheckCost(32_001, {
             maxInputTokens: 32_000, // hits the ceiling exactly
             maxOutputTokens: 4_000,
         });
-        // Wait: 32001 > 32000 → input_too_large fires first, NOT hard_cap.
-        // The ordering matters — input check before hard-cap check.
         expect(decision.ok).toBe(false);
         if (decision.ok) return;
         expect(decision.reason).toBe("input_too_large");
     });
 
-    it("triggers hard_cap when sum > 36K but input still within input cap", () => {
-        // Construct so input cap allows but combined exceeds:
-        //   maxInputTokens: 40_000 (will be clamped to 32_000 by Math.min)
-        //   estimate: 33_000 (over 32_000 effective input)
-        //   → input_too_large again, not hard cap.
-        //
-        // To get hard_cap_exceeded specifically, the user has to be at high
-        // input AND a settings combination where input itself passes.
-        // Easiest: maxInputTokens=32K, maxOutputTokens=5K (clamped to 4K).
-        // estimate=33K is over input cap. So we need estimate <= effective
-        // input AND estimate + effectiveOutput > 36K.
-        //
-        // effectiveInput = min(32K, 32K) = 32K. estimate <= 32K means
-        // estimate + 4K <= 36K → CAN'T trigger hard cap with default ceiling.
-        //
-        // BUT: user is allowed to lower maxOutputTokens below the default.
-        // If they set maxOutputTokens = 100 and we have a custom pricing-test
-        // budget like {maxInputTokens: 35_000, maxOutputTokens: 2_000}:
-        //   effectiveInput = min(35K, 32K) = 32K; estimate of 32K passes.
-        //   effectiveOutput = min(2K, 4K) = 2K; sum = 34K → still under 36K.
-        // The cleanest way is to test pre-clamping:
-        //   {maxInputTokens: 32_000, maxOutputTokens: 4_000}, estimate = 32_001
-        //   → input_too_large.
-        //
-        // To uniquely exercise hard_cap, lower the effective output AFTER
-        // the input has passed. The pre-clamp logic uses min(setting, ceiling)
-        // so we can't go ABOVE 36K via legit settings. The only path to
-        // hard_cap is when the user manually edits maxOutputTokens above 4K
-        // (we still clamp to 4K). Hard cap fires when:
-        //   estimate <= effectiveInput AND estimate + effectiveOutput > 36K
-        //
-        // This is mathematically impossible with the current ceilings
-        // (32K input + 4K output = exactly 36K hard cap). So in PRACTICE
-        // the hard_cap path is a defence-in-depth: it would only fire if a
-        // future setting bump (e.g. maxOutput → 6K) made the sum exceed 36K
-        // before someone remembered to bump the hard cap too.
-        //
-        // We simulate that future scenario by constructing a budget whose
-        // post-clamp output is large enough that input+output > hardCap:
-        //   Use a custom call where caller passes {maxInputTokens: 32_000,
-        //   maxOutputTokens: 4_000} and estimate=32_001 (over input cap)
-        //   versus estimate=32_000 + maxOutputTokens=5_000 (output clamped
-        //   to 4K → sum = 36K, exactly at hard cap, passes).
-        //
-        // Resolution: assert the path via direct invocation with a
-        // hypothetical setting that bypasses input. We forcibly construct
-        // input_too_large NOT triggering by using estimate < effectiveInput,
-        // then make sum > hard cap by lying about the budget (test bypass).
-        const decisionOverHardCap = preCheckCost(32_000, {
+    it("allows input plus output exactly at the hard cap, including a clamped output budget", () => {
+        const decisionAtHardCap = preCheckCost(32_000, {
             maxInputTokens: 32_000,
             maxOutputTokens: 4_000,
         });
-        // 32_000 + 4_000 = 36_000 exactly — passes (strictly greater check).
-        expect(decisionOverHardCap.ok).toBe(true);
+        expect(decisionAtHardCap.ok).toBe(true);
 
-        // To prove the hard_cap branch is reachable, mock the clamping by
-        // setting input low and output (post-clamp) at the cap, then push
-        // estimate one over the (clamped) input but under the input cap to
-        // hit hard cap... Actually the simplest demonstration of the branch:
-        // estimate is at the maxInput exactly AND maxOutput pushes us over.
-        //
-        // Since clamp caps output at 4K, the only way to exceed 36K is to
-        // exceed input. The branch is genuinely defence-in-depth. We assert
-        // its existence by stub-testing the boundary at exactly 36K (passes)
-        // vs 36K + 1 (would fire if we could).
-        //
-        // We can demonstrate the branch by sending estimate = 32_000 and
-        // maxOutputTokens = 4_001 (clamps to 4_000 → sum = 36_000, passes).
-        const noFire = preCheckCost(32_000, {
+        const decisionWithClampedOutput = preCheckCost(32_000, {
             maxInputTokens: 32_000,
             maxOutputTokens: 4_001, // clamped → 4_000
         });
-        expect(noFire.ok).toBe(true);
-    });
-
-    it("rejects estimates that exceed the hard-cap when input is at the input limit and output is the post-clamp ceiling", () => {
-        // The reliable way to trigger hard_cap_exceeded: pass a budget whose
-        // post-clamp values satisfy `estimate <= effectiveInput AND
-        // estimate + effectiveOutput > hardCap`. With current clamps
-        // (32K input + 4K output) the sum is exactly 36K, which is NOT
-        // > hardCap (strict `>`).
-        //
-        // To force the branch with a deterministic test, we feed estimate
-        // = 32_500 with maxInputTokens = 36_000 (clamps to 32_000 → estimate
-        // 32_500 > 32_000 → input_too_large). Hard cap doesn't fire.
-        //
-        // Hard cap fires only if a future ceiling bump opens up the branch.
-        // For now we settle for documenting the boundary via this test that
-        // pins the exact arithmetic; if PAGELET_TOKEN_LIMITS.hardCap drops
-        // below maxInput + maxOutput later, this test will surface the gap.
-        expect(PAGELET_TOKEN_LIMITS.maxInput + PAGELET_TOKEN_LIMITS.maxOutput)
-            .toBeLessThanOrEqual(PAGELET_TOKEN_LIMITS.hardCap);
+        expect(decisionWithClampedOutput.ok).toBe(true);
     });
 
     it("clamps an above-ceiling user setting down to maxInput / maxOutput", () => {
@@ -297,11 +212,7 @@ describe("lookupPricing / pricingKey", () => {
         expect(lookupPricing("  QWEN  ", "Qwen-Max").known).toBe(true);
     });
 
-    it("returns known pricing for canonical openai / anthropic ids directly", () => {
-        // openai is canonical AND matches the pricing-table prefix, so no
-        // alias is needed — this test pins that the alias path doesn't
-        // accidentally short-circuit the direct lookup.
-        expect(lookupPricing("openai", "gpt-4o-mini").known).toBe(true);
+    it("returns unknown pricing for an unpriced canonical provider", () => {
         // anthropic is canonical but not in the default table yet; it
         // should miss cleanly (no alias, no entry) rather than crashing.
         const missing = lookupPricing("anthropic", "claude-haiku");

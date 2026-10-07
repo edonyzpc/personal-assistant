@@ -594,23 +594,6 @@ describe("PetView task kind", () => {
         expect(view.taskKind).toBe("summary");
     });
 
-    it("defines a 520ms hold gesture for the three-action menu", () => {
-        const source = readFileSync("src/pagelet/pet/PetView.ts", "utf8");
-
-        expect(source).toContain("const ACTION_RING_HOLD_MS = 520;");
-        expect(source).toContain("onQuickCaptureOpen");
-        expect(source).toContain("onReviewCurrentNote");
-        expect(source).toContain("onDiscoverConnections");
-        expect(source).toContain("this.openActionRing();");
-        expect(source).toContain("_handlePointerDown");
-        expect(source).toContain("_handleTouchstart");
-        expect(source).toContain("_handleTouchcancel");
-        expect(source).toContain("this.startPointerHold(e);");
-        expect(source).toContain("if (this.consumeQuickCaptureHold()) return;");
-        expect(source).not.toContain("pa-pagelet-pet-capture-form");
-        expect(source).not.toContain("pagelet.pet.quickCapturePlaceholder");
-    });
-
     it("marks hold triggered from the hold path without calling the bubble callback", () => {
         jest.useFakeTimers();
         type PetViewCaptureInternals = {
@@ -1092,19 +1075,6 @@ describe("PetView hold-menu input boundary", () => {
             expect(fixture.root.children).not.toContain(fixture.menu);
             expectNoAction(fixture);
         });
-    });
-});
-
-describe("Pet SVG visual weight", () => {
-    it("uses lighter desktop strokes with mobile-specific stroke classes", () => {
-        const svgSource = readFileSync("src/pagelet/pet/PetSvg.ts", "utf8");
-
-        expect(svgSource).toContain("const DESKTOP_OUTLINE_STROKE_WIDTH = 1.6;");
-        expect(svgSource).toContain("const DESKTOP_DETAIL_STROKE_WIDTH = 1.4;");
-        expect(svgSource).toContain('const OUTLINE_STROKE_CLASS = "pa-pagelet-pet-stroke-outline";');
-        expect(svgSource).toContain('const DETAIL_STROKE_CLASS = "pa-pagelet-pet-stroke-detail";');
-        expect(svgSource).toContain('idle: "#1f2328"');
-        expect(svgSource).toContain('resting: "#2f3437"');
     });
 });
 

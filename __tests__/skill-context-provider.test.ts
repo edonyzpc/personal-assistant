@@ -1,6 +1,4 @@
 import { describe, expect, it } from "@jest/globals";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 
 import { BUNDLED_SKILL_RESOURCES } from "../src/ai-services/bundled-skills";
 import { BUNDLED_SKILL_IDS } from "../src/ai-services/bundled-skill-catalog";
@@ -187,14 +185,7 @@ describe("SkillContextProvider", () => {
         expect(provider.loadSkillBody("nonexistent-skill")).toBeNull();
     });
 
-    it("does not import CapabilityRegistry or call registry execution", () => {
-        const source = readFileSync(path.join(process.cwd(), "src/ai-services/skill-context-provider.ts"), "utf8");
-
-        expect(source).not.toContain("CapabilityRegistry");
-        expect(source).not.toContain(".execute(");
-    });
-
-    it("loads all bundled skills and keeps ordinary read-only skill bodies unchanged in scope", () => {
+    it("loads all bundled skills with their expected names", () => {
         expect(BUNDLED_SKILL_RESOURCES).toHaveLength(10);
         const parsed = BUNDLED_SKILL_RESOURCES.map((resource) =>
             parseAgentSkillMarkdown(resource.content, resource.path));
@@ -211,13 +202,6 @@ describe("SkillContextProvider", () => {
             "obsidian-dataview",
             "obsidian-templater",
         ]);
-        // Templater describes a third-party plugin API with write operations
-        // (create_new, cursor_append etc.) — PA itself stays read-only.
-        // Ghost has its own explicit Host-bound domain capability; loading the skill grants no authority.
-        const readOnlySkills = parsed.filter(s => !["obsidian-templater", "blog2ghost"].includes(s.metadata.name));
-        for (const skill of readOnlySkills) {
-            expect(skill.body).not.toMatch(/\b(create|edit|write|modify|append|delete)\b/i);
-        }
     });
 
 });

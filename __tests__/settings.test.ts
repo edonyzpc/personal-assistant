@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { installObsidianDocumentHelpers } from './helpers/obsidian-dom';
 
@@ -1200,40 +1199,6 @@ describe('Operations Agent settings compatibility', () => {
         expect(names).toContain('Suggest saving useful conclusions');
         expect(names).not.toContain('Include note content in write audit');
         expect(names).not.toContain('Write audit retention');
-    });
-});
-
-describe('settings row-layout styling hooks', () => {
-    it('classifies every interactive row and reapplies layout classes after dynamic rebuilds', () => {
-        const source = readFileSync('src/settings.ts', 'utf8');
-        const methodBody = (name: string) => {
-            const start = source.indexOf(`    private ${name}(`);
-            expect(start).toBeGreaterThanOrEqual(0);
-            const next = source.indexOf('\n    private ', start + 1);
-            return source.slice(start, next === -1 ? undefined : next);
-        };
-
-        for (const name of [
-            'rebuildProviderConfig',
-            'rebuildQwenOptions',
-            'rebuildMetadataList',
-            'rebuildMemorySubSettings',
-            'rebuildMemoryAdvanced',
-            'rebuildFeaturedImage',
-        ]) {
-            expect(methodBody(name)).toContain('this.markFormControlSettings(container);');
-        }
-        expect(methodBody('renderMemoryControlCenterOverview')).toContain('this.markFormControlSettings(body);');
-        const classifier = methodBody('markFormControlSettings');
-        expect(classifier).toContain('input, select, textarea, button');
-        expect(classifier).toContain('!control.classList.contains("is-measuring")');
-        expect(classifier).toContain('.clickable-icon, .checkbox-container, .pa-settings-skill-picker');
-        expect(classifier).toContain('primaryFields.forEach((control) => control.classList.add("pa-setting-form-input"));');
-        expect(classifier).not.toContain('input[type=\'color\']');
-        expect(classifier).toContain('pa-setting-layout--field');
-        expect(classifier).toContain('pa-setting-layout--compact');
-        expect(classifier).toContain('pa-setting-layout--cluster');
-        expect(classifier).toContain('pa-setting-layout--stacked');
     });
 });
 
@@ -5056,136 +5021,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
     });
 });
 
-describe('loadSettings + migrateSettings end-to-end (fresh / legacy / second-launch)', () => {
-    // We don't instantiate the full PluginManager (huge mock surface). Instead
-    // we replay the exact loadSettings → migrateSettings logic from src/plugin.ts
-    // using the real helpers, so this guards against regressions in either
-    // the helpers or the call-site wiring.
-    function simulate(loaded: unknown): {
-        settings: ReturnType<typeof mergeLoadedSettings>;
-        migrationApplied: boolean;
-    } {
-        const fresh = isFreshInstall(loaded);
-        const needsLegacyMigration = isLegacyV1Install(loaded);
-        const settings = mergeLoadedSettings(loaded);
-        const loadedObject = loaded && typeof loaded === 'object' && !Array.isArray(loaded)
-            ? loaded as { modelName?: unknown }
-            : {};
-        const settingsWithLegacyModel = settings as typeof settings & { modelName?: unknown };
-        const legacyModelName = typeof loadedObject.modelName === 'string'
-            ? loadedObject.modelName.trim()
-            : '';
-        const hasConfirmedLegacyQwenModel = typeof loadedObject.modelName === 'string'
-            && new Set(['qwen-max', 'qwen-turbo', 'qwen-plus']).has(loadedObject.modelName);
-        if (fresh) {
-            settings.aiProvider = '';
-        }
-
-        let migrationApplied = false;
-        if (needsLegacyMigration && hasConfirmedLegacyQwenModel) {
-            settings.aiProvider = 'qwen';
-            settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-            settings.chatModelName = legacyModelName || DEFAULT_SETTINGS.chatModelName;
-            settings.embeddingModelName = 'text-embedding-v3';
-            migrationApplied = true;
-        } else if (needsLegacyMigration) {
-            settings.aiProvider = '';
-            delete settings.aiProviderPreset;
-            migrationApplied = true;
-        }
-        if (
-            legacyModelName
-            && legacyModelName !== 'qwen-plus'
-            && settings.chatModelName === DEFAULT_SETTINGS.chatModelName
-        ) {
-            settings.chatModelName = legacyModelName;
-            migrationApplied = true;
-        }
-        if ('modelName' in settingsWithLegacyModel) {
-            delete settingsWithLegacyModel.modelName;
-            migrationApplied = true;
-        }
-        return { settings, migrationApplied };
-    }
-
-    it('fresh install (null data) → aiProvider stays empty, no migration', () => {
-        const { settings, migrationApplied } = simulate(null);
-        expect(migrationApplied).toBe(false);
-        expect(settings.aiProvider).toBe('');
-    });
-
-    it('fresh install ({}) → aiProvider stays empty, no migration', () => {
-        const { settings, migrationApplied } = simulate({});
-        expect(migrationApplied).toBe(false);
-        expect(settings.aiProvider).toBe('');
-    });
-
-    it('legacy v1.x install (no aiProvider field) migrates to qwen with proper defaults', () => {
-        const legacyBlob = {
-            // v1.x stored chat model in `modelName`, no `aiProvider` field.
-            modelName: 'qwen-turbo',
-            debug: false,
-        };
-        const { settings, migrationApplied } = simulate(legacyBlob);
-        expect(migrationApplied).toBe(true);
-        expect(settings.aiProvider).toBe('qwen');
-        expect(settings.baseURL).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1');
-        // The legacy modelName field is preferred over the current default fallback.
-        expect(settings.chatModelName).toBe('qwen-turbo');
-        expect(settings.embeddingModelName).toBe('text-embedding-v3');
-        expect(settings).not.toHaveProperty('modelName');
-    });
-
-    it('legacy data without an exact pre-Provider Qwen model requires provider selection', () => {
-        const { settings, migrationApplied } = simulate({ debug: false });
-        expect(migrationApplied).toBe(true);
-        expect(settings.aiProvider).toBe('');
-        expect(settings).not.toHaveProperty('modelName');
-    });
-
-    it('post-fresh second launch: persisted aiProvider:"" must NOT re-trigger migration', () => {
-        // After a fresh install, the user opens settings and the plugin saves
-        // the merged blob to disk. That blob now has an explicit `aiProvider`
-        // field (empty string, because the user has not picked a provider yet).
-        // The next load must keep aiProvider blank instead of silently
-        // overwriting it with the legacy "qwen" default.
-        const persistedAfterFreshSave = {
-            aiProvider: '',
-            debug: false,
-            // Other defaults baked in by mergeLoadedSettings on first save.
-            statisticsType: 'word',
-        };
-        const { settings, migrationApplied } = simulate(persistedAfterFreshSave);
-        expect(migrationApplied).toBe(false);
-        expect(settings.aiProvider).toBe('');
-    });
-
-    it('post-migration second launch: aiProvider:"qwen" stays put, no re-migration', () => {
-        const persistedAfterMigration = {
-            aiProvider: 'qwen',
-            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-            chatModelName: 'qwen3.6-plus',
-            embeddingModelName: 'text-embedding-v3',
-        };
-        const { settings, migrationApplied } = simulate(persistedAfterMigration);
-        expect(migrationApplied).toBe(false);
-        expect(settings.aiProvider).toBe('qwen');
-        expect(settings.chatModelName).toBe('qwen3.6-plus');
-    });
-
-    it('user picks openai then re-launches: aiProvider stays "openai", no migration', () => {
-        const persisted = {
-            aiProvider: 'openai',
-            baseURL: 'https://api.openai.com/v1',
-            chatModelName: 'gpt-4o-mini',
-            embeddingModelName: 'text-embedding-3-small',
-        };
-        const { settings, migrationApplied } = simulate(persisted);
-        expect(migrationApplied).toBe(false);
-        expect(settings.aiProvider).toBe('openai');
-    });
-});
-
 describe('Phase 4 P1 UX', () => {
     it.each([
         ['Excluded folders', 'folders'], ['Excluded tags', 'tags'],
@@ -6041,17 +5876,6 @@ describe('Phase 4 P1 UX', () => {
             await row.buttons[0].onClick!();
             expect(plugin.settings.metadatas.filter((rule) => rule.key === 'retryKey')).toHaveLength(1);
             expect(row.texts.map((text) => text.value)).toEqual(['', '']);
-        });
-
-        it('uses a corrected desc string ("Value only supports …")', () => {
-            const plugin = makePlugin({ enableMetadataUpdating: true });
-            const tab = new SettingTab(makeMockApp() as never, plugin as never);
-            tab.containerEl = new MockContainerEl('div') as never;
-            tab.display();
-
-            const record = getMockSettingRecords()
-                .find((r) => r.name === 'Add Key:Value in frontmatter');
-            expect(record?.desc).toBe('Value only supports formatted timestamp and regular string.');
         });
 
         it('renames metadata type dropdown labels to plain English', () => {

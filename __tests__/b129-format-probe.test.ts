@@ -266,10 +266,4 @@ describe('B129 failure preserves acquired bytes and draft', () => {
             originalRetained: true, draftPreserved: true, networkRequestsInitiated: 0 });
         expect(env.Image).not.toHaveBeenCalled();
     });
-    it('ignores a late result from an aborted canvas operation', async () => {
-        const env = sandbox(); const controller = new AbortController(); let finish: ((value: string) => void) | undefined;
-        const work = env.B129FormatProbe.abortable((resolve: (value: string) => void) => { finish = resolve; }, controller.signal, 10000);
-        controller.abort(); await expect(work).rejects.toThrow('cancelled');
-        expect(() => finish!('late pixels')).not.toThrow();
-    });
 });

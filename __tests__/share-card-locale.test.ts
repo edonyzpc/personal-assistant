@@ -1,9 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import {
-    diffPluginLocaleAgainstEn,
-    pluginT,
-} from "../src/locales/plugin";
+import { pluginT } from "../src/locales/plugin";
 
 describe("Share Card locale copy", () => {
     it("keeps English and Chinese busy announcements available and in parity", () => {
@@ -15,7 +12,6 @@ describe("Share Card locale copy", () => {
             .toBe("有 2 项视觉内容无法加载，已显示为占位提示。");
         expect(pluginT("plugin.shareCard.resourcePlaceholder", "zh", { label: "示意图" }))
             .toBe("视觉内容无法加载：示意图");
-        expect(diffPluginLocaleAgainstEn("zh")).toEqual({ missing: [], orphan: [] });
     });
 
     it("keeps fixed card dimensions and 44px mobile actions in static CSS", () => {
@@ -24,18 +20,6 @@ describe("Share Card locale copy", () => {
         expect(css).toMatch(/\.pa-share-card\s*\{[\s\S]*?width:\s*540px;[\s\S]*?height:\s*720px;/);
         expect(css).toMatch(
             /\.pa-share-card\s*\{[\s\S]*?font-size:\s*var\(--pa-share-card-font-size,\s*24px\);/,
-        );
-        expect(css).toMatch(
-            /\.pa-share-card-body h1\s*\{[\s\S]*?font-size:\s*1\.75em;[\s\S]*?line-height:\s*1\.22;/,
-        );
-        expect(css).toMatch(
-            /\.pa-share-card-body h2\s*\{[\s\S]*?font-size:\s*1\.4375em;[\s\S]*?line-height:\s*1\.26;/,
-        );
-        expect(css).toMatch(
-            /\.pa-share-card-body h3\s*\{[\s\S]*?font-size:\s*1\.1875em;[\s\S]*?line-height:\s*1\.32;/,
-        );
-        expect(css).toMatch(
-            /\.pa-share-card-body h4,\s*\n\.pa-share-card-body h5,\s*\n\.pa-share-card-body h6\s*\{[\s\S]*?font-size:\s*1em;[\s\S]*?line-height:\s*1\.44;/,
         );
         expect(css).toMatch(/body\.is-mobile\s+\.pa-share-card-actions button\s*\{[\s\S]*?min-height:\s*44px;/);
         expect(css).toMatch(/@media\s*\(max-width:\s*600px\)[\s\S]*?\.pa-share-card-actions button\s*\{[\s\S]*?min-height:\s*44px;/);

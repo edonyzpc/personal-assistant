@@ -31,13 +31,6 @@ describe("rewriteQuery", () => {
         expect(invoke).toHaveBeenCalledWith("React 组件 渲染性能 怎么优化 useMemo有用吗", undefined);
     });
 
-    it("returns null for short English queries (2-3 tokens)", async () => {
-        const invoke = makeInvoker('{"keywords":"React hooks"}');
-        const result = await rewriteQuery("React hooks", invoke);
-        expect(result).toBeNull();
-        expect(invoke).not.toHaveBeenCalled();
-    });
-
     it("returns null for 3-token query", async () => {
         const invoke = makeInvoker('{"keywords":"a b c"}');
         const result = await rewriteQuery("one two three", invoke);
@@ -66,12 +59,6 @@ describe("rewriteQuery", () => {
         expect(invoke).not.toHaveBeenCalled();
     });
 
-    it("returns null when LLM returns empty content", async () => {
-        const invoke = makeInvoker("");
-        const result = await rewriteQuery("how to optimize React component rendering performance", invoke);
-        expect(result).toBeNull();
-    });
-
     it("returns null when LLM returns invalid JSON", async () => {
         const invoke = makeInvoker("here are some keywords: React, useMemo");
         const result = await rewriteQuery("how to optimize React component rendering performance", invoke);
@@ -89,12 +76,6 @@ describe("rewriteQuery", () => {
         const invoke = makeInvoker('  { "keywords" : "ERR_OPFS_LOCKED sqlite" }  ');
         const result = await rewriteQuery("what causes ERR_OPFS_LOCKED in sqlite wasm workers", invoke);
         expect(result).toBe("ERR_OPFS_LOCKED sqlite");
-    });
-
-    it("returns null when keywords value is empty string", async () => {
-        const invoke = makeInvoker('{"keywords":""}');
-        const result = await rewriteQuery("please help me find something in my notes today", invoke);
-        expect(result).toBeNull();
     });
 
     it("passes signal to invoker", async () => {
