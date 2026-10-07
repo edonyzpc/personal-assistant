@@ -23,6 +23,9 @@ beforeAll(() => {
     `;
     results = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", script], {
         cwd: process.cwd(),
+        // Both virtual inputs share a path. Keep full type information when
+        // CI would otherwise use an isolated program for the second input.
+        env: { ...process.env, TSESTREE_SINGLE_RUN: "false" },
         encoding: "utf8",
         timeout: 30_000,
         maxBuffer: 1024 * 1024,
