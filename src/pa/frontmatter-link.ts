@@ -32,7 +32,7 @@ export function readPaRelatedLinksFromMarkdown(markdown: string): string[] {
     const values = typeof raw === "string"
         ? [raw]
         : Array.isArray(raw) && raw.every((entry) => typeof entry === "string")
-            ? raw as string[]
+            ? raw
             : null;
     if (!values) throw new Error("The existing pa-related Property needs review in Chat.");
     const deduplicated: string[] = [];

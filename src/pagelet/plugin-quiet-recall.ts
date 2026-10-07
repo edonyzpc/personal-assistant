@@ -394,8 +394,7 @@ export class QuietRecallPluginIntegration {
             addScore(this.dependencies.app.vault.getAbstractFileByPath(path) as TFile | null, 0.45);
         }
 
-        const resolvedLinks = this.dependencies.app.metadataCache?.resolvedLinks as
-            Record<string, Record<string, number>> | undefined;
+        const resolvedLinks = this.dependencies.app.metadataCache?.resolvedLinks;
         for (const file of this.dependencies.app.vault.getMarkdownFiles()) {
             if (file.path === activeFile.path || !this.dependencies.source.isPageletProviderSourceAllowedFile(file)) continue;
             if (parentFolder(file.path) === activeFolder) addScore(file, 0.18);

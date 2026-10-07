@@ -55,8 +55,8 @@ function validateInput(input: unknown): ToolInput {
         ...(value.type ? { type: value.type as ToolInput["type"] } : {}),
         ...(value.origin ? { origin: value.origin as ToolInput["origin"] } : {}),
         ...(value.sources ? { sources: value.sources as ToolInput["sources"] } : {}),
-        ...(value.targetId ? { targetId: value.targetId as string } : {}),
-        ...(value.expectedUpdatedAt ? { expectedUpdatedAt: value.expectedUpdatedAt as string } : {}),
+        ...(value.targetId ? { targetId: value.targetId } : {}),
+        ...(value.expectedUpdatedAt ? { expectedUpdatedAt: value.expectedUpdatedAt } : {}),
     };
 }
 

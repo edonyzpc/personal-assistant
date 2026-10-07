@@ -1142,7 +1142,7 @@ export class LLMView extends ItemView {
                 getActiveViewOfType?: <T>(type: new (...args: never[]) => T) => T | null;
                 getMostRecentLeaf?: () => WorkspaceLeaf | null;
             };
-            const activeView = workspace.getActiveViewOfType?.(MarkdownView) as MarkdownView | null | undefined;
+            const activeView = workspace.getActiveViewOfType?.(MarkdownView);
             const leafView = workspace.getMostRecentLeaf?.()?.view as (MarkdownView & {
                 editor?: { getSelection?: () => string };
                 getViewType?: () => string;
@@ -5753,7 +5753,7 @@ export class LLMView extends ItemView {
                     }
                     : undefined;
                 if (nativeWriting) {
-                    const versions = this.host.writingVersions!;
+                    const versions = this.host.writingVersions;
                     const getAllowedVersionIds = () => [...new Set([
                         ...timelineEntries.flatMap(entry => entry.kind === 'history' && entry.assistant.writingVersionId
                             ? [entry.assistant.writingVersionId] : []),

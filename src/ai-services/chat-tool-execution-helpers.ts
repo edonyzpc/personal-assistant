@@ -530,7 +530,7 @@ export async function scoreMetadataMatchCooperatively(
         await checkpoint();
         const keyText = normalizeSearchText(key);
         for (let index = 0; index < query.tokens.length; index++) {
-            if (keyText.includes(query.tokens[index]!)) frontmatterMatches[index] = true;
+            if (keyText.includes(query.tokens[index])) frontmatterMatches[index] = true;
         }
         // Search tokens contain no comma or whitespace, so they cannot cross the
         // ", " separators used by renderFrontmatterValue. Search each scalar directly.
@@ -538,7 +538,7 @@ export async function scoreMetadataMatchCooperatively(
             const text = normalizeSearchText(scalar);
             for (let index = 0; index < query.tokens.length; index++) {
                 await checkpoint();
-                if (text.includes(query.tokens[index]!)) frontmatterMatches[index] = true;
+                if (text.includes(query.tokens[index])) frontmatterMatches[index] = true;
             }
         }
     }
@@ -546,14 +546,14 @@ export async function scoreMetadataMatchCooperatively(
         + (titleText.includes(query.normalizedQuery) ? 6 : 0);
     for (let index = 0; index < query.tokens.length; index++) {
         await checkpoint();
-        const token = query.tokens[index]!;
+        const token = query.tokens[index];
         const inTitle = titleText.includes(token), inPath = pathText.includes(token);
         let inTag = false;
         for (const tag of normalizedTags) {
             await checkpoint();
             if (tag.includes(token)) { inTag = true; break; }
         }
-        const inFrontmatter = frontmatterMatches[index]!;
+        const inFrontmatter = frontmatterMatches[index];
         score += (inTitle ? 4 : 0) + (inPath ? 3 : 0) + (inTag ? 3 : 0)
             + (inFrontmatter ? 2 : 0) + (inTitle || inPath || inTag || inFrontmatter ? 1 : 0);
     }
@@ -566,7 +566,7 @@ async function* iterateFrontmatterScalars(value: unknown, checkpoint: Cooperativ
     const active = new Set<object>();
     while (stack.length) {
         await checkpoint();
-        const frame = stack[stack.length - 1]!;
+        const frame = stack[stack.length - 1];
         if (frame.index >= frame.values.length) {
             if (frame.array) active.delete(frame.array);
             stack.pop();
@@ -944,12 +944,12 @@ function projectCacheCallouts(
         if (startLine < 1 || endLine < startLine || endLine > lines.length) {
             throw new NoteStructureCacheMismatchError("Cached callout candidate is outside the current note text.");
         }
-        if (section.type === "callout" && !CALLOUT_LINE_PATTERN.test(lines[startLine - 1]!)) {
+        if (section.type === "callout" && !CALLOUT_LINE_PATTERN.test(lines[startLine - 1])) {
             throw new NoteStructureCacheMismatchError("Cached callout position does not match the current note text.");
         }
         for (let lineIndex = startLine; lineIndex <= endLine; lineIndex++) {
             if (fencedLines.has(lineIndex - 1)) continue;
-            const match = lines[lineIndex - 1]!.match(CALLOUT_LINE_PATTERN);
+            const match = lines[lineIndex - 1].match(CALLOUT_LINE_PATTERN);
             if (!match || seenLines.has(lineIndex)) continue;
             seenLines.add(lineIndex);
             const title = match[2].trim();
@@ -969,8 +969,8 @@ function collectFencedLineIndexes(lines: readonly string[]): Set<number> {
     lines.forEach((line, index) => {
         const marker = line.match(/^\s{0,3}(?:>\s*)*(`{3,}|~{3,})/);
         if (marker) {
-            const currentMarker = marker[1]![0] as "`" | "~";
-            const length = marker[1]!.length;
+            const currentMarker = marker[1][0] as "`" | "~";
+            const length = marker[1].length;
             fencedLines.add(index);
             if (!fence) {
                 fence = { marker: currentMarker, length };
@@ -1006,7 +1006,7 @@ function buildCacheLineSpans(content: string): CacheLineSpan[] {
             end: match.index,
             endIncludingBreak: match.index + match[0].length,
         });
-        start = spans[spans.length - 1]!.endIncludingBreak;
+        start = spans[spans.length - 1].endIncludingBreak;
     }
     spans.push({ start, end: content.length, endIncludingBreak: content.length });
     return spans;
@@ -1025,7 +1025,7 @@ function locateCacheStructure(
     }
     if (lineIndex < 1 || lineIndex > spans.length) return null;
 
-    const span = spans[lineIndex - 1]!;
+    const span = spans[lineIndex - 1];
     const line = content.slice(span.start, span.end);
     if (typeof start?.offset === "number") {
         if (!Number.isInteger(start.offset) || start.offset < span.start || start.offset > span.end) {
@@ -1133,11 +1133,11 @@ function cachedHeadingMatches(
         let text = atx[2] ?? "";
         const closing = text.match(/[ \t]+#+[ \t]*$/);
         if (closing) text = text.slice(0, text.length - closing[0].length);
-        return atx[1]!.length === heading.level && text.trim() === heading.heading?.trim();
+        return atx[1].length === heading.level && text.trim() === heading.heading?.trim();
     }
     const underline = lines[lineIndex]?.match(/^\s{0,3}(=+|-+)[ \t]*$/);
     if (underline) {
-        return (underline[1]![0] === "=" ? 1 : 2) === heading.level
+        return (underline[1][0] === "=" ? 1 : 2) === heading.level
             && line.trim() === heading.heading?.trim();
     }
     return false;

@@ -293,14 +293,14 @@ export class ShareCardExporter {
             const savedPaths: string[] = [];
 
             for (let index = 0; index < pages.length; index += 1) {
-                const page = pages[index]!;
+                const page = pages[index];
                 try {
                     this.assertActive();
                     const blob = await this.capturePage(page);
                     const contents = await blob.arrayBuffer();
                     this.assertActive();
-                    await this.app.vault.createBinary(paths[index]!, contents);
-                    savedPaths.push(paths[index]!);
+                    await this.app.vault.createBinary(paths[index], contents);
+                    savedPaths.push(paths[index]);
                 } catch (error) {
                     if (!(error instanceof ShareCardRenderCancelledError)) {
                         console.error("Share Card local page save failed.", {

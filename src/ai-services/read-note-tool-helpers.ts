@@ -99,7 +99,7 @@ export function resolveReadNoteSelection(
     endLine?: number,
     lineSpans: readonly ReadNoteLineSpan[] = getReadNoteLines(view),
 ): ReadNoteSelection {
-    const lastLine = lineSpans[lineSpans.length - 1]!.originalLine;
+    const lastLine = lineSpans[lineSpans.length - 1].originalLine;
     if (startLine === undefined || endLine === undefined) {
         return {
             startOffset: 0,
@@ -115,8 +115,8 @@ export function resolveReadNoteSelection(
         throw new ReadNoteRangeUnavailableError("Requested line range ends before its start line.");
     }
 
-    const start = lineSpans[startLine - view.firstOriginalLine]!;
-    const end = lineSpans[clippedEndLine - view.firstOriginalLine]!;
+    const start = lineSpans[startLine - view.firstOriginalLine];
+    const end = lineSpans[clippedEndLine - view.firstOriginalLine];
     return {
         startOffset: start.start,
         endOffset: end.selectionEnd,
@@ -275,7 +275,7 @@ export function buildReadNoteSegment(options: ReadNoteSegmentOptions): ReadNoteS
     let high = safeEnds.length - 1;
     while (low <= high) {
         const middle = Math.floor((low + high) / 2);
-        const candidate = buildCandidate(safeEnds[middle]!);
+        const candidate = buildCandidate(safeEnds[middle]);
         if (JSON.stringify(candidate.content).length <= READ_NOTE_RESULT_JSON_BUDGET_CHARS) {
             bestCandidate = candidate;
             low = middle + 1;
@@ -344,8 +344,8 @@ function describeReadNoteRange(
     const endLine = start === end
         ? startLine
         : lineForBoundary(lines, end, "end");
-    const startSpan = lines[startLine - view.firstOriginalLine]!;
-    const endSpan = lines[endLine - view.firstOriginalLine]!;
+    const startSpan = lines[startLine - view.firstOriginalLine];
+    const endSpan = lines[endLine - view.firstOriginalLine];
     const splitWithinLineBreak = end > endSpan.end && end < endSpan.selectionEnd;
     return {
         startLine,
@@ -363,10 +363,10 @@ function lineForBoundary(
 ): number {
     let index = lines.findIndex(line => offset <= line.selectionEnd);
     if (index < 0) index = lines.length - 1;
-    const current = lines[index]!;
+    const current = lines[index];
     if (offset > current.end && offset < current.selectionEnd) return current.originalLine;
     if (boundary === "start" && offset === current.selectionEnd && index < lines.length - 1) {
-        return lines[index + 1]!.originalLine;
+        return lines[index + 1].originalLine;
     }
     return current.originalLine;
 }

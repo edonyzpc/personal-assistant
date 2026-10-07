@@ -92,8 +92,8 @@ export function createOperationsReviewModel(intent: OperationsIntent): Operation
     }
 
     for (const [normalizedPath, operations] of operationGroups) {
-        const first = operations[0]!;
-        const last = operations[operations.length - 1]!;
+        const first = operations[0];
+        const last = operations[operations.length - 1];
         const before = first.expectedBefore ?? "";
         const after = last.expectedAfter;
         const group: OperationsReviewFileGroup = {
@@ -160,7 +160,7 @@ function createLineDiff(
     if (operations) {
         let index = 0;
         while (index < operations.length) {
-            const operation = operations[index]!;
+            const operation = operations[index];
             if (operation.type === "equal") {
                 normalizedOperations.push(operation);
                 index += 1;
@@ -169,8 +169,8 @@ function createLineDiff(
 
             const deletes: DiffLine[] = [];
             const inserts: DiffLine[] = [];
-            while (index < operations.length && operations[index]!.type !== "equal") {
-                const changed = operations[index]!;
+            while (index < operations.length && operations[index].type !== "equal") {
+                const changed = operations[index];
                 if (changed.type === "delete") deletes.push(changed.old);
                 else inserts.push(changed.new);
                 index += 1;
@@ -190,7 +190,7 @@ function createLineDiff(
     let changeCount = 0;
     let operationIndex = 0;
     while (operationIndex < normalizedOperations.length) {
-        const operation = normalizedOperations[operationIndex]!;
+        const operation = normalizedOperations[operationIndex];
         if (operation.type === "equal") {
             rows.push({
                 id: `${path}:${rows.length}`,
@@ -206,28 +206,28 @@ function createLineDiff(
 
         const deletes: DiffLine[] = [];
         const inserts: DiffLine[] = [];
-        while (operationIndex < normalizedOperations.length && normalizedOperations[operationIndex]!.type !== "equal") {
-            const changed = normalizedOperations[operationIndex]!;
+        while (operationIndex < normalizedOperations.length && normalizedOperations[operationIndex].type !== "equal") {
+            const changed = normalizedOperations[operationIndex];
             if (changed.type === "delete") deletes.push(changed.old);
             else inserts.push(changed.new);
             operationIndex += 1;
         }
         const pairs = Math.min(deletes.length, inserts.length);
         for (let pair = 0; pair < pairs; pair += 1) {
-            const segments = highlightLineSegments(deletes[pair]!.text, inserts[pair]!.text);
+            const segments = highlightLineSegments(deletes[pair].text, inserts[pair].text);
             rows.push({
                 id: `${path}:${rows.length}`,
                 kind: "delete",
-                text: deletes[pair]!.text,
-                newline: deletes[pair]!.newline,
+                text: deletes[pair].text,
+                newline: deletes[pair].newline,
                 oldNumber: oldNumber++,
                 oldSegments: segments.old,
             });
             rows.push({
                 id: `${path}:${rows.length}`,
                 kind: "insert",
-                text: inserts[pair]!.text,
-                newline: inserts[pair]!.newline,
+                text: inserts[pair].text,
+                newline: inserts[pair].newline,
                 newNumber: newNumber++,
                 newSegments: segments.new,
             });
@@ -270,7 +270,7 @@ function splitDiffLines(value: string): DiffLine[] {
     while (cursor < value.length) {
         let newlineStart = -1;
         for (let index = cursor; index < value.length; index += 1) {
-            const character = value[index]!;
+            const character = value[index];
             if (character === "\r" || character === "\n") {
                 newlineStart = index;
                 break;
@@ -301,16 +301,16 @@ function createDiffBlocks(rows: readonly OperationsReviewDiffLine[]): Operations
     let start = 0;
 
     for (let index = 1; index <= changedIndexes.length; index += 1) {
-        const previous = changedIndexes[index - 1]!;
-        const current = index < changedIndexes.length ? changedIndexes[index]! : rows.length;
+        const previous = changedIndexes[index - 1];
+        const current = index < changedIndexes.length ? changedIndexes[index] : rows.length;
         if (index < changedIndexes.length && current - previous <= DIFF_BLOCK_GAP_LINES) continue;
-        const startIndex = Math.max(0, changedIndexes[start]! - DIFF_CONTEXT_LINES);
+        const startIndex = Math.max(0, changedIndexes[start] - DIFF_CONTEXT_LINES);
         const endIndex = Math.min(rows.length - 1, previous + DIFF_CONTEXT_LINES);
         blocks.push({
             id: `block-${blocks.length}`,
             startIndex,
             endIndex,
-            contextBefore: changedIndexes[start]! - startIndex,
+            contextBefore: changedIndexes[start] - startIndex,
             contextAfter: endIndex - previous,
         });
         start = index;
@@ -371,27 +371,27 @@ function diffSequences<T>(
         : left === right;
 
     let prefix = 0;
-    while (prefix < oldItems.length && prefix < newItems.length && equals(oldItems[prefix]!, newItems[prefix]!)) prefix += 1;
+    while (prefix < oldItems.length && prefix < newItems.length && equals(oldItems[prefix], newItems[prefix])) prefix += 1;
     let suffix = 0;
     while (
         suffix < oldItems.length - prefix
         && suffix < newItems.length - prefix
-        && equals(oldItems[oldItems.length - 1 - suffix]!, newItems[newItems.length - 1 - suffix]!)
+        && equals(oldItems[oldItems.length - 1 - suffix], newItems[newItems.length - 1 - suffix])
     ) suffix += 1;
 
     const coreOld = oldItems.slice(prefix, oldItems.length - suffix);
     const coreNew = newItems.slice(prefix, newItems.length - suffix);
     const result: SequenceDiffOp<T>[] = [];
     for (let index = 0; index < prefix; index += 1) {
-        result.push({ type: "equal", old: oldItems[index]!, new: newItems[index]! });
+        result.push({ type: "equal", old: oldItems[index], new: newItems[index] });
     }
 
     const coreOperations = diffSequencesCore(coreOld, coreNew, equals);
     if (!coreOperations) return null;
     result.push(...coreOperations);
     for (let index = 0; index < suffix; index += 1) {
-        const oldItem = oldItems[oldItems.length - suffix + index]!;
-        result.push({ type: "equal", old: oldItem, new: newItems[newItems.length - suffix + index]! });
+        const oldItem = oldItems[oldItems.length - suffix + index];
+        result.push({ type: "equal", old: oldItem, new: newItems[newItems.length - suffix + index] });
     }
     return result;
 }
@@ -408,7 +408,7 @@ function diffSequencesCore<T>(
     trace.push(new Map([[1, 0]]));
 
     for (let distance = 0; distance <= maximumDistance; distance += 1) {
-        const offsets = trace[distance]!;
+        const offsets = trace[distance];
         for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
             let x = diagonal === -distance || (
                 diagonal !== distance
@@ -418,7 +418,7 @@ function diffSequencesCore<T>(
                 : (offsets.get(diagonal - 1) ?? -1) + 1;
             let y = x - diagonal;
             if (x > oldLength || y < 0 || y > newLength) continue;
-            while (x < oldLength && y < newLength && equals(oldItems[x]!, newItems[y]!)) {
+            while (x < oldLength && y < newLength && equals(oldItems[x], newItems[y])) {
                 x += 1;
                 y += 1;
             }
@@ -442,7 +442,7 @@ function reconstructOperations<T>(
     let x = oldItems.length;
     let y = newItems.length;
     for (let distance = finalDistance; distance > 0; distance -= 1) {
-        const previous = trace[distance - 1]!;
+        const previous = trace[distance - 1];
         const diagonal = x - y;
         const fromUpper = diagonal === -distance || (
             diagonal !== distance
@@ -455,10 +455,10 @@ function reconstructOperations<T>(
         while (x > previousX && y > previousY) {
             x -= 1;
             y -= 1;
-            operations.push({ type: "equal", old: oldItems[x]!, new: newItems[y]! });
+            operations.push({ type: "equal", old: oldItems[x], new: newItems[y] });
         }
-        if (x === previousX) operations.push({ type: "insert", new: newItems[previousY]! });
-        else operations.push({ type: "delete", old: oldItems[previousX]! });
+        if (x === previousX) operations.push({ type: "insert", new: newItems[previousY] });
+        else operations.push({ type: "delete", old: oldItems[previousX] });
         x = previousX;
         y = previousY;
     }

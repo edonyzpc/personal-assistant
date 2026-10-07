@@ -185,7 +185,7 @@ export async function prepareNoteImageRemoval(
     }
     const assertCurrent = async (): Promise<void> => {
         await checkpointTaskSourceRead(guard);
-        if (!sourceValidity!()) {
+        if (!sourceValidity()) {
             throw new NoteImageRemovalPreparationError(
                 "source_denied",
                 "The source receipt for the selected note is no longer valid.",
@@ -298,22 +298,22 @@ export async function prepareNoteImageRemoval(
     const privatePreparation: NoteImageRemovalPrivatePreparation = Object.freeze({
         attachmentAction: input.attachmentAction,
         sourceValidity,
-        sourceAuthority: () => sourceAuthority!(),
+        sourceAuthority: () => sourceAuthority(),
         note,
         attachment,
         scannedSources: Object.freeze([
             note,
             ...(searchEvidence?.scannedSources.filter(source => source.path !== note.path) ?? []),
-        ].map(source => freezeIdentity(source) as NoteImageRemovalSourceFile)),
+        ].map(source => freezeIdentity(source))),
         ...(searchEvidence?.inventorySnapshot ? {
             inventorySnapshot: Object.freeze(
-                searchEvidence.inventorySnapshot.map(source => freezeIdentity(source) as NoteImageRemovalSourceFile),
+                searchEvidence.inventorySnapshot.map(source => freezeIdentity(source)),
             ),
         } : {}),
         ...(searchEvidence?.sourceScope ? { sourceScope: searchEvidence.sourceScope } : {}),
         revalidate: () => {
             try {
-                if (!sourceValidity!()) return false;
+                if (!sourceValidity()) return false;
                 if (!options.host.isPathAllowed(note.path)) return false;
                 const currentNote = options.host.getSourceFile(note.path);
                 if (!sameIdentity(currentNote, note)) return false;
@@ -345,7 +345,7 @@ export async function prepareNoteImageRemoval(
         },
         revalidateAfterSelfWrite: () => {
             try {
-                if (!sourceAuthority!()) return false;
+                if (!sourceAuthority()) return false;
                 if (scannedSourcesExcludeNote().some(source => (
                     !options.host.isPathAllowed(source.path)
                     || !sameIdentity(options.host.getSourceFile(source.path), source)
@@ -363,7 +363,7 @@ export async function prepareNoteImageRemoval(
         },
         revalidateUndo: () => {
             try {
-                if (!sourceAuthority!()) return false;
+                if (!sourceAuthority()) return false;
                 if (!options.host.isPathAllowed(note.path)) return false;
                 return input.attachmentAction !== "delete"
                     || options.host.isAttachmentPathAllowed(attachment.path);
@@ -647,7 +647,7 @@ async function inspectScopedReferences(input: {
             ...(incomplete ? { reason: "reference_check_incomplete" } : {}),
         }),
         evidence: Object.freeze({
-            scannedSources: Object.freeze(scannedSources.map(source => freezeIdentity(source) as NoteImageRemovalSourceFile)),
+            scannedSources: Object.freeze(scannedSources.map(source => freezeIdentity(source))),
             inventorySnapshot: initialInventory,
             sourceScope: Object.freeze({
                 allowedPaths: scope.allowedPaths === null ? null : Object.freeze([...scope.allowedPaths]),
@@ -737,7 +737,7 @@ function selectReference(content: string, selector: string): SelectedReference {
             "The exact selected image reference occurs more than once; a unique selection is required.",
         );
     }
-    return { ...parsed, ...occurrences[0]! };
+    return { ...parsed, ...occurrences[0] };
 }
 
 function parseSelector(
@@ -951,7 +951,7 @@ function getSourceIdentity(
             `The selected note identity is unavailable: ${path}`,
         );
     }
-    return freezeIdentity(source) as NoteImageRemovalSourceFile;
+    return freezeIdentity(source);
 }
 
 function resolveAttachment(
@@ -972,7 +972,7 @@ function resolveAttachment(
             "The selected reference does not resolve to one live local image attachment.",
         );
     }
-    return freezeIdentity(attachment) as NoteImageRemovalAttachmentFile;
+    return freezeIdentity(attachment);
 }
 
 function parseLinktextSafely(host: NoteImageRemovalHost, linktext: string): { path: string; subpath: string } {

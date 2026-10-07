@@ -247,7 +247,7 @@ export function prepareShareCardPrintStyleForCapture(cardEl: HTMLElement): () =>
     const originalFilters = wrappers.map((wrapper) => wrapper.style.getPropertyValue("filter"));
     const captureFilters = originalFilters.map((reference) => {
         const match = /^url\(["']?#([^"'()]+)["']?\)$/u.exec(reference.trim());
-        const captureFilter = match ? filterUrls.get(match[1]!) : undefined;
+        const captureFilter = match ? filterUrls.get(match[1]) : undefined;
         if (!captureFilter) {
             throw new Error("Share Card print filter reference cannot be captured.");
         }
@@ -256,12 +256,12 @@ export function prepareShareCardPrintStyleForCapture(cardEl: HTMLElement): () =>
 
     const restore = (): void => {
         wrappers.forEach((wrapper, index) => {
-            wrapper.style.setProperty("filter", originalFilters[index]!);
+            wrapper.style.setProperty("filter", originalFilters[index]);
         });
     };
     try {
         wrappers.forEach((wrapper, index) => {
-            wrapper.style.setProperty("filter", captureFilters[index]!);
+            wrapper.style.setProperty("filter", captureFilters[index]);
         });
     } catch (error) {
         restore();

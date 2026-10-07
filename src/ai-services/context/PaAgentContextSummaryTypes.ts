@@ -81,7 +81,7 @@ export function* projectPaAgentRetainedActionFactsSteps(messages: readonly ChatM
                 }
             }
         }
-        if (actionStates.length || actionResults.length || unresolvedCalls.length) facts.push({ index: indexes[offset]!,
+        if (actionStates.length || actionResults.length || unresolvedCalls.length) facts.push({ index: indexes[offset],
             ...(actionStates.length ? { actionStates } : {}), ...(actionResults.length ? { actionResults } : {}),
             ...(unresolvedCalls.length ? { unresolvedCalls } : {}) });
     }

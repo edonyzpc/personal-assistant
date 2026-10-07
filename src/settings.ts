@@ -1256,12 +1256,12 @@ export class SettingTab extends PluginSettingTab {
         this.refreshSettingsNavigationMobileOffset(this.settingsScrollRoot ?? undefined);
         if (summary) {
             this.scrollSettingsSummaryIntoView(
-                summary as HTMLElement,
+                summary,
                 this.settingsScrollBehavior(),
             );
         }
         if (!normalizedTargetId) {
-            (summary as HTMLElement | null)?.focus?.({ preventScroll: true });
+            summary?.focus?.({ preventScroll: true });
         }
         this.settingsNavigationButtons.get(normalizedId)?.setAttr("aria-expanded", "true");
         if (requestedId === "memory-personalization" && !normalizedTargetId) {
@@ -1273,7 +1273,7 @@ export class SettingTab extends PluginSettingTab {
     }
 
     refreshPageletSettingsIfVisible(): boolean {
-        const ownerDocument = (this.containerEl as HTMLElement).ownerDocument;
+        const ownerDocument = this.containerEl.ownerDocument;
         if (!ownerDocument?.body?.classList.contains("pa-settings-tab-open")) return false;
         if (!this.pageletPreferencesContainer?.isConnected) return false;
         this.pageletPreferencesContainer.empty();
@@ -1328,7 +1328,7 @@ export class SettingTab extends PluginSettingTab {
         this.disposeGhostSettings = null;
         this.settingsVisible = true;
         const { containerEl } = this;
-        const doc = (containerEl as HTMLElement).ownerDocument ?? getPlatformDocument();
+        const doc = containerEl.ownerDocument ?? getPlatformDocument();
         this.memoryControlCenterGeneration += 1;
         this.memoryControlCenterSnapshotReady = false;
         this.clearPermissionControlBindings();
@@ -1461,7 +1461,7 @@ export class SettingTab extends PluginSettingTab {
                 cls: "pa-settings-group",
                 attr: { id: detailsId, "aria-labelledby": summaryId },
             });
-            (details as HTMLDetailsElement).open = !this.isGroupCollapsed(group.id);
+            details.open = !this.isGroupCollapsed(group.id);
             const summary = details.createEl("summary", {
                 cls: "pa-settings-group-summary",
                 text: this.t(group.labelKey as never),
@@ -1553,7 +1553,7 @@ export class SettingTab extends PluginSettingTab {
         this.clearPermissionControlBindings();
         this.clearSourceScopeBindings();
         this.memoryControlCenterRefresh = null;
-        const doc = (this.containerEl as HTMLElement).ownerDocument ?? getPlatformDocument();
+        const doc = this.containerEl.ownerDocument ?? getPlatformDocument();
         doc.body?.classList.remove("pa-settings-tab-open");
         this.debouncedSaveRunner.cancel();
         this.debouncedAIProviderSaveRunner.cancel();
@@ -3769,9 +3769,9 @@ export class SettingTab extends PluginSettingTab {
             );
         });
         cancel.addEventListener("click", () => editor.remove());
-        actions.querySelectorAll("button").forEach((button) => { (button as HTMLButtonElement).disabled = true; });
+        actions.querySelectorAll("button").forEach((button) => { button.disabled = true; });
         cancel.addEventListener("click", () => {
-            actions.querySelectorAll("button").forEach((button) => { (button as HTMLButtonElement).disabled = false; });
+            actions.querySelectorAll("button").forEach((button) => { button.disabled = false; });
         }, { once: true });
         input.focus();
     }

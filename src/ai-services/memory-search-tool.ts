@@ -791,7 +791,7 @@ export class MemorySearchTool {
                 }
                 rerankOutcome = await preparedReranker.invoke(query, rerankerInput,
                     () => this.isCoherentCandidateSetStillCurrent(
-                        sealedRerankerInput!, signal, invocation?.absoluteDeadlineMs));
+                        sealedRerankerInput, signal, invocation?.absoluteDeadlineMs));
             } else {
                 rerankOutcome = createFailOpenOutcome(rerankerInput, "model_unavailable", false);
             }

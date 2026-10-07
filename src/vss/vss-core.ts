@@ -4817,7 +4817,7 @@ export class VSS {
             if (!this.disposed && canCache()) {
                 this.pageletQueryEmbeddingCache.set(cacheKey, embedding);
                 while (this.pageletQueryEmbeddingCache.size > 16) {
-                    const oldest = this.pageletQueryEmbeddingCache.keys().next().value as string | undefined;
+                    const oldest = this.pageletQueryEmbeddingCache.keys().next().value;
                     if (!oldest) break;
                     this.pageletQueryEmbeddingCache.delete(oldest);
                 }

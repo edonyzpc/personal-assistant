@@ -227,7 +227,7 @@ export async function executeQueryNotes(
 
     const selected: QueryNotesEvaluatedItem[] = [];
     for (let index = nextIndex; index < orderedMatches.length && selected.length < input.limit; index += 1) {
-        const candidate = [...selected, orderedMatches[index]!];
+        const candidate = [...selected, orderedMatches[index]];
         const hasMore = index + 1 < orderedMatches.length;
         const prospectiveNextIndex = nextIndex + selected.length + 1;
         const content = makeOutput({
@@ -246,7 +246,7 @@ export async function executeQueryNotes(
             }) : undefined,
         });
         if (JSON.stringify(content).length <= QUERY_NOTES_RESULT_JSON_BUDGET_CHARS) {
-            selected.push(orderedMatches[index]!);
+            selected.push(orderedMatches[index]);
             continue;
         }
         if (!hasMore) {
@@ -259,7 +259,7 @@ export async function executeQueryNotes(
                 evaluation,
             });
             if (JSON.stringify(withoutCursor).length <= QUERY_NOTES_RESULT_JSON_BUDGET_CHARS) {
-                selected.push(orderedMatches[index]!);
+                selected.push(orderedMatches[index]);
             }
         }
         break;
@@ -471,8 +471,8 @@ async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<
             } else {
                 frontmatter = cache.frontmatter;
                 if (input.tags?.length) {
-                    tags = epoch === undefined ? captureTagsSnapshot(cache as QueryNotesTagCache, cacheKnown)
-                        : await finishProjectionCooperatively(captureTagsSnapshotSteps(cache as QueryNotesTagCache, cacheKnown), calculationCheckpoint);
+                    tags = epoch === undefined ? captureTagsSnapshot(cache, cacheKnown)
+                        : await finishProjectionCooperatively(captureTagsSnapshotSteps(cache, cacheKnown), calculationCheckpoint);
                 }
             }
         }
@@ -495,7 +495,7 @@ async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<
         for (const condition of input.properties ?? []) {
             conditionOutcomes.push(evaluatePropertyCondition(
                 condition,
-                propertySnapshots[condition.key]!,
+                propertySnapshots[condition.key],
             ));
         }
 
@@ -790,7 +790,7 @@ function isValidCalendarDate(value: string): boolean {
     const day = Number(value.slice(8, 10));
     if (month < 1 || month > 12 || day < 1) return false;
     const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-    const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]!;
+    const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
     return day <= daysInMonth;
 }
 

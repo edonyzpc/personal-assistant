@@ -60,7 +60,7 @@ export function replaceLiteral(
     occurrence: "first" | "all" = "first",
 ): string {
     const plan = planLiteralReplacement(current, search, replacement, occurrence);
-    const first = plan.matchOffsets[0]!;
+    const first = plan.matchOffsets[0];
     if (occurrence === "first") {
         return current.slice(0, first) + replacement + current.slice(first + search.length);
     }
@@ -118,7 +118,7 @@ export function insertMarkdown(
         if (anchor.line < 1 || anchor.line > lines.length) {
             throw new OperationsTransformError(`Line ${anchor.line} is outside the note.`);
         }
-        const line = lines[anchor.line - 1]!;
+        const line = lines[anchor.line - 1];
         return insertAt(current, position === "before" ? line.start : line.end, content);
     }
 
@@ -131,8 +131,8 @@ export function deleteMarkdownLines(current: string, from: number, to: number): 
     if (from < 1 || to < from || to > lines.length) {
         throw new OperationsTransformError(`Line range ${from}-${to} is outside the note.`);
     }
-    const start = lines[from - 1]!.start;
-    const end = lines[to - 1]!.end;
+    const start = lines[from - 1].start;
+    const end = lines[to - 1].end;
     return current.slice(0, start) + current.slice(end);
 }
 
@@ -141,7 +141,7 @@ export function deleteMarkdownSection(current: string, section: string): string 
     const matches = headings.filter((heading) => heading.text === section);
     if (matches.length === 0) throw new OperationsTransformError(`Heading "${section}" was not found.`);
     if (matches.length > 1) throw new OperationsTransformError(`Heading "${section}" is ambiguous.`);
-    const target = matches[0]!;
+    const target = matches[0];
     const next = headings.find((heading) => heading.start > target.start && heading.level <= target.level);
     return current.slice(0, target.start) + current.slice(next?.start ?? current.length);
 }
@@ -215,7 +215,7 @@ function collectHeadings(markdown: string): MarkdownHeading[] {
     let inFrontmatter = lines[0]?.text === "---";
     let previousTextLine: MarkdownLine | null = null;
     for (let index = 0; index < lines.length; index += 1) {
-        const line = lines[index]!;
+        const line = lines[index];
         if (inFrontmatter) {
             if (index > 0 && (line.text === "---" || line.text === "...")) inFrontmatter = false;
             previousTextLine = null;
@@ -223,7 +223,7 @@ function collectHeadings(markdown: string): MarkdownHeading[] {
         }
         const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line.text);
         if (fenceMatch) {
-            const run = fenceMatch[1]!;
+            const run = fenceMatch[1];
             const marker = run[0] as "`" | "~";
             if (fence === null) {
                 fence = { marker, length: run.length };
@@ -243,10 +243,10 @@ function collectHeadings(markdown: string): MarkdownHeading[] {
         }
         const match = /^ {0,3}(#{1,6})[\t ]+(.+?)\s*$/.exec(line.text);
         if (match) {
-            const text = match[2]!.replace(/[\t ]+#+[\t ]*$/, "").trim();
+            const text = match[2].replace(/[\t ]+#+[\t ]*$/, "").trim();
             if (text.length > 0) {
                 headings.push({
-                    level: match[1]!.length,
+                    level: match[1].length,
                     text,
                     start: line.start,
                     end: line.end,
@@ -260,7 +260,7 @@ function collectHeadings(markdown: string): MarkdownHeading[] {
             const text = previousTextLine.text.trim();
             if (text.length > 0) {
                 headings.push({
-                    level: setext[1]![0] === "=" ? 1 : 2,
+                    level: setext[1][0] === "=" ? 1 : 2,
                     text,
                     start: previousTextLine.start,
                     end: line.end,
@@ -278,7 +278,7 @@ function findUniqueHeading(markdown: string, text: string): MarkdownHeading {
     const matches = collectHeadings(markdown).filter((heading) => heading.text === text);
     if (matches.length === 0) throw new OperationsTransformError(`Heading "${text}" was not found.`);
     if (matches.length > 1) throw new OperationsTransformError(`Heading "${text}" is ambiguous.`);
-    return matches[0]!;
+    return matches[0];
 }
 
 function insertAt(markdown: string, offset: number, content: string): string {

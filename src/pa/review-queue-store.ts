@@ -417,7 +417,7 @@ function normalizePersistedReviewQueueItem(entry: Record<string, unknown>): Revi
     if (!isReviewQueueAdmissionReason(item.admissionReason)) {
         item.admissionReason = "legacy_pre_refactor";
         item.metadata = {
-            ...(isRecord(item.metadata) ? item.metadata as Record<string, string | number | boolean | null> : {}),
+            ...(isRecord(item.metadata) ? item.metadata : {}),
             legacyPreRefactor: true,
         };
     }

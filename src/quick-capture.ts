@@ -393,7 +393,7 @@ class QuickCaptureModal extends Modal {
                 placeholder: pluginT("plugin.quickCapture.modal.placeholder", getPluginUiLanguage()),
                 rows: "12",
             },
-        }) as HTMLTextAreaElement;
+        });
         input.value = this.draft.initialText;
         this.inputEl = input;
 

@@ -502,7 +502,7 @@ export class ShareCardRenderer {
         const prepared: PreparedShareCardBlock[] = [];
         try {
             for (let blockIndex = 0; blockIndex < semanticBlocks.length; blockIndex += 1) {
-                const source = semanticBlocks[blockIndex]!;
+                const source = semanticBlocks[blockIndex];
                 this.assertActive();
                 const contextualMarkdown = applyShareCardReferenceDefinitionContext(
                     source,
@@ -748,7 +748,7 @@ export class ShareCardRenderer {
         deadline: number,
         signal: AbortSignal,
     ): Promise<void> {
-        const images = Array.from(bodyEl.querySelectorAll("img")) as HTMLImageElement[];
+        const images = Array.from(bodyEl.querySelectorAll("img"));
         await Promise.all(images.map(async (image) => {
             try {
                 if (typeof image.decode === "function") {
@@ -831,7 +831,7 @@ export class ShareCardRenderer {
         const segments = page.renderPlan?.segments;
         if (segments) {
             if (segments.length !== 1) return false;
-            const segment = segments[0]!;
+            const segment = segments[0];
             const block = this.preparedBlocks?.[segment.blockIndex];
             return Boolean(
                 block
@@ -1040,12 +1040,12 @@ function findPreparedBlockSequence(
 ): PreparedShareCardBlock[] | null {
     if (content.length === 0) return [];
     for (let start = 0; start < blocks.length; start += 1) {
-        if (!content.startsWith(blocks[start]!.source)) continue;
+        if (!content.startsWith(blocks[start].source)) continue;
         let candidate = "";
         for (let end = start; end < blocks.length; end += 1) {
             candidate = candidate.length > 0
-                ? `${candidate}\n\n${blocks[end]!.source}`
-                : blocks[end]!.source;
+                ? `${candidate}\n\n${blocks[end].source}`
+                : blocks[end].source;
             if (candidate === content) return blocks.slice(start, end + 1);
             if (candidate.length >= content.length) break;
         }
@@ -1392,11 +1392,11 @@ function removeLiteralBoundarySentinel(
     );
     if (!located) return null;
     const start = {
-        node: textNodes[located.startNodeIndex]!,
+        node: textNodes[located.startNodeIndex],
         offset: located.startOffset,
     };
     const end = {
-        node: textNodes[located.endNodeIndex]!,
+        node: textNodes[located.endNodeIndex],
         offset: located.endOffset,
     };
     if (!start || !end || typeof ownerDocument.createComment !== "function") return null;
@@ -1455,7 +1455,7 @@ function locateLinearTextPoint(
 ): { nodeIndex: number; offset: number } | null {
     let consumed = 0;
     for (let nodeIndex = 0; nodeIndex < segments.length; nodeIndex += 1) {
-        const segment = segments[nodeIndex]!;
+        const segment = segments[nodeIndex];
         if (requestedOffset <= consumed + segment.length) {
             return { nodeIndex, offset: requestedOffset - consumed };
         }
@@ -1588,11 +1588,11 @@ function createShareCardStaticBoundaryResolver(
         let high = anchors.length - 1;
         while (low + 1 < high) {
             const middle = Math.floor((low + high) / 2);
-            if (anchors[middle]! <= sourceOffset) low = middle;
+            if (anchors[middle] <= sourceOffset) low = middle;
             else high = middle;
         }
-        const start = anchors[low]!;
-        const end = anchors[high]!;
+        const start = anchors[low];
+        const end = anchors[high];
         if (!intervals.has(start)) {
             const from = resolveStaticBoundary(bodyEl, existingBoundaries, start, sourceLength);
             const to = resolveStaticBoundary(bodyEl, existingBoundaries, end, sourceLength);
@@ -1612,7 +1612,7 @@ function createShareCardStaticBoundaryResolver(
         let right = textNodes.length - 1;
         while (left < right) {
             const middle = Math.floor((left + right) / 2);
-            if (textNodes[middle]!.end < offset) left = middle + 1;
+            if (textNodes[middle].end < offset) left = middle + 1;
             else right = middle;
         }
         const node = textNodes[left];
@@ -1697,7 +1697,7 @@ function isSafeStandaloneMermaidMarkdown(markdown: string): boolean {
     if (lines.length < 3) return false;
     const opening = /^ {0,3}(`{3,}|~{3,})[ \t]*mermaid[ \t]*$/iu.exec(lines[0] ?? "");
     if (!opening) return false;
-    const marker = opening[1]!;
+    const marker = opening[1];
     const closing = new RegExp(`^ {0,3}${marker.charAt(0)}{${marker.length},} *$`, "u");
     if (!closing.test(lines[lines.length - 1] ?? "")) return false;
     const body = lines.slice(1, -1).join("\n");
@@ -2119,7 +2119,7 @@ function replaceWithPlaceholder(element: Element, label: string): void {
 
 function preserveTaskListState(bodyEl: HTMLElement): void {
     for (const element of Array.from(bodyEl.querySelectorAll("input"))) {
-        const input = element as HTMLInputElement;
+        const input = element;
         const type = (input.getAttribute("type") ?? input.type).toLowerCase();
         const isTaskCheckbox = type === "checkbox" && (
             input.classList.contains("task-list-item-checkbox")

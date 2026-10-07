@@ -367,9 +367,7 @@ export class SourceAccess {
     createMemoryGraphBoundarySnapshotSource(
         consumer: SourceConsumer,
     ): GraphBoundarySnapshotSource | undefined {
-        const resolvedLinks = this.dependencies.app.metadataCache?.resolvedLinks as
-            | Record<string, Record<string, number>>
-            | undefined;
+        const resolvedLinks = this.dependencies.app.metadataCache?.resolvedLinks;
         if (!resolvedLinks) return undefined;
         const pageletResolver = consumer === "pagelet"
             ? this.createPageletProviderSourceResolver()

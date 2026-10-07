@@ -239,7 +239,7 @@ export class WritingSaveAction {
             await this.app.vault.process(note, (current) => {
                 this.check(signal); this.allowed(receipt.targetNotePath);
                 attachments.assertCurrent();
-                if (note!.path !== receipt.targetNotePath || current !== initialText) throw new WritingSaveError('note_changed');
+                if (note.path !== receipt.targetNotePath || current !== initialText) throw new WritingSaveError('note_changed');
                 return finalText;
             });
             const verified = await this.verifyCompleted(receipt); verifications.push(verified);

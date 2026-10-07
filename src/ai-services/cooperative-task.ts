@@ -54,15 +54,15 @@ export async function sortCooperatively<T>(
     while (runs.length > 1) {
         const merged: T[][] = [];
         for (let run = 0; run < runs.length; run += 2) {
-            const left = runs[run]!;
+            const left = runs[run];
             const right = runs[run + 1];
             if (!right) { merged.push(left); continue; }
             const result: T[] = [];
             let a = 0, b = 0;
             while (a < left.length || b < right.length) {
                 await checkpoint();
-                if (b === right.length || a < left.length && compare(left[a]!, right[b]!) <= 0) result.push(left[a++]!);
-                else result.push(right[b++]!);
+                if (b === right.length || a < left.length && compare(left[a], right[b]) <= 0) result.push(left[a++]);
+                else result.push(right[b++]);
             }
             merged.push(result);
         }

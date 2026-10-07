@@ -577,8 +577,8 @@ async function assertSourceSetCurrent(
     }
     for (let index = 0; index < identities.length; index++) {
         if (epoch !== undefined) await checkpoint();
-        const expected = identities[index]!;
-        const actual = currentFiles[index]!;
+        const expected = identities[index];
+        const actual = currentFiles[index];
         if (
             actual !== expected.file
             || actual.path !== expected.path
@@ -677,7 +677,7 @@ async function buildLineSpans(content: string, checkpoint: CooperativeCheckpoint
     while ((match = lineBreak.exec(content)) !== null) {
         await checkpoint();
         spans.push({ start, endIncludingBreak: match.index + match[0].length, line });
-        start = spans[spans.length - 1]!.endIncludingBreak;
+        start = spans[spans.length - 1].endIncludingBreak;
         line++;
     }
     spans.push({ start, endIncludingBreak: content.length, line });
@@ -693,10 +693,10 @@ function describeRange(
         let low = 0, high = lineSpans.length - 1;
         while (low < high) {
             const mid = Math.floor((low + high) / 2);
-            if (inclusive ? offset <= lineSpans[mid]!.endIncludingBreak : offset < lineSpans[mid]!.endIncludingBreak) high = mid;
+            if (inclusive ? offset <= lineSpans[mid].endIncludingBreak : offset < lineSpans[mid].endIncludingBreak) high = mid;
             else low = mid + 1;
         }
-        return lineSpans[low]!;
+        return lineSpans[low];
     };
     const startSpan = findSpan(start, false);
     const endSpan = findSpan(end, true);

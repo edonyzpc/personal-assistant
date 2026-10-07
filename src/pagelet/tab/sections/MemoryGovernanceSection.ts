@@ -550,7 +550,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
     ): HTMLElement {
         const pending = state?.status === "correcting";
         const editor = el("div", "pa-pagelet-tab-memory-correction-editor");
-        const textarea = el("textarea", "pa-pagelet-tab-memory-correction-input") as HTMLTextAreaElement;
+        const textarea = el("textarea", "pa-pagelet-tab-memory-correction-input");
         textarea.value = currentSummary;
         textarea.setAttribute("aria-label", pageletT("pagelet.tab.memory.correctLabel", this.locale));
         this.setFocusKey(textarea, this.recordFocusKey(record.id, "correction-input"));

@@ -186,8 +186,8 @@ export function isValidRetrievalSearchRuntimeParameters(
         && isFiniteNonNegativeTuple(input.rrf?.sourceWeights, 2))) return false;
 
     const expected = input.variant === "candidate"
-        ? RETRIEVAL_CALIBRATION_PROFILE.candidate[input.mode!]
-        : RETRIEVAL_CALIBRATION_PROFILE.baseline[input.mode!];
+        ? RETRIEVAL_CALIBRATION_PROFILE.candidate[input.mode]
+        : RETRIEVAL_CALIBRATION_PROFILE.baseline[input.mode];
     return input.evidence === expected.evidence
         && input.vectorRaw === expected.vectorRaw
         && input.lexicalRaw === expected.lexicalRaw

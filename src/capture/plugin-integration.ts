@@ -125,7 +125,7 @@ export class QuickCapturePluginIntegration {
             },
             createReviewQueueItem: (queueInput) => this.dependencies.createReviewQueueItem(queueInput),
             now: () => new Date(),
-            log: (...args) => this.dependencies.log(args[0] as string, ...args.slice(1)),
+            log: (...args) => this.dependencies.log(args[0], ...args.slice(1)),
         });
     }
 }

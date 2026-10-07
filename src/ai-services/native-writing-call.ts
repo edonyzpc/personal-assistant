@@ -82,7 +82,7 @@ export class NativeWritingCallCollector {
                 || (index !== undefined && (typeof index !== "number" || !Number.isSafeInteger(index) || index < 0))
                 || (name !== undefined && typeof name !== "string")) return this.reject();
 
-            if (!this.acceptIdentity(id as string | undefined, index as number | undefined)) return this.reject();
+            if (!this.acceptIdentity(id, index)) return this.reject();
             if (name) {
                 const nextName = extendWritingName(this.namePrefix, name);
                 if (nextName === undefined) return this.reject();

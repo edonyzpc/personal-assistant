@@ -746,7 +746,7 @@ export class PluginManager extends Plugin {
             readCommittedState: () => this.deviceMemoryGovernanceRepository?.initialize()
                 ?? Promise.resolve(undefined),
             getPanelRecord: (claimId) => this.getMemoryGovernancePanelState().records
-                .find((record) => record.id === claimId) as PanelMemoryGovernanceRecord | undefined,
+                .find((record) => record.id === claimId),
             pageletMessage: (key) => pageletT(key, this.getPageletLocale()),
             pluginMessage: (key) => this.t(key),
             log: (message, detail) => this.log(message, detail),
@@ -4994,7 +4994,7 @@ export class PluginManager extends Plugin {
                 (candidate) => candidate.id === item.id,
             );
             const receipt = stored?.governanceAdmission?.chatSemanticReceipt;
-            const source = receipt ? await this.prepareChatSemanticSourceEvidence(receipt, stored!.claim) : null;
+            const source = receipt ? await this.prepareChatSemanticSourceEvidence(receipt, stored.claim) : null;
             if (receipt && !source) {
                 return { ok: false, message: pageletT("pagelet.tab.memory.actionUnavailable", this.getPageletLocale()) };
             }
@@ -6502,7 +6502,7 @@ export class PluginManager extends Plugin {
             )
         ))) return null;
         return {
-            currentNote: { path: snapshots[0]!.path, content: contents[0] ?? "" },
+            currentNote: { path: snapshots[0].path, content: contents[0] ?? "" },
             relatedNotes: snapshots.slice(1).map((snapshot, index) => ({
                 path: snapshot.path,
                 content: (contents[index + 1] ?? "").slice(0, 1200),

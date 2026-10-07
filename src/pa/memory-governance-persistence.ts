@@ -1907,10 +1907,10 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
                 const record: Record<string, unknown> = {};
                 if (!Array.isArray(entries)) throw new MemoryGovernancePersistenceError("invalid_state");
                 for (const entry of entries) {
-                    if (!isRecord(entry) || !requiredString(entry.key) || isUnsafeMapKey(entry.key as string)) {
+                    if (!isRecord(entry) || !requiredString(entry.key) || isUnsafeMapKey(entry.key)) {
                         throw new MemoryGovernancePersistenceError("invalid_state");
                     }
-                    record[entry.key as string] = entry.value;
+                    record[entry.key] = entry.value;
                 }
                 raw[storeName] = record;
             });

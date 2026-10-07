@@ -245,7 +245,7 @@ export function parseMemoryManagementEvidence(value: unknown): MemoryManagementE
         evidence: {
             schemaVersion: 1,
             purpose: "memory_management",
-            observationId: record.observationId as string,
+            observationId: record.observationId,
             tool: record.tool as MemoryManagementEvidence["tool"],
             operation: record.operation as MemoryManagementOperation,
             stateFingerprint: record.stateFingerprint as string,

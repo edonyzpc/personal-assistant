@@ -91,7 +91,7 @@ function parseResult(raw: string, needed: PrepareGhostMetadataInput["needed"]): 
         if (!["customExcerpt", "metaDescription", "slug"].includes(key) || typeof record[key] !== "string") {
             throw new GhostMetadataPreparationError("invalid_result");
         }
-        const text = record[key] as string;
+        const text = record[key];
         if (key === "slug") {
             if (!isValidGhostSlug(text)) throw new GhostMetadataPreparationError("invalid_result");
             result.slug = text;

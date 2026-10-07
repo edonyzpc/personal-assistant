@@ -2716,7 +2716,7 @@ export class PaAgentRuntime {
                                 if (boundHistory && indexes) {
                                     const currentHistory = await sourceRun.projectHistoryAsync(options.chatHistory ?? [], prepareSignal ?? undefined);
                                     boundHistory.forEach((message, index) => {
-                                        const current = currentHistory[indexes[index]! - 1];
+                                        const current = currentHistory[indexes[index] - 1];
                                         if (!current || !isCurrentHistorySummary({ text: '', sourceMessages: [message] }, [current])) {
                                             throw new Error('Context summary source changed before dispatch');
                                         }

@@ -623,7 +623,7 @@ export class ShareCardModal extends Modal {
     private async savePages(): Promise<void> {
         const exporter = this.exporter;
         if (!exporter || this.pages.length === 0 || this.busy) return;
-        const pages = this.pages.length === 1 ? [this.pages[0]!] : [...this.pages];
+        const pages = this.pages.length === 1 ? [this.pages[0]] : [...this.pages];
         const rawFolder = this.folderInputEl?.value?.trim();
         const selectedFolder = rawFolder !== undefined && rawFolder !== ""
             ? rawFolder

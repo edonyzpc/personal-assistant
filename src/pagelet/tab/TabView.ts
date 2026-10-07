@@ -584,7 +584,7 @@ export class TabView {
 
     private renderContextPagerAsDetails(contextPager: ContextPagerState | undefined): boolean {
         if (!this.bodyEl || !contextPager) return false;
-        const details = el("details", "pa-pagelet-tab-context-pager-details") as HTMLDetailsElement;
+        const details = el("details", "pa-pagelet-tab-context-pager-details");
         const summary = el("summary");
         summary.textContent = pageletT("pagelet.panel.contextPager.usedSources", this.locale);
         details.appendChild(summary);

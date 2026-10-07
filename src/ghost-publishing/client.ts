@@ -287,7 +287,7 @@ function parsePost(raw: unknown): GhostPost {
     return {
         id: value.id, uuid: value.uuid, status: value.status as GhostPostStatus,
         updated_at: value.updated_at, url: value.url, title: value.title, slug: value.slug,
-        ...(value.created_at !== undefined ? { created_at: value.created_at as string } : {}),
+        ...(value.created_at !== undefined ? { created_at: value.created_at } : {}),
         lexical: value.lexical, visibility: value.visibility, tags, authors,
         custom_template: nullable.custom_template, feature_image: nullable.feature_image,
         feature_image_alt: nullable.feature_image_alt, feature_image_caption: nullable.feature_image_caption,

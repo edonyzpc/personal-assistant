@@ -210,7 +210,7 @@ export function redactExactLegacyMemoryPayload(
             nextQueueItems.push(cloneUnknown(candidate));
             continue;
         }
-        const validation = validateReviewQueueItem(candidate as unknown as ReviewQueueItem);
+        const validation = validateReviewQueueItem(candidate as ReviewQueueItem);
         if (!validation.ok
             || validation.value.id !== rawId
             || !MEMORY_QUEUE_TYPES.has(validation.value.type)) {
@@ -224,10 +224,10 @@ export function redactExactLegacyMemoryPayload(
     }
 
     const memoryGovernance = isRecord(payload.memoryGovernance)
-        ? cloneUnknown(payload.memoryGovernance) as Record<string, unknown>
+        ? cloneUnknown(payload.memoryGovernance)
         : {};
     const reviewQueue = isRecord(payload.reviewQueue)
-        ? cloneUnknown(payload.reviewQueue) as Record<string, unknown>
+        ? cloneUnknown(payload.reviewQueue)
         : {};
     defineEnumerableValue(memoryGovernance, "records", nextRecords);
     defineEnumerableValue(reviewQueue, "items", nextQueueItems);
@@ -361,7 +361,7 @@ export function mergeLegacyReviewQueuePassthrough(
     }
 
     const container = isRecord(rawReviewQueue)
-        ? cloneUnknown(rawReviewQueue) as Record<string, unknown>
+        ? cloneUnknown(rawReviewQueue)
         : {};
     defineEnumerableValue(container, "items", mergedItems);
     return { ok: true, reviewQueue: container };

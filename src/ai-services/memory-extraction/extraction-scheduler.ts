@@ -12,7 +12,6 @@ import {
     TypeAUserProfileExtractor,
     type UserProfileCandidate,
     type UserProfileSnapshot,
-    type SemanticUserProfileCandidate,
 } from "./type-a-extractor";
 import type { PersistedConversation, PersistedTurn } from "../../chat/chat-history-store";
 import { getOptionalPlatformDocument } from "../../platform-dom";
@@ -434,7 +433,7 @@ export class MemoryExtractionScheduler {
             if (!isCurrent() || extracted.status !== "parsed" || extracted.projections.length === 0 || !await checkSources()) return null;
             const candidates = extracted.candidates.filter((candidate) => verifyChatMemorySemanticReceipt(
                 candidate.chatSemanticReceipt, candidate, conversationId, extracted.projections,
-            )) as SemanticUserProfileCandidate[];
+            ));
             const current = this.userProfileSnapshot ? cloneUserProfileSnapshot(this.userProfileSnapshot) : null;
             const proposed = this.typeAExtractor.mergeSemanticCandidates(current, candidates, this.now());
             const canonicalIds = captured?.status === "ready" ? captured.baseline.profileRecordIdsByKey : undefined;

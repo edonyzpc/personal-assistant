@@ -171,7 +171,7 @@ function consumeExpandedFenceContainerPrefix(
 ): number | null {
     let cursor = 0;
     for (let index = 0; index < containers.length; index += 1) {
-        const container = containers[index]!;
+        const container = containers[index];
         if (container.type === "list") {
             let consumed = 0;
             while (
@@ -240,7 +240,7 @@ function inheritedFenceContainers(previousBlock?: string): FenceContainer[] {
     if (!previousBlock) return [];
     const lines = previousBlock.split("\n");
     for (let index = lines.length - 1; index >= 0; index -= 1) {
-        const candidate = parseFenceContainers(expandMarkdownLine(lines[index]!).text);
+        const candidate = parseFenceContainers(expandMarkdownLine(lines[index]).text);
         if (candidate.containers.some((container) => container.type === "list")) {
             return candidate.containers;
         }
@@ -556,14 +556,14 @@ function addEvenlySampledBoundaries(
         return;
     }
     if (count === 1) {
-        selected.add(available[0]!);
+        selected.add(available[0]);
         return;
     }
     for (let index = 0; index < count; index += 1) {
         const candidateIndex = Math.round(
             (index * (available.length - 1)) / (count - 1),
         );
-        selected.add(available[candidateIndex]!);
+        selected.add(available[candidateIndex]);
     }
 }
 
@@ -712,7 +712,7 @@ function analyzeMarkdownLines(source: string): MarkdownLine[] {
             paginationCannotProveSafety("Markdown tables cannot be split safely for Share Card pagination.");
         }
         if (/^\s*(?:={3,}|-{3,})\s*$/.test(line) && lines.length > 0) {
-            const previous = source.slice(lines[lines.length - 1]!.start, lines[lines.length - 1]!.end);
+            const previous = source.slice(lines[lines.length - 1].start, lines[lines.length - 1].end);
             if (previous.trim().length > 0) {
                 paginationCannotProveSafety("Setext headings cannot be split safely for Share Card pagination.");
             }
@@ -920,7 +920,7 @@ function markdownLinesOutsideCode(markdown: string): string[] {
         line = line.replace(/<(code|pre)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, "");
         const rawOpening = /<(code|pre)\b[^>]*>/iu.exec(line);
         if (rawOpening) {
-            rawCodeTag = rawOpening[1]!.toLowerCase() as "code" | "pre";
+            rawCodeTag = rawOpening[1].toLowerCase() as "code" | "pre";
             line = line.slice(0, rawOpening.index);
         }
 
@@ -1030,7 +1030,7 @@ export function createShareCardReferenceDefinitionContext(
     for (const block of blocks) {
         const lines = markdownLinesOutsideCode(block);
         for (let index = 0; index < lines.length; index += 1) {
-            const line = lines[index]!;
+            const line = lines[index];
             const label = referenceDefinitionLabel(line);
             if (!label || definitions.has(label)) continue;
             const definitionLines = [line];
@@ -1038,7 +1038,7 @@ export function createShareCardReferenceDefinitionContext(
                 index + 1 < lines.length
                 && /^(?: {1,3}|\t)\S/u.test(lines[index + 1] ?? "")
             ) {
-                definitionLines.push(lines[index + 1]!);
+                definitionLines.push(lines[index + 1]);
                 index += 1;
             }
             definitions.set(label, definitionLines.join("\n"));
@@ -1194,7 +1194,7 @@ function createSafeFragmentPlan(source: string): SafeFragmentPlan {
     }
     const taskScopes: SourceRange[] = [];
     for (let index = 0; index < lines.length; index += 1) {
-        const item = lines[index]!;
+        const item = lines[index];
         if (!item.taskItem) continue;
         if (taskScopes.some((scope) => item.start > scope.start && item.start < scope.end)) {
             continue;
@@ -1640,7 +1640,7 @@ async function largestSafeFragmentEnd(
     let best = start;
     while (low <= high) {
         const middle = Math.floor((low + high) / 2);
-        const end = candidates[middle]!;
+        const end = candidates[middle];
         const markdown = plan.render(start, end);
         if (!plan.hasText(start, end)) {
             low = middle + 1;
@@ -1804,7 +1804,7 @@ export function isAtomicShareCardVisualBlock(block: string): boolean {
         if (opening) {
             const info = opening[2]?.trim().split(/[ \t]+/u, 1)[0]?.toLowerCase() ?? "";
             if (info === "mermaid") return true;
-            fence = { character: opening[1]!.charAt(0), length: opening[1]!.length };
+            fence = { character: opening[1].charAt(0), length: opening[1].length };
             continue;
         }
         if (/^(?: {4}|\t)/u.test(line)) continue;
@@ -1819,7 +1819,7 @@ export function isAtomicShareCardVisualBlock(block: string): boolean {
         ordinary = ordinary.replace(/<(code|pre)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, "");
         const unclosedRawLiteral = /<(code|pre)\b[^>]*>/iu.exec(ordinary);
         if (unclosedRawLiteral) {
-            rawLiteralTag = unclosedRawLiteral[1]!.toLowerCase() as "code" | "pre";
+            rawLiteralTag = unclosedRawLiteral[1].toLowerCase() as "code" | "pre";
             ordinary = ordinary.slice(0, unclosedRawLiteral.index);
         }
 
@@ -1848,7 +1848,7 @@ export function isPureShareCardVisualBlock(block: string): boolean {
     if (lines.length < 3) return false;
     const opening = /^ {0,3}(`{3,}|~{3,})[ \t]*mermaid[ \t]*$/iu.exec(lines[0] ?? "");
     if (!opening) return false;
-    const marker = opening[1]!;
+    const marker = opening[1];
     return new RegExp(`^ {0,3}${marker.charAt(0)}{${marker.length},} *$`, "u")
         .test(lines[lines.length - 1] ?? "");
 }
@@ -1971,7 +1971,7 @@ export async function paginateShareCardMarkdown(
     let blockIndex = 0;
     while (blockIndex < semanticBlocks.length) {
         assertActive();
-        const nextBlock = semanticBlocks[blockIndex]!;
+        const nextBlock = semanticBlocks[blockIndex];
         if (current.length === 0 && isAtomicShareCardVisualBlock(nextBlock)) {
             const segment = createRenderSegment(
                 blockIndex,
@@ -2021,7 +2021,7 @@ export async function paginateShareCardMarkdown(
             continue;
         }
 
-        const block = semanticBlocks[blockIndex]!;
+        const block = semanticBlocks[blockIndex];
         const withoutDefinitions = referenceDefinitionLabels(block).size > 0
             ? withoutReferenceDefinitions(block)
             : block;

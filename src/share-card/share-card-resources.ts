@@ -2049,7 +2049,7 @@ function materializeResolution(
                 failureReason: "localized-output-too-large",
             }];
             resolution.resolvedResources.clear();
-            const primaryKey = resolution.uniqueKeys.values().next().value as string | undefined;
+            const primaryKey = resolution.uniqueKeys.values().next().value;
             resolution.uniqueKeys = primaryKey ? new Set([primaryKey]) : new Set();
         }
         resolution.replacement = () => resolution.allocation.fallbackReplacement;
