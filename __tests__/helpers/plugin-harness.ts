@@ -162,6 +162,8 @@ export function createPluginHarness(options: PluginHarnessOptions = {}): PluginH
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const plugin = Object.create(PluginManager.prototype) as any;
+    plugin.taskSourceConfigurationRevision = 0;
+    plugin.taskSourceConfigurationSnapshot = '';
     plugin.operationsReviewRouter = new OperationsReviewRouter();
     plugin.settingsPersistence = plugin.createSettingsPersistence();
     plugin.aiConfiguration = plugin.createAIConfiguration();

@@ -142,7 +142,6 @@ export class AgentDebugStore {
         }
         return { generation: Number(await this.control(tx, key('generation', vaultKey)) ?? 0), domains,
             revision: Number(await this.control(tx, key('revision', vaultKey)) ?? 0),
-            sourceToken: await this.control(tx, key('source-token', vaultKey)) as string | undefined,
             quarantined: await this.control(tx, key('quarantine', vaultKey)) === true };
     }
     getGeneration(): Promise<DebugGeneration> { return this.transact(['control'], 'readonly', tx => this.generation(tx)); }
@@ -176,9 +175,7 @@ export class AgentDebugStore {
             const owners = this.ownerIds(existing);
             const uncertain = owners.filter(id => id !== ownerId && !liveOwners.includes(id));
             const unverified = uncertain.length > 0;
-            // Quarantine the uncertain owner, not the whole vault: fresh runs and
-            // history from a clean owner must remain usable after a crash.
-            for (const id of uncertain) this.putControl(tx, key('uncertain-owner', this.vaultKey, id), true);
+            // An interrupted capture is historical fact, not a source-permission revocation.
             this.putControl(tx, key('owner', this.vaultKey), JSON.stringify([...new Set([...owners.filter(id => liveOwners.includes(id)), ownerId])]));
             if (unverified) {
                 const rows = await request(tx.objectStore('runs').index('vault').getAll(this.vaultKey)) as RunRow[];
@@ -203,10 +200,8 @@ export class AgentDebugStore {
         });
     }
 
-    private async isContentAllowed(tx: IDBTransaction, content: DebugContent, generation: DebugGeneration, ownerSessionId?: string): Promise<boolean> {
+    private async isContentAllowed(tx: IDBTransaction, content: DebugContent, generation: DebugGeneration): Promise<boolean> {
         if (generation.quarantined || content.generation !== generation.generation) return false;
-        if (ownerSessionId && await this.control(tx, key('uncertain-owner', this.vaultKey, ownerSessionId))
-            && (content.lineage.possibleDomains.includes('vault_notes') || content.lineage.completeness === 'unknown')) return false;
         for (const domain of content.lineage.possibleDomains) {
             if ((content.domainGenerations[domain] ?? 0) !== (generation.domains[domain] ?? 0)) return false;
         }
@@ -237,10 +232,11 @@ export class AgentDebugStore {
                 + Number(await this.control(tx, key('control-bytes')) ?? 0) + (old ? 0 : rowBytes(batch.run));
             let bytes = old?.value.accountedBytes ?? 0;
             let eventCount = old?.value.eventCount ?? 0;
-            let hasGap = old?.value.hasGap ?? batch.run.hasGap;
+            let hasGap = (old?.value.hasGap ?? false) || batch.run.hasGap;
             const accepted = new Set<string>();
+            const unavailable = new Map<string, 'cleared' | 'capacity'>();
             for (const content of batch.contents) {
-                if (!await this.isContentAllowed(tx, content, generation, batch.run.ownerSessionId)) { hasGap = true; continue; }
+                if (!await this.isContentAllowed(tx, content, generation)) { hasGap = true; unavailable.set(content.contentId, 'cleared'); continue; }
                 const id = key(runKey, content.contentId);
                 const previous = await request(tx.objectStore('contents').get(id)) as ContentRow | undefined;
                 if (previous && (previous.value.text !== content.text || JSON.stringify(previous.value.lineage) !== JSON.stringify(content.lineage))) {
@@ -248,7 +244,7 @@ export class AgentDebugStore {
                 }
                 const nextBytes = rowBytes(content);
                 if (utf8Bytes(content.text) > this.budgets.contentBytes || bytes + nextBytes - (previous?.bytes ?? 0) > this.budgets.runBytes
-                    || partitionBytes + nextBytes - (previous?.bytes ?? 0) > this.budgets.persistentBytes) { hasGap = true; continue; }
+                    || partitionBytes + nextBytes - (previous?.bytes ?? 0) > this.budgets.persistentBytes) { hasGap = true; unavailable.set(content.contentId, 'capacity'); continue; }
                 const row: ContentRow = { id, vaultKey: this.vaultKey, runKey, value: content, bytes: nextBytes,
                     claims: content.lineage.claimIds,
                     legacy: content.lineage.legacyRecordIds.map(value => key(this.vaultKey, value)),
@@ -263,7 +259,7 @@ export class AgentDebugStore {
                 const id = key(runKey, event.segment, event.seq);
                 const previous = await request(tx.objectStore('events').get(id)) as Row<DebugEvent> | undefined;
                 const safeEvent: DebugEvent = { ...event, contentIds: event.contentIds.filter(contentId => accepted.has(contentId)) };
-                if (safeEvent.contentIds.length < event.contentIds.length) safeEvent.availability = 'cleared';
+                if (safeEvent.contentIds.length < event.contentIds.length) safeEvent.availability = event.contentIds.some(id => unavailable.get(id) === 'capacity') ? 'capacity' : 'cleared';
                 const nextBytes = rowBytes(safeEvent);
                 if (partitionBytes + nextBytes - (previous?.bytes ?? 0) > this.budgets.persistentBytes) { hasGap = true; continue; }
                 tx.objectStore('events').put({ id, vaultKey: this.vaultKey, runKey, value: safeEvent, bytes: nextBytes });
@@ -315,15 +311,7 @@ export class AgentDebugStore {
             if (!run || run.expiresAt <= this.now()) return [];
             const range = this.ranges!.bound([runKey, (query.after ?? -1) + 1], [runKey, Number.MAX_SAFE_INTEGER]);
             const rows = await request(tx.objectStore('events').index('sequence').getAll(range, Math.min(500, query.limit ?? 200))) as Row<DebugEvent>[];
-            const uncertain = run.value.ownerSessionId
-                && await this.control(tx, key('uncertain-owner', this.vaultKey, run.value.ownerSessionId));
-            if (!uncertain) return rows.map(row => row.value);
-            const contents = await request(tx.objectStore('contents').index('run').getAll(runKey)) as ContentRow[];
-            const hidden = new Set(contents.filter(row => row.value.lineage.possibleDomains.includes('vault_notes')
-                || row.value.lineage.completeness === 'unknown').map(row => row.value.contentId));
-            return rows.map(row => row.value.contentIds.some(id => hidden.has(id))
-                ? { ...row.value, label: undefined, details: undefined, contentIds: [], availability: 'recovery_unverified' }
-                : row.value);
+            return rows.map(row => row.value);
         });
     }
 
@@ -343,7 +331,7 @@ export class AgentDebugStore {
             const rows = await request(tx.objectStore('contents').index('run').getAll(runKey)) as ContentRow[];
             const result: DebugContent[] = [];
             for (const row of rows) if ((!selected || selected.includes(row.value.contentId))
-                && await this.isContentAllowed(tx, row.value, generation, run.value.ownerSessionId)) result.push(row.value);
+                && await this.isContentAllowed(tx, row.value, generation)) result.push(row.value);
             if (!selected) return result;
             const byId = new Map(result.map(content => [content.contentId, content]));
             return selected.flatMap(id => byId.has(id) ? [byId.get(id)!] : []);
@@ -351,9 +339,13 @@ export class AgentDebugStore {
     }
 
     private async removeRun(tx: IDBTransaction, row: RunRow): Promise<void> {
+        // Child primary keys are JSON tuples beginning with the encoded runKey.
+        // The comma's immediate successor bounds exactly that prefix, including
+        // every content ID/event segment without enumerating records in the renderer.
+        const prefix = key(row.runKey).slice(0, -1) + ',';
+        const children = this.ranges!.bound(prefix, prefix.slice(0, -1) + '-', false, true);
         for (const name of ['events', 'contents'] as const) {
-            const ids = await request(tx.objectStore(name).index('run').getAllKeys(row.runKey));
-            for (const id of ids) tx.objectStore(name).delete(id);
+            tx.objectStore(name).delete(children);
         }
         tx.objectStore('runs').delete(row.id);
     }
@@ -423,20 +415,6 @@ export class AgentDebugStore {
         }
     }
 
-    async revokeDomains(domains: readonly DebugDomain[], options: { sourceToken?: string } = {}): Promise<void> {
-        return this.transact([...STORES], 'readwrite', async tx => {
-            const rows = new Map<string, ContentRow>();
-            for (const domain of domains) {
-                const id = key('domain', this.vaultKey, domain);
-                this.putControl(tx, id, Number(await this.control(tx, id) ?? 0) + 1);
-                const entries = await request(tx.objectStore('contents').index('domains').getAll(key(this.vaultKey, domain))) as ContentRow[];
-                entries.forEach(row => rows.set(row.id, row));
-            }
-            await this.redactContentRows(tx, [...rows.values()]);
-            if (options.sourceToken !== undefined) this.putControl(tx, key('source-token', this.vaultKey), options.sourceToken);
-        });
-    }
-
     async forgetClaim(claimId: string, options: { deviceWide?: boolean; domains?: readonly DebugDomain[] } = {}): Promise<void> {
         return this.transact([...STORES], 'readwrite', async tx => {
             const tombstone = key('claim', options.deviceWide ? '*' : this.vaultKey, claimId);
@@ -465,11 +443,6 @@ export class AgentDebugStore {
             const unknown = await request(tx.objectStore('contents').index('unknownDomains').getAll('legacy_memory')) as ContentRow[];
             await this.redactContentRows(tx, [...new Map([...rows, ...unknown.filter(row => row.vaultKey === this.vaultKey)].map(row => [row.id, row])).values()]);
         });
-    }
-
-    async applySourceToken(token: string): Promise<void> {
-        const current = await this.getGeneration();
-        if (current.sourceToken !== token) await this.revokeDomains(DEBUG_DOMAINS, { sourceToken: token });
     }
 
     setQuarantined(value: boolean): Promise<void> {

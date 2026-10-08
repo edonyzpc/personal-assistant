@@ -1,7 +1,6 @@
 import { ChatService } from '../src/ai-services/chat-service';
 import type { AiServiceHost } from '../src/ai-services/AiServiceHost';
 import type { TaskSourceRunHost } from '../src/ai-services/task-source-run';
-import type { InputLineage } from '../src/ai-services/input-lineage';
 import { completeInputLineage } from '../src/ai-services/input-lineage';
 import { createAbortError } from '../src/ai-services/chat-utils';
 
@@ -20,20 +19,10 @@ jest.mock('../src/ai-services/task-source-run', () => {
     return { ...actual, TaskSourceRun: class extends actual.TaskSourceRun {
         constructor(host: TaskSourceRunHost) {
             super(host);
-            const original = this.prepareLineageAdmission;
-            Object.defineProperty(this, 'prepareLineageAdmission', { value: async (lineage: InputLineage | undefined, signal?: AbortSignal) => {
+            const original = this.prepareGenerationSnapshot;
+            Object.defineProperty(this, 'prepareGenerationSnapshot', { value: async (...args: Parameters<typeof original>) => {
                 mockPreparations += 1;
-                if (mockRevoke && mockProviderRequests > 0) {
-                    const revoke = mockRevoke; mockRevoke = undefined; setTimeout(revoke, 0);
-                }
-                const receipt = await original(lineage, signal);
-                if (mockOrdinaryEdit && mockProviderRequests === 0) {
-                    const edit = mockOrdinaryEdit; mockOrdinaryEdit = undefined; edit();
-                    mockOrdinaryEditApplied = true;
-                    expect(receipt.isCurrent()).toBe(false);
-                    expect(receipt.sourceValidity()).toBe(true);
-                }
-                return receipt;
+                return original(...args);
             } });
         }
     } };
@@ -72,6 +61,7 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'bat
         memorySearch: { ensureReadyForChat: async () => ({ decision: 'answer-now' }), searchHybrid: async () => [] },
         isDataBoundaryAllowedPath: (path: string) => !denied.has(path), getMemoryEvidenceEpoch: () => 'synthetic-boundary',
         getTaskSourceAuthorityEpoch: () => String(mockAuthority),
+        getTaskSourceConfigurationEpoch: () => change === 'ordinary-edit' ? 'fixed-configuration' : String(mockAuthority),
         getAPIToken: async () => 'synthetic-token', log: () => undefined,
         isOperationsAgentEnabled: false, getMemoryExtractionPromptContext: () => undefined,
     } as unknown as AiServiceHost;
@@ -84,6 +74,10 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'bat
         requests.push(body);
         mockProviderRequests = requests.length;
         const first = requests.length === 1;
+        if (first) {
+            mockRevoke?.(); mockRevoke = undefined;
+            if (mockOrdinaryEdit) { mockOrdinaryEdit(); mockOrdinaryEdit = undefined; mockOrdinaryEditApplied = true; }
+        }
         if (first) await new Promise<void>((resolve, reject) => {
             const signal = init?.signal ?? controller.signal;
             const abort = () => { signal.removeEventListener('abort', abort); reject(createAbortError()); };
@@ -140,7 +134,7 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'bat
     const firstRequest = async () => {
         start();
         await driveUntil(() => requests.length === 1);
-        expect(mockPreparations).toBeGreaterThan(0);
+        expect(mockPreparations).toBe(1);
         expect(requests).toHaveLength(1);
         expect(read).not.toHaveBeenCalled();
         expect(releaseFirstResponse).toBeDefined();
@@ -150,9 +144,9 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'bat
         releaseFirstResponse();
         await driveUntil(() => settled);
         await running;
-        expect(mockPreparations).toBeGreaterThan(0);
+        expect(mockPreparations).toBe(2);
         expect(requests).toHaveLength(2);
-        expect(read).toHaveBeenCalledTimes(revoke || change === 'batch-rejected' ? 0 : 1);
+        expect(read).toHaveBeenCalledTimes(change === 'batch-rejected' ? 0 : 1);
         if (change === 'batch-rejected') {
             const messages = (requests[1] as { messages: Array<{ role: string; content: string }> }).messages;
             const results = messages.filter(message => message.role === 'tool');
@@ -198,7 +192,7 @@ describe.each(['unchanged', 'revoked', 'ordinary-edit', 'batch-rejected'] as con
         firstStageVerified = true;
         phasePassed = true;
     });
-    it('preserves the legacy read gate and history after the tool response', async () => {
+    it('admits the new target and applies only pending configuration to the next input', async () => {
         // Both phases keep the same run, history, authority and production
         // deadline. Each default test timeout bounds its own request phase.
         expect(firstStageVerified).toBe(true);

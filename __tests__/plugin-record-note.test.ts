@@ -1214,6 +1214,12 @@ describe('plugin startup view registration', () => {
             targetPath: 'records',
             fileFormat: 'YYYY-MM-DD',
             enableMetadataUpdating: true,
+            dataBoundary: {
+                excludedFolders: [], excludedTags: [], generatedNotePolicy: 'exclude-generated',
+                providerDisclosureReasons: [], cleanupGroups: [],
+            },
+            vssCacheExcludePath: [],
+            pagelet: { excludedFolders: [], excludedTags: [], excludedPatterns: [] },
         };
         plugin.recordActions = new RecordActions({
             app: plugin.app,
@@ -9557,8 +9563,16 @@ describe('B-135 legacy Personal without extraction', () => {
     function createReaderHarness() {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         installPluginShellOwners(plugin);
-        plugin.settings = { memoryEnabled: true, memoryExtractionEnabled: false,
-            memoryExtractionConsent: { state: 'paused', version: 1 }, statisticsVaultId: 'legacy-vault' };
+        plugin.settings = {
+            memoryEnabled: true, memoryExtractionEnabled: false,
+            memoryExtractionConsent: { state: 'paused', version: 1 }, statisticsVaultId: 'legacy-vault',
+            dataBoundary: {
+                excludedFolders: [], excludedTags: [], generatedNotePolicy: 'exclude-generated',
+                providerDisclosureReasons: [], cleanupGroups: [],
+            },
+            vssCacheExcludePath: [],
+            pagelet: { excludedFolders: [], excludedTags: [], excludedPatterns: [] },
+        };
         plugin.app = { vault: { configDir: '.obsidian', adapter: {} } };
         plugin.getGovernedMemoryProjectionSnapshot = jest.fn(() => null);
         plugin.getMemoryGovernanceUiMode = jest.fn(() => plugin.getGovernedMemoryProjectionSnapshot()

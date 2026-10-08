@@ -32,7 +32,13 @@ export class WritingStyleUnavailableError extends Error {
 
 export class WritingStyleService {
     private disposed = false;
+    private readonly generationRevokedClaims = new Set<string>();
     constructor(private readonly options: WritingStyleServiceOptions) {}
+
+    /** Called only by the owner after a durable Forget, independently of UI caches. */
+    invalidateGenerationClaim(claimId: string): void {
+        this.generationRevokedClaims.add(claimId);
+    }
 
     async remember(versionId: string, scene: WritingStyleScene, explicitActionId: string, noteSourceRef?: PersistedSourceRef): Promise<{ claimId: string; revisionId: string }> {
         this.assertActive();
@@ -105,7 +111,28 @@ export class WritingStyleService {
         };
         const isCurrent = (): boolean => !budget.signal?.aborted && isSourceCurrent();
         if (!isCurrent()) throw new Error('Writing style changed while preparing');
-        return { context: selected.context, revisionIds: selected.revisionIds, isCurrent, isSourceCurrent, skipped: selected.skipped };
+        const selectedClaimIds = new Set(selected.revisionIds.map(id => revisions.get(id)!.claimId));
+        let retentionSequence = commitSequence;
+        let generationRetained = true;
+        const isGenerationRetained = (): boolean => {
+            if ([...selectedClaimIds].some(id => this.generationRevokedClaims.has(id))) generationRetained = false;
+            if (!generationRetained) return false;
+            const latest = this.options.getStateSnapshot();
+            if (!latest || latest.vaultScopeKey !== vaultScopeKey
+                || latest.state.commitSequence === retentionSequence) return true;
+            retentionSequence = latest.state.commitSequence;
+            // Source edits, corrections, pause and policy changes do not revoke
+            // an accepted generation. Explicit Forget/removal is a separate effect.
+            generationRetained = [...selectedClaimIds].every(id => {
+                const claim = latest.state.claims.find(candidate => candidate.id === id);
+                return !!claim && !['forget_pending', 'forgotten_tombstone', 'undone_add_tombstone'].includes(claim.lifecycle)
+                    && !latest.state.pendingOperations.some(operation => operation.claimId === id
+                        && operation.kind === 'forget');
+            });
+            return generationRetained;
+        };
+        return { context: selected.context, revisionIds: selected.revisionIds, isCurrent, isSourceCurrent,
+            isGenerationRetained, skipped: selected.skipped };
     }
 
     async correct(claimId: string, exactText: string, scene: WritingStyleScene, explicitActionId: string): Promise<void> {

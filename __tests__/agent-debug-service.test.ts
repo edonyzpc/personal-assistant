@@ -26,6 +26,89 @@ function setup(enabled = true, budgets?: Partial<DebugBudgets>) {
 }
 
 describe('Agent Debug service', () => {
+    it('admits only one bounded oversized observation until its write settles', async () => {
+        const { service, store, batches } = setup();
+        await service.initialize();
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        await service.flush();
+        let finishWrite!: () => void;
+        const writing = new Promise<void>(resolve => { finishWrite = resolve; });
+        store.writeBatch.mockImplementationOnce(async batch => { await writing; batches.push(batch); return true; });
+        const extracted = 'x'.repeat(2.5 * 1024 * 1024);
+        recorder.observe({ nodeId: 'tool-first', kind: 'tool', phase: 'tool_result', toolOutput: extracted });
+        const flushing = service.flush();
+        recorder.observe({ nodeId: 'small', kind: 'phase', phase: 'tool_completed' });
+        recorder.observe({ nodeId: 'tool-second', kind: 'tool', phase: 'tool_result', toolOutput: extracted });
+        recorder.finish('completed');
+        expect((await service.listRuns())[0].hasGap).toBe(true);
+        finishWrite(); await flushing; await service.flush();
+        const contents = batches.flatMap(batch => batch.contents).filter(content => content.kind === 'tool_output');
+        expect(contents.map(content => content.text).join('')).toBe(extracted);
+        expect(contents.every(content => content.contentId.startsWith('tool-first:'))).toBe(true);
+        expect(batches.flatMap(batch => batch.events).some(event => event.nodeId === 'small')).toBe(true);
+        expect(batches.at(-1)?.run.status).toBe('completed');
+        recorder.observe({ nodeId: 'tool-after-settle', kind: 'tool', phase: 'tool_result', toolOutput: extracted });
+        await service.flush();
+        expect(batches.flatMap(batch => batch.contents).filter(content => content.kind === 'tool_output')
+            .map(content => content.text).join('')).toBe(extracted + extracted);
+        await service.dispose();
+    });
+
+    it('saves a normal ready burst of 4096 immutable reply deltas without a capacity gap', async () => {
+        const { service, batches } = setup();
+        await service.initialize();
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        await service.flush();
+        const delta = 'complete reply fragment content. ';
+        for (let index = 0; index < 4096; index++) {
+            recorder.observe({ nodeId: 'answer', kind: 'llm', phase: 'receiving', text: delta });
+        }
+        recorder.finish('completed'); await service.flush();
+        const output = batches.flatMap(batch => batch.contents).filter(content => content.kind === 'output');
+        expect(output.map(content => content.text).join('')).toBe(delta.repeat(4096));
+        expect(output.every(content => content.text === delta)).toBe(true);
+        expect((await service.listRuns())[0]).toMatchObject({ hasGap: false, collection: 'complete' });
+        await service.dispose();
+    });
+
+    it('accounts drained and inflight bodies until a slow write settles', async () => {
+        const { service, store, batches } = setup(true, { queueBytes: 4096 });
+        await service.initialize();
+        let finishWrite!: () => void;
+        const writing = new Promise<void>(resolve => { finishWrite = resolve; });
+        store.writeBatch.mockImplementationOnce(async batch => { await writing; batches.push(batch); return true; });
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        const pending = [service.flush()];
+        for (let index = 0; index < 12; index++) {
+            recorder.observe({ nodeId: 'answer', kind: 'llm', phase: 'receiving', text: `${index}:${'x'.repeat(800)}` });
+            pending.push(service.flush());
+        }
+        finishWrite(); await Promise.all(pending);
+        // Successive drains must not release budget while their captured batches still wait.
+        expect(batches.flatMap(batch => batch.contents).reduce((sum, content) => sum + content.accountedBytes, 0)).toBeLessThan(4096);
+        expect(batches.flatMap(batch => batch.contents).filter(content => content.kind === 'output').length).toBeLessThan(3);
+        expect((await service.listRuns())[0].hasGap).toBe(true);
+        recorder.observe({ nodeId: 'answer', kind: 'llm', phase: 'receiving', text: 'after-write' });
+        await service.flush();
+        expect(batches.flatMap(batch => batch.contents).at(-1)?.text).toBe('after-write');
+        await service.dispose();
+    });
+
+    it('splits full extracted text and reasoning at storage-block limits without truncation', async () => {
+        const { service, batches } = setup(true, { contentBytes: 1024 });
+        await service.initialize();
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        const extracted = '提取内容😀'.repeat(1200);
+        recorder.observe({ nodeId: 'tool', kind: 'tool', phase: 'tool_result', toolOutput: { extractedText: extracted, data: 'full nested result' } });
+        recorder.observe({ nodeId: 'answer', kind: 'llm', phase: 'receiving', reasoning: extracted });
+        await service.flush();
+        const blocks = batches.flatMap(batch => batch.contents);
+        expect(blocks.filter(block => block.kind === 'reasoning').map(block => block.text).join('')).toBe(extracted);
+        expect(JSON.parse(blocks.filter(block => block.kind === 'tool_output').map(block => block.text).join(''))).toEqual({ extractedText: extracted, data: 'full nested result' });
+        expect((await service.listRuns())[0].hasGap).toBe(false);
+        await service.dispose();
+    });
+
     it('waits for in-flight writes but does not write or notify when repeatedly reading settled details', async () => {
         jest.useFakeTimers();
         const { service, store, batches } = setup();
@@ -55,18 +138,18 @@ describe('Agent Debug service', () => {
         }
     });
 
-    it('keeps detailed fields in memory only and removes them when Debug turns off', async () => {
+    it('persists observed reasoning and complete tools independently of later prompts and Debug toggles', async () => {
         const { service, batches } = setup(); await service.initialize();
         const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
         recorder.observe({ nodeId: 'call', kind: 'llm', phase: 'receiving', reasoning: 'REASONING', toolInput: { path: 'TOOL_ONLY' },
             prompt: JSON.stringify({ messages: [{ role: 'user', content: 'PROMPT' }] }) });
         await service.flush();
         expect(JSON.stringify(batches)).toContain('PROMPT');
-        expect(JSON.stringify(batches)).not.toContain('REASONING');
-        expect(JSON.stringify(batches)).not.toContain('TOOL_ONLY');
-        expect(service.getSessionDetails(recorder.captureId, 'call')).toHaveLength(2);
-        service.setEnabled(false);
+        expect(JSON.stringify(batches)).toContain('REASONING');
+        expect(JSON.stringify(batches)).toContain('TOOL_ONLY');
         expect(service.getSessionDetails(recorder.captureId, 'call')).toEqual([]);
+        service.setEnabled(false);
+        expect((await service.getContents(recorder.captureId)).map(content => content.kind)).toEqual(expect.arrayContaining(['reasoning', 'tool_input']));
         await service.dispose();
     });
 
@@ -136,15 +219,6 @@ describe('Agent Debug service', () => {
         await service.dispose();
     });
 
-    it('does not revoke an active capture for an unchanged source token', async () => {
-        const { service, store } = setup(); await service.initialize();
-        const changed = jest.fn(); service.subscribe(changed);
-        await service.applySourceToken('token-a');
-        expect(store.applySourceToken).not.toHaveBeenCalled();
-        expect(changed).not.toHaveBeenCalled();
-        await service.dispose();
-    });
-
     it('marks a run usage incomplete when another observed call has no token evidence', async () => {
         const { service } = setup(); await service.initialize();
         const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
@@ -192,7 +266,7 @@ describe('Agent Debug service', () => {
     });
 
     it('commits terminal metadata when both the event and queue budget are exhausted', async () => {
-        const { service, batches } = setup(true, { runEvents: 1, queueBytes: 1, queueEvents: 1 });
+        const { service, batches } = setup(true, { runEvents: 1, runBytes: 1, queueBytes: 1, queueEvents: 1 });
         await service.initialize();
         const recorder = service.startRun({ prompt: 'body exceeds queue', provider: 'p', model: 'm' });
         recorder.finish('failed'); await service.flush();

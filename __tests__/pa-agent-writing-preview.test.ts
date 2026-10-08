@@ -52,13 +52,16 @@ async function fixture(outcome: 'complete' | 'cancel' | 'tail-error' | 'forget' 
     });
     let snapshot = await repository.initialize();
     let nextId = 0;
-    const coordinator = new MemoryGovernanceCoordinator({ repository, opaqueVaultKey: 'vault', idFactory: () => `style-${++nextId}` });
+    let styleService: WritingStyleService;
+    const coordinator = new MemoryGovernanceCoordinator({ repository, opaqueVaultKey: 'vault', idFactory: () => `style-${++nextId}`,
+        projectionCleanupPort: { invalidateGenerationClaim: ({ claimId }) => styleService.invalidateGenerationClaim(claimId),
+            cleanupExactProjection: async () => undefined } });
     const version: WritingVersion = {
         id: 'version-1', requestId: 'sample-request', messageId: 'sample-message', conversationId: 'conversation-1',
         text: styleText, textHash: hashWritingStyleText(styleText), explanation: '', origin: 'ai_generated',
         turnIndex: 0, createdAt: 1, associatedImages: [], backgroundSourceRefs: [], styleRevisionIds: [], scene,
     };
-    const styleService = new WritingStyleService({
+    styleService = new WritingStyleService({
         versions: { get: async () => version }, coordinator,
         getStateSnapshot: () => ({ state: snapshot, vaultScopeKey: 'vault' }),
         isRuntimeEnabled: () => true,
@@ -133,7 +136,8 @@ async function fixture(outcome: 'complete' | 'cancel' | 'tail-error' | 'forget' 
             ] });
             if (outcome === 'forget' || outcome === 'cancel-forget') {
                 await coordinator.forget({ claimId: remembered.claimId });
-                snapshot = await repository.initialize();
+                // The UI projection still holds its old sample. The durable
+                // owner notification must revoke preview/final delivery now.
             }
             if (outcome === 'cancel' || outcome === 'cancel-forget') {
                 controller.abort();
@@ -236,7 +240,8 @@ describe('writing preview with a governed style through the production runtime',
         await expect(f.run()).rejects.toMatchObject({ name: 'AbortError' });
 
         expectGovernedStyleWasSent(f);
-        expect(f.prepared[0].isSourceCurrent?.()).toBe(false);
+        expect(f.prepared[0].isSourceCurrent?.()).toBe(true);
+        expect(f.prepared[0].isGenerationRetained?.()).toBe(false);
         expect(f.events.find((event) => event.kind === 'writing-recovery')).toMatchObject({
             reason: 'source_changed', rawText: '', previewText: '',
         });
@@ -395,7 +400,8 @@ describe('writing preview with a governed style through the production runtime',
 
         expectGovernedStyleWasSent(f);
         expect(f.controller.signal.aborted).toBe(false);
-        expect(f.prepared[0].isSourceCurrent?.()).toBe(false);
+        expect(f.prepared[0].isSourceCurrent?.()).toBe(true);
+        expect(f.prepared[0].isGenerationRetained?.()).toBe(false);
         expect(f.events.filter((event) => event.kind === 'writing-preview')).toEqual([
             expect.objectContaining({ text: body }), expect.objectContaining({ text: '' }),
         ]);

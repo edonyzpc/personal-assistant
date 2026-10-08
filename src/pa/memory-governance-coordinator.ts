@@ -40,6 +40,8 @@ const COMPLETED_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const MAX_FORGET_TRANSITIONS_PER_RUN = 10_000;
 
 export interface ExactMemoryProjectionCleanupPort {
+    /** The durable Forget fact revokes an active generation before async cleanup. */
+    invalidateGenerationClaim?(input: { claimId: string }): void;
     /** Claim-wide copies are not necessarily represented by a projection link. */
     cleanupDebugCopies?(input: { claimId: string; partition: MemoryPartitionKey }): Promise<void>;
     /**
@@ -584,11 +586,17 @@ export class MemoryGovernanceCoordinator {
             const payloadEntryId = this.idFactory();
             const occurredAt = this.nowIso();
             const assertCurrent = this.memoryActionCommitGuard(input.isCurrent);
-            return this.runDomainMutation(async () => {
+            let removedGenerationClaimId: string | undefined;
+            const result = await this.runDomainMutation(async () => {
                 return this.repository.transact((draft) => {
                     const migration = this.assertMutationEnvelope(draft, occurredAt);
                     const replay = this.replayExplicitAction(draft, input.action);
-                    if (replay) return replay.value;
+                    if (replay) {
+                        if (draft.claims.some(claim => claim.id === replay.value.claimId && claim.lifecycle === 'undone_add_tombstone')
+                            && draft.changeEvents.some(event => event.id === input.eventId && event.kind === 'add'
+                                && event.claimId === replay.value.claimId)) removedGenerationClaimId = replay.value.claimId;
+                        return replay.value;
+                    }
                     const event = draft.changeEvents.find((candidate) => candidate.id === input.eventId);
                     if (!event) throw new CoordinatorError("undo_not_available");
                     if (!event.undoSnapshotId) {
@@ -599,6 +607,9 @@ export class MemoryGovernanceCoordinator {
                         ));
                         if (!completed) throw new CoordinatorError("undo_not_available");
                         const completedClaim = this.requireClaimInScope(draft, completed.claimId);
+                        if (event.kind === 'add' && completedClaim.lifecycle === 'undone_add_tombstone') {
+                            removedGenerationClaimId = completedClaim.id;
+                        }
                         return receipt(completedClaim.id, completed);
                     }
                     const claim = this.requireClaimInScope(draft, event.claimId);
@@ -624,6 +635,7 @@ export class MemoryGovernanceCoordinator {
                     }
 
                     if (snapshot.restoreMode === "remove_added_claim") {
+                        removedGenerationClaimId = claim.id;
                         return this.undoAutomaticAddition(
                             draft,
                             migration,
@@ -697,6 +709,10 @@ export class MemoryGovernanceCoordinator {
                     return receipt(restoredClaim.id, undoEvent);
                 }, assertCurrent);
             });
+            if (result.ok && removedGenerationClaimId) {
+                this.projectionCleanupPort?.invalidateGenerationClaim?.({ claimId: removedGenerationClaimId });
+            }
+            return result;
         });
     }
 
@@ -1078,6 +1094,7 @@ export class MemoryGovernanceCoordinator {
                     },
                 };
             }
+            this.projectionCleanupPort?.invalidateGenerationClaim?.({ claimId: input.claimId });
             return this.runForgetOperation(started.value.operationId);
         });
     }
@@ -1091,6 +1108,9 @@ export class MemoryGovernanceCoordinator {
             );
             const completed: string[] = [];
             const pending: string[] = [];
+            for (const operation of operations) {
+                this.projectionCleanupPort?.invalidateGenerationClaim?.({ claimId: operation.claimId });
+            }
             for (const operation of operations) {
                 const result = await this.runForgetOperation(operation.id);
                 if (result.ok) completed.push(result.value.claimId);

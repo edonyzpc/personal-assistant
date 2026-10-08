@@ -406,6 +406,23 @@ function registerMemoryEvidence(
 }
 
 describe("PA Agent canonical host tool executor", () => {
+    it('observes the actual tool result before model prompt projection', async () => {
+        const file = { path: 'notes/complete.md', extension: 'md', stat: { mtime: 1, size: 12000 } };
+        const body = 'FULL_NOTE_TEXT '.repeat(100);
+        const host = { settings: {}, log: jest.fn(), app: {
+            vault: { getAbstractFileByPath: () => file, getMarkdownFiles: () => [file], cachedRead: async () => body },
+            metadataCache: { getFileCache: () => null },
+        } };
+        const registry = new CapabilityRegistry();
+        registry.register(createChatToolCapability(createReadNoteTool(), { providerId: 'core-tools' }));
+        const onToolResult = jest.fn();
+        const executor = createPaAgentCapabilityToolExecutor({ registry, host: host as never, onToolResult });
+        await executor.execute({ runId: 'run', turnId: 'turn', turnIndex: 0, userInput: 'read note',
+            toolCall: { type: 'toolCall', id: 'read', index: 0, name: 'read_note', input: { path: file.path } },
+            signal: new AbortController().signal });
+        expect(onToolResult).toHaveBeenCalledWith(expect.objectContaining({ turnId: 'turn', toolCallId: 'read', toolName: 'read_note',
+            result: expect.objectContaining({ ok: true, content: expect.objectContaining({ text: body }) }) }));
+    });
     it("propagates only allowlisted content-free capability reasons into loop metadata", () => {
         const baseResult: AgentCapabilityResult = {
             status: "unavailable",

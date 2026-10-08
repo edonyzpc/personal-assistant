@@ -37,6 +37,13 @@ export interface LatestMemorySourceMaterial {
     size: number;
 }
 
+export interface TaskSourceConfigurationSnapshot {
+    epoch: string;
+    isPathAllowed: (path: string) => boolean;
+    memoryAllowed: boolean;
+    webAllowed: boolean;
+}
+
 /**
  * Narrow host interface for AI services.
  *
@@ -145,6 +152,12 @@ export interface AiServiceHost {
 
     /** Live authority/identity fence for sealing cooperatively validated input ancestry. */
     getTaskSourceAuthorityEpoch?(): string;
+
+    /** Low-frequency source configuration changes, consumed at the next Agent loop boundary. */
+    getTaskSourceConfigurationEpoch?(): string;
+
+    /** Capture the policy used by one loop; later settings changes belong to the next loop. */
+    captureTaskSourceConfiguration?(): TaskSourceConfigurationSnapshot;
 
     /** Whether a vault path may be used as Memory evidence under current privacy settings. */
     isDataBoundaryAllowedPath?(this: void, path: string): boolean;

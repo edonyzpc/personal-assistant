@@ -9,7 +9,6 @@ import { completeInputLineage } from "../src/ai-services/input-lineage";
 import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
 import { AgentRunCoordinator } from "../src/ai-services/agent-run-coordinator";
 import { BuiltinWebSearchProvider, createBailianWebSearchNetworkPolicy } from "../src/ai-services/builtin-web-search-provider";
-import * as vaultEvidence from "../src/ai-services/vault-observation-evidence";
 import * as hostTools from "../src/ai-services/pa-agent-host-tools";
 import { MemorySearchTool } from "../src/ai-services/memory-search-tool";
 import { createPaRuntimeEvalRequestBudget, PA_RUNTIME_EVAL_CASES, runPaRuntimeEvalCase,
@@ -214,7 +213,7 @@ describe("B-149 runtime task baseline", () => {
     it.each([
         { tool: 'search_vault_metadata', change: 'epoch' },
         { tool: 'search_memory', change: 'memory' },
-    ] as const)('withdraws $tool before the next SDK request after $change changes', async ({ tool, change }) => {
+    ] as const)('applies the next-loop source policy to $tool after $change changes', async ({ tool, change }) => {
         const evalCase = PA_RUNTIME_EVAL_CASES.find(item => item.id === 'E-05')!;
         const host = hostFor(evalCase);
         host.settings.memoryEnabled = true;
@@ -242,9 +241,15 @@ describe("B-149 runtime task baseline", () => {
         });
         expect(requests).toHaveLength(2);
         const second = JSON.stringify(requests[1]);
-        expect(second).toContain('result_unknown');
-        expect(second).not.toContain('"matches":[]');
-        expect(second).not.toContain('"status":"unavailable"');
+        if (change === 'epoch') {
+            const toolText = requests[1].messages.filter(message => message.role === 'tool').map(message => String(message.content)).join('\n');
+            expect(toolText).toContain('"matches": []');
+            expect(toolText).not.toContain('result_unknown');
+        } else {
+            expect(second).toContain('result_unknown');
+            expect(second).not.toContain('"matches":[]');
+            expect(second).not.toContain('"status":"unavailable"');
+        }
     });
 
     it('sends Host-standard read-only Vault failures for E-06 as actual SDK tool results', async () => {
@@ -390,7 +395,7 @@ describe("B-149 runtime task baseline", () => {
         expect(toolMessage?.content).not.toContain('Vault getMarkdownFiles is unavailable.');
     });
 
-    it('withdraws a standard Vault failure when its source epoch changes before SDK dispatch', async () => {
+    it('retains an observed standard Vault failure after an ordinary epoch change before SDK dispatch', async () => {
         const evalCase = PA_RUNTIME_EVAL_CASES.find(item => item.id === 'E-06')!;
         const host = hostFor(evalCase);
         let epoch = 'e06-epoch-1';
@@ -419,8 +424,8 @@ describe("B-149 runtime task baseline", () => {
         expect(results[0].content.promptText).toContain('Read-only tool was unavailable.');
         expect(requests).toHaveLength(2);
         const second = JSON.stringify(requests[1]);
-        expect(second).toContain('result_unknown');
-        expect(second).not.toContain('Read-only tool was unavailable.');
+        expect(second).not.toContain('result_unknown');
+        expect(second).toContain('Read-only tool was unavailable.');
     });
 
     it('does not replay a standard Vault failure or its derived answer in a later Web run', async () => {
@@ -616,12 +621,9 @@ describe("B-149 runtime task baseline", () => {
                 let release!: () => void;
                 const enteredPromise = new Promise<void>(resolve => { entered = resolve; });
                 const heldPreparation = new Promise<void>(resolve => { release = resolve; });
-                const originalPrepare = vaultEvidence.prepareVaultObservationProjection;
-                const prepareSpy = jest.spyOn(vaultEvidence, "prepareVaultObservationProjection")
-                    .mockImplementation(async input => {
-                        if (active?.id === "E-11") { entered(); await heldPreparation; }
-                        return originalPrepare(input);
-                    });
+                // Hold actual model credential preparation; snapshot execution no longer
+                // calls the old source-proof projection before every generation.
+                host.getAPIToken = async () => { entered(); await heldPreparation; return 'b149-synthetic-token'; };
                 const controller = new AbortController();
                 const coordinator = new AgentRunCoordinator();
                 const running = runPaRuntimeEvalCase(evalCase, host, new AIUtils(host), {
@@ -641,7 +643,7 @@ describe("B-149 runtime task baseline", () => {
                         new Promise<boolean>(resolve => setTimeout(() => resolve(false), 40))]);
                     queuedController.abort();
                     probes.e11 = { enteredBeforeTimeout, cancelSettledBeforeRelease, secondLeaseAvailableBeforeRelease };
-                } finally { controller.abort(); release(); prepareSpy.mockRestore(); }
+                } finally { controller.abort(); release(); }
                 actual.push(await running);
                 probes.e11 = { ...(probes.e11 as Record<string, unknown>),
                     requestsAfterLateRelease: requests.filter(request => request.caseId === "E-11").length,

@@ -199,12 +199,12 @@ describe('B-135 production source handling', () => {
         expect(f.requests[0].tools?.map(tool => tool.function.name)).not.toContain('query_memories');
     });
 
-    it('keeps a note-derived combined Web query from reaching MCP after the note is revoked', async () => {
+    it('uses an accepted note-derived Web query after the source note is deleted', async () => {
         const path = 'private/DERIVED_WEB_QUERY.md';
         const file = { path, stat: { ctime: 1, mtime: 1, size: 32 } };
         let noteCurrent = true;
         const webRequest = jest.fn<BuiltinWebSearchRequest>(async () => {
-            throw new Error('A revoked note query reached Web MCP');
+            throw new Error('The synthetic provider is unavailable');
         });
         const provider = new BuiltinWebSearchProvider({ policy: createBailianWebSearchNetworkPolicy(),
             apiKey: 'synthetic-web-token', request: webRequest, isEnabled: () => true });
@@ -223,7 +223,8 @@ describe('B-135 production source handling', () => {
                 userMessageId: 'combined-user' } });
         expect(f.requests[0].tools?.map(tool => tool.function.name)).toContain('webSearch');
         expect(requestText(f.requests[0])).toContain('DERIVED_WEB_QUERY_SENTINEL');
-        expect(webRequest).not.toHaveBeenCalled();
+        expect(webRequest).toHaveBeenCalledTimes(1);
+        expect(webRequest.mock.calls[0][0].body).toMatchObject({ query: 'DERIVED_WEB_QUERY_SENTINEL' });
     });
 
     it('does not send a pixel-derived combined Web query after the image asset is revoked', async () => {
@@ -298,7 +299,7 @@ describe('B-135 production source handling', () => {
         expect(webRequest.mock.calls[0]?.[0]?.body).toMatchObject({ query: 'PUBLIC_USER_WEB_QUERY_SENTINEL' });
     });
 
-    it('saves a legitimate scoped Writing artifact after its stream closes and still rejects note revocation', async () => {
+    it('saves a legitimate scoped Writing artifact and retains its snapshot after note deletion', async () => {
         const path = 'notes/WRITING_CONTEXT.md';
         const file = { path, extension: 'md', stat: { ctime: 1, mtime: 1, size: 1 } };
         let liveFile: typeof file | null = file;
@@ -328,7 +329,7 @@ describe('B-135 production source handling', () => {
         expect(version.text).toBe('Scoped writing body');
         expect(stored?.id).toBe(version.id);
         liveFile = null;
-        expect(artifact.isSourceCurrent()).toBe(false);
+        expect(artifact.isSourceCurrent()).toBe(true);
     });
 
     it('does not carry a published note-directory path into the next web request without any note read', async () => {
@@ -463,7 +464,7 @@ describe('B-135 production source handling', () => {
         expect(f.requests).toHaveLength(2);
         expect(f.requests.every(request => !requestText(request).includes('PRIVATE_STYLE_SENTINEL'))).toBe(true);
     });
-    it('does not create a writing artifact when a supplied note disappears after the final request', async () => {
+    it('creates a writing artifact from its accepted note snapshot after the source disappears', async () => {
         const prompt = '根据当前笔记写一段文字';
         let live = true;
         const f = fixture([
@@ -480,11 +481,11 @@ describe('B-135 production source handling', () => {
         await f.run({ images: undefined, prompt, writingRequest: { requestId: 'writing-1' } });
         expect(f.requests).toHaveLength(2);
         expect(requestText(f.requests[1])).toContain('NOTE_USED_FOR_WRITING');
-        expect(f.events.some(event => event.kind === 'writing-artifact')).toBe(false);
-        expect(f.events.find(event => event.kind === 'writing-recovery')).toMatchObject({ reason: 'source_changed', rawText: '', previewText: '' });
+        expect(f.events.find(event => event.kind === 'writing-artifact')).toMatchObject({ body: 'SOURCE_BASED_WRITING' });
+        expect(f.events.some(event => event.kind === 'writing-recovery')).toBe(false);
     });
 
-    it.each(['answer', 'summary'] as const)('revalidates historical Memory revocation at the %s SDK retry', async stage => {
+    it.each(['answer', 'summary'] as const)('retains the accepted Memory history at the %s SDK retry', async stage => {
         const history: ChatMessage[] = [
             { role: 'assistant', content: 'REVOKED_HISTORY_MEMORY ' + (stage === 'summary' ? distinctContext('Earlier public detail', 300) : ''),
                 memoryMetadata: { hasMemoryContent: true, allowedMemorySourcePaths: ['A.md'] } },
@@ -511,10 +512,11 @@ describe('B-135 production source handling', () => {
             { stream: stage === 'answer', retryCount: '1' },
         ]);
         expect(f.requests.length).toBeGreaterThan(1);
+        expect(f.requests[1].messages).toEqual(f.requests[0].messages);
         for (const request of f.requests.slice(1)) {
-            expect(requestText(request)).not.toContain('REVOKED_HISTORY_MEMORY');
-            expect(requestText(request)).toContain('KEEP_INDEPENDENT_CHOICES');
+            expect(requestText(request)).toContain('REVOKED_HISTORY_MEMORY');
         }
+        expect(requestText(f.requests.at(-1)!)).toContain('KEEP_INDEPENDENT_CHOICES');
         expect(JSON.stringify(history)).toBe(original);
     });
 
@@ -591,7 +593,7 @@ describe('B-135 production source handling', () => {
         expect(JSON.stringify(history)).toBe(original);
     });
 
-    it.each(['answer', 'summary'] as const)('does not resend replaced history on a %s SDK retry', async stage => {
+    it.each(['answer', 'summary'] as const)('resends the accepted history snapshot on a %s SDK retry', async stage => {
         const history: ChatMessage[] = [
             { role: 'user', content: 'OLD_HISTORY_TEXT ' + (stage === 'summary' ? 'earlier '.repeat(900) : '') },
             { role: 'assistant', content: '方案一；方案二' },
@@ -612,14 +614,15 @@ describe('B-135 production source handling', () => {
             { stream: stage === 'answer', retryCount: '1' },
         ]);
         expect(f.requests.length).toBeGreaterThan(1);
+        expect(f.requests[1].messages).toEqual(f.requests[0].messages);
         for (const request of f.requests.slice(1)) {
-            expect(requestText(request)).not.toContain('OLD_HISTORY_TEXT');
-            expect(requestText(request)).toContain('CORRECTED_HISTORY_TEXT');
-            expect(requestText(request)).toContain('方案一；方案二');
+            expect(requestText(request)).toContain('OLD_HISTORY_TEXT');
+            expect(requestText(request)).not.toContain('CORRECTED_HISTORY_TEXT');
         }
+        expect(requestText(f.requests.at(-1)!)).toContain('方案一；方案二');
     });
 
-    it.each(['answer', 'overflow'] as const)('protects a Vault result at the %s dispatch boundary', async stage => {
+    it.each(['answer', 'overflow'] as const)('retains a Vault snapshot at the %s physical dispatch boundary', async stage => {
         const prompt = '读取当前笔记';
         let liveFile = { path: 'A.md', extension: 'md' };
         let revokedAt = -1;
@@ -646,18 +649,18 @@ describe('B-135 production source handling', () => {
         expect(revokedAt).toBeGreaterThan(0);
         expect(requestText(f.requests[revokedAt])).toContain('SERIALIZED_VAULT_SECRET');
         expect(f.requests[revokedAt].stream).toBe(true);
-        // The SDK retry is blocked; the runtime may prepare a fresh invoke
-        // fallback. That request must contain no material from the old file.
+        // This physical retry belongs to the current generation and retains its input.
         expect(f.sdkAttempts.filter(attempt => attempt.retryCount === '1')).toEqual([
             { stream: true, retryCount: '1' },
         ]);
         expect(f.requests.length).toBeGreaterThan(revokedAt + 1);
+        expect(f.requests[revokedAt + 1].messages).toEqual(f.requests[revokedAt].messages);
         for (const request of f.requests.slice(revokedAt + 1)) {
-            expect(requestText(request)).not.toContain('SERIALIZED_VAULT_SECRET');
+            expect(requestText(request)).toContain('SERIALIZED_VAULT_SECRET');
         }
     });
 
-    it('does not deliver writing after a used Vault source is revoked', async () => {
+    it('delivers the current Writing snapshot after a used source is newly excluded', async () => {
         const prompt = '先读取两篇笔记，再只用B整理';
         const f = fixture((body, index) => {
             if (index === 0) return { tools: [
@@ -683,8 +686,8 @@ describe('B-135 production source handling', () => {
         expect(requestText(f.requests[1])).toContain('A_PRIVATE_MATERIAL');
         expect(requestText(f.requests[1])).toContain('B_ALLOWED_MATERIAL');
         expect(requestText(f.requests[1])).toContain('VALID_PERSONAL_BACKGROUND');
-        expect(f.events.some(event => event.kind === 'writing-artifact')).toBe(false);
-        expect(f.events.some(event => event.kind === 'writing-recovery')).toBe(true);
+        expect(f.events.find(event => event.kind === 'writing-artifact')).toMatchObject({ body: '按B整理' });
+        expect(f.events.some(event => event.kind === 'writing-recovery')).toBe(false);
     });
 
     it('does not publish internal Memory path enumeration as a source directory', async () => {
@@ -833,15 +836,11 @@ describe.each([
         return () => { context = change === 'removed' ? undefined : background.context(newText); };
     }
 
-    function expectCurrentRequest(request: RequestBody, change: typeof changes[number]) {
+    function expectAcceptedRequest(request: RequestBody) {
         const text = requestText(request);
-        expect(text).not.toContain(oldText);
-        if (change === 'replaced') {
-            expect(text).toContain(newText);
-            expect(text).toContain(background.tag);
-        } else {
-            expect(text).not.toContain(background.tag);
-        }
+        expect(text).toContain(oldText);
+        expect(text).not.toContain(newText);
+        expect(text).toContain(background.tag);
     }
 
     it('keeps a valid non-empty background in the actual provider body', async () => {
@@ -853,7 +852,7 @@ describe.each([
         expect(requestText(f.requests[0])).toContain(background.tag);
     });
 
-    it.each(changes)('refreshes %s background after model construction without a style callback', async change => {
+    it.each(changes)('keeps accepted background when it is %s after model construction', async change => {
         const f = fixture([{}]);
         const changeBackground = configureBackground(f, change);
         let modelWaits = 0;
@@ -866,10 +865,10 @@ describe.each([
         await f.run({ images: undefined, prompt: 'Continue our discussion' });
         expect(modelWaits).toBe(1);
         expect(f.requests).toHaveLength(1);
-        expectCurrentRequest(f.requests[0], change);
+        expectAcceptedRequest(f.requests[0]);
     });
 
-    it.each(changes)('refreshes %s background after asynchronous style preparation', async change => {
+    it.each(changes)('keeps accepted background when it is %s during style preparation', async change => {
         const f = fixture((_request, index) => index === 0 ? prepareWritingContextReply()
             : nativeWritingReply(f.lifecycle));
         const changeBackground = configureBackground(f, change);
@@ -882,12 +881,12 @@ describe.each([
         await f.run({ images: undefined, prompt: 'Write a short paragraph', ...nativeWritingOptions(prepareWritingStyleForScene) });
         expect(prepareWritingStyleForScene).toHaveBeenCalledTimes(1);
         expect(f.requests).toHaveLength(2);
-        expectCurrentRequest(f.requests[1], change);
+        expectAcceptedRequest(f.requests[1]);
         expect(requestText(f.requests[1])).toContain(JSON.stringify(styleText).slice(1, -1));
         expect(f.events.find(event => event.kind === 'writing-artifact')).toMatchObject({ styleRevisionIds: ['t14-style'] });
     });
 
-    it.each(changes)('blocks already formatted messages when background is %s before physical SDK dispatch', async change => {
+    it.each(changes)('keeps formatted input when background is %s before physical SDK dispatch', async change => {
         const f = fixture(() => ({}));
         const changeBackground = configureBackground(f, change);
         let changed = false;
@@ -905,12 +904,12 @@ describe.each([
         // existed at the SDK boundary, so an always-empty prompt cannot pass.
         expect(JSON.stringify(f.observed[0].map(message => message.content))).toContain(oldText);
         expect(f.sdkAttempts.length).toBeGreaterThan(0);
-        for (const request of f.requests) expectCurrentRequest(request, change);
-        if (outcome.ok) expect(f.requests.length).toBeGreaterThan(0);
-        else expect(f.requests).toHaveLength(0);
+        expect(outcome.ok).toBe(true);
+        expect(f.requests).toHaveLength(1);
+        expectAcceptedRequest(f.requests[0]);
     });
 
-    it.each(changes)('blocks the real SDK 429 retry after background is %s', async change => {
+    it.each(changes)('keeps the real SDK 429 retry when background is %s', async change => {
         let changeBackground = () => {};
         let changed = false;
         const f = fixture((_body, index) => {
@@ -926,11 +925,10 @@ describe.each([
         expect(signal.aborted).toBe(false);
         expect(requestText(f.requests[0])).toContain(oldText);
         expect(f.sdkAttempts.slice(0, 2)).toEqual([{ stream: true, retryCount: '0' }, { stream: true, retryCount: '1' }]);
-        // The first request preceded revocation. Every later actual fetch must
-        // use a newly prepared projection; an SDK retry may never resend it.
-        for (const request of f.requests.slice(1)) expectCurrentRequest(request, change);
-        if (outcome.ok) expect(f.requests.length).toBeGreaterThan(1);
-        else expect(f.requests).toHaveLength(1);
+        expect(outcome.ok).toBe(true);
+        expect(f.requests).toHaveLength(2);
+        expect(f.requests[1].messages).toEqual(f.requests[0].messages);
+        expectAcceptedRequest(f.requests[1]);
     });
 });
 
@@ -1129,13 +1127,13 @@ describe('B-135 T14 selected-image history summary', () => {
             onUsageAccounting: snapshot => { accounting = snapshot; } }).catch(() => undefined);
         expect(f.requests.some(request => request.stream === false)).toBe(true);
         expect(accounting?.attempts).toEqual(expect.arrayContaining([expect.objectContaining({
-            purpose: 'context_summary', totalTokens: 7, complete: false,
+            purpose: 'context_summary', totalTokens: 7, complete: true,
         })]));
         expect(accounting?.knownPhysicalTokens).toBeGreaterThanOrEqual(7);
         expect(f.events.some(event => event.kind === 'answer-snapshot'
             && JSON.stringify(event).includes('STALE SUMMARY RESPONSE'))).toBe(false);
         expect(debugEvents.some(event => event.text?.includes('STALE SUMMARY RESPONSE')
-            || event.reasoning?.includes('STALE SUMMARY RESPONSE'))).toBe(false);
+            || event.reasoning?.includes('STALE SUMMARY RESPONSE'))).toBe(true);
     });
 
     it.each(['valid', 'revoked'] as const)('preserves selected-image summary preparation for %s sources', async state => {
@@ -1164,7 +1162,7 @@ describe('B-135 T14 selected-image history summary', () => {
     });
 });
 
-it('B-135 T14 keeps grown Memory and drops style that no longer fits after preparation', async () => {
+it('B-135 T14 keeps the accepted Memory and style budget while later Memory grows', async () => {
     const f = fixture((_request, index) => index === 0 ? prepareWritingContextReply()
         : nativeWritingReply(f.lifecycle));
     const oldText = 'T14_SMALL_MEMORY_SENTINEL';
@@ -1178,8 +1176,8 @@ it('B-135 T14 keeps grown Memory and drops style that no longer fits after prepa
     f.host.settings.memoryEnabled = true;
     f.host.getMemoryExtractionPromptContext.mockReturnValue({ memoryContextMode: 'governed', governedMemoryContext: oldText });
     const prepareWritingStyleForScene = jest.fn(async (_scene: unknown, input: { remainingTextChars: number; remainingMemoryChars: number }) => {
-        // The style really fits the initial budget. Only the intervening source
-        // change makes it ineligible; final projection must preserve new Memory.
+        // The style fits the accepted background budget; a later ordinary
+        // background change cannot alter this preparation's actual input.
         expect(styleText.length).toBeLessThan(input.remainingMemoryChars);
         expect(styleText.length).toBeLessThan(input.remainingTextChars);
         await Promise.resolve();
@@ -1189,19 +1187,19 @@ it('B-135 T14 keeps grown Memory and drops style that no longer fits after prepa
     await f.run({ images: undefined, prompt: 'Write a short paragraph', ...nativeWritingOptions(prepareWritingStyleForScene) });
     expect(prepareWritingStyleForScene).toHaveBeenCalledTimes(1);
     expect(f.requests).toHaveLength(2);
-    expect(requestText(f.requests[1])).toContain(grownContext.governedMemoryContext);
-    expect(requestText(f.requests[1])).not.toContain(oldText);
-    expect(requestText(f.requests[1])).not.toContain('T14_OVER_BUDGET_STYLE_SENTINEL');
-    expect(requestText(f.requests[1])).not.toContain('t14-over-budget-style');
+    expect(requestText(f.requests[1])).not.toContain(grownText);
+    expect(requestText(f.requests[1])).toContain(oldText);
+    expect(requestText(f.requests[1])).toContain('T14_OVER_BUDGET_STYLE_SENTINEL');
+    expect(requestText(f.requests[1])).toContain('t14-over-budget-style');
     const contextResult = f.lifecycle.find((event): event is Extract<AgentEvent, { type: 'message_end' }> =>
         event.type === 'message_end' && event.message.role === 'toolResult'
         && event.message.toolName === 'get_writing_context' && !event.message.isError);
     expect(contextResult).toBeDefined();
     if (contextResult?.message.role !== 'toolResult') throw new Error('Actual writing context is missing');
     const observation = JSON.parse(contextResult.message.content.promptText).observation;
-    expect(observation.style).toEqual({ context: '', revisionIds: [] });
+    expect(observation.style).toEqual({ context: styleText, revisionIds: ['t14-over-budget-style'] });
     expect(f.events.find(event => event.kind === 'writing-artifact')).toMatchObject({
-        styleRevisionIds: [], generationInput: { style: { state: 'none' } },
+        styleRevisionIds: ['t14-over-budget-style'], generationInput: { style: { state: 'identified', revisionIds: ['t14-over-budget-style'] } },
     });
 });
 
@@ -1251,7 +1249,8 @@ it('B-135 T14 preserves published Writing context when Memory grows beyond the o
     expect(f.requests).toHaveLength(2);
     expect(requestText(f.requests[0])).toContain(oldText);
     expect(requestText(f.requests[0])).not.toContain(grownText);
-    expect(requestText(f.requests[1])).toContain(grownText);
+    expect(requestText(f.requests[1])).not.toContain(grownText);
+    expect(requestText(f.requests[1])).toContain(oldText);
     expect(requestText(f.requests[1])).toContain(JSON.stringify(styleText).slice(1, -1));
     expect(f.events.some(event => event.kind === 'writing-artifact')).toBe(true);
 });
@@ -1343,7 +1342,7 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
         const f = fixture([{ error: new Error("setup failed with data:image/jpeg;base64,SECRET") }, { text: envelope() }]);
         await f.run({ writingRequest: { requestId: "writing-1" } });
         expect(f.requests.map((request) => request.stream === true)).toEqual([true, false]); expect(pixels(f.requests[0])).toEqual(pixels(f.requests[1]));
-        expect(f.service.resolveVariant).toHaveBeenCalledTimes(1); expect(f.service.verify.mock.calls.length).toBeGreaterThanOrEqual(2);
+        expect(f.service.resolveVariant).toHaveBeenCalledTimes(1); expect(f.service.verify).toHaveBeenCalledTimes(1);
         expect(f.events.find((event) => event.kind === "writing-artifact")).toMatchObject({ body: '正文："海风"\n🌊', requestId: "writing-1" });
         expect(f.events.filter((event) => event.kind === "answer-snapshot")).toEqual([expect.objectContaining({ snapshot: '正文："海风"\n🌊' })]);
         expect(JSON.stringify([f.events, f.lifecycle, f.host.log.mock.calls])).not.toContain("SECRET");
@@ -1408,26 +1407,34 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
         await expect(f.run()).rejects.toThrow(); expect(f.requests).toHaveLength(1); expect(pixels(f.requests[0])).toHaveLength(1); expect(f.release).toHaveBeenCalledTimes(1);
     });
 
-    it.each(["image", "style"] as const)("blocks a real SDK internal 429 retry after %s currentness is revoked", async (source) => {
+    it.each(["image", "style"] as const)("keeps SDK retry material while preserving the separate %s lifecycle", async (source) => {
         let styleCurrent = true;
         const f = fixture((_request, index) => {
             if (index === 0) return prepareWritingContextReply([image(1).ref]);
+            if (index === 2 && source === 'style') return nativeWritingReply(f.lifecycle);
             if (index !== 1) throw new Error("Revoked input reached another physical fetch");
             queueMicrotask(() => { if (source === "image") f.invalidate(); else styleCurrent = false; });
             return { httpError: { status: 429, code: "rate_limit_exceeded", retryAfter: "0.001" } };
         }, {}, 1);
-        await expect(f.run(nativeWritingOptions(async () => ({
+        const running = f.run(nativeWritingOptions(async () => ({
             context: "<writing_style>sample</writing_style>", revisionIds: ["style-1"],
             isCurrent: () => styleCurrent, isSourceCurrent: () => styleCurrent,
-        })))).rejects.toThrow();
+        })));
+        if (source === 'image') await expect(running).rejects.toThrow();
+        else await running;
         // Both attempts belong to the same stream. The SDK's own retry header
         // distinguishes the second attempt from the runtime's invoke fallback.
         expect(f.sdkAttempts).toEqual([{ stream: true, retryCount: "0" },
             { stream: true, retryCount: "0" }, { stream: true, retryCount: "1" }]);
-        expect(f.requests).toHaveLength(2);
+        expect(f.requests).toHaveLength(source === 'image' ? 2 : 3);
         expect(pixels(f.requests[0])).toHaveLength(1); expect(pixels(f.requests[1])).toHaveLength(1);
         expect(f.service.resolveVariant).toHaveBeenCalledTimes(1); expect(f.release).toHaveBeenCalledTimes(1);
-        expect(f.events.some((event) => event.kind === "writing-artifact" || event.kind === "answer-snapshot")).toBe(false);
+        if (source === 'image') {
+            expect(f.events.some((event) => event.kind === "writing-artifact" || event.kind === "answer-snapshot")).toBe(false);
+        } else {
+            expect(f.requests[2].messages).toEqual(f.requests[1].messages);
+            expect(f.events.find(event => event.kind === 'writing-artifact')).toMatchObject({ styleRevisionIds: ['style-1'] });
+        }
         expect(JSON.stringify([f.events, f.lifecycle, f.host.log.mock.calls])).not.toMatch(/SECRET|data:image|base64/);
     });
 
@@ -1475,14 +1482,14 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
         versions.dispose();
     });
 
-    it("does not submit if a style is cancelled while the provider responds", async () => {
+    it("retains accepted style when its broad source callback changes while the provider responds", async () => {
         let current = true;
         const f = fixture((_request, index) => index === 0 ? prepareWritingContextReply([image(1).ref])
             : { ...nativeWritingReply(f.lifecycle), onEnd: () => { current = false; } });
         await f.run(nativeWritingOptions(async () => ({ context: "<writing_style>sample</writing_style>", revisionIds: ["style-1"],
             isCurrent: () => current, isSourceCurrent: () => current })));
-        expect(f.events.find((event) => event.kind === "writing-recovery")).toMatchObject({ reason: "source_changed" });
-        expect(f.events.some((event) => event.kind === "writing-artifact")).toBe(false);
+        expect(f.events.some((event) => event.kind === "writing-recovery")).toBe(false);
+        expect(f.events.find((event) => event.kind === "writing-artifact")).toMatchObject({ styleRevisionIds: ['style-1'] });
     });
 
     it("ChatService exposes capability evidence and a configuration switch clears it", async () => {

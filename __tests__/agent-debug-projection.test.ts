@@ -1,7 +1,7 @@
 import { cloneDebugLineage, normalizeDebugUsage, projectDebugAttachments, projectDebugRequest, projectDebugSession, utf8Bytes } from '../src/agent-debug/projection';
 
 describe('Agent Debug content projection', () => {
-    it('retains the actual message/tool input but excludes protocol secrets, reasoning and inline media', () => {
+    it('retains actual message/tool text and reasoning while excluding protocol secrets and inline media', () => {
         const projected = projectDebugRequest(JSON.stringify({ model: 'model', messages: [
             { role: 'user', content: [{ type: 'text', text: 'note body' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }] },
             { role: 'assistant', reasoning_content: 'PRIVATE_REASONING', tool_calls: [
@@ -10,8 +10,10 @@ describe('Agent Debug content projection', () => {
         ], headers: { authorization: 'Bearer TOKEN' }, metadata: { internal: 'NO_METADATA' } }));
         expect(projected.text).toContain('note body');
         expect(projected.text).toContain('note.md');
-        for (const excluded of ['PRIVATE_REASONING', 'AAAA', 'SECRET', 'HIDDEN', 'TOKEN', 'NO_METADATA']) expect(projected.text).not.toContain(excluded);
-        expect(projected.redactions).toEqual(expect.arrayContaining(['reasoning', 'media', 'credentials']));
+        expect(projected.text).toContain('PRIVATE_REASONING'); expect(projected.text).toContain('HIDDEN');
+        expect(projected.text).toContain('NO_METADATA');
+        for (const excluded of ['AAAA', 'SECRET', 'TOKEN']) expect(projected.text).not.toContain(excluded);
+        expect(projected.redactions).toEqual(expect.arrayContaining(['credentials']));
     });
 
     it('does not evaluate accessors or toJSON in session objects', () => {

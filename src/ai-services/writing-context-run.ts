@@ -129,12 +129,26 @@ export class WritingContextRun {
             ...(version.id === this.host.selectedParentVersionId ? { selected: true as const } : {}) }));
     }
 
-    /** A synchronous, cloned receipt for a physical request or output gate. */
+    /** A cloned receipt with live preparation and action source checks. */
     current(): PreparedWritingContext | undefined {
         this.assertCurrent();
         if (!this.receipt) return undefined;
         this.assertReceiptCurrent(this.receipt);
         return cloneContext(this.receipt.value);
+    }
+
+    /** Generation consumes the already prepared materials; actual preparation
+     * and action validation keep their independent live checks. */
+    currentSnapshot(): PreparedWritingContext | undefined {
+        this.assertCurrent();
+        return this.receipt ? cloneContext(this.receipt.value) : undefined;
+    }
+
+    /** The style owner alone reports explicit Forget/removal, independently of source freshness. */
+    captureGenerationRetention(): () => boolean {
+        this.assertCurrent();
+        const receipt = this.receipt;
+        return () => receipt?.style.isGenerationRetained?.() !== false;
     }
 
     /** Reuse only the last still-valid preparation, not every selection seen in this run. */

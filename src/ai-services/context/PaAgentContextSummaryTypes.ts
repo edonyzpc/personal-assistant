@@ -191,7 +191,7 @@ export function isCurrentToolSummary(summary: PaAgentToolSummary, message: PaAge
         && stableJson(cloneInputLineage(source.inputLineage))
             === stableJson(cloneInputLineage(message.inputLineage))
         && source.content.promptText === message.content.promptText
-        && JSON.stringify(source.content.sourceRecords ?? []) === JSON.stringify(message.content.sourceRecords ?? [])
+        && stableJson(source.content.sourceRecords ?? []) === stableJson(message.content.sourceRecords ?? [])
         && stableJson(source.content.metadata?.vaultObservationEvidence)
             === stableJson(message.content.metadata?.vaultObservationEvidence);
     return current

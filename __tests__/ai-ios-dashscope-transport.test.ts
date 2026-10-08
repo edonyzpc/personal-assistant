@@ -574,6 +574,7 @@ describe("iOS DashScope chat transport", () => {
             await jest.advanceTimersByTimeAsync(60_000);
             expect(settled).toBe(false);
             await jest.advanceTimersByTimeAsync(1_000);
+            await jest.advanceTimersByTimeAsync(1); // Drive the continuation queued while consuming the ready buffered response.
 
             const result = await pending;
             expect(result.status).toBe("completed");

@@ -1637,12 +1637,12 @@ describe('ChatService.streamLLM integration', () => {
         },
     );
 
-    it('does not project an old Ghost status after its admitted source disappears before the next dispatch', async () => {
+    it('preserves the committed Ghost receipt after its ordinary source disappears before the next dispatch', async () => {
         const result = await runTamperedGhostResult('source');
         expect(result.submitCount).toBe(1);
-        expect(result.wire).not.toContain('ghost-operation');
-        expect(result.wire).not.toContain('publication has not been confirmed');
-        expect(result.failure).toBeDefined();
+        expect(result.wire).toContain('ghost-operation');
+        expect(result.wire).toContain('This does not confirm publication.');
+        expect(result.failure).toBeUndefined();
     });
 
     it.each(['attention-id', 'attention-no-id'] as const)(
@@ -2217,7 +2217,7 @@ describe('ChatService.streamLLM integration', () => {
             expect(streamCall).toBe(2);
 
             await jest.advanceTimersByTimeAsync(5);
-            await run;
+            await advanceFakeClockToStage(run, run);
 
             expect(stageIntent).toHaveBeenCalledTimes(1);
             expect(streamCall).toBe(2);
@@ -2516,7 +2516,7 @@ describe('ChatService.streamLLM integration', () => {
         }
     });
 
-    it.each(['forged', 'missing', 'wrong-index', 'revoked'] as const)('rejects %s retained summary anchors before auxiliary dispatch and falls back to admitted full history', async mode => {
+    it.each(['forged', 'missing', 'wrong-index', 'revoked'] as const)('validates %s retained summary anchors against the accepted history', async mode => {
         enableSummaryPressure();
         const history: ChatMessage[] = Array.from({ length: 8 }, (_, index) => [
             { role: 'user' as const, content: `${'Repeated background only. '.repeat(250)}Requirement ${index}: keep export offline. ${'Repeated background only. '.repeat(250)}` },
@@ -2546,12 +2546,19 @@ describe('ChatService.streamLLM integration', () => {
             await expect(service.streamLLM('Recall the export requirement.', jest.fn(), undefined, history,
                 { memoryMode: 'skip-memory', historyBudgetChars: 1000 })).resolves.toBeUndefined();
             expect(injected).toBe(true);
-            expect(summaryModel.invoke).not.toHaveBeenCalled();
             expect(answerModel.stream).toHaveBeenCalledTimes(1);
             expect(JSON.stringify(answerInputs)).not.toContain('forged-task');
-            expect(JSON.stringify(answerInputs)).not.toContain('conversation_summary');
-            expect(JSON.stringify(answerInputs)).toContain('Requirement 0: keep export offline.');
-            if (mode === 'revoked') expect(JSON.stringify(answerInputs)).toContain('Source changed before dispatch.');
+            if (mode === 'revoked') {
+                expect(summaryModel.invoke).toHaveBeenCalled();
+                expect(JSON.stringify(summaryModel.invoke.mock.calls)).toContain('Requirement 0: keep export offline.');
+                expect(JSON.stringify(summaryModel.invoke.mock.calls)).not.toContain('Source changed before dispatch.');
+                expect(JSON.stringify(answerInputs)).toContain('conversation_summary');
+                expect(JSON.stringify(answerInputs)).not.toContain('Source changed before dispatch.');
+            } else {
+                expect(summaryModel.invoke).not.toHaveBeenCalled();
+                expect(JSON.stringify(answerInputs)).not.toContain('conversation_summary');
+                expect(JSON.stringify(answerInputs)).toContain('Requirement 0: keep export offline.');
+            }
         } finally { prepare.mockRestore(); service.dispose(); }
     });
 
@@ -2788,7 +2795,7 @@ describe('ChatService.streamLLM integration', () => {
         summarizer.dispose();
     });
 
-    it('rechecks captured Memory source authorization during answer model construction without replacing its body', async () => {
+    it('retains captured Memory after its source disappears during answer model construction without rereading its body', async () => {
         const stalePath = 'notes/revoked-before-summary-dispatch.md';
         const staleBody = 'PRIVATE EVIDENCE REVOKED BEFORE SUMMARY DISPATCH';
         const staleMemory: MemorySearchResult = {
@@ -2816,8 +2823,7 @@ describe('ChatService.streamLLM integration', () => {
             fileContents: { [stalePath]: staleBody.repeat(100) },
         });
         const runtime = createRuntime(plugin, false, {
-            // The revoked-source receipt, bounded execution fact, and action-history
-            // wrapper fit below this lane boundary.
+            // A lane target does not replace an already accepted Memory snapshot.
             skillContextProvider: null, answerStreamMaxObservationChars: 850,
         });
         let sourceRevoked = false;
@@ -2837,11 +2843,11 @@ describe('ChatService.streamLLM integration', () => {
 
         expect(answerInputs.length).toBeGreaterThan(0);
         const sent = JSON.stringify(answerInputs);
-        expect(sent).not.toContain(stalePath);
-        expect(sent).toContain('Memory retrieval is currently unavailable');
-        expect(sent).toContain('empty results do not establish that no matching notes exist');
+        expect(sent).toContain(stalePath);
+        expect(sent).not.toContain('Memory retrieval is currently unavailable');
         expect(memoryTool.revalidateForProvider).not.toHaveBeenCalled();
-        expect(sent).not.toContain(staleBody);
+        expect(memoryTool.search).toHaveBeenCalledTimes(1);
+        expect(sent).toContain(staleBody);
         runtime.dispose();
     });
 

@@ -101,6 +101,43 @@ function attachAIActions(plugin: unknown): void {
     });
 }
 
+describe("B-165 source configuration epoch", () => {
+    it("changes for source configuration, without tracking ordinary source or unrelated settings changes", async () => {
+        const { plugin } = createPluginHarness();
+        await plugin.loadSettings();
+        const owner = plugin as unknown as {
+            taskSourceConfigurationRevision: number;
+            taskSourceConfigurationSnapshot: string;
+            captureTaskSourceConfiguration(): string;
+            captureAgentSourceConfiguration(): import('../src/ai-services/AiServiceHost').TaskSourceConfigurationSnapshot;
+            updateTaskSourceConfiguration(): void;
+            advanceTaskSourceAuthority(): void;
+        };
+        owner.taskSourceConfigurationSnapshot = owner.captureTaskSourceConfiguration();
+        owner.advanceTaskSourceAuthority();
+        plugin.settings.debug = !plugin.settings.debug;
+        owner.updateTaskSourceConfiguration();
+        expect(owner.taskSourceConfigurationRevision).toBe(0);
+
+        const accepted = owner.captureAgentSourceConfiguration();
+        expect(accepted.isPathAllowed('private/known.md')).toBe(true);
+        plugin.settings.dataBoundary.excludedFolders = ['private'];
+        owner.updateTaskSourceConfiguration();
+        expect(owner.taskSourceConfigurationRevision).toBe(1);
+        expect(accepted.isPathAllowed('private/known.md')).toBe(true);
+        expect(owner.captureAgentSourceConfiguration().isPathAllowed('private/known.md')).toBe(false);
+        owner.updateTaskSourceConfiguration();
+        expect(owner.taskSourceConfigurationRevision).toBe(1);
+
+        plugin.settings.dataBoundary.excludedFolders = [];
+        owner.updateTaskSourceConfiguration();
+        expect(owner.taskSourceConfigurationRevision).toBe(2);
+        plugin.settings.memoryEnabled = !plugin.settings.memoryEnabled;
+        owner.updateTaskSourceConfiguration();
+        expect(owner.taskSourceConfigurationRevision).toBe(3);
+    });
+});
+
 describe("B-135 native writing rollout", () => {
     it("exports the validated native protocol from the production Chat host", () => {
         const { plugin } = createPluginHarness({ initialData: { aiProvider: "openai", statisticsVaultId: "native-writing" } });

@@ -2,9 +2,9 @@ import type { AgentDebugNodeStatus, AgentDebugObservation, AgentDebugPort, Agent
 import { getOptionalPlatformWindow, setPlatformTimeout, clearPlatformTimeout, type PlatformTimeoutHandle } from '../platform-dom';
 import { AgentDebugCollector } from './collector';
 import { AgentDebugStore, type AgentDebugStoreOptions } from './store';
-import { cloneDebugLineage, debugBlockKey, filterDebugText, projectDebugAttachments, projectDebugRequest, projectDebugSession, utf8Bytes } from './projection';
+import { cloneDebugLineage, debugBlockKey, filterDebugText, projectDebugAttachments, projectDebugRequest, projectDebugSession, splitDebugText, utf8Bytes } from './projection';
 import { DEBUG_DOMAINS, DEFAULT_DEBUG_BUDGETS, type DebugBatch, type DebugBudgets, type DebugContent,
-    type DebugDomain, type DebugEvent, type DebugEventQuery, type DebugGeneration, type DebugRun, type DebugRunQuery,
+    type DebugDomain, type DebugEvent, type DebugEventQuery, type DebugGeneration, type DebugLineage, type DebugRun, type DebugRunQuery,
     type DebugSessionDetail, type DebugStoreStatus, type DebugUsage } from './types';
 
 interface RunState {
@@ -26,7 +26,7 @@ interface RunState {
 export interface AgentDebugServiceOptions extends AgentDebugStoreOptions {
     enabled: () => boolean;
     store?: AgentDebugStore;
-    /** Bootstrap adapters finish outbox and source/Memory reconciliation before opening content. */
+    /** Bootstrap adapters finish explicit deletion and Forget reconciliation before opening content. */
     recoveryReady?: boolean;
 }
 
@@ -35,7 +35,6 @@ export class AgentDebugService implements AgentDebugPort {
     private readonly budgets: DebugBudgets;
     private readonly collector: AgentDebugCollector;
     private readonly states = new Map<string, RunState>();
-    private readonly sessions = new Map<string, DebugSessionDetail>();
     private readonly volatileContents = new Map<string, DebugContent>();
     private volatileBytes = 0;
     private readonly volatileRunBytes = new Map<string, number>();
@@ -97,9 +96,9 @@ export class AgentDebugService implements AgentDebugPort {
                     this.liveOwners.clear(); this.channel.postMessage({ type: 'probe', vaultKey: this.options.vaultKey, ownerId: this.ownerId });
                     await new Promise<void>(resolve => setPlatformTimeout(resolve, 75));
                 }
-                const unverified = await this.store.beginOwner(this.ownerId, [...this.liveOwners]);
+                await this.store.beginOwner(this.ownerId, [...this.liveOwners]);
                 this.generation = await this.store.getGeneration();
-                this.available = true; this.reason = unverified ? 'recovery_unverified' : undefined;
+                this.available = true; this.reason = undefined;
                 await this.store.prune();
             } catch { this.available = false; this.reason = 'storage_unavailable'; }
             this.notify();
@@ -118,7 +117,6 @@ export class AgentDebugService implements AgentDebugPort {
     private changeEnabled(enabled: boolean): void {
         if (enabled === this.lastEnabled) return;
         this.lastEnabled = enabled;
-        this.sessions.clear();
         for (const state of this.states.values()) {
             if (state.finished) continue;
             state.segment++; state.text.clear(); state.run.collection = enabled ? 'partial' : 'stopped';
@@ -128,7 +126,7 @@ export class AgentDebugService implements AgentDebugPort {
             state.run.hasGap = true;
             if (!enabled && state.seq) this.collector.enqueueMetadata({ run: { ...state.run }, events: [], contents: [], generation: state.generation });
         }
-        // Already filtered, admitted history may still flush; transient detail never does.
+        // Already admitted history may still flush after recording is turned off.
         this.notify(true);
         this.scheduleFlush();
     }
@@ -145,7 +143,7 @@ export class AgentDebugService implements AgentDebugPort {
             run: { vaultKey: this.options.vaultKey, captureId, ownerSessionId: this.ownerId, conversationId: input.conversationId,
                 provider: input.provider, model: input.model, startedAt, updatedAt: startedAt,
                 expiresAt: startedAt + this.budgets.retentionMs, status: 'running', collection: this.enabled() ? 'recording' : 'partial',
-                eventCount: 0, accountedBytes: 0, lastCommittedSeq: 0, hasGap: !this.enabled() },
+                eventCount: 0, accountedBytes: 0, lastCommittedSeq: 0, hasGap: !this.enabled(), contentVersion: 2 },
             generation: this.cloneGeneration(), seq: 0, segment: 0, contentAllowed: true,
             text: new Map(), events: [], usage: new Map(), calls: new Set(), dispatchedAt: new Map(), unknownAttemptCost: false,
         };
@@ -200,7 +198,8 @@ export class AgentDebugService implements AgentDebugPort {
                 seq: ++state.seq, segment: state.segment, nodeId: observation.nodeId, parentId: observation.parentId,
                 turnId: observation.turnId, callId: observation.callId, attemptId: observation.attemptId,
                 toolCallId: observation.toolCallId, timestamp, kind: observation.phase, status: observation.status,
-                label: observation.toolName ?? observation.purpose ?? observation.phase, contentIds: [] };
+                label: observation.toolName ?? observation.purpose ?? observation.phase, contentIds: [],
+                durationMs: observation.durationMs };
             const details: NonNullable<DebugEvent['details']> = {};
             if (observation.purpose) details.purpose = observation.purpose;
             if (observation.provider) details.provider = filterDebugText(observation.provider).slice(0, 128);
@@ -245,55 +244,71 @@ export class AgentDebugService implements AgentDebugPort {
                 && [...state.calls].every(callId => [...state.usage.keys()]
                     .some(usageKey => usageKey.includes(`:${callId}:`)));
             const contents: DebugContent[] = [];
-            const lineage = cloneDebugLineage(observation.lineage ? {
-                sourceRefs: [...observation.lineage.sourcePaths ?? []], claimIds: [...observation.lineage.claimIds ?? []],
-                legacyRecordIds: [...observation.lineage.legacyRecordIds ?? []], possibleDomains: [...observation.lineage.domains ?? DEBUG_DOMAINS],
-                completeness: observation.lineage.unknown === false ? 'known' : 'unknown',
-                conversationIds: state.run.conversationId ? [state.run.conversationId] : [],
-            } : undefined);
+            let lineage: DebugLineage | undefined;
             const addContent = (kind: DebugContent['kind'], text: string, redactions: string[] = [], reusableSlot?: number): void => {
-                const bytes = utf8Bytes(text) + 256;
-                if (!state.contentAllowed || !this.recoveryReady || this.pendingCleanups.size > 0 || bytes > this.budgets.contentBytes
-                    ) {
+                if (!state.contentAllowed || !this.recoveryReady || this.pendingCleanups.size > 0) {
                     event.availability = this.recoveryReady ? 'capacity' : 'recovery_unverified'; state.run.hasGap = true; return;
                 }
-                const contentId = reusableSlot === undefined ? `${observation.nodeId}:${kind}:${state.segment}:${event.seq}`
-                    : `prompt:${state.segment}:${reusableSlot}:${debugBlockKey(text + JSON.stringify(lineage))}`;
-                contents.push({ vaultKey: this.options.vaultKey, captureId: state.run.captureId, contentId,
-                    kind, text, redactions, lineage, generation: state.generation.generation,
-                    domainGenerations: { ...state.generation.domains }, accountedBytes: bytes });
-                event.contentIds.push(contentId); state.run.accountedBytes += bytes;
-                this.cacheContent(contents[contents.length - 1]);
+                // Only observations with admitted content need a lineage projection.
+                // Ordinary path changes no longer revoke Debug history. Source facts stay in
+                // actual input/tool text; only explicit Forget/deletion associations live here.
+                lineage ??= cloneDebugLineage(observation.lineage ? {
+                        claimIds: [...observation.lineage.claimIds ?? []],
+                        legacyRecordIds: [...observation.lineage.legacyRecordIds ?? []], possibleDomains: [...observation.lineage.domains ?? DEBUG_DOMAINS],
+                        completeness: observation.lineage.unknown === false ? 'known' : 'unknown',
+                        conversationIds: state.run.conversationId ? [state.run.conversationId] : [],
+                } : undefined);
+                const contentLineage = lineage;
+                splitDebugText(text, this.budgets.contentBytes).forEach((part, index) => {
+                    const bytes = utf8Bytes(part) + 256;
+                    const contentId = reusableSlot === undefined ? `${observation.nodeId}:${kind}:${state.segment}:${event.seq}:${index}`
+                        : `prompt:${state.segment}:${reusableSlot}:${index}:${debugBlockKey(part)}`;
+                    contents.push({ vaultKey: this.options.vaultKey, captureId: state.run.captureId, contentId,
+                        kind, text: part, redactions, lineage: contentLineage, generation: state.generation.generation,
+                        domainGenerations: { ...state.generation.domains }, accountedBytes: bytes });
+                    event.contentIds.push(contentId); state.run.accountedBytes += bytes;
+                });
             };
             if (state.contentAllowed && this.recoveryReady && observation.prompt !== undefined) {
-                const projected = projectDebugRequest(observation.prompt, this.budgets.requestBytes, false);
-                if (projected.parts) projected.parts.forEach((part, index) => addContent('prompt', part, projected.redactions, index));
+                const projected = projectDebugRequest(observation.prompt, this.budgets.runBytes, false);
+                if (projected.parts) projected.parts.forEach((part, index) => addContent('prompt', `${index ? '\n\n' : ''}${part}`, projected.redactions, index));
                 else if (projected.text !== undefined) addContent('prompt', projected.text, projected.redactions, 0);
                 else { event.availability = projected.reason === 'capacity' ? 'capacity' : 'unavailable'; state.run.hasGap = true; }
             }
             if (state.contentAllowed && this.recoveryReady && observation.text !== undefined) {
                 // Delta chunks are immutable blocks; no ever-growing transcript is copied on each token.
-                const projected = projectDebugSession(observation.text, this.budgets.contentBytes);
+                const projected = projectDebugSession(observation.text, this.budgets.runBytes);
                 if (projected.text !== undefined) addContent(observation.kind === 'run' && observation.phase === 'received' ? 'input' : 'output', projected.text);
                 else { event.availability = 'capacity'; state.run.hasGap = true; }
             }
             if (state.contentAllowed && this.recoveryReady && observation.error) {
                 const projected = projectDebugSession({ name: observation.error.name, message: observation.error.message,
-                    code: observation.error.code, stack: observation.error.stack }, this.budgets.contentBytes);
+                    code: observation.error.code, stack: observation.error.stack }, this.budgets.runBytes);
                 if (projected.text) addContent('error', projected.text, projected.redactions);
             }
             if (state.contentAllowed && this.recoveryReady && observation.attachments?.length) {
                 const projected = projectDebugAttachments(observation.attachments);
                 if (projected.text) addContent('attachment', projected.text, projected.redactions);
             }
-            if (observation.reasoning !== undefined) this.addSession(state, observation.nodeId, 'reasoning', observation.reasoning, true);
-            if (observation.toolInput !== undefined) this.addSession(state, observation.nodeId, 'tool_input', observation.toolInput);
-            if (observation.toolOutput !== undefined) this.addSession(state, observation.nodeId, 'tool_output', observation.toolOutput);
+            for (const [kind, value] of [['reasoning', observation.reasoning], ['tool_input', observation.toolInput], ['tool_output', observation.toolOutput]] as const) {
+                if (value === undefined) continue;
+                const projected = projectDebugSession(value, this.budgets.runBytes);
+                if (projected.text !== undefined) addContent(kind, projected.text, projected.redactions);
+                else { event.availability = projected.reason === 'capacity' ? 'capacity' : 'unavailable'; state.run.hasGap = true; }
+            }
             state.events.push(event);
             if (state.events.length > 500) state.events.splice(0, state.events.length - 500);
             state.run.eventCount = state.seq;
             const batch: DebugBatch = { run: { ...state.run }, events: [event], contents, generation: state.generation };
-            if (!this.collector.enqueue(batch)) { state.run.hasGap = true; state.run.collection = 'partial'; }
+            if (!this.collector.enqueue(batch)) {
+                state.run.hasGap = true; state.run.collection = 'partial';
+                event.contentIds = []; event.availability = 'capacity';
+                this.collector.enqueueMetadata({ run: { ...state.run }, events: [], contents: [], generation: state.generation });
+            } else {
+                if (!this.available) contents.forEach(content => this.cacheContent(content));
+                // Start the existing writer before a ready buffered response fills its pending budget.
+                if (this.collector.pendingByteLength >= this.budgets.queueBytes / 2 || this.collector.pendingSize >= this.budgets.queueEvents / 2) void this.flush();
+            }
             this.scheduleFlush(); this.notify();
         } catch { state.run.hasGap = true; }
     }
@@ -333,23 +348,6 @@ export class AgentDebugService implements AgentDebugPort {
             reasoning: sum('reasoning'), complete: values.every(value => value.complete) };
     }
 
-    private addSession(state: RunState, nodeId: string, kind: DebugSessionDetail['kind'], value: unknown, append = false): void {
-        if (!state.contentAllowed || !this.recoveryReady || this.pendingCleanups.size > 0 || this.generation.quarantined) return;
-        const projected = projectDebugSession(value, this.budgets.sessionRunBytes);
-        if (!projected.text) return;
-        const id = `${state.run.captureId}:${nodeId}:${kind}`;
-        const text = append ? (this.sessions.get(id)?.text ?? '') + projected.text : projected.text;
-        if (utf8Bytes(text) > this.budgets.sessionRunBytes) return;
-        this.sessions.delete(id);
-        this.sessions.set(id, { captureId: state.run.captureId, nodeId, kind, text, timestamp: this.now() });
-        let bytes = 0, runBytes = 0;
-        for (const detail of [...this.sessions.values()].reverse()) {
-            bytes += utf8Bytes(detail.text);
-            if (detail.captureId === state.run.captureId) runBytes += utf8Bytes(detail.text);
-            if (bytes > this.budgets.sessionBytes || runBytes > this.budgets.sessionRunBytes) this.sessions.delete(`${detail.captureId}:${detail.nodeId}:${detail.kind}`);
-        }
-    }
-
     recordTextCommitted(runtimeRunId: string): void {
         const state = [...this.states.values()].find(candidate => candidate.run.runtimeRunId === runtimeRunId);
         if (!state || state.events.some(event => event.kind === 'first_chat_text_committed')) return;
@@ -382,13 +380,17 @@ export class AgentDebugService implements AgentDebugPort {
                     else {
                         const saved = await this.store.getRun(batch.run.captureId);
                         const current = this.states.get(batch.run.captureId);
-                        if (saved && current) { current.run.accountedBytes = saved.accountedBytes; current.run.lastCommittedSeq = saved.lastCommittedSeq; }
+                        if (saved && current) {
+                            current.run.accountedBytes = saved.accountedBytes; current.run.lastCommittedSeq = saved.lastCommittedSeq;
+                            current.run.hasGap ||= saved.hasGap;
+                            if (current.run.hasGap && current.run.collection === 'complete') current.run.collection = 'partial';
+                        }
                     }
                 } catch { this.reason = 'storage_write_failed'; const state = this.states.get(batch.run.captureId); if (state) state.run.hasGap = true; }
             }
             this.notify();
         });
-        this.flushTail = task.catch(() => undefined);
+        this.flushTail = task.catch(() => undefined).finally(() => this.collector.release(batches));
         return this.flushTail;
     }
 
@@ -431,10 +433,7 @@ export class AgentDebugService implements AgentDebugPort {
             && (!ids || ids.has(content.contentId))).map(content => ({ ...content }));
     }
 
-    getSessionDetails(captureId: string, nodeId: string): DebugSessionDetail[] {
-        if (!this.enabled() || !this.recoveryReady || this.pendingCleanups.size > 0 || this.generation.quarantined) return [];
-        return [...this.sessions.values()].filter(detail => detail.captureId === captureId && detail.nodeId === nodeId).map(detail => ({ ...detail }));
-    }
+    getSessionDetails(_captureId: string, _nodeId: string): DebugSessionDetail[] { return []; }
 
     async getStatus(): Promise<DebugStoreStatus> {
         await this.initialize();
@@ -465,7 +464,7 @@ export class AgentDebugService implements AgentDebugPort {
 
     private invalidate(broadcast = true): void {
         this.visibilityEpoch++;
-        this.collector.clear(); this.sessions.clear(); this.volatileContents.clear(); this.volatileRunBytes.clear(); this.volatileBytes = 0;
+        this.collector.clear(); this.volatileContents.clear(); this.volatileRunBytes.clear(); this.volatileBytes = 0;
         for (const state of this.states.values()) {
             state.contentAllowed = false; state.segment++; state.text.clear();
             state.events = state.events.map(event => ({ ...event, contentIds: [], label: undefined, details: undefined, availability: 'cleared' }));
@@ -504,11 +503,6 @@ export class AgentDebugService implements AgentDebugPort {
         this.resetLiveSegments(); this.notify(true);
     }
     clear(): Promise<void> { return this.clearHistory(); }
-    async revokeDomains(domains: readonly DebugDomain[], options: { sourceToken?: string } = {}): Promise<void> {
-        const cleanupId = `domains:${[...domains].sort().join(',')}`; this.pendingCleanups.add(cleanupId);
-        this.invalidate(); await this.flushTail; await this.store.revokeDomains(domains, options);
-        this.generation = await this.store.getGeneration(); this.pendingCleanups.delete(cleanupId); this.notify(true);
-    }
     async forgetClaim(claimId: string, options: { deviceWide?: boolean; domains?: readonly DebugDomain[] } = {}): Promise<void> {
         const cleanupId = `claim:${options.deviceWide ? '*' : this.options.vaultKey}:${claimId}`; this.pendingCleanups.add(cleanupId);
         this.invalidate(); await this.flushTail; await this.store.forgetClaim(claimId, options);
@@ -518,13 +512,6 @@ export class AgentDebugService implements AgentDebugPort {
         const cleanupId = `legacy:${recordId}`; this.pendingCleanups.add(cleanupId);
         this.invalidate(); await this.flushTail; await this.store.forgetLegacyRecord(recordId);
         this.generation = await this.store.getGeneration(); this.pendingCleanups.delete(cleanupId); this.notify(true);
-    }
-    async applySourceToken(token: string): Promise<void> {
-        await this.initialize();
-        if (this.generation.sourceToken === token) return;
-        this.pendingCleanups.add('source-token');
-        this.invalidate(); await this.flushTail; await this.store.applySourceToken(token);
-        this.generation = await this.store.getGeneration(); this.pendingCleanups.delete('source-token'); this.notify(true);
     }
     async refreshGeneration(): Promise<void> {
         await this.initialize();
@@ -556,7 +543,7 @@ export class AgentDebugService implements AgentDebugPort {
 
     async dispose(): Promise<void> {
         if (this.disposed) return;
-        this.disposed = true; this.sessions.clear(); this.volatileContents.clear(); this.listeners.clear();
+        this.disposed = true; this.volatileContents.clear(); this.listeners.clear();
         if (this.notificationTimer !== undefined) clearPlatformTimeout(this.notificationTimer);
         if (this.flushTimer !== undefined) clearPlatformTimeout(this.flushTimer);
         let timer: PlatformTimeoutHandle | undefined;

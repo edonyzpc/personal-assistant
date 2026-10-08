@@ -26,7 +26,6 @@ function setup(history = new MemoryChatHistoryStore()) {
         settings: () => settings,
         history: () => history,
         readForgetState,
-        recordSourceRevocation,
     });
     return { integration, service, history, settings, recordSourceRevocation, readForgetState };
 }
@@ -65,25 +64,20 @@ describe('B-145 plugin governance adapters', () => {
         await integration.dispose();
     });
 
-    it('retries a failed file revocation commit before reopening details', async () => {
-        jest.useFakeTimers();
-        const { integration, service, recordSourceRevocation } = setup();
+    it('does not recheck or clear actual history when source permissions change', async () => {
+        const { integration, service, settings, readForgetState } = setup();
         await integration.initialize();
         service.setRecoveryReady.mockClear();
-        recordSourceRevocation.mockRejectedValueOnce(new Error('settings unavailable'));
-        integration.sourceRevoked();
-        integration.sourceRevoked();
-        await jest.advanceTimersByTimeAsync(0);
-        expect(recordSourceRevocation).toHaveBeenCalledTimes(1);
-        expect(service.setRecoveryReady).not.toHaveBeenCalledWith(true);
-        await jest.advanceTimersByTimeAsync(30_000);
-        expect(recordSourceRevocation).toHaveBeenCalledTimes(2);
-        expect(service.applySourceToken).toHaveBeenLastCalledWith('source:new');
-        expect(service.setRecoveryReady).toHaveBeenLastCalledWith(true);
+        readForgetState.mockClear();
+        settings.dataBoundary.sourceRevocationEpoch = 'new-exclusion';
+        integration.settingsChanged();
+        expect(service.setRecoveryReady).not.toHaveBeenCalled();
+        expect(service.applySourceToken).not.toHaveBeenCalled();
+        expect(readForgetState).not.toHaveBeenCalled();
         await integration.dispose();
     });
 
-    it('cannot reopen details from stale recovery while a newer permission or Forget write is pending', async () => {
+    it('cannot reopen details from stale recovery while an explicit Forget write is pending', async () => {
         const { integration, service, settings, readForgetState } = setup();
         let release!: () => void;
         readForgetState.mockImplementationOnce(() => new Promise(resolve => {
@@ -91,13 +85,12 @@ describe('B-145 plugin governance adapters', () => {
         }));
         const startup = integration.initialize();
         for (let i = 0; i < 12; i++) await Promise.resolve();
-        integration.sourcePermissionRevoking();
         const finishForget = integration.beginLegacyForget();
         release();
         await startup;
         expect(service.setRecoveryReady).not.toHaveBeenCalledWith(true);
         settings.dataBoundary.sourceRevocationEpoch = 'source:committed';
-        integration.sourcePermissionCommitted();
+        integration.settingsChanged();
         for (let i = 0; i < 20; i++) await Promise.resolve();
         expect(service.setRecoveryReady).not.toHaveBeenCalledWith(true);
         finishForget();
@@ -119,23 +112,6 @@ describe('B-145 plugin governance adapters', () => {
         expect(service.blockConversation).toHaveBeenCalledWith('kept');
         expect(service.unblockConversation).toHaveBeenCalledWith('kept');
         expect(service.invalidateConversation).not.toHaveBeenCalled();
-        await integration.dispose();
-    });
-
-    it('recovers an uncertain settings write only after a fresh revocation epoch commits', async () => {
-        jest.useFakeTimers();
-        const { integration, service, recordSourceRevocation } = setup();
-        await integration.initialize();
-        service.setRecoveryReady.mockClear();
-        integration.sourcePermissionRevoking();
-        recordSourceRevocation.mockRejectedValueOnce(new Error('still unavailable'));
-        integration.sourcePermissionFailed();
-        await jest.advanceTimersByTimeAsync(0);
-        expect(service.setRecoveryReady).not.toHaveBeenCalledWith(true);
-        await jest.advanceTimersByTimeAsync(30_000);
-        expect(recordSourceRevocation).toHaveBeenCalledTimes(2);
-        expect(service.applySourceToken).toHaveBeenLastCalledWith('source:new');
-        expect(service.setRecoveryReady).toHaveBeenLastCalledWith(true);
         await integration.dispose();
     });
 

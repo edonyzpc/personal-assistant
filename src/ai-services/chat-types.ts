@@ -399,6 +399,8 @@ export interface ChatWritingStyleResult {
     context: string; revisionIds: string[]; isCurrent: () => boolean;
     /** Source validity independent of cancellation of the preparing model turn. */
     isSourceCurrent?: () => boolean;
+    /** Explicit Forget/deletion only; ordinary source or configuration changes retain generation. */
+    isGenerationRetained?: () => boolean;
     skipped?: Array<{ revisionId: string; reason: "ineligible" | "budget" | "invalid_budget" }>;
 }
 export type ChatWritingStylePreparation = (input: { remainingTextChars: number; remainingMemoryChars: number; signal?: AbortSignal }) => Promise<ChatWritingStyleResult>;

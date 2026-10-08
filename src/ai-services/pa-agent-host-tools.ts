@@ -70,6 +70,8 @@ const UNAVAILABLE_MEMORY_RETRIEVAL_GUIDANCE =
     "Memory retrieval is currently unavailable; empty results do not establish that no matching notes exist. Do not infer note content.";
 
 export interface PaAgentCapabilityToolExecutorOptions {
+    /** Actual execution result, before prompt/context projection. */
+    onToolResult?: (input: { turnId: string; toolCallId: string; toolName: string; result: ChatToolResult<unknown>; toolInput?: unknown }) => void;
     registry: CapabilityRegistry;
     host: AiServiceHost;
     isWritingSelectionCurrent?: (input: unknown) => boolean;
@@ -662,6 +664,8 @@ export function createPaAgentCapabilityToolExecutor(
                             : {}),
                     },
                 );
+                options.onToolResult?.({ turnId: input.turnId, toolCallId: toolCall.id, toolName: toolCall.name,
+                    result, toolInput: preparedResult.input });
                 if (isGhostPreparation && isGhostPreparationResult(result)) {
                     if (signal.aborted) throw createAbortError();
                     // Ghost freezes and validates its own note dependencies. This

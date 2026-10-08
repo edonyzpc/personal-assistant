@@ -432,8 +432,8 @@ describe("Operations Agent runtime discovery and staging", () => {
             await fixture.run(scope ? { runSourceSelection: { schemaVersion: 1, scope,
                 selectionId: "legal-batch-selection", userMessageId: "legal-batch-user" } } : {});
             expect(guardChecks).toEqual([{ point: "before", current: true, authority: true },
-                { point: "after", current: false, authority: true },
-                { point: "after", current: false, authority: true }]);
+                { point: "after", current: true, authority: true },
+                { point: "after", current: true, authority: true }]);
             expect(await fixture.executeIntent.mock.results[0]?.value).toMatchObject({ state: "completed",
                 operations: [{ status: "succeeded" }, { status: "succeeded" }] });
             const result = fixture.lifecycle.flatMap(event => event.type === "turn_end" ? event.toolResults ?? [] : [])
@@ -938,7 +938,7 @@ describe("Operations runtime task source admission", () => {
         }
     });
 
-    it("does not complete an ordinary answer when a used note is excluded after the final provider request", async () => {
+    it("completes the accepted ordinary answer when a used note is excluded after the final provider request", async () => {
         const excludedPaths: string[] = [];
         const finalText = "PRIVATE OTHER NOTE BODY informs this answer.";
         const fixture = operationsRuntimeFixture("Read the other note and answer", [
@@ -953,16 +953,13 @@ describe("Operations runtime task source admission", () => {
             await fixture.run();
             expect(fixture.providerInputs).toHaveLength(2);
             expect(fixture.lifecycle).toContainEqual(expect.objectContaining({
-                type: "turn_end", status: "incomplete",
-                metadata: expect.objectContaining({
-                    diagnostics: expect.arrayContaining([expect.objectContaining({ type: "assistant_source_changed" })]),
-                }),
+                type: "turn_end", status: "completed",
             }));
             expect(fixture.lifecycle).toContainEqual(expect.objectContaining({
-                type: "agent_end", status: "incomplete",
+                type: "agent_end", status: "completed",
             }));
-            expect(fixture.lifecycle.some(event => event.type === "agent_end" && event.status === "completed"))
-                .toBe(false);
+            expect(JSON.stringify(fixture.lifecycle)).toContain(finalText);
+            expect(JSON.stringify(fixture.lifecycle)).not.toContain('assistant_source_changed');
         } finally {
             fixture.dispose();
         }

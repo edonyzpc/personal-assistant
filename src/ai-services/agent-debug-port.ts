@@ -68,7 +68,7 @@ export interface AgentDebugObservation {
     /** Final admitted request body, never credentials/headers or Request streams. */
     prompt?: unknown;
     attachments?: readonly AgentDebugAttachment[];
-    /** Full tools not yet in a Prompt are session-only. */
+    /** Actual tool parameters and results, independently of later prompt projection. */
     toolInput?: unknown;
     toolOutput?: unknown;
     reasoning?: string;
@@ -77,6 +77,8 @@ export interface AgentDebugObservation {
     outcome?: string;
     missingReason?: string;
     lineage?: AgentDebugLineage;
+    /** Selected major-phase duration; detailed performance probes are not always-on fields. */
+    durationMs?: number;
     /** Milliseconds relative to the same monotonic clock, not inferred pixel timing. */
     timing?: { event: "dispatch" | "response" | "first_model_content" | "first_provider_text"
         | "first_chat_text_committed" | "provider_completion" | "consumer_end"; at: number };

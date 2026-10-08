@@ -222,6 +222,118 @@ function call(id: string, name: string, input: unknown = {}): ParsedBufferedTool
     return { type: 'toolCall', id, name, input, index: 0 };
 }
 
+describe('B165 generation read snapshots', () => {
+    it('retains accepted snapshots after ordinary deletion and only removes excluded material on the next loop', async () => {
+        const h = fixture();
+        let configurationEpoch = 'configuration-1';
+        const denied = new Set<string>();
+        const isPathAllowed = jest.fn((path: string) => !denied.has(path));
+        const run = new TaskSourceRun({ ...h.host, isPathAllowed,
+            getTaskSourceConfigurationEpoch: () => configurationEpoch });
+        const lineage = completeInputLineage([{ kind: 'vault', path: h.a.path, via: 'note' }]);
+        const source: PaAgentMessage = { role: 'toolResult', id: 'source', toolCallId: 'read', toolName: 'read_note',
+            timestamp: 1, isError: false, inputLineage: lineage,
+            content: { promptText: 'PRIVATE_SOURCE', includeInNextPrompt: true,
+                sourceRecords: [{ dedupKey: 'source', kind: 'context-used', path: h.a.path, title: 'a', sourceBoundary: 'vault' }] } };
+        const derived: PaAgentMessage = { role: 'assistant', id: 'derived', timestamp: 2, inputLineage: lineage,
+            content: [{ type: 'text', text: 'PRIVATE_DERIVED' },
+                { type: 'toolCall', id: 'call', name: 'read_note', input: { path: 'PRIVATE_PARAMETER' } }] };
+        const history: ChatMessage[] = [{ role: 'assistant', content: 'PRIVATE_HISTORY', inputLineage: lineage }];
+        const prepareNew = jest.fn(async (messages: readonly PaAgentMessage[]) => [...messages]);
+        const first = await run.prepareGenerationSnapshot([source, derived], history, prepareNew);
+        expect(JSON.stringify(first)).toContain('PRIVATE_HISTORY');
+        const checks = isPathAllowed.mock.calls.length;
+        h.files.delete(h.a.path);
+        h.setSourceEpoch('ordinary-edit-2');
+        const second = await run.prepareGenerationSnapshot([source, derived], history, prepareNew);
+        expect(second.transcript).toEqual(first.transcript);
+        expect(isPathAllowed).toHaveBeenCalledTimes(checks);
+        expect(second.configurationChanged).toBe(false);
+        expect(prepareNew.mock.calls[1][0]).toEqual([]);
+        denied.add(h.a.path);
+        configurationEpoch = 'configuration-2';
+        const next = await run.prepareGenerationSnapshot([source, derived], history, prepareNew);
+        expect(next.configurationChanged).toBe(true);
+        expect(JSON.stringify(next)).not.toContain('PRIVATE_');
+        expect(history[0].content).toBe('PRIVATE_HISTORY');
+    });
+
+    it('captures one configuration during preparation and leaves a later change pending', async () => {
+        const h = fixture();
+        let epoch = 'configuration-1';
+        let excluded = false;
+        const run = new TaskSourceRun({ ...h.host,
+            captureTaskSourceConfiguration: () => {
+                const capturedExcluded = excluded;
+                return { epoch, memoryAllowed: true, webAllowed: true,
+                    isPathAllowed: () => !capturedExcluded };
+            } });
+        const source: PaAgentMessage = { role: 'toolResult', id: 'source', toolCallId: 'read', toolName: 'read_note',
+            timestamp: 1, isError: false, inputLineage: completeInputLineage([{ kind: 'vault', path: h.a.path, via: 'note' }]),
+            content: { promptText: 'ACCEPTED_BODY', includeInNextPrompt: true } };
+        const prepare = async (messages: readonly PaAgentMessage[]) => {
+            excluded = true; epoch = 'configuration-2'; return [...messages];
+        };
+        const first = await run.prepareGenerationSnapshot([source], [], prepare);
+        expect(first.transcript[0]?.role === 'toolResult' && first.transcript[0].content.promptText).toBe('ACCEPTED_BODY');
+        const next = await run.prepareGenerationSnapshot([source], [], async messages => [...messages]);
+        expect(next.configurationChanged).toBe(true);
+        expect(next.transcript).toEqual([]);
+    });
+
+    it('retains finite completed-action facts while removing arguments and arbitrary metadata', async () => {
+        const h = fixture();
+        let epoch = 'configuration-1';
+        let allowed = true;
+        const run = new TaskSourceRun({ ...h.host, getTaskSourceConfigurationEpoch: () => epoch,
+            isPathAllowed: () => allowed });
+        const message: PaAgentMessage = { role: 'toolResult', id: 'effect', toolCallId: 'action', toolName: 'create_image',
+            timestamp: 1, isError: false, inputLineage: completeInputLineage([{ kind: 'vault', path: h.a.path, via: 'note' }]),
+            content: { promptText: 'PRIVATE_ACTION_BODY', includeInNextPrompt: true,
+                resultFact: { kind: 'accepted', action: 'image', operationId: 'task-1' },
+                metadata: { outcome: 'success', executionState: 'succeeded', privateBody: 'PRIVATE_METADATA' } } };
+        const prepare = async (messages: readonly PaAgentMessage[]) => [...messages];
+        await run.prepareGenerationSnapshot([message], [], prepare);
+        allowed = false; epoch = 'configuration-2';
+        const next = await run.prepareGenerationSnapshot([message], [], prepare);
+        expect(JSON.stringify(next)).toContain('task-1');
+        expect(JSON.stringify(next)).toContain('succeeded');
+        expect(JSON.stringify(next)).not.toContain('PRIVATE_');
+    });
+
+    it('keeps a withdrawn action group only for its own independent owner receipt, even with reused call IDs', async () => {
+        const h = fixture();
+        let epoch = 'configuration-1';
+        let allowed = true;
+        const run = new TaskSourceRun({ ...h.host, getTaskSourceConfigurationEpoch: () => epoch, isPathAllowed: () => allowed });
+        const privateLineage = completeInputLineage([{ kind: 'vault', path: h.a.path, via: 'note' }]);
+        const assistant = (id: string): PaAgentMessage => ({ role: 'assistant', id, timestamp: 1, inputLineage: privateLineage,
+            content: [{ type: 'text', text: 'PRIVATE_DERIVED' },
+                { type: 'toolCall', id: 'reused', name: 'prepare_ghost_post', input: { path: 'PRIVATE_PARAMETER' } }] });
+        const first = assistant('first');
+        const receipt: PaAgentMessage = { role: 'toolResult', id: 'receipt', timestamp: 2, toolCallId: 'reused',
+            toolName: 'prepare_ghost_post', isError: false, inputLineage: completeInputLineage(),
+            content: { promptText: 'OWNER_RECEIPT', includeInNextPrompt: true,
+                resultFact: { kind: 'approval_pending', intentId: 'owned-operation' },
+                metadata: { outcome: 'success', executionState: 'succeeded' } } };
+        const second = assistant('second');
+        const unavailable: PaAgentMessage = { role: 'toolResult', id: 'unavailable', timestamp: 4, toolCallId: 'reused',
+            toolName: 'prepare_ghost_post', isError: true, inputLineage: privateLineage,
+            content: { promptText: 'PRIVATE_UNAVAILABLE', includeInNextPrompt: true } };
+        const transcript = [first, receipt, second, unavailable];
+        const prepare = async (messages: readonly PaAgentMessage[]) => [...messages];
+        await run.prepareGenerationSnapshot(transcript, [], prepare);
+        allowed = false; epoch = 'configuration-2';
+        const next = await run.prepareGenerationSnapshot(transcript, [], prepare);
+        expect(next.transcript.map(message => message.id)).toEqual(['first', 'receipt']);
+        expect(next.transcript[0]).toMatchObject({ content: [{ type: 'toolCall', id: 'reused', name: 'prepare_ghost_post', input: {} }] });
+        expect(JSON.stringify(next.transcript)).toContain('OWNER_RECEIPT');
+        expect(JSON.stringify(next.transcript)).not.toContain('PRIVATE_');
+        expect(first.role === 'assistant' && JSON.stringify(first.content)).toContain('PRIVATE_PARAMETER');
+        expect((await run.prepareGenerationSnapshot(transcript, [], prepare)).transcript).toEqual(next.transcript);
+    });
+});
+
 function executorFor(run: TaskSourceRun, userInput = userText) {
     const execute = jest.fn(async () => ({ outcome: 'success' as const, promptText: 'unused' }));
     const prepareBatch = jest.fn(async () => undefined);

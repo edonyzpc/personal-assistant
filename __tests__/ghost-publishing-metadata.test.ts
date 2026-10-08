@@ -310,7 +310,7 @@ describe("prepareGhostMetadata", () => {
         expect(invoke).toHaveBeenCalledTimes(1);
     });
 
-    it("makes invalid metadata and content shapes readable through Debug without persisting session detail", async () => {
+    it("persists invalid metadata, reasoning and raw content shapes through Debug", async () => {
         const generation: DebugGeneration = { generation: 0, domains: {}, quarantined: false, sourceToken: "synthetic-token" };
         const batches: DebugBatch[] = [];
         const store = {
@@ -333,7 +333,7 @@ describe("prepareGhostMetadata", () => {
             await service.initialize();
             const recorder = service.startRun({ prompt: "Synthetic publish request", provider: "openai", model: "text-model" });
             const content = '{"customExcerpt":"Synthetic raw metadata answer"}';
-            const reasoning = "SYNTHETIC_REASONING_SESSION_ONLY";
+            const reasoning = "SYNTHETIC_REASONING_FULL_HISTORY";
             createChatModel.mockResolvedValueOnce({ invoke: async () => ({ content,
                 additional_kwargs: { reasoning_content: reasoning } }) });
             await expect(prepareGhostMetadata(host, input({ debug: { recorder, parentId: "synthetic-tool",
@@ -341,7 +341,7 @@ describe("prepareGhostMetadata", () => {
                 .rejects.toMatchObject({ code: "invalid_result", validationReason: "field_set" });
             const { agentDebugCall } = createChatModel.mock.calls[0][1] as { agentDebugCall: { callId: string } };
             const contents = await service.getContents(recorder.captureId, agentDebugCall.callId);
-            const lineage = { sourceRefs: ["Synthetic Article.md"], possibleDomains: ["vault_notes"], completeness: "known" };
+            const lineage = { sourceRefs: [], possibleDomains: ["vault_notes"], completeness: "known" };
             expect(contents).toContainEqual(expect.objectContaining({ kind: "output", text: content,
                 lineage: expect.objectContaining(lineage) }));
             const failure = contents.find(detail => detail.kind === "error");
@@ -349,21 +349,22 @@ describe("prepareGhostMetadata", () => {
             expect(JSON.parse(failure!.text)).toMatchObject({ code: "invalid_result", message: "Metadata validation failed: field_set." });
             expect(await service.getEvents(recorder.captureId)).toContainEqual(expect.objectContaining({ kind: "error",
                 nodeId: agentDebugCall.callId, details: expect.objectContaining({ purpose: "ghost_metadata", outcome: "field_set" }) }));
-            expect(service.getSessionDetails(recorder.captureId, agentDebugCall.callId))
-                .toContainEqual(expect.objectContaining({ kind: "reasoning", text: reasoning }));
-            expect(JSON.stringify(batches)).not.toContain(reasoning);
+            expect(contents).toContainEqual(expect.objectContaining({ kind: "reasoning", text: reasoning,
+                lineage: expect.objectContaining(lineage) }));
+            expect(service.getSessionDetails(recorder.captureId, agentDebugCall.callId)).toEqual([]);
+            expect(JSON.stringify(batches)).toContain(reasoning);
 
             const nontext = ["Synthetic array string block", { type: "refusal", refusal: "Synthetic provider refusal" }];
             createChatModel.mockResolvedValueOnce({ invoke: async () => ({ content: nontext }) });
             await expect(prepareGhostMetadata(host, input({ debug: { recorder, parentId: "synthetic-tool" } })))
                 .rejects.toMatchObject({ code: "invalid_result", validationReason: "refusal" });
             const nextCall = createChatModel.mock.calls[1][1] as { agentDebugCall: { callId: string } };
-            const detail = service.getSessionDetails(recorder.captureId, nextCall.agentDebugCall.callId)
+            const detail = (await service.getContents(recorder.captureId, nextCall.agentDebugCall.callId))
                 .find(entry => entry.kind === "tool_output");
             expect(JSON.parse(detail!.text)).toEqual({ content: nontext });
             await service.flush();
-            expect(JSON.stringify(batches)).not.toContain("Synthetic array string block");
-            expect(JSON.stringify(batches)).not.toContain("Synthetic provider refusal");
+            expect(JSON.stringify(batches)).toContain("Synthetic array string block");
+            expect(JSON.stringify(batches)).toContain("Synthetic provider refusal");
         } finally {
             await service.dispose();
         }

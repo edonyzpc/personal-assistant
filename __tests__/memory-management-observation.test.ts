@@ -1104,7 +1104,7 @@ describe("B-140 T-08 Memory management observations", () => {
             : true).toBe(false);
     });
 
-    it("revokes an expired management observation before the next physical provider dispatch", async () => {
+    it("retains accepted read-only Memory status when management state changes between preparation and dispatch", async () => {
         let prepareCalls = 0;
         let revoked = false;
         const memoryManagement = {
@@ -1182,14 +1182,16 @@ describe("B-140 T-08 Memory management observations", () => {
         });
         runtime.dispose();
 
-        expect(runtimeError).toBeInstanceOf(Error);
-        expect((runtimeError as Error).message).toContain("Memory management state changed before dispatch.");
-        expect(providerInputs).toHaveLength(1);
+        expect(runtimeError).toBeUndefined();
+        expect(providerInputs).toHaveLength(2);
         const toolResult = lifecycle.find(event => event.type === "message_end" && event.message.role === "toolResult");
         expect(JSON.stringify(toolResult)).toContain("776655");
-        // The first request was admitted while the evidence was current. The
-        // state changed between prepare and onStart, so no second physical SDK
-        // attempt may carry that now-expired observation.
+        // This is a get_memory_status observation, not a manage_memory action.
+        // The second request keeps the accepted observation despite a later state change.
         expect(JSON.stringify(providerInputs[0])).not.toContain("776655");
+        expect(JSON.stringify(providerInputs[1])).toContain("776655");
+        expect(memoryManagement.getStatus).toHaveBeenCalledTimes(1);
+        expect(lifecycle.filter(event => event.type === 'tool_execution_start').map(event => event.toolName)).toEqual(['get_memory_status']);
+        expect(lifecycle).toContainEqual(expect.objectContaining({ type: 'agent_end', status: 'completed' }));
     });
 });

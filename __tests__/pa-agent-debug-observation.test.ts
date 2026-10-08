@@ -23,6 +23,23 @@ function capture(enabled: () => boolean = () => true) {
 }
 
 describe("Chat scoped Debug observation", () => {
+    it('keeps major phase duration without persisting detailed per-source probes', () => {
+        const { events, recorder } = capture();
+        observeAgentDebugPhase(recorder, 'provider_source_prepare:end', { turnId: 'turn', durationMs: 137512,
+            sourceVisits: 100000, arbitrary: 'private detail' });
+        expect(events[0]).toMatchObject({ phase: 'provider_source_prepare:end', durationMs: 137512, status: 'completed' });
+        expect(events[0]).not.toHaveProperty('sourceVisits');
+        expect(events[0]).not.toHaveProperty('arbitrary');
+        observeAgentDebugPhase(recorder, 'runtime_startup_total', { elapsedMs: 42 });
+        expect(events[1]).toMatchObject({ phase: 'runtime_startup_total', durationMs: 42 });
+    });
+
+    it('records every actually observed provider text block without a separate 256-block cutoff', () => {
+        const { events, call } = capture();
+        observeAgentDebugResponse(call, { content: Array.from({ length: 300 }, (_, index) => ({ type: 'text', text: `block-${index};` })) });
+        expect(events[0].text).toContain('block-299;');
+        expect(events[0].missingReason).toBeUndefined();
+    });
     it('accounts only uniquely proven response attempts even while Debug is disabled', async () => {
         const ledger = new PaAgentRunUsageLedger();
         const { recorder } = capture(() => false);
@@ -231,7 +248,7 @@ describe("Chat scoped Debug observation", () => {
             || event.reasoning?.includes('MUST_NOT_REASON'))).toBe(false);
     });
 
-    it.each(['stream', 'invoke'] as const)('keeps %s usage but hides stale answer content from Debug', async path => {
+    it.each(['stream', 'invoke'] as const)('keeps %s usage and actual content when sources change during generation', async path => {
         const ledger = new PaAgentRunUsageLedger();
         const { recorder, events } = capture();
         const call: AgentDebugCallScope = { recorder, usageLedger: ledger,
@@ -249,7 +266,6 @@ describe("Chat scoped Debug observation", () => {
         const delivered: unknown[] = [];
         const consuming = async () => {
             for await (const chunk of streamWithInvokeFallback({ input: {}, debugCall: call,
-                isDebugContentCurrent: () => current,
                 chain: { stream: async function* () {
                     if (path === 'invoke') throw new Error('stream setup failed');
                     await traceProviderDispatch(() => Promise.resolve({ status: 200 }), 'native', undefined,
@@ -260,12 +276,13 @@ describe("Chat scoped Debug observation", () => {
             })) delivered.push(chunk);
         };
         await consuming();
-        expect(delivered.length).toBeGreaterThan(0); // The caller's final source guard owns delivery/recovery.
+        expect(current).toBe(false);
+        expect(delivered.length).toBeGreaterThan(0);
         expect(invoke).toHaveBeenCalledTimes(path === 'invoke' ? 1 : 0);
         expect(ledger.snapshot()).toMatchObject({ knownPhysicalTokens: 7,
             attempts: [{ purpose: 'answer', totalTokens: 7 }] });
-        expect(events.some(event => event.text?.includes('STALE_ANSWER_CONTENT')
-            || event.reasoning?.includes('STALE_ANSWER_REASON'))).toBe(false);
+        expect(events.some(event => event.text?.includes('STALE_ANSWER_CONTENT'))).toBe(true);
+        expect(events.some(event => event.reasoning?.includes('STALE_ANSWER_REASON'))).toBe(true);
     });
 
     it('records rerank usage without exposing a response after candidate identity changes', async () => {

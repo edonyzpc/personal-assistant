@@ -42,6 +42,20 @@ async function setup() {
 }
 
 describe('host writing context preparation', () => {
+    it('retains prepared generation text while live preparation still checks the parent and run', async () => {
+        const f = await setup();
+        await f.run.prepare(f.selection, budget);
+        f.records.delete(f.parent.id);
+        const snapshot = f.run.currentSnapshot();
+        expect(snapshot?.parent?.text).toBe('Original parent body');
+        expect(() => f.run.current()).toThrow();
+        if (snapshot?.parent) snapshot.parent.text = 'Changed caller copy';
+        expect(f.run.currentSnapshot()?.parent?.text).toBe('Original parent body');
+        f.state.current = false;
+        expect(() => f.run.currentSnapshot()).toThrow();
+        f.run.dispose();
+    });
+
     it.each(['parent', 'images', 'style'] as const)('checks real %s sources after run cleanup', async kind => {
         const f = await setup();
         f.host.verifyImages = async refs => ({ images: refs.map((value, ordinal) => ({ ref: value, ordinal, label: 'photo' })),

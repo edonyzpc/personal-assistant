@@ -3,13 +3,6 @@ import { DEFAULT_DEBUG_BUDGETS, type DebugLineage, type DebugUsage, emptyDebugLi
 export interface ProjectedDebugText { text?: string; parts?: string[]; redactions: string[]; reason?: 'capacity' | 'unobservable_body'; }
 
 const SECRET_KEY = /^(?:authorization|proxy-authorization|headers?|cookie|set-cookie|api[-_]?key|access[-_]?token|refresh[-_]?token|password|secret|credential)$/i;
-const REASONING_KEY = /^(?:reasoning(?:_content|_details)?|thinking|thoughts?|signature|encrypted_content)$/i;
-const REQUEST_KEYS = new Set(['model', 'messages', 'input', 'instructions', 'tools', 'tool_choice', 'parallel_tool_calls',
-    'temperature', 'top_p', 'max_tokens', 'max_completion_tokens', 'max_output_tokens', 'stream', 'stream_options',
-    'response_format', 'text', 'stop', 'seed', 'frequency_penalty', 'presence_penalty', 'reasoning_effort']);
-const MESSAGE_KEYS = new Set(['role', 'content', 'name', 'tool_call_id', 'tool_calls', 'function_call', 'type', 'text',
-    'id', 'call_id', 'output', 'arguments', 'function', 'description', 'parameters', 'strict', 'image_url', 'url',
-    'detail', 'input_image', 'input_text', 'mime_type', 'file_id', 'file_url', 'file_data']);
 
 function ownData(value: object, key: string): unknown {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
@@ -43,17 +36,16 @@ export function filterDebugText(text: string): string {
         });
 }
 
-/** Does not invoke getters/toJSON and never preserves unknown provider envelopes. */
-function projectValue(value: unknown, redactions: Set<string>, mode: 'request' | 'nested' | 'schema' | 'session', budget: ProjectionBudget, depth = 0): unknown {
+/** Preserve observed JSON text without invoking getters/toJSON or copying media payloads. */
+function projectValue(value: unknown, redactions: Set<string>, budget: ProjectionBudget, depth = 0): unknown {
     charge(budget, 8);
-    if (depth > 24) { redactions.add('depth_limit'); return '[depth limit]'; }
+    if (depth > 24) throw CAPACITY;
     if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
     if (typeof value === 'string') { charge(budget, value); return filterDebugText(value); }
     if (Array.isArray(value)) {
-        if (value.length > 4096) redactions.add('array_limit');
         const result: unknown[] = [];
-        for (let index = 0; index < Math.min(value.length, 4096); index++) {
-            result.push(projectValue(ownData(value, String(index)), redactions, mode === 'request' ? 'nested' : mode, budget, depth + 1));
+        for (let index = 0; index < value.length; index++) {
+            result.push(projectValue(ownData(value, String(index)), redactions, budget, depth + 1));
         }
         return result;
     }
@@ -62,30 +54,18 @@ function projectValue(value: unknown, redactions: Set<string>, mode: 'request' |
     }
     const result: Record<string, unknown> = {};
     const keys = Object.keys(value);
-    if (keys.length > 4096) redactions.add('field_limit');
-    for (const key of keys.slice(0, 4096)) {
+    for (const key of keys) {
         charge(budget, key);
         if (SECRET_KEY.test(key)) { redactions.add('credentials'); continue; }
-        if (mode !== 'session' && REASONING_KEY.test(key)) { redactions.add('reasoning'); continue; }
-        if (/^(?:file_data|data|b64_json|blob|bytes)$/i.test(key)) { redactions.add('media'); continue; }
-        if ((mode === 'request' && !REQUEST_KEYS.has(key)) || (mode === 'nested' && !MESSAGE_KEYS.has(key))) {
-            redactions.add(`field:${key.slice(0, 80)}`); continue;
-        }
+        if (/^(?:file_data|b64_json|blob|base64)$/i.test(key)) { redactions.add('media'); continue; }
         const entry = ownData(value, key);
         if (entry === undefined) { redactions.add('accessor_or_undefined'); continue; }
-        if (key === 'type' && typeof entry === 'string' && ['thinking', 'reasoning', 'redacted_thinking'].includes(entry)) {
-            redactions.add('reasoning'); return '[reasoning omitted]';
-        }
-        if (['image_url', 'input_image', 'file_url', 'file_id'].includes(key)) {
-            redactions.add('media'); result[key] = '[media reference omitted]'; continue;
-        }
-        // Tool schemas and arguments contain user-defined keys; secret/reasoning/media filtering still applies.
-        const childMode = mode === 'session' ? 'session' : mode === 'schema' || key === 'parameters' ? 'schema' : 'nested';
+        // Serialized tool arguments also pass through the credential/media projection.
         if (key === 'arguments' && typeof entry === 'string') {
             if (entry.length > budget.bytes || utf8Bytes(entry) > budget.bytes) throw CAPACITY;
-            try { result[key] = projectValue(JSON.parse(entry), redactions, 'schema', budget, depth + 1); }
+            try { result[key] = projectValue(JSON.parse(entry), redactions, budget, depth + 1); }
             catch (error) { if (error === CAPACITY) throw error; charge(budget, entry); result[key] = filterDebugText(entry); }
-        } else result[key] = projectValue(entry, redactions, childMode, budget, depth + 1);
+        } else result[key] = projectValue(entry, redactions, budget, depth + 1);
     }
     return result;
 }
@@ -96,7 +76,7 @@ export function projectDebugRequest(body: unknown, maxBytes = DEFAULT_DEBUG_BUDG
         const parsed: unknown = typeof body === 'string' ? JSON.parse(body) : body;
         if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') return { redactions: [], reason: 'unobservable_body' };
         const redactions = new Set<string>();
-        const projected = projectValue(parsed, redactions, 'request', { bytes: maxBytes, nodes: 16384 });
+        const projected = projectValue(parsed, redactions, { bytes: maxBytes, nodes: Math.ceil(maxBytes / 8) });
         const record = projected as Record<string, unknown>;
         const messages = Array.isArray(record.messages) ? record.messages : undefined;
         const parts = messages ? [JSON.stringify({ ...record, messages: '[ordered message blocks below]' }, null, 2),
@@ -108,12 +88,26 @@ export function projectDebugRequest(body: unknown, maxBytes = DEFAULT_DEBUG_BUDG
 export function projectDebugSession(value: unknown, maxBytes = DEFAULT_DEBUG_BUDGETS.contentBytes): ProjectedDebugText {
     const redactions = new Set<string>();
     try {
-        const budget = { bytes: maxBytes, nodes: 16384 };
+        const budget = { bytes: maxBytes, nodes: Math.ceil(maxBytes / 8) };
         if (typeof value === 'string') charge(budget, value);
-        const text = typeof value === 'string' ? filterDebugText(value) : JSON.stringify(projectValue(value, redactions, 'session', budget));
+        const text = typeof value === 'string' ? filterDebugText(value) : JSON.stringify(projectValue(value, redactions, budget));
         if (typeof text !== 'string') return { redactions: [], reason: 'unobservable_body' };
         return utf8Bytes(text) > maxBytes ? { redactions: [...redactions], reason: 'capacity' } : { text, redactions: [...redactions] };
     } catch (error) { return { redactions: [], reason: error === CAPACITY ? 'capacity' : 'unobservable_body' }; }
+}
+
+/** Immutable storage blocks; per-content limits control work size rather than truncate text. */
+export function splitDebugText(text: string, maxBytes: number): string[] {
+    const characters = Math.max(1, Math.min(16_384, Math.floor(maxBytes / 4)));
+    const parts: string[] = [];
+    for (let start = 0; start < text.length;) {
+        let end = Math.min(text.length, start + characters);
+        const code = text.charCodeAt(end - 1);
+        if (end < text.length && code >= 0xd800 && code <= 0xdbff) end--;
+        if (end === start) end = Math.min(text.length, start + 2);
+        parts.push(text.slice(start, end)); start = end;
+    }
+    return parts.length ? parts : [''];
 }
 
 /** Existing prepared-media receipts only; never read a Blob, fetch a URL or hash attachment bytes. */

@@ -207,7 +207,7 @@ import {
     type UserProfileSnapshot,
     type UserProfileStore,
 } from './ai-services/memory-extraction';
-import type { AiServiceHost } from './ai-services/AiServiceHost';
+import type { AiServiceHost, TaskSourceConfigurationSnapshot } from './ai-services/AiServiceHost';
 import { revalidateVaultObservationFromApp } from './ai-services/vault-observation-evidence';
 import {
     RetrievalDiagnosticsController,
@@ -593,6 +593,52 @@ function writeVaultInsightsInjectionNoticeFlag(): void {
 
 export class PluginManager extends Plugin {
     private taskSourceAuthorityRevision = 0;
+    private taskSourceConfigurationRevision = 0;
+    private taskSourceConfigurationSnapshot = '';
+
+    private captureTaskSourceConfiguration(): string {
+        const settings = this.settings;
+        return JSON.stringify({
+            memoryEnabled: settings.memoryEnabled,
+            webSearchEnabled: settings.webSearchEnabled,
+            excludedFolders: settings.dataBoundary.excludedFolders,
+            excludedTags: settings.dataBoundary.excludedTags,
+            generatedNotePolicy: settings.dataBoundary.generatedNotePolicy,
+            memoryExcludePaths: settings.vssCacheExcludePath,
+            pageletExcludedFolders: settings.pagelet.excludedFolders,
+            pageletExcludedTags: settings.pagelet.excludedTags,
+            pageletExcludedPatterns: settings.pagelet.excludedPatterns,
+        });
+    }
+
+    private updateTaskSourceConfiguration(): void {
+        const snapshot = this.captureTaskSourceConfiguration();
+        if (snapshot === this.taskSourceConfigurationSnapshot) return;
+        this.taskSourceConfigurationSnapshot = snapshot;
+        this.taskSourceConfigurationRevision += 1;
+    }
+
+    private captureAgentSourceConfiguration(): TaskSourceConfigurationSnapshot {
+        const settings = this.settings;
+        const sourceSettings = {
+            dataBoundary: { ...settings.dataBoundary,
+                excludedFolders: [...settings.dataBoundary.excludedFolders],
+                excludedTags: [...settings.dataBoundary.excludedTags] },
+            memoryExcludePrefixes: [...settings.vssCacheExcludePath],
+            pagelet: { ...settings.pagelet,
+                excludedFolders: [...settings.pagelet.excludedFolders],
+                excludedTags: [...settings.pagelet.excludedTags],
+                excludedPatterns: [...settings.pagelet.excludedPatterns] },
+        };
+        const source = new SourceAccess({ app: this.app, getSettings: () => sourceSettings,
+            log: (message, detail) => this.log(message, detail) });
+        return {
+            epoch: String(this.taskSourceConfigurationRevision),
+            isPathAllowed: path => source.isMemoryProviderPathAllowed(path),
+            memoryAllowed: settings.memoryEnabled === true,
+            webAllowed: settings.webSearchEnabled === true,
+        };
+    }
     private advanceTaskSourceAuthority(): void {
         this.taskSourceAuthorityRevision += 1;
     }
@@ -614,15 +660,12 @@ export class PluginManager extends Plugin {
         return new SettingsPersistence({
             onSourcePermissionRevoking: () => {
                 this.advanceTaskSourceAuthority();
-                this.agentDebugIntegration?.sourcePermissionRevoking();
             },
             onSourcePermissionCommitted: () => {
                 this.advanceTaskSourceAuthority();
-                this.agentDebugIntegration?.sourcePermissionCommitted();
             },
             onSourcePermissionFailed: () => {
                 this.advanceTaskSourceAuthority();
-                this.agentDebugIntegration?.sourcePermissionFailed();
             },
             loadData: () => this.loadData(),
             saveData: (data) => this.saveData(data),
@@ -1050,7 +1093,6 @@ export class PluginManager extends Plugin {
             vault: this.app.vault,
             settings: () => this.settings,
             history: () => this.chatIntegration.getHistoryStore(),
-            recordSourceRevocation: () => this.settingsPersistence.recordSourceRevocation(),
             readForgetState: async () => {
                 const state = await this.deviceMemoryGovernanceRepository?.initialize();
                 return {
@@ -1940,6 +1982,8 @@ export class PluginManager extends Plugin {
         void this.ensureLoadedPluginBuildIdentity();
         this.vaultEventBridge.resetStartupEventGate();
         await this.loadSettings();
+        this.taskSourceConfigurationSnapshot = this.captureTaskSourceConfiguration();
+        this.register(this.onSettingsChanged(() => this.updateTaskSourceConfiguration()));
         if (Platform.isDesktop && !Platform.isMobile) {
             const adapter = this.app.vault.adapter as typeof this.app.vault.adapter & { getBasePath?(): string };
             const vaultPath = adapter.getBasePath?.();
@@ -2026,23 +2070,6 @@ export class PluginManager extends Plugin {
         const agentDebug = this.getAgentDebugIntegration();
         void agentDebug.initialize();
         this.register(this.onSettingsChanged(() => agentDebug.settingsChanged()));
-        const deniedDebugSources = new Set<string>();
-        const observeDebugSourcePermission = (file: TFile): void => {
-            if (file.extension !== 'md') return;
-            if (this.isDataBoundaryAllowedFile(file)) {
-                deniedDebugSources.delete(file.path);
-            } else if (!deniedDebugSources.has(file.path)) {
-                deniedDebugSources.add(file.path);
-                agentDebug.sourceRevoked();
-            }
-        };
-        this.registerEvent(this.app.metadataCache.on('changed', observeDebugSourcePermission));
-        this.registerEvent(this.app.vault.on('rename', (file) => {
-            if (file instanceof TFile) observeDebugSourcePermission(file);
-        }));
-        this.registerEvent(this.app.vault.on('delete', (file) => {
-            if (file instanceof TFile && file.extension === 'md') agentDebug.sourceRevoked();
-        }));
         this.statsIntegration.initialize();
         const obsidianRegistration = {
             registerView: (viewType: string, factory: (leaf: WorkspaceLeaf) => View) => {
@@ -5415,6 +5442,8 @@ export class PluginManager extends Plugin {
             }),
             getMemoryEvidenceEpoch: () => this.getMemoryGraphTopologyEpoch("chat"),
             getTaskSourceAuthorityEpoch: () => this.getTaskSourceAuthorityEpoch(),
+            getTaskSourceConfigurationEpoch: () => String(this.taskSourceConfigurationRevision),
+            captureTaskSourceConfiguration: () => this.captureAgentSourceConfiguration(),
             getGraphBoundarySnapshotSource: () => this.createMemoryGraphBoundarySnapshotSource("chat"),
             isDataBoundaryAllowedPath: (path) => this.isMemoryProviderPathAllowed(path),
             readLatestMemorySource: (path, signal) => this.captureLatestMemorySource(
@@ -7588,6 +7617,7 @@ export class PluginManager extends Plugin {
                 state = await repository.initialize();
             }
             const cleanupPort: ExactMemoryProjectionCleanupPort = {
+                invalidateGenerationClaim: ({ claimId }) => this.chatIntegration.invalidateWritingStyleGenerationClaim(claimId),
                 cleanupDebugCopies: ({ claimId, partition }) => this.getAgentDebugIntegration()
                     .forgetClaim(claimId, partition.kind === 'device_collaboration'),
                 cleanupExactProjection: (input) => this.cleanupExactMemoryProjection(input.projectionLink),

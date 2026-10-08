@@ -28,10 +28,11 @@ it('reads a prior version absent from the timeline and registers it for current 
     expect(result.lifecycle.some(event => event.type === 'agent_end' && event.status === 'completed')).toBe(true);
 });
 
-it('rejects a history source revoked after preparation and before physical model dispatch', async () => {
+it('retains a history snapshot after preparation and source changes before physical dispatch', async () => {
     const result = await runScenario('history-read-revoked', false, { change: 'live-refresh', writing: false });
-    expect(result.inputs).toHaveLength(1);
-    expect(result.lifecycle.some(event => event.type === 'agent_end' && event.status === 'completed')).toBe(false);
+    expect(result.inputs).toHaveLength(2);
+    expect(result.inputs[1]).toContain('Authorized parent draft');
+    expect(result.lifecycle.some(event => event.type === 'agent_end' && event.status === 'completed')).toBe(true);
 });
 
 it('reads and delivers a complete selected draft beyond the former observation and output character caps', async () => {
@@ -172,6 +173,11 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked' | 'history-re
             messageInputs.push((input as { toChatMessages(): Array<{ getType(): string; content: unknown }> })
                 .toChatMessages().map(message => ({ role: message.getType(), content: String(message.content) })));
             const turn = inputs.length;
+            if (readsHistory && turn > 1 && backgroundAdmission?.writing === false) {
+                yield new AIMessageChunk({ content: 'Historical snapshot accepted' });
+                yield new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'stop' } });
+                return;
+            }
             if (readsHistory && turn === 1) {
                 yield new AIMessageChunk({ content: '', tool_call_chunks: [{ id: 'history-read', index: 0,
                     name: 'read_writing_history', args: JSON.stringify({ action: 'read', versionId: parent.id }) }] });
@@ -281,21 +287,21 @@ describe('native writing context runtime integration', () => {
         { change: 'revoked-same-text' as const, writing: false },
         { change: 'unguarded-refresh' as const, writing: true },
         { change: 'unguarded-refresh' as const, writing: false },
-    ])('rejects changed background authority without sending or fallback: $change / writing=$writing', async input => {
+    ])('keeps accepted background after a later authority change: $change / writing=$writing', async input => {
         const result = await runScenario('ordinary', false, input);
-        expect(result.inputs).toHaveLength(0);
-        expect(result.lifecycle.find(event => event.type === 'agent_end')).toMatchObject({ status: 'error' });
+        expect(result.inputs).toHaveLength(1);
+        expect(result.inputs[0]).toContain('Authorized personal background');
+        expect(result.lifecycle.find(event => event.type === 'agent_end')).toMatchObject({ status: 'completed' });
         expect(result.createModel).toHaveBeenCalledTimes(1);
     });
 
-    it('traces stale background rejection before sending ordinary Chat through the native writing entry', async () => {
+    it('omits initially unavailable background while continuing with accepted materials', async () => {
         const result = await runScenario('stale-insights', true);
         const traces = result.log.mock.calls.filter(([message]) => message === 'PA Agent trace').map(([, fields]) => fields);
-        expect(traces).toContainEqual(expect.objectContaining({ phase: 'llm_stream:error',
-            errorType: 'ProviderAdmissionError', localReason: 'personal_context_changed', turnId: 'turn_1' }));
-        expect(result.inputs).toHaveLength(0);
-        expect(traces.some(trace => trace.phase === 'http_dispatch')).toBe(false);
-        expect(JSON.stringify(traces)).not.toContain('Authorized personal background');
+        expect(result.error).toBeUndefined();
+        expect(result.inputs).toHaveLength(2);
+        expect(result.inputs.join('')).not.toContain('Authorized personal background');
+        expect(traces.some(trace => trace.localReason === 'personal_context_changed')).toBe(false);
     });
 
     it('keeps the installed HTTP hook silent until Debug is enabled and stops it again when disabled', async () => {
@@ -317,7 +323,7 @@ describe('native writing context runtime integration', () => {
         expect(result.log).not.toHaveBeenCalled();
     });
 
-    it('keeps a non-enumerable Personal source receipt across style projection and runtime cleanup', async () => {
+    it('keeps Personal snapshot provenance and session receipt across style projection and cleanup', async () => {
         const result = await runScenario('personal-source');
         const artifact = result.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> => event.kind === 'writing-artifact');
         expect(result.inputs[1]).toContain('Authorized personal background');
@@ -330,13 +336,13 @@ describe('native writing context runtime integration', () => {
         });
         expect(artifact?.isSourceCurrent?.()).toBe(true);
         result.revokePersonal();
-        expect(artifact?.isSourceCurrent?.()).toBe(false);
+        expect(artifact?.isSourceCurrent?.()).toBe(true);
     });
 
-    it('rejects a physical retry after Personal authority changes even with identical background text', async () => {
+    it('keeps a physical retry after Personal changes on the accepted input', async () => {
         const result = await runScenario('personal-retry');
-        expect(result.retryErrors).toHaveLength(1);
-        expect(result.events.some(event => event.kind === 'writing-artifact')).toBe(false);
+        expect(result.retryErrors).toHaveLength(0);
+        expect(result.events.some(event => event.kind === 'writing-artifact')).toBe(true);
     });
 
     it('records Pagelet backing hashes without claiming its rendered body is reload-verifiable', async () => {
@@ -351,15 +357,15 @@ describe('native writing context runtime integration', () => {
                 contentHash: { algorithm: 'unspecified', value: 'b'.repeat(64) } }],
         });
     });
-    it('delivers a source receipt that survives runtime cleanup but rejects a later style revocation', async () => {
+    it('keeps a generation receipt after cleanup and later style edits', async () => {
         const result = await runScenario('complete');
         const artifact = result.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> => event.kind === 'writing-artifact');
         expect(artifact?.isSourceCurrent?.()).toBe(true);
         expect(JSON.stringify(artifact)).not.toContain('isSourceCurrent');
         result.revokeStyle();
-        expect(artifact?.isSourceCurrent?.()).toBe(false);
+        expect(artifact?.isSourceCurrent?.()).toBe(true);
     });
-    it('saves an admitted scoped parent after stream cleanup and rejects later source revocation', async () => {
+    it('saves an admitted scoped parent after cleanup and retains its snapshot after source deletion', async () => {
         const result = await runScenario('complete', false, undefined, 'notes');
         expect(result.error).toBeUndefined();
         expect(result.inputs[0]).not.toContain('Authorized parent draft');
@@ -381,7 +387,7 @@ describe('native writing context runtime integration', () => {
             parentVersionId: result.parent.id, generationInput: artifact.generationInput }, artifact.isSourceCurrent);
         expect(saved.get(child.id)?.parentVersionId).toBe(result.parent.id);
         result.revokeParentSource();
-        expect(artifact.isSourceCurrent()).toBe(false);
+        expect(artifact.isSourceCurrent()).toBe(true);
     });
     it('tracks selected image and style with a scoped parent tool observation', async () => {
         const result = await runScenario('image-subset', false, undefined, 'notes');
@@ -399,18 +405,18 @@ describe('native writing context runtime integration', () => {
         });
         expect(artifact.isSourceCurrent()).toBe(true);
         result.revokeImage();
-        expect(artifact.isSourceCurrent()).toBe(false);
+        expect(artifact.isSourceCurrent()).toBe(true);
     });
-    it('rejects a scoped parent artifact when its selected style is revoked after streaming', async () => {
+    it('retains a scoped parent artifact after its selected style changes', async () => {
         const result = await runScenario('complete', false, undefined, 'notes');
         expect(result.error).toBeUndefined();
         const artifact = result.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> =>
             event.kind === 'writing-artifact');
         expect(artifact?.isSourceCurrent?.()).toBe(true);
         result.revokeStyle();
-        expect(artifact?.isSourceCurrent?.()).toBe(false);
+        expect(artifact?.isSourceCurrent?.()).toBe(true);
     });
-    it('rejects a scoped parent save when its Data Boundary permission is revoked after streaming', async () => {
+    it('saves an already generated scoped artifact after its source is newly excluded', async () => {
         const result = await runScenario('complete', false, undefined, 'notes');
         expect(result.error).toBeUndefined();
         const artifact = result.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> =>
@@ -418,7 +424,7 @@ describe('native writing context runtime integration', () => {
         if (!artifact?.isSourceCurrent || !artifact.generationInput) throw new Error('Missing scoped Writing artifact');
         expect(artifact.isSourceCurrent()).toBe(true);
         result.revokeParentPermission();
-        expect(artifact.isSourceCurrent()).toBe(false);
+        expect(artifact.isSourceCurrent()).toBe(true);
         const versions = new WritingVersionService({
             getWritingVersion: async id => id === result.parent.id ? result.parent : null,
             listWritingVersions: async () => [result.parent],
@@ -427,7 +433,7 @@ describe('native writing context runtime integration', () => {
         await expect(versions.create({ requestId: artifact.requestId, messageId: artifact.messageId,
             conversationId: 'conversation', turnIndex: 2, text: artifact.body, images: [],
             parentVersionId: result.parent.id, generationInput: artifact.generationInput }, artifact.isSourceCurrent))
-            .rejects.toThrow('Writing conversation changed');
+            .resolves.toMatchObject({ parentVersionId: result.parent.id, text: artifact.body });
     });
     it('invalidates a scoped parent receipt when its run selection changes after streaming', async () => {
         const result = await runScenario('complete', false, undefined, 'notes');
@@ -584,7 +590,7 @@ describe('native writing context runtime integration', () => {
         });
     });
 
-    it('keeps the incomplete output source receipt after cleanup and rejects later revocation', async () => {
+    it('keeps the incomplete output snapshot after cleanup and later style changes', async () => {
         const result = await runScenario('incomplete');
         expect(result.events.some(event => event.kind === 'writing-artifact')).toBe(false);
         const recovery = result.events.find(event => event.kind === 'writing-recovery');
@@ -596,7 +602,7 @@ describe('native writing context runtime integration', () => {
         });
         expect(JSON.stringify(recovery)).not.toContain('isSourceCurrent');
         result.revokeStyle();
-        expect(recovery?.isSourceCurrent?.()).toBe(false);
+        expect(recovery?.isSourceCurrent?.()).toBe(true);
     });
 
     it('allows ordinary discussion without preparing a context or creating a version', async () => {
@@ -636,16 +642,16 @@ describe('native writing context runtime integration', () => {
         expect(result.events.some(event => event.kind === 'writing-artifact' || event.kind === 'writing-recovery')).toBe(false);
     });
 
-    it('reports withheld ordinary Chat as incomplete when its generation sources change during streaming', async () => {
+    it('finishes ordinary Chat when accepted background changes during streaming', async () => {
         const result = await runScenario('ordinary-revoked');
         expect(result.error).toBeUndefined();
         expect(result.inputs).toHaveLength(1);
-        expect(result.lifecycle.find(event => event.type === 'turn_end')).toMatchObject({ status: 'incomplete' });
-        expect(result.lifecycle.at(-1)).toMatchObject({ type: 'agent_end', status: 'incomplete' });
+        expect(result.lifecycle.find(event => event.type === 'turn_end')).toMatchObject({ status: 'completed' });
+        expect(result.lifecycle.at(-1)).toMatchObject({ type: 'agent_end', status: 'completed' });
         expect(result.events.filter(event => event.kind === 'writing-preview').map(event => event.text))
-            .toEqual(['We can discuss the options first.', '']);
+            .toEqual(['We can discuss the options first.']);
         expect(result.events.some(event => event.kind === 'writing-recovery')).toBe(false);
-        expect(result.events.some(event => event.kind === 'answer-snapshot' || event.kind === 'writing-artifact')).toBe(false);
+        expect(result.events.some(event => event.kind === 'answer-snapshot')).toBe(true);
     });
 
     it.each(['premature', 'mixed'] as const)('rejects %s output without executing a context preparation', async scenario => {
@@ -655,12 +661,12 @@ describe('native writing context runtime integration', () => {
         expect(result.events.some(event => event.kind === 'writing-artifact')).toBe(false);
     });
 
-    it.each(['revoked', 'physical-retry'] as const)('rejects stale style at %s while retaining the original request identity', async scenario => {
+    it.each(['revoked', 'physical-retry'] as const)('keeps accepted style during %s and retains the request identity', async scenario => {
         const result = await runScenario(scenario);
+        expect(result.error).toBeUndefined();
         expect(result.inputs).toHaveLength(2);
-        expect(result.events.some(event => event.kind === 'writing-artifact')).toBe(false);
-        const recovery = result.events.find(event => event.kind === 'writing-recovery');
-        expect(recovery).toMatchObject({ requestId: 'request', reason: 'source_changed', rawText: '' });
-        if (scenario === 'physical-retry') expect(result.retryErrors).toHaveLength(1);
+        expect(result.events.find(event => event.kind === 'writing-artifact')).toMatchObject({ requestId: 'request', body });
+        expect(result.events.some(event => event.kind === 'writing-recovery')).toBe(false);
+        if (scenario === 'physical-retry') expect(result.retryErrors).toHaveLength(0);
     });
 });

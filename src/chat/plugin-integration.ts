@@ -328,6 +328,10 @@ export class ChatPluginIntegration {
         return this.writingStyleService;
     }
 
+    invalidateWritingStyleGenerationClaim(claimId: string): void {
+        this.writingStyleService?.invalidateGenerationClaim(claimId);
+    }
+
     setWritingStyleServiceForCompatibility(value: WritingStyleService | undefined): void {
         this.writingStyleService = value;
     }

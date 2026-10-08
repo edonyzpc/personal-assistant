@@ -111,7 +111,7 @@ function NodeDetails({ event, contents, session }: { event: DebugEvent; contents
         {contentGroups.map(group => <details key={group.key} open={group.kind === 'error'}>
             <summary>{label('content', group.kind)}</summary>
             {group.redactions.length > 0 && <p className="pa-agent-debug-notice">{t('plugin.agentDebug.filteredFields')}: {group.redactions.join(', ')}</p>}
-            <TextBlocks parts={group.parts} separator={group.kind === 'output' ? '' : '\n\n'} />
+            <TextBlocks parts={group.parts} />
         </details>)}
         {session.map((detail, index) => <details key={`${detail.kind}-${index}`}>
             <summary>{label('content', detail.kind)} · {t('plugin.agentDebug.sessionOnly')}</summary>
@@ -342,6 +342,7 @@ export function AgentDebugPanel({ host, conversationId }: { host: AgentDebugView
             <p>{label('status', selectedRun.status)} · {label('collection', selectedRun.collection)}
                 {selectedRun.endedAt !== undefined && ` · ${Math.max(0, selectedRun.endedAt - selectedRun.startedAt)} ms`}</p>
             {selectedRun.hasGap && <p className="pa-agent-debug-notice">{t('plugin.agentDebug.gap')}</p>}
+            {selectedRun.contentVersion !== 2 && <p className="pa-agent-debug-notice">{t('plugin.agentDebug.legacyDetails')}</p>}
         </div>}
         <details className="pa-agent-debug-section" open><summary>{t('plugin.agentDebug.trajectory')}</summary>
             {turnGroups.length === 0 ? <p>{t('plugin.agentDebug.noEvents')}</p> : turnGroups.map(([turnId, group]) => <div key={turnId}>

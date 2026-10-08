@@ -53,7 +53,7 @@ function responseText(content: unknown): string {
     if (!Array.isArray(content)) return "";
     const parts: string[] = [];
     const length = field(content, "length");
-    for (let index = 0; index < Math.min(typeof length === "number" ? length : 0, 256); index++) {
+    for (let index = 0; index < (typeof length === "number" ? length : 0); index++) {
         const block = field(content, String(index));
         const text = field(block, "text");
         if (field(block, "type") === "text" && typeof text === "string") parts.push(text);
@@ -182,7 +182,6 @@ export function observeAgentDebugResponse(
                 ...callIdentity(scope), phase: "receiving", status: "running",
                 ...(text ? { text, textMode: mode } : {}),
                 ...(typeof reasoning === "string" && reasoning ? { reasoning } : {}),
-                ...(Array.isArray(content) && (field(content, "length") as number) > 256 ? { missingReason: "output_block_limit" } : {}),
                 usage: usage && !attemptId ? { ...usage, updateKey: usageKey,
                     ...(scope.usageLedger?.hasAmbiguousResponsePhase(scope.callId) ? { complete: false } : {}) } : undefined,
             };
@@ -192,6 +191,19 @@ export function observeAgentDebugResponse(
         nodeId: attemptId, parentId: scope.callId, kind: 'attempt', phase: 'usage',
         purpose: scope.purpose, callId: scope.callId, attemptId, turnId: scope.turnId,
         usage: { ...usage, updateKey: usageKey },
+    }));
+}
+
+/** Record the executed result before any model-context trimming. */
+export function observeAgentDebugToolResult(
+    recorder: AgentDebugRunRecorder | undefined,
+    input: { turnId: string; toolCallId: string; toolName: string; result: unknown; runtimeRunId?: string; toolInput?: unknown },
+): void {
+    observeAgentDebug(recorder, () => ({
+        nodeId: `${input.turnId}:tool:${input.toolCallId}`, parentId: input.turnId,
+        turnId: input.turnId, runtimeRunId: input.runtimeRunId, toolCallId: input.toolCallId,
+        toolName: input.toolName, kind: 'tool', phase: 'tool_result', toolInput: input.toolInput, toolOutput: input.result,
+        lineage: { unknown: true },
     }));
 }
 
@@ -256,8 +268,10 @@ export function observeAgentDebugPhase(
         const turnId = typeof fields.turnId === "string" ? fields.turnId : undefined;
         const name = phase.replace(/:(?:start|end|error)$/, "");
         const nodeId = typeof fields.leaseId === "string" ? fields.leaseId : `${turnId ?? recorder.captureId}:phase:${name}`;
+        const duration = fields.durationMs ?? fields.elapsedMs;
         return { nodeId, parentId: turnId ?? recorder.captureId,
             kind: "phase", phase, turnId,
+            ...(typeof duration === "number" && Number.isFinite(duration) && duration >= 0 ? { durationMs: duration } : {}),
             status: phase === "turn_lease:start" || phase === "chat_startup_lease:start" ? "queued"
                 : phase.endsWith(":start") ? "running" : phase.endsWith(":error")
                     ? fields.status === "cancelled" || fields.status === "completed" ? fields.status : "failed"

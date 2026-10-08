@@ -16,7 +16,6 @@ export interface AgentDebugPluginOptions {
     settings(): PluginManagerSettings;
     history(): ChatHistoryStore | undefined;
     readForgetState(): Promise<DebugForgetState>;
-    recordSourceRevocation(): Promise<void>;
 }
 
 /** Owns only Debug adapters; no Agent work waits for its startup or cleanup. */
@@ -25,11 +24,8 @@ export class AgentDebugPluginIntegration {
     private startup: Promise<void> | undefined;
     private queue: Promise<void> = Promise.resolve();
     private detachHistory: (() => void) | undefined;
-    private sourceToken: string | undefined;
     private retryTimer: PlatformTimeoutHandle | undefined;
     private disposed = false;
-    private fileRevocationPending = false;
-    private permissionWritePending = false;
     private legacyWritesPending = 0;
     private admissionRevision = 0;
     private readonly deletingConversations = new Map<string, number>();
@@ -81,15 +77,6 @@ export class AgentDebugPluginIntegration {
     private async reconcile(): Promise<void> {
         if (this.disposed) return;
         const revision = this.admissionRevision;
-        if (this.fileRevocationPending) {
-            await this.options.recordSourceRevocation();
-            this.fileRevocationPending = false;
-        }
-        const token = this.options.settings().dataBoundary.sourceRevocationEpoch ?? '';
-        if (token !== this.sourceToken) {
-            await this.service.applySourceToken(token);
-            this.sourceToken = token;
-        }
         await this.drainDeletions();
         const state = await this.options.readForgetState();
         for (const claim of state.claims) {
@@ -103,7 +90,7 @@ export class AgentDebugPluginIntegration {
             this.seenLegacy.add(id);
         }
         // Store quarantine (unclean previous owner) is an independent gate.
-        const pending = this.fileRevocationPending || this.permissionWritePending || this.legacyWritesPending > 0;
+        const pending = this.legacyWritesPending > 0;
         if (!this.disposed && revision === this.admissionRevision && !pending) {
             this.service.setRecoveryReady(true);
         } else if (!this.disposed && !pending) {
@@ -114,31 +101,9 @@ export class AgentDebugPluginIntegration {
     settingsChanged(): void {
         if (this.disposed) return;
         this.service.setEnabled(this.options.settings().debug);
-        const token = this.options.settings().dataBoundary.sourceRevocationEpoch ?? '';
-        if (this.sourceToken !== token) {
-            this.revokeAdmission();
-            void this.enqueue(() => this.reconcile());
-        }
     }
 
     revokeAdmission(): void { this.admissionRevision++; this.service.setRecoveryReady(false); }
-
-    sourcePermissionRevoking(): void {
-        this.permissionWritePending = true;
-        this.revokeAdmission();
-    }
-
-    sourcePermissionCommitted(): void {
-        this.permissionWritePending = false;
-        void this.enqueue(() => this.reconcile());
-    }
-
-    sourcePermissionFailed(): void {
-        this.permissionWritePending = false;
-        // A failed write may have reached disk. Persist a fresh content-free epoch
-        // before reopening, using the existing bounded retry path.
-        this.sourceRevoked();
-    }
 
     /** Keep older async recovery from reopening details during a primary Forget write. */
     beginLegacyForget(): () => void {
@@ -151,13 +116,6 @@ export class AgentDebugPluginIntegration {
             this.legacyWritesPending--;
             void this.enqueue(() => this.reconcile());
         };
-    }
-
-    sourceRevoked(): void {
-        this.revokeAdmission();
-        if (this.fileRevocationPending) return;
-        this.fileRevocationPending = true;
-        void this.enqueue(() => this.reconcile());
     }
 
     /** Called from the durable Forget state machine, not an advisory listener. */

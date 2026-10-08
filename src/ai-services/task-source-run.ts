@@ -24,6 +24,7 @@ import { admitsInputLineage, admitsValidatedInputDependency, cloneInputLineage, 
 import { createCooperativeTask } from './cooperative-task';
 import { throwIfAborted } from './chat-utils';
 import { boundActionStates, cloneActionStateBinding, cloneActionStates, type PaAgentActionState } from './pa-agent-result-facts';
+import { projectPaAgentToolStatus } from './pa-agent-action-history';
 
 export const MAX_TASK_SOURCE_NOTE_HANDLES = 32;
 export const MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS = 8000;
@@ -54,6 +55,8 @@ export interface TaskSourceRunHost {
     isPathAllowed?: (path: string) => boolean;
     getMemoryEvidenceEpoch?: () => string;
     getTaskSourceAuthorityEpoch?: () => string;
+    getTaskSourceConfigurationEpoch?: () => string;
+    captureTaskSourceConfiguration?: AiServiceHost['captureTaskSourceConfiguration'];
 }
 
 /** One run's host facts and read planning; no note contents or permissions live here. */
@@ -75,6 +78,13 @@ export class TaskSourceRun {
     private readonly isPathAllowed: ((path: string) => boolean) | undefined;
     private readonly getMemoryEvidenceEpoch: (() => string) | undefined;
     private readonly getTaskSourceAuthorityEpoch: (() => string) | undefined;
+    private readonly getTaskSourceConfigurationEpoch: (() => string) | undefined;
+    private readonly captureTaskSourceConfiguration: AiServiceHost['captureTaskSourceConfiguration'];
+    private generationConfigurationEpoch: string | undefined;
+    private generationConstraint: TaskSourceConstraint | undefined;
+    private readonly generationMessages = new WeakMap<PaAgentMessage, PaAgentMessage | null>();
+    private generationHistory: ChatMessage[] | undefined;
+    private readonly generationDependencyDecisions = new Map<string, boolean>();
     private readonly hostSourcesAreCurrent: () => boolean;
     private readonly ownedLineages = new WeakMap<InputLineage, InputLineage>();
     private readonly ownedHistoryLineages = new WeakMap<ChatMessage, InputLineage | undefined>();
@@ -109,6 +119,8 @@ export class TaskSourceRun {
         this.isPathAllowed = host.isPathAllowed?.bind(host);
         this.getMemoryEvidenceEpoch = host.getMemoryEvidenceEpoch?.bind(host);
         this.getTaskSourceAuthorityEpoch = host.getTaskSourceAuthorityEpoch?.bind(host);
+        this.getTaskSourceConfigurationEpoch = host.getTaskSourceConfigurationEpoch?.bind(host);
+        this.captureTaskSourceConfiguration = host.captureTaskSourceConfiguration?.bind(host);
         this.identities = new TaskSourceNoteIdentities({
             runId,
             workspace,
@@ -249,6 +261,175 @@ export class TaskSourceRun {
     ): ReadonlyMap<string, TaskSourceReadPlan> | undefined => {
         const result = this.resolveReadPlansWithReason(calls);
         return result.ok ? result.plans : undefined;
+    };
+
+    /** The request owner has finished material admission and fixes this input.
+     * Later assistant/tool ancestry may reuse that accepted dependency fact. */
+    readonly acceptGenerationLineage = (lineage: InputLineage): void => {
+        for (const dependency of lineage.dependencies) {
+            this.generationDependencyDecisions.set(this.generationDependencyKey(dependency), true);
+        }
+    };
+
+    private generationDependencyKey(dependency: InputDependency): string {
+        return dependency.kind === 'vault' ? `${dependency.kind}:${dependency.via}:${dependency.path}`
+            : JSON.stringify(dependency);
+    }
+
+    /** A loop accepts read snapshots once. Only a later configuration change
+     * revisits retained material; ordinary file events never revoke it. */
+    readonly prepareGenerationSnapshot = async (
+        transcript: readonly PaAgentMessage[], history: readonly ChatMessage[],
+        prepareNew: (messages: readonly PaAgentMessage[]) => Promise<PaAgentMessage[]>,
+        signal?: AbortSignal,
+    ): Promise<{ transcript: PaAgentMessage[]; history: ChatMessage[]; configurationChanged: boolean;
+        allowsLineage(lineage: InputLineage | undefined): Promise<boolean> }> => {
+        throwIfAborted(signal);
+        const configuration = this.captureTaskSourceConfiguration?.();
+        const epoch = configuration?.epoch ?? this.getTaskSourceConfigurationEpoch?.();
+        const isPathAllowed = configuration?.isPathAllowed ?? this.isPathAllowed;
+        const memoryAllowed = configuration?.memoryAllowed ?? this.isMemoryAllowed();
+        const webAllowed = configuration?.webAllowed ?? this.isWebAllowed();
+        const constraint = this.state.snapshot();
+        const configurationChanged = this.generationConstraint !== undefined
+            && (epoch !== this.generationConfigurationEpoch || constraint !== this.generationConstraint);
+        // Capture the version once. Changes during this pass remain pending for
+        // the next loop rather than restarting the whole preparation.
+        this.generationConfigurationEpoch = epoch;
+        this.generationConstraint = constraint;
+        const task = createCooperativeTask(signal);
+        if (configurationChanged) this.generationDependencyDecisions.clear();
+        const dependencyDecisions = this.generationDependencyDecisions;
+        const allows = async (lineage: InputLineage | undefined): Promise<boolean> => {
+            const owned = this.ownedLineage(lineage);
+            if (!owned) return !this.runSourceSelection;
+            if (this.runSourceSelection && owned.completeness !== 'complete') return false;
+            for (const dependency of owned.dependencies) {
+                await task.checkpoint();
+                const key = this.generationDependencyKey(dependency);
+                let allowed = dependencyDecisions.get(key);
+                if (allowed === undefined) {
+                    if (dependency.kind === 'vault') {
+                        const noteId = this.registeredNotes.size && [...this.registeredNotes.values()]
+                            .find(note => note.path === dependency.path)?.noteId;
+                        allowed = this.runSourceSelection?.scope !== 'web'
+                            && (dependency.via !== 'memory' || memoryAllowed)
+                            && isPathAllowed?.(dependency.path) !== false
+                            && (constraint.allowedNoteIds === null
+                                && constraint.excludedNoteIds.length === 0
+                                || !!noteId && this.state.allows({ kind: 'note', noteId }, constraint));
+                    } else if (dependency.kind === 'run-notes-observation') {
+                        // An aggregate with no splittable paths leaves on a
+                        // configuration change; its old contents are not reused.
+                        allowed = !configurationChanged && dependency.runId === constraint.runId
+                            && this.runSourceSelection?.scope !== 'web'
+                            && (dependency.owner !== 'memory' || memoryAllowed);
+                    } else if (dependency.kind === 'web') {
+                        allowed = this.runSourceSelection?.scope !== 'notes' && webAllowed
+                            && this.state.allows({ kind: 'web' }, constraint);
+                    } else {
+                        allowed = admitsValidatedInputDependency(dependency,
+                            this.runSourceSelection?.scope ?? 'combined', {
+                                ...this.lineageAdmission,
+                                isVaultAllowed: () => false,
+                                isWebAllowed: () => false,
+                            });
+                    }
+                    dependencyDecisions.set(key, allowed);
+                }
+                if (!allowed) return false;
+            }
+            return true;
+        };
+        const newMessages = transcript.filter(message => !this.generationMessages.has(message));
+        const preparedNew = await prepareNew(newMessages);
+        const byId = new Map(preparedNew.map(message => [message.id, message]));
+        const projected: PaAgentMessage[] = [];
+        const withdrawnAssistants = new Map<PaAgentMessage, PaAgentMessage>();
+        for (const original of transcript) {
+            await task.checkpoint();
+            const cached = this.generationMessages.get(original);
+            let message = cached === undefined ? byId.get(original.id) : cached ?? undefined;
+            if (message && (cached === undefined || configurationChanged) && message.role !== 'user') {
+                let admitted = await allows(message.inputLineage);
+                // Legacy tool observations still carry source records even if
+                // their ancestry predates the lineage field.
+                if (admitted && message.role === 'toolResult') {
+                    for (const record of message.content.sourceRecords ?? []) {
+                        await task.checkpoint();
+                        if (record.path && !dependencyDecisions.get(`vault:${record.sourceBoundary === 'memory' || record.kind === 'memory-reference' ? 'memory' : 'note'}:${record.path}`)
+                            && isPathAllowed?.(record.path) === false) { admitted = false; break; }
+                        if ((record.sourceBoundary === 'memory' || record.kind === 'memory-reference')
+                            && !memoryAllowed) { admitted = false; break; }
+                        if (record.sourceBoundary === 'web' && !webAllowed) { admitted = false; break; }
+                    }
+                }
+                if (!admitted) {
+                    const status = message.role === 'toolResult' ? projectPaAgentToolStatus(message) : undefined;
+                    // Retain only finite owner status/opaque identities, never
+                    // old arguments, prose or arbitrary tool metadata.
+                    if (message.role === 'assistant') {
+                        // Preserve the originating group for independently retained
+                        // effects. Its old prose and parameters are never reused.
+                        message = { ...message, inputLineage: completeInputLineage(),
+                            content: message.content.flatMap(part => part.type === 'toolCall'
+                                ? [{ type: 'toolCall' as const, id: part.id, name: part.name, input: {} }] : []) };
+                        withdrawnAssistants.set(message, original);
+                    } else message = message.role === 'toolResult' && status?.domainIdentity ? {
+                        ...message,
+                        inputLineage: completeInputLineage(),
+                        content: { promptText: JSON.stringify(status), includeInNextPrompt: true,
+                            metadata: { outcome: status.outcome, statusOnly: true,
+                                ...(status.executionState ? { executionState: status.executionState } : {}) } },
+                    } : undefined;
+                }
+            }
+            this.generationMessages.set(original, message ?? null);
+            if (message) projected.push(message);
+        }
+        const retainedTranscript: PaAgentMessage[] = withdrawnAssistants.size ? [] : projected;
+        for (let index = 0; withdrawnAssistants.size && index < projected.length; index++) {
+            await task.checkpoint();
+            const message = projected[index];
+            const original = withdrawnAssistants.get(message);
+            if (!original || message.role !== 'assistant') {
+                retainedTranscript.push(message);
+                continue;
+            }
+            const results: Extract<PaAgentMessage, { role: 'toolResult' }>[] = [];
+            for (let resultIndex = index + 1; resultIndex < projected.length; resultIndex++) {
+                const result = projected[resultIndex];
+                if (result.role !== 'toolResult') break;
+                const status = projectPaAgentToolStatus(result);
+                if (status.domainIdentity || result.content.metadata?.statusOnly === true
+                    && status.executionState !== undefined) results.push(result);
+            }
+            const content = message.content.filter(part => part.type === 'toolCall'
+                && results.some(result => result.toolCallId === part.id && result.toolName === part.name));
+            const retained = content.length ? { ...message, content } : null;
+            this.generationMessages.set(original, retained);
+            if (retained) retainedTranscript.push(retained);
+        }
+        if (this.generationHistory === undefined) {
+            // Historical provenance/action receipts are admitted once by the
+            // existing owner. Subsequent loops retain this accepted projection.
+            this.generationHistory = await this.projectHistoryAsync(history, signal);
+        } else if (configurationChanged) {
+            const retained: ChatMessage[] = [];
+            for (const message of this.generationHistory) {
+                await task.checkpoint();
+                const admitted = await allows(historyInputLineage(message));
+                const recordsAllowed = admitted && historySourceRecords(message).every(record =>
+                    (!record.path || isPathAllowed?.(record.path) !== false)
+                    && (!(record.sourceBoundary === 'memory' || record.kind === 'memory-reference') || memoryAllowed)
+                    && (record.sourceBoundary !== 'web' || webAllowed));
+                if (recordsAllowed) retained.push(message);
+                else retained.push(...this.historyFragment(message, false,
+                    cloneActionStates(message.actionStates ?? message.canonicalTurn?.actionStates)));
+            }
+            this.generationHistory = retained;
+        }
+        return { transcript: retainedTranscript, history: this.generationHistory, configurationChanged, allowsLineage: allows };
     };
 
     readonly prepareVaultObservationProjection = async (

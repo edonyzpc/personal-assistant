@@ -295,6 +295,7 @@ describe("PaAgentLoop", () => {
             });
             const pending = loop.run();
             await jest.advanceTimersByTimeAsync(230);
+            await jest.advanceTimersByTimeAsync(1); // Drain the newly queued cooperative continuation.
             const result = await pending;
             expect(result.status).toBe("completed");
             expect(result.committedFinalText).toBe("Answer.");
@@ -379,6 +380,7 @@ describe("PaAgentLoop", () => {
                 }).run();
 
                 await jest.advanceTimersByTimeAsync(300_001);
+                await jest.advanceTimersByTimeAsync(1); // Drain the newly queued cooperative continuation.
                 const result = await pending;
 
                 expect(result.status).toBe("completed");
@@ -449,6 +451,7 @@ describe("PaAgentLoop", () => {
             });
             const pending = loop.run();
             await jest.advanceTimersByTimeAsync(660);
+            await jest.advanceTimersByTimeAsync(1); // Drain the newly queued cooperative continuation.
             const result = await pending;
             expect(result.status).toBe("completed");
             expect(result.committedFinalText).toBe("Recovered after SDK retry.");
@@ -520,38 +523,58 @@ describe("PaAgentLoop", () => {
         expect(result.transcript[0]).toMatchObject({ role: "user", content: "keep the original request" });
     });
 
-    it("revalidates prepared material before an SDK physical retry and blocks revoked content", async () => {
+    it("prepares once and keeps the accepted input for same-turn physical retries", async () => {
         let authorized = true;
         let physicalRequests = 0;
-        const prepareModelInput = async (input: PaAgentModelInput): Promise<PaAgentModelInput> => {
-            if (!authorized) throw new Error("source authorization revoked");
-            return { ...input, runtimeInstruction: "authorized-source-material" };
-        };
+        const prepareModelInput = jest.fn(async (input: PaAgentModelInput): Promise<PaAgentModelInput> => {
+            if (!authorized) throw new Error("new sources are excluded");
+            return { ...input, runtimeInstruction: "accepted-source-material" };
+        });
         const loop = new PaAgentLoop({
-            runId: "sdk-retry-revalidation",
-            userInput: "use the authorized source",
+            runId: "sdk-retry-snapshot",
+            userInput: "use the accepted source",
             prepareModelInput,
             model: {
                 stream: async function* (input) {
                     physicalRequests += 1;
-                    expect(input.runtimeInstruction).toBe("authorized-source-material");
                     authorized = false;
-                    await input.prepareForProviderRetry?.();
+                    expect(await input.prepareForProviderRetry?.()).toBe(input);
                     physicalRequests += 1;
-                    yield { type: "text_delta", text: "must not be sent" } as const;
+                    yield { type: "text_delta", text: "Accepted answer" } as const;
                 },
             },
         });
-
         const result = await loop.run();
+        expect(prepareModelInput).toHaveBeenCalledTimes(1);
+        expect(physicalRequests).toBe(2);
+        expect(result.status).toBe("completed");
+        expect(result.committedFinalText).toBe("Accepted answer");
+    });
 
-        expect(physicalRequests).toBe(1);
-        expect(result.status).toBe("error");
-        expect(result.committedFinalText).toBe("");
-        expect(result.turns[0].diagnostics).toContainEqual(expect.objectContaining({
-            type: "provider_error",
-            retryable: false,
-        }));
+    it("lets input and Stop run during an immediately ready diagnostic burst", async () => {
+        const controller = new AbortController();
+        let produced = 0;
+        let inputAt = 0;
+        const execute = jest.fn(async () => ({ outcome: "success" as const, promptText: "effect" }));
+        const loop = new PaAgentLoop({
+            runId: "buffered-burst",
+            userInput: "stay responsive",
+            signal: controller.signal,
+            model: { stream: async function* () {
+                for (let index = 0; index < 300; index++) {
+                    produced++;
+                    if (index === 0) setTimeout(() => { inputAt = produced; controller.abort(); }, 0);
+                    yield { type: "diagnostic", diagnostic: { type: "buffered_test", index } } as const;
+                }
+                yield { type: "toolcall_delta", id: "late-action", name: "write_note", input: {}, index: 0 } as const;
+            } },
+            toolExecutor: { execute },
+        });
+        const result = await loop.run();
+        expect(inputAt).toBeGreaterThan(0);
+        expect(inputAt).toBeLessThan(300);
+        expect(result.status).toBe("aborted");
+        expect(execute).not.toHaveBeenCalled();
     });
 
     beforeEach(() => {
@@ -1644,6 +1667,7 @@ describe("PaAgentLoop", () => {
 
             await jest.advanceTimersByTimeAsync(5);
             expect(modelInputs).toHaveLength(1);
+            await jest.advanceTimersByTimeAsync(1); // Drain the newly queued cooperative continuation.
             const result = await pending;
 
             expect(result.status).toBe("completed_with_warning");
@@ -1768,6 +1792,7 @@ describe("PaAgentLoop", () => {
 
             const pending = loop.run();
             await jest.advanceTimersByTimeAsync(75);
+            await jest.advanceTimersByTimeAsync(1); // Drain the newly queued cooperative continuation.
             const result = await pending;
 
             expect(result.status).toBe("incomplete");
@@ -2017,6 +2042,7 @@ describe("PaAgentLoop", () => {
             });
             const pending = loop.run();
             await jest.advanceTimersByTimeAsync(75);
+            await jest.advanceTimersByTimeAsync(1); // Drain the newly queued cooperative continuation.
             const result = await pending;
             expect(modelInputs).toHaveLength(1);
             expect(afterTurn).not.toHaveBeenCalled();

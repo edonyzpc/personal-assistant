@@ -78,7 +78,14 @@ async function runPageletStartedText(
         runStartedAt: startedAt,
     });
     const pending = loop.run();
+    let settled = false;
+    void pending.then(() => { settled = true; });
     await jest.advanceTimersByTimeAsync(75);
+    // Drive cooperative stream continuations without reaching the 100 ms hard boundary.
+    for (let elapsed = 0; elapsed < 20 && !settled; elapsed += 1) {
+        await jest.advanceTimersByTimeAsync(1);
+    }
+    expect(settled).toBe(true);
     const result = await pending;
     return { result, policy, afterTurn, validateSource, modelInputs };
 }

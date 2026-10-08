@@ -554,7 +554,7 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(submit).toHaveBeenCalledTimes(1);
     });
 
-    it.each(['prepared', 'needs_attention'] as const)("retains only the saved Ghost %s receipt after preparation changes the note observation epoch", async status => {
+    it.each(['prepared', 'needs_attention'] as const)("retains accepted observations and the saved Ghost %s receipt after an ordinary note epoch change", async status => {
         const host = createPromptHost();
         let epoch = "before-ghost-save";
         host.getMemoryEvidenceEpoch = () => epoch;
@@ -571,7 +571,7 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(trace.providerTexts[2]).toMatch(/"executionState":\s*"succeeded"/);
         expect(trace.providerTexts[2]).not.toContain("result is unknown");
         expect(trace.providerTexts[2]).not.toContain("OLD_OBSERVATION_DERIVED_PROSE");
-        expect(trace.providerTexts[2]).not.toContain('"matches": []');
+        expect(trace.providerTexts[2]).toContain('"matches": []');
         expect(trace.providerTexts[2]).toContain("draft_saved awaits human publishing in Ghost");
         expect(trace.toolResults[0].content.resultFact).toEqual({ kind: "approval_pending", intentId: "saved-draft-operation" });
         const messages = trace.lifecycle.flatMap(event => event.type === "message_end" && event.message ? [event.message] : []);
@@ -597,14 +597,24 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         ], undefined, { host, readBetweenPreparations: true, reuseCallId: true,
             onGhostResult: () => { if (++ghostResults === 2) epoch = "after-later-result"; } });
         expect(trace.providerTexts).toHaveLength(4);
-        expect(trace.providerTexts[3]).not.toContain("INVALID_SECOND_TARGET");
         expect(trace.providerTexts[3]).toContain("first-owned-operation");
         expect(submit).toHaveBeenCalledTimes(1);
+        expect(trace.toolResults).toHaveLength(2);
+        const [first, second] = trace.toolResults;
+        expect(first.content.resultFact).toEqual({ kind: "approval_pending", intentId: "first-owned-operation" });
+        expect(second.content.metadata).toMatchObject({ outcome: "schema_invalid", executionState: "not_started" });
+        const secondGroup = trace.providerTexts[3].split('</action_history>').find(group => group.includes(second.id));
+        expect(secondGroup).toBeDefined();
+        expect(secondGroup).toContain('"outcome":"schema_invalid"');
+        expect(secondGroup).toContain('"executionState":"not_started"');
+        expect(secondGroup).toContain('"allowedActions":["correct_input"]');
+        expect(secondGroup).not.toContain('first-owned-operation');
     });
 
-    it.each(['prepared', 'needs_attention'] as const)("does not restore Memory-derived Ghost %s ancestry when Memory permission is withdrawn", async status => {
+    it.each(['prepared', 'needs_attention'] as const)("keeps the submitted Ghost %s receipt while removing excluded Memory ancestry at the next loop", async status => {
         const host = createPromptHost();
         host.settings.memoryEnabled = true;
+        host.getTaskSourceConfigurationEpoch = () => `memory-enabled:${host.settings.memoryEnabled}`;
         let epoch = "memory-enabled-before-save";
         host.getMemoryEvidenceEpoch = () => epoch;
         const submit = jest.fn<GhostHostBinding["submit"]>(async () => {
@@ -621,7 +631,10 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         ]));
         expect(submit).toHaveBeenCalledTimes(1);
         expect(trace.providerTexts[2]).not.toContain("WITHDRAWN_MEMORY_DERIVED_PROSE");
-        expect(trace.providerTexts[2]).not.toContain("memory-withdrawn-operation");
+        expect(trace.providerTexts[2]).toContain('"operationId": "memory-withdrawn-operation"');
+        expect(trace.providerTexts[2]).toContain(`"status": "${status}"`);
+        expect(trace.providerTexts[2]).not.toContain('notes/target.md');
+        expect(trace.toolResults[0].content.resultFact).toEqual({ kind: "approval_pending", intentId: "memory-withdrawn-operation" });
     });
 
     it("passes the current Ghost tool's Debug ownership through the real capability loop", async () => {

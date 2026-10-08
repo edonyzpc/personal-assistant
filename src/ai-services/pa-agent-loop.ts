@@ -27,6 +27,7 @@ import type {
     UserMessageContent,
 } from "./chat-types";
 import { ModelChunkConsumer, appendTextPart } from "./pa-agent-chunk-consumer";
+import { createCooperativeTask } from './cooperative-task';
 import {
     ToolExecutionDispatcher,
     defaultIncludeInNextPrompt,
@@ -72,7 +73,7 @@ export interface PaAgentModelInput {
     toolMode?: PaAgentToolMode;
     controlSnapshot?: AgentControlSnapshot;
     signal?: AbortSignal;
-    /** Internal request-boundary hook used only when a transport retries physically. */
+    /** Same-turn retries retain the already accepted input. */
     prepareForProviderRetry?: () => Promise<PaAgentModelInput>;
     /** Marks the boundary immediately before a physical Provider request is dispatched. */
     notifyProviderRequestStarted?: () => void;
@@ -1064,20 +1065,7 @@ export class PaAgentLoop {
                 );
                 inputPreparationCompleted = true;
                 this.debug('loop_input_prepare:end', { turnId });
-                const prepareForProviderRetry = async (): Promise<PaAgentModelInput> => {
-                    const baseInput = { ...modelInput };
-                    delete baseInput.prepareForProviderRetry;
-                    const refreshed = await this.prepareModelInputForProvider(
-                        baseInput,
-                        toolMode,
-                        (reason) => {
-                            providerPreparationDeadlineReason = reason;
-                            turnAbort.abort();
-                        },
-                    );
-                    modelInput = { ...refreshed, prepareForProviderRetry };
-                    return modelInput;
-                };
+                const prepareForProviderRetry = async (): Promise<PaAgentModelInput> => modelInput;
                 modelInput = { ...modelInput, prepareForProviderRetry };
             }
             if (turnAbort.signal.aborted || this.isAborted()) {
@@ -1138,8 +1126,15 @@ export class PaAgentLoop {
         let completedTextAt: number | undefined;
         let completedOutputAt: number | undefined;
         let transportOutcome = "unknown";
+        const streamWork = createCooperativeTask();
+        let receivedChunk = false;
         while (consumer) {
+            // Buffered responses can keep every next() ready. Budget the whole
+            // consumer, including diagnostic branches and synchronous observers.
+            // The consumer below owns cancellation outcomes after this yield.
+            if (receivedChunk) await streamWork.checkpoint();
             const next = await consumer.nextChunk();
+            if (next.type === 'chunk') receivedChunk = true;
             if (next.type !== "chunk") transportOutcome = next.type;
             if (next.type !== 'chunk') this.debug('model_wait:end', { turnId, outcome: next.type,
                 providerRequestStarted, modelChunkCount, elapsedMs: elapsedSince(modelStartedAt, this.now()) });

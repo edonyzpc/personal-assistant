@@ -46,6 +46,8 @@ export interface DebugRun {
     accountedBytes: number;
     lastCommittedSeq: number;
     hasGap: boolean;
+    /** Missing on legacy captures, whose reasoning and tool details were session-only. */
+    contentVersion?: 2;
 }
 
 export interface DebugEvent {
@@ -75,7 +77,7 @@ export interface DebugContent {
     vaultKey: string;
     captureId: string;
     contentId: string;
-    kind: 'prompt' | 'input' | 'output' | 'context' | 'error' | 'attachment';
+    kind: 'prompt' | 'input' | 'output' | 'context' | 'error' | 'attachment' | 'reasoning' | 'tool_input' | 'tool_output';
     text: string;
     redactions: string[];
     lineage: DebugLineage;
