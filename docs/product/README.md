@@ -13,11 +13,12 @@
 
 ## Capture、Recall 与 Context
 
+- [PA Agent 快照执行与完整 Debug](./specs/pa-agent-snapshot-execution-product-spec.md) — B-165：当前生成快照、下一轮配置更新、完整文本历史；[当前机制](../architecture/pa-agent-architecture-plan.md#source-and-trust-boundaries)。
 - [必要确认与合同接续](./specs/pa-contract-alignment-product-spec.md) — B-161：已完成本地对齐的直接执行、选源、预算、容量与旧合同接续；证据与限制见 [最终验证](../archive/2026/b161-contract-alignment-validation.md)。
 - [PA Agent Command Contract](./specs/pa-agent-command-contract-product-spec.md) — B-158：统一职责、SDD/验收与公共框架后领域迁移。
 - [执行事实连续性](./specs/pa-action-continuity-product-spec.md) — B-157：合法动作状态、保存重开与压缩摘要，历史验收与限制见 [最终验证](../archive/2026/b157-context-action-continuity-validation.md)。
 
-- [Agent 响应性](./specs/pa-agent-responsive-execution-product-spec.md) — B-155：原生 UI 不被 Agent 准备阻塞，来源检查分层并保留快照与撤销。
+- [Agent 响应性](./specs/pa-agent-responsive-execution-product-spec.md) — B-155 已交付非阻塞设计；持续来源复核目标由 B-165 局部接续。
 - [Note Change Review](./specs/pa-note-change-review-product-spec.md) — B-154：按笔记最终差异、Chat/tab 审阅与 Operations 审计退役。
 - [PA Agent 问答范围与 Runtime 演进](./specs/pa-agent-runtime-evolution-product-spec.md) — B-149 已交付：我的笔记 / 网络资料 / 综合模式、上下文硬边界与五项架构演进；产品决定见 DEC-043。
 - [PA Agent Task Source Boundary](./specs/pa-agent-task-source-boundary-product-spec.md) — B-146 已按后续产品决定完成本地验收：Agent 自主取材、Host 保留明确运行保护；事实质量改进另见 B-148。

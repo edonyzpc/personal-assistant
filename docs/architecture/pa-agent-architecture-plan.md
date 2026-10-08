@@ -69,7 +69,7 @@ flowchart TD
 | `SourceRecord` and source projection | Keep source records and source-boundary metadata separate from answer text; normalization and copying use the shared source helpers, not a separate store instance. |
 | `MemorySearchTool` | Owns direct/graph candidate collection, selected-model reranking, live-source checks, final allocation, and the allowlisted Memory observation. |
 | `ChatMemoryRecoveryCoordinator` | Owns one run-scoped hidden relaxed attempt, its token/deadlines/frozen plan, exact-repeat suppression, and the cumulative ≤8-document replacement observation. |
-| `TaskSourceRun` | Binds one user request to its Host-selected notes, web, or combined scope, admits only compatible complete input lineage, preserves read snapshots, and rechecks current authorization before every physical provider request. |
+| `TaskSourceRun` | Binds one user request to its Host-selected notes, web, or combined scope; admits new material, retains accepted generation snapshots, and filters excluded old and derived material once at the next loop after a source configuration change. Physical retries reuse the accepted input. |
 | `WritingContextRun` | Exposes Host-selected writing candidates on demand, binds the selected parent/material/style state to one context handle, and admits the final pure output against that handle. |
 | `ChatView` | Consumes canonical lifecycle, writing preview/artifact/recovery events and persists current-turn state, versions and confirmed save results without duplicate legacy rendering. |
 
@@ -400,11 +400,12 @@ source in that batch is read. Excluded notes return the deterministic
 `source_excluded` reason. User instructions about which sources to use remain
 instructions for the Agent rather than keyword-based Host admission rules.
 Note scope and personalization are separate: a request limited to the current
-note does not by itself remove eligible Personal or existing Memory. Before
-every physical provider request, the Host rebuilds the actual admitted input
-from the run's read snapshots and rechecks live authorization. Ordinary note
-edits and background Memory refresh do not rewrite an already-read snapshot;
-deletion, exclusion, Forget, Data Boundary or lost identity still withdraw it.
+note does not by itself remove eligible Personal or existing Memory. The Host
+admits new read material and builds the generation input once. Ordinary note
+edits, deletion and background Memory refresh do not rewrite that accepted
+snapshot. Source configuration changes filter excluded old and derived material
+at the next loop; same-round physical retries retain the original input.
+Explicit Forget, cancellation and asset lifecycle remain separate owner effects.
 The Agent decides whether another read is needed. User-text keywords do not
 decide execution or cache reuse. An explicit repeated ordinary read executes
 through the existing capability again; identical parameters do not silently
@@ -419,7 +420,7 @@ returns a run-bound context handle. When native writing output is enabled,
 `present_writing` becomes available only after that context is prepared. It must
 be the single output call in its response and cannot be mixed with new source or
 action calls. The Host separately verifies provider completion, call identity,
-schema, source currentness and the generation-input snapshot before creating one
+schema, explicit retention and the generation-input snapshot before creating one
 artifact/version. Preview reads and saves nothing; saving remains an explicit
 confirmed Host action. Legacy JSON, recovery and persisted-version readers stay
 available for existing records.
@@ -562,7 +563,7 @@ and [Write Action Framework](./write-action-framework-sdd.md).
 
 ### B-140 note, Memory, and insight capabilities
 
-The main Agent receives the approved read tools at the first turn, subject to the live Host and policy. `query_notes` uses the public Vault file list and MetadataCache for exact bounded filters; date field and timezone are explicit, with the Agent explaining its contextual choice when the user leaves them open. `read_note` uses public Vault/Editor reads with a versioned, bounded range and continuation. `search_vault_snippets` supplies literal multi-match offsets and bounded continuation because the public API has no equivalent snippet paging. `inspect_obsidian_note` uses public cached metadata first and reads/parses Markdown only for missing or requested details. These tools share the task-source permission, coverage, and physical provider-dispatch revalidation path; none creates a second persistent vault index.
+The main Agent receives the approved read tools at the first turn, subject to the live Host and policy. `query_notes` uses the public Vault file list and MetadataCache for exact bounded filters; date field and timezone are explicit, with the Agent explaining its contextual choice when the user leaves them open. `read_note` uses public Vault/Editor reads with a versioned, bounded range and continuation. `search_vault_snippets` supplies literal multi-match offsets and bounded continuation because the public API has no equivalent snippet paging. `inspect_obsidian_note` uses public cached metadata first and reads/parses Markdown only for missing or requested details. These tools share target admission and coverage facts; accepted read snapshots follow DEC-055 across generation and retries. None creates a second persistent vault index.
 
 `get_memory_status`, `query_memories`, and `get_memory_usage` project existing Control Center, governance, and usage records. `manage_memory` binds an explicit current-user request to the existing admission and governance coordinator; pending, review, cancellation, and committed effects stay distinct. The new `get_vault_insights` and `query_saved_insights` only read the existing Type-C snapshot and Saved Insight ledger, preserving generation time, coverage, source strength, status, and weak-only effect. Current factual claims still require the note read tools. `manage_saved_insight` applies an explicit save, Later, archive, or restore through the existing ledger or Review queue with request/source/target version checks; it never promotes a saved item to Memory or edits a note. Pagelet's ordinary discovery remains a separate read-only run bound to its frozen anchor and existing Review delivery flow.
 
@@ -592,8 +593,13 @@ Current top-level constants:
 
 Per-read ranges with continuation are different from aggregate task limits. Bounded read tools retain continuation; selected Writing parents and Writing delivery have no default character cap.
 
-Immediately before a provider request, including SDK physical retries, the
-runtime rebuilds the prompt from fixed read snapshots and current authorization.
+The loop accepts read material once and runtime assembles the final provider
+input once for that generation. Under [DEC-055](../product/decisions/dec-055-agent-snapshot-execution-and-debug-history.md),
+SDK physical retries and stream fallback reuse this input. A relevant configuration
+change removes newly excluded retained material and its derived context at the
+next loop; the Agent decides how to obtain replacement evidence. Ordinary file
+changes do not revoke accepted generation material. Physical dispatch retains
+call identity, cancellation, deadline and attempt accounting checks.
 Each physical attempt receives a fresh 30-minute deadline; failed attempts stop
 that clock before SDK backoff. A real `Retry-After` is cancellable, happens after
 the turn lease is released, and does not consume the next attempt's budget.
@@ -614,12 +620,13 @@ summary; that target is soft and never authorizes dropping required input. It
 bypasses stream-to-invoke fallback with unchanged input. Image errors retain a
 safe overflow category without exposing the SDK request body. The failed attempt
 stays in canonical history but is omitted from subsequent model projections; already
-executed effects are not replayed. A consecutive second rejection, cancellation or source
-revocation stops explicitly. Actual provider capacity remains a physical limit.
+executed effects are not replayed. A consecutive second rejection, cancellation or
+explicit run termination stops explicitly. Actual provider capacity remains a physical limit.
 After successful recovery, the numeric retry target is cleared. Accepted
-source-current summaries remain in subsequent projections, so the next tool
+accepted summaries remain in subsequent projections, so the next tool
 turn does not expand back to the input the provider already rejected. Original
-source snapshots remain available for authorization and source revalidation.
+source snapshots retain their provenance and dependency facts for the next loop's
+configuration processing and the domain owners' actual action admission.
 
 Each attempted admissible projection contributes a three-boolean Context
 receipt (`historyCompressed`, `toolContextReduced`, `budgetLimited`), aggregated
@@ -660,7 +667,7 @@ The model is asked to return minified JSON and retain each material item in its
 appropriate field once, removing repeated background and acknowledgements that
 add no state. Requirements, actual completion status, uncertainty and permission
 history remain explicit. The detailed semantic instructions, 16k-character
-request limit, source checks, cancellation and complete-result cache admission
+request limit, snapshot association, cancellation and complete-result cache admission
 retain their existing boundaries.
 Summary source JSON is indented to expose individual source/segment boundaries;
 this whitespace counts toward the same complete request limit and can cause
@@ -675,9 +682,9 @@ auxiliary ledger records request, active wait and token pressure without blockin
 another summary. Each physical attempt retains its independent timeout.
 Provider-reported physical usage is kept
 per attempt when attributable, including failed or cancelled attempts; unknown
-usage remains unknown rather than being added to a fabricated total. After
-preparation and before every answer attempt, source
-currentness is revalidated and the complete request is measured again. Missing
+usage remains unknown rather than being added to a fabricated total. Summary
+preparation and final projection consume the accepted generation material; an
+unchanged answer retry does not re-prepare or revalidate its sources. Missing
 usage remains unknown; it does not become zero or block task execution.
 Tool-summary payload snapshots and registry live references use independent
 clones. Optional summary checks use their own cancellation scope; late results
@@ -742,7 +749,7 @@ Host executor 确认 read_only、完整配对且成功的观察可以进入来�
 history aux 使用 System 协议、Human 普通来源/纯自由 previousSummary、独立 Human
 只读 retainedActionFacts 三消息。Host 从当前获准快照确定性提取操作事实，与模型
 六字段草稿组合；事实不交给模型重新判定，previousSummary 只回传自由草稿。runtime
-校验角色、封闭键、来源索引、完整正文与独立事实，派发前重算 binding/currentness；
+校验角色、封闭键、来源索引、完整正文与独立事实，派发复用本轮已接受的材料关联；
 缺失、重复或篡改不派发。组合 JSON 的转义、wrapper 与完整保护集合计入同一请求预算，
 不增预算或缩掉必要证据。有 owner 事实时初始空草稿可合法组合，空更新不能擦掉已有
 非空草稿；实际容纳不了则如实 overflow。工具摘要保持原两消息，缓存仍为现有内存缓存。
@@ -760,8 +767,12 @@ history aux 使用 System 协议、Human 普通来源/纯自由 previousSummary�
 - Input lineage records the complete source dependencies of actual provider
   input, tool arguments/results, summaries, images and Writing versions.
   Compatible complete lineage may be reused; mixed or unknown lineage cannot
-  be laundered by a shorter answer or summary. Live source and version checks
-  run again before physical dispatch and final delivery. A source-free Host
+  be laundered by a shorter answer or summary. New reads check their target;
+  accepted generation and delivery do not repeat live source/version checks.
+  Configuration changes take effect at the next loop, including removal of
+  newly excluded raw material and dependent summaries, assistant text and tool
+  arguments/results. Real actions retain their owner permission and target
+  conflict checks. A source-free Host
   observation must be independently proven source-free before reuse.
 - Assistant calls and paired results are projected from one canonical action
   history. Native tool messages and compatibility text carry the same call IDs,
@@ -775,6 +786,33 @@ history aux 使用 System 协议、Human 普通来源/纯自由 previousSummary�
   confirmed save receipt, and a task missing necessary evidence may end
   incomplete without a generic fabricated answer.
 - Memory references, Context Used, Web sources, and Skill context retain distinct origin metadata.
+
+Debug observes actual execution without participating in source admission.
+When enabled, existing local history stores full text input/output, returned
+reasoning and actual tool arguments/results. Media retain references, type and
+fingerprint only. Ordinary source changes do not filter this history; explicit
+Chat/Debug deletion, Forget, credential filtering and existing retention/capacity
+rules remain. Runtime consumption uses the existing cooperative helper for
+continuous ready chunks; Debug uses the existing serialized writer and counts
+pending and in-flight data until settlement. Chat renders the first body update
+and coalesces subsequent updates through its existing pending drain, leaving
+the existing 32 ms interval after nonempty intermediate publications and their
+existing synchronous scroll/layout frame for native input; final text,
+copy and history retain the complete response. Long multiline paragraphs in a
+strict literal subset can use an equivalent paragraph HTML input to the same
+public Markdown renderer, avoiding its repeated inline tail scans. Native line
+break settings, sanitizer, postprocessors, source path and render owner remain;
+Markdown syntax and unknown settings keep the original input. Store cleanup
+deletes a run's event and content key ranges in the original atomic transaction,
+without enumerating every child key. Detailed storage ownership is defined in
+[Debug architecture](./pa-agent-debug-view.md); the historical diagnosis and
+acceptance conditions are retained in [B-165 evidence](../archive/2026/b165-agent-snapshot-execution-validation.md).
+
+The governance coordinator synchronously notifies the existing Writing style
+owner after durable `forget_pending` and when resuming a pending Forget. This
+invalidates selected generation claims independently of projection-cache refresh;
+ordinary commits or unavailable projections do not revoke an accepted generation.
+The existing asynchronous Debug/Chat history cleanup keeps its original phases.
 - Tool observations are wrapped and treated as untrusted data, not instructions.
 - Web titles/snippets and vault content cannot alter host policy or capability permissions.
 - Source notes are not modified by retrieval, context projection, or Memory search.

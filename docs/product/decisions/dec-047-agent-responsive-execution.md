@@ -2,9 +2,11 @@
 
 Decision ID: DEC-047
 Status: Accepted
-Updated: 2026-10-01
+Updated: 2026-10-08
 Authority: Owner 本次讨论明确要求 Agent 运行不能阻塞 Obsidian UI、笔记编辑等原生功能，并授权 GPT 完成设计、实现和验收。
 Work item: B-155
+
+> 2026-10-08 行为修订：[DEC-055](./dec-055-agent-snapshot-execution-and-debug-history.md) 取消当前生成/重试的持续来源复核，配置变化在下一 loop 处理，并移除重复准备与逐片段来源检查。B-155 的历史实现/验收及原生 UI 响应要求保持；B-165 的最终验证见 [证据记录](../../archive/2026/b165-agent-snapshot-execution-validation.md)。
 
 ## Context
 

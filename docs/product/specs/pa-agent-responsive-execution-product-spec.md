@@ -1,10 +1,12 @@
 # PA Agent 响应性 Product Spec
 
 Document status: Approved
-Updated: 2026-10-01
+Updated: 2026-10-08
 Work item: B-155
 Authority: Owner 已授权的非阻塞运行约束及 [DEC-047](../decisions/dec-047-agent-responsive-execution.md)。
 Decision: [DEC-047](../decisions/dec-047-agent-responsive-execution.md)
+
+> 2026-10-08：[B-165 Product Spec](./pa-agent-snapshot-execution-product-spec.md) 接续来源复核与准备方式，取消当前生成/重试的持续追溯检查，并按配置变化更新下一 loop。原生 UI 响应、协作执行与能力范围要求保持；B-155 历史证据不作为新目标的完成证明。
 
 ## Outcome And Scope
 

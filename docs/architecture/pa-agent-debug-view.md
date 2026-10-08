@@ -1,10 +1,10 @@
 # PA Agent Debug View 与本机历史
 
 Document status: Current
-Updated: 2026-09-23
-Work item: B-145
-Product contract: [DEC-041](../product/decisions/dec-041-agent-debug-view-and-local-history.md) / [Product Spec](../product/specs/pa-agent-debug-view-product-spec.md)
-Validation: [B-145 本地验收](../archive/2026/b145-agent-debug-validation.md)
+Updated: 2026-10-08
+Work item: B-145, B-165
+Product contract: [DEC-055](../product/decisions/dec-055-agent-snapshot-execution-and-debug-history.md) / [当前 Product Spec](../product/specs/pa-agent-snapshot-execution-product-spec.md)；[DEC-041](../product/decisions/dec-041-agent-debug-view-and-local-history.md) 的其它范围保持。
+Validation: [B-145 历史验收](../archive/2026/b145-agent-debug-validation.md) / [B-165 完整历史与响应性证据](../archive/2026/b165-agent-snapshot-execution-validation.md)
 
 ## 责任与数据流
 
@@ -15,47 +15,62 @@ flowchart LR
     O --> P[白名单投影与过滤]
     P --> Q[有界队列]
     Q --> D[(设备本机 IndexedDB)]
-    P --> M[会话临时详情]
     D --> V[Debug ItemView]
-    M --> V
-    H[Chat 删除 outbox / Forget / 来源撤销] --> G[恢复屏障与代际清理]
+    H[Chat 删除 outbox / Forget / 明确清空] --> G[恢复屏障与代际清理]
     G --> D
     G --> Q
-    G --> M
 ```
 
 - `src/ai-services/agent-debug-port.ts` 是业务运行时的可选、容错观察端口；
   `agent-debug-observation.ts`、Agent loop、provider transport 和工具适配器只报告
   实际发生的阶段、调用/attempt、结果、usage 与错误，不生成“思考过程”。
-- `src/agent-debug/projection.ts` 将已准入的输入、Prompt、输出和附件引用投影到专用
-  白名单 DTO；凭据和认证材料在入口过滤，reasoning 与未入模底层详情只进入会话内存。
-  附件不复制二进制或内联 base64，无法取得的字段明确标为未知或不可用。
+- `src/agent-debug/projection.ts` 将实际完整文本输入、Prompt、输出、返回 reasoning、
+  工具参数/结果与附件引用投影到专用白名单 DTO。凭据和认证材料在入口过滤；
+  文本及提取内容持久化，图片/附件只保留引用、类型和指纹，不复制二进制或内联 base64。
+  未提供的字段如实标注；Debug 不承担 Agent 来源准入或回复有效性的判断。
 - `collector.ts` 与 `service.ts` 管理有界队列、Run/Turn/节点身份、开关切换、
   usage 去重归因、可见缺口和非阻塞批量写入。观察、写库或视图失败不回传为
-  Agent 业务失败，也不额外发起模型/工具请求。
+  Agent 业务失败，也不额外发起模型/工具请求。正文/reasoning 使用不可变增量块，
+  不每片段复制整段内容；待写和在写块计费到写入成功、明确失败或丢弃后才释放，
+  沿用现有 `flushTail` 串行写入。
 - `store.ts` 使用设备本机 `personal-assistant-agent-debug-v1` IndexedDB，分为
   `runs`、`events`、`contents`、`control` 四个 store。普通读写永久绑定由 vault
   与设备范围计算的 opaque key；历史不写 Markdown vault 或同步目录。
 - `view.tsx` 和 `components/AgentDebugPanel.tsx` 提供 Obsidian ItemView，上方轨迹、
   下方详情；`chat-view.ts` 的按钮只在 Debug 开启时显示，点击打开或复用当前
-  vault 的 tab。关闭 tab 不停止采集，关闭 Debug 停止新详情采集但不删除已获准历史。
+  vault 的 tab。完整内容从持久块按需展开/分页；旧版未保存的 reasoning/工具详情
+  提示旧版未记录，不回填。关闭 tab 不停止采集，关闭 Debug 停止新详情采集但不删除历史。
 
 ## 保留与恢复
 
 默认预算定义在 `src/agent-debug/types.ts`：单 vault 持久内容上限 256 MiB、
-单 Run 32 MiB / 20,000 事件、单请求 2 MiB、单内容块 1 MiB；待写队列
-2 MiB / 2,048 事件，会话临时详情 16 MiB、单 Run 4 MiB，批量 flush
-间隔 250 ms，最长保留 30 天。容量不足优先淘汰最旧的已结束完整 Run，
-故实际留存可短于 30 天；单项过大、存储不可用或事件丢失以部分记录/缺口表示，
-不假装有完整轨迹。历史分页按需读出，查看不重放任务。
+单 Run 32 MiB / 20,000 事件、单持久内容块 1 MiB；普通待写及在写队列
+2 MiB / 2,048 事件，批量 flush 间隔 250 ms，最长保留 30 天。实际 Prompt、
+reasoning 与工具观察按 `runBytes` 准入并分块；不以投影 helper 的 `requestBytes`
+默认值截断实际完整请求。存储不可用时的临时缓存仍使用既有 session 预算，
+不以缓存替代持久记录。
+
+单个真实工具结果可能大于普通队列预算而仍在 run 预算内。collector 至多接纳一个
+受 `runBytes` 限制的大 observation，并立即使用现有 flush；该大项到结算前持续计费，
+第二大项不重复豁免，普通块继续受 `queueBytes` 限制。持有字节上限为
+`runBytes + queueBytes`，不无限排入脱离预算的闭包。
+
+容量不足优先淘汰最旧的已结束完整 Run，实际留存可短于 30 天；真实容量不足、
+存储不可用或事件丢失以部分记录/缺口表示，不假装完整，不等待存储来阻塞 Agent。
+历史分页按需读出，查看不重放任务。回收在同一原子事务删除 event/content 的
+run key range 和 run 行，不枚举全部子项；相邻身份隔离、回滚与迟到写入屏障保持。
 
 Chat 删除先在 Chat store 同事务写 Debug deletion outbox，再由
 `agent-debug/plugin-integration.ts` 阻断可见内容、幂等清除 Debug 副本并确认
-outbox；重载继续未完成清理。Memory claim/legacy Forget 与来源撤销通过代际、
-来源 token 和内容 lineage 清除关联正文/Prompt/派生快照。未知来源采用保守域
-屏障，迟到写入须通过同一代际校验，清理失败不得宣布完成。启动先协调删除、
-Forget 和来源状态，再允许内容读取；异常退出只隔离无法验证的旧 owner 的
-笔记/未知来源内容和相关事件元数据，不全库抹除干净历史或新 Run。
+outbox；重载继续未完成清理。Memory claim/legacy Forget 通过独立关联、代际与
+保守域屏障清除相应副本，迟到写入须通过同一代际校验，清理失败不得宣布完成。
+启动先协调明确删除与 Forget，再允许内容读取。异常结束的旧捕获标记 interrupted/unknown
+和真实缺口，保留已记录内容，不以旧 owner 身份再次过滤来源；明确清理的代际和既有
+quarantine 状态仍独立生效。
+
+普通来源排除、笔记编辑/删除/metadata 事件不拦截采集、不自动清理或重写历史，
+不再将配置 source token 当作持续授权屏障。实际来源事实仍保存在输入/工具文本中；
+用于明确删除与 Forget 的 claim、legacy、conversation/domain 关联继续保留。
 
 Debug 数据是用于诊断的有限观察记录，不是可重放审计日志。实际 token usage
 仅按 provider/适配器返回值显示；缺失或尾部未消费时不记为零。Debug 关闭时

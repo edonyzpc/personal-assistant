@@ -1,10 +1,12 @@
 # PA Agent 产品设计：问答范围与 Runtime 演进
 
 Document status: Approved
-Updated: 2026-10-05
+Updated: 2026-10-08
 Work item: B-149
 Decision: [DEC-043](../decisions/dec-043-agent-runtime-evolution-and-source-scope.md)
 Authority: Owner 已确认并由 B-149 交付的五项架构演进、三种问答范围及上下文取舍；本文定义当前产品行为与验收标准。
+
+> 2026-10-08：[B-165 Product Spec](./pa-agent-snapshot-execution-product-spec.md) 局部接续运行中即时来源撤销：当前生成与自动重试使用快照，下一 loop 移除新排除旧材料。下文其它范围与演进合同保持；B-165 最终验证见 [证据记录](../../archive/2026/b165-agent-snapshot-execution-validation.md)，不改写 B-149 历史验收。
 
 > **本文是 B-149 已交付行为的产品合同。**设计始于 `master@6fce3824` 的评审；实现见 [PA Agent Architecture](../../architecture/pa-agent-architecture-plan.md)，本地验收及限制见 [B-149 验证记录](../../archive/2026/b149-pa-agent-runtime-evolution-validation.md)。本地验收不等于版本发布或 BRAT 安装验证。
 

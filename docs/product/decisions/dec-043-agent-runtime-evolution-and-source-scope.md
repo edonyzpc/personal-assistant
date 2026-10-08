@@ -2,9 +2,11 @@
 
 Decision ID: DEC-043
 Status: Accepted
-Updated: 2026-09-25
+Updated: 2026-10-08
 Authority: Owner 在当前架构评审讨论中接受五项演进方向，确认三种范围、默认/记忆与图标优先，并接受硬约束、上下文取舍和运行中切换方案；随后明确要求落地产品设计文档。
 Work item: B-149
+
+> 2026-10-08 行为修订：[DEC-055](./dec-055-agent-snapshot-execution-and-debug-history.md) 局部接续动态撤销规则：当前生成及其重试沿用快照，配置变化在下一 loop 收起新排除旧材料。下文的三种范围与其它演进要求保持；B-165 的最终验证见 [证据记录](../../archive/2026/b165-agent-snapshot-execution-validation.md)。
 
 ## Context
 

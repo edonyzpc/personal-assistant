@@ -1,10 +1,12 @@
 # PA Agent Debug View 与本机历史设计
 
 Document status: Approved
-Updated: 2026-09-23
+Updated: 2026-10-08
 Work item: B-145
 Decision: [DEC-041](../decisions/dec-041-agent-debug-view-and-local-history.md)
 Authority: Owner 已确认的可视化调试与历史数据边界。B-145 已实现并通过本地验证；Approved 指持续有效的产品合同，不把模拟器结果当作 iOS 真机或发布安装证据。
+
+> 2026-10-08：[B-165 Product Spec](./pa-agent-snapshot-execution-product-spec.md) 局部接续本文数据保留与来源变化规则；完整文本/reasoning/工具详情改为本地持久化，普通来源变化不追溯过滤。媒体仅引用/指纹，显式清理和期限保持。下文为 B-145 历史基线，B-165 最终验证见 [证据记录](../../archive/2026/b165-agent-snapshot-execution-validation.md)。
 
 ## Problem And Product Outcome
 
