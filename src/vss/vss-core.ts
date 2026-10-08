@@ -228,6 +228,7 @@ export type VSSIndexOpenMode = "foreground" | "manual";
 interface VSSEnsureIndexOptions {
     allowFallback: boolean;
     allowMissingIndexRecovery?: boolean;
+    recoverMarker?: boolean;
     mode?: VSSIndexOpenMode;
 }
 
@@ -417,9 +418,6 @@ export class VSS {
         if (!this.localStateHydrated && !this.hasPendingLocalStateWrites()) {
             await this.hydrateLocalStateFromStore();
         }
-        if (!this.marker && !this.rebuildGuard && this.status !== "initializing") {
-            this.status = "uninitialized";
-        }
         await this.flushPendingLocalStateWrites();
         if (this.marker && !this.index && this.status === "uninitialized") {
             await this.ensureIndex({ allowFallback: false, mode: "foreground" });
@@ -435,10 +433,20 @@ export class VSS {
 
     private async hydrateLocalStateFromStore(): Promise<void> {
         if (this.disposed || !this.localStateReady || this.localStateHydrated) return;
-        await this.loadDirtyJournal();
-        if (this.disposed) return;
-        const rebuildGuard = await this.stateStore.getRebuildGuard();
-        const marker = await this.readLocalMarker();
+        let rebuildGuard: VSSRebuildGuard | null;
+        let marker: VSSIndexMarker | null;
+        try {
+            await this.loadDirtyJournal();
+            if (this.disposed || this.closing) return;
+            rebuildGuard = await this.stateStore.getRebuildGuard();
+            marker = await this.readLocalMarker();
+        } catch (error) {
+            this.localStateReady = false;
+            this.lastErrorCode = VSS_LOCAL_STATE_UNAVAILABLE_CODE;
+            this.host.log("Could not read Memory local state", error);
+            return;
+        }
+        if (this.disposed || this.closing) return;
         if (rebuildGuard) {
             this.rebuildGuard = { ...rebuildGuard };
             this.preparedRebuildMarker = marker;
@@ -534,7 +542,6 @@ export class VSS {
     private async readLocalMarker(): Promise<VSSIndexMarker | null> {
         const marker = await this.stateStore.getMarker();
         if (!marker) return null;
-        if (marker.deviceId !== this.deviceId) return null;
         if (marker.schemaVersion !== VSS_SCHEMA_VERSION) {
             this.status = "stale";
         }
@@ -548,44 +555,7 @@ export class VSS {
     }
 
     private async tryRecoverMarkerFromSqlite(mode: VSSIndexOpenMode): Promise<void> {
-        if (!this.profile || this.disposed || this.rebuildGuard || this.dirty.size > 0) {
-            this.status = "uninitialized";
-            return;
-        }
-        let sqliteIndex: SqliteVectorIndex | null = null;
-        try {
-            const opened = await this.openSqliteIndex(this.profile, mode);
-            sqliteIndex = opened.index;
-            this.assertActive();
-            if (opened.status === "stale") {
-                this.index = sqliteIndex;
-                sqliteIndex = null;
-                this.status = "stale";
-                return;
-            }
-            const stats = await sqliteIndex.getStats();
-            this.assertActive();
-            if (stats.status === "ready" && stats.chunkCount > 0) {
-                this.index = sqliteIndex;
-                sqliteIndex = null;
-                this.status = "ready";
-                await this.writeLocalIndexState();
-                return;
-            }
-            await this.disposeIndex(sqliteIndex);
-            sqliteIndex = null;
-            this.status = "uninitialized";
-        } catch (error) {
-            if (sqliteIndex) {
-                await this.disposeIndex(sqliteIndex);
-            }
-            if (this.disposed || getErrorCode(error) === "vss-disposed") {
-                return;
-            }
-            this.recordIndexError(error);
-            this.status = "disabled";
-            this.host.log("Could not recover Memory state from local index", error);
-        }
+        await this.ensureIndex({ allowFallback: false, recoverMarker: true, mode });
     }
 
     async markDirtyIfEligible(file: TAbstractFile): Promise<boolean> {
@@ -3001,15 +2971,18 @@ export class VSS {
         };
     }
 
-    private shouldRecoverMarkerForStats(mode: VSSIndexOpenMode): boolean {
-        return mode === "manual"
+    private canRecoverMarker(): boolean {
+        return !this.disposed
+            && !this.closing
             && this.localStateHydrated
-            && !this.index
             && !this.marker
             && !this.rebuildGuard
             && !this.markerRecoverySuppressed
-            && this.dirty.size === 0
             && (this.status === "uninitialized" || this.status === "disabled" || this.status === "error");
+    }
+
+    private shouldRecoverMarkerForStats(mode: VSSIndexOpenMode): boolean {
+        return mode === "manual" && this.canRecoverMarker();
     }
 
     private shouldEnsureStatsIndex(mode: VSSIndexOpenMode): boolean {
@@ -3029,7 +3002,9 @@ export class VSS {
             };
         }
         await this.initialize();
-        if (this.index) {
+        if (this.canRecoverMarker()) {
+            await this.tryRecoverMarkerFromSqlite("foreground");
+        } else if (this.index) {
             await this.ensureIndex({ allowFallback: false, mode: "foreground" });
         }
 
@@ -3114,7 +3089,7 @@ export class VSS {
             };
         }
 
-        if (status === "uninitialized") {
+        if (status === "uninitialized" && this.localStateHydrated && !this.disposed && !this.closing) {
             return {
                 reason: "first-use",
                 action: "rebuild",
@@ -3813,11 +3788,16 @@ export class VSS {
     }
 
     private async ensureIndex(options: VSSEnsureIndexOptions): Promise<void> {
-        if (this.disposed) return;
+        if (this.disposed || this.closing) return;
         if (this.ensureIndexPromise) {
             await this.ensureIndexPromise;
-            if (!this.disposed && this.shouldRetryEnsureIndex(options)) {
-                await this.ensureIndexUnlocked(options);
+            if (!this.disposed && !this.closing && (
+                options.recoverMarker && this.canRecoverMarker()
+                || this.shouldRetryEnsureIndex(options)
+            )) {
+                // A recovery waiter may follow an ordinary open. Re-enter the
+                // shared flight so all waiters use that index and one marker save.
+                await this.ensureIndex(options);
             }
             return;
         }
@@ -3841,6 +3821,13 @@ export class VSS {
         const mode = options.mode ?? "foreground";
         const { profile, profileSignature } = await this.refreshEmbeddingProfile();
         this.assertActive();
+        const recoveryGeneration = this.stateGeneration;
+        const recoverMarker = options.recoverMarker === true && this.canRecoverMarker();
+
+        if (recoverMarker && this.index) {
+            await this.recoverMarkerFromOpenIndex(recoveryGeneration, profileSignature);
+            return;
+        }
 
         if (this.index && this.status === "ready" && this.hasAdmittedReadyMarker()) {
             return;
@@ -3851,7 +3838,7 @@ export class VSS {
         if (this.index && this.status === "stale") return;
         if (this.index
             && !this.marker
-            && this.status === "uninitialized") {
+            && (this.status === "uninitialized" || this.status === "disabled" || this.status === "error")) {
             return;
         }
         if (this.index && this.status === "initializing") {
@@ -3900,11 +3887,22 @@ export class VSS {
             sqliteIndex = opened.index;
             const status = opened.status;
             this.assertActive();
+            if (recoverMarker && !this.isMarkerRecoveryCurrent(recoveryGeneration, profileSignature)) {
+                await this.disposeIndex(sqliteIndex);
+                sqliteIndex = null;
+                this.markRecoveryUnavailable(recoveryGeneration);
+                return;
+            }
             this.index = sqliteIndex;
-            this.status = status;
+            this.status = status === "ready" && recoverMarker ? "initializing" : status;
             this.lastErrorCode = undefined;
 
             if (status === "stale") {
+                return;
+            }
+
+            if (recoverMarker) {
+                await this.recoverMarkerFromOpenIndex(recoveryGeneration, profileSignature);
                 return;
             }
 
@@ -3927,7 +3925,7 @@ export class VSS {
             }
             this.recordIndexError(error);
             this.host.log("SQLite VSS index unavailable", error);
-            if (mode === "manual" && !options.allowFallback) {
+            if (mode === "manual" && !options.allowFallback && !recoverMarker) {
                 this.index = null;
                 this.status = "error";
                 throw error;
@@ -3942,6 +3940,63 @@ export class VSS {
 
         this.index = null;
         this.status = "disabled";
+    }
+
+    private isMarkerRecoveryCurrent(generation: number, profileSignature: string): boolean {
+        return !this.disposed
+            && !this.closing
+            && generation === this.stateGeneration
+            && this.localStateHydrated
+            && !this.marker
+            && !this.rebuildGuard
+            && !this.markerRecoverySuppressed
+            && this.profile !== null
+            && getEmbeddingProfileSignature(this.profile) === profileSignature
+            && getEmbeddingProfileSignature(this.createEmbeddingProfile()) === profileSignature;
+    }
+
+    private async recoverMarkerFromOpenIndex(generation: number, profileSignature: string): Promise<void> {
+        if (!this.index || !this.isMarkerRecoveryCurrent(generation, profileSignature)) return;
+        try {
+            const stats = await this.index.getStats();
+            this.assertActive();
+            if (!this.isMarkerRecoveryCurrent(generation, profileSignature)) {
+                this.markRecoveryUnavailable(generation);
+                return;
+            }
+            if (stats.status === "stale") {
+                this.status = "stale";
+                return;
+            }
+            if (stats.status !== "ready") {
+                this.status = "disabled";
+                return;
+            }
+            if (stats.chunkCount === 0) {
+                this.status = "uninitialized";
+                return;
+            }
+            // Cached snapshots must stay non-ready until the durable marker is
+            // accepted. Dirty notes remain queued for the existing Update flow.
+            this.status = "initializing";
+            if (!await this.writeLocalIndexState(generation, undefined, true)
+                && !this.disposed && !this.closing && generation === this.stateGeneration
+                && !this.marker && !this.rebuildGuard) {
+                this.status = "disabled";
+            }
+        } catch (error) {
+            if (this.disposed || this.closing || getErrorCode(error) === "vss-disposed") return;
+            this.recordIndexError(error);
+            this.status = "disabled";
+            this.host.log("Could not recover Memory state from local index", error);
+        }
+    }
+
+    private markRecoveryUnavailable(generation: number): void {
+        if (!this.disposed && !this.closing && generation === this.stateGeneration
+            && !this.marker && !this.rebuildGuard) {
+            this.status = "disabled";
+        }
     }
 
     private async openSqliteIndex(
@@ -4396,22 +4451,18 @@ export class VSS {
 
     private async loadDirtyJournal() {
         if (this.disposed) return;
-        try {
-            const dirty = await this.stateStore.getDirtyJournal();
-            const pending = new Map(this.dirty);
-            this.dirty.clear();
-            for (const [path, timestamps] of dirty) {
-                this.dirty.set(path, {
-                    first: timestamps.first,
-                    last: timestamps.last,
-                    epoch: ++this.dirtyEpochCounter,
-                });
-            }
-            for (const [path, timestamps] of pending) {
-                this.dirty.set(path, timestamps);
-            }
-        } catch (e) {
-            this.host.log("Error loading Memory dirty journal:", e);
+        const dirty = await this.stateStore.getDirtyJournal();
+        const pending = new Map(this.dirty);
+        this.dirty.clear();
+        for (const [path, timestamps] of dirty) {
+            this.dirty.set(path, {
+                first: timestamps.first,
+                last: timestamps.last,
+                epoch: ++this.dirtyEpochCounter,
+            });
+        }
+        for (const [path, timestamps] of pending) {
+            this.dirty.set(path, timestamps);
         }
     }
 
@@ -4479,7 +4530,9 @@ export class VSS {
         if (!replaced) {
             this.marker = previousMarker;
             this.rebuildGuard = previousGuard;
-            this.markerRecoverySuppressed = previousRecoverySuppressed;
+            // A failed build admission without a prior accepted marker must
+            // stay fail closed, even when its retry journal contains dirty notes.
+            this.markerRecoverySuppressed = previousMarker ? previousRecoverySuppressed : true;
             this.markerWritePending = previousMarkerWritePending;
             this.pendingMarkerSnapshot = previousPendingMarkerSnapshot;
             this.preparedRebuildMarker = previousPreparedRebuildMarker;
@@ -4582,12 +4635,15 @@ export class VSS {
     private async writeLocalIndexState(
         generation = this.stateGeneration,
         abortSignal?: AbortSignal,
+        recoveringMarker = false,
     ): Promise<boolean> {
         if (this.disposed || abortSignal?.aborted) return false;
         if (!this.index || !this.profile) return false;
         const previousMarker = this.marker ? { ...this.marker } : null;
         const previousStatus = this.status;
         const previousRecoverySuppressed = this.markerRecoverySuppressed;
+        const recoveryIndex = this.index;
+        const recoveryProfileSignature = getEmbeddingProfileSignature(this.profile);
         const stats = await this.index.getStats();
         if (this.disposed || generation !== this.stateGeneration || abortSignal?.aborted) return false;
         this.storageStatus = await this.getStoragePersistenceStatus();
@@ -4610,6 +4666,15 @@ export class VSS {
             estimatedDbBytes: stats.estimatedDbBytes,
             estimatedEmbeddingTokens: estimateEmbeddingTokens(stats.chunkCount),
         };
+        if (recoveringMarker) {
+            const canPublish = () => this.index === recoveryIndex
+                && this.isMarkerRecoveryCurrent(generation, recoveryProfileSignature);
+            if (!canPublish() || stats.status !== "ready" || stats.chunkCount === 0) return false;
+            if (!await this.persistMarkerSnapshot(marker, generation, canPublish) || !canPublish()) return false;
+            this.marker = marker;
+            this.status = "ready";
+            return true;
+        }
         this.marker = marker;
         this.markerRecoverySuppressed = false;
         this.status = stats.status === "stale" ? "stale" : "ready";
@@ -4643,21 +4708,28 @@ export class VSS {
         return false;
     }
 
-    private async persistMarkerSnapshot(marker: VSSIndexMarker, generation: number): Promise<boolean> {
+    private async persistMarkerSnapshot(
+        marker: VSSIndexMarker,
+        generation: number,
+        canPublishRecovery?: () => boolean,
+    ): Promise<boolean> {
         if (this.disposed) return false;
         if (!await this.ensureLocalStateStoreReady()) {
-            this.markerWritePending = true;
-            this.pendingMarkerSnapshot = { ...marker };
+            if (!canPublishRecovery) {
+                this.markerWritePending = true;
+                this.pendingMarkerSnapshot = { ...marker };
+            }
             return false;
         }
         const snapshot = { ...marker };
         const write = this.stateWriteChain.catch(() => undefined).then(async () => {
-            if (this.disposed || generation !== this.stateGeneration) return;
+            if (this.disposed || generation !== this.stateGeneration || canPublishRecovery && !canPublishRecovery()) return;
             await this.stateStore.setMarker(snapshot);
         });
         this.stateWriteChain = write.then(() => undefined, () => undefined);
         try {
             await write;
+            if (canPublishRecovery && !canPublishRecovery()) return false;
             if (!this.disposed && generation === this.stateGeneration) {
                 this.markerWritePending = false;
                 this.pendingMarkerSnapshot = null;
@@ -4665,8 +4737,12 @@ export class VSS {
             }
             return !this.disposed && generation === this.stateGeneration;
         } catch (error) {
-            this.markerWritePending = true;
-            this.pendingMarkerSnapshot = { ...marker };
+            // Recovery retries through ensureIndex with the retained local DB;
+            // generic pending writes would publish ready without recovery checks.
+            if (!canPublishRecovery) {
+                this.markerWritePending = true;
+                this.pendingMarkerSnapshot = { ...marker };
+            }
             this.localStateReady = false;
             this.host.log("Error persisting Memory local marker:", error);
             return false;

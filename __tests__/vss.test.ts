@@ -934,6 +934,217 @@ describe('VSS SQLite/WASM lifecycle', () => {
         vss.dispose();
     });
 
+    it('keeps the existing marker identity when only the statistics device ID changes', async () => {
+        const { plugin, vssStateStore } = createPlugin();
+        const index = new FakeVectorIndex();
+        index.records.set('note.md', { path: 'note.md', contentHash: 'hash', mtime: 1, size: 2, status: 'ready', updatedAt: 3 });
+        setMockSqliteIndex(index);
+        const vss = new VSS(plugin, 'cache');
+        const marker = createReadyMarker({
+            deviceId: 'previous-device',
+            opfsScope: (vss as any).getVaultStorageScope().safeName, // eslint-disable-line @typescript-eslint/no-explicit-any
+        });
+        await vssStateStore.setMarker(marker);
+
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'ready', action: 'none' });
+        await expect(vssStateStore.getMarker()).resolves.toEqual(marker);
+        expect(vss.getMemoryStatusSnapshot()).toMatchObject({ status: 'ready' });
+        expect(index.reset).not.toHaveBeenCalled();
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await vss.dispose();
+    });
+
+    it('recovers missing marker with dirty notes and uses Update to skip unchanged content', async () => {
+        const sameContent = 'unchanged memory';
+        const same = createTFile('same.md', { size: sameContent.length, mtime: 2, ctime: 1 });
+        const changed = createTFile('changed.md', { size: 20, mtime: 2, ctime: 1 });
+        const { plugin, vssStateStore, mockAdapter, mockVault } = createPlugin({ getVSSFiles: jest.fn(() => [same, changed]) });
+        mockVault.getAbstractFileByPath.mockImplementation((path) => path === same.path ? same : changed);
+        mockAdapter.read.mockImplementation(async (path) => path === same.path ? sameContent : 'updated memory content');
+        const journal = new Map<string, DirtyTimestamps>([
+            [same.path, { first: 1, last: 2 }],
+            [changed.path, { first: 1, last: 2 }],
+        ]);
+        await vssStateStore.setDirtyJournal(journal);
+        const index = new FakeVectorIndex();
+        index.records.set(same.path, { path: same.path, contentHash: await computeContentHash(sameContent), mtime: 1, size: 1, status: 'ready', updatedAt: 1 });
+        index.records.set(changed.path, { path: changed.path, contentHash: 'old-hash', mtime: 1, size: 1, status: 'ready', updatedAt: 1 });
+        setMockSqliteIndex(index);
+        const vss = new VSS(plugin, 'cache');
+        const internal = vss as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        internal.waitForEmbeddingThrottle = jest.fn(async () => undefined);
+        const embedDocuments = jest.fn(async (texts: string[]) => texts.map(() => [1, 0]));
+        internal.aiUtils.createEmbeddings.mockResolvedValue({ embedDocuments, embedQuery: jest.fn() });
+
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'changed-notes', action: 'refresh', notesLikelyToUpdate: 2 });
+        await expect(vssStateStore.getDirtyJournal()).resolves.toEqual(journal);
+        expect(embedDocuments).not.toHaveBeenCalled();
+        expect(index.reset).not.toHaveBeenCalled();
+        const summary = await vss.refreshLocalIndex({ silent: true });
+
+        expect(summary).toMatchObject({ updated: 1, metadataSynced: 1, failed: 0 });
+        expect(embedDocuments).toHaveBeenCalledTimes(1);
+        expect(index.upsertFile).toHaveBeenCalledTimes(1);
+        expect(index.upsertFile).toHaveBeenCalledWith(expect.objectContaining({ path: changed.path }), expect.any(Array), expect.any(Array));
+        expect(index.reset).not.toHaveBeenCalled();
+        await expect(vssStateStore.getDirtyJournal()).resolves.toEqual(new Map());
+        await vss.dispose();
+    });
+
+    it.each(['getDirtyJournal', 'getRebuildGuard', 'getMarker'] as const)('keeps %s read failures unavailable until state can hydrate', async (method) => {
+        const { plugin, vssStateStore } = createPlugin();
+        const index = new FakeVectorIndex();
+        index.records.set('note.md', { path: 'note.md', contentHash: 'hash', mtime: 1, size: 2, status: 'ready', updatedAt: 3 });
+        setMockSqliteIndex(index);
+        const read = jest.spyOn(vssStateStore, method as 'getMarker');
+        read.mockRejectedValueOnce(new Error('state read unavailable')).mockRejectedValueOnce(new Error('state read still unavailable'));
+        const vss = new VSS(plugin, 'cache');
+
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'unavailable', action: 'none' });
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'unavailable', action: 'none' });
+        expect(index.initialize).not.toHaveBeenCalled();
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'ready', action: 'none' });
+        expect(index.reset).not.toHaveBeenCalled();
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await vss.dispose();
+    });
+
+    it('keeps a failed SQLite recovery unavailable on the next readiness and reuses data when opening recovers', async () => {
+        const { plugin } = createPlugin();
+        const index = new FakeVectorIndex();
+        index.records.set('note.md', { path: 'note.md', contentHash: 'hash', mtime: 1, size: 2, status: 'ready', updatedAt: 3 });
+        index.initialize.mockRejectedValueOnce(new Error('open unavailable')).mockRejectedValueOnce(new Error('open still unavailable'));
+        setMockSqliteIndex(index);
+        const vss = new VSS(plugin, 'cache');
+
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'unavailable', action: 'none' });
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'unavailable', action: 'none' });
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'ready', action: 'none' });
+        expect(index.reset).not.toHaveBeenCalled();
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await vss.dispose();
+    });
+
+    it('retries recovery marker save with the same index without turning the failure into first use', async () => {
+        const stateStore = new FailingMarkerWriteStateStore();
+        const write = jest.spyOn(stateStore, 'setMarker');
+        write.mockRejectedValueOnce(new Error('save unavailable')).mockRejectedValueOnce(new Error('save still unavailable'));
+        stateStore.failNextMarkerWrite = false;
+        const { plugin } = createPlugin({ createVSSIndexStateStore: jest.fn(() => stateStore) });
+        const index = new FakeVectorIndex();
+        index.records.set('note.md', { path: 'note.md', contentHash: 'hash', mtime: 1, size: 2, status: 'ready', updatedAt: 3 });
+        setMockSqliteIndex(index);
+        const vss = new VSS(plugin, 'cache');
+
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'unavailable', action: 'none' });
+        expect(vss.getMemoryStatusSnapshot().status).not.toBe('ready');
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'unavailable', action: 'none' });
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'ready', action: 'none' });
+        expect(index.initialize).toHaveBeenCalledTimes(1);
+        expect(index.reset).not.toHaveBeenCalled();
+        expect((vss as any).markerRecoverySuppressed).toBe(false); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await vss.dispose();
+    });
+
+    it.each(['success', 'generation-change', 'profile-change', 'closing'] as const)('publishes recovery ready only after marker persistence with %s', async (outcome) => {
+        const stateStore = new BlockingMarkerStateStore();
+        stateStore.blockNextMarkerWrite();
+        const { plugin } = createPlugin({ createVSSIndexStateStore: jest.fn(() => stateStore) });
+        const index = new FakeVectorIndex();
+        index.records.set('note.md', { path: 'note.md', contentHash: 'hash', mtime: 1, size: 2, status: 'ready', updatedAt: 3 });
+        setMockSqliteIndex(index);
+        const vss = new VSS(plugin, 'cache');
+        const reading = vss.getMemoryReadiness();
+        await stateStore.waitForMarkerWrite();
+        expect(vss.getMemoryStatusSnapshot().status).not.toBe('ready');
+        if (outcome === 'generation-change') (vss as any).stateGeneration++; // eslint-disable-line @typescript-eslint/no-explicit-any
+        if (outcome === 'profile-change') plugin.settings.embeddingModelName = 'new-model';
+        const disposing = outcome === 'closing' ? vss.dispose() : null;
+        stateStore.releaseMarkerWrite();
+        const plan = await reading;
+
+        expect(plan.reason).toBe(outcome === 'success' ? 'ready' : 'unavailable');
+        if (outcome !== 'success') expect(vss.getMemoryStatusSnapshot().status).not.toBe('ready');
+        await (disposing ?? vss.dispose());
+    });
+
+    it.each(['opening', 'stats'] as const)('keeps recovery for outdated settings during %s unavailable and rechecks compatibility next time', async (phase) => {
+        const { plugin, vssStateStore } = createPlugin();
+        const openingIndex = phase === 'opening' ? new BlockingInitializeVectorIndex() : new BlockingStatsVectorIndex();
+        openingIndex.records.set('note.md', { path: 'note.md', contentHash: 'hash', mtime: 1, size: 2, status: 'ready', updatedAt: 3 });
+        setMockSqliteIndex(openingIndex);
+        const vss = new VSS(plugin, 'cache');
+        const reading = vss.getMemoryReadiness();
+        if (openingIndex instanceof BlockingInitializeVectorIndex) {
+            await openingIndex.waitForInitializeStarted();
+        } else {
+            await openingIndex.waitForStatsStarted();
+        }
+        plugin.settings.embeddingModelName = 'new-model';
+        openingIndex.release();
+
+        await expect(reading).resolves.toMatchObject({ reason: 'unavailable', action: 'none' });
+        await expect(vssStateStore.getMarker()).resolves.toBeNull();
+        expect(openingIndex.dispose).toHaveBeenCalledTimes(phase === 'opening' ? 1 : 0);
+        expect(openingIndex.reset).not.toHaveBeenCalled();
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const incompatibleIndex = new FakeVectorIndex();
+        incompatibleIndex.status = 'stale';
+        setMockSqliteIndex(incompatibleIndex);
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'settings-changed', action: 'rebuild', requiresApproval: true });
+        expect(openingIndex.dispose).toHaveBeenCalledTimes(1);
+        expect(incompatibleIndex.initialize).toHaveBeenCalledWith(expect.objectContaining({ model: 'new-model' }));
+        expect(incompatibleIndex.reset).not.toHaveBeenCalled();
+        await vss.dispose();
+    });
+
+    it('shares ordinary opening with concurrent readiness and manual stats recovery', async () => {
+        const { plugin, vssStateStore } = createPlugin();
+        const index = new BlockingInitializeVectorIndex();
+        index.records.set('note.md', { path: 'note.md', contentHash: 'hash', mtime: 1, size: 2, status: 'ready', updatedAt: 3 });
+        setMockSqliteIndex(index);
+        const vss = new VSS(plugin, 'cache');
+        await vss.initialize();
+        const opening = (vss as any).ensureIndex({ allowFallback: false, mode: 'foreground' }); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await index.waitForInitializeStarted();
+        const readiness = vss.getMemoryReadiness();
+        const stats = vss.getStats({ mode: 'manual' });
+        index.release();
+        await opening;
+
+        await expect(readiness).resolves.toMatchObject({ reason: 'ready' });
+        await expect(stats).resolves.toMatchObject({ status: 'ready' });
+        await expect(vssStateStore.getMarker()).resolves.toMatchObject({ chunkCount: 1 });
+        expect(index.initialize).toHaveBeenCalledTimes(1);
+        expect(MockSqliteVectorIndex).toHaveBeenCalledTimes(1);
+        await vss.dispose();
+    });
+
+    it.each(['empty', 'incompatible', 'foreign-marker'] as const)('retains the existing recovery classification for %s local state', async (scenario) => {
+        const { plugin, vssStateStore } = createPlugin();
+        const index = new FakeVectorIndex();
+        if (scenario === 'incompatible') {
+            index.status = 'stale';
+            index.records.set('note.md', { path: 'note.md', contentHash: 'hash', mtime: 1, size: 2, status: 'ready', updatedAt: 3 });
+        }
+        if (scenario === 'foreign-marker') {
+            await vssStateStore.setMarker(createReadyMarker({ opfsScope: 'different-vault-scope' }));
+        }
+        setMockSqliteIndex(index);
+        const vss = new VSS(plugin, 'cache');
+
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
+            reason: scenario === 'incompatible' ? 'settings-changed' : 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        expect((vss as any).marker).toBeNull(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(index.reset).not.toHaveBeenCalled();
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await vss.dispose();
+    });
+
     it('does not reconstruct the local marker from OPFS during foreground startup', async () => {
         const { plugin, vssStateStore } = createPlugin();
         const index = new FakeVectorIndex();
@@ -2082,8 +2293,8 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(index.records.has('old.md')).toBe(true);
         await expect(stateStore.getMarker()).resolves.toMatchObject({ indexId: 'index-1' });
         await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
-            reason: 'first-use',
-            action: 'rebuild',
+            reason: 'unavailable',
+            action: 'none',
         });
         await expect(vss.getStats()).resolves.toMatchObject({ status: 'uninitialized' });
         await expect(vss.canAutoMaintain()).resolves.toBe(false);
