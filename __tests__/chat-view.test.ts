@@ -6,6 +6,7 @@ import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-s
 import type { AgentEvent, LegacyAgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, formatOperationsPreview, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
 import { mergeContextUsedItems, normalizeContextUsedItems } from '../src/chat/formatters';
+import { renderMarkdownWithOwner } from '../src/chat/mermaid';
 import { ChatConfirmationModal, ChatHistoryPickerModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
 import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
@@ -25,6 +26,7 @@ import { createCreateImageTool, type ChatToolContext } from '../src/ai-services/
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
 import { ChatImageRequestError } from '../src/ai-services/image-capability';
 import { collectActionStates } from '../src/ai-services/pa-agent-result-facts';
+import { createCooperativeTask } from '../src/ai-services/cooperative-task';
 import { OPERATIONS_BLOCKED_MESSAGE, OPERATIONS_STAGED_MESSAGE } from '../src/ai-services/operations/operations-tool-provider';
 import { OperationsService } from '../src/ai-services/operations/operations-service';
 import { createAiServiceHost } from '../src/tests/factories/host-factory';
@@ -8021,6 +8023,7 @@ describe('LLMView turn lifecycle', () => {
         }));
         await flushPromises();
         await flushPromises();
+        await new Promise(resolve => setTimeout(resolve, 40));
 
         expect(allText(getElementByClass(responseDiv, 'assistant'))).not.toContain('Draft answer before tools.');
         expect(allText(responseDiv)).toContain('Working on: Draft answer before tools.');
@@ -9371,6 +9374,86 @@ describe('LLMView turn lifecycle', () => {
         expect(getButtonByText(containerEl, 'Summarize current note').disabled).toBe(false);
     });
 
+    it.each(['complete', 'cancel'] as const)('coalesces microtask-ready canonical text with fast rendering and preserves %s content', async outcome => {
+        const { view, containerEl } = createView();
+        const renderedMarkdown: string[] = [];
+        // The renderer is immediately ready. The producer uses the same
+        // ready-chunk cooperative boundary as PaAgentLoop.
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>)
+            .mockImplementation((_app, markdown, el) => {
+                renderedMarkdown.push(markdown);
+                el.setText(markdown);
+            });
+        let stopTimer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            await view.onOpen();
+            const prompt = 'ready text burst';
+            getTextArea(containerEl).value = prompt;
+            void getButtonByText(containerEl, 'Ask').click();
+            await flushPromises();
+            const call = streamCalls[0];
+            // A completed tool phase can leave a blank message before the
+            // first answer text. It must still get the immediate first render.
+            call.onChunk('');
+            await flushPromises();
+            emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+            emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+            emitCanonical(call, canonicalEvent({ type: 'message_start', message: assistantMessage('ready-assistant', []) }));
+            const fragments = Array.from({ length: 4096 }, (_, index) => `${String(index).padStart(4, '0')}${'x'.repeat(25)}\n`);
+            const received: string[] = [];
+            const work = createCooperativeTask(call.signal);
+            try {
+                for (const text of fragments) {
+                    await work.checkpoint();
+                    received.push(text);
+                    emitCanonical(call, canonicalEvent({ type: 'message_update', messageId: 'ready-assistant',
+                        update: { kind: 'text_delta', text } }));
+                    if (received.length === 1) {
+                        expect(renderedMarkdown).toEqual([prompt, '', text]);
+                        if (outcome === 'cancel') stopTimer = setTimeout(() => getButtonByClass(containerEl, 'cancel-button').click(), 0);
+                    }
+                }
+            } catch (error) {
+                if (outcome !== 'cancel') throw error;
+                expect(error).toMatchObject({ name: 'AbortError' });
+            }
+            const content = received.join('');
+            if (outcome === 'complete') {
+                expect(received).toHaveLength(4096);
+                expect(content).toHaveLength(122880);
+                emitCanonical(call, canonicalEvent({ type: 'message_end',
+                    message: assistantMessage('ready-assistant', [{ type: 'text', text: content }]) }));
+                emitCanonical(call, canonicalEvent({ type: 'turn_end', status: 'completed' }));
+                emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'completed', metadata: { finalTurnId: 'turn_1' } }));
+                call.resolve();
+            } else {
+                expect(call.signal?.aborted).toBe(true);
+                expect(received.length).toBeGreaterThan(0);
+                expect(received.length).toBeLessThan(4096);
+                emitCanonical(call, canonicalEvent({ type: 'message_update', messageId: 'ready-assistant',
+                    update: { kind: 'text_delta', text: 'LATE_AFTER_STOP' } }));
+                call.reject(new DOMException('Aborted', 'AbortError'));
+            }
+            await waitForTurnCompletion(view);
+            expect(view.chatHistory[1].content).toBe(content);
+            const assistant = getElementByClass(containerEl, 'assistant');
+            expect(allText(assistant)).toContain(content);
+            getButtonByClass(assistant, 'copy-message-button').click();
+            expect(navigator.clipboard.writeText).toHaveBeenCalledWith(content);
+            expect(allText(containerEl)).not.toContain('LATE_AFTER_STOP');
+            // One latest render per cooperative slice plus the first/final
+            // render replaces thousands of whole-prefix Markdown parses.
+            expect(renderedMarkdown.length - 2).toBeLessThanOrEqual(Math.ceil(received.length / 64) + 2);
+            if (outcome === 'cancel') {
+                expect(view.chatHistory[1].shareCardEligible).toBe(false);
+                expect(allText(containerEl)).toContain('Generation cancelled');
+            }
+            await view.onClose();
+        } finally {
+            if (stopTimer !== undefined) clearTimeout(stopTimer);
+        }
+    });
+
     it('coalesces overlapping live markdown renders before the final markdown render', async () => {
         const { view, containerEl } = createView();
         const renderJobs: Array<{ markdown: string; el: MockElement; resolve: () => void }> = [];
@@ -9406,6 +9489,7 @@ describe('LLMView turn lifecycle', () => {
 
         renderJobs[1].resolve();
         await flushPromises();
+        await new Promise(resolve => setTimeout(resolve, 40));
         expect(allText(containerEl)).not.toContain('old chunk');
         expect(renderJobs.map((job) => job.markdown)).toEqual(['stream', 'old chunk', 'new chunk']);
 
@@ -9415,7 +9499,67 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('old chunk');
     });
 
-    it('uses a cost-aware latest-only drain after a slow synchronous live render', async () => {
+    it.each([false, true])('keeps the native renderer and complete literal text with strict line breaks %s', async strictLineBreaks => {
+        const app = { vault: { getConfig: jest.fn(() => strictLineBreaks) } } as unknown as App;
+        const owner = new Component();
+        const target = new MockElement('div') as unknown as HTMLElement;
+        const markdown = 'Plain words 123.45, café; next: yes!? 中文文字\r\n'.repeat(256);
+
+        await renderMarkdownWithOwner({ app }, markdown, target, owner, 'Folder/Note.md');
+
+        const render = MarkdownRenderer.render as unknown as jest.Mock;
+        const [renderedApp, renderedMarkdown, renderedTarget, renderedSourcePath, renderedOwner] = render.mock.calls.at(-1)!;
+        expect(renderedApp).toBe(app);
+        expect(renderedTarget).toBe(target);
+        expect(renderedSourcePath).toBe('Folder/Note.md');
+        expect(renderedOwner).toBe(owner);
+        expect(renderedMarkdown).toMatch(/^<p>Plain words /);
+        expect(renderedMarkdown).toMatch(/中文文字<\/p>$/);
+        expect(String(renderedMarkdown).includes('<br>')).toBe(!strictLineBreaks);
+        expect(String(renderedMarkdown).slice(3, -4).replace(/<br>\n/g, '\n'))
+            .toBe(markdown.replace(/\r\n/g, '\n').slice(0, -1));
+    });
+
+    it.each([
+        ['short paragraph', 'First line.\nSecond line.\n'],
+        ['one long line', 'Long literal sentence. '.repeat(512).trimEnd()],
+        ['multiple paragraphs', '\nSecond paragraph.\n'],
+        ['numbered list', '1. Numbered item.\n'],
+        ['empty numbered item', '2.\nFollowing text.\n'],
+        ['indentation', ' Indented line.\n'],
+        ['hard break', 'Two spaces.  \nNext line.\n'],
+        ['trailing whitespace', 'Trailing space. \n'],
+        ['bare URL', 'www.example.com\n'],
+        ['email', 'person@example.com\n'],
+        ['Markdown emphasis', '*emphasis*\n'],
+        ['Markdown link', '[label](https://example.com)\n'],
+        ['HTML/entity', '<span>HTML</span> &amp; text\n'],
+        ['Mermaid', '```mermaid\ngraph TD\nA --> B\n```\n'],
+        ['lone carriage return', 'First\rSecond\n'],
+    ])('preserves original native Markdown input for %s', async (name, suffix) => {
+        const app = { vault: { getConfig: () => false } } as unknown as App;
+        const owner = new Component();
+        const target = new MockElement('div') as unknown as HTMLElement;
+        const markdown = name === 'short paragraph' || name === 'one long line'
+            ? suffix : 'Ordinary paragraph text.\n'.repeat(400) + suffix;
+
+        await renderMarkdownWithOwner({ app }, markdown, target, owner);
+
+        expect((MarkdownRenderer.render as unknown as jest.Mock).mock.calls.at(-1)?.[1]).toBe(markdown);
+    });
+
+    it.each([undefined, 'false'])('keeps native Markdown when the line-break setting is unknown (%s)', async setting => {
+        const app = { vault: { getConfig: () => setting } } as unknown as App;
+        const owner = new Component();
+        const target = new MockElement('div') as unknown as HTMLElement;
+        const markdown = 'Ordinary paragraph text.\n'.repeat(400);
+
+        await renderMarkdownWithOwner({ app }, markdown, target, owner);
+
+        expect((MarkdownRenderer.render as unknown as jest.Mock).mock.calls.at(-1)?.[1]).toBe(markdown);
+    });
+
+    it('keeps the first text immediate and gives a costly scroll layout frame time before publishing more', async () => {
         const { view, containerEl } = createView();
         const renderedMarkdown: string[] = [];
         let nowMs = 0;
@@ -9423,37 +9567,46 @@ describe('LLMView turn lifecycle', () => {
         try {
             (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
                 renderedMarkdown.push(markdown);
-                if (markdown.startsWith('slow')) {
-                    nowMs += 20;
-                }
                 el.setText(markdown);
             });
             await view.onOpen();
 
-            getTextArea(containerEl).value = 'cost prompt';
+            getTextArea(containerEl).value = 'frame prompt';
             void getButtonByText(containerEl, 'Ask').click();
             await flushPromises();
 
-            streamCalls[0].onChunk('slow one');
+            streamCalls[0].onChunk('first text');
             await flushPromises();
             await flushPromises();
-            expect(renderedMarkdown).toEqual(['cost prompt', 'slow one']);
-            expect(allText(containerEl)).toContain('slow one');
+            expect(renderedMarkdown).toEqual(['frame prompt', 'first text']);
+            expect(allText(containerEl)).toContain('first text');
 
-            streamCalls[0].onChunk('slow two');
-            streamCalls[0].onChunk('slow three');
+            streamCalls[0].onChunk('second text');
+            streamCalls[0].onChunk('latest text');
             await flushPromises();
-            expect(renderedMarkdown).toEqual(['cost prompt', 'slow one']);
-            expect(allText(containerEl)).not.toContain('slow three');
+            expect(renderedMarkdown).toEqual(['frame prompt', 'first text']);
+            expect(allText(containerEl)).not.toContain('latest text');
 
-            nowMs = 52;
+            const responseDiv = getResponseDiv(view);
+            jest.spyOn(responseDiv, 'scrollTo').mockImplementation(options => {
+                // The existing layout/scroll operation costs more than the
+                // publication interval; its end must leave time for interaction.
+                nowMs = 100;
+                responseDiv.scrollToCalls.push(options);
+            });
+            runAnimationFrames();
+            await new Promise((resolve) => setTimeout(resolve, 40));
+            await flushPromises();
+            expect(renderedMarkdown).toEqual(['frame prompt', 'first text']);
+
+            nowMs = 140;
             await new Promise((resolve) => setTimeout(resolve, 40));
             await flushPromises();
             await flushPromises();
 
-            expect(renderedMarkdown).toEqual(['cost prompt', 'slow one', 'slow three']);
-            expect(renderedMarkdown).not.toContain('slow two');
-            expect(allText(containerEl)).toContain('slow three');
+            expect(renderedMarkdown).toEqual(['frame prompt', 'first text', 'latest text']);
+            expect(renderedMarkdown).not.toContain('second text');
+            expect(allText(containerEl)).toContain('latest text');
         } finally {
             performanceNowSpy.mockRestore();
         }

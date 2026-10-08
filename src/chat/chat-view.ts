@@ -112,7 +112,6 @@ export const PA_CHAT_SUBAGENT_ICON = "PA_CHAT_SUBAGENT";
 export type { ChatMessage };
 let sourceScopeMenuSequence = 0;
 
-const LIVE_MARKDOWN_SLOW_RENDER_MS = 12;
 const LIVE_MARKDOWN_RENDER_COOLDOWN_MS = 32;
 const CHAT_DRAWER_HOST_CLASS = 'pa-chat-drawer-host';
 const ROLE_IDENTICON_FILL_CLASSES: Record<string, string> = {
@@ -305,7 +304,7 @@ const getMonotonicTimeMs = () => {
 type MarkdownRenderOptions = {
     forceScroll?: boolean;
     deferMermaid?: boolean;
-    onSynchronousRenderComplete?: (durationMs: number) => void;
+    onScrollSettled?: () => void;
 };
 
 type MemoryChipState = {
@@ -1003,7 +1002,11 @@ export class LLMView extends ItemView {
         };
 
         const scrollToBottom = (
-            { force = false, behavior = 'smooth' }: { force?: boolean; behavior?: ScrollBehavior } = {}
+            { force = false, behavior = 'smooth', onSettled }: {
+                force?: boolean;
+                behavior?: ScrollBehavior;
+                onSettled?: () => void;
+            } = {}
         ) => {
             if (force) {
                 shouldAutoScroll = true;
@@ -1025,6 +1028,7 @@ export class LLMView extends ItemView {
                     top: getScrollBottom(),
                     behavior,
                 });
+                onSettled?.();
             });
             this.scheduledScrollFrame = frameId;
         };
@@ -3200,7 +3204,6 @@ export class LLMView extends ItemView {
                 rendered.contentDiv.appendChild(buffer);
             }
 
-            const renderStartedAt = getMonotonicTimeMs();
             const renderPromise = renderMarkdownWithOwner(
                 this.host,
                 mermaidTransform.markdown,
@@ -3208,7 +3211,6 @@ export class LLMView extends ItemView {
                 renderOwner,
                 sourcePath,
             );
-            options.onSynchronousRenderComplete?.(getMonotonicTimeMs() - renderStartedAt);
 
             return renderPromise
                 .then(() => {
@@ -3255,6 +3257,7 @@ export class LLMView extends ItemView {
                     scrollToBottom({
                         force: options.forceScroll,
                         behavior: options.forceScroll ? 'smooth' : 'auto',
+                        onSettled: options.onScrollSettled,
                     });
                     return true;
                 })
@@ -3292,6 +3295,7 @@ export class LLMView extends ItemView {
                             scrollToBottom({
                                 force: options.forceScroll,
                                 behavior: options.forceScroll ? 'smooth' : 'auto',
+                                onSettled: options.onScrollSettled,
                             });
                             return true;
                         } catch (fallbackError) {
@@ -3307,7 +3311,9 @@ export class LLMView extends ItemView {
                     rendered.renderOwner = undefined;
                     rendered.renderedContent = content;
                     rendered.renderedContentMode = mermaidTransform.deferred ? 'deferred-mermaid' : 'full';
-                    scrollToBottom({ force: options.forceScroll, behavior: 'auto' });
+                    scrollToBottom({
+                        force: options.forceScroll, behavior: 'auto', onSettled: options.onScrollSettled,
+                    });
                     return true;
                 });
         };
@@ -3369,7 +3375,6 @@ export class LLMView extends ItemView {
             state.pendingForceScroll = false;
             state.inFlight = true;
             state.inFlightContent = content;
-            let synchronousRenderDurationMs = 0;
             const isCurrentLiveMarkdownRender = () => {
                 if (!isLive()) return false;
                 const pending = state.pendingContent;
@@ -3378,8 +3383,10 @@ export class LLMView extends ItemView {
             const renderPromise = renderMarkdownInto(rendered, content, isCurrentLiveMarkdownRender, {
                 deferMermaid: true,
                 forceScroll,
-                onSynchronousRenderComplete: (durationMs) => {
-                    synchronousRenderDurationMs = durationMs;
+                onScrollSettled: () => {
+                    if (isLive() && content) {
+                        state.nextRenderAfterMs = getMonotonicTimeMs() + LIVE_MARKDOWN_RENDER_COOLDOWN_MS;
+                    }
                 },
             });
             state.inFlightPromise = renderPromise;
@@ -3387,11 +3394,12 @@ export class LLMView extends ItemView {
                 state.inFlight = false;
                 state.inFlightContent = undefined;
                 state.inFlightPromise = undefined;
-                if (synchronousRenderDurationMs >= LIVE_MARKDOWN_SLOW_RENDER_MS) {
-                    state.nextRenderAfterMs = getMonotonicTimeMs() + LIVE_MARKDOWN_RENDER_COOLDOWN_MS;
-                } else if ((state.nextRenderAfterMs ?? 0) <= getMonotonicTimeMs()) {
-                    state.nextRenderAfterMs = undefined;
-                }
+                // Native parsing can be fast while publishing the full DOM and
+                // the following scroll/layout frame are expensive. Leave frame
+                // time after every intermediate publication before draining more.
+                state.nextRenderAfterMs = content
+                    ? getMonotonicTimeMs() + LIVE_MARKDOWN_RENDER_COOLDOWN_MS
+                    : undefined;
                 if (!isLive()) {
                     clearScheduledLiveMarkdownDrain(state);
                     state.pendingContent = undefined;
@@ -3399,7 +3407,8 @@ export class LLMView extends ItemView {
                     return;
                 }
                 if (state.pendingContent !== undefined && state.pendingContent !== rendered.renderedContent) {
-                    runLiveMarkdownRender(rendered, state, isLive, options);
+                    scheduleLiveMarkdownDrain(rendered, state, isLive,
+                        Math.max(0, (state.nextRenderAfterMs ?? 0) - getMonotonicTimeMs()), options);
                 }
             });
         }
@@ -3414,7 +3423,12 @@ export class LLMView extends ItemView {
             const state = getLiveMarkdownRenderState(rendered);
             state.pendingContent = content;
             state.pendingForceScroll = Boolean(state.pendingForceScroll || options.forceScroll);
-            runLiveMarkdownRender(rendered, state, isLive, options);
+            if (state.inFlight || state.scheduledDrainTimer !== undefined) return;
+            // Show the first text immediately. Ready chunks after it share the
+            // existing latest-content drain even when every render is fast.
+            if (!rendered.renderedContent) runLiveMarkdownRender(rendered, state, isLive, options);
+            else scheduleLiveMarkdownDrain(rendered, state, isLive,
+                Math.max(0, (state.nextRenderAfterMs ?? 0) - getMonotonicTimeMs()), options);
         };
         const cancelLiveMarkdownRender = (rendered?: RenderedMessage | null) => {
             if (!rendered) return;

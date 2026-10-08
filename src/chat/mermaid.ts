@@ -26,6 +26,39 @@ function mermaidT(key: string, params?: Readonly<Record<string, string | number>
     return pluginT(key, getPluginUiLanguage(), params);
 }
 
+function prepareLiteralParagraph(app: App, markdown: string): string {
+    if (markdown.length < 8192 || !markdown.includes('\n')) return markdown;
+
+    const vaultConfig = app.vault as typeof app.vault & { getConfig?: (key: string) => unknown };
+    const strictLineBreaks = vaultConfig.getConfig?.('strictLineBreaks');
+    if (typeof strictLineBreaks !== 'boolean') return markdown;
+
+    const literal = markdown.replace(/\r\n/g, '\n');
+    if (!/^[\p{L}\p{N}\p{M} .,;:!?\n]+$/u.test(literal)
+        || /www\./i.test(literal)
+        || /(^|\n)(?: |\d+\.(?: |\n|$))/.test(literal)
+        || /^\n|\n\n| (?:\n|$)/.test(literal)) {
+        return markdown;
+    }
+
+    const paragraph = literal.endsWith('\n') ? literal.slice(0, -1) : literal;
+    if (!paragraph.includes('\n')) return markdown;
+
+    // Native inline parsing repeatedly scans the remaining tail of long, line-broken
+    // paragraphs. This strict literal subset has the same native paragraph and
+    // configured line-break DOM as an HTML block, which still goes through the
+    // native sanitizer and postprocessors below.
+    const escaped = paragraph.replace(/[&<>\n]/g, character => {
+        switch (character) {
+            case '&': return '&amp;';
+            case '<': return '&lt;';
+            case '>': return '&gt;';
+            default: return strictLineBreaks ? '\n' : '<br>\n';
+        }
+    });
+    return `<p>${escaped}</p>`;
+}
+
 export function renderMarkdownWithOwner(
     host: ChatRenderHost,
     markdown: string,
@@ -34,7 +67,9 @@ export function renderMarkdownWithOwner(
     sourcePath = '',
 ): Promise<void> {
     try {
-        return Promise.resolve(MarkdownRenderer.render(host.app, markdown, target, sourcePath, owner));
+        return Promise.resolve(MarkdownRenderer.render(
+            host.app, prepareLiteralParagraph(host.app, markdown), target, sourcePath, owner,
+        ));
     } catch (error) {
         return Promise.reject(toError(error));
     }
