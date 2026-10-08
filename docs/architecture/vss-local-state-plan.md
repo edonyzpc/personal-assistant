@@ -1,6 +1,6 @@
 # VSS Local State Plan
 
-Updated: 2026-08-11
+Updated: 2026-10-08
 
 Status: Current local-state contract. Owner 于 2026-08-11 在 PR #378 当前 review follow-up 中明确选择方案 1：IndexedDB marker 状态未知时，destructive rebuild 必须 fail closed；本次选择不追溯为更早授权。
 
@@ -39,7 +39,7 @@ Existing legacy files are read-only compatibility artifacts. The plugin does not
 | User-facing vocabulary | Memory, Prepare memory, Update memory |
 | Internal vocabulary | VSS, SQLite, OPFS, marker, dirty journal, fallback only in code/docs/diagnostics |
 
-If local app storage is cleared, foreground startup, chat readiness, and normal status checks do not open OPFS merely to reconstruct the VSS marker. Manual technical diagnostics may bounded-retry OPFS SQLite and reconstruct the marker from a valid index. If neither local state nor manually recoverable OPFS Memory exists, the user is asked to prepare Memory again. Notes are not modified or deleted.
+Under [DEC-054](../product/decisions/dec-054-memory-marker-recovery.md), normal Memory readiness attempts current-scope SQLite recovery before classifying a missing marker as first use; manual technical diagnostics use the same opening coordination. Startup initialization and ordinary foreground stats remain passive. Compatible ready data with nonzero chunks can restore a marker even with dirty notes, which remain queued for Update. Read/open/save failure is unavailable, not proof of absence; recovery never resets embeddings or calls their provider. Notes are not modified or deleted.
 
 “Marker absent” and “marker unknown” are different states. Absence is trusted only after the current IndexedDB state store has hydrated successfully (or after a durable, generation-matched removal). If hydration/open fails, a silent first-use or confirmed recovery rebuild must not infer absence from an in-memory `null` marker.
 
@@ -58,13 +58,14 @@ flowchart TD
   Legacy["legacy vault state\nread-only"] -. import diagnostics .-> State
 ```
 
-The IndexedDB database name is scoped like Statistics v3: plugin id, `statisticsVaultId`, vault config directory, and local vault path hash. The OPFS SQLite scope is unchanged in this migration; the current OPFS scope is recorded in the marker and marker reads are valid only when device id, profile signature, and OPFS scope match.
+The IndexedDB database name is scoped like Statistics v3: plugin id, `statisticsVaultId`, vault config directory, and local vault path hash. The OPFS SQLite scope is unchanged in this migration; marker admission checks schema/profile and the recorded optional OPFS scope. The statistics device ID remains metadata and no longer independently rejects a same-scope marker; the existing optional-scope compatibility remains.
 
 ## Runtime Rules
 
 - `VSSIndexStateStore.initialize()` is retried on update and status paths. For ordinary non-destructive observation/verification and pending maintenance bookkeeping, marker/dirty state may remain in VSS memory until IndexedDB can be opened and updated.
 - Production does not use the test-only memory state store as a durable backend. In-memory state is temporary process state used only while IndexedDB is unavailable.
 - Dirty journal writes are serialized with VSS index operations or an equivalent ordered state-write chain.
+- Recovery candidates use the ordered state-write chain and publish ready only after durable save and generation/profile/index/lifecycle/guard checks. A recovery save failure retains the existing index for entry-driven retry without using generic pending writes or setting new build suppression; ordinary maintenance pending writes retain their prior behavior.
 - A destructive rebuild has a stricter preflight. Before clearing the current index, VSS waits for earlier ordered state writes, then atomically persists the whole-vault retry journal, original-reason guard and null marker. A hydrated null is known absent; otherwise the successful same-generation transition is the durable invalidation. Any transition failure stops before `VectorIndex.reset()` and before creating/calling the embedding provider.
 - The same atomic state transition stores `rebuildGuard` with the initiating reason: `first-use`、`settings-changed` or `local-memory-missing`. `replaceRebuildState({ marker, dirtyJournal, guard })` keeps marker invalidation, retry work, and recovery identity from diverging.
 - Hydration reads the rebuild guard as higher-priority recovery truth than marker/OPFS inference. It maps the guard back to `uninitialized/first-use`、`stale/settings-changed` or `missing-local-index/local-memory-missing`; a failed or cancelled recovery must not restart as silent first-use merely because its marker is null.
@@ -82,7 +83,7 @@ The IndexedDB database name is scoped like Statistics v3: plugin id, `statistics
 On first local-state initialization:
 
 1. Read local IndexedDB marker, dirty journal, and rebuild guard. When a guard exists, preserve and surface its original recovery reason before considering marker/OPFS recovery.
-2. If local marker is absent, do not open OPFS on the foreground path. Startup, file-open, chat readiness, and ordinary status calls must not create or hold OPFS SQLite handles just to probe local cache state.
+2. If local marker is absent, startup initialization remains passive. Normal readiness checks current-scope SQLite through the shared opening flight after state hydration; a rebuild guard or build suppression still blocks marker recovery. No new provider work is authorized by recovery.
 3. Optionally read legacy marker/manifest for diagnostics, but never override local state.
 4. Ignore legacy dirty journal by default.
 5. Do not delete legacy files.
@@ -113,4 +114,4 @@ Manual recovery path:
 - Abort/total-failure restart fixtures preserve `settings-changed` and `local-memory-missing` guards exactly; they do not become `first-use`. A `first-use` guard remains `first-use`.
 - If saving `memoryApprovalPolicy` or accepting the prepared lifecycle fails after index build, matching-handle durable compensation removes usable-ready admission and restores the original rebuild guard/reason. Cancel/new-run fixtures prove stale admit/rollback cannot change the successor marker/index, and a successor that takes over an in-flight auto-policy save performs its own persistence before reporting success.
 - Memory reset removes the local Memory copy from OPFS and clears VSS maintenance state without touching old vault files.
-- Foreground startup/chat/readiness does not recover a missing marker by opening OPFS; marker reconstruction is limited to manual technical diagnostics/status paths.
+- Startup initialization remains passive; readiness and manual stats reuse a single open index for compatible marker recovery. Dirty is preserved, pending recovery is non-ready, failure can retry, and changed device ID alone preserves existing marker identity. Generation/profile/lifecycle invalidation cannot publish old recovery ready or misclassify the invalidated attempt as first use.

@@ -1,6 +1,6 @@
 # VSS SQLite/WASM Current Architecture
 
-Updated: 2026-09-04
+Updated: 2026-10-08
 
 Status: Current runtime contract. The SQLite/WASM baseline was verified against `src/vss/`, `src/plugin.ts`, `src/memory-manager.ts`, the current package manifest, and VSS tests during the documentation restructure; DEC-028/B-126 owns silent first-use Memory, while DEC-031 is the dated B-125 amendment for the platform-scoped retrieval shipping default and tracks its current implementation/validation in the [B-125 最终验证](../archive/2026/b125-retrieval-shipping-default-validation.md).
 
@@ -15,6 +15,7 @@ Status: Current runtime contract. The SQLite/WASM baseline was verified against 
 - [DEC-031](../product/decisions/dec-031-b125-retrieval-shipping-default.md) makes the four owner-approved B-125 capabilities build-default-on only for explicit macOS/Linux/iOS identity, retains sparse explicit per-flag rollback, and masks Win32/Android plus identity without an allowlist signal all-false without adding a user-facing technical setting or changing B-125 algorithms/data boundaries.
 - Owner's later 2026-08-11 option 1 adds a prerequisite to that exception: an in-memory null marker cannot authorize destructive work until IndexedDB marker state has hydrated as known absent or the prior/unknown marker is durably invalidated. Before reset/provider work, VSS must durably save retry state and establish that truth; an unavailable transition fails closed while Chat remains answer-now.
 - Missing local index, profile/settings stale, manual Prepare/Update, and other non-first-use costly rebuild paths require explicit user confirmation.
+- [DEC-054](../product/decisions/dec-054-memory-marker-recovery.md) adds local marker recovery before the normal readiness path classifies first use. A changed statistics device ID alone does not invalidate a same-scope marker; compatible existing SQLite data is reused without reset or document embedding. Acceptance evidence is in the [B-164 final validation](../archive/2026/b164-memory-marker-recovery-validation.md).
 - Automatic background maintenance is allowed only after a confirmed or DEC-028 first-use prepare reaches durable usable ready. Abort, total failure, ready-marker publication failure, unavailable durable backend, unload, or Memory opt-out must not upgrade `memoryApprovalPolicy` or manufacture ready state. A denied persistent-storage request alone keeps the existing usable-but-evictable behavior and warning.
 
 ## Runtime Shape
@@ -201,7 +202,8 @@ maintenance queue does not imply that the keyword index has been prepared.
 - Destructive rebuild atomically durable-saves the whole-vault retry journal, a null/invalidation marker and a content-free guard carrying the original `first-use`、`settings-changed` or `local-memory-missing` reason. It may proceed after hydrated known absence or after this same-generation durable invalidation; transition failure preserves the old OPFS index/marker and stops before `VectorIndex.reset()` and before any embedding-provider call.
 - Hydration prioritizes the rebuild guard over marker/OPFS inference; abort and total failure retain it, so a confirmed recovery cannot restart as silent first-use.
 - Full success clears the guard only after durable ready publication and Memory policy/lifecycle admission. Deferred rebuild returns an opaque prepared-run handle；`admitPreparedRebuild(handle)` and `rollbackPreparedRebuild(handle, reason)` mutate only while that handle still owns the prepared marker/guard. A stale handle is a no-op, so an older cancelled lifecycle cannot admit or erase a newer rebuild.
-- Foreground startup/chat/readiness must not open OPFS only to reconstruct a missing marker.
+- Startup initialization and ordinary foreground stats remain passive when the marker is missing. Normal Memory readiness and manual stats share `ensureIndexPromise` to open or reuse the current-scope SQLite index; recovery requires hydrated local state, no rebuild guard/suppression, and compatible ready data with nonzero chunks. Dirty notes do not block recovery and remain queued for Update.
+- A recovered marker is published ready only after ordered persistence succeeds and generation, profile, index ownership and lifecycle still match. Read/open/save failures and invalidated recovery remain unavailable rather than first-use; later entry retries with the retained index where possible. Recovery does not change maintenance policy or ordinary refresh/rebuild pending-write semantics.
 
 See [VSS Local State](./vss-local-state-plan.md) for the focused state-store contract. Browser persistent-storage permission denial remains a separate usable-but-evictable warning and is not marker uncertainty.
 

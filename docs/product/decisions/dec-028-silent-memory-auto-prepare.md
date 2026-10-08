@@ -2,13 +2,15 @@
 
 Decision ID: DEC-028
 Status: Accepted
-Updated: 2026-08-23
+Updated: 2026-10-08
 Work item: B-126
 Authority: Owner 于 2026-08-11 在 PR #378 当前 review follow-up 中明确选择方案 A：保留首次 Chat 静默后台 whole-vault Memory 构建；同日后续明确选择方案 1：IndexedDB marker 状态未知时 destructive rebuild fail closed。Owner 于 2026-08-23 进一步选择 legacy provider 方案 B：只 grandfather 可由原始旧配置可靠识别的 Qwen，Ollama 或来源不明的自动迁移必须重新选择当前 Provider。以上选择共同授权对应契约与 CI/test 修复；本记录不把更早讨论视为已验证授权。
 Supersedes: 仅替代 [PA Data Boundary Product Spec](../specs/pa-data-boundary-product-spec.md) 与 [VSS SQLite/WASM Architecture](../../architecture/vss-sqlite-wasm-architecture.md) 中“首次 Prepare 必须阻断确认”的条款；本地索引丢失、profile/settings stale、手动 Prepare/Update 与其他 costly rebuild 继续阻断确认。
 Revisit trigger: 隐私法规变化要求 explicit opt-in；用户反馈显示 silent build 造成意外成本或混淆；total failure 率过高需要 fallback 到确认流程
 
 ## Context
+
+2026-10-08 局部接续：[DEC-054](./dec-054-memory-marker-recovery.md) 要求缺 marker 时先尝试复用已有兼容 SQLite，设备 ID 变化不再单独构成失效依据。它只调整误判 first-use 的恢复入口，保留本记录的真正首次准备、guard 和维护授权边界；已验证技术行为见 [当前架构](../../architecture/vss-sqlite-wasm-architecture.md)，历史验收见 [B-164 最终验证](../../archive/2026/b164-memory-marker-recovery-validation.md)。
 
 PA 的 Memory 系统在首次使用时需要将 vault 中的 Markdown 笔记文本发送到用户已配置的 embedding API（如 Qwen DashScope）进行向量化。此前的实现要求通过一个 5-section Approval Modal 获得用户明确确认后才开始构建。
 

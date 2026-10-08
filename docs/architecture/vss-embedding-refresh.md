@@ -1,6 +1,6 @@
 # VSS Embedding 刷新方案说明
 
-> **Status (2026-08-11)**: Current refresh/maintenance contract. DEC-028/B-126 is the approved first-use amendment and its implementation validation is tracked in the [B-126 最终验证](../archive/2026/b126-first-run-memory-validation.md). Ollama support was removed in v2.0.0; the current provider matrix is Qwen plus supported OpenAI-compatible embedding providers.
+> **Status (2026-10-08)**: Current refresh/maintenance contract. DEC-028/B-126 is the approved first-use amendment and its implementation validation is tracked in the [B-126 最终验证](../archive/2026/b126-first-run-memory-validation.md); DEC-054 locally adds marker recovery before first-use classification. Ollama support was removed in v2.0.0; the current provider matrix is Qwen plus supported OpenAI-compatible embedding providers.
 ## 目标
 
 在保证 Memory 搜索结果新鲜度的前提下，降低频繁编辑和大 vault 重建时的 embedding 请求数与 Token 消耗，让准备和后台维护过程不阻塞聊天，并在限流或网络抖动时给用户明确反馈。
@@ -8,6 +8,8 @@
 本文记录当前 SQLite/WASM VSS 主路径。旧的 JSON cache + `MemoryVectorStore` / `MemoryVectorIndex` 方案已被废弃，不再作为 fallback 检索路径。
 
 ## 当前关键机制
+
+- **Marker 异常先复用**：[DEC-054](../product/decisions/dec-054-memory-marker-recovery.md) 使同 scope marker 不再因统计 device ID 单项变化失效。正常 readiness 在首次准备判断前与手动 stats 共用 SQLite 打开协调，恢复已有兼容非空 index 的 marker；dirty 保留，由现有 Update/hash 去重处理。恢复不 reset、不生成文档 embeddings、不升级维护 policy；读取/打开/保存失败或恢复失效保持不可用，后续入口可重试；恢复 marker 持久成功且 generation/profile/guard/lifecycle 仍有效后才发布 ready。启动 initialize 与普通前台 stats 仍不主动恢复缺 marker。
 
 - **事件改造**：`vault.create` / `vault.modify` 先观察本地索引 metadata：启动期旧 mtime replay 仍会经过轻量 observation，只有 metadata 已匹配的 replay 被忽略；普通 `vault.modify` 即使 metadata 匹配也会进入 verify queue，metadata drift 进入 verify queue，缺失 indexed record 才标记 dirty；`vault.rename` 删除旧 path 并标记新 path，`vault.delete` 删除本地索引记录；事件本身不直接计算 embedding。
 - **首次准备与自动维护**：[DEC-028](../product/decisions/dec-028-silent-memory-auto-prepare.md) 允许首次 Chat 静默启动一个 whole eligible vault rebuild 并立即 answer-now；其他 recovery/manual/costly prepare 仍需确认。确认路径或 DEC-028 路径只有在 durable usable ready 且未 abort/total-fail 后才把 `memoryApprovalPolicy` 升级为 `auto-refresh-after-prepare`；后续 changed notes 才由后台 reconcile/verify/refresh 维护，Chat 不等待 refresh。
@@ -141,6 +143,7 @@ DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
 - auto policy + durable ready + changed notes 时 Chat 不弹确认、不等待 refresh，会调度后台 reconcile/verify/flush。
 - first-use Chat 不弹确认且立即 answer-now；并发 first-use 复用同一 rebuild。只有 durable usable success 才升级 auto policy，total failure/abort/ready-marker publication failure 与 Memory disable/unload 都不制造 ready 或迟到副作用。Persistent-storage permission 被拒本身沿用既有 usable-but-evictable warning 语义。
 - state-store unavailable 且 persisted marker truth 未 hydrate 时，destructive rebuild 的 reset/provider call 为 0，旧 index/marker 不变；state store 恢复后再按 hydrated marker 判定，不静默假设 first-use。
+- 同 scope 的 device ID 变化、marker 缺失并带 dirty 均可复用兼容本地数据；恢复的 reset/文档 embedding 为 0，后续 Update 跳过未变内容。恢复期间 cached status 非 ready，连续读取/打开/保存失败与配置变更不误归 first-use；guard/构建抑制和现有确认仍保留。具体证据见 [B-164 最终验证](../archive/2026/b164-memory-marker-recovery-validation.md)。
 - destructive rebuild abort/total-failure restart 保留 `settings-changed`/`local-memory-missing` 原 reason；policy/lifecycle admission failure 触发 rollback，移除 usable-ready admission 并保留 guarded recovery reason；完整 admitted success 才清 guard。
 - 非 durable 或不可用状态下不会执行自动写入，并会提示后台更新不可用。
 - reconcile 能发现新增、deleted indexed path，并把 durable ready 下的 metadata mismatch/rolling candidate 放入 verify queue。verify 只有在 hash 真实变化时才标 dirty。metadata-only 漂移不会让 Memory 进入 needs update，也不会把聊天入口的 brain 状态变成 changed-notes。

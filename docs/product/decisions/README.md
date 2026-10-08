@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-10-06
+Updated: 2026-10-08
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-054 | Memory marker 异常优先复用本地数据 | Accepted | 同 scope 不以设备 ID 单项否决；缺 marker 先恢复兼容 SQLite 状态，保留 dirty/guard/policy | [Record](./dec-054-memory-marker-recovery.md) |
 | DEC-053 | 精简 Ghost 同步与人工上线 | Accepted | note 全量同步；草稿 Ghost Publish，已发布临时预览后 PA 确认；取消历史/恢复与自动 probe，目标尚待实施 | [Record](./dec-053-lean-ghost-publishing.md) |
 | DEC-052 | Open prepared review 沿用深度发现 | Accepted | 2026-10-06 接受现有显式发现路由及其可能的网络/额度使用；Open Pagelet 仍零调用，不回填旧批准或验收 | [Record](./dec-052-prepared-review-deep-discover-route.md) |
 | DEC-051 | 必要确认、前后台预算与合同接续 | Accepted | 局部接续旧确认/容量条款，保留来源、Writing与Ghost边界；设计不等于实现 | [Record](./dec-051-proportionate-confirmation-and-contract-alignment.md) |

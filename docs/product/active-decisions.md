@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-10-06
+Updated: 2026-10-08
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-054 | Memory marker 异常优先复用本地数据 | marker/设备 ID 异常不单独触发全量重建；复用当前 scope 的兼容数据和既有 Update，不扩展一般恢复或授权 | [Decision](./decisions/dec-054-memory-marker-recovery.md), [Product Spec](./specs/pa-memory-marker-recovery-product-spec.md) | 实施发现必须改变持久化格式、维护授权或 guard 语义 |
 | DEC-053 | 精简 Ghost 同步与人工上线 | note 唯一内容源；草稿直接覆盖并在 Ghost Publish，已发布临时预览后 PA 确认原 ID 更新；无专用历史/恢复/自动 probe | [Decision](./decisions/dec-053-lean-ghost-publishing.md), [Product Spec](./specs/pa-ghost-blog-publishing-product-spec.md) | Ghost 提供同 ID 待发布接口，或用户重新需要恢复/协作 |
 | DEC-052 | Open prepared review 沿用深度发现 | 保留兼容名称/ID，取消该入口的零调用承诺，可能使用配置服务商与 API 额度；Open Pagelet 面板入口仍零调用，不恢复旧 Prepared Panel 或授予写入 | [Decision](./decisions/dec-052-prepared-review-deep-discover-route.md), [Pagelet guide](../guides/pagelet-user-guide.md) | 兼容名称造成费用/行为误解，或用户需要独立缓存查看入口 |
 | DEC-051 | 必要确认与合同接续 | 明确请求不重复确认；手动无累计额度；自动12/36默认；旧合同按真实入口接续；Writing/Ghost/来源边界保留 | [Decision](./decisions/dec-051-proportionate-confirmation-and-contract-alignment.md), [Product Spec](./specs/pa-contract-alignment-product-spec.md) | 实际成本/资源证据支持调整，或需要扩大数据/发布/恢复范围 |
