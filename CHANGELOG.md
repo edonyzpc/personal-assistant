@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.7](https://github.com/edonyzpc/personal-assistant/compare/2.10.6...2.10.7) (2026-10-08)
+
+### Fix
+- memory: recover usable indexes before first-use rebuild
+- agent: use snapshots and persist complete debug history
+- chat: keep streaming markdown rendering responsive
+
+### Docs
+- memory: close out B-164 marker recovery
+- agent: close out B-165 snapshot execution
+
 ## [2.10.6](https://github.com/edonyzpc/personal-assistant/compare/2.10.5...2.10.6) (2026-10-08)
 
 ### Features
