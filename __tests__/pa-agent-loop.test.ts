@@ -465,10 +465,14 @@ describe("PaAgentLoop", () => {
         jest.useFakeTimers();
         try {
             const order: string[] = [];
+            const retryPhases: Array<{ phase: string; fields: Record<string, unknown> }> = [];
             let attempts = 0;
             const loop = new PaAgentLoop({
                 runId: "retry-after",
                 userInput: "complete the bounded task",
+                onDebug: (phase, fields = {}) => {
+                    if (phase.startsWith("provider_retry_wait:")) retryPhases.push({ phase, fields });
+                },
                 turnLeaseProvider: async ({ turnIndex }) => {
                     order.push(`acquire:${turnIndex}`);
                     return { release: () => order.push(`release:${turnIndex}`) };
@@ -498,6 +502,9 @@ describe("PaAgentLoop", () => {
                 "acquire:0", "model:1", "release:0",
                 "acquire:1", "model:2", "release:1",
             ]);
+            expect(retryPhases.map(event => event.phase)).toEqual(["provider_retry_wait:start", "provider_retry_wait:end"]);
+            expect(retryPhases[0].fields.phaseInstanceId).toEqual(expect.any(String));
+            expect(retryPhases[0].fields.phaseInstanceId).toBe(retryPhases[1].fields.phaseInstanceId);
         } finally {
             jest.useRealTimers();
         }

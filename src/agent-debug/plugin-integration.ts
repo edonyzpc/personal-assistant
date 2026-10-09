@@ -149,6 +149,7 @@ export class AgentDebugPluginIntegration {
             enabled: () => this.service.enabled(),
             listRuns: query => read(() => this.service.listRuns(query)),
             getEvents: (id, query) => read(() => this.service.getEvents(id, query)),
+            getTracePage: (id, query) => read(() => this.service.getTracePage(id, query)),
             getContents: (id, node) => read(() => this.service.getContents(id, node)),
             getSessionDetails: (id, node) => this.service.getSessionDetails(id, node),
             getStatus: () => read(() => this.service.getStatus()),

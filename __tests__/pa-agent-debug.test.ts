@@ -38,6 +38,21 @@ describe('PA Agent debug observation', () => {
         expect(sink.mock.calls.at(-1)?.[1]).toMatchObject({ phase: 'admission:error', localReason: 'personal_context_changed' });
     });
 
+    it('measures a real phase with the monotonic clock despite a wall-clock adjustment', async () => {
+        const wallClock = jest.spyOn(Date, 'now');
+        const monotonicClock = jest.spyOn(performance, 'now');
+        try {
+            const log = jest.fn<(phase: string, fields?: Record<string, unknown>) => void>();
+            wallClock.mockReturnValueOnce(1000).mockReturnValueOnce(100);
+            monotonicClock.mockReturnValueOnce(50).mockReturnValueOnce(75);
+            expect(await traceAgentPhase(log, 'prepare', () => 'prepared')).toBe('prepared');
+            expect(log.mock.calls[1][1]).toMatchObject({ durationMs: 25 });
+            expect(log.mock.calls[0][1]?.phaseInstanceId).toBe(log.mock.calls[1][1]?.phaseInstanceId);
+        } finally {
+            wallClock.mockRestore(); monotonicClock.mockRestore();
+        }
+    });
+
     it('distinguishes empty, whitespace, markup and real native tools without logging their content', () => {
         expect(describeAgentText(' \n')).toMatchObject({ chars: 2, visibleChars: 0, containsToolCallMarkup: false });
         const log = jest.fn();

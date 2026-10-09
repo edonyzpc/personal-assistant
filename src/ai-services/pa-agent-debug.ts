@@ -1,7 +1,13 @@
 import type { AgentEvent } from './chat-types';
+import { agentDebugNow } from './agent-debug-observation';
 
 export type AgentDebugFields = Record<string, unknown>;
 export type AgentDebugLog = (phase: string, fields?: AgentDebugFields) => void;
+
+let phaseSequence = 0;
+
+/** The execution owner keeps this identity across one phase's start and end. */
+export const createAgentDebugPhaseInstanceId = (): string => `debug-phase-${++phaseSequence}`;
 
 // Metadata is extensible. Only these host codes are safe to copy into traces.
 const debugCodes = new Set([
@@ -86,14 +92,15 @@ export function describeAgentText(text: string): AgentDebugFields {
 export async function traceAgentPhase<T>(
     log: AgentDebugLog, phase: string, task: () => T | PromiseLike<T>, fields: AgentDebugFields = {},
 ): Promise<T> {
-    const startedAt = Date.now();
-    log(`${phase}:start`, fields);
+    const startedAt = agentDebugNow();
+    const phaseFields = { ...fields, phaseInstanceId: createAgentDebugPhaseInstanceId() };
+    log(`${phase}:start`, phaseFields);
     try {
         const result = await task();
-        log(`${phase}:end`, { ...fields, durationMs: Date.now() - startedAt });
+        log(`${phase}:end`, { ...phaseFields, durationMs: agentDebugNow() - startedAt });
         return result;
     } catch (error) {
-        log(`${phase}:error`, { ...fields, durationMs: Date.now() - startedAt,
+        log(`${phase}:error`, { ...phaseFields, durationMs: agentDebugNow() - startedAt,
             ...describeAgentError(error) });
         throw error;
     }
@@ -103,7 +110,8 @@ export async function traceAgentPhase<T>(
 export function createAgentEventDebugObserver(log: AgentDebugLog): (event: AgentEvent) => void {
     const observedDeltas = new Set<string>();
     return event => {
-        const fields: AgentDebugFields = { turnId: event.turnId, eventSeq: event.seq, eventTimestamp: event.timestamp };
+        const fields: AgentDebugFields = { turnId: event.turnId, eventSeq: event.seq, eventTimestamp: event.timestamp,
+            observationSource: 'lifecycle' };
         if (event.type === 'message_update') {
             const key = `${event.messageId}:${event.update.kind}`;
             if (observedDeltas.has(key)) return;

@@ -1,10 +1,10 @@
 # PA Agent Debug Explorer Product Spec
 
 Document status: Approved
-Updated: 2026-10-09
+Updated: 2026-10-10
 Work item: B-167
 Decision: [DEC-057](../decisions/dec-057-agent-debug-explorer.md)
-Authority: Owner 已确认的桌面/移动预览及“聚焦展开＋节点定位搜索”组合；Approved 指目标产品行为，不表示产品代码已实施。执行与验证状态只见 Tracker。
+Authority: Owner 已确认的桌面/移动预览及“聚焦展开＋节点定位搜索”组合；本文持有长期产品行为，当前实现由 Architecture 持有，终态验证见历史证据。
 
 ## Problem And Product Outcome
 
@@ -108,9 +108,9 @@ Agent/节点结果、采集状态、详情可用性为三个维度。进行中�
 
 无阻止本规格成立的未决产品选择。具体组件拆分、缓存大小/批次、容器断点和必要的视窗渲染属于 SDD 工程参数，以真实输入和交互验证确定，不能改变上述范围。
 
-## Delivery Handoff
+## Implementation And Validation
 
-- Active Package: [Feature Home](../../development/active/agent-debug-explorer/README.md)、[Tracker](../../development/active/agent-debug-explorer/tracker.md)
-- Design: [SDD](../../development/active/agent-debug-explorer/sdd.md)；已确认 HTML 预览的布局和交互以本文落为持久合同，示例数据/“模拟实时”不进入正式产品。
+- Design disposition: 已确认 HTML 预览的布局和交互由本文持有，实现设计已吸收到当前 Architecture/源码/tests；示例数据/“模拟实时”不进入正式产品。Feature Home/SDD/Tracker 在 closeout 后删除。
+- Historical validation: [B-167 最终验证](../../archive/2026/b167-agent-debug-explorer-validation.md)，包含 T-01～07、十项 REQ/AC、独立审查与隔离桌面/移动证据及限制。
 - Current architecture: [Debug](../../architecture/pa-agent-debug-view.md)、[Command responsibility contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)
-- Release boundary: 当前只授权设计及任务文档；开发执行、Git 交付与发布分别遵循当时授权。
+- Delivery authority: Owner 2026-10-09 授权开发测试，2026-10-10 授权 closeout 与本地 master 提交；远程推送与发布另行授权。

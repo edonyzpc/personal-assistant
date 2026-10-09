@@ -2,7 +2,7 @@ import { ItemView, type ViewStateResult, type WorkspaceLeaf } from 'obsidian';
 import { createRoot, type Root } from 'react-dom/client';
 import { AgentDebugPanel } from './components/AgentDebugPanel';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
-import type { DebugContent, DebugEvent, DebugEventQuery, DebugRun, DebugRunQuery, DebugSessionDetail, DebugStoreStatus } from './types';
+import type { DebugContent, DebugEvent, DebugEventQuery, DebugRun, DebugRunQuery, DebugSessionDetail, DebugStoreStatus, DebugTracePage, DebugTraceQuery } from './types';
 
 export const AGENT_DEBUG_VIEW_TYPE = 'pa-agent-debug-view';
 
@@ -10,6 +10,7 @@ export interface AgentDebugViewHost {
     enabled(): boolean;
     listRuns(query: DebugRunQuery): Promise<DebugRun[]>;
     getEvents(captureId: string, query: DebugEventQuery): Promise<DebugEvent[]>;
+    getTracePage(captureId: string, query: DebugTraceQuery): Promise<DebugTracePage>;
     getContents(captureId: string, nodeId: string): Promise<DebugContent[]>;
     getSessionDetails(captureId: string, nodeId: string): DebugSessionDetail[];
     getStatus(): Promise<DebugStoreStatus>;

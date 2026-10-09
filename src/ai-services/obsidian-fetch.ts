@@ -133,6 +133,7 @@ export function traceProviderDispatch<T extends { status?: number }>(
         }
         if (call) observeAgentDebug(call.recorder, () => ({
             nodeId: requestId, parentId: call.callId, kind: "attempt", phase,
+            boundary: phase === "error" || transport === "obsidian" ? "end" : "update",
             callId: call.callId, attemptId: requestId, turnId: call.turnId,
             transport: transport === "obsidian" ? "buffered" : "native",
             // Native fetch resolves at headers, before the SDK consumes the stream body.
@@ -147,6 +148,7 @@ export function traceProviderDispatch<T extends { status?: number }>(
         if (call) markAgentDebugAttemptFailure(call, requestId, true);
         if (call) observeAgentDebug(call.recorder, () => ({
             nodeId: requestId, parentId: call.callId, kind: "attempt", phase: "local_cancelled",
+            boundary: "update",
             callId: call.callId, attemptId: requestId, turnId: call.turnId,
             status: "cancelled", outcome: transport === "obsidian" ? "remote_outcome_unknown" : "cancellation_requested",
         }));
@@ -196,6 +198,7 @@ export function traceProviderDispatch<T extends { status?: number }>(
             dispatchObserved = true;
             observeAgentDebug(call.recorder, () => ({
                 nodeId: requestId, parentId: call.callId, kind: "attempt", phase: "dispatch", status: "running",
+                boundary: "start",
                 callId: call.callId, attemptId: requestId, turnId: call.turnId,
                 provider: call.provider, model: typeof record?.model === 'string' ? record.model : call.model,
                 transport: transport === "obsidian" ? "buffered" : "native",

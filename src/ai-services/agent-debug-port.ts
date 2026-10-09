@@ -51,6 +51,10 @@ export interface AgentDebugObservation {
     parentId?: string;
     kind: AgentDebugNodeKind;
     phase: string;
+    /** Real execution boundary, independent of status or payload arrival. */
+    boundary?: "start" | "update" | "end" | "instant";
+    /** A tool's executed result is distinct from its later model-context text. */
+    contentRole?: "actual_tool_result" | "model_tool_observation";
     purpose?: "answer" | "context_summary" | "query_rewrite" | "rerank" | "image_preparation" | "ghost_metadata";
     status?: AgentDebugNodeStatus;
     runtimeRunId?: string;

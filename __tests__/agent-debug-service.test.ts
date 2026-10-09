@@ -1,8 +1,9 @@
 import { AgentDebugService } from '../src/agent-debug/service';
 import type { AgentDebugStore } from '../src/agent-debug/store';
-import type { DebugBatch, DebugBudgets, DebugGeneration } from '../src/agent-debug/types';
+import type { DebugBatch, DebugBudgets, DebugGeneration, DebugTracePage, DebugTraceQuery } from '../src/agent-debug/types';
+import { buildTraceModel } from '../src/agent-debug/trace-model';
 
-function setup(enabled = true, budgets?: Partial<DebugBudgets>) {
+function setup(enabled = true, budgets?: Partial<DebugBudgets>, monotonicNow: () => number = () => 0, now: () => number = () => 1000) {
     const generation: DebugGeneration = { generation: 0, domains: {}, quarantined: false, sourceToken: 'token-a' };
     const batches: DebugBatch[] = [];
     const store = {
@@ -12,6 +13,18 @@ function setup(enabled = true, budgets?: Partial<DebugBudgets>) {
         writeBatch: jest.fn(async (batch: DebugBatch) => { batches.push(batch); return true; }),
         getContents: jest.fn(async (id: string) => batches.filter(batch => batch.run.captureId === id).flatMap(batch => batch.contents)),
         getEvents: jest.fn(async () => []), listRuns: jest.fn(async () => []),
+        getTracePage: jest.fn(async (id: string, query: DebugTraceQuery = {}): Promise<DebugTracePage> => {
+            const captures = batches.filter(batch => batch.run.captureId === id);
+            const all = captures.flatMap(batch => batch.events).sort((left, right) => left.seq - right.seq);
+            const run = captures.at(-1)?.run;
+            const committed = all.at(-1)?.seq ?? 0;
+            const through = Math.min(query.through ?? committed, committed);
+            const candidates = all.filter(event => event.seq > (query.after ?? 0) && event.seq <= through);
+            const events = candidates.slice(0, query.limit ?? 200);
+            const hasMore = candidates.length > events.length;
+            return { events, liveEvents: [], through, nextAfter: hasMore ? events.at(-1)!.seq : through, hasMore,
+                run: run ? { ...run, lastCommittedSeq: committed } : null, availability: run ? 'available' : 'cleared' };
+        }),
         getRun: jest.fn(async () => undefined),
         isRunAllowed: jest.fn(async () => true),
         clear: jest.fn(async () => { generation.generation++; batches.splice(0); generation.quarantined = false; }),
@@ -21,11 +34,239 @@ function setup(enabled = true, budgets?: Partial<DebugBudgets>) {
         status: jest.fn(async () => ({ available: true, recoveryReady: true, bytes: 0, limit: 1000 })),
     };
     const service = new AgentDebugService({ vaultKey: 'vault', enabled: () => enabled, recoveryReady: true,
-        store: store as unknown as AgentDebugStore, now: () => 1000, budgets });
+        store: store as unknown as AgentDebugStore, now, monotonicNow, budgets });
     return { service, store, batches, generation };
 }
 
 describe('Agent Debug service', () => {
+    it('keeps a delayed early commit reachable after it leaves the 500 event live tail', async () => {
+        const { service, store, batches } = setup();
+        await service.initialize();
+        let release!: () => void;
+        const writing = new Promise<void>(resolve => { release = resolve; });
+        store.writeBatch.mockImplementationOnce(async batch => { await writing; batches.push(batch); return true; });
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        recorder.observe({ nodeId: 'early', kind: 'phase', phase: 'prepare', boundary: 'instant' });
+        const flushing = service.flush();
+        for (let index = 0; index < 605; index++) recorder.observe({ nodeId: `later-${index}`, kind: 'phase', phase: 'step' });
+        const before = await service.getTracePage(recorder.captureId);
+        expect(before.events).toEqual([]);
+        expect(before).toMatchObject({ through: 0, nextAfter: 0, hasMore: false, availability: 'partial', reason: 'persistence_pending' });
+        expect(before.run?.hasGap).toBe(false);
+        expect(before.liveEvents).toHaveLength(500);
+        expect(before.liveEvents.some(event => event.nodeId === 'early')).toBe(false);
+        release(); await flushing; await service.flush();
+        let page = await service.getTracePage(recorder.captureId);
+        const through = page.through;
+        const loaded = [...page.events];
+        while (page.hasMore) {
+            page = await service.getTracePage(recorder.captureId, { after: page.nextAfter, through });
+            loaded.push(...page.events);
+        }
+        expect(loaded).toHaveLength(607);
+        expect(loaded.some(event => event.nodeId === 'early')).toBe(true);
+        expect(loaded.at(-1)?.nodeId).toBe('later-604');
+        expect(page.nextAfter).toBe(607);
+        expect(page.availability).toBe('available');
+        expect(page.reason).toBeUndefined();
+        await service.dispose();
+    });
+
+    it('records first Chat text as a stable child without changing the Run status or capture interval', async () => {
+        let monotonic = 100;
+        const { service, batches } = setup(true, undefined, () => monotonic);
+        await service.initialize();
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        recorder.bindRun('runtime');
+        monotonic = 110;
+        recorder.observe({ nodeId: recorder.captureId, kind: 'run', phase: 'agent_start', boundary: 'start', status: 'running' });
+        monotonic = 120;
+        service.recordTextCommitted('runtime');
+        for (let index = 0; index < 505; index++) recorder.observe({ nodeId: `phase-${index}`, kind: 'phase', phase: 'step' });
+        service.recordTextCommitted('runtime');
+        await service.flush();
+        const events = batches.flatMap(batch => batch.events);
+        const interim = buildTraceModel(events);
+        expect(interim.nodes.get(recorder.captureId)).toMatchObject({ startMs: 0,
+            event: { nodeKind: 'run', kind: 'agent_start', status: 'running' } });
+        expect(interim.nodes.get(recorder.captureId)?.endMs).toBeUndefined();
+        const committed = events.filter(event => event.kind === 'first_chat_text_committed');
+        expect(committed).toHaveLength(1);
+        expect(committed[0]).toMatchObject({ nodeId: `${recorder.captureId}:first-chat-text-committed`, parentId: recorder.captureId,
+            nodeKind: 'phase', boundary: 'instant', status: 'completed', elapsedMs: 20 });
+        expect(interim.nodes.get(committed[0].nodeId)).toMatchObject({ startMs: 20, endMs: 20 });
+        monotonic = 160; recorder.finish('completed'); await service.flush();
+        const final = buildTraceModel(batches.flatMap(batch => batch.events));
+        expect(final.nodes.get(recorder.captureId)).toMatchObject({ startMs: 0, endMs: 60, durationMs: 60,
+            event: { nodeKind: 'run', status: 'completed' } });
+        await service.dispose();
+    });
+
+    it('rejects an expired historical trace returned by a delayed store read without live state', async () => {
+        let now = 1000;
+        const { service, store } = setup(true, undefined, () => 0, () => now);
+        await service.initialize();
+        const run = { vaultKey: 'vault', captureId: 'historical', startedAt: 100, updatedAt: 100,
+            expiresAt: 1050, status: 'completed' as const, collection: 'complete' as const,
+            eventCount: 1, accountedBytes: 0, lastCommittedSeq: 1, hasGap: false };
+        let release!: () => void;
+        store.getTracePage.mockImplementationOnce(() => new Promise(resolve => {
+            release = () => resolve({ events: [{ vaultKey: 'vault', captureId: 'historical', seq: 1, segment: 0,
+                nodeId: 'history', timestamp: 100, kind: 'prompt', label: 'old title', contentIds: [] }],
+            liveEvents: [], through: 1, nextAfter: 1, hasMore: false, availability: 'available', run });
+        }));
+        const reading = service.getTracePage('historical');
+        await Promise.resolve();
+        now = 1051; release();
+        expect(await reading).toMatchObject({ run: null, events: [], liveEvents: [], availability: 'cleared' });
+        await service.dispose();
+    });
+
+    it('reports safe node read errors and discards late failures after clear or expiry', async () => {
+        const { service, store } = setup(); await service.initialize();
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        await service.flush();
+        store.getContents.mockRejectedValueOnce(new Error('Bearer private-provider-error'));
+        await expect(service.getContents(recorder.captureId)).rejects.toThrow('storage_read_failed');
+        for (const effect of ['clear', 'expiry']) {
+            let now = 1000;
+            const scenario = setup(true, { retentionMs: 50 }, () => 0, () => now);
+            await scenario.service.initialize();
+            const current = scenario.service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+            await scenario.service.flush();
+            let reject!: () => void;
+            scenario.store.getContents.mockImplementationOnce(() => new Promise((_resolve, rejectRead) => {
+                reject = () => rejectRead(new Error('private late error'));
+            }));
+            const reading = scenario.service.getContents(current.captureId);
+            for (let index = 0; index < 8; index++) await Promise.resolve();
+            if (effect === 'clear') await scenario.service.clearHistory(); else now = 1051;
+            reject();
+            expect(await reading).toEqual([]);
+            await scenario.service.dispose();
+        }
+        await service.dispose();
+    });
+
+    it('returns canonical merged content references separately from the uncommitted overlay', async () => {
+        const { service } = setup(); await service.initialize();
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        recorder.observe({ nodeId: 'answer', kind: 'llm', phase: 'receiving', text: 'first' });
+        recorder.observe({ nodeId: 'answer', kind: 'llm', phase: 'receiving', text: 'second' });
+        await service.flush();
+        const page = await service.getTracePage(recorder.captureId, { limit: 1 });
+        expect(page).toMatchObject({ through: 3, nextAfter: 1, hasMore: true });
+        expect(page.liveEvents.map(event => event.seq)).toEqual([1, 2, 3]);
+        const end = await service.getTracePage(recorder.captureId, { after: page.nextAfter, through: page.through });
+        expect(end.events).toHaveLength(1);
+        expect(end.events[0]).toMatchObject({ seq: 3, contentIds: ['answer:output:0:2:0', 'answer:output:0:3:0'] });
+        expect(end).toMatchObject({ nextAfter: 3, hasMore: false });
+        await service.dispose();
+    });
+
+    it('preserves node provenance and filtered errors using one monotonic capture clock', async () => {
+        let monotonic = 100;
+        const { service, batches } = setup(true, undefined, () => monotonic);
+        await service.initialize();
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        monotonic = 110;
+        recorder.observe({ nodeId: 'attempt', kind: 'attempt', phase: 'dispatch', boundary: 'start',
+            timing: { event: 'dispatch', at: 108 } });
+        monotonic = 140;
+        recorder.observe({ nodeId: 'attempt', kind: 'attempt', phase: 'done', boundary: 'end',
+            timing: { event: 'consumer_end', at: 138 }, error: { name: 'ProviderError', message: `Bearer secret-credential sk-123456789 ${'x'.repeat(900)}` } });
+        recorder.observe({ nodeId: 'tool', kind: 'tool', phase: 'tool_result', contentRole: 'actual_tool_result', toolOutput: 'real result' });
+        recorder.observe({ nodeId: 'tool', kind: 'tool', phase: 'tool_model_text', contentRole: 'model_tool_observation', toolOutput: 'model text' });
+        await service.flush();
+        const events = batches.flatMap(batch => batch.events);
+        expect(events[0]).toMatchObject({ nodeKind: 'run', boundary: 'start', elapsedMs: 0, timestamp: 1000 });
+        expect(events[1]).toMatchObject({ nodeKind: 'attempt', boundary: 'start', elapsedMs: 10, details: { 'timing.dispatch': 8 } });
+        expect(events[2]).toMatchObject({ boundary: 'end', elapsedMs: 40, durationMs: 30, details: { 'timing.consumer_end': 38 } });
+        expect(events[2].errorSummary).toContain('Bearer [filtered]');
+        expect(events[2].errorSummary).not.toContain('secret-credential');
+        expect(events[2].errorSummary).not.toContain('sk-123456789');
+        expect(events[2].errorSummary!.length).toBeLessThanOrEqual(512);
+        expect(events.slice(3).map(event => event.contentRole)).toEqual(['actual_tool_result', 'model_tool_observation']);
+        expect(batches.flatMap(batch => batch.contents).filter(content => content.kind === 'tool_output')
+            .map(content => [content.contentRole, content.text])).toEqual([['actual_tool_result', 'real result'], ['model_tool_observation', 'model text']]);
+        await service.clearHistory();
+        expect((await service.getTracePage(recorder.captureId)).liveEvents.some(event => event.errorSummary)).toBe(false);
+        await service.dispose();
+    });
+
+    it('distinguishes failed reads and incomplete no-database tails from an empty complete trace', async () => {
+        const { service, store } = setup(); await service.initialize();
+        store.getTracePage.mockRejectedValueOnce(new Error('unprojected provider payload'));
+        expect(await service.getTracePage('missing')).toMatchObject({ events: [], availability: 'unavailable', reason: 'storage_read_failed' });
+        await service.dispose();
+        const fallback = setup();
+        fallback.store.initialize.mockRejectedValueOnce(new Error('no database'));
+        await fallback.service.initialize();
+        const recorder = fallback.service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        for (let index = 0; index < 605; index++) recorder.observe({ nodeId: `node-${index}`, kind: 'phase', phase: 'step' });
+        const page = await fallback.service.getTracePage(recorder.captureId);
+        expect(page).toMatchObject({ events: [], through: 0, nextAfter: 0, hasMore: false, availability: 'partial', reason: 'session_tail_incomplete' });
+        expect(page.liveEvents).toHaveLength(500);
+        await fallback.service.dispose();
+    });
+
+    it('rejects delayed trace pages after clear, temporary admission revocation or unload', async () => {
+        for (const effect of ['clear', 'admission', 'unload']) {
+            const { service, store } = setup(); await service.initialize();
+            const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+            await service.flush();
+            const oldPage = await service.getTracePage(recorder.captureId);
+            let release!: () => void;
+            store.getTracePage.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve(oldPage); }));
+            const reading = service.getTracePage(recorder.captureId);
+            await Promise.resolve();
+            if (effect === 'clear') await service.clearHistory();
+            else if (effect === 'admission') { service.setRecoveryReady(false); service.setRecoveryReady(true); }
+            else await service.dispose();
+            release();
+            expect(await reading).toMatchObject({ events: [], liveEvents: [], run: null, availability: 'cleared' });
+            await service.dispose();
+        }
+    });
+
+    it('does not reveal pages or node contents when a live run expires during the read', async () => {
+        let now = 1000;
+        const { service, store, batches } = setup(true, { retentionMs: 50 }, () => 0, () => now);
+        await service.initialize();
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        await service.flush();
+        const oldPage = await service.getTracePage(recorder.captureId);
+        const oldContents = batches.flatMap(batch => batch.contents);
+        let releasePage!: () => void;
+        let releaseContents!: () => void;
+        store.getTracePage.mockImplementationOnce(() => new Promise(resolve => { releasePage = () => resolve(oldPage); }));
+        store.getContents.mockImplementationOnce(() => new Promise(resolve => { releaseContents = () => resolve(oldContents); }));
+        const page = service.getTracePage(recorder.captureId);
+        const contents = service.getContents(recorder.captureId);
+        for (let index = 0; index < 8; index++) await Promise.resolve();
+        now = 1051;
+        releasePage(); releaseContents();
+        expect(await page).toMatchObject({ events: [], liveEvents: [], availability: 'cleared' });
+        expect(await contents).toEqual([]);
+        await service.dispose();
+    });
+
+    it('rejects metadata returned after history was cleared during an event read', async () => {
+        const { service, store, batches } = setup();
+        await service.initialize();
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        await service.flush();
+        const oldEvents = batches.flatMap(batch => batch.events);
+        let release!: () => void;
+        store.getEvents.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve(oldEvents as never[]); }));
+        const reading = service.getEvents(recorder.captureId);
+        await Promise.resolve();
+        await service.clearHistory();
+        release();
+        expect(await reading).toEqual([]);
+        await service.dispose();
+    });
+
     it('admits only one bounded oversized observation until its write settles', async () => {
         const { service, store, batches } = setup();
         await service.initialize();

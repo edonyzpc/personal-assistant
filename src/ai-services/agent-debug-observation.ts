@@ -10,6 +10,7 @@ import {
 } from "./agent-debug-port";
 
 let callSequence = 0;
+let phaseObservationSequence = 0;
 
 export function bindAgentDebugAttempt(scope: AgentDebugCallScope, attemptId: string): void {
     scope.usageLedger?.dispatch(scope.callId, scope.purpose, attemptId, scope.promptEstimate);
@@ -93,7 +94,7 @@ export function createAgentDebugCall(
         bindRun: () => undefined, observe: () => undefined, finish: () => undefined };
     const scope = { ...input, recorder: effectiveRecorder, usageLedger,
         callId: input.callId ?? `${effectiveRecorder.captureId}:llm:${++callSequence}` };
-    observeAgentDebug(recorder, () => ({ ...callIdentity(scope), phase: "prepare", status: "running" }));
+    observeAgentDebug(recorder, () => ({ ...callIdentity(scope), phase: "prepare", boundary: "start", status: "running" }));
     return scope;
 }
 
@@ -111,7 +112,8 @@ export function observeAgentDebugCall(
     observation: Partial<AgentDebugObservation>,
 ): void {
     if (!scope) return;
-    observeAgentDebug(scope.recorder, () => ({ ...callIdentity(scope), ...observation }));
+    const boundary = observation.boundary ?? (observation.phase === "consumer_end" || observation.phase === "error" ? "end" : "update");
+    observeAgentDebug(scope.recorder, () => ({ ...callIdentity(scope), ...observation, boundary }));
     const attemptId = (observation.phase === 'consumer_end' || observation.phase === 'error')
         ? scope.usageLedger?.finishResponsePhase(scope.callId,
             observation.status === 'cancelled' ? 'cancelled'
@@ -122,6 +124,7 @@ export function observeAgentDebugCall(
         observeAgentDebug(scope.recorder, () => ({
             nodeId: attemptId, parentId: scope.callId, kind: "attempt", phase: observation.phase!,
             callId: scope.callId, attemptId, turnId: scope.turnId, timing: observation.timing,
+            boundary: "end",
             status: observation.status === "cancelled" || observation.status === "completed" ? observation.status
                 : observation.error ? "failed" : observation.missingReason ? "partial" : observation.status,
             error: observation.error, missingReason: observation.missingReason,
@@ -179,7 +182,7 @@ export function observeAgentDebugResponse(
             const reasoning = observation === "usage_only" ? undefined
                 : field(field(response, "additional_kwargs"), "reasoning_content");
             return {
-                ...callIdentity(scope), phase: "receiving", status: "running",
+                ...callIdentity(scope), phase: "receiving", boundary: "update",
                 ...(text ? { text, textMode: mode } : {}),
                 ...(typeof reasoning === "string" && reasoning ? { reasoning } : {}),
                 usage: usage && !attemptId ? { ...usage, updateKey: usageKey,
@@ -189,6 +192,7 @@ export function observeAgentDebugResponse(
     }
     if (usage && attemptId) observeAgentDebug(scope.recorder, () => ({
         nodeId: attemptId, parentId: scope.callId, kind: 'attempt', phase: 'usage',
+        boundary: 'update',
         purpose: scope.purpose, callId: scope.callId, attemptId, turnId: scope.turnId,
         usage: { ...usage, updateKey: usageKey },
     }));
@@ -203,6 +207,7 @@ export function observeAgentDebugToolResult(
         nodeId: `${input.turnId}:tool:${input.toolCallId}`, parentId: input.turnId,
         turnId: input.turnId, runtimeRunId: input.runtimeRunId, toolCallId: input.toolCallId,
         toolName: input.toolName, kind: 'tool', phase: 'tool_result', toolInput: input.toolInput, toolOutput: input.result,
+        boundary: 'update', contentRole: 'actual_tool_result',
         lineage: { unknown: true },
     }));
 }
@@ -216,17 +221,21 @@ export function observeAgentDebugLifecycle(recorder: AgentDebugRunRecorder | und
         const root = recorder.captureId;
         const base = { runtimeRunId: event.runId, turnId: event.turnId, phase: event.type };
         if (event.type === "agent_start" || event.type === "agent_end") {
-            return { ...base, nodeId: root, kind: "run", status: event.type === "agent_start" ? "running" : agentDebugStatus(event.status) };
+            return { ...base, nodeId: root, kind: "run", boundary: event.type === "agent_start" ? "start" : "end",
+                status: event.type === "agent_start" ? "running" : agentDebugStatus(event.status) };
         }
         if (event.type === "turn_start" || event.type === "turn_end") {
             return { ...base, nodeId: event.turnId, parentId: root, kind: "turn",
+                boundary: event.type === "turn_start" ? "start" : "end",
                 status: event.type === "turn_start" ? "running" : agentDebugStatus(event.status) };
         }
         if (event.type === "tool_execution_start" || event.type === "tool_execution_end" || event.type === "tool_execution_update") {
             return { ...base, nodeId: `${event.turnId}:tool:${event.toolCallId}`, parentId: event.turnId,
                 kind: "tool", toolCallId: event.toolCallId, toolName: event.toolName,
+                boundary: event.type === "tool_execution_start" ? "start" : event.type === "tool_execution_end" ? "end" : "update",
                 lineage: { unknown: true },
-                status: event.type === "tool_execution_end" ? agentDebugStatus(event.outcome) : "running",
+                status: event.type === "tool_execution_end" ? agentDebugStatus(event.outcome)
+                    : event.type === "tool_execution_start" ? "running" : undefined,
                 ...(event.type === "tool_execution_start" ? { toolInput: event.input } : {}),
                 ...(event.type === "tool_execution_end" ? { outcome: event.outcome } : {}),
             };
@@ -234,10 +243,11 @@ export function observeAgentDebugLifecycle(recorder: AgentDebugRunRecorder | und
         if (event.type === "message_end" && event.message.role === "toolResult") {
             return { ...base, nodeId: `${event.turnId}:tool:${event.message.toolCallId}`, parentId: event.turnId,
                 kind: "tool", toolCallId: event.message.toolCallId, toolName: event.message.toolName,
+                boundary: "update", contentRole: "model_tool_observation",
                 toolOutput: event.message.content.promptText, lineage: { unknown: true },
             };
         }
-        return { ...base, nodeId: root, kind: "phase" };
+        return { ...base, nodeId: root, kind: "phase", boundary: "instant" };
     });
     // Host diagnostics explain empty/finalization/recovery outcomes that need not throw.
     // Only known scalar fields enter the dedicated projection, never arbitrary metadata.
@@ -253,6 +263,7 @@ export function observeAgentDebugLifecycle(recorder: AgentDebugRunRecorder | und
                 nodeId: `${event.turnId}:diagnostic:${event.seq}:${index}`,
                 parentId: event.type === "agent_end" ? recorder.captureId : event.turnId,
                 kind: "phase", phase: "diagnostic", turnId: event.turnId, runtimeRunId: event.runId,
+                boundary: "instant",
                 outcome: code, lineage: { unknown: true },
                 error: { code, ...(typeof message === "string" ? { message } : {}) },
             }));
@@ -263,19 +274,25 @@ export function observeAgentDebugLifecycle(recorder: AgentDebugRunRecorder | und
 export function observeAgentDebugPhase(
     recorder: AgentDebugRunRecorder | undefined, phase: string, fields: Record<string, unknown>,
 ): void {
-    if (!recorder) return;
+    if (!recorder || fields.observationSource === "lifecycle" || fields.observationSource === "transport") return;
     observeAgentDebug(recorder, () => {
         const turnId = typeof fields.turnId === "string" ? fields.turnId : undefined;
         const name = phase.replace(/:(?:start|end|error)$/, "");
-        const nodeId = typeof fields.leaseId === "string" ? fields.leaseId : `${turnId ?? recorder.captureId}:phase:${name}`;
+        const nodeId = typeof fields.leaseId === "string" ? fields.leaseId
+            : typeof fields.phaseInstanceId === "string" ? `${turnId ?? recorder.captureId}:phase:${fields.phaseInstanceId}`
+                : `${turnId ?? recorder.captureId}:phase:${name}:${++phaseObservationSequence}`;
         const duration = fields.durationMs ?? fields.elapsedMs;
+        const terminalStatus = fields.status === "completed" || fields.status === "cancelled" || fields.status === "partial"
+            || fields.status === "failed" || fields.status === "interrupted" || fields.status === "unknown" ? fields.status : undefined;
         return { nodeId, parentId: turnId ?? recorder.captureId,
             kind: "phase", phase, turnId,
+            boundary: phase.endsWith(":start") ? "start" : phase.endsWith(":end") || phase.endsWith(":error") ? "end"
+                : phase === "turn_lease_bound" ? "update" : "instant",
             ...(typeof duration === "number" && Number.isFinite(duration) && duration >= 0 ? { durationMs: duration } : {}),
             status: phase === "turn_lease:start" || phase === "chat_startup_lease:start" ? "queued"
                 : phase.endsWith(":start") ? "running" : phase.endsWith(":error")
-                    ? fields.status === "cancelled" || fields.status === "completed" ? fields.status : "failed"
-                    : phase.endsWith(":end") || phase === "turn_lease_bound" ? "completed" : undefined,
+                    ? terminalStatus ?? (fields.errorType === "AbortError" ? "cancelled" : "failed")
+                    : phase.endsWith(":end") || phase === "turn_lease_bound" ? terminalStatus ?? "completed" : undefined,
             ...(typeof fields.action === "string" ? { outcome: `${fields.action}${typeof fields.reason === "string" ? `: ${fields.reason}` : ""}` }
                 : typeof fields.reason === "string" ? { outcome: fields.reason } : {}),
         };

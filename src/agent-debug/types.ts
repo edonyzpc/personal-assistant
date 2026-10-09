@@ -63,6 +63,14 @@ export interface DebugEvent {
     toolCallId?: string;
     timestamp: number;
     kind: string;
+    /** Actual observer category; kind remains the phase for historical readers. */
+    nodeKind?: 'run' | 'turn' | 'phase' | 'llm' | 'attempt' | 'tool';
+    boundary?: 'start' | 'update' | 'end' | 'instant';
+    contentRole?: 'actual_tool_result' | 'model_tool_observation';
+    /** Observation time relative to this capture's monotonic start. */
+    elapsedMs?: number;
+    /** Bounded, projected error metadata; never a raw provider/error object. */
+    errorSummary?: string;
     status?: string;
     label?: string;
     durationMs?: number;
@@ -78,6 +86,7 @@ export interface DebugContent {
     captureId: string;
     contentId: string;
     kind: 'prompt' | 'input' | 'output' | 'context' | 'error' | 'attachment' | 'reasoning' | 'tool_input' | 'tool_output';
+    contentRole?: 'actual_tool_result' | 'model_tool_observation';
     text: string;
     redactions: string[];
     lineage: DebugLineage;
@@ -146,6 +155,20 @@ export interface DebugRunQuery {
 }
 
 export interface DebugEventQuery { limit?: number; after?: number; }
+
+export interface DebugTraceQuery { after?: number; through?: number; limit?: number; }
+
+export interface DebugTracePage {
+    events: DebugEvent[];
+    /** Session tail only. It must never advance the persistent cursor. */
+    liveEvents: DebugEvent[];
+    through: number;
+    nextAfter: number;
+    hasMore: boolean;
+    run: DebugRun | null;
+    availability: 'available' | 'partial' | 'unavailable' | 'cleared';
+    reason?: string;
+}
 
 export interface DebugStoreStatus {
     available: boolean;

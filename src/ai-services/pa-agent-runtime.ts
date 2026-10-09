@@ -8,7 +8,7 @@ import { resolvePaAgentModelBudgetFacts } from "./ai-utils";
 import { PaAgentRunUsageLedger, type PaAgentUsageLedgerSnapshot } from './agent-usage-ledger';
 import type { AiServiceHost, RetrievalOptimizationFlags } from "./AiServiceHost";
 import type { MemoryMode } from "../memory-manager";
-import { createAgentDebugLog, createAgentEventDebugObserver, describeAgentError, traceAgentPhase } from './pa-agent-debug';
+import { createAgentDebugLog, createAgentDebugPhaseInstanceId, createAgentEventDebugObserver, describeAgentError, traceAgentPhase } from './pa-agent-debug';
 import type { AgentDebugCallScope, AgentDebugRunRecorder } from './agent-debug-port';
 import { agentDebugError, agentDebugNow, createAgentDebugCall, observeAgentDebugCall,
     observeAgentDebugLifecycle, observeAgentDebugPhase, observeAgentDebugResponse, observeAgentDebugToolResult,
@@ -2282,6 +2282,7 @@ export class PaAgentRuntime {
                 }, usageLedger);
                 let debugConsumerEnded = false;
                 let debugProviderCompletion: string | undefined;
+                let debugStreamPhaseId: string | undefined;
                 try {
                 if (!additionalProvidersLoaded) {
                     additionalProvidersLoaded = true;
@@ -2330,7 +2331,8 @@ export class PaAgentRuntime {
                             }, { turnId: input.turnId, stage: 'answer' });
                         },
                         onProviderRequestStart: () => {
-                            debug('provider_admission:start', { turnId: input.turnId, stage: 'answer' });
+                            const phaseInstanceId = createAgentDebugPhaseInstanceId();
+                            debug('provider_admission:start', { turnId: input.turnId, stage: 'answer', phaseInstanceId });
                             try {
                                 const binding = attempt.binding;
                                 if (!binding) throw new Error("Answer vault observation projection is not bound");
@@ -2342,9 +2344,9 @@ export class PaAgentRuntime {
                                 answerSourceValidity = binding.isSourceCurrent;
                                 writingGeneration = preparedWritingGeneration;
                                 input.notifyProviderRequestStarted?.();
-                                debug('provider_admission:end', { turnId: input.turnId, stage: 'answer' });
+                                debug('provider_admission:end', { turnId: input.turnId, stage: 'answer', phaseInstanceId });
                             } catch (error) {
-                                debug('provider_admission:error', { turnId: input.turnId, stage: 'answer', ...describeAgentError(error) });
+                                debug('provider_admission:error', { turnId: input.turnId, stage: 'answer', phaseInstanceId, ...describeAgentError(error) });
                                 throw error;
                             }
                         },
@@ -2352,7 +2354,7 @@ export class PaAgentRuntime {
                         onProviderRequestDiagnostic: requestDiagnostic("answer", input.turnId),
                         isProviderRequestTraceEnabled: debugEnabled,
                         onProviderRequestTrace: (event: import('./obsidian-fetch').ProviderRequestTrace) =>
-                            debug(event.phase, { ...event, stage: 'answer', turnId: input.turnId }),
+                            debug(event.phase, { ...event, stage: 'answer', turnId: input.turnId, observationSource: 'transport' }),
                     });
                 const llm = await traceAgentPhase(debug, 'model_create', () => createAnswerModel(streamAttempt), { turnId: input.turnId });
                 actionProjectionMode = llm instanceof ChatOpenAI ? "native" : "compat";
@@ -2374,7 +2376,7 @@ export class PaAgentRuntime {
                         assertProviderInputCurrent(input.signal);
                         if (!invokeAttempt.binding) throw new Error("Answer vault observation projection is not bound");
                         if (!invokeChain) {
-                            const invokeLlm = await createAnswerModel(invokeAttempt);
+                            const invokeLlm = await traceAgentPhase(debug, 'model_create', () => createAnswerModel(invokeAttempt), { turnId: input.turnId });
                             if (actionProjectionMode === "native" && !(invokeLlm instanceof ChatOpenAI)) {
                                 throw new Error("Invoke adapter cannot represent the native action history");
                             }
@@ -2394,7 +2396,6 @@ export class PaAgentRuntime {
                 const preview = await previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
                 const needsHistorySummary = preview.history.historyBudgetLimited === true;
                 if (input.toolMode !== "final_answer_only" && preview.outcome.needsCompaction) {
-                    debug('context_summary:start', { turnId: input.turnId });
                     // Prepare the selected image inputs before optional compaction.
                     if (imageScope?.hasSelectedImages) {
                         if (options.imageCapability?.get() === "unsupported") throw new ChatImageRequestError("unsupported_model");
@@ -2443,7 +2444,7 @@ export class PaAgentRuntime {
                             onProviderRequestFailed: summaryAttemptClock.failed,
                             onProviderRequestDiagnostic: requestDiagnostic("context_summary", input.turnId),
                             onProviderRequestTrace: (event: import('./obsidian-fetch').ProviderRequestTrace) =>
-                                debug(event.phase, { ...event, stage: 'context_summary', turnId: input.turnId }),
+                                debug(event.phase, { ...event, stage: 'context_summary', turnId: input.turnId, observationSource: 'transport' }),
                             isProviderRequestTraceEnabled: debugEnabled,
                         });
                         assertRequestCurrent(signal);
@@ -2529,6 +2530,10 @@ export class PaAgentRuntime {
                             budgetActivity.finish();
                         }
                     };
+                    const phaseInstanceId = createAgentDebugPhaseInstanceId();
+                    const summaryPhaseStartedAt = agentDebugNow();
+                    let summaryPhaseFailed = false;
+                    debug('context_summary:start', { turnId: input.turnId, phaseInstanceId });
                     try {
                         const historySources = acceptedHistory;
                         const history = needsHistorySummary ? await contextSummarizer.prepareHistory({
@@ -2556,12 +2561,15 @@ export class PaAgentRuntime {
                             }
                         }
                     } catch (error) {
+                        summaryPhaseFailed = true;
                         // Optional compaction failure keeps complete original context;
                         // user cancellation still ends the run.
                         if (input.signal?.aborted) throw error;
                     } finally {
                         preparation.dispose();
-                        debug('context_summary:end', { turnId: input.turnId, modelCalls, durationMs: Date.now() - startedAt });
+                        debug(summaryPhaseFailed ? 'context_summary:error' : 'context_summary:end', {
+                            turnId: input.turnId, phaseInstanceId, modelCalls, durationMs: agentDebugNow() - summaryPhaseStartedAt,
+                            status: input.signal?.aborted ? 'cancelled' : summaryPhaseFailed ? 'failed' : 'completed' });
                     }
                     yield { type: "diagnostic", diagnostic: {
                         type: "context_summary_preparation", modelCalls,
@@ -2574,7 +2582,8 @@ export class PaAgentRuntime {
                     () => prepareCanonicalProviderInput(providerInput, toolDefinitions, schemas),
                     { turnId: input.turnId, toolMode: input.toolMode ?? 'normal', toolCount: schemas.length });
                 streamAttempt.binding = canonicalAnswer.vaultBinding;
-                debug('llm_stream:start', { turnId: input.turnId, toolCount: schemas.length });
+                debugStreamPhaseId = createAgentDebugPhaseInstanceId();
+                debug('llm_stream:start', { turnId: input.turnId, phaseInstanceId: debugStreamPhaseId, toolCount: schemas.length });
                 // P0-D: if streaming fails before any visible output (e.g., provider rejected stream
                 // outright or dropped the connection pre-flight), retry via chain.invoke() so the user
                 // still gets the answer instead of a hard runtime error.
@@ -2632,7 +2641,7 @@ export class PaAgentRuntime {
                     yield chunk;
                 }
                 if (imageScope?.hasSelectedImages) options.imageCapability?.onSuccess();
-                debug('llm_stream:end', { turnId: input.turnId });
+                debug('llm_stream:end', { turnId: input.turnId, phaseInstanceId: debugStreamPhaseId });
                 observeAgentDebugCall(debugCall, { phase: "consumer_end", status: "completed",
                     timing: { event: "consumer_end", at: agentDebugNow() } });
                 debugConsumerEnded = true;
@@ -2642,7 +2651,8 @@ export class PaAgentRuntime {
                         ...(debugProviderCompletion ? { missingReason: "transport_ended_after_completion" } : {}),
                         timing: { event: "consumer_end", at: agentDebugNow() } });
                     debugConsumerEnded = true;
-                    debug('llm_stream:error', { turnId: input.turnId, status: debugErrorStatus, ...describeAgentError(error) });
+                    if (debugStreamPhaseId) debug('llm_stream:error', { turnId: input.turnId, phaseInstanceId: debugStreamPhaseId,
+                        status: debugErrorStatus, ...describeAgentError(error) });
                     if (!imageScope?.hasImages || isAbortError(error, input.signal) || error instanceof PaAgentContextOverflowError) throw error;
                     // Preserve the recoverable category without exposing SDK errors
                     // that may contain the private image request body.
@@ -2652,6 +2662,8 @@ export class PaAgentRuntime {
                     throw error instanceof ChatImageRequestError ? error
                         : new ChatImageRequestError(isStructuredImageUnsupportedError(error) ? "unsupported_model" : "provider_failed");
                 } finally {
+                    if (!debugConsumerEnded && debugStreamPhaseId) debug('llm_stream:end', { turnId: input.turnId,
+                        phaseInstanceId: debugStreamPhaseId, status: debugProviderCompletion ? 'completed' : input.signal?.aborted ? 'cancelled' : 'partial' });
                     if (!debugConsumerEnded) observeAgentDebugCall(debugCall, {
                         phase: "consumer_end", status: debugProviderCompletion ? "completed" : input.signal?.aborted ? "cancelled" : "partial",
                         missingReason: "consumer_closed_before_eof", timing: { event: "consumer_end", at: agentDebugNow() },

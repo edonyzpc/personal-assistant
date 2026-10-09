@@ -1,10 +1,10 @@
 # PA Agent Debug View 与本机历史
 
 Document status: Current
-Updated: 2026-10-08
-Work item: B-145, B-165
-Product contract: [DEC-055](../product/decisions/dec-055-agent-snapshot-execution-and-debug-history.md) / [当前 Product Spec](../product/specs/pa-agent-snapshot-execution-product-spec.md)；[DEC-041](../product/decisions/dec-041-agent-debug-view-and-local-history.md) 的其它范围保持。
-Validation: [B-145 历史验收](../archive/2026/b145-agent-debug-validation.md) / [B-165 完整历史与响应性证据](../archive/2026/b165-agent-snapshot-execution-validation.md)
+Updated: 2026-10-10
+Work item: B-145, B-165, B-167
+Product contract: [DEC-055](../product/decisions/dec-055-agent-snapshot-execution-and-debug-history.md) 的数据/执行边界与 [DEC-057](../product/decisions/dec-057-agent-debug-explorer.md) / [Explorer Product Spec](../product/specs/pa-agent-debug-explorer-product-spec.md) 的查看行为；[DEC-041](../product/decisions/dec-041-agent-debug-view-and-local-history.md) 的其它范围保持。
+Validation: [B-145 历史验收](../archive/2026/b145-agent-debug-validation.md) / [B-165 完整历史与响应性证据](../archive/2026/b165-agent-snapshot-execution-validation.md) / [B-167 最终验证](../archive/2026/b167-agent-debug-explorer-validation.md)。以下描述当前源码，部署身份与验证限制见上述证据。
 
 ## 责任与数据流
 
@@ -36,10 +36,55 @@ flowchart LR
 - `store.ts` 使用设备本机 `personal-assistant-agent-debug-v1` IndexedDB，分为
   `runs`、`events`、`contents`、`control` 四个 store。普通读写永久绑定由 vault
   与设备范围计算的 opaque key；历史不写 Markdown vault 或同步目录。
-- `view.tsx` 和 `components/AgentDebugPanel.tsx` 提供 Obsidian ItemView，上方轨迹、
-  下方详情；`chat-view.ts` 的按钮只在 Debug 开启时显示，点击打开或复用当前
-  vault 的 tab。完整内容从持久块按需展开/分页；旧版未保存的 reasoning/工具详情
-  提示旧版未记录，不回填。关闭 tab 不停止采集，关闭 Debug 停止新详情采集但不删除历史。
+- `view.tsx` 和 `components/AgentDebugPanel.tsx` 提供 Obsidian ItemView。
+  `chat-view.ts` 的按钮只在 Debug 开启时显示，点击打开或复用当前 vault 的 tab。
+  宽 leaf 为树形行、统一时间轴和右侧详情，两侧独立滚动，分隔可调整；历史可收起。
+  实际 leaf 小于 760px 时采用轨迹/详情双页、历史/轮次原生弹层和当前可见序列导航。
+  完整内容从持久块按节点请求、按需展开；旧版未保存的 reasoning/工具详情不回填。
+  关闭 tab 不停止采集，关闭 Debug 停止新详情采集但不删除历史。
+
+## 完整轨迹与阅读状态
+
+`store.getTracePage` 在同一只读事务读取 Run、清理控制与事件，固定持久高水位 H，
+只枚举 `after < seq <= H` 的事件。稀疏 seq 允许存在；分页游标来自真实持久事件，
+末页推进到 H。`service` 将内存尾部作为独立 overlay 返回，不能用其推进持久游标。
+`useTracePages` 逐页合并整个 Run，完成当前 H 后按通知读取新的持久范围；内部 500
+条页/尾窗不是查看范围。存储不可用、读取失败、真实采集缺口与尚未提交的前缀
+分别表达，不能把局部记录称为全部。清理 epoch、恢复屏障、Run 到期及卸载保护
+新读取和迟到结果；正文继续经由 integration 的 outbox 协调与 service 安全入口。
+
+只有相应持久页已加载，才移除其范围内的 overlay；节点及有序去重的内容引用
+由当前有效 canonical 事件与剩余 overlay 重建，不永久累积被替换的旧快照。
+
+`trace-model.ts` 仅处理过滤后的元数据，按稳定节点身份与真实父子关系合并更新；
+缺父节点或环显示缺口，不补造执行。phase occurrence 由执行 owner 赋予身份，
+生命周期/transport console 镜像不再次生成阶段。节点类型与 phase 分开保存，
+start/update/end/instant 是实际边界，单调相对时间用于统一时间轴；缺少边界不
+反推区间，已有有效耗时仍可显示。模型等待从真实等待入口计时，不改业务预算
+或指标。工具真实结果与给模型的观察文本分别标记，旧未知来源如实标注。
+
+默认聚焦当前执行/选中路径；手动展开覆盖默认值，刷新不重置。当前 Run 的搜索
+只用名称、阶段、工具和已记录错误摘要，保留祖先；词项来自当前有效 canonical/
+overlay 元数据，晚更新改标签不会丢失同节点已记录工具名，失效后不保留旧词。
+不读取 Prompt、reasoning 或工具正文。手动选择、搜索、折叠、滚动暂停跟随，显式恢复时展开当前路径并定位。
+窄详情保存进入时的可见导航序列与返回锚点，历史切换/清理同步清除失效阅读状态。
+详情读取失败可显式重试，同一节点普通更新保留已展开内容和长文本分页状态。
+原生弹层处理 Escape 并阻止其触发宿主切换 leaf，关闭后归还触发点焦点；移动
+floating navbar 模式在内容底部留出宿主导航高度，安全区继续由 Obsidian 负责。
+
+当前 viewer 拥有所选 Run 的分页、索引、详情和阅读状态；隐藏时暂停 UI 刷新，
+恢复时补读已提交范围。关闭 leaf 清理后续分页、订阅、observer、timer 与 React
+root，并拒收迟到结果；插件级采集继续。workspace 只保存 `conversationId` 路由，
+不持久化正文或阅读缓存。
+
+这些能力复用现有 React、观察端口和 IndexedDB；未引入 AgentPrism、LangChain、
+全文索引、上传、任务重放或独立后台采集。
+
+## 旧历史兼容
+
+新增类型、边界、相对时间和内容来源均为可选字段；数据库 schema、key、seq
+index 与旧设置保持，`contentVersion: 2` 仍表示已有完整文本记录语义。旧事件用
+可证实字段保守显示，不配对未经证实的重复阶段，不擦库或读取旧 Chat/笔记补录。
 
 ## 保留与恢复
 

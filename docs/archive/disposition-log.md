@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-10-09
+Updated: 2026-10-10
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-10-10 | `docs/development/active/agent-debug-explorer/**` | deleted-after-absorption | [DEC-057](../product/decisions/dec-057-agent-debug-explorer.md), [Product Spec](../product/specs/pa-agent-debug-explorer-product-spec.md), [Debug architecture](../architecture/pa-agent-debug-view.md), [B-167 validation](./2026/b167-agent-debug-explorer-validation.md), current source and focused tests | Owner 明确授权 closeout 与本地 master 提交；T-01～07、十项REQ/AC和独立审查完成，无未完成项。完整轨迹、双端阅读状态、可选元数据兼容与清理边界已吸收；仅保留最终gate/实际app/三态与Stop/清理回执及隔离构建身份和限制。设计阶段可从4927e770恢复，本轮最终执行Tracker增量未单独提交，不声称旧Git保存了完整执行过程；删除Feature Home/SDD/Tracker。推送与发布独立。 |
 | 2026-10-09 | `docs/development/active/tag-appearance/**` | deleted-after-absorption | [DEC-056](../product/decisions/dec-056-opt-in-tag-appearance.md), [Product Spec](../product/specs/pa-tag-appearance-product-spec.md), [Tag architecture](../architecture/tag-appearance.md), [B-166 validation](./2026/b166-tag-appearance-validation.md), current source and focused tests | Owner 明确授权 closeout 与本地 master 提交；T-00～06、10组REQ/AC及独立审查完成，无未完成项。稳定配色、表面准入、设置/窗口/卸载生命周期已吸收；仅保留最终 gate 复用、原生交互、最低 core/installer 与模拟器限制及资源恢复证据。Feature Home/SDD/Tracker 本轮未提交，删除后不声称旧 Git 历史保存了完整过程包。远程推送与发布独立。 |
 | 2026-10-08 | `docs/development/active/agent-snapshot-execution/**` | deleted-after-absorption | [DEC-055](../product/decisions/dec-055-agent-snapshot-execution-and-debug-history.md), [Product Spec](../product/specs/pa-agent-snapshot-execution-product-spec.md), [Agent architecture](../architecture/pa-agent-architecture-plan.md#source-and-trust-boundaries), [Debug architecture](../architecture/pa-agent-debug-view.md), [B-165 validation](./2026/b165-agent-snapshot-execution-validation.md) | Owner 明确授权 closeout 与本地 master 提交；T-01–05、八项 REQ/七项 AC、独立审查与隔离 Desktop/mobile/真实模型验收完成，无未完成项。稳定行为已吸收，仅保留事故与最终验证的独有证据及限制；删除未提交的 Feature Home/SDD/Tracker，不声称完整过程包已在 Git 留存。生产部署、推送与发布独立。 |
 | 2026-10-08 | `docs/development/active/memory-marker-recovery/**` | deleted-after-absorption | [DEC-054](../product/decisions/dec-054-memory-marker-recovery.md), [Product Spec](../product/specs/pa-memory-marker-recovery-product-spec.md), [VSS architecture](../architecture/vss-sqlite-wasm-architecture.md), [B-164 validation](./2026/b164-memory-marker-recovery-validation.md) | Owner 明确授权 closeout 与本地 master 提交；T00–03、四组 REQ/AC、独立审查与隔离真实存储验收已完成，无未完成项转入 Backlog。稳定设计吸收，独有最终门禁、应用恢复→Update 和证据限制紧凑保留；删除未提交的 Feature Home/SDD/Tracker，不声称 Git 保存了完整过程包。推送与发版未授权。 |

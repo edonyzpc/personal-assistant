@@ -4,7 +4,8 @@ import {
 } from "./agent-runtime-primitives";
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import { errorMessage } from "./agent-utils";
-import type { AgentDebugLog } from './pa-agent-debug';
+import { createAgentDebugPhaseInstanceId, type AgentDebugLog } from './pa-agent-debug';
+import { agentDebugNow } from './agent-debug-observation';
 import { PaAgentContextOverflowError } from "./context/PaAgentContextOverflowError";
 import { getProviderAdmissionError } from "./provider-admission-error";
 import { parseTaskIncompleteOutput, REPORT_TASK_INCOMPLETE } from './pa-agent-task-outcome';
@@ -1052,9 +1053,11 @@ export class PaAgentLoop {
 
         let iterator: AsyncIterator<PaAgentModelStreamChunk> | undefined;
         let inputPreparationCompleted = !this.options.prepareModelInput;
+        let inputPreparationPhaseId: string | undefined;
         try {
             if (this.options.prepareModelInput) {
-                this.debug('loop_input_prepare:start', { turnId });
+                inputPreparationPhaseId = createAgentDebugPhaseInstanceId();
+                this.debug('loop_input_prepare:start', { turnId, phaseInstanceId: inputPreparationPhaseId });
                 modelInput = await this.prepareModelInputForProvider(
                     modelInput,
                     toolMode,
@@ -1064,7 +1067,7 @@ export class PaAgentLoop {
                     },
                 );
                 inputPreparationCompleted = true;
-                this.debug('loop_input_prepare:end', { turnId });
+                this.debug('loop_input_prepare:end', { turnId, phaseInstanceId: inputPreparationPhaseId });
                 const prepareForProviderRetry = async (): Promise<PaAgentModelInput> => modelInput;
                 modelInput = { ...modelInput, prepareForProviderRetry };
             }
@@ -1074,6 +1077,10 @@ export class PaAgentLoop {
             iterator = this.options.model.stream(modelInput)[Symbol.asyncIterator]();
             if (!this.options.model.reportsProviderRequestStart) notifyProviderRequestStarted();
         } catch (error) {
+            if (!inputPreparationCompleted && inputPreparationPhaseId) this.debug('loop_input_prepare:error', {
+                turnId, phaseInstanceId: inputPreparationPhaseId,
+                status: isAbortError(error, turnAbort.signal) ? 'cancelled' : 'failed',
+            });
             if (error instanceof ProviderPreparationDeadlineError) {
                 stopReason = "wall_clock_exceeded";
                 terminalStatus = "incomplete";
@@ -1120,8 +1127,10 @@ export class PaAgentLoop {
                 },
             })
             : undefined;
-        this.debug('model_wait:start', { turnId, idleTimeoutMs: Number.isFinite(this.assistantIdleTimeoutMs) ? this.assistantIdleTimeoutMs : null,
-            providerRequestStarted });
+        const modelWaitPhaseId = consumer ? createAgentDebugPhaseInstanceId() : undefined;
+        const modelWaitStartedAt = agentDebugNow();
+        if (modelWaitPhaseId) this.debug('model_wait:start', { turnId, phaseInstanceId: modelWaitPhaseId,
+            idleTimeoutMs: Number.isFinite(this.assistantIdleTimeoutMs) ? this.assistantIdleTimeoutMs : null, providerRequestStarted });
 
         let completedTextAt: number | undefined;
         let completedOutputAt: number | undefined;
@@ -1136,8 +1145,6 @@ export class PaAgentLoop {
             const next = await consumer.nextChunk();
             if (next.type === 'chunk') receivedChunk = true;
             if (next.type !== "chunk") transportOutcome = next.type;
-            if (next.type !== 'chunk') this.debug('model_wait:end', { turnId, outcome: next.type,
-                providerRequestStarted, modelChunkCount, elapsedMs: elapsedSince(modelStartedAt, this.now()) });
             if (next.type === "done") {
                 break;
             }
@@ -1343,6 +1350,12 @@ export class PaAgentLoop {
                 }
             }
         }
+
+        if (modelWaitPhaseId) this.debug('model_wait:end', { turnId, phaseInstanceId: modelWaitPhaseId,
+            outcome: transportOutcome, providerRequestStarted, modelChunkCount,
+            durationMs: agentDebugNow() - modelWaitStartedAt,
+            status: terminalStatus === 'aborted' ? 'cancelled' : terminalStatus === 'error' ? 'failed'
+                : terminalStatus === 'incomplete' || terminalStatus === 'completed_with_warning' ? 'partial' : 'completed' });
 
         if (textUsesHardDeadline
             && (completedTextAt ?? this.now()) - this.runStartedAt >= this.maxWallClockMs - this.finalizationReserveMs) {
@@ -1853,7 +1866,8 @@ export class PaAgentLoop {
                 : []
         )).at(-1);
         if (!retryAfterMs || this.isAborted()) return;
-        this.debug("provider_retry_wait:start", { retryAfterMs });
+        const phaseInstanceId = createAgentDebugPhaseInstanceId();
+        this.debug("provider_retry_wait:start", { retryAfterMs, phaseInstanceId });
         await new Promise<void>((resolve) => {
             let settled = false;
             let timerStarted = false;
@@ -1868,7 +1882,8 @@ export class PaAgentLoop {
             const timer: PlatformTimeoutHandle = setPlatformTimeout(finish, retryAfterMs);
             timerStarted = true;
         });
-        this.debug("provider_retry_wait:end", { retryAfterMs, aborted: this.isAborted() });
+        this.debug("provider_retry_wait:end", { retryAfterMs, phaseInstanceId, aborted: this.isAborted(),
+            status: this.isAborted() ? "cancelled" : "completed" });
     }
 
     private isWallClockExceeded(): boolean {

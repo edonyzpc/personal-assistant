@@ -30,6 +30,8 @@ class Factory {
     definitions = new Map<string, Map<string, Definition>>();
     initialized = false;
     failCommit = false;
+    afterRequest?: (value: unknown) => void;
+    beforeCompletion?: (names: string[], mode: string) => void;
     readonly db = {
         objectStoreNames: { contains: (name: string) => this.rows.has(name) },
         createObjectStore: (name: string) => {
@@ -60,12 +62,13 @@ class Transaction {
         const result = new FixtureRequest<T>();
         queueMicrotask(() => {
             if (this.aborted) return;
-            result.result = copy(operation()); result.onsuccess?.();
+            result.result = copy(operation()); this.factory.afterRequest?.(result.result); result.onsuccess?.();
             if (this.timer) clearTimeout(this.timer);
             this.timer = setTimeout(() => {
                 if (this.aborted) return;
                 if (this.mode === 'readwrite' && this.factory.failCommit) { this.factory.failCommit = false; this.error = new Error('commit failure'); this.abort(); return; }
                 if (this.mode === 'readwrite') for (const name of this.names) this.factory.rows.set(name, this.rows.get(name)!);
+                this.factory.beforeCompletion?.(this.names, this.mode);
                 this.oncomplete?.();
             }, 0);
         });
@@ -125,6 +128,76 @@ function batch(vaultKey: string, captureId: string, generation: DebugGeneration,
 }
 
 describe('Agent Debug storage boundaries', () => {
+    it('enumerates a sparse legacy run beyond 500 rows at a fixed committed high-water mark', async () => {
+        const store = setup();
+        const recorded = batch('vault-a', 'trace', await store.getGeneration());
+        recorded.contents = [];
+        recorded.events = Array.from({ length: 605 }, (_, index) => ({ ...recorded.events[0],
+            seq: (index + 1) * 3, nodeId: `node-${index}`, contentIds: [] }));
+        await store.writeBatch(recorded);
+        const first = await store.getTracePage('trace', { limit: 200 });
+        expect(first).toMatchObject({ through: 1815, nextAfter: 600, hasMore: true, availability: 'available' });
+        expect(first.run?.contentVersion).toBeUndefined();
+        const incoming = { ...recorded, events: [{ ...recorded.events[0], seq: 1818, nodeId: 'new-node' }] };
+        await store.writeBatch(incoming);
+        const loaded = [...first.events];
+        let page = first;
+        while (page.hasMore) {
+            page = await store.getTracePage('trace', { after: page.nextAfter, through: first.through, limit: 200 });
+            loaded.push(...page.events);
+        }
+        expect(loaded.map(event => event.nodeId)).toEqual(recorded.events.map(event => event.nodeId));
+        expect(page).toMatchObject({ through: 1815, nextAfter: 1815, hasMore: false, availability: 'available' });
+        const increment = await store.getTracePage('trace', { after: page.through });
+        expect(increment.events.map(event => event.seq)).toEqual([1818]);
+        expect(increment).toMatchObject({ through: 1818, nextAfter: 1818, hasMore: false });
+        store.close();
+    });
+
+    it('reads the run high-water mark and rows from one transaction snapshot', async () => {
+        const factory = new Factory(); const store = setup('a', factory);
+        const recorded = batch('a', 'trace', await store.getGeneration());
+        await store.writeBatch(recorded);
+        const transaction = factory.db.transaction;
+        const intercept = jest.spyOn(factory.db, 'transaction').mockImplementationOnce((names, mode) => {
+            const tx = transaction(names, mode);
+            const runKey = JSON.stringify(['a', 'trace']);
+            const row = factory.rows.get('runs')!.get(runKey)!;
+            (row.value as DebugBatch['run']).lastCommittedSeq = 9;
+            const event = { ...recorded.events[0], seq: 9, nodeId: 'concurrent' };
+            factory.rows.get('events')!.set(JSON.stringify([runKey, 0, 9]), {
+                id: JSON.stringify([runKey, 0, 9]), vaultKey: 'a', runKey, bytes: 256, value: event,
+            });
+            return tx;
+        });
+        const page = await store.getTracePage('trace');
+        expect(page.through).toBe(1);
+        expect(page.events.map(event => event.seq)).toEqual([1]);
+        expect(intercept).toHaveBeenCalledWith(['runs', 'events', 'control'], 'readonly');
+        intercept.mockRestore();
+        const later = await store.getTracePage('trace', { after: page.through });
+        expect(later).toMatchObject({ through: 9, hasMore: false, nextAfter: 9 });
+        expect(later.events.map(event => event.seq)).toEqual([9]);
+        store.close();
+    });
+
+    it('does not return metadata after expiry or clear and removes safe error metadata on Forget', async () => {
+        let now = 1000;
+        const store = setup('a', new Factory(), () => now);
+        const recorded = batch('a', 'trace', await store.getGeneration());
+        recorded.events[0].errorSummary = 'project-specific failure';
+        await store.writeBatch(recorded);
+        await store.forgetClaim('claim');
+        expect((await store.getTracePage('trace')).events[0]).toMatchObject({ contentIds: [], availability: 'cleared' });
+        expect((await store.getTracePage('trace')).events[0].errorSummary).toBeUndefined();
+        now = 10001;
+        expect(await store.getTracePage('trace')).toMatchObject({ run: null, availability: 'cleared', events: [] });
+        now = 1000;
+        await store.clear();
+        expect(await store.getTracePage('trace')).toMatchObject({ run: null, availability: 'cleared', events: [] });
+        store.close();
+    });
+
     it('persists a real 2.5 MiB tag-tool result between immediate start and finish and reopens all text', async () => {
         const prefix = Array.from({ length: 7 }, (_, index) => `${index}-${'folder'.repeat(16)}`).join('/');
         const files = Array.from({ length: 3000 }, (_, index) => ({ path: `${prefix}/note-${index}.md`, extension: 'md',
@@ -238,6 +311,7 @@ describe('Agent Debug storage boundaries', () => {
         const factory = new Factory(); const a = setup('a', factory), b = setup('b', factory);
         const oldA = batch('a', 'a-run', await a.getGeneration());
         const oldB = batch('b', 'b-run', await b.getGeneration());
+        oldB.events[0] = { ...oldB.events[0], label: 'private title', errorSummary: 'private error', details: { outcome: 'private outcome' } };
         await a.writeBatch(oldA); await b.writeBatch(oldB);
         await a.forgetClaim('claim', { deviceWide: true });
         const generation = await a.getGeneration();
@@ -246,7 +320,54 @@ describe('Agent Debug storage boundaries', () => {
         await b.writeBatch(oldB);
         expect(await a.getContents('a-run')).toEqual([]);
         expect(await b.getContents('b-run')).toEqual([]);
+        expect((await b.getTracePage('b-run')).events[0]).toMatchObject({
+            nodeId: 'node', kind: 'prompt', contentIds: [], availability: 'cleared',
+        });
+        const event = (await b.getTracePage('b-run')).events[0];
+        expect(event.label).toBeUndefined(); expect(event.details).toBeUndefined(); expect(event.errorSummary).toBeUndefined();
         a.close(); b.close();
+    });
+
+    it('retains safe metadata when missing content is caused by capacity rather than Forget', async () => {
+        const store = setup('a', new Factory(), () => 1000, { contentBytes: 3 });
+        const recorded = batch('a', 'trace', await store.getGeneration());
+        recorded.events[0] = { ...recorded.events[0], label: 'tool', errorSummary: 'failure', details: { outcome: 'failed' } };
+        await store.writeBatch(recorded);
+        expect((await store.getTracePage('trace')).events[0]).toMatchObject({
+            label: 'tool', errorSummary: 'failure', details: { outcome: 'failed' }, availability: 'capacity', contentIds: [],
+        });
+        store.close();
+    });
+
+    it('drops historical node contents when expiry passes after the transaction reads the body', async () => {
+        let now = 1000; const factory = new Factory(); const store = setup('a', factory, () => now);
+        await store.writeBatch(batch('a', 'history', await store.getGeneration()));
+        let bodyWasRead = false;
+        factory.afterRequest = value => {
+            const row = value as { value?: { contentId?: string } } | undefined;
+            if (row?.value?.contentId === 'body') { bodyWasRead = true; now = 10001; }
+        };
+        const historical = new AgentDebugService({ vaultKey: 'a', store, recoveryReady: true, enabled: () => false, now: () => now });
+        await historical.initialize();
+        expect(await historical.getContents('history', 'node')).toEqual([]);
+        expect(bodyWasRead).toBe(true);
+        await historical.dispose();
+    });
+
+    it('drops historical node contents when expiry passes while awaiting IDB completion', async () => {
+        let now = 1000; const factory = new Factory(); const store = setup('a', factory, () => now);
+        await store.writeBatch(batch('a', 'history', await store.getGeneration()));
+        const historical = new AgentDebugService({ vaultKey: 'a', store, recoveryReady: true, enabled: () => false, now: () => now });
+        await historical.initialize();
+        let bodyTransactionCompleted = false;
+        factory.beforeCompletion = (names, mode) => {
+            if (mode === 'readonly' && names.includes('contents')) {
+                bodyTransactionCompleted = true; now = 10001;
+            }
+        };
+        expect(await historical.getContents('history', 'node')).toEqual([]);
+        expect(bodyTransactionCompleted).toBe(true);
+        await historical.dispose();
     });
 
     it('expires records without refreshing TTL on read and does not block a new run after a turn deletion', async () => {

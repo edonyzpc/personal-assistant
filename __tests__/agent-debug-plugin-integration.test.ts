@@ -14,6 +14,8 @@ function setup(history = new MemoryChatHistoryStore()) {
         forgetLegacyRecord: jest.fn(async () => undefined),
         setRecoveryReady: jest.fn(), setEnabled: jest.fn(), blockConversation: jest.fn(), unblockConversation: jest.fn(),
         dispose: jest.fn(async () => undefined),
+        getTracePage: jest.fn(async () => ({ events: [], liveEvents: [], through: 0, nextAfter: 0,
+            hasMore: false, run: null, availability: 'cleared' as const })),
     };
     jest.mocked(AgentDebugService).mockImplementation(() => service as unknown as AgentDebugService);
     const settings = structuredClone(DEFAULT_SETTINGS);
@@ -32,6 +34,25 @@ function setup(history = new MemoryChatHistoryStore()) {
 
 describe('B-145 plugin governance adapters', () => {
     afterEach(() => { jest.useRealTimers(); jest.clearAllMocks(); });
+
+    it('drains durable Chat deletion intent before returning a trace page', async () => {
+        const { integration, service, history } = setup();
+        await integration.initialize();
+        let release!: () => void;
+        service.invalidateConversation.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+        await history.deleteConversation('conversation');
+        const reading = integration.viewHost().getTracePage('capture', { after: 10, through: 90 });
+        for (let index = 0; index < 12; index++) await Promise.resolve();
+        expect(service.invalidateConversation).toHaveBeenCalledWith('conversation', expect.any(Object));
+        expect(service.getTracePage).not.toHaveBeenCalled();
+        expect((await history.listDebugDeletions()).length).toBeGreaterThan(0);
+        release();
+        await reading;
+        expect(service.invalidateConversation).toHaveBeenLastCalledWith('conversation', expect.objectContaining({ permanent: true }));
+        expect(await history.listDebugDeletions()).toEqual([]);
+        expect(service.getTracePage).toHaveBeenCalledWith('capture', { after: 10, through: 90 });
+        await integration.dispose();
+    });
 
     it('acknowledges Chat deletion only after Debug cleanup commits', async () => {
         const { integration, service, history } = setup();

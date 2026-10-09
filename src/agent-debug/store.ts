@@ -1,7 +1,7 @@
 import { getPlatformIndexedDB, getPlatformIDBKeyRange, setPlatformTimeout, clearPlatformTimeout } from '../platform-dom';
 import { DEFAULT_DEBUG_BUDGETS, DEBUG_DOMAINS, type DebugBatch, type DebugBudgets, type DebugContent,
     type DebugDomain, type DebugEvent, type DebugEventQuery, type DebugGeneration, type DebugRun,
-    type DebugRunQuery, type DebugStoreStatus } from './types';
+    type DebugRunQuery, type DebugStoreStatus, type DebugTracePage, type DebugTraceQuery } from './types';
 import { utf8Bytes } from './projection';
 
 const STORES = ['runs', 'events', 'contents', 'control'] as const;
@@ -260,6 +260,10 @@ export class AgentDebugStore {
                 const previous = await request(tx.objectStore('events').get(id)) as Row<DebugEvent> | undefined;
                 const safeEvent: DebugEvent = { ...event, contentIds: event.contentIds.filter(contentId => accepted.has(contentId)) };
                 if (safeEvent.contentIds.length < event.contentIds.length) safeEvent.availability = event.contentIds.some(id => unavailable.get(id) === 'capacity') ? 'capacity' : 'cleared';
+                if (event.contentIds.some(contentId => unavailable.get(contentId) === 'cleared')) {
+                    safeEvent.label = undefined; safeEvent.details = undefined; safeEvent.errorSummary = undefined;
+                    safeEvent.availability = 'cleared';
+                }
                 const nextBytes = rowBytes(safeEvent);
                 if (partitionBytes + nextBytes - (previous?.bytes ?? 0) > this.budgets.persistentBytes) { hasGap = true; continue; }
                 tx.objectStore('events').put({ id, vaultKey: this.vaultKey, runKey, value: safeEvent, bytes: nextBytes });
@@ -315,11 +319,35 @@ export class AgentDebugStore {
         });
     }
 
+    /** Freeze the committed range and read its rows in the same transaction. */
+    getTracePage(captureId: string, query: DebugTraceQuery = {}): Promise<DebugTracePage> {
+        return this.transact(['runs', 'events', 'control'], 'readonly', async tx => {
+            const runKey = key(this.vaultKey, captureId);
+            const row = await request(tx.objectStore('runs').get(runKey)) as RunRow | undefined;
+            if (!row || row.value.expiresAt <= this.now() || !await this.runAllowed(tx, row.value)) {
+                return { events: [], liveEvents: [], through: 0, nextAfter: 0, hasMore: false,
+                    run: null, availability: 'cleared' };
+            }
+            const run = row.value;
+            const through = Math.min(query.through ?? run.lastCommittedSeq, run.lastCommittedSeq);
+            const after = query.after ?? 0;
+            const limit = Math.min(500, Math.max(1, Math.floor(query.limit ?? 200)));
+            const range = after < through ? this.ranges!.bound([runKey, after], [runKey, through], true) : undefined;
+            const rows = range ? await request(tx.objectStore('events').index('sequence').getAll(range, limit + 1)) as Row<DebugEvent>[] : [];
+            const hasMore = rows.length > limit;
+            const events = rows.slice(0, limit).map(event => event.value);
+            return { events, liveEvents: [], through, nextAfter: hasMore ? events[events.length - 1].seq : through,
+                hasMore, run, availability: run.hasGap ? 'partial' : 'available' };
+        });
+    }
+
     async getContents(captureId: string, nodeId?: string): Promise<DebugContent[]> {
-        return this.transact(['runs', 'events', 'contents', 'control'], 'readonly', async tx => {
+        let expiresAt = 0;
+        const contents = await this.transact(['runs', 'events', 'contents', 'control'], 'readonly', async tx => {
             const runKey = key(this.vaultKey, captureId);
             const run = await request(tx.objectStore('runs').get(runKey)) as RunRow | undefined;
             if (!run || run.expiresAt <= this.now()) return [];
+            expiresAt = run.value.expiresAt;
             const generation = await this.generation(tx);
             if (generation.quarantined) return [];
             let selected: string[] | undefined;
@@ -328,7 +356,10 @@ export class AgentDebugStore {
                 selected = events.filter(row => row.value.nodeId === nodeId).sort((left, right) => left.value.seq - right.value.seq)
                     .flatMap(row => row.value.contentIds);
             }
-            const rows = await request(tx.objectStore('contents').index('run').getAll(runKey)) as ContentRow[];
+            const rows = selected
+                ? (await Promise.all([...new Set(selected)].map(id => request(tx.objectStore('contents').get(key(runKey, id))))))
+                    .filter((row): row is ContentRow => row !== undefined)
+                : await request(tx.objectStore('contents').index('run').getAll(runKey)) as ContentRow[];
             const result: DebugContent[] = [];
             for (const row of rows) if ((!selected || selected.includes(row.value.contentId))
                 && await this.isContentAllowed(tx, row.value, generation)) result.push(row.value);
@@ -336,6 +367,9 @@ export class AgentDebugStore {
             const byId = new Map(result.map(content => [content.contentId, content]));
             return selected.flatMap(id => byId.has(id) ? [byId.get(id)!] : []);
         });
+        // IDB completion can arrive after the last request and after retention
+        // expires, including historical runs with no live service state.
+        return expiresAt > this.now() ? contents : [];
     }
 
     private async removeRun(tx: IDBTransaction, row: RunRow): Promise<void> {
@@ -405,7 +439,7 @@ export class AgentDebugStore {
             const events = await request(tx.objectStore('events').index('run').getAll(runKey)) as Row<DebugEvent>[];
             for (const event of events) {
                 // Mixed diagnostics can repeat a title/path: retain only structure after a content revocation.
-                event.value = { ...event.value, label: undefined, details: undefined, contentIds: [], availability: 'cleared' };
+                event.value = { ...event.value, label: undefined, details: undefined, errorSummary: undefined, contentIds: [], availability: 'cleared' };
                 event.bytes = rowBytes(event.value); tx.objectStore('events').put(event);
             }
             const remaining = await request(tx.objectStore('contents').index('run').getAll(runKey)) as ContentRow[];

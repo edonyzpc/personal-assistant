@@ -13,7 +13,7 @@
 
 ## Capture、Recall 与 Context
 
-- [Agent Debug 完整轨迹与双端查看](./specs/pa-agent-debug-explorer-product-spec.md) — B-167：聚焦展开、节点定位搜索、桌面右侧详情与移动独立详情页；[设计与开发测试任务](../development/active/agent-debug-explorer/README.md)。
+- [Agent Debug 完整轨迹与双端查看](./specs/pa-agent-debug-explorer-product-spec.md) — B-167：聚焦展开、节点定位搜索、桌面右侧详情与移动独立详情页；[当前机制](../architecture/pa-agent-debug-view.md)与[最终验证](../archive/2026/b167-agent-debug-explorer-validation.md)。
 - [PA Agent 快照执行与完整 Debug](./specs/pa-agent-snapshot-execution-product-spec.md) — B-165：当前生成快照、下一轮配置更新、完整文本历史；[当前机制](../architecture/pa-agent-architecture-plan.md#source-and-trust-boundaries)。
 - [必要确认与合同接续](./specs/pa-contract-alignment-product-spec.md) — B-161：已完成本地对齐的直接执行、选源、预算、容量与旧合同接续；证据与限制见 [最终验证](../archive/2026/b161-contract-alignment-validation.md)。
 - [PA Agent Command Contract](./specs/pa-agent-command-contract-product-spec.md) — B-158：统一职责、SDD/验收与公共框架后领域迁移。

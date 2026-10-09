@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-10-09
+Updated: 2026-10-10
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,7 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
-| DEC-057 | Agent Debug 完整轨迹与双端查看 | 全Run树与统一时间轴，聚焦展开＋节点定位搜索；宽容器右侧详情、窄容器详情页；保留既有本地有界数据与执行隔离 | [Decision](./decisions/dec-057-agent-debug-explorer.md), [Product Spec](./specs/pa-agent-debug-explorer-product-spec.md), [Feature Home](../development/active/agent-debug-explorer/README.md) | 全文/跨Run搜索、独立后台记录或现有预算内可操作性无法满足 |
+| DEC-057 | Agent Debug 完整轨迹与双端查看 | 全Run树与统一时间轴，聚焦展开＋节点定位搜索；宽容器右侧详情、窄容器详情页；保留既有本地有界数据与执行隔离 | [Decision](./decisions/dec-057-agent-debug-explorer.md), [Product Spec](./specs/pa-agent-debug-explorer-product-spec.md), [Architecture](../architecture/pa-agent-debug-view.md), [B-167 validation](../archive/2026/b167-agent-debug-explorer-validation.md) | 全文/跨Run搜索、独立后台记录或现有预算内可操作性无法满足 |
 | DEC-056 | 默认关闭的 PA 标签外观 | 用户主动开启后完整标签名称固定九色，父子独立；保留原生交互，关闭恢复当前主题/snippets；不扩大至通用 chip 或标签导航列表 | [Decision](./decisions/dec-056-opt-in-tag-appearance.md), [Product Spec](./specs/pa-tag-appearance-product-spec.md) | 需要扩大表面、改变名称映射、默认启用或新增逐标签配置 |
 | DEC-055 | PA Agent 快照执行与完整 Debug | 当前生成及重试沿用快照，配置变化下一 loop 收起受影响旧材料；完整文本/reasoning/工具历史本地保存，媒体仅引用指纹 | [Decision](./decisions/dec-055-agent-snapshot-execution-and-debug-history.md), [Product Spec](./specs/pa-agent-snapshot-execution-product-spec.md), [Architecture](../architecture/pa-agent-architecture-plan.md#source-and-trust-boundaries), [Validation](../archive/2026/b165-agent-snapshot-execution-validation.md) | 新增媒体副本、同步、独立动作权限或紧急撤销能力 |
 | DEC-054 | Memory marker 异常优先复用本地数据 | marker/设备 ID 异常不单独触发全量重建；复用当前 scope 的兼容数据和既有 Update，不扩展一般恢复或授权 | [Decision](./decisions/dec-054-memory-marker-recovery.md), [Product Spec](./specs/pa-memory-marker-recovery-product-spec.md) | 实施发现必须改变持久化格式、维护授权或 guard 语义 |

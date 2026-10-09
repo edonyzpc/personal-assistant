@@ -3,7 +3,9 @@ import type { EffectCallback, ReactElement, SetStateAction } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AgentDebugView, type AgentDebugViewHost } from '../src/agent-debug/view';
 import { AgentDebugPanel, debugTextPrefix, groupDebugContents, projectDebugNodes } from '../src/agent-debug/components/AgentDebugPanel';
+import { DebugDialog } from '../src/agent-debug/components/DebugDialog';
 import type { DebugContent, DebugEvent, DebugRun } from '../src/agent-debug/types';
+import { emptyDebugLineage } from '../src/agent-debug/types';
 
 jest.mock('obsidian');
 jest.mock('react-dom/client', () => ({ createRoot: jest.fn() }));
@@ -20,7 +22,9 @@ jest.mock('react', () => ({
 }));
 
 type Node = ReactElement<{ children?: unknown; onClick?: () => void; onChange?: (event: { target: { value: string } }) => void;
-    onSelect?: (id: string) => void; nodes?: DebugEvent[]; event?: DebugEvent; contents?: DebugContent[] }>;
+    onSelect?: (id: string) => void; onBrowse?: () => void; model?: { nodes: Map<string, unknown> }; rows?: { id: string }[];
+    nodes?: DebugEvent[]; event?: DebugEvent; contents?: DebugContent[]; hidden?: boolean; disabled?: boolean;
+    onRetry?: () => void; failed?: boolean; 'aria-label'?: string }>;
 function elements(tree: unknown): Node[] {
     if (Array.isArray(tree)) return tree.flatMap(elements);
     if (!tree || typeof tree !== 'object' || !('props' in tree)) return [];
@@ -33,7 +37,7 @@ class PanelRenderer {
     private effects: Array<{ deps?: readonly unknown[]; cleanup?: () => void }> = [];
     private pending: Array<() => void> = [];
     tree: unknown;
-    constructor(readonly host: AgentDebugViewHost, private readonly element?: unknown) { this.render(); }
+    constructor(readonly host: AgentDebugViewHost, private readonly element?: unknown, private readonly component?: () => unknown) { this.render(); }
     useState<T>(initial: T | (() => T)): [T, (next: SetStateAction<T>) => void] {
         const index = this.cursor++;
         if (!(index in this.cells)) this.cells[index] = typeof initial === 'function' ? (initial as () => T)() : initial;
@@ -58,11 +62,11 @@ class PanelRenderer {
     }
     render(): void {
         mockHooks = this; this.cursor = 0;
-        this.tree = AgentDebugPanel({ host: this.host, conversationId: 'conversation' });
+        this.tree = this.component ? this.component() : AgentDebugPanel({ host: this.host, conversationId: 'conversation' });
         this.pending.splice(0).forEach(effect => effect());
     }
     async settle(): Promise<void> {
-        for (let index = 0; index < 6; index++) { await Promise.resolve(); await Promise.resolve(); this.render(); }
+        for (let index = 0; index < 10; index++) { await Promise.resolve(); await Promise.resolve(); jest.advanceTimersByTime(0); this.render(); }
     }
     snapshot(): string { return JSON.stringify(this.cells); }
     unmount(): void { this.effects.forEach(effect => effect.cleanup?.()); }
@@ -72,7 +76,7 @@ function event(overrides: Partial<DebugEvent> = {}): DebugEvent {
 }
 function run(captureId: string, startedAt: number): DebugRun {
     return { vaultKey: 'vault', captureId, conversationId: 'conversation', startedAt, updatedAt: startedAt,
-        expiresAt: startedAt + 99999, status: 'running', collection: 'recording', eventCount: 1,
+        expiresAt: Date.now() + 99999, status: 'running', collection: 'recording', eventCount: 1,
         accountedBytes: 100, lastCommittedSeq: 1, hasGap: false };
 }
 function fixture() {
@@ -82,6 +86,8 @@ function fixture() {
         enabled: () => true,
         listRuns: jest.fn<AgentDebugViewHost['listRuns']>(async () => [run('new-run', 200), run('older-run', 100)]),
         getEvents: jest.fn<AgentDebugViewHost['getEvents']>(async captureId => [event({ captureId })]),
+        getTracePage: jest.fn<AgentDebugViewHost['getTracePage']>(async captureId => ({ events: [event({ captureId })], liveEvents: [],
+            through: 1, nextAfter: 1, hasMore: false, run: run(captureId, 200), availability: 'available' })),
         getContents: jest.fn<AgentDebugViewHost['getContents']>(async () => []),
         getSessionDetails: () => [],
         getStatus: jest.fn<AgentDebugViewHost['getStatus']>(async () => ({ available: true, recoveryReady: true, bytes: 100, limit: 1000 })),
@@ -185,30 +191,35 @@ describe('Agent Debug view', () => {
         const { host, notify } = fixture();
         const renderer = new PanelRenderer(host);
         await renderer.settle();
+        elements(renderer.tree).find(node => node.type === 'button' && node.props.children === 'Runs')?.props.onClick?.();
+        renderer.render();
         const historical = elements(renderer.tree).find(node => node.key === 'older-run');
         elements(historical).find(node => node.type === 'button')?.props.onClick?.();
         renderer.render(); await renderer.settle();
         notify(); jest.advanceTimersByTime(100); renderer.render(); await renderer.settle();
-        expect(host.getEvents.mock.calls.at(-1)?.[0]).toBe('older-run');
+        expect(host.getTracePage.mock.calls.at(-1)?.[0]).toBe('older-run');
         elements(renderer.tree).find(node => node.type === 'select')?.props.onChange?.({ target: { value: 'failed' } });
         renderer.render(); await renderer.settle();
         expect(host.listRuns).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'failed', conversationId: 'conversation' }));
         renderer.unmount();
     });
 
-    it('holds the current tail page when selecting a node in a long run', async () => {
+    it('accumulates the complete long run and preserves selection as new metadata arrives', async () => {
         const { host } = fixture();
         host.listRuns.mockResolvedValue([{ ...run('new-run', 200), eventCount: 450, lastCommittedSeq: 450 }]);
-        host.getEvents.mockImplementation(async (_id, query) => [event({
-            seq: (query.after ?? 0) + 1, nodeId: query.after ? 'late-node' : 'first-node',
-        })]);
+        host.getTracePage.mockImplementation(async (_id, query) => ({ events: [event({
+            seq: query.after ? 450 : 1, nodeId: query.after ? 'late-node' : 'first-node',
+        })], liveEvents: [], through: 450, nextAfter: query.after ? 450 : 1, hasMore: !query.after,
+            run: run('new-run', 200), availability: 'available' }));
         const renderer = new PanelRenderer(host);
         await renderer.settle();
-        const trace = elements(renderer.tree).find(node => node.props.nodes?.some(item => item.nodeId === 'late-node'));
+        const trace = elements(renderer.tree).find(node => node.props.model?.nodes.has('late-node'));
         expect(trace).toBeDefined();
         trace?.props.onSelect?.('late-node');
         renderer.render(); await renderer.settle();
-        expect(host.getEvents).toHaveBeenLastCalledWith('new-run', expect.objectContaining({ after: 250 }));
+        expect(host.getTracePage).toHaveBeenCalledWith('new-run', expect.objectContaining({ after: 0, through: undefined }));
+        expect(host.getTracePage).toHaveBeenCalledWith('new-run', expect.objectContaining({ after: 1, through: 450 }));
+        expect(trace?.props.model?.nodes.has('first-node')).toBe(true);
         expect(elements(renderer.tree).some(node => node.props.event?.nodeId === 'late-node')).toBe(true);
         renderer.unmount();
     });
@@ -238,5 +249,229 @@ describe('Agent Debug view', () => {
         renderer.unmount();
         expect(listeners.size).toBe(0);
         expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('searches metadata without reading body and restores the collapsed outline after clearing search', async () => {
+        const { host } = fixture();
+        host.getTracePage.mockResolvedValue({ events: [event({ nodeId: 'turn', nodeKind: 'turn' }),
+            event({ seq: 2, nodeId: 'early', parentId: 'turn', label: 'Early context' }),
+            event({ seq: 900, nodeId: 'late', parentId: 'turn', errorSummary: 'quota exhausted' })],
+            liveEvents: [], through: 900, nextAfter: 900, hasMore: false, run: run('new-run', 200), availability: 'available' });
+        const renderer = new PanelRenderer(host); await renderer.settle();
+        const trace = () => elements(renderer.tree).find(node => node.props.model);
+        (trace()?.props as unknown as { onToggle: (id: string, expanded: boolean) => void }).onToggle('turn', false);
+        renderer.render(); await renderer.settle();
+        const reads = host.getContents.mock.calls.length;
+        elements(renderer.tree).find(node => node.type === 'input' && node.props['aria-label'])?.props.onChange?.({ target: { value: 'quota' } });
+        renderer.render(); await renderer.settle();
+        expect(trace()?.props.rows?.map(row => row.id)).toEqual(['turn', 'late']);
+        expect(host.getContents).toHaveBeenCalledTimes(reads);
+        elements(renderer.tree).find(node => node.type === 'input' && node.props['aria-label'])?.props.onChange?.({ target: { value: '' } });
+        renderer.render(); await renderer.settle();
+        expect(trace()?.props.rows?.map(row => row.id)).toEqual(['turn']);
+        renderer.unmount();
+    });
+
+    it('pauses following on manual browsing and updates facts without replacing the selected node', async () => {
+        const { host, notify } = fixture();
+        const renderer = new PanelRenderer(host); await renderer.settle();
+        const trace = () => elements(renderer.tree).find(node => node.props.model);
+        trace()?.props.onBrowse?.(); renderer.render();
+        host.getTracePage.mockResolvedValue({ events: [event({ seq: 2, nodeId: 'new-node', status: 'running' })], liveEvents: [],
+            through: 2, nextAfter: 2, hasMore: false, run: run('new-run', 200), availability: 'available' });
+        notify(); jest.advanceTimersByTime(100); renderer.render(); await renderer.settle();
+        expect(trace()?.props.model?.nodes.has('new-node')).toBe(true);
+        expect(elements(renderer.tree).some(node => node.props.event?.nodeId === 'call')).toBe(true);
+        elements(renderer.tree).find(node => node.type === 'button' && node.props.children === 'Follow latest')?.props.onClick?.();
+        renderer.render(); await renderer.settle();
+        expect(elements(renderer.tree).some(node => node.props.event?.nodeId === 'new-node')).toBe(true);
+        renderer.unmount();
+    });
+
+    it('keeps narrow detail navigation fixed to the entered visible sequence as live nodes arrive', async () => {
+        const { host, notify } = fixture();
+        host.getTracePage.mockResolvedValue({ events: [event({ nodeId: 'first' }), event({ seq: 2, nodeId: 'second' })], liveEvents: [],
+            through: 2, nextAfter: 2, hasMore: false, run: run('new-run', 200), availability: 'available' });
+        const renderer = new PanelRenderer(host, { clientWidth: 360, getClientRects: () => [{}] }); await renderer.settle();
+        elements(renderer.tree).find(node => node.props.model)?.props.onSelect?.('first'); renderer.render(); await renderer.settle();
+        expect(elements(renderer.tree).find(node => node.type === 'button' && node.props.children === 'Previous')?.props.disabled).toBe(true);
+        host.getTracePage.mockResolvedValue({ events: [event({ seq: 3, nodeId: 'third' })], liveEvents: [],
+            through: 3, nextAfter: 3, hasMore: false, run: run('new-run', 200), availability: 'available' });
+        notify(); jest.advanceTimersByTime(100); renderer.render(); await renderer.settle();
+        elements(renderer.tree).find(node => node.type === 'button' && node.props.children === 'Next')?.props.onClick?.();
+        renderer.render(); await renderer.settle();
+        expect(elements(renderer.tree).some(node => node.props.event?.nodeId === 'second')).toBe(true);
+        expect(elements(renderer.tree).find(node => node.type === 'button' && node.props.children === 'Next')?.props.disabled).toBe(true);
+        elements(renderer.tree).find(node => node.type === 'button' && node.props.children === 'Back to trace')?.props.onClick?.(); renderer.render();
+        const track = elements(renderer.tree).find(node => node.type === 'section' && node.props['aria-label'] === 'Execution trace');
+        expect(track?.props.hidden).toBe(false);
+        renderer.unmount();
+    });
+
+    it('synchronously removes metadata and rejects a late trace page after clearing', async () => {
+        const { host, notify } = fixture();
+        const renderer = new PanelRenderer(host); await renderer.settle();
+        let resolve!: (value: Awaited<ReturnType<AgentDebugViewHost['getTracePage']>>) => void;
+        host.getTracePage.mockImplementation(() => new Promise(result => { resolve = result; }));
+        notify(); jest.advanceTimersByTime(100); renderer.render(); await renderer.settle();
+        notify(true); renderer.render();
+        resolve({ events: [event({ label: 'revoked private metadata' })], liveEvents: [], through: 10, nextAfter: 10,
+            hasMore: false, run: run('new-run', 200), availability: 'available' });
+        await renderer.settle();
+        expect(renderer.snapshot()).not.toContain('revoked private metadata');
+        expect(elements(renderer.tree).find(node => node.props.model)?.props.model?.nodes.size).toBe(0);
+        renderer.unmount(); expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('separates actual tool output, text supplied to the model and old output of unknown origin', () => {
+        const block = (contentId: string, role?: DebugContent['contentRole']): DebugContent => ({ vaultKey: 'vault', captureId: 'run', contentId,
+            kind: 'tool_output', text: contentId, redactions: [], contentRole: role, lineage: emptyDebugLineage(),
+            generation: 0, domainGenerations: {}, accountedBytes: contentId.length });
+        const groups = groupDebugContents([block('actual', 'actual_tool_result'), block('model', 'model_tool_observation'), block('old')]);
+        expect(groups.map(group => [group.role, group.parts])).toEqual([
+            ['actual_tool_result', ['actual']], ['model_tool_observation', ['model']], [undefined, ['old']],
+        ]);
+    });
+
+    it.each(['close', 'escape', 'cancel'] as const)('restores trigger focus after the dialog %s lifecycle', action => {
+        const { host } = fixture();
+        const order: string[] = [];
+        const trigger = { isConnected: true, focus: () => order.push('trigger-focused') };
+        const dialog = { ownerDocument: { activeElement: trigger }, showModal: () => order.push('modal-opened'),
+            close: () => order.push('modal-closed') };
+        let closed = false;
+        const renderer = new PanelRenderer(host, dialog, () => DebugDialog({ title: 'Turns', onClose: () => { closed = true; }, children: 'turns' }));
+        if (action === 'close') elements(renderer.tree).find(node => node.type === 'button')?.props.onClick?.();
+        else if (action === 'escape') {
+            const preventDefault = jest.fn();
+            const stopPropagation = jest.fn();
+            (elements(renderer.tree)[0].props as unknown as { onKeyDown: (event: { key: string; preventDefault: () => void; stopPropagation: () => void }) => void })
+                .onKeyDown({ key: 'Escape', preventDefault, stopPropagation });
+            expect(preventDefault).toHaveBeenCalledTimes(1);
+            expect(stopPropagation).toHaveBeenCalledTimes(1);
+        } else {
+            const preventDefault = jest.fn();
+            (elements(renderer.tree)[0].props as unknown as { onCancel: (event: { preventDefault: () => void }) => void }).onCancel({ preventDefault });
+            expect(preventDefault).toHaveBeenCalledTimes(1);
+        }
+        expect(closed).toBe(true);
+        renderer.unmount();
+        expect(order).toEqual(['modal-opened', 'modal-closed', 'trigger-focused']);
+    });
+
+    it('preserves a wide trace scroll position when selecting a different node', async () => {
+        const { host } = fixture();
+        host.getTracePage.mockResolvedValue({ events: [event({ nodeId: 'early' }), event({ seq: 2, nodeId: 'late' })], liveEvents: [],
+            through: 2, nextAfter: 2, hasMore: false, run: run('new-run', 200), availability: 'available' });
+        const renderer = new PanelRenderer(host, { clientWidth: 1000, getClientRects: () => [{}] }); await renderer.settle();
+        const trace = elements(renderer.tree).find(node => node.props.model)!;
+        const scroll = { scrollTop: 640, querySelectorAll: () => [] };
+        (trace.props as unknown as { scrollRef: { current: unknown } }).scrollRef.current = scroll;
+        trace.props.onSelect?.('early'); renderer.render(); await renderer.settle();
+        expect(scroll.scrollTop).toBe(640);
+        expect(elements(renderer.tree).some(node => node.props.event?.nodeId === 'early')).toBe(true);
+        renderer.unmount();
+    });
+
+    it('explicit following opens the target ancestors while preserving unrelated manual collapse', async () => {
+        const { host } = fixture();
+        host.getTracePage.mockResolvedValue({ events: [event({ nodeId: 'root', nodeKind: 'run' }),
+            event({ seq: 2, nodeId: 'turn-current', parentId: 'root', nodeKind: 'turn' }),
+            event({ seq: 3, nodeId: 'model-current', parentId: 'turn-current', nodeKind: 'llm', status: 'running' }),
+            event({ seq: 4, nodeId: 'turn-old', parentId: 'root', nodeKind: 'turn' }),
+            event({ seq: 5, nodeId: 'old-tool', parentId: 'turn-old' })], liveEvents: [],
+            through: 5, nextAfter: 5, hasMore: false, run: run('new-run', 200), availability: 'available' });
+        const renderer = new PanelRenderer(host, { clientWidth: 1000, getClientRects: () => [{}] }); await renderer.settle();
+        const trace = () => elements(renderer.tree).find(node => node.props.model)!;
+        const toggle = (id: string, expanded: boolean) => (trace().props as unknown as { onToggle: (id: string, expanded: boolean) => void }).onToggle(id, expanded);
+        toggle('turn-old', false); toggle('root', false); renderer.render(); await renderer.settle();
+        expect(trace().props.rows?.map(row => row.id)).toEqual(['root']);
+        const scrollIntoView = jest.fn();
+        (trace().props as unknown as { scrollRef: { current: unknown } }).scrollRef.current = { scrollTop: 640,
+            querySelectorAll: () => [{ dataset: { nodeId: 'model-current' }, scrollIntoView }] };
+        elements(renderer.tree).find(node => node.type === 'button' && node.props.children === 'Follow latest')?.props.onClick?.();
+        renderer.render(); await renderer.settle();
+        expect(trace().props.rows?.map(row => row.id)).toEqual(['root', 'turn-current', 'model-current', 'turn-old']);
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+        renderer.unmount();
+    });
+
+    it('removes a loaded expired Run and details without requiring another Agent event', async () => {
+        const { host } = fixture();
+        const expiring = { ...run('new-run', 200), expiresAt: Date.now() + 20 };
+        host.listRuns.mockResolvedValue([expiring]);
+        host.getTracePage.mockResolvedValue({ events: [event({ label: 'short lived trace' })], liveEvents: [],
+            through: 1, nextAfter: 1, hasMore: false, run: expiring, availability: 'available' });
+        host.getContents.mockResolvedValue([{ contentId: 'short', text: 'short lived body' } as DebugContent]);
+        const renderer = new PanelRenderer(host); await renderer.settle();
+        expect(renderer.snapshot()).toContain('short lived body');
+        jest.advanceTimersByTime(21); renderer.render(); await renderer.settle();
+        expect(renderer.snapshot()).not.toContain('short lived body');
+        expect(renderer.snapshot()).not.toContain('short lived trace');
+        expect(elements(renderer.tree).find(node => node.props.model)?.props.model?.nodes.size).toBe(0);
+        renderer.unmount(); expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('shows a failed detail read and retries the same node successfully with an explicit action', async () => {
+        const { host } = fixture();
+        host.getContents.mockRejectedValueOnce(new Error('storage_read_failed')).mockResolvedValueOnce([{ contentId: 'restored', text: 'recovered details' } as DebugContent]);
+        const renderer = new PanelRenderer(host); await renderer.settle();
+        const inspector = () => elements(renderer.tree).find(node => node.props.event?.nodeId === 'call');
+        expect(inspector()?.props.failed).toBe(true);
+        const traceReads = host.getTracePage.mock.calls.length;
+        inspector()?.props.onRetry?.(); renderer.render(); await renderer.settle();
+        expect(host.getContents).toHaveBeenCalledTimes(2);
+        expect(host.getTracePage).toHaveBeenCalledTimes(traceReads);
+        expect(inspector()?.props.failed).toBe(false);
+        expect(inspector()?.props.contents?.[0].text).toBe('recovered details');
+        renderer.unmount();
+    });
+
+    it('reports a pending saved prefix accurately, then reads committed pages to restore the complete trace', async () => {
+        const { host, notify } = fixture();
+        const all = Array.from({ length: 607 }, (_, index) => event({ seq: index + 1, nodeId: `node-${index + 1}`,
+            label: index === 0 ? 'Early prefix node' : `Stage ${index + 1}` }));
+        let committed = false;
+        const metadata = { ...run('new-run', 200), eventCount: 607, lastCommittedSeq: 0, contentVersion: 2 as const };
+        host.listRuns.mockResolvedValue([metadata]);
+        host.getTracePage.mockImplementation(async (_captureId, query) => committed
+            ? { events: all.slice(query.after ?? 0, (query.after ?? 0) + 500), liveEvents: all.slice(-500),
+                through: 607, nextAfter: query.after ? 607 : 500, hasMore: !query.after,
+                run: { ...metadata, lastCommittedSeq: 607 }, availability: 'available' }
+            : { events: [], liveEvents: all.slice(-500), through: 0, nextAfter: 0, hasMore: false,
+                run: metadata, availability: 'partial', reason: 'persistence_pending' });
+        const renderer = new PanelRenderer(host); await renderer.settle();
+        expect(JSON.stringify(renderer.tree)).toContain('Recorded activity is still being saved');
+        expect(JSON.stringify(renderer.tree)).not.toContain('All recorded metadata loaded');
+        expect(elements(renderer.tree).find(node => node.props.model)?.props.model?.nodes.size).toBe(500);
+        elements(renderer.tree).find(node => node.type === 'input' && node.props['aria-label'])?.props.onChange?.({ target: { value: 'Early prefix' } });
+        renderer.render(); await renderer.settle();
+        expect(JSON.stringify(renderer.tree)).toContain('Search range is still loading');
+        committed = true; notify(); jest.advanceTimersByTime(100); renderer.render(); await renderer.settle();
+        expect(host.getTracePage).toHaveBeenCalledWith('new-run', expect.objectContaining({ after: 0, through: undefined }));
+        expect(host.getTracePage).toHaveBeenCalledWith('new-run', expect.objectContaining({ after: 500, through: 607 }));
+        expect(elements(renderer.tree).find(node => node.props.model)?.props.model?.nodes.size).toBe(607);
+        expect(elements(renderer.tree).find(node => node.props.model)?.props.rows?.map(row => row.id)).toEqual(['node-1']);
+        expect(JSON.stringify(renderer.tree)).toContain('All recorded metadata loaded');
+        expect(JSON.stringify(renderer.tree)).not.toContain('Recorded activity is still being saved');
+        renderer.unmount();
+    });
+
+    it('finds the recorded tool name after a later observation relabels its node and clears the index on invalidation', async () => {
+        const { host, notify } = fixture();
+        host.getTracePage.mockResolvedValue({ events: [event({ nodeId: 'turn', nodeKind: 'turn' }),
+            event({ seq: 2, nodeId: 'tool', parentId: 'turn', kind: 'tool_end', label: 'B167_LONG_TOOL', status: 'completed' }),
+            event({ seq: 3, nodeId: 'tool', parentId: 'turn', kind: 'tool_observation', label: 'tool_observation' })],
+            liveEvents: [], through: 3, nextAfter: 3, hasMore: false, run: run('new-run', 200), availability: 'available' });
+        const renderer = new PanelRenderer(host); await renderer.settle();
+        const bodyReads = host.getContents.mock.calls.length;
+        elements(renderer.tree).find(node => node.type === 'input' && node.props['aria-label'])?.props.onChange?.({ target: { value: 'B167_LONG_TOOL' } });
+        renderer.render(); await renderer.settle();
+        expect(elements(renderer.tree).find(node => node.props.model)?.props.rows?.map(row => row.id)).toEqual(['turn', 'tool']);
+        expect(host.getContents).toHaveBeenCalledTimes(bodyReads);
+        notify(true); renderer.render(); await renderer.settle();
+        expect(elements(renderer.tree).find(node => node.props.model)?.props.model?.nodes.size).toBe(0);
+        expect(renderer.snapshot()).not.toContain('B167_LONG_TOOL');
+        renderer.unmount();
     });
 });

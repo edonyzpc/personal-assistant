@@ -10155,12 +10155,12 @@ body.is-mobile .pa-chat-view .pa-chat-image-task-card__header-controls button.me
     border-radius: 12px;
 }
 
-/* Agent Debug: local, text-only diagnostics. Keep the trace above its details. */
+/* Agent Debug: local trace explorer, sized to its actual Obsidian leaf. */
 .pa-chat-view .pa-chat-debug-button[hidden] { display: none; }
 .pa-agent-debug-view {
-    max-width: 1080px;
-    margin-inline: auto;
-    padding: 16px;
+    width: 100%;
+    height: 100%;
+    padding: 12px;
     color: var(--text-normal);
     overflow-wrap: anywhere;
     container-type: inline-size;
@@ -10245,3 +10245,78 @@ body.is-mobile .pa-agent-debug-view summary { min-height: 44px; }
     .pa-agent-debug-facts { grid-template-columns: minmax(80px, 110px) minmax(0, 1fr); }
     .pa-agent-debug-branches { grid-template-columns: minmax(0, 1fr); margin-inline-start: 4px; padding-inline-start: 8px; }
 }
+
+.pa-agent-debug-view,
+.pa-agent-debug-view * { box-sizing: border-box; }
+.pa-agent-debug-content { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 6px; }
+/* Floating mobile navigation overlays the leaf; its safe-area offset is already reserved by Obsidian. */
+body.is-mobile.is-floating-nav .pa-agent-debug-content { padding-bottom: calc(var(--navbar-height, 52px) + 8px); }
+.pa-agent-debug-header { flex-shrink: 0; }
+.pa-agent-debug-header h2 { font-size: var(--font-ui-large); }
+.pa-agent-debug-storage { color: var(--text-muted); font-size: var(--font-ui-smaller); flex-shrink: 0; }
+.pa-agent-debug-storage p { margin: 4px 0; }
+.pa-agent-debug-summary { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--font-ui-small); flex-shrink: 0; }
+.pa-agent-debug-summary p { margin: 3px 0; width: 100%; }
+.pa-agent-debug-history { max-height: 35%; overflow: auto; border: 1px solid var(--background-modifier-border); padding: 6px; }
+.pa-agent-debug-workspace { display: grid; flex: 1; min-height: 0; min-width: 0; overflow: hidden; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); }
+.pa-agent-debug-track-pane,
+.pa-agent-debug-inspector-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+.pa-agent-debug-view [hidden] { display: none !important; }
+.pa-agent-debug-trace-tools { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; border-bottom: 1px solid var(--background-modifier-border); flex-shrink: 0; }
+.pa-agent-debug-trace-tools input { min-width: 100px; flex: 1; width: 100%; }
+.pa-agent-debug-load-state { display: flex; flex-wrap: wrap; gap: 4px 8px; padding: 4px 8px; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.pa-agent-debug-trace-scroll,
+.pa-agent-debug-inspector-scroll { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; flex: 1; min-height: 0; padding: 4px; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+.pa-agent-debug-inspector-scroll { padding: 12px; }
+.pa-agent-debug-time-axis { display: grid; grid-template-columns: minmax(0, 1fr) 34%; gap: 8px; padding: 6px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.pa-agent-debug-trace { display: flex; flex-direction: column; gap: 1px; margin: 0; }
+.pa-agent-debug-trace-row { display: grid; grid-template-columns: minmax(0, 1fr) 34%; align-items: center; border-bottom: 1px solid var(--background-modifier-border); min-height: 50px; gap: 4px; }
+.pa-agent-debug-row-main { display: flex; align-items: stretch; min-width: 0; padding-inline-start: calc(var(--pa-debug-depth) * 12px); }
+.pa-agent-debug-collapse,
+.pa-agent-debug-collapse-space { flex: 0 0 44px; min-width: 44px; width: 44px; min-height: 44px; }
+.pa-agent-debug-collapse { padding: 0; border: 0; box-shadow: none; background: transparent; font-size: 18px; }
+.pa-agent-debug-node { border: 0; min-height: 44px; flex: 1; min-width: 0; padding: 6px; justify-content: center; }
+.pa-agent-debug-node-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pa-agent-debug-kind { font-size: var(--font-ui-smaller); color: var(--text-muted); margin-inline-end: 6px; font-weight: normal; }
+.pa-agent-debug-node-state,
+.pa-agent-debug-anomalies,
+.pa-agent-debug-match-label { font-size: var(--font-ui-smaller); }
+.pa-agent-debug-node-state { color: var(--text-muted); }
+.pa-agent-debug-anomalies { color: var(--text-warning); }
+.pa-agent-debug-match-label { color: var(--interactive-accent); }
+.pa-agent-debug-trace-row.is-match { background: var(--background-modifier-hover); }
+.pa-agent-debug-timeline { position: relative; height: 16px; margin-inline: 3px 8px; background: var(--background-secondary); border-radius: 3px; overflow: hidden; }
+.pa-agent-debug-time-bar { position: absolute; height: 8px; top: 4px; background: var(--interactive-accent); border-radius: 3px; }
+.pa-agent-debug-time-bar.is-running { opacity: 0.65; border-inline-end: 2px solid var(--text-normal); }
+.pa-agent-debug-splitter { cursor: col-resize; background: var(--background-secondary); touch-action: none; }
+.pa-agent-debug-splitter:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+.pa-agent-debug-bottom-bar { display: flex; justify-content: space-between; align-items: center; gap: 4px; flex-shrink: 0; padding: 4px 6px; padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--background-modifier-border); background: var(--background-primary); font-size: var(--font-ui-smaller); }
+.pa-agent-debug-bottom-bar button { min-height: 44px; }
+.pa-agent-debug-details h3 { margin-top: 0; }
+.pa-agent-debug-facts dd { min-width: 0; overflow-wrap: anywhere; }
+.pa-agent-debug-details pre { max-height: none; margin-block: 8px; }
+.pa-agent-debug-detail-header { display: flex; align-items: center; gap: 6px; padding: 4px; flex-shrink: 0; border-bottom: 1px solid var(--background-modifier-border); }
+.pa-agent-debug-detail-header span { flex: 1; min-width: 0; font-weight: var(--font-semibold); }
+.pa-agent-debug-dialog { color: var(--text-normal); background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); width: min(560px, calc(100% - 24px)); max-height: calc(100% - 40px); padding: 12px; overflow: hidden; }
+.pa-agent-debug-dialog[open] { display: flex; flex-direction: column; }
+.pa-agent-debug-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.pa-agent-debug-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0; }
+.pa-agent-debug-dialog h3 { margin: 4px 0; }
+.pa-agent-debug-dialog-content { overflow: auto; padding-block: 6px calc(16px + env(safe-area-inset-bottom, 0px)); min-height: 0; }
+.pa-agent-debug-dialog .pa-agent-debug-runs { max-height: none; }
+.pa-agent-debug-dialog button,
+.pa-agent-debug-dialog select { min-height: 44px; }
+.pa-agent-debug-view.is-narrow { padding: 6px; }
+.pa-agent-debug-view.is-narrow .pa-agent-debug-workspace { grid-template-columns: minmax(0, 1fr); }
+.pa-agent-debug-view.is-narrow .pa-agent-debug-trace-row { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.pa-agent-debug-view.is-narrow .pa-agent-debug-timeline { margin: 0 8px 6px calc(52px + var(--pa-debug-depth) * 8px); height: 10px; }
+.pa-agent-debug-view.is-narrow .pa-agent-debug-time-bar { height: 6px; top: 2px; }
+.pa-agent-debug-view.is-narrow .pa-agent-debug-row-main { padding-inline-start: calc(var(--pa-debug-depth) * 8px); }
+.pa-agent-debug-view.is-narrow button,
+.pa-agent-debug-view.is-narrow select,
+.pa-agent-debug-view.is-narrow summary { min-height: 44px; }
+.pa-agent-debug-view.is-narrow .pa-agent-debug-header > span { flex-basis: 100%; order: 2; }
+.pa-agent-debug-view.is-narrow .pa-agent-debug-header h2 { flex: 1 0 auto; white-space: nowrap; }
+.pa-agent-debug-view.is-detail-page .pa-agent-debug-storage,
+.pa-agent-debug-view.is-detail-page .pa-agent-debug-summary { display: none; }
+.pa-agent-debug-view.is-narrow .pa-agent-debug-facts { grid-template-columns: minmax(75px, 95px) minmax(0, 1fr); }

@@ -1,7 +1,10 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { RunnableLambda } from "@langchain/core/runnables";
 import type { AgentDebugCallScope, AgentDebugObservation, AgentDebugRunRecorder } from "../src/ai-services/agent-debug-port";
-import { agentDebugError, observeAgentDebugCall, observeAgentDebugLifecycle, observeAgentDebugPhase, observeAgentDebugResponse, readAgentDebugUsage } from "../src/ai-services/agent-debug-observation";
+import { agentDebugError, createAgentDebugCall, observeAgentDebugCall, observeAgentDebugLifecycle, observeAgentDebugPhase, observeAgentDebugResponse, observeAgentDebugToolResult, readAgentDebugUsage } from "../src/ai-services/agent-debug-observation";
+import { createAgentDebugLog, createAgentEventDebugObserver, traceAgentPhase, type AgentDebugFields } from "../src/ai-services/pa-agent-debug";
+import { PaAgentLoop } from "../src/ai-services/pa-agent-loop";
+import { createPaAgentHostPolicy } from "../src/ai-services/pa-agent-host-policy";
 import { PaAgentRunUsageLedger } from '../src/ai-services/agent-usage-ledger';
 import { traceProviderDispatch } from "../src/ai-services/obsidian-fetch";
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
@@ -23,6 +26,164 @@ function capture(enabled: () => boolean = () => true) {
 }
 
 describe("Chat scoped Debug observation", () => {
+    it('pairs repeated and concurrent real phases by their execution identity', async () => {
+        const { events, recorder } = capture();
+        const log = createAgentDebugLog(() => true,
+            (_message, fields) => observeAgentDebugPhase(recorder, String(fields.phase), fields), {});
+        let finishFirst!: () => void;
+        let finishSecond!: () => void;
+        const first = traceAgentPhase(log, 'prepare', () => new Promise<void>(resolve => { finishFirst = resolve; }), { turnId: 'turn' });
+        const second = traceAgentPhase(log, 'prepare', () => new Promise<void>(resolve => { finishSecond = resolve; }), { turnId: 'turn' });
+        finishSecond(); await second;
+        finishFirst(); await first;
+        await traceAgentPhase(log, 'prepare', () => undefined, { turnId: 'turn' });
+        expect(events.map(event => event.boundary)).toEqual(['start', 'start', 'end', 'end', 'start', 'end']);
+        expect(events[0].nodeId).toBe(events[3].nodeId);
+        expect(events[1].nodeId).toBe(events[2].nodeId);
+        expect(events[4].nodeId).toBe(events[5].nodeId);
+        expect(new Set(events.map(event => event.nodeId)).size).toBe(3);
+        log('recovery', { turnId: 'turn' }); log('recovery', { turnId: 'turn' });
+        expect(events.slice(-2).every(event => event.boundary === 'instant')).toBe(true);
+        expect(events.at(-1)?.nodeId).not.toBe(events.at(-2)?.nodeId);
+    });
+
+    it('records an aborted real preparation phase as cancelled', async () => {
+        const { recorder, events } = capture();
+        const log = createAgentDebugLog(() => true,
+            (_message, fields) => observeAgentDebugPhase(recorder, String(fields.phase), fields), {});
+        const error = Object.assign(new Error('cancelled preparation'), { name: 'AbortError' });
+        await expect(traceAgentPhase(log, 'host_context', () => { throw error; })).rejects.toBe(error);
+        expect(events.map(event => event.boundary)).toEqual(['start', 'end']);
+        expect(events[0].nodeId).toBe(events[1].nodeId);
+        expect(events[1].status).toBe('cancelled');
+    });
+
+    it.each(['completed', 'failed', 'cancelled'] as const)(
+        'measures actual model waiting separately from preparation when the model is %s', async outcome => {
+            const { recorder, events } = capture();
+            let monotonic = 0;
+            let businessClock = 1000;
+            const monotonicClock = jest.spyOn(performance, 'now').mockImplementation(() => monotonic);
+            const abort = new AbortController();
+            try {
+                const log = createAgentDebugLog(() => true,
+                    (_message, fields) => observeAgentDebugPhase(recorder, String(fields.phase), fields), {});
+                const result = await new PaAgentLoop({
+                    runId: 'timed-run', userInput: 'Return the controlled result', maxTurns: 1,
+                    now: () => businessClock, signal: abort.signal,
+                    prepareModelInput: async input => {
+                        await Promise.resolve();
+                        monotonic += 100;
+                        businessClock += 100;
+                        return input;
+                    },
+                    model: { stream: async function* () {
+                        monotonic += 25;
+                        businessClock += 25;
+                        if (outcome === 'failed') throw new Error('controlled model failure');
+                        if (outcome === 'cancelled') {
+                            abort.abort();
+                            return;
+                        }
+                        yield { type: 'text_delta', text: 'Controlled result.' } as const;
+                        yield { type: 'provider_completion', completion: 'stop' } as const;
+                    } },
+                    onDebug: log,
+                }).run();
+                const waiting = events.filter(event => event.phase.startsWith('model_wait:'));
+                expect(waiting.map(event => event.boundary)).toEqual(['start', 'end']);
+                expect(waiting[0].nodeId).toBe(waiting[1].nodeId);
+                expect(waiting[1]).toMatchObject({ durationMs: 25, status: outcome });
+                // The existing business metric includes request preparation.
+                expect(result.turns[0].timing.modelElapsedMs).toBe(125);
+            } finally {
+                monotonicClock.mockRestore();
+            }
+        });
+
+    it('observes a multi-turn parallel-tool loop once through the lifecycle and console chain', async () => {
+        const { events, recorder } = capture();
+        const consoleLog = jest.fn<(message: string, fields: AgentDebugFields) => void>();
+        const log = createAgentDebugLog(() => true, (message, fields) => {
+            observeAgentDebugPhase(recorder, String(fields.phase), fields);
+            consoleLog(message, fields);
+        }, {});
+        const logLifecycle = createAgentEventDebugObserver(log);
+        let modelTurns = 0;
+        const result = await new PaAgentLoop({
+            runId: 'observed-run', userInput: 'Read both notes', maxTurns: 2, toolExecutionMode: 'hybrid',
+            hostPolicy: createPaAgentHostPolicy(),
+            prepareModelInput: input => input,
+            model: { stream: async function* () {
+                if (++modelTurns === 1) {
+                    yield { type: 'toolcall_delta', id: 'a', name: 'read_note', input: { path: 'a.md' }, index: 0 } as const;
+                    yield { type: 'toolcall_delta', id: 'b', name: 'read_note', input: { path: 'b.md' }, index: 1 } as const;
+                    yield { type: 'provider_completion', completion: 'tool_calls' } as const;
+                } else {
+                    yield { type: 'text_delta', text: 'Both notes read.' } as const;
+                    yield { type: 'provider_completion', completion: 'stop' } as const;
+                }
+            } },
+            toolExecutor: { getRetrySafety: () => 'read_only', execute: async () => ({ outcome: 'success', promptText: 'note read' }) },
+            onDebug: log,
+            onEvent: event => { observeAgentDebugLifecycle(recorder, event); logLifecycle(event); },
+        }).run();
+        expect(result.status).toBe('completed');
+        expect(modelTurns).toBe(2);
+        const turns = events.filter(event => event.kind === 'turn');
+        expect(turns.map(event => event.boundary)).toEqual(['start', 'end', 'start', 'end']);
+        expect(new Set(turns.map(event => event.nodeId)).size).toBe(2);
+        expect(events.filter(event => event.kind === 'tool' && event.boundary === 'start')).toHaveLength(2);
+        expect(events.filter(event => event.kind === 'tool' && event.boundary === 'end')).toHaveLength(2);
+        expect(events.filter(event => event.kind === 'phase').some(event =>
+            ['agent_start', 'agent_end', 'turn_start', 'turn_end', 'message_end', 'tool_execution_start', 'tool_execution_end'].includes(event.phase))).toBe(false);
+        expect(consoleLog.mock.calls.some(([, fields]) => fields.phase === 'turn_start')).toBe(true);
+        for (const phase of ['loop_input_prepare', 'model_wait']) {
+            const phases = events.filter(event => event.phase.startsWith(`${phase}:`));
+            expect(phases.map(event => event.boundary)).toEqual(['start', 'end', 'start', 'end']);
+            expect(phases[0].nodeId).toBe(phases[1].nodeId);
+            expect(phases[2].nodeId).toBe(phases[3].nodeId);
+            expect(phases[0].nodeId).not.toBe(phases[2].nodeId);
+        }
+    });
+
+    it('retains executed tool results separately from the text presented to the model', () => {
+        const { recorder, events } = capture();
+        observeAgentDebugToolResult(recorder, { turnId: 'turn', toolCallId: 'call', toolName: 'read_note',
+            result: { data: 'complete result' }, toolInput: { path: 'a.md' } });
+        observeAgentDebugLifecycle(recorder, { version: 2, runId: 'run', turnId: 'turn', scope: 'turn', timestamp: 1, seq: 3,
+            type: 'message_end', message: { role: 'toolResult', id: 'result', timestamp: 1, toolCallId: 'call',
+                toolName: 'read_note', isError: false, content: { promptText: 'trimmed observation', includeInNextPrompt: true } } });
+        expect(events.map(event => event.contentRole)).toEqual(['actual_tool_result', 'model_tool_observation']);
+        expect(events[0].nodeId).toBe(events[1].nodeId);
+        expect(events.map(event => event.toolOutput)).toEqual([{ data: 'complete result' }, 'trimmed observation']);
+        expect(events.every(event => event.boundary === 'update')).toBe(true);
+    });
+
+    it('does not reopen a terminal call when content or usage arrives later', () => {
+        const { recorder, events } = capture();
+        const call = createAgentDebugCall(recorder, { callId: 'call', parentId: 'turn', turnId: 'turn', purpose: 'answer' });
+        observeAgentDebugCall(call, { phase: 'consumer_end', status: 'completed' });
+        observeAgentDebugResponse(call, { content: 'late content', usage_metadata: { input_tokens: 2, output_tokens: 1 } });
+        expect(events[0]).toMatchObject({ boundary: 'start', status: 'running' });
+        expect(events[1]).toMatchObject({ boundary: 'end', status: 'completed' });
+        expect(events[2]).toMatchObject({ boundary: 'update', text: 'late content', usage: { totalTokens: 3 } });
+        expect(events[2].status).toBeUndefined();
+    });
+
+    it.each(['native', 'obsidian'] as const)('keeps %s HTTP console events out of phase nodes while preserving actual attempts', async transport => {
+        const { recorder, call, events } = capture();
+        const log = createAgentDebugLog(() => true,
+            (_message, fields) => observeAgentDebugPhase(recorder, String(fields.phase), fields), {});
+        await traceProviderDispatch(() => Promise.resolve({ status: 200 }), transport,
+            event => log(event.phase, { ...event, observationSource: 'transport' }), '{"messages":[]}', () => true, { call });
+        observeAgentDebugCall(call, { phase: 'consumer_end', status: 'completed' });
+        const attempts = events.filter(event => event.kind === 'attempt');
+        expect(attempts.map(event => event.boundary)).toEqual(['start', transport === 'obsidian' ? 'end' : 'update']);
+        expect(new Set(attempts.map(event => event.nodeId)).size).toBe(1);
+        expect(events.some(event => event.kind === 'phase')).toBe(false);
+    });
+
     it('keeps major phase duration without persisting detailed per-source probes', () => {
         const { events, recorder } = capture();
         observeAgentDebugPhase(recorder, 'provider_source_prepare:end', { turnId: 'turn', durationMs: 137512,

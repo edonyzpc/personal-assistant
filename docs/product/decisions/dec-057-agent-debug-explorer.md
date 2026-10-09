@@ -2,15 +2,15 @@
 
 Decision ID: DEC-057
 Status: Accepted
-Updated: 2026-10-09
-Authority: Owner 在本次会话确认桌面与移动 HTML 预览符合预期，并明确“接受推荐的组合聚焦展开＋节点定位搜索”，要求编写方案与 SDD 开发测试任务；本次授权到文档，不包含产品代码实施。
+Updated: 2026-10-10
+Authority: Owner 先确认桌面与移动 HTML 预览及“聚焦展开＋节点定位搜索”组合；2026-10-09 明确授权 B-167 全部开发测试，2026-10-10 明确授权 closeout 与本地 master 提交。最终验收见历史证据，当前行为由 Spec 与 Architecture 持有；未授权远程推送或 release。
 Work item: B-167
 
 ## Context
 
 Owner 无法在当前 Debug 中方便地看到所有 Turns/stages；节点与详情上下分布、执行方块的表达也不便于理解全过程。希望达到 AgentPrism 示例的浏览体验，但明确不强制复用 LangChain 生态。
 
-源码基线 `1ff0c648` 中，`AgentDebugPanel` 以 200 条事件窗口投影当前树，翻页替换事件；轨迹在详情上方，子节点以网格卡片排列。现有本地历史与观察端口可以复用，但只改 CSS 不能满足完整 Run 浏览。当前实现事实见 [Debug architecture](../../architecture/pa-agent-debug-view.md)，设计依据见 [SDD](../../development/active/agent-debug-explorer/sdd.md)。
+源码基线 `1ff0c648` 中，`AgentDebugPanel` 以 200 条事件窗口投影当前树，翻页替换事件；轨迹在详情上方，子节点以网格卡片排列。现有本地历史与观察端口可以复用，但只改 CSS 不能满足完整 Run 浏览。最终实现与设计已吸收到 [Debug architecture](../../architecture/pa-agent-debug-view.md)，验收依据见 [B-167 最终验证](../../archive/2026/b167-agent-debug-explorer-validation.md)。
 
 ## Options Considered
 
@@ -35,7 +35,7 @@ Owner 无法在当前 Debug 中方便地看到所有 Turns/stages；节点与详
 - Product behavior: 本决定接续 DEC-041 的上下布局、网格执行方块及事件窗口导航目标；具体行为由 [B-167 Product Spec](../specs/pa-agent-debug-explorer-product-spec.md) 持有。
 - Architecture / data / safety: 保留 [DEC-055](./dec-055-agent-snapshot-execution-and-debug-history.md) 的完整文本本地历史、实际 provider reasoning、工具 IO、凭据过滤、媒体仅引用，以及既有容量/期限/显式清理规则；不增加请求、重放、上传或同步。
 - Compatibility / migration: 旧记录可读，未知时间/类型/未采集内容如实显示；不回填历史，不清空数据库来升级 UI。Agent 结果、采集完整性、内容可用性分开。
-- Work created: B-167 的产品规格、SDD 与 Tracker；当前 Architecture 继续描述已实现行为，不以新设计替换事实。无强制第三方组件引入，无产品代码修改授权。
+- Work disposition: B-167 稳定行为和设计已吸收到当前 Product Spec/Architecture/源码/tests；独有验证证据紧凑保留。Feature Home/SDD/Tracker 在 closeout 后删除，不保留完整过程包；无强制第三方组件引入。
 
 ## Revisit Trigger
 
@@ -44,7 +44,7 @@ Owner 无法在当前 Debug 中方便地看到所有 Turns/stages；节点与详
 ## Traceability
 
 - Product Spec: [Agent Debug Explorer](../specs/pa-agent-debug-explorer-product-spec.md)
-- Architecture / SDD: [current architecture](../../architecture/pa-agent-debug-view.md)、[proposed SDD](../../development/active/agent-debug-explorer/sdd.md)
-- Execution: [Tracker](../../development/active/agent-debug-explorer/tracker.md)
+- Architecture: [current architecture](../../architecture/pa-agent-debug-view.md)
+- Historical validation: [B-167 最终验证](../../archive/2026/b167-agent-debug-explorer-validation.md)
 - Supersedes: [DEC-041](./dec-041-agent-debug-view-and-local-history.md) 的查看布局与导航条款；其余有效约束及 DEC-055 保持。
 - Reference: [AgentPrism repository](https://github.com/evilmartians/agent-prism)、[demo](https://agent-prism.evilmartians.io/)；外部示例提供设计输入，不提供 PA 产品或实现授权。

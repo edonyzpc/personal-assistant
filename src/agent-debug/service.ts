@@ -1,11 +1,12 @@
 import type { AgentDebugNodeStatus, AgentDebugObservation, AgentDebugPort, AgentDebugRunRecorder, AgentDebugUsage } from '../ai-services/agent-debug-port';
+import { agentDebugNow } from '../ai-services/agent-debug-observation';
 import { getOptionalPlatformWindow, setPlatformTimeout, clearPlatformTimeout, type PlatformTimeoutHandle } from '../platform-dom';
 import { AgentDebugCollector } from './collector';
 import { AgentDebugStore, type AgentDebugStoreOptions } from './store';
 import { cloneDebugLineage, debugBlockKey, filterDebugText, projectDebugAttachments, projectDebugRequest, projectDebugSession, splitDebugText, utf8Bytes } from './projection';
 import { DEBUG_DOMAINS, DEFAULT_DEBUG_BUDGETS, type DebugBatch, type DebugBudgets, type DebugContent,
     type DebugDomain, type DebugEvent, type DebugEventQuery, type DebugGeneration, type DebugLineage, type DebugRun, type DebugRunQuery,
-    type DebugSessionDetail, type DebugStoreStatus, type DebugUsage } from './types';
+    type DebugSessionDetail, type DebugStoreStatus, type DebugTracePage, type DebugTraceQuery, type DebugUsage } from './types';
 
 interface RunState {
     run: DebugRun;
@@ -19,6 +20,9 @@ interface RunState {
     calls: Set<string>;
     dispatchedAt: Map<string, number>;
     unknownAttemptCost: boolean;
+    startedMonotonic: number;
+    discardedThrough: number;
+    textCommitted: boolean;
     retired?: boolean;
     finished?: boolean;
 }
@@ -28,6 +32,8 @@ export interface AgentDebugServiceOptions extends AgentDebugStoreOptions {
     store?: AgentDebugStore;
     /** Bootstrap adapters finish explicit deletion and Forget reconciliation before opening content. */
     recoveryReady?: boolean;
+    /** Same monotonic clock as the observation/transport adapter. */
+    monotonicNow?: () => number;
 }
 
 export class AgentDebugService implements AgentDebugPort {
@@ -43,6 +49,7 @@ export class AgentDebugService implements AgentDebugPort {
     private readonly pendingCleanups = new Set<string>();
     private visibilityEpoch = 0;
     private readonly now: () => number;
+    private readonly monotonicNow: () => number;
     private generation: DebugGeneration = { generation: 0, domains: {}, quarantined: false };
     private recoveryReady: boolean;
     private available = false;
@@ -64,6 +71,7 @@ export class AgentDebugService implements AgentDebugPort {
         this.budgets = { ...DEFAULT_DEBUG_BUDGETS, ...options.budgets };
         this.collector = new AgentDebugCollector(this.budgets);
         this.now = options.now ?? Date.now;
+        this.monotonicNow = options.monotonicNow ?? agentDebugNow;
         this.recoveryReady = options.recoveryReady ?? false;
         this.lastEnabled = options.enabled();
         const Channel = (getOptionalPlatformWindow() as (Window & { BroadcastChannel?: typeof BroadcastChannel }) | undefined)?.BroadcastChannel;
@@ -132,6 +140,7 @@ export class AgentDebugService implements AgentDebugPort {
     }
 
     setRecoveryReady(ready: boolean): void {
+        if (!ready) this.visibilityEpoch++;
         this.recoveryReady = ready;
         this.notify(!ready);
     }
@@ -146,6 +155,8 @@ export class AgentDebugService implements AgentDebugPort {
                 eventCount: 0, accountedBytes: 0, lastCommittedSeq: 0, hasGap: !this.enabled(), contentVersion: 2 },
             generation: this.cloneGeneration(), seq: 0, segment: 0, contentAllowed: true,
             text: new Map(), events: [], usage: new Map(), calls: new Set(), dispatchedAt: new Map(), unknownAttemptCost: false,
+            startedMonotonic: this.monotonicNow(),
+            discardedThrough: 0, textCommitted: false,
         };
         if (this.states.size >= 128) {
             const oldest = [...this.states.entries()].find(([, candidate]) => candidate.finished);
@@ -155,7 +166,7 @@ export class AgentDebugService implements AgentDebugPort {
         this.states.set(captureId, state);
         // Lazy initialization is best effort and is never awaited by Agent execution.
         void this.initialize();
-        if (this.enabled()) this.observe(state, { nodeId: captureId, kind: 'run', phase: 'received', status: 'queued',
+        if (this.enabled()) this.observe(state, { nodeId: captureId, kind: 'run', phase: 'received', boundary: 'start', status: 'queued',
             text: input.prompt, lineage: { domains: ['chat_history'], unknown: false } });
         return {
             captureId,
@@ -169,7 +180,7 @@ export class AgentDebugService implements AgentDebugPort {
                 state.run.status = this.runStatus(status); state.run.endedAt = this.now();
                 state.run.expiresAt = state.run.endedAt + this.budgets.retentionMs;
                 state.run.collection = state.run.hasGap ? 'partial' : 'complete';
-                this.observe(state, { nodeId: captureId, kind: 'run', phase: 'finished', status, error });
+                this.observe(state, { nodeId: captureId, kind: 'run', phase: 'finished', boundary: 'end', status, error });
                 this.collector.enqueueMetadata({ run: { ...state.run }, events: [], contents: [], generation: state.generation });
                 void this.flush();
             },
@@ -190,6 +201,7 @@ export class AgentDebugService implements AgentDebugPort {
             if (state.retired || !this.enabled() || this.blockedConversations.has(state.run.conversationId ?? '')) return;
             if (state.seq >= this.budgets.runEvents) { state.run.hasGap = true; return; }
             const timestamp = this.now();
+            const elapsedMs = this.monotonicNow() - state.startedMonotonic;
             state.run.updatedAt = timestamp;
             if (observation.runtimeRunId) state.run.runtimeRunId = observation.runtimeRunId;
             if (observation.purpose === 'answer' && observation.provider) state.run.provider = observation.provider;
@@ -198,8 +210,14 @@ export class AgentDebugService implements AgentDebugPort {
                 seq: ++state.seq, segment: state.segment, nodeId: observation.nodeId, parentId: observation.parentId,
                 turnId: observation.turnId, callId: observation.callId, attemptId: observation.attemptId,
                 toolCallId: observation.toolCallId, timestamp, kind: observation.phase, status: observation.status,
-                label: observation.toolName ?? observation.purpose ?? observation.phase, contentIds: [],
+                nodeKind: observation.kind, boundary: observation.boundary, contentRole: observation.contentRole,
+                elapsedMs: Number.isFinite(elapsedMs) && elapsedMs >= 0 ? elapsedMs : undefined,
+                label: filterDebugText(observation.toolName ?? observation.purpose ?? observation.phase).slice(0, 512), contentIds: [],
                 durationMs: observation.durationMs };
+            if (observation.error && state.contentAllowed && this.recoveryReady && !this.pendingCleanups.size) {
+                event.errorSummary = filterDebugText([observation.error.name, observation.error.message]
+                    .filter(value => typeof value === 'string').join(': ')).slice(0, 512) || undefined;
+            }
             const details: NonNullable<DebugEvent['details']> = {};
             if (observation.purpose) details.purpose = observation.purpose;
             if (observation.provider) details.provider = filterDebugText(observation.provider).slice(0, 128);
@@ -208,8 +226,12 @@ export class AgentDebugService implements AgentDebugPort {
             if (observation.outcome) details.outcome = filterDebugText(observation.outcome).slice(0, 256);
             if (observation.missingReason) details.missingReason = filterDebugText(observation.missingReason).slice(0, 256);
             if (observation.timing) {
-                details.timing = observation.timing.event; details.at = observation.timing.at;
-                details[`timing.${observation.timing.event}`] = observation.timing.at;
+                const relativeAt = observation.timing.at - state.startedMonotonic;
+                details.timing = observation.timing.event;
+                if (Number.isFinite(relativeAt) && relativeAt >= 0) {
+                    details.at = relativeAt;
+                    details[`timing.${observation.timing.event}`] = relativeAt;
+                }
                 if (observation.timing.event === 'dispatch') state.dispatchedAt.set(observation.nodeId, observation.timing.at);
                 const dispatch = state.dispatchedAt.get(observation.nodeId);
                 if (observation.timing.event === 'consumer_end' && dispatch !== undefined && observation.timing.at >= dispatch) {
@@ -264,7 +286,8 @@ export class AgentDebugService implements AgentDebugPort {
                     const contentId = reusableSlot === undefined ? `${observation.nodeId}:${kind}:${state.segment}:${event.seq}:${index}`
                         : `prompt:${state.segment}:${reusableSlot}:${index}:${debugBlockKey(part)}`;
                     contents.push({ vaultKey: this.options.vaultKey, captureId: state.run.captureId, contentId,
-                        kind, text: part, redactions, lineage: contentLineage, generation: state.generation.generation,
+                        kind, contentRole: kind === 'tool_output' ? observation.contentRole : undefined,
+                        text: part, redactions, lineage: contentLineage, generation: state.generation.generation,
                         domainGenerations: { ...state.generation.domains }, accountedBytes: bytes });
                     event.contentIds.push(contentId); state.run.accountedBytes += bytes;
                 });
@@ -297,7 +320,11 @@ export class AgentDebugService implements AgentDebugPort {
                 else { event.availability = projected.reason === 'capacity' ? 'capacity' : 'unavailable'; state.run.hasGap = true; }
             }
             state.events.push(event);
-            if (state.events.length > 500) state.events.splice(0, state.events.length - 500);
+            if (state.events.length > 500) {
+                const count = state.events.length - 500;
+                state.discardedThrough = state.events[count - 1].seq;
+                state.events.splice(0, count);
+            }
             state.run.eventCount = state.seq;
             const batch: DebugBatch = { run: { ...state.run }, events: [event], contents, generation: state.generation };
             if (!this.collector.enqueue(batch)) {
@@ -350,8 +377,11 @@ export class AgentDebugService implements AgentDebugPort {
 
     recordTextCommitted(runtimeRunId: string): void {
         const state = [...this.states.values()].find(candidate => candidate.run.runtimeRunId === runtimeRunId);
-        if (!state || state.events.some(event => event.kind === 'first_chat_text_committed')) return;
-        this.observe(state, { nodeId: state.run.captureId, kind: 'phase', phase: 'first_chat_text_committed', status: 'completed' });
+        if (!state || state.textCommitted) return;
+        const nodeId = `${state.run.captureId}:first-chat-text-committed`;
+        this.observe(state, { nodeId, parentId: state.run.captureId, kind: 'phase', phase: 'first_chat_text_committed',
+            boundary: 'instant', status: 'completed' });
+        if (state.events.some(event => event.nodeId === nodeId)) state.textCommitted = true;
     }
 
     private scheduleFlush(): void {
@@ -408,13 +438,54 @@ export class AgentDebugService implements AgentDebugPort {
     }
 
     async getEvents(captureId: string, query: DebugEventQuery = {}): Promise<DebugEvent[]> {
+        const epoch = this.visibilityEpoch;
         await this.initialize();
         const state = this.states.get(captureId);
         if (state && this.blockedConversations.has(state.run.conversationId ?? '')) return [];
         const stored = this.available ? await this.store.getEvents(captureId, query).catch(() => []) : [];
+        if (epoch !== this.visibilityEpoch || this.disposed || this.pendingCleanups.size
+            || state && state.run.expiresAt <= this.now()) return [];
         const events = new Map(stored.map(event => [event.seq, event]));
         for (const event of state?.events ?? []) if (event.seq > (query.after ?? -1)) events.set(event.seq, event);
         return [...events.values()].sort((left, right) => left.seq - right.seq).slice(0, query.limit ?? 200);
+    }
+
+    async getTracePage(captureId: string, query: DebugTraceQuery = {}): Promise<DebugTracePage> {
+        const empty = (availability: DebugTracePage['availability'], reason?: string): DebugTracePage => ({
+            events: [], liveEvents: [], through: 0, nextAfter: 0, hasMore: false, run: null, availability, reason,
+        });
+        const epoch = this.visibilityEpoch;
+        await this.initialize();
+        if (this.disposed || epoch !== this.visibilityEpoch || this.pendingCleanups.size) return empty('cleared');
+        if (!this.recoveryReady || this.generation.quarantined) return empty('unavailable', 'recovery_unverified');
+        const state = this.states.get(captureId);
+        if (state && (state.run.expiresAt <= this.now() || this.blockedConversations.has(state.run.conversationId ?? ''))) return empty('cleared');
+        const visible = (): boolean => !this.disposed && epoch === this.visibilityEpoch && this.recoveryReady
+            && !this.pendingCleanups.size && (!state || state.run.expiresAt > this.now()
+                && !this.blockedConversations.has(state.run.conversationId ?? ''));
+        let page: DebugTracePage;
+        if (this.available) {
+            try { page = await this.store.getTracePage(captureId, query); }
+            catch { return visible() ? empty('unavailable', 'storage_read_failed') : empty('cleared'); }
+            if (!visible() || page.run && page.run.expiresAt <= this.now()) return empty('cleared');
+            // A missing previously committed run was deleted, expired or pruned. The
+            // live tail cannot resurrect it. A not-yet-committed run has H=0.
+            if (!page.run && (!state || state.run.lastCommittedSeq > 0)) return page;
+        } else {
+            if (!visible()) return empty('cleared');
+            if (!state?.seq) return empty('unavailable', this.reason ?? 'storage_unavailable');
+            page = empty('partial', state.events[0]?.seq > 1 ? 'session_tail_incomplete' : this.reason ?? 'storage_unavailable');
+        }
+        if (!state) return page;
+        // This is an actual live-window eviction, not a gap inferred from
+        // sparse persistent sequence numbers. A later commit fills this range.
+        const persistencePending = this.available && state.discardedThrough > (page.run?.lastCommittedSeq ?? 0);
+        return { ...page, liveEvents: [...state.events],
+            run: { ...state.run, hasGap: state.run.hasGap || !!page.run?.hasGap,
+                lastCommittedSeq: page.run?.lastCommittedSeq ?? 0 },
+            availability: persistencePending ? 'partial' : page.availability === 'cleared' ? state.run.hasGap ? 'partial' : 'available'
+                : page.availability === 'available' && state.run.hasGap ? 'partial' : page.availability,
+            reason: persistencePending ? 'persistence_pending' : page.reason };
     }
 
     async getContents(captureId: string, nodeId?: string): Promise<DebugContent[]> {
@@ -424,10 +495,18 @@ export class AgentDebugService implements AgentDebugPort {
         if (state && this.blockedConversations.has(state.run.conversationId ?? '')) return [];
         await this.flush();
         if (this.available) {
-            const result = await this.store.getContents(captureId, nodeId).catch(() => []);
-            return epoch === this.visibilityEpoch && this.recoveryReady && !this.pendingCleanups.size ? result : [];
+            const visible = (): boolean => epoch === this.visibilityEpoch && !this.disposed && this.recoveryReady
+                && !this.pendingCleanups.size && (!state || state.run.expiresAt > this.now());
+            try {
+                const result = await this.store.getContents(captureId, nodeId);
+                return visible() ? result : [];
+            } catch {
+                if (!visible()) return [];
+                throw new Error('storage_read_failed');
+            }
         }
-        if (epoch !== this.visibilityEpoch || !this.recoveryReady || this.pendingCleanups.size > 0) return [];
+        if (epoch !== this.visibilityEpoch || this.disposed || !this.recoveryReady || this.pendingCleanups.size > 0
+            || state && state.run.expiresAt <= this.now()) return [];
         const ids = nodeId ? new Set(state?.events.filter(event => event.nodeId === nodeId).flatMap(event => event.contentIds)) : undefined;
         return [...this.volatileContents.values()].filter(content => content.captureId === captureId
             && (!ids || ids.has(content.contentId))).map(content => ({ ...content }));
@@ -467,7 +546,7 @@ export class AgentDebugService implements AgentDebugPort {
         this.collector.clear(); this.volatileContents.clear(); this.volatileRunBytes.clear(); this.volatileBytes = 0;
         for (const state of this.states.values()) {
             state.contentAllowed = false; state.segment++; state.text.clear();
-            state.events = state.events.map(event => ({ ...event, contentIds: [], label: undefined, details: undefined, availability: 'cleared' }));
+            state.events = state.events.map(event => ({ ...event, contentIds: [], label: undefined, details: undefined, errorSummary: undefined, availability: 'cleared' }));
             state.run.hasGap = true;
         }
         this.notify(true, broadcast);
@@ -532,6 +611,7 @@ export class AgentDebugService implements AgentDebugPort {
         for (const [id, state] of this.states) {
             if (state.finished) { state.retired = true; this.states.delete(id); continue; }
             state.events = []; state.usage.clear(); state.calls.clear(); state.dispatchedAt.clear(); state.unknownAttemptCost = false;
+            state.discardedThrough = 0;
             state.seq = 0;
             state.generation = this.cloneGeneration(); state.contentAllowed = false;
             state.run = { ...state.run, usage: undefined, eventCount: 0, accountedBytes: 0, lastCommittedSeq: 0,
