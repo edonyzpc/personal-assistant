@@ -828,6 +828,7 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
         saveSettings: jest.fn<() => Promise<void>>(async () => undefined),
         saveSettingsPermissions: jest.fn<(patch: SettingsPermissionPatch) => Promise<void>>(),
         setStatisticsSyncEnabled: jest.fn<(value: boolean) => Promise<void>>(),
+        setTagStyleEnabled: jest.fn<(value: boolean) => Promise<void>>(),
         openGraphOptions: jest.fn(() => ({ close: jest.fn() })),
         openFeaturedImageOptions: jest.fn(() => ({ close: jest.fn() })),
         setMemoryAutoAcceptPaused: jest.fn(async (_paused: boolean) => undefined),
@@ -933,6 +934,10 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
         await plugin.saveSettings();
         await plugin.statsManager.setStatisticsSyncEnabled(value);
         plugin.settings.statisticsSyncEnabled = value;
+    });
+    plugin.setTagStyleEnabled.mockImplementation(async value => {
+        await plugin.saveSettings();
+        plugin.settings.tagStyleEnabled = value;
     });
     return plugin;
 }
@@ -1242,6 +1247,36 @@ describe('PA Agent builtin WebSearch settings', () => {
 });
 
 describe('simple settings canonicalization', () => {
+    it.each([undefined, false, true, 'true', 1, null])('keeps tag styling opt-in for persisted value %p', value => {
+        expect(DEFAULT_SETTINGS.tagStyleEnabled).toBe(false);
+        expect(mergeLoadedSettings({ tagStyleEnabled: value }).tagStyleEnabled).toBe(value === true);
+    });
+
+    it.each([true, false])('synchronizes the tag toggle after a pending save succeeds=%p', async succeeds => {
+        const plugin = makePlugin();
+        let resolveSave!: () => void;
+        let rejectSave!: (reason: unknown) => void;
+        plugin.saveSettings.mockImplementationOnce(() => new Promise<void>((resolve, reject) => {
+            resolveSave = resolve;
+            rejectSave = reject;
+        }));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        const control = () => [...getMockSettingRecords()].reverse()
+            .find(row => row.name === pluginT('plugin.settings.tagAppearance.name'))!.toggles[0];
+        tab.display();
+        const saving = control().onChange!(true);
+        expect(control()).toMatchObject({ value: false, disabled: true });
+        tab.hide();
+        tab.display();
+        expect(control()).toMatchObject({ value: false, disabled: true });
+        if (succeeds) resolveSave();
+        else rejectSave(new Error('disk unavailable'));
+        await saving;
+        expect(control()).toMatchObject({ value: succeeds, disabled: false });
+        expect(plugin.setTagStyleEnabled).toHaveBeenCalledTimes(1);
+    });
+
     it.each([true, false, undefined, 'invalid'])('ignores retired switches with value %p', (value) => {
         const loaded = {
             memoryAutoCheckBeforeChat: value, skillContextEnabled: value, enabledSkillIds: [],

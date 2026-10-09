@@ -1,6 +1,161 @@
 @tailwind components;
 @tailwind utilities;
 
+/* B-166: only genuine tags marked by the enabled integration receive these variables. */
+.pa-tag-appearance[data-pa-tag-color],
+a.tag.pa-tag-appearance[data-pa-tag-color],
+.metadata-property-value[data-property-type="tags"] .multi-select-pill.pa-tag-appearance[data-pa-tag-color],
+.cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color]) {
+	--tag-color: var(--pa-tag-color);
+	--tag-color-hover: var(--pa-tag-color);
+	--tag-background: var(--pa-tag-background);
+	--tag-background-hover: var(--pa-tag-background);
+	--tag-border-width: 0px;
+	--tag-border-color: transparent;
+	--tag-border-color-hover: transparent;
+	--tag-radius: 3px;
+	--tag-corner-shape: round;
+	--tag-padding-x: 6px;
+	--tag-padding-y: 2px;
+	--tag-decoration: none;
+	--tag-decoration-hover: none;
+}
+
+.pa-tag-appearance[data-pa-tag-color="gray"],
+.cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="gray"]) {
+	--pa-tag-background: #EBEDF0;
+	--pa-tag-color: #32302C;
+}
+.pa-tag-appearance[data-pa-tag-color="brown"],
+.cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="brown"]) {
+	--pa-tag-background: #EFE9E4;
+	--pa-tag-color: #603B2C;
+}
+.pa-tag-appearance[data-pa-tag-color="orange"],
+.cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="orange"]) {
+	--pa-tag-background: #FAEBDD;
+	--pa-tag-color: #854C1D;
+}
+.pa-tag-appearance[data-pa-tag-color="yellow"],
+.cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="yellow"]) {
+	--pa-tag-background: #FBF3DB;
+	--pa-tag-color: #89632A;
+}
+.pa-tag-appearance[data-pa-tag-color="green"],
+.cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="green"]) {
+	--pa-tag-background: #EDF3EC;
+	--pa-tag-color: #2B593F;
+}
+.pa-tag-appearance[data-pa-tag-color="blue"],
+.cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="blue"]) {
+	--pa-tag-background: #E7F3F8;
+	--pa-tag-color: #28456C;
+}
+.pa-tag-appearance[data-pa-tag-color="purple"],
+.cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="purple"]) {
+	--pa-tag-background: #F6F3F9;
+	--pa-tag-color: #5C3B89;
+}
+.pa-tag-appearance[data-pa-tag-color="pink"],
+.cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="pink"]) {
+	--pa-tag-background: #FAF1F5;
+	--pa-tag-color: #69314C;
+}
+.pa-tag-appearance[data-pa-tag-color="red"],
+.cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="red"]) {
+	--pa-tag-background: #FDEBEC;
+	--pa-tag-color: #6E3630;
+}
+
+.theme-dark .pa-tag-appearance[data-pa-tag-color="gray"],
+.theme-dark .cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="gray"]) {
+	--pa-tag-background: #303033;
+	--pa-tag-color: #DDDDDF;
+}
+.theme-dark .pa-tag-appearance[data-pa-tag-color="brown"],
+.theme-dark .cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="brown"]) {
+	--pa-tag-background: #3A302B;
+	--pa-tag-color: #D9B9A8;
+}
+.theme-dark .pa-tag-appearance[data-pa-tag-color="orange"],
+.theme-dark .cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="orange"]) {
+	--pa-tag-background: #403124;
+	--pa-tag-color: #EDBC93;
+}
+.theme-dark .pa-tag-appearance[data-pa-tag-color="yellow"],
+.theme-dark .cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="yellow"]) {
+	--pa-tag-background: #393427;
+	--pa-tag-color: #E3CB91;
+}
+.theme-dark .pa-tag-appearance[data-pa-tag-color="green"],
+.theme-dark .cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="green"]) {
+	--pa-tag-background: #2B382F;
+	--pa-tag-color: #ADD0B6;
+}
+.theme-dark .pa-tag-appearance[data-pa-tag-color="blue"],
+.theme-dark .cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="blue"]) {
+	--pa-tag-background: #293541;
+	--pa-tag-color: #A7C7E5;
+}
+.theme-dark .pa-tag-appearance[data-pa-tag-color="purple"],
+.theme-dark .cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="purple"]) {
+	--pa-tag-background: #342E40;
+	--pa-tag-color: #C6B5E3;
+}
+.theme-dark .pa-tag-appearance[data-pa-tag-color="pink"],
+.theme-dark .cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="pink"]) {
+	--pa-tag-background: #3E2C36;
+	--pa-tag-color: #E0B2C9;
+}
+.theme-dark .pa-tag-appearance[data-pa-tag-color="red"],
+.theme-dark .cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color="red"]) {
+	--pa-tag-background: #402D2D;
+	--pa-tag-color: #E2AFAA;
+}
+
+a.tag.pa-tag-appearance[data-pa-tag-color] {
+	background-color: var(--tag-background);
+	border: 0;
+	border-radius: var(--tag-radius);
+	box-shadow: none;
+	color: var(--tag-color);
+	padding: var(--tag-padding-y) var(--tag-padding-x);
+	text-decoration: none;
+}
+
+/* Marks may be nested inside native tokens; begin/end tokens keep ownership of edge padding. */
+.pa-tag-appearance[data-pa-tag-color] .cm-hashtag,
+.cm-hashtag.pa-tag-appearance[data-pa-tag-color],
+.cm-hashtag:has(> .pa-tag-appearance[data-pa-tag-color]) {
+	background-color: var(--tag-background);
+	border: 0;
+	box-shadow: none;
+	color: var(--tag-color);
+}
+
+.metadata-property-value[data-property-type="tags"] .multi-select-pill.pa-tag-appearance[data-pa-tag-color] {
+	--pill-color: var(--tag-color);
+	--pill-color-hover: var(--tag-color-hover);
+	--pill-color-remove: var(--tag-color);
+	--pill-color-remove-hover: var(--tag-color-hover);
+	--pill-background: var(--tag-background);
+	--pill-background-hover: var(--tag-background-hover);
+	--pill-border-width: 0px;
+	--pill-border-color: transparent;
+	--pill-border-color-hover: transparent;
+	--pill-radius: var(--tag-radius);
+	--pill-corner-shape: round;
+	--pill-padding-x: var(--tag-padding-x);
+	--pill-padding-y: var(--tag-padding-y);
+	--pill-decoration: none;
+	--pill-decoration-hover: none;
+	background-color: var(--pill-background);
+	border: 0;
+	border-radius: var(--pill-radius);
+	box-shadow: none;
+	color: var(--pill-color);
+}
+
 body {
 	--status-bar: #2fcc70ee;
 	--status-bar-animate: #2fcc70;

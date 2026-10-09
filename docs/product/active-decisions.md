@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-10-08
+Updated: 2026-10-09
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-056 | 默认关闭的 PA 标签外观 | 用户主动开启后完整标签名称固定九色，父子独立；保留原生交互，关闭恢复当前主题/snippets；不扩大至通用 chip 或标签导航列表 | [Decision](./decisions/dec-056-opt-in-tag-appearance.md), [Product Spec](./specs/pa-tag-appearance-product-spec.md) | 需要扩大表面、改变名称映射、默认启用或新增逐标签配置 |
 | DEC-055 | PA Agent 快照执行与完整 Debug | 当前生成及重试沿用快照，配置变化下一 loop 收起受影响旧材料；完整文本/reasoning/工具历史本地保存，媒体仅引用指纹 | [Decision](./decisions/dec-055-agent-snapshot-execution-and-debug-history.md), [Product Spec](./specs/pa-agent-snapshot-execution-product-spec.md), [Architecture](../architecture/pa-agent-architecture-plan.md#source-and-trust-boundaries), [Validation](../archive/2026/b165-agent-snapshot-execution-validation.md) | 新增媒体副本、同步、独立动作权限或紧急撤销能力 |
 | DEC-054 | Memory marker 异常优先复用本地数据 | marker/设备 ID 异常不单独触发全量重建；复用当前 scope 的兼容数据和既有 Update，不扩展一般恢复或授权 | [Decision](./decisions/dec-054-memory-marker-recovery.md), [Product Spec](./specs/pa-memory-marker-recovery-product-spec.md) | 实施发现必须改变持久化格式、维护授权或 guard 语义 |
 | DEC-053 | 精简 Ghost 同步与人工上线 | note 唯一内容源；草稿直接覆盖并在 Ghost Publish，已发布临时预览后 PA 确认原 ID 更新；无专用历史/恢复/自动 probe | [Decision](./decisions/dec-053-lean-ghost-publishing.md), [Product Spec](./specs/pa-ghost-blog-publishing-product-spec.md) | Ghost 提供同 ID 待发布接口，或用户重新需要恢复/协作 |

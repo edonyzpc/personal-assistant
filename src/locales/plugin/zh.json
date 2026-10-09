@@ -1,4 +1,7 @@
 {
+    "plugin.settings.tagAppearance.title": "标签样式",
+    "plugin.settings.tagAppearance.name": "使用 PA 标签样式",
+    "plugin.settings.tagAppearance.desc": "为笔记标签应用柔和外观和固定自动配色；关闭后恢复当前主题样式。",
     "plugin.agentDebug.field.purpose": "调用用途",
     "plugin.agentDebug.field.provider": "服务商",
     "plugin.agentDebug.field.model": "模型",

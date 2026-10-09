@@ -39,6 +39,7 @@
 - [Write Action Framework](./write-action-framework-sdd.md)
 - [Statistics v3](./statistics-v3-plan.md)
 - [Settings current status](./settings-status.md)
+- [Tag Appearance](./tag-appearance.md) — 默认关闭的标签外观、固定配色与跨视图清理。
 
 ## Share Card
 

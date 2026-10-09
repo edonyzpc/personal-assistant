@@ -259,6 +259,7 @@ export function normalizeFeaturedImageCount(value: unknown): number {
 
 export interface PluginManagerSettings {
     debug: boolean;
+    tagStyleEnabled: boolean;
     targetPath: string;
     fileFormat: string;
     author: string;
@@ -378,6 +379,7 @@ export interface PluginManagerSettings {
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
     debug: false,
+    tagStyleEnabled: false,
     targetPath: ".",
     fileFormat: "YYYY-MM-DD",
     author: "",
@@ -592,6 +594,7 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     const loadedObject = omitDeprecatedSimpleSettingsFields(loadedWithoutRetiredAudit);
     const loadedPagelet = isRecord(loadedObject.pagelet) ? loadedObject.pagelet : {};
     const merged = Object.assign({}, DEFAULT_SETTINGS, loadedObject) as PluginManagerSettings;
+    merged.tagStyleEnabled = loadedObject.tagStyleEnabled === true;
     const loadedLocalGraph = isRecord(loadedObject.localGraph)
         ? loadedObject.localGraph as Partial<typeof DEFAULT_SETTINGS.localGraph>
         : undefined;
@@ -1062,6 +1065,7 @@ interface SettingsPersistenceHost {
     saveSettingsPermissions(patch: SettingsPermissionPatch): Promise<void>;
     setStatisticsSyncEnabled(enabled: boolean): Promise<void>;
     setBackgroundDiscoveryEnabled(enabled: boolean): Promise<void>;
+    setTagStyleEnabled(enabled: boolean): Promise<void>;
 }
 
 interface SettingsPageletHost {
@@ -1383,6 +1387,7 @@ export class SettingTab extends PluginSettingTab {
                     this.renderPageletSection(this.pageletPreferencesContainer);
                 },
                 (p) => this.renderQuickCaptureSection(p),
+                (p) => this.renderTagAppearanceSection(this.createSettingsDetail(p, "plugin.settings.tagAppearance.title")),
                 (p) => this.renderSaveSuggestionPreference(this.createSettingsDetail(p, "plugin.settings.simple.notifications")),
                 (p) => this.renderStatisticsSection(this.createSettingsDetail(p, "plugin.settings.statistics.title")),
                 (p) => this.renderGraphSection(p),
@@ -2998,6 +3003,15 @@ export class SettingTab extends PluginSettingTab {
 
         this.refreshQwenResponseOptionAvailability();
         this.markFormControlSettings(container);
+    }
+
+    private renderTagAppearanceSection(parentEl: HTMLElement): void {
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.tagAppearance.name"))
+            .setDesc(this.t("plugin.settings.tagAppearance.desc"))
+            .addToggle(toggle => this.configurePermissionToggle("tagStyleEnabled", toggle,
+                () => this.plugin.settings.tagStyleEnabled,
+                value => this.plugin.setTagStyleEnabled(value)));
     }
 
     private renderAdvancedSection(parentEl: HTMLElement): void {

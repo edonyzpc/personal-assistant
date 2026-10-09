@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-10-08
+Updated: 2026-10-09
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-056 | 可选的柔和标签外观与固定自动配色 | Accepted | 默认关闭；完整名称固定九色；正文、Properties tags 与 PA 真实标签一致，关闭恢复用户主题 | [Record](./dec-056-opt-in-tag-appearance.md) |
 | DEC-055 | PA Agent 快照执行与完整 Debug | Accepted | 当前生成及重试固定快照、下一 loop 更新排除；完整文本历史与媒体引用指纹 | [Record](./dec-055-agent-snapshot-execution-and-debug-history.md) |
 | DEC-054 | Memory marker 异常优先复用本地数据 | Accepted | 同 scope 不以设备 ID 单项否决；缺 marker 先恢复兼容 SQLite 状态，保留 dirty/guard/policy | [Record](./dec-054-memory-marker-recovery.md) |
 | DEC-053 | 精简 Ghost 同步与人工上线 | Accepted | note 全量同步；草稿 Ghost Publish，已发布临时预览后 PA 确认；取消历史/恢复与自动 probe，目标尚待实施 | [Record](./dec-053-lean-ghost-publishing.md) |

@@ -72,6 +72,15 @@ export class Component {
     }
 }
 
+export class MarkdownRenderChild extends Component {
+    constructor(public containerEl: HTMLElement) { super(); }
+}
+
+export class MarkdownPreviewRenderer {
+    static registerPostProcessor() { }
+    static unregisterPostProcessor() { }
+}
+
 export class Setting {
     constructor(_containerEl: unknown) { }
     setName(_name: string) { return this; }
@@ -95,6 +104,7 @@ export class Plugin {
     registerView() { }
     registerEvent() { }
     registerInterval() { }
+    registerEditorExtension() { }
 }
 
 export class PluginSettingTab {

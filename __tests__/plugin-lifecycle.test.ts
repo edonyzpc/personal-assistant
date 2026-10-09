@@ -886,6 +886,7 @@ describe('B-106 feature and permission Plugin integration', () => {
         const saves = [
             plugin.saveSettingsPermissions({ webSearchEnabled: true }),
             plugin.setStatisticsSyncEnabled(true),
+            plugin.setTagStyleEnabled(true),
             plugin.saveGraphOptions({ localGraph: plugin.settings.localGraph, enableGraphColors: true, colorGroups: [] }),
             plugin.saveFeaturedImageDefaults({ featuredImageModel: 'wan2.7-image-pro', numFeaturedImages: 3, featuredImagePath: 'images' }),
         ];
@@ -896,6 +897,38 @@ describe('B-106 feature and permission Plugin integration', () => {
         await rejected;
         expect(adapter.process).toHaveBeenCalledTimes(writesBeforeRelease);
         expect(state.settingsPersistence.notifySettingsChanged).not.toHaveBeenCalled();
+    });
+
+    it('applies tag appearance only after commit and preserves it when disabling fails', async () => {
+        const { plugin, state, adapter, readPersisted } = await fixture();
+        const runtime = { setEnabled: jest.fn(), dispose: jest.fn() };
+        Object.assign(plugin, { tagAppearanceIntegration: runtime });
+        const entered = deferred();
+        const release = deferred();
+        const process = adapter.process.getMockImplementation()!;
+        adapter.process.mockImplementationOnce(async (...args: unknown[]) => {
+            entered.resolve();
+            await release.promise;
+            return process(...args);
+        });
+        const saving = plugin.setTagStyleEnabled(true);
+        await entered.promise;
+        expect(runtime.setEnabled).not.toHaveBeenCalled();
+        release.resolve();
+        await saving;
+        expect(readPersisted()?.tagStyleEnabled).toBe(true);
+        expect(runtime.setEnabled).toHaveBeenCalledWith(true);
+        runtime.setEnabled.mockClear();
+        adapter.process.mockRejectedValueOnce(new Error('disk unavailable'));
+        await expect(plugin.setTagStyleEnabled(false)).rejects.toThrow('disk unavailable');
+        expect(plugin.settings.tagStyleEnabled).toBe(true);
+        expect(runtime.setEnabled).not.toHaveBeenCalled();
+        await plugin.loadSettings();
+        expect(runtime.setEnabled).toHaveBeenCalledWith(true);
+        runtime.setEnabled.mockClear();
+        state.unloading = true;
+        await expect(plugin.setTagStyleEnabled(false)).rejects.toThrow('unloading');
+        expect(runtime.setEnabled).not.toHaveBeenCalled();
     });
 
     it('saves graph defaults through the shared modal without opening a graph when no leaf exists', async () => {

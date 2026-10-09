@@ -1,4 +1,7 @@
 {
+    "plugin.settings.tagAppearance.title": "Tag styles",
+    "plugin.settings.tagAppearance.name": "Use PA tag styles",
+    "plugin.settings.tagAppearance.desc": "Apply soft styling and stable automatic colors to note tags. Turn off to restore your current theme's styling.",
     "plugin.agentDebug.field.purpose": "Call purpose",
     "plugin.agentDebug.field.provider": "Provider",
     "plugin.agentDebug.field.model": "Model",

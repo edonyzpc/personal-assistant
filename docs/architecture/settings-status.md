@@ -1,6 +1,6 @@
 # Settings Current Status
 
-Updated: 2026-10-05
+Updated: 2026-10-09
 
 ## Status
 
@@ -56,6 +56,11 @@ Preferences, Notes & privacy, and Advanced & maintenance. Native details keep
 specialized choices behind their related product area. Old Memory and
 Appearance deep links resolve to the corresponding detail; exact recovery
 targets open the maintenance group.
+
+Tag styles 位于 Preferences → Appearance and reminders。`tagStyleEnabled` 默认
+false，加载时仅原始 `true` 开启；设置切片提交成功后同步标签外观，保存期间禁用
+当前开关，失败回滚并保留原有效外观。关闭或卸载清理自有资源，使当前主题和
+snippets 接管；跨视图与固定配色契约见 [Tag Appearance](./tag-appearance.md)。
 
 Pagelet preferences and Memory management refresh their own regions. Provider
 tuple drafts remain separate from the effective connection, and passive

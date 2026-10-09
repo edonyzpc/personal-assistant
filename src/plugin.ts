@@ -48,6 +48,7 @@ import { FeaturedImageOptionsModal, type FeaturedImageOptionsModalHost } from '.
 import type { FeaturedImageDefaults } from './ai-services/featured-image-options';
 import type { ImageGenerationConnection } from './ai-services/image-generation-connection';
 import { GhostPublishingIntegration } from './ghost-publishing/host-integration';
+import { TagAppearanceIntegration } from './tag-appearance/integration';
 import type { GhostPublishingConfiguration } from './ghost-publishing/configuration';
 import { prepareGhostMetadata } from './ai-services/ghost-metadata';
 import { openSettings, openSettingsTab } from './obsidian-internals';
@@ -1872,6 +1873,7 @@ export class PluginManager extends Plugin {
     }
     private phase3Handle: PlatformTimeoutHandle | null = null;
     private unloading = false;
+    private tagAppearanceIntegration?: TagAppearanceIntegration;
 
     startRetrievalDiagnostics(): RetrievalDiagnosticsSessionIdentity {
         return this.retrievalDiagnostics.start();
@@ -1982,6 +1984,9 @@ export class PluginManager extends Plugin {
         void this.ensureLoadedPluginBuildIdentity();
         this.vaultEventBridge.resetStartupEventGate();
         await this.loadSettings();
+        if (this.unloading) return;
+        this.tagAppearanceIntegration = new TagAppearanceIntegration(this.app, this);
+        this.tagAppearanceIntegration.setEnabled(this.settings.tagStyleEnabled === true);
         this.taskSourceConfigurationSnapshot = this.captureTaskSourceConfiguration();
         this.register(this.onSettingsChanged(() => this.updateTaskSourceConfiguration()));
         if (Platform.isDesktop && !Platform.isMobile) {
@@ -6598,6 +6603,8 @@ export class PluginManager extends Plugin {
 
     private async unloadAsync(): Promise<void> {
         this.unloading = true;
+        this.tagAppearanceIntegration?.dispose();
+        this.tagAppearanceIntegration = undefined;
         this.ghostPublishingIntegration?.dispose();
         this.ghostPublishingIntegration = undefined;
         this.ghostPublishingConfiguration = undefined;
@@ -8162,6 +8169,7 @@ export class PluginManager extends Plugin {
 
     async loadSettings(): Promise<void> {
         await this.settingsPersistence.loadSettings();
+        if (!this.unloading) this.tagAppearanceIntegration?.setEnabled(this.settings.tagStyleEnabled === true);
     }
 
     async saveSettings(): Promise<void> {
@@ -8241,6 +8249,16 @@ export class PluginManager extends Plugin {
     /** Publish only a committed preference; pending saves cannot open provider admission. */
     async setBackgroundDiscoveryEnabled(enabled: boolean): Promise<void> {
         await this.settingsPersistence.setBackgroundDiscoveryEnabled(enabled);
+    }
+
+    async setTagStyleEnabled(enabled: boolean): Promise<void> {
+        await this.persistPaSettingsSlice(
+            () => this.settings.tagStyleEnabled,
+            value => { this.settings.tagStyleEnabled = value; },
+            enabled,
+            true,
+        );
+        if (!this.unloading) this.tagAppearanceIntegration?.setEnabled(this.settings.tagStyleEnabled === true);
     }
 
     private isBackgroundDiscoveryEnabled(): boolean {
