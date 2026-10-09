@@ -419,6 +419,9 @@ class MockElement {
         if (selector === 'a.internal-link') {
             return walkAll(this, (el) => el.tagName === 'a' && el.classList.contains('internal-link'));
         }
+        if (selector === 'a.tag') {
+            return walkAll(this, (el) => el.tagName === 'a' && el.classList.contains('tag'));
+        }
         if (selector.startsWith('.') && !selector.includes(',') && !selector.includes(' ')) {
             return walkAll(this, (el) => el.classList.contains(selector.slice(1)));
         }
@@ -11115,6 +11118,83 @@ describe('LLMView turn lifecycle', () => {
         const callout = getElementByClass(containerEl, 'callout');
         expect(callout.getAttribute('data-callout')).toBe('personal-assistant-ai');
         expect(getElementByClass(callout, 'internal-link').getAttribute('data-href')).toBe('memory/late.md');
+    });
+
+    it.each(['#work', '#项目', '#项目/工作'])('opens native tag search for %s after live and final rendering', async tagName => {
+        const { view, containerEl, app } = createView();
+        const openGlobalSearch = jest.fn();
+        Object.assign(app, { internalPlugins: { getEnabledPluginById: jest.fn(() => ({ openGlobalSearch })) } });
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void>).mockImplementation((_app, markdown, el) => {
+            el.setText(markdown);
+            if (markdown.includes(tagName)) el.createEl('a', { cls: 'tag', text: tagName, attr: { href: tagName } });
+        });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'show tags';
+        void getButtonByText(containerEl, 'Ask').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        streamCalls[0].onChunk(tagName);
+        await flushPromises();
+
+        const click = () => getLinkByText(containerEl, tagName).dispatchEvent('click', {
+            button: 0, preventDefault: jest.fn(), stopPropagation: jest.fn(),
+        });
+        click();
+        expect(openGlobalSearch).toHaveBeenCalledTimes(1);
+        expect(openGlobalSearch).toHaveBeenLastCalledWith(`tag:${tagName}`);
+
+        streamCalls[0].onChunk(`${tagName} updated`);
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
+        click();
+        expect(openGlobalSearch).toHaveBeenCalledTimes(2);
+        expect(openGlobalSearch).toHaveBeenLastCalledWith(`tag:${tagName}`);
+        expect(app.workspace.openLinkText).not.toHaveBeenCalled();
+    });
+
+    it('leaves native embedded tags and non-tag anchors with their own interaction owners', () => {
+        const { view, app } = createView();
+        const openGlobalSearch = jest.fn();
+        Object.assign(app, { internalPlugins: { getEnabledPluginById: () => ({ openGlobalSearch }) } });
+        const outerPreview = new MockElement('div');
+        outerPreview.classList.add('markdown-preview-view');
+        const buffer = outerPreview.createDiv();
+        const ownTag = buffer.createEl('a', { cls: 'tag', text: '#own' });
+        const nestedTags = ['markdown-preview-view', 'bases-view'].map(cls => {
+            const nested = buffer.createDiv({ cls });
+            return nested.createEl('a', { cls: 'tag', text: '#embedded' });
+        });
+        const ordinaryAnchor = buffer.createEl('a', { text: '#heading', attr: { href: '#heading' } });
+        buffer.createEl('code', { text: '#code' });
+
+        view['updateClickableLink'](buffer as unknown as HTMLElement);
+        ownTag.dispatchEvent('click', { button: 0, preventDefault: jest.fn() });
+        expect(openGlobalSearch).toHaveBeenCalledTimes(1);
+        expect(openGlobalSearch).toHaveBeenCalledWith('tag:#own');
+        for (const node of [...nestedTags, ordinaryAnchor]) expect(node.listeners.get('click')).toBeUndefined();
+    });
+
+    it('matches native tag activation and reads Search availability at click time', () => {
+        const { view, app } = createView();
+        const openGlobalSearch = jest.fn();
+        const getEnabledPluginById = jest.fn<(id: string) => { openGlobalSearch: typeof openGlobalSearch } | null>(() => null);
+        Object.assign(app, { internalPlugins: { getEnabledPluginById } });
+        const buffer = new MockElement('div');
+        const tag = buffer.createEl('a', { cls: 'tag', text: '#Topic/Subtopic' });
+        view['updateClickableLink'](buffer as unknown as HTMLElement);
+
+        const ignoredEvent = { button: 1, preventDefault: jest.fn() };
+        tag.dispatchEvent('click', ignoredEvent);
+        expect(ignoredEvent.preventDefault).not.toHaveBeenCalled();
+        expect(getEnabledPluginById).not.toHaveBeenCalled();
+        expect(() => tag.dispatchEvent('click', { button: 0, preventDefault: jest.fn() })).not.toThrow();
+        expect(openGlobalSearch).not.toHaveBeenCalled();
+
+        getEnabledPluginById.mockReturnValue({ openGlobalSearch });
+        tag.dispatchEvent('click', { button: 0, ctrlKey: true, preventDefault: jest.fn() });
+        expect(getEnabledPluginById).toHaveBeenLastCalledWith('global-search');
+        expect(openGlobalSearch).toHaveBeenCalledTimes(1);
+        expect(openGlobalSearch).toHaveBeenCalledWith('tag:#Topic/Subtopic');
+        expect(app.workspace.openLinkText).not.toHaveBeenCalled();
     });
 
     it('opens Memory reference note links in a new tab even when a Markdown leaf is available', async () => {

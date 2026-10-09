@@ -7555,6 +7555,31 @@ export class LLMView extends ItemView {
                 });
             });
         });
+        containerEl.querySelectorAll<HTMLAnchorElement>('a.tag').forEach(tag => {
+            // Embedded Markdown/Bases views already own their tag interactions.
+            let parent = tag.parentElement;
+            while (parent && parent !== containerEl) {
+                if (parent.classList.contains('markdown-preview-view') || parent.classList.contains('bases-view')) return;
+                parent = parent.parentElement;
+            }
+            tag.addEventListener('click', event => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                const tagName = tag.textContent;
+                if (tagName) this.openChatTagSearch(tagName);
+            });
+        });
+    }
+
+    private openChatTagSearch(tagName: string): void {
+        // Obsidian's native tag handler uses this core-plugin interface; it is not public API.
+        const app = this.app as typeof this.app & {
+            internalPlugins?: {
+                getEnabledPluginById?(id: string): { openGlobalSearch?(query: string): void } | null;
+            };
+        };
+        const search = app.internalPlugins?.getEnabledPluginById?.('global-search');
+        search?.openGlobalSearch?.(`tag:${tagName}`);
     }
 
     private isMemoryReferenceLink(link: HTMLElement): boolean {
