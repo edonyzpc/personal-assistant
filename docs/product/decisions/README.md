@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-057 | Agent Debug 完整轨迹与双端查看 | Accepted | 完整Run、聚焦展开＋节点定位搜索；桌面树/时间轴与右侧详情、移动详情页；数据边界沿用DEC-055 | [Record](./dec-057-agent-debug-explorer.md) |
 | DEC-056 | 可选的柔和标签外观与固定自动配色 | Accepted | 默认关闭；完整名称固定九色；正文、Properties tags 与 PA 真实标签一致，关闭恢复用户主题 | [Record](./dec-056-opt-in-tag-appearance.md) |
 | DEC-055 | PA Agent 快照执行与完整 Debug | Accepted | 当前生成及重试固定快照、下一 loop 更新排除；完整文本历史与媒体引用指纹 | [Record](./dec-055-agent-snapshot-execution-and-debug-history.md) |
 | DEC-054 | Memory marker 异常优先复用本地数据 | Accepted | 同 scope 不以设备 ID 单项否决；缺 marker 先恢复兼容 SQLite 状态，保留 dirty/guard/policy | [Record](./dec-054-memory-marker-recovery.md) |
@@ -23,7 +24,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 | DEC-044 | Unified Chat image creation | Accepted | 单一 CreateImage、明确文字来源、保留专用提炼；原 command 成为 Chat 快捷入口 | [Record](./dec-044-unified-chat-image-creation.md) |
 | DEC-043 | PA Agent 问答范围硬约束与 Runtime 演进 | Accepted | B-149 已交付三种范围与 runtime；在途生成/重试及下一 loop 配置更新由 DEC-055 局部接续 | [Record](./dec-043-agent-runtime-evolution-and-source-scope.md) |
 | DEC-042 | PA Agent task source boundary and revisable plan | Accepted | B-146 已本地验收：Agent 遵循自由语言取材限制、Host 不硬拦普通读取；独立权限和高后果保护保留 | [Record](./dec-042-agent-task-source-boundary.md) |
-| DEC-041 | Agent Debug View and bounded local history | Accepted | B-145 已交付本机轨迹；完整文本历史/来源变化语义由 DEC-055 接续，期限/显式清理/媒体引用保持 | [Record](./dec-041-agent-debug-view-and-local-history.md) |
+| DEC-041 | Agent Debug View and bounded local history | Accepted | 本机轨迹基线；数据规则由 DEC-055、查看布局与导航由 DEC-057 局部接续，期限/显式清理/媒体引用保持 | [Record](./dec-041-agent-debug-view-and-local-history.md) |
 | DEC-040 | Recoverable Agent task execution | Accepted | B-144 已交付已读版本、自主纠错、单次尝试默认 30 分钟、前后台完成导向与受控并发、writing 领域化、真实交付及重载后用户继续 | [Record](./dec-040-recoverable-agent-execution.md) |
 | DEC-039 | Behavior-preserving plugin shell refactor | Accepted | 保持完整正常功能，按状态/资源所有权逐片迁移；限定 Pagelet、metadata、Callout 生命周期修复，性能不设改进目标 | [Record](./dec-039-plugin-shell-refactor.md) |
 | DEC-038 | Chat image generation and unified image connection | Accepted | Wan 创建/参考/编辑、后台恢复、确切版本与复制下载；Chat/Featured Image 统一连接；透明确认与删聊天仅留文件 | [Record](./dec-038-chat-image-generation.md) |

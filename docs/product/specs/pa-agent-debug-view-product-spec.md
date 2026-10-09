@@ -1,7 +1,7 @@
 # PA Agent Debug View 与本机历史设计
 
 Document status: Approved
-Updated: 2026-10-08
+Updated: 2026-10-09
 Work item: B-145
 Decision: [DEC-041](../decisions/dec-041-agent-debug-view-and-local-history.md)
 Authority: Owner 已确认的可视化调试与历史数据边界。B-145 已实现并通过本地验证；Approved 指持续有效的产品合同，不把模拟器结果当作 iOS 真机或发布安装证据。
@@ -9,6 +9,8 @@ Authority: Owner 已确认的可视化调试与历史数据边界。B-145 已实
 > 2026-10-08：[B-165 Product Spec](./pa-agent-snapshot-execution-product-spec.md) 局部接续本文数据保留与来源变化规则；完整文本/reasoning/工具详情改为本地持久化，普通来源变化不追溯过滤。媒体仅引用/指纹，显式清理和期限保持。下文为 B-145 历史基线，B-165 最终验证见 [证据记录](../../archive/2026/b165-agent-snapshot-execution-validation.md)。
 
 ## Problem And Product Outcome
+
+> 2026-10-09：[B-167 Product Spec](./pa-agent-debug-explorer-product-spec.md) 接续本文入口与布局中的上下详情、网格并行和单页事件导航要求，并规定完整 Run 浏览、聚焦展开、节点定位搜索与移动详情页。本文对应旧 UI 的 AC 按新规格验收，未接续的入口、观察事实、性能与数据规则继续按 DEC-041/DEC-055 生效；目标方案不代表已实施，见 [Tracker](../../development/active/agent-debug-explorer/tracker.md)。
 
 - User problem: 对话历史能看到最终回答，但不能清晰解释 Agent 经过哪些轮次、
   使用了什么输入、为何等待或恢复、工具实际结果和模型成本；控制台日志难以关联。

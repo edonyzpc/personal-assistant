@@ -2,13 +2,15 @@
 
 Decision ID: DEC-041
 Status: Accepted
-Updated: 2026-10-08
+Updated: 2026-10-09
 Authority: Owner 确认两层数据保留、正文和 Prompt 本机历史、最多 30 天、容量满时淘汰最旧记录、删除联动和附件引用边界。B-145 已完成本地实现与验证；Accepted 是产品决定，发布状态须另以发布证据确认。
 Work item: B-145
 
 > 2026-10-08 行为修订：[DEC-055](./dec-055-agent-snapshot-execution-and-debug-history.md) 将完整文本、provider reasoning 与全部工具结果纳入本地历史，取消普通来源配置/文件变化触发的过滤与清理；期限、显式清理和媒体引用保持。下文保留 B-145 历史决定与原基线；B-165 的最终验证见 [证据记录](../../archive/2026/b165-agent-snapshot-execution-validation.md)。
 
 ## Context
+
+> 2026-10-09 查看方式修订：[DEC-057](./dec-057-agent-debug-explorer.md) 接续上下布局、网格节点与事件窗口导航，采用完整 Run 树/时间轴、桌面右侧详情、移动详情页及聚焦展开＋节点定位搜索。仅本轮产品选择与文档已获授权，当前交付状态见 [B-167 Tracker](../../development/active/agent-debug-explorer/tracker.md)。数据边界仍按 DEC-055。
 
 [Discussion #382](https://github.com/edonyzpc/personal-assistant/discussions/382)
 提出记录 stopReason、provider completion、diagnostics 和 token usage。Owner 随后
