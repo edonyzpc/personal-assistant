@@ -38,6 +38,7 @@ import type {
     ChatWritingRecovery,
     ChatMessage,
 } from "../ai-services/chat-types";
+import { cloneThinkingExecutionSummary, type ThinkingDebugNodeRef, type ThinkingExecutionSummary } from "./execution-summary";
 
 export const CHAT_HISTORY_SCHEMA_VERSION = 2;
 export const CHAT_HISTORY_IDB_VERSION = 4;
@@ -117,6 +118,7 @@ export interface PersistedTurn {
     memoryManagementEvidenceInvalid?: boolean;
     contextUsed?: ChatContextUsedItem[];
     activityDetails?: string[];
+    executionSummary?: ThinkingExecutionSummary;
     providerReasoningObserved?: boolean;
 }
 
@@ -145,6 +147,13 @@ export interface ChatHistoryStore {
     ): Promise<void>;
     /** Revises the original existing turn; missing/replaced records are never recreated. */
     reviseTurn(turn: PersistedTurn, updatedAt: string): Promise<PersistedConversation | null>;
+    /** Updates only elapsed time on an existing original turn with a summary. */
+    updateExecutionElapsedMs(turn: PersistedTurn, elapsedMs: number): Promise<boolean>;
+    /** Projects a Forget cleanup onto current summary references without replacing concurrent turn facts. */
+    reviseDebugReferencesForForget?(
+        claimId: string | undefined,
+        findClearedReferences: (references: readonly ThinkingDebugNodeRef[]) => Promise<ReadonlySet<string>>,
+    ): Promise<ChatDebugReferenceRevision>;
     deleteTurn(conversationId: string, turnIndex: number): Promise<void>;
     deleteTurnsForConversation(conversationId: string): Promise<void>;
 
@@ -196,9 +205,19 @@ export interface ChatHistoryStore {
 export interface ChatDebugDeletion {
     id: string;
     conversationId: string;
+    /** Real runtime IDs only; Chat pending placeholders are never included. */
+    runtimeRunIds?: string[];
+    /** Debug captures saved by the deleted Chat turns. */
+    captureIds?: string[];
+    /** Legacy pre-B-168 field, retained for acknowledged old outbox rows. */
     runIds?: string[];
     deletedAt: number;
     deleteConversation: boolean;
+}
+
+export interface ChatDebugReferenceRevision {
+    references: number;
+    removed: number;
 }
 
 type ChatDebugDeletionListener = (event: {
@@ -207,13 +226,41 @@ type ChatDebugDeletionListener = (event: {
 
 let debugDeletionSequence = 0;
 function createDebugDeletion(conversationId: string, turns: readonly PersistedTurn[], deleteConversation: boolean): ChatDebugDeletion {
-    const runIds = turns.map((turn) => turn.assistant.agentExecution?.runId);
+    const runtimeRunIds = turns.map((turn) => turn.executionSummary?.runtimeRunId).filter((id): id is string => !!id);
+    const captureIds = turns.map((turn) => turn.executionSummary?.debug?.captureId)
+        .filter((id): id is string => !!id);
     return {
         id: `debug-delete:${Date.now()}:${++debugDeletionSequence}:${Math.random().toString(36).slice(2)}`,
         conversationId,
-        ...(runIds.length && runIds.every((id): id is string => !!id) ? { runIds: [...new Set(runIds)] } : {}),
+        ...(runtimeRunIds.length ? { runtimeRunIds: [...new Set(runtimeRunIds)] } : {}),
+        ...(captureIds.length ? { captureIds: [...new Set(captureIds)] } : {}),
         deletedAt: Date.now(),
         deleteConversation,
+    };
+}
+
+function debugReferenceKey(reference: ThinkingDebugNodeRef): string {
+    return JSON.stringify([reference.captureId, reference.nodeId]);
+}
+
+function turnWithRevisedDebugReferences(
+    turn: PersistedTurn,
+    clearedReferences: ReadonlySet<string>,
+): { turn: PersistedTurn; removed: number } {
+    const debug = turn.executionSummary?.debug;
+    if (!debug) return { turn, removed: 0 };
+    const nodes = debug.nodes.filter(node => !clearedReferences.has(debugReferenceKey(node)));
+    const removed = debug.nodes.length - nodes.length;
+    if (removed === 0) return { turn, removed };
+    return {
+        turn: {
+            ...turn,
+            executionSummary: {
+                ...turn.executionSummary!,
+                debug: { ...debug, nodes },
+            },
+        },
+        removed,
     };
 }
 
@@ -371,10 +418,37 @@ export class MemoryChatHistoryStore extends ChatDebugDeletionNotifications imple
         const conversation = this.conversations.get(copy.conversationId);
         const previous = this.turns.get(buildTurnRecordKey(copy.conversationId, copy.turnIndex));
         if (!conversation || !previous || !sameOriginalTurn(copy, previous)) return null;
+        preserveLatestExecutionDetails(copy, previous);
         this.commitTurn(copy);
         const updated = { ...conversation, updatedAt };
         this.conversations.set(updated.id, updated);
         return cloneConversation(updated);
+    }
+
+    async updateExecutionElapsedMs(turn: PersistedTurn, elapsedMs: number): Promise<boolean> {
+        assertExecutionElapsedMs(elapsedMs);
+        const key = buildTurnRecordKey(turn.conversationId, turn.turnIndex);
+        const previous = this.turns.get(key);
+        if (!previous || !sameOriginalTurn(turn, previous) || !previous.executionSummary) return false;
+        this.turns.set(key, { ...previous, executionSummary: { ...previous.executionSummary, elapsedMs } });
+        return true;
+    }
+
+    async reviseDebugReferencesForForget(
+        _claimId: string | undefined,
+        findClearedReferences: (references: readonly ThinkingDebugNodeRef[]) => Promise<ReadonlySet<string>>,
+    ): Promise<ChatDebugReferenceRevision> {
+        const references = [...this.turns.values()]
+            .flatMap(turn => turn.executionSummary?.debug?.nodes ?? []);
+        const clearedReferences = await findClearedReferences(references);
+        let removed = 0;
+        for (const [key, current] of Array.from(this.turns.entries())) {
+            const revision = turnWithRevisedDebugReferences(current, clearedReferences);
+            if (revision.removed === 0) continue;
+            this.turns.set(key, revision.turn);
+            removed += revision.removed;
+        }
+        return { references: references.length, removed };
     }
 
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
@@ -765,11 +839,51 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
             const previous = await requestToPromise<TurnRecord | undefined>(transaction.objectStore(TURNS_STORE)
                 .get(buildTurnRecordKey(copy.conversationId, copy.turnIndex)));
             if (!conversation || !previous || !sameOriginalTurn(copy, previous.turn)) return;
+            preserveLatestExecutionDetails(copy, previous.turn);
             await this.writeTurn(transaction, copy);
             updated = { ...conversation, updatedAt };
             conversationStore.put(updated);
         });
         return updated ? cloneConversation(updated) : null;
+    }
+
+    async updateExecutionElapsedMs(turn: PersistedTurn, elapsedMs: number): Promise<boolean> {
+        assertExecutionElapsedMs(elapsedMs);
+        let updated = false;
+        await this.writeTransaction([TURNS_STORE], async transaction => {
+            const store = transaction.objectStore(TURNS_STORE);
+            const key = buildTurnRecordKey(turn.conversationId, turn.turnIndex);
+            const previous = await requestToPromise<TurnRecord | undefined>(store.get(key));
+            if (!previous || !sameOriginalTurn(turn, previous.turn) || !previous.turn.executionSummary) return;
+            store.put({ key, turn: { ...previous.turn,
+                executionSummary: { ...previous.turn.executionSummary, elapsedMs } } } satisfies TurnRecord);
+            updated = true;
+        });
+        return updated;
+    }
+
+    async reviseDebugReferencesForForget(
+        _claimId: string | undefined,
+        findClearedReferences: (references: readonly ThinkingDebugNodeRef[]) => Promise<ReadonlySet<string>>,
+    ): Promise<ChatDebugReferenceRevision> {
+        const currentRecords = await requestToPromise<TurnRecord[]>(
+            this.getStore(TURNS_STORE, "readonly").getAll());
+        const references = currentRecords
+            .map(({ turn }) => turn)
+            .flatMap(turn => turn.executionSummary?.debug?.nodes ?? []);
+        const clearedReferences = await findClearedReferences(references);
+        let removed = 0;
+        await this.writeTransaction([TURNS_STORE], async transaction => {
+            const store = transaction.objectStore(TURNS_STORE);
+            const records = await requestToPromise<TurnRecord[]>(store.getAll());
+            for (const record of records) {
+                const revision = turnWithRevisedDebugReferences(record.turn, clearedReferences);
+                if (revision.removed === 0) continue;
+                store.put({ key: record.key, turn: revision.turn } satisfies TurnRecord);
+                removed += revision.removed;
+            }
+        });
+        return { references: references.length, removed };
     }
 
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
@@ -1299,6 +1413,10 @@ export class UnavailableChatHistoryStore implements ChatHistoryStore {
         throw this.error;
     }
 
+    async updateExecutionElapsedMs(_turn: PersistedTurn, _elapsedMs: number): Promise<boolean> {
+        throw this.error;
+    }
+
     async deleteTurn(_conversationId: string, _turnIndex: number): Promise<void> {
         throw this.error;
     }
@@ -1572,6 +1690,23 @@ function sameActionStateBinding(value: unknown, expected: PaAgentActionStateBind
         && binding.runId === expected.runId && binding.turnId === expected.turnId;
 }
 
+function assertExecutionElapsedMs(elapsedMs: number): void {
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) throw new Error('Invalid execution elapsed time.');
+}
+
+/** Whole-turn revisions must not revive references revoked by their cleanup owner. */
+function preserveLatestExecutionDetails(incoming: PersistedTurn, previous: PersistedTurn): void {
+    const latest = cloneThinkingExecutionSummary(previous.executionSummary);
+    if (!incoming.executionSummary) {
+        if (latest) incoming.executionSummary = latest;
+        return;
+    }
+    if (latest?.debug) incoming.executionSummary.debug = latest.debug;
+    else delete incoming.executionSummary.debug;
+    if (latest?.elapsedMs !== undefined) incoming.executionSummary.elapsedMs = latest.elapsedMs;
+    else delete incoming.executionSummary.elapsedMs;
+}
+
 function sameOriginalTurn(incoming: PersistedTurn, previous: PersistedTurn): boolean {
     const binding = cloneActionStateBinding(incoming.assistant.actionStateBinding);
     const priorBinding = cloneActionStateBinding(previous.assistant.actionStateBinding);
@@ -1625,6 +1760,7 @@ function cloneTurn(turn: PersistedTurn, discardInvalidGenerationInput = false): 
         ...(turn.memoryManagementContractVersion === 1 ? cloneManagementEvidenceState(turn) : {}),
         ...(turn.contextUsed ? { contextUsed: turn.contextUsed.map(cloneContextUsedItem) } : {}),
         ...(turn.activityDetails ? { activityDetails: [...turn.activityDetails] } : {}),
+        ...(turn.executionSummary ? { executionSummary: cloneThinkingExecutionSummary(turn.executionSummary) } : {}),
         ...(turn.providerReasoningObserved !== undefined
             ? { providerReasoningObserved: turn.providerReasoningObserved }
             : {}),

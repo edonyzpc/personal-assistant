@@ -2,7 +2,7 @@ import { describe, expect, it, jest } from "@jest/globals";
 import { ChatHistoryManager } from "../src/chat/chat-history-manager";
 import { MemoryChatHistoryStore, type PersistedConversation, type PersistedTurn } from "../src/chat/chat-history-store";
 import { ConversationPersistence } from "../src/chat/ConversationPersistence";
-import type { TimelineEntry } from "../src/chat/types";
+import type { TerminalTurnEntry, TimelineEntry } from "../src/chat/types";
 import { completeInputLineage } from '../src/ai-services/input-lineage';
 import type { PaAgentActionState } from '../src/ai-services/pa-agent-result-facts';
 
@@ -50,6 +50,61 @@ function makePersistence(manager: ChatHistoryManager) {
 }
 
 describe("ConversationPersistence", () => {
+    it.each(["failed", "cancelled"] as const)(
+        "revises the running execution summary in place for a %s terminal turn",
+        async state => {
+            const store = new MemoryChatHistoryStore();
+            const manager = new ChatHistoryManager({ store, generateId: () => `terminal-${state}` });
+            const persistence = makePersistence(manager);
+            const user = { role: "user" as const, content: "request" };
+            const initialSummary = {
+                version: 1 as const,
+                steps: [{ key: "prep", order: 0, kind: "preparation" as const, status: "active" as const }],
+            };
+            const terminalSummary = {
+                version: 1 as const,
+                elapsedMs: 1500,
+                steps: [{ key: "prep", order: 0, kind: "preparation" as const, status: "succeeded" as const }],
+            };
+            expect(await persistence.persistRunningTurn("request", "pending-id", user, initialSummary)).toBe(true);
+            expect(await persistence.persistTerminalTurn({
+                prompt: "request", runId: "pending-id", user, content: state,
+                state, executionSummary: terminalSummary,
+            })).toBe(true);
+            const turns = await manager.getTurns(`terminal-${state}`);
+            expect(turns).toHaveLength(1);
+            expect(turns[0]?.turnIndex).toBe(0);
+            expect(turns[0]?.executionSummary).toEqual(terminalSummary);
+            expect(manager.deserializeTurn(turns[0]!).historyEntry.executionSummary).toEqual(terminalSummary);
+        },
+    );
+
+    it("retains the original terminal turn location when deletion fails and accepts a retry", async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => "terminal-delete-retry" });
+        const persistence = makePersistence(manager);
+        const user = { role: "user" as const, content: "request" };
+        await persistence.persistRunningTurn("request", "pending-id", user, {
+            version: 1,
+            steps: [{ key: "prep", order: 0, kind: "preparation", status: "active" }],
+        });
+        await persistence.persistTerminalTurn({
+            prompt: "request", runId: "pending-id", user, content: "failed",
+            state: "failed", executionSummary: { version: 1, elapsedMs: 20, steps: [] },
+        });
+        const entry: TerminalTurnEntry = {
+            kind: "terminal", id: 1, prompt: "request", content: "failed",
+            terminalKind: "error", runId: "pending-id",
+        };
+        jest.spyOn(manager, "deleteTurn").mockRejectedValueOnce(new Error("storage unavailable"));
+
+        await expect(persistence.deletePersistedTurnForEntry(entry)).resolves.toBe(false);
+        expect((await manager.getTurns("terminal-delete-retry"))).toHaveLength(1);
+
+        await expect(persistence.deletePersistedTurnForEntry(entry)).resolves.toBe(true);
+        expect(await manager.getTurns("terminal-delete-retry")).toEqual([]);
+    });
+
     it('binds a running action without changing source content or reviving a deleted request', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'running-operations' });
@@ -78,7 +133,8 @@ describe("ConversationPersistence", () => {
         const manager = new ChatHistoryManager({ store, generateId: () => 'bound-conversation' });
         const persistence = makePersistence(manager);
         const entry: TimelineEntry = { kind: 'history', user: { role: 'user', content: 'request' }, assistant: { role: 'assistant', content: 'draft',
-            canonicalTurn: { schemaVersion: 1, runId: 'actual-run', turnId: 'actual-turn', messages: [] } } };
+            canonicalTurn: { schemaVersion: 1, runId: 'actual-run', turnId: 'actual-turn', messages: [] } },
+            executionSummary: { version: 1, steps: [] } };
         jest.spyOn(manager, 'recordTurn').mockRejectedValueOnce(new Error('first write failed'));
         expect(await persistence.persistFinalizedTurn('request', entry)).toBe(false);
         expect(entry.assistant.actionStateBinding).toBeUndefined();
@@ -86,6 +142,16 @@ describe("ConversationPersistence", () => {
         expect(entry.assistant.actionStateBinding).toEqual({ conversationId: 'bound-conversation', turnIndex: 0,
             runId: 'actual-run', turnId: 'actual-turn' });
         expect((await store.getTurns('bound-conversation'))[0].assistant.actionStateBinding).toEqual(entry.assistant.actionStateBinding);
+        const updateElapsed = jest.spyOn(manager, 'updateExecutionElapsedMs');
+        const revise = jest.spyOn(manager, 'reviseTurn');
+        expect(await persistence.updateFinalizedExecutionElapsedMs(entry, 1900)).toBe(true);
+        expect(updateElapsed).toHaveBeenCalledWith({ conversationId: 'bound-conversation', turnIndex: 0, entry }, 1900);
+        expect(revise).not.toHaveBeenCalled();
+        const reopened = makePersistence(manager).hydrateConversation(
+            (await store.getConversation('bound-conversation'))!, await store.getTurns('bound-conversation'))!;
+        expect(reopened.timelineEntries[0].kind).toBe('history');
+        if (reopened.timelineEntries[0].kind !== 'history') throw new Error('Expected history');
+        expect(reopened.timelineEntries[0].executionSummary?.elapsedMs).toBe(1900);
     });
     it('retries a pending finalized-turn revision after its first persistence failure', async () => {
         const store = new MemoryChatHistoryStore();

@@ -2,9 +2,9 @@
 
 Document status: Current
 Updated: 2026-10-10
-Work item: B-145, B-165, B-167
+Work item: B-145, B-165, B-167, B-168
 Product contract: [DEC-055](../product/decisions/dec-055-agent-snapshot-execution-and-debug-history.md) 的数据/执行边界与 [DEC-057](../product/decisions/dec-057-agent-debug-explorer.md) / [Explorer Product Spec](../product/specs/pa-agent-debug-explorer-product-spec.md) 的查看行为；[DEC-041](../product/decisions/dec-041-agent-debug-view-and-local-history.md) 的其它范围保持。
-Validation: [B-145 历史验收](../archive/2026/b145-agent-debug-validation.md) / [B-165 完整历史与响应性证据](../archive/2026/b165-agent-snapshot-execution-validation.md) / [B-167 最终验证](../archive/2026/b167-agent-debug-explorer-validation.md)。以下描述当前源码，部署身份与验证限制见上述证据。
+Validation: [B-145 历史验收](../archive/2026/b145-agent-debug-validation.md) / [B-165 完整历史与响应性证据](../archive/2026/b165-agent-snapshot-execution-validation.md) / [B-167 最终验证](../archive/2026/b167-agent-debug-explorer-validation.md) / [B-168 Chat THINKING 验收](../archive/2026/b168-chat-thinking-process-validation.md)。以下描述当前源码，部署身份与验证限制见上述证据。
 
 ## 责任与数据流
 
@@ -37,7 +37,9 @@ flowchart LR
   `runs`、`events`、`contents`、`control` 四个 store。普通读写永久绑定由 vault
   与设备范围计算的 opaque key；历史不写 Markdown vault 或同步目录。
 - `view.tsx` 和 `components/AgentDebugPanel.tsx` 提供 Obsidian ItemView。
-  `chat-view.ts` 的按钮只在 Debug 开启时显示，点击打开或复用当前 vault 的 tab。
+  Chat 过程按已保存真实引用打开或复用当前 vault 的 tab；Debug 开关控制新详情采集，
+  不阻断已保存历史的读取。产品边界见 [DEC-058](../product/decisions/dec-058-chat-thinking-process.md)
+  与 [Chat THINKING Product Spec](../product/specs/pa-chat-thinking-process-product-spec.md)。
   宽 leaf 为树形行、统一时间轴和右侧详情，两侧独立滚动，分隔可调整；历史可收起。
   实际 leaf 小于 760px 时采用轨迹/详情双页、历史/轮次原生弹层和当前可见序列导航。
   完整内容从持久块按节点请求、按需展开；旧版未保存的 reasoning/工具详情不回填。
@@ -74,11 +76,51 @@ floating navbar 模式在内容底部留出宿主导航高度，安全区继续�
 
 当前 viewer 拥有所选 Run 的分页、索引、详情和阅读状态；隐藏时暂停 UI 刷新，
 恢复时补读已提交范围。关闭 leaf 清理后续分页、订阅、observer、timer 与 React
-root，并拒收迟到结果；插件级采集继续。workspace 只保存 `conversationId` 路由，
-不持久化正文或阅读缓存。
+root，并拒收迟到结果；插件级采集继续。workspace 只保存 `conversationId`、
+`agentDebugCaptureId`、`agentDebugNodeId` 路由，不持久化正文或阅读缓存。
 
 这些能力复用现有 React、观察端口和 IndexedDB；未引入 AgentPrism、LangChain、
 全文索引、上传、任务重放或独立后台采集。
+
+## Chat THINKING 投影与持久化
+
+`chat-view.ts` 沿用现有 DOM、PA 样式和原粒子；过程展开、计时与查看均不执行任务。
+Agent/loop 拥有调用与运行事实，领域 action state/回执拥有业务效果，Chat 只读投影。
+工具成功不等于目标完成，Stop 不撤销既有效果；必要操作和领域卡片留在折叠区外。
+
+- `UiTurn.chatStartedAt` 在 Chat 承接发送时记录，早于准备/历史等待；`chatDeliveredAt`
+  在真实交付终态记录。`agent_end` 不提前结束交付计时，不改 runtime 预算；一次视图
+  timer 每秒只更新文字，终态冻结，关闭/失效时释放，不逐秒写历史或累加并行耗时。
+- 步骤按 run/turn/message/toolCall 等真实身份稳定更新，顺序只代表已记录顺序。
+  `execution-summary.ts` 在保存时生成轻量摘要；当前/历史非 tool 活动按摘要稳定 key
+  投影终态，不能让 raw active 副本覆盖终态；tool outcome 与领域事实不被统一改写。
+  准备期失败/取消读取已有 Chat terminal kind，历史恢复复用 `agentExecution` 的
+  failed/cancelled，保留 running 恢复、明确 turnStatus 及 user_abort 规则。
+- 当前 reasoning 投影已有 canonical assistant 消息，未入快照的 delta 仅按
+  message/part 临时保留，快照到来即合并释放；不修改 provider 上下文。Debug off
+  仍可查看本视图已经收到的文本，关闭/重载后全文依赖既有 Debug，不复制到 Chat 库。
+- `HistoryTurnEntry`、`TerminalTurnEntry` 与 `PersistedTurn.executionSummary`
+  只存版本、实际运行身份、步骤事实、可信 `elapsedMs` 与 `debug: { captureId, nodes }`。
+  来源/操作按 `sourceRecordKeys/operationId` 引用既有事实，不复制正文、标题或清理集合。
+  成功、部分正文、Writing recovery 和无正文 failed/cancelled 均接入原持久化路径；
+  旧记录缺时间/引用时诚实降级，不回填、擦库或解析旧文案猜身份。
+- `ConversationPersistence.updateFinalizedExecutionElapsedMs` 经 manager/store
+  `updateExecutionElapsedMs` 原位补存冻结时间，不重写正文或重放效果。既有整 turn
+  revision 保留 DB 最新 Debug 引用与耗时，包含已移除状态；首次保存仍写真实新引用。
+- `onDebugReference` 传递真实 capture；`AgentDebugRunRecorder.onCallIdentity` 在
+  实际模型调用接缝关联 assistant message 和 logical call，不依赖正文采集开关。
+  历史 reasoning 按 capture/node 读取，入口用真实序号和工具关联显示标签。
+  `AgentDebugRouteTarget/revealTarget` 直接定位；node ID 沿用非空不透明字符串合同。
+  旧/缺引用只打开已知 run/会话，不搜索、分页恢复关联或选择最近节点冒充。
+- 历史读取按节点保留请求身份并共用清理 epoch；不同节点不互相取消。Debug invalidated
+  只失效历史缓存/迟到读取，不重绘或取消当前任务。删除沿原 outbox/墓碑；Forget 由原
+  owner 判断范围，`getPersistedEvents` 的确切 persisted cleared 事件支撑
+  `reviseDebugReferencesForForget` 原子修订，不能从 live/page cleared、缺 run 或空正文
+  推测清理原因，也不能以缺 exact Chat claim 否定 Debug owner 已确认的 unknown scope。
+- 摘要不进入后续 provider 输入、Memory 提取、分享等非目标投影；显示失败不能变成
+  Agent 失败。展开/焦点/滚动保持用户选择，资源随既有视图 teardown 释放。
+  `getChatThinkingProcessLocale()` 只为过程读取平台 navigator 主语言：zh 用中文、
+  其他可读主语言用英文，语言不可取得才 fallback 插件语言；固定名称与正文不翻译。
 
 ## 旧历史兼容
 

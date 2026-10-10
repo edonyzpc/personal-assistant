@@ -1224,7 +1224,12 @@ describe('ChatService.streamLLM integration', () => {
             startRun: jest.fn<(input: { conversationId?: string; prompt: string; provider: string; model: string }) => typeof recorder>(() => recorder),
         } };
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
-        await expect(service.streamLLM('inspect startup', jest.fn(), undefined, [], { conversationId: 'conversation' })).rejects.toBe(failure);
+        const references: Array<{ captureId: string; nodeId?: string; turnId?: string; messageId?: string }> = [];
+        await expect(service.streamLLM('inspect startup', jest.fn(), undefined, [], {
+            conversationId: 'conversation',
+            onDebugReference: reference => references.push(reference),
+        })).rejects.toBe(failure);
+        expect(references).toEqual([{ captureId: 'capture-startup' }]);
         expect(plugin.agentDebug.startRun).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'conversation', prompt: 'inspect startup' }));
         expect(recorder.bindRun).not.toHaveBeenCalled();
         expect(recorder.observe).toHaveBeenCalledWith(expect.objectContaining({ phase: 'chat_startup_lease:error', status: 'failed' }));
@@ -1245,6 +1250,33 @@ describe('ChatService.streamLLM integration', () => {
         await service.streamLLM('hello', chunk => output.push(chunk));
         expect(output.join('')).toContain('Business answer.');
         expect(mockCreateChatModel).toHaveBeenCalledTimes(1);
+        service.dispose();
+    });
+
+    it.each([true, false])('forwards real capture and answer identities independently of the payload gate: %s', async enabled => {
+        const recorder = { captureId: 'capture-real-answer', enabled: () => enabled,
+            bindRun: jest.fn(), observe: jest.fn(), finish: jest.fn() };
+        const base = createPlugin();
+        const plugin = { ...base, settings: { ...base.settings, debug: enabled }, agentDebug: {
+            startRun: () => recorder,
+        } };
+        mockCreateChatModel.mockResolvedValue(createStreamModel('Business answer.'));
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const references: Array<{ captureId: string; nodeId?: string; turnId?: string; messageId?: string }> = [];
+        const output: string[] = [];
+        await service.streamLLM('hello', chunk => output.push(chunk), undefined, [], {
+            conversationId: 'conversation',
+            onDebugReference: reference => references.push(reference),
+        });
+        expect(output.join('')).toContain('Business answer.');
+        expect(references).toHaveLength(2);
+        expect(references[0]).toEqual({ captureId: 'capture-real-answer' });
+        expect(references[1]).toMatchObject({
+            captureId: 'capture-real-answer',
+            turnId: expect.any(String),
+            messageId: expect.any(String),
+            nodeId: expect.any(String),
+        });
         service.dispose();
     });
 

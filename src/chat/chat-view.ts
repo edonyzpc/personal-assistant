@@ -30,7 +30,13 @@ import {
     type PageletChatHandoffContext,
     type PageletChatHandoffPreparationResult,
 } from '../ai-services/pagelet-handoff';
-import type { ThinkingStatusView, RenderedMessage, RuntimeWarningViewItem, CanonicalLifecycleUiState, UiTurn, TerminalTurnEntry, TimelineEntry } from './types';
+import type { ThinkingActivityRecord, ThinkingStatusView, RenderedMessage, RuntimeWarningViewItem, CanonicalLifecycleUiState, UiTurn, TerminalTurnEntry, TimelineEntry, HistoryTurnEntry } from './types';
+import {
+    createThinkingExecutionSummary,
+    type ThinkingDebugNodeRef,
+    type ThinkingExecutionStep,
+    type ThinkingExecutionSummary,
+} from './execution-summary';
 import { confirmChatAction, pickChatConversation } from './modals';
 import type { ChatHost } from './ChatHost';
 import type { ChatHistoryManager } from './chat-history-manager';
@@ -39,7 +45,25 @@ import { ConversationPersistence } from './ConversationPersistence';
 import { renderMarkdownWithOwner, containsMermaidFence, deferMermaidFences, getMermaidFenceSources, scheduleMermaidEnhancement, renderMermaidSourceWarning } from './mermaid';
 import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatChoiceMenuItem, createChatMenuDivider, createChatMenuLabel, updateChatMenuAvailableWidth } from './menu-helpers';
 import { registerMessageLongPress } from './message-long-press';
-import { formatSourceSummary, mergeContextUsedItems, normalizeContextUsedItems, normalizeSourceRecords, mergeSourceRecords, getContextUsedItemsFromStatus, formatAgentStatus, formatCanonicalToolStatus, formatCanonicalToolCompletedStatus, formatRuntimeWarningLabel, formatRuntimeWarningDetail, formatCanonicalTerminalSummary, runtimeWarningKey } from './formatters';
+import {
+    formatAgentStatus,
+    formatCanonicalTerminalSummary,
+    formatCanonicalToolCompletedStatus,
+    formatCanonicalToolStatus,
+    formatRuntimeWarningDetail,
+    formatRuntimeWarningLabel,
+    formatSourceSummary,
+    formatThinkingDuration,
+    formatThinkingResultFact,
+    getChatThinkingProcessLocale,
+    getContextUsedItemsFromStatus,
+    getToolContextUsedInfo,
+    mergeContextUsedItems,
+    mergeSourceRecords,
+    normalizeContextUsedItems,
+    normalizeSourceRecords,
+    runtimeWarningKey,
+} from './formatters';
 import {
     createChatRoleIdenticonSessionSeed,
     getChatRoleIdenticonModel,
@@ -60,6 +84,8 @@ import {
     getPlatformPerformance,
     requestPlatformAnimationFrame,
     setPlatformTimeout,
+    setPlatformInterval,
+    clearPlatformInterval,
     type PlatformAnimationFrameHandle,
     type PlatformTimeoutHandle,
 } from '../platform-dom';
@@ -356,6 +382,7 @@ export class LLMView extends ItemView {
     private viewSessionId = 0;
     private activeTurnId = 0;
     private activeTurnCancelled = false;
+    private activeThinkingTimerReleaser: (() => void) | null = null;
     private scheduledScrollFrame: PlatformAnimationFrameHandle | null = null;
     private panelResizeObserver: ResizeObserver | null = null;
     private statusBarResizeObserver: ResizeObserver | null = null;
@@ -530,6 +557,9 @@ export class LLMView extends ItemView {
         this.registerViewTeardown(() => composerDraft.dispose());
         this.resetRoleIdenticonSessionSeed();
         const t = makePluginTranslator(getPluginUiLanguage());
+        const thinkingLocale = getChatThinkingProcessLocale();
+        const thinkingT = (key: string, params?: Readonly<Record<string, string | number>>) =>
+            pluginT(key, thinkingLocale, params);
         const { containerEl } = this;
         containerEl.empty();
         containerEl.classList.add('llm-view');
@@ -1129,6 +1159,9 @@ export class LLMView extends ItemView {
             active: false,
             messages: [],
             messagesById: new Map(),
+            thinkingActivities: new Map(),
+            thinkingActivityOrder: [],
+            pendingReasoningParts: new Map(),
             turnStatuses: new Map(),
             hostContextUsedItems: [],
             hostSourceRecords: [],
@@ -3091,6 +3124,15 @@ export class LLMView extends ItemView {
         };
         const debugRenderedTurns = new WeakMap<RenderedMessage, UiTurn>();
         const debugCommittedMessages = new WeakSet<RenderedMessage>();
+        const historyReasoningContents = new WeakMap<HistoryTurnEntry, Map<string, string>>();
+        const historyReasoningStates = new WeakMap<HistoryTurnEntry, Map<string, string>>();
+        const historyReasoningReadTokens = new WeakMap<HistoryTurnEntry, Map<string, number>>();
+        const historyReasoningBlocks = new WeakMap<HistoryTurnEntry, Array<{
+            nodeId: string;
+            bodyEl: HTMLElement;
+            loadButton: HTMLButtonElement;
+        }>>();
+        let historyDebugCleanupEpoch = 0;
         const recordDebugTextCommit = (rendered: RenderedMessage, buffer: HTMLElement, content: string) => {
             if (!this.host.settings.debug || !this.host.recordAgentDebugTextCommitted
                 || debugCommittedMessages.has(rendered) || !content.trim()
@@ -4335,20 +4377,87 @@ export class LLMView extends ItemView {
                         || contextUsedItems.length > 0
                         || metadata?.contextTrace?.reduction
                         || (entry.activityDetails?.length ?? 0) > 0
+                        || (entry.thinkingActivities?.length ?? 0) > 0
+                        || (entry.executionSummary?.steps.length ?? 0) > 0
+                        || entry.thinkingElapsedMs !== undefined
+                        || entry.executionSummary?.elapsedMs !== undefined
+                        || (entry.executionSummary?.debug?.nodes.length ?? 0) > 0
                         || runtimeWarnings.length > 0
                     ) {
                         const statusView = createThinkingStatusView();
-                        entry.activityDetails?.forEach((detail) => appendThinkingStatus(statusView, detail));
-                        if (entry.providerReasoningObserved) {
-                            renderProviderReasoningNotice(statusView);
+                        const persistedElapsedMs = entry.executionSummary?.elapsedMs ?? entry.thinkingElapsedMs;
+                        if (persistedElapsedMs !== undefined) {
+                            statusView.timerStartedAt = 0;
+                            statusView.timerFrozenAt = persistedElapsedMs;
+                            statusView.elapsedEl?.setText(formatThinkingDuration(
+                                persistedElapsedMs,
+                                thinkingLocale,
+                            ));
                         }
+                        const activities = entry.thinkingActivities
+                            ? projectThinkingActivities(entry.thinkingActivities, entry.executionSummary)
+                            : activitiesFromExecutionSummary(entry.executionSummary);
+                        const sourceRecords = entry.assistant.canonicalTurn?.sourceRecords
+                            ?? entry.assistant.memoryMetadata?.sourceRecords
+                            ?? metadata?.sourceRecords
+                            ?? [];
+                        const sourceRecordsByKey = new Map(sourceRecords.map(record => [record.dedupKey, record]));
+                        activities.forEach(activity => {
+                            if (!activity.sourceRecordKeys?.length) return;
+                            const records = activity.sourceRecordKeys
+                                .map(key => sourceRecordsByKey.get(key))
+                                .filter((record): record is SourceRecord => Boolean(record));
+                            activity.sourceSummary = records.length > 0
+                                ? formatSourceSummary(records.map(record => ({ path: record.path ?? record.title ?? record.url ?? record.dedupKey })))
+                                : thinkingT('plugin.chat.thinking.sourceMissing');
+                        });
+                        if (activities.length > 0) {
+                            activities.forEach(activity => renderThinkingActivity(statusView, activity));
+                        } else {
+                            entry.activityDetails?.forEach((detail, index) => {
+                                const item = statusView.activityListEl.createDiv({
+                                    cls: 'thinking-status-detail-item',
+                                    text: detail,
+                                });
+                                statusView.activityElementsByKey.set(`history:${index}`, item);
+                            });
+                        }
+                        const reasoningSections = [
+                            ...(entry.assistant.canonicalTurn?.messages ?? [])
+                                .map(message => ({
+                                    messageId: message.id,
+                                    text: readAssistantReasoning(message),
+                                }))
+                                .filter(section => section.text),
+                            ...(entry.providerReasoningLegacyText
+                                ? [{ messageId: 'legacy-stream', text: entry.providerReasoningLegacyText }]
+                                : []),
+                        ];
+                        if (reasoningSections.length > 0) {
+                            const contentEl = ensureProviderReasoningSection(statusView);
+                            contentEl.empty();
+                            reasoningSections.forEach((section, index) => {
+                                const sectionEl = contentEl.createDiv({ cls: 'thinking-status-reasoning-message' });
+                                sectionEl.dataset.messageId = section.messageId;
+                                sectionEl.setText(index === 0 ? section.text : `\n\n${section.text}`);
+                            });
+                        } else {
+                            renderHistoryReasoningSection(statusView, entry);
+                            if (
+                                (entry.executionSummary?.debug?.nodes.length ?? 0) === 0
+                                && entry.providerReasoningObserved
+                            ) {
+                                renderProviderReasoningHistoryNotice(statusView);
+                            }
+                        }
+                        renderDebugReferences(statusView, entry);
                         renderContextUsedItems(statusView, contextUsedItems, metadata?.contextTrace?.reduction);
                         renderRuntimeWarnings(statusView, runtimeWarnings);
                         completeThinkingStatus(
                             statusView,
                             readPendingSourceDecision(entry.assistant)
-                                ? t('plugin.chat.sourceDecision.legacySummary')
-                                : formatCanonicalTerminalSummary(entry.assistant.canonicalTurn?.status, runtimeWarnings),
+                                ? thinkingT('plugin.chat.sourceDecision.legacySummary')
+                                : formatCanonicalTerminalSummary(entry.assistant.canonicalTurn?.status, runtimeWarnings, thinkingLocale),
                         );
                     }
                     const assistantRendered = createMessageElement(entry.assistant, {
@@ -4496,6 +4605,11 @@ export class LLMView extends ItemView {
                         }
                         for (const taskId of imageTaskIds) dropImageTaskCard(taskId);
                     }
+                    const deleted = await this.conversationPersistence.deletePersistedTurnForEntry(entry);
+                    if (!deleted) {
+                        new Notice(t('plugin.chat.notice.deleteMessageFailed'));
+                        return;
+                    }
                     removeTerminalEntry(entry);
                     imageOperationByTurn.delete(entry.id);
                 });
@@ -4524,18 +4638,43 @@ export class LLMView extends ItemView {
             }
 
             entry.terminalRow = row;
-            scrollToBottom({ force: true });
+            scrollToBottom();
         };
 
         const createTerminalEntry = (
             turn: UiTurn,
+            runId: string,
             content: string,
             terminalKind: TerminalTurnEntry['terminalKind'],
             errorDetail?: string,
         ) => {
             cancelLiveMarkdownRender(turn.assistantMessage);
             removeElement(turn.assistantMessage?.messageDiv);
-            stopThinkingLoader(turn.statusView);
+            turn.chatDeliveredAt ??= Date.now();
+            const executionSummary = createThinkingExecutionSummary(turn);
+            if (turn.canonicalLifecycle.terminalStatus === undefined) {
+                // Legacy errors and cancellation have a known Chat terminal fact without an agent_end event.
+                for (const step of executionSummary.steps) {
+                    if (step.kind !== 'tool'
+                        && turn.canonicalLifecycle.thinkingActivities.get(step.key)?.status === 'active') {
+                        step.status = terminalKind === 'error' ? 'failed' : 'stopped';
+                    }
+                }
+            }
+            if (turn.statusView) {
+                renderFinalizedThinkingActivities(turn, executionSummary);
+                turn.statusView.timerFrozenAt ??= turn.chatDeliveredAt;
+                completeThinkingStatus(
+                    turn.statusView,
+                    formatCanonicalTerminalSummary(
+                        terminalKind === 'error' ? 'error' : 'aborted',
+                        turn.canonicalLifecycle.warnings,
+                        thinkingLocale,
+                    ),
+                );
+            } else {
+                stopThinkingLoader(turn.statusView);
+            }
             const entry: TerminalTurnEntry = {
                 kind: 'terminal',
                 id: turn.id,
@@ -4550,6 +4689,9 @@ export class LLMView extends ItemView {
                 errorDetail,
                 userMessage: turn.userMessage,
                 statusView: turn.statusView,
+                thinkingElapsedMs: Math.max(0, turn.chatDeliveredAt - turn.chatStartedAt),
+                runId,
+                executionSummary,
             };
             timelineEntries.push(entry);
             createTerminalRow(entry);
@@ -4558,6 +4700,7 @@ export class LLMView extends ItemView {
                 imageTaskMessageTargets.set(imageOperation.stableMessageId, { parent: entry.terminalRow });
                 void loadImageTaskCards();
             }
+            return entry;
         };
 
         const createThinkingStatusView = (turn?: UiTurn): ThinkingStatusView => {
@@ -4573,23 +4716,24 @@ export class LLMView extends ItemView {
                 cls: 'thinking-status-toggle',
                 attr: {
                     type: 'button',
-                    'aria-label': t("plugin.chat.thinking.showDetails"),
+                    'aria-label': thinkingT("plugin.chat.thinking.showDetails"),
                     'aria-expanded': 'false',
                     'aria-controls': detailsId,
                 },
             });
             setIcon(toggleButton, 'chevron-right');
-            const { loaderEl } = createRoleLabel(headerDiv, t("plugin.chat.role.thinking"), {
+            const { loaderEl } = createRoleLabel(headerDiv, 'THINKING', {
                 extraClass: 'thinking-status-role',
                 loader: 'thinking',
             });
             const summaryEl = headerDiv.createDiv({ cls: 'thinking-status-summary' });
             summaryEl.setAttribute('aria-live', 'polite');
+            const elapsedEl = headerDiv.createDiv({ cls: 'thinking-status-elapsed' });
             const detailsEl = messageDiv.createDiv({ cls: 'thinking-status-details' });
             detailsEl.id = detailsId;
             detailsEl.hidden = true;
             const activitySectionEl = detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-activity' });
-            activitySectionEl.createDiv({ cls: 'thinking-status-section-title', text: t("plugin.chat.thinking.assistantActivity") });
+            activitySectionEl.createDiv({ cls: 'thinking-status-section-title', text: thinkingT("plugin.chat.thinking.assistantActivity") });
             const activityListEl = activitySectionEl.createDiv({ cls: 'thinking-status-activity-list' });
 
             const statusView: ThinkingStatusView = {
@@ -4600,8 +4744,37 @@ export class LLMView extends ItemView {
                 toggleButton,
                 loaderEl,
                 expanded: false,
-                detailItems: [],
+                reasoningExpanded: false,
+                activityElementsByKey: new Map(),
+                elapsedEl,
             };
+
+            const renderElapsed = () => {
+                if (statusView.timerStartedAt === undefined) return;
+                const end = statusView.timerFrozenAt ?? Date.now();
+                elapsedEl.setText(formatThinkingDuration(
+                    Math.max(0, end - statusView.timerStartedAt),
+                    thinkingLocale,
+                ));
+            };
+            if (turn && turn.chatDeliveredAt === undefined) {
+                statusView.timerStartedAt = turn.chatStartedAt;
+                renderElapsed();
+                statusView.timerId = setPlatformInterval(renderElapsed, 1000);
+                (statusView.timerId as unknown as { unref?: () => void }).unref?.();
+                const releaseActiveTimer = () => {
+                    if (statusView.timerId === undefined) return;
+                    clearPlatformInterval(statusView.timerId);
+                    statusView.timerId = undefined;
+                };
+                this.activeThinkingTimerReleaser = releaseActiveTimer;
+                this.registerViewTeardown(() => {
+                    releaseActiveTimer();
+                    if (this.activeThinkingTimerReleaser === releaseActiveTimer) {
+                        this.activeThinkingTimerReleaser = null;
+                    }
+                });
+            }
 
             const toggleThinkingDetails = () => {
                 pauseAutoScroll();
@@ -4610,7 +4783,9 @@ export class LLMView extends ItemView {
                 toggleButton.setAttribute('aria-expanded', String(statusView.expanded));
                 toggleButton.setAttribute(
                     'aria-label',
-                    statusView.expanded ? t("plugin.chat.thinking.hideDetails") : t("plugin.chat.thinking.showDetails")
+                    statusView.expanded
+                        ? thinkingT("plugin.chat.thinking.hideDetails")
+                        : thinkingT("plugin.chat.thinking.showDetails")
                 );
                 setIcon(toggleButton, statusView.expanded ? 'chevron-down' : 'chevron-right');
             };
@@ -4622,60 +4797,420 @@ export class LLMView extends ItemView {
             return statusView;
         };
 
-        const appendThinkingStatus = (statusView: ThinkingStatusView, content: string) => {
-            const MAX_THINKING_DETAIL_ITEMS = 6;
-            statusView.summaryEl.setText(content);
-            if (statusView.lastDetail !== content) {
-                statusView.lastDetail = content;
-                const detailItem = statusView.activityListEl.createDiv({ cls: 'thinking-status-detail-item', text: content });
-                statusView.detailItems.push(detailItem);
-                while (statusView.detailItems.length > MAX_THINKING_DETAIL_ITEMS) {
-                    removeElement(statusView.detailItems.shift());
+        const renderThinkingActivity = (statusView: ThinkingStatusView, activity: ThinkingActivityRecord) => {
+            let item = statusView.activityElementsByKey.get(activity.key);
+            if (!item) {
+                item = statusView.activityListEl.createDiv({
+                    cls: 'thinking-status-detail-item thinking-activity-item',
+                });
+                item.dataset.activityKey = activity.key;
+                item.createDiv({ cls: 'thinking-activity-title' });
+                item.createDiv({ cls: 'thinking-activity-detail' });
+                statusView.activityElementsByKey.set(activity.key, item);
+            }
+            item.className = `thinking-status-detail-item thinking-activity-item thinking-activity-${activity.kind} activity-${activity.status}`;
+            const [titleEl, detailEl] = Array.from(item.children) as [HTMLElement, HTMLElement];
+            titleEl.setText(activity.title);
+            const detailParts = [
+                activity.detail,
+                activity.sourceSummary,
+                ...(activity.operationId
+                    ? [thinkingT('plugin.chat.thinking.operationReference', { id: activity.operationId })]
+                    : []),
+                formatThinkingResultFact(activity.resultFact, thinkingLocale),
+            ].filter((part): part is string => Boolean(part));
+            detailEl.setText(detailParts.join(' · '));
+        };
+
+        const activityTitleFromSummaryStep = (step: ThinkingExecutionStep): string => {
+            if (step.kind === 'tool') {
+                return step.outcome
+                    ? formatCanonicalToolCompletedStatus(step.toolName ?? 'tool', step.outcome, thinkingLocale)
+                    : formatCanonicalToolStatus(step.toolName ?? 'tool', thinkingLocale);
+            }
+            if (step.status !== 'active') {
+                const phase = thinkingT(`plugin.chat.thinking.phase.${step.kind}`);
+                const statusKey = step.status === 'succeeded'
+                    ? 'completed'
+                    : step.status === 'failed'
+                        ? 'failed'
+                        : step.status === 'stopped'
+                            ? 'interrupted'
+                            : step.status === 'unknown' ? 'unknown' : undefined;
+                return statusKey
+                    ? `${phase} · ${thinkingT(`plugin.agentDebug.status.${statusKey}`)}`
+                    : phase;
+            }
+            if (step.kind === 'model') return thinkingT('plugin.chat.thinking.qwenThinking');
+            if (step.kind === 'draft') return pluginT('plugin.chat.lifecycle.movingDraftToProgress', thinkingLocale);
+            if (step.kind === 'context') {
+                return step.outcome === 'tools'
+                    ? pluginT('plugin.chat.lifecycle.continuingWithTools', thinkingLocale)
+                    : pluginT('plugin.chat.lifecycle.decidingContext', thinkingLocale);
+            }
+            return thinkingT('plugin.chat.thinking.preparing');
+        };
+
+        const projectThinkingActivities = (
+            activities: ThinkingActivityRecord[],
+            summary: ThinkingExecutionSummary | undefined,
+        ): ThinkingActivityRecord[] => {
+            const stepsByKey = new Map(summary?.steps
+                .filter(step => step.kind !== 'tool' && step.status !== 'active')
+                .map(step => [step.key, step]));
+            return activities.map(activity => {
+                const step = activity.kind !== 'tool' ? stepsByKey.get(activity.key) : undefined;
+                return step
+                    ? { ...activity, status: step.status, title: activityTitleFromSummaryStep(step) }
+                    : { ...activity };
+            });
+        };
+
+        const renderFinalizedThinkingActivities = (turn: UiTurn, summary: ThinkingExecutionSummary) => {
+            const statusView = turn.statusView;
+            if (!statusView) return;
+            const activities = turn.canonicalLifecycle.thinkingActivityOrder
+                .map(key => turn.canonicalLifecycle.thinkingActivities.get(key))
+                .filter((activity): activity is ThinkingActivityRecord => Boolean(activity));
+            projectThinkingActivities(activities, summary)
+                .filter(activity => activity.kind !== 'tool')
+                .forEach(activity => renderThinkingActivity(statusView, activity));
+        };
+
+        const activitiesFromExecutionSummary = (summary: ThinkingExecutionSummary | undefined): ThinkingActivityRecord[] => {
+            if (!summary) return [];
+            return [...summary.steps]
+                .sort((left, right) => left.order - right.order)
+                .map(step => ({
+                    key: step.key,
+                    kind: step.kind === 'tool' ? 'tool' as const : 'phase' as const,
+                    title: activityTitleFromSummaryStep(step),
+                    status: step.status,
+                    ...(step.runId ? { runId: step.runId } : {}),
+                    ...(step.turnId ? { turnId: step.turnId } : {}),
+                    ...(step.messageId ? { messageId: step.messageId } : {}),
+                    ...(step.toolCallId ? { toolCallId: step.toolCallId } : {}),
+                    ...(step.toolName ? { toolName: step.toolName } : {}),
+                    ...(step.sourceRecordKeys ? { sourceRecordKeys: [...step.sourceRecordKeys] } : {}),
+                    ...(step.operationId ? { operationId: step.operationId } : {}),
+                    executionKind: step.kind,
+                    ...(step.outcome ? { outcome: step.outcome } : {}),
+                }));
+        };
+
+        const setHistoryReasoningResult = (
+            entry: HistoryTurnEntry,
+            node: ThinkingDebugNodeRef,
+            state: string,
+            text?: string,
+        ) => {
+            const states = historyReasoningStates.get(entry) ?? new Map<string, string>();
+            const contents = historyReasoningContents.get(entry) ?? new Map<string, string>();
+            states.set(node.nodeId, state);
+            if (text === undefined) contents.delete(node.nodeId);
+            else contents.set(node.nodeId, text);
+            historyReasoningStates.set(entry, states);
+            historyReasoningContents.set(entry, contents);
+        };
+
+        const updateHistoryReasoningBlock = (
+            bodyEl: HTMLElement,
+            loadButton: HTMLButtonElement,
+            state: string,
+            text?: string,
+        ) => {
+            bodyEl.setText(text ?? thinkingT(`plugin.chat.thinking.${state}`));
+            loadButton.disabled = state === 'reasoningLoading';
+        };
+
+        const loadHistoryReasoning = async (
+            entry: HistoryTurnEntry,
+            node: ThinkingDebugNodeRef,
+            bodyEl: HTMLElement,
+            loadButton: HTMLButtonElement,
+        ) => {
+            const traceReader = this.host.readAgentDebugTrace?.bind(this.host);
+            const contentReader = this.host.readAgentDebugContents?.bind(this.host);
+            if (!traceReader || !contentReader) {
+                updateHistoryReasoningBlock(bodyEl, loadButton, 'reasoningUnavailable');
+                return;
+            }
+            const cleanupEpoch = historyDebugCleanupEpoch;
+            const readTokens = historyReasoningReadTokens.get(entry) ?? new Map<string, number>();
+            const readToken = (readTokens.get(node.nodeId) ?? 0) + 1;
+            readTokens.set(node.nodeId, readToken);
+            historyReasoningReadTokens.set(entry, readTokens);
+            const isCurrentRead = () => isCurrentSession()
+                && cleanupEpoch === historyDebugCleanupEpoch
+                && readTokens.get(node.nodeId) === readToken;
+            updateHistoryReasoningBlock(bodyEl, loadButton, 'reasoningLoading');
+            const findTarget = (page: Awaited<ReturnType<NonNullable<ChatHost['readAgentDebugTrace']>>>) =>
+                [...page.events, ...page.liveEvents].find(event => event.nodeId === node.nodeId);
+            try {
+                let page = await traceReader(node.captureId, { limit: 200 });
+                if (!isCurrentRead()) return;
+                if (!page.run) {
+                    setHistoryReasoningResult(entry, node, 'reasoningUnavailable');
+                    updateHistoryReasoningBlock(bodyEl, loadButton, 'reasoningUnavailable');
+                    return;
                 }
+                let target = findTarget(page);
+                let guard = 0;
+                while (!target && page.hasMore && guard++ < 100) {
+                    page = await traceReader(node.captureId, { after: page.nextAfter, limit: 200 });
+                    if (!isCurrentRead()) return;
+                    target = findTarget(page);
+                }
+                if (!target) {
+                    setHistoryReasoningResult(entry, node, 'reasoningMissing');
+                    updateHistoryReasoningBlock(bodyEl, loadButton, 'reasoningMissing');
+                    return;
+                }
+                const contents = await contentReader(node.captureId, node.nodeId);
+                if (!isCurrentRead()) return;
+                const reasoning = contents
+                    .filter(content => content.kind === 'reasoning')
+                    .map(content => content.text)
+                    .join('\n\n');
+                if (!reasoning) {
+                    const state = target.availability === 'not_provided'
+                        ? 'reasoningNotProvided'
+                        : 'reasoningUnavailable';
+                    setHistoryReasoningResult(entry, node, state);
+                    updateHistoryReasoningBlock(bodyEl, loadButton, state);
+                    return;
+                }
+                setHistoryReasoningResult(entry, node, 'ready', reasoning);
+                updateHistoryReasoningBlock(bodyEl, loadButton, 'ready', reasoning);
+            } catch {
+                if (!isCurrentRead()) return;
+                setHistoryReasoningResult(entry, node, 'reasoningReadFailed');
+                updateHistoryReasoningBlock(bodyEl, loadButton, 'reasoningReadFailed');
             }
+        };
+
+        const renderHistoryReasoningSection = (statusView: ThinkingStatusView, entry: HistoryTurnEntry) => {
+            const nodes = entry.executionSummary?.debug?.nodes.filter(node => node.kind === 'reasoning') ?? [];
+            if (nodes.length === 0) return;
+            const contentEl = ensureProviderReasoningSection(statusView);
+            contentEl.empty();
+            const blocks: Array<{ nodeId: string; bodyEl: HTMLElement; loadButton: HTMLButtonElement }> = [];
+            nodes.forEach((node, index) => {
+                const messageEl = contentEl.createDiv({ cls: 'thinking-status-reasoning-message' });
+                messageEl.dataset.messageId = node.messageId ?? node.nodeId;
+                messageEl.createDiv({
+                    cls: 'thinking-activity-title',
+                    text: `${thinkingT('plugin.chat.thinking.reasoning')} ${index + 1}`,
+                });
+                const controlsEl = messageEl.createDiv({ cls: 'thinking-status-reasoning-controls' });
+                const bodyEl = controlsEl.createDiv({ cls: 'thinking-status-reasoning-state' });
+                const loadButton = controlsEl.createEl('button', {
+                    cls: 'thinking-status-reasoning-load',
+                    text: thinkingT('plugin.chat.thinking.loadReasoning'),
+                    attr: { type: 'button' },
+                });
+                loadButton.onclick = () => {
+                    if (!loadButton.disabled) void loadHistoryReasoning(entry, node, bodyEl, loadButton);
+                };
+                blocks.push({ nodeId: node.nodeId, bodyEl, loadButton });
+                const cached = historyReasoningContents.get(entry)?.get(node.nodeId);
+                const state = historyReasoningStates.get(entry)?.get(node.nodeId);
+                updateHistoryReasoningBlock(
+                    bodyEl,
+                    loadButton,
+                    state ?? 'reasoningNotLoaded',
+                    cached,
+                );
+            });
+            historyReasoningBlocks.set(entry, blocks);
+        };
+
+        const renderDebugReferences = (statusView: ThinkingStatusView, entry: HistoryTurnEntry) => {
+            const debug = entry.executionSummary?.debug;
+            if (!this.host.openAgentDebug) return;
+            const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-debug-refs' });
+            section.createDiv({
+                cls: 'thinking-status-section-title',
+                text: thinkingT('plugin.chat.thinking.debugReferences'),
+            });
+            const listEl = section.createDiv({ cls: 'thinking-status-debug-ref-list' });
+            if (!debug || debug.nodes.length === 0) {
+                listEl.createDiv({
+                    cls: 'thinking-status-debug-target-missing',
+                    text: thinkingT('plugin.chat.thinking.debugTargetMissing'),
+                });
+                const fallbackButton = listEl.createEl('button', {
+                    cls: 'thinking-status-debug-ref',
+                    text: thinkingT('plugin.chat.thinking.openDebug'),
+                    attr: { type: 'button' },
+                });
+                fallbackButton.onclick = () => {
+                    void this.host.openAgentDebug?.({
+                        conversationId: this.conversationPersistence.activeConversationId ?? undefined,
+                        ...(debug ? { captureId: debug.captureId } : {}),
+                    });
+                };
+            }
+            const nodes = debug?.nodes ?? [];
+            let reasoningIndex = 0;
+            let toolIndex = 0;
+            nodes.forEach(node => {
+                let targetLabel: string;
+                if (node.kind === 'reasoning') {
+                    targetLabel = `${thinkingT('plugin.chat.thinking.reasoning')} ${++reasoningIndex}`;
+                } else {
+                    const step = node.turnId && node.toolCallId
+                        ? entry.executionSummary?.steps.find(step => step.kind === 'tool'
+                            && step.turnId === node.turnId && step.toolCallId === node.toolCallId)
+                        : undefined;
+                    const toolName = step?.toolName;
+                    const toolLabel = toolName === 'search_memory'
+                        ? thinkingT('plugin.chat.formatter.toolLabel.memory')
+                        : toolName === 'webSearch'
+                            ? thinkingT('plugin.chat.formatter.toolLabel.webSearch')
+                            : getToolContextUsedInfo(toolName ?? 'tool', thinkingLocale).label;
+                    targetLabel = `${toolLabel} ${++toolIndex}`;
+                }
+                const button = listEl.createEl('button', {
+                    cls: 'thinking-status-debug-ref',
+                    text: `${targetLabel} · ${thinkingT('plugin.chat.thinking.openDebug')}`,
+                    attr: {
+                        type: 'button',
+                        'data-capture-id': node.captureId,
+                        'data-node-id': node.nodeId,
+                    },
+                });
+                button.onclick = () => {
+                    void this.host.openAgentDebug?.({
+                        conversationId: this.conversationPersistence.activeConversationId ?? undefined,
+                        captureId: node.captureId,
+                        nodeId: node.nodeId,
+                    });
+                };
+            });
+        };
+
+        const recordActivitySummary = (turn: UiTurn, title: string) => {
+            if (turn.activityDetails.at(-1) === title) return;
+            turn.activityDetails.push(title);
+            while (turn.activityDetails.length > 6) turn.activityDetails.shift();
+        };
+
+        const upsertThinkingActivity = (
+            turn: UiTurn,
+            activity: Omit<ThinkingActivityRecord, 'status'> & { status?: ThinkingActivityRecord['status'] },
+        ) => {
+            const canonical = turn.canonicalLifecycle;
+            const existing = canonical.thinkingActivities.get(activity.key);
+            const merged: ThinkingActivityRecord = {
+                ...existing,
+                ...activity,
+                status: activity.status ?? existing?.status ?? 'active',
+            };
+            if (!existing) canonical.thinkingActivityOrder.push(activity.key);
+            canonical.thinkingActivities.set(activity.key, merged);
+            turn.statusView ??= createThinkingStatusView(turn);
+            renderThinkingActivity(turn.statusView, merged);
+            turn.statusView.summaryEl.setText(merged.title);
+            recordActivitySummary(turn, merged.title);
             scrollToBottom();
         };
 
-        const appendThinkingDetail = (statusView: ThinkingStatusView, content: string) => {
-            const MAX_THINKING_DETAIL_ITEMS = 6;
-            if (statusView.lastDetail === content) return;
-            statusView.lastDetail = content;
-            const detailItem = statusView.activityListEl.createDiv({ cls: 'thinking-status-detail-item', text: content });
-            statusView.detailItems.push(detailItem);
-            while (statusView.detailItems.length > MAX_THINKING_DETAIL_ITEMS) {
-                removeElement(statusView.detailItems.shift());
-            }
+        const addCanonicalActivity = (
+            turn: UiTurn,
+            content: string,
+            key = `phase:${content}`,
+            status: ThinkingActivityRecord['status'] = 'active',
+            executionKind?: ThinkingActivityRecord['executionKind'],
+        ) => {
+            upsertThinkingActivity(turn, {
+                key,
+                kind: 'phase',
+                title: content,
+                status,
+                executionKind,
+            });
+        };
+
+        const appendThinkingStatus = (statusView: ThinkingStatusView, content: string) => {
+            statusView.summaryEl.setText(content);
+            const item = statusView.activityListEl.createDiv({ cls: 'thinking-status-detail-item', text: content });
+            const key = `legacy:${statusView.activityElementsByKey.size}`;
+            statusView.activityElementsByKey.set(key, item);
             scrollToBottom();
         };
 
-        const ensureProviderReasoningNotice = (statusView: ThinkingStatusView) => {
-            if (statusView.reasoningContentEl) return statusView.reasoningContentEl;
+        const ensureProviderReasoningSection = (statusView: ThinkingStatusView) => {
+            if (statusView.reasoningContentEl && statusView.reasoningToggleButton) return statusView.reasoningContentEl;
             const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-reasoning' });
-            section.createDiv({ cls: 'thinking-status-section-title', text: t("plugin.chat.thinking.providerThinking") });
+            const header = section.createDiv({ cls: 'thinking-reasoning-header' });
+            const reasoningId = `pa-chat-thinking-reasoning-${sessionId}-${++thinkingStatusId}`;
+            const toggleButton = header.createEl('button', {
+                cls: 'thinking-reasoning-toggle',
+                attr: {
+                    type: 'button',
+                    'aria-label': thinkingT('plugin.chat.thinking.showReasoning'),
+                    'aria-expanded': 'false',
+                    'aria-controls': reasoningId,
+                },
+            });
+            setIcon(toggleButton, 'chevron-right');
+            header.createDiv({ cls: 'thinking-status-section-title', text: 'reasoning' });
             const contentEl = section.createDiv({ cls: 'thinking-status-reasoning-content' });
+            contentEl.id = reasoningId;
+            contentEl.hidden = true;
+            toggleButton.onclick = (event) => {
+                event.stopPropagation();
+                pauseAutoScroll();
+                statusView.reasoningExpanded = !statusView.reasoningExpanded;
+                contentEl.hidden = !statusView.reasoningExpanded;
+                toggleButton.setAttribute('aria-expanded', String(statusView.reasoningExpanded));
+                toggleButton.setAttribute(
+                    'aria-label',
+                    statusView.reasoningExpanded
+                        ? thinkingT('plugin.chat.thinking.hideReasoning')
+                        : thinkingT('plugin.chat.thinking.showReasoning'),
+                );
+                setIcon(toggleButton, statusView.reasoningExpanded ? 'chevron-down' : 'chevron-right');
+            };
             statusView.reasoningSectionEl = section;
+            statusView.reasoningToggleButton = toggleButton;
             statusView.reasoningContentEl = contentEl;
             return contentEl;
         };
 
-        const renderProviderReasoningNotice = (statusView: ThinkingStatusView) => {
-            const contentEl = ensureProviderReasoningNotice(statusView);
-            contentEl.setText(t("plugin.chat.thinking.providerReasoningHidden"));
+        const renderProviderReasoningHistoryNotice = (statusView: ThinkingStatusView) => {
+            const contentEl = ensureProviderReasoningSection(statusView);
+            contentEl.setText(thinkingT('plugin.chat.thinking.reasoningUnavailable'));
+        };
+
+        type ProviderReasoningSection = { messageId: string; text: string };
+        const renderProviderReasoningSections = (turn: UiTurn, sections: ProviderReasoningSection[]) => {
+            const visibleSections = sections.filter(section => section.text);
+            if (visibleSections.length === 0) return;
+            turn.providerReasoningObserved = true;
+            turn.statusView ??= createThinkingStatusView(turn);
+            const contentEl = ensureProviderReasoningSection(turn.statusView);
+            contentEl.empty();
+            visibleSections.forEach((section, index) => {
+                const sectionEl = contentEl.createDiv({ cls: 'thinking-status-reasoning-message' });
+                sectionEl.dataset.messageId = section.messageId;
+                sectionEl.setText(index === 0 ? section.text : `\n\n${section.text}`);
+            });
+            turn.statusView.summaryEl.setText(thinkingT('plugin.chat.thinking.qwenThinking'));
+            scrollToBottom();
         };
 
         const appendProviderReasoning = (turn: UiTurn, delta: string) => {
             if (!delta) return;
-            turn.providerReasoningObserved = true;
-            turn.statusView ??= createThinkingStatusView(turn);
-            turn.statusView.summaryEl.setText(t("plugin.chat.thinking.qwenThinking"));
-            renderProviderReasoningNotice(turn.statusView);
-            scrollToBottom();
+            turn.providerReasoningBuffer = `${turn.providerReasoningBuffer ?? ''}${delta}`;
+            renderProviderReasoningSections(turn, [{ messageId: 'legacy-stream', text: turn.providerReasoningBuffer }]);
         };
 
         const ensureWarningList = (statusView: ThinkingStatusView) => {
             if (statusView.warningListEl) return statusView.warningListEl;
             const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-warnings' });
-            section.createDiv({ cls: 'thinking-status-section-title', text: t("plugin.chat.thinking.warnings") });
+            section.createDiv({ cls: 'thinking-status-section-title', text: thinkingT("plugin.chat.thinking.warnings") });
             const listEl = section.createDiv({ cls: 'thinking-status-warning-list' });
             statusView.warningSectionEl = section;
             statusView.warningListEl = listEl;
@@ -4698,16 +5233,27 @@ export class LLMView extends ItemView {
                 const row = listEl.createDiv({ cls: `thinking-status-warning-item warning-${warning.type}` });
                 row.createDiv({
                     cls: 'thinking-status-warning-label',
-                    text: formatRuntimeWarningLabel(warning),
+                    text: formatRuntimeWarningLabel(warning, thinkingLocale),
                 });
-                const detail = formatRuntimeWarningDetail(warning);
+                const detail = formatRuntimeWarningDetail(warning, thinkingLocale);
                 if (detail) {
                     row.createDiv({ cls: 'thinking-status-warning-detail', text: detail });
                 }
             });
         };
 
-        const completeThinkingStatus = (statusView: ThinkingStatusView, summary = t("plugin.chat.thinking.complete")) => {
+        const completeThinkingStatus = (statusView: ThinkingStatusView, summary = thinkingT("plugin.chat.thinking.complete")) => {
+            if (statusView.timerId !== undefined) {
+                clearPlatformInterval(statusView.timerId);
+                statusView.timerId = undefined;
+            }
+            if (statusView.timerStartedAt !== undefined) {
+                statusView.timerFrozenAt ??= Date.now();
+                statusView.elapsedEl?.setText(formatThinkingDuration(
+                    Math.max(0, statusView.timerFrozenAt - statusView.timerStartedAt),
+                    thinkingLocale,
+                ));
+            }
             stopThinkingLoader(statusView);
             statusView.summaryEl.setText(summary);
         };
@@ -4715,7 +5261,7 @@ export class LLMView extends ItemView {
         const ensureContextUsedList = (statusView: ThinkingStatusView) => {
             if (statusView.contextUsedListEl) return statusView.contextUsedListEl;
             const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-context-used' });
-            section.createDiv({ cls: 'thinking-status-section-title', text: t("plugin.chat.thinking.contextUsed") });
+            section.createDiv({ cls: 'thinking-status-section-title', text: thinkingT("plugin.chat.thinking.contextUsed") });
             const listEl = section.createDiv({ cls: 'thinking-status-context-list' });
             statusView.contextUsedSectionEl = section;
             statusView.contextUsedListEl = listEl;
@@ -4728,9 +5274,9 @@ export class LLMView extends ItemView {
             reduction?: ContextReductionReceipt,
         ) => {
             const reductionLabel = reduction?.budgetLimited
-                ? t('plugin.chat.thinking.contextBudgetLimited')
+                ? thinkingT('plugin.chat.thinking.contextBudgetLimited')
                 : reduction?.historyCompressed || reduction?.toolContextReduced
-                    ? t('plugin.chat.thinking.contextCompressed')
+                    ? thinkingT('plugin.chat.thinking.contextCompressed')
                     : undefined;
             if (items.length === 0 && !reductionLabel) {
                 removeElement(statusView.contextUsedSectionEl);
@@ -4745,7 +5291,7 @@ export class LLMView extends ItemView {
                 if (item.memoryClaimId && this.host.openMemorySettings) {
                     const target = row.createEl('button', {
                         cls: 'thinking-status-context-label thinking-status-context-memory-link',
-                        text: t("plugin.chat.thinking.savedUnderstanding"),
+                        text: thinkingT("plugin.chat.thinking.savedUnderstanding"),
                     });
                     target.setAttr('type', 'button');
                     target.addEventListener('click', () => this.host.openMemorySettings?.(item.memoryClaimId));
@@ -4753,15 +5299,15 @@ export class LLMView extends ItemView {
                     row.createDiv({ cls: 'thinking-status-context-label', text: item.label });
                 }
                 const effectDetail = item.memoryEffect === 'future_answers'
-                    ? t("plugin.chat.thinking.savedUnderstandingFutureAnswers")
+                    ? thinkingT("plugin.chat.thinking.savedUnderstandingFutureAnswers")
                     : item.memoryEffect === 'collaboration_default'
-                        ? t("plugin.chat.thinking.savedUnderstandingCollaborationDefault")
+                        ? thinkingT("plugin.chat.thinking.savedUnderstandingCollaborationDefault")
                         : item.detail;
                 const sourceDetail = item.memorySource
-                    ? t(`plugin.chat.thinking.savedUnderstandingSource.${item.memorySource}`)
+                    ? thinkingT(`plugin.chat.thinking.savedUnderstandingSource.${item.memorySource}`)
                     : undefined;
                 const scopeDetail = item.memoryScope
-                    ? t(`plugin.chat.thinking.savedUnderstandingScope.${item.memoryScope}`)
+                    ? thinkingT(`plugin.chat.thinking.savedUnderstandingScope.${item.memoryScope}`)
                     : undefined;
                 const detail = [sourceDetail, scopeDetail, effectDetail].filter(Boolean).join(' · ');
                 if (detail) {
@@ -4772,16 +5318,16 @@ export class LLMView extends ItemView {
                     row.createDiv({ cls: 'thinking-status-context-sources', text: sourceSummary });
                 }
                 if (item.citationEligible) {
-                    row.createDiv({ cls: 'thinking-status-context-note', text: t("plugin.chat.thinking.memoryEligible") });
+                    row.createDiv({ cls: 'thinking-status-context-note', text: thinkingT("plugin.chat.thinking.memoryEligible") });
                 } else if (item.statusOnly) {
                     row.createDiv({
                         cls: 'thinking-status-context-note',
                         text: item.memoryClaimId
-                            ? t("plugin.chat.thinking.savedUnderstandingNotCitation")
-                            : t("plugin.chat.thinking.statusOnly"),
+                            ? thinkingT("plugin.chat.thinking.savedUnderstandingNotCitation")
+                            : thinkingT("plugin.chat.thinking.statusOnly"),
                     });
                 } else {
-                    row.createDiv({ cls: 'thinking-status-context-note', text: t("plugin.chat.thinking.notMemoryReference") });
+                    row.createDiv({ cls: 'thinking-status-context-note', text: thinkingT("plugin.chat.thinking.notMemoryReference") });
                 }
             });
             if (reductionLabel) {
@@ -4799,36 +5345,211 @@ export class LLMView extends ItemView {
 
         const renderAgentStatus = (turn: UiTurn, status: ChatAgentStatus) => {
             turn.statusView ??= createThinkingStatusView(turn);
-            const content = formatAgentStatus(status);
-            if (turn.activityDetails[turn.activityDetails.length - 1] !== content) {
-                turn.activityDetails.push(content);
-                while (turn.activityDetails.length > 6) {
-                    turn.activityDetails.shift();
-                }
-            }
-            appendThinkingStatus(turn.statusView, content);
-            addContextUsedItems(turn, getContextUsedItemsFromStatus(status));
-        };
-
-        const addCanonicalActivity = (turn: UiTurn, content: string) => {
-            turn.statusView ??= createThinkingStatusView(turn);
-            if (turn.activityDetails[turn.activityDetails.length - 1] !== content) {
-                turn.activityDetails.push(content);
-                while (turn.activityDetails.length > 6) {
-                    turn.activityDetails.shift();
-                }
-            }
-            appendThinkingStatus(turn.statusView, content);
+            const content = formatAgentStatus(status, thinkingLocale);
+            addCanonicalActivity(turn, content, `legacy-status:${content}`, 'active', 'context');
+            addContextUsedItems(turn, getContextUsedItemsFromStatus(status, thinkingLocale));
         };
 
         const upsertCanonicalMessage = (turn: UiTurn, message: PaAgentMessage) => {
             turn.canonicalLifecycle.messagesById.set(message.id, message);
+            if (message.role === 'assistant') turn.canonicalLifecycle.currentAssistantId = message.id;
             const index = turn.canonicalLifecycle.messages.findIndex((candidate) => candidate.id === message.id);
             if (index >= 0) {
                 turn.canonicalLifecycle.messages[index] = message;
             } else {
                 turn.canonicalLifecycle.messages.push(message);
             }
+        };
+
+        const readAssistantReasoning = (message: PaAgentMessage | undefined) => (
+            message?.role === 'assistant'
+                ? message.content
+                    .filter((part): part is { type: 'thinking'; text: string } => part.type === 'thinking')
+                    .map((part) => part.text)
+                    .join('')
+                : ''
+        );
+
+        const readAssistantReasoningPart = (
+            message: PaAgentMessage | undefined,
+            partIndex: number | undefined,
+        ) => {
+            if (message?.role !== 'assistant') return '';
+            const thinkingParts = message.content.filter((part): part is { type: 'thinking'; text: string } =>
+                part.type === 'thinking');
+            if (partIndex === undefined) return thinkingParts.map(part => part.text).join('');
+            return thinkingParts[partIndex]?.text ?? '';
+        };
+
+        const canonicalReasoningSections = (turn: UiTurn) => {
+            const sections = turn.canonicalLifecycle.messages
+                .map(message => ({
+                    messageId: message.id,
+                    text: readAssistantReasoning(message),
+                }))
+                .filter(section => section.text);
+            const pendingByMessage = new Map<string, string>();
+            for (const pending of turn.canonicalLifecycle.pendingReasoningParts.values()) {
+                pendingByMessage.set(
+                    pending.messageId,
+                    `${pendingByMessage.get(pending.messageId) ?? ''}${pending.text}`,
+                );
+            }
+            for (const [messageId, text] of pendingByMessage) {
+                const existing = sections.find(section => section.messageId === messageId);
+                if (existing) existing.text = `${existing.text}${text}`;
+                else sections.push({ messageId, text });
+            }
+            return sections;
+        };
+
+        const recordCanonicalThinkingDelta = (
+            turn: UiTurn,
+            messageId: string,
+            partIndex: number | undefined,
+            delta: string,
+        ) => {
+            const canonical = turn.canonicalLifecycle;
+            const key = `${messageId}:part:${partIndex ?? 'all'}`;
+            const snapshot = readAssistantReasoningPart(
+                canonical.messagesById.get(messageId),
+                partIndex,
+            );
+            if (snapshot) {
+                canonical.pendingReasoningParts.delete(key);
+            } else {
+                const existing = canonical.pendingReasoningParts.get(key);
+                canonical.pendingReasoningParts.set(key, {
+                    messageId,
+                    partIndex,
+                    text: `${existing?.text ?? ''}${delta}`,
+                });
+            }
+            renderProviderReasoningSections(turn, canonicalReasoningSections(turn));
+        };
+
+        const toolActivityKey = (turn: UiTurn, turnId: string, toolCallId: string) => (
+            `tool:${turn.canonicalLifecycle.runId ?? 'pending'}:${turnId}:${toolCallId}`
+        );
+
+        const findFallbackToolActivityKey = (turn: UiTurn, turnId: string, toolCallId: string) => {
+            const assistantId = turn.canonicalLifecycle.currentAssistantId;
+            if (!assistantId) return undefined;
+            const assistant = turn.canonicalLifecycle.messagesById.get(assistantId);
+            if (assistant?.role !== 'assistant') return undefined;
+            const toolCall = assistant.content.find((part): part is { type: 'toolCall'; id?: string; name: string; input: unknown; index?: number } =>
+                part.type === 'toolCall' && part.id === toolCallId);
+            const index = toolCall?.index;
+            if (index === undefined) return undefined;
+            return `tool:${turn.canonicalLifecycle.runId ?? 'pending'}:${turnId}:draft:${assistantId}:${index}`;
+        };
+
+        const promoteFallbackToolActivity = (turn: UiTurn, turnId: string, toolCallId: string) => {
+            const canonical = turn.canonicalLifecycle;
+            const targetKey = toolActivityKey(turn, turnId, toolCallId);
+            if (canonical.thinkingActivities.has(targetKey)) return targetKey;
+            const fallbackKey = findFallbackToolActivityKey(turn, turnId, toolCallId);
+            const fallback = fallbackKey ? canonical.thinkingActivities.get(fallbackKey) : undefined;
+            const statusView = turn.statusView;
+            const fallbackElement = fallbackKey && statusView ? statusView.activityElementsByKey.get(fallbackKey) : undefined;
+            if (fallback && fallbackKey) {
+                canonical.thinkingActivities.delete(fallbackKey);
+                canonical.thinkingActivities.set(targetKey, { ...fallback, key: targetKey, toolCallId });
+                const orderIndex = canonical.thinkingActivityOrder.indexOf(fallbackKey);
+                if (orderIndex >= 0) canonical.thinkingActivityOrder[orderIndex] = targetKey;
+                if (statusView && fallbackElement) {
+                    statusView.activityElementsByKey.delete(fallbackKey);
+                    statusView.activityElementsByKey.set(targetKey, fallbackElement);
+                    fallbackElement.dataset.activityKey = targetKey;
+                }
+            }
+            return targetKey;
+        };
+
+        const updateToolActivity = (
+            turn: UiTurn,
+            event: Extract<AgentEvent, { type: 'tool_execution_start' | 'tool_execution_update' | 'tool_execution_end' }>,
+        ) => {
+            const key = promoteFallbackToolActivity(turn, event.turnId, event.toolCallId);
+            upsertThinkingActivity(turn, {
+                key,
+                kind: 'tool',
+                title: event.type === 'tool_execution_end'
+                    ? formatCanonicalToolCompletedStatus(event.toolName, event.outcome, thinkingLocale)
+                    : formatCanonicalToolStatus(event.toolName, thinkingLocale),
+                status: event.type === 'tool_execution_end'
+                    ? (event.outcome === 'success' || event.outcome === 'control_applied'
+                        ? 'succeeded'
+                        : event.outcome === 'reused_result' || event.outcome === 'duplicate_skipped'
+                            ? 'reused'
+                            : event.outcome === 'aborted' || event.outcome === 'abort_timeout'
+                                ? 'stopped'
+                                : event.outcome === 'budget_exceeded'
+                                    ? 'skipped'
+                                    : 'failed')
+                    : 'active',
+                runId: event.runId,
+                turnId: event.turnId,
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                executionKind: 'tool',
+                ...(event.type === 'tool_execution_end' ? { outcome: event.outcome } : {}),
+            });
+            if (turn.debugCaptureId) {
+                turn.debugNodeRefs.set(`tool:${event.turnId}:${event.toolCallId}`, {
+                    captureId: turn.debugCaptureId,
+                    nodeId: `${event.turnId}:tool:${event.toolCallId}`,
+                    turnId: event.turnId,
+                    toolCallId: event.toolCallId,
+                    kind: 'tool',
+                });
+            }
+        };
+
+        const updateToolResultActivity = (
+            turn: UiTurn,
+            event: Extract<AgentEvent, { type: 'message_end' }>,
+            message: Extract<PaAgentMessage, { role: 'toolResult' }>,
+        ) => {
+            const key = promoteFallbackToolActivity(turn, event.turnId, message.toolCallId);
+            const existing = turn.canonicalLifecycle.thinkingActivities.get(key);
+            const sourceRecordKeys = [...new Set((message.content.sourceRecords ?? [])
+                .map(record => record.dedupKey)
+                .filter(Boolean))];
+            upsertThinkingActivity(turn, {
+                key,
+                kind: 'tool',
+                title: existing?.title ?? formatCanonicalToolCompletedStatus(
+                    message.toolName,
+                    message.isError ? 'recoverable_error' : 'success',
+                    thinkingLocale,
+                ),
+                status: message.isError ? 'failed' : (existing?.status ?? 'succeeded'),
+                detail: message.content.previewText,
+                sourceSummary: formatSourceSummary(message.content.sourceRecords
+                    ?.map(record => ({ path: record.path ?? record.title ?? record.url ?? record.dedupKey }))),
+                resultFact: message.content.resultFact,
+                runId: event.runId,
+                turnId: event.turnId,
+                toolCallId: message.toolCallId,
+                toolName: message.toolName,
+                executionKind: 'tool',
+                outcome: message.isError ? 'recoverable_error' : (existing?.outcome ?? 'success'),
+                ...(sourceRecordKeys.length > 0 ? { sourceRecordKeys } : {}),
+                ...(message.content.resultFact && 'operationId' in message.content.resultFact
+                    && typeof message.content.resultFact.operationId === 'string'
+                    ? { operationId: message.content.resultFact.operationId }
+                    : {}),
+            });
+        };
+
+        const addCanonicalActivityFromEvent = (
+            turn: UiTurn,
+            event: AgentEvent,
+            title: string,
+            executionKind?: ThinkingActivityRecord['executionKind'],
+        ) => {
+            addCanonicalActivity(turn, title, `event:${event.runId}:${event.seq}`, 'active', executionKind);
         };
 
         const addCanonicalRuntimeWarnings = (turn: UiTurn, warnings: unknown) => {
@@ -4981,7 +5702,14 @@ export class LLMView extends ItemView {
             if (event.type === 'agent_start') {
                 canonical.active = true;
                 canonical.runId = event.runId;
-                addCanonicalActivity(turn, pluginT('plugin.chat.lifecycle.startingRun', getPluginUiLanguage()));
+                upsertThinkingActivity(turn, {
+                    key: `chat:${turn.id}:preparation`,
+                    kind: 'phase',
+                    title: thinkingT('plugin.chat.thinking.preparing'),
+                    status: 'active',
+                    runId: event.runId,
+                    executionKind: 'preparation',
+                });
                 return;
             }
             if (canonical.runId && event.runId !== canonical.runId) return;
@@ -4989,15 +5717,23 @@ export class LLMView extends ItemView {
             canonical.runId ??= event.runId;
 
             switch (event.type) {
-                case 'turn_start':
+                case 'turn_start': {
                     canonical.active = true;
                     canonical.runId ??= event.runId;
                     canonical.currentTurnId = event.turnId;
                     addCanonicalHostContextMetadata(turn, event.metadata?.hostContext, event.turnId);
-                    addCanonicalActivity(turn, event.metadata?.runtimeInstruction
-                        ? pluginT('plugin.chat.lifecycle.continuingWithTools', getPluginUiLanguage())
-                        : pluginT('plugin.chat.lifecycle.decidingContext', getPluginUiLanguage()));
+                    addCanonicalActivityFromEvent(
+                        turn,
+                        event,
+                        event.metadata?.runtimeInstruction
+                            ? pluginT('plugin.chat.lifecycle.continuingWithTools', thinkingLocale)
+                            : pluginT('plugin.chat.lifecycle.decidingContext', thinkingLocale),
+                        'context',
+                    );
+                    const contextActivity = canonical.thinkingActivities.get(`event:${event.runId}:${event.seq}`);
+                    if (contextActivity) contextActivity.outcome = event.metadata?.runtimeInstruction ? 'tools' : 'context';
                     return;
+                }
                 case 'message_start':
                     upsertCanonicalMessage(turn, event.message);
                     if (event.message.role === 'assistant') {
@@ -5007,9 +5743,22 @@ export class LLMView extends ItemView {
                 case 'message_update':
                     if (event.update.kind === 'thinking_delta') {
                         turn.providerReasoningObserved = true;
-                        turn.statusView ??= createThinkingStatusView(turn);
-                        renderProviderReasoningNotice(turn.statusView);
-                        addCanonicalActivity(turn, pluginT('plugin.chat.lifecycle.readingModelProgress', getPluginUiLanguage()));
+                        recordCanonicalThinkingDelta(turn, event.messageId, event.update.partIndex, event.update.text);
+                        addCanonicalActivity(
+                            turn,
+                            thinkingT('plugin.chat.thinking.qwenThinking'),
+                            `model:${event.runId}:${event.turnId}:${event.messageId}`,
+                            'active',
+                            'model',
+                        );
+                        const modelActivity = canonical.thinkingActivities.get(
+                            `model:${event.runId}:${event.turnId}:${event.messageId}`,
+                        );
+                        if (modelActivity) {
+                            modelActivity.runId = event.runId;
+                            modelActivity.turnId = event.turnId;
+                            modelActivity.messageId = event.messageId;
+                        }
                     } else if (event.update.kind === 'text_delta') {
                         setResponseContent((turn.assistantMessage?.copyContent ?? '') + event.update.text);
                     } else if (event.update.kind === 'toolcall_start') {
@@ -5019,13 +5768,44 @@ export class LLMView extends ItemView {
                             setResponseContent('');
                             const reclassified = event.metadata.reclassifiedPendingText.trim();
                             if (reclassified) {
-                                addCanonicalActivity(turn, pluginT('plugin.chat.lifecycle.draftBeforeToolUse', getPluginUiLanguage(), { preview: reclassified.slice(0, 240) }));
+                                addCanonicalActivity(
+                                    turn,
+                                    pluginT('plugin.chat.lifecycle.draftBeforeToolUse', thinkingLocale, { preview: reclassified.slice(0, 240) }),
+                                    `draft:${event.runId}:${event.turnId}:${event.messageId}:${event.update.index ?? 0}`,
+                                    'active',
+                                    'draft',
+                                );
                             }
-                            addCanonicalActivity(turn, pluginT('plugin.chat.lifecycle.movingDraftToProgress', getPluginUiLanguage()));
+                            addCanonicalActivityFromEvent(
+                                turn,
+                                event,
+                                pluginT('plugin.chat.lifecycle.movingDraftToProgress', thinkingLocale),
+                                'draft',
+                            );
                         }
-                        addCanonicalActivity(turn, event.update.name
-                            ? pluginT('plugin.chat.lifecycle.preparingTool', getPluginUiLanguage(), { tool: event.update.name })
-                            : pluginT('plugin.chat.lifecycle.preparingToolCall', getPluginUiLanguage()));
+                        const toolCallId = event.update.toolCallId;
+                        upsertThinkingActivity(turn, {
+                            key: toolCallId
+                                ? toolActivityKey(turn, event.turnId, toolCallId)
+                                : `tool:${canonical.runId ?? event.runId}:${event.turnId}:draft:${event.messageId}:${event.update.index ?? 0}`,
+                            kind: 'tool',
+                            title: event.update.name
+                                ? pluginT('plugin.chat.lifecycle.preparingTool', thinkingLocale, { tool: event.update.name })
+                                : pluginT('plugin.chat.lifecycle.preparingToolCall', thinkingLocale),
+                            runId: event.runId,
+                            turnId: event.turnId,
+                            toolCallId,
+                            executionKind: 'tool',
+                        });
+                        if (toolCallId && turn.debugCaptureId) {
+                            turn.debugNodeRefs.set(`tool:${event.turnId}:${toolCallId}`, {
+                                captureId: turn.debugCaptureId,
+                                nodeId: `${event.turnId}:tool:${toolCallId}`,
+                                turnId: event.turnId,
+                                toolCallId,
+                                kind: 'tool',
+                            });
+                        }
                     } else if (event.update.kind === 'toolcall_delta') {
                         canonical.sawToolCallInAssistantMessage = true;
                     }
@@ -5033,6 +5813,12 @@ export class LLMView extends ItemView {
                 case 'message_end':
                     upsertCanonicalMessage(turn, event.message);
                     if (event.message.role === 'assistant') {
+                        for (const key of canonical.pendingReasoningParts.keys()) {
+                            if (canonical.pendingReasoningParts.get(key)?.messageId === event.message.id) {
+                                canonical.pendingReasoningParts.delete(key);
+                            }
+                        }
+                        renderProviderReasoningSections(turn, canonicalReasoningSections(turn));
                         if (event.message.providerCompletion === 'tool_calls'
                             || event.message.content.some((part) => part.type === 'toolCall')) {
                             setResponseContent('');
@@ -5045,21 +5831,17 @@ export class LLMView extends ItemView {
                         if (finalText) setResponseContent(finalText);
                     } else if (event.message.role === 'toolResult') {
                         addContextUsedItems(turn, event.message.content.contextUsed ?? []);
-                        addCanonicalActivity(turn, pluginT('plugin.chat.lifecycle.toolResultReceived', getPluginUiLanguage(), { tool: event.message.toolName }));
-                        if (event.message.content.previewText) {
-                            turn.statusView ??= createThinkingStatusView(turn);
-                            appendThinkingDetail(turn.statusView, event.message.content.previewText);
-                        }
+                        updateToolResultActivity(turn, event, event.message);
                     }
                     return;
                 case 'tool_execution_start':
-                    addCanonicalActivity(turn, formatCanonicalToolStatus(event.toolName));
+                    updateToolActivity(turn, event);
                     return;
                 case 'tool_execution_update':
-                    addCanonicalActivity(turn, event.toolName);
+                    updateToolActivity(turn, event);
                     return;
                 case 'tool_execution_end':
-                    addCanonicalActivity(turn, formatCanonicalToolCompletedStatus(event.toolName, event.outcome));
+                    updateToolActivity(turn, event);
                     return;
                 case 'turn_end':
                     canonical.turnStatuses.set(event.turnId, event.status);
@@ -5085,14 +5867,12 @@ export class LLMView extends ItemView {
                     if (canonical.warnings.some((warning) => warning.type === 'assistant_source_changed')) {
                         setResponseContent('');
                     }
-                    if (turn.statusView) {
-                        completeThinkingStatus(
-                            turn.statusView,
-                            event.status === 'needs_user' && canonical.messages.some(isLegacySourceDecisionResult)
-                                ? t('plugin.chat.sourceDecision.legacySummary')
-                                : formatCanonicalTerminalSummary(event.status, turn.canonicalLifecycle.warnings),
-                        );
-                    }
+                    turn.statusView ??= createThinkingStatusView(turn);
+                    turn.statusView.summaryEl.setText(
+                        event.status === 'needs_user' && canonical.messages.some(isLegacySourceDecisionResult)
+                            ? thinkingT('plugin.chat.sourceDecision.legacySummary')
+                            : thinkingT('plugin.chat.thinking.finishingDelivery'),
+                    );
                     return;
             }
         };
@@ -5211,6 +5991,20 @@ export class LLMView extends ItemView {
             if (!userRendered || !assistantRendered) return false;
             const sourceChanged = turn.canonicalLifecycle.warnings.some(
                 (warning) => warning.type === 'assistant_source_changed');
+            const createFinalizedSummary = () => {
+                const summary = createThinkingExecutionSummary(turn);
+                if (!turn.canonicalLifecycle.active && turn.canonicalLifecycle.terminalStatus === undefined) {
+                    const phaseStatus = sawLegacyPartialFailure || sourceChanged ? 'unknown' : 'succeeded';
+                    // Legacy delivery has ended even though it has no canonical terminal event.
+                    for (const step of summary.steps) {
+                        if (step.kind !== 'tool'
+                            && turn.canonicalLifecycle.thinkingActivities.get(step.key)?.status === 'active') {
+                            step.status = phaseStatus;
+                        }
+                    }
+                }
+                return summary;
+            };
             // Persist the same interruption fact used by live actions so a
             // resolved partial/recovery response cannot become complete on reopen.
             if (sawLegacyPartialFailure && !isInterruptedAssistant({
@@ -5309,6 +6103,7 @@ export class LLMView extends ItemView {
                 assistantMessage.sourceDecision = readPendingSourceDecision(assistantMessage);
             }
             this.chatHistory.push(userMessage, assistantMessage);
+            const executionSummary = createFinalizedSummary();
             const historyEntry: TimelineEntry = {
                 kind: 'history',
                 user: userMessage,
@@ -5316,7 +6111,12 @@ export class LLMView extends ItemView {
                 memoryMetadata: turn.memoryMetadata,
                 contextUsedItems: turn.contextUsedItems,
                 activityDetails: turn.activityDetails,
+                thinkingActivities: projectThinkingActivities(turn.canonicalLifecycle.thinkingActivityOrder
+                    .map(key => turn.canonicalLifecycle.thinkingActivities.get(key))
+                    .filter((activity): activity is ThinkingActivityRecord => Boolean(activity)), executionSummary),
                 providerReasoningObserved: turn.providerReasoningObserved,
+                providerReasoningLegacyText: turn.providerReasoningBuffer,
+                executionSummary,
             };
             timelineEntries.push(historyEntry);
             if (!sawLegacyPartialFailure) this.result = sourceChanged ? '' : visibleContent;
@@ -5406,33 +6206,34 @@ export class LLMView extends ItemView {
             assistantRendered.loaderEl = undefined;
             assistantRendered.messageDiv.removeAttribute('aria-busy');
             stopRoleIdenticonScan(assistantRendered.roleEl);
-            if (
-                    turn.statusView
-                    && (
-                        turn.providerReasoningObserved
-                        || turn.contextUsedItems.length > 0
-                        || turn.memoryMetadata?.contextTrace?.reduction
-                        || turn.activityDetails.length > 0
-                        || turn.canonicalLifecycle.warnings.length > 0
-                        || (
-                            turn.canonicalLifecycle.terminalStatus !== undefined
-                            && turn.canonicalLifecycle.terminalStatus !== 'completed'
-                        )
-                    )
-                ) {
+            turn.chatDeliveredAt ??= Date.now();
+            historyEntry.thinkingElapsedMs = Math.max(0, turn.chatDeliveredAt - turn.chatStartedAt);
+            historyEntry.executionSummary = createFinalizedSummary();
+            historyEntry.thinkingActivities = projectThinkingActivities(turn.canonicalLifecycle.thinkingActivityOrder
+                .map(key => turn.canonicalLifecycle.thinkingActivities.get(key))
+                .filter((activity): activity is ThinkingActivityRecord => Boolean(activity)), historyEntry.executionSummary);
+            if (turn.statusView) {
+                renderFinalizedThinkingActivities(turn, historyEntry.executionSummary);
+                turn.statusView.timerFrozenAt ??= turn.chatDeliveredAt;
                 completeThinkingStatus(
                     turn.statusView,
                     decisionQuestion
-                        ? t('plugin.chat.sourceDecision.legacySummary')
+                        ? thinkingT('plugin.chat.sourceDecision.legacySummary')
                         : formatCanonicalTerminalSummary(
                             turn.canonicalLifecycle.terminalStatus,
                             turn.canonicalLifecycle.warnings,
+                            thinkingLocale,
                         ),
                 );
-            } else {
-                stopThinkingLoader(turn.statusView);
-                removeElement(turn.statusView?.messageDiv);
-                turn.statusView = undefined;
+            }
+            if (persisted && isCurrentSession()) {
+                const finalSummaryPersisted = await this.conversationPersistence.updateFinalizedExecutionElapsedMs(
+                    historyEntry,
+                    historyEntry.thinkingElapsedMs,
+                );
+                if (!finalSummaryPersisted) {
+                    this.host.log('Could not save the finalized Chat execution summary');
+                }
             }
             renderEmptyState();
             return true;
@@ -5601,6 +6402,7 @@ export class LLMView extends ItemView {
             emptyStateEl = null;
             sendButton.disabled = true;
             shouldAutoScroll = true;
+            const chatStartedAt = Date.now();
             const turnId = this.startTurn();
             const turnSourcePath = this.getMarkdownRenderSourcePath();
             const controller = new AbortController();
@@ -5610,18 +6412,6 @@ export class LLMView extends ItemView {
             const isLiveTurn = () => this.isCurrentTurn(sessionId, turnId, controller);
             const isSameTurn = () => this.isCurrentTurn(sessionId, turnId, controller, { includeCancelled: true });
             const historyConversationId = this.conversationPersistence.activeConversationId;
-            await refreshOperationsHistoryState();
-            await refreshWritingHistoryState();
-            await refreshGhostHistoryState();
-            if (imageGeneration && historyConversationId) {
-                try {
-                    for (const task of await imageGeneration.list(historyConversationId)) await refreshImageHistoryState(task);
-                } catch (error) { this.host.log('Could not refresh image history state', error); }
-                if (!isCurrentSession() || this.conversationPersistence.activeConversationId !== historyConversationId) return;
-            }
-            const modelHistory = this.chatHistory.map((message) => ({ ...message }));
-            const turnPageletHandoff = this.pendingPageletHandoff;
-            const previousResult = this.result;
             const turn: UiTurn = {
                 id: ++uiTurnId,
                 prompt,
@@ -5643,49 +6433,37 @@ export class LLMView extends ItemView {
                 },
                 contextUsedItems: [],
                 activityDetails: [],
+                chatStartedAt,
                 canonicalLifecycle: createCanonicalLifecycleState(),
+                debugNodeRefs: new Map(),
             };
             rawPromptsByTurn.set(turn, rawPrompt);
             if (ghostCommand !== null) ghostTargetsByTurn.set(turn.id, ghostCapturedPath);
             if (retryImageOperation) turn.userProvenance!.messageId = retryImageOperation.stableMessageId;
             const stableMessageId = turn.userProvenance!.messageId;
-            // Capture before the first persistence/lease await. Later scope edits belong to the next run.
-            const runSourceSelection = this.conversationPersistence.captureRunSourceSelection(stableMessageId);
-            turn.runSourceSelection = runSourceSelection;
-            const currentUserLineage = completeInputLineage([{ kind: 'user-text', messageId: stableMessageId },
-                ...turnImages.map(image => ({ kind: 'attachment' as const,
-                    ownerMessageId: stableMessageId, ref: { ...image.ref } }))]);
-            const imageLineageSources = [
-                currentUserLineage,
-                explicitImageIntent?.textSource?.inputLineage,
-                explicitImageIntent?.promptOrigin?.inputLineage,
-                explicitImageIntent?.promptLineage,
-            ].filter((lineage): lineage is InputLineage => lineage !== undefined);
-            const imageFirstRequestLineage = explicitImageIntent
-                && (explicitImageIntent.textSource || explicitImageIntent.promptOrigin
-                    || explicitImageIntent.promptLineage)
-                ? unionInputLineages(...imageLineageSources)
-                : undefined;
-            const persistedUserMessage: ChatMessage = {
-                role: 'user', content: rawPrompt,
-                inputLineage: imageFirstRequestLineage ?? currentUserLineage,
-                runSourceSelection,
-                ...(turnImages.length ? { images: cloneMessageImages(turnImages) } : {}),
-                ...(explicitWritingIntent ? { writingAction: { kind: 'writing' as const,
-                    ...((writingSelectedParent ?? writingParent)?.id
-                        ? { parentVersionId: (writingSelectedParent ?? writingParent)!.id } : {}) } } : {}),
-                hostProvenance: turn.userProvenance!,
-            };
-            await this.conversationPersistence.persistRunningTurn(rawPrompt, stableMessageId, persistedUserMessage);
             const operationId = retryImageOperation?.operationId ?? `image-${stableMessageId}`;
             const imageOperationRecord: ImageOperationRecord = retryImageOperation ?? {
                 stableMessageId, operationId,
                 ...(explicitImageIntent ? { intent: explicitImageIntent } : {}),
                 reservations: new Map<string, number>(),
                 preparations: new Map<string, Promise<string>>(),
-                submissionReceipts: new Map(),
+                submissionReceipts: new Map<string, {
+                    promise: Promise<{ taskId: string }>;
+                    count: number;
+                    state: 'pending' | 'accepted' | 'unknown';
+                }>(),
             };
-            imageOperationByTurn.set(turn.id, imageOperationRecord);
+            let modelHistory: ChatMessage[];
+            let turnPageletHandoff: PageletChatHandoffContext | undefined;
+            let previousResult = this.result;
+            let runSourceSelection: ReturnType<ConversationPersistence['captureRunSourceSelection']> | undefined;
+            let currentUserLineage: InputLineage;
+            let persistedUserMessage: ChatMessage = {
+                role: 'user',
+                content: rawPrompt,
+                ...(turnImages.length ? { images: cloneMessageImages(turnImages) } : {}),
+                hostProvenance: turn.userProvenance!,
+            };
             let acceptedImageTaskId: string | undefined;
             const configuredImageTotal = explicitImageIntent?.generationOptions
                 && (explicitImageIntent.textSource || explicitImageIntent.promptOrigin
@@ -5694,40 +6472,99 @@ export class LLMView extends ItemView {
             const acceptedImageCounts = new Map<string, number>();
             const operationsCardHandles: OperationsIntentCardHandle[] = [];
             let sawLegacyPartialFailure = false;
+            let responseContent = '';
             const isUiTurnVisible = () => isCurrentSession()
                 && this.activeTurnId === turnId
                 && Boolean(turn.userMessage?.messageDiv.parentElement);
+            imageOperationByTurn.set(turn.id, imageOperationRecord);
+
+            turn.userMessage = createMessageElement(
+                { role: 'user', content: prompt, images: turnImages },
+                { animate: true, forceScroll: true, isLive: isUiTurnVisible, sourcePath: turnSourcePath },
+            );
+            if (sentDraft) textArea.value = '';
+            renderImageDraft();
+            hideComposerHint();
+            setHistoryDeleteButtonsDisabled(true);
+            syncComposerControls();
+            turn.assistantMessage = createMessageElement(
+                { role: 'assistant', content: '' },
+                {
+                    isLive: isLiveTurn,
+                    animate: true,
+                    showAssistantLoader: true,
+                    skipInitialRender: true,
+                    sourcePath: turnSourcePath,
+                },
+            );
+            debugRenderedTurns.set(turn.assistantMessage, turn);
+            turn.statusView = createThinkingStatusView(turn);
+            turn.statusView.summaryEl.setText(thinkingT('plugin.chat.thinking.preparing'));
+            upsertThinkingActivity(turn, {
+                key: `chat:${turn.id}:preparation`,
+                kind: 'phase',
+                title: thinkingT('plugin.chat.thinking.preparing'),
+                status: 'active',
+                executionKind: 'preparation',
+            });
+            if (turn.userProvenance?.messageId) {
+                imageTaskMessageTargets.set(turn.userProvenance.messageId, {
+                    parent: turn.assistantMessage.messageDiv,
+                    before: turn.assistantMessage.actionDiv,
+                    rendered: turn.assistantMessage,
+                });
+                void loadImageTaskCards();
+            }
 
             try {
-                turn.userMessage = createMessageElement(
-                    { role: 'user', content: prompt, images: turnImages },
-                    { animate: true, forceScroll: true, isLive: isUiTurnVisible, sourcePath: turnSourcePath },
-                );
-                if (sentDraft) textArea.value = '';
-                renderImageDraft();
-                hideComposerHint();
-                setHistoryDeleteButtonsDisabled(true);
-                syncComposerControls();
-                let responseContent = '';
-                turn.assistantMessage = createMessageElement(
-                    { role: 'assistant', content: '' },
-                    {
-                        isLive: isLiveTurn,
-                        animate: true,
-                        showAssistantLoader: true,
-                        skipInitialRender: true,
-                        sourcePath: turnSourcePath,
-                    },
-                );
-                debugRenderedTurns.set(turn.assistantMessage, turn);
-                if (turn.userProvenance?.messageId) {
-                    imageTaskMessageTargets.set(turn.userProvenance.messageId, {
-                        parent: turn.assistantMessage.messageDiv,
-                        before: turn.assistantMessage.actionDiv,
-                        rendered: turn.assistantMessage,
-                    });
-                    void loadImageTaskCards();
+                await refreshOperationsHistoryState();
+                await refreshWritingHistoryState();
+                await refreshGhostHistoryState();
+                if (imageGeneration && historyConversationId) {
+                    try {
+                        for (const task of await imageGeneration.list(historyConversationId)) await refreshImageHistoryState(task);
+                    } catch (error) { this.host.log('Could not refresh image history state', error); }
+                    if (!isCurrentSession() || this.conversationPersistence.activeConversationId !== historyConversationId) {
+                        throw new DOMException('Chat context changed during preparation', 'AbortError');
+                    }
                 }
+                if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+                modelHistory = this.chatHistory.map((message) => ({ ...message }));
+                turnPageletHandoff = this.pendingPageletHandoff ?? undefined;
+                previousResult = this.result;
+                // Capture before the first persistence/lease await. Later scope edits belong to the next run.
+                runSourceSelection = this.conversationPersistence.captureRunSourceSelection(stableMessageId);
+                turn.runSourceSelection = runSourceSelection;
+                currentUserLineage = completeInputLineage([{ kind: 'user-text', messageId: stableMessageId },
+                    ...turnImages.map(image => ({ kind: 'attachment' as const,
+                        ownerMessageId: stableMessageId, ref: { ...image.ref } }))]);
+                const imageLineageSources = [
+                    currentUserLineage,
+                    explicitImageIntent?.textSource?.inputLineage,
+                    explicitImageIntent?.promptOrigin?.inputLineage,
+                    explicitImageIntent?.promptLineage,
+                ].filter((lineage): lineage is InputLineage => lineage !== undefined);
+                const imageFirstRequestLineage = explicitImageIntent
+                    && (explicitImageIntent.textSource || explicitImageIntent.promptOrigin
+                        || explicitImageIntent.promptLineage)
+                    ? unionInputLineages(...imageLineageSources)
+                    : undefined;
+                persistedUserMessage = {
+                    role: 'user', content: rawPrompt,
+                    inputLineage: imageFirstRequestLineage ?? currentUserLineage,
+                    runSourceSelection,
+                    ...(turnImages.length ? { images: cloneMessageImages(turnImages) } : {}),
+                    ...(explicitWritingIntent ? { writingAction: { kind: 'writing' as const,
+                        ...((writingSelectedParent ?? writingParent)?.id
+                            ? { parentVersionId: (writingSelectedParent ?? writingParent)!.id } : {}) } } : {}),
+                    hostProvenance: turn.userProvenance!,
+                };
+                await this.conversationPersistence.persistRunningTurn(
+                    rawPrompt,
+                    stableMessageId,
+                    persistedUserMessage,
+                    createThinkingExecutionSummary(turn),
+                );
 
                 const handleStatus = (status: ChatAgentStatus) => {
                     if (!acceptingStreamEvents || !isLiveTurn()) return;
@@ -6265,6 +7102,18 @@ export class LLMView extends ItemView {
                             const handle = renderOperationsIntentCard(turn.assistantMessage, intent);
                             if (handle) operationsCardHandles.push(handle);
                         },
+                        onDebugReference: reference => {
+                            if (!acceptingStreamEvents || !isLiveTurn()) return;
+                            turn.debugCaptureId = reference.captureId;
+                            if (reference.nodeId === undefined || reference.messageId === undefined) return;
+                            turn.debugNodeRefs.set(`reasoning:${reference.messageId}`, {
+                                captureId: reference.captureId,
+                                nodeId: reference.nodeId,
+                                turnId: reference.turnId,
+                                messageId: reference.messageId,
+                                kind: 'reasoning',
+                            });
+                        },
                         onLifecycleEvent: (event) => {
                             if (!acceptingStreamEvents) return;
                             if (!isLiveTurn() && isSameTurn() && controller.signal.aborted
@@ -6424,13 +7273,14 @@ export class LLMView extends ItemView {
                         await finalizeSuccessfulTurn(turn, prompt, receivedText, isSameTurn, true);
                     } else {
                         const cancellationMessage = t("plugin.chat.notice.generationCancelled");
-                        createTerminalEntry(turn, cancellationMessage, 'cancelled');
+                        const terminalEntry = createTerminalEntry(turn, stableMessageId, cancellationMessage, 'cancelled');
                         await this.conversationPersistence.persistTerminalTurn({
                             prompt: rawPrompt,
                             runId: stableMessageId,
                             user: persistedUserMessage,
                             content: cancellationMessage,
                             state: 'cancelled',
+                            executionSummary: terminalEntry.executionSummary,
                         });
                         this.result = previousResult;
                     }
@@ -6471,13 +7321,15 @@ export class LLMView extends ItemView {
                         syncComposerControls();
                         await finalizeSuccessfulTurn(turn, prompt, receivedText, isSameTurn, true);
                     } else {
-                        createTerminalEntry(turn, failureMessage, 'error', localOverflow || providerOverflow ? undefined : String(error));
+                        const terminalEntry = createTerminalEntry(turn, stableMessageId, failureMessage, 'error',
+                            localOverflow || providerOverflow ? undefined : String(error));
                         await this.conversationPersistence.persistTerminalTurn({
                             prompt: rawPrompt,
                             runId: stableMessageId,
                             user: persistedUserMessage,
                             content: failureMessage,
                             state: 'failed',
+                            executionSummary: terminalEntry.executionSummary,
                         });
                         this.result = previousResult;
                     }
@@ -6491,7 +7343,35 @@ export class LLMView extends ItemView {
                     }
                 }
             } finally {
+                if (!isSameTurn() && turn.statusView?.timerId !== undefined && turn.chatDeliveredAt === undefined) {
+                    turn.chatDeliveredAt = Date.now();
+                    turn.statusView.timerFrozenAt ??= turn.chatDeliveredAt;
+                    completeThinkingStatus(
+                        turn.statusView,
+                        formatCanonicalTerminalSummary(
+                            controller.signal.aborted
+                                ? 'aborted'
+                                : turn.canonicalLifecycle.terminalStatus ?? (turn.canonicalLifecycle.active ? 'incomplete' : 'error'),
+                            turn.canonicalLifecycle.warnings,
+                            thinkingLocale,
+                        ),
+                    );
+                }
                 if (isSameTurn()) {
+                    if (turn.statusView?.timerId !== undefined && turn.chatDeliveredAt === undefined) {
+                        turn.chatDeliveredAt = Date.now();
+                        turn.statusView.timerFrozenAt ??= turn.chatDeliveredAt;
+                        completeThinkingStatus(
+                            turn.statusView,
+                            formatCanonicalTerminalSummary(
+                                controller.signal.aborted
+                                    ? 'aborted'
+                                    : turn.canonicalLifecycle.terminalStatus ?? (turn.canonicalLifecycle.active ? 'incomplete' : 'error'),
+                                turn.canonicalLifecycle.warnings,
+                                thinkingLocale,
+                            ),
+                        );
+                    }
                     this.abortController = null;
                     this.activeTurnCancelled = false;
                     isStopping = false;
@@ -7193,6 +8073,19 @@ export class LLMView extends ItemView {
             syncComposerControls();
             renderEmptyState();
         }) ?? null;
+        this.registerViewTeardown(this.host.subscribeAgentDebug?.(change => {
+            if (!isCurrentSession() || !change?.invalidated) return;
+            historyDebugCleanupEpoch++;
+            for (const entry of timelineEntries) {
+                if (entry.kind !== 'history') continue;
+                historyReasoningContents.delete(entry);
+                historyReasoningStates.delete(entry);
+                historyReasoningReadTokens.delete(entry);
+                for (const block of historyReasoningBlocks.get(entry) ?? []) {
+                    updateHistoryReasoningBlock(block.bodyEl, block.loadButton, 'reasoningUnavailable');
+                }
+            }
+        }) ?? (() => undefined));
         void refreshMemoryChipState();
 
         // vss cache updates are now handled globally in the plugin
@@ -7525,6 +8418,8 @@ export class LLMView extends ItemView {
     private invalidateActiveTurn() {
         this.activeTurnId += 1;
         this.activeTurnCancelled = true;
+        this.activeThinkingTimerReleaser?.();
+        this.activeThinkingTimerReleaser = null;
         this.abortController?.abort();
         this.abortController = null;
         this.chatService.resetContext?.();

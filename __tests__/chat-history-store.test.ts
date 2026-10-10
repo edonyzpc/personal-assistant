@@ -85,21 +85,50 @@ describe("B-145 Chat deletion outbox", () => {
         await store.appendTurn(makeTurn({ assistant: {
             role: "assistant", content: "private result",
             agentExecution: { runId: "run-original", state: "completed" },
+        }, executionSummary: {
+            version: 1,
+            runtimeRunId: "run-original",
+            elapsedMs: 1250,
+            steps: [{ key: "step-1", order: 0, kind: "tool", status: "succeeded",
+                runId: "run-original", turnId: "turn-1", toolCallId: "call-1",
+                toolName: "read_note", outcome: "success" }],
+            debug: { captureId: "capture-original", nodes: [{ captureId: "capture-original",
+                nodeId: "turn-1:tool:call-1", turnId: "turn-1", toolCallId: "call-1", kind: "tool" }] },
         } }));
         const phases: string[] = [];
         const detach = store.onDebugDeletion((event) => phases.push(event.phase));
         await store.deleteTurn("conv-1", 0);
         const [intent] = await store.listDebugDeletions();
-        expect(intent).toMatchObject({ conversationId: "conv-1", runIds: ["run-original"], deleteConversation: false });
+        expect(intent).toMatchObject({
+            conversationId: "conv-1",
+            runtimeRunIds: ["run-original"],
+            captureIds: ["capture-original"],
+            deleteConversation: false,
+        });
         expect(JSON.stringify(intent)).not.toContain("private result");
         expect(phases).toEqual(["start", "committed"]);
         expect(factory.db.transactionCalls.some((stores) => stores.includes("turns") && stores.includes("debugDeletionOutbox"))).toBe(true);
         await store.appendTurn(makeTurn({ assistant: { role: "assistant", content: "new result",
             agentExecution: { runId: "run-new", state: "completed" } } }));
-        expect((await store.listDebugDeletions())[0].runIds).toEqual(["run-original"]);
+        expect((await store.listDebugDeletions())[0].runtimeRunIds).toEqual(["run-original"]);
         await store.acknowledgeDebugDeletion(intent.id);
         expect(await store.listDebugDeletions()).toEqual([]);
         detach();
+    });
+
+    it("does not present a Chat pending placeholder as a real Debug run identity", async () => {
+        const factory = new FakeIndexedDbFactory();
+        const store = new IndexedDbChatHistoryStore("debug-outbox-placeholder", factory as unknown as IDBFactory);
+        await store.initialize();
+        await store.appendTurn(makeTurn({ assistant: {
+            role: "assistant", content: "ordinary result",
+            agentExecution: { runId: "chat-pending-placeholder", state: "completed" },
+        } }));
+
+        await store.deleteTurn("conv-1", 0);
+        const [intent] = await store.listDebugDeletions();
+
+        expect(intent?.runIds).toBeUndefined();
     });
 });
 
@@ -381,15 +410,19 @@ describe('B157 atomic historical state updates', () => {
             expect(await store.reviseTurn(updated, '2026-10-02T10:00:00.000Z'))
                 .toMatchObject({ turnCount: 4, title: 'Current title', updatedAt: '2026-10-02T10:00:00.000Z' });
             expect((await store.getTurns('conv-1'))[0].assistant.content).toBe('Updated.');
+            expect(await store.updateExecutionElapsedMs(updated, 1000)).toBe(false);
+            expect((await store.getTurns('conv-1'))[0].executionSummary).toBeUndefined();
             if (backend === 'indexeddb') expect(factory.db.transactionCalls.some(stores =>
                 stores.includes('turns') && stores.includes('conversations') && stores.includes('writingVersions'))).toBe(true);
             await store.deleteTurn('conv-1', 0);
             expect(await store.reviseTurn(updated, '2026-10-02T11:00:00.000Z')).toBeNull();
+            expect(await store.updateExecutionElapsedMs(updated, 1000)).toBe(false);
             expect(await store.getTurns('conv-1')).toEqual([]);
             const replacement = { ...original, assistant: { ...original.assistant, content: 'Replacement.',
                 actionStateBinding: { ...original.assistant.actionStateBinding!, runId: 'replacement-run' } } };
             await store.appendTurn(replacement);
             expect(await store.reviseTurn(updated, '2026-10-02T11:00:00.000Z')).toBeNull();
+            expect(await store.updateExecutionElapsedMs(updated, 1000)).toBe(false);
             expect((await store.getTurns('conv-1'))[0].assistant.content).toBe('Replacement.');
             await store.deleteConversation('conv-1');
             expect(await store.reviseTurn(replacement, '2026-10-02T12:00:00.000Z')).toBeNull();
@@ -462,13 +495,32 @@ describe('B157 atomic historical state updates', () => {
         const ready: PaAgentActionState = { ...accepted, phase: 'completed', revision: 2,
             receipt: { kind: 'image-task', taskId: 'task-1', taskRevision: 3, state: 'completed' } };
         const turn = makeTurn({ conversationId: binding.conversationId, turnIndex: binding.turnIndex,
-            assistant: { role: 'assistant', content: 'Accepted.', actionStateBinding: binding, actionStates: [accepted] } });
+            assistant: { role: 'assistant', content: 'Accepted.', actionStateBinding: binding, actionStates: [accepted] },
+            executionSummary: { version: 1, elapsedMs: 1000, steps: [],
+                debug: { captureId: 'capture-action', nodes: [{ captureId: 'capture-action',
+                    nodeId: 'node-action', kind: 'reasoning' }] } } });
         try {
+            await store.upsertConversation(makeConversation({ id: binding.conversationId }));
             await store.appendTurn(turn);
             await expect(store.updateActionStates(binding, () => [ready])).resolves.toEqual([ready]);
             await store.appendTurn(turn);
             await store.appendTurn({ ...turn, assistant: { ...turn.assistant, actionStates: [] } });
             expect((await store.getTurns(binding.conversationId))[0].assistant.actionStates).toEqual([ready]);
+            await store.reviseDebugReferencesForForget('claim-forgotten', async () => new Set([
+                JSON.stringify(['capture-action', 'node-action']),
+            ]));
+            expect(await store.updateExecutionElapsedMs(turn, 2000)).toBe(true);
+            const staleRevision = { ...turn, assistant: { ...turn.assistant, content: 'Updated writing body.' } };
+            expect(await store.reviseTurn(staleRevision, '2026-10-02T12:00:00.000Z')).not.toBeNull();
+            expect((await store.getTurns(binding.conversationId))[0]).toMatchObject({
+                assistant: { content: 'Updated writing body.', actionStates: [ready] },
+                executionSummary: { elapsedMs: 2000, debug: { captureId: 'capture-action', nodes: [] } },
+            });
+            expect(await store.updateExecutionElapsedMs(turn, 3000)).toBe(true);
+            expect((await store.getTurns(binding.conversationId))[0]).toMatchObject({
+                assistant: { content: 'Updated writing body.', actionStates: [ready] },
+                executionSummary: { elapsedMs: 3000, debug: { captureId: 'capture-action', nodes: [] } },
+            });
             await expect(store.updateActionStates(binding, () => [accepted])).resolves.toEqual([ready]);
             await expect(store.updateActionStates({ ...binding, runId: 'other-run' }, () => [ready])).resolves.toBeUndefined();
             await expect(store.updateActionStates(binding, () => [{ ...ready, origin: { ...ready.origin, turnId: 'other-turn' } }]))

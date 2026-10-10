@@ -1,11 +1,13 @@
 import type { Component } from 'obsidian';
 import type { ChatContextUsedItem, ChatTurnMemoryMetadata } from '../ai-services/chat-service';
 import type { ChatMessage, ChatRuntimeWarning, PaAgentMessage, PaAgentPersistedTurn, SourceRecord } from '../ai-services/chat-types';
+import type { PaAgentResultFact } from '../ai-services/pa-agent-result-facts';
 import type { MessageImage } from './image-types';
 import type { ChatHostProvenance } from '../ai-services/chat-provenance';
 import type { ChatWritingRecovery, ChatWritingMaterialContext } from '../ai-services/chat-types';
 import type { WritingVersion } from './writing-types';
 import type { GenerationInputSnapshot } from '../ai-services/generation-input-snapshot';
+import type { ThinkingDebugNodeRef, ThinkingExecutionSummary } from './execution-summary';
 
 export interface ThinkingStatusView {
     messageDiv: HTMLDivElement;
@@ -15,14 +17,47 @@ export interface ThinkingStatusView {
     toggleButton: HTMLButtonElement;
     loaderEl?: HTMLElement;
     reasoningSectionEl?: HTMLElement;
+    reasoningToggleButton?: HTMLButtonElement;
     reasoningContentEl?: HTMLElement;
     contextUsedSectionEl?: HTMLElement;
     contextUsedListEl?: HTMLElement;
     warningSectionEl?: HTMLElement;
     warningListEl?: HTMLElement;
     expanded: boolean;
-    detailItems: HTMLElement[];
-    lastDetail?: string;
+    reasoningExpanded: boolean;
+    activityElementsByKey: Map<string, HTMLElement>;
+    elapsedEl?: HTMLElement;
+    timerId?: import('../platform-dom').PlatformIntervalHandle;
+    timerStartedAt?: number;
+    timerFrozenAt?: number;
+}
+
+export type ThinkingActivityStatus =
+    | 'active'
+    | 'succeeded'
+    | 'reused'
+    | 'failed'
+    | 'stopped'
+    | 'skipped'
+    | 'unknown';
+
+export interface ThinkingActivityRecord {
+    key: string;
+    kind: 'phase' | 'tool';
+    title: string;
+    detail?: string;
+    status: ThinkingActivityStatus;
+    runId?: string;
+    turnId?: string;
+    messageId?: string;
+    toolCallId?: string;
+    toolName?: string;
+    executionKind?: import('./execution-summary').ThinkingExecutionStepKind;
+    outcome?: string;
+    sourceRecordKeys?: string[];
+    operationId?: string;
+    sourceSummary?: string;
+    resultFact?: PaAgentResultFact;
 }
 
 export type RenderedMessage = {
@@ -58,8 +93,12 @@ export type CanonicalLifecycleUiState = {
     runId?: string;
     finalTurnId?: string;
     currentTurnId?: string;
+    currentAssistantId?: string;
     messages: PaAgentMessage[];
     messagesById: Map<string, PaAgentMessage>;
+    thinkingActivities: Map<string, ThinkingActivityRecord>;
+    thinkingActivityOrder: string[];
+    pendingReasoningParts: Map<string, { messageId: string; partIndex?: number; text: string }>;
     turnStatuses: Map<string, string>;
     hostContextUsedItems: ChatContextUsedItem[];
     hostSourceRecords: SourceRecord[];
@@ -95,8 +134,13 @@ export type UiTurn = {
     userMessage?: RenderedMessage;
     assistantMessage?: RenderedMessage;
     statusView?: ThinkingStatusView;
+    chatStartedAt: number;
+    chatDeliveredAt?: number;
     terminalRow?: HTMLDivElement;
     providerReasoningObserved?: boolean;
+    providerReasoningBuffer?: string;
+    debugCaptureId?: string;
+    debugNodeRefs: Map<string, ThinkingDebugNodeRef>;
 };
 
 export type HistoryTurnEntry = {
@@ -106,6 +150,10 @@ export type HistoryTurnEntry = {
     memoryMetadata?: ChatTurnMemoryMetadata;
     contextUsedItems?: ChatContextUsedItem[];
     activityDetails?: string[];
+    thinkingActivities?: ThinkingActivityRecord[];
+    thinkingElapsedMs?: number;
+    executionSummary?: ThinkingExecutionSummary;
+    providerReasoningLegacyText?: string;
     providerReasoningObserved?: boolean;
 };
 
@@ -123,6 +171,9 @@ export type TerminalTurnEntry = {
     errorDetail?: string;
     userMessage?: RenderedMessage;
     statusView?: ThinkingStatusView;
+    thinkingElapsedMs?: number;
+    runId?: string;
+    executionSummary?: ThinkingExecutionSummary;
     terminalRow?: HTMLDivElement;
 };
 

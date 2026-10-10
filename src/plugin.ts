@@ -1109,11 +1109,13 @@ export class PluginManager extends Plugin {
         });
     }
 
-    private async openAgentDebug(conversationId?: string): Promise<void> {
+    private async openAgentDebug(target?: string | import('./agent-debug/view').AgentDebugRouteTarget): Promise<void> {
         const existing = this.app.workspace.getLeavesOfType(AGENT_DEBUG_VIEW_TYPE)[0];
         const leaf = existing ?? this.app.workspace.getLeaf('tab');
         if (!existing) await leaf.setViewState({ type: AGENT_DEBUG_VIEW_TYPE, active: true });
-        if (leaf.view instanceof AgentDebugView) leaf.view.revealConversation(conversationId);
+        if (leaf.view instanceof AgentDebugView) {
+            leaf.view.revealTarget(typeof target === 'string' ? { conversationId: target } : target);
+        }
         await this.app.workspace.revealLeaf(leaf);
         // On mobile, revealLeaf does not dismiss an open Chat drawer; it would
         // otherwise cover the newly opened Debug tab completely.
@@ -1144,9 +1146,12 @@ export class PluginManager extends Plugin {
         openOperationsReview: (reviewId) => this.operationsReviewRouter.open(reviewId, this.app.workspace),
         invalidateOperationsReviewSession: (reviewId) => this.operationsReviewRouter.invalidate(reviewId),
         createAiServiceHost: () => this.createAiServiceHost("chat"),
-        hostActions: {
-            openAgentDebug: (conversationId) => this.openAgentDebug(conversationId),
-            recordAgentDebugTextCommitted: (runId) => this.agentDebugIntegration?.service.recordTextCommitted(runId),
+            hostActions: {
+                openAgentDebug: (conversationId) => this.openAgentDebug(conversationId),
+                recordAgentDebugTextCommitted: (runId) => this.agentDebugIntegration?.service.recordTextCommitted(runId),
+                readAgentDebugTrace: (captureId, query = {}) => this.getAgentDebugIntegration().viewHost().getTracePage(captureId, query),
+                readAgentDebugContents: (captureId, nodeId) => this.getAgentDebugIntegration().viewHost().getContents(captureId, nodeId),
+                subscribeAgentDebug: listener => this.getAgentDebugIntegration().viewHost().subscribe(listener),
             isOperationsAgentEnabled: () => this.isOperationsAgentEnabled,
             log: (message, ...args) => this.log(message, ...args),
             getAISetupIssue: () => this.getAISetupIssue(),

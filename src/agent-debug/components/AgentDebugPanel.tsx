@@ -15,7 +15,12 @@ const RUN_PAGE = 50;
 const RUN_STATUSES: DebugRunStatus[] = ['running', 'completed', 'partial', 'failed', 'cancelled', 'interrupted', 'unknown'];
 const bytes = (value: number) => `${(value / (1024 * 1024)).toFixed(1)} MiB`;
 
-export function AgentDebugPanel({ host, conversationId }: { host: AgentDebugViewHost; conversationId?: string }) {
+export function AgentDebugPanel({ host, conversationId, initialCaptureId, initialNodeId }: {
+    host: AgentDebugViewHost;
+    conversationId?: string;
+    initialCaptureId?: string;
+    initialNodeId?: string;
+}) {
     const rootRef = useRef<HTMLDivElement>(null);
     const traceScroll = useRef<HTMLDivElement>(null);
     const inspectorScroll = useRef<HTMLDivElement>(null);
@@ -31,9 +36,9 @@ export function AgentDebugPanel({ host, conversationId }: { host: AgentDebugView
     const [currentConversationOnly, setCurrentConversationOnly] = useState(Boolean(conversationId));
     const [before, setBefore] = useState<number>();
     const [moreRuns, setMoreRuns] = useState(false);
-    const [captureId, setCaptureId] = useState<string>();
-    const [nodeId, setNodeId] = useState<string>();
-    const [following, setFollowing] = useState(true);
+    const [captureId, setCaptureId] = useState<string | undefined>(initialCaptureId);
+    const [nodeId, setNodeId] = useState<string | undefined>(initialNodeId);
+    const [following, setFollowing] = useState(!initialCaptureId && !initialNodeId);
     const [query, setQuery] = useState('');
     const [overrides, setOverrides] = useState(new Map<string, boolean>());
     const [contents, setContents] = useState<DebugContent[]>([]);
@@ -56,6 +61,7 @@ export function AgentDebugPanel({ host, conversationId }: { host: AgentDebugView
     const model = useMemo(() => buildTraceModel(load.events), [load.events]);
     const selected = nodeId ? model.nodes.get(nodeId) : undefined;
     const selectedRun = load.run ?? runs.find(run => run.captureId === captureId);
+    const targetMissing = Boolean(nodeId && !selected && load.state === 'ready' && !following);
     const view = useMemo(() => visibleTraceRows(model, nodeId, overrides, query, nodeTitle), [model, nodeId, overrides, query]);
     const navigationIds = navigation.filter(id => model.nodes.has(id));
     const navigationIndex = nodeId ? navigationIds.indexOf(nodeId) : -1;
@@ -329,7 +335,8 @@ export function AgentDebugPanel({ host, conversationId }: { host: AgentDebugView
                         onKeyDown={event => { if (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '].includes(event.key)) pause(); }} onClick={pause}>
                         {selected ? <NodeInspector key={JSON.stringify([captureId, nodeId])} event={selected.event} durationMs={selected.durationMs}
                             contents={detailContents} session={detailsKey === JSON.stringify([captureId, nodeId]) ? session : []}
-                            loading={detailsLoading} failed={detailsFailed} onRetry={() => setDetailRevision(value => value + 1)} /> : <p>{t('plugin.agentDebug.selectNode')}</p>}
+                            loading={detailsLoading} failed={detailsFailed} onRetry={() => setDetailRevision(value => value + 1)} />
+                            : <p>{targetMissing ? t('plugin.agentDebug.targetMissing') : t('plugin.agentDebug.selectNode')}</p>}
                     </div>
                     {narrow && <footer className="pa-agent-debug-bottom-bar">
                         <button type="button" disabled={navigationIndex <= 0} onClick={() => { pause(); returnAnchor.current.changed = true; setNodeId(navigationIds[navigationIndex - 1]); }}>{t('plugin.agentDebug.previousNode')}</button>

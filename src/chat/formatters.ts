@@ -2,9 +2,20 @@ import type { ChatAgentStatus, ChatContextUsedItem } from '../ai-services/chat-s
 import type { ChatRuntimeWarning, SourceRecord } from '../ai-services/chat-types';
 import { parseObservedSourceRevision } from '../ai-services/generation-input-snapshot';
 import { getPluginUiLanguage, pluginT, type PluginLocale } from '../locales/plugin';
+import { normalizeUiLanguage } from '../locales/language';
+import { getOptionalPlatformWindow } from '../platform-dom';
 
 function ft(key: string, params?: Readonly<Record<string, string | number>>, locale?: PluginLocale): string {
     return pluginT(key, locale ?? getPluginUiLanguage(), params);
+}
+
+export function getChatThinkingProcessLocale(): PluginLocale {
+    const navigator = getOptionalPlatformWindow()?.navigator;
+    const primaryLanguage = navigator?.languages?.[0] ?? navigator?.language;
+    if (typeof primaryLanguage === 'string' && primaryLanguage.length > 0) {
+        return normalizeUiLanguage(primaryLanguage) ?? 'en';
+    }
+    return getPluginUiLanguage();
 }
 
 export function displaySourceName(path: string): string {
@@ -33,28 +44,28 @@ const TOOL_CONTEXT_MAP: Record<string, { category: ChatContextUsedItem['category
     read_note_outline: { category: 'note-outline', labelKey: 'plugin.chat.formatter.contextTool.noteOutline.label', detailKey: 'plugin.chat.formatter.contextTool.noteOutline.detail' },
 };
 
-export function getToolContextUsedInfo(tool: string): Pick<ChatContextUsedItem, 'category' | 'label' | 'detail'> {
+export function getToolContextUsedInfo(tool: string, locale?: PluginLocale): Pick<ChatContextUsedItem, 'category' | 'label' | 'detail'> {
     const entry = TOOL_CONTEXT_MAP[tool];
     if (entry) {
-        return { category: entry.category, label: ft(entry.labelKey), detail: ft(entry.detailKey) };
+        return { category: entry.category, label: ft(entry.labelKey, undefined, locale), detail: ft(entry.detailKey, undefined, locale) };
     }
     return {
         category: 'read-only-tool',
-        label: ft('plugin.chat.formatter.contextTool.default.label'),
-        detail: ft('plugin.chat.formatter.contextTool.default.detail'),
+        label: ft('plugin.chat.formatter.contextTool.default.label', undefined, locale),
+        detail: ft('plugin.chat.formatter.contextTool.default.detail', undefined, locale),
     };
 }
 
-export function formatToolRunningStatus(tool: string): string {
-    if (tool === 'get_current_note_context') return ft('plugin.chat.formatter.readingCurrentNote');
-    if (tool === 'inspect_obsidian_note') return ft('plugin.chat.formatter.readingNoteStructure');
-    if (tool === 'read_canvas_summary') return ft('plugin.chat.formatter.checkingCanvasStructure');
-    if (tool === 'search_vault_snippets') return ft('plugin.chat.formatter.searchingNoteSnippets');
-    if (tool === 'list_vault_tags') return ft('plugin.chat.formatter.readingTags');
-    if (tool === 'search_vault_metadata') return ft('plugin.chat.formatter.searchingMetadata');
-    if (tool === 'list_recent_notes') return ft('plugin.chat.formatter.readingRecentNotes');
-    if (tool === 'read_note_outline') return ft('plugin.chat.formatter.readingNoteOutline');
-    return ft('plugin.chat.formatter.readingContext');
+export function formatToolRunningStatus(tool: string, locale?: PluginLocale): string {
+    if (tool === 'get_current_note_context') return ft('plugin.chat.formatter.readingCurrentNote', undefined, locale);
+    if (tool === 'inspect_obsidian_note') return ft('plugin.chat.formatter.readingNoteStructure', undefined, locale);
+    if (tool === 'read_canvas_summary') return ft('plugin.chat.formatter.checkingCanvasStructure', undefined, locale);
+    if (tool === 'search_vault_snippets') return ft('plugin.chat.formatter.searchingNoteSnippets', undefined, locale);
+    if (tool === 'list_vault_tags') return ft('plugin.chat.formatter.readingTags', undefined, locale);
+    if (tool === 'search_vault_metadata') return ft('plugin.chat.formatter.searchingMetadata', undefined, locale);
+    if (tool === 'list_recent_notes') return ft('plugin.chat.formatter.readingRecentNotes', undefined, locale);
+    if (tool === 'read_note_outline') return ft('plugin.chat.formatter.readingNoteOutline', undefined, locale);
+    return ft('plugin.chat.formatter.readingContext', undefined, locale);
 }
 
 export function dedupeContextSources(sources: ChatContextUsedItem['sources'] = []) {
@@ -220,26 +231,27 @@ export function isDuplicateReadOnlyToolSkip(status: ChatAgentStatus): boolean {
     );
 }
 
-export function getContextUsedItemsFromStatus(status: ChatAgentStatus): ChatContextUsedItem[] {
+export function getContextUsedItemsFromStatus(status: ChatAgentStatus, locale?: PluginLocale): ChatContextUsedItem[] {
+    const lt = (key: string, params?: Readonly<Record<string, string | number>>) => ft(key, params, locale);
     if (status.type === 'memory-selected' || status.type === 'memory-expanded') {
         if (status.sources.length === 0) return [];
         return [{
             category: 'memory',
-            label: ft('plugin.chat.formatter.contextUsed.selectedMemory'),
+            label: lt('plugin.chat.formatter.contextUsed.selectedMemory'),
             detail: status.sources.length === 1
-                ? ft('plugin.chat.formatter.contextUsed.selectedNoteOne')
-                : ft('plugin.chat.formatter.contextUsed.selectedNoteMany', { count: status.sources.length }),
+                ? lt('plugin.chat.formatter.contextUsed.selectedNoteOne')
+                : lt('plugin.chat.formatter.contextUsed.selectedNoteMany', { count: status.sources.length }),
             sources: status.sources,
             citationEligible: true,
         }];
     }
     if (status.type === 'tool-done') {
-        const toolInfo = getToolContextUsedInfo(status.tool);
+        const toolInfo = getToolContextUsedInfo(status.tool, locale);
         if (status.availability === 'unavailable') {
             return [{
                 category: 'tool-unavailable',
-                label: ft('plugin.chat.formatter.contextUsed.toolUnavailableLabel', { label: toolInfo.label }),
-                detail: ft('plugin.chat.formatter.contextUsed.vaultContextUnavailable'),
+                label: lt('plugin.chat.formatter.contextUsed.toolUnavailableLabel', { label: toolInfo.label }),
+                detail: lt('plugin.chat.formatter.contextUsed.vaultContextUnavailable'),
                 sources: status.sources,
                 citationEligible: false,
                 statusOnly: true,
@@ -249,7 +261,7 @@ export function getContextUsedItemsFromStatus(status: ChatAgentStatus): ChatCont
             category: toolInfo.category,
             label: toolInfo.label,
             detail: status.availability === 'partial'
-                ? ft('plugin.chat.formatter.contextUsed.partialDetail', { detail: toolInfo.detail ?? '' })
+                ? lt('plugin.chat.formatter.contextUsed.partialDetail', { detail: toolInfo.detail ?? '' })
                 : toolInfo.detail,
             sources: status.sources,
             citationEligible: false,
@@ -257,11 +269,11 @@ export function getContextUsedItemsFromStatus(status: ChatAgentStatus): ChatCont
     }
     if (status.type === 'tool-skipped') {
         if (isDuplicateReadOnlyToolSkip(status)) return [];
-        const toolInfo = getToolContextUsedInfo(status.tool);
+        const toolInfo = getToolContextUsedInfo(status.tool, locale);
         return [{
             category: 'tool-unavailable',
-            label: ft('plugin.chat.formatter.contextUsed.toolUnavailableLabel', { label: toolInfo.label }),
-            detail: ft('plugin.chat.formatter.contextUsed.vaultContextUnavailable'),
+            label: lt('plugin.chat.formatter.contextUsed.toolUnavailableLabel', { label: toolInfo.label }),
+            detail: lt('plugin.chat.formatter.contextUsed.vaultContextUnavailable'),
             statusOnly: true,
         }];
     }
@@ -270,121 +282,170 @@ export function getContextUsedItemsFromStatus(status: ChatAgentStatus): ChatCont
         return [{
             category: isLoopCap ? 'loop-cap' : 'fallback',
             label: isLoopCap
-                ? ft('plugin.chat.formatter.contextUsed.usingGathered')
-                : ft('plugin.chat.formatter.contextUsed.availableContext'),
+                ? lt('plugin.chat.formatter.contextUsed.usingGathered')
+                : lt('plugin.chat.formatter.contextUsed.availableContext'),
             detail: isLoopCap
-                ? ft('plugin.chat.formatter.contextUsed.answeredAfterLimit')
-                : ft('plugin.chat.formatter.contextUsed.answeredFromAvailable'),
+                ? lt('plugin.chat.formatter.contextUsed.answeredAfterLimit')
+                : lt('plugin.chat.formatter.contextUsed.answeredFromAvailable'),
             statusOnly: true,
         }];
     }
     return [];
 }
 
-export function formatAgentStatus(status: ChatAgentStatus): string {
+export function formatAgentStatus(status: ChatAgentStatus, locale?: PluginLocale): string {
+    const lt = (key: string, params?: Readonly<Record<string, string | number>>) => ft(key, params, locale);
     if (status.type === 'thinking') {
-        return ft('plugin.chat.formatter.decidingContext');
+        return lt('plugin.chat.formatter.decidingContext');
     } else if (status.type === 'memory-prefetching') {
-        return ft('plugin.chat.formatter.searchingNotes', { query: status.query });
+        return lt('plugin.chat.formatter.searchingNotes', { query: status.query });
     } else if (status.type === 'memory-prefetched') {
         const sources = formatSourceSummary(status.sources);
-        return sources ? ft('plugin.chat.formatter.relatedNotesFound', { sources }) : ft('plugin.chat.formatter.noRelatedNotes');
+        return sources ? lt('plugin.chat.formatter.relatedNotesFound', { sources }) : lt('plugin.chat.formatter.noRelatedNotes');
     } else if (status.type === 'memory-reranking') {
-        return ft('plugin.chat.formatter.checkingRelatedNotes', { count: status.candidateCount });
+        return lt('plugin.chat.formatter.checkingRelatedNotes', { count: status.candidateCount });
     } else if (status.type === 'memory-selected') {
         const sources = formatSourceSummary(status.sources);
-        return sources ? ft('plugin.chat.formatter.selectedNotes', { sources }) : ft('plugin.chat.formatter.noRelevantNotes');
+        return sources ? lt('plugin.chat.formatter.selectedNotes', { sources }) : lt('plugin.chat.formatter.noRelevantNotes');
     } else if (status.type === 'memory-expanded') {
-        return ft('plugin.chat.formatter.readingSelectedNotes');
+        return lt('plugin.chat.formatter.readingSelectedNotes');
     } else if (status.type === 'retrieving') {
-        return ft('plugin.chat.formatter.searchingNotes', { query: status.query });
+        return lt('plugin.chat.formatter.searchingNotes', { query: status.query });
     } else if (status.type === 'retrieved') {
         const sources = formatSourceSummary(status.sources);
-        return sources ? ft('plugin.chat.formatter.relatedNotesFound', { sources }) : ft('plugin.chat.formatter.noRelatedNotes');
+        return sources ? lt('plugin.chat.formatter.relatedNotesFound', { sources }) : lt('plugin.chat.formatter.noRelatedNotes');
     } else if (status.type === 'memory-skipped') {
-        return /returned 0 source/i.test(status.reason) ? ft('plugin.chat.formatter.noRelatedNotes') : ft('plugin.chat.formatter.notesSkipped');
+        return /returned 0 source/i.test(status.reason) ? lt('plugin.chat.formatter.noRelatedNotes') : lt('plugin.chat.formatter.notesSkipped');
     } else if (status.type === 'tool-running') {
-        return formatToolRunningStatus(status.tool);
+        return formatToolRunningStatus(status.tool, locale);
     } else if (status.type === 'tool-done') {
         const sources = formatSourceSummary(status.sources);
-        const toolInfo = getToolContextUsedInfo(status.tool);
+        const toolInfo = getToolContextUsedInfo(status.tool, locale);
         return sources
-            ? ft('plugin.chat.formatter.toolDoneWithSources', { label: toolInfo.label, sources })
-            : ft('plugin.chat.formatter.toolDoneNoSources', { label: toolInfo.label });
+            ? lt('plugin.chat.formatter.toolDoneWithSources', { label: toolInfo.label, sources })
+            : lt('plugin.chat.formatter.toolDoneNoSources', { label: toolInfo.label });
     } else if (status.type === 'tool-skipped') {
-        if (isDuplicateReadOnlyToolSkip(status)) return ft('plugin.chat.formatter.contextAlreadyGathered');
-        return ft('plugin.chat.formatter.contextUnavailable');
+        if (isDuplicateReadOnlyToolSkip(status)) return lt('plugin.chat.formatter.contextAlreadyGathered');
+        return lt('plugin.chat.formatter.contextUnavailable');
     } else if (status.type === 'answering') {
-        return ft('plugin.chat.formatter.answering');
+        return lt('plugin.chat.formatter.answering');
     } else if (status.type === 'fallback') {
         return /cap reached|stopped before/i.test(status.reason)
-            ? ft('plugin.chat.formatter.usingGatheredContext')
-            : ft('plugin.chat.formatter.answeringFromContext');
+            ? lt('plugin.chat.formatter.usingGatheredContext')
+            : lt('plugin.chat.formatter.answeringFromContext');
     }
-    return ft('plugin.chat.formatter.thinking');
+    return lt('plugin.chat.formatter.thinking');
 }
 
-export function formatCanonicalToolStatus(toolName: string): string {
-    if (toolName === 'search_memory') return ft('plugin.chat.formatter.searchingMemory');
-    if (toolName === 'webSearch') return ft('plugin.chat.formatter.searchingWeb');
-    return formatToolRunningStatus(toolName);
+export function formatCanonicalToolStatus(toolName: string, locale?: PluginLocale): string {
+    if (toolName === 'search_memory') return ft('plugin.chat.formatter.searchingMemory', undefined, locale);
+    if (toolName === 'webSearch') return ft('plugin.chat.formatter.searchingWeb', undefined, locale);
+    return ft(getToolRunningKey(toolName), undefined, locale);
 }
 
-export function formatCanonicalToolCompletedStatus(toolName: string, outcome: string): string {
+function getToolRunningKey(toolName: string): string {
+    if (toolName === 'get_current_note_context') return 'plugin.chat.formatter.readingCurrentNote';
+    if (toolName === 'inspect_obsidian_note') return 'plugin.chat.formatter.readingNoteStructure';
+    if (toolName === 'read_canvas_summary') return 'plugin.chat.formatter.checkingCanvasStructure';
+    if (toolName === 'search_vault_snippets') return 'plugin.chat.formatter.searchingNoteSnippets';
+    if (toolName === 'list_vault_tags') return 'plugin.chat.formatter.readingTags';
+    if (toolName === 'search_vault_metadata') return 'plugin.chat.formatter.searchingMetadata';
+    if (toolName === 'list_recent_notes') return 'plugin.chat.formatter.readingRecentNotes';
+    if (toolName === 'read_note_outline') return 'plugin.chat.formatter.readingNoteOutline';
+    return 'plugin.chat.formatter.readingContext';
+}
+
+export function formatCanonicalToolCompletedStatus(toolName: string, outcome: string, locale?: PluginLocale): string {
     const label = toolName === 'search_memory'
-        ? ft('plugin.chat.formatter.toolLabel.memory')
+        ? ft('plugin.chat.formatter.toolLabel.memory', undefined, locale)
         : toolName === 'webSearch'
-            ? ft('plugin.chat.formatter.toolLabel.webSearch')
-            : getToolContextUsedInfo(toolName).label;
-    if (outcome === 'success') return ft('plugin.chat.formatter.toolComplete', { label });
-    if (outcome === 'budget_exceeded') return ft('plugin.chat.formatter.toolSkippedBudget', { label });
-    if (outcome === 'duplicate_skipped') return ft('plugin.chat.formatter.toolAlreadyGathered', { label });
-    if (outcome === 'aborted' || outcome === 'abort_timeout') return ft('plugin.chat.formatter.toolStopped', { label });
-    return ft('plugin.chat.formatter.toolUnavailable', { label });
+            ? ft('plugin.chat.formatter.toolLabel.webSearch', undefined, locale)
+            : ft(getToolContextLabelKey(toolName), undefined, locale);
+    if (outcome === 'success') return ft('plugin.chat.formatter.toolComplete', { label }, locale);
+    if (outcome === 'reused_result') return ft('plugin.chat.formatter.toolReused', { label }, locale);
+    if (outcome === 'control_applied') return ft('plugin.chat.formatter.toolControlApplied', { label }, locale);
+    if (outcome === 'budget_exceeded') return ft('plugin.chat.formatter.toolSkippedBudget', { label }, locale);
+    if (outcome === 'duplicate_skipped') return ft('plugin.chat.formatter.toolAlreadyGathered', { label }, locale);
+    if (outcome === 'aborted' || outcome === 'abort_timeout') return ft('plugin.chat.formatter.toolStopped', { label }, locale);
+    return ft('plugin.chat.formatter.toolUnavailable', { label }, locale);
 }
 
-export function formatRuntimeWarningType(type: string): string {
-    if (type === 'provider_admission_rejected') return ft('plugin.chat.formatter.warningContextUnavailable');
-    if (type === 'provider_tool_calls_missing') return ft('plugin.chat.formatter.warningToolRequestIncomplete');
-    if (type === 'assistant_source_changed') return ft('plugin.chat.writing.sourceChangedHint');
-    if (type === 'context_local_overflow' || type === 'provider_context_overflow') return ft('plugin.chat.formatter.warningContextTooLong');
-    if (type === 'required_capability_missing') return ft('plugin.chat.formatter.warningIncomplete');
-    if (type === 'provider_partial_error') return ft('plugin.chat.formatter.warningStoppedEarly');
-    if (type === 'assistant_idle_timeout') return ft('plugin.chat.formatter.warningIdleTimeout');
-    if (type === 'assistant_empty_response') return ft('plugin.chat.formatter.warningEmptyResponse');
-    if (type === 'wall_clock_exceeded') return ft('plugin.chat.formatter.warningRuntimeLimit');
-    return ft('plugin.chat.formatter.warningGeneric');
+function getToolContextLabelKey(toolName: string): string {
+    const entry = TOOL_CONTEXT_MAP[toolName];
+    return entry?.labelKey ?? 'plugin.chat.formatter.contextTool.default.label';
 }
 
-export function formatRuntimeWarningLabel(warning: ChatRuntimeWarning): string {
-    if (warning.type === 'provider_admission_rejected' || warning.type === 'provider_tool_calls_missing') return formatRuntimeWarningType(warning.type);
+export function formatThinkingResultFact(fact: { kind: string } | undefined, locale?: PluginLocale): string | undefined {
+    if (!fact) return undefined;
+    switch (fact.kind) {
+        case 'accepted': return ft('plugin.chat.thinking.factAccepted', undefined, locale);
+        case 'evidence': return ft('plugin.chat.thinking.factEvidence', undefined, locale);
+        case 'no_match': return ft('plugin.chat.thinking.factNoMatch', undefined, locale);
+        case 'unavailable': return ft('plugin.chat.thinking.factUnavailable', undefined, locale);
+        case 'transient_failure': return ft('plugin.chat.thinking.factTransientFailure', undefined, locale);
+        case 'artifact_ready': return ft('plugin.chat.thinking.factArtifactReady', undefined, locale);
+        case 'approval_pending': return ft('plugin.chat.thinking.factApprovalPending', undefined, locale);
+        case 'applied': return ft('plugin.chat.thinking.factApplied', undefined, locale);
+        case 'partial': return ft('plugin.chat.thinking.factPartial', undefined, locale);
+        case 'unknown': return ft('plugin.chat.thinking.factUnknown', undefined, locale);
+        default: return undefined;
+    }
+}
+
+export function formatThinkingDuration(milliseconds: number, locale: PluginLocale): string {
+    const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+    if (seconds < 60) return ft('plugin.chat.thinking.elapsedSeconds', { seconds }, locale);
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return ft('plugin.chat.thinking.elapsedMinutes', {
+        minutes,
+        seconds: String(remainingSeconds).padStart(2, '0'),
+    }, locale);
+}
+
+export function formatRuntimeWarningType(type: string, locale?: PluginLocale): string {
+    if (type === 'provider_admission_rejected') return ft('plugin.chat.formatter.warningContextUnavailable', undefined, locale);
+    if (type === 'provider_tool_calls_missing') return ft('plugin.chat.formatter.warningToolRequestIncomplete', undefined, locale);
+    if (type === 'assistant_source_changed') return ft('plugin.chat.writing.sourceChangedHint', undefined, locale);
+    if (type === 'context_local_overflow' || type === 'provider_context_overflow') return ft('plugin.chat.formatter.warningContextTooLong', undefined, locale);
+    if (type === 'required_capability_missing') return ft('plugin.chat.formatter.warningIncomplete', undefined, locale);
+    if (type === 'provider_partial_error') return ft('plugin.chat.formatter.warningStoppedEarly', undefined, locale);
+    if (type === 'assistant_idle_timeout') return ft('plugin.chat.formatter.warningIdleTimeout', undefined, locale);
+    if (type === 'assistant_empty_response') return ft('plugin.chat.formatter.warningEmptyResponse', undefined, locale);
+    if (type === 'wall_clock_exceeded') return ft('plugin.chat.formatter.warningRuntimeLimit', undefined, locale);
+    return ft('plugin.chat.formatter.warningGeneric', undefined, locale);
+}
+
+export function formatRuntimeWarningLabel(warning: ChatRuntimeWarning, locale?: PluginLocale): string {
+    if (warning.type === 'provider_admission_rejected' || warning.type === 'provider_tool_calls_missing') return formatRuntimeWarningType(warning.type, locale);
     if (warning.type === 'assistant_empty_response' || warning.type === 'context_local_overflow'
-        || warning.type === 'provider_context_overflow') return formatRuntimeWarningType(warning.type);
-    return warning.message ?? formatRuntimeWarningType(warning.type);
+        || warning.type === 'provider_context_overflow') return formatRuntimeWarningType(warning.type, locale);
+    return warning.message ?? formatRuntimeWarningType(warning.type, locale);
 }
 
-export function formatRuntimeWarningDetail(warning: ChatRuntimeWarning): string | undefined {
-    if (warning.type === 'context_local_overflow') return ft('plugin.chat.formatter.warningContextTooLongDetail');
-    if (warning.type === 'provider_context_overflow') return ft('plugin.chat.formatter.warningProviderContextTooLongDetail');
-    if (warning.type === 'assistant_empty_response') return ft('plugin.chat.formatter.warningNoAnswer');
+export function formatRuntimeWarningDetail(warning: ChatRuntimeWarning, locale?: PluginLocale): string | undefined {
+    if (warning.type === 'context_local_overflow') return ft('plugin.chat.formatter.warningContextTooLongDetail', undefined, locale);
+    if (warning.type === 'provider_context_overflow') return ft('plugin.chat.formatter.warningProviderContextTooLongDetail', undefined, locale);
+    if (warning.type === 'assistant_empty_response') return ft('plugin.chat.formatter.warningNoAnswer', undefined, locale);
     return warning.detail ?? warning.capability;
 }
 
 export function formatCanonicalTerminalSummary(
     status: string | undefined,
     warnings: ChatRuntimeWarning[] = [],
+    locale?: PluginLocale,
 ): string {
     if (warnings.some((warning) => warning.type === 'context_local_overflow' || warning.type === 'provider_context_overflow')) {
-        return ft('plugin.chat.formatter.warningContextTooLong');
+        return ft('plugin.chat.formatter.warningContextTooLong', undefined, locale);
     }
-    if (status === 'needs_user') return ft('plugin.chat.formatter.summaryNeedsUser');
+    if (status === 'needs_user') return ft('plugin.chat.formatter.summaryNeedsUser', undefined, locale);
     if (status === 'incomplete' || warnings.some((warning) => warning.type === 'assistant_empty_response')) {
-        return ft('plugin.chat.formatter.summaryIncomplete');
+        return ft('plugin.chat.formatter.summaryIncomplete', undefined, locale);
     }
-    if (status === 'aborted') return ft('plugin.chat.formatter.summaryCancelled');
-    if (status === 'error') return ft('plugin.chat.formatter.summaryFailed');
-    if (status === 'completed_with_warning' || warnings.length > 0) return ft('plugin.chat.formatter.summaryWithWarning');
-    return ft('plugin.chat.formatter.summaryComplete');
+    if (status === 'aborted') return ft('plugin.chat.formatter.summaryCancelled', undefined, locale);
+    if (status === 'error') return ft('plugin.chat.formatter.summaryFailed', undefined, locale);
+    if (status === 'completed_with_warning' || warnings.length > 0) return ft('plugin.chat.formatter.summaryWithWarning', undefined, locale);
+    return ft('plugin.chat.formatter.summaryComplete', undefined, locale);
 }
 
 export function runtimeWarningKey(warning: ChatRuntimeWarning): string {

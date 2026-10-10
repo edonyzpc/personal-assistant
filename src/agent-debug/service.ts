@@ -208,7 +208,8 @@ export class AgentDebugService implements AgentDebugPort {
             if (observation.purpose === 'answer' && observation.model) state.run.model = observation.model;
             const event: DebugEvent = { vaultKey: this.options.vaultKey, captureId: state.run.captureId,
                 seq: ++state.seq, segment: state.segment, nodeId: observation.nodeId, parentId: observation.parentId,
-                turnId: observation.turnId, callId: observation.callId, attemptId: observation.attemptId,
+                turnId: observation.turnId, messageId: observation.messageId,
+                callId: observation.callId, attemptId: observation.attemptId,
                 toolCallId: observation.toolCallId, timestamp, kind: observation.phase, status: observation.status,
                 nodeKind: observation.kind, boundary: observation.boundary, contentRole: observation.contentRole,
                 elapsedMs: Number.isFinite(elapsedMs) && elapsedMs >= 0 ? elapsedMs : undefined,
@@ -437,6 +438,13 @@ export class AgentDebugService implements AgentDebugPort {
         return [...result.values()].sort((left, right) => right.startedAt - left.startedAt).slice(0, query.limit ?? 50);
     }
 
+    /** Forget reconciliation needs durable owner decisions, never the invalidated live overlay. */
+    async getPersistedEvents(captureId: string, query: DebugEventQuery = {}): Promise<DebugEvent[]> {
+        await this.initialize();
+        if (!this.available) throw new Error('Debug history is unavailable for Forget reference reconciliation.');
+        return this.store.getEvents(captureId, query);
+    }
+
     async getEvents(captureId: string, query: DebugEventQuery = {}): Promise<DebugEvent[]> {
         const epoch = this.visibilityEpoch;
         await this.initialize();
@@ -557,14 +565,18 @@ export class AgentDebugService implements AgentDebugPort {
     }
     unblockConversation(conversationId: string): void { this.blockedConversations.delete(conversationId); this.notify(); }
 
-    async invalidateConversation(conversationId: string, options: { runIds?: string[]; operationId?: string; before?: number; permanent?: boolean } = {}): Promise<void> {
+    async invalidateConversation(conversationId: string, options: { runIds?: string[]; captureIds?: string[];
+        operationId?: string; before?: number; permanent?: boolean } = {}): Promise<void> {
         const cleanupId = `conversation:${conversationId}`;
         this.pendingCleanups.add(cleanupId);
         this.blockConversation(conversationId);
         await this.flushTail;
         await this.store.invalidateConversation(conversationId, options);
         for (const [id, state] of this.states) if (state.run.conversationId === conversationId
-            && (options.runIds?.length ? options.runIds.includes(state.run.runtimeRunId ?? '') : options.permanent || state.run.startedAt <= (options.before ?? this.now()))) {
+            && ((options.runIds?.length || options.captureIds?.length)
+                ? options.runIds?.includes(state.run.runtimeRunId ?? '')
+                    || options.captureIds?.includes(state.run.captureId)
+                : options.permanent || state.run.startedAt <= (options.before ?? this.now()))) {
             state.retired = true; this.states.delete(id);
         }
         this.generation = await this.store.getGeneration();

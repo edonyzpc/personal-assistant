@@ -694,6 +694,10 @@ describe("PaAgentLoop", () => {
 
         expect(preparedTurns).toEqual([0, 1]);
         expect(preparationSignals.every((signal) => signal.aborted)).toBe(true);
+        expect(new Set(modelInputs.map(input => (input as unknown as { messageId?: string }).messageId)).size)
+            .toBe(modelInputs.length);
+        expect(modelInputs.map(input => (input as unknown as { messageId?: string }).messageId))
+            .toEqual(["message_assistant_1", "message_assistant_2"]);
         expect(modelInputs[1]?.transcript.find((message) => message.role === "toolResult"))
             .toMatchObject({ content: { promptText: "GATED MEMORY" } });
         expect(modelInputs[1]?.prepareForProviderRetry).toEqual(expect.any(Function));

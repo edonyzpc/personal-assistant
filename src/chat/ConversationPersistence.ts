@@ -3,6 +3,7 @@ import type { TimelineEntry } from "./types";
 import type { ChatHistoryManager } from "./chat-history-manager";
 import type { PersistedConversation, PersistedTurn } from "./chat-history-store";
 import type { WritingVersionService } from './writing-versions';
+import type { ThinkingExecutionSummary } from './execution-summary';
 import { cloneWritingVersion, type WritingVersion } from './writing-types';
 import { throwIfAborted } from '../ai-services/chat-utils';
 import { cloneActionStateBinding, cloneActionStates, type PaAgentActionState } from '../ai-services/pa-agent-result-facts';
@@ -60,6 +61,7 @@ export class ConversationPersistence {
     private unpersistedFinalizedEntries = new Set<TimelineEntry>();
     private readonly pendingFinalizedRevisions = new WeakSet<TimelineEntry>();
     private pendingTurnIndexByRunId = new Map<string, number>();
+    private terminalTurnIndexByRunId = new Map<string, number>();
     private readonly sourceSelectionInstanceId = ++sourceSelectionInstanceSequence;
     private sourceSelectionSequence = 0;
     private draftSequence = 0;
@@ -390,6 +392,8 @@ export class ConversationPersistence {
         this.persistedTurnIndexByEntry = new WeakMap<TimelineEntry, number>();
         this.unpersistedFinalizedEntries.clear();
         this.pendingTurnIndexByRunId.clear();
+        this.terminalTurnIndexByRunId.clear();
+        this.terminalTurnIndexByRunId.clear();
         this.reservedConversationId = null;
         this.draftSequence += 1;
         this.sourceSelection = newConversationSourceSelection();
@@ -772,7 +776,8 @@ export class ConversationPersistence {
         }
     }
 
-    persistRunningTurn(prompt: string, runId: string, user: ChatMessage): Promise<boolean> {
+    persistRunningTurn(prompt: string, runId: string, user: ChatMessage,
+        executionSummary?: ThinkingExecutionSummary): Promise<boolean> {
         if (this.sourceSelectionSaveFailed && this.pendingSourceSelectionId) void this.retryPendingSourceSelection();
         let persisted = false;
         const next = this.persistChain.catch(() => undefined).then(async () => {
@@ -797,6 +802,7 @@ export class ConversationPersistence {
                     shareCardEligible: false,
                     agentExecution: { runId, state: "running" },
                 },
+                ...(executionSummary ? { executionSummary } : {}),
             };
             const updated = await manager.recordTurn({
                 conversationId,
@@ -820,6 +826,7 @@ export class ConversationPersistence {
         user: ChatMessage;
         content: string;
         state: "failed" | "cancelled";
+        executionSummary?: ThinkingExecutionSummary;
     }): Promise<boolean> {
         let persisted = false;
         const next = this.persistChain.catch(() => undefined).then(async () => {
@@ -837,6 +844,7 @@ export class ConversationPersistence {
                     shareCardEligible: false,
                     agentExecution: { runId: input.runId, state: input.state },
                 },
+                ...(input.executionSummary ? { executionSummary: input.executionSummary } : {}),
             };
             const updated = await manager.recordTurn({
                 conversationId,
@@ -848,27 +856,77 @@ export class ConversationPersistence {
             this.activeConversation = this.retainLatestSourceSelection(updated);
             this.nextTurnIndex = Math.max(this.nextTurnIndex, turnIndex + 1);
             this.pendingTurnIndexByRunId.delete(input.runId);
+            this.terminalTurnIndexByRunId.set(input.runId, turnIndex);
             persisted = true;
         }).catch((error) => this.options.log("Failed to persist terminal chat turn", error));
         this.persistChain = next;
         return next.then(() => persisted);
     }
 
-    async deletePersistedTurnForEntry(entry: TimelineEntry): Promise<void> {
-        if (entry.kind !== 'history') return;
+    async deletePersistedTurnForEntry(entry: TimelineEntry): Promise<boolean> {
+        if (entry.kind === 'terminal') {
+            const turnIndex = entry.runId === undefined
+                ? undefined
+                : this.terminalTurnIndexByRunId.get(entry.runId);
+            if (turnIndex === undefined) return true;
+            const deleted = await this.deletePersistedTurnAtIndex(entry.runId!, turnIndex);
+            if (deleted) {
+                this.terminalTurnIndexByRunId.delete(entry.runId!);
+            }
+            return deleted;
+        }
+        if (entry.kind !== 'history') return true;
         const manager = await this.getReadyManager();
-        if (!manager) return;
+        if (!manager) return false;
         const conversationId = this.activeId;
-        if (!conversationId) return;
+        if (!conversationId) return false;
         const turnIndex = this.persistedTurnIndexByEntry.get(entry);
-        if (turnIndex === undefined) return;
+        if (turnIndex === undefined) return true;
         try {
             await manager.deleteTurn(conversationId, turnIndex);
             this.persistedTurnIndexByEntry.delete(entry);
             this.pendingFinalizedRevisions.delete(entry);
+            return true;
         } catch (error) {
             this.options.log("Failed to delete persisted chat turn", error);
+            return false;
         }
+    }
+
+    private async deletePersistedTurnAtIndex(runId: string, turnIndex: number): Promise<boolean> {
+        const manager = await this.getReadyManager();
+        const conversationId = this.activeId;
+        if (!this.terminalTurnIndexByRunId.has(runId)) return true;
+        if (!manager || !conversationId) return false;
+        try {
+            await manager.deleteTurn(conversationId, turnIndex);
+            return true;
+        } catch (error) {
+            this.options.log("Failed to delete terminal Chat turn", error);
+            return false;
+        }
+    }
+
+    /** Save delivery timing without replaying the finalized turn's content or Debug references. */
+    updateFinalizedExecutionElapsedMs(entry: TimelineEntry, elapsedMs: number): Promise<boolean> {
+        if (entry.kind !== 'history') return Promise.resolve(false);
+        const conversationId = this.activeId;
+        const entryIndices = this.persistedTurnIndexByEntry;
+        const originalManager = this.options.getManager();
+        const turnIndex = entryIndices.get(entry);
+        if (!conversationId || turnIndex === undefined) return Promise.resolve(false);
+        const isCurrent = () => this.persistedTurnIndexByEntry === entryIndices
+            && this.activeId === conversationId && this.options.getManager() === originalManager
+            && entryIndices.get(entry) === turnIndex;
+        let persisted = false;
+        const next = this.persistChain.catch(() => undefined).then(async () => {
+            if (!isCurrent()) return;
+            const manager = await this.getReadyManager();
+            if (!manager || !isCurrent()) return;
+            persisted = await manager.updateExecutionElapsedMs({ conversationId, turnIndex, entry }, elapsedMs);
+        }).catch(error => this.options.log('Failed to save Chat execution elapsed time', error));
+        this.persistChain = next;
+        return next.then(() => persisted);
     }
 
     /** Attach an explicitly recovered version to the existing turn, without a new chat or extraction event. */

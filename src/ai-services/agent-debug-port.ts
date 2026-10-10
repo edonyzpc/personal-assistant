@@ -59,6 +59,7 @@ export interface AgentDebugObservation {
     status?: AgentDebugNodeStatus;
     runtimeRunId?: string;
     turnId?: string;
+    messageId?: string;
     toolCallId?: string;
     callId?: string;
     attemptId?: string;
@@ -92,8 +93,19 @@ export interface AgentDebugRunRecorder {
     readonly captureId: string;
     enabled(): boolean;
     bindRun(runtimeRunId: string): void;
+    /** Content-free logical-call identity; independent of payload capture gating. */
+    onCallIdentity?(identity: AgentDebugCallIdentity): void;
     observe(event: AgentDebugObservation): void;
     finish(status: AgentDebugNodeStatus, error?: AgentDebugObservation["error"]): void;
+}
+
+export interface AgentDebugCallIdentity {
+    callId: string;
+    nodeId: string;
+    parentId?: string;
+    purpose: "answer" | "context_summary" | "query_rewrite" | "rerank" | "image_preparation" | "ghost_metadata";
+    turnId?: string;
+    messageId?: string;
 }
 
 export interface AgentDebugPort {
@@ -110,6 +122,7 @@ export interface AgentDebugCallScope {
     callId: string;
     parentId: string;
     turnId?: string;
+    messageId?: string;
     purpose: "answer" | "context_summary" | "query_rewrite" | "rerank" | "image_preparation" | "ghost_metadata";
     provider?: string;
     model?: string;

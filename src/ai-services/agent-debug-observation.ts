@@ -3,6 +3,7 @@ import type { PaAgentRunUsageLedger } from './agent-usage-ledger';
 import {
     observeAgentDebug,
     type AgentDebugCallScope,
+    type AgentDebugCallIdentity,
     type AgentDebugNodeStatus,
     type AgentDebugObservation,
     type AgentDebugRunRecorder,
@@ -94,6 +95,16 @@ export function createAgentDebugCall(
         bindRun: () => undefined, observe: () => undefined, finish: () => undefined };
     const scope = { ...input, recorder: effectiveRecorder, usageLedger,
         callId: input.callId ?? `${effectiveRecorder.captureId}:llm:${++callSequence}` };
+    try {
+        effectiveRecorder.onCallIdentity?.({
+            callId: scope.callId,
+            nodeId: scope.callId,
+            ...(scope.parentId ? { parentId: scope.parentId } : {}),
+            purpose: scope.purpose,
+            ...(scope.turnId ? { turnId: scope.turnId } : {}),
+            ...(scope.messageId ? { messageId: scope.messageId } : {}),
+        } satisfies AgentDebugCallIdentity);
+    } catch { /* Identity notification cannot alter execution. */ }
     observeAgentDebug(recorder, () => ({ ...callIdentity(scope), phase: "prepare", boundary: "start", status: "running" }));
     return scope;
 }
@@ -102,7 +113,8 @@ function callIdentity(scope: AgentDebugCallScope): AgentDebugObservation {
     return {
         nodeId: scope.callId, parentId: scope.parentId, kind: "llm", phase: scope.purpose,
         purpose: scope.purpose,
-        callId: scope.callId, turnId: scope.turnId, provider: scope.provider, model: scope.model,
+        callId: scope.callId, turnId: scope.turnId, messageId: scope.messageId,
+        provider: scope.provider, model: scope.model,
         lineage: scope.lineage,
     };
 }

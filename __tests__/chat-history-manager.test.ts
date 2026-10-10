@@ -103,6 +103,49 @@ function makeHistoryEntry(overrides: Partial<HistoryTurnEntry> = {}): HistoryTur
 }
 
 describe("ChatHistoryManager", () => {
+    it("round-trips opaque execution identities without display prose", async () => {
+        const { manager, store } = makeManager();
+        await manager.initialize();
+        const conversation = await manager.startConversation("summarize execution");
+        const entry = makeHistoryEntry({
+            executionSummary: {
+                version: 1,
+                runtimeRunId: "runtime-real",
+                elapsedMs: 1250,
+                steps: [
+                    { key: "prep", order: 0, kind: "preparation", status: "succeeded" },
+                    { key: `tool:runtime-real:turn-real:${"x".repeat(300)}`, order: 1,
+                        kind: "tool", status: "reused", runId: "runtime-real",
+                        turnId: "turn-real", toolCallId: "调用+abc", toolName: "read_note",
+                        outcome: "reused_result", sourceRecordKeys: ["memory:notes/b.md"],
+                        operationId: "operation-real" },
+                ],
+                debug: { captureId: "capture-real", nodes: [{ captureId: "capture-real",
+                    nodeId: "turn-real:tool:call-real", turnId: "turn-real", toolCallId: "call-real",
+                    kind: "tool" }] },
+            },
+        });
+        await manager.recordTurn({ conversationId: conversation.id, conversation, turnIndex: 0,
+            entry, userPrompt: entry.user.content });
+
+        const [stored] = await store.getTurns(conversation.id);
+        expect(JSON.stringify(stored?.executionSummary)).not.toContain("Loaded memory");
+        expect(JSON.stringify(stored?.executionSummary)).not.toContain("Composed answer");
+        const restored = manager.deserializeTurn(stored!);
+        expect(restored.historyEntry.executionSummary).toEqual(entry.executionSummary);
+        const updateElapsed = jest.spyOn(store, 'updateExecutionElapsedMs');
+        expect(await manager.updateExecutionElapsedMs({ conversationId: conversation.id, turnIndex: 0,
+            entry: { ...entry, assistant: { ...entry.assistant, content: 'Stale view body' } } }, 2500)).toBe(true);
+        expect(updateElapsed).toHaveBeenCalledWith(expect.objectContaining({
+            conversationId: conversation.id, turnIndex: 0,
+            user: expect.objectContaining({ content: entry.user.content }),
+        }), 2500);
+        expect((await store.getTurns(conversation.id))[0]).toMatchObject({
+            assistant: { content: entry.assistant.content },
+            executionSummary: { ...entry.executionSummary, elapsedMs: 2500 },
+        });
+    });
+
     it('publishes only committed source metadata without revoking an existing source lease', async () => {
         const { manager, store } = makeManager();
         await manager.initialize();
@@ -329,6 +372,28 @@ describe("ChatHistoryManager", () => {
         const oldRecord: PersistedTurn = { ...turn, assistant: { ...turn.assistant } };
         delete oldRecord.assistant.turnStatus;
         expect(manager.deserializeTurn(oldRecord).assistantMessage.canonicalTurn?.status).toBe("aborted");
+
+        const preparedCancelled: PersistedTurn = {
+            ...oldRecord,
+            assistant: {
+                role: "assistant", content: "Generation cancelled", shareCardEligible: false,
+                agentExecution: { runId: "prepared-cancelled", state: "cancelled" },
+            },
+        };
+        expect(manager.deserializeTurn(preparedCancelled).assistantMessage.canonicalTurn?.status).toBe("aborted");
+        const preparedFailed: PersistedTurn = {
+            ...preparedCancelled,
+            assistant: {
+                ...preparedCancelled.assistant, content: "The answer did not finish.",
+                agentExecution: { runId: "prepared-failed", state: "failed" },
+            },
+        };
+        expect(manager.deserializeTurn(preparedFailed).assistantMessage.canonicalTurn?.status).toBe("error");
+        const explicitTerminal: PersistedTurn = {
+            ...preparedFailed,
+            assistant: { ...preparedFailed.assistant, turnStatus: "aborted" },
+        };
+        expect(manager.deserializeTurn(explicitTerminal).assistantMessage.canonicalTurn?.status).toBe("aborted");
     });
 
     it("rehydrates an unfinished running turn as interrupted without claiming completion", async () => {

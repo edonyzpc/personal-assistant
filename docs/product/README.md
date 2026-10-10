@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [Chat THINKING 可解释执行过程](./specs/pa-chat-thinking-process-product-spec.md) — B-168：原位细轨道、整轮耗时、当前 reasoning 与轻量历史；[当前接线](../architecture/pa-agent-debug-view.md#chat-thinking-投影与持久化)及[最终验证](../archive/2026/b168-chat-thinking-process-validation.md)。
 - [Agent Debug 完整轨迹与双端查看](./specs/pa-agent-debug-explorer-product-spec.md) — B-167：聚焦展开、节点定位搜索、桌面右侧详情与移动独立详情页；[当前机制](../architecture/pa-agent-debug-view.md)与[最终验证](../archive/2026/b167-agent-debug-explorer-validation.md)。
 - [PA Agent 快照执行与完整 Debug](./specs/pa-agent-snapshot-execution-product-spec.md) — B-165：当前生成快照、下一轮配置更新、完整文本历史；[当前机制](../architecture/pa-agent-architecture-plan.md#source-and-trust-boundaries)。
 - [必要确认与合同接续](./specs/pa-contract-alignment-product-spec.md) — B-161：已完成本地对齐的直接执行、选源、预算、容量与旧合同接续；证据与限制见 [最终验证](../archive/2026/b161-contract-alignment-validation.md)。

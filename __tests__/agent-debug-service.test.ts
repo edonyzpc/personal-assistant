@@ -39,6 +39,27 @@ function setup(enabled = true, budgets?: Partial<DebugBudgets>, monotonicNow: ()
 }
 
 describe('Agent Debug service', () => {
+    it('persists the real assistant message identity on model-call events', async () => {
+        const { service, batches } = setup();
+        await service.initialize();
+        const recorder = service.startRun({ prompt: 'question', provider: 'p', model: 'm' });
+        recorder.bindRun('runtime-run-real');
+        recorder.observe({
+            nodeId: `${recorder.captureId}:llm:message-1`,
+            parentId: 'turn-1',
+            kind: 'llm',
+            phase: 'answer',
+            boundary: 'start',
+            turnId: 'turn-1',
+            messageId: 'message-1',
+            callId: `${recorder.captureId}:llm:message-1`,
+            purpose: 'answer',
+        });
+        await service.flush();
+        expect(batches.flatMap(batch => batch.events).find(event => event.nodeKind === 'llm'))
+            .toMatchObject({ turnId: 'turn-1', messageId: 'message-1' });
+    });
+
     it('keeps a delayed early commit reachable after it leaves the 500 event live tail', async () => {
         const { service, store, batches } = setup();
         await service.initialize();

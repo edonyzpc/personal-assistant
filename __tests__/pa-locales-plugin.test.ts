@@ -10,6 +10,7 @@ import {
     makePluginTranslator,
     pluginT,
 } from "../src/locales/plugin";
+import { formatThinkingDuration, getChatThinkingProcessLocale } from "../src/chat/formatters";
 
 describe("pluginT lookup", () => {
     it("returns locale-specific strings with EN as the default fallback", () => {
@@ -110,5 +111,24 @@ describe("getPluginUiLanguage", () => {
             i18next: { language: "fr" },
         };
         expect(getPluginUiLanguage()).toBe("en");
+    });
+});
+
+describe("Chat THINKING process locale and timing", () => {
+    afterEach(() => {
+        delete (globalThis as unknown as { window?: unknown }).window;
+    });
+
+    it("uses EN for a readable non-ZH primary system language", () => {
+        (globalThis as unknown as { window: unknown }).window = {
+            i18next: { language: "zh-CN" },
+            navigator: { languages: ["ja-JP", "zh-CN"] },
+        };
+        expect(getChatThinkingProcessLocale()).toBe("en");
+    });
+
+    it("pads the seconds part after the first minute", () => {
+        expect(formatThinkingDuration(65_000, "en")).toBe("1m 05s");
+        expect(formatThinkingDuration(65_000, "zh")).toBe("1 分 05 秒");
     });
 });

@@ -12,6 +12,8 @@ import {
 } from "../src/ai-services/pa-agent-command";
 import type { CreateImageHostBinding, CreateImageToolInput, GhostHostBinding } from "../src/ai-services/chat-tool-types";
 import type { PaAgentMessage } from "../src/ai-services/chat-types";
+import { ChatHistoryManager } from "../src/chat/chat-history-manager";
+import { MemoryChatHistoryStore } from "../src/chat/chat-history-store";
 import { GhostHostAdmissionError } from "../src/ghost-publishing/types";
 import { ImagePreacceptError, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from "../src/chat/image-generation-types";
 import { createChatToolCapability } from "../src/ai-services/capability-adapter";
@@ -760,6 +762,64 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(providerInputs[0]).toContain(
             "Declared capability search_memory is not currently admitted or exportable",
         );
+    });
+
+    it("keeps execution summaries and Debug references out of provider history input", async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => "summary-projection-conversation" });
+        await manager.initialize();
+        const conversation = await manager.startConversation("original request");
+        const entry = {
+            kind: "history" as const,
+            user: { role: "user" as const, content: "Original request" },
+            assistant: { role: "assistant" as const, content: "Original answer" },
+            executionSummary: {
+                version: 1 as const,
+                runtimeRunId: "runtime-summary-real",
+                elapsedMs: 1234,
+                steps: [{ key: "SUMMARY_STEP_SENTINEL", order: 0, kind: "tool" as const,
+                    status: "succeeded" as const, toolName: "SUMMARY_TOOL_SENTINEL", outcome: "success" }],
+                debug: { captureId: "SUMMARY_CAPTURE_SENTINEL", nodes: [{
+                    captureId: "SUMMARY_CAPTURE_SENTINEL", nodeId: "SUMMARY_NODE_SENTINEL", kind: "tool" as const,
+                }] },
+            },
+        };
+        await manager.recordTurn({ conversationId: conversation.id, conversation, turnIndex: 0,
+            entry, userPrompt: entry.user.content });
+        const restored = manager.deserializeTurn((await manager.getTurns(conversation.id))[0]!);
+
+        const host = createPromptHost();
+        const providerInputs: string[] = [];
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: async function* (input: unknown) {
+                providerInputs.push(String(input));
+                yield new AIMessageChunk({ content: "Current answer." });
+                yield new AIMessageChunk({ content: "", response_metadata: { finish_reason: "stop" } });
+            },
+        };
+        const runtime = new PaAgentRuntime(
+            host as never,
+            { createChatModel: async () => model } as never,
+            { skillContextProvider: null },
+        );
+        try {
+            await runtime.streamTurn({
+                prompt: "Current request",
+                userText: "Current request",
+                memoryMode: "skip-memory",
+                chatHistory: [restored.userMessage, restored.assistantMessage],
+            });
+        } finally {
+            runtime.dispose();
+        }
+
+        expect(providerInputs[0]).toContain("Original request");
+        expect(providerInputs[0]).toContain("Original answer");
+        expect(providerInputs[0]).not.toContain("SUMMARY_STEP_SENTINEL");
+        expect(providerInputs[0]).not.toContain("SUMMARY_TOOL_SENTINEL");
+        expect(providerInputs[0]).not.toContain("SUMMARY_CAPTURE_SENTINEL");
+        expect(providerInputs[0]).not.toContain("SUMMARY_NODE_SENTINEL");
     });
 
     it("binds a sourceless command invocation to its stable message identity", async () => {

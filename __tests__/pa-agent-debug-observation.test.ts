@@ -171,6 +171,48 @@ describe("Chat scoped Debug observation", () => {
         expect(events[2].status).toBeUndefined();
     });
 
+    it('projects the real assistant message identity on every model-call observation', () => {
+        const { recorder, events } = capture();
+        const call = createAgentDebugCall(recorder, {
+            callId: 'answer-message-call',
+            parentId: 'turn',
+            turnId: 'turn',
+            messageId: 'message_assistant_1',
+            purpose: 'answer',
+        });
+        observeAgentDebugCall(call, { phase: 'dispatch' });
+        observeAgentDebugCall(call, { phase: 'consumer_end', status: 'completed' });
+        expect(events.map(event => event.messageId))
+            .toEqual(['message_assistant_1', 'message_assistant_1', 'message_assistant_1']);
+    });
+
+    it('emits logical call identity before the payload capture gate', () => {
+        const identities: Array<{ callId: string; nodeId: string; turnId?: string; messageId?: string }> = [];
+        const recorder: AgentDebugRunRecorder = {
+            captureId: 'capture-disabled',
+            enabled: () => false,
+            bindRun: jest.fn(),
+            onCallIdentity: identity => identities.push(identity),
+            observe: jest.fn(),
+            finish: jest.fn(),
+        };
+        const call = createAgentDebugCall(recorder, {
+            parentId: 'turn',
+            turnId: 'turn',
+            messageId: 'message',
+            purpose: 'answer',
+        });
+        observeAgentDebugCall(call, { phase: 'dispatch' });
+        expect(identities).toHaveLength(1);
+        expect(identities[0]).toMatchObject({
+            callId: expect.any(String),
+            nodeId: expect.any(String),
+            turnId: 'turn',
+            messageId: 'message',
+        });
+        expect(recorder.observe).not.toHaveBeenCalled();
+    });
+
     it.each(['native', 'obsidian'] as const)('keeps %s HTTP console events out of phase nodes while preserving actual attempts', async transport => {
         const { recorder, call, events } = capture();
         const log = createAgentDebugLog(() => true,

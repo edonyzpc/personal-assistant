@@ -58,6 +58,7 @@ export interface DebugEvent {
     nodeId: string;
     parentId?: string;
     turnId?: string;
+    messageId?: string;
     callId?: string;
     attemptId?: string;
     toolCallId?: string;

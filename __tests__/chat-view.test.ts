@@ -7702,6 +7702,9 @@ describe('LLMView turn lifecycle', () => {
         for (let i = 0; i < 8; i++) await flushPromises();
         expect(restored.view.chatHistory[1]).toMatchObject({ content: 'Readable partial answer', shareCardEligible: false,
             runtimeWarnings: [expect.objectContaining({ type: 'partial_output_error' })] });
+        expect((await manager.getTurns('typed-partial'))[0]?.executionSummary?.steps).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'preparation', status: 'unknown' }),
+        ]));
         expect(restored.view.result).toBe('');
         expect(getButtonsByText(restored.containerEl, 'Add to Editor')).toHaveLength(0);
         await restored.view.onClose();
@@ -7815,6 +7818,7 @@ describe('LLMView turn lifecycle', () => {
         const userMessage = getElementByClass(responseDiv, 'user');
         const assistantMessage = getElementByClass(responseDiv, 'assistant');
         expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(1);
+        expect(allText(responseDiv)).toContain('Deciding what context to use...');
 
         streamCalls[0].resolve();
         await flushPromises();
@@ -7824,7 +7828,7 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementByClass(responseDiv, 'assistant')).toBe(assistantMessage);
         expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(1);
         expect(getElementByClass(responseDiv, 'thinking-status-summary').textContent).toBe('Thinking complete');
-        expect(allText(responseDiv)).toContain('Deciding what context to use...');
+        expect(allText(responseDiv)).toContain('Context selection · Completed');
         expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(0);
         expect(view.chatHistory.map(({ hostProvenance: _provenance, runSourceSelection: _selection, inputLineage: _lineage, ...message }) => message)).toEqual([
             { role: 'user', content: 'status prompt' },
@@ -7832,7 +7836,695 @@ describe('LLMView turn lifecycle', () => {
         ]);
     });
 
-    it('keeps provider reasoning hidden outside the final answer', async () => {
+    it('keeps canonical tool identity, reasoning, and user folding stable across updates', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'use two parallel tools';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        const responseDiv = getResponseDiv(view);
+        emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_1', scope: 'turn' }));
+        const assistant = assistantMessage('assistant_tools', []);
+        emitCanonical(call, canonicalEvent({ type: 'message_start', turnId: 'turn_1', scope: 'turn', message: assistant }));
+        assistant.content.push({ type: 'thinking', text: 'Current provider reasoning.' });
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            turnId: 'turn_1',
+            scope: 'turn',
+            messageId: assistant.id,
+            update: { kind: 'thinking_delta', text: 'Current provider reasoning.' },
+        }));
+        for (const toolCallId of ['call_same_1', 'call_same_2']) {
+            emitCanonical(call, canonicalEvent({
+                type: 'message_update',
+                turnId: 'turn_1',
+                scope: 'turn',
+                messageId: assistant.id,
+                update: { kind: 'toolcall_start', toolCallId, name: 'search_memory', index: Number(toolCallId.at(-1)) - 1 },
+            }));
+            emitCanonical(call, canonicalEvent({
+                type: 'tool_execution_start',
+                turnId: 'turn_1',
+                scope: 'turn',
+                toolCallId,
+                toolName: 'search_memory',
+            }));
+        }
+
+        const activityItems = getElementsByClass(responseDiv, 'thinking-activity-tool');
+        expect(activityItems).toHaveLength(2);
+        const firstActivity = activityItems[0];
+        const toggle = getElementByClass(responseDiv, 'thinking-status-toggle');
+        toggle.focus();
+        toggle.click();
+        responseDiv.scrollTop = 80;
+        const scrollCallsBeforeCompletion = responseDiv.scrollToCalls.length;
+
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_end',
+            turnId: 'turn_1',
+            scope: 'turn',
+            toolCallId: 'call_same_2',
+            toolName: 'search_memory',
+            outcome: 'success',
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_end',
+            turnId: 'turn_1',
+            scope: 'turn',
+            toolCallId: 'call_same_1',
+            toolName: 'search_memory',
+            outcome: 'reused_result',
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_end',
+            turnId: 'turn_1',
+            scope: 'turn',
+            toolCallId: 'call_same_1',
+            toolName: 'search_memory',
+            outcome: 'reused_result',
+        }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_2', scope: 'turn' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_start',
+            turnId: 'turn_2',
+            scope: 'turn',
+            toolCallId: 'call_next_turn',
+            toolName: 'search_memory',
+        }));
+
+        const updatedItems = getElementsByClass(responseDiv, 'thinking-activity-tool');
+        expect(updatedItems).toHaveLength(3);
+        expect(updatedItems[0]).toBe(firstActivity);
+        expect(allText(updatedItems[0])).toContain('Reused existing result');
+        expect(allText(updatedItems[1])).toContain('Memory complete');
+        expect(toggle.getAttribute('aria-expanded')).toBe('true');
+        expect((globalThis.document as unknown as { activeElement?: MockElement }).activeElement).toBe(toggle);
+
+        const reasoningToggle = getElementByClass(responseDiv, 'thinking-reasoning-toggle');
+        expect(getElementByClass(responseDiv, 'thinking-status-reasoning-content').hidden).toBe(true);
+        reasoningToggle.click();
+        expect(allText(getElementByClass(responseDiv, 'thinking-status-reasoning-content'))).toContain('Current provider reasoning.');
+
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            turnId: 'turn_2',
+            scope: 'turn',
+            message: assistantMessage('assistant_final', [{ type: 'text', text: 'Final answer.' }]),
+        }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', scope: 'run', turnId: '__run__', status: 'completed' }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(toggle.getAttribute('aria-expanded')).toBe('true');
+        expect(allText(responseDiv)).toContain('Current provider reasoning.');
+        expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(0);
+        expect(responseDiv.scrollTop).toBe(80);
+        expect(responseDiv.scrollToCalls.length).toBe(scrollCallsBeforeCompletion);
+    });
+
+    it('times Chat delivery from acceptance and freezes the reliable terminal value', async () => {
+        jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+        jest.setSystemTime(1_000_000);
+        Object.assign(globalThis.window, {
+            i18next: { language: 'zh-CN' },
+            navigator: { languages: ['en-US', 'zh-CN'] },
+        });
+        try {
+            const store = new MemoryChatHistoryStore();
+            const manager = new ChatHistoryManager({ store, generateId: () => 'elapsed-conversation' });
+            const updateElapsed = jest.spyOn(manager, 'updateExecutionElapsedMs');
+            const revise = jest.spyOn(manager, 'reviseTurn');
+            const { view, containerEl } = createView({ chatHistoryManager: manager });
+            await flushPromises();
+            await view.onOpen();
+            getTextArea(containerEl).value = 'timer prompt';
+            void getButtonByClass(containerEl, 'send-button-visible').click();
+            await flushPromises();
+            const responseDiv = getResponseDiv(view);
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('0s');
+
+            jest.advanceTimersByTime(2_000);
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('2s');
+            const call = streamCalls[0];
+            emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__' }));
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('2s');
+
+            jest.advanceTimersByTime(1_000);
+            emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_final', scope: 'turn' }));
+            emitCanonical(call, canonicalEvent({
+                type: 'message_start',
+                turnId: 'turn_final',
+                scope: 'turn',
+                message: assistantMessage('assistant_final', []),
+            }));
+            emitCanonical(call, canonicalEvent({
+                type: 'message_update',
+                turnId: 'turn_final',
+                scope: 'turn',
+                messageId: 'assistant_final',
+                update: { kind: 'text_delta', text: 'delivered answer' },
+            }));
+            emitCanonical(call, canonicalEvent({
+                type: 'message_end',
+                turnId: 'turn_final',
+                scope: 'turn',
+                message: assistantMessage('assistant_final', [{ type: 'text', text: 'delivered answer' }]),
+            }));
+            emitCanonical(call, canonicalEvent({
+                type: 'turn_end',
+                turnId: 'turn_final',
+                scope: 'turn',
+                status: 'completed',
+            }));
+            emitCanonical(call, canonicalEvent({ type: 'agent_end', scope: 'run', turnId: '__run__', status: 'completed' }));
+            expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(1);
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('3s');
+
+            call.resolve();
+            await flushPromises();
+            await flushPromises();
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('3s');
+            expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(0);
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-summary'))).toBe('Thinking complete');
+            expect(updateElapsed).toHaveBeenCalledWith(expect.objectContaining({
+                conversationId: 'elapsed-conversation', turnIndex: 0,
+            }), 3000);
+            expect(revise).not.toHaveBeenCalled();
+            expect((await manager.getTurns('elapsed-conversation'))[0]?.executionSummary?.elapsedMs).toBe(3000);
+
+            jest.advanceTimersByTime(3_000);
+            emitCanonical(call, canonicalEvent({
+                type: 'tool_execution_start',
+                turnId: 'turn_late',
+                scope: 'turn',
+                toolCallId: 'call_late',
+                toolName: 'search_memory',
+            }));
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('3s');
+            expect(allText(getElementByClass(responseDiv, 'assistant'))).toContain('delivered answer');
+            expect(allText(responseDiv)).not.toContain('call_late');
+            await view.onClose();
+            const restored = createView({ chatHistoryManager: manager });
+            await restored.view.onOpen();
+            for (let index = 0; index < 6; index++) await flushPromises();
+            expect(allText(getElementByClass(getResponseDiv(restored.view), 'thinking-status-elapsed'))).toBe('3s');
+            await restored.view.onClose();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('owns the visible preparation timer and terminal cleanup before the stream starts', async () => {
+        const { view, containerEl, plugin } = createView();
+        await view.onOpen();
+        let releaseReceipts: (() => void) | undefined;
+        const mutablePlugin = plugin as unknown as { writingSave?: unknown };
+        mutablePlugin.writingSave = {
+            subscribeState: () => () => {},
+            listReceipts: () => new Promise<void>(resolve => {
+                releaseReceipts = resolve;
+            }),
+        };
+
+        getTextArea(containerEl).value = 'preparation prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const responseDiv = getResponseDiv(view);
+        expect(streamCalls).toHaveLength(0);
+        expect(allText(getElementByClass(responseDiv, 'thinking-status-summary'))).toBe('Preparing this request');
+        expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('0s');
+        expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(1);
+        expect(getButtonByClass(containerEl, 'cancel-button').disabled).toBe(false);
+
+        getButtonByClass(containerEl, 'cancel-button').click();
+        expect(typeof releaseReceipts).toBe('function');
+        releaseReceipts?.();
+        await flushPromises();
+        await flushPromises();
+
+        expect(streamCalls).toHaveLength(0);
+        expect(view.abortController).toBeNull();
+        expect(allText(responseDiv)).toContain('Generation cancelled');
+        expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('0s');
+        expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(0);
+    });
+
+    it('releases the active timer and rejects late stream output when Chat is cleared during a run', async () => {
+        const setIntervalSpy = jest.spyOn(globalThis, 'setInterval');
+        const clearIntervalSpy = jest.spyOn(globalThis, 'clearInterval');
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'clear while running';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const responseDiv = getResponseDiv(view);
+        const timerIndex = setIntervalSpy.mock.calls.findIndex(args => args[1] === 1000);
+        expect(timerIndex).toBeGreaterThanOrEqual(0);
+        const timerHandle = setIntervalSpy.mock.results[timerIndex]?.value;
+
+        await getButtonByText(containerEl, 'Clear Chat').click();
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.abortController).toBeNull();
+        expect(clearIntervalSpy).toHaveBeenCalledWith(timerHandle as NodeJS.Timeout);
+        streamCalls[0].onChunk('late output after clear');
+        streamCalls[0].options.onLifecycleEvent?.(canonicalEvent({
+            type: 'tool_execution_start',
+            turnId: 'turn_late_clear',
+            scope: 'turn',
+            toolCallId: 'call_late_clear',
+            toolName: 'search_memory',
+        }));
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(allText(responseDiv)).not.toContain('late output after clear');
+        expect(allText(responseDiv)).not.toContain('call_late_clear');
+        setIntervalSpy.mockRestore();
+        clearIntervalSpy.mockRestore();
+    });
+
+    it('deletes a failed terminal turn from its original persisted turn slot', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'terminal-delete-conversation' });
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'fail before answering';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        runAnimationFrames(true);
+        const responseDiv = getResponseDiv(view);
+        responseDiv.scrollHeight = 1000;
+        responseDiv.clientHeight = 300;
+        responseDiv.scrollTop = 80;
+        responseDiv.dispatchEvent('touchstart');
+        responseDiv.dispatchEvent('scroll');
+        const scrollCallsBeforeFailure = responseDiv.scrollToCalls.length;
+        streamCalls[0].reject(new Error('provider failed'));
+        for (let index = 0; index < 8; index++) await flushPromises();
+        runAnimationFrames();
+
+        expect(allText(containerEl)).toContain('The answer did not finish.');
+        expect(responseDiv.scrollTop).toBe(80);
+        expect(responseDiv.scrollToCalls).toHaveLength(scrollCallsBeforeFailure);
+        const deleteButtons = getButtonsByClass(containerEl, 'delete-message-button');
+        deleteButtons.at(-1)!.click();
+        for (let index = 0; index < 6; index++) await flushPromises();
+        expect(allText(containerEl)).not.toContain('The answer did not finish.');
+
+        await view.onClose();
+        const restored = createView({ chatHistoryManager: manager });
+        await restored.view.onOpen();
+        for (let index = 0; index < 6; index++) await flushPromises();
+        expect(allText(restored.containerEl)).not.toContain('The answer did not finish.');
+    });
+
+    it('keeps reasoning scoped to canonical messages and temporary fragments', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'reason across tool turns';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        const responseDiv = getResponseDiv(view);
+        emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_1', scope: 'turn' }));
+        const first = assistantMessage('reasoning_message_1', []);
+        emitCanonical(call, canonicalEvent({ type: 'message_start', turnId: 'turn_1', scope: 'turn', message: first }));
+        first.content.push({ type: 'thinking', text: 'first complete reasoning.' });
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            turnId: 'turn_1',
+            scope: 'turn',
+            messageId: first.id,
+            update: { kind: 'thinking_delta', text: 'first complete reasoning.' },
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            turnId: 'turn_1',
+            scope: 'turn',
+            message: assistantMessage('reasoning_message_1', [
+                { type: 'thinking', text: 'first complete reasoning.' },
+                { type: 'toolCall', id: 'call_reasoning', name: 'search_memory', input: {} },
+            ]),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end',
+            turnId: 'turn_1',
+            scope: 'turn',
+            status: 'tool_results_ready',
+        }));
+
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_2', scope: 'turn' }));
+        const second = assistantMessage('reasoning_message_2', []);
+        emitCanonical(call, canonicalEvent({ type: 'message_start', turnId: 'turn_2', scope: 'turn', message: second }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            turnId: 'turn_2',
+            scope: 'turn',
+            messageId: second.id,
+            update: { kind: 'thinking_delta', text: 'second temporary fragment.', partIndex: 1 },
+        }));
+        const reasoningMessages = getElementsByClass(responseDiv, 'thinking-status-reasoning-message');
+        expect(reasoningMessages).toHaveLength(2);
+        expect(allText(reasoningMessages[0])).toContain('first complete reasoning.');
+        expect(allText(reasoningMessages[1])).toContain('second temporary fragment.');
+
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            turnId: 'turn_2',
+            scope: 'turn',
+            message: assistantMessage('reasoning_message_2', [
+                { type: 'thinking', text: 'second complete reasoning.' },
+                { type: 'text', text: 'Final reasoning answer.' },
+            ]),
+        }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', scope: 'run', turnId: '__run__', status: 'completed' }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const finalMessages = getElementsByClass(responseDiv, 'thinking-status-reasoning-message');
+        expect(finalMessages).toHaveLength(2);
+        expect(allText(finalMessages[0])).toContain('first complete reasoning.');
+        expect(allText(finalMessages[1])).toContain('second complete reasoning.');
+        expect(allText(finalMessages[1])).not.toContain('second temporary fragment.');
+        expect(allText(getElementByClass(responseDiv, 'assistant'))).toContain('Final reasoning answer.');
+    });
+
+    it('persists exact execution identities and guarded Debug references for history', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'execution-summary-conversation' });
+        const expectCompletedActivities = (response: MockElement) => {
+            const phases = getElementsByClass(response, 'thinking-activity-phase');
+            expect(phases.length).toBeGreaterThan(0);
+            expect(phases.every(phase => !phase.className.includes('activity-active'))).toBe(true);
+            expect(phases.every(phase => allText(phase).includes('Completed'))).toBe(true);
+            expect(phases.map(allText).join(' ')).not.toMatch(/Model is thinking|Deciding|Preparing this request/);
+            const tools = getElementsByClass(response, 'thinking-activity-tool');
+            expect(tools.find(tool => tool.dataset.activityKey === 'tool:runtime_real:turn_1:call_real')?.className)
+                .toContain('activity-reused');
+            expect(tools.find(tool => tool.dataset.activityKey === 'tool:runtime_real:turn_1:call_failed')?.className)
+                .toContain('activity-failed');
+        };
+        const openAgentDebug = jest.fn<NonNullable<ChatHost['openAgentDebug']>>(async () => undefined);
+        let invalidateDebug: ((change?: { invalidated?: boolean }) => void) | undefined;
+        const traceEvent = (captureId: string, nodeId: string, messageId: string) => ({
+            vaultKey: 'vault',
+            captureId,
+            seq: 1,
+            segment: 0,
+            nodeId,
+            kind: 'llm',
+            timestamp: 1,
+            contentIds: [],
+            messageId,
+        });
+        const readAgentDebugTrace = jest.fn<NonNullable<ChatHost['readAgentDebugTrace']>>(async captureId => ({
+            events: [traceEvent(captureId, 'llm-message-1', 'message_1')],
+            liveEvents: [traceEvent(captureId, 'llm-message-2', 'message_2')],
+            through: 1,
+            nextAfter: 1,
+            hasMore: false,
+            run: {
+                vaultKey: 'vault',
+                captureId,
+                runtimeRunId: 'runtime_real',
+                startedAt: 1,
+                updatedAt: 1,
+                expiresAt: Number.MAX_SAFE_INTEGER,
+                status: 'completed' as const,
+                collection: 'complete' as const,
+                eventCount: 1,
+                accountedBytes: 0,
+                lastCommittedSeq: 1,
+                hasGap: false,
+            },
+            availability: 'available' as const,
+        }));
+        const readAgentDebugContents = jest.fn<NonNullable<ChatHost['readAgentDebugContents']>>(async (captureId, nodeId) => [{
+            vaultKey: 'vault',
+            captureId,
+            contentId: `${nodeId}:reasoning`,
+            kind: 'reasoning' as const,
+            text: nodeId === 'llm-message-1'
+                ? 'First historical provider reasoning.'
+                : 'Second historical provider reasoning.',
+            redactions: [],
+            lineage: { sourceRefs: [], claimIds: [], legacyRecordIds: [], conversationIds: [], possibleDomains: [], completeness: 'unknown' as const },
+            generation: 1,
+            domainGenerations: {},
+            accountedBytes: 32,
+        }]);
+        const { view, containerEl, plugin } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, {
+            openAgentDebug,
+            readAgentDebugTrace,
+            readAgentDebugContents,
+            subscribeAgentDebug: (listener: (change?: { invalidated?: boolean }) => void) => {
+                invalidateDebug = listener;
+                return () => undefined;
+            },
+        });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'persist execution';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        call.options.onDebugReference?.({ captureId: 'capture_real', nodeId: 'llm-message-1',
+            turnId: 'turn_1', messageId: 'message_1' });
+        call.options.onDebugReference?.({ captureId: 'capture_real', nodeId: 'llm-message-2',
+            turnId: 'turn_2', messageId: 'message_2' });
+        emitCanonical(call, canonicalEvent({ type: 'agent_start', runId: 'runtime_real', scope: 'run', turnId: '__run__' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', runId: 'runtime_real', turnId: 'turn_1', scope: 'turn' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_start', runId: 'runtime_real', turnId: 'turn_1', scope: 'turn',
+            message: assistantMessage('message_1', []),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update', runId: 'runtime_real', turnId: 'turn_1', scope: 'turn',
+            messageId: 'message_1', update: { kind: 'thinking_delta', text: 'First live reasoning.' },
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end', runId: 'runtime_real', turnId: 'turn_1', scope: 'turn',
+            message: assistantMessage('message_1', [
+                { type: 'thinking', text: 'First live reasoning.' },
+                { type: 'toolCall', id: 'call_real', name: 'search_memory', input: {} },
+                { type: 'toolCall', id: 'call_failed', name: 'search_memory', input: {} },
+            ]),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_end', runId: 'runtime_real', turnId: 'turn_1', scope: 'turn',
+            toolCallId: 'call_real', toolName: 'search_memory', outcome: 'reused_result',
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_end', runId: 'runtime_real', turnId: 'turn_1', scope: 'turn',
+            toolCallId: 'call_failed', toolName: 'search_memory', outcome: 'recoverable_error',
+        }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', runId: 'runtime_real', turnId: 'turn_2', scope: 'turn' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_start', runId: 'runtime_real', turnId: 'turn_2', scope: 'turn',
+            message: assistantMessage('message_2', []),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end', runId: 'runtime_real', turnId: 'turn_2', scope: 'turn',
+            message: assistantMessage('message_2', [{ type: 'text', text: 'Final execution answer.' }]),
+        }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', runId: 'runtime_real', scope: 'run', turnId: '__run__', status: 'completed' }));
+        call.resolve();
+        for (let index = 0; index < 8; index++) await flushPromises();
+        expectCompletedActivities(getResponseDiv(view));
+        await view.onClose();
+
+        const restored = createView({ chatHistoryManager: manager });
+        Object.assign(restored.plugin, {
+            openAgentDebug,
+            readAgentDebugTrace,
+            readAgentDebugContents,
+            subscribeAgentDebug: (listener: (change?: { invalidated?: boolean }) => void) => {
+                invalidateDebug = listener;
+                return () => undefined;
+            },
+        });
+        await restored.view.onOpen();
+        for (let index = 0; index < 8; index++) await flushPromises();
+        const persistedSummary = (await manager.getTurns('execution-summary-conversation'))[0]
+            ?.executionSummary;
+        expect(typeof persistedSummary?.elapsedMs).toBe('number');
+        const restoredResponse = getResponseDiv(restored.view);
+        expectCompletedActivities(restoredResponse);
+        const debugButtons = getElementsByClass(restoredResponse, 'thinking-status-debug-ref');
+        expect(debugButtons).toHaveLength(4);
+        expect(new Set(debugButtons.map(button => button.getAttribute('data-node-id')))).toEqual(new Set([
+            'llm-message-1', 'llm-message-2', 'turn_1:tool:call_real', 'turn_1:tool:call_failed',
+        ]));
+        expect(debugButtons.map(allText)).toEqual([
+            'reasoning 1 · Open in Debug', 'reasoning 2 · Open in Debug',
+            'Memory 1 · Open in Debug', 'Memory 2 · Open in Debug',
+        ]);
+
+        const exactButton = debugButtons.find(button => button.getAttribute('data-node-id') === 'llm-message-2')!;
+        exactButton.click();
+        expect(openAgentDebug).toHaveBeenCalledWith(expect.objectContaining({
+            captureId: 'capture_real',
+            nodeId: 'llm-message-2',
+        }));
+
+        const reasoningMessages = getElementsByClass(restoredResponse, 'thinking-status-reasoning-message');
+        expect(reasoningMessages).toHaveLength(2);
+        expect(allText(reasoningMessages[0])).toContain('reasoning 1');
+        expect(allText(reasoningMessages[1])).toContain('reasoning 2');
+        getElementsByClass(reasoningMessages[0], 'thinking-status-reasoning-load')[0].click();
+        getElementsByClass(reasoningMessages[1], 'thinking-status-reasoning-load')[0].click();
+        for (let index = 0; index < 8; index++) await flushPromises();
+        expect(readAgentDebugTrace).toHaveBeenCalledWith('capture_real', expect.anything());
+        expect(readAgentDebugContents).toHaveBeenCalledWith('capture_real', 'llm-message-1');
+        expect(readAgentDebugContents).toHaveBeenCalledWith('capture_real', 'llm-message-2');
+        expect(allText(reasoningMessages[0])).toContain('First historical provider reasoning.');
+        expect(allText(reasoningMessages[1])).toContain('Second historical provider reasoning.');
+
+        invalidateDebug?.({ invalidated: true });
+        readAgentDebugContents.mockResolvedValueOnce([]);
+        getElementsByClass(reasoningMessages[1], 'thinking-status-reasoning-load')[0].click();
+        for (let index = 0; index < 8; index++) await flushPromises();
+        expect(allText(reasoningMessages[1])).toContain('Local details are unavailable');
+
+        const originalContentsReader = readAgentDebugContents.getMockImplementation()!;
+        let releaseLateContents!: () => void;
+        const lateContents = new Promise<void>(resolve => { releaseLateContents = resolve; });
+        readAgentDebugContents.mockImplementationOnce(async (...args) => {
+            await lateContents;
+            return originalContentsReader(...args);
+        });
+        const firstLoadButton = getElementsByClass(reasoningMessages[0], 'thinking-status-reasoning-load')[0];
+        firstLoadButton.click();
+        for (let index = 0; index < 8; index++) await flushPromises();
+        expect(firstLoadButton.disabled).toBe(true);
+        readAgentDebugTrace.mockResolvedValue({
+            events: [], liveEvents: [], through: 0, nextAfter: 0, hasMore: false,
+            run: null, availability: 'cleared' as const,
+        });
+        invalidateDebug?.({ invalidated: true });
+        releaseLateContents();
+        for (let index = 0; index < 8; index++) await flushPromises();
+        const clearedMessages = getElementsByClass(restoredResponse, 'thinking-status-reasoning-message');
+        expect(allText(clearedMessages[0])).not.toContain('First historical provider reasoning.');
+        expect(allText(clearedMessages[1])).not.toContain('Second historical provider reasoning.');
+        expect(firstLoadButton.disabled).toBe(false);
+        expect(getElementsByClass(restoredResponse, 'thinking-activity-item').length).toBeGreaterThan(0);
+        getElementsByClass(clearedMessages[0], 'thinking-status-reasoning-load')[0].click();
+        for (let index = 0; index < 8; index++) await flushPromises();
+        expect(allText(clearedMessages[0])).toContain('Local details are unavailable');
+    });
+
+    it('keeps the live turn and its domain card attached when Debug history is invalidated', async () => {
+        let invalidateDebug: ((change?: { invalidated?: boolean }) => void) | undefined;
+        const { view, containerEl, plugin } = createView();
+        Object.assign(plugin, {
+            subscribeAgentDebug: (listener: (change?: { invalidated?: boolean }) => void) => {
+                invalidateDebug = listener;
+                return () => undefined;
+            },
+        });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'keep live execution';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const responseDiv = getResponseDiv(view);
+        const assistant = getElementByClass(responseDiv, 'assistant');
+        const domainCard = assistant.createDiv({ cls: 'pa-test-domain-card', text: 'domain effect pending' });
+
+        invalidateDebug?.({ invalidated: true });
+        await flushPromises();
+
+        expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(1);
+        expect(getElementByClass(responseDiv, 'assistant')).toBe(assistant);
+        expect(domainCard.parentElement).toBe(assistant);
+
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_after_invalidation', scope: 'turn' }));
+        emitCanonical(call, canonicalEvent({ type: 'message_start', turnId: 'turn_after_invalidation', scope: 'turn',
+            message: assistantMessage('message_after_invalidation', []) }));
+        emitCanonical(call, canonicalEvent({ type: 'message_update', turnId: 'turn_after_invalidation', scope: 'turn',
+            messageId: 'message_after_invalidation', update: { kind: 'text_delta', text: 'answer after invalidation' } }));
+        emitCanonical(call, canonicalEvent({ type: 'message_end', turnId: 'turn_after_invalidation', scope: 'turn',
+            message: assistantMessage('message_after_invalidation', [{ type: 'text', text: 'answer after invalidation' }]) }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_end', turnId: 'turn_after_invalidation', scope: 'turn', status: 'completed' }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', scope: 'run', turnId: '__run__', status: 'completed' }));
+        call.resolve();
+        for (let index = 0; index < 8; index++) await flushPromises();
+
+        expect(allText(responseDiv)).toContain('answer after invalidation');
+        expect(allText(responseDiv)).toContain('domain effect pending');
+    });
+
+    it('keeps a capture-only reference and opens the known capture when no node exists', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'capture-only-conversation' });
+        const openAgentDebug = jest.fn<NonNullable<ChatHost['openAgentDebug']>>(async () => undefined);
+        const { view, containerEl, plugin } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { openAgentDebug });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'capture only';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onDebugReference?.({ captureId: 'capture_only_real' });
+        streamCalls[0].reject(new Error('preparation failed'));
+        for (let index = 0; index < 8; index++) await flushPromises();
+
+        getTextArea(containerEl).value = 'capture-only success';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[1].options.onDebugReference?.({ captureId: 'capture_success_real' });
+        streamCalls[1].onChunk('An answer without payload capture.');
+        streamCalls[1].resolve();
+        for (let index = 0; index < 8; index++) await flushPromises();
+        await view.onClose();
+
+        const restored = createView({ chatHistoryManager: manager });
+        Object.assign(restored.plugin, { openAgentDebug });
+        await restored.view.onOpen();
+        for (let index = 0; index < 8; index++) await flushPromises();
+        const persisted = (await manager.getTurns('capture-only-conversation'))[0]?.executionSummary;
+        expect(persisted?.debug).toEqual({ captureId: 'capture_only_real', nodes: [] });
+        expect(persisted?.steps).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'preparation', status: 'failed' }),
+        ]));
+        const completed = (await manager.getTurns('capture-only-conversation'))[1]?.executionSummary;
+        expect(completed?.debug).toEqual({ captureId: 'capture_success_real', nodes: [] });
+        expect(completed?.steps).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'preparation', status: 'succeeded' }),
+        ]));
+        expect(completed?.steps.filter(step => step.kind !== 'tool').every(step => step.status !== 'active')).toBe(true);
+        const restoredResponse = getResponseDiv(restored.view);
+        expect(allText(restoredResponse)).toContain('No exact Debug node is saved for this step.');
+        const fallbackButton = getElementByClass(restoredResponse, 'thinking-status-debug-ref');
+        fallbackButton.click();
+        expect(openAgentDebug).toHaveBeenCalledWith(expect.objectContaining({
+            captureId: 'capture_only_real',
+        }));
+        expect(openAgentDebug).not.toHaveBeenCalledWith(expect.objectContaining({
+            nodeId: expect.any(String),
+        }));
+    });
+
+    it('shows current provider reasoning only inside the folded THINKING section', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
 
@@ -7849,17 +8541,19 @@ describe('LLMView turn lifecycle', () => {
 
         const responseDiv = getResponseDiv(view);
         expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(1);
-        expect(allText(responseDiv)).toContain('Provider thinking');
-        expect(allText(responseDiv)).toContain('Provider reasoning was received but is hidden');
-        expect(allText(responseDiv)).not.toContain('first thought');
-        expect(allText(responseDiv)).not.toContain('second thought');
+        const reasoningContent = getElementByClass(responseDiv, 'thinking-status-reasoning-content');
+        expect(reasoningContent.hidden).toBe(true);
+        getElementByClass(responseDiv, 'thinking-reasoning-toggle').click();
+        expect(allText(reasoningContent)).toContain('first thought. second thought.');
         expect(allText(responseDiv)).toContain('final answer only');
+        expect(allText(getElementByClass(responseDiv, 'assistant'))).not.toContain('first thought');
 
         streamCalls[0].resolve();
         await flushPromises();
         await flushPromises();
 
         expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(1);
+        expect(allText(getElementByClass(responseDiv, 'thinking-status-reasoning-content'))).toContain('first thought. second thought.');
         expect(getElementByClass(responseDiv, 'thinking-status-summary').textContent).toBe('Thinking complete');
         expect(getElementByClass(responseDiv, 'thinking-status').getAttribute('aria-busy')).toBeNull();
         expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(0);
@@ -7869,7 +8563,7 @@ describe('LLMView turn lifecycle', () => {
         ]);
     });
 
-    it('keeps hidden provider reasoning notice when completed turns are redrawn', async () => {
+    it('keeps current provider reasoning readable when completed turns are redrawn', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
 
@@ -7900,8 +8594,8 @@ describe('LLMView turn lifecycle', () => {
             { role: 'user', content: 'first prompt' },
             { role: 'assistant', content: 'first answer' },
         ]);
-        expect(allText(containerEl)).toContain('Provider reasoning was received but is hidden');
-        expect(allText(containerEl)).not.toContain('persisted reasoning');
+        expect(allText(getElementByClass(containerEl, 'thinking-status-reasoning-content'))).toContain('persisted reasoning');
+        expect(allText(getElementByClass(containerEl, 'assistant'))).not.toContain('persisted reasoning');
         expect(allText(containerEl)).not.toContain('second answer');
         expect(getElementsByClass(containerEl, 'thinking-status')).toHaveLength(1);
     });
@@ -8714,7 +9408,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         await flushPromises();
 
-        expect(allText(getResponseDiv(view))).toContain('Continuing with tool results...');
+        expect(allText(getResponseDiv(view))).toContain('Context selection · Completed');
         expect(allText(getResponseDiv(view))).not.toContain('SECRET_CORRECTIVE_RUNTIME_INSTRUCTION');
         expect(allText(getElementByClass(getResponseDiv(view), 'assistant'))).toContain('Final answer.');
     });
@@ -12046,7 +12740,7 @@ describe('LLMView turn lifecycle', () => {
         expect(toggle.getAttribute('aria-expanded')).toBe('true');
     });
 
-    it('coalesces repeated activity details and caps retained rows', async () => {
+    it('coalesces repeated activity details without dropping distinct live steps', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
 
@@ -12063,8 +12757,8 @@ describe('LLMView turn lifecycle', () => {
         }
 
         const details = getElementsByClass(containerEl, 'thinking-status-detail-item');
-        expect(details).toHaveLength(6);
-        expect(allText(containerEl)).not.toContain('Deciding what context to use...');
+        expect(details).toHaveLength(10);
+        expect(allText(containerEl)).toContain('Preparing this request');
         expect(allText(containerEl)).toContain('Searching notes: step 8');
     });
 

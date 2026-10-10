@@ -64,6 +64,8 @@ export type {
 export interface PaAgentModelInput {
     runId: string;
     turnId: string;
+    /** Set by the canonical loop for logical answer calls; auxiliary callers may omit it. */
+    messageId?: string;
     turnIndex: number;
     userInput: string;
     transcript: PaAgentMessage[];
@@ -1029,6 +1031,7 @@ export class PaAgentLoop {
         let modelInput: PaAgentModelInput = {
             runId: this.options.runId,
             turnId,
+            messageId: assistantMessage.id,
             turnIndex,
             userInput: this.options.userInput,
             transcript: this.transcript.filter(message => !this.recoveredOverflowAssistantIds.has(message.id)),

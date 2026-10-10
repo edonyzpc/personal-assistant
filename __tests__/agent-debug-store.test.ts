@@ -370,17 +370,25 @@ describe('Agent Debug storage boundaries', () => {
         await historical.dispose();
     });
 
-    it('expires records without refreshing TTL on read and does not block a new run after a turn deletion', async () => {
+    it('keeps sibling runs after capture-only deletion and blocks a late runtime-identified batch', async () => {
         let now = 1000; const store = setup('a', new Factory(), () => now);
         const generation = await store.getGeneration();
-        await store.writeBatch(batch('a', 'old', generation));
-        await store.invalidateConversation('conversation', { runIds: ['old'], operationId: 'delete-one', permanent: false });
+        const targeted = batch('a', 'capture-old', generation);
+        targeted.run.runtimeRunId = 'runtime-old';
+        const sibling = batch('a', 'capture-new', generation, 200);
+        sibling.run.runtimeRunId = 'runtime-new';
+        await store.writeBatch(targeted);
+        await store.writeBatch(sibling);
+        await store.invalidateConversation('conversation', { captureIds: ['capture-old'], operationId: 'delete-one', permanent: false });
         expect((await store.getGeneration()).revision).toBe(1);
-        expect(await store.isRunAllowed(batch('a', 'old', generation).run)).toBe(false);
-        await store.writeBatch(batch('a', 'new', generation, 200));
-        expect((await store.listRuns()).map(run => run.captureId)).toEqual(['new']);
+        expect(await store.isRunAllowed(targeted.run)).toBe(false);
+        expect((await store.listRuns()).map(run => run.captureId)).toEqual(['capture-new']);
+        const late = batch('a', 'capture-old', generation, 150);
+        late.run.runtimeRunId = 'runtime-old';
+        await expect(store.writeBatch(late)).resolves.toBe(false);
+        expect((await store.listRuns()).map(run => run.captureId)).toEqual(['capture-new']);
         now = 10001;
-        expect(await store.getContents('new')).toEqual([]);
+        expect(await store.getContents('capture-new')).toEqual([]);
         expect(await store.listRuns()).toEqual([]);
         await store.prune(); store.close();
     });

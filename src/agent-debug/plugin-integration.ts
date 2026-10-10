@@ -3,6 +3,7 @@ import type { PluginManagerSettings } from '../settings';
 import type { ChatHistoryStore } from '../chat/chat-history-store';
 import { createMemoryGovernanceOpaqueVaultKey, getMemoryGovernanceVaultDeviceScope } from '../memory/plugin-governance-storage';
 import { AgentDebugService } from './service';
+import type { DebugEvent } from './types';
 import type { AgentDebugViewHost } from './view';
 import { setPlatformTimeout, clearPlatformTimeout, type PlatformTimeoutHandle } from '../platform-dom';
 
@@ -16,6 +17,10 @@ export interface AgentDebugPluginOptions {
     settings(): PluginManagerSettings;
     history(): ChatHistoryStore | undefined;
     readForgetState(): Promise<DebugForgetState>;
+}
+
+function debugReferenceKey(captureId: string, nodeId: string): string {
+    return JSON.stringify([captureId, nodeId]);
 }
 
 /** Owns only Debug adapters; no Agent work waits for its startup or cleanup. */
@@ -62,7 +67,9 @@ export class AgentDebugPluginIntegration {
         if (!history?.listDebugDeletions || !history.acknowledgeDebugDeletion) return;
         for (const entry of await history.listDebugDeletions()) {
             await this.service.invalidateConversation(entry.conversationId, {
-                operationId: entry.id, runIds: entry.deleteConversation ? undefined : entry.runIds,
+                operationId: entry.id,
+                runIds: entry.deleteConversation ? undefined : entry.runtimeRunIds ?? entry.runIds,
+                captureIds: entry.deleteConversation ? undefined : entry.captureIds,
                 before: entry.deletedAt, permanent: entry.deleteConversation,
             });
             await history.acknowledgeDebugDeletion(entry.id);
@@ -82,11 +89,13 @@ export class AgentDebugPluginIntegration {
         for (const claim of state.claims) {
             if (this.seenClaims.has(claim.id)) continue;
             await this.service.forgetClaim(claim.id, { deviceWide: claim.deviceWide });
+            await this.reviseHistoryForForget(claim.id);
             this.seenClaims.add(claim.id);
         }
         for (const id of state.legacyRecordIds) {
             if (this.seenLegacy.has(id)) continue;
             await this.service.forgetLegacyRecord(id);
+            await this.reviseHistoryForForget(undefined);
             this.seenLegacy.add(id);
         }
         // Store quarantine (unclean previous owner) is an independent gate.
@@ -120,21 +129,68 @@ export class AgentDebugPluginIntegration {
 
     /** Called from the durable Forget state machine, not an advisory listener. */
     async forgetClaim(claimId: string, deviceWide: boolean): Promise<void> {
-        await this.service.initialize();
-        await this.service.forgetClaim(claimId, { deviceWide });
-        this.seenClaims.add(claimId);
+        try {
+            await this.service.initialize();
+            await this.service.forgetClaim(claimId, { deviceWide });
+            await this.reviseHistoryForForget(claimId);
+            this.seenClaims.add(claimId);
+        } catch (error) {
+            this.revokeAdmission();
+            void this.enqueue(() => this.reconcile());
+            throw error;
+        }
     }
 
     async forgetLegacyRecord(recordId: string): Promise<void> {
         try {
             await this.service.initialize();
             await this.service.forgetLegacyRecord(recordId);
+            await this.reviseHistoryForForget(undefined);
             this.seenLegacy.add(recordId);
             void this.enqueue(() => this.reconcile());
         } catch (error) {
             this.revokeAdmission();
             void this.enqueue(() => this.reconcile());
             throw error;
+        }
+    }
+
+    private async reviseHistoryForForget(claimId: string | undefined): Promise<void> {
+        const history = this.options.history();
+        if (!history?.reviseDebugReferencesForForget) return;
+        await history.initialize();
+        await history.reviseDebugReferencesForForget(claimId, async references => {
+            const nodesByCapture = new Map<string, Set<string>>();
+            for (const reference of references) {
+                const nodes = nodesByCapture.get(reference.captureId) ?? new Set<string>();
+                nodes.add(reference.nodeId);
+                nodesByCapture.set(reference.captureId, nodes);
+            }
+            const cleared = new Set<string>();
+            for (const [captureId, nodes] of nodesByCapture) {
+                let after = 0;
+                for (;;) {
+                    const events = await this.service.getPersistedEvents(captureId, { after, limit: 200 });
+                    if (!events.length) break;
+                    this.collectClearedDebugReferences(events, nodes, cleared);
+                    if (events.length < 200) break;
+                    const lastSeq = events[events.length - 1].seq;
+                    if (lastSeq <= after) break;
+                    after = lastSeq;
+                }
+            }
+            return cleared;
+        });
+    }
+
+    private collectClearedDebugReferences(
+        events: readonly DebugEvent[],
+        nodes: ReadonlySet<string>,
+        cleared: Set<string>,
+    ): void {
+        for (const event of events) {
+            if (event.availability !== 'cleared' || !nodes.has(event.nodeId)) continue;
+            cleared.add(debugReferenceKey(event.captureId, event.nodeId));
         }
     }
 

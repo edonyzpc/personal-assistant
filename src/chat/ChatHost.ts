@@ -22,6 +22,8 @@ import type { ChatSourceScope } from '../ai-services/chat-source-scope';
 import type { PrepareFeaturedImagePromptInput,
     PrepareFeaturedImagePromptRuntime } from '../ai-services/prepare-featured-image-prompt';
 import type { OperationsReviewSession } from '../ai-services/operations/operations-review-session';
+import type { DebugContent, DebugTracePage, DebugTraceQuery } from '../agent-debug/types';
+import type { AgentDebugRouteTarget } from '../agent-debug/view';
 
 export type AISetupFailureCode =
     | "invalid_configuration"
@@ -48,8 +50,11 @@ export interface ChatHost {
         verified: boolean;
     } | undefined>;
     clearGhostContextPersistence?(conversationId: string): void;
-    openAgentDebug?(conversationId?: string): void | Promise<void>;
+    openAgentDebug?(target?: string | AgentDebugRouteTarget): void | Promise<void>;
     recordAgentDebugTextCommitted?(runtimeRunId: string): void;
+    readAgentDebugTrace?(captureId: string, query?: DebugTraceQuery): Promise<DebugTracePage>;
+    readAgentDebugContents?(captureId: string, nodeId: string): Promise<DebugContent[]>;
+    subscribeAgentDebug?(listener: (change?: { invalidated?: boolean }) => void): () => void;
     readonly app: App;
     readonly settings: {
         debug: boolean;

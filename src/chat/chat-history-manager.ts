@@ -39,6 +39,7 @@ import {
     parseMemoryManagementEvidence,
     type MemoryManagementEvidence,
 } from "../ai-services/memory-management-evidence";
+import { cloneThinkingExecutionSummary } from "./execution-summary";
 
 const TITLE_MAX_LENGTH = 60;
 const PREVIEW_MAX_LENGTH = 200;
@@ -361,6 +362,15 @@ export class ChatHistoryManager {
         return this.mutateSources(input.conversationId, () => this.store.reviseTurn(turn, this.toIso(this.now())));
     }
 
+    async updateExecutionElapsedMs(
+        input: Pick<Parameters<ChatHistoryManager['recordTurn']>[0], 'conversationId' | 'turnIndex' | 'entry'>,
+        elapsedMs: number,
+    ): Promise<boolean> {
+        if (!this.isAvailable()) throw new Error('Chat history is unavailable for an elapsed time update.');
+        const turn = this.serializeTurn(input.entry, input.conversationId, input.turnIndex);
+        return this.mutateSources(input.conversationId, () => this.store.updateExecutionElapsedMs(turn, elapsedMs));
+    }
+
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
         if (!this.isAvailable()) return;
         await this.mutateSources(conversationId, async () => {
@@ -542,6 +552,7 @@ export class ChatHistoryManager {
             ...(entry.activityDetails && entry.activityDetails.length > 0
                 ? { activityDetails: [...entry.activityDetails] }
                 : {}),
+            ...(entry.executionSummary ? { executionSummary: cloneThinkingExecutionSummary(entry.executionSummary) } : {}),
             ...(entry.providerReasoningObserved
                 ? { providerReasoningObserved: entry.providerReasoningObserved }
                 : {}),
@@ -570,8 +581,9 @@ export class ChatHistoryManager {
         const interruptedExecution = turn.assistant.agentExecution?.state === "running";
         const status = interruptedExecution ? "incomplete" : turn.assistant.turnStatus
             ?? (turn.assistant.runtimeWarnings?.some((warning) => warning.type === "user_abort")
+                || turn.assistant.agentExecution?.state === "cancelled"
                 ? "aborted"
-                : "completed");
+                : turn.assistant.agentExecution?.state === "failed" ? "error" : "completed");
         const canonicalTurn = rebuildCanonicalTurn({
             conversationId: turn.conversationId,
             turnIndex: turn.turnIndex,
@@ -637,6 +649,7 @@ export class ChatHistoryManager {
             ...(turn.activityDetails && turn.activityDetails.length > 0
                 ? { activityDetails: [...turn.activityDetails] }
                 : {}),
+            ...(turn.executionSummary ? { executionSummary: cloneThinkingExecutionSummary(turn.executionSummary) } : {}),
             ...(turn.providerReasoningObserved
                 ? { providerReasoningObserved: true }
                 : {}),

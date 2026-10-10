@@ -152,7 +152,10 @@ export class AgentDebugStore {
             const cutoff = await this.control(tx, key('conversation-cutoff', this.vaultKey, run.conversationId));
             if (typeof cutoff === 'number' && run.startedAt <= cutoff) return false;
         }
-        return !await this.control(tx, key('run', this.vaultKey, run.runtimeRunId ?? run.captureId));
+        const runtimeRevoked = run.runtimeRunId !== undefined
+            && await this.control(tx, key('run', this.vaultKey, run.runtimeRunId)) === true;
+        const captureRevoked = await this.control(tx, key('run', this.vaultKey, run.captureId)) === true;
+        return !runtimeRevoked && !captureRevoked;
     }
     isRunAllowed(run: DebugRun): Promise<boolean> {
         if (run.vaultKey !== this.vaultKey) return Promise.resolve(false);
@@ -401,20 +404,25 @@ export class AgentDebugStore {
     }
     prune(): Promise<void> { return this.transact([...STORES], 'readwrite', tx => this.pruneInTransaction(tx)); }
 
-    async invalidateConversation(conversationId: string, options: { runIds?: string[]; operationId?: string; before?: number; permanent?: boolean } = {}): Promise<void> {
+    async invalidateConversation(conversationId: string, options: { runIds?: string[]; captureIds?: string[];
+        operationId?: string; before?: number; permanent?: boolean } = {}): Promise<void> {
         return this.transact([...STORES], 'readwrite', async tx => {
             if (options.operationId && await this.control(tx, key('applied', this.vaultKey, options.operationId))) return;
             const revision = key('revision', this.vaultKey);
             this.putControl(tx, revision, Number(await this.control(tx, revision) ?? 0) + 1);
             if (options.permanent) this.putControl(tx, key('conversation', this.vaultKey, conversationId), true);
-            else if (!options.runIds?.length) {
+            else if (!options.runIds?.length && !options.captureIds?.length) {
                 const cutoffKey = key('conversation-cutoff', this.vaultKey, conversationId);
                 this.putControl(tx, cutoffKey, Math.max(Number(await this.control(tx, cutoffKey) ?? 0), options.before ?? this.now()));
             }
-            for (const runId of options.runIds ?? []) this.putControl(tx, key('run', this.vaultKey, runId), true);
+            for (const runId of [...options.runIds ?? [], ...options.captureIds ?? []]) {
+                this.putControl(tx, key('run', this.vaultKey, runId), true);
+            }
             const rows = await request(tx.objectStore('runs').index('vault').getAll(this.vaultKey)) as RunRow[];
             for (const row of rows) if (row.value.conversationId === conversationId
-                && (options.runIds?.length ? options.runIds.includes(row.value.runtimeRunId ?? '') || options.runIds.includes(row.value.captureId)
+                && ((options.runIds?.length || options.captureIds?.length)
+                    ? options.runIds?.includes(row.value.runtimeRunId ?? '')
+                        || options.captureIds?.includes(row.value.captureId)
                     : options.permanent || row.value.startedAt <= (options.before ?? this.now()))) await this.removeRun(tx, row);
             if (options.operationId) this.putControl(tx, key('applied', this.vaultKey, options.operationId), true);
         });

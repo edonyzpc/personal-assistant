@@ -144,8 +144,21 @@ describe('Agent Debug view', () => {
         await view.setState({ conversationId: 'conversation-1', prompt: 'must not persist' });
         await view.onOpen();
         expect(view.getState()).toEqual({ conversationId: 'conversation-1' });
+        for (const nodeId of ['turn-1:tool:call+abc', `turn-${'x'.repeat(256)}:tool:call+abc`]) {
+            await view.setState({
+                conversationId: 'conversation-1',
+                agentDebugCaptureId: 'capture-1',
+                agentDebugNodeId: nodeId,
+                output: 'must not persist',
+            });
+            expect(view.getState()).toEqual({
+                conversationId: 'conversation-1',
+                agentDebugCaptureId: 'capture-1',
+                agentDebugNodeId: nodeId,
+            });
+        }
         view.revealConversation('conversation-2');
-        expect(render).toHaveBeenCalledTimes(2);
+        expect(render).toHaveBeenCalledTimes(4);
         await view.onClose();
         expect(unmount).toHaveBeenCalledTimes(1);
         await view.setState({ conversationId: '<private title>' });
@@ -201,6 +214,38 @@ describe('Agent Debug view', () => {
         elements(renderer.tree).find(node => node.type === 'select')?.props.onChange?.({ target: { value: 'failed' } });
         renderer.render(); await renderer.settle();
         expect(host.listRuns).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'failed', conversationId: 'conversation' }));
+        renderer.unmount();
+    });
+
+    it('opens an exact capture and node without following a newer run', async () => {
+        const { host } = fixture();
+        const renderer = new PanelRenderer(host, undefined, () => AgentDebugPanel({
+            host,
+            conversationId: 'conversation',
+            initialCaptureId: 'older-run',
+            initialNodeId: 'call',
+        }));
+        await renderer.settle();
+        expect(host.getTracePage).toHaveBeenCalledWith('older-run', expect.anything());
+        expect(host.getTracePage.mock.calls.some(([captureId]) => captureId === 'new-run')).toBe(false);
+        const selected = elements(renderer.tree).find(node => node.props.event?.nodeId === 'call');
+        expect(selected).toBeDefined();
+        renderer.unmount();
+    });
+
+    it('reports an exact missing target without selecting the newest node', async () => {
+        const { host } = fixture();
+        const renderer = new PanelRenderer(host, undefined, () => AgentDebugPanel({
+            host,
+            conversationId: 'conversation',
+            initialCaptureId: 'older-run',
+            initialNodeId: 'missing-node',
+        }));
+        await renderer.settle();
+        expect(JSON.stringify(renderer.tree)).toContain('The requested Debug node is not present in this capture.');
+        expect(elements(renderer.tree).some(node => node.props.model?.nodes.has('call'))).toBe(true);
+        expect(elements(renderer.tree).some(node => node.props.event?.nodeId === 'call')).toBe(false);
+        expect(host.getContents).not.toHaveBeenCalled();
         renderer.unmount();
     });
 

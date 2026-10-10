@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-10-09
+Updated: 2026-10-10
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-058 | Chat 内可解释的 THINKING 过程 | Accepted | 原位细轨道、整轮计时、当前 reasoning 与轻量历史；全文沿用 Debug，数据和执行边界保持 | [Record](./dec-058-chat-thinking-process.md) |
 | DEC-057 | Agent Debug 完整轨迹与双端查看 | Accepted | 完整Run、聚焦展开＋节点定位搜索；桌面树/时间轴与右侧详情、移动详情页；数据边界沿用DEC-055 | [Record](./dec-057-agent-debug-explorer.md) |
 | DEC-056 | 可选的柔和标签外观与固定自动配色 | Accepted | 默认关闭；完整名称固定九色；正文、Properties tags 与 PA 真实标签一致，关闭恢复用户主题 | [Record](./dec-056-opt-in-tag-appearance.md) |
 | DEC-055 | PA Agent 快照执行与完整 Debug | Accepted | 当前生成及重试固定快照、下一 loop 更新排除；完整文本历史与媒体引用指纹 | [Record](./dec-055-agent-snapshot-execution-and-debug-history.md) |

@@ -2275,7 +2275,8 @@ export class PaAgentRuntime {
             reportsProviderRequestStart: true,
             stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
                 const debugCall = createAgentDebugCall(debugRecorder, {
-                    parentId: input.turnId, turnId: input.turnId, purpose: "answer",
+                    parentId: input.turnId, turnId: input.turnId, messageId: input.messageId,
+                    purpose: "answer",
                     ...debugModelIdentity(),
                     lineage: { unknown: true },
                     getAttachments: imageScope ? () => imageScope.debugAttachments() : undefined,

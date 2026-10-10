@@ -91,6 +91,12 @@ export interface StreamLLMOptions {
     /** Visible Pagelet evidence to inject into this explicit user turn only. */
     pageletHandoff?: PageletChatHandoffContext;
     onLifecycleEvent?: (event: AgentEvent) => void;
+    onDebugReference?: (reference: {
+        captureId: string;
+        nodeId?: string;
+        turnId?: string;
+        messageId?: string;
+    }) => void;
     /** Content-free run accounting; used by the controlled evaluation recorder. */
     onUsageAccounting?: (snapshot: import('./agent-usage-ledger').PaAgentUsageLedgerSnapshot) => void;
     /** Host-validated final text, including a pure incomplete result. */
@@ -367,6 +373,26 @@ export class ChatService {
             debugRecorder = this.host.agentDebug?.startRun({ conversationId: options.conversationId,
                 prompt, provider: this.host.settings.aiProvider, model: this.host.settings.chatModelName });
         } catch { /* Observability cannot reject a Chat request. */ }
+        const capturedRecorder = debugRecorder;
+        if (capturedRecorder && options.onDebugReference) {
+            const onDebugReference = options.onDebugReference;
+            const capturedOnCallIdentity = capturedRecorder.onCallIdentity?.bind(capturedRecorder);
+            onDebugReference({ captureId: capturedRecorder.captureId });
+            debugRecorder = {
+                ...capturedRecorder,
+                onCallIdentity: identity => {
+                    capturedOnCallIdentity?.(identity);
+                    if (identity.purpose === 'answer' && identity.messageId && identity.turnId) {
+                        onDebugReference({
+                            captureId: capturedRecorder.captureId,
+                            nodeId: identity.nodeId,
+                            turnId: identity.turnId,
+                            messageId: identity.messageId,
+                        });
+                    }
+                },
+            };
+        }
         let debugStatus: AgentDebugNodeStatus = "completed";
         let debugFailure: ReturnType<typeof agentDebugError>;
         const debugRequestId = debugRecorder?.captureId
