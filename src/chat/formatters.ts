@@ -2,19 +2,12 @@ import type { ChatAgentStatus, ChatContextUsedItem } from '../ai-services/chat-s
 import type { ChatRuntimeWarning, SourceRecord } from '../ai-services/chat-types';
 import { parseObservedSourceRevision } from '../ai-services/generation-input-snapshot';
 import { getPluginUiLanguage, pluginT, type PluginLocale } from '../locales/plugin';
-import { normalizeUiLanguage } from '../locales/language';
-import { getOptionalPlatformWindow } from '../platform-dom';
 
 function ft(key: string, params?: Readonly<Record<string, string | number>>, locale?: PluginLocale): string {
     return pluginT(key, locale ?? getPluginUiLanguage(), params);
 }
 
 export function getChatThinkingProcessLocale(): PluginLocale {
-    const navigator = getOptionalPlatformWindow()?.navigator;
-    const primaryLanguage = navigator?.languages?.[0] ?? navigator?.language;
-    if (typeof primaryLanguage === 'string' && primaryLanguage.length > 0) {
-        return normalizeUiLanguage(primaryLanguage) ?? 'en';
-    }
     return getPluginUiLanguage();
 }
 

@@ -5155,7 +5155,10 @@ export class LLMView extends ItemView {
                 },
             });
             setIcon(toggleButton, 'chevron-right');
-            header.createDiv({ cls: 'thinking-status-section-title', text: 'reasoning' });
+            header.createDiv({
+                cls: 'thinking-status-section-title',
+                text: thinkingT('plugin.chat.thinking.reasoning'),
+            });
             const contentEl = section.createDiv({ cls: 'thinking-status-reasoning-content' });
             contentEl.id = reasoningId;
             contentEl.hidden = true;

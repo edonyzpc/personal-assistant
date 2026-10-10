@@ -133,8 +133,9 @@ Agent/loop 拥有调用与运行事实，领域 action state/回执拥有业务�
   推测清理原因，也不能以缺 exact Chat claim 否定 Debug owner 已确认的 unknown scope。
 - 摘要不进入后续 provider 输入、Memory 提取、分享等非目标投影；显示失败不能变成
   Agent 失败。展开/焦点/滚动保持用户选择，资源随既有视图 teardown 释放。
-  `getChatThinkingProcessLocale()` 只为过程读取平台 navigator 主语言：zh 用中文、
-  其他可读主语言用英文，语言不可取得才 fallback 插件语言；固定名称与正文不翻译。
+  `getChatThinkingProcessLocale()` 复用 `getPluginUiLanguage()`，使过程状态、步骤、
+  耗时与无障碍文案跟随 Obsidian 界面语言及既有英文回退；不再优先读取 navigator。
+  固定名称为 `THINKING` / `Reasoning`，供应商 reasoning 正文不翻译。
 
 ## 旧历史兼容
 

@@ -7837,6 +7837,10 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('keeps canonical tool identity, reasoning, and user folding stable across updates', async () => {
+        Object.assign(globalThis.window, {
+            i18next: { language: 'en-US' },
+            navigator: { languages: ['zh-CN', 'en-US'] },
+        });
         const { view, containerEl } = createView();
         await view.onOpen();
 
@@ -7849,13 +7853,13 @@ describe('LLMView turn lifecycle', () => {
         emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_1', scope: 'turn' }));
         const assistant = assistantMessage('assistant_tools', []);
         emitCanonical(call, canonicalEvent({ type: 'message_start', turnId: 'turn_1', scope: 'turn', message: assistant }));
-        assistant.content.push({ type: 'thinking', text: 'Current provider reasoning.' });
+        assistant.content.push({ type: 'thinking', text: '供应商 reasoning 原文保持不翻译。' });
         emitCanonical(call, canonicalEvent({
             type: 'message_update',
             turnId: 'turn_1',
             scope: 'turn',
             messageId: assistant.id,
-            update: { kind: 'thinking_delta', text: 'Current provider reasoning.' },
+            update: { kind: 'thinking_delta', text: '供应商 reasoning 原文保持不翻译。' },
         }));
         for (const toolCallId of ['call_same_1', 'call_same_2']) {
             emitCanonical(call, canonicalEvent({
@@ -7878,8 +7882,14 @@ describe('LLMView turn lifecycle', () => {
         expect(activityItems).toHaveLength(2);
         const firstActivity = activityItems[0];
         const toggle = getElementByClass(responseDiv, 'thinking-status-toggle');
+        expect(getElementByClass(responseDiv, 'thinking-status-summary').textContent).toBe('Searching Memory...');
+        const reasoningSection = getElementByClass(responseDiv, 'thinking-status-reasoning');
+        expect(getElementByClass(reasoningSection, 'thinking-status-section-title').textContent).toBe('Reasoning');
+        expect(getElementByClass(responseDiv, 'thinking-reasoning-toggle').getAttribute('aria-label')).toBe('Show Reasoning');
+        expect(toggle.getAttribute('aria-label')).toBe('Show thinking details');
         toggle.focus();
         toggle.click();
+        expect(toggle.getAttribute('aria-label')).toBe('Hide thinking details');
         responseDiv.scrollTop = 80;
         const scrollCallsBeforeCompletion = responseDiv.scrollToCalls.length;
 
@@ -7926,8 +7936,10 @@ describe('LLMView turn lifecycle', () => {
 
         const reasoningToggle = getElementByClass(responseDiv, 'thinking-reasoning-toggle');
         expect(getElementByClass(responseDiv, 'thinking-status-reasoning-content').hidden).toBe(true);
+        expect(reasoningToggle.getAttribute('aria-label')).toBe('Show Reasoning');
         reasoningToggle.click();
-        expect(allText(getElementByClass(responseDiv, 'thinking-status-reasoning-content'))).toContain('Current provider reasoning.');
+        expect(reasoningToggle.getAttribute('aria-label')).toBe('Hide Reasoning');
+        expect(allText(getElementByClass(responseDiv, 'thinking-status-reasoning-content'))).toContain('供应商 reasoning 原文保持不翻译。');
 
         emitCanonical(call, canonicalEvent({
             type: 'message_end',
@@ -7941,7 +7953,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
 
         expect(toggle.getAttribute('aria-expanded')).toBe('true');
-        expect(allText(responseDiv)).toContain('Current provider reasoning.');
+        expect(allText(responseDiv)).toContain('供应商 reasoning 原文保持不翻译。');
         expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(0);
         expect(responseDiv.scrollTop).toBe(80);
         expect(responseDiv.scrollToCalls.length).toBe(scrollCallsBeforeCompletion);
@@ -7966,13 +7978,14 @@ describe('LLMView turn lifecycle', () => {
             void getButtonByClass(containerEl, 'send-button-visible').click();
             await flushPromises();
             const responseDiv = getResponseDiv(view);
-            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('0s');
+            expect(getElementByClass(responseDiv, 'thinking-status-toggle').getAttribute('aria-label')).toBe('显示思考详情');
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('0 秒');
 
             jest.advanceTimersByTime(2_000);
-            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('2s');
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('2 秒');
             const call = streamCalls[0];
             emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__' }));
-            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('2s');
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('2 秒');
 
             jest.advanceTimersByTime(1_000);
             emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_final', scope: 'turn' }));
@@ -8003,14 +8016,14 @@ describe('LLMView turn lifecycle', () => {
             }));
             emitCanonical(call, canonicalEvent({ type: 'agent_end', scope: 'run', turnId: '__run__', status: 'completed' }));
             expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(1);
-            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('3s');
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('3 秒');
 
             call.resolve();
             await flushPromises();
             await flushPromises();
-            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('3s');
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('3 秒');
             expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(0);
-            expect(allText(getElementByClass(responseDiv, 'thinking-status-summary'))).toBe('Thinking complete');
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-summary'))).toBe('思考完成');
             expect(updateElapsed).toHaveBeenCalledWith(expect.objectContaining({
                 conversationId: 'elapsed-conversation', turnIndex: 0,
             }), 3000);
@@ -8025,14 +8038,14 @@ describe('LLMView turn lifecycle', () => {
                 toolCallId: 'call_late',
                 toolName: 'search_memory',
             }));
-            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('3s');
+            expect(allText(getElementByClass(responseDiv, 'thinking-status-elapsed'))).toBe('3 秒');
             expect(allText(getElementByClass(responseDiv, 'assistant'))).toContain('delivered answer');
             expect(allText(responseDiv)).not.toContain('call_late');
             await view.onClose();
             const restored = createView({ chatHistoryManager: manager });
             await restored.view.onOpen();
             for (let index = 0; index < 6; index++) await flushPromises();
-            expect(allText(getElementByClass(getResponseDiv(restored.view), 'thinking-status-elapsed'))).toBe('3s');
+            expect(allText(getElementByClass(getResponseDiv(restored.view), 'thinking-status-elapsed'))).toBe('3 秒');
             await restored.view.onClose();
         } finally {
             jest.useRealTimers();
@@ -8372,7 +8385,7 @@ describe('LLMView turn lifecycle', () => {
             'llm-message-1', 'llm-message-2', 'turn_1:tool:call_real', 'turn_1:tool:call_failed',
         ]));
         expect(debugButtons.map(allText)).toEqual([
-            'reasoning 1 · Open in Debug', 'reasoning 2 · Open in Debug',
+            'Reasoning 1 · Open in Debug', 'Reasoning 2 · Open in Debug',
             'Memory 1 · Open in Debug', 'Memory 2 · Open in Debug',
         ]);
 
@@ -8385,8 +8398,8 @@ describe('LLMView turn lifecycle', () => {
 
         const reasoningMessages = getElementsByClass(restoredResponse, 'thinking-status-reasoning-message');
         expect(reasoningMessages).toHaveLength(2);
-        expect(allText(reasoningMessages[0])).toContain('reasoning 1');
-        expect(allText(reasoningMessages[1])).toContain('reasoning 2');
+        expect(allText(reasoningMessages[0])).toContain('Reasoning 1');
+        expect(allText(reasoningMessages[1])).toContain('Reasoning 2');
         getElementsByClass(reasoningMessages[0], 'thinking-status-reasoning-load')[0].click();
         getElementsByClass(reasoningMessages[1], 'thinking-status-reasoning-load')[0].click();
         for (let index = 0; index < 8; index++) await flushPromises();

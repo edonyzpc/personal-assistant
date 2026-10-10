@@ -119,10 +119,21 @@ describe("Chat THINKING process locale and timing", () => {
         delete (globalThis as unknown as { window?: unknown }).window;
     });
 
-    it("uses EN for a readable non-ZH primary system language", () => {
+    it.each([
+        { obsidian: "en-US", navigator: ["zh-CN", "en-US"], expected: "en" },
+        { obsidian: "zh-CN", navigator: ["en-US", "zh-CN"], expected: "zh" },
+    ])("follows Obsidian UI language $obsidian when navigator is $navigator", ({ obsidian, navigator, expected }) => {
         (globalThis as unknown as { window: unknown }).window = {
-            i18next: { language: "zh-CN" },
-            navigator: { languages: ["ja-JP", "zh-CN"] },
+            i18next: { language: obsidian },
+            navigator: { languages: navigator },
+        };
+        expect(getChatThinkingProcessLocale()).toBe(expected);
+    });
+
+    it("keeps the reliable EN fallback when both locales are unsupported", () => {
+        (globalThis as unknown as { window: unknown }).window = {
+            i18next: { language: "fr" },
+            navigator: { languages: ["ja-JP"] },
         };
         expect(getChatThinkingProcessLocale()).toBe("en");
     });

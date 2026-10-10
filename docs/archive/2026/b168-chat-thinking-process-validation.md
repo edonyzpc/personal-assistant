@@ -67,3 +67,28 @@ navigator 原始 en-US，侧栏恢复约原宽 717px；临时流观察期间 err
 `final-deploy-cancellation.log`、`app-final-accepted.json`、`app-final-environment.json`。
 本页压缩保存其结果与身份，不承诺临时目录永久存在，也不归档全部逐轮记录。
 本地验收不证明在线模型质量、外部业务效果、iPhone、远程 CI、日常 vault 部署或发布。
+
+## 2026-10-10 使用反馈窄修收尾
+
+Owner 在使用中要求 THINKING 跟随 Obsidian 界面语言，并将固定标题改为
+`Reasoning`；在获知本次尚未部署和真实窗口复验后，明确要求 closeout 并提交到
+本地 `master`。这次修订替代初版的平台语言优先，保留以上原始验证的历史事实。
+
+- 范围：过程语言复用 `getPluginUiLanguage()`；当前、历史及 Debug 引用的标题与
+  显示/隐藏/读取按钮统一为 `Reasoning`。供应商原文、执行行为及存储边界不变。
+- 实际 writer：配置的 pa-glm / ZAI / glm-5.3；GPT-6 负责需求修订、文档和独立验收。
+  风险为局部语言来源及文案修复，实际 diff、关键断言和原始测试结果已独立核对。
+- 回归：语言不一致的两个用例先取得真实目标失败；修复后
+  `npm test -- --runInBand __tests__/pa-locales-plugin.test.ts __tests__/chat-view.test.ts`
+  自然 exit 0，2 suites / 408 tests PASS。覆盖双向语言组合、英文回退、当前/历史
+  标题、中文供应商原文保留，以及原有计时、折叠和持久化语义。
+  收尾时并行 Debug 改动已独立提交；仅因共享语言表增加文案补跑 locales suite，
+  自然 exit 0，16 tests PASS，不与上述 408 项重复累加。
+- 工程检查：`npx tsc -noEmit -skipLibCheck`、`docs:check`、diff check 均 PASS；
+  runtime style/HTML scan 无匹配，exit 1 按规则为 PASS。提交本身不使这些证据失效。
+- 证据限制：未为本次窄修构建部署、执行全套测试或完成真实 Obsidian 窗口复验。
+  默认 Obsidian 命令未进入 CLI 模式，当前原生窗口交互工具不可用；不把以上初版
+  app smoke 当成本次语言规则与标题的应用内证明。下次部署时复验受影响的展开界面。
+- 文档处置：行为已吸收到 DEC-058、Product Spec、当前架构和 focused tests；本次
+  不新建 Active Package，原 B-168 没有待删除的活动入口。原始本机日志位于
+  `/tmp/pa-b168-language-fix-20261010/`，不承诺临时目录永久存在。
