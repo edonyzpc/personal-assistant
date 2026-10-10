@@ -45,6 +45,8 @@ Authority: Owner 已确认的桌面/移动预览及“聚焦展开＋节点定�
 
 概览显示运行结果、时间、模型、已知 usage 和采集完整性。历史保持会话/结果筛选、分页与清理入口；分页只用于运行列表，所选 Run 大纲连续可达。Run 正在加载时显示“正在加载轨迹”，不得将已载入片段称为全部，也不能将读取失败称为无节点。
 
+运行选择使用已有时间与模型，不补造任务标题。概览补充轮次和节点数；重试提示表示存在相关记录，不把等待阶段与请求尝试的聚合数称为实际重试次数。
+
 ### 桌面与窄容器
 
 ```text
@@ -59,6 +61,12 @@ Authority: Owner 已确认的桌面/移动预览及“聚焦展开＋节点定�
 
 树行以缩进、类型图标、状态文字和时间条表达；不使用方块布局位置暗示并行。分隔拖动不能遮住详情或使轨迹不可用；宽度不足自动使用窄容器模式，保留节点与阅读状态。状态不单靠颜色表达，键盘可展开、选中、调整分隔并返回。
 
+桌面轨迹按名称、公共时间轨道、耗时、状态四列对齐，顶部刻度与各行共用坐标。
+类型图标与整行选择突出层级和当前节点；名称、时间条均可选择，折叠按钮单独操作。
+详情默认打开“输入／输出”，另有“时间与用量”“原始记录”两个 Tab；context 与
+reasoning 保持渐进展开。切换 Tab 保留已加载正文长度与展开状态，并回到该类别顶部；
+主动切换节点也回到详情顶部。
+
 ### 聚焦展开与搜索
 
 首次展示运行大纲，展开当前执行路径；完成的历史按所选节点路径展示。无选择时优先已有失败/缺口位置，否则末个已观察执行节点。所有 Turn 及无 Turn 阶段有入口，折叠行保留异常提示；“展开全部”展开结构，不预读所有正文。
@@ -68,6 +76,9 @@ Authority: Owner 已确认的桌面/移动预览及“聚焦展开＋节点定�
 ### 移动详情与导航
 
 轨迹主行名称最多两行，状态/耗时不覆盖名称；第二行使用同一 Run 的时间尺度。折叠箭头与节点选择各有至少 44×44 CSS px 的独立触控区域，互不误触。
+
+不同层级的时间副行起点和宽度相同，缩进仅影响名称。详情页隐藏运行总览，优先给
+节点标题、三个详情 Tab 与正文空间；运行历史和轮次导航在窄容器中呈现底部抽屉。
 
 点击节点进入整页详情。直接返回恢复原搜索、折叠、节点和滚动锚点；详情“上一/下一”使用进入详情时固定的可见/过滤序列，首尾禁用，不因实时新增事件插入目标。主动换到另一个节点后，返回可定位该节点。清理移除的节点从序列撤下，不能保留已失效内容。
 
@@ -110,6 +121,7 @@ Agent/节点结果、采集状态、详情可用性为三个维度。进行中�
 
 ## Implementation And Validation
 
+- 2026-10-10 预览补齐：最终行为已吸收到本文与 Architecture；复用现有 React/数据层，无新框架或采集。冻结的 [桌面预览](../../archive/2026/b167-agent-debug-preview-alignment/reference-desktop.html) 与 [移动预览](../../archive/2026/b167-agent-debug-preview-alignment/reference-mobile.html) 保留为外观与交互参照；正式界面的独立审查、定向测试、Obsidian 桌面/移动模拟证据见 [本轮最终验证](../../archive/2026/b167-agent-debug-preview-alignment-validation.md)。原 B-167 历史验收不替代本轮视觉还原验证。
 - Design disposition: 已确认 HTML 预览的布局和交互由本文持有，实现设计已吸收到当前 Architecture/源码/tests；示例数据/“模拟实时”不进入正式产品。Feature Home/SDD/Tracker 在 closeout 后删除。
 - Historical validation: [B-167 最终验证](../../archive/2026/b167-agent-debug-explorer-validation.md)，包含 T-01～07、十项 REQ/AC、独立审查与隔离桌面/移动证据及限制。
 - Current architecture: [Debug](../../architecture/pa-agent-debug-view.md)、[Command responsibility contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)

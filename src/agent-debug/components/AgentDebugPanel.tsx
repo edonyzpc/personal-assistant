@@ -6,8 +6,9 @@ import { buildTraceModel, focusNode, traceAncestors, visibleTraceRows } from '..
 import { NodeInspector, DebugUsageText } from './NodeInspector';
 import { TraceTree } from './TraceTree';
 import { DebugDialog } from './DebugDialog';
+import { DebugIcon } from './DebugIcon';
 import { useTracePages } from './useTracePages';
-import { debugLabel as label, debugT as t, debugTime as time, nodeTitle } from './debug-format';
+import { debugDuration, debugStatusClass, debugLabel as label, debugT as t, debugTime as time, nodeTitle } from './debug-format';
 
 export { projectDebugNodes } from '../trace-model';
 export { groupDebugContents, debugTextPrefix } from './NodeInspector';
@@ -56,7 +57,7 @@ export function AgentDebugPanel({ host, conversationId, initialCaptureId, initia
     const [navigation, setNavigation] = useState<string[]>([]);
     const [modal, setModal] = useState<'history' | 'turns'>();
     const [historyOpen, setHistoryOpen] = useState(false);
-    const [split, setSplit] = useState(54);
+    const [split, setSplit] = useState(62);
     const { load, invalidate } = useTracePages(host, captureId, revision, generation, visible);
     const model = useMemo(() => buildTraceModel(load.events), [load.events]);
     const selected = nodeId ? model.nodes.get(nodeId) : undefined;
@@ -72,7 +73,9 @@ export function AgentDebugPanel({ host, conversationId, initialCaptureId, initia
             const isTurn = event.nodeKind === 'turn' || event.kind === 'turn' || /^turn_(start|end)$/.test(event.kind);
             const turnId = event.turnId && event.turnId !== '__run__' ? event.turnId : isTurn ? id : undefined;
             if (!turnId) continue;
-            if (!entries.has(turnId) || isTurn) entries.set(turnId, { id, name: t('plugin.agentDebug.turn', { id: turnId }) });
+            if (!entries.has(turnId) || isTurn) entries.set(turnId, {
+                id, name: isTurn && event.label ? nodeTitle(event) : t('plugin.agentDebug.turn', { id: turnId }),
+            });
         }
         return [...entries.values()];
     }, [model]);
@@ -235,7 +238,11 @@ export function AgentDebugPanel({ host, conversationId, initialCaptureId, initia
             setContents(content); setSession(host.getSessionDetails(captureId, nodeId)); setDetailsKey(key); setDetailsLoading(false);
         }).catch(() => { if (!cancelled && epoch === generation.current) { setDetailsLoading(false); setDetailsFailed(true); } });
         return () => { cancelled = true; };
-    }, [host, captureId, nodeId, revision, detailRevision]);
+    }, [host, captureId, nodeId, selected?.id, revision, detailRevision]);
+
+    useEffect(() => {
+        if (inspectorScroll.current) inspectorScroll.current.scrollTop = 0;
+    }, [captureId, nodeId]);
 
     const latest = () => {
         const target = focusNode(model);
@@ -272,14 +279,31 @@ export function AgentDebugPanel({ host, conversationId, initialCaptureId, initia
     </>;
     const detailContents = selected && detailsKey === JSON.stringify([captureId, nodeId])
         ? contents.map(content => ({ ...content, contentRole: content.contentRole ?? selected.contentRoles.get(content.contentId) })) : [];
+    const ancestorTitles = traceAncestors(model, nodeId).slice(1).reverse()
+        .map(id => nodeTitle(model.nodes.get(id)!.event));
+    const runDuration = selectedRun?.endedAt !== undefined
+        ? Math.max(0, selectedRun.endedAt - selectedRun.startedAt) : model.extentMs;
+    const hasRetryActivity = model.roots.some(id => model.nodes.get(id)!.anomalies.retries > 0);
+    const openHistory = () => { pause(); if (narrow) setModal('history'); else setHistoryOpen(value => !value); };
     return <div className={`pa-agent-debug-view${narrow ? ' is-narrow' : ''}${narrow && detailPage ? ' is-detail-page' : ''}`} ref={rootRef}>
         <div className="pa-agent-debug-content">
-            <header className="pa-agent-debug-header"><h2>{t('plugin.agentDebug.title')}</h2>
-                <span>{host.enabled() ? t('plugin.agentDebug.captureOn') : t('plugin.agentDebug.captureOff')}</span>
-                <button type="button" onClick={() => { pause(); if (narrow) setModal('history'); else setHistoryOpen(value => !value); }} aria-expanded={!narrow && historyOpen}>{t('plugin.agentDebug.runs')}</button>
-                <button type="button" disabled={clearing} onClick={() => setConfirmClear(true)}>{t('plugin.agentDebug.clear')}</button>
+            <header className="pa-agent-debug-header">
+                <div className="pa-agent-debug-title-row">
+                    <h2><DebugIcon name="git-pull-request" />{t('plugin.agentDebug.explorerTitle')}</h2>
+                    <span className="pa-agent-debug-muted">{host.enabled() ? t('plugin.agentDebug.captureOn') : t('plugin.agentDebug.captureOff')}</span>
+                    <button type="button" className="pa-agent-debug-icon-button" disabled={clearing}
+                        aria-label={t('plugin.agentDebug.clear')} title={t('plugin.agentDebug.clear')} onClick={() => setConfirmClear(true)}><DebugIcon name="trash-2" /></button>
+                </div>
+                <div className="pa-agent-debug-run-picker">
+                    <button type="button" className="pa-agent-debug-run-trigger" onClick={openHistory}
+                        aria-label={t('plugin.agentDebug.runs')} aria-expanded={narrow ? modal === 'history' : historyOpen}>
+                        <span>{selectedRun ? time(selectedRun.startedAt) : t('plugin.agentDebug.runs')}{selectedRun?.model && ` · ${selectedRun.model}`}</span>
+                        <DebugIcon name="chevron-down" />
+                    </button>
+                </div>
             </header>
-            <details className="pa-agent-debug-storage"><summary>{t('plugin.agentDebug.retention')}</summary>
+            <details className="pa-agent-debug-storage"><summary>{t('plugin.agentDebug.localHistory')}</summary>
+                <p>{t('plugin.agentDebug.retention')}</p>
                 {status && <p>{t('plugin.agentDebug.storage', { used: bytes(status.bytes), limit: bytes(status.limit) })}{!status.recoveryReady && ` · ${t('plugin.agentDebug.recovering')}`}{!status.available && ` · ${t('plugin.agentDebug.sessionFallback')}`}</p>}
             </details>
             {historyOpen && !narrow && <section className="pa-agent-debug-history" aria-label={t('plugin.agentDebug.runs')}>{history}</section>}
@@ -288,23 +312,34 @@ export function AgentDebugPanel({ host, conversationId, initialCaptureId, initia
                 <button type="button" onClick={() => setConfirmClear(false)}>{t('plugin.agentDebug.cancel')}</button>
             </div>}
             {(error || cleared || clearing) && <p role="status" className="pa-agent-debug-notice">{error ? t('plugin.agentDebug.loadFailed') : clearing ? t('plugin.agentDebug.clearing') : t('plugin.agentDebug.cleared')}</p>}
-            {selectedRun && <div className="pa-agent-debug-summary">
-                <span>{label('status', selectedRun.status)} · {label('collection', selectedRun.collection)} · {selectedRun.provider} {selectedRun.model}</span>
-                <span><DebugUsageText usage={selectedRun.usage} /></span>
+            {selectedRun && <div className="pa-agent-debug-summary pa-agent-debug-run-meta">
+                <span className={`pa-agent-debug-status-chip ${debugStatusClass(selectedRun.status)}`}>
+                    <DebugIcon name={selectedRun.status === 'completed' ? 'circle-check' : selectedRun.status === 'failed' ? 'circle-x' : 'circle-dot'} />{label('status', selectedRun.status)}
+                </span>
+                <span>{debugDuration(runDuration)}</span>
+                <span>{t('plugin.agentDebug.turnCount', { count: turns.length })}</span>
+                <span>{t('plugin.agentDebug.nodeCount', { count: model.nodes.size })}</span>
+                <span>{label('collection', selectedRun.collection)}</span>
+                {hasRetryActivity && <span className="pa-agent-debug-anomalies"><DebugIcon name="rotate-ccw" />{t('plugin.agentDebug.retryActivity')}</span>}
+                {selectedRun.usage && <span><DebugUsageText usage={selectedRun.usage} /></span>}
                 {selectedRun.hasGap && <p className="pa-agent-debug-notice">{t('plugin.agentDebug.gap')}</p>}
                 {selectedRun.contentVersion !== 2 && <p className="pa-agent-debug-muted">{t('plugin.agentDebug.legacyDetails')}</p>}
             </div>}
             <div className="pa-agent-debug-workspace" style={{ gridTemplateColumns: narrow ? undefined : `${split}% 8px minmax(0, 1fr)` }}>
                 <section className="pa-agent-debug-track-pane" aria-label={t('plugin.agentDebug.trajectory')} hidden={narrow && detailPage}>
                     <div className="pa-agent-debug-trace-tools">
-                        <input type="search" value={query} aria-label={t('plugin.agentDebug.search')} placeholder={t('plugin.agentDebug.search')} onChange={event => { pause(); setQuery(event.target.value); }} />
-                        <button type="button" onClick={() => { pause(); setOverrides(new Map(model.ordered.map(id => [id, true]))); }}>{t('plugin.agentDebug.expandAll')}</button>
-                        <button type="button" onClick={() => { pause(); setOverrides(new Map()); }}>{t('plugin.agentDebug.focusPath')}</button>
+                        <div className="pa-agent-debug-search"><DebugIcon name="search" />
+                            <input type="search" value={query} aria-label={t('plugin.agentDebug.search')} placeholder={t('plugin.agentDebug.search')} onChange={event => { pause(); setQuery(event.target.value); }} />
+                        </div>
+                        <button type="button" className="pa-agent-debug-icon-button" aria-label={t('plugin.agentDebug.expandAll')} title={t('plugin.agentDebug.expandAll')}
+                            onClick={() => { pause(); setOverrides(new Map(model.ordered.map(id => [id, true]))); }}><DebugIcon name="list-tree" /></button>
+                        <button type="button" className="pa-agent-debug-icon-button" aria-label={t('plugin.agentDebug.focusPath')} title={t('plugin.agentDebug.focusPath')}
+                            onClick={() => { pause(); setOverrides(new Map()); }}><DebugIcon name="list" /></button>
                     </div>
                     <div className="pa-agent-debug-load-state" role="status">
                         {load.state === 'loading' && t('plugin.agentDebug.traceLoading')}
                         {load.state === 'saving' && t('plugin.agentDebug.traceSaving')}
-                        {load.state === 'ready' && t('plugin.agentDebug.traceReady', { count: model.nodes.size })}
+                        {load.state === 'ready' && t('plugin.agentDebug.visibleNodes', { visible: view.rows.length, total: model.nodes.size })}
                         {load.state === 'partial' && t('plugin.agentDebug.tracePartial')}
                         {load.state === 'cleared' && t('plugin.agentDebug.availability.cleared')}
                         {load.state === 'error' && <><span>{t('plugin.agentDebug.traceFailed')}</span><button type="button" onClick={() => setRevision(value => value + 1)}>{t('plugin.agentDebug.retryRead')}</button></>}
@@ -314,9 +349,12 @@ export function AgentDebugPanel({ host, conversationId, initialCaptureId, initia
                     <TraceTree model={model} rows={view.rows} selectedId={nodeId} onSelect={select} scrollRef={traceScroll} onBrowse={pause}
                         onToggle={(id, expanded) => { pause(); setOverrides(previous => new Map(previous).set(id, expanded)); }} />
                     <footer className="pa-agent-debug-bottom-bar">
-                        <button type="button" onClick={() => { pause(); setModal('turns'); }}>{t('plugin.agentDebug.turns')}</button>
-                        <button type="button" onClick={latest} aria-pressed={following}>{t('plugin.agentDebug.followLatest')}</button>
-                        <span>{following ? t('plugin.agentDebug.following') : t('plugin.agentDebug.followPaused')}</span>
+                        <button type="button" className="pa-agent-debug-quiet-button" aria-label={t('plugin.agentDebug.turns')}
+                            onClick={() => { pause(); setModal('turns'); }}><DebugIcon name="layers" />{t('plugin.agentDebug.turnCount', { count: turns.length })}</button>
+                        <button type="button" className="pa-agent-debug-follow" aria-label={t('plugin.agentDebug.followLatest')} onClick={latest} aria-pressed={following}
+                            title={following ? t('plugin.agentDebug.following') : t('plugin.agentDebug.followPaused')}>
+                            <DebugIcon name={following ? 'radio' : 'locate-fixed'} />{t('plugin.agentDebug.followLatest')}
+                        </button>
                     </footer>
                 </section>
                 {!narrow && <div className="pa-agent-debug-splitter" role="separator" aria-label={t('plugin.agentDebug.resizePanels')}
@@ -330,10 +368,12 @@ export function AgentDebugPanel({ host, conversationId, initialCaptureId, initia
                         setSplit(Math.max(35, Math.min(65, (event.clientX - bounds.left) / bounds.width * 100)));
                     }} onPointerUp={event => { event.currentTarget.releasePointerCapture(event.pointerId); }} />}
                 <section className="pa-agent-debug-inspector-pane" aria-label={t('plugin.agentDebug.details')} hidden={narrow && !detailPage}>
-                    {narrow && <header className="pa-agent-debug-detail-header"><button type="button" onClick={() => setDetailPage(false)}>{t('plugin.agentDebug.backToTrace')}</button><span>{selected ? nodeTitle(selected.event) : t('plugin.agentDebug.details')}</span></header>}
+                    {narrow && <header className="pa-agent-debug-detail-header"><button type="button" className="pa-agent-debug-quiet-button" onClick={() => setDetailPage(false)}><DebugIcon name="arrow-left" />{t('plugin.agentDebug.backToTrace')}</button></header>}
                     <div className="pa-agent-debug-inspector-scroll" ref={inspectorScroll} onWheel={pause} onTouchStart={pause}
                         onKeyDown={event => { if (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '].includes(event.key)) pause(); }} onClick={pause}>
                         {selected ? <NodeInspector key={JSON.stringify([captureId, nodeId])} event={selected.event} durationMs={selected.durationMs}
+                            ancestorTitles={ancestorTitles} startMs={selected.startMs} endMs={selected.endMs}
+                            onTabChange={() => { if (inspectorScroll.current) inspectorScroll.current.scrollTop = 0; }}
                             contents={detailContents} session={detailsKey === JSON.stringify([captureId, nodeId]) ? session : []}
                             loading={detailsLoading} failed={detailsFailed} onRetry={() => setDetailRevision(value => value + 1)} />
                             : <p>{targetMissing ? t('plugin.agentDebug.targetMissing') : t('plugin.agentDebug.selectNode')}</p>}
@@ -346,7 +386,7 @@ export function AgentDebugPanel({ host, conversationId, initialCaptureId, initia
                 </section>
             </div>
         </div>
-        {modal && <DebugDialog title={t(modal === 'history' ? 'plugin.agentDebug.runs' : 'plugin.agentDebug.turns')} onClose={() => setModal(undefined)}>
+        {modal && <DebugDialog title={t(modal === 'history' ? 'plugin.agentDebug.runs' : 'plugin.agentDebug.turns')} narrow={narrow} onClose={() => setModal(undefined)}>
             {modal === 'history' ? history : <ol className="pa-agent-debug-runs">{turns.map(turn => <li key={turn.id}><button type="button" onClick={() => jump(turn.id)}>
                 {query.trim() ? t('plugin.agentDebug.clearSearchView', { name: turn.name }) : turn.name}
             </button></li>)}</ol>}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { debugT as t } from './debug-format';
 
-export function DebugDialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function DebugDialog({ title, onClose, children, narrow = false }: { title: string; onClose: () => void; children: ReactNode; narrow?: boolean }) {
     const ref = useRef<HTMLDialogElement>(null);
     useEffect(() => {
         const dialog = ref.current;
@@ -10,7 +10,7 @@ export function DebugDialog({ title, onClose, children }: { title: string; onClo
         dialog?.showModal();
         return () => { dialog?.close(); if (prior?.isConnected && 'focus' in prior) (prior as HTMLElement).focus(); };
     }, []);
-    return <dialog ref={ref} className="pa-agent-debug-dialog" aria-label={title}
+    return <dialog ref={ref} className={`pa-agent-debug-dialog${narrow ? ' is-narrow' : ''}`} aria-label={title}
         onKeyDown={event => {
             if (event.key !== 'Escape') return;
             // The modal owns Escape before Obsidian's workspace shortcuts can handle the same key.

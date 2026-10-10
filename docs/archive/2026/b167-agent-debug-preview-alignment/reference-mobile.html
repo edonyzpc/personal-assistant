@@ -1,0 +1,505 @@
+<div class="viz-dotted-background" style="padding:20px 0">
+<div id="pa-debug-mobile" aria-label="PA Agent Debug 移动端设计预览">
+  <style>
+    #pa-debug-mobile { --pa-bg:light-dark(#ffffff,#202022); --pa-sub:light-dark(#f6f6f7,#272729); --pa-hover:light-dark(#eeeeF2,#303034); --pa-text:light-dark(#25252c,#e5e5eb); --pa-muted:light-dark(#70707d,#a3a3b0); --pa-line:light-dark(#e5e5eb,#39393f); --pa-purple:light-dark(#7056b1,#b19adc); --pa-purple-bg:light-dark(#f0ecf8,#343044); --pa-green:light-dark(#327564,#8dc5ad); --pa-green-bg:light-dark(#eaf4ef,#253b32); --pa-amber:light-dark(#976521,#e0b472); --pa-amber-bg:light-dark(#fcf3e3,#3b3324); --pa-red:light-dark(#b64b4c,#e49294); --pa-red-bg:light-dark(#faeeee,#402c30); --pa-code:light-dark(#f7f7f9,#26262b); --pa-shadow:light-dark(#17152118,#00000050); color:var(--pa-text); font-family:"Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif; font-size:13px; line-height:1.5; width:100%; }
+    #pa-debug-mobile * { box-sizing:border-box; }
+    #pa-debug-mobile button, #pa-debug-mobile input { font:inherit; color:inherit; }
+    #pa-debug-mobile button { -webkit-tap-highlight-color:transparent; }
+    #pa-debug-mobile button:focus-visible, #pa-debug-mobile input:focus-visible { outline:2px solid var(--pa-purple); outline-offset:2px; }
+    #pa-debug-mobile button:disabled { opacity:.4; }
+    #pa-debug-mobile [hidden] { display:none !important; }
+    #pa-debug-mobile svg { width:15px; height:15px; flex:none; stroke-width:1.65; }
+    #pa-debug-mobile .pa-window { width:100%; max-width:100%; margin:auto; border:1px solid var(--pa-line); border-radius:10px; overflow:hidden; background:var(--pa-bg); container:pa-window / inline-size; --pa-detail-width:36%; --pa-row-height:35px; }
+    #pa-debug-mobile .pa-window.pa-narrow { max-width:430px; }
+    #pa-debug-mobile .pa-chrome { height:43px; display:flex; gap:12px; align-items:center; padding:0 108px 0 16px; background:var(--pa-sub); border-bottom:1px solid var(--pa-line); white-space:nowrap; }
+    #pa-debug-mobile .pa-logo { color:var(--pa-purple); display:flex; }
+    #pa-debug-mobile .pa-brand { font-size:12px; font-weight:500; }
+    #pa-debug-mobile .pa-chrome-divider { color:var(--pa-muted); }
+    #pa-debug-mobile .pa-prototype { color:var(--pa-muted); font-size:11px; margin-left:auto; }
+    #pa-debug-mobile .pa-header { padding:18px 20px 14px; border-bottom:1px solid var(--pa-line); }
+    #pa-debug-mobile .pa-title-row { display:flex; align-items:center; justify-content:space-between; gap:14px; }
+    #pa-debug-mobile .pa-heading { display:flex; align-items:center; gap:9px; font-size:19px; font-weight:500; letter-spacing:-.4px; margin:0; }
+    #pa-debug-mobile .pa-heading svg { width:20px; height:20px; }
+    #pa-debug-mobile .pa-header-actions { display:flex; align-items:center; gap:6px; }
+    #pa-debug-mobile .pa-button { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:31px; padding:5px 9px; background:var(--pa-bg); border:1px solid var(--pa-line); border-radius:6px; white-space:nowrap; }
+    #pa-debug-mobile .pa-button:hover { background:var(--pa-hover); }
+    #pa-debug-mobile .pa-button.pa-primary { color:var(--pa-purple); background:var(--pa-purple-bg); border-color:transparent; }
+    #pa-debug-mobile .pa-button.pa-quiet { border-color:transparent; background:transparent; color:var(--pa-muted); }
+    #pa-debug-mobile .pa-button.pa-quiet:hover { background:var(--pa-hover); color:var(--pa-text); }
+    #pa-debug-mobile .pa-run-picker { position:relative; min-width:0; margin-top:11px; }
+    #pa-debug-mobile .pa-run-trigger { display:flex; gap:7px; align-items:center; background:transparent; border:0; padding:0; text-align:left; font-weight:500; max-width:100%; }
+    #pa-debug-mobile .pa-run-trigger span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #pa-debug-mobile .pa-run-menu { position:absolute; top:30px; left:0; width:min(440px,calc(100cqw - 42px)); z-index:30; background:var(--pa-bg); box-shadow:0 8px 30px var(--pa-shadow); border:1px solid var(--pa-line); border-radius:9px; padding:6px; }
+    #pa-debug-mobile .pa-menu-label { padding:6px 9px; font-size:11px; color:var(--pa-muted); }
+    #pa-debug-mobile .pa-run-option { display:flex; width:100%; flex-direction:column; gap:4px; align-items:flex-start; padding:10px; border:0; border-radius:5px; background:transparent; text-align:left; }
+    #pa-debug-mobile .pa-run-option:hover, #pa-debug-mobile .pa-run-option[aria-current="true"] { background:var(--pa-purple-bg); }
+    #pa-debug-mobile .pa-run-option small { color:var(--pa-muted); font-size:11px; }
+    #pa-debug-mobile .pa-meta { display:flex; align-items:center; flex-wrap:wrap; gap:8px 17px; margin-top:10px; font-size:12px; color:var(--pa-muted); font-variant-numeric:tabular-nums; }
+    #pa-debug-mobile .pa-meta b { font-weight:500; color:var(--pa-text); }
+    #pa-debug-mobile .pa-status { display:inline-flex; align-items:center; gap:5px; color:var(--pa-green); }
+    #pa-debug-mobile .pa-status svg { width:13px; height:13px; }
+    #pa-debug-mobile .pa-meta-action { border:0; padding:0; background:transparent; color:var(--pa-amber); display:flex; align-items:center; gap:5px; }
+    #pa-debug-mobile .pa-body { display:grid; grid-template-columns:minmax(0,1fr) 6px minmax(290px,var(--pa-detail-width)); height:576px; min-height:0; }
+    #pa-debug-mobile .pa-trace { min-width:0; display:flex; flex-direction:column; overflow:hidden; }
+    #pa-debug-mobile .pa-tools { padding:10px 12px; display:flex; gap:7px; align-items:center; border-bottom:1px solid var(--pa-line); min-height:54px; }
+    #pa-debug-mobile .pa-search { display:flex; flex:1; align-items:center; gap:7px; border:1px solid var(--pa-line); border-radius:6px; padding:5px 8px; min-width:70px; background:var(--pa-sub); color:var(--pa-muted); }
+    #pa-debug-mobile .pa-search input { min-width:0; width:100%; border:0; background:transparent; outline-offset:5px; font-size:12px; padding:0; }
+    #pa-debug-mobile .pa-search input::placeholder { color:var(--pa-muted); }
+    #pa-debug-mobile .pa-icon-button { border:0; background:transparent; padding:6px; display:flex; align-items:center; justify-content:center; min-width:29px; min-height:29px; border-radius:5px; color:var(--pa-muted); }
+    #pa-debug-mobile .pa-icon-button:hover { background:var(--pa-hover); color:var(--pa-text); }
+    #pa-debug-mobile .pa-trace-info { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 13px; min-height:33px; border-bottom:1px solid var(--pa-line); font-size:11px; color:var(--pa-muted); }
+    #pa-debug-mobile .pa-follow { color:var(--pa-purple); background:transparent; border:0; display:flex; align-items:center; gap:5px; padding:0; white-space:nowrap; font-size:11px; }
+    #pa-debug-mobile .pa-follow svg { width:12px; height:12px; }
+    #pa-debug-mobile .pa-tree-scroll { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:var(--pa-line) transparent; }
+    #pa-debug-mobile .pa-columns, #pa-debug-mobile .pa-tree-row { display:grid; grid-template-columns:minmax(164px,1.25fr) minmax(85px,.85fr) 57px 30px; align-items:center; padding-right:10px; }
+    #pa-debug-mobile .pa-columns { position:sticky; top:0; z-index:4; height:33px; background:var(--pa-sub); border-bottom:1px solid var(--pa-line); color:var(--pa-muted); font-size:11px; }
+    #pa-debug-mobile .pa-columns>span:first-child { padding-left:14px; }
+    #pa-debug-mobile .pa-ticks { display:flex; justify-content:space-between; font-variant-numeric:tabular-nums; }
+    #pa-debug-mobile .pa-right { text-align:right; }
+    #pa-debug-mobile .pa-tree-row { min-height:var(--pa-row-height); position:relative; border-bottom:1px solid color-mix(in srgb,var(--pa-line) 45%,transparent); }
+    #pa-debug-mobile .pa-tree-row:hover { background:var(--pa-sub); }
+    #pa-debug-mobile .pa-tree-row[data-selected="true"] { background:var(--pa-purple-bg); }
+    #pa-debug-mobile .pa-tree-row[data-selected="true"]:before { content:""; position:absolute; inset:0 auto 0 0; width:3px; background:var(--pa-purple); }
+    #pa-debug-mobile .pa-tree-row.pa-group { background:color-mix(in srgb,var(--pa-sub) 60%,var(--pa-bg)); }
+    #pa-debug-mobile .pa-tree-row.pa-group[data-selected="true"] { background:var(--pa-purple-bg); }
+    #pa-debug-mobile .pa-node-label { display:flex; min-width:0; align-items:center; padding-left:calc(5px + var(--pa-depth) * 13px); }
+    #pa-debug-mobile .pa-fold { width:22px; height:28px; flex:none; padding:4px; border:0; border-radius:4px; display:flex; align-items:center; justify-content:center; background:transparent; color:var(--pa-muted); }
+    #pa-debug-mobile .pa-fold:hover { background:var(--pa-hover); }
+    #pa-debug-mobile .pa-fold-spacer { width:22px; flex:none; }
+    #pa-debug-mobile .pa-node-select { display:flex; align-items:center; gap:7px; min-width:0; width:100%; border:0; background:transparent; padding:8px 5px 8px 0; text-align:left; }
+    #pa-debug-mobile .pa-node-icon { display:flex; color:var(--pa-muted); flex:none; }
+    #pa-debug-mobile .pa-node-icon[data-kind="model"], #pa-debug-mobile .pa-node-icon[data-kind="attempt"] { color:var(--pa-purple); }
+    #pa-debug-mobile .pa-node-icon[data-kind="tool"] { color:var(--pa-green); }
+    #pa-debug-mobile .pa-node-title { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+    #pa-debug-mobile .pa-group .pa-node-title { font-weight:500; }
+    #pa-debug-mobile .pa-match { text-decoration:underline; text-decoration-color:var(--pa-purple); text-underline-offset:3px; }
+    #pa-debug-mobile .pa-lane { position:relative; height:var(--pa-row-height); width:100%; padding:0; border:0; background:repeating-linear-gradient(to right,var(--pa-line) 0,var(--pa-line) 1px,transparent 1px,transparent 33.333%); }
+    #pa-debug-mobile .pa-bar { position:absolute; top:calc(50% - 3px); height:6px; min-width:2px; border-radius:2px; background:var(--pa-purple); opacity:.66; }
+    #pa-debug-mobile .pa-bar.pa-bar-group { height:3px; top:calc(50% - 1.5px); background:var(--pa-muted); opacity:.4; }
+    #pa-debug-mobile .pa-bar.pa-bar-tool { background:var(--pa-green); }
+    #pa-debug-mobile .pa-bar.pa-bar-error { background:var(--pa-red); opacity:.8; }
+    #pa-debug-mobile .pa-bar.pa-bar-wait { background:var(--pa-amber); }
+    #pa-debug-mobile .pa-bar.pa-bar-live { opacity:1; }
+    #pa-debug-mobile .pa-unknown { position:absolute; left:8px; top:10px; font-size:11px; color:var(--pa-muted); }
+    #pa-debug-mobile .pa-duration { text-align:right; color:var(--pa-muted); font-size:11px; font-variant-numeric:tabular-nums; padding-right:2px; }
+    #pa-debug-mobile .pa-node-state { display:flex; justify-content:flex-end; color:var(--pa-green); }
+    #pa-debug-mobile .pa-node-state svg { width:12px; height:12px; }
+    #pa-debug-mobile .pa-node-state.pa-error { color:var(--pa-red); }
+    #pa-debug-mobile .pa-node-state.pa-running { color:var(--pa-purple); }
+    #pa-debug-mobile .pa-node-state.pa-gap, #pa-debug-mobile .pa-node-state.pa-interrupted { color:var(--pa-amber); }
+    #pa-debug-mobile .pa-empty { padding:45px 20px; text-align:center; color:var(--pa-muted); }
+    #pa-debug-mobile .pa-trace-footer { display:flex; gap:7px; align-items:center; min-height:33px; padding:7px 13px; font-size:11px; color:var(--pa-muted); background:var(--pa-sub); border-top:1px solid var(--pa-line); }
+    #pa-debug-mobile .pa-trace-footer svg { width:12px; height:12px; }
+    #pa-debug-mobile .pa-divider { padding:0; border:0; background:var(--pa-sub); border-left:1px solid var(--pa-line); border-right:1px solid var(--pa-line); cursor:col-resize; position:relative; touch-action:none; }
+    #pa-debug-mobile .pa-divider:after { content:""; width:2px; height:27px; border-radius:2px; background:var(--pa-line); position:absolute; left:1px; top:46%; }
+    #pa-debug-mobile .pa-inspector { min-width:0; display:flex; flex-direction:column; background:var(--pa-bg); overflow:hidden; }
+    #pa-debug-mobile .pa-detail-head { padding:14px 17px 12px; }
+    #pa-debug-mobile .pa-breadcrumb { color:var(--pa-muted); font-size:11px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; margin-bottom:11px; }
+    #pa-debug-mobile .pa-detail-title { margin:0; display:flex; align-items:flex-start; gap:8px; font-size:17px; font-weight:500; letter-spacing:-.25px; }
+    #pa-debug-mobile .pa-detail-title svg { color:var(--pa-purple); width:19px; height:19px; margin-top:3px; }
+    #pa-debug-mobile .pa-detail-subtitle { margin:4px 0 11px 27px; color:var(--pa-muted); font-family:"JetBrains Mono","SFMono-Regular",Consolas,monospace; font-size:11px; overflow-wrap:anywhere; }
+    #pa-debug-mobile .pa-detail-meta { display:flex; gap:10px; align-items:center; font-size:11px; color:var(--pa-muted); flex-wrap:wrap; }
+    #pa-debug-mobile .pa-chip { display:inline-flex; align-items:center; gap:4px; padding:2px 6px; border-radius:4px; background:var(--pa-green-bg); color:var(--pa-green); }
+    #pa-debug-mobile .pa-chip.pa-chip-error { background:var(--pa-red-bg); color:var(--pa-red); }
+    #pa-debug-mobile .pa-chip.pa-chip-gap, #pa-debug-mobile .pa-chip.pa-chip-interrupted { background:var(--pa-amber-bg); color:var(--pa-amber); }
+    #pa-debug-mobile .pa-chip.pa-chip-running { background:var(--pa-purple-bg); color:var(--pa-purple); }
+    #pa-debug-mobile .pa-tabs { display:flex; gap:18px; padding:0 17px; border-bottom:1px solid var(--pa-line); }
+    #pa-debug-mobile .pa-tab { padding:9px 0; border:0; border-bottom:2px solid transparent; color:var(--pa-muted); background:transparent; white-space:nowrap; font-size:12px; }
+    #pa-debug-mobile .pa-tab[aria-selected="true"] { color:var(--pa-purple); border-bottom-color:var(--pa-purple); }
+    #pa-debug-mobile .pa-detail-content { min-height:0; flex:1; overflow:auto; padding:16px 17px 24px; scrollbar-width:thin; scrollbar-color:var(--pa-line) transparent; overscroll-behavior:contain; }
+    #pa-debug-mobile .pa-content-section { margin-bottom:23px; }
+    #pa-debug-mobile .pa-section-label { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 9px; color:var(--pa-muted); font-size:11px; font-weight:500; }
+    #pa-debug-mobile .pa-section-label span { font-weight:400; }
+    #pa-debug-mobile .pa-code { font-family:"JetBrains Mono","SFMono-Regular",Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; line-height:1.8; margin:0; padding:11px 12px; border-radius:6px; background:var(--pa-code); color:var(--pa-text); }
+    #pa-debug-mobile .pa-message { margin-bottom:10px; padding:10px 12px; border-radius:6px; background:var(--pa-sub); font-size:12px; }
+    #pa-debug-mobile .pa-message-role { display:block; color:var(--pa-purple); font-family:Consolas,monospace; font-size:11px; margin-bottom:6px; }
+    #pa-debug-mobile .pa-prose { font-size:12px; line-height:1.85; margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+    #pa-debug-mobile .pa-prose-link { color:var(--pa-purple); }
+    #pa-debug-mobile .pa-notice { padding:9px 10px; border-radius:6px; background:var(--pa-amber-bg); color:var(--pa-amber); font-size:11px; margin-bottom:18px; display:flex; gap:7px; align-items:flex-start; }
+    #pa-debug-mobile .pa-notice svg { margin-top:2px; flex:none; width:13px; height:13px; }
+    #pa-debug-mobile .pa-jump { display:inline-flex; align-items:center; gap:3px; border:0; padding:6px 0 0; color:inherit; background:transparent; font-size:11px; }
+    #pa-debug-mobile .pa-kv { display:flex; justify-content:space-between; gap:15px; padding:8px 0; border-bottom:1px solid var(--pa-line); font-size:12px; }
+    #pa-debug-mobile .pa-kv span:first-child { color:var(--pa-muted); }
+    #pa-debug-mobile .pa-kv span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
+    #pa-debug-mobile .pa-step { display:grid; grid-template-columns:12px 1fr auto; gap:7px; font-size:12px; padding:9px 0; align-items:center; }
+    #pa-debug-mobile .pa-step-dot { width:6px; height:6px; border-radius:50%; background:var(--pa-purple); }
+    #pa-debug-mobile .pa-step-time { color:var(--pa-muted); font-variant-numeric:tabular-nums; }
+    #pa-debug-mobile .pa-back { display:none; }
+    #pa-debug-mobile .pa-bottom { display:flex; align-items:center; justify-content:space-between; padding:7px 13px; border-top:1px solid var(--pa-line); font-size:11px; color:var(--pa-muted); background:var(--pa-sub); gap:8px; }
+    #pa-debug-mobile .pa-bottom>span { display:flex; align-items:center; gap:5px; }
+    #pa-debug-mobile .pa-bottom svg { width:12px; height:12px; }
+    #pa-debug-mobile .pa-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+    @container pa-window (max-width:720px) {
+      #pa-debug-mobile .pa-body { display:block; height:585px; }
+      #pa-debug-mobile .pa-trace { height:100%; }
+      #pa-debug-mobile .pa-divider, #pa-debug-mobile .pa-inspector { display:none; }
+      #pa-debug-mobile .pa-window.pa-show-detail .pa-trace { display:none; }
+      #pa-debug-mobile .pa-window.pa-show-detail .pa-inspector { display:flex; height:100%; }
+      #pa-debug-mobile .pa-back { display:inline-flex; margin:0 0 10px -7px; }
+      #pa-debug-mobile .pa-detail-head { padding-top:9px; }
+      #pa-debug-mobile .pa-chrome { padding-left:13px; gap:8px; }
+      #pa-debug-mobile .pa-chrome-divider, #pa-debug-mobile .pa-chrome-divider + .pa-brand { display:none; }
+      #pa-debug-mobile .pa-prototype { display:none; }
+      #pa-debug-mobile .pa-header { padding:13px 13px 12px; }
+      #pa-debug-mobile .pa-heading { font-size:17px; }
+      #pa-debug-mobile .pa-header-actions { gap:0; }
+      #pa-debug-mobile .pa-columns, #pa-debug-mobile .pa-tree-row { grid-template-columns:minmax(150px,1.3fr) minmax(60px,.7fr) 48px 22px; padding-right:7px; }
+      #pa-debug-mobile .pa-node-label { padding-left:calc(3px + var(--pa-depth) * 9px); }
+      #pa-debug-mobile .pa-fold, #pa-debug-mobile .pa-fold-spacer { width:19px; }
+      #pa-debug-mobile .pa-node-select { gap:5px; }
+      #pa-debug-mobile .pa-node-icon svg { width:13px; height:13px; }
+      #pa-debug-mobile .pa-tools { padding:9px; }
+      #pa-debug-mobile .pa-meta { gap:6px 12px; }
+      #pa-debug-mobile .pa-optional { display:none; }
+      #pa-debug-mobile .pa-bottom { flex-wrap:wrap; }
+    }
+    @container pa-window (max-width:440px) {
+      #pa-debug-mobile .pa-ticks span:nth-child(2), #pa-debug-mobile .pa-ticks span:nth-child(3) { display:none; }
+    }
+    @media (pointer:coarse) {
+      #pa-debug-mobile .pa-button, #pa-debug-mobile .pa-icon-button, #pa-debug-mobile .pa-tab { min-height:44px; }
+      #pa-debug-mobile .pa-node-select, #pa-debug-mobile .pa-fold { min-height:44px; }
+      #pa-debug-mobile .pa-search input { font-size:16px; }
+      #pa-debug-mobile .pa-fold { width:28px; }
+    }
+    #pa-debug-mobile { max-width:410px; margin:auto; --pa-mobile-height:820px; }
+    #pa-debug-mobile .pa-window { position:relative; display:flex; flex-direction:column; height:var(--pa-mobile-height); max-width:100%; border-radius:20px; }
+    #pa-debug-mobile .pa-chrome { flex:none; height:48px; padding:0 112px 0 17px; }
+    #pa-debug-mobile .pa-header { flex:none; padding:10px 14px 7px; }
+    #pa-debug-mobile .pa-heading { font-size:19px; }
+    #pa-debug-mobile .pa-run-picker { margin-top:0; }
+    #pa-debug-mobile .pa-run-trigger { min-height:44px; width:100%; justify-content:space-between; gap:8px; font-size:14px; }
+    #pa-debug-mobile .pa-run-trigger span { white-space:normal; text-wrap:pretty; }
+    #pa-debug-mobile .pa-meta { gap:4px 12px; margin-top:0; min-height:30px; }
+    #pa-debug-mobile .pa-meta-action { min-width:44px; min-height:44px; margin:-7px 0; }
+    #pa-debug-mobile .pa-body { flex:1; min-height:0; height:auto; display:flex; flex-direction:column; }
+    #pa-debug-mobile .pa-trace { flex:1; min-height:0; height:auto; }
+    #pa-debug-mobile .pa-window.pa-show-detail .pa-header { display:none; }
+    #pa-debug-mobile .pa-window.pa-show-detail .pa-inspector { flex:1; min-height:0; height:auto; display:flex; }
+    #pa-debug-mobile .pa-tools { flex:none; min-height:60px; padding:8px 10px; gap:4px; }
+    #pa-debug-mobile .pa-search { min-height:44px; padding:8px 10px; }
+    #pa-debug-mobile .pa-search input { font-size:16px; }
+    #pa-debug-mobile .pa-button, #pa-debug-mobile .pa-icon-button { min-width:44px; min-height:44px; }
+    #pa-debug-mobile .pa-trace-info { min-height:27px; padding:1px 14px 7px; flex:none; gap:8px; }
+    #pa-debug-mobile .pa-integrity { white-space:nowrap; color:var(--pa-green); }
+    #pa-debug-mobile .pa-columns { height:45px; grid-template-columns:minmax(0,1fr) 62px 27px; grid-template-rows:22px 22px; padding-right:13px; }
+    #pa-debug-mobile .pa-columns>span:first-child { grid-column:1; grid-row:1; }
+    #pa-debug-mobile .pa-columns>.pa-right { grid-column:2; grid-row:1; }
+    #pa-debug-mobile .pa-ticks { grid-column:1/-1; grid-row:2; margin-left:54px; }
+    #pa-debug-mobile .pa-ticks span:nth-child(2), #pa-debug-mobile .pa-ticks span:nth-child(3) { display:block; }
+    #pa-debug-mobile .pa-tree-row { grid-template-columns:minmax(0,1fr) 62px 27px; grid-template-rows:minmax(44px,auto) 16px; min-height:66px; padding:3px 13px 3px 0; }
+    #pa-debug-mobile .pa-node-label { grid-column:1; grid-row:1; padding-left:calc(2px + var(--pa-depth) * 7px); }
+    #pa-debug-mobile .pa-fold, #pa-debug-mobile .pa-fold-spacer { width:44px; height:44px; flex:none; }
+    #pa-debug-mobile .pa-fold svg { width:16px; height:16px; }
+    #pa-debug-mobile .pa-fold-spacer { width:26px; }
+    #pa-debug-mobile .pa-node-select { min-height:44px; gap:6px; padding:3px 4px 3px 0; }
+    #pa-debug-mobile .pa-node-title { font-size:13px; white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; line-height:1.5; overflow-wrap:anywhere; }
+    #pa-debug-mobile .pa-node-icon svg { width:15px; height:15px; }
+    #pa-debug-mobile .pa-duration { grid-column:2; grid-row:1; font-size:12px; }
+    #pa-debug-mobile .pa-node-state { grid-column:3; grid-row:1; }
+    #pa-debug-mobile .pa-node-state svg { width:15px; height:15px; }
+    #pa-debug-mobile .pa-lane { grid-column:1/-1; grid-row:2; margin-left:54px; width:calc(100% - 54px); height:16px; }
+    #pa-debug-mobile .pa-unknown { top:0; left:0; }
+    #pa-debug-mobile .pa-bar { height:4px; top:6px; }
+    #pa-debug-mobile .pa-bar.pa-bar-group { height:3px; top:6px; }
+    #pa-debug-mobile .pa-trace-footer { flex:none; min-height:57px; padding:5px 10px; display:flex; justify-content:space-between; background:var(--pa-bg); }
+    #pa-debug-mobile .pa-follow { min-height:44px; min-width:100px; padding:6px 11px; border-radius:7px; background:var(--pa-purple-bg); font-size:12px; justify-content:center; }
+    #pa-debug-mobile .pa-turns { display:flex; align-items:center; gap:6px; min-height:44px; min-width:106px; border:0; padding:6px 8px; background:transparent; border-radius:6px; font-size:12px; }
+    #pa-debug-mobile .pa-turns svg { width:17px; height:17px; }
+    #pa-debug-mobile .pa-turns span { color:var(--pa-muted); }
+    #pa-debug-mobile .pa-detail-head { flex:none; padding:0 16px 13px; }
+    #pa-debug-mobile .pa-back { min-height:44px; padding-left:0; margin:2px 0 9px; font-size:13px; }
+    #pa-debug-mobile .pa-breadcrumb { margin-bottom:9px; white-space:normal; font-size:12px; }
+    #pa-debug-mobile .pa-detail-title { font-size:18px; line-height:1.5; }
+    #pa-debug-mobile .pa-detail-subtitle { display:none; }
+    #pa-debug-mobile .pa-detail-meta { margin-top:9px; gap:8px 12px; font-size:12px; }
+    #pa-debug-mobile .pa-tabs { flex:none; gap:0; padding:0 12px; }
+    #pa-debug-mobile .pa-tab { flex:1; min-height:46px; font-size:13px; }
+    #pa-debug-mobile .pa-detail-content { padding:17px 16px 25px; }
+    #pa-debug-mobile .pa-section-label { font-size:12px; }
+    #pa-debug-mobile .pa-prose, #pa-debug-mobile .pa-message { font-size:14px; }
+    #pa-debug-mobile .pa-code { font-size:12px; line-height:1.85; }
+    #pa-debug-mobile .pa-message-role { font-size:12px; }
+    #pa-debug-mobile .pa-detail-content summary { min-height:44px; align-content:center; }
+    #pa-debug-mobile .pa-notice { font-size:12px; }
+    #pa-debug-mobile .pa-jump { min-height:44px; font-size:12px; }
+    #pa-debug-mobile .pa-node-nav { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; min-height:57px; padding:5px 9px; gap:8px; border-top:1px solid var(--pa-line); flex:none; }
+    #pa-debug-mobile .pa-node-nav button { min-height:44px; background:transparent; border:0; border-radius:6px; display:flex; align-items:center; justify-content:center; gap:5px; font-size:12px; }
+    #pa-debug-mobile .pa-node-nav span { font-size:11px; color:var(--pa-muted); }
+    #pa-debug-mobile .pa-bottom { flex:none; justify-content:center; font-size:11px; padding:4px 10px 13px; min-height:32px; position:relative; }
+    #pa-debug-mobile .pa-bottom:after { content:""; position:absolute; bottom:4px; width:90px; height:3px; border-radius:4px; background:var(--pa-line); }
+    #pa-debug-mobile #pa-bottom-state { display:none; }
+    #pa-debug-mobile .pa-sheet-layer { position:absolute; inset:0; z-index:50; }
+    #pa-debug-mobile .pa-scrim { position:absolute; inset:0; width:100%; height:100%; border:0; background:light-dark(#15131e55,#00000088); }
+    #pa-debug-mobile .pa-sheet { position:absolute; bottom:0; left:0; right:0; max-height:78%; display:flex; flex-direction:column; background:var(--pa-bg); border:1px solid var(--pa-line); border-radius:18px 18px 0 0; box-shadow:0 -4px 24px var(--pa-shadow); padding-bottom:22px; }
+    #pa-debug-mobile .pa-sheet-heading { flex:none; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 12px 4px 18px; }
+    #pa-debug-mobile .pa-sheet-heading h3 { font-size:17px; font-weight:500; margin:0; }
+    #pa-debug-mobile .pa-sheet-list { flex:1; min-height:0; overflow:auto; padding:4px 10px 14px; overscroll-behavior:contain; }
+    #pa-debug-mobile .pa-sheet-item { display:flex; width:100%; flex-direction:column; align-items:flex-start; text-align:left; gap:6px; min-height:70px; padding:12px 10px; background:transparent; border:0; border-bottom:1px solid var(--pa-line); border-radius:6px; font-size:14px; }
+    #pa-debug-mobile .pa-sheet-item small { font-size:12px; color:var(--pa-muted); }
+    #pa-debug-mobile .pa-sheet-item[aria-current="true"] { background:var(--pa-purple-bg); }
+    #pa-debug-mobile .pa-sheet-note { padding:0 18px 7px; color:var(--pa-muted); font-size:12px; }
+    #pa-debug-mobile button:hover { background-color:var(--pa-hover); }
+    #pa-debug-mobile .pa-scrim:hover { background:light-dark(#15131e55,#00000088); }
+    @media (max-width:360px) { #pa-debug-mobile .pa-ticks span:nth-child(2), #pa-debug-mobile .pa-ticks span:nth-child(3) { display:none; } #pa-debug-mobile .pa-meta { gap:4px 9px; } }
+  </style>
+  <div class="pa-window" aria-label="Agent Debug 手机界面">
+    <div class="pa-chrome"><span class="pa-logo"><i data-lucide="orbit" aria-hidden="true"></i></span><span class="pa-brand">PA · Agent Debug</span></div>
+    <header class="pa-header">
+      <div class="pa-title-row"><h2 class="pa-heading"><i data-lucide="git-pull-request" aria-hidden="true"></i>运行轨迹</h2><div class="pa-header-actions"><button class="pa-button pa-quiet cursor-interaction" id="pa-simulate" type="button" data-tooltip="按示例时序逐步显示事件，不执行真实 Agent"><i data-lucide="play" aria-hidden="true"></i><span>模拟实时</span></button></div></div>
+      <div class="pa-run-picker"><button id="pa-run-trigger" class="pa-run-trigger cursor-interaction" type="button" aria-expanded="false" aria-controls="pa-mobile-modal"><span id="pa-run-name">关联本周笔记中的共同主题</span><i data-lucide="chevron-down" aria-hidden="true"></i></button></div>
+      <div class="pa-meta" id="pa-summary"></div>
+    </header>
+    <div class="pa-body">
+      <section class="pa-trace" aria-label="完整运行树与时间轴">
+        <div class="pa-tools"><label class="pa-search"><i data-lucide="search" aria-hidden="true"></i><input id="pa-search" type="search" placeholder="搜索节点、工具、阶段…" aria-label="搜索运行节点" autocomplete="off"></label><button id="pa-expand" class="pa-icon-button cursor-interaction" type="button" aria-label="展开全部节点" data-tooltip="展开全部"><i data-lucide="list-tree" aria-hidden="true"></i></button><button id="pa-collapse" class="pa-icon-button cursor-interaction" type="button" aria-label="收起至 Turn" data-tooltip="收起至 Turn"><i data-lucide="list" aria-hidden="true"></i></button></div>
+        <div class="pa-trace-info"><span id="pa-count"></span><span id="pa-integrity" class="pa-integrity">完整记录</span></div>
+        <div class="pa-tree-scroll" id="pa-tree-scroll"><div class="pa-columns"><span>节点</span><div class="pa-ticks" id="pa-ticks"></div><span class="pa-right">耗时</span><span></span></div><div id="pa-tree" role="tree" aria-label="Agent 运行节点"></div></div>
+        <nav class="pa-trace-footer" id="pa-trace-footer" aria-label="轨迹导航"><button id="pa-turns" class="pa-turns cursor-interaction" type="button" aria-controls="pa-mobile-modal"><i data-lucide="layers" aria-hidden="true"></i>轮次导航<span id="pa-turn-count">3</span></button><button id="pa-follow" class="pa-follow cursor-interaction" type="button"><i data-lucide="locate-fixed" aria-hidden="true"></i><span>定位最新</span></button></nav>
+      </section>
+      <button class="pa-divider" id="pa-divider" type="button" aria-label="调整详情宽度，使用左右方向键" data-tooltip="拖动调整宽度"></button>
+      <aside class="pa-inspector" aria-label="所选节点详情">
+        <div class="pa-detail-head"><button id="pa-back" type="button" class="pa-button pa-quiet pa-back cursor-interaction"><i data-lucide="arrow-left" aria-hidden="true"></i>返回运行轨迹</button><div class="pa-breadcrumb" id="pa-breadcrumb"></div><h3 class="pa-detail-title" id="pa-detail-title"></h3><div class="pa-detail-subtitle" id="pa-detail-subtitle"></div><div class="pa-detail-meta" id="pa-detail-meta"></div></div>
+        <div class="pa-tabs" role="tablist" aria-label="节点详情分类"><button class="pa-tab cursor-interaction" id="pa-tab-io" data-tab="io" role="tab" aria-selected="true" aria-controls="pa-detail-content" type="button">输入 / 输出</button><button class="pa-tab cursor-interaction" id="pa-tab-timing" data-tab="timing" role="tab" aria-selected="false" aria-controls="pa-detail-content" type="button">时间与用量</button><button class="pa-tab cursor-interaction" id="pa-tab-raw" data-tab="raw" role="tab" aria-selected="false" aria-controls="pa-detail-content" type="button">原始记录</button></div>
+        <div class="pa-detail-content" id="pa-detail-content" role="tabpanel" aria-labelledby="pa-tab-io"></div>
+        <nav class="pa-node-nav" aria-label="按当前轨迹顺序浏览节点"><button id="pa-prev-node" class="cursor-interaction" type="button"><i data-lucide="chevron-left" aria-hidden="true"></i>上一节点</button><span id="pa-node-position"></span><button id="pa-next-node" class="cursor-interaction" type="button">下一节点<i data-lucide="chevron-right" aria-hidden="true"></i></button></nav>
+      </aside>
+    </div>
+    <footer class="pa-bottom"><span><i data-lucide="flask-conical" aria-hidden="true"></i>移动端设计预览 · 示例数据</span><span id="pa-bottom-state">本机历史 · 不执行真实任务</span></footer>
+    <div id="pa-mobile-modal" class="pa-sheet-layer" hidden><button type="button" id="pa-sheet-scrim" class="pa-scrim cursor-interaction" aria-label="关闭弹层"></button><section class="pa-sheet" role="dialog" aria-modal="true" aria-labelledby="pa-sheet-title"><div class="pa-sheet-heading"><h3 id="pa-sheet-title">轮次导航</h3><button type="button" id="pa-sheet-close" class="pa-icon-button cursor-interaction" aria-label="关闭弹层"><i data-lucide="x" aria-hidden="true"></i></button></div><div id="pa-sheet-note" class="pa-sheet-note"></div><div id="pa-sheet-list" class="pa-sheet-list"></div></section></div>
+    <div id="pa-announcement" class="pa-sr" aria-live="polite"></div>
+  </div>
+  <script>
+  (() => {
+    const root = document.getElementById('pa-debug-mobile');
+    const $ = selector => root.querySelector(selector);
+    const windowEl = $('.pa-window');
+    const tree = $('#pa-tree');
+    const treeScroll = $('#pa-tree-scroll');
+    const content = $('#pa-detail-content');
+    const create = (tag, className, text) => { const el = document.createElement(tag); if (className) el.className = className; if (text !== undefined) el.textContent = text; return el; };
+    const icon = name => { const el = create('i'); el.dataset.lucide = name; el.setAttribute('aria-hidden', 'true'); return el; };
+    const icons = () => { if (globalThis.lucide) globalThis.lucide.createIcons({attrs:{width:15,height:15}}); };
+    const labels = {run:'运行',turn:'Turn',phase:'阶段',model:'模型调用',tool:'工具',attempt:'请求尝试',wait:'等待'};
+    const glyphs = {run:'bot',turn:'layers',phase:'scan-line',model:'sparkles',tool:'wrench',attempt:'corner-down-right',wait:'timer'};
+    const stateLabels = {success:'已完成',error:'失败',running:'运行中',gap:'记录缺口',interrupted:'已中断'};
+    const fmt = value => value === null || value === undefined ? '未知' : value < 1 ? `${Math.round(value * 1000)} ms` : `${value.toFixed(1)} s`;
+    const node = (id,parent,name,kind,start,end,extra={}) => ({id,parent,name,kind,start,end,status:'success',...extra});
+    const standard = [
+      node('run',null,'Agent 运行','run',0,24.8,{input:'关联本周笔记中的共同主题，并给出原文依据。',output:'已完成 3 轮处理，交付 3 个共同主题与笔记引用。'}),
+      node('prep','run','接收与准备','phase',0,.6,{output:'请求已接收；输入快照就绪。'}),
+      node('receive','prep','接收用户请求','phase',0,.04,{output:'用户请求已加入本次运行。'}),
+      node('snapshot','prep','固定输入快照','phase',.04,.6,{output:'本轮使用的会话、工具与模型配置快照已固定。'}),
+      node('t1','run','Turn 1 · 查找线索','turn',.6,6.6,{output:'找到 4 篇相关笔记，进入正文读取。'}),
+      node('context1','t1','准备上下文','phase',.6,.9,{output:'组合当前消息、会话上下文和可用工具描述。'}),
+      node('model1','t1','决定检索方向','model',.9,3.4,{code:'chat.completions · tool selection',tokens:[1320,76],output:'调用 search_notes 与 get_current_note_context，收集可用材料。'}),
+      node('batch1','t1','工具执行 · 并行 2 项','phase',3.4,6.6,{output:'两项工具独立执行；本阶段在全部结果返回后结束。'}),
+      node('search','batch1','search_notes','tool',3.4,6.1,{input:{query:'本周 项目决策 低负担 信任',limit:6},output:{matches:[{path:'示例/低负担回顾.md',score:.91},{path:'示例/渐进式信任.md',score:.87},{path:'示例/产品周记.md',score:.82},{path:'示例/可解释交互.md',score:.79}]}}),
+      node('current','batch1','get_current_note_context','tool',3.4,4.3,{input:{mode:'selection-or-nearby'},output:'当前笔记：示例/产品周记.md\n选区：降低记录与回顾成本，让功能在需要的时候自然出现。'}),
+      node('t2','run','Turn 2 · 阅读与综合','turn',6.6,19.8,{output:'已读取笔记正文，模型请求首次失败后重试成功。'}),
+      node('batch2','t2','工具执行 · 并行 2 项','phase',6.6,8.2,{output:'两篇笔记已读取。'}),
+      node('read1','batch2','read_note · 低负担回顾','tool',6.6,8.2,{input:{path:'示例/低负担回顾.md'},output:'# 低负担回顾\n\n回顾应该像想起来了，而不是又多了一组待处理。\n\n让来源随时可以查看，让多数提示可以安静地忽略。'}),
+      node('read2','batch2','read_note · 渐进式信任','tool',6.6,7.8,{input:{path:'示例/渐进式信任.md'},output:'# 渐进式信任\n\n能力需要通过可检查的证据逐步获得信任。\n对于会改变笔记或产生外部影响的动作，先给出明确预览。'}),
+      node('context2','t2','整理工具结果与引用','phase',8.2,8.7,{output:'将两篇正文与检索摘要加入下一次模型输入。'}),
+      node('model2','t2','综合笔记，提炼共同主题','model',8.7,19.8,{code:'chat.completions · answer synthesis',tokens:[3246,612],retry:true,output:'这些笔记有三个相互关联的主题：\n\n1. 降低回顾负担\n让回顾发生在自然的间隙，提示可以被忽略。\n来源：[[示例/低负担回顾]]\n\n2. 用可检查的证据建立信任\n保留来源、执行记录与明确的结果。\n来源：[[示例/渐进式信任]]\n\n3. 让能力按需要出现\n界面优先保持安静，在用户深入时提供更多细节。\n来源：[[示例/产品周记]]'}),
+      node('attempt1','model2','请求 1 · 服务暂时不可用','attempt',8.7,10.1,{liveName:'请求 1 · 等待响应',status:'error',code:'provider request · attempt 1',error:'HTTP 503 · Service temporarily unavailable',output:'本次请求未返回模型正文。后续将按已有策略重试。'}),
+      node('backoff','model2','退避等待','wait',10.1,11.3,{output:'等待 1.2 秒后发起第 2 次请求。'}),
+      node('attempt2','model2','请求 2 · 成功','attempt',11.3,19.8,{liveName:'请求 2 · 接收响应',code:'provider request · attempt 2',tokens:[3246,612],milestones:[['发送请求',11.3],['收到首个文本',12.0],['Provider 完成',19.6],['消费结束',19.8]],output:'完整文本已返回；finish_reason = stop。'}),
+      node('t3','run','Turn 3 · 校验与交付','turn',19.8,24.6,{output:'引用校验通过，最终回复已交付。'}),
+      node('model3','t3','整理最终回答','model',19.8,24.2,{tokens:[1870,286],output:'已将共同主题、解释与对应引用整理为最终回复。'}),
+      node('verify','t3','检查引用与完成条件','phase',24.2,24.6,{output:'3 个主题均包含来源；没有待执行的写入操作。'}),
+      node('deliver','run','回复已交付','phase',24.6,24.8,{liveName:'提交回复',output:'最后一段正文已提交到 Chat，本次 Agent 运行完成。'})
+    ];
+    const longRun = [node('run',null,'Agent 运行','run',0,84,{output:'12 个 Turn 已完成，全部 74 个节点保存在当前示例中。'})];
+    const tasks = ['查找线索','读取原文','补充关联','核对引用','检查冲突','补充上下文','关联主题','读取补充笔记','整理证据','形成结论','核对遗漏','交付回复'];
+    for (let i=1;i<=12;i++) {
+      const s=(i-1)*7;
+      longRun.push(node(`t${i}`,'run',`Turn ${i} · ${tasks[i-1]}`,'turn',s,s+7,{output:`第 ${i} 轮完成，结果已交给下一阶段。`}),node(`c${i}`,`t${i}`,'准备上下文','phase',s,s+.6,{output:'上下文准备完成。'}),node(`m${i}`,`t${i}`,'模型调用','model',s+.6,s+3.7,{tokens:[900+i*84,88+i*8],output:`第 ${i} 轮：${tasks[i-1]}。`}),node(`b${i}`,`t${i}`,'工具执行 · 并行 2 项','phase',s+3.7,s+6.6,{output:'两项工具已返回。'}),node(`a${i}`,`b${i}`,'search_notes','tool',s+3.7,s+6.6,{input:{query:tasks[i-1]},output:`返回与“${tasks[i-1]}”有关的笔记摘要。`}),node(`r${i}`,`b${i}`,'read_note','tool',s+3.7,s+5.9,{input:{path:`示例/主题-${i}.md`},output:`第 ${i} 篇示例笔记正文。`}));
+    }
+    longRun.push(node('deliver','run','回复已交付','phase',83.7,84,{liveName:'提交回复',output:'完整运行结束；可向上查看全部 Turn。'}));
+    const gapRun = [node('run',null,'Agent 运行','run',0,16.5,{status:'interrupted',output:'任务已中断。采集中途开启，仅保存了部分运行内容。'}),node('unrecorded','run','开始阶段未记录','phase',null,null,{status:'gap',output:'Debug 于运行开始 4.2 秒后开启，之前的节点与正文未采集。'}),node('t1','run','Turn 1 · 检索材料','turn',null,6.1,{status:'gap',output:'本轮起点未记录；已保存后半段的工具返回。'}),node('partial','t1','search_notes','tool',null,6.1,{status:'gap',input:null,output:'已接收到 3 项检索结果。请求参数与准确起点未记录。'}),node('t2','run','Turn 2 · 读取与整理','turn',6.1,16.5,{status:'interrupted',output:'运行在输出完成前中断。'}),node('read','t2','read_note','tool',6.1,8.0,{input:{path:'示例/产品周记.md'},output:'降低记录与回顾成本，让功能在需要的时候自然出现。'}),node('partial-model','t2','整理回答 · 输出未完成','model',8,16.5,{status:'interrupted',output:'这些笔记反复提到减少管理负担，以及通过明确的来源建立信任……'}),node('interrupt','run','用户停止了任务','phase',16.5,16.5,{status:'interrupted',output:'收到取消信号；当前运行结束，已采集内容保留。'})];
+    const runs = [{id:'standard',name:'关联本周笔记中的共同主题',time:'18:42',duration:24.8,nodes:standard,turns:3,events:286,selected:'model2',collapsed:['prep','t1','batch2','t3'],complete:true},{id:'long',name:'长运行 · 梳理项目决策的演变',time:'18:35',duration:84,nodes:longRun,turns:12,events:1248,selected:'m1',collapsed:longRun.filter(n=>n.kind==='turn'&&n.id!=='t1').map(n=>n.id),complete:true},{id:'gap',name:'部分记录 · 检查笔记之间的关联',time:'18:20',duration:16.5,nodes:gapRun,turns:2,events:61,selected:'partial-model',collapsed:[],complete:false}];
+    for(const item of runs) item.collapsed=item.nodes.filter(n=>n.kind!=='run'&&item.nodes.some(child=>child.parent===n.id)).map(n=>n.id);
+    let run = runs[0];
+    let selected = run.selected, collapsed = new Set(run.collapsed), tab='io', query='', following=false, clock=run.duration, simulation='idle', timer=null, unseen=0, lastDetailKey='';
+    const design = {width:390,height:820};
+    let returnScroll=0, entryNode='', detailSequence=[], sheetTrigger=null;
+    const stateSession = Math.random().toString(36).slice(2);
+    let stateRevision=0, lastSavedRevision='';
+    const available = () => run.nodes.filter(n=>n.start===null || n.start<=clock);
+    const statusOf = n => simulation!=='idle' && n.start!==null && clock<n.end ? 'running' : n.status;
+    const nameOf = n => statusOf(n)==='running' && n.liveName ? n.liveName : n.name;
+    const durationOf = n => n.start===null || n.end===null ? null : Math.max(0,Math.min(clock,n.end)-n.start);
+    function save() {
+      if (!window.openai?.setWidgetState) return;
+      lastSavedRevision=`${stateSession}:${++stateRevision}`;
+      const snapshot={modelContent:{preview:'PA Agent Debug 移动端',run:run.name,node:run.nodes.find(n=>n.id===selected)?.name,detailTab:tab,screen:windowEl.classList.contains('pa-show-detail')?'节点详情':'运行轨迹'},privateContent:{kind:'mobile',revision:lastSavedRevision,runId:run.id,selected,tab,collapsed:[...collapsed],query,design:{...design},screen:windowEl.classList.contains('pa-show-detail')?'detail':'trace',returnScroll,entryNode,detailSequence}};
+      window.openai.setWidgetState(snapshot).catch(()=>{});
+    }
+    function restore(value) {
+      const data=value?.privateContent;
+      if(!data||data.kind!=='mobile'||!runs.some(r=>r.id===data.runId)) return false;
+      stopTimer(); run=runs.find(r=>r.id===data.runId); clock=run.duration; simulation='idle'; following=false;
+      selected=run.nodes.some(n=>n.id===data.selected)?data.selected:run.selected;
+      collapsed=new Set(Array.isArray(data.collapsed)?data.collapsed.filter(id=>run.nodes.some(n=>n.id===id)):run.collapsed);
+      tab=['io','timing','raw'].includes(data.tab)?data.tab:'io'; query=typeof data.query==='string'?data.query:'';
+      if(data.design){design.width=Math.max(320,Math.min(430,Number(data.design.width)||390));design.height=Math.max(660,Math.min(880,Number(data.design.height)||820));}
+      returnScroll=Math.max(0,Number(data.returnScroll)||0);entryNode=typeof data.entryNode==='string'?data.entryNode:selected;detailSequence=Array.isArray(data.detailSequence)?data.detailSequence.filter(id=>run.nodes.some(n=>n.id===id)):[];
+      windowEl.classList.toggle('pa-show-detail',data.screen==='detail');
+      $('#pa-search').value=query; return true;
+    }
+    function applyDesign() { root.style.maxWidth=`${design.width}px`;root.style.setProperty('--pa-mobile-height',`${design.height}px`); }
+    function parents(id) { const list=[];let n=run.nodes.find(x=>x.id===id);while(n){list.unshift(n);n=run.nodes.find(x=>x.id===n.parent);}return list; }
+    function reveal(id) { parents(id).forEach(n=>collapsed.delete(n.id)); }
+    function announce(text){$('#pa-announcement').textContent=text;}
+    function choose(id, fromUser=true) {
+      selected=id;
+      if(fromUser){if(!windowEl.classList.contains('pa-show-detail')){returnScroll=treeScroll.scrollTop;entryNode=id;detailSequence=visibleNodes().visible.map(n=>n.id);}following=false;unseen=0;windowEl.classList.add('pa-show-detail');}
+      render();
+      if(fromUser){content.scrollTop=0;announce(`已选择 ${nameOf(run.nodes.find(n=>n.id===id))}`);save();}
+    }
+    function scrollSelected() { const row=[...tree.children].find(el=>el.dataset.nodeId===selected);if(row){const top=row.getBoundingClientRect().top-treeScroll.getBoundingClientRect().top+treeScroll.scrollTop;treeScroll.scrollTop=Math.max(0,top-45);} }
+    function renderSummary(){
+      $('#pa-run-name').textContent=run.name;
+      const summary=$('#pa-summary');summary.replaceChildren();
+      const live=simulation!=='idle'&&clock<run.duration;
+      const status=create('span','pa-status');status.style.color=live?'var(--pa-purple)':run.complete?'var(--pa-green)':'var(--pa-amber)';status.append(icon(live?'radio':run.complete?'circle-check':'circle-alert'),create('span','',live?(simulation==='paused'?'模拟已暂停':'运行中 · 模拟'):run.complete?'已完成':'已中断'));summary.append(status);
+      for(const text of [fmt(clock),`${live?available().filter(n=>n.kind==='turn').length:run.turns} Turns`,`${available().length} 节点`]) summary.append(create('span','',text));
+      const time=create('span','pa-optional',`${run.time} · 示例模型`);summary.append(time);
+      if(run.id==='standard'&&clock>=10.1){const b=create('button','pa-meta-action cursor-interaction');b.type='button';b.append(icon('rotate-ccw'),create('span','','1 次重试'));b.onclick=()=>{query='';$('#pa-search').value='';reveal('attempt1');choose('attempt1');scrollSelected();};summary.append(b);}
+      if(!run.complete){const s=create('span','','部分记录');s.style.color='var(--pa-amber)';summary.append(s);}
+      $('#pa-simulate').replaceChildren(icon(simulation==='running'?'pause':'play'),create('span','',simulation==='running'?'暂停模拟':simulation==='paused'?'继续模拟':'模拟实时'));
+      $('#pa-simulate').disabled=run.id==='gap';
+      $('#pa-bottom-state').textContent=simulation==='idle'?'本机历史 · 不执行真实任务':simulation==='paused'?'示例暂停 · 不影响阅读':clock>=run.duration?'示例播放完成':'示例事件按时序推进';
+    }
+    function visibleNodes(){
+      const all=available(); const q=query.trim().toLowerCase();
+      const hits=new Set(q?all.filter(n=>`${nameOf(n)} ${labels[n.kind]} ${statusOf(n)==='error'?n.error||'':''}`.toLowerCase().includes(q)).map(n=>n.id):[]);
+      const included=new Set();if(q) for(const id of hits) parents(id).forEach(n=>included.add(n.id));
+      const visible=all.filter(n=>n.kind!=='run'&&(q?included.has(n.id):parents(n.id).slice(0,-1).every(p=>!collapsed.has(p.id))));
+      return {all,visible,hits,q};
+    }
+    function renderTree(){
+      if(windowEl.classList.contains('pa-show-detail'))return;
+      const top=treeScroll.scrollTop;const focused=document.activeElement?.closest?.('[data-node-id]')?.dataset.nodeId;
+      const data=visibleNodes();tree.replaceChildren();
+      for(const n of data.visible){
+        const isParent=data.all.some(child=>child.parent===n.id); const depth=Math.max(0,parents(n.id).length-2); const status=statusOf(n);
+        const row=create('div',`pa-tree-row${n.kind==='turn'||n.kind==='run'?' pa-group':''}`);row.dataset.nodeId=n.id;row.dataset.selected=String(n.id===selected);row.style.setProperty('--pa-depth',depth);row.setAttribute('role','treeitem');row.setAttribute('aria-level',depth+1);row.setAttribute('aria-selected',String(n.id===selected));
+        if(isParent) row.setAttribute('aria-expanded',String(data.q||!collapsed.has(n.id)));
+        const label=create('div','pa-node-label');
+        if(isParent){const fold=create('button','pa-fold cursor-interaction');fold.type='button';fold.dataset.fold=n.id;fold.setAttribute('aria-label',`${collapsed.has(n.id)?'展开':'收起'} ${n.name}`);fold.append(icon(data.q||!collapsed.has(n.id)?'chevron-down':'chevron-right'));if(data.q)fold.disabled=true;label.append(fold);}else label.append(create('span','pa-fold-spacer'));
+        const select=create('button','pa-node-select cursor-interaction');select.type='button';select.dataset.select=n.id;const ni=create('span','pa-node-icon');ni.dataset.kind=n.kind;ni.append(icon(glyphs[n.kind]));select.append(ni,create('span',`pa-node-title${data.hits.has(n.id)?' pa-match':''}`,nameOf(n)));label.append(select);row.append(label);
+        const lane=create('div','pa-lane');lane.setAttribute('role','img');lane.setAttribute('aria-label',`${nameOf(n)}，${n.start===null?'起点未知':`从 ${n.start.toFixed(1)} 秒开始`}，${stateLabels[status]}，耗时 ${fmt(durationOf(n))}`);
+        if(n.start===null||n.end===null)lane.append(create('span','pa-unknown','起点未知'));
+        else{const bar=create('span',`pa-bar${['run','turn','phase'].includes(n.kind)?' pa-bar-group':''}${n.kind==='tool'?' pa-bar-tool':''}${status==='error'?' pa-bar-error':''}${n.kind==='wait'?' pa-bar-wait':''}${status==='running'?' pa-bar-live':''}`);bar.style.left=`${n.start/run.duration*100}%`;bar.style.width=`${Math.max(.35,durationOf(n)/run.duration*100)}%`;lane.append(bar);}row.append(lane,create('span','pa-duration',fmt(durationOf(n))));
+        const state=create('span',`pa-node-state pa-${status}`);state.setAttribute('aria-label',stateLabels[status]);state.append(icon(status==='success'?'check':status==='error'?'x':status==='running'?'circle-dot':status==='gap'?'circle-help':'square'));row.append(state);tree.append(row);
+      }
+      if(!data.visible.length)tree.append(create('div','pa-empty','没有匹配的节点'));
+      $('#pa-count').textContent=data.q?`${data.hits.size} 个匹配 · 保留层级`:`${data.visible.length} / ${data.all.length-1} 步骤可见`;
+      $('#pa-integrity').textContent=!run.complete?'部分记录':simulation!=='idle'&&clock<run.duration?'正在采集':'完整记录';$('#pa-integrity').style.color=run.complete?'var(--pa-green)':'var(--pa-amber)';$('#pa-turn-count').textContent=available().filter(n=>n.kind==='turn').length;
+      const follow=$('#pa-follow');follow.replaceChildren(icon(following?'radio':'locate-fixed'),create('span','',following?'正在跟随':unseen?`跟随最新 · +${unseen}`:simulation!=='idle'&&clock<run.duration?'跟随最新':'定位最新'));follow.setAttribute('aria-pressed',String(following));
+      $('#pa-trace-footer').setAttribute('aria-label',following?'正在跟随当前执行节点':'轮次导航与定位最新节点');
+      treeScroll.scrollTop=top;
+      if(focused){const button=[...tree.querySelectorAll('[data-select]')].find(el=>el.dataset.select===focused);button?.focus({preventScroll:true});}
+    }
+    function section(title,extra){const s=create('section','pa-content-section');const h=create('h4','pa-section-label',title);if(extra)h.append(create('span','',extra));s.append(h);content.append(s);return s;}
+    function code(s,value){s.append(create('pre','pa-code',typeof value==='string'?value:JSON.stringify(value,null,2)));}
+    function message(s,role,text){const m=create('div','pa-message');m.append(create('span','pa-message-role',role),create('p','pa-prose',text));s.append(m);}
+    function kv(s,key,value){const row=create('div','pa-kv');row.append(create('span','',key),create('span','',value));s.append(row);return row;}
+    function notice(text,jump){const box=create('div','pa-notice');box.append(icon('info'));const body=create('div','',text);if(jump){body.append(create('br'));const b=create('button','pa-jump cursor-interaction',query?'清除搜索并查看失败请求':'查看失败的第一次请求');b.type='button';b.append(icon('arrow-up-right'));b.onclick=()=>{query='';$('#pa-search').value='';reveal(jump);detailSequence=visibleNodes().visible.map(n=>n.id);choose(jump);};body.append(b);}box.append(body);content.append(box);}
+    function renderDetails(force=false){
+      const n=run.nodes.find(x=>x.id===selected)||available()[0]; if(!n)return;
+      const status=statusOf(n);const detailKey=[run.id,n.id,tab,status,n.retry&&clock>=10.1?'retried':'',tab==='timing'?n.milestones?.filter(x=>x[1]<=clock).length||0:0].join('|');
+      if(!force&&detailKey===lastDetailKey){for(const el of root.querySelectorAll('[data-elapsed]'))el.textContent=fmt(durationOf(n));return;}
+      const preserve=lastDetailKey.startsWith(`${run.id}|${n.id}|${tab}|`);const oldScroll=content.scrollTop;
+      const disclosures=new Map([...content.querySelectorAll('[data-disclosure]')].map(el=>[el.dataset.disclosure,el.open]));
+      const focusedDisclosure=content.contains(document.activeElement)?document.activeElement.closest('[data-disclosure]')?.dataset.disclosure:null;
+      lastDetailKey=detailKey;
+      const parentTurn=parents(n.id).find(x=>x.kind==='turn');$('#pa-breadcrumb').textContent=parentTurn?`${parentTurn.name} / ${labels[n.kind]}`:`运行阶段 / ${labels[n.kind]}`;
+      $('#pa-detail-title').replaceChildren(icon(glyphs[n.kind]),create('span','',nameOf(n)));
+      $('#pa-detail-subtitle').textContent=n.code||`${labels[n.kind]} · ${run.id}/${n.id}`;
+      const meta=$('#pa-detail-meta');const elapsed=create('span','',fmt(durationOf(n)));elapsed.dataset.elapsed='true';meta.replaceChildren(create('span',`pa-chip pa-chip-${status}`,stateLabels[status]),elapsed,create('span','',labels[n.kind]));
+      if(n.tokens && status!=='running')meta.append(create('span','',`${n.tokens[0].toLocaleString()} → ${n.tokens[1].toLocaleString()} tokens`));
+      for(const button of root.querySelectorAll('[data-tab]'))button.setAttribute('aria-selected',String(button.dataset.tab===tab));
+      content.setAttribute('aria-labelledby',`pa-tab-${tab}`);content.replaceChildren();
+      if(n.retry&&clock>=10.1)notice(clock<19.8?'第一次请求失败，正在恢复。':'第一次请求失败，重试后完成。失败记录保留在子节点中。','attempt1');
+      if(n.status==='gap'||(run.id==='gap'&&n.id==='run'))notice('采集于运行中途开启。缺失内容没有被补写，未知起点不绘制确定时间条。');
+      if(tab==='raw'){
+        const s=section('节点记录','示例');code(s,{nodeId:n.id,parentId:n.parent,type:n.kind,status,startSeconds:n.start,endSeconds:status==='running'?null:n.end,durationSeconds:status==='running'?null:durationOf(n),input:n.input??(n.kind==='model'?'见调用消息':null),output:status==='running'?'接收中':n.output??null,...(n.error&&status==='error'?{error:n.error}:{}),...(n.tokens&&status!=='running'?{usage:{input:n.tokens[0],output:n.tokens[1]}}:{})});
+      }else if(tab==='timing'){
+        const s=section('时间');kv(s,'相对 Run 起点',n.start===null?'未记录':`${n.start.toFixed(2)} s`);kv(s,'结束时间',status==='running'?'尚未结束':`${n.end?.toFixed(2)??'未知'} s`);kv(s,'耗时',fmt(durationOf(n))).lastElementChild.dataset.elapsed='true';
+        if(n.milestones){const m=section('调用里程碑');for(const [label,at] of n.milestones.filter(x=>x[1]<=clock)){const row=create('div','pa-step');row.append(create('span','pa-step-dot'),create('span','',label),create('span','pa-step-time',`${at.toFixed(1)} s`));m.append(row);}}
+        if(n.tokens && status!=='running'){const u=section('Token 用量','Provider 返回');kv(u,'输入',n.tokens[0].toLocaleString());kv(u,'输出',n.tokens[1].toLocaleString());kv(u,'合计',(n.tokens[0]+n.tokens[1]).toLocaleString());if(n.retry)u.append(create('p','pa-prose','本处展示成功请求的已知用量；失败请求未返回用量。'));}else{section('Token 用量').append(create('p','pa-prose',n.kind==='tool'?'工具执行不直接产生模型 token 用量。':status==='running'?'调用尚未结束，最终用量还未返回。':'此节点没有独立的已知用量记录。'));}
+        if(n.kind==='phase'&&n.name.includes('并行'))section('并发关系').append(create('p','pa-prose','子工具在同一时间轴上重叠。本阶段耗时取实际起止，不累加并行工具的耗时。'));
+      }else{
+        if(n.error&&status==='error'){const e=section('错误');code(e,n.error);}
+        const input=section(n.kind==='tool'?'工具参数':'输入',n.kind==='model'?'调用消息 · 示例':'');
+        if(n.kind==='model'||n.kind==='attempt'){
+          message(input,'system','依据提供的笔记回答；给出可核查的引用，不补写未提供的事实。');
+          message(input,'user',run.id==='standard'?'关联本周笔记中的共同主题，并给出原文依据。':run.id==='long'?'梳理项目决策的演变，按来源核对每个阶段。':'检查这些笔记之间的关联。');
+          let contextLabel='上下文',contextText='';
+          if(run.id==='standard'&&n.id==='model1'){contextLabel='上下文 · 请求与工具描述';contextText='可用工具：search_notes、get_current_note_context。\n当前尚未获得检索结果。';}
+          else if(run.id==='standard'&&n.id==='model3'){contextLabel='上下文 · 上一轮综合结果';contextText='上一轮已生成三个共同主题与对应笔记引用。本轮核对引用，并整理最终回复。';}
+          else if(run.id==='standard'){contextLabel='上下文 · 2 篇笔记与检索摘要';contextText='[低负担回顾]\n回顾应该像想起来了，而不是又多了一组待处理。\n\n[渐进式信任]\n能力需要通过可检查的证据逐步获得信任。';}
+          else if(run.id==='long'){contextLabel='上下文 · 本轮任务';contextText=`当前任务：${parents(n.id).find(x=>x.kind==='turn')?.name||'梳理决策'}。\n此预览未展开本轮的全部历史消息。`;}
+          else{contextLabel='上下文 · 已采集的工具结果';contextText='[产品周记]\n降低记录与回顾成本，让功能在需要的时候自然出现。\n\n运行开始阶段未采集。';}
+          const d=create('details');d.dataset.disclosure='context';const sum=create('summary','pa-section-label cursor-interaction',contextLabel);d.append(sum);code(d,contextText);input.append(d);
+        }else if(n.input!==undefined&&n.input!==null)code(input,n.input);
+        else input.append(create('p','pa-prose',n.status==='gap'?'未记录输入。':'此节点记录阶段状态，具体输入见所属模型或工具调用。'));
+        const output=section(n.kind==='tool'?'工具结果':'输出',status==='running'?'接收中':'');
+        if(status==='running'){output.append(create('p','pa-prose',n.kind==='model'||n.kind==='attempt'?'正在接收模型输出…':'执行尚未结束，结果将在完成后显示。'));}
+        else if(typeof n.output==='object')code(output,n.output);
+        else output.append(create('p','pa-prose',n.output||'阶段已完成。'));
+        if(n.kind==='model'){const d=create('details');d.dataset.disclosure='reasoning';const sum=create('summary','pa-section-label cursor-interaction','Reasoning');d.append(sum,create('p','pa-prose','该示例未记录 Provider 返回的 reasoning。'));content.append(d);}
+      }
+      if(preserve){for(const el of content.querySelectorAll('[data-disclosure]'))el.open=disclosures.get(el.dataset.disclosure)||false;if(focusedDisclosure)[...content.querySelectorAll('[data-disclosure]')].find(el=>el.dataset.disclosure===focusedDisclosure)?.querySelector('summary')?.focus({preventScroll:true});content.scrollTop=oldScroll;}else content.scrollTop=0;
+    }
+    function renderNodeNav(){
+      if(!detailSequence.includes(selected))detailSequence=visibleNodes().visible.map(n=>n.id);
+      const index=detailSequence.indexOf(selected);$('#pa-prev-node').disabled=index<=0;$('#pa-next-node').disabled=index<0||index>=detailSequence.length-1;
+      $('#pa-node-position').textContent=index<0?'当前节点':`${index+1} / ${detailSequence.length}`;
+    }
+    function render(){renderSummary();renderTree();renderDetails();renderNodeNav();icons();}
+    function setRun(id){stopTimer();run=runs.find(r=>r.id===id);selected=run.selected;collapsed=new Set(run.collapsed);tab='io';query='';clock=run.duration;simulation='idle';following=false;unseen=0;lastDetailKey='';returnScroll=0;detailSequence=[];$('#pa-search').value='';windowEl.classList.remove('pa-show-detail');closeSheet();renderTicks();render();treeScroll.scrollTop=0;save();}
+    function renderTicks(){const tick=$('#pa-ticks');tick.replaceChildren();for(const value of [0,run.duration/3,run.duration*2/3,run.duration])tick.append(create('span','',`${value.toFixed(1).replace(/\.0$/,'')}s`));}
+    function stopTimer(){if(timer!==null){clearInterval(timer);timer=null;}}
+    function latestNode(){const items=available();const leaves=items.filter(n=>!items.some(c=>c.parent===n.id));const active=leaves.filter(n=>n.start!==null&&n.end>clock).sort((a,b)=>b.start-a.start);return active[0]||leaves.sort((a,b)=>(b.end??0)-(a.end??0))[0]||items[0];}
+    function tick(){if(!root.isConnected){stopTimer();return;}const prev=available().length;clock=Math.min(run.duration,clock+run.duration/28);const count=available().length-prev;if(following){const n=latestNode();selected=n.id;reveal(n.id);}else unseen+=count;render();if(following)scrollSelected();if(clock>=run.duration){stopTimer();simulation='idle';following=false;render();announce('模拟运行已完成，全部节点可以浏览。');}}
+    $('#pa-simulate').addEventListener('click',()=>{if(simulation==='running'){stopTimer();simulation='paused';render();return;}if(simulation==='paused'){simulation='running';timer=setInterval(tick,800);render();return;}clock=0;simulation='running';following=true;selected='receive';collapsed=new Set();query='';$('#pa-search').value='';unseen=0;lastDetailKey='';if(run.id==='long')selected='c1';render();timer=setInterval(tick,800);announce('开始模拟实时事件；选择旧节点会停止跟随，但模拟继续。');});
+    $('#pa-follow').addEventListener('click',()=>{query='';$('#pa-search').value='';following=simulation!=='idle';unseen=0;const n=latestNode();selected=n.id;reveal(n.id);render();scrollSelected();save();});
+    function pauseForBrowse(){if(!following)return;following=false;unseen=0;const button=$('#pa-follow');button.setAttribute('aria-pressed','false');button.replaceChildren(icon('locate-fixed'),create('span','','跟随最新'));icons();}
+    treeScroll.addEventListener('pointerdown',pauseForBrowse,{passive:true});treeScroll.addEventListener('touchstart',pauseForBrowse,{passive:true});treeScroll.addEventListener('wheel',pauseForBrowse,{passive:true});treeScroll.addEventListener('keydown',e=>{if(['ArrowDown','ArrowUp','PageDown','PageUp','Home','End'].includes(e.key))pauseForBrowse();});
+    $('#pa-search').addEventListener('input',e=>{query=e.target.value;following=false;renderTree();icons();save();});
+    $('#pa-expand').addEventListener('click',()=>{collapsed.clear();following=false;renderTree();icons();save();});
+    $('#pa-collapse').addEventListener('click',()=>{collapsed=new Set(run.nodes.filter(n=>n.kind!=='run'&&run.nodes.some(c=>c.parent===n.id)).map(n=>n.id));following=false;renderTree();icons();save();});
+    tree.addEventListener('click',e=>{const fold=e.target.closest('[data-fold]');if(fold){const id=fold.dataset.fold;collapsed.has(id)?collapsed.delete(id):collapsed.add(id);following=false;renderTree();icons();save();return;}const row=e.target.closest('[data-node-id]');if(row)choose(row.dataset.nodeId);});
+    tree.addEventListener('keydown',e=>{const button=e.target.closest('[data-select]');if(!button)return;const id=button.dataset.select;const list=[...tree.querySelectorAll('.pa-node-select')];const index=list.findIndex(el=>el.dataset.select===id);if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();list[Math.max(0,Math.min(list.length-1,index+(e.key==='ArrowDown'?1:-1)))]?.focus();}else if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();if(e.key==='ArrowRight')collapsed.delete(id);else collapsed.add(id);renderTree();icons();save();}});
+    for(const button of root.querySelectorAll('[data-tab]'))button.addEventListener('click',()=>{tab=button.dataset.tab;renderDetails(true);icons();content.scrollTop=0;save();});
+    $('#pa-back').addEventListener('click',()=>{windowEl.classList.remove('pa-show-detail');renderTree();icons();treeScroll.scrollTop=returnScroll;if(selected!==entryNode)scrollSelected();const selectedButton=[...tree.querySelectorAll('.pa-node-select')].find(b=>b.dataset.select===selected);selectedButton?.focus({preventScroll:true});save();});
+    function moveNode(direction){const index=detailSequence.indexOf(selected);const id=detailSequence[index+direction];if(id)choose(id);}
+    $('#pa-prev-node').addEventListener('click',()=>moveNode(-1));$('#pa-next-node').addEventListener('click',()=>moveNode(1));
+    function setBackgroundInert(value){for(const el of windowEl.children)if(el.id!=='pa-mobile-modal'&&el.id!=='pa-announcement')el.inert=value;}
+    function closeSheet(restoreFocus=true){$('#pa-mobile-modal').hidden=true;setBackgroundInert(false);$('#pa-run-trigger').setAttribute('aria-expanded','false');$('#pa-turns').setAttribute('aria-expanded','false');if(restoreFocus)sheetTrigger?.focus({preventScroll:true});}
+    function openSheet(mode){
+      following=false;sheetTrigger=mode==='runs'?$('#pa-run-trigger'):$('#pa-turns');
+      $('#pa-sheet-title').textContent=mode==='runs'?'历史运行 · 示例':'轮次导航';$('#pa-sheet-note').textContent=mode==='runs'?'查看完整运行或有缺口的记录':query?'跳转轮次将清除当前搜索':'跳转到对应 Turn，继续查看其完整过程';
+      const list=$('#pa-sheet-list');list.replaceChildren();
+      if(mode==='runs')for(const item of runs){const b=create('button','pa-sheet-item cursor-interaction');b.type='button';b.dataset.run=item.id;b.setAttribute('aria-current',String(item.id===run.id));b.append(create('span','',item.name),create('small','',`${item.time} · ${item.turns} Turns · ${item.nodes.length} 节点 · ${item.complete?'已完成':'部分记录'}`));b.onclick=()=>setRun(item.id);list.append(b);}
+      else for(const n of available().filter(n=>n.kind==='turn')){const b=create('button','pa-sheet-item cursor-interaction');b.type='button';b.dataset.turn=n.id;b.append(create('span','',n.name),create('small','',`${stateLabels[statusOf(n)]} · ${fmt(durationOf(n))}`));b.onclick=()=>{closeSheet();query='';$('#pa-search').value='';reveal(n.id);selected=n.id;render();scrollSelected();announce(`已定位 ${n.name}`);save();};list.append(b);}
+      if(!list.children.length)list.append(create('p','pa-empty','尚未进入第一个 Turn'));
+      $('#pa-mobile-modal').hidden=false;sheetTrigger.setAttribute('aria-expanded','true');setBackgroundInert(true);icons();$('#pa-sheet-close').focus({preventScroll:true});
+    }
+    $('#pa-run-trigger').addEventListener('click',()=>openSheet('runs'));$('#pa-turns').addEventListener('click',()=>openSheet('turns'));
+    $('#pa-sheet-close').addEventListener('click',()=>closeSheet());$('#pa-sheet-scrim').addEventListener('click',()=>closeSheet());
+    $('#pa-mobile-modal').addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();closeSheet();}else if(e.key==='Tab'){const buttons=[...$('.pa-sheet').querySelectorAll('button:not(:disabled)')];const first=buttons[0],last=buttons[buttons.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}});
+    window.addEventListener('pagehide',stopTimer,{once:true});
+    window.addEventListener('openai:set_globals',event=>{const state=event.detail?.globals?.widgetState;if(state&&!state.privateContent?.revision?.startsWith(`${stateSession}:`)&&restore(state)){lastDetailKey='';applyDesign();renderTicks();render();}});
+    for(const el of root.querySelectorAll('[data-tooltip]'))el.removeAttribute('data-tooltip');
+    restore(window.openai?.widgetState);applyDesign();renderTicks();render();
+    if(globalThis.Tweak){const tweak=new globalThis.Tweak({container:windowEl,onChange:()=>{applyDesign();save();}});tweak.addSlider(design,'width',{label:'手机宽度',min:320,max:430,step:1,unit:'px'});tweak.addSlider(design,'height',{label:'可用屏幕高度',min:660,max:880,step:10,unit:'px'});}
+  })();
+  </script>
+</div>
+
+</div>

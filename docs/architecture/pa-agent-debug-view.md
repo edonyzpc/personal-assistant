@@ -82,6 +82,20 @@ root，并拒收迟到结果；插件级采集继续。workspace 只保存 `conv
 这些能力复用现有 React、观察端口和 IndexedDB；未引入 AgentPrism、LangChain、
 全文索引、上传、任务重放或独立后台采集。
 
+### 已确认预览的展示补齐
+
+按 [Explorer 产品契约](../product/specs/pa-agent-debug-explorer-product-spec.md)，
+桌面轨迹排为名称、统一时间轨道、耗时、状态四列；图标由 Obsidian `setIcon`
+提供。移动端使用名称主行和固定公共起点的时间副行，缩进只影响名称。类型色、
+整行选择与顶部刻度由 viewer 局部 CSS 持有，不增加数据或布局框架。
+
+节点详情默认打开输入／输出，时间与用量、原始记录分别为另外两个 Tab。
+切换 Tab 保留正文分页与展开子树，但由既有 Inspector 滚动容器回到顶部；切换
+节点重置该容器。精确路由先于异步轨迹页到达时，目标节点就绪会触发正文读取。
+窄屏详情隐藏运行总览，保留返回和固定前后节点导航；运行与轮次列表使用底部抽屉。
+运行概览的重试提示只表示存在相关记录，不把等待阶段与请求尝试的聚合数冒充重试次数。
+本次展示补齐的构建身份、双端交互及限制见 [2026-10-10 验证证据](../archive/2026/b167-agent-debug-preview-alignment-validation.md)。
+
 ## Chat THINKING 投影与持久化
 
 `chat-view.ts` 沿用现有 DOM、PA 样式和原粒子；过程展开、计时与查看均不执行任务。

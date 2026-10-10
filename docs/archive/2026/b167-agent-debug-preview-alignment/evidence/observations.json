@@ -1,0 +1,38 @@
+{
+  "vault": "/mnt/code/personal-assistant/test",
+  "profile": "/tmp/pa-b167-preview-smoke/profile",
+  "mobile": true,
+  "width": 393,
+  "height": 852,
+  "view": {
+    "x": 12,
+    "y": 123,
+    "width": 369,
+    "height": 695,
+    "top": 123,
+    "right": 381,
+    "bottom": 818,
+    "left": 12
+  },
+  "traceScroll": 522.5,
+  "restoredFocus": "轮次",
+  "laneX": [
+    "[66,292]"
+  ],
+  "errors": "No errors captured.",
+  "console": "No console messages captured.",
+  "restored": {
+    "vault": "/mnt/code/personal-assistant/test",
+    "profile": "/tmp/pa-b167-preview-smoke/profile",
+    "mobile": false,
+    "mobileFlag": null,
+    "debug": false
+  },
+  "version": "Obsidian 1.14.4 on Linux",
+  "input": "Native X11/XTest mouse, wheel and keyboard; registered Obsidian dev:mobile command handler in the isolated window",
+  "assetSha256": {
+    "dist/main.js": "b7917e3f8d7d9957ce0a9d3d5f3cd6d890308ceda390836af675dcf23a55d980",
+    "dist/styles.css": "ff4a9011b1d010db41582d77c26acfc84e4c1c291be62b79e76109058ccf8f7c"
+  },
+  "identityMatched": true
+}
