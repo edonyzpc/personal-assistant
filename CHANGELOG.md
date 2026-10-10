@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.8](https://github.com/edonyzpc/personal-assistant/compare/2.10.7...2.10.8) (2026-10-10)
+
+### Features
+- tags: add opt-in tag styles
+- agent-debug: implement complete trace explorer
+- chat: add explainable thinking process
+
+### Fix
+- chat: open native search when clicking response tags
+
+### Docs
+- agent-debug: define b-167 explorer design and tasks
+
 ## [2.10.7](https://github.com/edonyzpc/personal-assistant/compare/2.10.6...2.10.7) (2026-10-08)
 
 ### Fix
