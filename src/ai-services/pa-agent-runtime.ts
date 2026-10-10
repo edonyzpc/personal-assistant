@@ -873,8 +873,20 @@ function isSafeSourceFreeToolObservation(
     if (!observation) return false;
 
     if (message.toolName === "search_vault_metadata" && fact.search === "metadata") {
-        return hasOnlyKeys(observation, ["query", "matches"])
-            && typeof observation.query === "string" && emptyArray(observation.matches);
+        const legacyFormat = Object.keys(observation).length === 2
+            && hasOnlyKeys(observation, ["query", "matches"]);
+        const completeFormat = Object.keys(observation).length === 5
+            && hasOnlyKeys(observation,
+                ["query", "matches", "matchCount", "matchCountKind", "coverage"]);
+        const coverage = asRecord(observation.coverage);
+        return (legacyFormat || completeFormat)
+            && typeof observation.query === "string" && emptyArray(observation.matches)
+            && (!completeFormat
+                || observation.matchCount === 0 && observation.matchCountKind === "exact"
+                    && coverage?.state === "complete"
+                    && hasOnlyKeys(coverage, ["state", "scannedPermittedNotes", "evaluatedCandidates"])
+                    && isCount(coverage.scannedPermittedNotes)
+                    && isCount(coverage.evaluatedCandidates));
     }
     if (message.toolName === "query_notes" && fact.search === "metadata"
         && message.content.metadata?.vaultObservationContractVersion === 1) {
@@ -893,6 +905,7 @@ function isSafeSourceFreeToolObservation(
         && message.content.metadata?.vaultObservationContractVersion === 1) {
         const coverage = asRecord(observation.coverage);
         const page = asRecord(observation.page);
+        const legacyPageFormat = Object.prototype.hasOwnProperty.call(observation, "page");
         return hasOnlyKeys(observation, ["kind", "query", "scope", "part", "caseSensitive",
             "matches", "matchCount", "matchCountKind", "page", "coverage", "scannedFiles",
             "scannedBytes", "consideredFiles", "skippedFiles", "truncated", "omittedCount"])
@@ -910,11 +923,12 @@ function isSafeSourceFreeToolObservation(
                 "evaluatedBytes"].every(key => isCount(coverage[key]))
             && ["skippedFiles", "candidateCapExceeded", "fileCapExceeded", "byteCapExceeded",
                 "unknownFileSize"].every(key => coverage[key] === undefined)
-            && page !== undefined && hasOnlyKeys(page, ["startIndex", "returnedCount", "requestedLimit", "hasMore",
-                "outputBudgetExceeded"])
-            && page.startIndex === 0 && page.returnedCount === 0
-            && isCount(page.requestedLimit) && page.requestedLimit > 0
-            && page.hasMore === false && page.outputBudgetExceeded === undefined
+            && (!legacyPageFormat
+                || page !== undefined && hasOnlyKeys(page, ["startIndex", "returnedCount", "requestedLimit", "hasMore",
+                    "outputBudgetExceeded"])
+                    && page.startIndex === 0 && page.returnedCount === 0
+                    && isCount(page.requestedLimit) && page.requestedLimit > 0
+                    && page.hasMore === false && page.outputBudgetExceeded === undefined)
             && ["scannedFiles", "scannedBytes", "consideredFiles", "skippedFiles",
                 "omittedCount"].every(key => observation[key] === undefined || isCount(observation[key]))
             && observation.skippedFiles === undefined && observation.truncated === undefined;

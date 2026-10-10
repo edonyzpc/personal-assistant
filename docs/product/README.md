@@ -13,6 +13,8 @@
 
 ## Capture、Recall 与 Context
 
+- [完整笔记查询](./specs/pa-complete-note-query-product-spec.md) — B-169：一次条件查询返回完整轻量列表，正文按需；[执行记录](../development/active/complete-note-query/tracker.md)。
+
 - [Chat THINKING 可解释执行过程](./specs/pa-chat-thinking-process-product-spec.md) — B-168：原位细轨道、整轮耗时、当前 reasoning 与轻量历史；[当前接线](../architecture/pa-agent-debug-view.md#chat-thinking-投影与持久化)及[最终验证](../archive/2026/b168-chat-thinking-process-validation.md)。
 - [Agent Debug 完整轨迹与双端查看](./specs/pa-agent-debug-explorer-product-spec.md) — B-167：聚焦展开、节点定位搜索、桌面右侧详情与移动独立详情页；[当前机制](../architecture/pa-agent-debug-view.md)与[最终验证](../archive/2026/b167-agent-debug-explorer-validation.md)。
 - [PA Agent 快照执行与完整 Debug](./specs/pa-agent-snapshot-execution-product-spec.md) — B-165：当前生成快照、下一轮配置更新、完整文本历史；[当前机制](../architecture/pa-agent-architecture-plan.md#source-and-trust-boundaries)。

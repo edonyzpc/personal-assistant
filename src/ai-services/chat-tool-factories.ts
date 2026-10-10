@@ -42,7 +42,10 @@ import type {
     VaultSnippetSearchOutput,
     VaultTagsOutput,
 } from "./chat-tool-types";
-import { OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS } from "./chat-tool-types";
+import {
+    COMPLETE_NOTE_LIST_TOOL_OUTPUT_BUDGET_CHARS,
+    OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
+} from "./chat-tool-types";
 import type { SourceRecord } from "./chat-types";
 import { GhostHostAdmissionError } from "../ghost-publishing/types";
 import { ghostPreparationMessage } from "./ghost-tool-receipt";
@@ -59,17 +62,13 @@ import {
     INSPECT_NOTE_MAX_READ_BYTES,
     NOTE_STRUCTURE_BODY_UNAVAILABLE_SOURCE,
     NOTE_OUTLINE_MAX_HEADINGS,
-    QUERY_NOTES_MAX_LIMIT,
-    QUERY_NOTES_RESULT_JSON_BUDGET_CHARS,
     READ_NOTE_MAX_CHARS,
     READ_NOTE_MAX_READ_BYTES,
     READ_NOTE_RESULT_JSON_BUDGET_CHARS,
     RECENT_NOTES_MAX_LIMIT,
-    SNIPPET_MAX_LIMIT,
     TAGS_MAX_LIMIT,
     VAULT_FILE_READ_SKIPPED_SIZE_SOURCE,
     VAULT_FILE_READ_UNAVAILABLE_SOURCE,
-    VAULT_METADATA_MAX_LIMIT,
 } from "./chat-tool-constants";
 import {
     applyOutline,
@@ -107,6 +106,7 @@ import {
     readVaultFile,
     readVaultFileWithBudget,
     scoreMetadataMatchCooperatively,
+    type ScoredVaultMetadataMatch,
     truncate,
 } from "./chat-tool-execution-helpers";
 import {
@@ -160,16 +160,14 @@ import {
     type ReadNoteFileStatSnapshot,
 } from "./read-note-tool-helpers";
 import {
-    QueryNotesCursorExpiredError,
     QueryNotesFileIdentityRegistry,
-    QueryNotesResultBudgetUnavailableError,
+    QueryNotesSourcesChangedError,
     QueryNotesUnavailableError,
     executeQueryNotes,
 } from "./query-notes-tool-helpers";
 import {
     SequentialVaultSnippetIdentityRegistry,
-    VaultSnippetCursorExpiredError,
-    VaultSnippetResultBudgetUnavailableError,
+    VaultSnippetSourcesChangedError,
     VaultSnippetSearchUnavailableError,
     executeVaultSnippetSearch,
 } from "./vault-snippet-search-tool-helpers";
@@ -190,7 +188,6 @@ export interface QueryNotesToolOptions extends VaultToolPathFilterOptions {
 export type ReadNoteToolOptions = VaultToolPathFilterOptions;
 
 let nextReadNoteToolInstance = 0;
-let nextVaultSnippetSearchToolInstance = 0;
 let nextVaultObservationInstance = 0;
 
 function observationScope(context: ChatToolContext): VaultObservationScope {
@@ -417,7 +414,6 @@ function prepareSearchVaultSnippetsArguments(raw: unknown, _ctx: PrepareToolArgu
     if (scope) normalized.scope = scope;
     if (record.part !== undefined) normalized.part = record.part;
     if (record.caseSensitive !== undefined) normalized.caseSensitive = record.caseSensitive;
-    if (record.cursor !== undefined) normalized.cursor = record.cursor;
     return normalized;
 }
 
@@ -603,6 +599,7 @@ export function createSearchVaultMetadataTool(
         description: "Search Markdown note filenames, paths, tags, and frontmatter metadata.",
         plannerGuidance: [
             "Use when the user wants to find notes by title, path, tag, frontmatter, folder, or metadata keyword.",
+            "Omit limit for the complete matching-note list; supply limit only for an explicit user top-N request.",
             "This returns vault facts and note paths; it does not create Memory references or user preferences.",
         ],
         inputSchema: {
@@ -614,9 +611,8 @@ export function createSearchVaultMetadataTool(
                 },
                 limit: {
                     type: "integer",
-                    description: "Maximum number of matches to return.",
+                    description: "Optional explicit top-N limit; omit it to return every match.",
                     minimum: 1,
-                    maximum: VAULT_METADATA_MAX_LIMIT,
                 },
             },
             required: ["query"],
@@ -624,7 +620,7 @@ export function createSearchVaultMetadataTool(
         },
         permission: "read-only",
         cost: "free",
-        outputBudgetChars: 5000,
+        outputBudgetChars: COMPLETE_NOTE_LIST_TOOL_OUTPUT_BUDGET_CHARS,
         requiresConfirmation: false,
         failureBehavior: "recoverable",
         statusMessageText: "Searching note metadata",
@@ -635,35 +631,74 @@ export function createSearchVaultMetadataTool(
         execute: async (input, context) => {
             throwIfAborted(context.signal);
             const checkpoint = createReadCheckpoint(context);
-            const metadataCache = getMetadataCache(context.host);
+            const metadataCache = getOptionalMetadataCache(context.host);
             const querySignals = buildMetadataQuerySignals(input.query);
             const scanEpoch = context.host.getTaskSourceAuthorityEpoch?.();
             if (typeof context.host.app.vault.getMarkdownFiles !== "function") {
                 return createToolFailureResult("search_vault_metadata", input.query,
                     "Vault note enumeration is unavailable.");
             }
+            if (!metadataCache || typeof metadataCache.getFileCache !== "function") {
+                return createToolFailureResult("search_vault_metadata", input.query,
+                    "MetadataCache getFileCache is unavailable.");
+            }
             const markdownFiles = await getMarkdownFilesCooperatively(context.host, checkpoint);
-            const compare = (a: VaultMetadataMatch, b: VaultMetadataMatch) =>
+            const compare = (a: ScoredVaultMetadataMatch, b: ScoredVaultMetadataMatch) =>
                 b.score - a.score || (b.mtime ?? 0) - (a.mtime ?? 0) || a.path.localeCompare(b.path);
-            const matches: VaultMetadataMatch[] = [];
+            const scoredMatches: ScoredVaultMetadataMatch[] = [];
+            const seenPaths = new Set<string>();
+            let cacheKnown = true;
             for (const file of markdownFiles) {
                 await checkpoint();
+                throwIfAborted(context.signal);
                 if (!isAllowedPath(file.path, options.isPathAllowed)) continue;
+                if (seenPaths.has(file.path)) continue;
+                seenPaths.add(file.path);
                 const calculation = createCooperativeTask(context.signal);
-                const match = await scoreMetadataMatchCooperatively(file, metadataCache.getFileCache?.(file), querySignals,
+                const cache = metadataCache.getFileCache(file);
+                if (!cache || typeof cache !== "object") {
+                    cacheKnown = false;
+                    continue;
+                }
+                const match = await scoreMetadataMatchCooperatively(file, cache, querySignals,
                     async () => { await calculation.checkpoint(); });
                 if (!match) continue;
-                insertLimitedMatch(matches, match, compare, input.limit);
+                scoredMatches.push(match);
             }
             if (scanEpoch !== undefined && scanEpoch !== context.host.getTaskSourceAuthorityEpoch?.()) {
                 return createToolFailureResult("search_vault_metadata", input.query, "Note sources changed during metadata search; retry.");
             }
+            if (!cacheKnown) {
+                return createToolFailureResult("search_vault_metadata", input.query,
+                    "MetadataCache returned an unknown note cache.");
+            }
+            scoredMatches.sort(compare);
+            const matchCount = scoredMatches.length;
+            const matches: VaultMetadataMatch[] = (input.limit === undefined
+                ? scoredMatches
+                : scoredMatches.slice(0, input.limit))
+                .map(({ path, title, mtime, ctime }) => ({
+                    path,
+                    title,
+                    ...(mtime === undefined ? {} : { mtime }),
+                    ...(ctime === undefined ? {} : { ctime }),
+                }));
 
             return {
                 ok: true,
                 tool: "search_vault_metadata",
                 inputSummary: input.query,
-                content: { query: input.query, matches },
+                content: {
+                    query: input.query,
+                    matches,
+                    matchCount,
+                    matchCountKind: "exact",
+                    coverage: {
+                        state: "complete",
+                        scannedPermittedNotes: seenPaths.size,
+                        evaluatedCandidates: seenPaths.size,
+                    },
+                },
                 sources: matches.map((match) => ({ path: match.path })),
                 ...(matches.length === 0
                     ? { resultFact: { kind: "no_match" as const, search: "metadata" as const } }
@@ -680,7 +715,8 @@ export function createListRecentNotesTool(
         name: "list_recent_notes",
         description: "List recently modified or created Markdown notes.",
         plannerGuidance: [
-            "Use when the user asks what they recently wrote, modified, created, or worked on in the vault.",
+            "Use for an explicit recent top-N request, such as the latest notes the user wrote, modified, created, or worked on.",
+            "Use query_notes without limit when the user needs a complete modified/created date-range list.",
             "This returns vault facts only; it does not establish long-term user preferences.",
         ],
         inputSchema: {
@@ -1039,7 +1075,7 @@ export function createQueryNotesTool(
             "Use for precise note-list questions with explicit conditions; choose the date field and timezone from context, explain the interpretation, and ask when genuinely ambiguous.",
             "Date intervals are half-open; ctime/mtime require timestamp boundaries with an explicit UTC offset, and calendar-date is only for property dates in YYYY-MM-DD form.",
             "Path is exact, folder is recursive, tags are all-of exact matches, and property conditions combine with AND.",
-            "Check coverage and matchCountKind before calling a partial result complete; continue only with nextCursor.",
+            "Omit limit for a complete condition query; supply limit only for an explicit user top-N request. Use read_note only when body text is needed.",
         ],
         inputSchema: {
             type: "object",
@@ -1108,14 +1144,17 @@ export function createQueryNotesTool(
                     required: ["field", "direction"],
                     additionalProperties: false,
                 },
-                limit: { type: "integer", minimum: 1, maximum: QUERY_NOTES_MAX_LIMIT },
-                cursor: { type: "string", description: "Opaque continuation cursor from this tool instance." },
+                limit: {
+                    type: "integer",
+                    minimum: 1,
+                    description: "Optional explicit top-N limit; omit it to return every match.",
+                },
             },
             additionalProperties: false,
         },
         permission: "read-only",
         cost: "free",
-        outputBudgetChars: QUERY_NOTES_RESULT_JSON_BUDGET_CHARS,
+        outputBudgetChars: COMPLETE_NOTE_LIST_TOOL_OUTPUT_BUDGET_CHARS,
         requiresConfirmation: false,
         failureBehavior: "recoverable",
         statusMessageText: "Querying notes",
@@ -1154,7 +1193,7 @@ export function createQueryNotesTool(
                 return {
                     ok: true,
                     tool: "query_notes",
-                    inputSummary: `limit:${input.limit}`,
+                    inputSummary: input.limit === undefined ? "complete" : `top:${input.limit}`,
                     content: result.content,
                     sources: result.matches.map(match => ({ path: match.path })),
                     ...(result.content.matches.length > 0
@@ -1171,8 +1210,7 @@ export function createQueryNotesTool(
                 };
             } catch (error) {
                 if (error instanceof QueryNotesUnavailableError
-                    || error instanceof QueryNotesCursorExpiredError
-                    || error instanceof QueryNotesResultBudgetUnavailableError) {
+                    || error instanceof QueryNotesSourcesChangedError) {
                     return createToolFailureResult("query_notes", "metadata query", error.message);
                 }
                 throw error;
@@ -1525,15 +1563,15 @@ export function createReadCanvasSummaryTool(): ChatToolDefinition<ReadCanvasSumm
 export function createSearchVaultSnippetsTool(
     options: VaultToolPathFilterOptions = {},
 ): ChatToolDefinition<SearchVaultSnippetsInput, VaultSnippetSearchOutput> {
-    const instancePrefix = `vault-snippets-instance-${++nextVaultSnippetSearchToolInstance}`;
-    const identities = new SequentialVaultSnippetIdentityRegistry(instancePrefix);
+    const identities = new SequentialVaultSnippetIdentityRegistry();
     return withTaskSourceReadBoundary({
         name: "search_vault_snippets",
-        description: "Search bounded Markdown snippets in the vault.",
+        description: "Search literal Markdown text and return each matching note once.",
         plannerGuidance: buildV1APlannerGuidance(["markdown", "safety"], [
-            "Use when the user asks to find note passages or short snippets by text query.",
+            "Use when the user asks to find notes containing literal text.",
             "Use an optional vault-relative Markdown file or folder scope when supplied by the user.",
-            "Return short snippets only. Do not return full note bodies.",
+            "Omit limit for the complete matching-note list; supply limit only for an explicit user top-N request.",
+            "Results contain lightweight note identity and first-match location only. Use read_note for body text.",
         ]),
         inputSchema: {
             type: "object",
@@ -1544,9 +1582,8 @@ export function createSearchVaultSnippetsTool(
                 },
                 limit: {
                     type: "integer",
-                    description: "Maximum snippet matches to return.",
+                    description: "Optional explicit top-N note limit; omit it to return every matching note.",
                     minimum: 1,
-                    maximum: SNIPPET_MAX_LIMIT,
                 },
                 scope: {
                     type: "string",
@@ -1561,17 +1598,13 @@ export function createSearchVaultSnippetsTool(
                     type: "boolean",
                     description: "Use a literal case-sensitive match; defaults to Unicode case-insensitive matching.",
                 },
-                cursor: {
-                    type: "string",
-                    description: "Opaque continuation cursor from this tool instance.",
-                },
             },
             required: ["query"],
             additionalProperties: false,
         },
         permission: "read-only",
         cost: "free",
-        outputBudgetChars: OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
+        outputBudgetChars: COMPLETE_NOTE_LIST_TOOL_OUTPUT_BUDGET_CHARS,
         requiresConfirmation: false,
         failureBehavior: "recoverable",
         statusMessageText: "Searching note snippets",
@@ -1606,7 +1639,6 @@ export function createSearchVaultSnippetsTool(
                 const result = await executeVaultSnippetSearch({
                     input: scopedInput,
                     host: filteredHost,
-                    instancePrefix,
                     identities,
                     signal: context.signal,
                     checkpoint: createReadCheckpoint(context),
@@ -1647,8 +1679,7 @@ export function createSearchVaultSnippetsTool(
                 };
             } catch (error) {
                 if (error instanceof VaultSnippetSearchUnavailableError
-                    || error instanceof VaultSnippetCursorExpiredError
-                    || error instanceof VaultSnippetResultBudgetUnavailableError) {
+                    || error instanceof VaultSnippetSourcesChangedError) {
                     return createToolFailureResult("search_vault_snippets", input.query, error.message);
                 }
                 throw error;

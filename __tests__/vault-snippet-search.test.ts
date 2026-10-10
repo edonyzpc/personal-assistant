@@ -5,6 +5,7 @@ import {
     type VaultSnippetSearchOutput,
 } from "../src/ai-services/chat-tools";
 import { enforceToolOutputBudget } from "../src/ai-services/chat-tool-registry";
+import { chatToolResultToPaAgentToolExecutionResult } from "../src/ai-services/pa-agent-host-tools";
 import type { ChatToolRegistryDefinition } from "../src/ai-services/chat-tool-types";
 import { computeContentHash } from "../src/vss-helpers";
 
@@ -68,6 +69,42 @@ async function execute(host: never, input: Record<string, unknown>) {
 }
 
 describe("search_vault_snippets multi-match source locating", () => {
+    it("returns one lightweight note result for every permitted file without scan paging", async () => {
+        const fileCount = 100;
+        const fileContents = Object.fromEntries(Array.from({ length: fileCount }, (_, index) => [
+            `notes/${String(index).padStart(3, "0")}.md`,
+            index === 0 ? "needle first\nneedle repeated" : index === 1 ? "no match" : "needle",
+        ]));
+        const files = Object.keys(fileContents).map(path => ({ path, basename: path.slice(0, -3) }));
+        const { host, cachedRead } = createHost({ markdownFiles: files, fileContents });
+
+        const result = await execute(host, { query: "needle" });
+
+        expect(result.matchCount).toBe(99);
+        expect(result.matches).toHaveLength(99);
+        expect(result.matches.map(match => match.path).slice(0, 3)).toEqual([
+            "notes/000.md",
+            "notes/002.md",
+            "notes/003.md",
+        ]);
+        expect(new Set(result.matches.map(match => match.path)).size).toBe(99);
+        expect(result.matches[0]).not.toHaveProperty("snippet");
+        expect(Object.prototype.hasOwnProperty.call(result, "nextCursor")).toBe(false);
+        expect(Object.prototype.hasOwnProperty.call(result, "page")).toBe(false);
+        expect(result.matchCountKind).toBe("exact");
+        expect(result.coverage).toMatchObject({
+            state: "complete",
+            scannedPermittedNotes: 100,
+            readNotes: 100,
+        });
+        expect(cachedRead).toHaveBeenCalledTimes(100);
+
+        const limited = await execute(host, { query: "needle", limit: 5 });
+        expect(limited.matchCount).toBe(99);
+        expect(limited.matches).toHaveLength(5);
+        expect(cachedRead).toHaveBeenCalledTimes(200);
+    });
+
     it("checks each read file directly without enumerating the vault again", async () => {
         const fileContents = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`notes/${index}.md`, "needle"]));
         const f = createHost({ markdownFiles: Object.keys(fileContents).map(path => ({ path })), fileContents });
@@ -104,32 +141,20 @@ describe("search_vault_snippets multi-match source locating", () => {
         });
     });
 
-    it("returns every match in one file across pages without duplicates", async () => {
+    it("returns repeated matches in one note once at the first location", async () => {
         const content = "needle alpha\nmiddle\nneedle beta";
         const files = [{ path: "notes/multi.md", basename: "multi", stat: { mtime: 2, size: Buffer.byteLength(content) } }];
         const fileContents: Record<string, string> = { "notes/multi.md": content };
         const { host, cachedRead } = createHost({ markdownFiles: files, fileContents });
 
-        const first = await execute(host, {
-            query: "needle",
-            scope: "notes/multi.md",
-            limit: 1,
-        });
-        expect(first.matches).toHaveLength(1);
-        expect(first.matches[0]?.range.startOffset).toBe(0);
-        expect(typeof first.nextCursor).toBe("string");
-
-        const second = await execute(host, {
-            query: "needle",
-            scope: "notes/multi.md",
-            limit: 1,
-            cursor: first.nextCursor,
-        });
-        expect(second.matches).toHaveLength(1);
-        expect(second.matches[0]?.range.startOffset).toBe(20);
-        expect(second.nextCursor).toBeUndefined();
-        expect(cachedRead).toHaveBeenCalledTimes(2);
-        expect(JSON.stringify(second).length).toBeLessThanOrEqual(6000);
+        const result = await execute(host, { query: "needle", scope: "notes/multi.md" });
+        expect(result.matches).toHaveLength(1);
+        expect(result.matches[0]?.range.startOffset).toBe(0);
+        expect(result.matches[0]).not.toHaveProperty("snippet");
+        expect(Object.prototype.hasOwnProperty.call(result, "page")).toBe(false);
+        expect(Object.prototype.hasOwnProperty.call(result, "nextCursor")).toBe(false);
+        expect(cachedRead).toHaveBeenCalledTimes(1);
+        expect(result.coverage).toMatchObject({ state: "complete", readNotes: 1 });
     });
 
     it("searches saved properties and body separately with literal case and whitespace semantics", async () => {
@@ -195,79 +220,26 @@ describe("search_vault_snippets multi-match source locating", () => {
         });
     });
 
-    it("expires a cursor when same-stat match text, a nonmatch source, or the file set changes", async () => {
-        const files = [
-            { path: "notes/a.md", basename: "a", stat: { mtime: 10, size: 14 } },
-            { path: "notes/b.md", basename: "b", stat: { mtime: 11, size: 12 } },
-        ];
-        const fileContents: Record<string, string> = {
-            "notes/a.md": "needle one\nneedle two\n",
-            "notes/b.md": "no match here",
-        };
-        const { host, hostFiles } = createHost({ markdownFiles: files, fileContents });
-        const first = await execute(host, { query: "needle", scope: "notes", limit: 1 });
-        expect(first.nextCursor).toBeTruthy();
-
-        fileContents["notes/a.md"] = "other one\nother two\n";
-        await expect(execute(host, {
-            query: "needle",
-            scope: "notes",
-            limit: 1,
-            cursor: first.nextCursor,
-        })).rejects.toThrow("snapshot is no longer current");
-
-        fileContents["notes/a.md"] = "needle one\nneedle two\n";
-        const nonmatchCursor = await execute(host, {
-            query: "needle",
-            scope: "notes",
-            limit: 1,
-        });
-        fileContents["notes/b.md"] = "no match there";
-        await expect(execute(host, {
-            query: "needle",
-            scope: "notes",
-            limit: 1,
-            cursor: nonmatchCursor.nextCursor,
-        })).rejects.toThrow("snapshot is no longer current");
-
-        const third = await execute(host, {
-            query: "needle",
-            scope: "notes",
-            limit: 1,
-        });
-        hostFiles.push({
-            path: "notes/c.md",
-            basename: "c",
-            stat: { mtime: 12, size: 7 },
-        });
-        fileContents["notes/c.md"] = "needle";
-        await expect(execute(host, {
-            query: "needle",
-            scope: "notes",
-            limit: 1,
-            cursor: third.nextCursor,
-        })).rejects.toThrow("snapshot is no longer current");
+    it("rejects retired cursors before execution", () => {
+        expect(() => searchTool.validateInput({ query: "needle", cursor: "legacy" }))
+            .toThrow("rerun the same complete query without cursor");
     });
 
-    it("marks unknown size and scan overruns partial without a whole-range cursor", async () => {
+    it("marks an actually unknown size partial while a large readable note is searchable", async () => {
         const unknownSize = await execute(hostWithFile({ stat: undefined }), {
             query: "needle",
             scope: "notes/a.md",
         });
         expect(unknownSize.matches).toEqual([]);
         expect(unknownSize.coverage).toMatchObject({ state: "partial", unknownFileSize: true });
-        expect(unknownSize.nextCursor).toBeUndefined();
-        expect(unknownSize.partialResultGuidance).toContain("Narrow the scope");
+        expect(unknownSize.unavailableSources).toContain("vault file stat unavailable");
 
         const oversized = await execute(hostWithFile({
             stat: { mtime: 1, size: 100_001 },
         }), { query: "needle", scope: "notes/a.md" });
-        expect(oversized.coverage).toMatchObject({
-            state: "partial",
-            skippedFiles: 1,
-        });
-        expect(oversized.skippedSources).toContain("vault file read skipped for size");
-        expect(oversized.nextCursor).toBeUndefined();
+        expect(oversized.matches).toHaveLength(1);
+        expect(oversized.coverage).toMatchObject({ state: "complete", readNotes: 1 });
+        expect(Buffer.byteLength("needle", "utf8")).toBeLessThan(100_001);
     });
 
     it("fails closed when Markdown enumeration is unavailable", async () => {
@@ -368,109 +340,109 @@ describe("search_vault_snippets multi-match source locating", () => {
         expect(finalHashResult.error).toContain("sources changed");
     });
 
-    it("reports a candidate-budget partial without treating the unvisited file as a source-set change", async () => {
-        const makeFiles = (count: number) => Array.from({ length: count }, (_, index) => {
-            const path = `notes/candidate-${String(index).padStart(3, "0")}.md`;
-            if (index < 400) {
-                return {
-                    path,
-                    basename: `candidate-${index}`,
-                    stat: { mtime: index + 1, size: 0 },
-                };
-            }
-            return {
-                path,
-                basename: `candidate-${index}`,
-                get stat(): never {
-                    throw new Error("Candidate-cap-outside stat must not be read");
+    it.each([
+        ["added", (files: VaultFile[], replacement: VaultFile) => { files.push(replacement); }],
+        ["removed", (files: VaultFile[], _replacement: VaultFile) => { files.splice(1, 1); }],
+        ["replaced", (files: VaultFile[], _replacement: VaultFile) => {
+            files[1] = { ...files[1]! };
+        }],
+    ] as const)("rejects a source set with a %s file while reading the final fixtures", async (_kind, mutate) => {
+        const files = ["a", "b", "c"].map(name => ({
+            path: `notes/${name}.md`,
+            basename: name,
+            stat: { mtime: name.charCodeAt(0), size: 9 },
+        }));
+        const replacement = {
+            path: "notes/d.md",
+            basename: "d",
+            stat: { mtime: 4, size: 9 },
+        };
+        const fileContents = Object.fromEntries(files.map(file => [file.path, "needle"]));
+        const cachedRead = jest.fn(async (file: VaultFile) => {
+            if (file.path === "notes/b.md") mutate(files, replacement);
+            return fileContents[file.path] ?? "";
+        });
+        const host = {
+            app: {
+                vault: {
+                    getMarkdownFiles: () => files,
+                    getAbstractFileByPath: (path: string) => files.find(file => file.path === path) ?? null,
+                    cachedRead,
                 },
-            };
-        });
-        const makeHost = (files: VaultFile[]) => {
-            const cachedRead = jest.fn(async (file: VaultFile) => {
-                if (files.indexOf(file) >= 400) {
-                    throw new Error("Candidate-cap-outside body must not be read");
-                }
-                return "";
-            });
-            return {
-                host: {
-                    app: {
-                        vault: {
-                            getMarkdownFiles: () => files,
-                            getAbstractFileByPath: (path: string) => files.find(file => file.path === path) ?? null,
-                            cachedRead,
-                        },
-                        metadataCache: { getFileCache: () => null, resolvedLinks: {}, unresolvedLinks: {} },
-                    },
-                } as never,
-                cachedRead,
-            };
-        };
+                metadataCache: { getFileCache: () => null, resolvedLinks: {}, unresolvedLinks: {} },
+            },
+        } as never;
 
-        const atCap = makeHost(makeFiles(400));
-        const atCapResult = await execute(atCap.host, { query: "needle", scope: "notes" });
-        expect(atCapResult.coverage).toMatchObject({
-            state: "partial",
-            evaluatedCandidates: 400,
-            readNotes: 80,
-            skippedFiles: 320,
-            fileCapExceeded: true,
-        });
+        const result = await searchTool.execute(
+            searchTool.validateInput({ query: "needle", scope: "notes" }) as never,
+            { host },
+        );
 
-        const overCapFiles = makeFiles(401);
-        const overCap = makeHost(overCapFiles);
-        const overCapResult = await execute(overCap.host, { query: "needle", scope: "notes" });
-        expect(overCapResult.coverage).toMatchObject({
-            state: "partial",
-            evaluatedCandidates: 400,
-            readNotes: 80,
-            skippedFiles: 320,
-            candidateCapExceeded: true,
-            fileCapExceeded: true,
-        });
-        expect(overCap.cachedRead).toHaveBeenCalledTimes(80);
-
-        const mutateDuringSnapshotHash = async (
-            mutation: (files: VaultFile[]) => void,
-        ) => {
-            const files = makeFiles(401);
-            const host = makeHost(files);
-            const hashMock = computeContentHash as jest.Mock;
-            const originalHash = hashMock.getMockImplementation();
-            const digest = async (input: unknown) => {
-                try {
-                    const parsed = JSON.parse(String(input)) as Array<{ path?: string }>;
-                    if (Array.isArray(parsed) && parsed.length === 400) mutation(files);
-                } catch {
-                    // Content hashes are strings and intentionally do not trigger the mutation.
-                }
-                const { createHash } = jest.requireActual("node:crypto") as typeof import("node:crypto");
-                return createHash("sha1").update(String(input), "utf8").digest("hex");
-            };
-            hashMock.mockImplementation(digest);
-            try {
-                return await searchTool.execute(
-                    searchTool.validateInput({ query: "needle", scope: "notes" }) as never,
-                    { host: host.host },
-                );
-            } finally {
-                hashMock.mockImplementation(originalHash ?? digest);
-            }
-        };
-
-        await expect(mutateDuringSnapshotHash(files => {
-            files.push({ path: "notes/new-outside-cap.md", basename: "new-outside-cap" });
-        })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("changed while snippets") });
-        await expect(mutateDuringSnapshotHash(files => {
-            files.splice(400, 1);
-        })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("changed while snippets") });
-        await expect(mutateDuringSnapshotHash(files => {
-            files[400] = { path: "notes/candidate-400.md", basename: "candidate-400" };
-        })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("changed while snippets") });
+        expect(result.ok).toBe(false);
+        expect(result.error ?? "").toMatch(/sources changed|permitted note集合 changed/i);
     });
 
-    it("derives visible sources from the budgeted page and continues without duplicate matches", async () => {
+    it("stops an in-flight snippet search at a real read checkpoint when the call is aborted", async () => {
+        const files = ["a", "b"].map(name => ({
+            path: `notes/${name}.md`,
+            basename: name,
+            stat: { mtime: name.charCodeAt(0), size: 9 },
+        }));
+        const controller = new AbortController();
+        const cachedRead = jest.fn(async (file: VaultFile) => {
+            controller.abort();
+            return file.path === "notes/a.md" ? "needle" : "no match";
+        });
+        const host = {
+            app: {
+                vault: {
+                    getMarkdownFiles: () => files,
+                    getAbstractFileByPath: (path: string) => files.find(file => file.path === path) ?? null,
+                    cachedRead,
+                },
+                metadataCache: { getFileCache: () => null, resolvedLinks: {}, unresolvedLinks: {} },
+            },
+        } as never;
+
+        const error = await searchTool.execute(
+            searchTool.validateInput({ query: "needle", scope: "notes" }) as never,
+            { host, signal: controller.signal },
+        ).then(() => undefined, caught => caught as Error);
+
+        expect(error?.name).toBe("AbortError");
+        expect(cachedRead).toHaveBeenCalledTimes(1);
+    });
+
+    it("searches every candidate beyond the old candidate cap", async () => {
+        const files = Array.from({ length: 401 }, (_, index) => ({
+            path: `notes/candidate-${String(index).padStart(3, "0")}.md`,
+            basename: `candidate-${index}`,
+            stat: { mtime: index + 1, size: 0 },
+        }));
+        const cachedRead = jest.fn(async () => "");
+        const host = {
+            app: {
+                vault: {
+                    getMarkdownFiles: () => files,
+                    getAbstractFileByPath: (path: string) => files.find(file => file.path === path) ?? null,
+                    cachedRead,
+                },
+                metadataCache: { getFileCache: () => null, resolvedLinks: {}, unresolvedLinks: {} },
+            },
+        } as never;
+
+        const result = await execute(host, { query: "needle", scope: "notes" });
+
+        expect(result.coverage).toMatchObject({
+            state: "complete",
+            scannedPermittedNotes: 401,
+            evaluatedCandidates: 401,
+            readNotes: 401,
+        });
+        expect(cachedRead).toHaveBeenCalledTimes(401);
+    });
+
+    it("keeps every visible source in one complete provider result", async () => {
         const files = Array.from({ length: 10 }, (_, index) => ({
             path: `notes/${"long-".repeat(80)}-${index}.md`,
             basename: `long-${index}`,
@@ -478,35 +450,21 @@ describe("search_vault_snippets multi-match source locating", () => {
         const fileContents = Object.fromEntries(files.map(file => [file.path, `needle ${"x".repeat(250)}`]));
         const { host } = createHost({ markdownFiles: files, fileContents });
 
-        const firstResult = await searchTool.execute(
+        const completeResult = await searchTool.execute(
             searchTool.validateInput({ query: "needle", scope: "notes", limit: 10 }) as never,
             { host },
         );
-        expect(firstResult.ok).toBe(true);
-        const first = firstResult.content as VaultSnippetSearchOutput;
-        expect(first.matches.length).toBeGreaterThan(0);
-        expect(first.matches.length).toBeLessThan(10);
-        expect(first.page.outputBudgetExceeded).toBe(true);
-        expect(JSON.stringify(first).length).toBeLessThanOrEqual(6000);
-        expect(firstResult.sources?.map(source => source.path)).toEqual(first.matches.map(match => match.path));
-        expect(first.nextCursor).toBeTruthy();
-
-        const secondResult = await searchTool.execute(
-            searchTool.validateInput({
-                query: "needle",
-                scope: "notes",
-                limit: 10,
-                cursor: first.nextCursor,
-            }) as never,
-            { host },
-        );
-        const second = secondResult.content as VaultSnippetSearchOutput;
-        expect(second.matches.map(match => match.path)).not.toContain(first.matches[0]!.path);
-        expect(secondResult.sources?.map(source => source.path)).toEqual(second.matches.map(match => match.path));
-        expect(second.nextCursor).toBeUndefined();
+        expect(completeResult.ok).toBe(true);
+        const complete = completeResult.content as VaultSnippetSearchOutput;
+        expect(complete.matches).toHaveLength(10);
+        expect(Object.prototype.hasOwnProperty.call(complete, "page")).toBe(false);
+        expect(Object.prototype.hasOwnProperty.call(complete, "nextCursor")).toBe(false);
+        expect(JSON.stringify(complete).length).toBeGreaterThan(6_000);
+        expect(completeResult.sources?.map(source => source.path))
+            .toEqual(complete.matches.map(match => match.path));
     });
 
-    it("fails when metadata and the first match cannot fit and fails registry results above the declared budget", async () => {
+    it("returns and projects a result larger than the old output budget", async () => {
         const escapedStem = "\"".repeat(950);
         const longPath = `notes/${escapedStem}.md`;
         const { host } = createHost({
@@ -517,9 +475,9 @@ describe("search_vault_snippets multi-match source locating", () => {
             searchTool.validateInput({ query: "needle", scope: longPath }) as never,
             { host },
         );
-        expect(result.ok).toBe(false);
-        expect(result.error).toContain("cannot fit");
-        expect(result.content).toBeNull();
+        expect(result.ok).toBe(true);
+        expect(result.content?.matches[0]?.path).toBe(longPath);
+        expect(JSON.stringify(result.content).length).toBeGreaterThan(6_000);
 
         const definition = searchTool as unknown as ChatToolRegistryDefinition;
         const oversized = {
@@ -534,16 +492,27 @@ describe("search_vault_snippets multi-match source locating", () => {
                 matches: [{ path: "x".repeat(7000) }],
                 matchCount: 1,
                 matchCountKind: "exact",
-                page: { startIndex: 0, returnedCount: 1, requestedLimit: 5, hasMore: false },
                 coverage: { state: "complete" },
             },
             sources: [],
         } as never;
-        expect(() => enforceToolOutputBudget(definition, oversized))
-            .toThrow("search_vault_snippets result exceeds its output budget");
+        expect(enforceToolOutputBudget(definition, oversized)).toBe(oversized);
+
+        const projected = chatToolResultToPaAgentToolExecutionResult({
+            type: "toolCall",
+            index: 0,
+            id: "complete-snippets",
+            name: "search_vault_snippets",
+            input: { query: "needle", scope: longPath },
+        }, result);
+        const projectedObservation = (JSON.parse(projected.promptText) as {
+            observation: VaultSnippetSearchOutput;
+        }).observation;
+        expect(projectedObservation.matches[0]?.path).toBe(longPath);
+        expect(projected.promptText.length).toBeGreaterThan(JSON.stringify(result.content).length);
     });
 
-    it("skips an actually oversized read without hashing or repartitioning truncated YAML", async () => {
+    it("searches a note larger than the old per-file byte cap", async () => {
         const path = "notes/oversized.md";
         const content = `---\nneedle: ${"x".repeat(100_100)}\n---`;
         const file = {
@@ -562,24 +531,16 @@ describe("search_vault_snippets multi-match source locating", () => {
                 metadataCache: { getFileCache: () => null, resolvedLinks: {}, unresolvedLinks: {} },
             },
         } as never;
-        const hashMock = computeContentHash as jest.Mock;
-        const callCountBefore = hashMock.mock.calls.length;
-
         const result = await execute(host, { query: "needle", part: "body", scope: path });
 
         expect(result.matches).toEqual([]);
-        expect(result.nextCursor).toBeUndefined();
         expect(result.coverage).toMatchObject({
-            state: "partial",
+            state: "complete",
             readNotes: 1,
             readBytes: Buffer.byteLength(content, "utf8"),
-            evaluatedBytes: 0,
-            skippedFiles: 1,
-            byteCapExceeded: true,
+            evaluatedBytes: Buffer.byteLength(content, "utf8"),
         });
-        expect(result.skippedSources).toContain("vault file read skipped for size");
-        expect(hashMock.mock.calls.slice(callCountBefore))
-            .not.toContainEqual([content]);
+        expect(Buffer.byteLength(content, "utf8")).toBeGreaterThan(100_000);
 
         const complete = "---\nstatus: needle\n---\nbody";
         const completePath = "notes/complete.md";
@@ -593,13 +554,14 @@ describe("search_vault_snippets multi-match source locating", () => {
 
     it("validates a filtered cachedRead API and its string result at call time", async () => {
         const baseVault = () => {
-            const files = [{ path: "notes/a.md", basename: "a", stat: { mtime: 1, size: 6 } }];
+            const files = [
+                { path: "notes/a.md", basename: "a", stat: { mtime: 1, size: 6 } },
+                { path: "notes/b.md", basename: "b", stat: { mtime: 2, size: 6 } },
+            ];
             return {
                 files,
                 getMarkdownFiles: () => files,
-            getAbstractFileByPath: (path: string) => path === "notes/a.md"
-                    ? files[0]
-                    : null,
+            getAbstractFileByPath: (path: string) => files.find(file => file.path === path) ?? null,
             };
         };
         const disappearingVault: Record<string, unknown> = {
@@ -612,15 +574,25 @@ describe("search_vault_snippets multi-match source locating", () => {
                 metadataCache: { getFileCache: () => null, resolvedLinks: {}, unresolvedLinks: {} },
             },
         } as never;
-        (computeContentHash as jest.Mock).mockImplementationOnce(async (input: unknown) => {
-            delete disappearingVault.cachedRead;
+        const disappearingHash = computeContentHash as jest.Mock;
+        const originalDisappearingHash = disappearingHash.getMockImplementation();
+        const fallbackDigest = async (input: unknown) => {
             const { createHash } = jest.requireActual("node:crypto") as typeof import("node:crypto");
-            return createHash("sha1").update(input as string, "utf8").digest("hex");
+            return createHash("sha1").update(String(input), "utf8").digest("hex");
+        };
+        disappearingHash.mockImplementation(async (input: unknown) => {
+            if (String(input) === "needle") delete disappearingVault.cachedRead;
+            return fallbackDigest(input);
         });
-        const disappearing = await createSearchVaultSnippetsTool({ isPathAllowed: () => true }).execute(
-            { query: "needle" } as never,
-            { host: disappearingHost },
-        );
+        let disappearing: Awaited<ReturnType<typeof searchTool.execute>>;
+        try {
+            disappearing = await createSearchVaultSnippetsTool({ isPathAllowed: () => true }).execute(
+                { query: "needle" } as never,
+                { host: disappearingHost },
+            );
+        } finally {
+            disappearingHash.mockImplementation(originalDisappearingHash ?? fallbackDigest);
+        }
         expect(disappearing.ok).toBe(false);
         expect(disappearing.error).toContain("cachedRead is unavailable");
 
@@ -709,7 +681,7 @@ describe("search_vault_snippets multi-match source locating", () => {
         expect(result.sources).toEqual([{ path: "notes/a.md" }]);
     });
 
-    it("stops further physical reads once actual bytes exceed the total scan budget", async () => {
+    it("keeps reading when actual bytes exceed the old aggregate scan budget", async () => {
         const content = `${"x".repeat(100_100)}\nneedle`;
         const files = [0, 1, 2, 3].map(index => ({
             path: `notes/actual-${index}.md`,
@@ -730,16 +702,14 @@ describe("search_vault_snippets multi-match source locating", () => {
 
         const result = await execute(host, { query: "needle", scope: "notes" });
 
-        expect(cachedRead).toHaveBeenCalledTimes(2);
+        expect(cachedRead).toHaveBeenCalledTimes(4);
         expect(result.coverage).toMatchObject({
-            state: "partial",
-            readNotes: 2,
-            readBytes: Buffer.byteLength(content, "utf8") * 2,
-            evaluatedBytes: 0,
-            skippedFiles: 4,
-            byteCapExceeded: true,
+            state: "complete",
+            readNotes: 4,
+            readBytes: Buffer.byteLength(content, "utf8") * 4,
+            evaluatedBytes: Buffer.byteLength(content, "utf8") * 4,
         });
-        expect(result.nextCursor).toBeUndefined();
+        expect(result.matches).toHaveLength(4);
     });
 });
 

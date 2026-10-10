@@ -203,7 +203,11 @@ Implementation must update every runtime chokepoint when adding a tool:
 
 ## Read-Only Tool Policy
 
-v1A tools must satisfy all of these metadata constraints:
+v1A tools must satisfy all of these metadata constraints. The current narrow
+exception for complete note-list queries is defined by
+[DEC-059](../product/decisions/dec-059-complete-note-query-results.md);
+its implementation status belongs to the
+[B-169 Tracker](../development/active/complete-note-query/tracker.md).
 
 - `permission = "read-only"`
 - `cost = "free"` unless a future SPEC explicitly introduces AI-cost tools
@@ -214,25 +218,24 @@ v1A tools must satisfy all of these metadata constraints:
 
 The implementation should add a local policy assertion so that first-stage Obsidian Operations tools cannot be registered or executed if they violate these constraints.
 
-Every v1A tool result must be budgeted twice:
+Except for the DEC-059 complete note-list output, v1A tool results must be budgeted twice:
 
 - first at the tool result level using its `outputBudgetChars`,
 - then at the final serialized `<tool_context>` level using an aggregate hard cap before the final prompt is built.
 
-This applies to note inspection, Canvas summaries, snippet search, and tag listing. Truncated outputs must carry an explicit truncated/omitted-count signal so the assistant does not imply it saw complete note or Canvas content.
+This applies to note inspection, Canvas summaries, and tag listing. Truncated outputs must carry an explicit truncated/omitted-count signal so the assistant does not imply it saw complete note or Canvas content. `query_notes`, `search_vault_metadata`, and `search_vault_snippets` instead deliver their complete lightweight matching-note lists through output validation, source evidence and provider projection. Actual model context admission remains in force; it must not silently crop lists or create a pagination workflow.
 
 Mobile and constrained-device behavior must also be protected before prompt serialization:
 
 - note and Canvas reads should check known file size before `cachedRead` and return bounded metadata-only or unavailable structure when a target exceeds the read budget,
-- snippet search should skip individual files that exceed the per-file or remaining aggregate read budget and continue searching smaller eligible files,
-- metadata-only vault scans should have a file-count cap and report truncated/skipped scan facts.
+- content keyword search should scan the complete permitted scope with cooperative yielding and cancellation checks, reporting actual read failures rather than skipping readable files because of arbitrary file/byte budgets,
+- metadata-only note queries should evaluate all permitted candidates before matching, sorting and any explicitly requested top-N selection.
 
-`search_vault_snippets` requires additional hard limits:
+Under DEC-059, `search_vault_snippets` retains its tool name for compatibility and has these result and execution boundaries:
 
-- snippet-only output,
-- maximum result count,
-- maximum files scanned,
-- maximum bytes read,
+- one lightweight result per matching note, with an optional first-match location,
+- all matching notes by default; an explicit top-N request applies after full matching,
+- no model-driven scan or result pagination,
 - optional folder/path scope,
 - abort checks between reads,
 - no full note body output.

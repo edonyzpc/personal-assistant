@@ -196,7 +196,7 @@ describe("T-07 query evidence foundation", () => {
             .resolves.toEqual({ observationId: evidence.observationId, validItemIndexes: [1], aggregateCurrent: false });
     });
 
-    it("covers the permitted candidate set beyond the 500 evaluated cap without extra metadata reads", async () => {
+    it("covers the complete permitted candidate set beyond the old evaluated cap", async () => {
         const files = Array.from({ length: 501 }, (_, index) => makeFile(`${String(index).padStart(3, "0")}.md`));
         const caches = new Map(files.map((file, index) => [file.path, { frontmatter: { index } }]));
         const fixture = queryFixture(files, caches);
@@ -206,18 +206,18 @@ describe("T-07 query evidence foundation", () => {
             limit: 20,
         });
         const evidence = requireQueryEvidence(result);
-        expect(evidence.coverage).toMatchObject({ state: "partial", candidateCapExceeded: true });
-        expect(evidence.aggregate.evaluatedCandidates).toBe(500);
+        expect(evidence.coverage).toMatchObject({ state: "complete" });
+        expect(evidence.aggregate.evaluatedCandidates).toBe(501);
         const producerCacheReads = fixture.getFileCache.mock.calls.length;
-        expect(producerCacheReads).toBe(500);
+        expect(producerCacheReads).toBe(1002);
         await expect(revalidateVaultObservationFromApp(fixture.host, evidence))
             .resolves.toMatchObject({ aggregateCurrent: true, validItemIndexes: expect.any(Array) });
-        expect(fixture.getFileCache.mock.calls.length).toBe(producerCacheReads + 500);
+        expect(fixture.getFileCache.mock.calls.length).toBe(producerCacheReads + 501);
         expect(fixture.cachedRead).not.toHaveBeenCalled();
     });
 
     it.each([1_000, 1_024])(
-        "uses one complete snapshot budget for producer and pure query revalidation at %d-char values",
+        "uses one complete snapshot projection for producer and pure query revalidation at %d-char values",
         async (valueLength) => {
         const files = Array.from({ length: 500 }, (_, index) => makeFile(`${String(index).padStart(3, "0")}.md`));
         const caches = new Map(files.map(file => [file.path, { frontmatter: { p: "x".repeat(valueLength) } }]));
@@ -227,8 +227,8 @@ describe("T-07 query evidence foundation", () => {
             limit: 10,
         });
         const evidence = requireQueryEvidence(result);
-        expect(evidence.coverage).toMatchObject({ state: "partial", projectionBudgetExceeded: true });
-        expect(evidence.aggregate.evaluatedCandidates).toBe(valueLength === 1_000 ? 113 : 111);
+        expect(evidence.coverage).toMatchObject({ state: "complete" });
+        expect(evidence.aggregate.evaluatedCandidates).toBe(500);
         expect(evidence.items.map(item => item.path)).toEqual(files.slice(0, 10).map(file => file.path));
         const producerCacheReads = fixture.getFileCache.mock.calls.length;
         await expect(revalidateVaultObservationFromApp(fixture.host, evidence))
@@ -236,7 +236,7 @@ describe("T-07 query evidence foundation", () => {
                 aggregateCurrent: true,
                 validItemIndexes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
             });
-        expect(fixture.getFileCache.mock.calls.length).toBe(producerCacheReads * 2);
+        expect(fixture.getFileCache.mock.calls.length).toBe(producerCacheReads + 500);
         expect(fixture.cachedRead).not.toHaveBeenCalled();
     });
 
@@ -259,14 +259,17 @@ describe("T-07 query evidence foundation", () => {
 
     it("requires a current aggregate for a bound partial history payload", async () => {
         const files = Array.from({ length: 500 }, (_, index) => makeFile(`${String(index).padStart(3, "0")}.md`));
-        const caches = new Map(files.map(file => [file.path, { frontmatter: { p: "x".repeat(1024) } }]));
+        const caches = new Map<string, unknown>(
+            files.map(file => [file.path, { frontmatter: { p: "x".repeat(1024) } }]),
+        );
+        caches.set("000.md", null);
         const fixture = queryFixture(files, caches);
         const result = await fixture.invoke({
             properties: [{ key: "p", operator: "contains", value: "x" }],
             limit: 1,
         });
         const evidence = requireQueryEvidence(result);
-        expect(evidence.coverage.state).toBe("partial");
+        expect(evidence.coverage).toMatchObject({ state: "partial", cacheUnknown: true });
         const historyMessage: ChatMessage = {
             role: "assistant",
             content: "PARTIAL_HISTORY_SENTINEL",
@@ -390,7 +393,7 @@ describe("T-07 query evidence foundation", () => {
         expect(projected.observation.matches.map(match => match.path)).toEqual(["notes/b.md"]);
         expect((projection.transcript[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.resultFact)
             .toEqual({ kind: "evidence", sourceRefs: ["notes/b.md"] });
-        expect(projected.observation.nextCursor).toBeUndefined();
+        expect(Object.prototype.hasOwnProperty.call(projected.observation, "nextCursor")).toBe(false);
         expect(projected.observation.matchCountKind).toBe("lower-bound");
         expect(projected.observation.sort).toBeUndefined();
         expect(projected.observation.coverage).toEqual({ state: "partial" });
@@ -724,16 +727,16 @@ describe("T-07 snippet evidence foundation", () => {
             .resolves.toEqual({ observationId: evidence.observationId, validItemIndexes: [1], aggregateCurrent: false });
     });
 
-    it("classifies known oversized and unknown file sizes identically during pure snippet revalidation", async () => {
+    it("revalidates a large readable note and an actually unknown stat differently", async () => {
         const oversized = makeFile("notes/big.md");
-        oversized.stat = { size: 10_000_000 };
+        oversized.stat = { mtime: 1, size: 10_000_000 };
         const oversizedFixture = snippetFixture([oversized], new Map([["notes/big.md", "needle"]]));
         const oversizedResult = await oversizedFixture.invoke({ query: "needle", limit: 5 });
-        expect(oversizedResult.content!.coverage).toMatchObject({ state: "partial", skippedFiles: 1 });
+        expect(oversizedResult.content!.coverage).toMatchObject({ state: "complete", readNotes: 1 });
         const oversizedEvidence = requireSnippetEvidence(oversizedResult);
         await expect(revalidateVaultObservationFromApp(oversizedFixture.host, oversizedEvidence))
-            .resolves.toMatchObject({ validItemIndexes: [], aggregateCurrent: true });
-        expect(oversizedFixture.cachedRead).not.toHaveBeenCalled();
+            .resolves.toMatchObject({ validItemIndexes: [0], aggregateCurrent: true });
+        expect(oversizedFixture.cachedRead).toHaveBeenCalledTimes(2);
 
         const unknown = makeFile("notes/unknown.md");
         unknown.stat = { size: 10 };
@@ -792,9 +795,9 @@ describe("T-07 snippet evidence foundation", () => {
         expect(projected.observation.matches.map(match => match.path)).toEqual(["notes/b.md"]);
         expect((projection.transcript[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.resultFact)
             .toEqual({ kind: "evidence", sourceRefs: ["notes/b.md"] });
-        expect(projected.observation.nextCursor).toBeUndefined();
+        expect(Object.prototype.hasOwnProperty.call(projected.observation, "nextCursor")).toBe(false);
         expect(projected.observation.matchCountKind).toBe("lower-bound");
-        expect(projected.observation.page).toBeUndefined();
+        expect(Object.prototype.hasOwnProperty.call(projected.observation, "page")).toBe(false);
         expect(projected.observation.coverage).toEqual({ state: "partial" });
         expect(projected.observation.scannedFiles).toBeUndefined();
         expect(projected.observation.scannedBytes).toBeUndefined();
@@ -813,7 +816,7 @@ describe("T-07 snippet evidence foundation", () => {
         projection.binding.assertCurrent();
     });
 
-    it("withdraws aggregate facts from a real partial before binding retained snippets", async () => {
+    it("withdraws aggregate facts from a complete scan before binding retained snippets", async () => {
         const files = [
             makeFile("notes/a.md", 30),
             makeFile("notes/b.md", 30),
@@ -826,7 +829,7 @@ describe("T-07 snippet evidence foundation", () => {
         ]);
         const fixture = snippetFixture(files, contents);
         const result = await fixture.invoke({ query: "needle", limit: 5 });
-        expect(result.content!.coverage.state).toBe("partial");
+        expect(result.content!.coverage.state).toBe("complete");
         const originalPrompt = JSON.stringify({
             tool: "search_vault_snippets",
             status: "ok",
@@ -844,7 +847,7 @@ describe("T-07 snippet evidence foundation", () => {
         };
         expect(projected.observation.matches.map(match => match.path)).toEqual(["notes/b.md"]);
         expect(projected.observation.coverage).toEqual({ state: "partial" });
-        expect(projected.observation.page).toBeUndefined();
+        expect(Object.prototype.hasOwnProperty.call(projected.observation, "page")).toBe(false);
         await projection.binding.prepare();
         projection.binding.assertCurrent();
 
@@ -1209,7 +1212,7 @@ describe("T-07 strict reader and clone", () => {
         expect(parseVaultObservationEvidence(longPathEvidence).ok).toBe(true);
     });
 
-    it("accepts a legal cross-line snippet range and directly enforces whole-turn budgets", async () => {
+    it("accepts a legal cross-line range and keeps complete-list evidence outside byte paging budgets", async () => {
         const content = "xxfoo\nb";
         const file = makeFile("notes/cross-line.md", content.length);
         const fixture = snippetFixture([file], new Map([["notes/cross-line.md", content]]));
@@ -1231,7 +1234,7 @@ describe("T-07 strict reader and clone", () => {
         const heavyEvidence = structuredClone(parsed.evidence);
         heavyEvidence.scope.allowedPaths = Array.from({ length: 400 }, (_, index) => `notes/${index}/${"x".repeat(220)}`);
         expect(parseVaultObservationEvidence(heavyEvidence).ok).toBe(true);
-        expect(() => assertVaultObservationHistory(Array.from({ length: 6 }, () => heavyEvidence))).toThrow();
+        expect(() => assertVaultObservationHistory(Array.from({ length: 6 }, () => heavyEvidence))).not.toThrow();
         expect(() => assertVaultObservationHistory(Array.from({ length: 64 }, () => parsed.evidence))).not.toThrow();
     });
 

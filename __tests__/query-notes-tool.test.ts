@@ -2,14 +2,16 @@ import { getAllTags } from 'obsidian';
 import type { AiServiceHost } from '../src/ai-services/AiServiceHost';
 import { chatToolResultToAgentCapabilityResult } from '../src/ai-services/capability-adapter';
 import { createQueryNotesTool } from '../src/ai-services/chat-tool-factories';
+import { enforceToolOutputBudget } from '../src/ai-services/chat-tool-registry';
+import { chatToolResultToPaAgentToolExecutionResult } from '../src/ai-services/pa-agent-host-tools';
 import { isQueryNotesResult } from '../src/ai-services/chat-tool-guards';
 import type {
     ChatToolContext,
+    ChatToolRegistryDefinition,
     ChatToolResult,
     QueryNotesInput,
     QueryNotesOutput,
 } from '../src/ai-services/chat-tool-types';
-import { QUERY_NOTES_PROJECTION_MAX_UTF8_BYTES } from '../src/ai-services/chat-tool-constants';
 import { computeContentHash } from '../src/vss-helpers';
 
 jest.mock('obsidian', () => {
@@ -118,6 +120,32 @@ function paths(result: QueryNotesOutput): string[] {
 }
 
 describe('createQueryNotesTool', () => {
+    it('returns every permitted match after the old candidate cap without an explicit limit', async () => {
+        const files = Array.from({ length: 601 }, (_, index) => makeFile(
+            `notes/${String(index).padStart(3, '0')}/${'p'.repeat(50)}.md`,
+        ));
+        const f = setup(files);
+
+        const execution = await f.invoke({
+            sort: { field: 'path', direction: 'asc' },
+        });
+        const result = output(execution);
+
+        expect(result.matchCount).toBe(601);
+        expect(result.matches).toHaveLength(601);
+        expect(result.matches[600]?.path).toBe(`notes/600/${'p'.repeat(50)}.md`);
+        expect(result.matchCountKind).toBe('exact');
+        expect(result.coverage).toMatchObject({
+            state: 'complete',
+            evaluatedCandidates: 601,
+            scannedPermittedNotes: 601,
+        });
+        expect(result.partialResultGuidance).toBeUndefined();
+        expect(JSON.stringify(result).length).toBeGreaterThan(6_000);
+        expect(Buffer.byteLength(JSON.stringify(execution.vaultObservationEvidence), 'utf8'))
+            .toBeGreaterThan(128_000);
+    });
+
     it('rejects a native snapshot whose epoch changes after an earlier candidate was read', async () => {
         const files = Array.from({ length: 200 }, (_, index) => makeFile(`notes/${String(index).padStart(3, '0')}.md`));
         const caches = new Map(files.map(file => [file.path, { tags: [{ tag: '#project' }] }]));
@@ -278,7 +306,6 @@ describe('createQueryNotesTool', () => {
         expect(result.matchCountKind).toBe('exact');
         expect(result.coverage.state).toBe('complete');
         expect(result.coverage.cacheUnknown).toBeUndefined();
-        expect(result.nextCursor).toBeUndefined();
     });
 
     it('treats a missing tag cache as unknown instead of matching every requested tag', async () => {
@@ -290,7 +317,6 @@ describe('createQueryNotesTool', () => {
             state: 'partial',
             cacheUnknown: true,
         }));
-        expect(result.nextCursor).toBeUndefined();
 
         const knownCache = setup(
             [makeFile('no-tags.md')],
@@ -300,7 +326,6 @@ describe('createQueryNotesTool', () => {
         expect(nonmatch.matchCount).toBe(0);
         expect(nonmatch.matchCountKind).toBe('exact');
         expect(nonmatch.coverage.state).toBe('complete');
-        expect(nonmatch.nextCursor).toBeUndefined();
     });
 
     it('ignores unknown sort values for candidates excluded by a definite condition', async () => {
@@ -380,7 +405,6 @@ describe('createQueryNotesTool', () => {
         expect(invalid.matchCount).toBe(1);
         expect(invalid.matchCountKind).toBe('lower-bound');
         expect(invalid.coverage.state).toBe('partial');
-        expect(invalid.nextCursor).toBeUndefined();
     });
 
     it('keeps a definite AND false exact even when unrelated cache data is unknown', async () => {
@@ -420,41 +444,64 @@ describe('createQueryNotesTool', () => {
         expect(f.cachedRead).not.toHaveBeenCalled();
     });
 
-    it('pages every match once with deterministic same-time path order and changed limits', async () => {
+    it('returns deterministic same-time path order and applies explicit limits after matching', async () => {
         const files = [
             makeFile('c.md', { mtime: 100 }),
             makeFile('a.md', { mtime: 100 }),
             makeFile('b.md', { mtime: 100 }),
         ];
         const f = setup(files);
-        const first = output(await f.invoke({
+        const complete = output(await f.invoke({
+            sort: { field: 'mtime', direction: 'desc' },
+            limit: 1,
+        }));
+        expect(complete.matchCount).toBe(3);
+        expect(paths(complete)).toEqual(['a.md']);
+
+        const changedLimit = output(await f.invoke({
+            sort: { field: 'mtime', direction: 'desc' },
+            limit: 1,
+        }));
+        expect(paths(changedLimit)).toEqual(['a.md']);
+    });
+
+    it('places unknown stat values after known values in both requested directions', async () => {
+        const unknownStat = makeFile('b.md');
+        Reflect.deleteProperty(unknownStat.stat, 'mtime');
+        const f = setup([
+            makeFile('a.md', { mtime: 100 }),
+            unknownStat,
+            makeFile('c.md', { mtime: 200 }),
+        ]);
+
+        const ascending = output(await f.invoke({
+            sort: { field: 'mtime', direction: 'asc' },
+            limit: 2,
+        }));
+        expect(paths(ascending)).toEqual(['a.md', 'c.md']);
+        expect(ascending.matchCount).toBe(3);
+
+        const descending = output(await f.invoke({
             sort: { field: 'mtime', direction: 'desc' },
             limit: 2,
         }));
-        expect(paths(first)).toEqual(['a.md', 'b.md']);
-        const second = output(await f.invoke({
-            sort: { field: 'mtime', direction: 'desc' },
-            limit: 1,
-            cursor: first.nextCursor!,
-        }));
-        expect(paths(second)).toEqual(['c.md']);
-        expect(second.nextCursor).toBeUndefined();
+        expect(paths(descending)).toEqual(['c.md', 'a.md']);
+        expect(descending.matchCount).toBe(3);
     });
 
-    it('continues deterministically when the public API enumeration order changes', async () => {
+    it('returns a deterministic complete list when the public API enumeration order changes', async () => {
         const firstFile = makeFile('a.md');
         const secondFile = makeFile('b.md');
         const f = setup([firstFile, secondFile]);
-        const first = output(await f.invoke({ limit: 1 }));
-        expect(paths(first)).toEqual(['a.md']);
+        const first = output(await f.invoke({}));
+        expect(paths(first)).toEqual(['a.md', 'b.md']);
 
         f.setFiles([secondFile, firstFile]);
-        const second = output(await f.invoke({ limit: 1, cursor: first.nextCursor! }));
-        expect(paths(second)).toEqual(['b.md']);
-        expect(second.nextCursor).toBeUndefined();
+        const second = output(await f.invoke({}));
+        expect(paths(second)).toEqual(['a.md', 'b.md']);
     });
 
-    it('invalidates cursors for query, sort, cache, file identity, and permission changes', async () => {
+    it('rejects retired cursors and detects changed sources on a fresh complete query', async () => {
         const file = makeFile('note.md');
         const other = makeFile('other.md');
         const caches = new Map([
@@ -462,51 +509,40 @@ describe('createQueryNotesTool', () => {
             ['other.md', { frontmatter: { status: 'active' } }],
         ]);
         const f = setup([file, other], caches);
-        const first = output(await f.invoke({
+        output(await f.invoke({
             properties: [{ key: 'status', operator: 'equals', value: 'active' }],
             limit: 1,
         }));
-        expect(first.matchCount).toBe(2);
-
-        const expiredCursor = async (raw: Record<string, unknown>) => {
-            const result = await f.invoke({ ...raw, cursor: first.nextCursor!, limit: 1 });
-            expect(result.ok).toBe(false);
-            expect(result.content).toBeNull();
-            return result.error ?? '';
-        };
-
-        expect(await expiredCursor({
-            properties: [{ key: 'status', operator: 'equals', value: 'inactive' }],
-        })).toContain('different query');
-        expect(await expiredCursor({
+        expect(() => f.tool.validateInput({
             properties: [{ key: 'status', operator: 'equals', value: 'active' }],
-            sort: { field: 'mtime', direction: 'desc' },
-        })).toContain('different query');
+            cursor: 'legacy-cursor',
+        })).toThrow('rerun the same complete query without cursor');
 
         caches.set('note.md', { frontmatter: { status: 'inactive' } });
-        expect(await expiredCursor({
+        const changedCache = output(await f.invoke({
             properties: [{ key: 'status', operator: 'equals', value: 'active' }],
-        })).toMatch(/snapshot|different query/);
+        }));
+        expect(paths(changedCache)).toEqual(['other.md']);
         caches.set('note.md', { frontmatter: { status: 'active' } });
-
         f.replaceFile('note.md', makeFile('note.md'));
-        expect(await expiredCursor({
+        const replaced = output(await f.invoke({
             properties: [{ key: 'status', operator: 'equals', value: 'active' }],
-        })).toMatch(/snapshot|different query/);
-
-        f.setFiles([file]);
-        expect(await expiredCursor({
-            properties: [{ key: 'status', operator: 'equals', value: 'active' }],
-        })).toMatch(/snapshot|different query/);
-
-        f.setFiles([file, other]);
+        }));
+        expect(paths(replaced)).toEqual(['note.md', 'other.md']);
         f.allowed.clear();
-        expect((await expiredCursor({
+        const excluded = output(await f.invoke({
             properties: [{ key: 'status', operator: 'equals', value: 'active' }],
-        })).length).toBeGreaterThan(0);
+        }));
+        expect(excluded.matchCount).toBe(0);
+        expect(excluded.coverage).toMatchObject({
+            state: 'complete',
+            scannedPermittedNotes: 0,
+        });
+        expect(JSON.stringify(excluded)).not.toContain('note.md');
+        expect(JSON.stringify(excluded)).not.toContain('other.md');
     });
 
-    it('projects an own __proto__ property and invalidates its cursor when it is deleted', async () => {
+    it('projects an own __proto__ property and detects deletion on a fresh complete query', async () => {
         const makeFrontmatter = () => JSON.parse('{"__proto__":"yes"}') as Record<string, unknown>;
         const frontmatters = new Map([
             ['a.md', makeFrontmatter()],
@@ -517,70 +553,86 @@ describe('createQueryNotesTool', () => {
         const caches = new Map(
             [...frontmatters].map(([path, frontmatter]) => [path, { frontmatter }]),
         );
-        const query = {
-            properties: [{ key: '__proto__', operator: 'exists' as const }],
-            limit: 1,
-        };
+        const query = { properties: [{ key: '__proto__', operator: 'exists' as const }] };
         const f = setup(files, caches);
-        const first = output(await f.invoke(query));
-        expect(paths(first)).toEqual(['a.md']);
+        const before = output(await f.invoke(query));
+        expect(paths(before)).toEqual(['a.md', 'b.md', 'c.md']);
 
-        const unchanged = output(await f.invoke({ ...query, cursor: first.nextCursor! }));
-        expect(paths(unchanged)).toEqual(['b.md']);
+        const unchanged = output(await f.invoke(query));
+        expect(paths(unchanged)).toEqual(['a.md', 'b.md', 'c.md']);
 
         delete frontmatters.get('a.md')!.__proto__;
-        const changed = await f.invoke({ ...query, cursor: first.nextCursor! });
-        expect(changed.ok).toBe(false);
-        expect(changed.content).toBeNull();
-        expect(changed.error).toMatch(/snapshot|different query/);
+        const changed = output(await f.invoke(query));
+        expect(paths(changed)).toEqual(['b.md', 'c.md']);
     });
 
-    it('revalidates the projection after asynchronous hashing', async () => {
+    it('detects a same-path file replacement between evaluation snapshots', async () => {
         const file = makeFile('note.md');
+        const replacement = makeFile('note.md');
         const other = makeFile('other.md');
         const caches = new Map([
             ['note.md', { frontmatter: { status: 'active' } }],
             ['other.md', { frontmatter: { status: 'active' } }],
         ]);
         const f = setup([file, other], caches);
-        const first = output(await f.invoke({
-            properties: [{ key: 'status', operator: 'equals', value: 'active' }],
-            limit: 1,
-        }));
-        (computeContentHash as jest.Mock).mockImplementationOnce(async () => {
-            caches.set('note.md', { frontmatter: { status: 'changed' } });
-            return 'changed-during-hash';
+        let enumerations = 0;
+        f.getMarkdownFiles.mockImplementation(() => {
+            enumerations += 1;
+            return enumerations === 1 ? [file, other] : [replacement, other];
         });
         const changedDuringHash = await f.invoke({
             properties: [{ key: 'status', operator: 'equals', value: 'active' }],
             limit: 1,
-            cursor: first.nextCursor,
         });
         expect(changedDuringHash.ok).toBe(false);
-        expect(changedDuringHash.error).toContain('different query');
+        expect(changedDuringHash.error).toContain('sources changed');
+
+        const fresh = output(await f.invoke({
+            properties: [{ key: 'status', operator: 'equals', value: 'active' }],
+        }));
+        expect(paths(fresh)).toEqual(['note.md', 'other.md']);
     });
 
-    it('returns a deterministic path-asc partial page without a cursor over the candidate cap', async () => {
-        const files = Array.from({ length: 501 }, (_, index) => makeFile(`${String(index).padStart(3, '0')}.md`, { mtime: index }));
+    it('stops an in-flight query at the cache boundary when the call is aborted', async () => {
+        const caches = new Map([
+            ['a.md', { frontmatter: { status: 'active' } }],
+            ['b.md', { frontmatter: { status: 'active' } }],
+        ]);
+        const f = setup([makeFile('a.md'), makeFile('b.md')], caches);
+        const controller = new AbortController();
+        f.cache.mockImplementation((file: FileFixture) => {
+            controller.abort();
+            return caches.get(file.path) ?? null;
+        });
+
+        const error = await f.invoke({
+            properties: [{ key: 'status', operator: 'exists' }],
+        }, { ...f.context, signal: controller.signal }).then(() => undefined, caught => caught as Error);
+
+        expect(error?.name).toBe('AbortError');
+        expect(f.cache).toHaveBeenCalledTimes(1);
+        expect(f.cachedRead).not.toHaveBeenCalled();
+    });
+
+    it('applies an explicit limit only after evaluating every candidate', async () => {
+        const files = Array.from({ length: 601 }, (_, index) => makeFile(`${String(index).padStart(3, '0')}.md`, { mtime: index }));
         const f = setup(files);
         const result = output(await f.invoke({
             sort: { field: 'mtime', direction: 'desc' },
             limit: 3,
         }));
-        expect(paths(result)).toEqual(['000.md', '001.md', '002.md']);
-        expect(result.matchCount).toBe(500);
-        expect(result.matchCountKind).toBe('lower-bound');
+        expect(paths(result)).toEqual(['600.md', '599.md', '598.md']);
+        expect(result.matchCount).toBe(601);
+        expect(result.matchCountKind).toBe('exact');
         expect(result.coverage).toEqual(expect.objectContaining({
-            state: 'partial',
-            candidateCapExceeded: true,
-            evaluatedCandidates: 500,
+            state: 'complete',
+            evaluatedCandidates: 601,
         }));
-        expect(result.sort).toEqual({ field: 'path', direction: 'asc' });
-        expect(result.nextCursor).toBeUndefined();
-        expect(result.partialResultGuidance).toContain('Narrow the query');
+        expect(result.sort).toEqual({ field: 'mtime', direction: 'desc' });
+        expect(result.partialResultGuidance).toBeUndefined();
     });
 
-    it('counts the complete canonical snapshot JSON against the projection budget', async () => {
+    it('keeps a complete canonical snapshot beyond the old projection byte cap', async () => {
         const hashInputs: string[] = [];
         (computeContentHash as jest.Mock).mockImplementation(async (input: string) => {
             hashInputs.push(input);
@@ -591,18 +643,17 @@ describe('createQueryNotesTool', () => {
             // Keep the instance-prefix digit count stable across test ordering so
             // this exercises the snapshot boundary rather than identity length drift.
             for (let index = 0; index < 1_000; index += 1) createQueryNotesTool();
-            const files = Array.from({ length: 500 }, (_, index) => makeFile(
-                `${String(index).padStart(3, '0')}${'p'.repeat(index < 100 ? 191 : 190)}.md`,
+            const files = Array.from({ length: 600 }, (_, index) => makeFile(
+                `${String(index).padStart(3, '0')}${'p'.repeat(index < 100 ? 241 : 240)}.md`,
             ));
             const f = setup(files);
             const result = output(await f.invoke({ limit: 1 }));
             expect(result.coverage).toEqual(expect.objectContaining({
-                state: 'partial',
-                projectionBudgetExceeded: true,
+                state: 'complete',
+                evaluatedCandidates: 600,
             }));
-            expect(result.nextCursor).toBeUndefined();
             const hashedBytes = hashInputs.map(input => Buffer.byteLength(input, 'utf8'));
-            expect(Math.max(...hashedBytes)).toBeLessThanOrEqual(QUERY_NOTES_PROJECTION_MAX_UTF8_BYTES);
+            expect(Math.max(...hashedBytes)).toBeGreaterThan(128_000);
         } finally {
             (computeContentHash as jest.Mock).mockImplementation(async (input: string) => {
                 const { createHash } = jest.requireActual('node:crypto') as typeof import('node:crypto');
@@ -611,7 +662,7 @@ describe('createQueryNotesTool', () => {
         }
     });
 
-    it('still resolves an exact path found after the general candidate cap', async () => {
+    it('still resolves an exact path after six hundred general candidates', async () => {
         const files = Array.from({ length: 501 }, (_, index) => makeFile(`${String(index).padStart(3, '0')}.md`));
         const f = setup(files);
         const result = output(await f.invoke({ path: '500.md' }));
@@ -629,20 +680,15 @@ describe('createQueryNotesTool', () => {
         expect(result.matchCountKind).toBe('exact');
     });
 
-    it('treats an oversized relevant property as partial rather than absent', async () => {
-        const caches = new Map([['note.md', { frontmatter: { text: 'x'.repeat(20_000) } }]]);
+    it('evaluates a large relevant property without byte truncation', async () => {
+        const caches = new Map([['note.md', { frontmatter: { text: `${'x'.repeat(20_000)} needle` } }]]);
         const f = setup([makeFile('note.md')], caches);
         const result = output(await f.invoke({
             properties: [{ key: 'text', operator: 'contains', value: 'needle' }],
         }));
-        expect(result.matchCount).toBe(0);
-        expect(result.matchCountKind).toBe('lower-bound');
-        expect(result.coverage).toEqual(expect.objectContaining({
-            state: 'partial',
-            projectionBudgetExceeded: true,
-            cacheUnknown: true,
-        }));
-        expect(result.nextCursor).toBeUndefined();
+        expect(result.matchCount).toBe(1);
+        expect(result.matchCountKind).toBe('exact');
+        expect(result.coverage.state).toBe('complete');
     });
 
     it('projects existence without recursively copying an unrelated complex value', async () => {
@@ -663,7 +709,7 @@ describe('createQueryNotesTool', () => {
         expect(result.coverage.state).toBe('complete');
     });
 
-    it('checks metadata strings and array lengths before serialization or member visits', async () => {
+    it('evaluates large metadata strings and arrays without treating size as unknown', async () => {
         const hugeString = 'x'.repeat(20_000);
         const stringify = jest.spyOn(JSON, 'stringify');
         const oversizedString = setup(
@@ -674,13 +720,9 @@ describe('createQueryNotesTool', () => {
             properties: [{ key: 'text', operator: 'contains', value: 'needle' }],
         }));
         expect(contains.matchCount).toBe(0);
-        expect(contains.matchCountKind).toBe('lower-bound');
-        expect(contains.coverage).toEqual(expect.objectContaining({
-            state: 'partial',
-            projectionBudgetExceeded: true,
-            cacheUnknown: true,
-        }));
-        expect(stringify.mock.calls.some(([value]) => typeof value === 'string' && value.includes(hugeString))).toBe(false);
+        expect(contains.matchCountKind).toBe('exact');
+        expect(contains.coverage.state).toBe('complete');
+        expect(hugeString.length).toBe(20_000);
 
         const exists = output(await oversizedString.invoke({
             properties: [{ key: 'text', operator: 'exists' }],
@@ -708,13 +750,9 @@ describe('createQueryNotesTool', () => {
             properties: [{ key: 'values', operator: 'contains', value: 'needle' }],
         }));
         expect(containsArray.matchCount).toBe(0);
-        expect(containsArray.matchCountKind).toBe('lower-bound');
-        expect(containsArray.coverage).toEqual(expect.objectContaining({
-            state: 'partial',
-            projectionBudgetExceeded: true,
-            cacheUnknown: true,
-        }));
-        expect(accessedIndexes).toEqual([]);
+        expect(containsArray.matchCountKind).toBe('exact');
+        expect(containsArray.coverage.state).toBe('complete');
+        expect(accessedIndexes.length).toBe(16_386);
 
         const bounded = setup(
             [makeFile('bounded-array.md')],
@@ -728,43 +766,65 @@ describe('createQueryNotesTool', () => {
         expect(boundedResult.coverage.state).toBe('complete');
     });
 
-    it('rejects obviously oversized tag caches before calling getAllTags', async () => {
+    it('evaluates an oversized tag cache through getAllTags', async () => {
         const hugeTags = Array.from({ length: 20_000 }, () => ({ tag: '#x' }));
         const caches = new Map([['note.md', { tags: hugeTags }]]);
         const f = setup([makeFile('note.md')], caches);
         const callsBefore = (getAllTags as jest.Mock).mock.calls.length;
         const result = output(await f.invoke({ tags: ['project'] }));
         expect(result.matchCount).toBe(0);
-        expect(result.matchCountKind).toBe('lower-bound');
-        expect(result.coverage).toEqual(expect.objectContaining({
-            state: 'partial',
-            projectionBudgetExceeded: true,
-            cacheUnknown: true,
-        }));
-        expect((getAllTags as jest.Mock).mock.calls.length).toBe(callsBefore);
-        expect(f.cache).toHaveBeenCalledTimes(1);
+        expect(result.matchCountKind).toBe('exact');
+        expect(result.coverage.state).toBe('complete');
+        expect((getAllTags as jest.Mock).mock.calls.length).toBeGreaterThan(callsBefore);
+        expect(f.cache).toHaveBeenCalledTimes(2);
     });
 
-    it('applies the provider-facing result budget as JavaScript characters', async () => {
-        const suffixes = ['甲', '乙'];
+    it('passes a full result above the old character budget through provider enforcement', async () => {
+        const suffixes = ['甲', '乙', '丙', '丁'];
         const files = suffixes.map(suffix => makeFile(`${'笔'.repeat(1_000)}${suffix}.md`));
         const f = setup(files);
-        const result = output(await f.invoke({ limit: 2 }));
-        expect(result.matchCount).toBe(2);
+        const execution = await f.invoke({});
+        const result = output(execution);
+        expect(result.matchCount).toBe(4);
         expect(result.matchCountKind).toBe('exact');
-        expect(result.nextCursor).toBeUndefined();
         const serialized = JSON.stringify(result);
-        expect(serialized.length).toBeLessThanOrEqual(6_000);
+        expect(serialized.length).toBeGreaterThan(6_000);
         expect(Buffer.byteLength(serialized, 'utf8')).toBeGreaterThan(6_000);
+        expect(f.tool.outputBudgetChars).toBe(Number.MAX_SAFE_INTEGER);
+        const budgeted = enforceToolOutputBudget(f.tool as unknown as ChatToolRegistryDefinition, execution);
+        expect(budgeted.content).toBe(execution.content);
+        const projected = chatToolResultToPaAgentToolExecutionResult({
+            type: 'toolCall',
+            index: 0,
+            id: 'complete-query',
+            name: 'query_notes',
+            input: {},
+        }, execution);
+        expect(projected.promptText).toContain('笔甲');
+        expect(projected.promptText).toContain('笔丁');
+        expect(projected.promptText.length).toBeGreaterThan(serialized.length);
     });
 
-    it('returns an explicit unavailable result when one complete match cannot fit the output budget', async () => {
-        const longPath = `${'p'.repeat(5800)}.md`;
+    it('returns a single match larger than the old output budget', async () => {
+        const longPath = `${Array.from({ length: 10 }, () => `folder-${'d'.repeat(115)}`).join('/')}/note.md`;
+        expect(longPath.length).toBeGreaterThan(1_024);
+        expect(Math.max(...longPath.split('/').map(segment => segment.length))).toBeLessThan(256);
         const f = setup([makeFile(longPath)]);
-        const result = await f.invoke({ limit: 1 });
-        expect(result.ok).toBe(false);
-        expect(result.content).toBeNull();
-        expect(result.error).toContain('output budget');
+        const execution = await f.invoke({ limit: 1 });
+        expect(execution.ok).toBe(true);
+        expect(execution.content?.matches[0]?.path).toBe(longPath);
+        const projected = chatToolResultToPaAgentToolExecutionResult({
+            type: 'toolCall',
+            index: 0,
+            id: 'complete-query-long-path',
+            name: 'query_notes',
+            input: { limit: 1 },
+        }, execution);
+        const envelope = JSON.parse(projected.promptText) as {
+            observation: { matches: Array<{ path: string }> };
+        };
+        expect(envelope.observation.matches[0]?.path).toBe(longPath);
+        expect(projected.metadata?.vaultObservationEvidence).toBeTruthy();
     });
 
     it('fails closed when required public APIs are missing', async () => {

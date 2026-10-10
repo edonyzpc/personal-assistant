@@ -19,7 +19,9 @@ import type {
     ChatToolResult,
 } from "./chat-tools";
 import {
+    COMPLETE_NOTE_LIST_TOOL_OUTPUT_BUDGET_CHARS,
     OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
+    isCompleteNoteListToolName,
     isObsidianOperationsV1AToolName,
 } from "./chat-tools";
 import { PolicyEngine, type CapabilityPolicyDecision } from "./policy-engine";
@@ -345,8 +347,13 @@ function getObsidianOperationsV1ACapabilityPolicyError(capability: AgentCapabili
     if (capability.cost !== "free") errors.push("cost must be free");
     if (!Number.isFinite(capability.outputBudgetChars) || capability.outputBudgetChars <= 0) {
         errors.push("outputBudgetChars must be positive");
-    } else if (capability.outputBudgetChars > OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS) {
-        errors.push(`outputBudgetChars must be <= ${OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS}`);
+    } else {
+        const maximum = isCompleteNoteListToolName(capability.name)
+            ? COMPLETE_NOTE_LIST_TOOL_OUTPUT_BUDGET_CHARS
+            : OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS;
+        if (capability.outputBudgetChars > maximum) {
+            errors.push(`outputBudgetChars must be <= ${maximum}`);
+        }
     }
     if (capability.requiresConfirmation !== false) errors.push("requiresConfirmation must be false");
     if (capability.failureBehavior !== "recoverable") errors.push("failureBehavior must be recoverable");

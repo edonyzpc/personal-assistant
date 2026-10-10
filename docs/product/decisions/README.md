@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-059 | 条件查询一次返回完整笔记列表 | Accepted | 默认完整匹配、轻量清单、正文按需；不让模型拆目录或分页补查 | [Record](./dec-059-complete-note-query-results.md) |
 | DEC-058 | Chat 内可解释的 THINKING 过程 | Accepted | 原位细轨道、整轮计时、当前 reasoning 与轻量历史；全文沿用 Debug，数据和执行边界保持 | [Record](./dec-058-chat-thinking-process.md) |
 | DEC-057 | Agent Debug 完整轨迹与双端查看 | Accepted | 完整Run、聚焦展开＋节点定位搜索；桌面树/时间轴与右侧详情、移动详情页；数据边界沿用DEC-055 | [Record](./dec-057-agent-debug-explorer.md) |
 | DEC-056 | 可选的柔和标签外观与固定自动配色 | Accepted | 默认关闭；完整名称固定九色；正文、Properties tags 与 PA 真实标签一致，关闭恢复用户主题 | [Record](./dec-056-opt-in-tag-appearance.md) |

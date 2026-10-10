@@ -469,11 +469,17 @@ export function buildMetadataQuerySignals(query: string): MetadataQuerySignals {
     };
 }
 
+export interface ScoredVaultMetadataMatch extends VaultMetadataMatch {
+    score: number;
+    tags: string[];
+    frontmatter: Record<string, string>;
+}
+
 export function scoreMetadataMatch(
     file: MarkdownFileLike,
     cache: FileCacheLike | null | undefined,
     query: MetadataQuerySignals,
-): VaultMetadataMatch | null {
+): ScoredVaultMetadataMatch | null {
     const title = getFileTitle(file);
     const tags = collectCacheTags(cache);
     const frontmatter = previewFrontmatter(cache?.frontmatter);
@@ -517,7 +523,7 @@ export async function scoreMetadataMatchCooperatively(
     cache: FileCacheLike | null | undefined,
     query: MetadataQuerySignals,
     checkpoint: CooperativeCheckpoint,
-): Promise<VaultMetadataMatch | null> {
+): Promise<ScoredVaultMetadataMatch | null> {
     const title = getFileTitle(file);
     const pathText = normalizeSearchText(file.path), titleText = normalizeSearchText(title);
     const tags = await collectCacheTagsCooperatively(cache, checkpoint);

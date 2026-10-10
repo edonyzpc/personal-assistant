@@ -4,6 +4,7 @@ import { createChatToolCapability } from '../src/ai-services/capability-adapter'
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
 import { chatToolResultToPaAgentToolExecutionResult } from '../src/ai-services/pa-agent-host-tools';
 import {
+    COMPLETE_NOTE_LIST_TOOL_OUTPUT_BUDGET_CHARS,
     OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
     OBSIDIAN_OPERATIONS_V1A_TOOL_NAMES,
     createInspectObsidianNoteTool,
@@ -176,9 +177,10 @@ describe('Obsidian Operations v1A App API read tools', () => {
                 sourceBoundary: 'read-only-tool',
             });
             expect(registry.getDefinition(name)?.outputBudgetChars).toBeGreaterThan(0);
-            expect(registry.getDefinition(name)?.outputBudgetChars).toBeLessThanOrEqual(
-                OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
-            );
+            const maximum = name === 'search_vault_snippets'
+                ? COMPLETE_NOTE_LIST_TOOL_OUTPUT_BUDGET_CHARS
+                : OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS;
+            expect(registry.getDefinition(name)?.outputBudgetChars).toBeLessThanOrEqual(maximum);
         }
     });
 
@@ -349,7 +351,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
         expect(JSON.stringify(content)).not.toContain('x'.repeat(200));
     });
 
-    it('searches bounded Markdown snippets with dotted folder scope and no full-body output', async () => {
+    it('searches literal Markdown text with dotted folder scope and no body output', async () => {
         const plugin = createPlugin({
             markdownFiles: [
                 { path: 'notes/2026.05/a.md', basename: 'a', stat: { mtime: 1, size: 650 } },
@@ -372,9 +374,8 @@ describe('Obsidian Operations v1A App API read tools', () => {
         const content = result.content as VaultSnippetSearchOutput;
         expect(content.matches).toHaveLength(1);
         expect(content.matches[0]).toMatchObject({ path: 'notes/2026.05/a.md', line: 1 });
-        expect(content.matches[0].snippet).toContain('pa-positive-snippet-token-1701');
-        expect(content.matches[0].snippet.length).toBeLessThanOrEqual(263);
-        expect(content.matches[0].snippet).not.toContain('a'.repeat(200));
+        expect(content.matches[0].range).toMatchObject({ startLine: 1, endLine: 1 });
+        expect(Object.prototype.hasOwnProperty.call(content.matches[0], 'snippet')).toBe(false);
     });
 
     it('reports missing snippet scopes separately from no-match results', async () => {
@@ -615,7 +616,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
         });
     });
 
-    it('uses mobile-safe read budgets before loading oversized files', async () => {
+    it('keeps mobile reads fail-closed for unavailable stats while retaining bounded structure tools', async () => {
         const registry = createRegistry();
         const oversizedNote = { path: 'notes/huge.md', basename: 'huge', stat: { size: 300_001 } };
         const notePlugin = createPlugin({
@@ -688,9 +689,8 @@ describe('Obsidian Operations v1A App API read tools', () => {
         expect(snippetResult.content as VaultSnippetSearchOutput).toMatchObject({
             matches: [expect.objectContaining({ path: 'notes/small.md' })],
             scannedFiles: 1,
-            skippedFiles: 1,
-            truncated: true,
-            skippedSources: ['vault file read skipped for size'],
+            coverage: { state: 'partial', unknownFileSize: true },
+            unavailableSources: ['vault file stat unavailable'],
         });
     });
 
@@ -725,7 +725,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
         });
     });
 
-    it('enforces UTF-8 byte read budgets when file size is unavailable', async () => {
+    it('does not claim a no-match result when the file stat is unavailable', async () => {
         const registry = createRegistry();
         const plugin = createPlugin({
             markdownFiles: [{ path: 'notes/multibyte.md', basename: 'multibyte' }],
@@ -746,11 +746,10 @@ describe('Obsidian Operations v1A App API read tools', () => {
         expect(result.content as VaultSnippetSearchOutput).toMatchObject({
             matches: [],
             scannedFiles: 0,
-            skippedFiles: 1,
-            skippedSources: ['vault file stat unavailable'],
-            truncated: true,
+            coverage: { state: 'partial', unknownFileSize: true },
+            unavailableSources: ['vault file stat unavailable'],
         });
-        expect((result.content as VaultSnippetSearchOutput).scannedBytes).toBeLessThanOrEqual(100_000);
+        expect((result.content as VaultSnippetSearchOutput).scannedBytes).toBe(0);
     });
 
     it('caps tag metadata scans for large vaults', async () => {

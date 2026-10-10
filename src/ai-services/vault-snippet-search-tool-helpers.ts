@@ -2,31 +2,21 @@ import { getFrontMatterInfo } from "obsidian";
 
 import { computeContentHash } from "../vss-helpers";
 import {
-    OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
     type SearchVaultSnippetPart,
     type VaultSnippetMatch,
-    type VaultSnippetPage,
     type VaultSnippetRange,
     type VaultSnippetSearchOutput,
     type SearchVaultSnippetsInput,
 } from "./chat-tool-types";
 import {
-    SNIPPET_CONTEXT_CHARS,
-    SNIPPET_MAX_BYTES,
-    SNIPPET_MAX_CANDIDATE_FILES,
-    SNIPPET_MAX_CHARS,
-    SNIPPET_MAX_FILE_BYTES,
-    SNIPPET_MAX_FILES,
     SNIPPET_SCOPE_UNAVAILABLE_SOURCE,
     SNIPPET_SCOPE_UNSUPPORTED_SOURCE,
-    VAULT_FILE_READ_SKIPPED_SIZE_SOURCE,
     VAULT_FILE_READ_UNAVAILABLE_SOURCE,
     VAULT_FILE_STAT_UNAVAILABLE_SOURCE,
 } from "./chat-tool-constants";
 import {
     canReadVaultFiles,
     getFileTitle,
-    getKnownFileSize,
     getUtf8ByteLength,
     readVaultFile,
     sortCooperatively,
@@ -38,8 +28,6 @@ import { throwIfAborted } from "./chat-utils";
 import { createCooperativeTask } from "./cooperative-task";
 
 export class VaultSnippetSearchUnavailableError extends Error { }
-export class VaultSnippetCursorExpiredError extends Error { }
-export class VaultSnippetResultBudgetUnavailableError extends Error { }
 export class VaultSnippetSourcesChangedError extends VaultSnippetSearchUnavailableError { }
 
 interface VaultSnippetFileStat {
@@ -74,14 +62,6 @@ interface VaultSnippetSourceIdentityCapture {
     identity: string;
 }
 
-interface VaultSnippetCursor {
-    version: 1;
-    instance: string;
-    query: string;
-    snapshot: string;
-    nextIndex: number;
-}
-
 export interface VaultSnippetIdentityRegistry {
     identity(file: object): string;
 }
@@ -90,12 +70,10 @@ export class SequentialVaultSnippetIdentityRegistry implements VaultSnippetIdent
     private readonly identities = new WeakMap<object, string>();
     private nextSequence = 0;
 
-    constructor(private readonly instancePrefix: string) { }
-
     identity(file: object): string {
         const existing = this.identities.get(file);
         if (existing) return existing;
-        const identity = `${this.instancePrefix}-file-${++this.nextSequence}`;
+        const identity = `file-${++this.nextSequence}`;
         this.identities.set(file, identity);
         return identity;
     }
@@ -104,7 +82,6 @@ export class SequentialVaultSnippetIdentityRegistry implements VaultSnippetIdent
 export interface ExecuteVaultSnippetSearchOptions {
     input: SearchVaultSnippetsInput;
     host: AiServiceHost;
-    instancePrefix: string;
     identities: VaultSnippetIdentityRegistry;
     signal: AbortSignal | undefined;
     dependencyPaths: Set<string>;
@@ -149,7 +126,6 @@ export async function executeVaultSnippetSearch(
                 matches: [],
                 matchCount: 0,
                 matchCountKind: "exact",
-                page: makePage(0, 0, input.limit, false),
                 coverage: makeCoverage(),
                 scannedFiles: 0,
                 scannedBytes: 0,
@@ -171,28 +147,6 @@ export async function executeVaultSnippetSearch(
         return unavailableResult(input, part, caseSensitive, files);
     }
 
-    const queryDigest = await hashJsonValue({
-        query: input.query,
-        scope: input.scope ?? "",
-        part,
-        caseSensitive,
-    });
-    const cursor = input.cursor ? decodeVaultSnippetCursor(input.cursor) : null;
-    if (input.cursor && !cursor) {
-        throw new VaultSnippetCursorExpiredError("search_vault_snippets cursor is invalid.");
-    }
-    if (cursor && cursor.instance !== options.instancePrefix) {
-        throw new VaultSnippetCursorExpiredError("search_vault_snippets cursor targets a different tool instance.");
-    }
-    if (cursor && cursor.query !== queryDigest) {
-        throw new VaultSnippetCursorExpiredError("search_vault_snippets cursor targets a different query or scope.");
-    }
-
-    const pageStartIndex = cursor?.nextIndex ?? 0;
-    if (pageStartIndex < 0 || !Number.isInteger(pageStartIndex)) {
-        throw new VaultSnippetCursorExpiredError("search_vault_snippets cursor has an invalid next index.");
-    }
-
     const matcher = createLiteralMatcher(input.query, caseSensitive);
     const sourceIdentities: VaultSnippetSourceIdentityCapture[] = [];
     for (const file of files) {
@@ -205,29 +159,17 @@ export async function executeVaultSnippetSearch(
         path: string;
         stat: VaultSnippetFileStat | null;
     }> = [];
-    const pageMatches: VaultSnippetMatch[] = [];
-    const skippedSources = new Set<string>();
+    const noteMatches: VaultSnippetMatch[] = [];
     let consideredFiles = 0;
     let readNotes = 0;
     let readBytes = 0;
     let evaluatedBytes = 0;
-    let skippedFiles = 0;
-    let omittedCount = 0;
-    let matchCount = 0;
-    let candidateCapExceeded = false;
-    let fileCapExceeded = false;
-    let byteCapExceeded = false;
     let unknownFileSize = false;
 
     for (const file of files) {
         await checkpoint();
         throwIfAborted(signal);
         options.assertCurrent();
-        if (consideredFiles >= SNIPPET_MAX_CANDIDATE_FILES) {
-            candidateCapExceeded = true;
-            omittedCount++;
-            break;
-        }
         consideredFiles++;
         options.dependencyPaths.add(file.path);
         const identity = options.identities.identity(file);
@@ -244,42 +186,8 @@ export async function executeVaultSnippetSearch(
             sourceCaptures.push({ file, path: capturedPath, stat });
         };
         if (!stat) {
-            const knownSize = getKnownFileSize(file);
-            if (knownSize !== undefined
-                && (knownSize > SNIPPET_MAX_FILE_BYTES || knownSize > SNIPPET_MAX_BYTES - evaluatedBytes)) {
-                skippedFiles++;
-                omittedCount++;
-                skippedSources.add(VAULT_FILE_READ_SKIPPED_SIZE_SOURCE);
-                captureSource("skipped-size");
-            } else {
-                unknownFileSize = true;
-                skippedFiles++;
-                omittedCount++;
-                skippedSources.add(VAULT_FILE_STAT_UNAVAILABLE_SOURCE);
-                captureSource("unknown-size");
-            }
-            continue;
-        }
-
-        const remainingByteBudget = SNIPPET_MAX_BYTES - readBytes;
-        if (readNotes >= SNIPPET_MAX_FILES || remainingByteBudget <= 0) {
-            if (readNotes >= SNIPPET_MAX_FILES) fileCapExceeded = true;
-            if (remainingByteBudget <= 0) byteCapExceeded = true;
-            skippedFiles++;
-            omittedCount++;
-            skippedSources.add(VAULT_FILE_READ_SKIPPED_SIZE_SOURCE);
-            captureSource("skipped-size");
-            continue;
-        }
-        if (
-            stat.size > SNIPPET_MAX_FILE_BYTES
-            || stat.size > remainingByteBudget
-            || remainingByteBudget < SNIPPET_MAX_FILE_BYTES
-        ) {
-            skippedFiles++;
-            omittedCount++;
-            skippedSources.add(VAULT_FILE_READ_SKIPPED_SIZE_SOURCE);
-            captureSource("skipped-size");
+            unknownFileSize = true;
+            captureSource("unknown-size");
             continue;
         }
 
@@ -291,15 +199,6 @@ export async function executeVaultSnippetSearch(
         const actualBytes = getUtf8ByteLength(content);
         readNotes++;
         readBytes += actualBytes;
-        if (actualBytes > SNIPPET_MAX_FILE_BYTES || actualBytes > SNIPPET_MAX_BYTES - readBytes) {
-            byteCapExceeded = true;
-            omittedCount++;
-            skippedFiles++;
-            skippedSources.add(VAULT_FILE_READ_SKIPPED_SIZE_SOURCE);
-            captureSource("skipped-size");
-            continue;
-        }
-
         evaluatedBytes += actualBytes;
         const contentHash = await computeContentHash(content);
         await checkpoint();
@@ -308,30 +207,25 @@ export async function executeVaultSnippetSearch(
         assertFileCurrent(options, file, stat);
         captureSource("read", contentHash);
 
-        const lineSpans = await buildLineSpans(content, calculationCheckpoint);
+        let firstMatch: VaultSnippetMatch | undefined;
         for (const partView of getSearchPartViews(content, part)) {
             matcher.lastIndex = 0;
-            let match = matcher.exec(partView.text);
-            while (match) {
-                await calculationCheckpoint();
-                const originalStart = partView.start + match.index;
-                const originalEnd = originalStart + match[0].length;
-                if (matchCount >= pageStartIndex && pageMatches.length < input.limit) {
-                    pageMatches.push(makeMatch(
-                        file,
-                        partView,
-                        originalStart,
-                        originalEnd,
-                        contentHash,
-                        lineSpans,
-                        content,
-                    ));
-                }
-                matchCount++;
-                matcher.lastIndex = match.index + match[0].length;
-                match = matcher.exec(partView.text);
-            }
+            const match = matcher.exec(partView.text);
+            if (!match) continue;
+            const originalStart = partView.start + match.index;
+            const originalEnd = originalStart + match[0].length;
+            const spans = await buildLineSpans(content, calculationCheckpoint);
+            firstMatch = makeMatch(
+                file,
+                partView,
+                originalStart,
+                originalEnd,
+                contentHash,
+                spans,
+            );
+            break;
         }
+        if (firstMatch) noteMatches.push(firstMatch);
     }
 
     await checkpoint();
@@ -344,20 +238,16 @@ export async function executeVaultSnippetSearch(
             throw new VaultSnippetSourcesChangedError("Task source path is no longer permitted.");
         }
     }
-
-    const scanComplete = !candidateCapExceeded && !fileCapExceeded && !byteCapExceeded
-        && !unknownFileSize && skippedFiles === 0;
-    const snapshotDigest = await hashJsonValue(snapshot);
+    await hashJsonValue(snapshot);
     await checkpoint();
     throwIfAborted(signal);
     options.assertCurrent();
+    if (!canReadVaultFiles(host)) {
+        throw new VaultSnippetSearchUnavailableError("Vault cachedRead is unavailable.");
+    }
     await assertSourceSetCurrent(options, sourceIdentities, sourceCaptures, input.scope, checkpoint);
-    if (cursor && cursor.snapshot !== snapshotDigest) {
-        throw new VaultSnippetCursorExpiredError("search_vault_snippets cursor snapshot is no longer current.");
-    }
-    if (cursor && pageStartIndex > matchCount) {
-        throw new VaultSnippetCursorExpiredError("search_vault_snippets cursor points beyond the current matches.");
-    }
+
+    const scanComplete = !unknownFileSize;
 
     const coverage = makeCoverage({
         scannedPermittedNotes: files.length,
@@ -365,37 +255,26 @@ export async function executeVaultSnippetSearch(
         readNotes,
         readBytes,
         evaluatedBytes,
-        skippedFiles: skippedFiles || undefined,
-        candidateCapExceeded: candidateCapExceeded || undefined,
-        fileCapExceeded: fileCapExceeded || undefined,
-        byteCapExceeded: byteCapExceeded || undefined,
         unknownFileSize: unknownFileSize || undefined,
         state: scanComplete ? "complete" : "partial",
     });
 
-    const content = fitResultToBudget({
-            query: input.query,
-            scope: input.scope,
-            part,
-            caseSensitive,
-            matches: pageMatches,
-            matchCount,
-            matchCountKind: scanComplete ? "exact" : "lower-bound",
-            pageStartIndex,
-            requestedLimit: input.limit,
-            scanComplete,
-            snapshotDigest,
-            queryDigest,
-            instancePrefix: options.instancePrefix,
-            coverage,
-            skippedSources: [...skippedSources],
-            scannedFiles: readNotes,
-            scannedBytes: evaluatedBytes,
-            consideredFiles,
-            skippedFiles: skippedFiles || undefined,
-            truncated: scanComplete ? undefined : true,
-            omittedCount: omittedCount || undefined,
-    });
+    const matches = input.limit === undefined ? noteMatches : noteMatches.slice(0, input.limit);
+    const content: VaultSnippetSearchOutput = {
+        kind: "vault-snippets",
+        query: input.query,
+        scope: input.scope,
+        part,
+        caseSensitive,
+        matches,
+        matchCount: noteMatches.length,
+        matchCountKind: scanComplete ? "exact" : "lower-bound",
+        coverage,
+        scannedFiles: readNotes,
+        scannedBytes: evaluatedBytes,
+        consideredFiles,
+        ...(scanComplete ? {} : { unavailableSources: [VAULT_FILE_STAT_UNAVAILABLE_SOURCE] }),
+    };
     return {
         content,
         matchPaths: content.matches.map(match => match.path),
@@ -422,7 +301,6 @@ function unavailableResult(
             matches: [],
             matchCount: 0,
             matchCountKind: "lower-bound",
-            page: makePage(0, 0, input.limit, false),
             coverage: makeCoverage({
                 state: "partial",
                 scannedPermittedNotes: files.length,
@@ -717,44 +595,15 @@ function makeMatch(
     end: number,
     sourceVersion: string,
     lineSpans: readonly VaultSnippetLineSpan[],
-    content: string,
 ): VaultSnippetMatch {
-    const contextStart = Math.max(partView.start, start - SNIPPET_CONTEXT_CHARS);
-    const contextEnd = Math.min(partView.end, end + SNIPPET_CONTEXT_CHARS);
-    const snippet = normalizeSnippetSpaces(content.slice(contextStart, contextEnd));
     const range = describeRange(lineSpans, start, end);
     return {
         path: file.path,
         title: getFileTitle(file),
         line: range.startLine,
-        snippet: truncateChars(snippet, SNIPPET_MAX_CHARS),
         part: partView.part,
         sourceVersion,
         range,
-    };
-}
-
-function normalizeSnippetSpaces(value: string): string {
-    return value.replace(/\s+/g, " ").trim();
-}
-
-function truncateChars(value: string, maxLength: number): string {
-    return value.length <= maxLength ? value : value.slice(0, maxLength);
-}
-
-function makePage(
-    startIndex: number,
-    returnedCount: number,
-    requestedLimit: number,
-    hasMore: boolean,
-    outputBudgetExceeded?: boolean,
-): VaultSnippetPage {
-    return {
-        startIndex,
-        returnedCount,
-        requestedLimit,
-        hasMore,
-        ...(outputBudgetExceeded ? { outputBudgetExceeded: true } : {}),
     };
 }
 
@@ -774,39 +623,6 @@ function makeCoverage(values: Partial<VaultSnippetSearchOutput["coverage"]> = {}
     };
 }
 
-function decodeVaultSnippetCursor(cursor: string): VaultSnippetCursor | null {
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(cursor);
-    } catch {
-        return null;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const value = parsed as Record<string, unknown>;
-    const keys = Object.keys(value).sort();
-    if (JSON.stringify(keys) !== JSON.stringify(["instance", "nextIndex", "query", "snapshot", "version"])) {
-        return null;
-    }
-    if (value.version !== 1
-        || typeof value.instance !== "string" || !value.instance
-        || typeof value.query !== "string" || !/^[0-9a-f]{40}$/.test(value.query)
-        || typeof value.snapshot !== "string" || !/^[0-9a-f]{40}$/.test(value.snapshot)
-        || typeof value.nextIndex !== "number" || !Number.isInteger(value.nextIndex) || value.nextIndex < 0) {
-        return null;
-    }
-    return {
-        version: 1,
-        instance: value.instance,
-        query: value.query,
-        snapshot: value.snapshot,
-        nextIndex: value.nextIndex,
-    };
-}
-
-function encodeVaultSnippetCursor(cursor: VaultSnippetCursor): string {
-    return JSON.stringify(cursor);
-}
-
 async function hashJsonValue(value: unknown): Promise<string> {
     try {
         return await computeContentHash(JSON.stringify(value));
@@ -818,89 +634,4 @@ async function hashJsonValue(value: unknown): Promise<string> {
 function comparePaths(left: string, right: string): number {
     if (left === right) return 0;
     return left < right ? -1 : 1;
-}
-
-interface FitResultOptions {
-    query: string;
-    scope?: string;
-    part: SearchVaultSnippetPart;
-    caseSensitive: boolean;
-    matches: VaultSnippetMatch[];
-    matchCount: number;
-    matchCountKind: "exact" | "lower-bound";
-    pageStartIndex: number;
-    requestedLimit: number;
-    scanComplete: boolean;
-    snapshotDigest: string;
-    queryDigest: string;
-    instancePrefix: string;
-    coverage: VaultSnippetSearchOutput["coverage"];
-    skippedSources: string[];
-    scannedFiles: number;
-    scannedBytes: number;
-    consideredFiles: number;
-    skippedFiles?: number;
-    truncated?: boolean;
-    omittedCount?: number;
-}
-
-function fitResultToBudget(options: FitResultOptions): VaultSnippetSearchOutput {
-    let returnedCount = options.matches.length;
-    let candidate: VaultSnippetSearchOutput | undefined;
-    while (returnedCount >= 0) {
-        const matches = options.matches.slice(0, returnedCount);
-        const nextIndex = options.pageStartIndex + returnedCount;
-        const hasMore = options.scanComplete && nextIndex < options.matchCount;
-        const nextCursor = hasMore
-            ? encodeVaultSnippetCursor({
-                version: 1,
-                instance: options.instancePrefix,
-                query: options.queryDigest,
-                snapshot: options.snapshotDigest,
-                nextIndex,
-            })
-            : undefined;
-        const outputBudgetExceeded = returnedCount < options.matches.length;
-        candidate = {
-            kind: "vault-snippets",
-            query: options.query,
-            scope: options.scope,
-            part: options.part,
-            caseSensitive: options.caseSensitive,
-            matches,
-            matchCount: options.matchCount,
-            matchCountKind: options.matchCountKind,
-            page: makePage(
-                options.pageStartIndex,
-                returnedCount,
-                options.requestedLimit,
-                hasMore,
-                outputBudgetExceeded || undefined,
-            ),
-            coverage: options.coverage,
-            ...(nextCursor ? { nextCursor } : {}),
-            scannedFiles: options.scannedFiles,
-            scannedBytes: options.scannedBytes,
-            consideredFiles: options.consideredFiles,
-            ...(options.skippedFiles === undefined ? {} : { skippedFiles: options.skippedFiles }),
-            ...(options.skippedSources.length === 0 ? {} : { skippedSources: options.skippedSources }),
-            ...(options.truncated === undefined && !outputBudgetExceeded ? {} : { truncated: true }),
-            ...(options.omittedCount === undefined ? {} : { omittedCount: options.omittedCount }),
-            ...(options.scanComplete ? {} : {
-                partialResultGuidance: "Narrow the scope or use read_note for a specific large note; this partial scan has no whole-range cursor.",
-            }),
-        };
-        if (JSON.stringify(candidate).length <= OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS) {
-            return candidate;
-        }
-        if (returnedCount <= 1) {
-            throw new VaultSnippetResultBudgetUnavailableError(
-                "search_vault_snippets cannot fit its metadata and first match in the result budget.",
-            );
-        }
-        returnedCount--;
-    }
-    throw new VaultSnippetResultBudgetUnavailableError(
-        "search_vault_snippets cannot fit its result in the output budget.",
-    );
 }

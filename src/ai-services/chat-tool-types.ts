@@ -47,6 +47,21 @@ export type ChatToolFailureBehavior = "recoverable";
 export type ChatToolSourceBoundary = "memory" | "current-note" | "read-only-tool" | "web" | "skill-context";
 
 export const OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS = 6000;
+/** Complete note-list tools do not apply a tool-local result cap; the model
+ * context admission layer owns the later physical prompt boundary. */
+export const COMPLETE_NOTE_LIST_TOOL_OUTPUT_BUDGET_CHARS = Number.MAX_SAFE_INTEGER;
+
+export const COMPLETE_NOTE_LIST_TOOL_NAMES = [
+    "query_notes",
+    "search_vault_metadata",
+    "search_vault_snippets",
+] as const satisfies readonly ChatToolName[];
+
+export type CompleteNoteListToolName = typeof COMPLETE_NOTE_LIST_TOOL_NAMES[number];
+
+export function isCompleteNoteListToolName(name: string): name is CompleteNoteListToolName {
+    return (COMPLETE_NOTE_LIST_TOOL_NAMES as readonly string[]).includes(name);
+}
 
 export const OBSIDIAN_OPERATIONS_V1A_TOOL_NAMES = [
     "inspect_obsidian_note",
@@ -257,22 +272,28 @@ export interface CurrentNoteContextOutput {
 
 export interface SearchVaultMetadataInput {
     query: string;
-    limit: number;
+    limit?: number;
 }
 
 export interface VaultMetadataMatch {
     path: string;
     title: string;
-    score: number;
-    tags: string[];
-    frontmatter: Record<string, string>;
     mtime?: number;
     ctime?: number;
+}
+
+export interface SearchVaultMetadataCoverage {
+    state: "complete" | "partial";
+    scannedPermittedNotes: number;
+    evaluatedCandidates: number;
 }
 
 export interface SearchVaultMetadataOutput {
     query: string;
     matches: VaultMetadataMatch[];
+    matchCount: number;
+    matchCountKind: "exact" | "lower-bound";
+    coverage: SearchVaultMetadataCoverage;
 }
 
 export interface ListRecentNotesInput {
@@ -319,11 +340,10 @@ export interface ReadCanvasSummaryInput {
 
 export interface SearchVaultSnippetsInput {
     query: string;
-    limit: number;
+    limit?: number;
     scope?: string;
     part?: SearchVaultSnippetPart;
     caseSensitive?: boolean;
-    cursor?: string;
 }
 
 export interface ListVaultTagsInput {
@@ -398,8 +418,7 @@ export interface QueryNotesInput {
     properties?: QueryNotesPropertyCondition[];
     date?: QueryNotesDateFilter;
     sort: QueryNotesSort;
-    limit: number;
-    cursor?: string;
+    limit?: number;
 }
 
 export interface QueryNotesMatch {
@@ -426,7 +445,6 @@ export interface QueryNotesOutput {
     sort: QueryNotesSort;
     coverage: QueryNotesCoverage;
     partialResultGuidance?: string;
-    nextCursor?: string;
 }
 
 export interface InspectObsidianNoteOutput {
@@ -510,7 +528,6 @@ export interface VaultSnippetMatch {
     path: string;
     title: string;
     line: number;
-    snippet: string;
     part: SearchVaultSnippetPart;
     sourceVersion: string;
     range: VaultSnippetRange;
@@ -525,10 +542,8 @@ export interface VaultSnippetSearchOutput {
     matches: VaultSnippetMatch[];
     matchCount: number;
     matchCountKind: "exact" | "lower-bound";
-    page: VaultSnippetPage;
     coverage: VaultSnippetCoverage;
     partialResultGuidance?: string;
-    nextCursor?: string;
     scannedFiles?: number;
     scannedBytes?: number;
     consideredFiles?: number;
@@ -550,14 +565,6 @@ export interface VaultSnippetRange {
     endLine: number;
     startColumn: number;
     endColumn: number;
-}
-
-export interface VaultSnippetPage {
-    startIndex: number;
-    returnedCount: number;
-    requestedLimit: number;
-    hasMore: boolean;
-    outputBudgetExceeded?: boolean;
 }
 
 export interface VaultSnippetCoverage {

@@ -8,6 +8,7 @@ Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governa
 
 | Track | Work item | Feature Home | Tracker |
 | --- | --- | --- | --- |
+| Complete Note Query | B-169 | [Feature Home](./complete-note-query/README.md) | [Tracker](./complete-note-query/tracker.md) |
 | Lean Ghost Publishing | B-163 | [Feature Home](./lean-ghost-publishing/README.md) | [Tracker](./lean-ghost-publishing/tracker.md) |
 
 已完成任务的稳定契约留在 Product/Governance/Architecture，

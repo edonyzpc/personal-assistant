@@ -3,7 +3,6 @@ import type { MarkdownFileLike } from "./chat-tool-execution-helpers";
 import {
     getFileTitle,
     getOptionalMetadataCache,
-    getUtf8ByteLength,
     getVault,
     getMarkdownFilesCooperatively,
     sortCooperatively,
@@ -16,19 +15,12 @@ import type {
     QueryNotesOutput,
     QueryNotesPropertyValue,
 } from "./chat-tool-types";
-import {
-    QUERY_NOTES_MAX_CANDIDATES,
-    QUERY_NOTES_PROJECTION_MAX_UTF8_BYTES,
-    QUERY_NOTES_RESULT_JSON_BUDGET_CHARS,
-} from "./chat-tool-constants";
 import { canonicalizeQueryNotesInput } from "./chat-tool-guards";
 import { throwIfAborted } from "./chat-utils";
-import { computeContentHash } from "../vss-helpers";
 import { createCooperativeTask } from "./cooperative-task";
 
 export class QueryNotesUnavailableError extends Error {}
-export class QueryNotesCursorExpiredError extends Error {}
-export class QueryNotesResultBudgetUnavailableError extends Error {}
+export class QueryNotesSourcesChangedError extends QueryNotesUnavailableError {}
 
 export interface QueryNotesExecutionOptions {
     input: QueryNotesInput;
@@ -78,13 +70,6 @@ export class QueryNotesFileIdentityRegistry {
     }
 }
 
-const QUERY_NOTES_IDENTITY_SEQUENCE_WIDTH = 10;
-/** Fixed-width private identities are excluded from durable evidence; pure
- * revalidation only needs an equal-length placeholder for the shared budget. */
-export const QUERY_NOTES_PRIVATE_IDENTITY_PLACEHOLDER = "0".repeat(
-    32 + 1 + QUERY_NOTES_IDENTITY_SEQUENCE_WIDTH,
-);
-
 type UnknownMarker = { state: "unknown" };
 type AbsentMarker = { state: "absent" };
 type OversizedMarker = { state: "oversized" };
@@ -125,8 +110,6 @@ interface QueryNotesEvaluation {
     items: QueryNotesEvaluatedItem[];
     candidatePaths: string[];
     scannedPermittedNotes: number;
-    candidateCapExceeded: boolean;
-    projectionBudgetExceeded: boolean;
     hasUnknownEvaluation: boolean;
 }
 
@@ -143,20 +126,9 @@ interface PropertyUsage {
     date: boolean;
 }
 
-const RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES = 16_384;
-const RELEVANT_METADATA_MAX_ARRAY_ENTRIES = Math.floor(RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES / 2);
-
 interface QueryNotesTagCache {
     tags?: Array<{ tag?: string }>;
     frontmatter?: Record<string, unknown>;
-}
-
-interface QueryNotesCursor {
-    version: 1;
-    instance: string;
-    query: string;
-    snapshot: string;
-    nextIndex: number;
 }
 
 export async function executeQueryNotes(
@@ -170,38 +142,21 @@ export async function executeQueryNotes(
     throwIfAborted(signal);
     options.assertCurrent?.();
 
-    const queryDigest = await computeContentHash(canonicalizeQueryNotesInput(input));
-    await checkpoint();
-    throwIfAborted(signal);
-    options.assertCurrent?.();
-    const cursor = input.cursor ? decodeQueryNotesCursor(input.cursor) : null;
-    if (cursor && (cursor.instance !== options.instancePrefix || cursor.query !== queryDigest)) {
-        throw new QueryNotesCursorExpiredError("query_notes cursor targets a different query or tool instance.");
-    }
-
     let evaluation = await evaluateQueryNotes(options);
-    let canonicalSnapshot = JSON.stringify(evaluation.snapshot);
-    let snapshotDigest = "";
+    const canonicalSnapshot = JSON.stringify(evaluation.snapshot);
     const complete = isCompleteEvaluation(evaluation);
 
     if (complete) {
-        snapshotDigest = await computeContentHash(canonicalSnapshot);
         await checkpoint();
         throwIfAborted(signal);
         options.assertCurrent?.();
         const rebuilt = await evaluateQueryNotes(options);
         const rebuiltCanonical = JSON.stringify(rebuilt.snapshot);
         if (rebuiltCanonical !== canonicalSnapshot) {
-            throw new QueryNotesCursorExpiredError("query_notes sources changed while the snapshot was being verified.");
+            throw new QueryNotesSourcesChangedError("query_notes sources changed while the snapshot was being verified.");
         }
         options.assertCurrent?.();
-        if (cursor && cursor.snapshot !== snapshotDigest) {
-            throw new QueryNotesCursorExpiredError("query_notes cursor snapshot is no longer current.");
-        }
-        canonicalSnapshot = rebuiltCanonical;
         evaluation = rebuilt;
-    } else if (cursor) {
-        throw new QueryNotesCursorExpiredError("query_notes can no longer verify the cursor's complete snapshot.");
     }
 
     const knownMatches: QueryNotesEvaluatedItem[] = [];
@@ -210,88 +165,22 @@ export async function executeQueryNotes(
         if (item.match === true) knownMatches.push(item);
     }
     const requestedSort = input.sort;
-    const actualSort = complete ? requestedSort : { field: "path" as const, direction: "asc" as const };
     const orderedMatches = await sortCooperatively(knownMatches, (left, right) => compareQueryNotesItems(
         left,
         right,
-        complete ? requestedSort : actualSort,
+        requestedSort,
     ), calculationCheckpoint);
-
-    let nextIndex = 0;
-    if (cursor) {
-        if (cursor.nextIndex < 0 || cursor.nextIndex >= orderedMatches.length) {
-            throw new QueryNotesCursorExpiredError("query_notes cursor page is outside the current result set.");
-        }
-        nextIndex = cursor.nextIndex;
-    }
-
-    const selected: QueryNotesEvaluatedItem[] = [];
-    for (let index = nextIndex; index < orderedMatches.length && selected.length < input.limit; index += 1) {
-        const candidate = [...selected, orderedMatches[index]];
-        const hasMore = index + 1 < orderedMatches.length;
-        const prospectiveNextIndex = nextIndex + selected.length + 1;
-        const content = makeOutput({
-            input,
-            items: candidate,
-            matchCount: knownMatches.length,
-            exact: complete,
-            sort: actualSort,
-            evaluation,
-            nextCursor: hasMore ? encodeQueryNotesCursor({
-                version: 1,
-                instance: options.instancePrefix,
-                query: queryDigest,
-                snapshot: snapshotDigest,
-                nextIndex: prospectiveNextIndex,
-            }) : undefined,
-        });
-        if (JSON.stringify(content).length <= QUERY_NOTES_RESULT_JSON_BUDGET_CHARS) {
-            selected.push(orderedMatches[index]);
-            continue;
-        }
-        if (!hasMore) {
-            const withoutCursor = makeOutput({
-                input,
-                items: candidate,
-                matchCount: knownMatches.length,
-                exact: complete,
-                sort: actualSort,
-                evaluation,
-            });
-            if (JSON.stringify(withoutCursor).length <= QUERY_NOTES_RESULT_JSON_BUDGET_CHARS) {
-                selected.push(orderedMatches[index]);
-            }
-        }
-        break;
-    }
-
-    if (selected.length === 0 && orderedMatches.length > nextIndex) {
-        throw new QueryNotesResultBudgetUnavailableError(
-            "query_notes cannot fit its result metadata and the next complete match in the output budget.",
-        );
-    }
-
-    const finalNextIndex = nextIndex + selected.length;
-    const hasMore = finalNextIndex < orderedMatches.length;
-    if (!complete && cursor) throw new QueryNotesCursorExpiredError("query_notes cursor coverage is no longer complete.");
+    const selected = input.limit === undefined
+        ? orderedMatches
+        : orderedMatches.slice(0, input.limit);
     const content = makeOutput({
         input,
         items: selected,
         matchCount: knownMatches.length,
         exact: complete,
-        sort: actualSort,
+        sort: requestedSort,
         evaluation,
-        nextCursor: complete && hasMore ? encodeQueryNotesCursor({
-            version: 1,
-            instance: options.instancePrefix,
-            query: queryDigest,
-            snapshot: snapshotDigest,
-            nextIndex: finalNextIndex,
-        }) : undefined,
     });
-    if (JSON.stringify(content).length > QUERY_NOTES_RESULT_JSON_BUDGET_CHARS) {
-        throw new QueryNotesResultBudgetUnavailableError("query_notes result exceeds its output budget.");
-    }
     await checkpoint();
     throwIfAborted(signal);
     options.assertCurrent?.();
@@ -366,18 +255,6 @@ export function projectQueryMetadata(
         } : {}),
     };
     return snapshot;
-    return {
-        path: file.path,
-        ...(needsCtime ? { ctime: statNumber(file.stat?.ctime) } : {}),
-        ...(needsMtime ? { mtime: statNumber(file.stat?.mtime) } : {}),
-        ...(needsTags ? { tags: captureTagsSnapshot(cacheRecord ?? {}, cacheKnown) } : {}),
-        ...(properties.length > 0 ? {
-            properties: properties.reduce<Record<string, PropertySnapshot>>((result, key) => {
-                result[key] = capturePropertySnapshot(frontmatter, key, cacheKnown, propertyUsage.get(key)!);
-                return result;
-            }, Object.create(null)),
-        } : {}),
-    };
 }
 
 async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<QueryNotesEvaluation> {
@@ -420,35 +297,30 @@ async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<
     }
 
     const permittedFiles: MarkdownFileLike[] = [];
-    let scannedPermittedNotes = 0;
+    const permittedByPath = new Map<string, MarkdownFileLike>();
     for (const file of files) {
         await checkpoint();
         throwIfAborted(signal);
         options.assertCurrent?.();
         if (!file || typeof file.path !== "string" || !file.path) continue;
         if (options.isPathReadable && !options.isPathReadable(file.path)) continue;
+        if (permittedByPath.has(file.path)) continue;
+        permittedByPath.set(file.path, file);
         permittedFiles.push(file);
-        scannedPermittedNotes += 1;
     }
+    const scannedPermittedNotes = permittedFiles.length;
     const orderedFiles = await sortCooperatively(permittedFiles, (left, right) => comparePaths(left.path, right.path), calculationCheckpoint);
     await checkpoint();
 
     const items: QueryNotesEvaluatedItem[] = [];
-    let candidateCapExceeded = false;
-    let projectionBudgetExceeded = false;
     let hasUnknownEvaluation = false;
-    const projectionBudget = createSnapshotProjectionBudget(QUERY_NOTES_PROJECTION_MAX_UTF8_BYTES);
 
-    outer: for (const file of orderedFiles) {
+    for (const file of orderedFiles) {
         // The native epoch permits cooperative reads. Legacy hosts keep one metadata seal atomic.
         if (epoch !== undefined) await checkpoint();
         throwIfAborted(signal);
         options.assertCurrent?.();
         if (!isInStaticQueryScope(file.path, input)) continue;
-        if (input.path === undefined && items.length >= QUERY_NOTES_MAX_CANDIDATES) {
-            candidateCapExceeded = true;
-            break outer;
-        }
 
         const identity = options.identities.register(file);
         options.onMetadataDependency?.(file.path);
@@ -514,33 +386,25 @@ async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<
             match = "unknown";
         }
 
-        for (const snapshot of Object.values(propertySnapshots)) {
-            if (snapshot.state === "oversized") projectionBudgetExceeded = true;
-        }
-        if (tags?.state === "oversized") projectionBudgetExceeded = true;
-
         const itemHasUnknownEvaluation = match === "unknown"
             || (!sortValueKnown && match !== false);
         if (itemHasUnknownEvaluation) hasUnknownEvaluation = true;
 
-        if (!projectionBudget.append({
+        const snapshot: QueryNotesSnapshotItem = {
             path: file.path,
+            identity,
             ...(ctime === undefined ? {} : { ctime }),
             ...(mtime === undefined ? {} : { mtime }),
             ...(tags === undefined ? {} : { tags }),
             ...(Object.keys(propertySnapshots).length === 0 ? {} : { properties: propertySnapshots }),
-        }, identity)) {
-            projectionBudgetExceeded = true;
-            break outer;
-        }
+        };
 
         items.push({
             file,
-            snapshot: projectionBudget.lastAppended!,
+            snapshot,
             match,
             sortValueKnown,
         });
-        if (input.path) break outer;
     }
 
     throwIfAborted(signal);
@@ -552,21 +416,19 @@ async function evaluateQueryNotes(options: QueryNotesExecutionOptions): Promise<
     }
     if (epoch !== undefined) {
         if (epoch !== options.host.getTaskSourceAuthorityEpoch?.()) {
-            throw new QueryNotesCursorExpiredError("query_notes sources changed while the snapshot was being verified.");
+            throw new QueryNotesSourcesChangedError("query_notes sources changed while the snapshot was being verified.");
         }
     }
     return {
         snapshot: {
             version: 1,
-            completeCandidateSet: !candidateCapExceeded,
-            projectionComplete: !projectionBudgetExceeded,
-            candidates: projectionBudget.candidates,
+            completeCandidateSet: true,
+            projectionComplete: true,
+            candidates: items.map(item => item.snapshot),
         },
         items,
         candidatePaths,
         scannedPermittedNotes,
-        candidateCapExceeded,
-        projectionBudgetExceeded,
         hasUnknownEvaluation,
     };
 }
@@ -606,18 +468,9 @@ function* capturePropertySnapshotSteps(
 
     const actual = frontmatter[key]!;
     if (usage.contains && Array.isArray(actual)) {
-        const captured = yield* captureBoundedScalarArraySteps(actual, RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES);
-        return captured ? { state: "value", value: captured.value } : { state: "oversized" };
+        return { state: "value", value: yield* captureScalarArraySteps(actual) };
     }
     if (!isJsonScalar(actual)) return { state: "incompatible" };
-    if (typeof actual === "string" && actual.length > RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES) {
-        return { state: "oversized" };
-    }
-
-    const token = JSON.stringify(actual);
-    if (getUtf8ByteLength(token) > RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES) {
-        return { state: "oversized" };
-    }
     return { state: "value", value: actual };
 }
 
@@ -630,9 +483,6 @@ function captureTagsSnapshot(
 
 function* captureTagsSnapshotSteps(cache: QueryNotesTagCache, cacheKnown: boolean): Generator<void, TagSnapshot> {
     if (!cacheKnown) return { state: "unknown" };
-    if (yield* hasObviouslyOversizedTagInputSteps(cache, RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES)) {
-        return { state: "oversized" };
-    }
     if (typeof getAllTags !== "function") {
         throw new QueryNotesUnavailableError("Obsidian getAllTags is unavailable.");
     }
@@ -644,11 +494,7 @@ function* captureTagsSnapshotSteps(cache: QueryNotesTagCache, cacheKnown: boolea
             error instanceof Error ? error.message : "Obsidian getAllTags failed.",
         );
     }
-    if ((rawTags ?? []).length > RELEVANT_METADATA_MAX_ARRAY_ENTRIES) {
-        return { state: "oversized" };
-    }
-    const captured = yield* captureBoundedScalarArraySteps(rawTags ?? [], RELEVANT_METADATA_VALUE_MAX_UTF8_BYTES);
-    return captured ? { state: "value", value: captured.value } : { state: "oversized" };
+    return { state: "value", value: yield* captureScalarArraySteps(rawTags ?? []) };
 }
 
 function evaluatePropertyCondition(
@@ -673,31 +519,6 @@ function evaluatePropertyCondition(
     }
     if (Array.isArray(actual)) {
         return actual.some(member => isJsonScalar(member) && jsonScalarEquals(member, expected));
-    }
-    return false;
-}
-
-function* hasObviouslyOversizedTagInputSteps(
-    cache: QueryNotesTagCache,
-    maxBytes: number,
-): Generator<void, boolean> {
-    if (Array.isArray(cache.tags)) {
-        if (cache.tags.length > RELEVANT_METADATA_MAX_ARRAY_ENTRIES) return true;
-        for (const entry of cache.tags) {
-            yield;
-            if (typeof entry.tag === "string" && entry.tag.length > maxBytes) return true;
-        }
-    }
-    const frontmatter = cache.frontmatter;
-    if (!frontmatter || typeof frontmatter !== "object") return false;
-    for (const key of ["tags", "tag"] as const) {
-        const value = frontmatter[key];
-        if (Array.isArray(value)) {
-            if (value.length > RELEVANT_METADATA_MAX_ARRAY_ENTRIES) return true;
-            for (const entry of value) { yield; if (typeof entry === "string" && entry.length > maxBytes) return true; }
-            continue;
-        }
-        if (typeof value === "string" && value.length > maxBytes) return true;
     }
     return false;
 }
@@ -794,27 +615,16 @@ function isValidCalendarDate(value: string): boolean {
     return day <= daysInMonth;
 }
 
-function* captureBoundedScalarArraySteps(
-    value: readonly unknown[],
-    maxBytes: number,
-): Generator<void, { value: unknown[]; bytes: number } | null> {
-    if (value.length > RELEVANT_METADATA_MAX_ARRAY_ENTRIES) return null;
-    let bytes = 2;
+function* captureScalarArraySteps(value: readonly unknown[]): Generator<void, unknown[]> {
     const normalized: QueryNotesPropertyValue[] = [];
     for (const entry of value) {
         yield;
         // Non-scalar entries cannot satisfy the strict scalar member semantics;
         // they are intentionally ignored instead of recursively materialized.
         if (!isJsonScalar(entry)) continue;
-        if (typeof entry === "string" && entry.length > maxBytes) return null;
-        const token = JSON.stringify(entry);
-        const tokenBytes = getUtf8ByteLength(token);
-        const separator = normalized.length === 0 ? 0 : 1;
-        if (bytes + separator + tokenBytes > maxBytes) return null;
-        bytes += separator + tokenBytes;
         normalized.push(entry);
     }
-    return { value: normalized, bytes };
+    return normalized;
 }
 
 function finishProjection<Output>(steps: Generator<void, Output>): Output {
@@ -831,52 +641,8 @@ async function finishProjectionCooperatively<Output>(
     return step.value;
 }
 
-export function createSnapshotProjectionBudget(maxBytes: number): {
-    candidates: QueryNotesSnapshotItem[];
-    lastAppended: QueryNotesSnapshotItem | undefined;
-    append(item: QueryNotesPublicSnapshot, identity?: string): boolean;
-} {
-    // Reserve the larger false/false flags so partial and complete snapshots
-    // measure candidate JSON with the same complete-JSON magnitude.
-    const prefixBytes = getUtf8ByteLength(
-        '{"version":1,"completeCandidateSet":false,"projectionComplete":false,"candidates":[',
-    );
-    const closingBytes = getUtf8ByteLength(']}');
-    const candidates: QueryNotesSnapshotItem[] = [];
-    let candidateBytes = 0;
-    let appendedCount = 0;
-    return {
-        candidates,
-        lastAppended: undefined,
-        append(item: QueryNotesPublicSnapshot, identity?: string): boolean {
-            const budgetedItem: QueryNotesSnapshotItem = {
-                path: item.path,
-                identity: identity ?? QUERY_NOTES_PRIVATE_IDENTITY_PLACEHOLDER,
-                ...(item.ctime === undefined ? {} : { ctime: item.ctime }),
-                ...(item.mtime === undefined ? {} : { mtime: item.mtime }),
-                ...(item.tags === undefined ? {} : { tags: item.tags }),
-                ...(item.properties === undefined ? {} : { properties: item.properties }),
-            };
-            const itemBytes = getUtf8ByteLength(JSON.stringify(budgetedItem));
-            const separatorBytes = appendedCount === 0 ? 0 : 1;
-            const prospectiveBytes = prefixBytes + candidateBytes
-                + separatorBytes + itemBytes + closingBytes;
-            if (prospectiveBytes > maxBytes) return false;
-            candidateBytes += separatorBytes + itemBytes;
-            appendedCount += 1;
-            if (identity !== undefined) {
-                candidates.push(budgetedItem);
-                this.lastAppended = budgetedItem;
-            }
-            return true;
-        },
-    };
-}
-
 function isCompleteEvaluation(evaluation: QueryNotesEvaluation): boolean {
-    return !evaluation.candidateCapExceeded
-        && !evaluation.projectionBudgetExceeded
-        && !evaluation.hasUnknownEvaluation;
+    return !evaluation.hasUnknownEvaluation;
 }
 
 function compareQueryNotesItems(
@@ -887,6 +653,9 @@ function compareQueryNotesItems(
     if (sort.field !== "path") {
         const leftValue = sort.field === "ctime" ? left.snapshot.ctime : left.snapshot.mtime;
         const rightValue = sort.field === "ctime" ? right.snapshot.ctime : right.snapshot.mtime;
+        if (isKnownStat(leftValue) !== isKnownStat(rightValue)) {
+            return isKnownStat(leftValue) ? -1 : 1;
+        }
         if (isKnownStat(leftValue) && isKnownStat(rightValue) && leftValue !== rightValue) {
             const delta = leftValue - rightValue;
             return sort.direction === "asc" ? delta : -delta;
@@ -908,7 +677,6 @@ function makeOutput(options: {
     exact: boolean;
     sort: NonNullable<QueryNotesInput["sort"]>;
     evaluation: QueryNotesEvaluation;
-    nextCursor?: string;
 }): QueryNotesOutput {
     const query = JSON.parse(canonicalizeQueryNotesInput(options.input)) as Omit<QueryNotesInput, "limit" | "cursor">;
     const matches = options.items.map(item => {
@@ -924,8 +692,6 @@ function makeOutput(options: {
         state: options.exact ? "complete" : "partial",
         scannedPermittedNotes: options.evaluation.scannedPermittedNotes,
         evaluatedCandidates: options.evaluation.items.length,
-        ...(options.evaluation.candidateCapExceeded ? { candidateCapExceeded: true } : {}),
-        ...(options.evaluation.projectionBudgetExceeded ? { projectionBudgetExceeded: true } : {}),
         ...(options.evaluation.hasUnknownEvaluation ? { cacheUnknown: true } : {}),
     };
     return {
@@ -935,42 +701,5 @@ function makeOutput(options: {
         matchCountKind: options.exact ? "exact" : "lower-bound",
         sort: options.sort,
         coverage,
-        ...(options.exact ? {} : {
-            partialResultGuidance: "Narrow the query (for example by folder, path, tag, property, or date) and query again; this partial page is sorted by path ascending.",
-        }),
-        ...(options.nextCursor ? { nextCursor: options.nextCursor } : {}),
     };
-}
-
-function decodeQueryNotesCursor(raw: string): QueryNotesCursor {
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        throw new QueryNotesCursorExpiredError("query_notes cursor is invalid.");
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new QueryNotesCursorExpiredError("query_notes cursor is invalid.");
-    }
-    const record = parsed as Record<string, unknown>;
-    const keys = Object.keys(record).sort();
-    if (JSON.stringify(keys) !== JSON.stringify(["instance", "nextIndex", "query", "snapshot", "version"])) {
-        throw new QueryNotesCursorExpiredError("query_notes cursor is invalid.");
-    }
-    if (record.version !== 1 || typeof record.instance !== "string" || !record.instance
-        || typeof record.query !== "string" || typeof record.snapshot !== "string"
-        || typeof record.nextIndex !== "number" || !Number.isInteger(record.nextIndex) || record.nextIndex < 0) {
-        throw new QueryNotesCursorExpiredError("query_notes cursor is invalid.");
-    }
-    return {
-        version: 1,
-        instance: record.instance,
-        query: record.query,
-        snapshot: record.snapshot,
-        nextIndex: record.nextIndex,
-    };
-}
-
-function encodeQueryNotesCursor(cursor: QueryNotesCursor): string {
-    return JSON.stringify(cursor);
 }

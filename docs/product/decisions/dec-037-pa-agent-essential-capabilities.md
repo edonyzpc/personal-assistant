@@ -10,6 +10,10 @@ Work item: B-140
 
 ## Scoped Successors
 
+[DEC-059](./dec-059-complete-note-query-results.md) 按用户 2026-10-10 的明确要求局部接续
+笔记列表查询：一次完整匹配、默认返回全部轻量列表，正文按需读取，不要求模型拆目录或分页补查。
+实现与验证状态见 [B-169 Tracker](../../development/active/complete-note-query/tracker.md)，不改写 B-140 历史验收。
+
 [DEC-046](./dec-046-note-change-review-and-audit-retirement.md) 已退役持久 Operations 审计；
 [DEC-051](./dec-051-proportionate-confirmation-and-contract-alignment.md) 允许主 Agent 执行
 当前明确修改请求，不再必经整批第二次确认。仅预览不执行，真正歧义、超授权和各领域

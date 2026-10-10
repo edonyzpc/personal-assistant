@@ -2,6 +2,8 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 import { createChatToolCapability } from '../src/ai-services/capability-adapter';
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
+import { enforceToolOutputBudget } from '../src/ai-services/chat-tool-registry';
+import { chatToolResultToPaAgentToolExecutionResult } from '../src/ai-services/pa-agent-host-tools';
 import {
     OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
     OBSIDIAN_OPERATIONS_V1A_TOOL_NAMES,
@@ -18,6 +20,7 @@ import {
     isObsidianOperationsV1AToolName,
     type ChatToolDefinition,
     type ChatToolContext,
+    type ChatToolRegistryDefinition,
     type ChatToolResult,
 } from '../src/ai-services/chat-tools';
 import type { SearchMemoryInput } from '../src/ai-services/chat-tool-types';
@@ -317,7 +320,10 @@ describe('vault tool path boundaries', () => {
             'private/secret.md': '# Secret\nshared evidence',
         };
         const cachedRead = jest.fn(async (file: { path: string }) => contents[file.path] ?? '');
-        const getFileCache = jest.fn((file: { path: string }) => ({
+        const getFileCache = jest.fn((file: { path: string }): {
+            headings: Array<{ heading: string; level: number }>;
+            frontmatter: { project: string };
+        } | null => ({
             headings: [{ heading: file.path.includes('secret') ? 'Secret' : 'Anchor', level: 1 }],
             frontmatter: { project: 'shared' },
         }));
@@ -349,6 +355,58 @@ describe('vault tool path boundaries', () => {
 
     const isPathAllowed = (path: string) => path.startsWith('allowed/');
 
+    it('returns every metadata match by default as a lightweight deterministic list', async () => {
+        const { host } = createBoundaryHost();
+        const files = Array.from({ length: 25 }, (_, index) => ({
+            path: `allowed/project-${'metadata-'.repeat(15)}${String(index).padStart(2, '0')}.md`,
+            basename: `project-${'metadata-'.repeat(15)}${String(index).padStart(2, '0')}`,
+            stat: { mtime: index, ctime: index, size: 10 },
+        }));
+        (host.app.vault as { getMarkdownFiles: () => unknown }).getMarkdownFiles = () => files;
+
+        const metadataTool = createSearchVaultMetadataTool({ isPathAllowed });
+        const result = await metadataTool.execute(
+            { query: 'project' },
+            context(host),
+        );
+
+        expect(result.ok).toBe(true);
+        expect(result.content?.matches).toHaveLength(25);
+        expect(result.content?.matchCount).toBe(25);
+        expect(result.content?.matchCountKind).toBe('exact');
+        expect(result.content?.coverage).toMatchObject({
+            state: 'complete',
+            scannedPermittedNotes: 25,
+            evaluatedCandidates: 25,
+        });
+        expect(result.content?.matches.map(match => match.path)).toEqual(files.map(file => file.path).reverse());
+        expect(result.content?.matches[0]).not.toHaveProperty('frontmatter');
+        expect(result.content?.matches[0]).not.toHaveProperty('score');
+        expect(result.content?.matches[0]).not.toHaveProperty('tags');
+        expect(JSON.stringify(result.content).length).toBeGreaterThan(6_000);
+        const budgeted = enforceToolOutputBudget(
+            metadataTool as unknown as ChatToolRegistryDefinition,
+            result as ChatToolResult<unknown>,
+        );
+        expect(budgeted.content).toBe(result.content);
+        const projected = chatToolResultToPaAgentToolExecutionResult({
+            type: 'toolCall',
+            index: 0,
+            id: 'complete-metadata',
+            name: 'search_vault_metadata',
+            input: { query: 'project' },
+        }, result);
+        expect(projected.promptText).toContain(files[24]!.path);
+        expect(projected.promptText).toContain(files[0]!.path);
+
+        const limited = await metadataTool.execute(
+            { query: 'project', limit: 5 },
+            context(host),
+        );
+        expect(limited.content?.matches).toHaveLength(5);
+        expect(limited.content?.matchCount).toBe(25);
+    });
+
     it('filters metadata and recent-note candidates before metadata enumeration', async () => {
         const { host, getFileCache } = createBoundaryHost();
         const metadata = await createSearchVaultMetadataTool({ isPathAllowed }).execute(
@@ -372,6 +430,9 @@ describe('vault tool path boundaries', () => {
         );
 
         expect(result.content?.matches).toEqual([]);
+        expect(result.content?.matchCount).toBe(0);
+        expect(result.content?.matchCountKind).toBe('exact');
+        expect(result.content?.coverage?.state).toBe('complete');
         expect(result.resultFact).toEqual({ kind: 'no_match', search: 'metadata' });
         expect(getFileCache).not.toHaveBeenCalledWith(expect.objectContaining({ path: 'private/secret.md' }));
     });
@@ -385,6 +446,31 @@ describe('vault tool path boundaries', () => {
         );
 
         expect(result.ok).toBe(false);
+        expect(result.resultFact).toBeUndefined();
+    });
+
+    it('does not classify an unknown metadata cache as a completed empty search', async () => {
+        const { host } = createBoundaryHost();
+        (host.app as { metadataCache?: unknown }).metadataCache = undefined;
+        const result = await createSearchVaultMetadataTool({ isPathAllowed }).execute(
+            { query: 'nomatchsynthetictoken' }, context(host),
+        );
+
+        expect(result.ok).toBe(false);
+        expect(result.error).toContain('MetadataCache getFileCache is unavailable');
+        expect(result.resultFact).toBeUndefined();
+    });
+
+    it('does not classify an unknown per-note cache as a completed empty search', async () => {
+        const { host, getFileCache } = createBoundaryHost();
+        getFileCache.mockImplementationOnce(() => null);
+
+        const result = await createSearchVaultMetadataTool({ isPathAllowed }).execute(
+            { query: 'nomatchsynthetictoken' }, context(host),
+        );
+
+        expect(result.ok).toBe(false);
+        expect(result.error).toContain('MetadataCache returned an unknown note cache');
         expect(result.resultFact).toBeUndefined();
     });
 

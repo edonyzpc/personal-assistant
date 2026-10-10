@@ -148,7 +148,9 @@ describe('Vault tool task-source read boundaries', () => {
         const result = await createSearchVaultMetadataTool().execute({ query: 'needle', limit: 10 }, f.context);
 
         expect(timerSawPartialArray).toBe(true);
-        expect(result.content?.matches).toEqual([expect.objectContaining({ path: 'allowed.md', score: 3 })]);
+        expect(result.content?.matches).toEqual([
+            expect.objectContaining({ path: 'allowed.md', title: 'allowed', mtime: 1, ctime: 1 }),
+        ]);
     });
 
     it.each(['metadata', 'tags', 'query', 'backlinks'])('%s yields to an ordinary timer and stops on revocation before scanning every source', async (name) => {

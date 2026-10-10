@@ -25,7 +25,9 @@ import type {
     VaultTagsOutput,
 } from "./chat-tool-types";
 import {
+    COMPLETE_NOTE_LIST_TOOL_OUTPUT_BUDGET_CHARS,
     OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
+    isCompleteNoteListToolName,
     isObsidianOperationsV1AToolName,
 } from "./chat-tool-types";
 import { TOOL_VALIDATION_INPUT_SUMMARY_CHARS } from "./chat-tool-constants";
@@ -51,8 +53,8 @@ export function assertObsidianOperationsV1AToolPolicy<Input, Output>(
     }
     if (!Number.isFinite(definition.outputBudgetChars) || definition.outputBudgetChars <= 0) {
         errors.push("outputBudgetChars must be positive");
-    } else if (definition.outputBudgetChars > OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS) {
-        errors.push(`outputBudgetChars must be <= ${OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS}`);
+    } else if (definition.outputBudgetChars > maximumToolOutputBudget(definition.name)) {
+        errors.push(`outputBudgetChars must be <= ${maximumToolOutputBudget(definition.name)}`);
     }
     if (definition.requiresConfirmation !== false) {
         errors.push("requiresConfirmation must be false");
@@ -73,16 +75,9 @@ export function enforceToolOutputBudget(
     definition: ChatToolRegistryDefinition,
     result: ChatToolResult<unknown>,
 ): ChatToolResult<unknown> {
-    // Snippet search packs complete pages itself and fails closed when metadata
-    // or its first match cannot fit. Generic array trimming could remove a match
-    // while leaving a cursor that claims the page made progress.
-    if (definition.name === "search_vault_snippets") {
-        const serialized = JSON.stringify(result.content);
-        if (serialized !== undefined && serialized.length > definition.outputBudgetChars) {
-            throw new Error(
-                `search_vault_snippets result exceeds its output budget: ${serialized.length} > ${definition.outputBudgetChars}.`,
-            );
-        }
+    // Complete note lists are ordered domain deliverables. Trimming them here
+    // would silently reintroduce paging; prompt admission owns the real limit.
+    if (isCompleteNoteListToolName(definition.name)) {
         return result;
     }
     if (!result.ok || !result.content || !isObsidianOperationsV1AToolName(definition.name)) {
@@ -96,6 +91,12 @@ export function enforceToolOutputBudget(
         ...result,
         content: fitV1AToolContentToBudget(definition.name, result.content, definition.outputBudgetChars),
     };
+}
+
+function maximumToolOutputBudget(name: string): number {
+    return isCompleteNoteListToolName(name)
+        ? COMPLETE_NOTE_LIST_TOOL_OUTPUT_BUDGET_CHARS
+        : OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS;
 }
 
 function fitV1AToolContentToBudget(
@@ -245,12 +246,6 @@ function createMinimalBudgetedV1AContent(tool: ObsidianOperationsV1AToolName, co
             matches: [],
             matchCount: typeof record.matchCount === "number" ? record.matchCount : 0,
             matchCountKind: "lower-bound",
-            page: {
-                startIndex: 0,
-                returnedCount: 0,
-                requestedLimit: 0,
-                hasMore: false,
-            },
             coverage: {
                 state: "partial",
                 scannedPermittedNotes: 0,

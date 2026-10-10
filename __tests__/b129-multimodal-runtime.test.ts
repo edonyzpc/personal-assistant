@@ -1796,7 +1796,6 @@ describe("B-140 T-07 vault observation physical integration", () => {
                         input: {
                             properties: [{ key: "status", operator: "equals", value: "active" }],
                             sort: { field: "path", direction: "asc" },
-                            limit: 2,
                         },
                     },
                 ] };
@@ -1844,13 +1843,20 @@ describe("B-140 T-07 vault observation physical integration", () => {
         const queryObservation = JSON.parse(requestText(answer!).match(
             /<untrusted source="tool:query_notes"[^>]*>\s*([\s\S]*?)\s*<\/untrusted>/,
         )![1]).observation;
-        expect(queryObservation.nextCursor).toBeDefined();
+        expect(queryObservation.nextCursor).toBeUndefined();
+        expect(queryObservation.matchCount).toBe(3);
         expect(queryObservation.sort).toEqual({ field: "path", direction: "asc" });
         expect(queryObservation.matchCountKind).toBe("exact");
         expect(queryObservation.coverage).toEqual(expect.objectContaining({ state: "complete" }));
+        expect(queryObservation.matches.map((match: { path: string }) => match.path)).toEqual([
+            "notes/a.md",
+            "notes/b.md",
+            "notes/c.md",
+        ]);
         expect(queryObservation.matches).toEqual([
             expect.objectContaining({ path: "notes/a.md" }),
             expect.objectContaining({ path: "notes/b.md" }),
+            expect.objectContaining({ path: "notes/c.md" }),
         ]);
     });
 

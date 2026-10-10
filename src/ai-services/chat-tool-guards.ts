@@ -44,9 +44,6 @@ import {
     NOTE_OUTLINE_MAX_HEADINGS,
     NOTE_OUTLINE_PATH_MAX_CHARS,
     QUERY_NOTES_CANONICAL_QUERY_MAX_CHARS,
-    QUERY_NOTES_CURSOR_MAX_CHARS,
-    QUERY_NOTES_DEFAULT_LIMIT,
-    QUERY_NOTES_MAX_LIMIT,
     QUERY_NOTES_MAX_PROPERTY_CONDITIONS,
     QUERY_NOTES_MAX_TAGS,
     QUERY_NOTES_PATH_MAX_CHARS,
@@ -57,14 +54,9 @@ import {
     READ_NOTE_MAX_CHARS,
     RECENT_NOTES_DEFAULT_LIMIT,
     RECENT_NOTES_MAX_LIMIT,
-    SNIPPET_CURSOR_MAX_CHARS,
-    SNIPPET_DEFAULT_LIMIT,
-    SNIPPET_MAX_LIMIT,
     SNIPPET_QUERY_MAX_CHARS,
     TAGS_DEFAULT_LIMIT,
     TAGS_MAX_LIMIT,
-    VAULT_METADATA_DEFAULT_LIMIT,
-    VAULT_METADATA_MAX_LIMIT,
     VAULT_METADATA_QUERY_MAX_CHARS,
 } from "./chat-tool-constants";
 import {
@@ -241,8 +233,9 @@ export function validateQueryNotesInput(input: unknown): QueryNotesInput {
         throw new Error("query_notes input must be an object.");
     }
     const value = input as Record<string, unknown>;
+    rejectRetiredCursor(value, "query_notes");
     rejectUnknownKeys(value, new Set([
-        "path", "folder", "tags", "properties", "date", "sort", "limit", "cursor",
+        "path", "folder", "tags", "properties", "date", "sort", "limit",
     ]), "query_notes");
 
     const path = value.path === undefined ? undefined : normalizeQueryPath(value.path, "path");
@@ -254,16 +247,7 @@ export function validateQueryNotesInput(input: unknown): QueryNotesInput {
     const properties = validateQueryProperties(value.properties);
     const date = validateQueryDate(value.date);
     const sort = validateQuerySort(value.sort);
-    const limit = normalizeLimit(value.limit, QUERY_NOTES_DEFAULT_LIMIT, QUERY_NOTES_MAX_LIMIT);
-
-    let cursor: string | undefined;
-    if (Object.prototype.hasOwnProperty.call(value, "cursor")) {
-        if (typeof value.cursor !== "string" || !value.cursor.trim()
-            || value.cursor.length > QUERY_NOTES_CURSOR_MAX_CHARS) {
-            throw new Error("query_notes cursor is invalid.");
-        }
-        cursor = value.cursor;
-    }
+    const limit = validateExplicitLimit(value.limit, "query_notes");
 
     const canonicalQuery = canonicalizeQueryNotesInput({
         ...(path === undefined ? {} : { path }),
@@ -284,9 +268,24 @@ export function validateQueryNotesInput(input: unknown): QueryNotesInput {
         ...(properties === undefined ? {} : { properties }),
         ...(date === undefined ? {} : { date }),
         sort,
-        limit,
-        ...(cursor === undefined ? {} : { cursor }),
+        ...(limit === undefined ? {} : { limit }),
     };
+}
+
+function rejectRetiredCursor(value: Record<string, unknown>, tool: string): void {
+    if (Object.prototype.hasOwnProperty.call(value, "cursor")) {
+        throw new Error(
+            `${tool} cursor is retired; rerun the same complete query without cursor.`,
+        );
+    }
+}
+
+function validateExplicitLimit(value: unknown, tool: string): number | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+        throw new Error(`${tool} limit must be a positive integer when explicitly requested.`);
+    }
+    return value;
 }
 
 function rejectUnknownKeys(value: Record<string, unknown>, allowed: Set<string>, tool: string): void {
@@ -521,13 +520,15 @@ export function validateSearchVaultMetadataInput(input: unknown): SearchVaultMet
         throw new Error("search_vault_metadata input must be an object.");
     }
     const value = input as Record<string, unknown>;
+    rejectUnknownKeys(value, new Set(["query", "limit"]), "search_vault_metadata");
     const query = typeof value.query === "string" ? value.query.trim() : "";
     if (!query) {
         throw new Error("search_vault_metadata input.query must be a non-empty string.");
     }
+    const limit = validateExplicitLimit(value.limit, "search_vault_metadata");
     return {
         query: limitInputText(query, VAULT_METADATA_QUERY_MAX_CHARS),
-        limit: normalizeLimit(value.limit, VAULT_METADATA_DEFAULT_LIMIT, VAULT_METADATA_MAX_LIMIT),
+        ...(limit === undefined ? {} : { limit }),
     };
 }
 
@@ -665,6 +666,10 @@ export function validateSearchVaultSnippetsInput(input: unknown): SearchVaultSni
         throw new Error("snippet search input must be an object.");
     }
     const value = input as Record<string, unknown>;
+    rejectRetiredCursor(value, "search_vault_snippets");
+    rejectUnknownKeys(value, new Set([
+        "query", "limit", "scope", "part", "caseSensitive",
+    ]), "search_vault_snippets");
     const query = typeof value.query === "string" ? value.query : "";
     if (!query.trim()) {
         throw new Error("snippet query must be a non-empty string.");
@@ -686,27 +691,17 @@ export function validateSearchVaultSnippetsInput(input: unknown): SearchVaultSni
         }
         caseSensitive = value.caseSensitive;
     }
-    let cursor: string | undefined;
-    if (value.cursor !== undefined) {
-        if (typeof value.cursor !== "string" || !value.cursor) {
-            throw new Error("snippet search input.cursor must be a non-empty string.");
-        }
-        if (value.cursor.length > SNIPPET_CURSOR_MAX_CHARS) {
-            throw new Error(`snippet search input.cursor must be at most ${SNIPPET_CURSOR_MAX_CHARS} characters.`);
-        }
-        cursor = value.cursor;
-    }
+    const limit = validateExplicitLimit(value.limit, "search_vault_snippets");
     const rawScope = typeof value.scope === "string" ? value.scope.trim() : "";
     const scope = rawScope
         ? validateVaultRelativeTargetPath(rawScope, [".md"], "snippet scope", { allowFolder: true })
         : undefined;
     return {
         query,
-        limit: normalizeLimit(value.limit, SNIPPET_DEFAULT_LIMIT, SNIPPET_MAX_LIMIT),
         scope,
         ...(part === undefined ? {} : { part }),
         ...(caseSensitive === undefined ? {} : { caseSensitive }),
-        ...(cursor === undefined ? {} : { cursor }),
+        ...(limit === undefined ? {} : { limit }),
     };
 }
 

@@ -122,46 +122,158 @@ function replyFor(evalCase: PaRuntimeEvalCase, index: number, arm: "main" | "no_
     return { text: evalCase.answer };
 }
 
+function injectObservedFormat(toolName: string, mutate: (observation: Record<string, unknown>) => void) {
+    const createExecutor = hostTools.createPaAgentCapabilityToolExecutor;
+    return jest.spyOn(hostTools, 'createPaAgentCapabilityToolExecutor').mockImplementation(options => {
+        const executor = createExecutor(options);
+        return { ...executor, execute: async input => {
+            const result = await executor.execute(input);
+            if (input.toolCall.name !== toolName) return result;
+            const envelope = JSON.parse(result.promptText) as {
+                observation: Record<string, unknown>;
+            };
+            mutate(envelope.observation);
+            return { ...result, promptText: JSON.stringify(envelope) };
+        } };
+    });
+}
+
 describe("B-149 runtime task baseline", () => {
-    it('keeps an empty notes search out of a later Web SDK request and its answer ancestry', async () => {
+    it.each([
+        ['complete', true], ['legacy', true], ['partial coverage', false],
+    ] as const)('classifies a %s empty metadata search before later ancestry use', async (format, isKnownSourceFree) => {
         const evalCase = PA_RUNTIME_EVAL_CASES.find(item => item.id === 'E-05')!;
         const host = hostFor(evalCase);
+        const spy = injectObservedFormat('search_vault_metadata', observation => {
+            if (format === 'legacy') {
+                delete observation.matchCount;
+                delete observation.matchCountKind;
+                delete observation.coverage;
+            } else if (format === 'partial coverage') {
+                observation.coverage = { state: 'complete' };
+            }
+        });
         const service = new ChatService(host);
         const requests: RequestBody[] = [];
-        globalThis.fetch = jest.fn(async (_url, init) => {
-            const body = JSON.parse(String(init?.body)) as RequestBody;
-            requests.push(body);
-            return completion(body, requests.length === 1
-                ? { tools: [{ name: 'search_vault_metadata', input: { query: 'no-match-synthetic' } }] }
-                : { text: requests.length === 2 ? 'NOTES_EMPTY_ANSWER_SENTINEL' : 'WEB_REPLY' });
-        }) as typeof fetch;
-        const firstSelection = { schemaVersion: 1 as const, scope: 'notes' as const,
-            selectionId: 'first-notes', userMessageId: 'first-user' };
-        const lifecycle: PaAgentMessage[] = [];
-        await service.streamLLM('Find my note', jest.fn(), undefined, [], {
-            userText: 'Find my note', runSourceSelection: firstSelection, memoryMode: 'skip-memory',
-            onLifecycleEvent: event => {
-                if (event.type === 'message_end') lifecycle.push(event.message);
-            },
-        });
-        const turn = createPaAgentPersistedTurn({ runId: 'first-run', turnId: 'final-turn', messages: lifecycle });
-        const history: ChatMessage[] = [
-            { role: 'user', content: 'Find my note', runSourceSelection: firstSelection,
-                inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'first-user' }]) },
-            { role: 'assistant', content: 'NOTES_EMPTY_ANSWER_SENTINEL', canonicalTurn: turn,
-                inputLineage: turn.inputLineage, runSourceSelection: firstSelection },
-        ];
-        await service.streamLLM('Search public Web', jest.fn(), undefined, history, {
-            userText: 'Search public Web', memoryMode: 'skip-memory', runSourceSelection: {
-                schemaVersion: 1, scope: 'web', selectionId: 'second-web', userMessageId: 'second-user',
-            },
-        });
-        expect(requests).toHaveLength(3);
-        expect(JSON.stringify(requests[2])).not.toContain('NOTES_EMPTY_ANSWER_SENTINEL');
-        expect(JSON.stringify(requests[2])).not.toContain('no-match-synthetic');
-        expect(turn.inputLineage?.dependencies).toEqual(expect.arrayContaining([
-            expect.objectContaining({ kind: 'run-notes-observation', owner: 'vault' }),
-        ]));
+        try {
+            globalThis.fetch = jest.fn(async (_url, init) => {
+                const body = JSON.parse(String(init?.body)) as RequestBody;
+                requests.push(body);
+                return completion(body, requests.length === 1
+                    ? { tools: [{ name: 'search_vault_metadata', input: { query: 'no-match-synthetic' } }] }
+                    : { text: requests.length === 2 ? 'NOTES_EMPTY_ANSWER_SENTINEL' : 'WEB_REPLY' });
+            }) as typeof fetch;
+            const firstSelection = { schemaVersion: 1 as const, scope: 'notes' as const,
+                selectionId: 'first-notes', userMessageId: 'first-user' };
+            const lifecycle: PaAgentMessage[] = [];
+            await service.streamLLM('Find my note', jest.fn(), undefined, [], {
+                userText: 'Find my note', runSourceSelection: firstSelection, memoryMode: 'skip-memory',
+                onLifecycleEvent: event => {
+                    if (event.type === 'message_end') lifecycle.push(event.message);
+                },
+            });
+            const toolResult = lifecycle.find(message => message.role === 'toolResult');
+            const dependencies = toolResult?.inputLineage?.dependencies ?? [];
+            expect(toolResult?.content.resultFact).toMatchObject({ kind: 'no_match', search: 'metadata' });
+            expect(toolResult?.content.sourceRecords).toEqual([]);
+            if (isKnownSourceFree) {
+                expect(toolResult?.inputLineage?.completeness).toBe('complete');
+                expect(dependencies).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ kind: 'run-notes-observation', owner: 'vault' }),
+                ]));
+            } else {
+                expect(toolResult?.inputLineage?.completeness).toBe('unknown');
+                expect(dependencies.some(item => item.kind === 'run-notes-observation')).toBe(false);
+            }
+            const turn = createPaAgentPersistedTurn({ runId: 'first-run', turnId: 'final-turn', messages: lifecycle });
+            if (isKnownSourceFree) {
+                expect(turn.inputLineage?.dependencies).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ kind: 'run-notes-observation', owner: 'vault' }),
+                ]));
+            } else {
+                expect(turn.inputLineage?.dependencies.some(item => item.kind === 'run-notes-observation')).toBe(false);
+            }
+            const history: ChatMessage[] = [
+                { role: 'user', content: 'Find my note', runSourceSelection: firstSelection,
+                    inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'first-user' }]) },
+                { role: 'assistant', content: 'NOTES_EMPTY_ANSWER_SENTINEL', canonicalTurn: turn,
+                    inputLineage: turn.inputLineage, runSourceSelection: firstSelection },
+            ];
+            await service.streamLLM('Search public Web', jest.fn(), undefined, history, {
+                userText: 'Search public Web', memoryMode: 'skip-memory', runSourceSelection: {
+                    schemaVersion: 1, scope: 'web', selectionId: 'second-web', userMessageId: 'second-user',
+                },
+            });
+            expect(requests).toHaveLength(3);
+            expect(JSON.stringify(requests[2])).not.toContain('NOTES_EMPTY_ANSWER_SENTINEL');
+        } finally {
+            spy.mockRestore();
+            service.dispose();
+        }
+    });
+
+    it.each([
+        ['complete page-free', false],
+        ['legacy paged', true],
+    ] as const)('admits an empty snippets search in its %s source-free format', async (_kind, useLegacyPage) => {
+        const evalCase = PA_RUNTIME_EVAL_CASES.find(item => item.id === 'E-05')!;
+        const host = hostFor(evalCase);
+        const legacyPageSpy = useLegacyPage ? injectObservedFormat('search_vault_snippets', observation => {
+            observation.page = {
+                startIndex: 0,
+                returnedCount: 0,
+                requestedLimit: 5,
+                hasMore: false,
+            };
+        }) : undefined;
+        const service = new ChatService(host);
+        const requests: RequestBody[] = [];
+        try {
+            globalThis.fetch = jest.fn(async (_url, init) => {
+                const body = JSON.parse(String(init?.body)) as RequestBody;
+                requests.push(body);
+                return completion(body, requests.length === 1
+                    ? { tools: [{ name: 'search_vault_snippets', input: { query: 'b169-no-match', limit: 5 } }] }
+                    : { text: 'WEB_REPLY' });
+            }) as typeof fetch;
+            const firstSelection = { schemaVersion: 1 as const, scope: 'notes' as const,
+                selectionId: 'b169-notes', userMessageId: 'b169-user' };
+            const lifecycle: PaAgentMessage[] = [];
+            await service.streamLLM('Find my note', jest.fn(), undefined, [], {
+                userText: 'Find my note', runSourceSelection: firstSelection, memoryMode: 'skip-memory',
+                onLifecycleEvent: event => {
+                    if (event.type === 'message_end') lifecycle.push(event.message);
+                },
+            });
+            const toolResult = lifecycle.find(message => message.role === 'toolResult');
+            expect(toolResult?.content.resultFact).toMatchObject({ kind: 'no_match', search: 'snippet' });
+            expect(toolResult?.content.sourceRecords).toEqual([]);
+            expect(toolResult?.inputLineage?.completeness).toBe('complete');
+            expect(toolResult?.inputLineage?.dependencies).toEqual(expect.arrayContaining([
+                expect.objectContaining({ kind: 'run-notes-observation', owner: 'vault' }),
+            ]));
+            const turn = createPaAgentPersistedTurn({ runId: 'b169-run', turnId: 'b169-turn', messages: lifecycle });
+            const history: ChatMessage[] = [
+                { role: 'user', content: 'Find my note', runSourceSelection: firstSelection,
+                    inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'b169-user' }]) },
+                { role: 'assistant', content: 'WEB_REPLY', canonicalTurn: turn,
+                    inputLineage: turn.inputLineage, runSourceSelection: firstSelection },
+            ];
+            await service.streamLLM('Search public Web', jest.fn(), undefined, history, {
+                userText: 'Search public Web', memoryMode: 'skip-memory', runSourceSelection: {
+                    schemaVersion: 1, scope: 'web', selectionId: 'b169-web', userMessageId: 'b169-web-user',
+                },
+            });
+
+            expect(requests).toHaveLength(3);
+            expect(JSON.stringify(requests[2])).not.toContain('b169-no-match');
+            expect(turn.inputLineage?.dependencies).toEqual(expect.arrayContaining([
+                expect.objectContaining({ kind: 'run-notes-observation', owner: 'vault' }),
+            ]));
+        } finally {
+            legacyPageSpy?.mockRestore();
+            service.dispose();
+        }
     });
 
     it('does not replay a cancelled notes tool observation in a later Web SDK request', async () => {

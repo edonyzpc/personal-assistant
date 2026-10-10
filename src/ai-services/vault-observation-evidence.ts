@@ -17,7 +17,6 @@ import { computeContentHash } from "../vss-helpers";
 import { cloneSourceRecord } from "./source-store";
 import { getReadNotePartView } from "./read-note-tool-helpers";
 import {
-    createSnapshotProjectionBudget,
     isInStaticQueryScope,
     projectQueryMetadata,
     type QueryNotesPublicSnapshot,
@@ -36,15 +35,9 @@ import {
     INSPECT_NOTE_MAX_TAGS,
     INSPECT_NOTE_MAX_TASKS,
     FRONTMATTER_VALUE_MAX_CHARS,
-    QUERY_NOTES_MAX_CANDIDATES,
-    QUERY_NOTES_PROJECTION_MAX_UTF8_BYTES,
-    SNIPPET_MAX_BYTES,
-    SNIPPET_MAX_CANDIDATE_FILES,
-    SNIPPET_MAX_FILE_BYTES,
-    SNIPPET_MAX_FILES,
 } from "./chat-tool-constants";
 import { canonicalizeQueryNotesInput, validateQueryNotesInput } from "./chat-tool-guards";
-import { getKnownFileSize, getMarkdownFilesCooperatively } from "./chat-tool-execution-helpers";
+import { getMarkdownFilesCooperatively } from "./chat-tool-execution-helpers";
 import { throwIfAborted } from "./chat-utils";
 import { createCooperativeTask, sortCooperatively } from './cooperative-task';
 import { canonicalContextJsonAsync, cloneCanonicalContextJsonAsync } from './context/PaAgentContextSerialization';
@@ -57,7 +50,6 @@ export const MAX_VAULT_OBSERVATION_TURN_UTF8_BYTES = 512_000;
 const HASH40 = /^[0-9a-f]{40}$/;
 const OBSERVATION_ID_MAX = 256;
 const SCOPE_PATHS_MAX = 500;
-const QUERY_PATH_MAX = 1_024;
 export type VaultObservationTool =
     | "read_note"
     | "query_notes"
@@ -388,7 +380,9 @@ export function assertVaultObservationHistory(values: readonly unknown[]): void 
     let total = 0;
     for (const value of values) {
         const parsed = parseStrict(value);
-        total += byteCountForJson(parsed);
+        if (parsed.tool !== "query_notes" && parsed.tool !== "search_vault_snippets") {
+            total += byteCountForJson(parsed);
+        }
         if (total > MAX_VAULT_OBSERVATION_TURN_UTF8_BYTES) {
             throw new Error("Vault observation evidence history exceeds its byte budget.");
         }
@@ -400,6 +394,7 @@ function byteCountForJson(value: unknown): number {
 }
 
 function assertParsedEnvelopeBudget(value: VaultObservationEvidence): void {
+    if (value.tool === "query_notes" || value.tool === "search_vault_snippets") return;
     if (byteCountForJson(value) > MAX_VAULT_OBSERVATION_ENVELOPE_UTF8_BYTES) {
         throw new Error("Vault observation evidence exceeds its envelope budget.");
     }
@@ -416,6 +411,10 @@ async function withEnvelopeBudget<T extends VaultObservationEvidence>(build: () 
 }
 
 async function assertEnvelopeBudget(value: unknown, signal?: AbortSignal): Promise<void> {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+        const tool = (value as { tool?: unknown }).tool;
+        if (tool === "query_notes" || tool === "search_vault_snippets") return;
+    }
     const json = await canonicalContextJsonAsync(value, signal);
     const encoder = new TextEncoder();
     const task = createCooperativeTask(signal);
@@ -551,14 +550,14 @@ function parseQuery(record: Record<string, unknown>, observationId: string, allo
             completeCandidateSet: boolean(aggregate.completeCandidateSet),
             projectionComplete: boolean(aggregate.projectionComplete),
         },
-        items: parseIndexedItems(record.items, 20, item => {
+        items: parseIndexedItems(record.items, item => {
             expectKeys(item, ["kind", "index", "outputDigest", "path", "metadataDigest"]);
             if (item.kind !== "query-match") throw new Error("Invalid query item kind.");
             return {
                 kind: "query-match",
                 index: safeInteger(item.index),
                 outputDigest: hash(item.outputDigest),
-                path: path(item.path, QUERY_PATH_MAX),
+                path: path(item.path),
                 metadataDigest: hash(item.metadataDigest),
             };
         }),
@@ -589,7 +588,7 @@ function parseSnippet(record: Record<string, unknown>, observationId: string, al
             scannedVersionDigest: hash(aggregate.scannedVersionDigest),
             evaluatedCandidates: safeInteger(aggregate.evaluatedCandidates),
         },
-        items: parseIndexedItems(record.items, 10, item => {
+        items: parseIndexedItems(record.items, item => {
             expectKeys(item, ["kind", "index", "outputDigest", "path", "contentHash", "part", "range"]);
             if (item.kind !== "snippet-match") throw new Error("Invalid snippet item kind.");
             const range = asRecord(item.range);
@@ -703,8 +702,8 @@ function parseInspectCoverage(value: unknown): InspectNoteCoverage {
     };
 }
 
-function parseIndexedItems<T>(value: unknown, max: number, parse: (record: Record<string, unknown>) => T): T[] {
-    if (!Array.isArray(value) || value.length > max) throw new Error("Invalid observation item count.");
+function parseIndexedItems<T>(value: unknown, parse: (record: Record<string, unknown>) => T): T[] {
+    if (!Array.isArray(value)) throw new Error("Invalid observation item count.");
     const seen = new Set<number>();
     return value.map(raw => {
         const record = asRecord(raw);
@@ -1022,18 +1021,13 @@ export async function revalidateVaultObservationFromApp(
             && (!metadataCache || typeof metadataCache.getFileCache !== "function")) {
             throw new Error("MetadataCache getFileCache is unavailable.");
         }
-        const evaluated = evidence.aggregate.query.path === undefined
-            ? scoped.slice(0, QUERY_NOTES_MAX_CANDIDATES)
-            : scoped;
         const snapshots: QueryNotesPublicSnapshot[] = [];
         const snapshotByPath = new Map<string, QueryNotesPublicSnapshot>();
-        const projectionBudget = createSnapshotProjectionBudget(QUERY_NOTES_PROJECTION_MAX_UTF8_BYTES);
-        for (const file of evaluated) {
+        for (const file of scoped) {
             await task.checkpoint();
             throwIfAborted(options.signal);
             const cache = needsMetadataCache ? metadataCache?.getFileCache?.(file) : undefined;
             const snapshot = projectQueryMetadata(file, cache, evidence.aggregate.query);
-            if (!projectionBudget.append(snapshot)) break;
             snapshots.push(snapshot);
             snapshotByPath.set(file.path, snapshot);
         }
@@ -1105,10 +1099,8 @@ async function revalidateSnippetObservation(
     }
     const scannedVersions: Array<{ path: string; state: string; contentHash?: string }> = [];
     const currentContent = new Map<string, string>();
-    let readNotes = 0;
-    let readBytes = 0;
-    let evaluatedBytes = 0;
-    for (const file of files.slice(0, SNIPPET_MAX_CANDIDATE_FILES)) {
+    const evidencePaths = new Set(evidence.items.map(item => item.path));
+    for (const file of files) {
         await task.checkpoint();
         throwIfAborted(signal);
         const stat = captureVaultSnippetStat(file);
@@ -1120,19 +1112,7 @@ async function revalidateSnippetObservation(
             });
         };
         if (!stat) {
-            const knownSize = getKnownFileSize(file);
-            if (knownSize !== undefined
-                && (knownSize > SNIPPET_MAX_FILE_BYTES || knownSize > SNIPPET_MAX_BYTES - evaluatedBytes)) {
-                capture("skipped-size");
-                continue;
-            }
             capture("unknown-size");
-            continue;
-        }
-        const remaining = SNIPPET_MAX_BYTES - readBytes;
-        if (readNotes >= SNIPPET_MAX_FILES || remaining <= 0
-            || stat.size > SNIPPET_MAX_FILE_BYTES || stat.size > remaining || remaining < SNIPPET_MAX_FILE_BYTES) {
-            capture("skipped-size");
             continue;
         }
         const vault = host.app.vault as unknown as { cachedRead?: (file: unknown) => Promise<string> };
@@ -1142,15 +1122,7 @@ async function revalidateSnippetObservation(
         }
         const content = await vault.cachedRead(file);
         if (typeof content !== "string") throw new Error("Vault cachedRead did not return a string.");
-        const bytes = new TextEncoder().encode(content).length;
-        readNotes += 1;
-        readBytes += bytes;
-        if (bytes > SNIPPET_MAX_FILE_BYTES || bytes > SNIPPET_MAX_BYTES - readBytes) {
-            capture("skipped-size");
-            continue;
-        }
-        evaluatedBytes += bytes;
-        currentContent.set(file.path, content);
+        if (evidencePaths.has(file.path)) currentContent.set(file.path, content);
         capture("read", await computeContentHash(content, signal));
     }
     const aggregateCurrent = await hashObservationValue(candidatePaths, signal) === evidence.aggregate.candidateSetDigest
