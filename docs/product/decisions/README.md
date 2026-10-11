@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-061 | Agent 独立通用计算 | Accepted | 计算与现有工具独立，Agent 自主组合；Pi/QuickJS Worker，无脚本内工具桥接 | [Record](./dec-061-independent-agent-computation.md) |
 | DEC-060 | PA prompt 精简与渐进披露 | Accepted | 常驻最小契约与原生工具，方法按需、事实解释随上下文，Agent 自主选择；B-170 独立 | [Record](./dec-060-agent-prompt-progressive-disclosure.md) |
 | DEC-059 | 条件查询一次返回完整笔记列表 | Accepted | 默认完整匹配、轻量清单、正文按需；不让模型拆目录或分页补查 | [Record](./dec-059-complete-note-query-results.md) |
 | DEC-058 | Chat 内可解释的 THINKING 过程 | Accepted | 原位细轨道、整轮计时、当前 reasoning 与轻量历史；全文沿用 Debug，数据和执行边界保持 | [Record](./dec-058-chat-thinking-process.md) |

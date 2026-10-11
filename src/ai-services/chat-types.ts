@@ -728,6 +728,7 @@ export type ChatToolName =
     | "vault_process"
     | "frontmatter_update"
     | "remove_note_image"
+    | "execute_code"
     | "execute_operations"
     | "get_operations_status"
     | "replace_selection"

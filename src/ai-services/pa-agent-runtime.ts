@@ -155,6 +155,7 @@ import { createMemoryManagementTools } from "./memory-management-tools";
 import { createInsightReadTools } from "./insight-read-tools";
 import { createInsightActionTool } from "./insight-action-tool";
 import { createMemoryActionTool } from "./memory-action-tools";
+import { createExecuteCodeTool, EXECUTE_CODE_TIMEOUT_MS, EXECUTE_CODE_TOOL_NAME } from "./independent-computation/capability";
 import {
     ConsoleDebugObserver,
     createActionExecutor,
@@ -802,6 +803,69 @@ function hasMatchingFailureReason(envelope: Record<string, unknown>, metadata?: 
 
 /** Empty searches and standard read-only failures have no path receipts.
  * Admit only owner-classified observations with closed, source-free provider text. */
+function isSafeExecuteCodeObservation(
+    message: Extract<PaAgentMessage, { role: "toolResult" }>,
+    envelope: Record<string, unknown>,
+): boolean {
+    if (message.content.sourceRecords?.length || message.content.contextUsed?.length !== 1) return false;
+    if (typeof envelope.input !== "string" || !/^code:\d+ chars$/.test(envelope.input)) return false;
+    const contextUsed = asRecord(message.content.contextUsed?.[0]);
+    if (message.isError) {
+        const fact = message.content.resultFact;
+        const metadata = message.content.metadata;
+        return metadata?.outcome === "recoverable_error"
+            && metadata.ok === false
+            && metadata.tool === EXECUTE_CODE_TOOL_NAME
+            && metadata.inputSummary === envelope.input
+            && metadata.sourceRecordCount === 0
+            && metadata.contextUsedCount === 1
+            && metadata.executionState === "failed"
+            && (metadata.failureReason === "timeout" || metadata.failureReason === "adapter_error")
+            && metadata.failureReason === envelope.failureReason
+            && fact?.kind === "unavailable"
+            && fact.capability === EXECUTE_CODE_TOOL_NAME
+            && fact.reason === "tool_unavailable"
+            && envelope.status === "unavailable"
+            && typeof envelope.error === "string"
+            && envelope.error.length > 0
+            && contextUsed?.category === "tool-unavailable"
+            && contextUsed.label === "Read-only tool unavailable"
+            && contextUsed.detail === envelope.error
+            && contextUsed.citationEligible === false
+            && contextUsed.statusOnly === true
+            && emptyArray(contextUsed.sources)
+            && hasOnlyKeys(envelope, ["tool", "status", "input", "error", "failureReason"]);
+    }
+
+    const observation = asRecord(envelope.observation);
+    if (message.content.metadata?.outcome !== "success"
+        || message.content.metadata.ok !== true
+        || message.content.metadata.tool !== EXECUTE_CODE_TOOL_NAME
+        || message.content.metadata.inputSummary !== envelope.input
+        || message.content.metadata.sourceRecordCount !== 0
+        || message.content.metadata.contextUsedCount !== 1
+        || envelope.status !== "ok"
+        || !hasOnlyKeys(envelope, ["tool", "status", "input", "observation"])
+        || !observation
+        || !hasOnlyKeys(observation, ["value", "output", "calls", "storeWrites"])
+        || !emptyArray(observation.calls)
+        || contextUsed?.category !== "read-only-tool"
+        || contextUsed.label !== "Read-only tool"
+        || contextUsed.detail !== "execute_code output"
+        || contextUsed.citationEligible !== false
+        || !emptyArray(contextUsed.sources)) return false;
+    const outputs = observation.output;
+    if (!Array.isArray(outputs)) return false;
+    return outputs.every(item => {
+        const text = asRecord(item);
+        return text !== undefined
+            && hasOnlyKeys(text, ["type", "text", "console"])
+            && text.type === "text"
+            && typeof text.text === "string"
+            && (text.console === undefined || text.console === true);
+    });
+}
+
 function isSafeSourceFreeToolObservation(
     message: Extract<PaAgentMessage, { role: "toolResult" }>,
 ): boolean {
@@ -812,6 +876,7 @@ function isSafeSourceFreeToolObservation(
     try { envelope = asRecord(JSON.parse(message.content.promptText)); } catch { return false; }
     if (!envelope || envelope.tool !== message.toolName || typeof envelope.input !== "string") return false;
     if (message.toolName === "prepare_ghost_post") return isSafeGhostPublishingStatusObservation(message, envelope);
+    if (message.toolName === EXECUTE_CODE_TOOL_NAME) return isSafeExecuteCodeObservation(message, envelope);
 
     const fact = message.content.resultFact;
     const expectedVaultFailureLabel = SOURCE_FREE_VAULT_FAILURE_LABELS.get(message.toolName);
@@ -1205,6 +1270,7 @@ export class PaAgentRuntime {
     private readonly operationsPolicyEngine: OperationsTurnPolicyEngine | null;
     private readonly operationsActionsPolicyEligible: boolean;
     private readonly skillContextProvider: SkillContextProvider | null;
+    private readonly executeCodeCapability: AgentCapability;
     private skillContextProviderRegistered = false;
     private readonly options: PaAgentRuntimeOptions;
     /**
@@ -1268,6 +1334,10 @@ export class PaAgentRuntime {
             this.actionExecutor = null;
         }
         const memoryTool = this.memoryTool;
+        this.executeCodeCapability = createChatToolCapability(createExecuteCodeTool(), {
+            providerId: "core-tools",
+            timeoutMs: EXECUTE_CODE_TIMEOUT_MS,
+        });
         const coreCapabilities = createCoreToolCapabilities([
             createSearchMemoryTool((input, context) => {
                 return memoryTool.search(
@@ -1292,7 +1362,7 @@ export class PaAgentRuntime {
             ...(this.host.insightActions ? [createInsightActionTool()] : []),
             ...(this.host.memoryActions ? [createMemoryActionTool()] : []),
         ]);
-        this.toolRegistry.registerMany(coreCapabilities);
+        this.toolRegistry.registerMany([...coreCapabilities, this.executeCodeCapability]);
         this.skillContextProvider = options.skillContextProvider === null
             ? null
             : options.skillContextProvider ?? new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
@@ -1952,6 +2022,9 @@ export class PaAgentRuntime {
         }
         if (this.host.insightActions && exportableToolNames.has("manage_saved_insight")) {
             availableSemanticToolNames.add("manage_saved_insight");
+        }
+        if (exportableToolNames.has(EXECUTE_CODE_TOOL_NAME)) {
+            availableSemanticToolNames.add(EXECUTE_CODE_TOOL_NAME);
         }
         if (operationsActionsEligible) {
             for (const toolName of CORE_WRITE_TOOL_NAMES.filter((toolName) => this.toolRegistry.getDefinition(toolName))) {
@@ -2826,6 +2899,7 @@ export class PaAgentRuntime {
                         || capability === imageStatusCapability
                         || capability === operationsStatusCapability
                         || capability === writingHistoryCapability
+                        || capability === this.executeCodeCapability
                         || insightRead
                         || insightAction
                         || capability === writingContextCapability
@@ -3067,7 +3141,8 @@ export class PaAgentRuntime {
                                 : isLiveHostBatchPreflightRejection(message) || message.content.metadata?.statusOnly === true
                                     ? completeInputLineage()
                                         : sourceFreeNotesObservation
-                                        ? message.toolName === 'prepare_ghost_post' || message.toolName === 'create_image'
+                                        ? message.toolName === EXECUTE_CODE_TOOL_NAME
+                                            || message.toolName === 'prepare_ghost_post' || message.toolName === 'create_image'
                                             || isSafeOperationsStagedObservation(message)
                                             ? completeInputLineage()
                                             : sourceRun.captureRunNotesObservationLineage(

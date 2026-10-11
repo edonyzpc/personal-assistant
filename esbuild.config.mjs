@@ -59,6 +59,7 @@ const createInlineSqliteWorkerPlugin = (production) => ({
 					'.ts': 'ts',
 					'.js': 'js',
 					'.mjs': 'js',
+					'.wasm': 'binary',
 				},
 				define: {
 					"process.env.NODE_ENV": production ? '"production"' : '"development"',

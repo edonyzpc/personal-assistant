@@ -172,7 +172,30 @@ const bundledResourceNoticeByPath = new Map([
       provenance: "Project-authored compatibility guidance; no third-party text intentionally copied.",
     },
   ],
+  [
+    "src/third_party/pi-codemode",
+    {
+      license: "MIT",
+      provenance: "Pi codemode minimum browser source closure at commit c5f5b3282d5e4203c085e59837ba17aeaf2829b5; wasm.ts is type-only browser extraction and symbol-dispose.d.ts is project-authored compatibility typing.",
+    },
+  ],
 ]);
+
+const PI_CODEMODE_COMMIT = "c5f5b3282d5e4203c085e59837ba17aeaf2829b5";
+const PI_CODEMODE_SHA256_BY_PATH = new Map([
+  ["identifier.ts", "c920a297e79186edc61348906950b639e8d67602122f165fb98012fd32be2f11"],
+  ["LICENSE", "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"],
+  ["runtime/execution.ts", "1551463e181168db410482955f6cbeda87e6eda731092889f1e831fdad4f4f5c"],
+  ["runtime/inline.ts", "d51850277ea4eea07a65cc6f6fc81797eb686e86d2b096b71e0e921dae079722"],
+  ["runtime/prelude-source.ts", "ec8ff19d48913dc56e70068d26094420da77ac2039e4e98b17feb509397c1295"],
+  ["runtime/protocol.ts", "7dad39eb66c66aa2c85a4a7cec5b180e9b116ef1513146aedc94f95abe2757ba"],
+  ["runtime/vm.ts", "10f191a08e9566d73ba911c7e77e8f4ef32edcba1ce49559539906304a8cea1d"],
+  ["symbol-dispose.d.ts", "488d6a41eef2aba05fab4f8655d04c6859ed66b6614f19bb890cd7d32e7f71dd"],
+  ["types.ts", "90b8904cebb10bf5bea712f67eb11716e1fcac502ac49f438bef3e41ee3ea78f"],
+  ["wasm.ts", "c0c079e6e8693dfd3b0c2eac28a8a00efbee54fca718053457e6bdc438a82881"],
+]);
+const QUICKJS_WASM_BYTES = 637_405;
+const QUICKJS_WASM_SHA256 = "d4c9375f2b1ca4dc95f72c8aa2982a7a9951ac8011490d79c6582df732b4bbd9";
 
 if (!rootPackage) {
   throw new Error("package-lock.json is missing the root package entry.");
@@ -248,6 +271,7 @@ function collectBundledResourcePaths() {
   }
   resourcePaths.add(shareCardFontManifest.subset.outputPath);
   resourcePaths.add("src/ui/loaders.ts");
+  resourcePaths.add("src/third_party/pi-codemode");
   return [...resourcePaths].sort();
 }
 
@@ -405,6 +429,60 @@ function verifyShareCardFontResource() {
 }
 
 verifyShareCardFontResource();
+
+function listFilesRecursive(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const path = `${directory}/${entry.name}`;
+    return entry.isDirectory() ? listFilesRecursive(path) : [path];
+  });
+}
+
+function verifyIndependentComputationProvenance() {
+  if (rootPackage.dependencies?.["quickjs-wasi"] !== "3.6.2"
+    || packages["node_modules/quickjs-wasi"]?.version !== "3.6.2") {
+    errors.push("quickjs-wasi must be pinned exactly to 3.6.2.");
+  }
+  const wasmPath = "node_modules/quickjs-wasi/quickjs.wasm";
+  if (!existsSync(wasmPath)) {
+    errors.push(`QuickJS WASM provenance path is missing: ${wasmPath}`);
+  } else {
+    const wasm = readFileSync(wasmPath);
+    if (wasm.byteLength !== QUICKJS_WASM_BYTES || sha256(wasm) !== QUICKJS_WASM_SHA256) {
+      errors.push("QuickJS WASM byte size or SHA-256 does not match the fixed dependency.");
+    }
+  }
+
+  const root = "src/third_party/pi-codemode";
+  const actualFiles = listFilesRecursive(root)
+    .map(path => path.slice(`${root}/`.length))
+    .sort();
+  const expectedFiles = [...PI_CODEMODE_SHA256_BY_PATH.keys()].sort();
+  if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
+    errors.push("Pi codemode third-party source closure has unexpected or missing files.");
+  }
+  for (const [relativePath, expectedHash] of PI_CODEMODE_SHA256_BY_PATH) {
+    const path = `${root}/${relativePath}`;
+    if (!existsSync(path)) {
+      errors.push(`Pi codemode provenance path is missing: ${path}`);
+      continue;
+    }
+    if (sha256(readFileSync(path)) !== expectedHash) {
+      errors.push(`Pi codemode source SHA-256 is stale: ${path}`);
+    }
+  }
+  for (const marker of [PI_CODEMODE_COMMIT, QUICKJS_WASM_SHA256]) {
+    if (!notices.includes(marker)) {
+      errors.push("THIRD_PARTY_NOTICES.md is missing independent-computation provenance markers.");
+      break;
+    }
+  }
+  const piLicensePath = `${root}/LICENSE`;
+  if (!existsSync(piLicensePath) || !notices.includes(readFileSync(piLicensePath, "utf8").trim())) {
+    errors.push("THIRD_PARTY_NOTICES.md must preserve the complete Pi codemode MIT license.");
+  }
+}
+
+verifyIndependentComputationProvenance();
 
 if (bundledResourcePaths.length === 0) {
   errors.push("Could not derive bundled skill resource paths from src/ai-services/bundled-skills.ts.");

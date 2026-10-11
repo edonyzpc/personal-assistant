@@ -73,6 +73,7 @@
     "markdown-it": "15.0.2",
     "nanoid": "^5.1.16",
     "obsidian-callout-manager": "^1.0.2-alpha1",
+    "quickjs-wasi": "3.6.2",
     "react": "18.3.1",
     "react-chartjs-2": "^5.3.0",
     "react-dom": "18.3.1",

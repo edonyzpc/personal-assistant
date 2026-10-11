@@ -535,7 +535,9 @@ export class ToolExecutionDispatcher {
         const results = await Promise.all(pending);
         if (!isReadGuardCurrent(readGuard)) {
             for (let index = 0; index < results.length; index++) {
-                if (results[index].outcome !== "budget_exceeded") results[index] = sourceGuardRejection();
+                if (results[index].outcome !== "budget_exceeded") {
+                    results[index] = this.resultAfterSourceInvalidation(entries[index].toolCall, results[index], readGuard);
+                }
             }
         }
         finalizeParallelToolResultsBeforeEmit(entries, results);
@@ -845,43 +847,69 @@ export class ToolExecutionDispatcher {
 
         const interrupt = this.createToolInterruptPromise(controller, timeoutMs);
         let executionStarted = false;
-        const executionPromise: Promise<ToolExecutionRaceResult> = Promise.resolve().then(async () => {
-            await checkpointTaskSourceRead(readGuard, controller.signal);
-            assertTaskSourceReadCurrent(readGuard);
-            executionStarted = true;
-            return this.config.toolExecutor!.execute({
-                runId: this.config.runId,
-                turnId,
-                turnIndex,
-                userInput: this.config.userInput,
-                toolCall,
-                signal: controller.signal,
-                ...(readGuard ? { taskSourceReadGuard: readGuard } : {}),
-                ...(interrupt.outerToolDeadlineAt === undefined
-                    ? {}
-                    : { outerToolDeadlineAt: interrupt.outerToolDeadlineAt }),
-            });
-        }).then(
-            (result) => ({ type: "completed" as const, result }),
-            (error) => ({ type: "rejected" as const, error }),
-        );
+        let completedResult: PaAgentToolExecutionResult | undefined;
+        const executionPromise: Promise<ToolExecutionRaceResult> = Promise.resolve().then(async (): Promise<ToolExecutionRaceResult> => {
+            try {
+                await checkpointTaskSourceRead(readGuard, controller.signal);
+                assertTaskSourceReadCurrent(readGuard);
+                const earlyInterrupt = interrupt.checkpoint();
+                if (earlyInterrupt) throw new Error(`Tool ${toolCall.name} interrupted before execution.`);
+                executionStarted = true;
+                const result = await this.config.toolExecutor!.execute({
+                    runId: this.config.runId,
+                    turnId,
+                    turnIndex,
+                    userInput: this.config.userInput,
+                    toolCall,
+                    signal: controller.signal,
+                    ...(readGuard ? { taskSourceReadGuard: readGuard } : {}),
+                    ...(interrupt.outerToolDeadlineAt === undefined
+                        ? {}
+                        : { outerToolDeadlineAt: interrupt.outerToolDeadlineAt }),
+                });
+                completedResult = result;
+                const firstAfterExecution = interrupt.checkpoint();
+                if (firstAfterExecution) return firstAfterExecution;
+                return { type: "completed", result };
+            } catch (error) {
+                return { type: "rejected", error };
+            }
+        });
 
         try {
-            const first = await Promise.race([executionPromise, interrupt.promise]);
+            const raced = await Promise.race([executionPromise, interrupt.promise]);
+            const first = interrupt.checkpoint() ?? raced;
             interrupt.cleanup();
+            const completedNotStarted = completedResult?.executionState === "not_started";
 
             switch (first.type) {
                 case "completed":
-                    if (!isReadGuardCurrent(readGuard)) return finalize(retrySafety === "side_effect"
-                        ? actionResultAfterSourceChange(first.result, readGuard)
-                        : sourceGuardRejection());
+                    if (!isReadGuardCurrent(readGuard)) {
+                        return finalize(this.resultAfterSourceInvalidation(toolCall, first.result, readGuard));
+                    }
                     return finalize(normalizeToolExecutionResult(first.result));
                 case "rejected":
-                    if (!isReadGuardCurrent(readGuard)) return finalize(retrySafety === "side_effect" && executionStarted
-                        ? actionResultAfterSourceChange(this.toolExceptionResult(toolCall, first.error, retrySafety), readGuard)
-                        : sourceGuardRejection());
+                    if (!isReadGuardCurrent(readGuard)) {
+                        if (!executionStarted) return finalize(sourceGuardRejection());
+                        return finalize(this.resultAfterSourceInvalidation(
+                            toolCall,
+                            this.toolExceptionResult(toolCall, first.error, retrySafety),
+                            readGuard,
+                        ));
+                    }
                     return finalize(this.toolExceptionResult(toolCall, first.error, retrySafety));
                 case "tool_timeout":
+                    if (!executionStarted || completedNotStarted) {
+                        return finalize(this.preExecutionInterruptResult(
+                            toolCall,
+                            "tool_timeout",
+                            timeoutMs,
+                            completedNotStarted ? completedResult : undefined,
+                        ));
+                    }
+                    if (completedResult && retrySafety === "side_effect") {
+                        return finalize(this.effectResultAfterInterrupt(toolCall, completedResult, "tool_timeout"));
+                    }
                     return finalize({
                         outcome: this.config.toolTimeoutOutcome,
                         executionState: retrySafety === "read_only" ? "failed" : "acceptance_unknown",
@@ -900,6 +928,17 @@ export class ToolExecutionDispatcher {
                     });
                 case "aborted":
                 case "wall_clock_exceeded":
+                    if (first.type === "wall_clock_exceeded" && (!executionStarted || completedNotStarted)) {
+                        return finalize(this.preExecutionInterruptResult(
+                            toolCall,
+                            "wall_clock_exceeded",
+                            undefined,
+                            completedNotStarted ? completedResult : undefined,
+                        ));
+                    }
+                    if (completedResult && retrySafety === "side_effect" && first.type === "wall_clock_exceeded") {
+                        return finalize(this.effectResultAfterInterrupt(toolCall, completedResult, "wall_clock_exceeded"));
+                    }
                     return finalize(await this.waitForInterruptedTool(first.type, executionPromise, retrySafety));
                 case "abort_timeout":
                     return finalize({
@@ -939,6 +978,95 @@ export class ToolExecutionDispatcher {
                 executionElapsedMs: Math.max(0, this.config.now() - startedAt),
             },
         };
+    }
+
+    private effectResultAfterInterrupt(
+        toolCall: ParsedBufferedToolCall,
+        result: PaAgentToolExecutionResult,
+        reason: "tool_timeout" | "wall_clock_exceeded",
+    ): PaAgentToolExecutionResult {
+        const executionState = result.executionState
+            ?? (result.outcome === "success" ? "succeeded" : "acceptance_unknown");
+        const fallbackRecovery = executionState === "acceptance_unknown"
+            ? {
+                code: "operation_acceptance_unknown",
+                allowedActions: ["query_operation", "needs_user"] as const,
+            }
+            : undefined;
+        const recovery = result.recovery ?? fallbackRecovery;
+        return {
+            outcome: "recoverable_error",
+            promptText: `Tool ${toolCall.name} reached ${
+                reason === "tool_timeout" ? "its tool deadline" : "the outer wall-clock deadline"
+            }; recorded owner execution state is ${executionState}. Only structured owner facts were retained.`,
+            includeInNextPrompt: true,
+            executionState,
+            ...(result.resultFact ? { resultFact: result.resultFact } : {}),
+            ...(recovery ? { recovery: { ...recovery, allowedActions: [...recovery.allowedActions] } } : {}),
+            metadata: {
+                outcome: "recoverable_error",
+                reason,
+                ...(reason === "tool_timeout" ? { failureReason: "timeout" } : {}),
+                ...(reason === "wall_clock_exceeded" ? { stoppedBy: "wall_clock_exceeded" } : {}),
+                executionState,
+            },
+        };
+    }
+
+    private preExecutionInterruptResult(
+        toolCall: ParsedBufferedToolCall,
+        reason: "tool_timeout" | "wall_clock_exceeded",
+        timeoutMs?: number,
+        ownerNotStarted?: PaAgentToolExecutionResult,
+    ): PaAgentToolExecutionResult {
+        if (reason === "tool_timeout") {
+            return {
+                outcome: this.config.toolTimeoutOutcome,
+                executionState: "not_started",
+                promptText: `Tool ${toolCall.name} timed out ${
+                    ownerNotStarted ? "after the owner reported not_started" : "before execution"
+                }.`,
+                previewText: `Stopped ${toolCall.name} ${ownerNotStarted ? "after not_started" : "before execution"}.`,
+                ...(ownerNotStarted?.recovery ? {
+                    recovery: { ...ownerNotStarted.recovery, allowedActions: [...ownerNotStarted.recovery.allowedActions] },
+                } : {}),
+                metadata: {
+                    outcome: this.config.toolTimeoutOutcome,
+                    reason,
+                    failureReason: "timeout",
+                    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+                },
+            };
+        }
+        return {
+            outcome: "aborted",
+            executionState: "not_started",
+            promptText: "",
+            includeInNextPrompt: false,
+            ...(ownerNotStarted?.recovery ? {
+                recovery: { ...ownerNotStarted.recovery, allowedActions: [...ownerNotStarted.recovery.allowedActions] },
+            } : {}),
+            metadata: {
+                outcome: "aborted",
+                reason,
+                stoppedBy: "wall_clock_exceeded",
+            },
+        };
+    }
+
+    private resultAfterSourceInvalidation(
+        toolCall: ParsedBufferedToolCall,
+        result: PaAgentToolExecutionResult,
+        readGuard?: TaskSourceReadGuard,
+    ): PaAgentToolExecutionResult {
+        const retrySafety = this.config.toolExecutor?.getRetrySafety?.(toolCall.name) ?? "read_only";
+        if (!isInterruptedToolExecutionResult(result)
+            && (result.executionState === "not_started" || isPreflightOnlyToolResult(result))) {
+            return preflightResultAfterSourceChange(toolCall, result);
+        }
+        return retrySafety === "side_effect"
+            ? actionResultAfterSourceChange(result, readGuard)
+            : observationResultAfterSourceChange(result, retrySafety);
     }
 
     private withHostRetrySafety(call: ParsedBufferedToolCall, result: PaAgentToolExecutionResult): PaAgentToolExecutionResult {
@@ -1028,9 +1156,17 @@ export class ToolExecutionDispatcher {
     private createToolInterruptPromise(controller: AbortController, timeoutMs = this.config.toolTimeoutMs): {
         promise: Promise<ToolExecutionRaceResult>;
         cleanup: () => void;
+        checkpoint: () => ToolExecutionRaceResult | undefined;
         outerToolDeadlineAt?: number;
     } {
+        const interruptStartedAt = this.config.now();
+        const wallClockRemainingMs = this.config.wallClockRemainingMs();
+        const wallClockDeadlineAt = wallClockRemainingMs === undefined
+            ? undefined
+            : interruptStartedAt + wallClockRemainingMs;
+        let toolDeadlineAt: number | undefined;
         let settled = false;
+        let settledResult: ToolExecutionRaceResult | undefined;
         let toolTimeoutTimer: PlatformTimeoutHandle | undefined;
         let wallClockTimer: PlatformTimeoutHandle | undefined;
         let outerToolDeadlineAt: number | undefined;
@@ -1048,11 +1184,26 @@ export class ToolExecutionDispatcher {
         const finish = (result: ToolExecutionRaceResult) => {
             if (settled) return;
             settled = true;
+            settledResult = result;
             cleanup();
             controller.abort();
             settle(result);
         };
         const onAbort = () => finish({ type: "aborted" });
+        /** iOS can resume without delivering an elapsed setTimeout. */
+        const checkpoint = (): ToolExecutionRaceResult | undefined => {
+            if (settledResult) return settledResult;
+            const now = this.config.now();
+            const toolExpired = toolDeadlineAt !== undefined && now >= toolDeadlineAt;
+            const wallExpired = wallClockDeadlineAt !== undefined && now >= wallClockDeadlineAt;
+            if (!toolExpired && !wallExpired) return undefined;
+            // The tool timer is registered first, so equal deadlines preserve its ordering.
+            const result = toolExpired && (wallClockDeadlineAt === undefined || toolDeadlineAt! <= wallClockDeadlineAt)
+                ? { type: "tool_timeout" as const }
+                : { type: "wall_clock_exceeded" as const };
+            finish(result);
+            return result;
+        };
 
         const promise = new Promise<ToolExecutionRaceResult>((resolve) => {
             settle = resolve;
@@ -1064,16 +1215,18 @@ export class ToolExecutionDispatcher {
             }
 
             if (Number.isFinite(timeoutMs) && timeoutMs >= 0) {
-                outerToolDeadlineAt = this.config.now() + timeoutMs;
-                toolTimeoutTimer = setPlatformTimeout(() => finish({ type: "tool_timeout" }), timeoutMs);
+                toolDeadlineAt = interruptStartedAt + timeoutMs;
+                outerToolDeadlineAt = wallClockDeadlineAt === undefined
+                    ? toolDeadlineAt
+                    : Math.min(toolDeadlineAt, wallClockDeadlineAt);
+                toolTimeoutTimer = setPlatformTimeout(() => finish({ type: "tool_timeout" }), Math.max(0, toolDeadlineAt - interruptStartedAt));
             }
-            const wallClockRemainingMs = this.config.wallClockRemainingMs();
             if (wallClockRemainingMs !== undefined) {
                 wallClockTimer = setPlatformTimeout(() => finish({ type: "wall_clock_exceeded" }), wallClockRemainingMs);
             }
         });
 
-        return { promise, cleanup, outerToolDeadlineAt };
+        return { promise, cleanup, checkpoint, outerToolDeadlineAt };
     }
 }
 
@@ -1274,6 +1427,25 @@ function isReadGuardCurrent(guard: TaskSourceReadGuard | undefined): boolean {
     try { assertTaskSourceReadCurrent(guard); return true; } catch { return false; }
 }
 
+function isPreflightOnlyToolResult(result: PaAgentToolExecutionResult): boolean {
+    if (result.metadata?.preflightOnly === true) return true;
+    return result.outcome === "schema_invalid"
+        || result.outcome === "budget_exceeded"
+        || result.outcome === "duplicate_skipped"
+        || result.outcome === "control_applied";
+}
+
+function isInterruptedToolExecutionResult(result: PaAgentToolExecutionResult): boolean {
+    return result.outcome === "aborted"
+        || result.outcome === "abort_timeout"
+        || result.metadata?.stoppedBy === "aborted"
+        || result.metadata?.stoppedBy === "wall_clock_exceeded"
+        || result.metadata?.reason === "user_abort"
+        || result.metadata?.reason === "tool_timeout"
+        || result.metadata?.reason === "wall_clock_exceeded"
+        || result.metadata?.reason === "scope_cancelled";
+}
+
 /** An invoked action can already have effects. A stale observation fence must
  * not turn those facts into a preflight rejection or erase replay protection. */
 function actionResultAfterSourceChange(
@@ -1295,6 +1467,17 @@ function actionResultAfterSourceChange(
     const recovery = result.recovery ?? (executionState === "acceptance_unknown"
         ? { code: "operation_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] as const }
         : undefined);
+    if (isInterruptedToolExecutionResult(result)) {
+        return {
+            outcome: result.outcome,
+            promptText: "The source scope changed after this action was invoked. Its first interruption cause was preserved.",
+            includeInNextPrompt: result.includeInNextPrompt ?? defaultIncludeInNextPrompt(result.outcome),
+            executionState,
+            ...(resultFact ? { resultFact } : {}),
+            ...(recovery ? { recovery: { ...recovery, allowedActions: [...recovery.allowedActions] } } : {}),
+            metadata: finiteInterruptedToolMetadata(result),
+        };
+    }
     // Drop material-bearing text, source records, context and free-form
     // metadata. These existing Host-owned fields report effects, not sources.
     return {
@@ -1306,6 +1489,110 @@ function actionResultAfterSourceChange(
         ...(recovery ? { recovery: { ...recovery, allowedActions: [...recovery.allowedActions] } } : {}),
         metadata: { reason: "task_source_changed_after_execution" },
     };
+}
+
+function preflightResultAfterSourceChange(
+    toolCall: ParsedBufferedToolCall,
+    result: PaAgentToolExecutionResult,
+): PaAgentToolExecutionResult {
+    const reason = knownPreflightReason(result.metadata?.reason);
+    const executionElapsedMs = finiteNumberMetadata(result.metadata?.executionElapsedMs);
+    return {
+        outcome: result.outcome,
+        promptText: sourceGuardRejection().promptText,
+        includeInNextPrompt: result.includeInNextPrompt ?? defaultIncludeInNextPrompt(result.outcome),
+        executionState: "not_started",
+        metadata: {
+            outcome: result.outcome,
+            ...(reason ? { reason } : {}),
+            preflightOnly: true,
+            tool: toolCall.name,
+            toolCallId: toolCall.id,
+            ...(executionElapsedMs !== undefined ? { executionElapsedMs } : {}),
+        },
+    };
+}
+
+function knownPreflightReason(value: unknown): string | undefined {
+    return value === "final_answer_only_violation"
+        || value === "control_snapshot_tool_blocked"
+        || value === "control_snapshot_tool_not_allowed"
+        || value === "placeholder_tool_call"
+        || value === "invalid_tool_input"
+        || value === "duplicate_tool_call"
+        || value === "capability_admission_rejected"
+        || value === "task_source_scope_expired"
+            ? value : undefined;
+}
+
+/** A stale read fence rejects observation material, not the invocation fact. */
+function observationResultAfterSourceChange(
+    result: PaAgentToolExecutionResult,
+    retrySafety: "read_only" | "side_effect",
+): PaAgentToolExecutionResult {
+    if (isInterruptedToolExecutionResult(result)) {
+        return {
+            outcome: result.outcome,
+            promptText: "The source scope changed after this tool was invoked. Its first interruption cause was preserved.",
+            includeInNextPrompt: result.includeInNextPrompt ?? defaultIncludeInNextPrompt(result.outcome),
+            ...(result.executionState ? { executionState: result.executionState } : {}),
+            ...(result.recovery ? { recovery: { ...result.recovery, allowedActions: [...result.recovery.allowedActions] } } : {}),
+            metadata: finiteInterruptedToolMetadata(result),
+        };
+    }
+    if (result.executionState === "not_started" || isPreflightOnlyToolResult(result)) {
+        return sourceGuardRejection();
+    }
+
+    const originalMetadata = result.metadata ?? {};
+    const executionElapsedMs = finiteNumberMetadata(originalMetadata.executionElapsedMs);
+    const executionState = result.executionState
+        ?? (result.outcome === "success"
+            ? "succeeded"
+            : retrySafety === "read_only" ? "failed" : undefined);
+    return {
+        outcome: "policy_rejected",
+        promptText: `The source scope changed after this tool was invoked. Its recorded execution state is ${executionState ?? "unknown"}; the observation was not admitted.`,
+        includeInNextPrompt: true,
+        ...(executionState ? { executionState } : {}),
+        ...(result.recovery ? { recovery: { ...result.recovery, allowedActions: [...result.recovery.allowedActions] } } : {}),
+        metadata: {
+            outcome: "policy_rejected",
+            reason: "task_source_scope_expired",
+            preflightOnly: false,
+            ...(executionElapsedMs !== undefined ? { executionElapsedMs } : {}),
+        },
+    };
+}
+
+function finiteInterruptedToolMetadata(result: PaAgentToolExecutionResult): Record<string, unknown> {
+    const metadata = result.metadata ?? {};
+    const reason = knownInterruptReason(metadata.reason);
+    const stoppedBy = metadata.stoppedBy === "aborted" || metadata.stoppedBy === "wall_clock_exceeded"
+        ? metadata.stoppedBy : undefined;
+    const failureReason = metadata.failureReason === "timeout" ? metadata.failureReason : undefined;
+    const timeoutMs = finiteNumberMetadata(metadata.timeoutMs);
+    const toolAbortGraceMs = finiteNumberMetadata(metadata.toolAbortGraceMs);
+    const executionElapsedMs = finiteNumberMetadata(metadata.executionElapsedMs);
+    return {
+        outcome: result.outcome,
+        ...(reason ? { reason } : {}),
+        ...(stoppedBy ? { stoppedBy } : {}),
+        ...(failureReason ? { failureReason } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        ...(toolAbortGraceMs !== undefined ? { toolAbortGraceMs } : {}),
+        ...(executionElapsedMs !== undefined ? { executionElapsedMs } : {}),
+    };
+}
+
+function finiteNumberMetadata(value: unknown): number | undefined {
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function knownInterruptReason(value: unknown): string | undefined {
+    return value === "user_abort" || value === "tool_timeout"
+        || value === "wall_clock_exceeded" || value === "scope_cancelled"
+            ? value : undefined;
 }
 
 function sourceGuardRejection(): PaAgentToolExecutionResult {

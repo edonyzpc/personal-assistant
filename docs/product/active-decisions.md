@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-061 | Agent 独立通用计算 | 独立计算工具，Agent 自主组合；固定 Pi/QuickJS 浏览器 Worker，无脚本内 PA 工具桥接 | [Decision](./decisions/dec-061-independent-agent-computation.md), [Product Spec](./specs/pa-independent-computation-product-spec.md), [验证与边界](../archive/2026/b170-independent-computation-validation.md) | 需要脚本 I/O、持久运行、新平台承诺或实际资源证据要求改变边界 |
 | DEC-060 | PA prompt 精简与渐进披露 | 复用原生工具与 Skill/reference；Agent 自主选择；说明精简已交付，保留来源、完整查询和执行事实；M3 答复缺口按用户决定延期 | [Decision](./decisions/dec-060-agent-prompt-progressive-disclosure.md), [Product Spec](./specs/pa-agent-prompt-disclosure-product-spec.md), [验证与延期证据](../archive/2026/b171-agent-prompt-disclosure-validation.md) | 证据要求动态工具发现、能力可见性或产品边界变化；B-159 答复缺口在真实使用中遇到时再讨论 |
 | DEC-059 | 条件查询完整笔记列表 | 一次查询完整许可范围，默认全部轻量结果；正文按需、官方 API、无候选截断补查流程 | [Decision](./decisions/dec-059-complete-note-query-results.md), [Product Spec](./specs/pa-complete-note-query-product-spec.md), [Tracker](../development/active/complete-note-query/tracker.md) | 真实资源或模型上下文容量阻止完整结果交付 |
 | DEC-058 | Chat 内可解释的 THINKING 过程 | 细轨道、整轮耗时终态保留、Debug off 当前 reasoning、轻量历史；中英文随系统，不改变执行语义 | [Decision](./decisions/dec-058-chat-thinking-process.md), [Product Spec](./specs/pa-chat-thinking-process-product-spec.md), [Architecture](../architecture/pa-agent-debug-view.md#chat-thinking-投影与持久化), [B-168 validation](../archive/2026/b168-chat-thinking-process-validation.md) | 全文额外持久化/同步、新框架、独立后台任务或执行动作 |

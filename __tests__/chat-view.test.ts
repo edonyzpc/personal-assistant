@@ -9502,6 +9502,77 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls[1].options.memoryMode).toBe('auto');
     });
 
+    it('persists a bounded terminal tool fact for a cancelled run without late material', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'cancelled-tool-facts-conversation' });
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'cancel while independent code runs';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start', runId: 'runtime_cancelled' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', runId: 'runtime_cancelled' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_start',
+            runId: 'runtime_cancelled',
+            message: assistantMessage('message_tool', []),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            runId: 'runtime_cancelled',
+            message: assistantMessage('message_tool', [
+                { type: 'toolCall', id: 'call_execute', name: 'execute_code', input: { code: 'return 1' } },
+            ]),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_start',
+            runId: 'runtime_cancelled',
+            toolCallId: 'call_execute',
+            toolName: 'execute_code',
+        }));
+
+        getButtonByClass(containerEl, 'cancel-button').click();
+        const lateMetadata = {
+            timing: { elapsedMs: 37 },
+            promptText: 'LATE_TOOL_BODY',
+            sourceRecords: [{ path: 'B170/late.md' }],
+        };
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_end',
+            runId: 'runtime_cancelled',
+            toolCallId: 'call_execute',
+            toolName: 'execute_code',
+            outcome: 'abort_timeout',
+            metadata: lateMetadata,
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_end',
+            runId: 'foreign_run',
+            toolCallId: 'call_execute',
+            toolName: 'execute_code',
+            outcome: 'success',
+            metadata: lateMetadata,
+        }));
+        call.reject(new DOMException('Aborted', 'AbortError'));
+        await waitForTurnCompletion(view);
+
+        const persisted = (await store.getTurns('cancelled-tool-facts-conversation'))[0];
+        expect(persisted?.assistant.agentExecution).toMatchObject({ state: 'cancelled' });
+        const toolSteps = persisted?.executionSummary?.steps.filter(step => step.kind === 'tool') ?? [];
+        expect(toolSteps).toHaveLength(1);
+        expect(toolSteps[0]).toMatchObject({
+            status: 'stopped',
+            outcome: 'abort_timeout',
+            toolName: 'execute_code',
+            toolCallId: 'call_execute',
+        });
+        expect(JSON.stringify(persisted)).not.toContain('LATE_TOOL_BODY');
+        expect(JSON.stringify(persisted)).not.toContain('B170/late.md');
+        expect(allText(containerEl)).not.toContain('LATE_TOOL_BODY');
+    });
+
     it('keeps Ask disabled while Stop is settling', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();

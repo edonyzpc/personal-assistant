@@ -5509,6 +5509,22 @@ export class LLMView extends ItemView {
             }
         };
 
+        const isCancelledToolTerminal = (
+            turn: UiTurn,
+            event: Extract<AgentEvent, { type: 'tool_execution_end' }>,
+        ) => {
+            const canonical = turn.canonicalLifecycle;
+            const activity = canonical.thinkingActivities.get(
+                toolActivityKey(turn, event.turnId, event.toolCallId),
+            );
+            return activity?.executionKind === 'tool'
+                && activity.status === 'active'
+                && activity.runId === event.runId
+                && activity.turnId === event.turnId
+                && activity.toolCallId === event.toolCallId
+                && activity.toolName === event.toolName;
+        };
+
         const updateToolResultActivity = (
             turn: UiTurn,
             event: Extract<AgentEvent, { type: 'message_end' }>,
@@ -7121,7 +7137,11 @@ export class LLMView extends ItemView {
                             if (!acceptingStreamEvents) return;
                             if (!isLiveTurn() && isSameTurn() && controller.signal.aborted
                                 && event.runId === turn.canonicalLifecycle.runId
-                                && (event.type === 'turn_end' || event.type === 'agent_end')) {
+                                && (event.type === 'turn_end' || event.type === 'agent_end' || event.type === 'tool_execution_end')) {
+                                if (event.type === 'tool_execution_end') {
+                                    if (isCancelledToolTerminal(turn, event)) updateToolActivity(turn, event);
+                                    return;
+                                }
                                 // Retain terminal status only; cancelled callbacks
                                 // cannot append text, tool results or source metadata.
                                 recordUserCancellation(turn, event.type === 'turn_end' ? event.turnId : undefined);

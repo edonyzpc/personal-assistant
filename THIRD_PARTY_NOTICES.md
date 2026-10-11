@@ -57,6 +57,38 @@ runtime and is licensed with the project source. Reference attribution:
 | `skills/obsidian-templater/references/module-reference.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
 | `skills/obsidian-templater/references/user-scripts.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
 | `skills/obsidian-templater/references/templater-modules-api.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
+| `src/third_party/pi-codemode` | `MIT` | Pi codemode minimum browser source closure at commit c5f5b3282d5e4203c085e59837ba17aeaf2829b5; wasm.ts is type-only browser extraction and symbol-dispose.d.ts is project-authored compatibility typing. |
+
+Independent computation also embeds `quickjs-wasi@3.6.2`’s `quickjs.wasm`
+(637405 bytes; SHA-256 `d4c9375f2b1ca4dc95f72c8aa2982a7a9951ac8011490d79c6582df732b4bbd9`).
+The Pi source closure and the complete MIT license are checked file-by-file by
+`scripts/check-third-party-notices.mjs`.
+
+### Pi codemode MIT license
+
+~~~text
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+~~~
 
 ## Bundled Binary Resource Provenance
 
@@ -244,6 +276,7 @@ SOFTWARE.
 | `p-queue` | `6.6.2` | `MIT` | `node_modules/p-queue` |
 | `p-timeout` | `3.2.0` | `MIT` | `node_modules/p-timeout` |
 | `punycode.js` | `2.3.1` | `MIT` | `node_modules/punycode.js` |
+| `quickjs-wasi` | `3.6.2` | `MIT` | `node_modules/quickjs-wasi` |
 | `react` | `18.3.1` | `MIT` | `node_modules/react` |
 | `react-chartjs-2` | `5.3.1` | `MIT` | `node_modules/react-chartjs-2` |
 | `react-dom` | `18.3.1` | `MIT` | `node_modules/react-dom` |
@@ -1530,6 +1563,36 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+~~~
+
+### quickjs-wasi@3.6.2
+
+- License: `MIT`
+- Lockfile path: `node_modules/quickjs-wasi`
+- Source file: `node_modules/quickjs-wasi/LICENSE`
+
+~~~text
+MIT License
+
+Copyright (c) 2026 Vercel, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 ~~~
 
 ### react@18.3.1

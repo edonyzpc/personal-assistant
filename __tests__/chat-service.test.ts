@@ -355,6 +355,7 @@ function createPlugin(overrides: {
 }
 
 const approvedFirstTurnToolNames = [
+    'execute_code',
     'get_current_note_context',
     'get_memory_status',
     'get_memory_usage',
@@ -2172,8 +2173,12 @@ describe('ChatService.streamLLM integration', () => {
         try {
             let streamCall = 0;
             let markAcknowledgementStarted!: () => void;
+            let releaseAcknowledgement!: () => void;
             const acknowledgementStarted = new Promise<void>((resolve) => {
                 markAcknowledgementStarted = resolve;
+            });
+            const acknowledgementReleased = new Promise<void>((resolve) => {
+                releaseAcknowledgement = resolve;
             });
             const providerInputs: Array<Record<string, string>> = [];
             const boundToolNames: string[][] = [];
@@ -2212,7 +2217,7 @@ describe('ChatService.streamLLM integration', () => {
                         markAcknowledgementStarted();
                         return {
                             async *[Symbol.asyncIterator]() {
-                                await new Promise<void>((resolve) => setTimeout(resolve, 75));
+                                await acknowledgementReleased;
                                 yield { content: '' };
                             },
                         };
@@ -2244,12 +2249,24 @@ describe('ChatService.streamLLM integration', () => {
             });
             await advanceFakeClockToStage(acknowledgementStarted, run);
 
-            await jest.advanceTimersByTimeAsync(70);
+            // The stage helper's 1 ms steps make setup duration fixture-relative.
+            // Bind only the decision that matters: preparation finished before soft=70.
             expect(acknowledgementSignal?.aborted).toBe(false);
             expect(streamCall).toBe(2);
+            expect(stageIntent).toHaveBeenCalledTimes(1);
+            expect(Date.now()).toBeLessThan(70);
 
+            // Exercise soft-deadline scheduling, then release the buffered
+            // acknowledgement at absolute 75, after soft=70 and before hard=100.
+            await jest.advanceTimersByTimeAsync(70 - Date.now());
+            expect(Date.now()).toBe(70);
+            expect(acknowledgementSignal?.aborted).toBe(false);
             await jest.advanceTimersByTimeAsync(5);
-            await advanceFakeClockToStage(run, run);
+            expect(Date.now()).toBe(75);
+            releaseAcknowledgement();
+            await jest.advanceTimersByTimeAsync(0);
+            expect(Date.now()).toBe(75);
+            await run;
 
             expect(stageIntent).toHaveBeenCalledTimes(1);
             expect(streamCall).toBe(2);

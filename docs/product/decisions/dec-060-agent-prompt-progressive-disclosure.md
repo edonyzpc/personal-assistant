@@ -15,7 +15,7 @@ Work item: B-171
 - 设计时源码基线：全局 prompt 包含各领域状态解释；普通工具指引已做适用范围内的精确去重；纯输出声明另有重复序列化。本次交付对后两者的区别保持不变，只移除真实冗余与无关说明。
 - Pi 固定源码 `c5f5b3282d5e4203c085e59837ba17aeaf2829b5` 的 [Skill 元数据/正文分离](https://github.com/earendil-works/pi/blob/c5f5b3282d5e4203c085e59837ba17aeaf2829b5/packages/coding-agent/src/core/skills.ts#L358)与[按实际工具组装规则](https://github.com/earendil-works/pi/blob/c5f5b3282d5e4203c085e59837ba17aeaf2829b5/packages/coding-agent/src/core/system-prompt.ts#L128)可借鉴。其可选工具发现不等于默认能力，也不是引入 Codemode 执行库就能获得的功能。
 - [既有 prompt 试验 §14–15](../../architecture/pa-agent-harness/pa-agent-harness-optimization-plan-2026-10-04.md#14-主提示与来源指引精简)已保留工具指引去重，主提示候选曾回退。未知操作的矛盾重提建议是具体风险；合理澄清、附加建议或未采用评估者预设路径不是失败依据。
-- [B-170 模型样本](../../development/discovery/pi-codemode-obsidian-feasibility.md#v6-最小真实模型对照)并非本方案验证，两臂日期正确性均未通过；不能用耗时差证明 prompt 或 Codemode 提速。
+- [B-170 模型样本](../../archive/2026/b170-pi-codemode-feasibility.md#v6-最小真实模型对照)并非本方案验证，两臂日期正确性均未通过；不能用耗时差证明 prompt 或 Codemode 提速。
 - 实施后同输入 M1 的单次观察：输入 tokens 减少 4.74%；这不证明稳定提速、普遍成功率或原始日期能力问题已解决。完整证据及失败边界见[验证归档](../../archive/2026/b171-agent-prompt-disclosure-validation.md)。
 
 ## Options Considered

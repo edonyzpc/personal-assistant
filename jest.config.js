@@ -131,6 +131,10 @@ module.exports = {
   // Activates notifications for test results
   // notify: false,
 
+  // quickjs-wasi ships browser-compatible ESM without a CJS bridge. Transform
+  // only this runtime dependency so Jest can execute the real QuickJS engine.
+  transformIgnorePatterns: ["/node_modules/(?!quickjs-wasi/)"],
+
   // An enum that specifies notification mode. Requires { notify: true }
   // notifyMode: "failure-change",
 
@@ -213,6 +217,7 @@ module.exports = {
   // A map from regular expressions to paths to transformers
   transform: {
     "\\.(md|txt)$": "<rootDir>/__mocks__/text-transformer.cjs",
+    "node_modules/quickjs-wasi/.+\\.js$": "ts-jest",
   },
 
   // An array of regexp pattern strings that are matched against all source file paths, matched files will skip transformation

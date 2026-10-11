@@ -9,5 +9,4 @@ Authority: 需要跨会话讨论、研究或产品决策的活跃 Discovery Brie
 | Work item | Topic | Delivery status (derived) | Decision needed | Updated | Brief |
 | --- | --- | --- | --- | --- | --- |
 | B-126 | First-run experience and platform robustness | Exploring | Silent first-use、bounded inline setup 与 first-Settings focus 已决定；Fresh Custom、wizard、progressive build、provider performance 与更宽 rollout 仍未决定 | 2026-10-06 | [Brief](./first-run-and-platform-robustness.md) |
-| B-170 | PA 通用计算 / Pi Codemode | Exploring | 用户已明确由 Agent 自主选择信息/工具/顺序；§20 已撤回固定步骤与时间快照要求，整体范围/资源/兼容提案待确认 | 2026-10-11 | [Brief](./pi-codemode-obsidian-feasibility.md#20-通用计算最小方案草案2026-10-11) |
 使用 [Discovery template](../templates/discovery.md)。Accepted 后进入 Decision/Product Spec，Deferred 回到 Backlog；Rejected/Cancelled 的结论先吸收到对应终态 authority，过程文档默认删除。只有仍被当前源码或文档引用的独有证据才按 [Documentation Workflow](../documentation-workflow.md#仅在以下情况-archive) 归档；不要求年度索引或完整过程包。

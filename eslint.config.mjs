@@ -52,4 +52,11 @@ export default [
       "obsidianmd/prefer-create-el": "error",
     },
   },
+  {
+    files: ["src/third_party/**/*.ts"],
+    rules: {
+      "preserve-caught-error": "off",
+      "@typescript-eslint/unbound-method": "off",
+    },
+  },
 ];

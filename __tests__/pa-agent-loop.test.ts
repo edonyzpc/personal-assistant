@@ -48,7 +48,11 @@ describe("PaAgentLoop", () => {
         expect(JSON.stringify(observed)).not.toContain("REVOKED NOTE TEXT");
         expect(observed.sourceRecords).toBeUndefined();
         if (retrySafety === "read_only") {
-            expect(observed.metadata).toMatchObject({ reason: "task_source_scope_expired", preflightOnly: true });
+            expect(observed.metadata).toMatchObject({
+                reason: "task_source_scope_expired",
+                preflightOnly: false,
+                executionState: "succeeded",
+            });
             expect(observed.resultFact).toBeUndefined();
         } else {
             expect(observed.metadata).toMatchObject({ executionState: "succeeded" });
