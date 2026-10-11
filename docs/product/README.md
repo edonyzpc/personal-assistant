@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [Prompt 精简与渐进披露](./specs/pa-agent-prompt-disclosure-product-spec.md) — B-171：常驻必要规则与能力，方法按需，Agent 自主选择；[执行记录](../development/active/agent-prompt-disclosure/tracker.md)。
 - [完整笔记查询](./specs/pa-complete-note-query-product-spec.md) — B-169：一次条件查询返回完整轻量列表，正文按需；[执行记录](../development/active/complete-note-query/tracker.md)。
 
 - [Chat THINKING 可解释执行过程](./specs/pa-chat-thinking-process-product-spec.md) — B-168：原位细轨道、整轮耗时、当前 reasoning 与轻量历史；[当前接线](../architecture/pa-agent-debug-view.md#chat-thinking-投影与持久化)及[最终验证](../archive/2026/b168-chat-thinking-process-validation.md)。

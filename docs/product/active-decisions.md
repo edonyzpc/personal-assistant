@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-10-10
+Updated: 2026-10-11
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-060 | PA prompt 精简与渐进披露 | 复用原生工具与 Skill/reference；Agent 自主选择；保留来源、完整查询和执行事实；产品范围已确认，实施另行授权 | [Decision](./decisions/dec-060-agent-prompt-progressive-disclosure.md), [Product Spec](./specs/pa-agent-prompt-disclosure-product-spec.md), [Tracker](../development/active/agent-prompt-disclosure/tracker.md) | 证据要求动态工具发现、能力可见性或产品边界变化 |
 | DEC-059 | 条件查询完整笔记列表 | 一次查询完整许可范围，默认全部轻量结果；正文按需、官方 API、无候选截断补查流程 | [Decision](./decisions/dec-059-complete-note-query-results.md), [Product Spec](./specs/pa-complete-note-query-product-spec.md), [Tracker](../development/active/complete-note-query/tracker.md) | 真实资源或模型上下文容量阻止完整结果交付 |
 | DEC-058 | Chat 内可解释的 THINKING 过程 | 细轨道、整轮耗时终态保留、Debug off 当前 reasoning、轻量历史；中英文随系统，不改变执行语义 | [Decision](./decisions/dec-058-chat-thinking-process.md), [Product Spec](./specs/pa-chat-thinking-process-product-spec.md), [Architecture](../architecture/pa-agent-debug-view.md#chat-thinking-投影与持久化), [B-168 validation](../archive/2026/b168-chat-thinking-process-validation.md) | 全文额外持久化/同步、新框架、独立后台任务或执行动作 |
 | DEC-057 | Agent Debug 完整轨迹与双端查看 | 全Run树与统一时间轴，聚焦展开＋节点定位搜索；宽容器右侧详情、窄容器详情页；保留既有本地有界数据与执行隔离 | [Decision](./decisions/dec-057-agent-debug-explorer.md), [Product Spec](./specs/pa-agent-debug-explorer-product-spec.md), [Architecture](../architecture/pa-agent-debug-view.md), [B-167 validation](../archive/2026/b167-agent-debug-explorer-validation.md) | 全文/跨Run搜索、独立后台记录或现有预算内可操作性无法满足 |
