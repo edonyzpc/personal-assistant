@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-10-10
+Updated: 2026-10-11
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-10-11 | `docs/development/active/agent-prompt-disclosure/**` | deleted-after-absorption | [DEC-060](../product/decisions/dec-060-agent-prompt-progressive-disclosure.md), [Product Spec](../product/specs/pa-agent-prompt-disclosure-product-spec.md), [Agent architecture](../architecture/pa-agent-architecture-plan.md), [B-171 validation](./2026/b171-agent-prompt-disclosure-validation.md), [Backlog B-159/B-172](../backlog.md#已延期的产品与工程工作) | 用户明确授权 B-171 closeout 与本地 master 提交；稳定说明分层、共用拼装和按需 Skill 边界已吸收。仅保留独有同题观察、两次 M3 FAIL、指南未送达/效果未验证、清理及用户延期依据；不声称全部 AC 通过，不把批次拒绝认定为产品缺陷。Feature Home/SDD/Tracker 删除，不完整归档；已提交设计历史与本轮未提交执行增量分开，后者由紧凑证据承接。B-170 保持独立，推送与发布未授权。 |
 | 2026-10-10 | `docs/development/active/agent-debug-preview-alignment/**` | deleted-after-absorption | [Product Spec](../product/specs/pa-agent-debug-explorer-product-spec.md), [Debug architecture](../architecture/pa-agent-debug-view.md#已确认预览的展示补齐), [本轮验证](./2026/b167-agent-debug-preview-alignment-validation.md), current source and focused tests | Owner 明确授权本轮 closeout 与本地 master 提交；T-01～04 和确认 findings 完成，无未完成项。四列轨迹/公共刻度、详情 Tab、移动独立详情/底部抽屉吸收到 current；仅保留冻结预览、正式界面截图和紧凑验证证据。未提交的 Home/SDD/Tracker 吸收后删除，不声称 Git 保存了完整过程。并行 B-168 修改排除，原 B-167 历史验收不改写。 |
 | 2026-10-10 | `docs/development/active/chat-thinking-process/**` | deleted-after-absorption | [DEC-058](../product/decisions/dec-058-chat-thinking-process.md), [Product Spec](../product/specs/pa-chat-thinking-process-product-spec.md), [Current wiring](../architecture/pa-agent-debug-view.md#chat-thinking-投影与持久化), [B-168 validation](./2026/b168-chat-thinking-process-validation.md), current source and focused tests | Owner 明确授权 closeout 与本地 master 提交；T-01～08、八组REQ/AC和确认 findings 已完成，无未完成项。稳定步骤/计时/reasoning/直接引用/清理接线吸收至 current；仅保留最终门、端口环境补测、真实受控 desktop/mobile 与构建身份/限制。删除本轮未提交的 Feature Home/SDD/Tracker，不声称 Git 保存了完整过程；原用户 handoff 不处理，推送与发布独立。 |
 | 2026-10-10 | `docs/development/active/agent-debug-explorer/**` | deleted-after-absorption | [DEC-057](../product/decisions/dec-057-agent-debug-explorer.md), [Product Spec](../product/specs/pa-agent-debug-explorer-product-spec.md), [Debug architecture](../architecture/pa-agent-debug-view.md), [B-167 validation](./2026/b167-agent-debug-explorer-validation.md), current source and focused tests | Owner 明确授权 closeout 与本地 master 提交；T-01～07、十项REQ/AC和独立审查完成，无未完成项。完整轨迹、双端阅读状态、可选元数据兼容与清理边界已吸收；仅保留最终gate/实际app/三态与Stop/清理回执及隔离构建身份和限制。设计阶段可从4927e770恢复，本轮最终执行Tracker增量未单独提交，不声称旧Git保存了完整执行过程；删除Feature Home/SDD/Tracker。推送与发布独立。 |

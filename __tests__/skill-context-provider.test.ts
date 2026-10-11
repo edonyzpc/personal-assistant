@@ -100,6 +100,12 @@ describe("SkillContextProvider", () => {
         const schemas = registry.exportProviderSchemas();
         expect(schemas).toHaveLength(1);
         expect(schemas[0]?.function.name).toBe("load_skill");
+        // B-171 R2: matching a description is a reason the Agent may consider,
+        // not a mandatory pre-step before other work.
+        expect(schemas[0]?.function.description).toContain("when its detail would help");
+        expect(schemas[0]?.function.description).not.toContain("Call this when");
+        expect(owned.plannerGuidance.join(" ")).toContain("not a required first step");
+        expect(owned.plannerGuidance.join(" ")).not.toContain("before calling load_skill");
     });
 
     it.each([

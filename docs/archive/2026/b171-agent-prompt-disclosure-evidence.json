@@ -1,0 +1,1080 @@
+{
+  "schema_version": 1,
+  "work_item": "B-171",
+  "recorded": "2026-10-11",
+  "delivery_disposition": "Closed with user-deferred M3 response gap; guide amendment effect unverified",
+  "scope": "Synthetic isolated test inputs. Verbatim final answers and factual tool/dispatch records retained; provider prompt bodies and model reasoning omitted. HTTP/loop completion is not a semantic pass.",
+  "original_synthetic_history": [
+    {
+      "role": "user",
+      "content": "请把选定笔记同步为 Ghost 草稿。",
+      "inputLineage": {
+        "schemaVersion": 1,
+        "completeness": "complete",
+        "dependencies": []
+      }
+    },
+    {
+      "role": "assistant",
+      "content": "我之前说已经完成了，请等待预览。",
+      "inputLineage": {
+        "schemaVersion": 1,
+        "completeness": "complete",
+        "dependencies": []
+      },
+      "actionStates": [
+        {
+          "schemaVersion": 1,
+          "owner": "ghost",
+          "operationId": "b171-ghost-unknown-01",
+          "phase": "unknown",
+          "origin": {
+            "runId": "b171-historical-run",
+            "turnId": "b171-historical-turn",
+            "assistantId": "b171-historical-assistant",
+            "callId": "b171-historical-call",
+            "resultId": "b171-historical-result"
+          },
+          "revision": 0,
+          "inputLineage": {
+            "schemaVersion": 1,
+            "completeness": "complete",
+            "dependencies": []
+          },
+          "receipt": {
+            "kind": "ghost-preparation",
+            "operationId": "b171-ghost-unknown-01",
+            "status": "outcome_unknown"
+          }
+        }
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "original_file": "frozen-gates.json",
+      "original_sha256": "599d844ced820a5d56dfc9c9fbed19142e3f3acf731127b0355e1cc9f6d6fbd6",
+      "receipt": {
+        "input": {
+          "diff_sha256": "1a7dc4eb7734e51c5e92d8d05d05a1ba6af078ac6b65a0960d789b85ca7e6b4b",
+          "untracked": []
+        },
+        "checks": [
+          {
+            "name": "lint",
+            "command": [
+              "npm",
+              "run",
+              "lint"
+            ],
+            "exit": 0,
+            "seconds": 11.593,
+            "log": "frozen-lint.log"
+          },
+          {
+            "name": "build",
+            "command": [
+              "npm",
+              "run",
+              "build"
+            ],
+            "exit": 0,
+            "seconds": 13.733,
+            "log": "frozen-build.log"
+          },
+          {
+            "name": "test-all",
+            "command": [
+              "npm",
+              "run",
+              "test:all",
+              "--",
+              "--runInBand"
+            ],
+            "exit": 0,
+            "seconds": 275.403,
+            "log": "frozen-test-all.log"
+          }
+        ],
+        "input_after": {
+          "diff_sha256": "1a7dc4eb7734e51c5e92d8d05d05a1ba6af078ac6b65a0960d789b85ca7e6b4b",
+          "untracked": []
+        },
+        "input_unchanged": true
+      }
+    },
+    {
+      "original_file": "r3-gates.json",
+      "original_sha256": "70d0baababc9bbafb47ce2c47b872c9807d0b9035fdb48ea73c9c437882cb3d4",
+      "receipt": {
+        "source_tests_unchanged": true,
+        "source_diff_sha256": "1a7dc4eb7734e51c5e92d8d05d05a1ba6af078ac6b65a0960d789b85ca7e6b4b",
+        "source_full_gate_reused": "frozen-gates.json",
+        "checks": [
+          {
+            "name": "build",
+            "exit": 0,
+            "seconds": 10.566
+          },
+          {
+            "name": "artifacts",
+            "exit": 0,
+            "seconds": 16.939
+          }
+        ],
+        "artifact_sha256": "c1b1e96324de9bd7ca9af4ed246f9e0b5f72ff676234802c727a4574a8217f35"
+      }
+    }
+  ],
+  "log_identities": [
+    {
+      "file": "frozen-lint.log",
+      "sha256": "f89aedc067333b4a88cfe35b9f320c1bd47d8cf25fd028b33b7a90a0c4814522",
+      "terminal_test_summary": []
+    },
+    {
+      "file": "frozen-build.log",
+      "sha256": "8447f4b072feede50b0294189ddc55930a392eba7326c2c6cb318e8537e8059b",
+      "terminal_test_summary": []
+    },
+    {
+      "file": "frozen-test-all.log",
+      "sha256": "6846dfabdf7368b5850d2134436ffed144f86850812eb22f2d79ef772815dd91",
+      "terminal_test_summary": [
+        "Test Suites: 385 passed, 385 total",
+        "Tests:       9320 passed, 9320 total",
+        "Time:        274.891 s"
+      ]
+    },
+    {
+      "file": "r3-skill-context-provider.log",
+      "sha256": "b65318c5ca1622d8805b9247960e24c8d0ae0af571bddf20b774e335b02a5bdd",
+      "terminal_test_summary": [
+        "Test Suites: 1 passed, 1 total",
+        "Tests:       24 passed, 24 total",
+        "Time:        0.204 s, estimated 1 s"
+      ]
+    },
+    {
+      "file": "r3-build.log",
+      "sha256": "5eecbadec083f9bd5435de16f9a1a3f3e5b552a429c261da207cbc6b48b90033",
+      "terminal_test_summary": []
+    },
+    {
+      "file": "r3-artifacts.log",
+      "sha256": "2d62559999ee2d17430423b81b2cdce09d6ca6ac1b66549fd09a4f862745cec6",
+      "terminal_test_summary": [
+        "Test Suites: 2 passed, 2 total",
+        "Tests:       61 passed, 61 total",
+        "Time:        16.615 s"
+      ]
+    }
+  ],
+  "integration": {
+    "base": "69b4f9aee48c7ea6e35c84651aa3eaed3cb0dac7",
+    "files": {
+      "src/ai-services/context/PaAgentContextProjector.ts": "75330074395b9a62bce956d295f4d883ca4f72d7d215c308609360be010e6a11",
+      "src/ai-services/context/PaAgentContextSummarizer.ts": "dac8165de66d1b88f9a2dea5e5ba0e86fee780660fc65ab134885d04dc1e3953",
+      "src/ai-services/pa-agent-prompts.ts": "6995e47ad72bcb0165628b454b687224a5b647e644e6b7f60f81f539c85bb353",
+      "src/ai-services/pa-agent-result-facts.ts": "454eb6eb322fd61aa94638b3ba01e721475d6352a112d6e649e9baf1f39c329f",
+      "src/ai-services/pa-agent-runtime.ts": "dc403a461f99c666a9520b7f37074a3dede192133ade5103592b2e7b4836b753",
+      "src/ai-services/skill-context-provider.ts": "b01bfb287274f752e213454d32380f9960ca18dfea0474651a4b26f2321b91e9",
+      "src/chat/chat-view.ts": "f52898ca982d735ef34962f51280e42f0d738ea66f23de9dddb68209a20ae7da",
+      "__tests__/chat-view.test.ts": "46f893568e7dee8dd00e7b85e3ed38054045a40af45fd42339ed7023d8c6adf7",
+      "__tests__/pa-agent-context-summarizer.test.ts": "831e0e870f0ae728af2c8849f718947b769cac08b33624d628b353433e8af240",
+      "__tests__/pa-agent-context-summary-projection.test.ts": "5f19c743f1e6abd68a844b3fbc2d93f5a56fd2129337c3be5b50d7165cde3fb5",
+      "__tests__/pa-agent-runtime-prompt.test.ts": "fa03a0009e7337bf8f0aa7046055184e5d1a6cda22bc12381cc1c3ab1346eeb3",
+      "__tests__/skill-context-provider.test.ts": "39de65e55d5abb33073466c5279c338fc9894deb76b4e80ccf0812d983054966",
+      "__tests__/writing-context-runtime.test.ts": "04e8d0e452217e4cbef4a1d02f58cb1531d83fe9d6f0670e7a1815a46f68df0f",
+      "skills/blog2ghost/SKILL.md": "53e8775cb51c9c965f26f760ec1e0a107861493cb943c8dfebfb3085c71a79a0",
+      "docs/architecture/pa-agent-architecture-plan.md": "b4f4c43a8eedd47859d06afb9e9001d10671555fff3e90134efbf7a9eb8d08e5"
+    }
+  },
+  "cases": [
+    {
+      "id": "m1-baseline",
+      "configuration": {
+        "provider": "qwen",
+        "model": "deepseek-v4-pro",
+        "thinking": true
+      },
+      "loadedBuildSha256": "29011532c03165ee247587c457d9897f7e0dab97d30e79f5b2777e5503fb658c",
+      "elapsedMs": 27615,
+      "firstAnswerCallbackMs": 27613,
+      "terminalStatus": "completed",
+      "physicalAttempts": 3,
+      "measuredTokens": {
+        "inputTokens": 36266,
+        "outputTokens": 1525,
+        "reasoningTokens": 577,
+        "totalTokens": 37791,
+        "cacheReadTokens": 21504
+      },
+      "warnings": [],
+      "original_file": "m1-baseline.json",
+      "original_sha256": "2cdc599e56a6884648f3228d1e8ace9f6d4b0655478bff0851063a428cf81e8c",
+      "prompt": "请列出 B-171-fixtures 文件夹中 date 属性在 2026-09-27（含）到 2026-10-11（不含）之间的全部笔记，按 date 升序。date 是 YYYY-MM-DD 日历日期，不使用文件创建或修改时间。只需标题、路径和日期，不必读取正文。",
+      "final_answer_verbatim": "在 `B-171-fixtures` 文件夹中共扫描了 8 篇笔记，其中 6 篇的 `date` 属性落在 **2026-09-27（含）至 2026-10-11（不含）** 范围内，按 `date` 升序排列如下：\n\n| # | date | 标题 | 路径 |\n|---|------|------|------|\n| 1 | 2026-09-29 | 2026-09-29-读书摘录 | `B-171-fixtures/2026-09-29-读书摘录.md` |\n| 2 | 2026-10-01 | 2026-10-01-假期计划 | `B-171-fixtures/2026-10-01-假期计划.md` |\n| 3 | 2026-10-04 | 2026-10-04-项目讨论 | `B-171-fixtures/2026-10-04-项目讨论.md` |\n| 4 | 2026-10-07 | 2026-10-07-学习记录 | `B-171-fixtures/2026-10-07-学习记录.md` |\n| 5 | 2026-10-09 | 2026-10-09-跑步记录 | `B-171-fixtures/2026-10-09-跑步记录.md` |\n| 6 | 2026-10-10 | 2026-10-10-每周总结 | `B-171-fixtures/2026-10-10-每周总结.md` |\n\n所有 `date` 值均来自各笔记的 YAML frontmatter 属性（均为 `calendar-date` 格式），未使用文件创建或修改时间。其余 2 篇笔记的 `date` 不在该区间内。",
+      "semantic_verdict": "PASS",
+      "no_real_ghost_image_or_writing_effects": true,
+      "tool_calls": [
+        {
+          "turn_id": "turn_1",
+          "id": "call_226a3755f3a84e299687d5d4",
+          "name": "query_notes",
+          "input": "{\"folder\": \"B-171-fixtures\", \"date\": {\"field\": \"property\", \"property\": \"date\", \"kind\": \"calendar-date\", \"from\": \"2026-09-27\", \"to\": \"2026-10-11\"}, \"properties\": [{\"key\": \"date\", \"operator\": \"exists\"}]}"
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_f0d61999fa7244a190bdf3ac",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-09-29-读书摘录.md\", \"part\": \"properties\"}"
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_2166e189028548bb85b8683f",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-01-假期计划.md\", \"part\": \"properties\"}"
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_ec0d0effda804efca8dee68a",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-04-项目讨论.md\", \"part\": \"properties\"}"
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_c1587eb8466043a09a8ae428",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-07-学习记录.md\", \"part\": \"properties\"}"
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_4e258eb17b6840ba9197dadc",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-09-跑步记录.md\", \"part\": \"properties\"}"
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_39178688656345acb210714b",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-10-每周总结.md\", \"part\": \"properties\"}"
+        }
+      ],
+      "tool_results": [
+        {
+          "turn_id": "turn_1",
+          "id": "call_226a3755f3a84e299687d5d4",
+          "name": "query_notes",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_f0d61999fa7244a190bdf3ac",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_2166e189028548bb85b8683f",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_ec0d0effda804efca8dee68a",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_c1587eb8466043a09a8ae428",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_4e258eb17b6840ba9197dadc",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_39178688656345acb210714b",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        }
+      ]
+    },
+    {
+      "id": "m1-candidate",
+      "configuration": {
+        "provider": "qwen",
+        "model": "deepseek-v4-pro",
+        "thinking": true
+      },
+      "loadedBuildSha256": "4c43c20dcfb217b3330baf82fd7f337d1f05ed520e2dee07e6b5a5898ffea9d3",
+      "elapsedMs": 27313,
+      "firstAnswerCallbackMs": 27312,
+      "terminalStatus": "completed",
+      "physicalAttempts": 3,
+      "measuredTokens": {
+        "inputTokens": 34546,
+        "outputTokens": 1469,
+        "reasoningTokens": 562,
+        "totalTokens": 36015,
+        "cacheReadTokens": 19456
+      },
+      "warnings": [],
+      "original_file": "m1-candidate.json",
+      "original_sha256": "05002b5df3da3ca37eb5e45b0c9e6a5237d1f7cd0152d5e1321e25bfca778f6d",
+      "prompt": "请列出 B-171-fixtures 文件夹中 date 属性在 2026-09-27（含）到 2026-10-11（不含）之间的全部笔记，按 date 升序。date 是 YYYY-MM-DD 日历日期，不使用文件创建或修改时间。只需标题、路径和日期，不必读取正文。",
+      "final_answer_verbatim": "在 `B-171-fixtures` 文件夹中，`date` 属性落在 **[2026-09-27, 2026-10-11)** 半开区间内的笔记共有 6 篇，按 `date` 升序排列如下：\n\n| # | 标题 | 路径 | date |\n|---|------|------|------|\n| 1 | 2026-09-29-读书摘录 | `B-171-fixtures/2026-09-29-读书摘录.md` | 2026-09-29 |\n| 2 | 2026-10-01-假期计划 | `B-171-fixtures/2026-10-01-假期计划.md` | 2026-10-01 |\n| 3 | 2026-10-04-项目讨论 | `B-171-fixtures/2026-10-04-项目讨论.md` | 2026-10-04 |\n| 4 | 2026-10-07-学习记录 | `B-171-fixtures/2026-10-07-学习记录.md` | 2026-10-07 |\n| 5 | 2026-10-09-跑步记录 | `B-171-fixtures/2026-10-09-跑步记录.md` | 2026-10-09 |\n| 6 | 2026-10-10-每周总结 | `B-171-fixtures/2026-10-10-每周总结.md` | 2026-10-10 |\n\n查询覆盖了该文件夹内全部 8 篇笔记，以上 6 篇的 `date` 属性均在指定范围内（另外 2 篇不在区间内因此被排除）。所有日期的来源均为各笔记 frontmatter 中的 `date` 属性，未使用文件创建或修改时间。",
+      "semantic_verdict": "PASS",
+      "no_real_ghost_image_or_writing_effects": true,
+      "tool_calls": [
+        {
+          "turn_id": "turn_1",
+          "id": "call_f9508e5edc9d4c9abc377b06",
+          "name": "query_notes",
+          "input": "{\"folder\": \"B-171-fixtures\", \"date\": {\"field\": \"property\", \"property\": \"date\", \"kind\": \"calendar-date\", \"from\": \"2026-09-27\", \"to\": \"2026-10-11\"}}"
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_e127488c7a0d429d963fbf14",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-09-29-读书摘录.md\", \"part\": \"properties\"}"
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_5f6dd868897b4704ba8cfa23",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-01-假期计划.md\", \"part\": \"properties\"}"
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_b6d20734f15d48929dfa2253",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-04-项目讨论.md\", \"part\": \"properties\"}"
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_50fb3a7dfafd46e0b619dab8",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-07-学习记录.md\", \"part\": \"properties\"}"
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_b80f15e9f8024e0187d371a5",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-09-跑步记录.md\", \"part\": \"properties\"}"
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_72d246055244449696cadb3d",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-10-每周总结.md\", \"part\": \"properties\"}"
+        }
+      ],
+      "tool_results": [
+        {
+          "turn_id": "turn_1",
+          "id": "call_f9508e5edc9d4c9abc377b06",
+          "name": "query_notes",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_e127488c7a0d429d963fbf14",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_5f6dd868897b4704ba8cfa23",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_b6d20734f15d48929dfa2253",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_50fb3a7dfafd46e0b619dab8",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_b80f15e9f8024e0187d371a5",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_4",
+          "id": "call_72d246055244449696cadb3d",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        }
+      ]
+    },
+    {
+      "id": "m2-candidate",
+      "configuration": {
+        "provider": "qwen",
+        "model": "deepseek-v4-pro",
+        "thinking": true
+      },
+      "loadedBuildSha256": "4c43c20dcfb217b3330baf82fd7f337d1f05ed520e2dee07e6b5a5898ffea9d3",
+      "elapsedMs": 66052,
+      "firstAnswerCallbackMs": 66051,
+      "terminalStatus": "completed",
+      "physicalAttempts": 4,
+      "measuredTokens": {
+        "inputTokens": 51729,
+        "outputTokens": 3840,
+        "reasoningTokens": 2382,
+        "totalTokens": 55569,
+        "cacheReadTokens": 34816
+      },
+      "warnings": [
+        "matching_persisted_turn_missing"
+      ],
+      "original_file": "m2-candidate.json",
+      "original_sha256": "598599f2728e9f9b1a16889166c2d746223ce51b937de3370e0b9a9e35efe164",
+      "prompt": "我想在 Obsidian 的一个 DataviewJS 代码块里做笔记概览。数据来自 B-171-fixtures：先按 date 升序列出 2026-09-27≤date<2026-10-11 的笔记链接和日期，再按文件分组显示这些笔记中的未完成任务。date 是 frontmatter 的日历日期。任务文本用普通表格显示，不要可切换的复选框。请给出可粘贴的代码，别修改笔记、属性或任务状态。",
+      "final_answer_verbatim": "以下是可粘贴的 DataviewJS 代码块：\n\n````markdown\n```dataviewjs\nconst start = dv.date(\"2026-09-27\");\nconst end = dv.date(\"2026-10-11\");\n\nconst pages = dv.pages('\"B-171-fixtures\"')\n  .where(p => p.date && p.date >= start && p.date < end)\n  .sort(p => p.date, \"asc\");\n\n// 第一部分：笔记概览 — 按 date 升序\ndv.header(2, \"笔记概览\");\ndv.table(\n  [\"笔记\", \"日期\"],\n  pages.map(p => [p.file.link, p.date])\n);\n\n// 第二部分：未完成任务 — 按文件分组\ndv.header(2, \"未完成任务\");\nfor (const page of pages) {\n  const incomplete = page.file.tasks.where(t => !t.completed);\n  if (incomplete.length > 0) {\n    dv.header(3, page.file.name);\n    dv.table(\n      [\"任务\"],\n      incomplete.map(t => [t.text])\n    );\n  }\n}\n```\n````\n\n**说明：**\n\n- `start` / `end` 对应 `2026-09-27 ≤ date < 2026-10-11`，使用 `dv.date()` 解析为 Luxon DateTime，与 frontmatter 的日历日期 `date` 直接比较。\n- 第一部分用 `dv.table` 按 `date` 升序输出笔记链接和日期。\n- 第二部分遍历同一批页面，每组以文件名作为三级标题，用普通表格（`dv.table`）列出任务文本；不使用 `dv.taskList`，所以不会出现可切换的复选框。\n- 若某个笔记没有未完成任务，该文件的表格不会渲染，不会产生空行。\n\n**当前 B-171-fixtures 中匹配范围的笔记（共 6 篇）：**\n\n| 笔记 | date |\n|------|------|\n| 2026-09-29-读书摘录 | 2026-09-29 |\n| 2026-10-01-假期计划 | 2026-10-01 |\n| 2026-10-04-项目讨论 | 2026-10-04 |\n| 2026-10-07-学习记录 | 2026-10-07 |\n| 2026-10-09-跑步记录 | 2026-10-09 |\n| 2026-10-10-每周总结 | 2026-10-10 |\n\n> 这些笔记目前体内没有任务（`- [ ]`），因此\"未完成任务\"部分会为空。代码本身已正确处理任务逻辑，将来添加任务后会自动显示。\n\n直接粘贴到任意 Obsidian 笔记中即可使用，不会修改任何笔记、属性或任务状态。",
+      "semantic_verdict": "PASS",
+      "no_real_ghost_image_or_writing_effects": true,
+      "tool_calls": [
+        {
+          "turn_id": "turn_1",
+          "id": "call_11559d332e7143c6857282ec",
+          "name": "load_skill",
+          "input": "{\"name\": \"obsidian-dataview\"}"
+        },
+        {
+          "turn_id": "turn_1",
+          "id": "call_9318f54b59804a2881081c9c",
+          "name": "query_notes",
+          "input": "{\"folder\": \"B-171-fixtures\"}"
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_658572820d234af49103ca6c",
+          "name": "load_skill",
+          "input": "{\"name\": \"obsidian-dataview\", \"reference\": \"references/dataviewjs-api.md\"}"
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_74754c594299424ab47ed7bb",
+          "name": "inspect_obsidian_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-09-29-读书摘录.md\"}"
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_86303d1996714e04b10e150c",
+          "name": "inspect_obsidian_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-01-假期计划.md\"}"
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_4350d395e41f4c60b5efccc7",
+          "name": "inspect_obsidian_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-04-项目讨论.md\"}"
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_d301744b0df9491ca360ebab",
+          "name": "inspect_obsidian_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-07-学习记录.md\"}"
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_520249b62b0c471197456468",
+          "name": "inspect_obsidian_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-09-跑步记录.md\"}"
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_a48d2c67a5ac495db0dffc92",
+          "name": "inspect_obsidian_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-10-每周总结.md\"}"
+        },
+        {
+          "turn_id": "turn_14",
+          "id": "call_ea651832a4694d8690dd08ce",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-09-29-读书摘录.md\", \"part\": \"body\"}"
+        },
+        {
+          "turn_id": "turn_14",
+          "id": "call_fd205c193f0f452eb0bc421f",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-01-假期计划.md\", \"part\": \"body\"}"
+        },
+        {
+          "turn_id": "turn_14",
+          "id": "call_88c9c8c197324514a6e3a9d1",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-04-项目讨论.md\", \"part\": \"body\"}"
+        },
+        {
+          "turn_id": "turn_14",
+          "id": "call_81bafbd65f22410b8193e43f",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-07-学习记录.md\", \"part\": \"body\"}"
+        },
+        {
+          "turn_id": "turn_14",
+          "id": "call_4e17e54ddad345aeb833469e",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-09-跑步记录.md\", \"part\": \"body\"}"
+        },
+        {
+          "turn_id": "turn_14",
+          "id": "call_094aad140c38429793a25ef0",
+          "name": "read_note",
+          "input": "{\"path\": \"B-171-fixtures/2026-10-10-每周总结.md\", \"part\": \"body\"}"
+        }
+      ],
+      "tool_results": [
+        {
+          "turn_id": "turn_1",
+          "id": "call_11559d332e7143c6857282ec",
+          "name": "load_skill",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_1",
+          "id": "call_9318f54b59804a2881081c9c",
+          "name": "query_notes",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_658572820d234af49103ca6c",
+          "name": "load_skill",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_74754c594299424ab47ed7bb",
+          "name": "inspect_obsidian_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_86303d1996714e04b10e150c",
+          "name": "inspect_obsidian_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_4350d395e41f4c60b5efccc7",
+          "name": "inspect_obsidian_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_d301744b0df9491ca360ebab",
+          "name": "inspect_obsidian_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_520249b62b0c471197456468",
+          "name": "inspect_obsidian_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_a48d2c67a5ac495db0dffc92",
+          "name": "inspect_obsidian_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_14",
+          "id": "call_ea651832a4694d8690dd08ce",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_14",
+          "id": "call_fd205c193f0f452eb0bc421f",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_14",
+          "id": "call_88c9c8c197324514a6e3a9d1",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_14",
+          "id": "call_81bafbd65f22410b8193e43f",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_14",
+          "id": "call_4e17e54ddad345aeb833469e",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_14",
+          "id": "call_094aad140c38429793a25ef0",
+          "name": "read_note",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        }
+      ]
+    },
+    {
+      "id": "m3-candidate",
+      "configuration": {
+        "provider": "qwen",
+        "model": "deepseek-v4-pro",
+        "thinking": true
+      },
+      "loadedBuildSha256": "4c43c20dcfb217b3330baf82fd7f337d1f05ed520e2dee07e6b5a5898ffea9d3",
+      "elapsedMs": 32382,
+      "firstAnswerCallbackMs": 32381,
+      "terminalStatus": "completed",
+      "physicalAttempts": 4,
+      "measuredTokens": {
+        "inputTokens": 37044,
+        "outputTokens": 1466,
+        "reasoningTokens": 850,
+        "totalTokens": 38510,
+        "cacheReadTokens": 31744
+      },
+      "warnings": [
+        "matching_persisted_turn_missing"
+      ],
+      "original_file": "m3-candidate.json",
+      "original_sha256": "d8b5a2ee1e49984e79332da9470516964da8fae178d99bfabc8db40f71704a7a",
+      "prompt": "刚才那个 Ghost 同步现在成功了吗？我还没看到预览，需要再做什么？",
+      "final_answer_verbatim": "根据目前掌握的信息，关于上次的 Ghost 同步（操作 ID `b171-ghost-unknown-01`），有几个关键事实：\n\n## 已知情况\n\n1. **操作结果未知**：该操作的状态是 `unknown`，也就是说系统无法确认草稿是否已保存到 Ghost。可能已经成功保存了，但也可能没有——我们无法从现有记录中确定。\n\n2. **副作用可能已发生**：`sideEffectsMayHaveOccurred: true` 意味着这个操作**可能**已经在 Ghost 端产生了实际效果，只是缺少确认信号。\n\n3. **当前 vault 中没有 Ghost 相关的笔记**：搜索 vault 的 8 篇笔记，没有发现含 `GHOST_ID` 的笔记，也没有任何 \"Ghost\" 相关的内容。这也说明之前的同步可能没有走到写回 `GHOST_ID` 这一步，或者目标笔记本身未被纳入当前 vault 范围。\n\n## 你需要做什么\n\n按照 blog2ghost 技能的工作方式：\n\n- **先去 Ghost 后台检查**：登录你的 Ghost 管理面板 → Drafts，看看是否已经出现了一篇草稿。如果草稿已存在，说明同步其实成功了，你直接在 Ghost 中预览并手动发布即可。\n- **如果没有草稿**：这说明上次操作没有成功保存。你需要**重新执行一次同步**：在 Obsidian 中打开那篇目标笔记（确保是当前活动笔记），然后明确告诉我\"请将该笔记同步为 Ghost 草稿\"，我会重新发起一次准备请求。\n\n简单来说：**先查 Ghost Drafts，有就直接用；没有就再来一次。** 根据技能规则，未知结果的操作不能自动重试，需要你给一个新的明确指令。",
+      "semantic_verdict": "FAIL",
+      "no_real_ghost_image_or_writing_effects": true,
+      "tool_calls": [
+        {
+          "turn_id": "turn_1",
+          "id": "call_8c283163d8d1450d8c342302",
+          "name": "load_skill",
+          "input": "{\"name\": \"blog2ghost\"}"
+        },
+        {
+          "turn_id": "turn_1",
+          "id": "call_41ee67731bc548c9bd664886",
+          "name": "get_current_note_context",
+          "input": "{\"mode\": \"metadata\"}"
+        },
+        {
+          "turn_id": "turn_1",
+          "id": "call_07130ee2f5db490abae99dab",
+          "name": "search_vault_metadata",
+          "input": "{\"query\": \"ghost\"}"
+        },
+        {
+          "turn_id": "turn_6",
+          "id": "call_0356c0c0a13648eabb3766cf",
+          "name": "search_vault_metadata",
+          "input": "{\"query\": \"ghost\"}"
+        },
+        {
+          "turn_id": "turn_9",
+          "id": "call_1ac4ec2dffca4cf39a4e4eb3",
+          "name": "load_skill",
+          "input": "{\"name\": \"blog2ghost\"}"
+        },
+        {
+          "turn_id": "turn_9",
+          "id": "call_a07d06bbdba74646a2fc6c1f",
+          "name": "search_vault_snippets",
+          "input": "{\"query\": \"Ghost\"}"
+        }
+      ],
+      "tool_results": [
+        {
+          "turn_id": "turn_1",
+          "id": "call_8c283163d8d1450d8c342302",
+          "name": "load_skill",
+          "outcome": "policy_rejected",
+          "preflight_only": true,
+          "execution_state": "not_started",
+          "rejection_reason": "source_read_plan_unavailable"
+        },
+        {
+          "turn_id": "turn_1",
+          "id": "call_41ee67731bc548c9bd664886",
+          "name": "get_current_note_context",
+          "outcome": "policy_rejected",
+          "preflight_only": true,
+          "execution_state": "not_started",
+          "rejection_reason": "source_read_plan_unavailable"
+        },
+        {
+          "turn_id": "turn_1",
+          "id": "call_07130ee2f5db490abae99dab",
+          "name": "search_vault_metadata",
+          "outcome": "policy_rejected",
+          "preflight_only": true,
+          "execution_state": "not_started",
+          "rejection_reason": "source_read_plan_unavailable"
+        },
+        {
+          "turn_id": "turn_6",
+          "id": "call_0356c0c0a13648eabb3766cf",
+          "name": "search_vault_metadata",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_9",
+          "id": "call_1ac4ec2dffca4cf39a4e4eb3",
+          "name": "load_skill",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        },
+        {
+          "turn_id": "turn_9",
+          "id": "call_a07d06bbdba74646a2fc6c1f",
+          "name": "search_vault_snippets",
+          "outcome": "success",
+          "preflight_only": false,
+          "execution_state": null,
+          "rejection_reason": null
+        }
+      ],
+      "actual_dispatch_checks": [
+        {
+          "turn_id": "turn_1",
+          "original_operation_id_present": true,
+          "no_resubmission_rule_present": true,
+          "unknown_not_no_effects_rule_present": true,
+          "old_ghost_guide_present": false,
+          "revised_ghost_guide_present": false
+        },
+        {
+          "turn_id": "turn_6",
+          "original_operation_id_present": true,
+          "no_resubmission_rule_present": true,
+          "unknown_not_no_effects_rule_present": true,
+          "old_ghost_guide_present": false,
+          "revised_ghost_guide_present": false
+        },
+        {
+          "turn_id": "turn_9",
+          "original_operation_id_present": true,
+          "no_resubmission_rule_present": true,
+          "unknown_not_no_effects_rule_present": true,
+          "old_ghost_guide_present": false,
+          "revised_ghost_guide_present": false
+        },
+        {
+          "turn_id": "turn_13",
+          "original_operation_id_present": true,
+          "no_resubmission_rule_present": true,
+          "unknown_not_no_effects_rule_present": true,
+          "old_ghost_guide_present": true,
+          "revised_ghost_guide_present": false
+        }
+      ]
+    },
+    {
+      "id": "m3-r3-candidate",
+      "configuration": {
+        "provider": "qwen",
+        "model": "deepseek-v4-pro",
+        "thinking": true
+      },
+      "loadedBuildSha256": "c1b1e96324de9bd7ca9af4ed246f9e0b5f72ff676234802c727a4574a8217f35",
+      "elapsedMs": 40484,
+      "firstAnswerCallbackMs": 40483,
+      "terminalStatus": "completed",
+      "physicalAttempts": 4,
+      "measuredTokens": {
+        "inputTokens": 35645,
+        "outputTokens": 1945,
+        "reasoningTokens": 1362,
+        "totalTokens": 37590,
+        "cacheReadTokens": 32768
+      },
+      "warnings": [
+        "matching_persisted_turn_missing"
+      ],
+      "original_file": "m3-r3-candidate.json",
+      "original_sha256": "1b26452b2ad6a9e4378f6b78ddccfcbc2fe2bfeb357ba369213731db7f5666c4",
+      "prompt": "刚才那个 Ghost 同步现在成功了吗？我还没看到预览，需要再做什么？",
+      "final_answer_verbatim": "根据目前的情况，我来帮你梳理一下：\n\n## 关于那次 Ghost 同步\n\n从历史记录来看，你之前请求的把选定笔记同步为 Ghost 草稿的操作状态是 **未知（unknown）**：\n\n- **操作已提交**，Ghost 系统确实收到了请求（`sideEffectsMayHaveOccurred: true`）\n- **最终结果不确定**——无法确认它是成功、失败还是部分完成\n- 这次操作发生在历史会话中，不在当前运行范围内\n\n## 当前限制\n\n目前我无法帮你做进一步验证，原因是当前运行上下文中：\n- 没有捕获到活动笔记（`currentNoteHandle` 为 null）\n- 所有用于读取笔记、搜索、技能的查询工具在当前运行中都不可用（`source_read_plan_unavailable`）\n\n## 你需要做什么\n\n1. **去 Ghost 后台直接查看**：登录你的 Ghost 管理面板，在 **Drafts（草稿）** 列表里看看那篇笔记是否已经出现在草稿中。这是最直接的确认方式。\n2. **如果草稿已存在**：你可以在 Ghost 中直接预览、编辑并发布，不需要再通过我操作。\n3. **如果草稿不存在**：说明那次同步可能没有成功。在这种情况下，你需要**在新的会话中重新发起同步请求**（而非在当前对话里重试），并确保当时有活动笔记被选中。\n\n总结：那次操作可能已生效也可能没有，我无法在当前环境中验证。最快的方式是直接去 Ghost 后台看一眼。",
+      "semantic_verdict": "FAIL",
+      "no_real_ghost_image_or_writing_effects": true,
+      "tool_calls": [
+        {
+          "turn_id": "turn_1",
+          "id": "call_bd351be7207a4b73a8756ed8",
+          "name": "load_skill",
+          "input": "{\"name\": \"blog2ghost\"}"
+        },
+        {
+          "turn_id": "turn_1",
+          "id": "call_5e4d4d6ff1e94881ac1976ba",
+          "name": "get_current_note_context",
+          "input": "{\"mode\": \"metadata\"}"
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_d60d5bec9a104ee49bd44c6f",
+          "name": "search_vault_metadata",
+          "input": "{\"query\": \"ghost\"}"
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_b12aa3adbe024198b81c5a5f",
+          "name": "get_memory_status",
+          "input": "{}"
+        },
+        {
+          "turn_id": "turn_9",
+          "id": "call_622d8636d694402191e76f8b",
+          "name": "get_current_note_context",
+          "input": "{\"mode\": \"metadata\"}"
+        }
+      ],
+      "tool_results": [
+        {
+          "turn_id": "turn_1",
+          "id": "call_bd351be7207a4b73a8756ed8",
+          "name": "load_skill",
+          "outcome": "policy_rejected",
+          "preflight_only": true,
+          "execution_state": "not_started",
+          "rejection_reason": "source_read_plan_unavailable"
+        },
+        {
+          "turn_id": "turn_1",
+          "id": "call_5e4d4d6ff1e94881ac1976ba",
+          "name": "get_current_note_context",
+          "outcome": "policy_rejected",
+          "preflight_only": true,
+          "execution_state": "not_started",
+          "rejection_reason": "source_read_plan_unavailable"
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_d60d5bec9a104ee49bd44c6f",
+          "name": "search_vault_metadata",
+          "outcome": "policy_rejected",
+          "preflight_only": true,
+          "execution_state": "not_started",
+          "rejection_reason": "source_read_plan_unavailable"
+        },
+        {
+          "turn_id": "turn_5",
+          "id": "call_b12aa3adbe024198b81c5a5f",
+          "name": "get_memory_status",
+          "outcome": "policy_rejected",
+          "preflight_only": true,
+          "execution_state": "not_started",
+          "rejection_reason": "source_read_plan_unavailable"
+        },
+        {
+          "turn_id": "turn_9",
+          "id": "call_622d8636d694402191e76f8b",
+          "name": "get_current_note_context",
+          "outcome": "policy_rejected",
+          "preflight_only": true,
+          "execution_state": "not_started",
+          "rejection_reason": "source_read_plan_unavailable"
+        }
+      ],
+      "actual_dispatch_checks": [
+        {
+          "turn_id": "turn_1",
+          "original_operation_id_present": true,
+          "no_resubmission_rule_present": true,
+          "unknown_not_no_effects_rule_present": true,
+          "old_ghost_guide_present": false,
+          "revised_ghost_guide_present": false
+        },
+        {
+          "turn_id": "turn_5",
+          "original_operation_id_present": true,
+          "no_resubmission_rule_present": true,
+          "unknown_not_no_effects_rule_present": true,
+          "old_ghost_guide_present": false,
+          "revised_ghost_guide_present": false
+        },
+        {
+          "turn_id": "turn_9",
+          "original_operation_id_present": true,
+          "no_resubmission_rule_present": true,
+          "unknown_not_no_effects_rule_present": true,
+          "old_ghost_guide_present": false,
+          "revised_ghost_guide_present": false
+        },
+        {
+          "turn_id": "turn_12",
+          "original_operation_id_present": true,
+          "no_resubmission_rule_present": true,
+          "unknown_not_no_effects_rule_present": true,
+          "old_ghost_guide_present": false,
+          "revised_ghost_guide_present": false
+        }
+      ]
+    }
+  ],
+  "cleanup_receipts": {
+    "original": {
+      "syntheticNotesRemoved": 8,
+      "probeRemoved": true,
+      "copiedConfigurationRemoved": true,
+      "baselineAssetsRestored": {
+        "main.js": "29011532c03165ee247587c457d9897f7e0dab97d30e79f5b2777e5503fb658c",
+        "manifest.json": "65e9881fb52fb7790a21e202ae7c003e0e22687ffaa9601518d524f06416dec2",
+        "manifest-beta.json": "65e9881fb52fb7790a21e202ae7c003e0e22687ffaa9601518d524f06416dec2",
+        "styles.css": "ff4a9011b1d010db41582d77c26acfc84e4c1c291be62b79e76109058ccf8f7c"
+      }
+    },
+    "r3": {
+      "syntheticNotesRemoved": 8,
+      "probeRemoved": true,
+      "temporaryConfigurationRemoved": true,
+      "credentialTempAbsent": true,
+      "baselineAssetsRestored": {
+        "main.js": "29011532c03165ee247587c457d9897f7e0dab97d30e79f5b2777e5503fb658c",
+        "manifest.json": "65e9881fb52fb7790a21e202ae7c003e0e22687ffaa9601518d524f06416dec2",
+        "manifest-beta.json": "65e9881fb52fb7790a21e202ae7c003e0e22687ffaa9601518d524f06416dec2",
+        "styles.css": "ff4a9011b1d010db41582d77c26acfc84e4c1c291be62b79e76109058ccf8f7c"
+      },
+      "trackedTestVaultUnchanged": true,
+      "isolatedWindowClosed": true
+    }
+  },
+  "user_decisions": [
+    "Preserve both M3 failures; discuss repair only if encountered in real use.",
+    "Guide amendment effect was not tested because the revised guide was not delivered. Batch rejection is not established as a product defect.",
+    "Tool progressive disclosure is separately deferred as B-172.",
+    "Close out B-171 and sign a local master commit; push and release are outside this authorization."
+  ],
+  "app_screenshot": {
+    "file": "b171-prompt-disclosure-m1-context-used.png",
+    "original_file": "m1-candidate-context-visible.png",
+    "sha256": "2f9101c18e734ae293ad1da0150bc3f5f51794fd35dcba97e67757c73d3eda04"
+  },
+  "closeout_checks": {
+    "docs_check": {
+      "exit": 0,
+      "markdown_files": 292,
+      "local_links": 3812
+    },
+    "docs_contract_tests": {
+      "command": "npm run test:docs -- --runInBand",
+      "exit": 0,
+      "suites": 2,
+      "tests": 57
+    },
+    "diff_check": {
+      "exit": 0
+    },
+    "integration_byte_identical_files": 15,
+    "unrelated_b170_edits_preserved_and_excluded_from_index": true
+  }
+}

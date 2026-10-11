@@ -105,6 +105,7 @@ describe("complete lossless history projection", () => {
             ], constraints: [], decisions: [], completed: [], open_questions: [], facts: [] })) } });
         expect(projected.history.omittedCount).toBe(0);
         expect(projected.history.historyBudgetLimited).not.toBe(true);
+        expect(projected.history.losslessEncodingUsed).toBe(true);
         expect(projected.input).toContain('CONTRACT_ID_734');
         expect(projected.input).not.toContain('conversation_summary');
         expect(JSON.stringify(messages)).toBe(before);
@@ -182,6 +183,8 @@ describe("complete lossless history projection", () => {
         });
         expect(projected.history).toMatchObject({ compactedCount: 2, summaryChars: 0,
             semanticSummaryChars: summary.text.length, omittedCount: 0, historyCompressed: true });
+        // Broad compression is not proof of encoding: this admitted tail is raw.
+        expect(projected.history.losslessEncodingUsed).not.toBe(true);
         expect(projected.history.text).toBe(`${formatSemanticHistorySummary(summary.text)}\n\n${formatHistoryMessages(messages.slice(2))}`);
         expect(projected.history.entries.slice(1)).toEqual(messages.slice(2).map(message => ({ kind: 'message', message })));
         expect(projected.history.sourceMessages).toEqual(messages);
@@ -403,6 +406,7 @@ describe("semantic prefix projection", () => {
         expect(planHistoryContext(messages, 1800).coveredMessages).toBe(2);
         expect(projected.history.text).toContain("<conversation_summary");
         expect(projected.history.text).toContain("adjacent-repeats-v1");
+        expect(projected.history.losslessEncodingUsed).toBe(true);
         expect(projected.history.text.length).toBeLessThanOrEqual(1800);
         expect(projected.history.omittedCount).toBe(0);
         expect(projected.history.summaryChars).toBe(0);

@@ -52,7 +52,8 @@ import {
 } from "./pa-agent-prompts";
 import { stringifyContextAsync } from './context/PaAgentContextSerialization';
 import { projectPaAgentToolStatus, type PaAgentActionGroup } from "./pa-agent-action-history";
-import { cloneActionStateBinding, isSafeImageAcceptedObservation, isSafeImageFailureObservation, isSafeOperationsStagedObservation } from './pa-agent-result-facts';
+import { cloneActionStateBinding, collectPaAgentActionOwnerFacts, isSafeImageAcceptedObservation,
+    isSafeImageFailureObservation, isSafeOperationsStagedObservation, selectPaAgentActionStateExplanationRules } from './pa-agent-result-facts';
 import { cloneChatHostProvenance } from './chat-provenance';
 import { historySummaryContentSteps, protectedHistorySourceIndexesSteps, type ColdWritingVersion } from './context/PaAgentHistoryContextPlan';
 import { ChatOpenAI } from "@langchain/openai";
@@ -3337,6 +3338,7 @@ export class PaAgentRuntime {
             ? (options.writingContextHost ? options.writingContextHandle : nativeWritingRequest.requestId) : undefined;
         const mayReportIncomplete = true;
         const currentInput = options.userText ?? options.prompt;
+        const boundSchemaNames = new Set(boundSchemas.map(schema => schema.function.name));
         let toolDefinitionsText = input.toolMode === "final_answer_only"
             ? (nativeContextHandle ? "Only present_writing or report_task_incomplete (pure outputs) are available. No source, context or action tools are available in this finalization turn."
                 : mayReportIncomplete ? "No source, context or action tools are available in this finalization turn."
@@ -3346,12 +3348,24 @@ export class PaAgentRuntime {
                 toolUseConstraints,
             ));
         if (mayReportIncomplete) {
-            toolDefinitionsText += `\nIf you cannot complete the user task, call ${REPORT_TASK_INCOMPLETE} as one native function/tool call with the explanation in answer. Do not print <${REPORT_TASK_INCOMPLETE}>, JSON, or any marker in ordinary text: that text will be shown literally and will not mark the task incomplete. Optional pure output schema: ${JSON.stringify(taskIncompleteOutputSchema().function)}`;
+            toolDefinitionsText += `\nIf you cannot complete the user task, call ${REPORT_TASK_INCOMPLETE} as one native function/tool call with the explanation in answer. Do not print <${REPORT_TASK_INCOMPLETE}>, JSON, or any marker in ordinary text: that text will be shown literally and will not mark the task incomplete.${
+                boundSchemaNames.has(REPORT_TASK_INCOMPLETE) ? "" : ` Optional pure output schema: ${JSON.stringify(taskIncompleteOutputSchema().function)}`}`;
         }
         if (nativeWritingRequest && nativeContextHandle && mayReportIncomplete && input.toolMode !== "final_answer_only") {
-            toolDefinitionsText += `\nPure output declaration (not a source or action): ${JSON.stringify(nativeWritingOutputSchema(nativeWritingRequest, nativeContextHandle).function)}`;
+            toolDefinitionsText += boundSchemaNames.has("present_writing")
+                ? "\npresent_writing is bound as the native pure-output declaration for this writing request; it is not a source or action tool."
+                : `\nPure output declaration (not a source or action): ${JSON.stringify(nativeWritingOutputSchema(nativeWritingRequest, nativeContextHandle).function)}`;
         }
         const operationsGuidance = createOperationsPromptGuidance(toolDefinitions ?? []);
+        // Conditional explanations ride currentProtocol so the same canonical text is
+        // consumed by the real messages and both estimate paths (D-02). Owner facts come
+        // only from structured Host state; history prose never selects a rule.
+        const ownerFacts = collectPaAgentActionOwnerFacts({
+            transcript: input.transcript,
+            chatHistory: options.chatHistory,
+        });
+        if (options.writingRequest) ownerFacts.add("writing");
+        const ownerExplanationRules = selectPaAgentActionStateExplanationRules(ownerFacts);
         const projection = await this.contextManager.forPromptAsync({
             coldWritingVersions: options.coldWritingVersions,
             protectedWritingVersionIds: options.protectedWritingVersionIds,
@@ -3366,6 +3380,7 @@ export class PaAgentRuntime {
                 selectedWritingContext(options.writingContext)]),
             currentProtocol: combineRuntimeInstructions([
                 input.currentProtocol,
+                ...ownerExplanationRules,
                 options.writingRequest && mayReportIncomplete ? (nativeWritingRequest ? (nativeContextHandle ? nativeWritingOutputInstruction(options.writingRequest, nativeContextHandle)
                     : nativeWritingPreparationInstruction(options.writingRequest,
                         boundSchemas.some(schema => schema.function.name === 'get_writing_context')))

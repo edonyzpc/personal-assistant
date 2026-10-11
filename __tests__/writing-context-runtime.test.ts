@@ -543,6 +543,9 @@ describe('native writing context runtime integration', () => {
         expect(result.inputs[1]).toContain('Writing context preparation is complete');
         expect(result.inputs[1]).not.toContain('Before presenting writing, call get_writing_context');
         expect(result.inputs[1].split('The current run uses the Writing output protocol.')).toHaveLength(2);
+        // B-171: the bound native schema is not duplicated as a full JSON declaration.
+        expect(result.inputs[1]).not.toContain('Pure output declaration (not a source or action): {"type":"function"');
+        expect(result.inputs[1]).toContain('present_writing is bound as the native pure-output declaration for this writing request');
         expect(result.schemas[1].map(schema => schema.function.name)).toContain('get_writing_context');
         expect(result.inputs[0]).not.toContain('Authorized parent draft');
         expect(result.inputs[1]).toContain('Authorized parent draft');

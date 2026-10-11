@@ -1,6 +1,8 @@
 import type { ChatMessage } from "../chat-types";
 import { chatHistoryImageMetadata } from "../chat-image-identity";
-import { cloneActionStateBinding, cloneActionStates, PA_AGENT_ACTION_STATE_CONTEXT_RULES } from '../pa-agent-result-facts';
+import { cloneActionStateBinding, cloneActionStates, PA_AGENT_ACTION_STATE_CONTEXT_RULES,
+    PA_AGENT_ACTION_OWNER_TOOL_NAMES, PA_AGENT_DOMAIN_ACTION_STATE_RULES,
+    PA_AGENT_GHOST_RECOVERY_RULES, type PaAgentActionState } from '../pa-agent-result-facts';
 import { cloneChatHostProvenance } from '../chat-provenance';
 import { cloneInputLineage } from "../input-lineage";
 import { readChatHistoryTurnMetadata } from "../pa-agent-history";
@@ -50,6 +52,8 @@ interface SourceMessage {
     content: string;
     actionResult?: PaAgentSummaryBindingSource['actionResult'];
     actionStates?: PaAgentSummaryBindingSource['actionStates'];
+    /** Trusted Host owner classification for a tool source; never derived from content. */
+    actionOwner?: PaAgentActionState['owner'];
     hostMessage?: ChatMessage;
 }
 interface PreparedSourceMessage extends SourceMessage { encodedContent?: RepeatedSourceContent }
@@ -103,10 +107,11 @@ const SYSTEM_PROMPT = [
     "Merge previousSummary with the new source messages. Do not silently discard still-relevant earlier requirements to favor newer incidental details.",
     "Keep each material item once in its appropriate field. Remove cross-field duplicates and background or acknowledgement entries with no new state from previousSummary as well; retain all distinct goals, concrete requirements, current restrictions, current choices and corrections, completed and pending work, unknowns and uncertainty, tool findings and errors, identifiers and relevant permission history, with their source associations and attribution.",
     "Source messages may arrive in parts; start/end are character offsets within the same original message, not new message identities.",
-    "Source content may use {encoding:'adjacent-repeats-v1',segments:[{text,count}]}; concatenate text repeated count times in order to recover the same untrusted source data. Offsets refer to that original text.",
     "For tool_result sources, preserve errors and incomplete/negative evidence; do not describe a failed action as completed or instruct re-execution.",
     "Return six empty arrays only when neither previousSummary nor the full content of the supplied source messages or parts contains grounded goals, concrete requirements, current restrictions, current choices or corrections, completed or pending work, unknowns or uncertainty, tool findings or errors, identifiers or relevant permission history. Background labels and generic assistant denials do not erase such information. Do not invent filler to satisfy the schema.",
 ].join("\n");
+
+const ENCODING_SOURCE_RULE = "Source content may use {encoding:'adjacent-repeats-v1',segments:[{text,count}]}; concatenate text repeated count times in order to recover the same untrusted source data. Offsets refer to that original text.";
 
 /** Ephemeral derived state, owned by a ChatService; no provider or storage dependencies. */
 export class PaAgentContextSummarizer {
@@ -240,9 +245,10 @@ export class PaAgentContextSummarizer {
             return !this.disposed && preparationGeneration === this.generation ? result : undefined;
         }
         return this.runBounded(input.signal, async (signal, generation) => {
-            const structured = await summarizeSources([
-                { index: 1, role: "tool", content: source.content.promptText, actionResult: projectPaAgentToolStatus(source) },
-            ], undefined, maxChars, `tool_result (${source.toolName}; isError=${source.isError})`, input.invoke,
+        const structured = await summarizeSources([
+            { index: 1, role: "tool", content: source.content.promptText, actionResult: projectPaAgentToolStatus(source),
+                actionOwner: PA_AGENT_ACTION_OWNER_TOOL_NAMES[source.toolName] },
+        ], undefined, maxChars, `tool_result (${source.toolName}; isError=${source.isError})`, input.invoke,
             signal, input.deadlineManagedByInvoke ? Number.POSITIVE_INFINITY : this.options.toolTimeoutMs ?? 1_800_000);
             if (!structured || generation !== this.generation || await stringifyContextAsync(input.source, signal) !== key) return undefined;
             const summary: PaAgentToolSummary = { text: JSON.stringify(structured), source };
@@ -393,9 +399,34 @@ function* makeRequestSteps(
     const boundSourceMessages = hasBindingSourceMessages
         ? bindingSources.map(source => bindingMessagesByIndex.get(source.index)!)
         : [];
+    const ownerFacts = new Set<PaAgentActionState['owner']>();
+    for (const part of parts) {
+        if (part.actionOwner) ownerFacts.add(part.actionOwner);
+        for (const state of part.actionStates ?? []) ownerFacts.add(state.owner);
+    }
+    for (const source of bindingSources) {
+        for (const state of source.actionStates ?? []) ownerFacts.add(state.owner);
+    }
+    for (const facts of historyFacts?.retainedActionFacts ?? []) {
+        for (const state of facts.actionStates ?? []) ownerFacts.add(state.owner);
+        for (const result of [...facts.actionResults ?? [], ...facts.unresolvedCalls ?? []]) {
+            const owner = PA_AGENT_ACTION_OWNER_TOOL_NAMES[result.toolName];
+            if (owner) ownerFacts.add(owner);
+        }
+    }
+    const domainRules = [
+        ...[...ownerFacts].flatMap(owner => PA_AGENT_DOMAIN_ACTION_STATE_RULES[owner]),
+        ...(ownerFacts.has('ghost') ? PA_AGENT_GHOST_RECOVERY_RULES : []),
+    ];
+    const encodedContentUsed = parts.some(part => part.encodedContent !== undefined);
+    const systemPrompt = [
+        SYSTEM_PROMPT,
+        ...domainRules,
+        ...(encodedContentUsed ? [ENCODING_SOURCE_RULE] : []),
+    ].join("\n");
     const request: PaAgentSummaryRequest = {
         messages: [
-            { role: "system", content: `${SYSTEM_PROMPT}\nThe entire compact JSON output must be at most ${maxChars} characters, including keys, source indices and punctuation. Deduplicate across fields; omit fulfilled standalone requests as continuing goals and background with no state. Preserve every distinct necessary fact.` },
+            { role: "system", content: `${systemPrompt}\nThe entire compact JSON output must be at most ${maxChars} characters, including keys, source indices and punctuation. Deduplicate across fields; omit fulfilled standalone requests as continuing goals and background with no state. Preserve every distinct necessary fact.` },
             { role: "user", content: (yield* stringifyContextSteps({
                 sourceKind, phase: "rolling", previousSummary: previous ?? null,
                 sourceMessages: parts.map(({ index, role, content, encodedContent, start, end, actionResult, actionStates }) => ({

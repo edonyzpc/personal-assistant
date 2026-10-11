@@ -3647,6 +3647,10 @@ describe('LLMView turn lifecycle', () => {
         for (let i = 0; i < 5; i++) await flushPromises();
         const binding = streamCalls[0].options.createImage!;
         expect(streamCalls[0].options.commandGuidance).toContain('Available image ref tokens: none');
+        // B-171: image facts stay bound; the note-source method is not duplicated here.
+        expect(streamCalls[0].options.commandGuidance).toMatch(/(Only this request's attached image pixels were sent|The Chat model has not received image pixels)/);
+        expect(streamCalls[0].options.commandGuidance).toContain('An explicit source control remains binding');
+        expect(streamCalls[0].options.commandGuidance).not.toContain('For a note-based image, locate the requested note and pass sourceNotePath; clarify only an ambiguous or conflicting source');
         expect(streamCalls[0].prompt).not.toContain('Available image ref tokens');
         expect(getVersionForOutput).not.toHaveBeenCalled();
         await expect(binding.submit({ prompt: 'blue image', operation: 'edit', count: 1,

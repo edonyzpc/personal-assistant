@@ -4,7 +4,7 @@ Document status: Approved
 Updated: 2026-10-11
 Work item: B-171
 Decision: [DEC-060](../decisions/dec-060-agent-prompt-progressive-disclosure.md)
-Authority: 用户已确认的 prompt 精简范围；本文件转录该行为约定，执行状态与实施授权见 Tracker。
+Authority: 用户已确认的 prompt 精简范围与交付行为；2026-10-11 已授权 closeout。独有验收、失败与延期依据见文末归档，当前未决工作由 Backlog 持有。
 
 ## Problem And Outcome
 
@@ -45,6 +45,10 @@ Agent 选择方法资料；Host 只依据真实绑定与已接纳结构化事实
 
 不新增 tool_search、自动意图分类、第二个 Agent、prompt 注册框架、自动 Skill 学习、用户开关或每工具一个 Skill。不重做历史压缩、Memory、上下文预算或来源系统，不改模型/thinking，不合入 B-170、shell 或脚本写入。无持久化迁移，无桌面/移动功能差异。
 
-## Open Decisions And Delivery
+## Delivered Behavior And Acceptance Boundary
 
-产品范围无未定项。技术细节见 [SDD](../../development/active/agent-prompt-disclosure/sdd.md)，开发与测试计划见 [Tracker](../../development/active/agent-prompt-disclosure/tracker.md)，入口见 [Feature Home](../../development/active/agent-prompt-disclosure/README.md)。本次仅制定文档；实施、Git 与发布不由此自动获得授权。
+本次交付沿用既有请求与 Skill 执行链：通用核心只出现一份，领域说明由可信 owner 事实选择并进入 `currentProtocol`；编码和摘要的表示说明由实际投影事实在共用消息构造中添加。真实发送与同步/异步估算使用同一有效说明，不为说明选择重做完整上下文投影。已绑定纯输出 schema 的重复全文移除，工具名称、顺序和参数不变；`load_skill` 的 description 与方法指导明确为按需读取。图片引用、版本、像素可见性、来源控件与显式命令边界保持，未增加指南资源、工具发现、配置或持久化状态。当前技术职责见 [PA Agent Architecture](../../architecture/pa-agent-architecture-plan.md)。
+
+B-171 于 2026-10-11 按用户授权收尾为 Closed。工程门禁、M1 普通查询与 M2 方法答复通过；M1 同题输入 tokens 下降 4.74% 只是单次观察，不宣称稳定提速。两次 M3 未知效果答复均 FAIL，故本次收尾不代表全部 AC 或未知效果行为通过。指南澄清因复验未送达而效果未验证，不能把批次拒绝直接认定为产品缺陷。用户选择真实使用中遇到该答复缺口时再讨论，见 [Backlog B-159](../../backlog.md#已延期的产品与工程工作)；工具接口披露 B-172 独立。
+
+保留[紧凑验证与延期依据](../../archive/2026/b171-agent-prompt-disclosure-validation.md)及[原始答复、关键轨迹、哈希与验证记录](../../archive/2026/b171-agent-prompt-disclosure-evidence.json)。Active 过程包已吸收删除；本地 master 提交获单独授权，实际 Git 结果与推送、发布仍分别确认。

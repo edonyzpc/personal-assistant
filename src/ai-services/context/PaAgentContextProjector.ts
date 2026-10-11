@@ -77,6 +77,9 @@ export interface PaAgentProjectedHistory {
     entries: PaAgentProjectedHistoryEntry[];
     /** Separate from summaryChars, which continues to measure the expendable legacy digest. */
     semanticSummaryChars?: number;
+    /** The admitted history representation actually contains lossless encodings.
+     * Host-only trusted fact; broader compression flags do not imply this. */
+    losslessEncodingUsed?: boolean;
 }
 
 export class PaAgentContextProjector {
@@ -158,6 +161,7 @@ export class PaAgentContextProjector {
                 semanticSummaryChars: semantic.text.length,
                 omittedCount: 0,
                 historyCompressed: true,
+                losslessEncodingUsed: Boolean(tail?.losslesslyEncoded),
                 historyBudgetLimited: text.length > budget,
             }, history, entries);
         }
@@ -169,6 +173,7 @@ export class PaAgentContextProjector {
                 summaryChars: 0,
                 omittedCount: 0,
                 historyCompressed: fullHistory.losslesslyEncoded || Boolean(coldReferences?.size),
+                losslessEncodingUsed: fullHistory.losslesslyEncoded,
             }, history, fullHistory.losslesslyEncoded ? undefined : history.map(message => {
                 const projection = coldReferences?.get(message);
                 return projection ? { kind: 'writing_reference' as const, projection }

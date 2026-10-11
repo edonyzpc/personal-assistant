@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-10-05
+Updated: 2026-10-11
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -383,6 +383,7 @@ abort, or deadline expiry invalidates the token and discards late work.
 - `load_skill({name})` returns the complete entry and its registered reference directory.
 - `load_skill({name, reference})` reads one exact registered reference. Entries and references are returned completely; their size participates in normal context pressure rather than a separate default character rejection. Explicit caller budgets, registered paths and schema boundaries remain enforced.
 - Bundled Skills provide context/instructions; they do not become arbitrary script execution.
+- The Agent chooses whether and when a guide's detail helps the current task. A matching catalog description does not require a preliminary load or a fixed tool sequence; necessary call semantics remain directly available with the bound tools.
 
 ### Task source and writing output
 
@@ -611,6 +612,19 @@ summaries retain complete original input. Current requirements, selected parents
 source permissions and closed effect facts are never silently cut to satisfy an
 estimate. Unknown-model fallback size is soft; only impossible configuration
 (no available input window) is locally rejected.
+
+Core trust, source and uncertain-effect recovery rules remain resident once.
+Domain field explanations are selected from admitted structured owner history
+and current-run tool facts; ordinary source prose does not select them. Historical
+owner facts still receive their explanation when action tools are withdrawn in
+the final turn. The shared message assembly adds lossless-decoding and summary
+representation guidance only from the history representation actually projected.
+These explanations use `currentProtocol` in both real messages and synchronous/
+asynchronous measurement, without another complete context-manager pass.
+Summary requests likewise select domain and encoding explanations from their
+actual structured inputs while retaining the existing summary protocol and facts.
+Pure-output declarations already present in the actual native bindings are not
+repeated as full JSON in system text; their short delivery semantics remain.
 
 A definite provider context-window error allows one compaction-and-retry per
 consecutive failure. A successful provider response resets this recovery guard,

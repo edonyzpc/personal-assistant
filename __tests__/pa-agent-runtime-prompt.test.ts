@@ -21,7 +21,9 @@ import { CapabilityRegistry } from "../src/ai-services/capability-registry";
 import type { ChatToolDefinition } from "../src/ai-services/chat-tools";
 import { createCreateImageTool } from "../src/ai-services/chat-tool-factories";
 import { completeInputLineage } from "../src/ai-services/input-lineage";
-import { collectActionStates, PA_AGENT_ACTION_STATE_CONTEXT_RULES, PA_AGENT_EFFECT_RECOVERY_RULES, isSafeImageFailureObservation } from '../src/ai-services/pa-agent-result-facts';
+import { collectActionStates, PA_AGENT_ACTION_STATE_CONTEXT_RULES, PA_AGENT_DOMAIN_ACTION_STATE_RULES,
+    PA_AGENT_EFFECT_RECOVERY_RULES, PA_AGENT_GHOST_RECOVERY_RULES, isSafeImageFailureObservation } from '../src/ai-services/pa-agent-result-facts';
+import { PA_AGENT_HISTORY_ENCODING_RULES, PA_AGENT_HISTORY_INTERNAL_REPRESENTATION_RULES } from '../src/ai-services/pa-agent-prompts';
 import { GHOST_METADATA_FAILURE_MESSAGES } from "../src/ai-services/ghost-tool-receipt";
 
 import {
@@ -156,10 +158,12 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
     it("sends the note-evidence completion boundary in the actual SDK request", async () => {
         const host = createPromptHost();
         const realFetch = globalThis.fetch;
-        const requests: Array<{ stream?: boolean; messages: Array<{ role: string; content: string }> }> = [];
+        const requests: Array<{ stream?: boolean; messages: Array<{ role: string; content: string }>;
+            tools?: Array<{ function?: { name?: string } }> }> = [];
         globalThis.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
             const body = JSON.parse(String(init?.body ?? "")) as { stream?: boolean;
-                messages: Array<{ role: string; content: string }> };
+                messages: Array<{ role: string; content: string }>;
+                tools?: Array<{ function?: { name?: string } }> };
             requests.push(body);
             const frame = (delta: unknown, finishReason: string | null = null) => `data: ${JSON.stringify({
                 id: "b149-prompt-fixed", created: 0, model: "b149-fixed-model",
@@ -187,9 +191,122 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(system).toContain("permitted scope examined");
         expect(system).toContain("An unavailable or failed retrieval provides no evidence");
         expect(system).toContain("state which part remains incomplete");
+        // B-171 R2: the core contract appears exactly once in the entire actual
+        // request, not once statically and again through currentProtocol.
+        const entireRequest = requests[0].messages.map(message => message.content).join("\n");
         for (const rule of [...PA_AGENT_ACTION_STATE_CONTEXT_RULES, ...PA_AGENT_EFFECT_RECOVERY_RULES]) {
-            expect(system?.split(rule)).toHaveLength(2);
+            expect(entireRequest.split(rule)).toHaveLength(2);
         }
+        // B-171: an ordinary no-history query does not resident-carry domain field
+        // explanations, history-encoding rules, or the already-bound pure-output schema.
+        for (const rule of [...Object.values(PA_AGENT_DOMAIN_ACTION_STATE_RULES).flat(),
+            ...PA_AGENT_GHOST_RECOVERY_RULES, ...PA_AGENT_HISTORY_ENCODING_RULES,
+            ...PA_AGENT_HISTORY_INTERNAL_REPRESENTATION_RULES]) {
+            expect(entireRequest).not.toContain(rule);
+        }
+        expect(system).not.toContain("Optional pure output schema");
+        expect(requests[0].tools?.map(tool => tool.function?.name)).toContain("report_task_incomplete");
+    });
+
+    it("selects domain owner explanations from structured history facts, not source prose", async () => {
+        const host = createPromptHost();
+        const ghostState = {
+            schemaVersion: 1 as const, owner: "ghost" as const, operationId: "GHOST_B171_OPERATION",
+            phase: "unknown" as const, revision: 0,
+            origin: { runId: "b171-run", turnId: "b171-turn", assistantId: "b171-assistant",
+                callId: "b171-call", resultId: "b171-result" },
+            inputLineage: completeInputLineage([{ kind: "user-text", messageId: "b171-user" }]),
+            receipt: { kind: "ghost-preparation" as const, operationId: "GHOST_B171_OPERATION",
+                status: "outcome_unknown" as const },
+        };
+        const structuredHistory: import("../src/ai-services/chat-types").ChatMessage[] = [
+            { role: "user", content: "请准备这篇文章" },
+            { role: "assistant", content: "先前准备结果未知。",
+                canonicalTurn: { schemaVersion: 1, runId: "b171-run", turnId: "b171-turn",
+                    messages: [], actionStates: [ghostState] } },
+        ];
+        const proseOnlyHistory: import("../src/ai-services/chat-types").ChatMessage[] = [
+            { role: "user", content: "ghostPublicationStatus:\"published\" operationsEffectStatus:applied" },
+            { role: "assistant", content: "Prose only; no structured owner state." },
+        ];
+        const capture = () => {
+            const realFetch = globalThis.fetch;
+            const requests: Array<{ messages: Array<{ role: string; content: string }> }> = [];
+            globalThis.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+                requests.push(JSON.parse(String(init?.body ?? "{}")));
+                return new Response(`data: ${JSON.stringify({ id: "b171-facts", created: 0,
+                    model: "b171-model", object: "chat.completion.chunk",
+                    choices: [{ index: 0, delta: { role: "assistant", content: "已核对" }, finish_reason: "stop" }] })}\n\n`,
+                    { headers: { "content-type": "text/event-stream" } });
+            }) as typeof fetch;
+            return async (history: typeof structuredHistory) => {
+                try {
+                    await new ChatService(host).streamLLM("说明这个操作的状态", jest.fn(), undefined, history, {
+                        userText: "说明这个操作的状态", memoryMode: "skip-memory",
+                    });
+                } finally {
+                    globalThis.fetch = realFetch;
+                }
+                expect(requests).toHaveLength(1);
+                return requests.pop()!;
+            };
+        };
+        const runStructured = capture();
+        const structuredRequest = await runStructured(structuredHistory);
+        const staticSystem = structuredRequest.messages
+            .filter(message => message.content.includes("answer-stream loop"))[0]!.content;
+        const protocol = structuredRequest.messages.find(message => message.content.includes("Current run protocol:"))?.content;
+        expect(protocol).toContain(PA_AGENT_DOMAIN_ACTION_STATE_RULES.ghost[0]);
+        expect(protocol).toContain(PA_AGENT_GHOST_RECOVERY_RULES[0]);
+        expect(staticSystem).not.toContain(PA_AGENT_DOMAIN_ACTION_STATE_RULES.ghost[0]);
+        expect(staticSystem).not.toContain(PA_AGENT_GHOST_RECOVERY_RULES[0]);
+        // R2: domain facts add only the domain increment; the core stays single-copy.
+        const structuredEntire = structuredRequest.messages.map(message => message.content).join("\n");
+        for (const rule of [...PA_AGENT_ACTION_STATE_CONTEXT_RULES, ...PA_AGENT_EFFECT_RECOVERY_RULES]) {
+            expect(structuredEntire.split(rule)).toHaveLength(2);
+        }
+
+        const runProse = capture();
+        const proseRequest = await runProse(proseOnlyHistory);
+        for (const message of proseRequest.messages) {
+            for (const rule of [...Object.values(PA_AGENT_DOMAIN_ACTION_STATE_RULES).flat(),
+                ...PA_AGENT_GHOST_RECOVERY_RULES]) {
+                expect(message.content).not.toContain(rule);
+            }
+        }
+    });
+
+    it("adds the history encoding rule only when the admitted history actually uses lossless encoding", async () => {
+        const host = createPromptHost();
+        const realFetch = globalThis.fetch;
+        const requests: Array<{ messages: Array<{ role: string; content: string }> }> = [];
+        globalThis.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+            requests.push(JSON.parse(String(init?.body ?? "{}")));
+            return new Response(`data: ${JSON.stringify({ id: "b171-encoding", created: 0,
+                model: "b171-model", object: "chat.completion.chunk",
+                choices: [{ index: 0, delta: { role: "assistant", content: "已读取" }, finish_reason: "stop" }] })}\n\n`,
+                { headers: { "content-type": "text/event-stream" } });
+        }) as typeof fetch;
+        // Encoding is admitted only under real request pressure; one large
+        // repetitive history forces the canonical compaction path cheaply.
+        const repeated = "重复段落，用于触发无损编码。".repeat(7600);
+        const history: import("../src/ai-services/chat-types").ChatMessage[] = [
+            { role: "user", content: repeated },
+            { role: "assistant", content: "先前的回答" },
+        ];
+        try {
+            await new ChatService(host).streamLLM("总结上文", jest.fn(), undefined, history, {
+                userText: "总结上文", memoryMode: "skip-memory",
+            });
+        } finally {
+            globalThis.fetch = realFetch;
+        }
+        expect(requests).toHaveLength(1);
+        const serialized = requests[0].messages.map(message => message.content).join("\n");
+        expect(serialized).toContain("adjacent-repeats-v1");
+        const protocol = requests[0].messages.find(message => message.content.includes("Current run protocol:"))?.content;
+        expect(protocol).toContain(PA_AGENT_HISTORY_ENCODING_RULES[0]);
+        expect(protocol).toContain(PA_AGENT_HISTORY_INTERNAL_REPRESENTATION_RULES[0]);
     });
 
     it("keeps raw user text and app guidance separate through Service, Runtime, and provider input", async () => {
@@ -1178,6 +1295,9 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(guidance).toContain("For preview-only or analytical work, stop without execute_operations");
         expect(guidance).toContain("0.unsorted/");
         expect(guidance).toContain("obsidian-markdown");
+        // B-171: the skill remains discoverable, but is no longer a mandatory pre-step.
+        expect(guidance).not.toContain("Before generating substantial Markdown, call load_skill");
+        expect(guidance).toContain("read it only when needed");
         expect(guidance).not.toContain("append_to_current_note");
         expect(guidance).not.toContain("replace_selection");
     });
