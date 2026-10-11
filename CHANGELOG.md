@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.9](https://github.com/edonyzpc/personal-assistant/compare/2.10.8...2.10.9) (2026-10-11)
+
+### Features
+- agent: add independent sandboxed computation
+- agent: add hybrid tool disclosure
+
+### Fix
+- agent-debug: align explorer with approved previews
+- chat: align thinking language and Reasoning labels
+- agent: return complete matching note lists
+- agent-debug: prevent overlap in compact layouts
+
+### Improvements
+- agent: streamline prompt disclosure
+
+### Docs
+- agent: document codemode mac validation handoff
+- b170: record codemode validation and candidate design
+- b171: define prompt disclosure design and validation plan
+
 ## [2.10.8](https://github.com/edonyzpc/personal-assistant/compare/2.10.7...2.10.8) (2026-10-10)
 
 ### Features
