@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [工具混合披露](./specs/pa-agent-tool-disclosure-product-spec.md) — B-172：基础直供、完整短目录与批量加载；[验证与边界](../archive/2026/b172-agent-tool-disclosure-validation.md)。
 - [独立通用计算](./specs/pa-independent-computation-product-spec.md) — B-170：日期、数值与结构化数据计算，由 Agent 自主选择和组合工具；[验证与边界](../archive/2026/b170-independent-computation-validation.md)。
 - [Prompt 精简与渐进披露](./specs/pa-agent-prompt-disclosure-product-spec.md) — B-171：常驻必要规则与能力，方法按需，Agent 自主选择；[验证与延期证据](../archive/2026/b171-agent-prompt-disclosure-validation.md)。
 - [完整笔记查询](./specs/pa-complete-note-query-product-spec.md) — B-169：一次条件查询返回完整轻量列表，正文按需；[执行记录](../development/active/complete-note-query/tracker.md)。

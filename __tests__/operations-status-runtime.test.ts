@@ -124,7 +124,9 @@ it('registers and freshly reads a finite Operations status observation across re
     } finally {
         runtime.dispose();
     }
-    expect(schemas[0].some(schema => schema.function.name === 'get_operations_status')).toBe(true);
+    expect(schemas[0].some(schema => schema.function.name === 'get_operations_status')).toBe(false);
+    expect(schemas[0].some(schema => schema.function.name === 'load_tools')).toBe(true);
+    expect(inputs[0].map(message => message.content).join('\n')).toContain('- name: get_operations_status');
     expect(readMock).toHaveBeenCalledTimes(2);
     expect(readMock.mock.calls[0]?.[0]).toEqual({ intentId: 'intent_previous' });
     expect(readMock.mock.calls.at(-1)?.[0]).toEqual({ intentId: 'intent_previous' });

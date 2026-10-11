@@ -208,6 +208,228 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(requests[0].tools?.map(tool => tool.function?.name)).toContain("report_task_incomplete");
     });
 
+    it("projects one disclosure snapshot across consecutive real SDK requests and mixed loads", async () => {
+        const host = createPromptHost();
+        const realFetch = globalThis.fetch;
+        const requests: Array<{ messages: Array<{ role: string; content: string }>;
+            tools?: Array<{ function?: { name?: string } }> }> = [];
+        const lifecycle: Array<{ type: string; message?: PaAgentMessage }> = [];
+        let deferredNames: string[] = [];
+        globalThis.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body ?? "")) as typeof requests[number];
+            requests.push(body);
+            const first = requests.length === 1;
+            if (first) {
+                const system = body.messages.find(message => message.role === "system")?.content ?? "";
+                const directory = system.slice(system.indexOf("Deferred tools ("),
+                    system.indexOf("If you cannot complete"));
+                deferredNames = [...directory.matchAll(/^- name: ([^\n]+)$/gm)].map(match => match[1]);
+                expect(deferredNames.length).toBeGreaterThan(0);
+            }
+            const delta = first
+                ? { role: "assistant", tool_calls: [
+                    { index: 0, id: "b172-load-call-1", type: "function",
+                        function: { name: "load_tools", arguments: JSON.stringify({
+                            names: deferredNames,
+                        }) } },
+                    { index: 1, id: "b172-load-call-2", type: "function",
+                        function: { name: "load_tools", arguments: JSON.stringify({
+                            names: deferredNames.slice(0, 1),
+                        }) } },
+                ] }
+                : { role: "assistant", content: "已完成接口披露检查。" };
+            const frame = `data: ${JSON.stringify({ id: "b172-disclosure-fixed", created: 0,
+                model: "b172-fixed-model", object: "chat.completion.chunk",
+                choices: [{ index: 0, delta, finish_reason: first ? "tool_calls" : "stop" }] })}\n\n`;
+            return new Response(frame + (first ? "data: [DONE]\n\n" : ""), {
+                headers: { "content-type": first ? "text/event-stream" : "application/json" },
+            });
+        }) as typeof fetch;
+        try {
+            await new ChatService(host).streamLLM("检查可用的最近笔记接口", jest.fn(), undefined, [], {
+                userText: "检查可用的最近笔记接口",
+                memoryMode: "skip-memory",
+                onLifecycleEvent: event => lifecycle.push(event as never),
+            });
+        } finally {
+            globalThis.fetch = realFetch;
+        }
+
+        expect(requests).toHaveLength(2);
+        const names = (request: typeof requests[number]) => request.tools?.map(tool => tool.function?.name) ?? [];
+        expect(names(requests[0])).toContain("load_tools");
+        expect(names(requests[0])).toContain("execute_code");
+        for (const name of deferredNames) expect(names(requests[0])).not.toContain(name);
+        expect(names(requests[1])).not.toContain("load_tools");
+        for (const name of deferredNames) expect(names(requests[1])).toContain(name);
+        const firstSystem = requests[0].messages.find(message => message.role === "system")?.content ?? "";
+        const secondSystem = requests[1].messages.find(message => message.role === "system")?.content ?? "";
+        const deferredBlock = (value: string) => value.slice(value.indexOf("Deferred tools ("), value.indexOf("If you cannot complete"));
+        expect(deferredBlock(firstSystem)).toContain("- name: list_recent_notes");
+        expect(deferredBlock(firstSystem)).not.toContain("Use for an explicit recent top-N request");
+        expect(secondSystem).not.toContain("Deferred tools (");
+        expect(secondSystem).not.toContain("Use load_tools only after reading the deferred tool directory");
+        expect(secondSystem).toContain("Use for an explicit recent top-N request");
+
+        const loadResults = lifecycle.flatMap(event => event.type === "message_end" && event.message?.role === "toolResult"
+            && event.message.toolName === "load_tools" ? [event.message] : []);
+        expect(loadResults).toHaveLength(2);
+        expect(JSON.parse(loadResults[0]?.content.promptText ?? "{}").observation.results).toEqual([
+            ...deferredNames.map(name => ({ name, status: "loaded" })),
+        ]);
+        expect(JSON.parse(loadResults[1]?.content.promptText ?? "{}").observation.results).toEqual([
+            { name: deferredNames[0], status: "already_loaded" },
+        ]);
+        for (const loadResult of loadResults) {
+            expect(loadResult.content.sourceRecords).toEqual([]);
+            expect(loadResult.content.contextUsed).toEqual([]);
+        }
+    });
+
+    it.each(["schema", "parse"] as const)(
+        "keeps the real loader %s rejection corrective while redacting failed parameters only for the provider",
+        async mode => {
+            const host = createPromptHost();
+            const realFetch = globalThis.fetch;
+            const requests: Array<{ messages: Array<{ role: string; content: string }>;
+                tools?: Array<{ function?: { name?: string } }> }> = [];
+            const lifecycle: Array<{ type: string; message?: PaAgentMessage }> = [];
+            const sentinels = ["B172_FAILED_INPUT_SENTINEL_1", "B172_FAILED_INPUT_SENTINEL_2"];
+            const argumentsTexts = mode === "schema"
+                ? sentinels.map((sentinel, index) => JSON.stringify({ names: index === 0 ? ["", sentinel] : [sentinel, 42] }))
+                : sentinels.map(sentinel => `{"names":["${sentinel}"`);
+            globalThis.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+                const body = JSON.parse(String(init?.body ?? "")) as typeof requests[number];
+                requests.push(body);
+                const first = requests.length === 1;
+                const delta = first
+                    ? { role: "assistant", tool_calls: sentinels.map((sentinel, index) => ({
+                        index, id: `b172-${mode}-call-${index + 1}`, type: "function",
+                        function: { name: "load_tools", arguments: argumentsTexts[index] },
+                    })) }
+                    : { role: "assistant", content: "已收到有限纠错反馈。" };
+                const frame = `data: ${JSON.stringify({ id: "b172-rejection-fixed", created: 0,
+                    model: "b172-fixed-model", object: "chat.completion.chunk",
+                    choices: [{ index: 0, delta, finish_reason: first ? "tool_calls" : "stop" }] })}\n\n`;
+                return new Response(frame + (first ? "data: [DONE]\n\n" : ""), {
+                    headers: { "content-type": first ? "text/event-stream" : "application/json" },
+                });
+            }) as typeof fetch;
+            try {
+                await new ChatService(host).streamLLM("触发 loader 参数错误", jest.fn(), undefined, [], {
+                    userText: "触发 loader 参数错误",
+                    memoryMode: "skip-memory",
+                    runSourceSelection: { schemaVersion: 1, scope: "notes",
+                        selectionId: "b172-loader-rejection-notes", userMessageId: "b172-loader-rejection-user" },
+                    onLifecycleEvent: event => lifecycle.push(event as never),
+                });
+            } finally {
+                globalThis.fetch = realFetch;
+            }
+
+            expect(requests).toHaveLength(2);
+            for (const sentinel of sentinels) expect(JSON.stringify(requests[1])).not.toContain(sentinel);
+            expect(requests[1].messages.map(message => message.content).join("\n")).toContain(
+                mode === "parse" ? "输入必须为有效 JSON" : "names 必须为非空的精确工具名称数组",
+            );
+            const assistant = lifecycle.flatMap(event => event.type === "message_end" && event.message?.role === "assistant"
+                ? [event.message] : [])[0];
+            const calls = assistant?.content.flatMap(part => part.type === "toolCall" ? [part] : []) ?? [];
+            expect(calls).toHaveLength(2);
+            for (const [index, call] of calls.entries()) {
+                expect(JSON.stringify(call.input)).toContain(sentinels[index]);
+            }
+            const results = lifecycle.flatMap(event => event.type === "message_end" && event.message?.role === "toolResult"
+                && event.message.toolName === "load_tools" ? [event.message] : []);
+            expect(results).toHaveLength(2);
+            expect(results[0]?.content.metadata).toMatchObject({
+                outcome: "schema_invalid",
+                reason: mode === "parse" ? "invalid_tool_input" : "input_validation_failed",
+                executionState: "not_started",
+            });
+            if (mode === "parse") {
+                for (const result of results) {
+                    expect(String(result.content.metadata?.parseError ?? "")).toContain("Expected ',' or ']' after array element");
+                }
+            }
+        },
+    );
+
+    it("executes a legal available-but-undisclosed tool without a loading prerequisite", async () => {
+        const host = createPromptHost();
+        const realFetch = globalThis.fetch;
+        const requests: Array<{ tools?: Array<{ function?: { name?: string } }> }> = [];
+        const lifecycle: Array<{ type: string; message?: PaAgentMessage }> = [];
+        globalThis.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body ?? "")) as typeof requests[number];
+            requests.push(body);
+            const first = requests.length === 1;
+            const delta = first
+                ? { role: "assistant", tool_calls: [{ index: 0, id: "b172-direct-call", type: "function",
+                    function: { name: "list_recent_notes", arguments: JSON.stringify({ limit: 1, order: "modified" }) } }] }
+                : { role: "assistant", content: "直接调用已完成。" };
+            const frame = `data: ${JSON.stringify({ id: "b172-direct-fixed", created: 0,
+                model: "b172-fixed-model", object: "chat.completion.chunk",
+                choices: [{ index: 0, delta, finish_reason: first ? "tool_calls" : "stop" }] })}\n\n`;
+            return new Response(frame + (first ? "data: [DONE]\n\n" : ""), {
+                headers: { "content-type": first ? "text/event-stream" : "application/json" },
+            });
+        }) as typeof fetch;
+        try {
+            await new ChatService(host).streamLLM("直接列出最近笔记", jest.fn(), undefined, [], {
+                userText: "直接列出最近笔记",
+                memoryMode: "skip-memory",
+                onLifecycleEvent: event => lifecycle.push(event as never),
+            });
+        } finally {
+            globalThis.fetch = realFetch;
+        }
+
+        expect(requests).toHaveLength(2);
+        expect(requests[0].tools?.map(tool => tool.function?.name)).not.toContain("list_recent_notes");
+        const result = lifecycle.flatMap(event => event.type === "message_end" && event.message?.role === "toolResult"
+            && event.message.toolName === "list_recent_notes" ? [event.message] : [])[0];
+        expect(result?.content.metadata?.outcome).toBe("success");
+        expect(result?.content.metadata?.reason).not.toBe("tool_outside_user_requested_scope");
+    });
+
+    it("resets loaded tools between runs on the same Runtime", async () => {
+        const host = createPromptHost();
+        const boundToolNames: string[][] = [];
+        let providerTurn = 0;
+        const boundModel = RunnableLambda.from(async function* () {
+            providerTurn += 1;
+            if (providerTurn === 1) {
+                yield new AIMessageChunk({ content: "", tool_call_chunks: [{ id: "b172-reset-load", index: 0,
+                    name: "load_tools", args: JSON.stringify({ names: ["list_recent_notes"] }) }] });
+            } else {
+                yield new AIMessageChunk({ content: "Done." });
+            }
+            yield new AIMessageChunk({ content: "", response_metadata: { finish_reason: "stop" } });
+        });
+        const model = {
+            bindTools: jest.fn((tools: unknown) => {
+                boundToolNames.push(Array.isArray(tools)
+                    ? tools.map(tool => (tool as { function?: { name?: string } }).function?.name ?? "")
+                    : []);
+                return boundModel;
+            }),
+        };
+        const runtime = new PaAgentRuntime(host as never, { createChatModel: async () => model } as never,
+            { skillContextProvider: null });
+        try {
+            await runtime.streamTurn({ prompt: "load recent notes", userText: "load recent notes", memoryMode: "skip-memory" });
+            await runtime.streamTurn({ prompt: "ordinary follow-up", userText: "ordinary follow-up", memoryMode: "skip-memory" });
+        } finally {
+            runtime.dispose();
+        }
+
+        const disclosures = boundToolNames.filter(names => names.length > 0);
+        expect(disclosures[0]).not.toContain("list_recent_notes");
+        expect(disclosures.slice(1, -1).some(names => names.includes("list_recent_notes"))).toBe(true);
+        expect(disclosures.at(-1)).not.toContain("list_recent_notes");
+    });
+
     it("selects domain owner explanations from structured history facts, not source prose", async () => {
         const host = createPromptHost();
         const ghostState = {
@@ -616,7 +838,10 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         } finally { clock.mockRestore(); }
 
         expect(trace.providerTexts).toHaveLength(2);
-        expect(trace.bindings[0]).toContain("create_image");
+        // Ordinary Chat may expose the image service without the CreateImage
+        // command binding; only that actual command prediscloses create_image.
+        expect(trace.bindings[0]).toContain(naturalEntry ? "load_tools" : "create_image");
+        if (naturalEntry) expect(trace.bindings[0]).not.toContain("create_image");
         expect(trace.bindings[1]).not.toContain("create_image");
         const finalInput = trace.providerTexts[1];
         expect(finalInput).toContain('"executionState":"acceptance_unknown"');
@@ -1309,6 +1534,19 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(guidance).toContain("manage_saved_insight");
         expect(guidance).toContain("reuse source observations already gathered");
         expect(guidance).not.toContain("No writable capabilities are bound");
+    });
+
+    it("distinguishes deferred Operations availability from no write capability", () => {
+        const guidance = createOperationsPromptGuidance(
+            [],
+            new Set(["vault_create", "execute_operations"]),
+            new Set(["vault_create", "execute_operations"]),
+        );
+
+        expect(guidance).toContain("No vault-note writing capabilities are bound yet");
+        expect(guidance).toContain("Vault-note writing capabilities are available but not bound: vault_create, execute_operations");
+        expect(guidance).toContain("Load the exact names from the deferred tool directory");
+        expect(guidance).not.toContain("Do not modify notes, run commands, change settings, or claim that you wrote a note.");
     });
 
     it("instructs the model to respond in the user's input language by default (#1.1)", () => {

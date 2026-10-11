@@ -28,8 +28,8 @@ jest.mock('../src/ai-services/task-source-run', () => {
     } };
 });
 
-function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'batch-rejected') {
-    const revoke = change === 'revoked';
+function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'batch-rejected' | 'loader-revoked') {
+    const revoke = change === 'revoked' || change === 'loader-revoked';
     mockAuthority = 1;
     mockPreparations = 0;
     mockProviderRequests = 0;
@@ -66,6 +66,7 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'bat
         isOperationsAgentEnabled: false, getMemoryExtractionPromptContext: () => undefined,
     } as unknown as AiServiceHost;
     const requests: unknown[] = [];
+    const lifecycle: Array<{ type: string; message?: import('../src/ai-services/chat-types').PaAgentMessage }> = [];
     const controller = new AbortController();
     let releaseFirstResponse: (() => void) | undefined;
     const originalFetch = globalThis.fetch;
@@ -88,6 +89,8 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'bat
         const calls = change === 'batch-rejected'
             ? [{ index: 0, id: 'skill-call', type: 'function', function: { name: 'load_skill', arguments: '{"name":"obsidian-markdown"}' } },
                 { index: 1, id: 'context-call', type: 'function', function: { name: 'get_current_note_context', arguments: '{"mode":"metadata"}' } }]
+            : change === 'loader-revoked'
+                ? [{ index: 0, id: 'loader-call', type: 'function', function: { name: 'load_tools', arguments: '{"names":["B172_REVOKED_SENTINEL"' } }]
             : [{ index: 0, id: 'read-target', type: 'function',
                 function: { name: 'read_note', arguments: JSON.stringify({ path: files[499].path }) } }];
         const delta = first ? { role: 'assistant', tool_calls: calls }
@@ -122,6 +125,7 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'bat
                 kind: 'vault', path: file.path, via: 'note' }))) }], {
             userText: '根据笔记读取资料', memoryMode: 'skip-memory', runSourceSelection: { schemaVersion: 1,
                 scope: 'notes', selectionId: 'scope', userMessageId: 'user' },
+            onLifecycleEvent: event => lifecycle.push(event as never),
         });
         void running.then(() => { settled = true; }, () => { settled = true; });
     };
@@ -146,7 +150,7 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'bat
         await running;
         expect(mockPreparations).toBe(2);
         expect(requests).toHaveLength(2);
-        expect(read).toHaveBeenCalledTimes(change === 'batch-rejected' ? 0 : 1);
+        expect(read).toHaveBeenCalledTimes(change === 'batch-rejected' || change === 'loader-revoked' ? 0 : 1);
         if (change === 'batch-rejected') {
             const messages = (requests[1] as { messages: Array<{ role: string; content: string }> }).messages;
             const results = messages.filter(message => message.role === 'tool');
@@ -166,6 +170,20 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'bat
             expect(JSON.parse(observation!.content.split('\n')[0]).isError).toBe(false);
         }
         if (revoke) expect(JSON.stringify(requests[1])).not.toContain('Synthetic private history');
+        if (change === 'loader-revoked') {
+            const loaderResult = lifecycle.flatMap(event => event.type === 'message_end'
+                && event.message?.role === 'toolResult' && event.message.toolName === 'load_tools'
+                ? [event.message] : [])[0];
+            expect(loaderResult?.content.metadata).toMatchObject({
+                outcome: 'schema_invalid', reason: 'invalid_tool_input', executionState: 'not_started',
+            });
+            expect(loaderResult?.inputLineage?.dependencies).toEqual(expect.arrayContaining([
+                expect.objectContaining({ kind: 'vault', path: files[0].path }),
+            ]));
+            const nextMessages = JSON.stringify((requests[1] as { messages: unknown[] }).messages);
+            expect(nextMessages).not.toContain('B172_REVOKED_SENTINEL');
+            expect(nextMessages).not.toContain('输入必须为有效 JSON');
+        }
         if (change === 'ordinary-edit') {
             expect(mockOrdinaryEditApplied).toBe(true);
             for (const request of requests) expect(JSON.stringify(request)).toContain('Synthetic private history');
@@ -174,7 +192,7 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'bat
     return { firstRequest, finish, cleanup };
 }
 
-describe.each(['unchanged', 'revoked', 'ordinary-edit', 'batch-rejected'] as const)('source admission in one continuous actual SDK run: %s', change => {
+describe.each(['unchanged', 'revoked', 'ordinary-edit', 'batch-rejected', 'loader-revoked'] as const)('source admission in one continuous actual SDK run: %s', change => {
     let scenario: ReturnType<typeof createScenario>;
     let firstStageVerified = false;
     let phasePassed = false;

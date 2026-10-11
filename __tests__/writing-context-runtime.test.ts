@@ -21,7 +21,9 @@ it('reads a prior version absent from the timeline and registers it for current 
     const result = await runScenario('history-read');
     expect(result.error).toBeUndefined();
     expect(result.inputs).toHaveLength(3);
-    expect(result.schemas[0].some(schema => schema.function.name === 'read_writing_history')).toBe(true);
+    expect(result.schemas[0].some(schema => schema.function.name === 'read_writing_history')).toBe(false);
+    expect(result.schemas[0].some(schema => schema.function.name === 'load_tools')).toBe(true);
+    expect(result.inputs[0]).toContain('- name: read_writing_history');
     expect(result.inputs[1]).toContain('Authorized parent draft');
     expect(result.inputs[1]).toContain('parentHandle');
     expect(result.prepareStyle).toHaveBeenCalledTimes(1);

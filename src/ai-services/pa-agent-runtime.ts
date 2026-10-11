@@ -113,6 +113,7 @@ import { createCoreToolCapabilities, createChatToolCapability } from "./capabili
 import {
     createPaAgentCommandCapabilityScope,
     formatPaAgentCommandInvocationGuidance,
+    paAgentCreateImageCommandDefinition,
     type PaAgentCommandCapabilityScope,
     type PaAgentCommandInvocation,
 } from "./pa-agent-command";
@@ -135,6 +136,18 @@ import {
 } from "./obsidian-fetch";
 import { errorMessage } from "./agent-utils";
 import { LOAD_SKILL_TOOL_NAME, SkillContextProvider } from "./skill-context-provider";
+import {
+    createLoadToolsCapability,
+    formatPaAgentToolDisclosureDirectory,
+    isClosedLoadToolsResult,
+    isClosedLoadToolsObservationText,
+    isRejectedLoadToolsResult,
+    PA_AGENT_LOAD_TOOLS_TOOL_NAME,
+    projectLoadToolsExecutionResult,
+    projectLoadToolsProviderTranscript,
+    projectPaAgentToolDisclosure,
+    type PaAgentToolDisclosureProjection,
+} from "./pa-agent-tool-disclosure";
 import { OperationsToolProvider } from "./operations/operations-tool-provider";
 import {
     createOperationsStagingToolExecutor,
@@ -2034,7 +2047,24 @@ export class PaAgentRuntime {
                 availableSemanticToolNames.add(EXECUTE_OPERATIONS_TOOL_NAME);
             }
         }
+        const loadedToolNames = new Set<string>();
+        const emptyToolDisclosure = projectPaAgentToolDisclosure({
+            schemas: [],
+            definitions: [],
+            predisclosedToolNames: [],
+            loadedToolNames,
+        });
+        let activeToolDisclosure: PaAgentToolDisclosureProjection = emptyToolDisclosure;
+        const loaderCapability = createLoadToolsCapability({
+            loadedToolNames,
+            getDisclosure: () => activeToolDisclosure,
+            assertCurrent: assertRequestCurrent,
+        });
+        if (!commandCapabilities.register(loaderCapability)) {
+            throw new Error("PA Agent tool disclosure capability unavailable");
+        }
         const availableMetaToolNames = new Set<string>();
+        availableMetaToolNames.add(PA_AGENT_LOAD_TOOLS_TOOL_NAME);
         if (writingContextCapability) availableMetaToolNames.add(GET_WRITING_CONTEXT);
         if (imageScope?.hasImages) availableMetaToolNames.add(RESOLVE_CHAT_IMAGES);
         if (options.createImage && exportableToolNames.has("create_image")) availableSemanticToolNames.add("create_image");
@@ -2113,23 +2143,30 @@ export class PaAgentRuntime {
             return `Select the parent and scene from the conversation semantically; use parentHandle=null for a new topic and omit scene when unknown. Authorized parent handles (JSON data): ${JSON.stringify(writingContextRun.candidateDirectory())}`;
         };
         type ContextInstructionReceipt = ReturnType<TaskSourceRun['captureContextInstruction']>;
-        const commandDeclarationGuidance = (boundSchemas?: ChatToolProviderSchema[]) => options.commandInvocation
+        const commandDeclarationGuidance = (
+            boundSchemas: ChatToolProviderSchema[] = [],
+            toolDisclosure?: PaAgentToolDisclosureProjection,
+        ) => options.commandInvocation
             ? formatPaAgentCommandInvocationGuidance(
                 options.commandInvocation,
-                new Set((boundSchemas ?? [])
-                    .map(schema => schema.function.name)
-                    .filter(name => name !== REPORT_TASK_INCOMPLETE)),
+                toolDisclosure?.finalAnswerOnly
+                    ? new Set<string>()
+                    : new Set(toolDisclosure?.availableNames
+                        ?? boundSchemas.map(schema => schema.function.name)
+                            .filter(name => name !== REPORT_TASK_INCOMPLETE)),
+                toolDisclosure?.finalAnswerOnly ? new Set<string>() : toolDisclosure?.deferredNames,
             )
             : undefined;
         const withImageContext = (input: PaAgentModelInput,
             directory?: ContextInstructionReceipt,
-            boundSchemas?: ChatToolProviderSchema[]): PaAgentModelInput => {
+            boundSchemas?: ChatToolProviderSchema[],
+            toolDisclosure?: PaAgentToolDisclosureProjection): PaAgentModelInput => {
             return {
                 ...input,
                 currentProtocol: input.currentProtocol,
                 runtimeInstruction: combineRuntimeInstructions([
                     input.runtimeInstruction,
-                    commandDeclarationGuidance(boundSchemas),
+                    commandDeclarationGuidance(boundSchemas, toolDisclosure),
                     options.commandGuidance,
                     directory?.instruction ?? sourceRun.contextInstruction(),
                     imageScope?.hasImages ? imageScope.contextText() : undefined,
@@ -2137,18 +2174,31 @@ export class PaAgentRuntime {
                 ]),
             };
         };
+        const projectProviderModelInput = (
+            input: PaAgentModelInput,
+            toolDisclosure?: PaAgentToolDisclosureProjection,
+        ): PaAgentModelInput => toolDisclosure
+            ? {
+                ...input,
+                transcript: projectLoadToolsProviderTranscript(input.transcript,
+                    message => this.toolRegistry.get(PA_AGENT_LOAD_TOOLS_TOOL_NAME) === loaderCapability
+                        && message.toolName === PA_AGENT_LOAD_TOOLS_TOOL_NAME),
+            }
+            : input;
         const buildCanonicalModelInput = async (
             input: PaAgentModelInput,
             toolDefinitions?: ChatToolRegistryDefinition[],
             boundSchemas?: ChatToolProviderSchema[],
+            toolDisclosure?: PaAgentToolDisclosureProjection,
             history?: ChatMessage[],
             directory?: ContextInstructionReceipt,
         ) =>
             this.buildPaAgentCanonicalModelInput(
             { ...projectionOptions(), chatHistory: history ?? acceptedHistory },
-                withImageContext(input, directory, boundSchemas),
+                withImageContext(projectProviderModelInput(input, toolDisclosure), directory, boundSchemas, toolDisclosure),
                 toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
                 toolDefinitions,
+                toolDisclosure,
                 injectedContext,
                 boundSchemas,
                 runSummaries,
@@ -2159,13 +2209,17 @@ export class PaAgentRuntime {
             input: PaAgentModelInput,
             toolDefinitions: ChatToolRegistryDefinition[],
             boundSchemas: ChatToolProviderSchema[],
-        ) => (await this.projectPaAgentCanonicalModelInput(
-            { ...projectionOptions(), chatHistory: acceptedHistory },
-            withImageContext(input, undefined, boundSchemas),
-            toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
-            toolDefinitions, injectedContext, boundSchemas,
-            runSummaries, actionProjectionMode, modelBudgetFacts,
-        )).projection;
+            toolDisclosure?: PaAgentToolDisclosureProjection,
+        ) => {
+            const providerInput = projectProviderModelInput(input, toolDisclosure);
+            return (await this.projectPaAgentCanonicalModelInput(
+                { ...projectionOptions(), chatHistory: acceptedHistory },
+                withImageContext(providerInput, undefined, boundSchemas, toolDisclosure),
+                toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
+                toolDefinitions, toolDisclosure, injectedContext, boundSchemas,
+                runSummaries, actionProjectionMode, modelBudgetFacts,
+            )).projection;
+        };
         const readInjectedContext = readAdmittedInjectedContext;
         const formatBackground = (context: PaAgentInjectedContext | undefined) => formatInjectedContext({
             ...context, pageletHandoff: undefined, writingStyleContext: undefined,
@@ -2197,6 +2251,7 @@ export class PaAgentRuntime {
             input: PaAgentModelInput,
             definitions: ChatToolRegistryDefinition[],
             schemas: ChatToolProviderSchema[],
+            toolDisclosure?: PaAgentToolDisclosureProjection,
         ): Promise<{ providerInput: Record<string, unknown>; vaultBinding: AnswerVaultBinding }> => {
             assertRequestCurrent(input.signal);
             // All asynchronous preparation has finished. Even an absent result
@@ -2215,6 +2270,7 @@ export class PaAgentRuntime {
                 input,
                 definitions,
                 schemas,
+                toolDisclosure,
                 acceptedHistory,
                 directoryReceipt,
             );
@@ -2353,10 +2409,11 @@ export class PaAgentRuntime {
         };
         const prepareCanonicalProviderInput = async (
             input: PaAgentModelInput, definitions: ChatToolRegistryDefinition[], schemas: ChatToolProviderSchema[],
+            toolDisclosure?: PaAgentToolDisclosureProjection,
         ): Promise<{ providerInput: Record<string, unknown>; vaultBinding: AnswerVaultBinding }> => {
             if (imageScope?.hasSelectedImages && options.imageCapability?.get() === "unsupported") throw new ChatImageRequestError("unsupported_model");
             if (imageScope?.hasSelectedImages) await imageScope.prepare(input.signal);
-            return await buildProviderInput(input, definitions, schemas);
+            return await buildProviderInput(input, definitions, schemas, toolDisclosure);
         };
         const debugModelIdentity = () => ({ provider: this.host.settings.aiProvider, model: this.host.settings.chatModelName });
         const model: PaAgentModel = {
@@ -2392,17 +2449,42 @@ export class PaAgentRuntime {
                         legacyStatus: { type: "fallback", reason: "Native tool schema export failed." } satisfies ChatAgentStatus,
                     });
                 }
-                const schemas = schemaResult.ok && input.toolMode !== "final_answer_only"
-                    ? schemaResult.schemas
-                    : [];
+                const exportedSchemas = schemaResult.ok ? schemaResult.schemas : [];
+                const exportedDefinitions = schemaResult.ok ? toolRegistry.listDefinitions(exportFilter) : [];
+                const actualCapabilityIsExportable = (name: string, capability: AgentCapability | undefined) => {
+                    const available = exportedSchemas.some(schema => schema.function.name === name);
+                    return available && toolRegistry.get(name) === capability;
+                };
+                const predisclosedToolNames = [
+                    ...(imageCapability && actualCapabilityIsExportable(RESOLVE_CHAT_IMAGES, imageCapability)
+                        ? [RESOLVE_CHAT_IMAGES] : []),
+                    ...(writingContextCapability && actualCapabilityIsExportable(GET_WRITING_CONTEXT, writingContextCapability)
+                        ? [GET_WRITING_CONTEXT] : []),
+                    ...(ghostPublishingCapability && actualCapabilityIsExportable("prepare_ghost_post", ghostPublishingCapability)
+                        ? ["prepare_ghost_post"] : []),
+                    ...(options.commandInvocation?.definition === paAgentCreateImageCommandDefinition
+                        && imageGenerationCapability
+                        && actualCapabilityIsExportable("create_image", imageGenerationCapability)
+                        ? ["create_image"] : []),
+                    ...(runSourceSelection?.scope === "web" && exportedSchemas.some(schema => schema.function.name === "webSearch")
+                        ? ["webSearch"] : []),
+                ];
+                const toolDisclosure = projectPaAgentToolDisclosure({
+                    schemas: exportedSchemas,
+                    definitions: exportedDefinitions,
+                    predisclosedToolNames,
+                    loadedToolNames,
+                    loaderToolName: PA_AGENT_LOAD_TOOLS_TOOL_NAME,
+                    finalAnswerOnly: input.toolMode === "final_answer_only",
+                });
+                activeToolDisclosure = toolDisclosure;
+                const schemas = [...toolDisclosure.schemas];
                 schemas.push(taskIncompleteOutputSchema());
                 const nativeContextHandle = currentWritingHandle();
                 if (nativeWritingRequest && nativeContextHandle && input.controlSnapshot?.writingOutput === "present_writing") {
                     schemas.push(nativeWritingOutputSchema(nativeWritingRequest, nativeContextHandle));
                 }
-                const toolDefinitions = input.toolMode === "final_answer_only"
-                    ? []
-                    : toolRegistry.listDefinitions(exportFilter);
+                const toolDefinitions = [...toolDisclosure.definitions];
                 const streamAttempt: { binding?: AnswerVaultBinding } = {};
                 const invokeAttempt: { binding?: AnswerVaultBinding } = {};
                 const createAnswerModel = async (attempt: { binding?: AnswerVaultBinding }) =>
@@ -2482,7 +2564,7 @@ export class PaAgentRuntime {
                 // The loop already accepted the materials. Model creation and
                 // physical requests consume that snapshot without preparing it again.
                 const providerInput = input;
-                const preview = await previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
+                const preview = await previewCanonicalModelInput(providerInput, toolDefinitions, schemas, toolDisclosure);
                 const needsHistorySummary = preview.history.historyBudgetLimited === true;
                 if (input.toolMode !== "final_answer_only" && preview.outcome.needsCompaction) {
                     // Prepare the selected image inputs before optional compaction.
@@ -2634,7 +2716,7 @@ export class PaAgentRuntime {
                             deadlineManagedByInvoke: true,
                         }) : runSummaries.history;
                         runSummaries = { history, tools };
-                        let remaining = await previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
+                        let remaining = await previewCanonicalModelInput(providerInput, toolDefinitions, schemas, toolDisclosure);
                         for (const source of getPaAgentToolSummaryCandidates(providerInput.transcript)) {
                             if (!remaining.outcome.needsCompaction) break;
                             if (toolSummaryAttempts.get(source.id) === source) continue;
@@ -2646,7 +2728,7 @@ export class PaAgentRuntime {
                                 deadlineManagedByInvoke: true });
                             if (summary) {
                                 tools.set(source.id, summary);
-                                remaining = await previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
+                                remaining = await previewCanonicalModelInput(providerInput, toolDefinitions, schemas, toolDisclosure);
                             }
                         }
                     } catch (error) {
@@ -2668,7 +2750,7 @@ export class PaAgentRuntime {
                     } };
                 }
                 const canonicalAnswer = await traceAgentPhase(debug, 'canonical_projection',
-                    () => prepareCanonicalProviderInput(providerInput, toolDefinitions, schemas),
+                    () => prepareCanonicalProviderInput(providerInput, toolDefinitions, schemas, toolDisclosure),
                     { turnId: input.turnId, toolMode: input.toolMode ?? 'normal', toolCount: schemas.length });
                 streamAttempt.binding = canonicalAnswer.vaultBinding;
                 debugStreamPhaseId = createAgentDebugPhaseInstanceId();
@@ -2698,6 +2780,7 @@ export class PaAgentRuntime {
                                 exportedProviderSchemaCount: schemaResult.ok ? schemaResult.schemas.length : 0,
                                 boundProviderSchemas: schemas,
                                 plannerToolDefinitions: toolDefinitions,
+                                toolDisclosure,
                             }),
                             ...(imageScope?.hasImages ? [imageScope.diagnostics()] : []),
                         ];
@@ -2768,6 +2851,12 @@ export class PaAgentRuntime {
             memoryEvidenceRegistry,
             memoryRecoveryCoordinator,
             onToolResult: observation => observeAgentDebugToolResult(debugRecorder, observation),
+            projectExecutionResult: (toolCall, result) => toolCall.name === PA_AGENT_LOAD_TOOLS_TOOL_NAME
+                && this.toolRegistry.get(PA_AGENT_LOAD_TOOLS_TOOL_NAME) === loaderCapability
+                ? projectLoadToolsExecutionResult(result, candidate => candidate.outcome === "success"
+                    && !candidate.sourceRecords?.length
+                    && isClosedLoadToolsObservationText(candidate.promptText))
+                : result,
             providerRequestScope,
             memoryPreparationOwnerSignal,
             getMemoryRequestDiagnostic: (turnId) => (stage) => requestDiagnostic(stage, turnId),
@@ -2845,7 +2934,7 @@ export class PaAgentRuntime {
             })
             : baseToolExecutor;
         const batchSourceInputs = new WeakMap<object, InputLineage>();
-        const toolExecutor = createTaskSourceConstrainedExecutor({
+        const sourceConstrainedToolExecutor = createTaskSourceConstrainedExecutor({
             baseExecutor: materialToolExecutor, state: sourceRun.state,
             resolveHostNoteId: sourceRun.resolveNoteId,
             isHostCurrent: sourceRun.isCurrent,
@@ -2895,6 +2984,7 @@ export class PaAgentRuntime {
                         && call.name === "manage_saved_insight";
                     return capability !== undefined && (capability === imageCapability
                         || capability === imageGenerationCapability
+                        || capability === loaderCapability
                         || capability === ghostPublishingCapability
                         || capability === imageStatusCapability
                         || capability === operationsStatusCapability
@@ -2921,6 +3011,25 @@ export class PaAgentRuntime {
                 return complete;
             },
         });
+        const toolExecutor: PaAgentToolExecutor = {
+            ...sourceConstrainedToolExecutor,
+            preflightBatch: input => {
+                const isCurrentLoaderParseError = (call: typeof input.toolCalls[number]) =>
+                    call.parseError !== undefined
+                    && call.name === PA_AGENT_LOAD_TOOLS_TOOL_NAME
+                    && this.toolRegistry.get(PA_AGENT_LOAD_TOOLS_TOOL_NAME) === loaderCapability;
+                if (!input.toolCalls.some(isCurrentLoaderParseError)) {
+                    return sourceConstrainedToolExecutor.preflightBatch?.(input);
+                }
+                // The loader's fixed reads[] plan needs no arguments. Project only
+                // this parse-error field for source preflight; dispatch, raw input,
+                // duplicate IDs, read plans, guards, checkpoints and Debug remain original.
+                const toolCalls = input.toolCalls.map(call => isCurrentLoaderParseError(call)
+                    ? ({ ...call, parseError: undefined } as typeof call)
+                    : call);
+                return sourceConstrainedToolExecutor.preflightBatch?.({ ...input, toolCalls });
+            },
+        };
         const loop = new PaAgentLoop({
             runId,
             userMessageId,
@@ -3073,6 +3182,12 @@ export class PaAgentRuntime {
                         }
                     } else {
                         const records = message.content.sourceRecords ?? [];
+                        const isCurrentLoaderToolResult = message.toolName === PA_AGENT_LOAD_TOOLS_TOOL_NAME
+                            && this.toolRegistry.get(PA_AGENT_LOAD_TOOLS_TOOL_NAME) === loaderCapability;
+                        const closedLoaderResult = isCurrentLoaderToolResult
+                            && isClosedLoadToolsResult(message, () => true);
+                        const rejectedLoaderResult = isCurrentLoaderToolResult
+                            && isRejectedLoadToolsResult(message, () => true);
                         if (message.toolName === GET_WRITING_CONTEXT && !message.isError) {
                             const handle = writingContextRun?.currentSnapshot()?.handle;
                             if (handle) writingContextObservationHandles.set(message.id, handle);
@@ -3137,6 +3252,8 @@ export class PaAgentRuntime {
                         const sourceFreeNotesObservation = records.length === 0
                             && isSafeSourceFreeToolObservation(message);
                         const resultLineage = writingContextLineage
+                            ?? (closedLoaderResult || rejectedLoaderResult ? completeInputLineage()
+                                : undefined)
                             ?? (records.length ? sourceRecordsInputLineage(records)
                                 : isLiveHostBatchPreflightRejection(message) || message.content.metadata?.statusOnly === true
                                     ? completeInputLineage()
@@ -3360,6 +3477,7 @@ export class PaAgentRuntime {
         input: PaAgentModelInput,
         toolUseConstraints?: PaAgentToolUseConstraints,
         toolDefinitions?: ChatToolRegistryDefinition[],
+        toolDisclosure?: PaAgentToolDisclosureProjection,
         injectedContext?: PaAgentInjectedContext,
         boundSchemas: ChatToolProviderSchema[] = [],
         summaries?: PaAgentContextSummaries,
@@ -3367,7 +3485,7 @@ export class PaAgentRuntime {
         modelBudgetFacts?: PaAgentModelBudgetFacts,
     ) {
         const { projection, operationsGuidance } = await this.projectPaAgentCanonicalModelInput(
-            options, input, toolUseConstraints, toolDefinitions, injectedContext, boundSchemas, summaries, actionMode,
+            options, input, toolUseConstraints, toolDefinitions, toolDisclosure, injectedContext, boundSchemas, summaries, actionMode,
             modelBudgetFacts,
         );
         if (options.writingContextHost && options.writingContextHandle) {
@@ -3400,6 +3518,7 @@ export class PaAgentRuntime {
         input: PaAgentModelInput,
         toolUseConstraints?: PaAgentToolUseConstraints,
         toolDefinitions?: ChatToolRegistryDefinition[],
+        toolDisclosure?: PaAgentToolDisclosureProjection,
         injectedContext?: PaAgentInjectedContext,
         boundSchemas: ChatToolProviderSchema[] = [],
         summaries?: PaAgentContextSummaries,
@@ -3422,6 +3541,10 @@ export class PaAgentRuntime {
                 this.toolRegistry.listDefinitions(),
                 toolUseConstraints,
             ));
+        if (input.toolMode !== "final_answer_only") {
+            const directoryText = formatPaAgentToolDisclosureDirectory(toolDisclosure?.directory ?? []);
+            if (directoryText) toolDefinitionsText += `\n${directoryText}`;
+        }
         if (mayReportIncomplete) {
             toolDefinitionsText += `\nIf you cannot complete the user task, call ${REPORT_TASK_INCOMPLETE} as one native function/tool call with the explanation in answer. Do not print <${REPORT_TASK_INCOMPLETE}>, JSON, or any marker in ordinary text: that text will be shown literally and will not mark the task incomplete.${
                 boundSchemaNames.has(REPORT_TASK_INCOMPLETE) ? "" : ` Optional pure output schema: ${JSON.stringify(taskIncompleteOutputSchema().function)}`}`;
@@ -3431,7 +3554,11 @@ export class PaAgentRuntime {
                 ? "\npresent_writing is bound as the native pure-output declaration for this writing request; it is not a source or action tool."
                 : `\nPure output declaration (not a source or action): ${JSON.stringify(nativeWritingOutputSchema(nativeWritingRequest, nativeContextHandle).function)}`;
         }
-        const operationsGuidance = createOperationsPromptGuidance(toolDefinitions ?? []);
+        const operationsGuidance = createOperationsPromptGuidance(
+            toolDefinitions ?? [],
+            toolDisclosure?.finalAnswerOnly ? new Set<string>() : toolDisclosure?.availableNames,
+            toolDisclosure?.finalAnswerOnly ? new Set<string>() : toolDisclosure?.deferredNames,
+        );
         // Conditional explanations ride currentProtocol so the same canonical text is
         // consumed by the real messages and both estimate paths (D-02). Owner facts come
         // only from structured Host state; history prose never selects a rule.
@@ -3653,6 +3780,7 @@ export interface PaAgentModelInputMetricsDiagnosticOptions {
     exportedProviderSchemaCount: number;
     boundProviderSchemas: ChatToolProviderSchema[];
     plannerToolDefinitions: ChatToolRegistryDefinition[];
+    toolDisclosure?: PaAgentToolDisclosureProjection;
 }
 
 export function createPaAgentModelInputMetricsDiagnostic(
@@ -3675,6 +3803,11 @@ export function createPaAgentModelInputMetricsDiagnostic(
         plannerToolDefinitionNames: options.plannerToolDefinitions
             .map((definition) => definition.name)
             .sort(),
+        deferredToolCount: options.toolDisclosure?.directory.length ?? 0,
+        deferredToolDirectoryChars: options.toolDisclosure
+            ? formatPaAgentToolDisclosureDirectory(options.toolDisclosure.directory).length
+            : 0,
+        loadedToolCount: options.toolDisclosure?.loadedNames.size ?? 0,
     };
     const contextProjection = parseOptionalDiagnostic(options.canonicalInput.__context_projection_diagnostic);
     return {

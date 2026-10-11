@@ -257,9 +257,35 @@ Registration flow:
 
 ```text
 provider.load → CapabilityRegistry.register → PolicyEngine export gate
-→ model tool call → prepareAndValidate → execution policy gate → executor
+→ per-generation tool disclosure → model tool call
+→ prepareAndValidate → execution policy gate → executor
 → structured toolResult + SourceRecord / Context Used
 ```
+
+The export gate defines available executable instances (A). Under
+[DEC-062](../product/decisions/dec-062-agent-hybrid-tool-disclosure.md), each
+generation discloses a subset (V): direct tools, tools required by actual task
+bindings, and names explicitly loaded within this run. `load_tools` only adds
+names to a run-local Set; it does not initialize providers or grant permission.
+Deferred instances retain execution admission through A, including legal calls
+whose schemas are absent from V. Schemas, guidance and budget use the same
+generation snapshot. When no deferred names remain, the loader schema, its
+guidance and the directory are omitted. Host-declared final outputs remain
+independent of this projection. See the
+[Tool Disclosure spec](../product/specs/pa-agent-tool-disclosure-product-spec.md)
+for the behavior contract; no persistent loading setting is introduced.
+
+One generation and its stream/invoke retries reuse that disclosure snapshot;
+loading and source changes take effect on the next loop. The run-owned loader
+checks current-run/cancellation admission before synchronously updating its Set.
+Its `reads: []` plan still passes through existing whole-batch source preflight.
+Source-free metadata and finite input-error feedback apply only to the actual
+loader instance and paired call, and remain joined with the original call lineage.
+Rejected arguments are removed only from the provider projection for the matching
+assistant group; canonical history and Debug retain the original facts. Neither
+a shared tool name nor empty sources establishes this trust boundary. Implementation
+is in [tool disclosure](../../src/ai-services/pa-agent-tool-disclosure.ts) and the
+existing [Runtime](../../src/ai-services/pa-agent-runtime.ts) admission/projection chain.
 
 Input normalization is tool-local through `prepareArguments` / `prepareAndValidate`. Invalid required input returns `schema_invalid`; the runtime may issue one corrective turn, but it must not silently broaden tool scope or invent a write target.
 

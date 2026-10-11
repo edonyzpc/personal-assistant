@@ -221,8 +221,11 @@ describe('B-135 production source handling', () => {
                 completeness: 'complete', dependencies: [{ kind: 'vault', path, via: 'note' }] } }],
             runSourceSelection: { schemaVersion: 1, scope: 'combined', selectionId: 'combined-web-query',
                 userMessageId: 'combined-user' } });
-        expect(f.requests[0].tools?.map(tool => tool.function.name)).toContain('webSearch');
+        const toolNames = f.requests[0].tools?.map(tool => tool.function.name);
+        expect(toolNames).not.toContain('webSearch');
+        expect(toolNames).toContain('load_tools');
         expect(requestText(f.requests[0])).toContain('DERIVED_WEB_QUERY_SENTINEL');
+        expect(requestText(f.requests[0])).toContain('- name: webSearch');
         expect(webRequest).toHaveBeenCalledTimes(1);
         expect(webRequest.mock.calls[0][0].body).toMatchObject({ query: 'DERIVED_WEB_QUERY_SENTINEL' });
     });

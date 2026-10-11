@@ -200,6 +200,16 @@ function recordedNeutralReply(label: string, chars = 712) {
         `阅读记录${label}${String.fromCharCode(0x4e00 + index)}：这里只描述核对现有上下文的阅读过程，继续依据用户各轮原文及原回执判断，不提供新的目标、结论或操作授权。`).join('').slice(0, chars);
 }
 
+function deferredDirectoryNames(body: any): string[] {
+    const system = body?.messages?.find((message: any) => message?.role === 'system')?.content;
+    if (typeof system !== 'string') return [];
+    const start = system.indexOf('Deferred tools (');
+    const end = system.indexOf('If you cannot complete');
+    if (start < 0) return [];
+    return [...system.slice(start, end > start ? end : undefined)
+        .matchAll(/^- name: ([^\n]+)$/gm)].map(match => match[1]);
+}
+
 function historySummaryMaterials(request: any) {
     expect(request.messages.map((message: any) => message.role)).toEqual(['system', 'user', 'user']);
     const source = JSON.parse(request.messages[1].content);
@@ -917,8 +927,10 @@ describe('B157 independent context harness contracts (offline)', () => {
             expect(setup.bodies.flatMap(body => body.messages.flatMap((message: any) =>
                 message.tool_calls?.filter((call: any) => call.function.name === 'vault_append') ?? []))).toHaveLength(2);
             expect(report.physicalRequests).toBe(complete ? 20 : maxRequests);
-            expect(setup.bodies[0].tools).toEqual(expect.arrayContaining(['search_memory', 'vault_append'].map(name =>
-                expect.objectContaining({ function: expect.objectContaining({ name }) }))));
+            expect(setup.bodies[0].tools).toEqual(expect.arrayContaining([expect.objectContaining({
+                function: expect.objectContaining({ name: 'search_memory' }),
+            })]));
+            expect(deferredDirectoryNames(setup.bodies[0])).toContain('vault_append');
             const summaryInputs = dispatched.filter((input: any) => input.body.messages[0].content.startsWith('Produce a source-grounded summary'));
             expect(summaryInputs).toHaveLength(actualAuxCalls);
             expect(new Set(returned.map((completion: any) => completion.callId)).size).toBe(actualAuxCalls);
@@ -970,9 +982,8 @@ describe('B157 independent context harness contracts (offline)', () => {
                         && typeof message.content === 'string' && message.content.startsWith('Recent chat history:\n'));
                     const serializedHistory = historyMaterial.content.match(/^Recent chat history:\n([\s\S]*?<\/chat_history>)/)[1];
                     expect(serializedHistory.length).toBeLessThanOrEqual(fixture.summaryHistoryBudgetChars);
-                    expect(input.body.tools).toEqual(expect.arrayContaining([expect.objectContaining({
-                        function: expect.objectContaining({ name: 'vault_append' }),
-                    })]));
+                    expect(input.body.tools?.some((tool: any) => tool?.function?.name === 'vault_append')).toBe(false);
+                    expect(deferredDirectoryNames(input.body)).toContain('vault_append');
                     const records = projectedHistoryRecords(input), history = summaryHistory(episode, index);
                     const covered = episode.summaryPreparations[index].coveredMessageCount;
                     const expected = projectedHistoryRecords({ body: { messages: [{ role: 'user',
@@ -1335,7 +1346,8 @@ describe('B157 independent context harness contracts (offline)', () => {
             const episode = report.results[0];
             expect(episode.operationsCapability).toMatchObject({ originalEnabled: false, controlledEnabled: true });
             expect(setup.plugin.settings.operationsAgentEnabled).toBe(false);
-            expect(setup.bodies[0].tools).toEqual(expect.arrayContaining([expect.objectContaining({ function: expect.objectContaining({ name: 'vault_append' }) })]));
+            expect(setup.bodies[0].tools?.some((tool: any) => tool?.function?.name === 'vault_append')).toBe(false);
+            expect(deferredDirectoryNames(setup.bodies[0])).toContain('vault_append');
             expect(episode.confirmations).toEqual(expect.arrayContaining([expect.objectContaining({
                 domain: 'operations', boundary: 'actual-session-confirm',
             })]));

@@ -733,7 +733,8 @@ export type ChatToolName =
     | "get_operations_status"
     | "replace_selection"
     | "webSearch"
-    | "load_skill";
+    | "load_skill"
+    | "load_tools";
 
 export type ChatToolUnavailableReason =
     | "pagelet_stage_control_unavailable"

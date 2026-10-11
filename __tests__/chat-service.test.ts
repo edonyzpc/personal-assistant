@@ -357,24 +357,25 @@ function createPlugin(overrides: {
 const approvedFirstTurnToolNames = [
     'execute_code',
     'get_current_note_context',
-    'get_memory_status',
-    'get_memory_usage',
-    'inspect_obsidian_note',
-    'list_recent_notes',
-    'list_vault_tags',
     'load_skill',
+    'load_tools',
     'query_notes',
-    'query_memories',
-    'read_canvas_summary',
     'read_note',
-    'read_note_outline',
     'search_memory',
     'search_vault_metadata',
-    'search_vault_snippets',
 ].sort();
 
 function expectedFirstTurnToolNames(...additionalToolNames: string[]) {
     return [...approvedFirstTurnToolNames, 'report_task_incomplete', ...additionalToolNames].sort();
+}
+
+function deferredNames(input: { tool_definitions?: unknown } | undefined): string[] {
+    const definitions = String(input?.tool_definitions ?? '');
+    const start = definitions.indexOf('Deferred tools (');
+    const end = definitions.indexOf('If you cannot complete');
+    if (start < 0) return [];
+    return [...definitions.slice(start, end > start ? end : undefined)
+        .matchAll(/^- name: ([^\n]+)$/gm)].map(match => match[1]);
 }
 
 async function runTamperedGhostResult(mutation: 'body' | 'url' | 'fact' | 'source' | 'attention-id' | 'attention-no-id') {
@@ -1691,9 +1692,11 @@ describe('ChatService.streamLLM integration', () => {
 
     it('runs host-bound create_image without a vault source declaration and keeps completion asynchronous', async () => {
         let turn = 0;
+        const modelInputs: Record<string, string>[] = [];
         const model = {
             bindTools: jest.fn(() => model),
-            stream: jest.fn(async function* () {
+            stream: jest.fn(async function* (input: Record<string, string>) {
+                modelInputs.push(input);
                 if (turn++ === 0) {
                     yield { tool_call_chunks: [{
                         index: 0, id: 'create-image-1', name: 'create_image',
@@ -1720,7 +1723,9 @@ describe('ChatService.streamLLM integration', () => {
 
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map(tool => tool.function?.name);
-        expect(exportedToolNames).toContain('create_image');
+        expect(exportedToolNames).not.toContain('create_image');
+        expect(exportedToolNames).toContain('load_tools');
+        expect(deferredNames(modelInputs[0])).toContain('create_image');
         expect(submit).toHaveBeenCalledTimes(1);
         expect((submit.mock.calls[0] as unknown[])[0]).toEqual({
             prompt: 'Watercolor bookstore', operation: 'generate', count: 1, referenceImageRefs: [],
@@ -2082,12 +2087,9 @@ describe('ChatService.streamLLM integration', () => {
                     .map(message => String(message.content)).join('\n');
                 expect(human).not.toContain('Do not call tools or claim that a write has completed.');
             }
-            expect(boundToolNames[0]).toEqual(expect.arrayContaining([
-                'vault_create',
-                'vault_append',
-                'vault_process',
-                'frontmatter_update',
-                'execute_operations',
+            expect(boundToolNames[0]).toContain('load_tools');
+            expect(deferredNames(providerInputs[0])).toEqual(expect.arrayContaining([
+                'vault_create', 'vault_append', 'vault_process', 'frontmatter_update', 'execute_operations',
             ]));
             expect(boundToolNames.length).toBeGreaterThanOrEqual(2);
             expect(String(providerInputs[1].tool_definitions)).toContain('vault_create');
@@ -2108,9 +2110,11 @@ describe('ChatService.streamLLM integration', () => {
 
     it('offers Memory with permitted Operations and completes a preview answer without a predicted-search warning', async () => {
         let streamCall = 0;
+        const modelInputs: Record<string, string>[] = [];
         const model = {
             bindTools: jest.fn(() => model),
-            stream: jest.fn(async function* () {
+            stream: jest.fn(async function* (input: Record<string, string>) {
+                modelInputs.push(input);
                 streamCall += 1;
                 if (streamCall === 1) {
                     yield {
@@ -2158,7 +2162,10 @@ describe('ChatService.streamLLM integration', () => {
         expect(plugin.vss.searchSimilarity).not.toHaveBeenCalled();
         expect(plugin.vss.searchHybrid).not.toHaveBeenCalled();
         const schemas = (model.bindTools.mock.calls as unknown as Array<[Array<{ function?: { name?: string } }>]>)[0][0];
-        expect(schemas.map((schema) => schema.function?.name)).toEqual(expect.arrayContaining(['search_memory', 'vault_create']));
+        const schemaNames = schemas.map((schema) => schema.function?.name);
+        expect(schemaNames).toContain('search_memory');
+        expect(schemaNames).not.toContain('vault_create');
+        expect(deferredNames(modelInputs[0])).toContain('vault_create');
         expect(await stageIntent.mock.results[0].value).toMatchObject({ state: 'pending' });
         expect(createNote).not.toHaveBeenCalled();
         expect(lifecycleEvents.find((event) => event.type === 'agent_end'))
@@ -3167,7 +3174,8 @@ describe('ChatService.streamLLM integration', () => {
         expect(modelInputs[0].input).toContain('https://example.com/b');
         const boundToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name);
-        expect(boundToolNames).toEqual(expect.arrayContaining([
+        expect(boundToolNames).toContain('load_tools');
+        expect(deferredNames(modelInputs[0])).toEqual(expect.arrayContaining([
             'vault_create',
             'vault_append',
             'vault_process',
@@ -3258,7 +3266,8 @@ describe('ChatService.streamLLM integration', () => {
     });
 
     it('exports builtin WebSearch capability when enabled for a DashScope-compatible provider', async () => {
-        const model = createStreamChunksModel([{ content: 'with web search' }]);
+        const modelInputs: Record<string, string>[] = [];
+        const model = createStreamChunksModel([{ content: 'with web search' }], input => modelInputs.push(input));
         mockCreateChatModel.mockResolvedValue(model);
         const plugin = createPlugin({ webSearchEnabled: true });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
@@ -3267,7 +3276,9 @@ describe('ChatService.streamLLM integration', () => {
 
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name);
-        expect(exportedToolNames).toContain('webSearch');
+        expect(exportedToolNames).not.toContain('webSearch');
+        expect(exportedToolNames).toContain('load_tools');
+        expect(deferredNames(modelInputs[0])).toContain('webSearch');
     });
 
     it('keeps WebSearch available while the Agent can honor a notes-only request', async () => {
@@ -3283,12 +3294,13 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames('webSearch'));
+        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames());
         expect(events.some(event => event.type === 'tool_execution_end' && event.toolName === 'webSearch')).toBe(false);
     });
 
     it('exposes core proposals after opt-in without creating a card for an ordinary text answer', async () => {
-        const model = createStreamChunksModel([{ content: 'ordinary answer' }]);
+        const modelInputs: Record<string, string>[] = [];
+        const model = createStreamChunksModel([{ content: 'ordinary answer' }], input => modelInputs.push(input));
         mockCreateChatModel.mockResolvedValue(model);
         const plugin = createPlugin({ operationsAgentEnabled: true });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
@@ -3300,7 +3312,8 @@ describe('ChatService.streamLLM integration', () => {
 
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name);
-        expect(exportedToolNames).toEqual(expect.arrayContaining([
+        expect(exportedToolNames).toContain('load_tools');
+        expect(deferredNames(modelInputs[0])).toEqual(expect.arrayContaining([
             'vault_create',
             'vault_append',
             'vault_process',
@@ -3358,7 +3371,8 @@ describe('ChatService.streamLLM integration', () => {
     });
 
     it('exposes Operations without regex-narrowing a current-note-only save', async () => {
-        const model = createStreamChunksModel([{ content: 'proposal ready' }]);
+        const modelInputs: Record<string, string>[] = [];
+        const model = createStreamChunksModel([{ content: 'proposal ready' }], input => modelInputs.push(input));
         mockCreateChatModel.mockResolvedValue(model);
         const plugin = createPlugin({ operationsAgentEnabled: true });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
@@ -3368,14 +3382,15 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames(
+        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames());
+        expect(deferredNames(modelInputs[0])).toEqual(expect.arrayContaining([
             'execute_operations',
             'frontmatter_update',
             'remove_note_image',
             'vault_append',
             'vault_create',
             'vault_process',
-        ));
+        ]));
     });
 
     it.each([
@@ -3649,7 +3664,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames('webSearch'));
+        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames());
         expect(modelInputs[0]?.tool_definitions).toContain('webSearch');
         expect(modelInputs[0]?.input).toContain('Recent chat history');
         expect(modelInputs[0]?.input).toContain('我目前只有 webSearch');
@@ -3686,7 +3701,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames('webSearch'));
+        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames());
         expect(modelInputs[0]?.tool_definitions).toContain('webSearch');
         expect(modelInputs[0]?.input).not.toContain('不要联网');
         expect(modelInputs[0]?.input).not.toContain('杭州今天的天气。');
@@ -3719,7 +3734,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames('webSearch'));
+        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames());
         expect(modelInputs[0]?.tool_definitions).toContain('webSearch');
         expect(events.some(event => event.type === 'tool_execution_end' && event.toolName === 'webSearch')).toBe(false);
         expect(modelInputs[0]?.input).toContain('I usually prefer web search for weather checks.');
@@ -3744,7 +3759,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames('webSearch'));
+        expect(exportedToolNames).toEqual(expectedFirstTurnToolNames());
         expect(inputs[0].available_skills).toContain('obsidian-markdown');
         expect(inputs[0].available_skills).toContain('obsidian-bases');
         expect(inputs[0].available_skills).toContain('json-canvas');

@@ -820,7 +820,11 @@ describe("B-149 runtime task baseline", () => {
                 ?.map((tool: any) => tool.function?.name) ?? [];
             expect(enabledTools("E-02")).toContain("webSearch");
             expect(enabledTools("E-02")).not.toContain("read_note");
-            expect(enabledTools("E-03")).toEqual(expect.arrayContaining(["read_note", "webSearch"]));
+            expect(enabledTools("E-03")).toContain("read_note");
+            expect(enabledTools("E-03")).not.toContain("webSearch");
+            expect(enabledTools("E-03")).toContain("load_tools");
+            expect(JSON.stringify(requests.find(request => request.caseId === "E-03")?.body))
+                .toContain("- name: webSearch");
             expect(enabledTools("E-08")).toContain("webSearch");
             expect(enabledTools("E-08")).not.toContain("read_note");
             const e08Requests = requests.filter(request => request.caseId === "E-08").map(request => request.body);

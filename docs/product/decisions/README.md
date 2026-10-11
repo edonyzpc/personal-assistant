@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-062 | PA Agent 工具混合披露 | Accepted | 基础直供、完整短目录、精确批量加载与真实绑定预披露；保持权限和独立计算，四项效果判定 | [Record](./dec-062-agent-hybrid-tool-disclosure.md) |
 | DEC-061 | Agent 独立通用计算 | Accepted | 计算与现有工具独立，Agent 自主组合；Pi/QuickJS Worker，无脚本内工具桥接 | [Record](./dec-061-independent-agent-computation.md) |
 | DEC-060 | PA prompt 精简与渐进披露 | Accepted | 常驻最小契约与原生工具，方法按需、事实解释随上下文，Agent 自主选择；B-170 独立 | [Record](./dec-060-agent-prompt-progressive-disclosure.md) |
 | DEC-059 | 条件查询一次返回完整笔记列表 | Accepted | 默认完整匹配、轻量清单、正文按需；不让模型拆目录或分页补查 | [Record](./dec-059-complete-note-query-results.md) |

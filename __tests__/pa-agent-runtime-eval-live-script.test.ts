@@ -234,7 +234,11 @@ describe("B-149 live eval script safety seam", () => {
             selectionId: "b149-E-03-selection", userMessageId: "b149-E-03-user" });
         expect(report.results[0].sourcePaths).toContain("synthetic/starbay-budget.md");
         expect(report.results[0].sourceUrls).toContain("https://example.invalid/starbay-plan");
-        expect(bodies[0].tools?.map(tool => tool.function.name)).toEqual(expect.arrayContaining(["read_note", "webSearch"]));
+        const toolNames = bodies[0].tools?.map(tool => tool.function.name);
+        expect(toolNames).toContain("read_note");
+        expect(toolNames).not.toContain("webSearch");
+        expect(toolNames).toContain("load_tools");
+        expect(JSON.stringify(bodies[0])).toContain("- name: webSearch");
         expect(JSON.stringify(bodies[2])).toContain("BUDGET_37");
         expect(JSON.stringify(bodies[2])).toContain("WEB_TWO_PHASES");
         expect(testVault.realVaultAccess).toEqual([]);

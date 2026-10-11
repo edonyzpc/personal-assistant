@@ -61,13 +61,18 @@ export function createPaAgentCommandCapabilityScope(
  */
 export function formatPaAgentCommandInvocationGuidance(
     invocation: PaAgentCommandInvocation,
-    availableCapabilityNames: ReadonlySet<string>,
+    availableCapabilityNames: ReadonlySet<string> = new Set<string>(),
+    deferredCapabilityNames: ReadonlySet<string> = new Set<string>(),
 ): string {
     const lines = [...invocation.definition.agentGuidance];
     for (const capabilityName of invocation.definition.capabilityNames) {
-        lines.push(availableCapabilityNames.has(capabilityName)
-            ? `Declared capability ${capabilityName} is currently admitted and exportable for this run.`
-            : `Declared capability ${capabilityName} is not currently admitted or exportable; do not call it or claim its effect.`);
+        if (availableCapabilityNames.has(capabilityName) && deferredCapabilityNames.has(capabilityName)) {
+            lines.push(`Declared capability ${capabilityName} is admitted for this run but not bound yet; load its exact name from the deferred tool directory before calling it.`);
+        } else if (availableCapabilityNames.has(capabilityName)) {
+            lines.push(`Declared capability ${capabilityName} is currently admitted and exportable for this run.`);
+        } else {
+            lines.push(`Declared capability ${capabilityName} is not currently admitted or exportable; do not call it or claim its effect.`);
+        }
     }
     return lines.join("\n");
 }

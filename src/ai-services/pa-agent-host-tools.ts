@@ -72,6 +72,11 @@ const UNAVAILABLE_MEMORY_RETRIEVAL_GUIDANCE =
 export interface PaAgentCapabilityToolExecutorOptions {
     /** Actual execution result, before prompt/context projection. */
     onToolResult?: (input: { turnId: string; toolCallId: string; toolName: string; result: ChatToolResult<unknown>; toolInput?: unknown }) => void;
+    /** Narrow run-owned execution-result projection; it cannot change admission or execution. */
+    projectExecutionResult?: (
+        toolCall: PaAgentToolCall,
+        result: PaAgentToolExecutionResult,
+    ) => PaAgentToolExecutionResult;
     registry: CapabilityRegistry;
     host: AiServiceHost;
     isWritingSelectionCurrent?: (input: unknown) => boolean;
@@ -795,7 +800,7 @@ export function createPaAgentCapabilityToolExecutor(
                     writable: false,
                 });
             }
-            return executionResult;
+            return options.projectExecutionResult?.(toolCall, executionResult) ?? executionResult;
         },
     };
 }

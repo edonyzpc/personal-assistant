@@ -55,6 +55,15 @@ import { WritingVersionService } from '../src/chat/writing-versions';
 
 jest.mock("obsidian");
 
+function deferredNames(providerInput: unknown): string[] {
+    const text = String(providerInput);
+    const start = text.indexOf("Deferred tools (");
+    const end = text.indexOf("If you cannot complete");
+    if (start < 0) return [];
+    return [...text.slice(start, end > start ? end : undefined)
+        .matchAll(/^- name: ([^\n]+)$/gm)].map(match => match[1]);
+}
+
 describe("Operations Agent runtime discovery and staging", () => {
     it("loads the five staging tools and narrow execution action without a legacy opt-in", async () => {
         const provider = new OperationsToolProvider();
@@ -308,7 +317,9 @@ describe("Operations Agent runtime discovery and staging", () => {
         try {
             await fixture.run();
 
-            expect(fixture.boundToolNames[0]).toEqual(expect.arrayContaining([...CORE_WRITE_TOOL_NAMES]));
+            expect(fixture.boundToolNames[0]).toContain("load_tools");
+            expect(deferredNames(fixture.providerInputs[0]))
+                .toEqual(expect.arrayContaining([...CORE_WRITE_TOOL_NAMES]));
             expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
             expect(fixture.executeIntent).not.toHaveBeenCalled();
             expect(fixture.vault.create).not.toHaveBeenCalled();
@@ -328,7 +339,9 @@ describe("Operations Agent runtime discovery and staging", () => {
         try {
             await fixture.run();
 
-            expect(fixture.boundToolNames[1]).toEqual(expect.arrayContaining([...CORE_WRITE_TOOL_NAMES]));
+            expect(fixture.boundToolNames[1]).toContain("load_tools");
+            expect(deferredNames(fixture.providerInputs[1]))
+                .toEqual(expect.arrayContaining([...CORE_WRITE_TOOL_NAMES]));
             expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
             expect(fixture.executeIntent).not.toHaveBeenCalled();
             expect(fixture.vault.create).not.toHaveBeenCalled();
@@ -373,7 +386,10 @@ describe("Operations Agent runtime discovery and staging", () => {
             expect(new Set(turnIds).size).toBe(3);
             expect(turnIds[0]).toBe(stagedInput?.turnId);
             expect(turnIds).not.toContain(stagedInput?.runId);
-            expect(fixture.boundToolNames[1]).toContain("execute_operations");
+            expect(fixture.boundToolNames[1]).not.toContain("execute_operations");
+            expect(deferredNames(fixture.providerInputs[1])).toContain("execute_operations");
+            expect(fixture.boundToolNames[2]).not.toContain("execute_operations");
+            expect(deferredNames(fixture.providerInputs[2])).toContain("execute_operations");
             expect(fixture.executeIntent).toHaveBeenCalledTimes(1);
             expect(fixture.executeIntent).toHaveBeenCalledWith(stagedIntent.id, expect.any(Function));
             expect(fixture.vault.create).toHaveBeenCalledWith("notes/new.md", "# Result");
@@ -392,6 +408,20 @@ describe("Operations Agent runtime discovery and staging", () => {
                     execution: { state: "completed" },
                 });
             expect(fixture.providerInputs).toHaveLength(3);
+            const completionMessages = (fixture.providerInputs[2] as {
+                messages?: Array<{ content?: unknown }>;
+            }).messages ?? [];
+            const pairedCompletionResult = completionMessages
+                .map(message => String(message.content))
+                .find(content => content.includes('"callId":"execute-current"'));
+            const completionSystem = String(completionMessages[0]?.content ?? "");
+            expect(pairedCompletionResult).toContain('"contextScope":"current_run"');
+            expect(pairedCompletionResult).toContain('"executionState":"succeeded"');
+            expect(pairedCompletionResult).toContain('"domainPhase":"completed"');
+            expect(completionSystem).toContain("actual owner execution receipts");
+            expect(completionSystem).toContain("deferred disclosure does not deny");
+            expect(completionSystem).not.toContain("actually bound and executed");
+            expect(completionSystem).not.toContain("Do not modify notes or claim a new write without");
             expect(fixture.legacyEvents).toContainEqual(expect.objectContaining({
                 kind: "answer-snapshot",
                 snapshot: "Created notes/new.md.",
@@ -568,7 +598,8 @@ describe("Operations Agent runtime discovery and staging", () => {
                     { role: 'assistant', content: 'OLD_PENDING_ANSWER_27' }] });
             expect(fixture.providerInputs).toHaveLength(2);
             expect(fixture.boundToolNames[0]).toContain('get_writing_context');
-            expect(fixture.boundToolNames[1]).toContain('execute_operations');
+            expect(fixture.boundToolNames[1]).not.toContain('execute_operations');
+            expect(deferredNames(fixture.providerInputs[1])).toContain('execute_operations');
             expect(prepare).not.toHaveBeenCalled();
             expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
             expect(fixture.executeIntent).not.toHaveBeenCalled();
@@ -703,8 +734,9 @@ describe("Operations-independent first-turn read capabilities", () => {
         });
         try {
             await fixture.run();
-            expect(fixture.boundToolNames[0]).toContain("manage_memory");
-            expect(String(fixture.providerInputs[0])).toContain('"manage_memory"');
+            expect(fixture.boundToolNames[0]).not.toContain("manage_memory");
+            expect(fixture.boundToolNames[0]).toContain("load_tools");
+            expect(deferredNames(fixture.providerInputs[0])).toContain("manage_memory");
         } finally {
             fixture.dispose();
         }
@@ -722,12 +754,14 @@ describe("Operations-independent first-turn read capabilities", () => {
         try {
             await fixture.run();
 
-            const expectedNames = [
+            const directNames = [
                 "search_memory",
                 "get_current_note_context",
                 "query_notes",
                 "read_note",
                 "search_vault_metadata",
+            ];
+            const deferredExpectedNames = [
                 "list_recent_notes",
                 "read_note_outline",
                 "inspect_obsidian_note",
@@ -736,11 +770,11 @@ describe("Operations-independent first-turn read capabilities", () => {
                 "list_vault_tags",
                 "webSearch",
             ];
-            expect(fixture.boundToolNames[0]).toEqual(expect.arrayContaining(expectedNames));
-            const firstProviderInput = String(fixture.providerInputs[0]);
-            for (const toolName of expectedNames) {
-                expect(firstProviderInput).toContain(`"${toolName}"`);
-            }
+            expect(fixture.boundToolNames[0]).toEqual(expect.arrayContaining(directNames));
+            expect(fixture.boundToolNames[0]).not.toContain("webSearch");
+            expect(fixture.boundToolNames[0]).toContain("load_tools");
+            expect(deferredNames(fixture.providerInputs[0]))
+                .toEqual(expect.arrayContaining(deferredExpectedNames));
             expect(fixture.boundToolNames[0]).not.toContain("vault_create");
             expect(fixture.boundToolNames[0]).not.toContain("declare_source_scope");
             expect(fixture.boundToolNames[0]).not.toContain("request_source_decision");
@@ -799,9 +833,9 @@ describe("Operations runtime task source admission", () => {
         try {
             await fixture.run();
 
-            expect(fixture.boundToolNames[0]).toEqual(expect.arrayContaining([
-                "vault_create", "vault_append",
-            ]));
+            expect(fixture.boundToolNames[0]).toContain("load_tools");
+            expect(deferredNames(fixture.providerInputs[0]))
+                .toEqual(expect.arrayContaining(["vault_create", "vault_append"]));
             expect(fixture.boundToolNames[0]).not.toContain("declare_source_scope");
             expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
             const [intent] = fixture.controller.listPendingIntents();

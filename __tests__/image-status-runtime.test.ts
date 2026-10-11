@@ -60,7 +60,9 @@ it('delivers a finite image status observation to ordinary Chat without a create
                 userMessageId: 'current-status-user' },
             onEvent: () => {}, onLifecycleEvent: event => lifecycle.push(event) });
     } finally { runtime.dispose(); }
-    expect(schemas[0].some(schema => schema.function.name === 'get_image_status')).toBe(true);
+    expect(schemas[0].some(schema => schema.function.name === 'get_image_status')).toBe(false);
+    expect(schemas[0].some(schema => schema.function.name === 'load_tools')).toBe(true);
+    expect(inputs[0].map(message => message.content).join('\n')).toContain('- name: get_image_status');
     expect(schemas[0].some(schema => schema.function.name === 'create_image')).toBe(false);
     expect(read).toHaveBeenCalledTimes(1);
     expect(read.mock.calls[0][0]).toEqual({ operationId: 'operation_previous' });
