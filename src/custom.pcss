@@ -10348,7 +10348,8 @@ body.is-mobile.is-floating-nav .pa-agent-debug-content { padding-bottom: calc(va
 .pa-agent-debug-trace-row { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(70px, 0.85fr) 64px 28px; align-items: center; padding-inline-end: 10px; }
 .pa-agent-debug-time-axis { position: sticky; top: 0; z-index: 2; min-height: 34px; border-bottom: 1px solid var(--pa-debug-line); background: var(--background-secondary); color: var(--text-muted); font-size: var(--font-ui-smaller); }
 .pa-agent-debug-time-axis > span:first-child { padding-inline-start: 14px; }
-.pa-agent-debug-time-ticks { position: relative; min-height: 22px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* The timeline cell is the query container, so tick density follows the splitter-driven time axis width. */
+.pa-agent-debug-time-ticks { position: relative; min-height: 22px; white-space: nowrap; font-variant-numeric: tabular-nums; container-type: inline-size; }
 .pa-agent-debug-time-ticks span { position: absolute; top: 50%; transform: translateY(-50%); }
 .pa-agent-debug-time-ticks span:first-child { inset-inline-start: 0; }
 .pa-agent-debug-time-ticks span:nth-child(2) { inset-inline-start: 33.333333%; transform: translate(-50%, -50%); }
@@ -10378,7 +10379,7 @@ body.is-mobile.is-floating-nav .pa-agent-debug-content { padding-bottom: calc(va
 .pa-agent-debug-anomalies { flex-shrink: 0; gap: 6px; color: var(--pa-debug-warning); font-size: 11px; }
 .pa-agent-debug-node .pa-agent-debug-anomalies { margin-inline-start: auto; }
 .pa-agent-debug-anomalies .pa-agent-debug-icon { width: 12px; height: 12px; }
-.pa-agent-debug-duration { padding-inline-start: 6px; text-align: end; color: var(--text-muted); font-size: var(--font-ui-smaller); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pa-agent-debug-duration { min-width: 0; padding-inline-start: 6px; text-align: end; color: var(--text-muted); font-size: var(--font-ui-smaller); font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; }
 .pa-agent-debug-node-state { display: inline-flex; align-items: center; justify-content: flex-end; }
 .pa-agent-debug-node-state .pa-agent-debug-icon { width: 15px; height: 15px; }
 .pa-agent-debug-view button.pa-agent-debug-timeline { position: relative; align-self: stretch; min-height: 44px; width: 100%; padding: 0; border: 0; box-shadow: none; border-radius: 0; overflow: hidden; background: repeating-linear-gradient(to right, var(--pa-debug-line) 0, var(--pa-debug-line) 1px, transparent 1px, transparent 33.333333%); }
@@ -10407,7 +10408,7 @@ body.is-mobile.is-floating-nav .pa-agent-debug-content { padding-bottom: calc(va
 .pa-agent-debug-detail-title .pa-agent-debug-icon { width: 20px; height: 20px; margin-top: 3px; color: var(--pa-debug-accent); }
 .pa-agent-debug-detail-subtitle { margin: 4px 0 10px 28px; color: var(--text-muted); font-family: var(--font-monospace); font-size: var(--font-ui-smaller); overflow-wrap: anywhere; }
 .pa-agent-debug-detail-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 10px; color: var(--text-muted); font-size: var(--font-ui-smaller); }
-.pa-agent-debug-tabs { position: sticky; top: 0; z-index: 1; display: flex; gap: 18px; padding-inline: 18px; border-bottom: 1px solid var(--pa-debug-line); background: var(--background-primary); }
+.pa-agent-debug-tabs { position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; column-gap: 18px; row-gap: 0; padding-inline: 18px; border-bottom: 1px solid var(--pa-debug-line); background: var(--background-primary); }
 .pa-agent-debug-view button.pa-agent-debug-tab { padding: 10px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; box-shadow: none; background: transparent; color: var(--text-muted); font-size: var(--font-ui-small); white-space: nowrap; }
 .pa-agent-debug-view button.pa-agent-debug-tab[aria-selected="true"] { color: var(--pa-debug-accent); border-bottom-color: var(--pa-debug-accent); }
 .pa-agent-debug-detail-content { padding: 16px 18px calc(24px + env(safe-area-inset-bottom, 0px)); }
@@ -10487,7 +10488,9 @@ body.is-mobile .pa-agent-debug-view summary,
 body.is-mobile .pa-agent-debug-view button.pa-agent-debug-timeline,
 .pa-agent-debug-view.is-narrow button.pa-agent-debug-timeline { min-height: 16px; }
 .pa-agent-debug-view.is-narrow button.pa-agent-debug-icon-button { min-width: 44px; }
-@container (max-width: 360px) {
+@container (max-width: 180px) {
     .pa-agent-debug-time-ticks span:not(:first-child):not(:last-child) { display: none; }
+}
+@container (max-width: 360px) {
     .pa-agent-debug-view.is-narrow .pa-agent-debug-anomalies { gap: 3px; }
 }
