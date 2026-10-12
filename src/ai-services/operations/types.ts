@@ -1,6 +1,8 @@
 import type { TaskSourceReadGuard } from "../task-source-read-guard";
 
 export const REMOVE_NOTE_IMAGE_TOOL_NAME = "remove_note_image" as const;
+export const VAULT_MOVE_TOOL_NAME = "vault_move" as const;
+export type OperationsMode = "apply" | "preview";
 export type NoteImageRemovalAttachmentAction = "keep" | "delete";
 
 export interface RemoveNoteImageInput {
@@ -25,6 +27,7 @@ export const CORE_WRITE_TOOL_NAMES = [
     "vault_process",
     "frontmatter_update",
     REMOVE_NOTE_IMAGE_TOOL_NAME,
+    VAULT_MOVE_TOOL_NAME,
 ] as const;
 
 export type CoreWriteToolName = typeof CORE_WRITE_TOOL_NAMES[number];
@@ -46,6 +49,11 @@ export interface VaultCreateInput {
 export interface VaultAppendInput {
     path: string;
     content: string;
+}
+
+export interface VaultMoveInput {
+    sourcePath: string;
+    targetPath: string;
 }
 
 export type VaultProcessInput = {
@@ -82,6 +90,7 @@ export interface CoreWriteInputMap {
     vault_process: VaultProcessInput;
     frontmatter_update: FrontmatterUpdateInput;
     remove_note_image: RemoveNoteImageInput;
+    vault_move: VaultMoveInput;
 }
 
 export type CoreWriteInput = CoreWriteInputMap[CoreWriteToolName];
@@ -162,6 +171,22 @@ export interface PreparedNoteImageRemovalOperation {
     };
 }
 
+export interface PreparedMoveOperation {
+    readonly kind: "move";
+    readonly id: string;
+    readonly toolCallId: string;
+    readonly name: typeof VAULT_MOVE_TOOL_NAME;
+    readonly input: VaultMoveInput;
+    readonly path: string;
+    readonly sourcePath: string;
+    readonly targetPath: string;
+    /** Host identity is private and never part of model-visible results. */
+    readonly fileIdentity: OperationsVaultFile;
+    readonly fileVersion?: { readonly mtime: number; readonly size: number };
+    readonly expectedBefore: string;
+    readonly expectedAfter: string;
+}
+
 export interface NoteImageRemovalEffectResult {
     readonly key: "note" | "attachment";
     readonly status: NoteImageRemovalEffectStatus;
@@ -170,7 +195,7 @@ export interface NoteImageRemovalEffectResult {
     readonly checkpoint?: "attachment-restored";
 }
 
-export type PreparedOperation = PreparedMarkdownOperation | PreparedNoteImageRemovalOperation;
+export type PreparedOperation = PreparedMarkdownOperation | PreparedNoteImageRemovalOperation | PreparedMoveOperation;
 
 export function getOperationsBlockedReason(
     operations: readonly PreparedOperation[],
@@ -202,6 +227,8 @@ export interface OperationsIntent {
     expiresAt: number;
     operations: readonly PreparedOperation[];
     state: OperationsIntentState;
+    /** Missing only on legacy internal proposals; they cannot enter direct apply. */
+    mode?: OperationsMode;
 }
 
 export type OperationsFailureCategory =
@@ -220,13 +247,14 @@ export type OperationsFailureCategory =
     | "undo_unavailable"
     | "unknown";
 
-export type OperationExecutionStatus = "succeeded" | "failed" | "stale" | "skipped" | "partial" | "unknown";
+export type OperationExecutionStatus = "succeeded" | "unchanged" | "failed" | "stale" | "skipped" | "partial" | "unknown";
 
 export interface OperationExecutionResult {
     operationId: string;
     toolCallId: string;
     name: CoreWriteToolName | typeof REMOVE_NOTE_IMAGE_TOOL_NAME;
     path: string;
+    targetPath?: string;
     status: OperationExecutionStatus;
     failureCategory?: OperationsFailureCategory;
     message?: string;
@@ -254,6 +282,12 @@ export interface UndoReceipt {
     expectedAfter: string;
     createdAt: number;
     expiresAt: number;
+    /** Populated only for native move recovery; no reference snapshots. */
+    move?: {
+        originalPath: string;
+        fileIdentity: OperationsVaultFile;
+        fileVersion?: { readonly mtime: number; readonly size: number };
+    };
 }
 
 export type UndoStatus = "undone" | "failed" | "stale" | "expired" | "unavailable" | "unknown";
@@ -274,6 +308,7 @@ export interface OperationsVaultFile {
     path: string;
     extension?: string;
     children?: unknown;
+    stat?: { mtime: number; size: number };
 }
 
 export interface OperationsVault {
@@ -296,6 +331,7 @@ export interface StageOperationsIntentInput {
     runId: string;
     turnId: string;
     operations: readonly OperationsToolCall[];
+    mode?: OperationsMode;
     /** Host-owned staging read boundary; never copied into the retained intent. */
     taskSourceReadGuard?: TaskSourceReadGuard;
 }

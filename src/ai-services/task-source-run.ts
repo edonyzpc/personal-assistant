@@ -25,6 +25,7 @@ import { createCooperativeTask } from './cooperative-task';
 import { throwIfAborted } from './chat-utils';
 import { boundActionStates, cloneActionStateBinding, cloneActionStates, type PaAgentActionState } from './pa-agent-result-facts';
 import { projectPaAgentToolStatus } from './pa-agent-action-history';
+import { isCoreWriteToolName } from './operations/input-validation';
 
 export const MAX_TASK_SOURCE_NOTE_HANDLES = 32;
 export const MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS = 8000;
@@ -373,13 +374,17 @@ export class TaskSourceRun {
                         // effects. Its old prose and parameters are never reused.
                         message = { ...message, inputLineage: completeInputLineage(),
                             content: message.content.flatMap(part => part.type === 'toolCall'
+                                && !isCoreWriteToolName(part.name) && part.name !== 'execute_operations'
                                 ? [{ type: 'toolCall' as const, id: part.id, name: part.name, input: {} }] : []) };
                         withdrawnAssistants.set(message, original);
                     } else message = message.role === 'toolResult' && status?.domainIdentity ? {
                         ...message,
                         inputLineage: completeInputLineage(),
                         content: { promptText: JSON.stringify(status), includeInNextPrompt: true,
+                            ...(status.operationsResult ? { promptText: JSON.stringify(status.operationsResult),
+                                resultFact: { kind: 'operations_result' as const, observation: status.operationsResult } } : {}),
                             metadata: { outcome: status.outcome, statusOnly: true,
+                                ...(status.operationsResult ? { operationsOwnerResult: true } : {}),
                                 ...(status.executionState ? { executionState: status.executionState } : {}) } },
                     } : undefined;
                 }

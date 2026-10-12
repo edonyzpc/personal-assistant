@@ -82,6 +82,16 @@ function OperationsGroupDiff({ group, mode, maxChangedRows }: OperationsGroupDif
     const [showAllContext, setShowAllContext] = useState(false);
     const [showCompleteBefore, setShowCompleteBefore] = useState(false);
     const [showCompleteAfter, setShowCompleteAfter] = useState(false);
+    if (group.targetPath) {
+        return (
+            <section className="pa-operations-diff__group" aria-label={group.path}>
+                <header className="pa-operations-diff__group-header">
+                    <span>{t('plugin.chat.operations.intent.move')}</span>
+                    <code>{group.path}</code><span aria-hidden="true"> → </span><code>{group.targetPath}</code>
+                </header>
+            </section>
+        );
+    }
     const block = group.blocks[Math.min(activeBlock, Math.max(0, group.blocks.length - 1))];
     const compactLimitReached = mode === 'compact' && maxChangedRows <= 0;
     let rows: readonly OperationsReviewDiffLine[] = [];
@@ -279,7 +289,7 @@ export function getOperationsCompactVisibility(model: OperationsReviewModel): Op
     }
 
     for (const group of model.groups.slice(2)) {
-        omittedChanges += group.changeCount;
+        omittedChanges += group.targetPath ? 1 : group.changeCount;
     }
     return { limits, omittedChanges };
 }

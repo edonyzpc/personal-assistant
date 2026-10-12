@@ -179,7 +179,7 @@ async function fixture(options: {
         id: "call-remove",
         index: 0,
         name: "remove_note_image",
-        input: { notePath: NOTE_PATH, imageReference: REFERENCE, attachmentAction: "delete" },
+        input: { mode: "apply", notePath: NOTE_PATH, imageReference: REFERENCE, attachmentAction: "delete" },
     };
     const sourceExecutor = createTaskSourceConstrainedExecutor({
         baseExecutor: { execute: jest.fn(async () => ({ outcome: "success" as const, promptText: "unused" })) },
@@ -215,6 +215,7 @@ async function fixture(options: {
         attachmentAction: "keep" | "delete",
         target: OperationsSession = session,
     ) => target.stage({
+        mode: "apply",
         runId: "run-execution",
         turnId: "turn-execution",
         taskSourceReadGuard: guard,
@@ -338,7 +339,7 @@ describe("B-160 note image removal execution", () => {
 
     it("continues an ordinary Agent batch across its own authority epoch change", async () => {
         const h = await fixture({ other: "Other" });
-        const intent = await h.session.stage({ runId: "run-execution", turnId: "turn-execution",
+        const intent = await h.session.stage({ runId: "run-execution", turnId: "turn-execution", mode: "apply",
             taskSourceReadGuard: h.guard, operations: [
                 { toolCallId: "append-note", name: "vault_append", input: { path: NOTE_PATH, content: "First" } },
                 { toolCallId: "append-other", name: "vault_append", input: { path: OTHER_PATH, content: "Second" } },
@@ -716,7 +717,8 @@ describe("B-160 note image removal execution", () => {
                     states => states.map(state => execution ? applyOperationsExecutionResult(state, execution) ?? state
                         : historyService.refreshOperationsActionState(state)));
             });
-            const executed = await historyService.confirmOperationsIntent(intent.id);
+            const executed = await historyService.executeOperationsIntentFromAgent({ intentId: intent.id,
+                runId: "run-execution", taskSourceReadGuard: h.guard });
             const restore = h.restoreAttachmentFile.getMockImplementation();
             if (!restore) throw new Error("missing restore implementation");
             h.restoreAttachmentFile.mockImplementation(async (file, bytes) => {
@@ -758,7 +760,7 @@ describe("B-160 note image removal execution", () => {
         expect(h.vault.notes.get(NOTE_PATH)).toBe(BEFORE);
     });
 
-    it("preserves earlier batch effects when image preparation settles after disposal", async () => {
+    it("prepares all image recovery before the first batch effect and writes nothing after disposal", async () => {
         const h = await fixture();
         const intent = await h.session.stage({ runId: "run-execution", turnId: "turn-execution",
             taskSourceReadGuard: h.guard, operations: [
@@ -782,12 +784,12 @@ describe("B-160 note image removal execution", () => {
         h.service.dispose();
         release();
         const result = await confirmed;
-        expect(result.state).toBe("partial");
-        expect(result.operations.map(operation => operation.status)).toEqual(["succeeded", "failed", "skipped"]);
+        expect(result.state).toBe("failed");
+        expect(result.operations.map(operation => operation.status)).toEqual(["skipped", "failed", "skipped"]);
         expect(result.operations.every(operation => operation.undoAvailable === false)).toBe(true);
-        expect(result.operations[1].effects).toEqual([{ key: "note", status: "not_started" },
+        expect(result.operations[1].effects).toEqual([{ key: "note", status: "not_started", failureCategory: "cancelled" },
             { key: "attachment", status: "not_started" }]);
-        expect(h.vault.notes.get(OTHER_PATH)).toBe("Other note.\nApplied first.");
+        expect(h.vault.notes.get(OTHER_PATH)).toBe("Other note.");
         expect(h.vault.notes.get(NOTE_PATH)).toBe(BEFORE);
         expect(h.vault.trashFile).not.toHaveBeenCalled();
     });
@@ -876,7 +878,8 @@ describe("B-160 note image removal execution", () => {
             await new Promise<void>(resolve => { releaseProcess = resolve; });
             return written;
         });
-        const confirmed = historyService.confirmOperationsIntent(intent.id);
+        const confirmed = historyService.executeOperationsIntentFromAgent({ intentId: intent.id,
+            runId: "run-execution", taskSourceReadGuard: h.guard });
         await started;
         historyService.dispose();
         h.service.dispose();

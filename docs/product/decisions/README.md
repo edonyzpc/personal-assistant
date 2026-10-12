@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-10-11
+Updated: 2026-10-12
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-063 | 单次 Operations 写入与原生移动 | Accepted | 合并暂存/执行，去多余 Confirm、保留 review/Undo，修复结果连续性与能力不足收敛；移动及引用维护复用 Obsidian，PA 不自建引用逻辑 | [Record](./dec-063-direct-operations-and-native-move.md) |
 | DEC-062 | PA Agent 工具混合披露 | Accepted | 基础直供、完整短目录、精确批量加载与真实绑定预披露；保持权限和独立计算，四项效果判定 | [Record](./dec-062-agent-hybrid-tool-disclosure.md) |
 | DEC-061 | Agent 独立通用计算 | Accepted | 计算与现有工具独立，Agent 自主组合；Pi/QuickJS Worker，无脚本内工具桥接 | [Record](./dec-061-independent-agent-computation.md) |
 | DEC-060 | PA prompt 精简与渐进披露 | Accepted | 常驻最小契约与原生工具，方法按需、事实解释随上下文，Agent 自主选择；B-170 独立 | [Record](./dec-060-agent-prompt-progressive-disclosure.md) |

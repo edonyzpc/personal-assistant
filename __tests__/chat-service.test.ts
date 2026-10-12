@@ -470,6 +470,7 @@ function createPendingOperationsIntent(input: StageOperationsIntentInput): Opera
         createdAt: 1,
         expiresAt: 10_000,
         state: 'pending',
+        mode: input.mode,
         operations: input.operations.map((operation, index) => ({
             kind: 'markdown',
             id: `operation-runtime-reserve-${index}`,
@@ -542,7 +543,7 @@ describe('Operations execution persistence', () => {
             const service = new ChatService(createPlugin() as unknown as ConstructorParameters<typeof ChatService>[0], session);
             try {
                 const guard = { isCurrent: () => true, isPathAllowed: () => true, isNoteDomainAllowed: () => true };
-                const intent = await session.stage({ runId: 'run', turnId: 'stage', taskSourceReadGuard: guard,
+                const intent = await session.stage({ runId: 'run', turnId: 'stage', mode: 'apply', taskSourceReadGuard: guard,
                     operations: [{ toolCallId: 'call', name: 'vault_append', input: { path: file.path, content: 'Green' } }] });
                 const input = { intentId: intent.id, runId: intent.runId, taskSourceReadGuard: guard };
                 let entered!: () => void, release!: () => void;
@@ -2019,6 +2020,7 @@ describe('ChatService.streamLLM integration', () => {
                                         id: 'operations-near-soft-call',
                                         name: 'vault_create',
                                         args: JSON.stringify({
+                                            mode: 'preview',
                                             path: '0.unsorted/near-soft.md',
                                             content: '# Near soft deadline',
                                         }),
@@ -2089,7 +2091,7 @@ describe('ChatService.streamLLM integration', () => {
             }
             expect(boundToolNames[0]).toContain('load_tools');
             expect(deferredNames(providerInputs[0])).toEqual(expect.arrayContaining([
-                'vault_create', 'vault_append', 'vault_process', 'frontmatter_update', 'execute_operations',
+                'vault_create', 'vault_append', 'vault_process', 'frontmatter_update', 'vault_move',
             ]));
             expect(boundToolNames.length).toBeGreaterThanOrEqual(2);
             expect(String(providerInputs[1].tool_definitions)).toContain('vault_create');
@@ -2123,7 +2125,8 @@ describe('ChatService.streamLLM integration', () => {
                             id: 'operations-without-predicted-memory',
                             name: 'vault_create',
                             args: JSON.stringify({
-                                path: '0.unsorted/unverified.md',
+                                mode: 'preview',
+                                            path: '0.unsorted/unverified.md',
                                 content: '# Unverified',
                             }),
                         }],
@@ -2212,7 +2215,8 @@ describe('ChatService.streamLLM integration', () => {
                                             id: 'operations-buffered-empty-ack',
                                             name: 'vault_create',
                                             args: JSON.stringify({
-                                                path: '0.unsorted/buffered-ack.md',
+                                                mode: 'preview',
+                                            path: '0.unsorted/buffered-ack.md',
                                                 content: '# Buffered acknowledgement',
                                             }),
                                         }],
@@ -2282,7 +2286,8 @@ describe('ChatService.streamLLM integration', () => {
             expect(human).not.toContain('Do not call tools or claim that a write has completed.');
             expect(human.split('Create a note for this decision.')).toHaveLength(2);
             expect(providerInputs[1].input).not.toContain('The ordinary turn deadline has been reached.');
-            expect(String(providerInputs[1].tool_definitions)).toContain('execute_operations');
+            expect(String(providerInputs[1].tool_definitions)).toContain('vault_create');
+            expect(String(providerInputs[1].tool_definitions)).not.toContain('execute_operations');
             expect(boundToolNames).toHaveLength(2);
             expect(lifecycleEvents.find((event) => event.type === 'agent_end')).toMatchObject({
                 status: 'incomplete',
@@ -3384,7 +3389,7 @@ describe('ChatService.streamLLM integration', () => {
             .sort();
         expect(exportedToolNames).toEqual(expectedFirstTurnToolNames());
         expect(deferredNames(modelInputs[0])).toEqual(expect.arrayContaining([
-            'execute_operations',
+            'vault_move',
             'frontmatter_update',
             'remove_note_image',
             'vault_append',
@@ -3397,7 +3402,7 @@ describe('ChatService.streamLLM integration', () => {
         { prompt: 'Save this conclusion as a new note in my vault.', legacyUnknown: false },
         { prompt: '就按刚才讨论的方案来。', legacyUnknown: false },
         { prompt: 'Legacy request with unknown provenance.', legacyUnknown: true },
-    ])('preserves Operations provenance for $prompt without writing until explicit confirmation', async ({ prompt, legacyUnknown }) => {
+    ])('preserves completed Operations provenance for $prompt through direct apply', async ({ prompt, legacyUnknown }) => {
         let modelTurn = 0;
         const requests: string[] = [];
         const model = {
@@ -3412,6 +3417,7 @@ describe('ChatService.streamLLM integration', () => {
                             id: 'call_create',
                             name: 'vault_create',
                             args: JSON.stringify({
+                                mode: 'apply',
                                 path: '0.unsorted/operations-e2e.md',
                                 content: '# Operations E2E',
                             }),
@@ -3419,7 +3425,7 @@ describe('ChatService.streamLLM integration', () => {
                     };
                     return;
                 }
-                yield { content: 'Review the inline proposal.' };
+                yield { content: 'The note has been saved.' };
             }),
         };
         mockCreateChatModel.mockResolvedValue(model);
@@ -3480,16 +3486,14 @@ describe('ChatService.streamLLM integration', () => {
                 expectedAfter: '# Operations E2E',
             }],
         });
-        expect(vault.create).not.toHaveBeenCalled();
+        expect(vault.create).toHaveBeenCalledTimes(1);
         const canonical = createPaAgentPersistedTurn({ runId: events[0].runId, turnId: events[0].turnId,
             messages: events.flatMap(event => event.type === 'message_end' ? [event.message] : []) });
         expect(canonical.actionStates).toHaveLength(1);
         const pending = canonical.actionStates![0];
-        expect(pending).toMatchObject({ owner: 'operations', phase: 'pending',
+        expect(pending).toMatchObject({ owner: 'operations', phase: 'completed',
             inputLineage: { completeness: legacyUnknown ? 'unknown' : 'complete' } });
 
-        const result = await service.confirmOperationsIntent(staged[0].id);
-        expect(result.state).toBe('completed');
         expect(vault.create).toHaveBeenCalledWith('0.unsorted/operations-e2e.md', '# Operations E2E');
         const completed = service.refreshOperationsActionState(pending);
         expect(completed).toMatchObject({ phase: 'completed', inputLineage: pending.inputLineage });
@@ -3497,7 +3501,7 @@ describe('ChatService.streamLLM integration', () => {
         const manager = new ChatHistoryManager({ store });
         await store.appendTurn(manager.serializeTurn({ kind: 'history', user: { role: 'user', content: prompt,
             inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'operations-user' }]) },
-            assistant: { role: 'assistant', content: 'Review the inline proposal.',
+            assistant: { role: 'assistant', content: 'The note has been saved.',
                 canonicalTurn: { ...canonical, actionStates: [completed] } } }, 'operations-conversation', 0));
         const hydrated = new ChatHistoryManager({ store }).deserializeTurn((await store.getTurns('operations-conversation'))[0]);
         const reopenedService = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
@@ -3516,7 +3520,7 @@ describe('ChatService.streamLLM integration', () => {
         } finally { reopenedService.dispose(); service.dispose(); await store.dispose(); }
     });
 
-    it('cancels a pending Operations intent when the setting is revoked before confirmation', async () => {
+    it('rejects a prepared apply intent when the setting is revoked before execution', async () => {
         const plugin = createPlugin({ operationsAgentEnabled: true });
         const vault = plugin.app.vault as typeof plugin.app.vault & {
             adapter: { exists: jest.Mock<(path: string) => Promise<boolean>> };
@@ -3534,11 +3538,13 @@ describe('ChatService.streamLLM integration', () => {
                 stageIntent(input: {
                     runId: string;
                     turnId: string;
+                    mode?: 'apply' | 'preview';
                     operations: Array<{ toolCallId: string; name: 'vault_create' | 'vault_append'; input: unknown }>;
                 }): Promise<OperationsIntent>;
             };
         }).operationsSession;
         const intent = await session.stageIntent({
+            mode: 'apply',
             runId: 'run-revoked',
             turnId: 'turn-revoked',
             operations: [{
@@ -3549,10 +3555,12 @@ describe('ChatService.streamLLM integration', () => {
         });
         plugin.isOperationsAgentEnabled = false;
 
-        await expect(service.confirmOperationsIntent(intent.id)).rejects.toThrow('no longer enabled');
+        await expect(service.executeOperationsIntentFromAgent({ intentId: intent.id, runId: intent.runId,
+            taskSourceReadGuard: { isCurrent: () => true, isPathAllowed: () => true, isNoteDomainAllowed: () => true } })).rejects.toThrow('no longer enabled');
 
         expect(vault.create).not.toHaveBeenCalled();
-        expect(() => service.cancelOperationsIntent(intent.id)).toThrow('cancelled');
+        service.cancelPendingOperations();
+        service.dispose();
     });
 
     it('constructs the fallback Operations service without touching historical audit paths', async () => {
@@ -3606,11 +3614,13 @@ describe('ChatService.streamLLM integration', () => {
                 stageIntent(input: {
                     runId: string;
                     turnId: string;
+                    mode?: 'apply' | 'preview';
                     operations: Array<{ toolCallId: string; name: 'vault_create' | 'vault_append'; input: unknown }>;
                 }): Promise<OperationsIntent>;
             };
         }).operationsSession;
         const intent = await session.stageIntent({
+            mode: 'apply',
             runId: 'run-fallback-audit-retirement',
             turnId: 'turn-fallback-audit-retirement',
             operations: [{
@@ -3620,7 +3630,8 @@ describe('ChatService.streamLLM integration', () => {
             }],
         });
 
-        const execution = await service.confirmOperationsIntent(intent.id);
+        const execution = await service.executeOperationsIntentFromAgent({ intentId: intent.id, runId: intent.runId,
+            taskSourceReadGuard: { isCurrent: () => true, isPathAllowed: () => true, isNoteDomainAllowed: () => true } });
         expect(execution.state).toBe('completed');
         const receiptId = execution.operations.find((result) => result.receiptId)?.receiptId;
         expect(receiptId).toBeDefined();

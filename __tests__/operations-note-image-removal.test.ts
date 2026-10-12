@@ -8,7 +8,7 @@ import type {
 import { OperationsIntentController } from "../src/ai-services/operations/operations-intent-controller";
 import { NoteImageRemovalResourceOwner } from "../src/ai-services/operations/note-image-removal-resources";
 import { createOperationsStagingToolExecutor } from "../src/ai-services/operations/operations-tool-executor";
-import { OPERATIONS_BLOCKED_MESSAGE, OperationsToolProvider } from "../src/ai-services/operations/operations-tool-provider";
+import { OperationsToolProvider } from "../src/ai-services/operations/operations-tool-provider";
 import { collectActionStates, cloneActionStates, projectActionSummaryFacts } from "../src/ai-services/pa-agent-result-facts";
 import { completeInputLineage } from "../src/ai-services/input-lineage";
 import type { NoteImageRemovalHost } from "../src/ai-services/operations/note-image-removal";
@@ -188,15 +188,17 @@ describe("B-160 note image removal", () => {
                 baseExecutor: { execute: jest.fn() }, registry, controller,
             });
             const call: ParsedBufferedToolCall = { type: "toolCall", id: "blocked-call", index: 0,
-                name: "remove_note_image", input: { notePath: NOTE_PATH,
+                name: "remove_note_image", input: { mode: "apply", notePath: NOTE_PATH,
                     imageReference: IMAGE_REFERENCE, attachmentAction: "delete" } };
             const prepared = await executor.prepareBatch!({ runId: "b160-red-run", turnId: "blocked-turn",
                 turnIndex: 0, userInput: "Remove the image and its attachment.", toolCalls: [call],
                 taskSourceReadGuard: makeGuard(), signal: new AbortController().signal });
             const result = prepared?.toolResults.get(call.id)!;
             const intent = controller.listPendingIntents()[0];
-            expect(result).toMatchObject({ promptText: OPERATIONS_BLOCKED_MESSAGE,
-                metadata: { staged: true, wrote: false, blockedReason: "shared_reference" } });
+            expect(JSON.parse(result.promptText)).toMatchObject({ state: "failed", undoAvailable: false,
+                operations: [{ status: "failed", failureCategory: "boundary_denied" }] });
+            expect(result).toMatchObject({ executionState: "not_started",
+                metadata: { wrote: false, blockedReason: "shared_reference" } });
             expect(intent.operations[0]).toMatchObject({ block: { reason: "shared_reference",
                 conflicts: [{ sourcePath: NOTE_PATH }] } });
             expect(JSON.stringify(result)).not.toContain(NOTE_PATH);
@@ -208,13 +210,12 @@ describe("B-160 note image removal", () => {
                     inputLineage: completeInputLineage([{ kind: "user-text", messageId: "b160-user" }]),
                     content: { promptText: result.promptText, previewText: result.previewText,
                         resultFact: result.resultFact, includeInNextPrompt: true,
-                        metadata: { ...result.metadata, originalLength: result.promptText.length,
+                        metadata: { ...result.metadata, operationsOwnerResult: true, originalLength: result.promptText.length,
                             observationChars: result.promptText.length } } },
             ] });
             const restored = cloneActionStates(JSON.parse(JSON.stringify(states)));
             expect(restored).toHaveLength(1);
-            expect(projectActionSummaryFacts(restored)[0]).toMatchObject({ phase: "pending",
-                operationsBlockedReason: "shared_reference" });
+            expect(projectActionSummaryFacts(restored)[0]).toMatchObject({ phase: "failed" });
             await expect(controller.executeIntent(intent.id)).rejects.toThrow("blocked by a shared image reference");
             expect(vault.process).not.toHaveBeenCalled();
             expect(vault.trashAttachment).not.toHaveBeenCalled();
@@ -286,6 +287,7 @@ describe("B-160 note image removal", () => {
             baseExecutor,
             registry,
             controller,
+            intentExecutor: input => controller.executeIntent(input.intentId),
         });
         const taskSourceReadGuard = makeGuard();
         const removeCall: ParsedBufferedToolCall = {
@@ -294,6 +296,7 @@ describe("B-160 note image removal", () => {
             index: 0,
             name: "remove_note_image",
             input: {
+                mode: "preview",
                 notePath: NOTE_PATH,
                 imageReference: IMAGE_REFERENCE,
                 attachmentAction: "delete",
@@ -314,7 +317,7 @@ describe("B-160 note image removal", () => {
 
         expect(toolResult).toMatchObject({
             outcome: "success",
-            metadata: { staged: true, wrote: false },
+            metadata: { mode: "preview", wrote: false },
         });
         const intent = controller.listPendingIntents()[0];
         expect(intent?.operations.map((operation) => operation.name)).toEqual(["remove_note_image"]);
@@ -332,7 +335,11 @@ describe("B-160 note image removal", () => {
         expect(vault.process).not.toHaveBeenCalled();
         expect(vault.trashAttachment).not.toHaveBeenCalled();
 
-        const result = await controller.executeIntent(intent.id);
+        const applyCall = { ...removeCall, id: "apply-remove", input: { ...removeCall.input as object, mode: "apply" } };
+        const applyBatch = { ...batch, turnId: "apply-turn", toolCalls: [applyCall] };
+        await executor.prepareBatch!(applyBatch);
+        const execution = await executor.execute({ ...applyBatch, toolCall: applyCall });
+        const result = controller.getContextResult(execution.metadata!.intentId as string).execution!;
         expect(result.state).toBe("completed");
         expect(result.operations[0]).toMatchObject({
             status: "succeeded",

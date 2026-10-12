@@ -49,25 +49,33 @@ describe("Operations core input validation", () => {
         })).toThrow("exact selected reference");
     });
 
-    it("strictly validates the four core tool shapes", () => {
-        expect(validateCoreWriteInput("vault_create", { path: "notes/new.md", content: "# New" })).toEqual({
+    it("requires an explicit apply/preview mode and validates the domain shapes", () => {
+        expect(() => validateCoreWriteInput("vault_create", { path: "notes/new.md", content: "# New" })).toThrow("mode");
+        expect(validateCoreWriteInput("vault_move", { mode: "preview", sourcePath: "notes/a.md", targetPath: "archive/a.md" }))
+            .toEqual({ mode: "preview", sourcePath: "notes/a.md", targetPath: "archive/a.md" });
+        expect(validateCoreWriteInput("vault_create", { mode: "apply", path: "notes/new.md", content: "# New" })).toEqual({
+            mode: "apply",
             path: "notes/new.md",
             content: "# New",
         });
-        expect(validateCoreWriteInput("vault_append", { path: "notes/a.md", content: "More" })).toEqual({
+        expect(validateCoreWriteInput("vault_append", { mode: "apply", path: "notes/a.md", content: "More" })).toEqual({
+            mode: "apply",
             path: "notes/a.md",
             content: "More",
         });
         expect(validateCoreWriteInput("vault_process", {
+            mode: "apply",
             path: "notes/a.md",
             operation: "insert",
             params: { anchor: { line: 2 }, position: "after", content: "More" },
         })).toEqual({
+            mode: "apply",
             path: "notes/a.md",
             operation: "insert",
             params: { anchor: { line: 2 }, position: "after", content: "More" },
         });
         expect(validateCoreWriteInput("frontmatter_update", {
+            mode: "apply",
             path: "notes/a.md",
             set: { status: "done", score: 2 },
             delete: ["draft"],
@@ -76,33 +84,38 @@ describe("Operations core input validation", () => {
 
     it("rejects additional, ambiguous, empty, and invalid nested properties", () => {
         expect(() => validateCoreWriteInput("vault_create", {
+            mode: "apply",
             path: "notes/new.md",
             content: "x",
             overwrite: true,
         })).toThrow(OperationsValidationError);
-        expect(() => validateCoreWriteInput("vault_append", { path: "notes/a.md", content: "" }))
+        expect(() => validateCoreWriteInput("vault_append", { mode: "apply", path: "notes/a.md", content: "" }))
             .toThrow("must not be empty");
         expect(() => validateCoreWriteInput("vault_process", {
+            mode: "apply",
             path: "notes/a.md",
             operation: "insert",
             params: { anchor: { heading: "A", line: 1 }, position: "after", content: "x" },
         })).toThrow("exactly one");
         expect(() => validateCoreWriteInput("vault_process", {
+            mode: "apply",
             path: "notes/a.md",
             operation: "delete",
             params: { from: 3, to: 2 },
         })).toThrow("less than or equal");
-        expect(() => validateCoreWriteInput("frontmatter_update", { path: "notes/a.md" }))
+        expect(() => validateCoreWriteInput("frontmatter_update", { mode: "apply", path: "notes/a.md" }))
             .toThrow("non-empty set or delete");
         expect(() => validateCoreWriteInput("frontmatter_update", {
+            mode: "apply",
             path: "notes/a.md",
             set: { status: "done" },
             delete: ["status"],
         })).toThrow("cannot set and delete");
 
-        const polluted = JSON.parse('{"path":"notes/a.md","set":{"safe":{"__proto__":{"polluted":true}}}}');
+        const polluted = JSON.parse('{"mode":"apply","path":"notes/a.md","set":{"safe":{"__proto__":{"polluted":true}}}}');
         expect(() => validateCoreWriteInput("frontmatter_update", polluted)).toThrow("forbidden key __proto__");
         expect(validateCoreWriteInput("vault_process", {
+            mode: "apply",
             path: "notes/a.md",
             operation: "replace",
             params: { search: "x".repeat(50_001), replace: "y" },
@@ -112,11 +125,13 @@ describe("Operations core input validation", () => {
     it("accepts complete provider selectors without a schema length cap", () => {
         const completeSelector = "h".repeat(1_001);
         expect(validateCoreWriteInput("vault_process", {
+            mode: "apply",
             path: "notes/a.md",
             operation: "insert",
             params: { anchor: { heading: completeSelector }, position: "after", content: "x" },
         })).toMatchObject({ params: { anchor: { heading: completeSelector } } });
         expect(validateCoreWriteInput("vault_process", {
+            mode: "apply",
             path: "notes/a.md",
             operation: "delete",
             params: { section: completeSelector },
@@ -126,14 +141,17 @@ describe("Operations core input validation", () => {
     it("keeps structural frontmatter boundaries without key-count or key-length caps", () => {
         const longKey = "k".repeat(257);
         expect(validateCoreWriteInput("frontmatter_update", {
+            mode: "apply",
             path: "notes/a.md",
             delete: [longKey],
         })).toMatchObject({ delete: [longKey] });
         expect(validateCoreWriteInput("frontmatter_update", {
+            mode: "apply",
             path: "notes/a.md",
             delete: Array.from({ length: 257 }, (_, index) => `key-${index}`),
         })).toMatchObject({ delete: expect.arrayContaining(["key-256"]) });
         expect(validateCoreWriteInput("frontmatter_update", {
+            mode: "apply",
             path: "notes/a.md",
             set: Object.fromEntries(Array.from(
                 { length: 257 },
@@ -141,14 +159,17 @@ describe("Operations core input validation", () => {
             )),
         })).toMatchObject({ set: expect.objectContaining({ "key-256": 256 }) });
         expect(() => validateCoreWriteInput("frontmatter_update", {
+            mode: "apply",
             path: "notes/a.md",
             set: { nested: { [longKey]: true } },
         })).not.toThrow();
         expect(() => validateCoreWriteInput("frontmatter_update", {
+            mode: "apply",
             path: "notes/a.md",
             delete: ["", "key"],
         })).toThrow("empty key");
         expect(() => validateCoreWriteInput("frontmatter_update", {
+            mode: "apply",
             path: "notes/a.md",
             delete: ["key", "key"],
         })).toThrow("duplicate keys");
@@ -156,10 +177,12 @@ describe("Operations core input validation", () => {
 
     it("keeps JSON protocol safety without node or encoded-character budgets", () => {
         expect(validateCoreWriteInput("frontmatter_update", {
+            mode: "apply",
             path: "notes/a.md",
             set: { values: Array.from({ length: 10_001 }, (_, index) => index) },
         })).toMatchObject({ set: { values: expect.arrayContaining([10_000]) } });
         expect(validateCoreWriteInput("frontmatter_update", {
+            mode: "apply",
             path: "notes/a.md",
             set: { value: "\u0000".repeat(50_001) },
         })).toMatchObject({ set: { value: "\u0000".repeat(50_001) } });
@@ -167,6 +190,7 @@ describe("Operations core input validation", () => {
         const cyclic: Record<string, unknown> = {};
         cyclic.self = cyclic;
         expect(() => validateCoreWriteInput("frontmatter_update", {
+            mode: "apply",
             path: "notes/a.md",
             set: cyclic,
         })).toThrow("must not contain cycles");

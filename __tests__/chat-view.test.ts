@@ -38,6 +38,7 @@ import type { MessageImage } from '../src/chat/image-types';
 import type { GenerationInputSnapshotV1, GenerationInputSnapshotV2 } from '../src/ai-services/generation-input-snapshot';
 import { completeInputLineage, toGenerationInputLineage } from '../src/ai-services/input-lineage';
 import type {
+    OperationsControllerEvent,
     OperationsExecutionResult,
     OperationsIntent,
     PreparedOperation,
@@ -83,8 +84,14 @@ const mockStreamLLM = jest.fn<(
     chatHistory?: unknown[],
     options?: StreamLLMOptions,
 ) => Promise<void>>();
-const mockConfirmOperationsIntent = jest.fn<(intentId: string) => Promise<OperationsExecutionResult>>();
-const mockCancelOperationsIntent = jest.fn<(intentId: string) => OperationsIntent>();
+const mockOperationsListeners = new Set<(event: OperationsControllerEvent) => void>();
+const mockSubscribeOperations = (listener: (event: OperationsControllerEvent) => void) => {
+    mockOperationsListeners.add(listener);
+    return () => mockOperationsListeners.delete(listener);
+};
+const emitOperationsExecution = (result: OperationsExecutionResult) => {
+    for (const listener of mockOperationsListeners) listener({ type: "intent-result", result });
+};
 const mockCancelPendingOperations = jest.fn<() => void>();
 const mockUndoOperations = jest.fn<(receiptIds: readonly string[]) => Promise<UndoResult[]>>();
 const mockDisposeChatService = jest.fn<() => void>();
@@ -111,11 +118,9 @@ jest.mock('react-dom/client', () => {
 jest.mock('../src/ai-services/chat-service', () => ({
     ChatService: jest.fn().mockImplementation(() => ({
         streamLLM: mockStreamLLM,
-        confirmOperationsIntent: mockConfirmOperationsIntent,
-        cancelOperationsIntent: mockCancelOperationsIntent,
         cancelPendingOperations: mockCancelPendingOperations,
         undoOperations: mockUndoOperations,
-        subscribeOperations: () => () => {},
+        subscribeOperations: mockSubscribeOperations,
         refreshOperationsActionState: (state: unknown) => state,
         registerOperationsContextPersistence: () => {},
         dispose: mockDisposeChatService,
@@ -976,11 +981,9 @@ function createView(options: {
         }),
         createChatService: jest.fn(() => ({
             streamLLM: mockStreamLLM,
-            confirmOperationsIntent: mockConfirmOperationsIntent,
-            cancelOperationsIntent: mockCancelOperationsIntent,
             cancelPendingOperations: mockCancelPendingOperations,
             undoOperations: mockUndoOperations,
-            subscribeOperations: () => () => {},
+            subscribeOperations: mockSubscribeOperations,
             refreshOperationsActionState: (state: unknown) => state,
             registerOperationsContextPersistence: () => {},
             dispose: mockDisposeChatService,
@@ -1104,8 +1107,7 @@ describe('LLMView turn lifecycle', () => {
         animationFrames = [];
         nextAnimationFrameId = 1;
         mockStreamLLM.mockReset();
-        mockConfirmOperationsIntent.mockReset();
-        mockCancelOperationsIntent.mockReset();
+        mockOperationsListeners.clear();
         mockCancelPendingOperations.mockReset();
         mockUndoOperations.mockReset();
         mockDisposeChatService.mockReset();
@@ -5997,7 +5999,7 @@ describe('LLMView turn lifecycle', () => {
         expect(getButtonsByClass(containerEl, 'share-card-message-button')).toHaveLength(0);
     });
 
-    it('keeps an Operations preview inline and inert until the model turn finishes, then supports confirm and Undo', async () => {
+    it('shows direct Operations results and allows Undo before the model turn finishes', async () => {
         const { view, containerEl, plugin } = createView({ operationsEnabled: true });
         await view.onOpen();
         const operation: PreparedOperation = {
@@ -6021,8 +6023,7 @@ describe('LLMView turn lifecycle', () => {
             operations: [operation],
             state: 'pending',
         };
-        mockCancelOperationsIntent.mockReturnValue({ ...intent, state: 'cancelled' });
-        mockConfirmOperationsIntent.mockResolvedValue({
+        const execution: OperationsExecutionResult = {
             intentId: intent.id,
             state: 'completed',
             operations: [{
@@ -6033,7 +6034,7 @@ describe('LLMView turn lifecycle', () => {
                 status: 'succeeded',
                 receiptId: 'receipt_1',
             }],
-        });
+        };
         mockUndoOperations.mockResolvedValue([{
             receiptId: 'receipt_1',
             operationId: operation.id,
@@ -6048,9 +6049,7 @@ describe('LLMView turn lifecycle', () => {
         call.options.onOperationsIntentStaged?.(intent);
 
         const card = getElementByClass(containerEl, 'pa-operations-intent-card');
-        const confirmButton = getButtonByText(card, 'Confirm changes');
-        expect(confirmButton.disabled).toBe(true);
-        expect(mockConfirmOperationsIntent).not.toHaveBeenCalled();
+        expect(walkAll(card, el => el.tagName === 'button' && allText(el) === 'Confirm changes')).toHaveLength(0);
         expect(allText(card)).toContain('0.unsorted/decision.md');
         expect(allText(card)).toContain('Keep the quiet default.');
         const openReviewButton = getButtonByText(card, 'Open full review');
@@ -6064,16 +6063,8 @@ describe('LLMView turn lifecycle', () => {
             registeredSession.reviewId,
         );
 
-        call.resolve();
+        emitOperationsExecution(execution);
         await flushPromises();
-        await flushPromises();
-        runAnimationFrames(true);
-
-        expect(allText(containerEl)).toContain('The current proposal is ready for review below. Nothing has been written yet.');
-        expect(confirmButton.disabled).toBe(false);
-        await confirmButton.click();
-        await flushPromises();
-        expect(mockConfirmOperationsIntent).toHaveBeenCalledWith(intent.id);
         expect(allText(card)).toContain('Changes applied.');
 
         const undoButton = getButtonByText(card, 'Undo');
@@ -6082,6 +6073,8 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         expect(mockUndoOperations).toHaveBeenCalledWith(['receipt_1']);
         expect(allText(card)).toContain('Undone');
+        call.resolve();
+        await flushPromises();
     });
 
     it.each(['checkpoint', 'expired', 'failed'] as const)('shows compound image effects and retains them through %s Undo feedback inline', async undoScenario => {
@@ -6121,7 +6114,7 @@ describe('LLMView turn lifecycle', () => {
             operations: [operation],
             state: 'pending',
         };
-        mockConfirmOperationsIntent.mockResolvedValue({
+        const execution: OperationsExecutionResult = {
             intentId: intent.id,
             state: 'partial',
             operations: [{
@@ -6138,7 +6131,7 @@ describe('LLMView turn lifecycle', () => {
                 ],
                 undoAvailable: true,
             }],
-        });
+        };
         mockUndoOperations.mockResolvedValue([{
             receiptId: 'receipt_image_inline',
             operationId: operation.id,
@@ -6167,11 +6160,8 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         await flushPromises();
         runAnimationFrames(true);
-        const confirmButton = getButtonByText(card, 'Confirm changes');
-        await confirmButton.click();
+        emitOperationsExecution(execution);
         await flushPromises();
-
-        expect(mockConfirmOperationsIntent).toHaveBeenCalledWith(intent.id);
         expect(allText(card)).toContain('Some changes were applied');
         expect(allText(card)).toContain('Note: Applied');
         expect(allText(card)).toContain('Image file: Outcome unknown');
@@ -6193,7 +6183,7 @@ describe('LLMView turn lifecycle', () => {
         }
     });
 
-    it('shows shared-image conflicts in the inline preview and leaves only review and Cancel available', async () => {
+    it('shows shared-image conflicts with review and no Confirm or pending Cancel', async () => {
         const { view, containerEl, plugin } = createView({ operationsEnabled: true });
         await view.onOpen();
         const intent: OperationsIntent = {
@@ -6224,7 +6214,6 @@ describe('LLMView turn lifecycle', () => {
                 },
             }],
         };
-        mockCancelOperationsIntent.mockReturnValue({ ...intent, state: 'cancelled' });
         getTextArea(containerEl).value = 'Remove the image and attachment';
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
@@ -6239,17 +6228,11 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(card)).toContain('The note and attachment have not been changed.');
         expect(allText(card)).toContain('Attachment deletion is blocked.');
         expect(allText(card)).not.toContain('The local image file will be deleted');
-        const confirmButton = getButtonByText(card, 'Confirm changes');
-        expect(confirmButton.disabled).toBe(true);
-        await confirmButton.click();
-        expect(mockConfirmOperationsIntent).not.toHaveBeenCalled();
+        expect(walkAll(card, el => el.tagName === 'button' && allText(el) === 'Confirm changes')).toHaveLength(0);
+        expect(walkAll(card, el => el.tagName === 'button' && allText(el) === 'Cancel')).toHaveLength(0);
         getButtonByText(card, 'Open full review').click();
         await flushPromises();
         expect(plugin.openOperationsReview).toHaveBeenCalledTimes(1);
-        const cancelButton = getButtonByText(card, 'Cancel');
-        expect(cancelButton.disabled).toBe(false);
-        cancelButton.click();
-        expect(mockCancelOperationsIntent).toHaveBeenCalledWith(intent.id);
     });
 
     it('shows a full-review route failure without writing the pending proposal', async () => {
@@ -6283,14 +6266,12 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         streamCalls[0].options.onOperationsIntentStaged?.(intent);
         const card = getElementByClass(containerEl, 'pa-operations-intent-card');
-        const confirmButton = getButtonByText(card, 'Confirm changes');
         getButtonByText(card, 'Open full review').click();
         await flushPromises();
 
         expect(plugin.openOperationsReview).toHaveBeenCalledTimes(1);
         expect(allText(card)).toContain('route unavailable');
-        expect(confirmButton.disabled).toBe(true);
-        expect(mockConfirmOperationsIntent).not.toHaveBeenCalledWith(intent.id);
+        expect(walkAll(card, el => el.tagName === 'button' && allText(el) === 'Confirm changes')).toHaveLength(0);
         streamCalls[0].resolve();
         await flushPromises();
     });
@@ -6440,7 +6421,6 @@ describe('LLMView turn lifecycle', () => {
         async (actionLabel) => {
             const { view, containerEl } = createView({ operationsEnabled: true });
             await view.onOpen();
-            mockCancelOperationsIntent.mockClear();
             mockCancelPendingOperations.mockClear();
 
             const operation: PreparedOperation = {
@@ -6472,7 +6452,7 @@ describe('LLMView turn lifecycle', () => {
             await flushPromises();
 
             const card = getElementByClass(containerEl, 'pa-operations-intent-card');
-            const confirmButton = getButtonByText(card, 'Confirm changes');
+            const openReviewButton = getButtonByText(card, 'Open full review');
             let releasePendingWrites!: () => void;
             const pendingWrites = new Promise<void>((resolve) => {
                 releasePendingWrites = resolve;
@@ -6482,19 +6462,14 @@ describe('LLMView turn lifecycle', () => {
             }).conversationPersistence;
             const waitForPendingWrites = jest.spyOn(persistence, 'waitForPendingWrites')
                 .mockReturnValueOnce(pendingWrites);
-            mockCancelOperationsIntent.mockClear();
             mockCancelPendingOperations.mockClear();
-            mockConfirmOperationsIntent.mockClear();
             getButtonByText(containerEl, actionLabel).click();
             await Promise.resolve();
 
             expect(waitForPendingWrites).toHaveBeenCalledTimes(1);
-            expect(mockCancelOperationsIntent).toHaveBeenCalledWith(intent.id);
             expect(mockCancelPendingOperations).toHaveBeenCalledTimes(1);
-            expect(confirmButton.disabled).toBe(true);
-            expect(confirmButton.hidden).toBe(true);
-            confirmButton.click();
-            expect(mockConfirmOperationsIntent).not.toHaveBeenCalled();
+            expect(openReviewButton.disabled).toBe(true);
+            expect(walkAll(card, el => el.tagName === 'button' && allText(el) === 'Confirm changes')).toHaveLength(0);
             expect(getElementsByClass(containerEl, 'pa-operations-intent-card')).toHaveLength(1);
 
             releasePendingWrites();
@@ -12920,25 +12895,16 @@ describe('LLMView turn lifecycle', () => {
                 emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__' }));
                 emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
                 const guard = { isCurrent: () => true, isPathAllowed: () => true, isNoteDomainAllowed: () => true };
-                const intent = await session.stage({ runId: 'run_ui_1', turnId: 'turn_1', taskSourceReadGuard: guard,
+                const intent = await session.stage({ runId: 'run_ui_1', turnId: 'turn_1', mode: 'apply', taskSourceReadGuard: guard,
                     operations: [{ toolCallId: 'stage-call', name: 'vault_process', input: {
                         path: file.path, operation: 'replace', params: { search: 'Blue', replace: 'Green', occurrence: 'first' },
                     } }] });
-                call.options.onOperationsIntentStaged?.(intent);
                 const lineage = completeInputLineage([{ kind: 'user-text', messageId: 'current-operations-user' }]);
                 emitCanonical(call, canonicalEvent({ type: 'message_end', message: {
                     ...assistantMessage('stage-assistant', [{ type: 'toolCall', id: 'stage-call', name: 'vault_process', input: {} }]),
                     inputLineage: lineage,
                 } }));
-                emitCanonical(call, canonicalEvent({ type: 'message_end', message: toolResultMessage('stage-result', {
-                    toolCallId: 'stage-call', toolName: 'vault_process', inputLineage: lineage,
-                    content: { promptText: OPERATIONS_STAGED_MESSAGE, previewText: 'Staged vault_process for inline review; no write occurred.',
-                        includeInNextPrompt: true, resultFact: { kind: 'approval_pending', intentId: intent.id },
-                        metadata: { outcome: 'success', intentId: intent.id, operationCount: 1, staged: true, wrote: false,
-                            originalLength: OPERATIONS_STAGED_MESSAGE.length, observationChars: OPERATIONS_STAGED_MESSAGE.length } },
-                }) }));
-                emitCanonical(call, canonicalEvent({ type: 'turn_end', status: 'completed' }));
-                emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'execute-turn' }));
+                call.options.onOperationsIntentStaged?.(intent);
                 let releaseNative: (() => void) | undefined;
                 let nativeStarted: Promise<void> | undefined;
                 if (assertion === 'late-close') {

@@ -28,6 +28,8 @@ const OPERATIONS_DISABLED_MESSAGE = "Operations is no longer enabled. Nothing wa
 export interface OperationsServiceOptions {
     vault: OperationsVault;
     trashFile: (file: OperationsVaultFile) => Promise<void>;
+    /** Native Obsidian FileManager.renameFile port; also used for Undo. */
+    renameFile?: (file: OperationsVaultFile, targetPath: string) => Promise<void>;
     isOperationsAgentEnabled: () => boolean;
     isPathAllowed?: (path: string) => boolean;
     frontmatterCodec?: FrontmatterCodec;
@@ -74,6 +76,7 @@ export class OperationsService {
         const controller = new OperationsIntentController({
             vault: this.options.vault,
             trashFile: this.options.trashFile,
+            ...(this.options.renameFile ? { renameFile: this.options.renameFile } : {}),
             ...(this.options.isPathAllowed ? { isPathAllowed: this.options.isPathAllowed } : {}),
             ...(options.markSelfWrite ? { markSelfWrite: options.markSelfWrite } : {}),
             ...(this.options.frontmatterCodec ? { frontmatterCodec: this.options.frontmatterCodec } : {}),
@@ -163,6 +166,14 @@ export class OperationsSession {
         return await this.stage(input, signal);
     }
 
+    getBatchContextResult(runId: string, turnId: string, toolCallIds: readonly string[]): ReturnType<OperationsIntentController["getBatchContextResult"]> {
+        return this.controller.getBatchContextResult(runId, turnId, toolCallIds);
+    }
+
+    getCallContextResult(runId: string, turnId: string, toolCallId: string): ReturnType<OperationsIntentController["getCallContextResult"]> {
+        return this.controller.getCallContextResult(runId, turnId, toolCallId);
+    }
+
     async confirm(intentId: string): Promise<OperationsExecutionResult> {
         if (!this.isOperationsAgentEnabled()) {
             this.tryCancel(intentId);
@@ -209,6 +220,9 @@ export class OperationsSession {
                 "The pending Operations intent is unavailable or belongs to another user request.",
             );
         }
+        if (intent.mode !== "apply") {
+            throw new OperationsControllerError("boundary_denied", "Only a freshly prepared apply call can execute through the Agent port.");
+        }
 
         const sourceAuthority = input.taskSourceReadGuard.captureSourceAuthority?.();
         const assertOperationAllowed = (operation: PreparedOperation, afterSelfWrite: boolean): void => {
@@ -241,6 +255,10 @@ export class OperationsSession {
                         "boundary_denied",
                         `Target is outside the current task source scope: ${operation.path}.`,
                     );
+                }
+                if (operation.kind === "move" && !isTaskSourcePathAllowed(input.taskSourceReadGuard,
+                    operation.targetPath, "output_target_exists")) {
+                    throw new OperationsControllerError("boundary_denied", "Move destination is outside the current task source scope.");
                 }
             } catch (error) {
                 if (error instanceof OperationsControllerError) throw error;

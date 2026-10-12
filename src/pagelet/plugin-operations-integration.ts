@@ -127,6 +127,7 @@ export class PageletOperationsPluginIntegration {
             const intent = await session.stageIntent({
                 runId: `pagelet:${input.candidateId}`,
                 turnId: `pagelet-link:${input.candidateId}:${this.dependencies.now()}`,
+                mode: "apply",
                 operations: [{
                     toolCallId: `pagelet-link:${input.candidateId}:${attempt}`,
                     name: "frontmatter_update",

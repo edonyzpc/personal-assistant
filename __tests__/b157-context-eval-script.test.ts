@@ -225,7 +225,7 @@ function historySummaryMaterials(request: any) {
 function summaryEpisodeReply(onSummary: () => void, followupReplyChars = 1600) {
     // Offline capacity fixture: larger neutral replies make all three original
     // corrections enter whole-turn summary prefixes without changing live seeds.
-    const staged = new Set<string>();
+    const submitted = new Set<string>();
     return (body: any) => {
         if (body.messages[0].content.startsWith('Produce a source-grounded summary')) {
             const { source: material } = historySummaryMaterials(body);
@@ -247,10 +247,11 @@ function summaryEpisodeReply(onSummary: () => void, followupReplyChars = 1600) {
         const current = [...body.messages].reverse().find((message: any) => message.role === 'user')?.content;
         const text = typeof current === 'string' ? (current.split('User input:\n').at(-1) ?? '').split('\n\n<runtime_instruction>')[0] : '';
         const seedIndex = fixture.summaryOperationSeeds.findIndex((seed: string) => text.endsWith(seed));
-        if (seedIndex >= 0 && !staged.has(text)) {
-            staged.add(text);
+        if (seedIndex >= 0 && !submitted.has(text)) {
+            submitted.add(text);
             return { role: 'assistant', content: '', tool_calls: [{ index: 0, id: `summary-operation-${seedIndex}`,
                 type: 'function', function: { name: 'vault_append', arguments: JSON.stringify({
+                    mode: 'apply',
                     path: `${fixture.syntheticPrefix}${seedIndex === 0 ? 'source' : 'new-source'}.md`,
                     content: `B157 摘要操作 ${seedIndex === 0 ? 'A' : 'B'}`,
                 }) } }] };
@@ -275,15 +276,14 @@ function assertSummaryOperations(episode: any) {
             input.body.messages.filter((message: any) => message.role === 'user').at(-1)?.content?.slice(-190)),
         beforeReopenPresent: Boolean(episode.summaryStateBeforeReopen) };
     if (!diagnostics.beforeReopenPresent) throw new Error(JSON.stringify(diagnostics));
-    expect(episode.summaryStateBeforeReopen.map((turn: any) => turn.assistant.actionStates[0].phase)).toEqual(['completed', 'pending']);
-    expect(episode.summaryStateAfterReopen.map((turn: any) => turn.assistant.actionStates[0].phase)).toEqual(['completed', 'lost']);
-    expect(episode.confirmations).toHaveLength(1);
-    expect(episode.confirmations[0]).toMatchObject({ domain: 'operations', boundary: 'actual-session-confirm',
-        intentId: episode.summaryStateAfterReopen[0].assistant.actionStates[0].operationId });
+    expect(episode.summaryStateBeforeReopen.map((turn: any) => turn.assistant.actionStates[0].phase)).toEqual(['completed', 'unknown']);
+    expect(episode.summaryStateAfterReopen.map((turn: any) => turn.assistant.actionStates[0].phase)).toEqual(['completed', 'unknown']);
+    expect(episode.confirmations).toEqual([]);
     expect(episode.reopen).toMatchObject({ hydratedTurnCount: 2, newStore: true, newManager: true, newService: true });
     expect(episode.localSyntheticNotes.find((note: any) => note.path.endsWith('/source.md')).content).toContain('B157 摘要操作 A');
     expect(episode.localSyntheticNotes.find((note: any) => note.path.endsWith('/new-source.md')).content).not.toContain('B157 摘要操作 B');
-    expect(episode.localMutations.filter((mutation: any) => mutation.path.endsWith('/new-source.md'))).toEqual([]);
+    expect(episode.localMutations.filter((mutation: any) => mutation.path.endsWith('/new-source.md')))
+        .toEqual([expect.objectContaining({ kind: 'process' })]);
 }
 
 function summaryHistory(episode: any, preparationIndex = 0) {
@@ -1021,7 +1021,7 @@ describe('B157 independent context harness contracts (offline)', () => {
                         owner: 'operations', phase: 'completed', operationsEffectStatus: 'applied',
                     });
                     expect(actionFacts.retainedActionFacts[1].actionStates[0]).toMatchObject({
-                        owner: 'operations', phase: 'lost', effectOutcome: 'unknown', sideEffectsMayHaveOccurred: true,
+                        owner: 'operations', phase: 'unknown', effectOutcome: 'unknown', sideEffectsMayHaveOccurred: true,
                     });
                     if (scenario === 'missing') delete actionFacts.retainedActionFacts;
                     else if (scenario === 'forged') actionFacts.retainedActionFacts[1].actionStates[0].phase = 'completed';
@@ -1333,10 +1333,10 @@ describe('B157 independent context harness contracts (offline)', () => {
         } finally { await domains.dispose(); await store.dispose(); }
     });
 
-    it('keeps original Operations disabled while the authorized fixture stages and confirms a real operation', async () => {
+    it('keeps original Operations disabled while the authorized fixture directly applies a real operation', async () => {
         const setup = offlineServicePlugin((_body, index) => index === 0 ? { role: 'assistant', content: '', tool_calls: [{
             index: 0, id: 'controlled-append', type: 'function', function: { name: 'vault_append',
-                arguments: '{"path":"B157-context-eval/source.md","content":"B157 已执行银杏"}' },
+                arguments: '{"mode":"apply","path":"B157-context-eval/source.md","content":"B157 已执行银杏"}' },
         }] } : { role: 'assistant', content: '已有合成笔记操作结果。' });
         (globalThis as any).__b157PreReloadPlugin = {};
         const handle = harness.installB157ContextEval(setup.app);
@@ -1348,9 +1348,7 @@ describe('B157 independent context harness contracts (offline)', () => {
             expect(setup.plugin.settings.operationsAgentEnabled).toBe(false);
             expect(setup.bodies[0].tools?.some((tool: any) => tool?.function?.name === 'vault_append')).toBe(false);
             expect(deferredDirectoryNames(setup.bodies[0])).toContain('vault_append');
-            expect(episode.confirmations).toEqual(expect.arrayContaining([expect.objectContaining({
-                domain: 'operations', boundary: 'actual-session-confirm',
-            })]));
+            expect(episode.confirmations).toEqual([]);
             expect(episode.domainStateAfterEvents[0].assistant.actionStates).toEqual(expect.arrayContaining([
                 expect.objectContaining({ owner: 'operations', phase: 'completed' }),
             ]));

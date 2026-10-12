@@ -10,7 +10,6 @@ import { PolicyEngine } from "../src/ai-services/policy-engine";
 import { ChatService } from "../src/ai-services/chat-service";
 import { PaAgentLoop } from "../src/ai-services/pa-agent-loop";
 import type {
-    PaAgentToolBatchPreparationInput,
     PaAgentToolExecutionInput,
     PaAgentToolExecutor,
     ParsedBufferedToolCall,
@@ -26,20 +25,14 @@ import {
 } from "../src/ai-services/operations/operations-service";
 import {
     createOperationsStagingToolExecutor,
-    type OperationsIntentExecutor,
-    type OperationsIntentStager,
 } from "../src/ai-services/operations/operations-tool-executor";
 import {
-    OPERATIONS_STAGED_MESSAGE,
-    OperationsExecuteToolCapability,
     OperationsToolCapability,
     OperationsToolProvider,
 } from "../src/ai-services/operations/operations-tool-provider";
 import {
     CORE_WRITE_TOOL_NAMES,
-    EXECUTE_OPERATIONS_TOOL_NAME,
     type OperationsIntent,
-    type PreparedMarkdownOperation,
     type OperationsVault,
     type OperationsVaultFile,
     type StageOperationsIntentInput,
@@ -64,36 +57,33 @@ function deferredNames(providerInput: unknown): string[] {
         .matchAll(/^- name: ([^\n]+)$/gm)].map(match => match[1]);
 }
 
-describe("Operations Agent runtime discovery and staging", () => {
-    it("loads the five staging tools and narrow execution action without a legacy opt-in", async () => {
+describe("Operations Agent direct runtime", () => {
+    it("loads direct Operations and move without an execution handoff", async () => {
         const provider = new OperationsToolProvider();
 
         await expect(provider.load(providerContext(false))).resolves.toMatchObject({
             status: "available",
-            capabilities: [...CORE_WRITE_TOOL_NAMES, EXECUTE_OPERATIONS_TOOL_NAME].map(() => expect.anything()),
+            capabilities: [...CORE_WRITE_TOOL_NAMES].map(() => expect.anything()),
         });
         const loaded = await provider.load(providerContext(true));
 
         expect(loaded.status).toBe("available");
         expect(loaded.capabilities.map((capability) => capability.name))
-            .toEqual([...CORE_WRITE_TOOL_NAMES, EXECUTE_OPERATIONS_TOOL_NAME]);
+            .toEqual([...CORE_WRITE_TOOL_NAMES]);
         await expect(provider.load(providerContext(false))).resolves.toMatchObject({
             status: "available",
-            capabilities: [...CORE_WRITE_TOOL_NAMES, EXECUTE_OPERATIONS_TOOL_NAME].map(() => expect.anything()),
+            capabilities: [...CORE_WRITE_TOOL_NAMES].map(() => expect.anything()),
         });
         expect(loaded.capabilities.every((capability) => (
             capability.kind === "action"
             && capability.permission === "local-filesystem-write"
-            && capability.requiresConfirmation === true
+            && capability.requiresConfirmation === false
         ))).toBe(true);
         expect(loaded.capabilities.map((capability) => capability.name)).not.toContain("append_to_current_note");
         expect(loaded.capabilities.map((capability) => capability.name)).not.toContain("replace_selection");
         await expect(loaded.capabilities[0].execute({}, {
             host: {} as never,
-        })).rejects.toThrow("cannot execute directly");
-        await expect(loaded.capabilities.at(-1)?.execute?.({ intentId: "intent-1" }, {
-            host: {} as never,
-        })).rejects.toThrow("must run through the Operations runtime executor");
+        })).rejects.toThrow("must run through the Operations batch executor");
     });
 
     it("keeps actions undiscoverable unless the current run explicitly includes them", async () => {
@@ -102,206 +92,21 @@ describe("Operations Agent runtime discovery and staging", () => {
         expect(registry.listDefinitions()).toEqual([]);
         expect(registry.exportProviderSchemas()).toEqual([]);
         expect(registry.listDefinitions({ includeActions: true }).map((definition) => definition.name))
-            .toEqual([...CORE_WRITE_TOOL_NAMES, EXECUTE_OPERATIONS_TOOL_NAME]);
+            .toEqual([...CORE_WRITE_TOOL_NAMES]);
         expect(registry.exportProviderSchemas({ includeActions: true }).map((schema) => schema.function.name))
-            .toEqual([...CORE_WRITE_TOOL_NAMES, EXECUTE_OPERATIONS_TOOL_NAME]);
+            .toEqual([...CORE_WRITE_TOOL_NAMES]);
     });
 
     it("keeps protocol shape without publishing arbitrary Operations schema capacities", () => {
         const frontmatter = new OperationsToolCapability("frontmatter_update").inputSchema;
         const process = new OperationsToolCapability("vault_process").inputSchema;
-        const execute = new OperationsExecuteToolCapability().inputSchema;
+
         expect(frontmatter.additionalProperties).toBe(false);
         expect(process.additionalProperties).toBe(false);
-        expect(execute.additionalProperties).toBe(false);
-        expect(execute.required).toEqual(["intentId"]);
-        expect(JSON.stringify([frontmatter, process, execute]))
+        expect(frontmatter.required).toContain("mode");
+        expect(process.required).toContain("mode");
+        expect(JSON.stringify([frontmatter, process]))
             .not.toMatch(/"(?:maxLength|maxItems|maxProperties|maximum)":/);
-    });
-
-    it("stages all action calls in a model phase as one intent and never direct-executes them", async () => {
-        const registry = await operationsRegistry();
-        const stageIntent = jest.fn(async (
-            input: StageOperationsIntentInput,
-            _signal?: AbortSignal,
-        ) => fakeIntent(input));
-        const baseExecute = jest.fn(async () => ({
-            outcome: "success" as const,
-            promptText: "base",
-        }));
-        const executor = createOperationsStagingToolExecutor({
-            baseExecutor: { execute: baseExecute },
-            registry,
-            controller: { stageIntent },
-        });
-        const batch = batchInput([
-            toolCall("call-1", "vault_create", { path: "0.unsorted/result.md", content: "# Result" }, 0),
-            toolCall("call-2", "frontmatter_update", { path: "projects/a.md", set: { status: "done" } }, 1),
-        ]);
-
-        const prepared = await executor.prepareBatch?.(batch);
-
-        expect(stageIntent).toHaveBeenCalledTimes(1);
-        expect(stageIntent).toHaveBeenCalledWith(
-            expect.objectContaining({
-                runId: "run-1",
-                turnId: "turn-1",
-                operations: [
-                    expect.objectContaining({ toolCallId: "call-1", name: "vault_create" }),
-                    expect.objectContaining({ toolCallId: "call-2", name: "frontmatter_update" }),
-                ],
-            }),
-            batch.signal,
-        );
-        expect(prepared?.toolResults.get("call-1")?.promptText).toBe(OPERATIONS_STAGED_MESSAGE);
-        expect(prepared?.toolResults.get("call-1")?.resultFact).toEqual({
-            kind: "approval_pending", intentId: "intent-1",
-        });
-        expect(OPERATIONS_STAGED_MESSAGE).toContain("latest user request");
-        expect(OPERATIONS_STAGED_MESSAGE).toContain("no write has occurred");
-        expect(OPERATIONS_STAGED_MESSAGE).toContain("does not report the state of any earlier proposal");
-        expect(prepared?.toolResults.get("call-2")?.metadata).toMatchObject({
-            intentId: "intent-1",
-            operationCount: 2,
-            staged: true,
-            wrote: false,
-        });
-        expect(baseExecute).not.toHaveBeenCalled();
-
-        const direct = await executor.execute({
-            runId: "run-1",
-            turnId: "turn-1",
-            turnIndex: 0,
-            userInput: "save",
-            toolCall: batch.toolCalls[0],
-            signal: batch.signal,
-        });
-        expect(direct).toMatchObject({
-            outcome: "policy_rejected",
-            metadata: { reason: "operations_batch_required", wrote: false },
-        });
-        expect(baseExecute).not.toHaveBeenCalled();
-    });
-
-    it("invokes prepareBatch once before individual dispatch and consumes staged results", async () => {
-        const execute = jest.fn<PaAgentToolExecutor["execute"]>(async () => {
-            throw new Error("prepared action must not execute individually");
-        });
-        const prepareBatch = jest.fn<NonNullable<PaAgentToolExecutor["prepareBatch"]>>(async (input) => ({
-            toolResults: new Map(input.toolCalls.map((call) => [call.id, {
-                outcome: "success" as const,
-                promptText: OPERATIONS_STAGED_MESSAGE,
-                metadata: { staged: true, wrote: false },
-            }])),
-        }));
-        const loop = new PaAgentLoop({
-            runId: "run-1",
-            userInput: "save these changes",
-            model: {
-                stream: async function* () {
-                    yield { type: "toolcall_delta", id: "call-1", name: "vault_create", input: { path: "0.unsorted/a.md", content: "A" }, index: 0 } as const;
-                    yield { type: "toolcall_delta", id: "call-2", name: "vault_append", input: { path: "b.md", content: "B" }, index: 1 } as const;
-                },
-            },
-            toolExecutor: { execute, prepareBatch, getExecutionMode: () => "sequential" },
-            toolExecutionMode: "hybrid",
-            hostPolicy: { afterTurn: () => ({ action: "stop", status: "completed", reason: "test" }) },
-            now: () => 100,
-        });
-
-        const result = await loop.run();
-
-        expect(prepareBatch).toHaveBeenCalledTimes(1);
-        expect(prepareBatch.mock.calls[0][0].toolCalls.map((call) => call.id)).toEqual(["call-1", "call-2"]);
-        expect(execute).not.toHaveBeenCalled();
-        expect(result.turns[0].toolResults.map((message) => message.content.metadata?.staged))
-            .toEqual([true, true]);
-    });
-
-    it("executes only through the narrow current-run Operations action port", async () => {
-        const registry = await operationsRegistry();
-        const intentExecutor = jest.fn<OperationsIntentExecutor>(async () => ({
-            intentId: "intent-1",
-            state: "completed" as const,
-            operations: [],
-        }));
-        const executor = createOperationsStagingToolExecutor({
-            baseExecutor: { execute: jest.fn<PaAgentToolExecutor["execute"]>() },
-            registry,
-            controller: { stageIntent: jest.fn<OperationsIntentStager["stageIntent"]>() },
-            intentExecutor,
-        });
-        const taskSourceReadGuard = Object.freeze({
-            isCurrent: () => true,
-            isPathAllowed: () => true,
-            isNoteDomainAllowed: () => true,
-        });
-        const input: PaAgentToolExecutionInput = {
-            runId: "run-1",
-            turnId: "turn-2",
-            turnIndex: 1,
-            userInput: "Apply the current staged change.",
-            toolCall: toolCall("execute", "execute_operations", { intentId: "intent-1" }, 0),
-            signal: new AbortController().signal,
-            taskSourceReadGuard,
-        };
-
-        expect(executor.getExecutionMode?.("execute_operations")).toBe("sequential");
-        expect(executor.getRetrySafety?.("execute_operations")).toBe("side_effect");
-        await expect(executor.execute(input)).resolves.toMatchObject({
-            outcome: "success",
-            metadata: { intentId: "intent-1", state: "completed" },
-        });
-        expect(intentExecutor).toHaveBeenCalledWith({
-            intentId: "intent-1",
-            runId: "run-1",
-            signal: input.signal,
-            taskSourceReadGuard,
-        });
-
-        await expect(executor.execute({
-            ...input,
-            toolCall: toolCall("invalid", "execute_operations", {
-                intentId: "intent-1", approved: true, runId: "forged",
-            }, 0),
-        })).resolves.toMatchObject({
-            outcome: "schema_invalid",
-            metadata: { reason: "operations_schema_invalid", wrote: false },
-        });
-        expect(intentExecutor).toHaveBeenCalledTimes(1);
-
-        await expect(executor.execute({ ...input, taskSourceReadGuard: undefined })).resolves.toMatchObject({
-            outcome: "policy_rejected",
-            metadata: { reason: "task_source_scope_changed", wrote: false },
-        });
-        expect(intentExecutor).toHaveBeenCalledTimes(1);
-    });
-
-    it("does not describe an uncertain execution exception as zero writes or offer a replay", async () => {
-        const registry = await operationsRegistry();
-        const intentExecutor = jest.fn<(input: unknown) => Promise<never>>();
-        const executor = createOperationsStagingToolExecutor({
-            baseExecutor: { execute: jest.fn<PaAgentToolExecutor["execute"]>() }, registry,
-            controller: { stageIntent: jest.fn<OperationsIntentStager["stageIntent"]>() }, intentExecutor,
-        });
-        const input: PaAgentToolExecutionInput = {
-            runId: "run-1", turnId: "turn-2", turnIndex: 1, userInput: "Apply the current staged change.",
-            toolCall: toolCall("execute", "execute_operations", { intentId: "intent-1" }, 0),
-            signal: new AbortController().signal,
-            taskSourceReadGuard: { isCurrent: () => true, isPathAllowed: () => true },
-        };
-        intentExecutor.mockRejectedValueOnce(new Error("Receipt unavailable after native call"));
-        const unknown = await executor.execute(input);
-        expect(unknown).toMatchObject({ executionState: "acceptance_unknown",
-            resultFact: { kind: "unknown", operationId: "intent-1" },
-            recovery: { operationId: "intent-1", allowedActions: ["query_operation", "wait"] } });
-        expect(unknown.metadata?.wrote).toBeUndefined();
-        expect(unknown.promptText).not.toContain("did not execute");
-        expect(unknown.previewText).not.toContain("did not start");
-
-        intentExecutor.mockRejectedValueOnce(new OperationsControllerError("boundary_denied", "Source revoked"));
-        expect(await executor.execute(input)).toMatchObject({ outcome: "policy_rejected",
-            executionState: "failed", metadata: { wrote: false, category: "boundary_denied" } });
     });
 
     it.each([
@@ -321,8 +126,8 @@ describe("Operations Agent runtime discovery and staging", () => {
             expect(deferredNames(fixture.providerInputs[0]))
                 .toEqual(expect.arrayContaining([...CORE_WRITE_TOOL_NAMES]));
             expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
-            expect(fixture.executeIntent).not.toHaveBeenCalled();
-            expect(fixture.vault.create).not.toHaveBeenCalled();
+            expect(fixture.executeIntent).toHaveBeenCalledTimes(1);
+            expect(fixture.vault.create).toHaveBeenCalledTimes(1);
         } finally {
             fixture.dispose();
         }
@@ -343,92 +148,63 @@ describe("Operations Agent runtime discovery and staging", () => {
             expect(deferredNames(fixture.providerInputs[1]))
                 .toEqual(expect.arrayContaining([...CORE_WRITE_TOOL_NAMES]));
             expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
-            expect(fixture.executeIntent).not.toHaveBeenCalled();
-            expect(fixture.vault.create).not.toHaveBeenCalled();
+            expect(fixture.executeIntent).toHaveBeenCalledTimes(1);
+            expect(fixture.vault.create).toHaveBeenCalledTimes(1);
         } finally {
             fixture.dispose();
         }
     });
 
-    it.each([false, true])("executes the current staged intent from a later model turn in the same user request (native authority change: %s)", async advanceAuthorityOnWrite => {
-        let stagedIntent: OperationsIntent | undefined;
-        let stagedInput: StageOperationsIntentInput | undefined;
-        let fixture: ReturnType<typeof operationsRuntimeFixture>;
-        fixture = operationsRuntimeFixture("Create notes/new.md with # Result now.", [
-            toolCall("stage-create", "vault_create", { path: "notes/new.md", content: "# Result" }, 0),
-        ], {
-            advanceAuthorityOnWrite,
-            finalText: "Created notes/new.md.",
-            nextToolCalls: (_input, modelTurn) => {
-                if (modelTurn !== 2) return undefined;
-                [stagedIntent] = fixture.controller.listPendingIntents();
-                stagedInput = fixture.stageIntent.mock.calls[0]?.[0];
-                return [toolCall("execute-current", "execute_operations", {
-                    intentId: stagedIntent?.id,
-                }, 0)];
-            },
-        });
+    it.each([false, true])("retains the real completed result in the next provider request (native authority change: %s)", async advanceAuthorityOnWrite => {
+        const fixture = operationsRuntimeFixture("Create notes/new.md with # Result now.", [
+            toolCall("create-current", "vault_create", { mode: "apply", path: "notes/new.md", content: "# Result" }, 0),
+        ], { advanceAuthorityOnWrite, finalText: "Created notes/new.md." });
         try {
             await fixture.run();
-
-            expect(stagedIntent).toBeDefined();
-            expect(stagedInput).toBeDefined();
-            if (!stagedIntent || !stagedInput) throw new Error("The staged intent was not captured.");
-            expect(stagedInput).toMatchObject({
-                runId: expect.stringMatching(/^run_/),
-                turnId: expect.stringMatching(/^turn_/),
-            });
-            expect(stagedInput?.runId).not.toBe(stagedInput?.turnId);
-            const turnIds = fixture.lifecycle.flatMap(event => (
-                event.type === "turn_start" ? [event.turnId] : []
-            ));
-            expect(turnIds).toHaveLength(3);
-            expect(new Set(turnIds).size).toBe(3);
-            expect(turnIds[0]).toBe(stagedInput?.turnId);
-            expect(turnIds).not.toContain(stagedInput?.runId);
-            expect(fixture.boundToolNames[1]).not.toContain("execute_operations");
-            expect(deferredNames(fixture.providerInputs[1])).toContain("execute_operations");
-            expect(fixture.boundToolNames[2]).not.toContain("execute_operations");
-            expect(deferredNames(fixture.providerInputs[2])).toContain("execute_operations");
+            expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
             expect(fixture.executeIntent).toHaveBeenCalledTimes(1);
-            expect(fixture.executeIntent).toHaveBeenCalledWith(stagedIntent.id, expect.any(Function));
             expect(fixture.vault.create).toHaveBeenCalledWith("notes/new.md", "# Result");
-            const executionResult = fixture.lifecycle.flatMap(event => event.type === "turn_end" ? event.toolResults ?? [] : [])
-                .find(message => message.toolName === "execute_operations");
-            expect(executionResult?.content).toMatchObject({
-                resultFact: { kind: "applied", action: "operations", receiptId: expect.any(String) },
-                metadata: { executionState: "succeeded" },
+            const result = fixture.lifecycle.flatMap(event => event.type === "turn_end" ? event.toolResults ?? [] : [])
+                .find(message => message.toolCallId === "create-current");
+            expect(result?.content).toMatchObject({
+                resultFact: { kind: "operations_result", observation: { state: "completed",
+                    operations: [{ toolCallId: "create-current", status: "succeeded", receiptId: expect.any(String) }] } },
+                metadata: { executionState: "succeeded", operationsOwnerResult: true },
             });
-            expect(JSON.stringify(fixture.lifecycle)).not.toContain('task_source_scope_expired');
-            expect(fixture.controller.getContextResult(stagedIntent.id, stagedInput.runId))
-                .toMatchObject({
-                    terminal: "completed",
-                    pending: false,
-                    executing: false,
-                    execution: { state: "completed" },
-                });
-            expect(fixture.providerInputs).toHaveLength(3);
-            const completionMessages = (fixture.providerInputs[2] as {
-                messages?: Array<{ content?: unknown }>;
-            }).messages ?? [];
-            const pairedCompletionResult = completionMessages
-                .map(message => String(message.content))
-                .find(content => content.includes('"callId":"execute-current"'));
-            const completionSystem = String(completionMessages[0]?.content ?? "");
-            expect(pairedCompletionResult).toContain('"contextScope":"current_run"');
-            expect(pairedCompletionResult).toContain('"executionState":"succeeded"');
-            expect(pairedCompletionResult).toContain('"domainPhase":"completed"');
-            expect(completionSystem).toContain("actual owner execution receipts");
-            expect(completionSystem).toContain("deferred disclosure does not deny");
-            expect(completionSystem).not.toContain("actually bound and executed");
-            expect(completionSystem).not.toContain("Do not modify notes or claim a new write without");
+            expect(fixture.controller.listPendingIntents()).toEqual([]);
+            expect(fixture.providerInputs).toHaveLength(2);
+            const input = String(fixture.providerInputs[1]);
+            expect(input).toContain('"callId":"create-current"');
+            expect(input).toContain('"domainPhase":"completed"');
+            expect(input).not.toContain("result_unknown");
+            expect(input).not.toContain("- name: execute_operations");
             expect(fixture.legacyEvents).toContainEqual(expect.objectContaining({
-                kind: "answer-snapshot",
-                snapshot: "Created notes/new.md.",
+                kind: "answer-snapshot", snapshot: "Created notes/new.md.",
             }));
-        } finally {
-            fixture.dispose();
-        }
+        } finally { fixture.dispose(); }
+    });
+
+    it("keeps native move completion after the original source path disappears", async () => {
+        const fixture = operationsRuntimeFixture("Move notes/current.md to notes/moved.md.", [
+            toolCall("move-current", "vault_move", { mode: "apply", sourcePath: "notes/current.md", targetPath: "notes/moved.md" }, 0),
+        ], { advanceAuthorityOnWrite: true, finalText: "Moved the note." });
+        try {
+            await fixture.run({ runSourceSelection: { schemaVersion: 1, scope: "notes",
+                selectionId: "move-selection", userMessageId: "move-user" } });
+            expect(fixture.renameFile).toHaveBeenCalledTimes(1);
+            expect(fixture.vault.getAbstractFileByPath("notes/current.md")).toBeNull();
+            expect(fixture.vault.getAbstractFileByPath("notes/moved.md")).not.toBeNull();
+            const result = fixture.lifecycle.flatMap(event => event.type === "turn_end" ? event.toolResults ?? [] : [])
+                .find(message => message.toolCallId === "move-current");
+            expect(result?.content.resultFact).toMatchObject({ kind: "operations_result", observation: {
+                state: "completed", operations: [{ toolCallId: "move-current", status: "succeeded" }],
+            } });
+            const next = String(fixture.providerInputs[1]);
+            expect(next).toContain('"state":"completed"');
+            expect(next).toContain('"toolCallId":"move-current"');
+            expect(next).not.toContain("result_unknown");
+            expect(fixture.lifecycle.at(-1)).toMatchObject({ type: "agent_end", status: "completed" });
+        } finally { fixture.dispose(); }
     });
 
     it.each([undefined, "notes", "combined"] as const)("completes both legal creates after its own native authority changes (scope: %s)", async scope => {
@@ -439,9 +215,6 @@ describe("Operations Agent runtime discovery and staging", () => {
         ], {
             advanceAuthorityOnWrite: true,
             finalText: "Both notes were created.",
-            nextToolCalls: (_input, modelTurn) => modelTurn === 2 ? [toolCall("execute-current", "execute_operations", {
-                intentId: fixture.controller.listPendingIntents()[0]?.id,
-            }, 0)] : undefined,
         });
         const execute = fixture.operationsSession.executeCurrentIntent.bind(fixture.operationsSession);
         const guardChecks: unknown[] = [];
@@ -462,17 +235,21 @@ describe("Operations Agent runtime discovery and staging", () => {
             await fixture.run(scope ? { runSourceSelection: { schemaVersion: 1, scope,
                 selectionId: "legal-batch-selection", userMessageId: "legal-batch-user" } } : {});
             expect(guardChecks).toEqual([{ point: "before", current: true, authority: true },
-                { point: "after", current: true, authority: true },
-                { point: "after", current: true, authority: true }]);
+                { point: "after", current: false, authority: true },
+                { point: "after", current: false, authority: true }]);
             expect(await fixture.executeIntent.mock.results[0]?.value).toMatchObject({ state: "completed",
                 operations: [{ status: "succeeded" }, { status: "succeeded" }] });
             const result = fixture.lifecycle.flatMap(event => event.type === "turn_end" ? event.toolResults ?? [] : [])
-                .find(message => message.toolName === "execute_operations");
-            expect(result?.content).toMatchObject({ resultFact: { kind: "applied", action: "operations" },
+                .find(message => message.toolName === "vault_create");
+            expect(result?.content).toMatchObject({ resultFact: { kind: "operations_result", observation: { state: "completed" } },
                 metadata: { executionState: "succeeded" } });
             expect(fixture.vault.getAbstractFileByPath("notes/first.md")).not.toBeNull();
             expect(fixture.vault.getAbstractFileByPath("notes/second.md")).not.toBeNull();
             expect(fixture.vault.create).toHaveBeenCalledTimes(2);
+            const next = String(fixture.providerInputs[1]);
+            expect(next).toContain('"callId":"create-second"');
+            expect(next).toContain('"toolCallId":"create-second","status":"succeeded"');
+            expect(next).not.toContain('result_unknown');
         } finally { fixture.dispose(); }
     });
 
@@ -486,9 +263,6 @@ describe("Operations Agent runtime discovery and staging", () => {
             advanceAuthorityOnWrite: true,
             excludedPaths,
             finalText: "The first note was created; the second result needs verification.",
-            nextToolCalls: (_input, modelTurn) => modelTurn === 2 ? [toolCall("execute-current", "execute_operations", {
-                intentId: fixture.controller.listPendingIntents()[0]?.id,
-            }, 0)] : undefined,
         });
         const create = fixture.vault.create.getMockImplementation();
         if (!create) throw new Error("Missing native create fixture");
@@ -500,11 +274,10 @@ describe("Operations Agent runtime discovery and staging", () => {
         try {
             await fixture.run();
             const result = fixture.lifecycle.flatMap(event => event.type === "turn_end" ? event.toolResults ?? [] : [])
-                .find(message => message.toolName === "execute_operations");
+                .find(message => message.toolName === "vault_create");
             expect(result?.content).toMatchObject({
-                resultFact: { kind: "partial", completedRefs: [expect.any(String)], remainingRefs: [expect.any(String)] },
-                metadata: { executionState: "partially_succeeded",
-                    recovery: { allowedActions: ["query_operation", "wait"] } },
+                resultFact: { kind: "operations_result", observation: { state: "partial" } },
+                metadata: { executionState: "succeeded" },
             });
             expect(result?.content.metadata?.preflightOnly).toBeUndefined();
             expect(fixture.vault.getAbstractFileByPath("notes/first.md")).not.toBeNull();
@@ -514,6 +287,10 @@ describe("Operations Agent runtime discovery and staging", () => {
             expect(await fixture.executeIntent.mock.results[0].value).toMatchObject({ state: "partial", operations: [
                 { status: "succeeded" }, { status: "skipped" },
             ] });
+            const next = String(fixture.providerInputs[1]);
+            expect(next).toContain('"toolCallId":"create-first","status":"succeeded"');
+            expect(next).toContain('"toolCallId":"create-second","status":"skipped"');
+            expect(next).not.toContain('result_unknown');
         } finally { fixture.dispose(); }
     });
 
@@ -585,7 +362,7 @@ describe("Operations Agent runtime discovery and staging", () => {
 
     it('keeps a real staged preview available without implicit execution', async () => {
         const fixture = operationsRuntimeFixture('Create notes/new.md with # Result', [
-            toolCall('create', 'vault_create', { path: 'notes/new.md', content: '# Result' }, 0),
+            toolCall('create', 'vault_create', { mode: 'preview', path: 'notes/new.md', content: '# Result' }, 0),
         ]);
         const versions = new WritingVersionService({ getWritingVersion: async () => null,
             putWritingVersion: async () => undefined, listWritingVersions: async () => [] });
@@ -599,7 +376,7 @@ describe("Operations Agent runtime discovery and staging", () => {
             expect(fixture.providerInputs).toHaveLength(2);
             expect(fixture.boundToolNames[0]).toContain('get_writing_context');
             expect(fixture.boundToolNames[1]).not.toContain('execute_operations');
-            expect(deferredNames(fixture.providerInputs[1])).toContain('execute_operations');
+            expect(deferredNames(fixture.providerInputs[1])).not.toContain('execute_operations');
             expect(prepare).not.toHaveBeenCalled();
             expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
             expect(fixture.executeIntent).not.toHaveBeenCalled();
@@ -638,7 +415,7 @@ describe("Operations Agent runtime discovery and staging", () => {
                         type: "toolcall_delta",
                         id: "call-timeout",
                         name: "vault_create",
-                        input: { path: "0.unsorted/timeout.md", content: "pending" },
+                        input: { mode: "apply", path: "0.unsorted/timeout.md", content: "pending" },
                         index: 0,
                     } as const;
                 },
@@ -695,7 +472,7 @@ describe("Operations Agent runtime discovery and staging", () => {
                         type: "toolcall_delta",
                         id: "call-abort",
                         name: "vault_create",
-                        input: { path: "0.unsorted/abort.md", content: "pending" },
+                        input: { mode: "apply", path: "0.unsorted/abort.md", content: "pending" },
                         index: 0,
                     } as const;
                 },
@@ -824,11 +601,11 @@ describe("Operations-independent first-turn read capabilities", () => {
 });
 
 describe("Operations runtime task source admission", () => {
-    it("stages a create-then-append batch without a source declaration or writes", async () => {
+    it("previews a create-then-append batch without a source declaration or writes", async () => {
         const prompt = "不要读取现有笔记。新建 notes/new.md，内容为 # Draft，然后追加 Final。";
         const fixture = operationsRuntimeFixture(prompt, [
-            toolCall("create", "vault_create", { path: "notes/new.md", content: "# Draft" }, 0),
-            toolCall("append", "vault_append", { path: "notes/new.md", content: "Final" }, 1),
+            toolCall("create", "vault_create", { mode: "preview", path: "notes/new.md", content: "# Draft" }, 0),
+            toolCall("append", "vault_append", { mode: "preview", path: "notes/new.md", content: "Final" }, 1),
         ]);
         try {
             await fixture.run();
@@ -848,8 +625,8 @@ describe("Operations runtime task source admission", () => {
             });
             expect(intent).not.toHaveProperty("taskSourceReadGuard");
             expect(fixture.lifecycle).toEqual(expect.arrayContaining([
-                expect.objectContaining({ type: "tool_execution_end", toolCallId: "create", outcome: "success", metadata: expect.objectContaining({ contentMetadata: expect.objectContaining({ staged: true, wrote: false }) }) }),
-                expect.objectContaining({ type: "tool_execution_end", toolCallId: "append", outcome: "success", metadata: expect.objectContaining({ contentMetadata: expect.objectContaining({ staged: true, wrote: false }) }) }),
+                expect.objectContaining({ type: "tool_execution_end", toolCallId: "create", outcome: "success", metadata: expect.objectContaining({ contentMetadata: expect.objectContaining({ mode: "preview", wrote: false }) }) }),
+                expect.objectContaining({ type: "tool_execution_end", toolCallId: "append", outcome: "success", metadata: expect.objectContaining({ contentMetadata: expect.objectContaining({ mode: "preview", wrote: false }) }) }),
                 expect.objectContaining({ type: "agent_end", status: "completed" }),
             ]));
             expect(fixture.vault.adapter.exists).toHaveBeenCalledWith("notes/new.md");
@@ -1132,18 +909,26 @@ function operationsRuntimeFixture(
         read: jest.fn(async (file: OperationsVaultFile) => oldContents.get(file.path) ?? ""),
         create: jest.fn(async (path: string, content: string) => {
             const file = { path, extension: "md", stat: { ctime: 1, mtime: 1, size: content.length } };
-            if (fixtureOptions.advanceAuthorityOnWrite) {
-                fileObjects.set(path, file);
-                oldContents.set(path, content);
-                authorityEpoch += 1;
-            }
+            fileObjects.set(path, file);
+            oldContents.set(path, content);
+            if (fixtureOptions.advanceAuthorityOnWrite) authorityEpoch += 1;
             return file;
         }),
-        process: jest.fn(async (_file: OperationsVaultFile, _change: (text: string) => string) => undefined),
+        process: jest.fn(async (file: OperationsVaultFile, change: (text: string) => string) => {
+            oldContents.set(file.path, change(oldContents.get(file.path) ?? ""));
+            if (fixtureOptions.advanceAuthorityOnWrite) authorityEpoch += 1;
+        }),
         adapter: { exists: jest.fn(async (path: string) => fileObjects.has(path)) },
     } satisfies OperationsVault & { getMarkdownFiles(): OperationsVaultFile[] };
     const trashFile = jest.fn(async (_file: OperationsVaultFile) => undefined);
-    const controller = new OperationsIntentController({ vault, trashFile,
+    const renameFile = jest.fn(async (file: OperationsVaultFile, targetPath: string) => {
+        const content = oldContents.get(file.path) ?? "";
+        fileObjects.delete(file.path); oldContents.delete(file.path);
+        file.path = targetPath;
+        fileObjects.set(targetPath, file); oldContents.set(targetPath, content);
+        if (fixtureOptions.advanceAuthorityOnWrite) authorityEpoch += 1;
+    });
+    const controller = new OperationsIntentController({ vault, trashFile, renameFile,
         isPathAllowed: path => !fixtureOptions.excludedPaths?.includes(path) });
     const operationsSession = new OperationsSession({
         controller,
@@ -1233,7 +1018,7 @@ function operationsRuntimeFixture(
         ...(fixtureOptions.policyOptions ? { policyOptions: fixtureOptions.policyOptions } : {}),
     });
     return {
-        vault, otherFile, trashFile, controller, operationsSession, stageIntent, executeIntent, getFileCache,
+        vault, otherFile, trashFile, renameFile, controller, operationsSession, stageIntent, executeIntent, getFileCache,
         boundToolNames, providerInputs, lifecycle, legacyEvents,
         run: (outputOptions: Pick<PaAgentStreamOptions, 'writingRequest' | 'writingOutputProtocol'
             | 'writingContextHost' | 'chatHistory' | 'runSourceSelection'> = {}) => runtime.streamTurn({
@@ -1314,37 +1099,7 @@ function toolCall(
     input: unknown,
     index: number,
 ): ParsedBufferedToolCall {
-    return { type: "toolCall", id, name, input, index };
-}
-
-function batchInput(toolCalls: ParsedBufferedToolCall[]): PaAgentToolBatchPreparationInput {
-    return {
-        runId: "run-1",
-        turnId: "turn-1",
-        turnIndex: 0,
-        userInput: "save this conclusion",
-        toolCalls,
-        signal: new AbortController().signal,
-    };
-}
-
-function fakeIntent(input: StageOperationsIntentInput): OperationsIntent {
-    return {
-        id: "intent-1",
-        runId: input.runId,
-        turnId: input.turnId,
-        createdAt: 1,
-        expiresAt: 2,
-        state: "pending",
-        operations: input.operations.map((operation, index) => ({
-            kind: "markdown",
-            id: `op-${index + 1}`,
-            toolCallId: operation.toolCallId,
-            name: operation.name as PreparedMarkdownOperation["name"],
-            input: operation.input as never,
-            path: (operation.input as { path: string }).path,
-            expectedBefore: null,
-            expectedAfter: "",
-        })),
-    };
+    const args = CORE_WRITE_TOOL_NAMES.includes(name as never) && input && typeof input === "object"
+        ? { mode: "apply", ...input } : input;
+    return { type: "toolCall", id, name, input: args, index };
 }

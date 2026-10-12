@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-10-11
+Updated: 2026-10-12
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-063 | 单次 Operations 写入与原生移动 | 直接写入、review/现有 Undo、结果连续性和能力收敛；移动及移回调用宿主 API，引用维护由 Obsidian 负责，PA 不自建引用逻辑 | [Decision](./decisions/dec-063-direct-operations-and-native-move.md), [Product Spec](./specs/pa-direct-operations-product-spec.md), [验证与边界](../archive/2026/b173-direct-operations-validation.md) | 真实宿主接线不满足已定行为，或需要非 Markdown、跨 vault、持久恢复等新范围 |
 | DEC-062 | PA Agent 工具混合披露 | 基础直供、完整短目录与批量加载已实现；真实绑定预披露；权限与效果事实独立于披露状态 | [Decision](./decisions/dec-062-agent-hybrid-tool-disclosure.md), [Product Spec](./specs/pa-agent-tool-disclosure-product-spec.md), [验证与边界](../archive/2026/b172-agent-tool-disclosure-validation.md) | 具体任务证明按需往返不划算、选择困难或目录规模成为主要负担 |
 | DEC-061 | Agent 独立通用计算 | 独立计算工具，Agent 自主组合；固定 Pi/QuickJS 浏览器 Worker，无脚本内 PA 工具桥接 | [Decision](./decisions/dec-061-independent-agent-computation.md), [Product Spec](./specs/pa-independent-computation-product-spec.md), [验证与边界](../archive/2026/b170-independent-computation-validation.md) | 需要脚本 I/O、持久运行、新平台承诺或实际资源证据要求改变边界 |
 | DEC-060 | PA prompt 精简与渐进披露 | 复用原生工具与 Skill/reference；Agent 自主选择；说明精简已交付，保留来源、完整查询和执行事实；M3 答复缺口按用户决定延期 | [Decision](./decisions/dec-060-agent-prompt-progressive-disclosure.md), [Product Spec](./specs/pa-agent-prompt-disclosure-product-spec.md), [验证与延期证据](../archive/2026/b171-agent-prompt-disclosure-validation.md) | 证据要求动态工具发现、能力可见性或产品边界变化；B-159 答复缺口在真实使用中遇到时再讨论 |

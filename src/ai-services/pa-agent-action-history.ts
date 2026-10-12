@@ -1,7 +1,8 @@
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import type { ChatMessage, PaAgentMessage, ToolExecutionOutcome } from "./chat-types";
 import { escapeTaggedBoundary } from "./agent-utils";
-import { cloneActionStates, projectPaAgentRecoveryControl, type PaAgentActionState } from './pa-agent-result-facts';
+import { cloneActionStates, isSafeOperationsResultObservation, projectPaAgentRecoveryControl, type PaAgentActionState } from './pa-agent-result-facts';
+import type { OperationsResultObservation } from './operations-status-tool';
 import { projectHostBatchPreflightRejection } from './pa-agent-preflight-facts';
 
 type ToolResult = Extract<PaAgentMessage, { role: "toolResult" }>;
@@ -43,7 +44,8 @@ export interface PaAgentActionCall {
     results: Array<{ id: string; outcome: ToolExecutionOutcome | "unknown"; executionState?: string;
         preflightRejection?: NonNullable<ReturnType<typeof projectHostBatchPreflightRejection>>;
         recovery?: NonNullable<ReturnType<typeof projectPaAgentRecoveryControl>>;
-        domainPhase?: 'accepted' | 'ready' | 'pending' | 'completed' | 'partial' | 'unknown';
+        domainPhase?: 'accepted' | 'ready' | 'pending' | 'running' | 'completed' | 'partial' | 'failed' | 'unknown';
+        operationsResult?: OperationsResultObservation;
         domainIdentity?: { operationId?: string; requestId?: string; receiptId?: string;
             intentId?: string; completedRefs?: string[]; remainingRefs?: string[] };
         isError: boolean; text: string }>;
@@ -110,7 +112,10 @@ export function projectPaAgentToolResult(result: ToolResult): PaAgentActionCall[
     const domainIdentity = safeDomainIdentity(result);
     const recovery = projectPaAgentRecoveryControl(result.content.metadata?.recovery);
     const preflightRejection = projectHostBatchPreflightRejection(result);
-    const domainPhase = result.content.resultFact?.kind === 'accepted' ? 'accepted'
+    const operationsResult = isSafeOperationsResultObservation(result) && result.content.resultFact?.kind === 'operations_result'
+        ? result.content.resultFact.observation : undefined;
+    const domainPhase = operationsResult ? operationsResult.state === 'executing' ? 'running' : operationsResult.state
+        : result.content.resultFact?.kind === 'accepted' ? 'accepted'
         : result.content.resultFact?.kind === 'artifact_ready' ? 'ready'
         : result.content.resultFact?.kind === 'approval_pending' ? 'pending'
         : result.content.resultFact?.kind === 'applied' ? 'completed'
@@ -127,6 +132,7 @@ export function projectPaAgentToolResult(result: ToolResult): PaAgentActionCall[
         isError: result.isError,
         ...(domainPhase ? { domainPhase } : {}),
         ...(domainIdentity ? { domainIdentity } : {}),
+        ...(operationsResult ? { operationsResult } : {}),
         text: result.content.includeInNextPrompt
             && result.content.metadata?.outcome !== "policy_rejected"
             && result.content.metadata?.outcome !== "duplicate_skipped"
@@ -145,6 +151,7 @@ function safeDomainIdentity(result: ToolResult): PaAgentActionCall['results'][nu
     const fact = result.content.resultFact;
     const safeId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9:_-]{1,256}$/.test(value);
     if (!fact) return undefined;
+    if (fact.kind === 'operations_result' && isSafeOperationsResultObservation(result)) return { intentId: fact.observation.intentId };
     if ((fact.kind === 'accepted' || fact.kind === 'unknown') && safeId(fact.operationId)) return { operationId: fact.operationId };
     if (fact.kind === 'approval_pending' && safeId(fact.intentId)) return { intentId: fact.intentId };
     if (fact.kind === 'artifact_ready' && safeId(fact.requestId) && safeId(fact.receiptId)) return { requestId: fact.requestId, receiptId: fact.receiptId };
@@ -194,6 +201,7 @@ function resultContent(call: PaAgentActionCall, scope: ActionContextScope): stri
             ...(result.preflightRejection ? { preflightRejection: result.preflightRejection } : {}),
             ...(result.domainPhase ? { domainPhase: result.domainPhase } : {}),
             ...(result.domainIdentity ? { domainIdentity: result.domainIdentity } : {}),
+            ...(result.operationsResult ? { operationsResult: result.operationsResult } : {}),
         }), "action_history");
         const safeText = escapeTaggedBoundary(escapeTaggedBoundary(result.text, "untrusted"), "action_history");
         return `${header}\n<untrusted source="tool:${call.name.replace(/["<>&]/g, "_")}">\n${safeText}\n</untrusted>`;

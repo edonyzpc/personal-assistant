@@ -6,6 +6,7 @@ import {
     createReadNoteOutlineTool,
 } from '../src/ai-services/chat-tool-factories';
 import { OperationsIntentController } from '../src/ai-services/operations/operations-intent-controller';
+import { isCoreWriteToolName } from '../src/ai-services/operations/input-validation';
 import type { CoreWriteToolName, OperationsVault } from '../src/ai-services/operations/types';
 import type { ParsedBufferedToolCall } from '../src/ai-services/pa-agent-types';
 import { TaskSourceConstraintState } from '../src/ai-services/task-source-constraint';
@@ -16,7 +17,9 @@ import { resolveTaskSourceReadPlans, type TaskSourceReadPlanHost } from '../src/
 jest.mock('obsidian');
 
 function call(id: string, name: string, input: unknown = {}): ParsedBufferedToolCall {
-    return { type: 'toolCall', id, name, input, index: 0 };
+    const args = isCoreWriteToolName(name) && input && typeof input === 'object'
+        ? { mode: 'apply', ...input } : input;
+    return { type: 'toolCall', id, name, input: args, index: 0 };
 }
 
 function fixture() {
@@ -401,8 +404,11 @@ describe('Operations task source virtual baseline plans', () => {
         };
         const controller = new OperationsIntentController({ vault, trashFile: async () => undefined });
         try {
-            const intent = await controller.stageIntent({ runId: 'run', turnId: 'turn', taskSourceReadGuard: guard,
-                operations: calls.map(entry => ({ toolCallId: entry.id, name: entry.name as CoreWriteToolName, input: entry.input })) });
+            const intent = await controller.stageIntent({ runId: 'run', turnId: 'turn', mode: 'apply', taskSourceReadGuard: guard,
+                operations: calls.map(entry => {
+                    const { mode: _mode, ...domainInput } = entry.input as Record<string, unknown>;
+                    return { toolCallId: entry.id, name: entry.name as CoreWriteToolName, input: domainInput };
+                }) });
             expect(intent.operations[1].expectedBefore).toBe('draft');
             expect(vault.adapter.exists).toHaveBeenCalledWith('notes/new.md');
             expect(vault.cachedRead).not.toHaveBeenCalled();

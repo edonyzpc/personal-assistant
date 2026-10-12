@@ -8,6 +8,7 @@ import type { NoteImageRemovalEffectStatus } from './operations/types';
 import { IMAGE_PREACCEPT_MESSAGES, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from '../chat/image-generation-types';
 import { PA_AGENT_RECOVERY_ACTIONS } from './pa-agent-types';
 import { isGhostPreparationMessage } from './ghost-tool-receipt';
+import { isOperationsResultObservation, type OperationsResultObservation } from './operations-status-tool';
 
 // Historical Chat receipts remain readable; these names cannot resume an operation.
 type GhostReceiptState = import('../ghost-publishing/state-schema').GhostLocalOperation['state']
@@ -60,6 +61,7 @@ export const PA_AGENT_DOMAIN_ACTION_STATE_RULES: Readonly<Record<PaAgentActionSt
     operations: [
         'operationsEffectStatus:applied records that the Host applied the note operation, not merely staged its preview.',
         'Operations action entries carry finite note/image-file effect facts. A receipt is not Undo availability; check operationsUndoAvailable. A partial record can contain an applied note plus a failed or unknown image-file effect, and an attachment-restored checkpoint means only that part was recovered.',
+        'Operations pending/prepared records an unexecuted internal preparation or historical proposal, not a required Confirm or authority to execute it. Preview is complete without a write; a later apply request prepares a new operation against current state.',
         'operationsBlockedReason shared_reference records a blocked Operations proposal with no writes. If its phase is pending, show its conflict review; it cannot be confirmed. An explicit choice to keep the attachment requires a new proposal.',
     ],
 };
@@ -92,6 +94,7 @@ export const PA_AGENT_ACTION_OWNER_TOOL_NAMES: Readonly<Record<string, PaAgentAc
     vault_process: 'operations',
     frontmatter_update: 'operations',
     remove_note_image: 'operations',
+    vault_move: 'operations',
     execute_operations: 'operations',
 };
 
@@ -131,6 +134,7 @@ export type PaAgentResultFact =
     | { kind: "transient_failure"; capability: string; recoveryCode: string }
     | { kind: "artifact_ready"; requestId: string; receiptId: string }
     | { kind: "approval_pending"; intentId: string }
+    | { kind: 'operations_result'; observation: OperationsResultObservation }
     | { kind: "applied"; action: "saved_insight" | "operations" | "writing_save"; receiptId: string }
     | { kind: "partial"; completedRefs: string[]; remainingRefs: string[] }
     | { kind: "unknown"; operationId: string };
@@ -161,7 +165,7 @@ export interface PaAgentActionState {
             state: GhostReceiptState; verified: boolean }
         | { kind: 'ghost-unavailable'; operationId: string; reason: 'operation_not_found' | 'status_read_unavailable' };
     actions?: Array<{ actionId: string; receiptId?: string;
-        phase: 'applied' | 'failed' | 'skipped' | 'undone' | 'unknown';
+        phase: 'applied' | 'unchanged' | 'failed' | 'skipped' | 'undone' | 'unknown';
         effect?: { key: 'note' | 'attachment'; status: NoteImageRemovalEffectStatus };
         checkpoint?: 'attachment-restored' }>;
     operationsUndoAvailable?: boolean;
@@ -229,7 +233,7 @@ const actionStateSchema = z.object({
             reason: z.enum(['operation_not_found', 'status_read_unavailable']) }).strict(),
     ]),
     actions: z.array(z.object({ actionId: opaqueId, receiptId: opaqueId.optional(),
-        phase: z.enum(['applied', 'failed', 'skipped', 'undone', 'unknown']),
+        phase: z.enum(['applied', 'unchanged', 'failed', 'skipped', 'undone', 'unknown']),
         effect: z.object({
             key: z.enum(['note', 'attachment']),
             status: z.enum(['not_started', 'applied', 'removed', 'failed', 'unknown', 'restored']),
@@ -266,17 +270,18 @@ const actionStateSchema = z.object({
     if (receipt.kind === 'operations-staged') return state.phase === 'pending' && state.revision === 0 && !state.actions;
     if (receipt.kind === 'operations-executing') return state.phase === 'running' && state.revision > 0 && !state.actions;
     if (receipt.kind === 'operations-terminal') return state.phase === receipt.state && state.revision > 0 && !state.actions;
-    if (!state.actions?.length || state.revision === 0) return false;
+    if (!state.actions?.length) return false;
     if (new Set(state.actions.map(action => action.actionId)).size !== state.actions.length) return false;
     if (state.actions.some(action => (action.phase === 'applied' || action.phase === 'undone') && !action.receiptId)) return false;
     if (receipt.kind === 'operations-result') {
-        const applied = state.actions.filter(action => action.phase === 'applied').length;
+        const applied = state.actions.filter(action => action.phase === 'applied' || action.phase === 'unchanged').length;
         return state.phase === receipt.state
             && (receipt.state === 'completed' ? applied === state.actions.length
                 : receipt.state === 'partial' ? applied > 0 && applied < state.actions.length
                 : receipt.state === 'unknown' ? state.actions.some(action => action.phase === 'unknown')
                     : applied === 0);
     }
+    if (state.revision === 0) return false;
     return (state.actions.some(action => action.phase === 'undone')
         || state.actions.some(action => action.effect?.status === 'unknown' && action.phase === 'unknown')
             && state.actions.some(action => action.effect?.key === 'note' && action.phase === 'applied' && action.receiptId))
@@ -417,13 +422,15 @@ export function applyOperationsExecutionResult(state: PaAgentActionState,
     return isSameOperationsFacts(state, candidate) ? state : candidate;
 }
 
-function operationActions(operation: import('./operations/types').OperationExecutionResult):
+function operationActions(operation: Pick<import('./operations/types').OperationExecutionResult,
+    'operationId' | 'status' | 'receiptId' | 'effects'>):
 NonNullable<PaAgentActionState['actions']> {
     if (!operation.effects?.length) {
         return [{
             actionId: operation.operationId,
             ...(operation.receiptId ? { receiptId: operation.receiptId } : {}),
             phase: operation.status === 'succeeded' ? 'applied'
+                : operation.status === 'unchanged' ? 'unchanged'
                 : operation.status === 'skipped' ? 'skipped'
                     : operation.status === 'unknown' ? 'unknown' : 'failed',
         }];
@@ -441,6 +448,12 @@ NonNullable<PaAgentActionState['actions']> {
                         : effect.status === 'not_started' ? 'skipped' : 'failed',
             effect: { key: effect.key, status: effect.status },
         }));
+}
+
+function operationsActionsPhase(actions: NonNullable<PaAgentActionState['actions']>): 'completed' | 'partial' | 'failed' | 'unknown' {
+    if (actions.some(action => action.phase === 'unknown')) return 'unknown';
+    const completed = actions.filter(action => action.phase === 'applied' || action.phase === 'unchanged').length;
+    return completed === actions.length ? 'completed' : completed > 0 ? 'partial' : 'failed';
 }
 
 /** Undo adds observed restoration facts without erasing prior completed effects. */
@@ -585,6 +598,43 @@ export function isSafeOperationsStagedObservation(message: Extract<import('./cha
         && metadata.observationChars === content.promptText.length;
 }
 
+/** Structural agreement is necessary but not proof of owner registration. The
+ * runtime establishes operationsOwnerResult only for its bound domain executor. */
+export function readOperationsResultObservation(message: Extract<import('./chat-types').PaAgentMessage,
+    { role: 'toolResult' }>): OperationsResultObservation | undefined {
+    const fact = message.content.resultFact;
+    if ((!isCoreWriteToolName(message.toolName) && message.toolName !== 'execute_operations')
+        || !message.content.includeInNextPrompt || message.content.sourceRecords?.length
+        || message.content.contextUsed?.length || fact?.kind !== 'operations_result'
+        || Object.keys(fact).some(key => !['kind', 'observation'].includes(key))
+        || !isOperationsResultObservation(fact.observation)) return undefined;
+    const observation = fact.observation;
+    if (message.toolName !== 'execute_operations' && (observation.state !== 'executing' && !observation.operations.length
+        || observation.operations.some(operation => operation.toolCallId !== message.toolCallId))) return undefined;
+    try {
+        const payload = JSON.parse(message.content.promptText) as unknown;
+        return isOperationsResultObservation(payload) && JSON.stringify(payload) === JSON.stringify(observation)
+            ? observation : undefined;
+    } catch { return undefined; }
+}
+
+export function isSafeOperationsResultObservation(message: Extract<import('./chat-types').PaAgentMessage,
+    { role: 'toolResult' }>): boolean {
+    return message.content.metadata?.operationsOwnerResult === true && readOperationsResultObservation(message) !== undefined;
+}
+
+export function isOperationsPreviewObservation(message: Extract<import('./chat-types').PaAgentMessage,
+    { role: 'toolResult' }>): boolean {
+    const metadata = message.content.metadata;
+    const blocked = metadata?.blockedReason === 'shared_reference';
+    return isCoreWriteToolName(message.toolName) && message.content.includeInNextPrompt
+        && !message.content.resultFact && !message.content.sourceRecords?.length && !message.content.contextUsed?.length
+        && metadata?.wrote === false && metadata.executionState === 'not_started'
+        && (metadata.mode === 'preview' || blocked)
+        && message.content.promptText === (blocked ? OPERATIONS_BLOCKED_MESSAGE : OPERATIONS_STAGED_MESSAGE)
+        && message.content.previewText === (blocked ? 'Changes are blocked; nothing was written.' : 'Preview only; nothing was written.');
+}
+
 /** Empty source records alone never qualify an arbitrary accepted observation. */
 export function isSafeImageFailureObservation(message: Extract<import('./chat-types').PaAgentMessage,
     { role: 'toolResult' }>): boolean {
@@ -673,6 +723,29 @@ export function collectActionStates(input: { runId: string; turnId: string;
         const lineage = cloneInputLineage(message.inputLineage);
         if (!lineage) continue;
         const metadata = message.content.metadata;
+        if (isSafeOperationsResultObservation(message) && fact?.kind === 'operations_result') {
+            const observation = fact.observation;
+            const actions = observation.operations.flatMap(operation => operationActions(operation));
+            if (!actions.length && observation.state !== 'executing') continue;
+            const phase = observation.state === 'executing' ? 'running' : operationsActionsPhase(actions);
+            const prior = states.find(state => state.owner === 'operations' && state.operationId === observation.intentId);
+            if (prior && prior.actions && phase !== 'running') {
+                const merged = [...prior.actions, ...actions.filter(action => !prior.actions!.some(existing => existing.actionId === action.actionId))];
+                const mergedPhase = operationsActionsPhase(merged);
+                Object.assign(prior, { actions: merged, phase: mergedPhase,
+                    operationsUndoAvailable: prior.operationsUndoAvailable || observation.undoAvailable,
+                    receipt: { kind: 'operations-result', intentId: observation.intentId, state: mergedPhase } });
+                continue;
+            }
+            states.push({ schemaVersion: 1, owner: 'operations', operationId: observation.intentId, phase,
+                origin: { runId: input.runId, turnId: input.turnId, assistantId,
+                    callId: message.toolCallId, resultId: message.id }, revision: phase === 'running' ? 1 : 0,
+                inputLineage: lineage,
+                ...(phase === 'running' ? { receipt: { kind: 'operations-executing', intentId: observation.intentId } as const }
+                    : { actions, operationsUndoAvailable: observation.undoAvailable,
+                        receipt: { kind: 'operations-result', intentId: observation.intentId, state: phase } as const }) });
+            continue;
+        }
         if (message.toolName === 'prepare_ghost_post' && !message.isError
             && metadata?.tool === 'prepare_ghost_post' && metadata.ok === true && metadata.outcome === 'success'
             && metadata.sourceRecordCount === 0 && !message.content.sourceRecords?.length) {
@@ -786,5 +859,8 @@ export function cloneResultFact(fact: PaAgentResultFact | undefined): PaAgentRes
     if (fact.kind === "evidence") return { ...fact, sourceRefs: [...fact.sourceRefs] };
     if (fact.kind === "partial") return { ...fact,
         completedRefs: [...fact.completedRefs], remainingRefs: [...fact.remainingRefs] };
+    if (fact.kind === 'operations_result') return isOperationsResultObservation(fact.observation)
+        ? { kind: 'operations_result', observation: JSON.parse(JSON.stringify(fact.observation)) as OperationsResultObservation }
+        : undefined;
     return { ...fact };
 }

@@ -2,7 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { createRoot } from 'react-dom/client';
 
 import { OperationsReviewSession } from '../src/ai-services/operations/operations-review-session';
-import type { OperationsExecutionResult, OperationsIntent, UndoResult } from '../src/ai-services/operations/types';
+import type { OperationsIntent, UndoResult } from '../src/ai-services/operations/types';
 import {
     OperationsReviewRouter,
     OPERATIONS_REVIEW_VIEW_TYPE,
@@ -41,8 +41,6 @@ function reviewSession(id = 'intent-view'): OperationsReviewSession {
     return new OperationsReviewSession({
         intent: reviewIntent(id),
         controller: {
-            confirm: async (): Promise<OperationsExecutionResult> => { throw new Error('unused'); },
-            cancel: (): OperationsIntent => { throw new Error('unused'); },
             undoMany: async (): Promise<UndoResult[]> => { throw new Error('unused'); },
         },
         sessionIdentity: 'view',

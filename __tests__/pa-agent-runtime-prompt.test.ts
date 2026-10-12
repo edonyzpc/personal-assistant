@@ -1506,18 +1506,20 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(joined).not.toContain("{tool_observations}");
     });
 
-    it("distinguishes staging from execution authorized by the current request", () => {
+    it("describes direct execution and preview from the current bound Operations tools", () => {
         const guidance = createOperationsPromptGuidance([
             { name: "vault_create" },
             { name: "vault_append" },
             { name: "vault_process" },
             { name: "frontmatter_update" },
+            { name: "vault_move" },
         ]);
 
-        expect(guidance).toContain("stage an immutable proposal only");
-        expect(guidance).toContain("never write during that tool call");
-        expect(guidance).toContain("When the current user request itself authorizes the modification and execute_operations is bound");
-        expect(guidance).toContain("For preview-only or analytical work, stop without execute_operations");
+        expect(guidance).toContain("mode: apply or preview");
+        expect(guidance).toContain("one tool call prepares and executes");
+        expect(guidance).toContain("does not write or provide Undo");
+        expect(guidance).toContain("vault_move");
+        expect(guidance).not.toContain("execute_operations");
         expect(guidance).toContain("0.unsorted/");
         expect(guidance).toContain("obsidian-markdown");
         // B-171: the skill remains discoverable, but is no longer a mandatory pre-step.
@@ -1539,12 +1541,12 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
     it("distinguishes deferred Operations availability from no write capability", () => {
         const guidance = createOperationsPromptGuidance(
             [],
-            new Set(["vault_create", "execute_operations"]),
-            new Set(["vault_create", "execute_operations"]),
+            new Set(["vault_create", "vault_move"]),
+            new Set(["vault_create", "vault_move"]),
         );
 
         expect(guidance).toContain("No vault-note writing capabilities are bound yet");
-        expect(guidance).toContain("Vault-note writing capabilities are available but not bound: vault_create, execute_operations");
+        expect(guidance).toContain("Vault-note writing capabilities are available but not bound: vault_create, vault_move");
         expect(guidance).toContain("Load the exact names from the deferred tool directory");
         expect(guidance).not.toContain("Do not modify notes, run commands, change settings, or claim that you wrote a note.");
     });

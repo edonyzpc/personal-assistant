@@ -41,10 +41,10 @@ export interface ChatToolContext {
     ghostMetadataDebug?: import("./ghost-metadata").GhostMetadataDebugScope;
 }
 
-export type ChatToolPermission = "read-only" | "network-read" | "memory-management" | "insight-management" | "image-generation" | "ghost-publishing";
+export type ChatToolPermission = "read-only" | "network-read" | "local-filesystem-write" | "memory-management" | "insight-management" | "image-generation" | "ghost-publishing";
 export type ChatToolCost = "free" | "ai-calls" | "network-calls";
 export type ChatToolFailureBehavior = "recoverable";
-export type ChatToolSourceBoundary = "memory" | "current-note" | "read-only-tool" | "web" | "skill-context";
+export type ChatToolSourceBoundary = "memory" | "current-note" | "read-only-tool" | "vault" | "web" | "skill-context";
 
 export const OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS = 6000;
 /** Complete note-list tools do not apply a tool-local result cap; the model

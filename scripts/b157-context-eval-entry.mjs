@@ -343,7 +343,7 @@ function isolatedChatService(plugin, syntheticApp, identity, record, control) {
   service.operationsSession = operations.createSession({ surface: 'b157-synthetic' });
   service.ownedOperationsService = operations;
   record.operationsCapability = { originalEnabled: original.isOperationsAgentEnabled === true,
-    controlledEnabled: true, boundary: 'authorized_fixture_instance; actual_confirmation_required' };
+    controlledEnabled: true, boundary: 'authorized_fixture_instance; direct_apply_or_preview' };
   service.host = syntheticHost(original, syntheticApp, identity, record);
   service.aiUtils.host = service.host;
   installDispatchRecorder(service, control, record);
@@ -699,10 +699,10 @@ export function createControlledDomains(appInstance, store, record, options = {}
         domains.releaseImage();
         await waitFor(() => image.list(context.conversation.id), tasks => tasks.some(task =>
           task.state === (item.settle === 'unknown' ? 'submission_unknown' : 'completed')), context.signal);
-      } else if (item.domain === 'operations' && item.settle === 'complete') {
-        for (const state of states.filter(state => state.owner === 'operations')) {
-          record.confirmations.push({ domain: 'operations', intentId: state.operationId, boundary: 'actual-session-confirm' });
-          await context.service.confirmOperationsIntent(state.operationId);
+      } else if (item.domain === 'operations') {
+        const expectedPhase = item.settle === 'unknown' ? 'unknown' : 'completed';
+        if (!states.some(state => state.owner === 'operations' && state.phase === expectedPhase)) {
+          fail('OPERATIONS_EXECUTION_STATE_NOT_OBSERVED');
         }
       } else if (item.domain === 'writing') {
         const version = (await versions.list(context.conversation.id)).at(-1);
@@ -824,11 +824,12 @@ async function runEpisode(input) {
     const text = `${fixture.padding.text.repeat(fixture.padding.repeat)}\n${item.initial}`;
     const extra = { ...domains.bindings(text, 0), ...(item.domain === 'writing'
       ? await writingOptions(context, `writing_${record.id}_0`) : {}) };
+    if (item.domain === 'operations' && item.settle === 'unknown') context.syntheticApp.synthetic.failNext('process');
     await executeTurn(context, text, extra, fixture.historyBudgetChars.reference);
     await domains.settleInitial();
     await reopenContext(context);
-    // Lost Operations is established from the new real session, not inserted as
-    // a canonical terminal fact. Other domains retain their real owner stores.
+    // Persisted effect facts survive the new session; its missing live intent
+    // cannot authorize repeating a completed or unknown write.
     await domains.refreshStates();
     const before = record.submissions.length;
     const followupExtra = { ...domains.bindings(item.question, 1),
@@ -877,8 +878,9 @@ async function runSummaryUpdates(input) {
   const context = await newEpisodeContext({ ...input, item });
   try {
     for (const [index, text] of fixture.summaryOperationSeeds.entries()) {
+      if (index === 1) context.syntheticApp.synthetic.failNext('process');
       await executeTurn(context, text, {}, fixture.historyBudgetChars.reference);
-      await context.domains.settleInitial({ domain: 'operations', settle: index === 0 ? 'complete' : 'lost-after-reopen' });
+      await context.domains.settleInitial({ domain: 'operations', settle: index === 0 ? 'complete' : 'unknown' });
     }
     context.record.summaryStateBeforeReopen = copy(await context.store.getTurns(context.conversation.id));
     await reopenContext(context);

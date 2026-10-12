@@ -44,7 +44,7 @@ async function harness() {
 }
 
 function call(id: string, name: string, input: unknown, index = 0): ParsedBufferedToolCall {
-    return { type: "toolCall", id, name, input, index };
+    return { type: "toolCall", id, name, input: { mode: "preview", ...(input as object) }, index };
 }
 
 function batch(toolCalls: ParsedBufferedToolCall[], taskSourceReadGuard: TaskSourceReadGuard): PaAgentToolBatchPreparationInput {
@@ -79,8 +79,8 @@ describe("Operations executor task source read boundary", () => {
             ], h.guard);
             const result = await h.executor.prepareBatch!(input);
             expect(stage).toHaveBeenCalledWith(expect.objectContaining({ taskSourceReadGuard: h.guard }), input.signal);
-            expect(result?.toolResults.get("allowed")).toMatchObject({ metadata: { staged: false, wrote: false } });
-            expect(result?.toolResults.get("excluded")).toMatchObject({ metadata: { staged: false, wrote: false } });
+            expect(result?.toolResults.get("allowed")).toMatchObject({ metadata: { wrote: false } });
+            expect(result?.toolResults.get("excluded")).toMatchObject({ metadata: { wrote: false } });
             expect(h.vault.getAbstractFileByPath).not.toHaveBeenCalled();
             expect(h.vault.cachedRead).not.toHaveBeenCalled();
             expect(h.vault.adapter.exists).not.toHaveBeenCalled();
@@ -98,8 +98,8 @@ describe("Operations executor task source read boundary", () => {
                 call("create", "vault_create", { path: "notes/new.md", content: "from the current note" }),
                 call("append", "vault_append", { path: "notes/new.md", content: "a generated addition" }, 1),
             ], h.guard));
-            expect(result?.toolResults.get("create")).toMatchObject({ outcome: "success", metadata: { staged: true, wrote: false } });
-            expect(result?.toolResults.get("append")).toMatchObject({ outcome: "success", metadata: { staged: true, wrote: false } });
+            expect(result?.toolResults.get("create")).toMatchObject({ outcome: "success", metadata: { mode: "preview", wrote: false } });
+            expect(result?.toolResults.get("append")).toMatchObject({ outcome: "success", metadata: { mode: "preview", wrote: false } });
             const [intent] = h.controller.listPendingIntents();
             expect(intent?.operations[1]?.expectedBefore).toBe("from the current note");
             expect(intent).not.toHaveProperty("taskSourceReadGuard");
@@ -123,7 +123,7 @@ describe("Operations executor task source read boundary", () => {
             h.revoke();
             releasePrepare();
             const result = await preparation;
-            expect(result?.toolResults.get("append")).toMatchObject({ metadata: { staged: false, wrote: false } });
+            expect(result?.toolResults.get("append")).toMatchObject({ metadata: { wrote: false } });
             expect(h.vault.getAbstractFileByPath).not.toHaveBeenCalled();
             expect(h.vault.cachedRead).not.toHaveBeenCalled();
             expect(h.controller.listPendingIntents()).toEqual([]);

@@ -16,7 +16,7 @@ Default runtime boundary:
 - Memory and Context Used remain source-visible.
 - No provider built-in web-search fallback.
 - No arbitrary MCP endpoint, shell, script, local executable, or hidden note mutation.
-- When the live Operations controller and policy are available, the same main Agent may stage the four core vault writes and the approved note-image removal operation, then execute a current explicit modification request through the domain tool. Preview-only work does not execute; genuine ambiguity or actions beyond authorization retain necessary confirmation. Real results, optional full diff and drift-safe Undo remain available. The old persisted Operations setting is retained for compatibility but is no longer a planning gate.
+- When the live Operations controller and policy are available, the same main Agent may apply or preview vault-note changes through one Operations call, including native Markdown movement. Apply prepares and executes the current authorized change; preview produces no write or Undo receipt. Real results, optional full review and drift-safe Undo remain available without an Operations Confirm step. The old persisted Operations setting is retained for compatibility but is no longer a planning gate.
 
 ## Runtime Map
 
@@ -480,10 +480,16 @@ acceptance stays unknown and remote verification remains unavailable.
 `report_task_incomplete` is a separate pure output for Chat and explicit Writing:
 it delivers an explanation without creating a work, cannot share a batch with
 other calls, and an invalid report receives bounded correction under the run budget.
+The main Agent checks the real bound/deferred directory for the necessary effects.
+Once a necessary capability is unavailable and no valid workaround or useful
+authorized next step remains, it reports the completed and remaining parts and
+ends. An unknown operation is checked by its original identity; absent new
+evidence does not justify replay or unchanged reads. The Host does not classify
+reasoning or impose a new round/time limit to decide task completion.
 
 ### Operations Agent providers
 
-`OPERATIONS_AGENT_RUNTIME_ENABLED=true` is a build-availability gate, not user consent. With a live controller and eligible policy, the same main Agent may propose `vault_create`, `vault_append`, `vault_process`, `frontmatter_update`, and the approved composite `remove_note_image` according to the user's goal; the old persisted `operationsAgentEnabled` value no longer gates planning or admission. There is no separate local write-intent classifier or old append/selection action.
+`OPERATIONS_AGENT_RUNTIME_ENABLED=true` is a build-availability gate, not user consent. With a live controller and eligible policy, the same main Agent may call `vault_create`, `vault_append`, `vault_process`, `frontmatter_update`, `remove_note_image`, and `vault_move` according to the user's goal. Each call requires `mode: apply | preview`; the old persisted `operationsAgentEnabled` value no longer gates planning or admission. There is no separate local write-intent classifier or old append/selection action. New catalogs do not expose `execute_operations`; historical names remain interpretable without reviving execution authority. See [DEC-063](../product/decisions/dec-063-direct-operations-and-native-move.md) and the [Product Spec](../product/specs/pa-direct-operations-product-spec.md).
 
 Under [DEC-050](../product/decisions/dec-050-note-image-removal-and-undo.md),
 `remove_note_image` binds the original source authority, exact note reference and
@@ -515,27 +521,64 @@ preparation and truthful Undo availability remain separate from these quotas.
 An admitted intent's full effect facts must survive status queries and context
 projection, regardless of the number of operations or effects.
 
-For a current explicit modification, the Agent stages the immutable intent and
-calls `execute_operations({ intentId })`. Merely staging or displaying a proposal
-does not execute it. Runtime binds the current user run, source guard and signal;
-model input cannot supply permission, run identity or replacement operations.
+For a current explicit modification, one `mode: apply` call prepares and executes
+the immutable intent. All Operations calls in one assistant phase are validated
+and prepared before its first effect, including required image recovery resources.
+The first handler executes the batch once; subsequent handlers consume their
+actual results from the existing preparation result map. Known preparation errors
+block the batch before writing, while execution-time conflicts retain earlier
+effects. Runtime binds the current user run, source guard and signal; model input
+cannot supply permission, run identity or replacement operations.
 `ChatService.executeOperationsIntentFromAgent` captures the original conversation
 history sink before its first await, then invokes `OperationsSession.executeCurrentIntent`.
 Pending becomes executing before the first write; executing or terminal intents
 return their actual state/result without another write. Old-run pending intents,
-cancellation and revocation cannot gain execution authority through this tool.
-The running row is bound to its existing action history before execution; final
+cancellation and revocation cannot gain execution authority through a new call.
+The real owner preparation supplies the initial existing action-history binding;
+it does not manufacture an intermediate staged tool result. Final
 owner facts update that original row even when the view has closed. A closed
-owner does not regain UI or Undo. Analysis/preview-only work stops before the
-execution tool; optional manual review and drift-safe Undo remain available.
+owner does not regain UI or Undo. `mode: preview` only prepares a visible proposal,
+without execution or a recovery receipt; a later apply call prepares and validates
+current state again. Optional full review and drift-safe Undo remain available.
 
-Calls from one assistant tool phase stage one immutable intent. Chat groups that
-intent by normalized note path and shows the first frozen baseline to the last
-planned result, while retaining the controller's original operation order. The
+Chat groups the immutable intent by normalized note path and shows the first
+frozen baseline to the actual last applied result, or the planned result for
+preview, while retaining the controller's original operation order. The
 compact diff states its omissions; the user can open one reusable full-review
-tab per batch. Chat and the tab share one in-memory review session and permit
-whole-batch confirmation or cancellation. No write occurs merely by opening or
-reviewing a tab.
+tab per batch. Chat and the tab share one in-memory review session and expose
+review and Undo/Undo all, without Confirm, pending Cancel or activation after
+generation ends. Controller concurrency and drift checks still govern Undo;
+model generation alone does not disable a completed operation's review or Undo.
+No write occurs merely by opening or reviewing a tab.
+
+`vault_move` uses the current vault's Markdown source and an existing target
+parent, never overwriting another object. It rechecks source identity/version/body
+and target admission immediately before the native call. Forward movement and
+Undo both delegate to `app.fileManager.renameFile`; Obsidian maintains references
+according to its current settings. PA does not scan, rewrite, snapshot or restore
+associated notes. A completed move proves the path change; host settings or a
+host user choice govern references, so it does not prove that every link was updated.
+Same-path movement reports unchanged without a false receipt.
+Unpreparable same-batch body dependencies after a move are rejected before effects;
+the Agent may split the work into separate calls.
+
+Move Undo uses the actual post-move body and original file identity to protect
+later edits and occupied paths. A post-move read failure does not erase a proven
+move, but may make Undo unavailable. An uncertain native effect stays unknown and
+cannot be replayed automatically. The review presents the source-to-target path
+change, without claiming that PA rewrote the body or restored vault-wide history.
+
+The registered Operations owner returns a closed `operations_result` observation:
+opaque intent/operation/call/receipt identities, finite state/effect categories
+and current Undo availability. It contains no paths, body, arguments or recovery
+bytes. The runtime admits it only from the actual registered capability; arbitrary
+same-name JSON cannot claim owner facts. Dispatcher, source filtering, native/compat
+projection and existing action history retain these facts even when the original
+source path disappears. The original invocation lineage remains attached to its
+arguments; excluded calls are removed rather than replaced with fabricated inputs.
+Finite current-run state can remain as context without restoring read/write authority.
+The original move follow-up, post-move dispatch, natural termination and review/Undo
+evidence are retained in [B-173 validation](../archive/2026/b173-direct-operations-validation.md).
 
 `operations-review-model.ts` projects immutable snapshots without executing or
 reordering operations. It uses bounded line-level Myers diff and Unicode-safe
@@ -774,7 +817,8 @@ reviseTurn 核原请求/binding 并保留现有 conversation 元数据，缺失/
 canonical 仍为空，没有新增数据库、原始 canonical 或摘要持久化。
 
 Operations 跨实例只读状态查询沿既有 service 找同 intent 与原 run 的真实 owner；
-当前 session 未找到不能误记 lost。confirm/cancel/Undo 留在原 session，不随查询转移。
+当前 session 未找到不能误记 lost。Undo 留在原 session，不随查询转移；旧历史中的
+confirm/cancel 不提供新 Operations 执行能力，其他领域的必要确认仍由其 owner 管理。
 同一原操作的可信回执可按存储最新 revision 纠正 legacy lost，不能复活 cancelled/expired。
 旧 run 有限状态仅在原 conversation、binding、唯一原 user、origin 与 complete lineage
 核实后派生当前空正文片段，epoch/Memory/依赖/lifetime 再验；限定 notes 范围或 exclusions

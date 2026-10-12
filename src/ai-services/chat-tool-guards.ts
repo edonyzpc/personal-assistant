@@ -224,6 +224,7 @@ export function isChatToolName(name: string): name is ChatToolName {
         || name === "read_note"
         || name === "query_notes"
         || name === "webSearch"
+        || name === "vault_move"
         || name === "execute_operations"
         || isObsidianOperationsV1AToolName(name);
 }

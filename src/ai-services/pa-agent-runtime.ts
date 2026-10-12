@@ -53,7 +53,9 @@ import {
 import { stringifyContextAsync } from './context/PaAgentContextSerialization';
 import { projectPaAgentToolStatus, type PaAgentActionGroup } from "./pa-agent-action-history";
 import { cloneActionStateBinding, collectPaAgentActionOwnerFacts, isSafeImageAcceptedObservation,
-    isSafeImageFailureObservation, isSafeOperationsStagedObservation, selectPaAgentActionStateExplanationRules } from './pa-agent-result-facts';
+    isSafeImageFailureObservation, isSafeOperationsStagedObservation, selectPaAgentActionStateExplanationRules,
+    collectActionStates, isSafeOperationsResultObservation, readOperationsResultObservation, isOperationsPreviewObservation,
+    projectActionStates, PA_AGENT_DOMAIN_ACTION_STATE_RULES } from './pa-agent-result-facts';
 import { cloneChatHostProvenance } from './chat-provenance';
 import { historySummaryContentSteps, protectedHistorySourceIndexesSteps, type ColdWritingVersion } from './context/PaAgentHistoryContextPlan';
 import { ChatOpenAI } from "@langchain/openai";
@@ -134,7 +136,7 @@ import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } 
 import {
     createProviderRequestScope,
 } from "./obsidian-fetch";
-import { errorMessage } from "./agent-utils";
+import { errorMessage, escapeTaggedBoundary } from "./agent-utils";
 import { LOAD_SKILL_TOOL_NAME, SkillContextProvider } from "./skill-context-provider";
 import {
     createLoadToolsCapability,
@@ -1282,6 +1284,7 @@ export class PaAgentRuntime {
     private readonly toolRegistry: CapabilityRegistry;
     private readonly operationsPolicyEngine: OperationsTurnPolicyEngine | null;
     private readonly operationsActionsPolicyEligible: boolean;
+    private readonly operationsToolProvider: OperationsToolProvider | null;
     private readonly skillContextProvider: SkillContextProvider | null;
     private readonly executeCodeCapability: AgentCapability;
     private skillContextProviderRegistered = false;
@@ -1381,12 +1384,13 @@ export class PaAgentRuntime {
             : options.skillContextProvider ?? new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
         // Register the four bounded Operations actions only when a real staging
         // controller and the current caller policy admit Chat actions.
-        if (operationsRuntimeAvailable) {
-            const operationsProvider = options.operationsToolProvider ?? new OperationsToolProvider();
+        this.operationsToolProvider = operationsRuntimeAvailable
+            ? options.operationsToolProvider ?? new OperationsToolProvider() : null;
+        if (this.operationsToolProvider) {
             const existingProviders = this.options.additionalCapabilityProviders ?? [];
             this.options = {
                 ...this.options,
-                additionalCapabilityProviders: [...existingProviders, operationsProvider],
+                additionalCapabilityProviders: [...existingProviders, this.operationsToolProvider],
             };
         }
     }
@@ -3138,12 +3142,25 @@ export class PaAgentRuntime {
                         // result must not erase an earlier still-valid source.
                         sourceRun.publishAdmittedNotePaths(paths, constraint);
                     }
+                    const excludedOperationStates = collectActionStates({ runId, turnId: input.turnId,
+                        messages: input.transcript }).filter(state => state.owner === 'operations'
+                            && !transcript.some(message => message.role === 'assistant'
+                                && message.id === state.origin.assistantId && message.content.some(part =>
+                                    part.type === 'toolCall' && part.id === state.origin.callId)));
+                    const finiteOperationsContext = excludedOperationStates.length ? [
+                        ...PA_AGENT_DOMAIN_ACTION_STATE_RULES.operations,
+                        `<domain_state scope="current_run" context_only="true">${escapeTaggedBoundary(
+                            JSON.stringify(projectActionStates(excludedOperationStates)), 'domain_state')}</domain_state>`,
+                    ].join('\n') : undefined;
                     return {
                         ...input,
                         transcript,
-                        ...(snapshot.configurationChanged ? { runtimeInstruction: combineRuntimeInstructions([
+                        ...(snapshot.configurationChanged || finiteOperationsContext ? { runtimeInstruction: combineRuntimeInstructions([
                             input.runtimeInstruction,
-                            'The source configuration changed since the previous model turn. Earlier excluded materials and affected derived context have been removed from this input. Use only the retained context and obtain newly allowed evidence if the task requires it.',
+                            finiteOperationsContext,
+                            ...(snapshot.configurationChanged ? [
+                                'The source configuration changed since the previous model turn. Earlier excluded materials and affected derived context have been removed from this input. Use only the retained context and obtain newly allowed evidence if the task requires it.',
+                            ] : []),
                         ]) } : {}),
                     };
             },
@@ -3181,6 +3198,20 @@ export class PaAgentRuntime {
                             if (attachmentValidity) callAttachmentValidityById.set(part.id, attachmentValidity);
                         }
                     } else {
+                        const operationsCapability = this.toolRegistry.get(message.toolName);
+                        const currentOperationsOwner = operationsCapability !== undefined
+                            && this.operationsToolProvider?.ownsCapability(operationsCapability) === true;
+                        if (!currentOperationsOwner && message.content.metadata) delete message.content.metadata.operationsOwnerResult;
+                        if (message.content.resultFact?.kind === 'operations_result') {
+                            if (currentOperationsOwner && readOperationsResultObservation(message)) {
+                                message.content.metadata = { ...message.content.metadata, operationsOwnerResult: true };
+                            } else {
+                                // Homonymous providers and arbitrary JSON cannot claim
+                                // the registered domain owner's receipt privilege.
+                                delete message.content.resultFact;
+                                if (message.content.metadata) delete message.content.metadata.operationsOwnerResult;
+                            }
+                        }
                         const records = message.content.sourceRecords ?? [];
                         const isCurrentLoaderToolResult = message.toolName === PA_AGENT_LOAD_TOOLS_TOOL_NAME
                             && this.toolRegistry.get(PA_AGENT_LOAD_TOOLS_TOOL_NAME) === loaderCapability;
@@ -3251,7 +3282,8 @@ export class PaAgentRuntime {
                         }
                         const sourceFreeNotesObservation = records.length === 0
                             && isSafeSourceFreeToolObservation(message);
-                        const resultLineage = writingContextLineage
+                        const resultLineage = isSafeOperationsResultObservation(message)
+                            || currentOperationsOwner && isOperationsPreviewObservation(message) ? completeInputLineage() : writingContextLineage
                             ?? (closedLoaderResult || rejectedLoaderResult ? completeInputLineage()
                                 : undefined)
                             ?? (records.length ? sourceRecordsInputLineage(records)

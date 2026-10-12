@@ -9,12 +9,11 @@ import {
 import { OperationsToolProvider } from "../src/ai-services/operations/operations-tool-provider";
 import { ChatService } from "../src/ai-services/chat-service";
 import { completeInputLineage } from "../src/ai-services/input-lineage";
-import { type PaAgentActionState, applyOperationsExecutionResult } from "../src/ai-services/pa-agent-result-facts";
+import { type PaAgentActionState, applyOperationsExecutionResult, projectActionStates } from "../src/ai-services/pa-agent-result-facts";
 import { ChatHistoryManager } from "../src/chat/chat-history-manager";
 import { MemoryChatHistoryStore } from "../src/chat/chat-history-store";
 import type { TaskSourceReadGuard } from "../src/ai-services/task-source-read-guard";
 import {
-    EXECUTE_OPERATIONS_TOOL_NAME,
     type ExecuteCurrentOperationsIntentInput,
     type OperationsControllerEvent,
     type OperationsVault,
@@ -70,6 +69,7 @@ function appendInput(path: string, content: string) {
     return {
         runId: "run-1",
         turnId: "turn-1",
+        mode: "apply" as const,
         operations: [
             { toolCallId: `call-${path}`, name: "vault_append" as const, input: { path, content } },
         ],
@@ -120,11 +120,11 @@ describe("Operations context across Chat sessions", () => {
         vault.files.set("notes/b.md", "B");
         const h = sharedChatServices(vault);
         try {
-            const intent = await h.owner.stage({ runId: "run-1", turnId: "turn-1", operations: [
+            const intent = await h.owner.stage({ runId: "run-1", turnId: "turn-1", mode: "apply", operations: [
                 { toolCallId: "call-1", name: "vault_append", input: { path: "notes/a.md", content: "first" } },
                 { toolCallId: "call-2", name: "vault_append", input: { path: "notes/b.md", content: "second" } },
             ] });
-            const executed = await h.a.confirmOperationsIntent(intent.id);
+            const executed = await h.a.executeOperationsIntentFromAgent(agentExecutionInput(intent.id));
             const completed = h.a.refreshOperationsActionState(pendingContext(intent.id));
             await h.a.undoOperations([executed.operations[0].receiptId!]);
             const partial = h.a.refreshOperationsActionState(completed);
@@ -139,13 +139,13 @@ describe("Operations context across Chat sessions", () => {
         } finally { h.a.dispose(); h.b.dispose(); h.operations.dispose(); }
     });
 
-    it("reads the live original owner without granting another session confirmation or Undo", async () => {
+    it("reads the live original owner without granting another session execution or Undo", async () => {
         const vault = new MemoryVault(); vault.files.set("notes/a.md", "A");
         const h = sharedChatServices(vault);
         const store = new MemoryChatHistoryStore(), manager = new ChatHistoryManager({ store });
         try {
             await manager.initialize();
-            const intent = await h.owner.stage({ runId: "run-1", turnId: "turn-1", operations: [
+            const intent = await h.owner.stage({ runId: "run-1", turnId: "turn-1", mode: "apply", operations: [
                 { toolCallId: "call-1", name: "vault_append", input: { path: "notes/a.md", content: "B" } },
             ] });
             const pending = pendingContext(intent.id);
@@ -164,10 +164,10 @@ describe("Operations context across Chat sessions", () => {
                 pendingWrites.push(write);
                 return write.then(() => undefined);
             });
-            await expect(h.b.confirmOperationsIntent(intent.id)).rejects.toMatchObject({ category: "expired" });
-            expect(() => h.b.cancelOperationsIntent(intent.id)).toThrow("Intent is missing or expired");
+            await expect(h.b.executeOperationsIntentFromAgent(agentExecutionInput(intent.id))).rejects.toMatchObject({ category: "expired" });
+            expect(() => h.reader.cancel(intent.id)).toThrow("Intent is missing or expired");
             expect(vault.process).not.toHaveBeenCalled();
-            const result = await h.a.confirmOperationsIntent(intent.id);
+            const result = await h.a.executeOperationsIntentFromAgent(agentExecutionInput(intent.id));
             await Promise.all(pendingWrites);
             const completed = h.b.refreshOperationsActionState(pending);
             expect(completed).toMatchObject({ phase: "completed", actions: [{ phase: "applied", receiptId: result.operations[0].receiptId }] });
@@ -190,7 +190,7 @@ describe("Operations context across Chat sessions", () => {
         const manager = new ChatHistoryManager({ store });
         try {
             await manager.initialize();
-            const intent = await h.owner.stage({ runId: "run-1", turnId: "turn-1", operations: [
+            const intent = await h.owner.stage({ runId: "run-1", turnId: "turn-1", mode: "apply", operations: [
                 { toolCallId: "call-1", name: "vault_append", input: { path: "notes/a.md", content: "B" } },
             ] });
             const pending = pendingContext(intent.id), conversation = await manager.startConversation("Append B");
@@ -201,7 +201,7 @@ describe("Operations context across Chat sessions", () => {
             await store.appendTurn({ conversationId: conversation.id, turnIndex: 0,
                 user: { role: "user", content: "Append B" },
                 assistant: { role: "assistant", content: "Review the proposal", actionStateBinding: binding, actionStates: [lost] } });
-            const result = await h.a.confirmOperationsIntent(intent.id);
+            const result = await h.a.executeOperationsIntentFromAgent(agentExecutionInput(intent.id));
             const stale = applyOperationsExecutionResult(pending, result)!;
             await expect(store.updateActionStates(binding, () => [stale])).rejects.toThrow("Conflicting action state revision");
             const updated = await manager.updateActionStatesForOperation(conversation.id, pending.origin.runId, "operations", intent.id,
@@ -223,18 +223,25 @@ describe("Operations context across Chat sessions", () => {
         const vault = new MemoryVault(); vault.files.set("notes/a.md", "A");
         const h = sharedChatServices(vault);
         try {
-            const intent = await h.owner.stage({ runId: "run-1", turnId: "turn-1", operations: [
+            const intent = await h.owner.stage({ runId: "run-1", turnId: "turn-1", mode: "apply", operations: [
                 { toolCallId: "call-1", name: "vault_append", input: { path: "notes/a.md", content: "B" } },
             ] });
             const pending = pendingContext(intent.id);
-            await h.a.confirmOperationsIntent(intent.id);
+            await h.a.executeOperationsIntentFromAgent(agentExecutionInput(intent.id));
             const completed = h.b.refreshOperationsActionState(pending);
             expect(completed.phase).toBe("completed");
             const foreign = { ...pending, origin: { ...pending.origin, runId: "other-run" } };
             expect(h.b.refreshOperationsActionState(foreign).phase).toBe("lost");
             h.a.dispose();
             expect(h.b.refreshOperationsActionState(pending).phase).toBe("lost");
-            expect(h.b.refreshOperationsActionState(completed)).toEqual(completed);
+            const closed = h.b.refreshOperationsActionState(completed);
+            expect(closed).toEqual({ ...completed, operationsUndoAvailable: false, revision: completed.revision + 1 });
+            expect(closed.actions).toEqual(completed.actions);
+            expect(h.b.refreshOperationsActionState(closed)).toEqual(closed);
+            expect(h.b.getVisibleOperationsStatus(intent.id, intent.runId)).toMatchObject({ available: false,
+                undoAvailable: false, reason: "owner_unavailable" });
+            expect(projectActionStates([closed])).toEqual([expect.objectContaining({ phase: "completed",
+                operationsEffectStatus: "applied", operationsUndoAvailable: false })]);
         } finally { h.a.dispose(); h.b.dispose(); h.operations.dispose(); }
     });
 
@@ -243,10 +250,10 @@ describe("Operations context across Chat sessions", () => {
         let now = 1_000;
         const h = sharedChatServices(vault, { now: () => now, pendingTtlMs: 1_000 });
         try {
-            const intent = await h.owner.stage({ runId: "run-1", turnId: "turn-1", operations: [
+            const intent = await h.owner.stage({ runId: "run-1", turnId: "turn-1", mode: "apply", operations: [
                 { toolCallId: "call-1", name: "vault_append", input: { path: "notes/a.md", content: "B" } },
             ] });
-            if (phase === "cancelled") h.a.cancelOperationsIntent(intent.id);
+            if (phase === "cancelled") h.owner.cancel(intent.id);
             else now += 1_001;
             const pending = pendingContext(intent.id);
             expect(h.b.refreshOperationsActionState(pending).phase).toBe(phase);
@@ -391,7 +398,7 @@ describe("B-161 live Operations execution", () => {
     it.each(["cancel", "source revoke", "disable"])("does not create after %s while target lookup is pending", async kind => {
         const h = executionFixture();
         try {
-            const intent = await h.session.stage({ runId: "run-1", turnId: "turn-1", operations: [
+            const intent = await h.session.stage({ runId: "run-1", turnId: "turn-1", mode: "apply", operations: [
                 { toolCallId: "create", name: "vault_create", input: { path: "notes/new.md", content: "New" } },
             ] });
             const started = deferred(), release = deferred();
@@ -536,7 +543,7 @@ describe("B-161 live Operations execution", () => {
 });
 
 describe("OperationsToolProvider shared identity", () => {
-    it("returns the same five staging objects and execution object across repeated loads", async () => {
+    it("returns stable direct-write and native move capability identities across loads", async () => {
         const provider = new OperationsToolProvider();
         const first = await provider.load(providerContext());
         const second = await provider.load(providerContext());
@@ -549,7 +556,7 @@ describe("OperationsToolProvider shared identity", () => {
             "vault_process",
             "frontmatter_update",
             "remove_note_image",
-            EXECUTE_OPERATIONS_TOOL_NAME,
+            "vault_move",
         ]);
         expect(second.capabilities).toHaveLength(6);
         first.capabilities.forEach((capability, index) => {

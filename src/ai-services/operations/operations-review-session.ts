@@ -12,6 +12,7 @@ import type {
 
 export type OperationsReviewStatus =
     | "pending"
+    | "preview"
     | "executing"
     | "completed"
     | "partial"
@@ -23,13 +24,12 @@ export type OperationsReviewStatus =
     | "discarded"
     | "unavailable";
 
-export type OperationsReviewAction = "confirm" | "cancel" | "undo";
+export type OperationsReviewAction = "undo";
 
 export interface OperationsReviewSnapshot {
     reviewId: string;
     intentId: string;
     status: OperationsReviewStatus;
-    activated: boolean;
     actionInFlight: OperationsReviewAction | null;
     model: OperationsReviewModel | null;
     execution: OperationsExecutionResult | null;
@@ -39,8 +39,6 @@ export interface OperationsReviewSnapshot {
 }
 
 export interface OperationsReviewSessionPort {
-    confirm(intentId: string): Promise<OperationsExecutionResult>;
-    cancel(intentId: string): OperationsIntent;
     undoMany(receiptIds: readonly string[]): Promise<UndoResult[]>;
     subscribe?(listener: (event: OperationsControllerEvent) => void): () => void;
 }
@@ -61,6 +59,7 @@ export class OperationsReviewSession {
 
     private readonly intentId: string;
     private model: OperationsReviewModel | null;
+    private intent: OperationsIntent | null;
     private readonly controller: OperationsReviewSessionPort;
     private readonly isSourceCurrent: () => boolean;
     private readonly onInvalidate?: (reviewId: string) => void;
@@ -68,7 +67,6 @@ export class OperationsReviewSession {
     private unsubscribe: (() => void) | null = null;
     private invalidationEpoch = 0;
     private status: OperationsReviewStatus = "pending";
-    private activated = false;
     private actionInFlight: OperationsReviewAction | null = null;
     private execution: OperationsExecutionResult | null = null;
     private operationResults: OperationExecutionResult[] = [];
@@ -79,6 +77,8 @@ export class OperationsReviewSession {
 
     constructor(options: OperationsReviewSessionOptions) {
         this.intentId = options.intent.id;
+        this.intent = options.intent;
+        this.status = options.intent.mode === "preview" ? "preview" : options.intent.state;
         this.model = createOperationsReviewModel(options.intent);
         this.controller = options.controller;
         this.isSourceCurrent = options.isSourceCurrent;
@@ -96,7 +96,6 @@ export class OperationsReviewSession {
             reviewId: this.reviewId,
             intentId: this.intentId,
             status: this.status,
-            activated: this.activated,
             actionInFlight: this.actionInFlight,
             model: this.status === "unavailable" || this.status === "discarded" ? null : this.model,
             execution: this.status === "unavailable" || this.status === "discarded" ? null : this.execution,
@@ -113,72 +112,6 @@ export class OperationsReviewSession {
     subscribe(listener: OperationsReviewListener): () => void {
         this.listeners.add(listener);
         return () => this.listeners.delete(listener);
-    }
-
-    activate(): void {
-        if (!this.isSourceCurrent() || this.status !== "pending") return;
-        this.activated = true;
-        this.emit();
-    }
-
-    canConfirm(): boolean {
-        return this.isSourceCurrent()
-            && this.activated
-            && this.status === "pending"
-            && !this.model?.blockers?.length
-            && this.actionInFlight === null;
-    }
-
-    canCancel(): boolean {
-        return this.isSourceCurrent()
-            && this.activated
-            && this.status === "pending"
-            && this.actionInFlight === null;
-    }
-
-    async confirm(): Promise<OperationsExecutionResult | null> {
-        if (!this.canConfirm()) return null;
-        const epoch = this.invalidationEpoch;
-        this.actionInFlight = "confirm";
-        this.status = "executing";
-        this.emit();
-        try {
-            const result = await this.controller.confirm(this.intentId);
-            if (this.isCurrentEpoch(epoch) && this.isSourceCurrent()) this.applyExecutionResult(result);
-            return result;
-        } catch (error) {
-            if (this.isCurrentEpoch(epoch) && this.isSourceCurrent()) {
-                this.error = errorText(error);
-                if (this.status === "executing") this.status = "failed";
-            }
-            return null;
-        } finally {
-            if (this.isCurrentEpoch(epoch) && this.isSourceCurrent()) {
-                this.actionInFlight = null;
-                this.emit();
-            }
-        }
-    }
-
-    cancel(): OperationsIntent | null {
-        if (!this.canCancel()) return null;
-        this.actionInFlight = "cancel";
-        try {
-            const cancelled = this.controller.cancel(this.intentId);
-            if (this.isSourceCurrent() && this.status === "pending") {
-                this.status = "cancelled";
-                this.activated = false;
-            }
-            return cancelled;
-        } catch (error) {
-            if (this.isSourceCurrent()) this.error = errorText(error);
-            return null;
-        } finally {
-            if (this.isSourceCurrent()) {
-                this.actionInFlight = null;
-                this.emit();
-            }
-        }
     }
 
     async undo(receiptIds: readonly string[]): Promise<UndoResult[] | null> {
@@ -228,13 +161,6 @@ export class OperationsReviewSession {
             this.invalidate("unavailable");
             return;
         }
-        if (this.status === "pending" && this.actionInFlight === null) {
-            try {
-                this.controller.cancel(this.intentId);
-            } catch {
-                // The controller already reports missing/expired intents fail-closed.
-            }
-        }
         this.invalidate("discarded");
     }
 
@@ -243,9 +169,9 @@ export class OperationsReviewSession {
         this.unsubscribe?.();
         this.unsubscribe = null;
         this.status = status;
-        this.activated = false;
         this.actionInFlight = null;
         this.model = null;
+        this.intent = null;
         this.execution = null;
         this.operationResults = [];
         this.undoResults = [];
@@ -280,12 +206,10 @@ export class OperationsReviewSession {
             case "intent-cancelled":
                 if (event.intent.id !== this.intentId) return;
                 this.status = "cancelled";
-                this.activated = false;
                 break;
             case "intent-expired":
                 if (event.intentId !== this.intentId) return;
                 this.status = "expired";
-                this.activated = false;
                 break;
             case "undo-result":
                 this.applyUndoResults([event.result]);
@@ -309,12 +233,16 @@ export class OperationsReviewSession {
             if (operation.receiptId) this.ownedReceiptIds.add(operation.receiptId);
         }
         this.status = result.state;
+        if (this.intent) this.model = createOperationsReviewModel(this.intent, this.operationResults);
     }
 
     private upsertOperationResult(result: OperationExecutionResult): void {
         const index = this.operationResults.findIndex((existing) => existing.operationId === result.operationId);
         if (index >= 0) this.operationResults[index] = result;
         else this.operationResults.push(result);
+        this.ownedOperationIds.add(result.operationId);
+        if (result.receiptId) this.ownedReceiptIds.add(result.receiptId);
+        if (this.intent) this.model = createOperationsReviewModel(this.intent, this.operationResults);
     }
 
     private applyUndoResults(results: readonly UndoResult[]): void {

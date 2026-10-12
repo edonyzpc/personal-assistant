@@ -1166,6 +1166,46 @@ describe('record note creation', () => {
     });
 });
 
+describe('Operations native move adapter', () => {
+    it('delegates forward movement and Undo to FileManager.renameFile', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const file = { path: 'notes/move.md', extension: 'md' };
+        const files = new Map<string, unknown>([[file.path, file], ['archive', { path: 'archive', children: [] }], ['notes', { path: 'notes', children: [] }]]);
+        const renameFile = jest.fn(async (movedFile: typeof file, targetPath: string) => {
+            files.delete(movedFile.path);
+            movedFile.path = targetPath;
+            files.set(targetPath, movedFile);
+        });
+        const vaultRename = jest.fn();
+        plugin.app = {
+            fileManager: { renameFile, trashFile: jest.fn() },
+            metadataCache: {},
+            vault: {
+                getAbstractFileByPath: (path: string) => files.get(path) ?? null,
+                cachedRead: async () => 'unchanged note',
+                read: async () => 'unchanged note',
+                adapter: { exists: async (path: string) => files.has(path) },
+                create: jest.fn(), process: jest.fn(), rename: vaultRename,
+            },
+        };
+        Object.defineProperty(plugin, 'isOperationsAgentEnabled', { value: true });
+        plugin.isDataBoundaryAllowedPath = () => true;
+        const operations = plugin.getOperationsService();
+        const session = operations.createSession({ surface: 'chat' });
+        try {
+            const intent = await session.stage({ runId: 'move-run', turnId: 'move-turn', mode: 'apply',
+                operations: [{ toolCallId: 'move-call', name: 'vault_move', input: { sourcePath: file.path, targetPath: 'archive/move.md' } }] });
+            const result = await session.executeCurrentIntent({ intentId: intent.id, runId: intent.runId,
+                taskSourceReadGuard: { isCurrent: () => true, isPathAllowed: () => true, isNoteDomainAllowed: () => true } });
+            expect(result.state).toBe('completed');
+            expect(renameFile).toHaveBeenNthCalledWith(1, file, 'archive/move.md');
+            expect(await session.undoMany([result.operations[0].receiptId])).toEqual([expect.objectContaining({ status: 'undone' })]);
+            expect(renameFile).toHaveBeenNthCalledWith(2, file, 'notes/move.md');
+            expect(vaultRename).not.toHaveBeenCalled();
+        } finally { session.dispose(); operations.dispose(); }
+    });
+});
+
 describe('plugin startup view registration', () => {
     it('registers custom views during onload before layout-ready work runs', async () => {
         const originalDocument = globalThis.document;

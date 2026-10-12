@@ -40,6 +40,28 @@ function intent(operations: readonly PreparedOperation[]): OperationsIntent {
 }
 
 describe("OperationsReviewModel", () => {
+    it("projects the last applied same-file state instead of the skipped final plan", () => {
+        const staged = intent([
+            operation("first", "notes/a.md", "before", "before\nfirst"),
+            operation("second", "notes/a.md", "before\nfirst", "before\nfirst\nnot reached"),
+        ]);
+        const model = createOperationsReviewModel(staged, [
+            { operationId: "first", toolCallId: "call-first", name: "vault_process", path: "notes/a.md", status: "succeeded" },
+            { operationId: "second", toolCallId: "call-second", name: "vault_process", path: "notes/a.md", status: "skipped" },
+        ]);
+        expect(model.groups[0]).toMatchObject({ before: "before", after: "before\nfirst" });
+        expect(model.groups[0]!.lines.some(line => line.text === "not reached")).toBe(false);
+    });
+
+    it("represents native move as a path change without a planned body rewrite", () => {
+        const model = createOperationsReviewModel(intent([{
+            kind: "move", id: "move", toolCallId: "call-move", name: "vault_move",
+            input: { sourcePath: "notes/a.md", targetPath: "archive/a.md" },
+            path: "notes/a.md", sourcePath: "notes/a.md", targetPath: "archive/a.md",
+            expectedBefore: "PRIVATE BODY", expectedAfter: "PRIVATE BODY", fileIdentity: { path: "notes/a.md" },
+        }]));
+        expect(model.groups[0]).toMatchObject({ path: "notes/a.md", targetPath: "archive/a.md", changeCount: 0 });
+    });
     it("exposes an independent attachment impact for a compound note-image operation", () => {
         const model = createOperationsReviewModel(intent([{
             kind: "note_image_removal",

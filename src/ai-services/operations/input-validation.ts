@@ -8,6 +8,8 @@ import {
     type VaultAppendInput,
     type VaultCreateInput,
     type VaultProcessInput,
+    type VaultMoveInput,
+    type OperationsMode,
 } from "./types";
 import { validateOperationsVaultPath } from "./vault-path";
 import { isRecord } from "../../pa/helpers";
@@ -31,7 +33,15 @@ export function isCoreWriteToolName(value: string): value is CoreWriteToolName {
 export function validateCoreWriteInput<Name extends CoreWriteToolName>(
     name: Name,
     raw: unknown,
-): CoreWriteInputMap[Name] {
+): CoreWriteInputMap[Name] & { mode: OperationsMode } {
+    const supplied = expectObject(raw, name);
+    const mode = expectEnum(supplied.mode, ["apply", "preview"] as const, `${name}.mode`);
+    const domainInput = { ...supplied };
+    delete domainInput.mode;
+    return { ...validateDomainWriteInput(name, domainInput), mode };
+}
+
+function validateDomainWriteInput<Name extends CoreWriteToolName>(name: Name, raw: unknown): CoreWriteInputMap[Name] {
     switch (name) {
         case "vault_create":
             return validateVaultCreateInput(raw) as CoreWriteInputMap[Name];
@@ -43,7 +53,18 @@ export function validateCoreWriteInput<Name extends CoreWriteToolName>(
             return validateFrontmatterUpdateInput(raw) as CoreWriteInputMap[Name];
         case "remove_note_image":
             return validateRemoveNoteImageInput(raw) as CoreWriteInputMap[Name];
+        case "vault_move":
+            return validateVaultMoveInput(raw) as CoreWriteInputMap[Name];
     }
+}
+
+export function validateVaultMoveInput(raw: unknown): VaultMoveInput {
+    const input = expectObject(raw, "vault_move");
+    expectExactKeys(input, ["sourcePath", "targetPath"], ["sourcePath", "targetPath"], "vault_move");
+    return {
+        sourcePath: validateOperationsVaultPath(input.sourcePath),
+        targetPath: validateOperationsVaultPath(input.targetPath),
+    };
 }
 
 export function validateExecuteOperationsInput(raw: unknown): { intentId: string } {
@@ -57,7 +78,7 @@ export function validateExecuteOperationsInput(raw: unknown): { intentId: string
 }
 
 /** Non-generic runtime alias for provider and dispatcher adapters. */
-export function validateCoreWriteToolInput(name: CoreWriteToolName, raw: unknown): CoreWriteInputMap[CoreWriteToolName] {
+export function validateCoreWriteToolInput(name: CoreWriteToolName, raw: unknown): CoreWriteInputMap[CoreWriteToolName] & { mode: OperationsMode } {
     return validateCoreWriteInput(name, raw);
 }
 

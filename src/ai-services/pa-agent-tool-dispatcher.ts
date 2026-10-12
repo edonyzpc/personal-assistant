@@ -1,6 +1,7 @@
 import { stableStringify } from "./agent-utils";
 import { createHostBatchPreflightRejection } from './pa-agent-preflight-facts';
 import { assertTaskSourceReadCurrent, checkpointTaskSourceRead, type TaskSourceReadGuard } from "./task-source-read-guard";
+import { isOperationsResultObservation } from './operations-status-tool';
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import {
     toolConstraintsFromAgentControlSnapshot,
@@ -452,7 +453,9 @@ export class ToolExecutionDispatcher {
                 index: toolCall.index,
             });
 
-            const skipResult = this.consumeExpiredSourceGuardAttempt(readGuard)
+            const preparedResult = preparedToolResults.get(toolCall.id);
+            const completedOperationsResult = finiteOperationsResult(preparedResult, toolCall.id);
+            const skipResult = completedOperationsResult ? undefined : this.consumeExpiredSourceGuardAttempt(readGuard)
                 ?? this.classifyPreflightSkip(toolCall, meaningfulToolCallNames, turnToolMode, turnControlSnapshot);
             let executionResult: PaAgentToolExecutionResult;
             if (skipResult) {
@@ -461,9 +464,9 @@ export class ToolExecutionDispatcher {
                 if (toolCall.name === "get_writing_context") this.lastSuccessfulWritingContextKey = undefined;
                 this.seenToolCallKeys.add(this.normalizeToolCallKey(toolCall));
                 this._toolCallCount += 1;
-                executionResult = !isReadGuardCurrent(readGuard) ? sourceGuardRejection()
-                    : preparedToolResults.get(toolCall.id)
-                        ?? await this.executeRealToolCall(turnId, turnIndex, toolCall, readGuard);
+                executionResult = completedOperationsResult ?? (!isReadGuardCurrent(readGuard) ? sourceGuardRejection()
+                    : preparedResult
+                        ?? await this.executeRealToolCall(turnId, turnIndex, toolCall, readGuard));
             }
 
             executionResult = this.withHostRetrySafety(toolCall, executionResult);
@@ -994,9 +997,10 @@ export class ToolExecutionDispatcher {
             }
             : undefined;
         const recovery = result.recovery ?? fallbackRecovery;
+        const operationsResult = finiteOperationsResult(result);
         return {
             outcome: "recoverable_error",
-            promptText: `Tool ${toolCall.name} reached ${
+            promptText: operationsResult?.promptText ?? `Tool ${toolCall.name} reached ${
                 reason === "tool_timeout" ? "its tool deadline" : "the outer wall-clock deadline"
             }; recorded owner execution state is ${executionState}. Only structured owner facts were retained.`,
             includeInNextPrompt: true,
@@ -1459,6 +1463,9 @@ function actionResultAfterSourceChange(
         if (sourceAuthority?.()) return normalizeToolExecutionResult(result);
     } catch { /* Unverifiable authority permits only the finite execution facts below. */ }
 
+    const operationsResult = finiteOperationsResult(result);
+    if (operationsResult) return operationsResult;
+
     const fact = result.resultFact;
     const resultFact = fact && (fact.kind === "applied" || fact.kind === "partial"
         || fact.kind === "unknown" || fact.kind === "accepted") ? fact : undefined;
@@ -1489,6 +1496,23 @@ function actionResultAfterSourceChange(
         ...(recovery ? { recovery: { ...recovery, allowedActions: [...recovery.allowedActions] } } : {}),
         metadata: { reason: "task_source_changed_after_execution" },
     };
+}
+
+/** Already-issued batch observations may outlive the source read fence. This
+ * only projects facts; it never starts another action or revives its authority. */
+function finiteOperationsResult(result: PaAgentToolExecutionResult | undefined,
+    toolCallId?: string): PaAgentToolExecutionResult | undefined {
+    const fact = result?.resultFact;
+    if (!result || fact?.kind !== 'operations_result' || !isOperationsResultObservation(fact.observation)
+        || toolCallId !== undefined && (!fact.observation.operations.length
+            || fact.observation.operations.some(operation => operation.toolCallId !== toolCallId))) return undefined;
+    return { outcome: result.outcome, executionState: result.executionState,
+        promptText: JSON.stringify(fact.observation), includeInNextPrompt: true,
+        resultFact: fact,
+        ...(result.recovery ? { recovery: { ...result.recovery,
+            allowedActions: [...result.recovery.allowedActions] } } : {}),
+        metadata: { ...finiteInterruptedToolMetadata(result),
+            ...(result.metadata?.intentId ? { intentId: fact.observation.intentId } : {}) } };
 }
 
 function preflightResultAfterSourceChange(

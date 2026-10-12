@@ -6,6 +6,7 @@ import type { ChatMessage, PaAgentMessage } from '../src/ai-services/chat-types'
 import { createTaskSourceConstrainedExecutor } from '../src/ai-services/task-source-executor';
 import { completeInputLineage, toGenerationInputLineage, unknownInputLineage, type InputLineage } from '../src/ai-services/input-lineage';
 import type { PaAgentActionState } from '../src/ai-services/pa-agent-result-facts';
+import { actionHistoryMessages, projectPaAgentActionHistory } from '../src/ai-services/pa-agent-action-history';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import {
@@ -299,6 +300,42 @@ describe('B165 generation read snapshots', () => {
         expect(JSON.stringify(next)).toContain('task-1');
         expect(JSON.stringify(next)).toContain('succeeded');
         expect(JSON.stringify(next)).not.toContain('PRIVATE_');
+    });
+
+    it('preserves a matched finite Operations result through the old unknown-lineage failure path', async () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, runSourceSelection: {
+            schemaVersion: 1, scope: 'notes', selectionId: 'notes-run', userMessageId: h.host.userMessageId,
+        } });
+        const observation = { intentId: 'intent', state: 'completed' as const, undoAvailable: true,
+            operations: [{ operationId: 'operation', toolCallId: 'move', status: 'succeeded' as const, receiptId: 'receipt' }] };
+        const lineage = completeInputLineage([{ kind: 'user-text' as const, messageId: h.host.userMessageId }]);
+        const assistant: PaAgentMessage = { role: 'assistant', id: 'assistant', timestamp: 1, inputLineage: lineage,
+            content: [{ type: 'toolCall', id: 'move', name: 'vault_move',
+                input: { mode: 'apply', sourcePath: h.a.path, targetPath: 'notes/moved.md' } }] };
+        const result: PaAgentMessage = { role: 'toolResult', id: 'result', timestamp: 2, toolCallId: 'move',
+            toolName: 'vault_move', isError: false, inputLineage: unknownInputLineage(lineage.dependencies),
+            content: { promptText: JSON.stringify(observation), includeInNextPrompt: true,
+                resultFact: { kind: 'operations_result', observation },
+                metadata: { outcome: 'success', executionState: 'succeeded', operationsOwnerResult: true } } };
+        const next = await run.prepareGenerationSnapshot([assistant, result], [], async messages => [...messages]);
+        const groups = projectPaAgentActionHistory(next.transcript);
+        for (const mode of ['native', 'compat'] as const) {
+            const input = actionHistoryMessages(groups, mode).map(message => String(message.content)).join('\n');
+            expect(input).toContain('"callId":"move"');
+            expect(input).toContain('"intentId":"intent"');
+            expect(input).toContain('"domainPhase":"completed"');
+            expect(input).toContain('"receiptId":"receipt"');
+            expect(input).not.toContain('result_unknown');
+        }
+        expect(result.inputLineage?.completeness).toBe('unknown');
+        const forged = { ...result, id: 'forged', content: { ...result.content,
+            promptText: JSON.stringify({ ...observation, path: 'PRIVATE.md' }),
+            resultFact: { kind: 'operations_result' as const, observation: { ...observation, path: 'PRIVATE.md' } } } };
+        const rejected = await run.prepareGenerationSnapshot([assistant, forged], [], async messages => [...messages]);
+        expect(rejected.transcript.map(message => message.id)).toEqual(['assistant']);
+        expect(actionHistoryMessages(projectPaAgentActionHistory(rejected.transcript), 'compat')
+            .map(message => String(message.content)).join('\n')).toContain('result_unknown');
     });
 
     it('keeps a withdrawn action group only for its own independent owner receipt, even with reused call IDs', async () => {
@@ -1213,8 +1250,9 @@ describe('Task source run host', () => {
         const calls = [call('current', 'get_current_note_context'), call('outline', 'read_note_outline', { notePath: h.b.path }),
             call('canvas', 'read_canvas_summary', { canvasPath: h.canvas.path }), call('memory', 'search_memory', 'a query'),
             call('metadata', 'search_vault_metadata'), call('web', 'webSearch'),
-            call('create', 'vault_create', { path: 'notes/new.md', content: 'draft' }),
-            call('append', 'vault_append', { path: 'notes/new.md', content: 'more' })];
+            call('create', 'vault_create', { mode: 'apply', path: 'notes/new.md', content: 'draft' }),
+            call('append', 'vault_append', { mode: 'apply', path: 'notes/new.md', content: 'more' }),
+            call('move', 'vault_move', { mode: 'apply', sourcePath: h.b.path, targetPath: 'notes/moved.md' })];
         const plans = run.resolveReadPlans(calls)!;
         expect(plans.size).toBe(calls.length);
         expect(plans.get('outline')).toEqual({ reads: [{ kind: 'note', noteId: run.resolveNoteId(h.b.path) }] });
@@ -1224,7 +1262,9 @@ describe('Task source run host', () => {
         expect(plans.get('web')).toEqual({ reads: [{ kind: 'web' }] });
         expect(plans.get('append')).toEqual({ reads: [], outputTargetPaths: ['notes/new.md'] });
         expect(h.getFileByPath).not.toHaveBeenCalledWith('notes/new.md');
-        expect(run.resolveReadPlans([calls[calls.length - 1], calls[calls.length - 2]])).toBeUndefined();
+        expect(plans.get('move')).toEqual({ reads: [{ kind: 'note', noteId: run.resolveNoteId(h.b.path) }],
+            outputTargetPaths: ['notes/moved.md'] });
+        expect(run.resolveReadPlans([calls[7], calls[6]])).toBeUndefined();
         expect(run.state.snapshot()).toMatchObject({ allowedNoteIds: null });
     });
 

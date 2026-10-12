@@ -41,13 +41,14 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
 
     const groupCount = snapshot.model.groups.length;
     const activeIndex = Math.min(activeGroupIndex, Math.max(0, groupCount - 1));
-    const decisionVisible = snapshot.status === 'pending';
 
     return (
         <div className="pa-operations-review-view">
             <header className="pa-operations-review-view__header">
                 <h2>{t('plugin.chat.operations.review.title')}</h2>
-                <div role="status" aria-live="polite">{statusText(snapshot.status)}</div>
+                <div role="status" aria-live="polite">{snapshot.status === 'completed' && snapshot.operationResults.length > 0
+                    && snapshot.operationResults.every(result => result.status === 'unchanged')
+                    ? t('plugin.chat.operations.intent.unchanged') : statusText(snapshot.status)}</div>
             </header>
 
             {groupCount > 1 && (
@@ -104,7 +105,9 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
                             >
                                 <div className="pa-operations-review-result__target">
                                     <span>{operationKindText(row.operationResult.name)} · {row.pathOperationNumber}</span>
-                                    <code>{row.operationResult.path}</code>
+                                    <code>{row.operationResult.targetPath
+                                        ? `${row.operationResult.path} → ${row.operationResult.targetPath}`
+                                        : row.operationResult.path}</code>
                                 </div>
                                 <span>{row.message}</span>
                                 {row.operationResult.receiptId
@@ -126,26 +129,6 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
             </main>
 
             <footer className="pa-operations-review-view__actions">
-                {decisionVisible && (
-                    <>
-                        <button
-                            type="button"
-                            className="pa-operations-review-primary-button"
-                            disabled={!session.canConfirm()}
-                            onClick={() => { void session.confirm(); }}
-                        >
-                            {t('plugin.chat.operations.intent.confirm')}
-                        </button>
-                        <button
-                            type="button"
-                            className="pa-operations-review-secondary-button"
-                            disabled={!session.canCancel()}
-                            onClick={() => session.cancel()}
-                        >
-                            {t('plugin.chat.operations.intent.cancel')}
-                        </button>
-                    </>
-                )}
                 {session.canUndo() && (
                     <button
                         type="button"
@@ -164,6 +147,7 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
 
 function statusText(status: string): string {
     switch (status) {
+        case 'preview': return t('plugin.chat.operations.intent.preview');
         case 'pending': return t('plugin.chat.operations.intent.pending');
         case 'executing': return t('plugin.chat.operations.intent.executing');
         case 'completed': return t('plugin.chat.operations.intent.completed');
@@ -180,6 +164,7 @@ function statusText(status: string): string {
 
 function operationStatusText(status: string): string {
     switch (status) {
+        case 'unchanged': return t('plugin.chat.operations.intent.unchanged');
         case 'succeeded': return t('plugin.chat.operations.intent.succeeded');
         case 'stale': return t('plugin.chat.operations.intent.stale');
         case 'skipped': return t('plugin.chat.operations.intent.skipped');
@@ -191,6 +176,7 @@ function operationStatusText(status: string): string {
 
 function operationKindText(name: string): string {
     switch (name) {
+        case 'vault_move': return t('plugin.chat.operations.intent.move');
         case 'vault_create': return t('plugin.chat.operations.intent.create');
         case 'vault_append': return t('plugin.chat.operations.intent.append');
         case 'frontmatter_update': return t('plugin.chat.operations.intent.properties');

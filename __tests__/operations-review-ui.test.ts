@@ -69,6 +69,26 @@ function group(id: string, changeCount: number, firstBlockChanges = changeCount)
 }
 
 describe("OperationsDiff presentation calculations", () => {
+    it("renders a native path move without displaying the note as a content edit", () => {
+        const model: OperationsReviewModel = { intentId: "move", groups: [{ ...group("move", 2), targetPath: "archive/move.md" }] };
+        const html = renderToStaticMarkup(createElement(OperationsDiff, { model, mode: "full" }));
+        expect(html).toContain("notes/move.md");
+        expect(html).toContain("archive/move.md");
+        expect(html).toContain("Move note");
+        expect(html).not.toContain("pa-operations-diff__rows");
+        expect(html).not.toContain("Show complete before");
+        const snapshot: OperationsReviewSnapshot = {
+            reviewId: "same-path", intentId: "move", status: "completed", actionInFlight: null, model,
+            execution: null, operationResults: [{ operationId: "move", toolCallId: "move-call", name: "vault_move",
+                path: "notes/move.md", targetPath: "notes/move.md", status: "unchanged", undoAvailable: false }],
+            undoResults: [], error: null,
+        };
+        const session = { getSnapshot: () => snapshot, subscribe: () => () => {}, canUndo: () => false };
+        const unchanged = renderToStaticMarkup(createElement(OperationsReviewPanel, { session: session as never }));
+        expect(unchanged).toContain("No changes were needed.");
+        expect(unchanged).not.toContain("Changes applied.");
+        expect(unchanged).not.toContain(">Undo</button>");
+    });
     it.each(["compact", "full"] as const)("keeps all shared-reference conflicts visible in %s review regardless of diff budgets or file pagination", (mode) => {
         const conflicts = Array.from({ length: 35 }, (_value, index) => ({
             sourcePath: `notes/shared-${index}.md`,
@@ -95,12 +115,11 @@ describe("OperationsDiff presentation calculations", () => {
         }
     });
 
-    it("disables full-review confirmation for a blocked proposal while leaving Cancel available", () => {
+    it("keeps blocked preview reviewable without Confirm or pending Cancel", () => {
         const snapshot: OperationsReviewSnapshot = {
             reviewId: "blocked-review",
             intentId: "blocked-intent",
-            status: "pending",
-            activated: true,
+            status: "preview",
             actionInFlight: null,
             model: {
                 intentId: "blocked-intent",
@@ -121,14 +140,13 @@ describe("OperationsDiff presentation calculations", () => {
         const session = {
             getSnapshot: () => snapshot,
             subscribe: () => () => undefined,
-            canConfirm: () => false,
-            canCancel: () => true,
             canUndo: () => false,
         };
         const html = renderToStaticMarkup(createElement(OperationsReviewPanel, { session: session as never }));
 
-        expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Confirm changes<\/button>/);
-        expect(html).toMatch(/<button type="button" class="pa-operations-review-secondary-button">Cancel<\/button>/);
+        expect(html).not.toContain("Confirm changes");
+        expect(html).not.toContain(">Cancel</button>");
+        expect(html).toContain("Preview only. Changes have not been applied.");
         expect(html).toContain("notes/shared.md");
         expect(html).toContain("Attachment deletion is blocked.");
         expect(html).not.toContain("The local image file will be deleted");
@@ -165,7 +183,6 @@ describe("OperationsDiff presentation calculations", () => {
             reviewId: "opr-review",
             intentId: "intent",
             status: "partial",
-            activated: true,
             actionInFlight: null,
             model: null,
             execution: null,
@@ -189,7 +206,6 @@ describe("OperationsDiff presentation calculations", () => {
             reviewId: "unknown-review",
             intentId: "unknown-intent",
             status: "partial",
-            activated: true,
             actionInFlight: null,
             model: { intentId: "unknown-intent", groups: [group("unknown", 2)] },
             execution: null,
@@ -222,7 +238,6 @@ describe("OperationsDiff presentation calculations", () => {
             reviewId: "receipt-only-review",
             intentId: "receipt-only-intent",
             status: "partial",
-            activated: true,
             actionInFlight: null,
             model: { intentId: "receipt-only-intent", groups: [group("receipt-only", 2)] },
             execution: null,
@@ -260,7 +275,6 @@ describe("OperationsDiff presentation calculations", () => {
             reviewId: "opr-undo-rows",
             intentId: "intent",
             status: "partial",
-            activated: true,
             actionInFlight: null,
             model,
             execution: null,
@@ -443,7 +457,6 @@ describe("Operations full-review result projection", () => {
             reviewId: "opr-review",
             intentId: "intent-review",
             status: "partial",
-            activated: false,
             actionInFlight: null,
             model: null,
             execution: null,
@@ -484,7 +497,6 @@ describe("Operations full-review result projection", () => {
             reviewId: "opr-receipt-only",
             intentId: "intent-receipt-only",
             status: "completed",
-            activated: false,
             actionInFlight: null,
             model: null,
             execution: null,

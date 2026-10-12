@@ -1,4 +1,4 @@
-import type { OperationsIntent, PreparedNoteImageRemovalOperation, PreparedOperation } from "./types";
+import type { OperationExecutionResult, OperationsIntent, PreparedNoteImageRemovalOperation, PreparedOperation } from "./types";
 
 const MAX_DIFF_SEQUENCE_ITEMS = 20_000;
 const MAX_DIFF_EDIT_DISTANCE = 1_200;
@@ -47,6 +47,8 @@ export interface OperationsReviewFileGroup {
     blocks: readonly OperationsReviewDiffBlock[];
     changeCount: number;
     diffDegraded: boolean;
+    /** Native movement is a path change; the host owns any link updates. */
+    targetPath?: string;
 }
 
 export interface OperationsReviewModel {
@@ -77,7 +79,10 @@ type SequenceDiffOp<T> =
     | { type: "insert"; new: T };
 
 /** Group an immutable intent by normalized path without changing execution order. */
-export function createOperationsReviewModel(intent: OperationsIntent): OperationsReviewModel {
+export function createOperationsReviewModel(
+    intent: OperationsIntent,
+    results?: readonly OperationExecutionResult[],
+): OperationsReviewModel {
     const groupsByPath = new Map<string, OperationsReviewFileGroup>();
     const operationGroups = new Map<string, PreparedOperation[]>();
 
@@ -93,9 +98,14 @@ export function createOperationsReviewModel(intent: OperationsIntent): Operation
 
     for (const [normalizedPath, operations] of operationGroups) {
         const first = operations[0];
-        const last = operations[operations.length - 1];
         const before = first.expectedBefore ?? "";
-        const after = last.expectedAfter;
+        const appliedOperations = results ? operations.filter(operation => {
+            const result = results.find(candidate => candidate.operationId === operation.id);
+            return result?.status === "succeeded"
+                || result?.effects?.some(effect => effect.key === "note" && effect.status === "applied");
+        }) : operations;
+        const reached = appliedOperations[appliedOperations.length - 1];
+        const after = first.kind === "move" ? before : reached?.expectedAfter ?? before;
         const group: OperationsReviewFileGroup = {
             id: `group-${normalizedPath}`,
             path: first.path,
@@ -107,6 +117,7 @@ export function createOperationsReviewModel(intent: OperationsIntent): Operation
             netZeroTextChange: first.expectedBefore !== null && before === after,
             operationIds: operations.map((operation) => operation.id),
             operations,
+            ...(first.kind === "move" ? { targetPath: first.targetPath } : {}),
             ...createLineDiff(before, after, normalizedPath),
         };
         groupsByPath.set(normalizedPath, group);

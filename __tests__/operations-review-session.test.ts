@@ -96,6 +96,7 @@ function makeFixture() {
         const intent: OperationsIntent = await controller.stageIntent({
             runId: "run",
             turnId: "turn",
+            mode: "apply",
             operations: [{
                 toolCallId: "call",
                 name: "vault_append",
@@ -105,8 +106,6 @@ function makeFixture() {
         const session = new OperationsReviewSession({
             intent,
             controller: {
-                confirm: async (intentId) => await controller.executeIntent(intentId),
-                cancel: (intentId) => controller.cancelIntent(intentId),
                 undoMany: async (receiptIds) => await controller.undoMany(receiptIds),
                 subscribe: (listener) => controller.subscribe(listener),
             },
@@ -129,72 +128,15 @@ function makeFixture() {
 }
 
 describe("OperationsReviewSession", () => {
-    it("keeps a shared-reference proposal reviewable and cancellable without admitting confirmation", async () => {
-        const intent: OperationsIntent = {
-            ...reviewIntent("shared-image"),
-            operations: [{
-                kind: "note_image_removal",
-                id: "shared-image-operation",
-                toolCallId: "shared-image-call",
-                name: "remove_note_image",
-                input: { notePath: "notes/a.md", imageReference: "![[assets/a.png]]", attachmentAction: "delete" },
-                path: "notes/a.md",
-                expectedBefore: "![[assets/a.png]]",
-                expectedAfter: "",
-                effects: {
-                    note: { path: "notes/a.md", status: "not_started" },
-                    attachment: { path: "assets/a.png", action: "delete", plannedAction: "remove", status: "not_started" },
-                },
-                coverage: { kind: "scoped_vault_search", complete: true },
-                undoLimitation: "temporary-attachment-and-note",
-                block: {
-                    reason: "shared_reference",
-                    conflicts: [{ sourcePath: "notes/shared.md", syntax: "wiki-embed", remainsInSelectedNote: false }],
-                },
-            }],
-        };
-        const confirm = jest.fn(async (_intentId: string): Promise<never> => { throw new Error("Blocked confirmation was admitted"); });
-        const cancel = jest.fn((_intentId: string) => ({ ...intent, state: "cancelled" as const }));
-        const session = new OperationsReviewSession({
-            intent,
-            controller: { confirm, cancel, undoMany: async () => [] },
-            sessionIdentity: "blocked-view",
-            isSourceCurrent: () => true,
-        });
-
-        session.activate();
-        expect(session.getSnapshot().model?.blockers).toHaveLength(1);
-        expect(session.getSnapshot().status).toBe("pending");
-        expect(session.canConfirm()).toBe(false);
-        await expect(session.confirm()).resolves.toBeNull();
-        await expect(session.confirm()).resolves.toBeNull();
-        expect(confirm).not.toHaveBeenCalled();
-        expect(session.canCancel()).toBe(true);
-        expect(session.cancel()?.state).toBe("cancelled");
-        expect(cancel).toHaveBeenCalledWith(intent.id);
-        session.invalidate();
-    });
-
-    it("requires activation and routes competing confirms through the controller once", async () => {
+    it("observes direct execution without activation or a UI execution port", async () => {
         const fixture = makeFixture();
         const session = await fixture.makeSession();
-
-        expect(session.canConfirm()).toBe(false);
-        await expect(session.confirm()).resolves.toBeNull();
         expect(fixture.vault.files.get("notes/a.md")).toBe("before");
-
-        session.activate();
-        expect(session.canConfirm()).toBe(true);
-        const first = session.confirm();
-        const second = session.confirm();
-        expect(await second).toBeNull();
-        const result = await first;
-        expect(result?.state).toBe("completed");
+        expect(session.canUndo()).toBe(false);
+        const result = await fixture.controller.executeIntent(session.getSnapshot().intentId);
+        expect(result.state).toBe("completed");
         expect(fixture.vault.files.get("notes/a.md")).toBe("before\nafter");
-        expect(session.getSnapshot()).toMatchObject({
-            status: "completed",
-            operationResults: [expect.objectContaining({ status: "succeeded" })],
-        });
+        expect(session.getSnapshot()).toMatchObject({ status: "completed", execution: result });
         expect(fixture.snapshots.some(snapshot => snapshot.status === "executing")).toBe(true);
         fixture.controller.dispose();
     });
@@ -203,8 +145,7 @@ describe("OperationsReviewSession", () => {
         const fixture = makeFixture();
         const chatSession = await fixture.makeSession();
         const fullViewSession = chatSession;
-        chatSession.activate();
-        await chatSession.confirm();
+        await fixture.controller.executeIntent(chatSession.getSnapshot().intentId);
         const receiptId = fullViewSession.getSnapshot().operationResults[0]!.receiptId!;
         expect(fullViewSession.canUndo()).toBe(true);
 
@@ -219,24 +160,28 @@ describe("OperationsReviewSession", () => {
         fixture.controller.dispose();
     });
 
-    it("cancel propagates from the shared adapter without writing", async () => {
-        const fixture = makeFixture();
-        const session = await fixture.makeSession();
-        session.activate();
-        const cancelled = session.cancel();
-
-        expect(cancelled).toMatchObject({ state: "cancelled" });
-        expect(session.getSnapshot().status).toBe("cancelled");
-        expect(session.canConfirm()).toBe(false);
-        expect(fixture.vault.files.get("notes/a.md")).toBe("before");
-        fixture.controller.dispose();
+    it("keeps preview and old pending history inert when opened or discarded", async () => {
+        const intent = reviewIntent("preview");
+        const undoMany = jest.fn(async () => []);
+        const makeSession = (mode?: "preview") => new OperationsReviewSession({
+            intent: { ...intent, mode }, controller: { undoMany },
+            sessionIdentity: "preview", isSourceCurrent: () => true,
+        });
+        const preview = makeSession("preview");
+        const historical = makeSession();
+        expect(preview.getSnapshot().status).toBe("preview");
+        expect(historical.getSnapshot().status).toBe("pending");
+        expect(preview.activeReceiptIds()).toEqual([]);
+        preview.discard();
+        historical.discard();
+        expect(undoMany).not.toHaveBeenCalled();
+        expect(preview.getSnapshot().model).toBeNull();
     });
 
     it("clears frozen bodies and receipts when the source Chat session is invalidated", async () => {
         const fixture = makeFixture();
         const session = await fixture.makeSession();
-        session.activate();
-        await session.confirm();
+        await fixture.controller.executeIntent(session.getSnapshot().intentId);
         const receiptId = session.getSnapshot().operationResults[0]!.receiptId!;
         expect(receiptId).toBeDefined();
 
@@ -270,6 +215,7 @@ describe("OperationsReviewSession", () => {
         const intent = await controller.stageIntent({
             runId: "run",
             turnId: "turn",
+            mode: "apply",
             operations: [{
                 toolCallId: "call",
                 name: "vault_append",
@@ -279,8 +225,6 @@ describe("OperationsReviewSession", () => {
         const session = new OperationsReviewSession({
             intent,
             controller: {
-                confirm: async (intentId) => await controller.executeIntent(intentId),
-                cancel: (intentId) => controller.cancelIntent(intentId),
                 undoMany: async (receiptIds) => await controller.undoMany(receiptIds),
                 subscribe: (listener) => controller.subscribe(listener),
             },
@@ -289,7 +233,6 @@ describe("OperationsReviewSession", () => {
         });
         const seen: string[] = [];
         session.subscribe(snapshot => seen.push(snapshot.status));
-        session.activate();
         const result = await controller.executeIntent(intent.id);
 
         expect(events.map(event => event.type)).toEqual(expect.arrayContaining([
@@ -323,12 +266,11 @@ describe("OperationsReviewSession", () => {
             pendingTtlMs: 60_000,
         });
         const port = {
-            confirm: async (intentId: string) => await controller.executeIntent(intentId),
-            cancel: (intentId: string) => controller.cancelIntent(intentId),
             undoMany: async (receiptIds: readonly string[]) => await controller.undoMany(receiptIds),
             subscribe: (listener: (event: OperationsControllerEvent) => void) => controller.subscribe(listener),
         };
         const intent = await controller.stageIntent({
+            mode: "apply",
             runId: "run-partial",
             turnId: "turn-partial",
             operations: [
@@ -356,8 +298,7 @@ describe("OperationsReviewSession", () => {
             isSourceCurrent: () => true,
         });
         vault.files.set("notes/existing.md", "user edit");
-        session.activate();
-        const execution = await session.confirm();
+        const execution = await controller.executeIntent(intent.id);
 
         expect(execution?.state).toBe("partial");
         const snapshot = session.getSnapshot();
@@ -388,8 +329,7 @@ describe("OperationsReviewSession", () => {
             };
         });
         const session = await fixture.makeSession();
-        session.activate();
-        await session.confirm();
+        await fixture.controller.executeIntent(session.getSnapshot().intentId);
         expect(session.canUndo()).toBe(true);
         fixture.controller.dispose();
 
@@ -406,7 +346,7 @@ describe("OperationsReviewSession", () => {
         expect(fixture.onInvalidate).toHaveBeenCalledWith(session.reviewId);
     });
 
-    it("does not restore a discarded batch when a deferred confirmation returns late", async () => {
+    it("does not restore a discarded batch when a native operation settles late", async () => {
         const vault = new MemoryVault();
         let releaseProcess!: (value: string) => void;
         (vault as unknown as {
@@ -426,6 +366,7 @@ describe("OperationsReviewSession", () => {
             pendingTtlMs: 60_000,
         });
         const intent = await controller.stageIntent({
+            mode: "apply",
             runId: "run-deferred",
             turnId: "turn-deferred",
             operations: [{
@@ -437,16 +378,13 @@ describe("OperationsReviewSession", () => {
         const session = new OperationsReviewSession({
             intent,
             controller: {
-                confirm: async (intentId) => await controller.executeIntent(intentId),
-                cancel: (intentId) => controller.cancelIntent(intentId),
                 undoMany: async (receiptIds) => await controller.undoMany(receiptIds),
                 subscribe: (listener) => controller.subscribe(listener),
             },
             sessionIdentity: "deferred",
             isSourceCurrent: () => true,
         });
-        session.activate();
-        const confirming = session.confirm();
+        const confirming = controller.executeIntent(intent.id);
         session.discard();
         releaseProcess("\nafter");
         const result = await confirming;
@@ -475,12 +413,6 @@ describe("OperationsReviewSession", () => {
         const session = new OperationsReviewSession({
             intent,
             controller: {
-                confirm: async () => ({
-                    intentId: intent.id,
-                    state: "completed",
-                    operations: [operation],
-                }),
-                cancel: () => intent,
                 undoMany: async () => [],
                 subscribe: listener => {
                     emitControllerEvent = listener;
@@ -490,8 +422,7 @@ describe("OperationsReviewSession", () => {
             sessionIdentity: "ownership",
             isSourceCurrent: () => true,
         });
-        session.activate();
-        await session.confirm();
+        emitControllerEvent?.({ type: "intent-result", result: { intentId: intent.id, state: "completed", operations: [operation] } });
 
         emitControllerEvent?.({
             type: "undo-result",

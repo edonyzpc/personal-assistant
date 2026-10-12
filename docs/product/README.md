@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [单次写入与原生移动](./specs/pa-direct-operations-product-spec.md) — B-173：直接写入、review/现有 Undo、结果连续性与能力不足收敛；[验证与边界](../archive/2026/b173-direct-operations-validation.md)。
 - [工具混合披露](./specs/pa-agent-tool-disclosure-product-spec.md) — B-172：基础直供、完整短目录与批量加载；[验证与边界](../archive/2026/b172-agent-tool-disclosure-validation.md)。
 - [独立通用计算](./specs/pa-independent-computation-product-spec.md) — B-170：日期、数值与结构化数据计算，由 Agent 自主选择和组合工具；[验证与边界](../archive/2026/b170-independent-computation-validation.md)。
 - [Prompt 精简与渐进披露](./specs/pa-agent-prompt-disclosure-product-spec.md) — B-171：常驻必要规则与能力，方法按需，Agent 自主选择；[验证与延期证据](../archive/2026/b171-agent-prompt-disclosure-validation.md)。

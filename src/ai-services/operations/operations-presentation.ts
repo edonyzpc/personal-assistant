@@ -10,11 +10,12 @@ export interface OperationsPreviewFormatter {
     formatFrontmatterRemove?: (key: string) => string;
 }
 
-/** Shared, content-bounded preview used by every Operations confirmation UI. */
+/** Shared, content-bounded preview used by Operations change review. */
 export function formatOperationsPreview(
     operation: PreparedOperation,
     formatter: OperationsPreviewFormatter = {},
 ): string {
+    if (operation.kind === "move") return `${operation.sourcePath} → ${operation.targetPath}`;
     if (operation.kind === "note_image_removal") {
         return formatOperationsBeforeAfterPreview(operation.expectedBefore, operation.expectedAfter);
     }

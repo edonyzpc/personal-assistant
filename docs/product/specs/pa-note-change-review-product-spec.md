@@ -1,7 +1,7 @@
 # Note Change Review Product Spec
 
 Document status: Current
-Updated: 2026-10-05
+Updated: 2026-10-12
 Work item: B-154
 Decision: [DEC-046](../decisions/dec-046-note-change-review-and-audit-retirement.md)
 Authority: Owner 已逐项确认的笔记审阅、按钮和 Operations 审计退役范围；实现已完成本地独立验收并获文档收尾授权。Current 表示当前产品契约，不表示 Git 集成或发布。
@@ -10,6 +10,12 @@ Authority: Owner 已逐项确认的笔记审阅、按钮和 Operations 审计退
 取消当前明确修改请求的整批二次确认。以下受影响的 REQ/AC 和流程按新目标修订；
 B-154 本地验收仍只证明修订前输入，新入口与结果收口由 [B-161 最终验证](../../archive/2026/b161-contract-alignment-validation.md)
 记录，不以本 Spec 的 Current 或旧 PASS 声称新实现已交付。
+
+2026-10-12 已验收接续：[DEC-063](../decisions/dec-063-direct-operations-and-native-move.md)
+与 [B-173 Product Spec](./pa-direct-operations-product-spec.md) 将 Operations 暂存/执行
+合并为一次工具调用，移除多余 Confirm、保留 review 与现有 Undo，并加入移动。
+当前行为与入口以该 Current Spec 和下方更新流程为准；
+[B-173 验证记录](../../archive/2026/b173-direct-operations-validation.md)保留新接线与真实双端证据，旧 B-154/B-161 结果仅证明各自历史输入。
 
 ## Problem And Product Outcome
 
@@ -42,15 +48,18 @@ B-154 本地验收仍只证明修订前输入，新入口与结果收口由 [B-1
 
 ## User Flow And States
 
-1. Agent 按当前请求准备同一批操作；明确修改可经领域执行入口直接执行，仅讨论/预览
-   停在未执行状态。收到 staged 事件本身不自动执行，旧历史提案不自行恢复权限。
+1. Agent 按当前请求在一次 `mode: apply` 工具调用内准备、校验并执行同批操作；
+   `mode: preview` 零写入，后续明确执行重新准备。旧历史提案不自行恢复权限，
+   不要求模型再调用 execute_operations，也无待激活的 Operations Confirm。
 2. Chat 展示实际差异与结果；内容较多时明确标出尚未展示的变化与完整审阅入口。
    不要求先打开 tab、滚动到底或再次点击确认才能完成明确请求；不把局部差异标成全部。
 3. 点击展开后打开/聚焦本批审阅 tab，按笔记顺序展示变化，可展开上下文、定位前后修改。
    文件名为主要标识，完整路径可辨；同名笔记不混淆。原始 Markdown 可见，不执行其中 HTML。
-4. 同批状态为 pending → executing → completed / partial / failed / unknown；
+   两处提供查看与当前可用 Undo/Undo all，不提供 Confirm 或 pending Cancel；move 显示原路径→新路径。
+4. 领域内部同批状态为 pending → executing → completed / partial / failed / unknown；
    pending 也可以 cancelled / expired / discarded。执行中不接受重复执行；取消只阻止
    后续尚未发生的效果，已经完成或未知的效果必须保留原操作事实，不自动重放。
+   这些内部阶段不产生用户必经的确认卡片；生成结束不再激活执行按钮，Stop 保留。
 5. 关闭审阅页不取消本批，也不延长其有效期；有效会话内可从卡片重新打开。
    会话结束或内容句柄失效后，旧页仅说明不可用，不能重新 stage、读新正文替换旧候选或写入。
 6. 顺序执行遇到失败可能已有部分写入。显示实际结果、未完成范围和现有可用撤销，
@@ -73,7 +82,7 @@ B-154 本地验收仍只证明修订前输入，新入口与结果收口由 [B-1
 | B-154/AC-02 | 长文、首尾多处修改、纯增加/删除、中文词语、Markdown 链接/空白变化均可核对；超过旧 1,600 字限制时仍能查看所有新旧变更，无 Before 挤掉 After |
 | B-154/AC-03 | 明确修改不因二次确认而阻断；差异有省略时可进入完整 tab；同批重复打开不增加 tab，两处共享实际状态，打开操作零笔记写入 |
 | B-154/AC-04 | 仅预览、已取消、超时或失效不可发起写入；重复工具调用/双界面操作最多执行一次；人工变更、目标冲突、撤权继续保护，unknown 不重放 |
-| B-154/AC-05 | 关 tab 再打开有效批次可继续；切换/关闭源 Chat、reload/unload 后旧页不可确认，资源订阅释放；workspace 序列化不含正文且重载不恢复待确认能力 |
+| B-154/AC-05 | 关 tab 再打开有效批次可继续查看/Undo；切换/关闭源 Chat、reload/unload 后旧页不恢复写权限，资源订阅释放；workspace 序列化不含正文且重载不恢复执行或 Undo 能力 |
 | B-154/AC-06 | 部分成功与失败/跳过范围在两处一致；真实 receipt 决定 Undo，撤销后同步反馈，外部改文后撤销拒绝保护用户内容 |
 | B-154/AC-07 | Desktop/mobile 代表视口下尺寸、弱化层级、长路径、滚动和固定操作区可用；键盘可达/焦点可辨，颜色之外有增删标记；中英文标签完整 |
 | B-154/AC-08 | 新装与带旧审计开关的配置均不生成审计；相关设置/提示消失，未新增替代文件或持久化通道，其他设置保持 |
@@ -89,4 +98,5 @@ B-154 本地验收仍只证明修订前输入，新入口与结果收口由 [B-1
 
 - [Operations 架构](../../architecture/pa-agent-architecture-plan.md#operations-agent-providers)承载当前模块、状态与兼容边界。
 - [B-154 验证记录](../../archive/2026/b154-note-change-review-validation.md)保留 10 项 AC 的本地证据、测试复用口径和部署身份；历史记录不作为当前交付状态权威。
+- [B-173 验证记录](../../archive/2026/b173-direct-operations-validation.md)承接单次写入、preview/review/Undo、移动及结果连续性，不扩大原审计退役边界。
 - 开发验收仅部署 repo-local test vault；Git 集成与推送以实际提交、远程引用为准，发布和真实用户 vault 修改分别需要授权。

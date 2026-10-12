@@ -5538,6 +5538,9 @@ export class PluginManager extends Plugin {
             trashFile: async (file) => {
                 await this.app.fileManager.trashFile(file as unknown as TAbstractFile);
             },
+            renameFile: async (file, targetPath) => {
+                await this.app.fileManager.renameFile(file as unknown as TFile, targetPath);
+            },
             isOperationsAgentEnabled: () => this.isOperationsAgentEnabled,
             isPathAllowed: (path) => this.isDataBoundaryAllowedPath(path),
             noteImageRemovalHost: createObsidianNoteImageHost({

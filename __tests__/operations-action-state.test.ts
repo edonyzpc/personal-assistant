@@ -11,6 +11,43 @@ const pending = (): PaAgentActionState => ({ schemaVersion: 1, owner: 'operation
     receipt: { kind: 'operations-staged', intentId: 'intent-1' } });
 
 describe('Operations finite action state', () => {
+    it('collects direct owner results without staging and keeps unchanged plus latest Undo facts', () => {
+        const lineage = completeInputLineage([{ kind: 'user-text', messageId: 'user-1' }]);
+        const observation = { intentId: 'intent-1', state: 'completed' as const, undoAvailable: true,
+            operations: [{ operationId: 'op-1', toolCallId: 'call-1', status: 'succeeded' as const, receiptId: 'receipt-1' }] };
+        const unchanged = { intentId: 'intent-1', state: 'completed' as const, undoAvailable: false,
+            operations: [{ operationId: 'op-2', toolCallId: 'call-2', status: 'unchanged' as const }] };
+        const result = (callId: string, value: typeof observation | typeof unchanged): PaAgentMessage => ({
+            role: 'toolResult', id: `result-${callId}`, toolCallId: callId, toolName: 'vault_move',
+            timestamp: 1, isError: false, inputLineage: lineage,
+            content: { promptText: JSON.stringify(value), includeInNextPrompt: true,
+                resultFact: { kind: 'operations_result', observation: value },
+                metadata: { outcome: 'success', operationsOwnerResult: true } },
+        });
+        const messages: PaAgentMessage[] = [{ role: 'assistant', id: 'assistant-1', timestamp: 0,
+            inputLineage: lineage, content: [
+                { type: 'toolCall', id: 'call-1', name: 'vault_move', input: { mode: 'apply', sourcePath: 'a.md', targetPath: 'b.md' } },
+                { type: 'toolCall', id: 'call-2', name: 'vault_move', input: { mode: 'apply', sourcePath: 'c.md', targetPath: 'c.md' } },
+            ] }, result('call-1', observation), result('call-2', unchanged)];
+        const states = collectActionStates({ runId: 'run-1', turnId: 'turn-1', messages });
+        expect(states).toHaveLength(1);
+        expect(states[0]).toMatchObject({ phase: 'completed', revision: 0, operationsUndoAvailable: true,
+            actions: [{ actionId: 'op-1', phase: 'applied', receiptId: 'receipt-1' },
+                { actionId: 'op-2', phase: 'unchanged' }] });
+        const restored = cloneActionStates(JSON.parse(JSON.stringify(states)));
+        expect(restored).toEqual(states);
+        const undone = applyOperationsUndoResult(restored[0], {
+            operationId: 'op-1', receiptId: 'receipt-1', status: 'undone', undoAvailable: false,
+        })!;
+        expect(cloneActionStates([undone])).toEqual([undone]);
+        expect(undone.revision).toBe(1);
+        expect(projectActionStates([undone])[0]).toMatchObject({ operationsUndoAvailable: false,
+            actions: [{ actionId: 'op-1', phase: 'undone' }, { actionId: 'op-2', phase: 'unchanged' }] });
+        const unowned = result('call-1', observation) as Extract<PaAgentMessage, { role: 'toolResult' }>;
+        delete unowned.content.metadata?.operationsOwnerResult;
+        expect(collectActionStates({ runId: 'run-1', turnId: 'turn-1', messages: [messages[0], unowned] })).toEqual([]);
+    });
+
     it('retains every effect and the last Undo checkpoint beyond the former action count limit', () => {
         const operations = Array.from({ length: 101 }, (_, index) => ({
             operationId: `op-${index}`,

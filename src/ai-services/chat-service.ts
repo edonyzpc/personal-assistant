@@ -1,5 +1,5 @@
 /* Copyright 2023 edonyzpc */
-import { Platform, type TAbstractFile } from 'obsidian';
+import { Platform, type TAbstractFile, type TFile } from 'obsidian';
 import {
     AIUtils,
     DASHSCOPE_INTL_COMPATIBLE_BASE_URL,
@@ -152,6 +152,9 @@ export class ChatService {
             trashFile: async (file: OperationsVaultFile) => {
                 await host.app.fileManager.trashFile(file as unknown as TAbstractFile);
             },
+            renameFile: async (file, targetPath) => {
+                await host.app.fileManager.renameFile(file as unknown as TFile, targetPath);
+            },
             isOperationsAgentEnabled: () => host.isOperationsAgentEnabled,
             ...(host.isDataBoundaryAllowedPath
                 ? { isPathAllowed: (path: string) => host.isDataBoundaryAllowedPath?.(path) === true }
@@ -168,19 +171,6 @@ export class ChatService {
         });
         this.ownedOperationsService = service;
         this.operationsSession = service.createSession({ surface: "chat-fallback" });
-    }
-
-    async confirmOperationsIntent(intentId: string): Promise<OperationsExecutionResult> {
-        const persist = this.operationsContextObservers.get(intentId);
-        const result = await this.operationsSession.confirm(intentId);
-        // The admitted native call can settle after the surface closes. Its finite
-        // fact belongs to the original history sink; it does not restore authority.
-        if (persist) {
-            const settled = this.operationsSession.isDisposed ? { ...result,
-                operations: result.operations.map(operation => ({ ...operation, undoAvailable: false })) } : undefined;
-            await persist(settled).catch(error => this.host.log('Could not persist Operations context state', error));
-        }
-        return result;
     }
 
     async executeOperationsIntentFromAgent(
@@ -216,10 +206,6 @@ export class ChatService {
             ));
         }
         return result;
-    }
-
-    cancelOperationsIntent(intentId: string): OperationsIntent {
-        return this.operationsSession.cancel(intentId);
     }
 
     cancelPendingOperations(): void {
@@ -284,6 +270,11 @@ export class ChatService {
         const undoAvailable = observed.execution?.operations.some(operation => operation.undoAvailable === true) ?? false;
         for (const undoResult of observed.undoResults) {
             refreshed = applyOperationsUndoResult(refreshed, undoResult, undoAvailable) ?? refreshed;
+        }
+        // Execution facts survive a closed owner; session-local recovery does not.
+        if (refreshed.operationsUndoAvailable === true && !undoAvailable) {
+            refreshed = cloneActionStates([{ ...refreshed, operationsUndoAvailable: false,
+                revision: refreshed.revision + 1 }])[0] ?? refreshed;
         }
         const lost = refreshed.phase === 'lost' && refreshed.receipt.kind === 'operations-terminal'
             && refreshed.receipt.state === 'lost';

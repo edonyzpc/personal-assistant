@@ -15,6 +15,7 @@ export interface CreateUndoReceiptInput {
     kind: CoreWriteToolName;
     before: string | null;
     expectedAfter: string;
+    move?: UndoReceipt["move"];
 }
 
 export interface OperationsUndoStoreOptions {
@@ -48,6 +49,7 @@ export class OperationsUndoStore {
             kind: input.kind,
             before: input.before,
             expectedAfter: input.expectedAfter,
+            ...(input.move ? { move: Object.freeze({ ...input.move }) } : {}),
             createdAt,
             expiresAt: createdAt + this.ttlMs,
         });

@@ -54,23 +54,31 @@ export function resolveTaskSourceReadPlans(
     }
 
     const plans = new Map<string, TaskSourceReadPlan>();
-    // Operations stage all actions together. The first operation on each path
+    // Operations prepare all actions together. The first operation on each path
     // chooses its real baseline; later actions see only that virtual target.
     const operationBaselines = new Map<string, TaskSourceReadPlan>();
     for (const call of calls) {
         try {
             let plan: TaskSourceReadPlan;
             if (call.name === REMOVE_NOTE_IMAGE_TOOL_NAME) {
-                // P1 keeps this name internal: no provider exports it yet. The
-                // Host plan still names the real note and, only for delete,
+                // The Host plan names the real note and, only for delete,
                 // the complete scoped reference search required by the domain.
-                const input = validateRemoveNoteImageInput(call.input);
+                const domainInput: Record<string, unknown> = { ...validateCoreWriteInput(call.name, call.input) };
+                delete domainInput.mode;
+                const input = validateRemoveNoteImageInput(domainInput);
                 const notePlan = planNote(input.notePath, host);
                 plan = input.attachmentAction === 'delete'
                     ? { reads: [...notePlan.reads, { kind: 'scoped_vault_search' }] }
                     : notePlan;
             } else if (isCoreWriteToolName(call.name)) {
                 const input = validateCoreWriteInput(call.name, call.input);
+                if (call.name === 'vault_move') {
+                    const move = input as { sourcePath: string; targetPath: string };
+                    plan = { ...planNote(validateOperationsVaultPath(move.sourcePath), host),
+                        outputTargetPaths: [validateOperationsVaultPath(move.targetPath)] };
+                    plans.set(call.id, freezePlan(plan));
+                    continue;
+                }
                 const path = validateOperationsVaultPath(
                     call.name === REMOVE_NOTE_IMAGE_TOOL_NAME
                         ? (input as { notePath: string }).notePath

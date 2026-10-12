@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-10-11
+Updated: 2026-10-12
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-10-12 | `docs/development/active/direct-operations/**` | deleted-after-absorption | [DEC-063](../product/decisions/dec-063-direct-operations-and-native-move.md), [Product Spec](../product/specs/pa-direct-operations-product-spec.md), [Operations Architecture](../architecture/pa-agent-architecture-plan.md#operations-agent-providers), [B-173 validation](./2026/b173-direct-operations-validation.md), current source and focused tests | 用户明确授权 B-173 closeout 与本地 master 提交；单次 apply/preview、review/现有 Undo、真实有限结果、收敛和原生 move 已吸收。仅保留故障丢失链、三类模型/双端 UI、F-06/F-07 窄修及证据限制；Home/SDD/Tracker 删除，不完整归档。未提交过程正文备份至本机临时目录，不声称 Git 已保存；无本范围未完成项，B-159/F-24/M3 延期保持，无推送或发布授权。 |
 | 2026-10-11 | `docs/development/active/tool-disclosure/**` | deleted-after-absorption | [DEC-062](../product/decisions/dec-062-agent-hybrid-tool-disclosure.md), [Product Spec](../product/specs/pa-agent-tool-disclosure-product-spec.md), [Agent Architecture](../architecture/pa-agent-architecture-plan.md#capability-model), [B-172 validation](./2026/b172-agent-tool-disclosure-validation.md), current source and focused tests | 用户明确授权 B-172 closeout 与本地 master 提交。稳定 A/V、真实绑定、同轮快照、来源／有限纠错和效果事实合同已吸收；独有四项比较、组合 gate 与 P2 窄修边界压缩保留。Feature Home/SDD/Tracker 删除，不完整归档；未提交过程原文留本机临时副本，不声称 Git 已保存。无推送或发布授权。 |
 | 2026-10-11 | `docs/development/discovery/pa-agent-tool-disclosure.md` | deleted-after-absorption | [DEC-062](../product/decisions/dec-062-agent-hybrid-tool-disclosure.md), [B-172 research and evidence](./2026/b172-agent-tool-disclosure-validation.md#研究与取舍依据) | Pi 固定来源、未合并理由和历史静态字符输入压缩保留；旧逐项分类及候选计划由当前合同、源码和 tests 承接，不保留 Exploring 镜像或重复开发方案。 |
 | 2026-10-11 | `docs/development/active/independent-computation/**` | deleted-after-absorption | [DEC-061](../product/decisions/dec-061-independent-agent-computation.md), [Product Spec](../product/specs/pa-independent-computation-product-spec.md), [B-170 validation](./2026/b170-independent-computation-validation.md), current source and focused tests | 用户明确授权B-170收口。稳定独立计算、来源准入、绝对期限、有限执行事实及生命周期约束吸收；Mac/mobile simulator接线、两个模型样本和iOS最终module Worker证据分开保留，控制台未定位诊断及Android未验证边界不隐去。Feature Home/SDD/Tracker吸收后删除，不完整归档。本轮未提交执行增量由紧凑证据承接，不声称旧Git保存全部过程。B-172仅修必要引用；无提交、推送或发布权限。 |

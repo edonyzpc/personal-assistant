@@ -341,7 +341,6 @@ type MemoryChipState = {
 };
 
 type OperationsIntentCardHandle = {
-    activate(): void;
     discard(): void;
 };
 
@@ -3964,8 +3963,6 @@ export class LLMView extends ItemView {
             const reviewSession = new OperationsReviewSession({
                 intent,
                 controller: {
-                    confirm: async (intentId) => await this.chatService.confirmOperationsIntent(intentId),
-                    cancel: (intentId) => this.chatService.cancelOperationsIntent(intentId),
                     undoMany: async (receiptIds) => await this.chatService.undoOperations(receiptIds),
                     ...(this.chatService.subscribeOperations ? {
                         subscribe: (listener) => this.chatService.subscribeOperations?.(listener),
@@ -4002,14 +3999,15 @@ export class LLMView extends ItemView {
                 status: HTMLElement;
                 undo: HTMLButtonElement;
             }>();
-            const diffUnmounters: Array<() => void> = [];
             const initialModel = reviewSession.getSnapshot().model;
+            let displayedModel = initialModel;
+            let unmountDiff: (() => void) | undefined;
+            const preview = list.createDiv({ cls: 'pa-operations-intent-card__preview' });
             if (initialModel) {
-                const preview = list.createDiv({ cls: 'pa-operations-intent-card__preview' });
-                diffUnmounters.push(mountOperationsDiff(preview, {
+                unmountDiff = mountOperationsDiff(preview, {
                     model: initialModel,
                     mode: 'compact',
-                }));
+                });
                 for (const attachment of initialModel.attachments ?? []) {
                     const attachmentRow = list.createDiv({
                         cls: 'pa-operations-intent-card__operation',
@@ -4037,7 +4035,7 @@ export class LLMView extends ItemView {
                     const rowHeader = row.createDiv({ cls: 'pa-operations-intent-card__operation-header' });
                     rowHeader.createEl('code', {
                         cls: 'pa-operations-intent-card__path',
-                        text: operation.path,
+                        text: operation.kind === 'move' ? `${operation.sourcePath} → ${operation.targetPath}` : operation.path,
                     });
                     const rowFooter = row.createDiv({ cls: 'pa-operations-intent-card__operation-footer' });
                     const resultStatus = rowFooter.createSpan({
@@ -4056,16 +4054,6 @@ export class LLMView extends ItemView {
             }
 
             const actions = card.createDiv({ cls: 'pa-operations-intent-card__actions' });
-            const confirmButton = actions.createEl('button', {
-                cls: 'pa-operations-review-primary-button',
-                text: t('plugin.chat.operations.intent.confirm'),
-                attr: { type: 'button' },
-            });
-            const cancelIntentButton = actions.createEl('button', {
-                cls: 'pa-operations-review-secondary-button',
-                text: t('plugin.chat.operations.intent.cancel'),
-                attr: { type: 'button' },
-            });
             const openReviewButton = actions.createEl('button', {
                 cls: 'pa-operations-review-secondary-button',
                 text: t('plugin.chat.operations.review.open'),
@@ -4077,7 +4065,6 @@ export class LLMView extends ItemView {
                 attr: { type: 'button' },
             });
             undoAllButton.hidden = true;
-            confirmButton.disabled = true;
             const openReviewError = card.createDiv({
                 cls: 'pa-operations-review-error',
                 attr: { role: 'alert' },
@@ -4095,16 +4082,13 @@ export class LLMView extends ItemView {
                 if (cardCleaned) return;
                 cardCleaned = true;
                 status.setText(t('plugin.chat.operations.review.unavailable'));
-                confirmButton.disabled = true;
-                cancelIntentButton.disabled = true;
                 undoAllButton.disabled = true;
                 openReviewButton.disabled = true;
-                confirmButton.hidden = true;
-                cancelIntentButton.hidden = true;
                 undoAllButton.hidden = true;
                 openReviewError.hidden = true;
-                for (const unmount of diffUnmounters) unmount();
-                diffUnmounters.length = 0;
+                unmountDiff?.();
+                unmountDiff = undefined;
+                displayedModel = null;
                 unsubscribeReviewSession?.();
                 reviewSession.invalidate('unavailable');
                 this.operationsReviewSessions.delete(intentId);
@@ -4132,6 +4116,7 @@ export class LLMView extends ItemView {
                     return [effectsText(result.effects), result.message].filter(Boolean).join('; ');
                 }
                 if (result.status === 'succeeded') return t('plugin.chat.operations.intent.succeeded');
+                if (result.status === 'unchanged') return t('plugin.chat.operations.intent.unchanged');
                 if (result.status === 'stale') return t('plugin.chat.operations.intent.stale');
                 if (result.status === 'skipped') return t('plugin.chat.operations.intent.skipped');
                 if (result.status === 'unknown') return t('plugin.chat.operations.intent.unknown');
@@ -4152,6 +4137,7 @@ export class LLMView extends ItemView {
                 return result.message || t('plugin.chat.operations.intent.undoFailed');
             };
             const statusText = (status: string) => {
+                if (status === 'preview') return t('plugin.chat.operations.intent.preview');
                 if (status === 'executing') return t('plugin.chat.operations.intent.executing');
                 if (status === 'completed') return t('plugin.chat.operations.intent.completed');
                 if (status === 'partial') return t('plugin.chat.operations.intent.partial');
@@ -4170,12 +4156,15 @@ export class LLMView extends ItemView {
                     cleanupCard();
                     return;
                 }
-                status.setText(statusText(snapshot.status));
+                status.setText(snapshot.status === 'completed' && snapshot.operationResults.length > 0
+                    && snapshot.operationResults.every(result => result.status === 'unchanged')
+                    ? t('plugin.chat.operations.intent.unchanged') : statusText(snapshot.status));
+                if (displayedModel !== snapshot.model) {
+                    unmountDiff?.();
+                    unmountDiff = mountOperationsDiff(preview, { model: snapshot.model, mode: 'compact' });
+                    displayedModel = snapshot.model;
+                }
                 const pendingVisible = snapshot.status === 'pending';
-                confirmButton.hidden = !pendingVisible;
-                cancelIntentButton.hidden = !pendingVisible;
-                confirmButton.disabled = !reviewSession.canConfirm();
-                cancelIntentButton.disabled = !reviewSession.canCancel();
                 undoAllButton.hidden = !reviewSession.canUndo();
                 undoAllButton.disabled = snapshot.actionInFlight !== null;
                 openReviewButton.disabled = !this.host.openOperationsReview;
@@ -4213,14 +4202,6 @@ export class LLMView extends ItemView {
             unsubscribeReviewSession = reviewSession.subscribe(renderSnapshot);
             renderSnapshot();
 
-            confirmButton.onclick = () => {
-                if (cardCleaned || confirmButton.disabled) return;
-                void reviewSession.confirm();
-            };
-            cancelIntentButton.onclick = () => {
-                if (cardCleaned || cancelIntentButton.disabled) return;
-                reviewSession.cancel();
-            };
             openReviewButton.onclick = async () => {
                 if (cardCleaned || openReviewButton.disabled) return;
                 openReviewButton.disabled = true;
@@ -4242,10 +4223,6 @@ export class LLMView extends ItemView {
             };
             scrollToBottom({ force: true });
             const handle: OperationsIntentCardHandle = {
-                activate: () => {
-                    if (cardCleaned || !pendingOperationsIntentIds.has(intentId)) return;
-                    reviewSession.activate();
-                },
                 discard: () => {
                     if (cardCleaned || !pendingOperationsIntentIds.has(intentId)) return;
                     reviewSession.discard();
@@ -5680,11 +5657,31 @@ export class LLMView extends ItemView {
                     ? { ...message, content: message.content.filter((part) => part.type !== 'text') }
                     : message) : canonical.messages,
             });
-            // Agent execution may finish before this turn first stores its
-            // action states. Reconcile the staged observation with its owner.
-            if (persisted.actionStates) {
-                persisted.actionStates = persisted.actionStates.map(state => this.chatService.refreshOperationsActionState(state));
-            }
+            // A direct call has a real owner preparation before its tool result.
+            // Keep that original binding when rebuilding the canonical snapshot.
+            const retainedOperations = cloneActionStates(turn.assistantMessage?.canonicalTurn?.actionStates)
+                .filter(state => state.owner === 'operations' && state.origin.runId === canonical.runId);
+            const collected = persisted.actionStates ?? [];
+            persisted.actionStates = cloneActionStates([
+                ...collected.map(state => {
+                    const prior = state.owner === 'operations'
+                        ? retainedOperations.find(candidate => candidate.operationId === state.operationId) : undefined;
+                    if (!prior) return state;
+                    const refreshed = this.chatService.refreshOperationsActionState(prior);
+                    // A trusted direct result still proves its effects after the
+                    // owner closes; preserve the original preparation binding.
+                    if (state.receipt.kind === 'operations-result'
+                        && (refreshed.phase === 'lost' || refreshed.phase === 'pending' || refreshed.phase === 'running')) {
+                        return { ...state, origin: prior.origin, inputLineage: prior.inputLineage,
+                            revision: refreshed.revision + 1 };
+                    }
+                    return refreshed;
+                }),
+                ...retainedOperations.filter(state => !collected.some(candidate => candidate.owner === 'operations'
+                    && candidate.operationId === state.operationId)),
+            ]).map(state => this.chatService.refreshOperationsActionState({ ...state,
+                origin: { ...state.origin, turnId } }));
+            if (turn.assistantMessage) turn.assistantMessage.canonicalTurn = persisted;
             return persisted;
         };
 
@@ -7092,8 +7089,26 @@ export class LLMView extends ItemView {
                         writingMaterialContext: turn.writingMaterialContext,
                         pageletHandoff: turnPageletHandoff ?? undefined,
                         onOperationsIntentStaged: (intent) => {
-                            if (!acceptingStreamEvents || !isLiveTurn() || !turn.assistantMessage) return;
-                            if (conversationIdForMemoryActions) {
+                            if (!acceptingStreamEvents || !isLiveTurn()) return;
+                            if (!turn.assistantMessage) updateResponseContent(responseContent);
+                            const prepared = persistCanonicalTurnFromLifecycle(turn, responseContent);
+                            if (intent.mode === 'apply' && prepared?.runId === intent.runId
+                                && !prepared.actionStates?.some(state => state.owner === 'operations' && state.operationId === intent.id)) {
+                                const call = intent.operations[0];
+                                const assistant = [...turn.canonicalLifecycle.messages].reverse().find(message => message.role === 'assistant'
+                                    && message.content.some(part => part.type === 'toolCall' && part.id === call?.toolCallId
+                                        && part.name === call.name));
+                                const lineage = cloneInputLineage(assistant?.inputLineage);
+                                if (assistant && lineage && call) {
+                                    prepared.actionStates = cloneActionStates([...(prepared.actionStates ?? []), {
+                                        schemaVersion: 1, owner: 'operations', operationId: intent.id, phase: 'pending', revision: 0,
+                                        origin: { runId: intent.runId, turnId: prepared.turnId, assistantId: assistant.id,
+                                            callId: call.toolCallId, resultId: `operations_prepare_${intent.id}` },
+                                        inputLineage: lineage, receipt: { kind: 'operations-staged', intentId: intent.id },
+                                    }]);
+                                }
+                            }
+                            if (conversationIdForMemoryActions && intent.mode === 'apply') {
                                 const conversationId = conversationIdForMemoryActions;
                                 const persistence = this.conversationPersistence;
                                 const service = this.chatService;
@@ -7118,7 +7133,7 @@ export class LLMView extends ItemView {
                                     }
                                 });
                             }
-                            const handle = renderOperationsIntentCard(turn.assistantMessage, intent);
+                            const handle = turn.assistantMessage ? renderOperationsIntentCard(turn.assistantMessage, intent) : undefined;
                             if (handle) operationsCardHandles.push(handle);
                         },
                         onDebugReference: reference => {
@@ -7247,7 +7262,6 @@ export class LLMView extends ItemView {
                 if (operationsCardHandles.length > 0 && responseContent.trim().length === 0) {
                     updateResponseContent(t('plugin.chat.operations.intent.acknowledgement'));
                 }
-                for (const handle of operationsCardHandles) handle.activate();
                 isFinalizing = true;
                 syncComposerControls();
                 const finalized = await finalizeSuccessfulTurn(
