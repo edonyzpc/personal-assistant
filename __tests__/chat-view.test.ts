@@ -252,6 +252,12 @@ class MockElement {
         return this._className;
     }
 
+    get nextSibling(): MockElement | null {
+        if (!this.parentElement) return null;
+        const nextIndex = this.parentElement.children.indexOf(this) + 1;
+        return this.parentElement.children[nextIndex] ?? null;
+    }
+
     set className(value: string) {
         this._className = value;
         for (const cls of value.split(/\s+/).filter(Boolean)) {
@@ -6699,6 +6705,135 @@ describe('LLMView turn lifecycle', () => {
         await view.onClose();
     });
 
+    it('keeps an explicit Reasoning pause effective across queued frames and layout-only scrolls', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'stream reasoning without stealing scroll';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        const responseDiv = getResponseDiv(view);
+        responseDiv.scrollHeight = 1000;
+        responseDiv.clientHeight = 300;
+        responseDiv.scrollTop = 100;
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_start',
+            message: assistantMessage('reasoning_pause_message', []),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            messageId: 'reasoning_pause_message',
+            update: { kind: 'thinking_delta', text: 'reasoning is streaming' },
+        }));
+
+        responseDiv.dispatchEvent('pointerdown');
+        responseDiv.dispatchEvent('touchstart');
+        const reasoningToggle = getElementByClass(responseDiv, 'thinking-reasoning-toggle');
+        reasoningToggle.click();
+        const scrollCallsAfterPause = responseDiv.scrollToCalls.length;
+        runAnimationFrames(true);
+        expect(responseDiv.scrollToCalls).toHaveLength(scrollCallsAfterPause);
+
+        responseDiv.scrollTop = getResponseDiv(view).scrollHeight - responseDiv.clientHeight;
+        responseDiv.dispatchEvent('scroll');
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            messageId: 'reasoning_pause_message',
+            update: { kind: 'thinking_delta', text: ' and grows' },
+        }));
+        runAnimationFrames(true);
+        expect(responseDiv.scrollToCalls).toHaveLength(scrollCallsAfterPause);
+
+        responseDiv.dispatchEvent('pointerdown');
+        responseDiv.scrollTop = responseDiv.scrollHeight - responseDiv.clientHeight;
+        responseDiv.dispatchEvent('scroll');
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            messageId: 'reasoning_pause_message',
+            update: { kind: 'thinking_delta', text: ' after return' },
+        }));
+        runAnimationFrames();
+        expect(responseDiv.scrollToCalls.length).toBeGreaterThan(scrollCallsAfterPause);
+        expect(responseDiv.scrollToCalls.at(-1)).toEqual({ top: 700, behavior: 'smooth' });
+
+        await view.onClose();
+    });
+
+    it('keeps a manual upward scroll pause after intent expires and layout reaches the bottom', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'stream reasoning while user reads earlier content';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        const responseDiv = getResponseDiv(view);
+        responseDiv.scrollHeight = 1000;
+        responseDiv.clientHeight = 300;
+        responseDiv.scrollTop = 0;
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_start',
+            message: assistantMessage('manual_scroll_pause_message', []),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            messageId: 'manual_scroll_pause_message',
+            update: { kind: 'thinking_delta', text: 'reasoning begins' },
+        }));
+        runAnimationFrames();
+
+        responseDiv.dispatchEvent('pointerdown');
+        responseDiv.dispatchEvent('touchstart');
+        responseDiv.scrollTop = 100;
+        responseDiv.dispatchEvent('scroll');
+        await new Promise(resolve => setTimeout(resolve, 580));
+
+        responseDiv.scrollTop = responseDiv.scrollHeight - responseDiv.clientHeight;
+        responseDiv.dispatchEvent('scroll');
+        const scrollCallsBeforeChunk = responseDiv.scrollToCalls.length;
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            messageId: 'manual_scroll_pause_message',
+            update: { kind: 'thinking_delta', text: ' and grows' },
+        }));
+        runAnimationFrames();
+        expect(responseDiv.scrollToCalls).toHaveLength(scrollCallsBeforeChunk);
+
+        responseDiv.dispatchEvent('pointerdown');
+        responseDiv.scrollTop = responseDiv.scrollHeight - responseDiv.clientHeight;
+        responseDiv.dispatchEvent('scroll');
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            messageId: 'manual_scroll_pause_message',
+            update: { kind: 'thinking_delta', text: ' after return' },
+        }));
+        runAnimationFrames();
+        expect(responseDiv.scrollToCalls.length).toBeGreaterThan(scrollCallsBeforeChunk);
+        expect(responseDiv.scrollToCalls.at(-1)).toEqual({ top: 700, behavior: 'smooth' });
+
+        const scrollCallsAfterResume = responseDiv.scrollToCalls.length;
+        responseDiv.scrollTop = 100;
+        responseDiv.dispatchEvent('scroll');
+        const scrollCallsBeforeSameGestureChunk = responseDiv.scrollToCalls.length;
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            messageId: 'manual_scroll_pause_message',
+            update: { kind: 'thinking_delta', text: ' within one gesture' },
+        }));
+        runAnimationFrames();
+        expect(responseDiv.scrollToCalls).toHaveLength(scrollCallsBeforeSameGestureChunk);
+        expect(responseDiv.scrollToCalls.length).toBeGreaterThanOrEqual(scrollCallsAfterResume);
+
+        await view.onClose();
+    });
+
     it('keeps the cancelled message but ignores stale chunks after cancel', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
@@ -8214,6 +8349,84 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(finalMessages[1])).toContain('second complete reasoning.');
         expect(allText(finalMessages[1])).not.toContain('second temporary fragment.');
         expect(allText(getElementByClass(responseDiv, 'assistant'))).toContain('Final reasoning answer.');
+    });
+
+    it('updates Reasoning blocks in place across additions and removals', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'stream stable reasoning blocks';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        const responseDiv = getResponseDiv(view);
+        emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_1', scope: 'turn' }));
+        const first = assistantMessage('reasoning_block_1', []);
+        emitCanonical(call, canonicalEvent({ type: 'message_start', turnId: 'turn_1', scope: 'turn', message: first }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update', turnId: 'turn_1', scope: 'turn', messageId: first.id,
+            update: { kind: 'thinking_delta', text: 'first reasoning.' },
+        }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_end', turnId: 'turn_1', scope: 'turn', status: 'tool_results_ready' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_2', scope: 'turn' }));
+        const second = assistantMessage('reasoning_block_2', []);
+        emitCanonical(call, canonicalEvent({ type: 'message_start', turnId: 'turn_2', scope: 'turn', message: second }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update', turnId: 'turn_2', scope: 'turn', messageId: second.id,
+            update: { kind: 'thinking_delta', text: 'second reasoning.' },
+        }));
+
+        const reasoningContent = getElementByClass(responseDiv, 'thinking-status-reasoning-content');
+        reasoningContent.scrollTop = 37;
+        let blocks = getElementsByClass(reasoningContent, 'thinking-status-reasoning-message');
+        expect(blocks).toHaveLength(2);
+        const firstBlock = blocks[0];
+        const secondBlock = blocks[1];
+
+        const insertBeforeSpy = jest.spyOn(reasoningContent, 'insertBefore');
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update', turnId: 'turn_2', scope: 'turn', messageId: second.id,
+            update: { kind: 'thinking_delta', text: ' appended.' },
+        }));
+        expect(insertBeforeSpy).not.toHaveBeenCalled();
+        blocks = getElementsByClass(reasoningContent, 'thinking-status-reasoning-message');
+        expect(blocks[0]).toBe(firstBlock);
+        expect(blocks[1]).toBe(secondBlock);
+        expect(allText(blocks[1])).toContain('second reasoning. appended.');
+        expect(reasoningContent.scrollTop).toBe(37);
+
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end', turnId: 'turn_2', scope: 'turn',
+            message: assistantMessage('reasoning_block_2', []),
+        }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_3', scope: 'turn' }));
+        const third = assistantMessage('reasoning_block_3', []);
+        emitCanonical(call, canonicalEvent({ type: 'message_start', turnId: 'turn_3', scope: 'turn', message: third }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update', turnId: 'turn_3', scope: 'turn', messageId: third.id,
+            update: { kind: 'thinking_delta', text: 'third reasoning.' },
+        }));
+
+        blocks = getElementsByClass(reasoningContent, 'thinking-status-reasoning-message');
+        expect(blocks).toHaveLength(2);
+        expect(blocks[0]).toBe(firstBlock);
+        expect(allText(blocks[0])).toContain('first reasoning.');
+        expect(allText(blocks[1])).toContain('third reasoning.');
+        expect(allText(reasoningContent)).not.toContain('second reasoning.');
+        expect(reasoningContent.scrollTop).toBe(37);
+
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end', turnId: 'turn_3', scope: 'turn',
+            message: assistantMessage('reasoning_block_3', []),
+        }));
+        const remainingBlocks = getElementsByClass(reasoningContent, 'thinking-status-reasoning-message');
+        expect(remainingBlocks).toHaveLength(1);
+        expect(remainingBlocks[0]).toBe(firstBlock);
+
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
     });
 
     it('persists exact execution identities and guarded Debug references for history', async () => {
@@ -11603,7 +11816,7 @@ describe('LLMView turn lifecycle', () => {
         await view.onClose();
     });
 
-    it('primes textarea focus from touch input without stealing button clicks', async () => {
+    it('leaves direct textarea focus native while priming touch input elsewhere', async () => {
         const { view, containerEl } = createView();
         const documentWithFocus = { activeElement: null as MockElement | null };
         Object.defineProperty(globalThis, 'document', {
@@ -11636,7 +11849,7 @@ describe('LLMView turn lifecycle', () => {
             defaultPrevented: false,
         });
 
-        expect(documentWithFocus.activeElement).toBe(textArea);
+        expect(documentWithFocus.activeElement).toBeNull();
 
         documentWithFocus.activeElement = null;
         composerRow.dispatchEvent('touchstart', {
@@ -11644,7 +11857,7 @@ describe('LLMView turn lifecycle', () => {
             defaultPrevented: false,
         });
 
-        expect(documentWithFocus.activeElement).toBe(textArea);
+        expect(documentWithFocus.activeElement).toBeNull();
 
         documentWithFocus.activeElement = null;
         composerRow.dispatchEvent('click', {
@@ -13362,6 +13575,78 @@ describe('mobile tab bar auto-hide', () => {
         expect(containerEl.children[3].classList.contains('pa-chat-keyboard-spacer')).toBe(true);
 
         await view.onClose();
+    });
+
+    it('closes an open More menu on outside capture without stealing textarea focus', async () => {
+        const documentListeners = new Map<string, Array<(event: { target: MockElement }) => void>>();
+        const documentWithFocus = {
+            activeElement: null as MockElement | null,
+            addEventListener: jest.fn((event: string, listener: (event: { target: MockElement }) => void) => {
+                const listeners = documentListeners.get(event) ?? [];
+                listeners.push(listener);
+                documentListeners.set(event, listeners);
+            }),
+            removeEventListener: jest.fn((event: string, listener: (event: { target: MockElement }) => void, _capture?: boolean) => {
+                const listeners = documentListeners.get(event) ?? [];
+                const index = listeners.indexOf(listener);
+                if (index !== -1) listeners.splice(index, 1);
+                if (listeners.length === 0) documentListeners.delete(event);
+            }),
+        };
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: withMockDomHelpers(documentWithFocus),
+        });
+        const { view, containerEl } = createView();
+        (containerEl as MockElement & { ownerDocument?: unknown }).ownerDocument = documentWithFocus;
+        await view.onOpen();
+
+        const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');
+        const composerMenu = getElementByClass(containerEl, 'pa-chat-composer-menu');
+        const composerRow = getElementByClass(containerEl, 'pa-chat-composer-row');
+        const textArea = getTextArea(containerEl);
+        const newChatButton = getButtonByText(composerMenu, 'New Chat');
+
+        moreButton.click();
+        expect(composerMenu.hidden).toBe(false);
+        expect(documentListeners.get('pointerdown')?.length).toBeGreaterThan(0);
+
+        const outsideCloseListener = (documentListeners.get('pointerdown') ?? [])
+            .find(listener => {
+                listener({ target: textArea });
+                return composerMenu.hidden;
+            });
+        expect(outsideCloseListener).toBeDefined();
+        composerRow.dispatchEvent('pointerdown', {
+            target: textArea,
+            defaultPrevented: false,
+        });
+        expect(composerMenu.hidden).toBe(true);
+        expect(documentWithFocus.activeElement).toBeNull();
+        expect(getTextArea(containerEl)).toBe(textArea);
+
+        moreButton.click();
+        expect(composerMenu.hidden).toBe(false);
+        for (const listener of documentListeners.get('pointerdown') ?? []) {
+            listener({ target: newChatButton });
+        }
+        expect(composerMenu.hidden).toBe(false);
+        newChatButton.click();
+        expect(composerMenu.hidden).toBe(true);
+        expect(getTextArea(containerEl)).toBe(textArea);
+
+        await view.onClose();
+        expect(documentListeners.get('pointerdown') ?? []).not.toContain(outsideCloseListener);
+        expect(documentWithFocus.removeEventListener).toHaveBeenCalledWith(
+            'pointerdown',
+            outsideCloseListener!,
+            true,
+        );
+        expect(documentWithFocus.removeEventListener).toHaveBeenCalledWith(
+            'click',
+            outsideCloseListener!,
+            true,
+        );
     });
 
     it('toggles aria-label and aria-expanded on handle click', async () => {

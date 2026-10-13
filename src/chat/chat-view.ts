@@ -760,14 +760,14 @@ export class LLMView extends ItemView {
         });
         const primeComposerTextAreaFocus = (event: Event) => {
             if (event.defaultPrevented) return;
-            if (!this.shouldFocusComposerTextArea(event.target, composerRow, textArea, true)) return;
+            if (!this.shouldFocusComposerTextArea(event.target, composerRow, textArea)) return;
             this.focusComposerTextArea(textArea);
         };
         composerRow.addEventListener('pointerdown', primeComposerTextAreaFocus, { passive: true });
         composerRow.addEventListener('touchstart', primeComposerTextAreaFocus, { passive: true });
         composerRow.addEventListener('click', (event) => {
             if (event.defaultPrevented) return;
-            if (!this.shouldFocusComposerTextArea(event.target, composerRow, textArea, false)) return;
+            if (!this.shouldFocusComposerTextArea(event.target, composerRow, textArea)) return;
             this.focusComposerTextArea(textArea);
         });
 
@@ -1017,6 +1017,7 @@ export class LLMView extends ItemView {
         const MERMAID_LAYOUT_STABILIZE_TIMEOUT_MS = 4000;
         const USER_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar']);
         let shouldAutoScroll = true;
+        let explicitAutoScrollPause = false;
         let userScrollIntent = false;
         let userScrollIntentTimer: PlatformTimeoutHandle | null = null;
 
@@ -1039,6 +1040,7 @@ export class LLMView extends ItemView {
         ) => {
             if (force) {
                 shouldAutoScroll = true;
+                explicitAutoScrollPause = false;
             } else if (!shouldAutoScroll) {
                 return;
             }
@@ -1051,6 +1053,7 @@ export class LLMView extends ItemView {
             frameId = requestPlatformAnimationFrame(() => {
                 if (frameId === null) return;
                 if (this.scheduledScrollFrame !== frameId) return;
+                if (!shouldAutoScroll || explicitAutoScrollPause) return;
                 this.scheduledScrollFrame = null;
                 this.responseDiv.scrollLeft = 0;
                 this.responseDiv.scrollTo({
@@ -1100,22 +1103,34 @@ export class LLMView extends ItemView {
             this.responseDiv.removeEventListener('pointerdown', markUserScrollIntent);
             this.responseDiv.removeEventListener('keydown', markKeyboardScrollIntent);
             clearUserScrollIntent();
+            explicitAutoScrollPause = false;
         });
         this.mobileInputAdapter.observeKeyboardClearance(containerEl, inputDiv, () => {
             stabilizeChatViewport({ behavior: 'auto' });
         });
 
         const pauseAutoScroll = () => {
+            explicitAutoScrollPause = true;
             shouldAutoScroll = false;
+            clearUserScrollIntent();
+            this.cancelScheduledScroll();
         };
 
         this.responseDiv.addEventListener('scroll', () => {
             if (isNearBottom()) {
-                shouldAutoScroll = true;
+                if (!explicitAutoScrollPause || userScrollIntent) {
+                    explicitAutoScrollPause = false;
+                    shouldAutoScroll = true;
+                }
                 return;
             }
-            if (userScrollIntent) {
+            if (userScrollIntent || explicitAutoScrollPause) {
                 shouldAutoScroll = false;
+                if (userScrollIntent) explicitAutoScrollPause = true;
+                this.cancelScheduledScroll();
+            }
+            if (userScrollIntent) {
+                markUserScrollIntent();
             }
         });
 
@@ -5165,18 +5180,45 @@ export class LLMView extends ItemView {
         };
 
         type ProviderReasoningSection = { messageId: string; text: string };
+        const providerReasoningBlocks = new WeakMap<ThinkingStatusView, Map<string, HTMLElement>>();
         const renderProviderReasoningSections = (turn: UiTurn, sections: ProviderReasoningSection[]) => {
             const visibleSections = sections.filter(section => section.text);
-            if (visibleSections.length === 0) return;
+            if (visibleSections.length === 0) {
+                if (!turn.statusView) return;
+                const blocksById = providerReasoningBlocks.get(turn.statusView);
+                if (!blocksById || blocksById.size === 0) return;
+                for (const sectionEl of [...blocksById.values()]) sectionEl.remove();
+                blocksById.clear();
+                return;
+            }
             turn.providerReasoningObserved = true;
             turn.statusView ??= createThinkingStatusView(turn);
             const contentEl = ensureProviderReasoningSection(turn.statusView);
-            contentEl.empty();
-            visibleSections.forEach((section, index) => {
-                const sectionEl = contentEl.createDiv({ cls: 'thinking-status-reasoning-message' });
-                sectionEl.dataset.messageId = section.messageId;
-                sectionEl.setText(index === 0 ? section.text : `\n\n${section.text}`);
-            });
+            const blocksById = providerReasoningBlocks.get(turn.statusView) ?? new Map<string, HTMLElement>();
+            providerReasoningBlocks.set(turn.statusView, blocksById);
+            const visibleIds = new Set<string>();
+            let followingElement: HTMLElement | null = null;
+            for (let index = visibleSections.length - 1; index >= 0; index -= 1) {
+                const section = visibleSections[index];
+                const expectedText = index === 0 ? section.text : `\n\n${section.text}`;
+                let sectionEl = blocksById.get(section.messageId);
+                if (!sectionEl || sectionEl.parentElement !== contentEl) {
+                    sectionEl = contentEl.createDiv({ cls: 'thinking-status-reasoning-message' });
+                    sectionEl.dataset.messageId = section.messageId;
+                    blocksById.set(section.messageId, sectionEl);
+                }
+                if (sectionEl.textContent !== expectedText) sectionEl.setText(expectedText);
+                if (sectionEl.nextSibling !== followingElement) {
+                    contentEl.insertBefore(sectionEl, followingElement);
+                }
+                visibleIds.add(section.messageId);
+                followingElement = sectionEl;
+            }
+            for (const [messageId, sectionEl] of [...blocksById]) {
+                if (visibleIds.has(messageId)) continue;
+                sectionEl.remove();
+                blocksById.delete(messageId);
+            }
             turn.statusView.summaryEl.setText(thinkingT('plugin.chat.thinking.qwenThinking'));
             scrollToBottom();
         };
@@ -7526,6 +7568,20 @@ export class LLMView extends ItemView {
             composerMenu.hidden = true;
             moreButton.setAttribute('aria-expanded', 'false');
         });
+        const composerMenuDocument = containerEl.ownerDocument ?? getOptionalPlatformDocument();
+        const onComposerMenuOutsidePointer = (event: Event) => {
+            if (composerMenu.hidden || moreControl.contains(event.target as Node)) return;
+            composerMenuAutoClose.close();
+        };
+        for (const event of ['pointerdown', 'click']) {
+            composerMenuDocument?.addEventListener?.(event, onComposerMenuOutsidePointer, true);
+        }
+        this.registerViewTeardown(() => {
+            composerMenuAutoClose.close();
+            for (const event of ['pointerdown', 'click']) {
+                composerMenuDocument?.removeEventListener?.(event, onComposerMenuOutsidePointer, true);
+            }
+        });
         const memoryMenuAutoClose = createIdleMenuAutoClose(memoryMenu, memoryChip, closeMemoryMenu);
         const closeSourceScopeMenu = () => {
             sourceScopeMenu.hidden = true;
@@ -8354,14 +8410,13 @@ export class LLMView extends ItemView {
         target: EventTarget | null,
         composerRow: HTMLElement,
         textArea: HTMLTextAreaElement,
-        allowTextAreaTarget: boolean,
     ): boolean {
         const targetElement = target as HTMLElement | null;
         if (!targetElement || typeof targetElement.tagName !== 'string') return false;
 
         let current: HTMLElement | null = targetElement;
         while (current) {
-            if (current === textArea) return allowTextAreaTarget;
+            if (current === textArea) return false;
             if (current !== composerRow && this.isComposerInteractiveElement(current)) return false;
             if (current === composerRow) return true;
             current = current.parentElement;
