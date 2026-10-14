@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.10](https://github.com/edonyzpc/personal-assistant/compare/2.10.9...2.10.10) (2026-10-14)
+
+### Features
+- operations: apply changes directly and support native moves
+- agent: add Obsidian resource SDK
+
+### Fix
+- chat: preserve reasoning scroll and composer focus
+- chat: keep mobile tab selector clickable in emulator
+- release: sync codemode prelude provenance hash
+
 ## [2.10.9](https://github.com/edonyzpc/personal-assistant/compare/2.10.8...2.10.9) (2026-10-11)
 
 ### Features
