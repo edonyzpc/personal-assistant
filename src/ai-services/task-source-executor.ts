@@ -2,6 +2,7 @@ import type { PaAgentToolExecutor, PaAgentToolExecutionResult, ParsedBufferedToo
 import type { TaskMaterialRead, TaskSourceConstraint, TaskSourceConstraintState } from './task-source-constraint';
 import type { NoteSearchScope } from '../vss/types';
 import { throwIfAborted } from './chat-utils';
+import type { TaskSourceReadGuard } from './task-source-read-guard';
 
 const RETIRED_SOURCE_CONTROLS = new Set(['declare_source_scope', 'request_source_decision']);
 
@@ -19,9 +20,14 @@ interface TaskSourceExecutorHost {
     isHostCurrent(): boolean;
     isWebAllowed?(this: void): boolean;
     isMemoryAllowed?(this: void): boolean;
+    isCreatedResourcePathAllowed?(this: void, path: string): boolean;
     isInputCurrent?(calls: readonly ParsedBufferedToolCall[]): boolean;
     captureInputSourceValidity?(calls: readonly ParsedBufferedToolCall[]): (() => boolean) | undefined;
-    prepareInputSourceAdmission?(calls: readonly ParsedBufferedToolCall[], signal?: AbortSignal): Promise<{
+    prepareInputSourceAdmission?(
+        calls: readonly ParsedBufferedToolCall[],
+        signal?: AbortSignal,
+        inputLineage?: import('./input-lineage').InputLineage,
+    ): Promise<{
         isCurrent(): boolean;
         sourceValidity(this: void): boolean;
         authorityValidity(this: void): boolean;
@@ -35,7 +41,8 @@ export type TaskSourceExecutorOptions = TaskSourceExecutorHost & ({
     resolveReadPlans?: never;
 } | {
     resolveReadPlans(calls: readonly ParsedBufferedToolCall[]): ReadonlyMap<string, TaskSourceReadPlan>
-        | { rejectionReason: 'source_excluded' | 'source_read_plan_unavailable' } | undefined;
+        | { rejectionReason: 'source_excluded' | 'source_read_plan_unavailable' }
+        | { rejectionReason: 'schema_invalid'; message: string } | undefined;
     resolveReadPlan?: never;
 });
 
@@ -45,6 +52,7 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
     return {
         execute: base.execute.bind(base),
         prepareBatch: base.prepareBatch?.bind(base),
+        getAttemptObservation: base.getAttemptObservation?.bind(base),
         getCanonicalToolCallKey: base.getCanonicalToolCallKey?.bind(base),
         getExecutionMode: base.getExecutionMode?.bind(base),
         getTimeoutMs: base.getTimeoutMs?.bind(base),
@@ -67,7 +75,14 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
             const constraint = options.state.snapshot();
             const outputTargets = new Set<string>();
             const batchResult = options.resolveReadPlans?.(input.toolCalls);
-            if (batchResult && 'rejectionReason' in batchResult) return rejectScope(batchResult.rejectionReason);
+            if (batchResult && 'rejectionReason' in batchResult) {
+                if (batchResult.rejectionReason === 'schema_invalid') return {
+                    outcome: 'schema_invalid', promptText: batchResult.message, includeInNextPrompt: true,
+                    executionState: 'not_started',
+                    metadata: { reason: 'schema_invalid', preflightOnly: true, batchPreflightRejected: true },
+                };
+                return rejectScope(batchResult.rejectionReason);
+            }
             const batchPlans = batchResult;
             if (options.resolveReadPlans && (!batchPlans || batchPlans.size !== input.toolCalls.length
                 || input.toolCalls.some(call => !batchPlans.has(call.id)))) {
@@ -107,13 +122,16 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
                 // The strict authority epoch seals the whole lineage. A cooperative
                 // yield only needs a new proof when that authority has changed.
                 if (preparedAdmission?.isCurrent()) return;
-                preparedAdmission = await options.prepareInputSourceAdmission!(input.toolCalls, signal);
+                preparedAdmission = await options.prepareInputSourceAdmission!(
+                    input.toolCalls,
+                    signal,
+                    input.inputLineage,
+                );
                 if (!isInputCurrent() || !options.state.isCurrent(constraint) || !preparedAdmission.isCurrent()) {
                     throw new Error('Task source admission changed during preparation.');
                 }
             } : undefined;
-            return { kind: 'admitted',
-                taskSourceReadGuard: options.state.createReadGuard(
+            const guard = options.state.createReadGuard(
                     constraint, options.resolveHostNoteId, isInputCurrent,
                     path => outputTargets.has(path),
                     options.resolveNoteSearchScope ? () => options.resolveNoteSearchScope!(constraint) : undefined,
@@ -125,7 +143,14 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
                     options.prepareInputSourceAdmission
                         ? () => preparedAdmission?.authorityValidity ?? (() => false)
                         : undefined,
-                ) };
+                );
+            const withCreatedOutputs = (bound: TaskSourceReadGuard): TaskSourceReadGuard => ({
+                ...bound,
+                isPathAllowed: (path, kind) => bound.isPathAllowed(path, kind)
+                    || bound.isCurrent() && options.isCreatedResourcePathAllowed!(path),
+                ...(bound.captureAuthorityGuard ? { captureAuthorityGuard: () => withCreatedOutputs(bound.captureAuthorityGuard!()) } : {}),
+            });
+            return { kind: 'admitted', taskSourceReadGuard: options.isCreatedResourcePathAllowed ? withCreatedOutputs(guard) : guard };
         },
     };
 }

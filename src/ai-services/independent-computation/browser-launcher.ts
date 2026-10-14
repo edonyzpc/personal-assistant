@@ -3,7 +3,7 @@ import {
     type VmEvents,
     type VmLauncher,
 } from "../../third_party/pi-codemode/runtime/execution";
-import type { CodemodeError, CodemodeResult } from "../../third_party/pi-codemode/types";
+import type { CodemodeCallResourceLimits, CodemodeError, CodemodeResult, CodemodeTool } from "../../third_party/pi-codemode/types";
 import workerSource from "./worker-entry.ts?worker-source";
 
 export const INDEPENDENT_COMPUTATION_MEMORY_LIMIT_BYTES = 64 * 1024 * 1024;
@@ -87,11 +87,22 @@ export async function runIndependentCode(input: {
     code: string;
     signal?: AbortSignal;
     timeoutMs: number;
+    tools?: readonly CodemodeTool[];
+    launcher?: VmLauncher;
+    maxCallPayloadChars?: number;
+    callResourceLimits?: CodemodeCallResourceLimits;
+    guestLibrarySource?: string;
+    globals?: readonly CodemodeTool[];
 }): Promise<CodemodeResult> {
     const sandbox = new CodemodeSandboxBase({
         timeoutMs: input.timeoutMs,
         memoryLimitBytes: INDEPENDENT_COMPUTATION_MEMORY_LIMIT_BYTES,
-    }, browserLauncher());
+        ...(input.tools?.length ? { tools: [...input.tools] } : {}),
+        ...(input.globals?.length ? { globals: [...input.globals] } : {}),
+        ...(input.maxCallPayloadChars !== undefined ? { maxCallPayloadChars: input.maxCallPayloadChars } : {}),
+        ...(input.callResourceLimits ? { callResourceLimits: input.callResourceLimits } : {}),
+        ...(input.guestLibrarySource ? { guestLibrarySource: input.guestLibrarySource } : {}),
+    }, input.launcher ?? browserLauncher());
     try {
         return await sandbox.execute(input.code, {
             ...(input.signal ? { signal: input.signal } : {}),

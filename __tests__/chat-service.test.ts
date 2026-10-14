@@ -356,6 +356,7 @@ function createPlugin(overrides: {
 
 const approvedFirstTurnToolNames = [
     'execute_code',
+    'execute_obsidian_code',
     'get_current_note_context',
     'load_skill',
     'load_tools',

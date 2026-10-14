@@ -1,3 +1,5 @@
+// PA derivation from Pi c5f5b3282d5e4203c085e59837ba17aeaf2829b5:
+// typed SDK globals, binary results, live transport limits and fixed libraries.
 import type { CodemodeWasmModule } from "./wasm.ts";
 
 export interface CodemodeToolContext {
@@ -27,6 +29,8 @@ export interface CodemodeTool {
 	outputSchema?: CodemodeJsonSchema;
 	/** Globals only: `execute` receives all call arguments as an array instead of the first one. */
 	spread?: boolean;
+	/** Decode only the declared SDK result's value.bytes wire field. */
+	binaryResult?: boolean;
 	/**
 	 * Globals only: TypeScript parameter list and return type for {@link renderDeclarations}, for
 	 * example `(type: string, id?: string): Promise<Model[]>`. Replaces the rendering from the schemas.
@@ -118,6 +122,21 @@ export interface CodemodeSandboxBaseOptions {
 	 * `InternalError: out of memory`. Default: no limit beyond wasm32's 4 GiB address space.
 	 */
 	memoryLimitBytes?: number;
+	/**
+	 * Maximum JSON characters for one tool/global argument before it is sent to the host.
+	 * The host independently rejects an oversized or duplicate transport attempt.
+	 */
+	maxCallPayloadChars?: number;
+	/** Shared sender/receiver bounds for live RPCs, rather than a cumulative call quota. */
+	callResourceLimits?: CodemodeCallResourceLimits;
+	/** Trusted bundled fixed libraries; never supplied by the guest script. */
+	guestLibrarySource?: string;
+}
+
+export interface CodemodeCallResourceLimits {
+	maxPayloadBytes: number;
+	maxInflightBytes: number;
+	maxInflightCalls: number;
 }
 
 /** Options of `CodemodeSandbox`, which runs each VM in a Node or Bun worker thread. */

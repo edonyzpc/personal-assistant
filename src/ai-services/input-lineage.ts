@@ -11,7 +11,7 @@ import type { ObservedSourceRevision, SourceRecord } from './chat-types';
 export type InputDependency =
     | { kind: 'user-text'; messageId: string }
     | { kind: 'attachment'; ownerMessageId: string; ref: ImageRef }
-    | { kind: 'vault'; path: string; via: 'note' | 'memory' | 'pagelet' }
+    | { kind: 'vault'; path: string; via: 'note' | 'memory' | 'pagelet'; resourceRef?: string }
     | { kind: 'run-notes-observation'; runId: string; owner: 'vault' | 'memory';
         sourceEpoch: string; memoryEnabled?: boolean }
     | { kind: 'personal'; source: Extract<GenerationInputPersonalSource, { state: 'identified' }> }
@@ -34,7 +34,8 @@ const dependencySchema = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('user-text'), messageId: shortIdentity }).strict(),
     z.object({ kind: z.literal('attachment'), ownerMessageId: shortIdentity,
         ref: z.object({ assetId: shortIdentity, contentHash: hash }).strict() }).strict(),
-    z.object({ kind: z.literal('vault'), path, via: z.enum(['note', 'memory', 'pagelet']) }).strict(),
+    z.object({ kind: z.literal('vault'), path, via: z.enum(['note', 'memory', 'pagelet']),
+        resourceRef: shortIdentity.optional() }).strict(),
     z.object({ kind: z.literal('run-notes-observation'), runId: shortIdentity,
         owner: z.enum(['vault', 'memory']), sourceEpoch: identity,
         memoryEnabled: z.boolean().optional() }).strict(),
@@ -100,7 +101,7 @@ export function unionInputLineages(...values: readonly (InputLineage | undefined
 }
 
 export interface InputLineageAdmission {
-    isVaultAllowed(path: string, via: 'note' | 'memory' | 'pagelet'): boolean;
+    isVaultAllowed(path: string, via: 'note' | 'memory' | 'pagelet', resourceRef?: string): boolean;
     isRunNotesObservationAllowed?(observation: Extract<InputDependency,
         { kind: 'run-notes-observation' }>): boolean;
     isWebAllowed(providerId: string, resultKey: string): boolean;
@@ -123,7 +124,8 @@ export function admitsValidatedInputDependency(dependency: InputDependency, scop
         switch (dependency.kind) {
             case 'user-text': return true;
             case 'attachment': return admission.isAttachmentAllowed?.(dependency.ref) === true;
-            case 'vault': return scope !== 'web' && admission.isVaultAllowed(dependency.path, dependency.via);
+            case 'vault': return scope !== 'web'
+                && admission.isVaultAllowed(dependency.path, dependency.via, dependency.resourceRef);
             case 'run-notes-observation': return scope !== 'web'
                 && admission.isRunNotesObservationAllowed?.(dependency) === true;
             case 'personal': return scope !== 'web' && admission.isPersonalAllowed?.(dependency.source) === true;
@@ -149,11 +151,13 @@ export function sourceRecordsInputLineage(records: readonly SourceRecord[]): Inp
             dependencies.push({ kind: 'web', providerId: record.providerId, resultKey: record.dedupKey });
         } else if (record.sourceBoundary === 'memory' || record.kind === 'memory-reference') {
             if (!record.path) { complete = false; continue; }
-            dependencies.push({ kind: 'vault', path: record.path, via: 'memory' });
+            dependencies.push({ kind: 'vault', path: record.path, via: 'memory',
+                ...(record.resourceRef ? { resourceRef: record.resourceRef } : {}) });
         } else if (record.sourceBoundary === 'current-note' || record.sourceBoundary === 'read-only-tool'
             || record.sourceBoundary === 'vault') {
             if (!record.path) { complete = false; continue; }
-            dependencies.push({ kind: 'vault', path: record.path, via: 'note' });
+            dependencies.push({ kind: 'vault', path: record.path, via: 'note',
+                ...(record.resourceRef ? { resourceRef: record.resourceRef } : {}) });
         } else complete = false;
     }
     const copied = cloneInputLineage({ schemaVersion: 1,

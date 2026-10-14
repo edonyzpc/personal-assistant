@@ -8,12 +8,14 @@ import {
 export interface TaskSourceNoteIdentity {
     readonly handle: string;
     readonly noteId: string;
+    /** Historical path at registration; current paths come from pathForNoteId. */
     readonly path: string;
 }
 
 interface RegisteredNote {
     readonly identity: TaskSourceNoteIdentity;
     readonly file: VaultFileLike;
+    currentPath: string;
     invalidated: boolean;
 }
 
@@ -54,7 +56,7 @@ export class TaskSourceNoteIdentities {
             const existing = this.byFile.get(file) ?? this.byPath.get(path);
             if (existing) {
                 const live = this.isLive(existing);
-                return live && existing.file === file && existing.identity.path === path
+                return live && existing.file === file && existing.currentPath === path
                     ? existing.identity : undefined;
             }
             if (this.getFileByPath(path) !== file || file.path !== path) return undefined;
@@ -64,7 +66,7 @@ export class TaskSourceNoteIdentities {
                 noteId: `${this.runId}:note:${sequence}`,
                 path,
             });
-            const registered: RegisteredNote = { identity, file, invalidated: false };
+            const registered: RegisteredNote = { identity, file, currentPath: path, invalidated: false };
             this.byPath.set(path, registered);
             this.byNoteId.set(identity.noteId, registered);
             this.byFile.set(file, registered);
@@ -75,13 +77,22 @@ export class TaskSourceNoteIdentities {
     }
 
     resolveNoteId(path: string): string | undefined {
-        const registered = this.byPath.get(path);
-        return registered && this.isLive(registered) ? registered.identity.noteId : undefined;
+        try {
+            let registered = this.byPath.get(path);
+            if (!registered) {
+                const currentFile = this.getFileByPath(path);
+                if (currentFile && typeof currentFile === "object") registered = this.byFile.get(currentFile as VaultFileLike);
+            }
+            return registered && this.isLive(registered) && registered.currentPath === path
+                ? registered.identity.noteId : undefined;
+        } catch {
+            return undefined;
+        }
     }
 
     pathForNoteId(noteId: string): string | undefined {
         const registered = this.byNoteId.get(noteId);
-        return registered && this.isLive(registered) ? registered.identity.path : undefined;
+        return registered && this.isLive(registered) ? registered.currentPath : undefined;
     }
 
     /** Retain the original excluded path even after deletion or replacement. */
@@ -95,15 +106,23 @@ export class TaskSourceNoteIdentities {
         const registered = this.byNoteId.get(this.currentNote.noteId);
         if (!registered || !this.isLive(registered)) return false;
         const view = this.findCurrentView();
-        return view?.file === registered.file && view.file.path === registered.identity.path;
+        return view?.file === registered.file && view.file.path === registered.currentPath;
     }
 
     private isLive(registered: RegisteredNote): boolean {
         if (registered.invalidated) return false;
         try {
-            if (registered.file.path === registered.identity.path
-                && this.getFileByPath(registered.identity.path) === registered.file
-                && registered.file.path === registered.identity.path) return true;
+            const currentPath = registered.file.path;
+            if (this.getFileByPath(currentPath) === registered.file && registered.file.path === currentPath) {
+                // Public native moves retain the object. Update only its current
+                // lookup; the original identity still carries its historical path.
+                if (registered.currentPath !== currentPath) {
+                    if (this.byPath.get(registered.currentPath) === registered) this.byPath.delete(registered.currentPath);
+                    registered.currentPath = currentPath;
+                    this.byPath.set(currentPath, registered);
+                }
+                return true;
+            }
         } catch {
             // A failed host lookup cannot establish that an earlier identity survived.
         }

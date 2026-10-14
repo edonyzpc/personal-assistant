@@ -30,6 +30,9 @@ export interface OperationsServiceOptions {
     trashFile: (file: OperationsVaultFile) => Promise<void>;
     /** Native Obsidian FileManager.renameFile port; also used for Undo. */
     renameFile?: (file: OperationsVaultFile, targetPath: string) => Promise<void>;
+    /** Resource SDK only: public Vault.trash, never permanent-delete settings. */
+    trashResource?: (file: OperationsVaultFile) => Promise<void>;
+    removeEmptyFolder?: (file: OperationsVaultFile) => Promise<void>;
     isOperationsAgentEnabled: () => boolean;
     isPathAllowed?: (path: string) => boolean;
     frontmatterCodec?: FrontmatterCodec;
@@ -77,6 +80,8 @@ export class OperationsService {
             vault: this.options.vault,
             trashFile: this.options.trashFile,
             ...(this.options.renameFile ? { renameFile: this.options.renameFile } : {}),
+            ...(this.options.trashResource ? { trashResource: this.options.trashResource } : {}),
+            ...(this.options.removeEmptyFolder ? { removeEmptyFolder: this.options.removeEmptyFolder } : {}),
             ...(this.options.isPathAllowed ? { isPathAllowed: this.options.isPathAllowed } : {}),
             ...(options.markSelfWrite ? { markSelfWrite: options.markSelfWrite } : {}),
             ...(this.options.frontmatterCodec ? { frontmatterCodec: this.options.frontmatterCodec } : {}),
@@ -173,6 +178,9 @@ export class OperationsSession {
     getCallContextResult(runId: string, turnId: string, toolCallId: string): ReturnType<OperationsIntentController["getCallContextResult"]> {
         return this.controller.getCallContextResult(runId, turnId, toolCallId);
     }
+    getUndoTargetPaths(receiptId: string): readonly string[] | undefined {
+        return this.controller.getUndoTargetPaths(receiptId);
+    }
 
     async confirm(intentId: string): Promise<OperationsExecutionResult> {
         if (!this.isOperationsAgentEnabled()) {
@@ -239,11 +247,24 @@ export class OperationsSession {
                     return;
                 }
                 assertTaskSourceReadCurrent(input.taskSourceReadGuard);
-                if (input.taskSourceReadGuard.isNoteDomainAllowed?.() === false) {
+                const newOutput = operation.kind === "resource"
+                    && (operation.resource.action === "create" || operation.resource.action === "mkdir");
+                const ownOutput = operation.kind === "resource"
+                    && (operation.resource.action === "open" || operation.resource.action === "undo")
+                    && isTaskSourcePathAllowed(input.taskSourceReadGuard, operation.path);
+                if (!newOutput && !ownOutput && input.taskSourceReadGuard.isNoteDomainAllowed?.() === false) {
                     throw new OperationsControllerError(
                         "boundary_denied",
                         "The current source scope does not permit note Operations.",
                     );
+                }
+                if (operation.kind === "resource") {
+                    const action = operation.resource.action;
+                    const output = action === "create" || action === "mkdir" || action === "undo";
+                    if (!isTaskSourcePathAllowed(input.taskSourceReadGuard, operation.path,
+                        output ? "output_target_exists" : "task_material")) throw new OperationsControllerError(
+                        "boundary_denied", "The resource target is outside the current source scope.");
+                    return;
                 }
                 if (operation.name !== "vault_create"
                     && !isTaskSourcePathAllowed(
@@ -272,7 +293,9 @@ export class OperationsSession {
 
         // executeIntent synchronously changes pending to executing before its
         // first await, so a repeated call above observes rather than rewrites.
-        return await this.controller.executeIntent(input.intentId, assertOperationAllowed);
+        const resourceGuard = input.taskSourceReadGuard.captureAuthorityGuard?.() ?? input.taskSourceReadGuard;
+        return await this.controller.executeIntent(input.intentId, assertOperationAllowed,
+            { guard: resourceGuard, signal: input.signal });
     }
 
     cancel(intentId: string): OperationsIntent {

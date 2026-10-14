@@ -122,6 +122,7 @@ module.exports = {
     "\\.wasm$": "<rootDir>/__mocks__/wasm-binary-fn.js",
     "\\.woff2$": "<rootDir>/__mocks__/woff2-binary-fn.js",
     "\\?worker-source$": "<rootDir>/__mocks__/asset-string.js",
+    "\\?guest-source$": "<rootDir>/__mocks__/asset-string.js",
     "^@sqlite\\.org/sqlite-wasm$": "<rootDir>/__mocks__/sqlite-wasm.js",
   },
 

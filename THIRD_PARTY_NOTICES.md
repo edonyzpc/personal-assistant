@@ -57,11 +57,11 @@ runtime and is licensed with the project source. Reference attribution:
 | `skills/obsidian-templater/references/module-reference.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
 | `skills/obsidian-templater/references/user-scripts.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
 | `skills/obsidian-templater/references/templater-modules-api.md` | `AGPL-3.0-only` | Project-authored compatibility guidance; no third-party text intentionally copied. |
-| `src/third_party/pi-codemode` | `MIT` | Pi codemode minimum browser source closure at commit c5f5b3282d5e4203c085e59837ba17aeaf2829b5; wasm.ts is type-only browser extraction and symbol-dispose.d.ts is project-authored compatibility typing. |
+| `src/third_party/pi-codemode` | `MIT` | Derived from Pi codemode minimum browser source closure at commit c5f5b3282d5e4203c085e59837ba17aeaf2829b5. PA additions bind SDK globals and fixed guest libraries, enforce byte/in-flight transport boundaries and preserve host cancellation facts. wasm.ts is type-only browser extraction and symbol-dispose.d.ts is project-authored compatibility typing. |
 
 Independent computation also embeds `quickjs-wasi@3.6.2`’s `quickjs.wasm`
 (637405 bytes; SHA-256 `d4c9375f2b1ca4dc95f72c8aa2982a7a9951ac8011490d79c6582df732b4bbd9`).
-The Pi source closure and the complete MIT license are checked file-by-file by
+The derived Pi source closure and the complete MIT license are checked file-by-file by
 `scripts/check-third-party-notices.mjs`.
 
 ### Pi codemode MIT license
@@ -252,16 +252,19 @@ SOFTWARE.
 | `@standard-schema/spec` | `1.1.0` | `MIT` | `node_modules/@standard-schema/spec` |
 | `@zumer/snapdom` | `2.23.2` | `MIT` | `node_modules/@zumer/snapdom` |
 | `ansi-styles` | `5.2.0` | `MIT` | `node_modules/@langchain/core/node_modules/ansi-styles` |
+| `argparse` | `1.0.10` | `MIT` | `node_modules/argparse` |
 | `argparse` | `3.0.2` | `PSF-2.0` | `node_modules/markdown-it/node_modules/argparse` |
 | `base64-js` | `1.5.1` | `MIT` | `node_modules/base64-js` |
 | `camelcase` | `6.3.0` | `MIT` | `node_modules/camelcase` |
 | `chart.js` | `4.4.9` | `MIT` | `node_modules/chart.js` |
 | `decamelize` | `1.2.0` | `MIT` | `node_modules/decamelize` |
 | `entities` | `8.1.0` | `BSD-2-Clause` | `node_modules/entities` |
+| `esprima` | `4.0.1` | `BSD-2-Clause` | `node_modules/esprima` |
 | `eventemitter3` | `4.0.7` | `MIT` | `node_modules/eventemitter3` |
 | `fflate` | `0.8.3` | `MIT` | `node_modules/fflate` |
 | `js-tiktoken` | `1.0.21` | `MIT` | `node_modules/js-tiktoken` |
 | `js-tokens` | `4.0.0` | `MIT` | `node_modules/js-tokens` |
+| `js-yaml` | `3.15.2` | `MIT` | `node_modules/js-yaml` |
 | `langsmith` | `0.7.1` | `MIT` | `node_modules/langsmith` |
 | `linkify-it` | `6.1.0` | `MIT` | `node_modules/linkify-it` |
 | `loose-envify` | `1.4.0` | `MIT` | `node_modules/loose-envify` |
@@ -282,6 +285,7 @@ SOFTWARE.
 | `react-dom` | `18.3.1` | `MIT` | `node_modules/react-dom` |
 | `scheduler` | `0.23.2` | `MIT` | `node_modules/scheduler` |
 | `semver` | `7.8.5` | `ISC` | `node_modules/semver` |
+| `sprintf-js` | `1.0.3` | `BSD-3-Clause` | `node_modules/sprintf-js` |
 | `uc.micro` | `3.0.0` | `MIT` | `node_modules/uc.micro` |
 | `uuid` | `11.1.1` | `MIT` | `node_modules/@langchain/core/node_modules/uuid` |
 | `zod` | `3.25.76` | `MIT` | `node_modules/zod` |
@@ -697,6 +701,36 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~
 
+### argparse@1.0.10
+
+- License: `MIT`
+- Lockfile path: `node_modules/argparse`
+- Source file: `node_modules/argparse/LICENSE`
+
+~~~text
+(The MIT License)
+
+Copyright (C) 2012 by Vitaly Puzrin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+~~~
+
 ### argparse@3.0.2
 
 - License: `PSF-2.0`
@@ -869,6 +903,36 @@ THIS IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRE
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~
 
+### esprima@4.0.1
+
+- License: `BSD-2-Clause`
+- Lockfile path: `node_modules/esprima`
+- Source file: `node_modules/esprima/LICENSE.BSD`
+
+~~~text
+Copyright JS Foundation and other contributors, https://js.foundation/
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+~~~
+
 ### eventemitter3@4.0.7
 
 - License: `MIT`
@@ -969,6 +1033,36 @@ SOFTWARE.
 The MIT License (MIT)
 
 Copyright (c) 2014, 2015, 2016, 2017, 2018 Simon Lydell
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+~~~
+
+### js-yaml@3.15.2
+
+- License: `MIT`
+- Lockfile path: `node_modules/js-yaml`
+- Source file: `node_modules/js-yaml/LICENSE`
+
+~~~text
+(The MIT License)
+
+Copyright (C) 2011-2015 by Vitaly Puzrin
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -1749,6 +1843,39 @@ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+~~~
+
+### sprintf-js@1.0.3
+
+- License: `BSD-3-Clause`
+- Lockfile path: `node_modules/sprintf-js`
+- Source file: `node_modules/sprintf-js/LICENSE`
+
+~~~text
+Copyright (c) 2007-2014, Alexandru Marasteanu <hello [at) alexei (dot] ro>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+* Redistributions of source code must retain the above copyright
+  notice, this list of conditions and the following disclaimer.
+* Redistributions in binary form must reproduce the above copyright
+  notice, this list of conditions and the following disclaimer in the
+  documentation and/or other materials provided with the distribution.
+* Neither the name of this software nor the names of its contributors may be
+  used to endorse or promote products derived from this software without
+  specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~
 
 ### uc.micro@3.0.0

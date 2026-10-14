@@ -725,6 +725,7 @@ export class ToolExecutionDispatcher {
                 replayBlocked: true,
                 toolName: call.name,
             },
+            ...hostChildFactFields(recorded),
         };
     }
 
@@ -942,7 +943,12 @@ export class ToolExecutionDispatcher {
                     if (completedResult && retrySafety === "side_effect" && first.type === "wall_clock_exceeded") {
                         return finalize(this.effectResultAfterInterrupt(toolCall, completedResult, "wall_clock_exceeded"));
                     }
-                    return finalize(await this.waitForInterruptedTool(first.type, executionPromise, retrySafety));
+                    return finalize(await this.waitForInterruptedTool(
+                        first.type,
+                        executionPromise,
+                        retrySafety,
+                        () => completedResult,
+                    ));
                 case "abort_timeout":
                     return finalize({
                         outcome: "abort_timeout",
@@ -1006,6 +1012,7 @@ export class ToolExecutionDispatcher {
             includeInNextPrompt: true,
             executionState,
             ...(result.resultFact ? { resultFact: result.resultFact } : {}),
+            ...hostChildFactFields(result),
             ...(recovery ? { recovery: { ...recovery, allowedActions: [...recovery.allowedActions] } } : {}),
             metadata: {
                 outcome: "recoverable_error",
@@ -1124,6 +1131,7 @@ export class ToolExecutionDispatcher {
         interruptedBy: "aborted" | "wall_clock_exceeded",
         executionPromise: Promise<ToolExecutionRaceResult>,
         retrySafety: "read_only" | "side_effect",
+        getCompletedResult: () => PaAgentToolExecutionResult | undefined,
     ): Promise<PaAgentToolExecutionResult> {
         const graceResult = await Promise.race([
             executionPromise,
@@ -1131,6 +1139,7 @@ export class ToolExecutionDispatcher {
         ]);
         const reason = interruptedBy === "wall_clock_exceeded" ? "wall_clock_exceeded" : "user_abort";
         const stoppedBy = interruptedBy === "wall_clock_exceeded" ? "wall_clock_exceeded" : "aborted";
+        const completedResult = getCompletedResult();
         if (graceResult.type === "abort_timeout") {
             return {
                 outcome: "abort_timeout",
@@ -1143,10 +1152,13 @@ export class ToolExecutionDispatcher {
                     stoppedBy,
                     toolAbortGraceMs: this.config.toolAbortGraceMs,
                 },
+                ...hostChildFactFields(getCompletedResult()),
             };
         }
         return {
             outcome: "aborted",
+            ...(completedResult?.executionState ? { executionState: completedResult.executionState } : {}),
+            ...(completedResult?.recovery ? { recovery: completedResult.recovery } : {}),
             promptText: "",
             includeInNextPrompt: false,
             metadata: {
@@ -1154,6 +1166,7 @@ export class ToolExecutionDispatcher {
                 reason,
                 stoppedBy,
             },
+            ...hostChildFactFields(getCompletedResult()),
         };
     }
 
@@ -1483,6 +1496,7 @@ function actionResultAfterSourceChange(
             ...(resultFact ? { resultFact } : {}),
             ...(recovery ? { recovery: { ...recovery, allowedActions: [...recovery.allowedActions] } } : {}),
             metadata: finiteInterruptedToolMetadata(result),
+            ...hostChildFactFields(result),
         };
     }
     // Drop material-bearing text, source records, context and free-form
@@ -1495,6 +1509,7 @@ function actionResultAfterSourceChange(
         ...(resultFact ? { resultFact } : {}),
         ...(recovery ? { recovery: { ...recovery, allowedActions: [...recovery.allowedActions] } } : {}),
         metadata: { reason: "task_source_changed_after_execution" },
+        ...hostChildFactFields(result),
     };
 }
 
@@ -1511,8 +1526,18 @@ function finiteOperationsResult(result: PaAgentToolExecutionResult | undefined,
         resultFact: fact,
         ...(result.recovery ? { recovery: { ...result.recovery,
             allowedActions: [...result.recovery.allowedActions] } } : {}),
+        ...hostChildFactFields(result),
         metadata: { ...finiteInterruptedToolMetadata(result),
             ...(result.metadata?.intentId ? { intentId: fact.observation.intentId } : {}) } };
+}
+
+function hostChildFactFields(result: PaAgentToolExecutionResult | undefined): Pick<PaAgentToolExecutionResult,
+    "actionStates" | "inputLineage"> {
+    if (!result) return {};
+    return {
+        ...(result.actionStates ? { actionStates: result.actionStates } : {}),
+        ...(result.inputLineage ? { inputLineage: result.inputLineage } : {}),
+    };
 }
 
 function preflightResultAfterSourceChange(

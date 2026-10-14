@@ -14,6 +14,7 @@ import { ChatHistoryManager } from "../src/chat/chat-history-manager";
 import { MemoryChatHistoryStore } from "../src/chat/chat-history-store";
 import type { TaskSourceReadGuard } from "../src/ai-services/task-source-read-guard";
 import {
+    CORE_WRITE_TOOL_NAMES,
     type ExecuteCurrentOperationsIntentInput,
     type OperationsControllerEvent,
     type OperationsVault,
@@ -550,15 +551,8 @@ describe("OperationsToolProvider shared identity", () => {
 
         expect(first.status).toBe("available");
         expect(second.status).toBe("available");
-        expect(first.capabilities.map(capability => capability.name)).toEqual([
-            "vault_create",
-            "vault_append",
-            "vault_process",
-            "frontmatter_update",
-            "remove_note_image",
-            "vault_move",
-        ]);
-        expect(second.capabilities).toHaveLength(6);
+        expect(first.capabilities.map(capability => capability.name)).toEqual([...CORE_WRITE_TOOL_NAMES]);
+        expect(second.capabilities).toHaveLength(CORE_WRITE_TOOL_NAMES.length);
         first.capabilities.forEach((capability, index) => {
             expect(second.capabilities[index]).toBe(capability);
         });

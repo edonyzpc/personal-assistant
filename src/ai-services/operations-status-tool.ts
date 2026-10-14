@@ -1,7 +1,7 @@
 import type { ChatToolDefinition } from './chat-tool-types';
 import { throwIfAborted } from './chat-utils';
 import type { OperationsExecutionResult, OperationExecutionStatus, OperationsFailureCategory,
-    NoteImageRemovalEffectStatus } from './operations/types';
+    NoteImageRemovalEffectStatus, ResourceEffectFacts } from './operations/types';
 
 export const GET_OPERATIONS_STATUS = 'get_operations_status';
 
@@ -23,8 +23,8 @@ export interface OperationsStatusHost {
     read(input: GetOperationsStatusInput, signal?: AbortSignal): Promise<OperationsStatusObservation>;
 }
 
-/** A finite projection of the controller's result, independent of note bodies,
- * paths and recovery snapshots. The original call still retains its ancestry. */
+/** A finite projection of the controller's result, excluding note bodies and
+ * private recovery snapshots. The original call still retains its ancestry. */
 export interface OperationsResultObservation {
     intentId: string;
     state: OperationsExecutionResult['state'];
@@ -35,6 +35,7 @@ export interface OperationsResultObservation {
         receiptId?: string;
         effects?: Array<{ key: 'note' | 'attachment'; status: NoteImageRemovalEffectStatus }>;
         failureCategory?: OperationsFailureCategory;
+        resourceEffect?: ResourceEffectFacts;
     }>;
     undoAvailable: boolean;
 }
@@ -50,6 +51,13 @@ export function operationsResultObservation(execution: OperationsExecutionResult
             ...(operation.receiptId ? { receiptId: operation.receiptId } : {}),
             ...(operation.effects ? { effects: operation.effects.map(effect => ({ key: effect.key, status: effect.status })) } : {}),
             ...(operation.failureCategory ? { failureCategory: operation.failureCategory } : {}),
+            ...(operation.resourceEffect ? { resourceEffect: { ...operation.resourceEffect,
+                ...(operation.resourceEffect.paths ? { paths: [...operation.resourceEffect.paths] } : {}),
+                ...(operation.resourceEffect.position ? { position: { ...operation.resourceEffect.position,
+                    requested: { ...operation.resourceEffect.position.requested },
+                    ...(operation.resourceEffect.position.actual ? { actual: { ...operation.resourceEffect.position.actual } } : {}),
+                } } : {}),
+            } } : {}),
         })),
         undoAvailable: operations.some(operation => operation.undoAvailable === true),
     };
@@ -73,16 +81,56 @@ export function isOperationsResultObservation(value: unknown): value is Operatio
     for (const candidate of observation.operations) {
         if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
         const operation = candidate as Record<string, unknown>;
-        if (Object.keys(operation).some(key => !['operationId', 'toolCallId', 'status', 'receiptId', 'effects', 'failureCategory'].includes(key))
+        if (Object.keys(operation).some(key => !['operationId', 'toolCallId', 'status', 'receiptId', 'effects', 'failureCategory', 'resourceEffect'].includes(key))
             || !safeIdentity(operation.operationId) || !safeIdentity(operation.toolCallId)
             || typeof operation.status !== 'string' || !OPERATION_STATUSES.has(operation.status)
             || ids.has(operation.operationId) || operation.receiptId !== undefined && !safeIdentity(operation.receiptId)
+            || operation.resourceEffect !== undefined && !isResourceEffectFacts(operation.resourceEffect)
             || operation.failureCategory !== undefined && !FAILURE_CATEGORIES.has(operation.failureCategory as string)) return false;
         ids.add(operation.operationId);
         if (operation.effects !== undefined && (!Array.isArray(operation.effects)
             || operation.effects.some(effect => !isOperationsEffect(effect)))) return false;
     }
     return true;
+}
+
+export function isResourceEffectFacts(value: unknown): value is ResourceEffectFacts {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const effect = value as Record<string, unknown>;
+    const keys = ['kind', 'paths', 'fromPath', 'toPath', 'resourceRef', 'scope', 'saved', 'restoredAsNewObjects', 'opened', 'undoStatus', 'undoUnavailableReason', 'viewId', 'viewType', 'position'];
+    return Object.keys(effect).every(key => keys.includes(key))
+        && ['create', 'replace', 'mkdir', 'move', 'trash', 'editor', 'open', 'undo'].includes(effect.kind as string)
+        && (effect.paths === undefined || Array.isArray(effect.paths)
+            && effect.paths.every(path => typeof path === 'string' && path.length <= 4096))
+        && (effect.fromPath === undefined || typeof effect.fromPath === 'string' && effect.fromPath.length <= 4096)
+        && (effect.toPath === undefined || typeof effect.toPath === 'string' && effect.toPath.length <= 4096)
+        && (effect.resourceRef === undefined || safeIdentity(effect.resourceRef))
+        && (effect.scope === undefined || effect.scope === 'editor-buffer')
+        && (effect.saved === undefined || effect.saved === 'unknown')
+        && (effect.restoredAsNewObjects === undefined || typeof effect.restoredAsNewObjects === 'boolean')
+        && (effect.opened === undefined || typeof effect.opened === 'boolean')
+        && (effect.undoStatus === undefined
+            || ['undone', 'failed', 'stale', 'expired', 'unavailable', 'unknown'].includes(effect.undoStatus as string))
+        && (effect.undoUnavailableReason === undefined || effect.undoUnavailableReason === 'recovery_capacity')
+        && (effect.viewId === undefined || safeIdentity(effect.viewId))
+        && (effect.position === undefined || isResourcePosition(effect.position))
+        && (effect.viewType === undefined || typeof effect.viewType === 'string' && effect.viewType.length <= 256);
+}
+
+function isResourcePosition(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const position = value as Record<string, unknown>;
+    const validPoint = (point: unknown): boolean => {
+        if (!point || typeof point !== 'object' || Array.isArray(point)) return false;
+        const coordinates = point as Record<string, unknown>;
+        return Object.keys(coordinates).every(key => key === 'line' || key === 'ch')
+            && Number.isSafeInteger(coordinates.line) && Number(coordinates.line) >= 0
+            && Number.isSafeInteger(coordinates.ch) && Number(coordinates.ch) >= 0;
+    };
+    return Object.keys(position).every(key => ['requested', 'applied', 'actual', 'reason'].includes(key))
+        && validPoint(position.requested) && typeof position.applied === 'boolean'
+        && (position.actual === undefined || validPoint(position.actual))
+        && (position.reason === undefined || typeof position.reason === 'string' && position.reason.length <= 256);
 }
 
 const STATUS_VALUES = new Set([

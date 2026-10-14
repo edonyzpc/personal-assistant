@@ -1,4 +1,66 @@
 import type { TaskSourceReadGuard } from "../task-source-read-guard";
+import type { ResourceTarget, WorkspaceSnapshotBinding, SdkResult, ResolvedObsidianResource, ReadSnapshotBinding } from "../independent-computation/obsidian-resource-sdk";
+import type { PaAgentToolBatchPreparationInput } from "../pa-agent-types";
+import type { InputLineage } from "../input-lineage";
+
+export const RESOURCE_OPERATION_TOOL_NAMES = [
+    "obsidian.vault.createText", "obsidian.vault.replaceText", "obsidian.vault.mkdir",
+    "obsidian.vault.move", "obsidian.vault.trash", "obsidian.workspace.open",
+    "obsidian.workspace.applyEdits", "obsidian.operations.undo", "vault_create_folder", "vault_trash",
+] as const;
+export type ResourceOperationToolName = typeof RESOURCE_OPERATION_TOOL_NAMES[number];
+export interface SnapshotEdit { from: number; to: number; text: string }
+export interface OperationsResourceContext {
+    registerCreatedResource?(file: OperationsVaultFile, text?: string, receiptId?: string): void;
+    resolveTarget(target: ResourceTarget, guard?: TaskSourceReadGuard, signal?: AbortSignal):
+        ResolvedObsidianResource | undefined | Promise<ResolvedObsidianResource | undefined>;
+    getReadSnapshot(version: string, target: ResourceTarget, guard?: TaskSourceReadGuard, signal?: AbortSignal):
+        ReadSnapshotBinding | undefined | Promise<ReadSnapshotBinding | undefined>;
+    resolveWorkspaceSnapshot(id: string, guard?: TaskSourceReadGuard, signal?: AbortSignal): WorkspaceSnapshotBinding | undefined;
+    openResource(target: ResourceTarget, position?: { line: number; ch: number }, guard?: TaskSourceReadGuard,
+        signal?: AbortSignal): Promise<SdkResult<unknown>>;
+}
+export type ResourceOperationInput = {
+    mode: OperationsMode; path?: string; target?: ResourceTarget; source?: ResourceTarget; to?: string;
+    text?: string; expectedVersion?: string; parents?: boolean; recursive?: boolean;
+    snapshotId?: string; edits?: SnapshotEdit[]; receiptId?: string; position?: { line: number; ch: number };
+};
+export interface ResourceTreeEntry {
+    path: string; file: OperationsVaultFile; kind: "file" | "folder";
+    stat?: { ctime?: number; mtime: number; size: number }; bytes?: ArrayBuffer;
+    contentHash?: string;
+}
+export type ResourcePreparedData =
+    | { action: "create"; parent: OperationsVaultFile | null; text: string; context?: OperationsResourceContext }
+    | { action: "replace"; file: OperationsVaultFile; before: string; text: string }
+    | { action: "mkdir"; paths: string[]; parents: Array<{ path: string; file: OperationsVaultFile }>; context?: OperationsResourceContext }
+    | { action: "move"; file: OperationsVaultFile; to: string; tree: ResourceTreeEntry[]; resourceRef?: string }
+    | { action: "trash"; tree: ResourceTreeEntry[] }
+    | { action: "editor"; binding: WorkspaceSnapshotBinding; before: string; after: string; edits: SnapshotEdit[] }
+    | { action: "open"; context: OperationsResourceContext; target: ResourceTarget; position?: { line: number; ch: number } }
+    | { action: "undo"; receiptId: string };
+export interface PreparedResourceOperation {
+    readonly kind: "resource"; readonly id: string; readonly toolCallId: string;
+    readonly name: ResourceOperationToolName; readonly input: ResourceOperationInput; readonly path: string;
+    readonly expectedBefore: string | null; readonly expectedAfter: string;
+    /** Host-only native objects and bindings; never included in domain observations. */
+    readonly resource: ResourcePreparedData;
+}
+export type ResourceUndoData =
+    | { action: "create"; file: OperationsVaultFile }
+    | { action: "replace"; file: OperationsVaultFile }
+    | { action: "move"; file: OperationsVaultFile; originalPath: string; tree: ResourceTreeEntry[] }
+    | { action: "mkdir"; folders: Array<{ path: string; file: OperationsVaultFile }>; removed: Set<string> }
+    | { action: "trash"; tree: ResourceTreeEntry[]; restored: Map<string, OperationsVaultFile>; release(): void }
+    | { action: "editor"; binding: WorkspaceSnapshotBinding };
+export interface ResourceEffectFacts {
+    kind: "create" | "replace" | "mkdir" | "move" | "trash" | "editor" | "open" | "undo";
+    paths?: readonly string[]; scope?: "editor-buffer"; saved?: "unknown"; restoredAsNewObjects?: boolean;
+    fromPath?: string; toPath?: string; resourceRef?: string;
+    opened?: boolean; undoStatus?: UndoStatus; viewId?: string; viewType?: string;
+    undoUnavailableReason?: "recovery_capacity";
+    position?: { requested: { line: number; ch: number }; applied: boolean; actual?: { line: number; ch: number }; reason?: string };
+}
 
 export const REMOVE_NOTE_IMAGE_TOOL_NAME = "remove_note_image" as const;
 export const VAULT_MOVE_TOOL_NAME = "vault_move" as const;
@@ -28,6 +90,7 @@ export const CORE_WRITE_TOOL_NAMES = [
     "frontmatter_update",
     REMOVE_NOTE_IMAGE_TOOL_NAME,
     VAULT_MOVE_TOOL_NAME,
+    ...RESOURCE_OPERATION_TOOL_NAMES,
 ] as const;
 
 export type CoreWriteToolName = typeof CORE_WRITE_TOOL_NAMES[number];
@@ -91,6 +154,16 @@ export interface CoreWriteInputMap {
     frontmatter_update: FrontmatterUpdateInput;
     remove_note_image: RemoveNoteImageInput;
     vault_move: VaultMoveInput;
+    "obsidian.vault.createText": ResourceOperationInput;
+    "obsidian.vault.replaceText": ResourceOperationInput;
+    "obsidian.vault.mkdir": ResourceOperationInput;
+    "obsidian.vault.move": ResourceOperationInput;
+    "obsidian.vault.trash": ResourceOperationInput;
+    "obsidian.workspace.open": ResourceOperationInput;
+    "obsidian.workspace.applyEdits": ResourceOperationInput;
+    "obsidian.operations.undo": ResourceOperationInput;
+    vault_create_folder: ResourceOperationInput;
+    vault_trash: ResourceOperationInput;
 }
 
 export type CoreWriteInput = CoreWriteInputMap[CoreWriteToolName];
@@ -195,7 +268,7 @@ export interface NoteImageRemovalEffectResult {
     readonly checkpoint?: "attachment-restored";
 }
 
-export type PreparedOperation = PreparedMarkdownOperation | PreparedNoteImageRemovalOperation | PreparedMoveOperation;
+export type PreparedOperation = PreparedMarkdownOperation | PreparedNoteImageRemovalOperation | PreparedMoveOperation | PreparedResourceOperation;
 
 export function getOperationsBlockedReason(
     operations: readonly PreparedOperation[],
@@ -229,6 +302,9 @@ export interface OperationsIntent {
     state: OperationsIntentState;
     /** Missing only on legacy internal proposals; they cannot enter direct apply. */
     mode?: OperationsMode;
+    /** Host-only original parent and admitted child ancestry for Chat persistence. */
+    hostParentBinding?: PaAgentToolBatchPreparationInput["hostParentBinding"];
+    inputLineage?: InputLineage;
 }
 
 export type OperationsFailureCategory =
@@ -261,6 +337,7 @@ export interface OperationExecutionResult {
     receiptId?: string;
     effects?: readonly NoteImageRemovalEffectResult[];
     undoAvailable?: boolean;
+    resourceEffect?: ResourceEffectFacts;
     checkpoint?: "attachment-restored";
 }
 
@@ -288,6 +365,7 @@ export interface UndoReceipt {
         fileIdentity: OperationsVaultFile;
         fileVersion?: { readonly mtime: number; readonly size: number };
     };
+    resource?: ResourceUndoData;
 }
 
 export type UndoStatus = "undone" | "failed" | "stale" | "expired" | "unavailable" | "unknown";
@@ -308,7 +386,7 @@ export interface OperationsVaultFile {
     path: string;
     extension?: string;
     children?: unknown;
-    stat?: { mtime: number; size: number };
+    stat?: { ctime?: number; mtime: number; size: number };
 }
 
 export interface OperationsVault {
@@ -317,6 +395,9 @@ export interface OperationsVault {
     read?(file: OperationsVaultFile): Promise<string>;
     create(path: string, content: string): Promise<OperationsVaultFile>;
     process(file: OperationsVaultFile, fn: (current: string) => string): Promise<unknown>;
+    readBinary?(file: OperationsVaultFile): Promise<ArrayBuffer>;
+    createBinary?(path: string, bytes: ArrayBuffer, options?: { ctime?: number; mtime?: number }): Promise<OperationsVaultFile>;
+    createFolder?(path: string): Promise<OperationsVaultFile>;
     adapter: {
         exists(path: string): Promise<boolean>;
         mkdir?(path: string): Promise<void>;
@@ -334,6 +415,10 @@ export interface StageOperationsIntentInput {
     mode?: OperationsMode;
     /** Host-owned staging read boundary; never copied into the retained intent. */
     taskSourceReadGuard?: TaskSourceReadGuard;
+    resourceContext?: OperationsResourceContext;
+    /** These facts come from the executor context, never domain tool arguments. */
+    hostParentBinding?: PaAgentToolBatchPreparationInput["hostParentBinding"];
+    inputLineage?: InputLineage;
 }
 
 export interface ExecuteCurrentOperationsIntentInput {

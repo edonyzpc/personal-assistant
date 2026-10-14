@@ -1167,6 +1167,65 @@ describe('record note creation', () => {
 });
 
 describe('Operations native move adapter', () => {
+    it.each([false, true])('offers safe mkdir Undo only through the original mobile port (mobile=%s)', async mobile => {
+        const previousMobile = Platform.isMobile;
+        Object.assign(Platform, { isMobile: mobile });
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        type Folder = { path: string; children: unknown[] };
+        const files = new Map<string, Folder>([['', { path: '', children: [] }]]);
+        const createFolder = jest.fn(async (path: string) => {
+            const folder: Folder = { path, children: [] };
+            files.set(path, folder);
+            files.get('')!.children.push(folder);
+            return folder;
+        });
+        const deleteFolder = jest.fn(async (folder: Folder, recursive: boolean) => {
+            expect(recursive).toBe(false);
+            if (folder.children.length) throw new Error('ENOTEMPTY');
+            files.delete(folder.path);
+            files.get('')!.children = files.get('')!.children.filter(child => child !== folder);
+        });
+        const trashFile = jest.fn();
+        const trashResource = jest.fn();
+        plugin.app = {
+            fileManager: { trashFile, renameFile: jest.fn() }, metadataCache: {},
+            vault: { getAbstractFileByPath: (path: string) => files.get(path) ?? null,
+                adapter: { exists: async (path: string) => files.has(path) }, createFolder, delete: deleteFolder, trash: trashResource },
+        };
+        Object.defineProperty(plugin, 'isOperationsAgentEnabled', { value: true });
+        plugin.isDataBoundaryAllowedPath = (path: string) => path === 'mkdir-fixture';
+        const operations = plugin.getOperationsService();
+        const session = operations.createSession({ surface: 'chat' });
+        let active = true;
+        const guard = { isCurrent: () => active, isNoteDomainAllowed: () => active,
+            isPathAllowed: (path: string) => active && path === 'mkdir-fixture',
+            captureSourceAuthority: () => () => active };
+        try {
+            const intent = await session.stage({ runId: 'mkdir-run', turnId: 'mkdir-turn', mode: 'apply',
+                taskSourceReadGuard: guard,
+                operations: [{ toolCallId: 'mkdir-call', name: 'obsidian.vault.mkdir', input: { path: 'mkdir-fixture' } }] });
+            const result = await session.executeCurrentIntent({ intentId: intent.id, runId: intent.runId, taskSourceReadGuard: guard });
+            expect(result.operations[0]).toMatchObject({ status: 'succeeded', undoAvailable: mobile,
+                resourceEffect: { kind: 'mkdir', paths: ['mkdir-fixture'] } });
+            expect(createFolder).toHaveBeenCalledTimes(1);
+            if (mobile) {
+                expect(result.operations[0].receiptId).toEqual(expect.any(String));
+                expect((await session.undoMany([result.operations[0].receiptId]))[0].status).toBe('undone');
+                expect(deleteFolder).toHaveBeenCalledWith(expect.objectContaining({ path: 'mkdir-fixture' }), false);
+            } else {
+                expect(result.operations[0].receiptId).toBeUndefined();
+                expect(result.operations[0].message).toContain('Safe Undo for these folders is unavailable.');
+                expect(deleteFolder).not.toHaveBeenCalled();
+                expect(files.has('mkdir-fixture')).toBe(true);
+            }
+            expect(trashFile).not.toHaveBeenCalled();
+            expect(trashResource).not.toHaveBeenCalled();
+        } finally {
+            active = false;
+            session.dispose(); operations.dispose();
+            Object.assign(Platform, { isMobile: previousMobile });
+        }
+    });
     it('delegates forward movement and Undo to FileManager.renameFile', async () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         const file = { path: 'notes/move.md', extension: 'md' };

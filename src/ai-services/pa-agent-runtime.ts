@@ -19,7 +19,7 @@ import type { PageletChatHandoffContext } from "./pagelet-handoff";
 import { stableHash } from "../pa/helpers";
 import { MemorySearchTool } from "./memory-search-tool";
 import { TaskSourceRun, historyInputLineage } from "./task-source-run";
-import { isGhostPreparationMessage } from "./ghost-tool-receipt";
+import { isGhostPreparationMessage, isGhostPreparationResult } from "./ghost-tool-receipt";
 import { ImagePreacceptError } from '../chat/image-generation-types';
 import { parseRunSourceSelection } from './chat-source-scope';
 import { cloneInputLineage, completeInputLineage, sourceRecordsInputLineage,
@@ -52,10 +52,10 @@ import {
 } from "./pa-agent-prompts";
 import { stringifyContextAsync } from './context/PaAgentContextSerialization';
 import { projectPaAgentToolStatus, type PaAgentActionGroup } from "./pa-agent-action-history";
-import { cloneActionStateBinding, collectPaAgentActionOwnerFacts, isSafeImageAcceptedObservation,
+import { cloneActionStateBinding, cloneActionStates, collectPaAgentActionOwnerFacts, isSafeImageAcceptedObservation,
     isSafeImageFailureObservation, isSafeOperationsStagedObservation, selectPaAgentActionStateExplanationRules,
     collectActionStates, isSafeOperationsResultObservation, readOperationsResultObservation, isOperationsPreviewObservation,
-    projectActionStates, PA_AGENT_DOMAIN_ACTION_STATE_RULES } from './pa-agent-result-facts';
+    projectActionStates } from './pa-agent-result-facts';
 import { cloneChatHostProvenance } from './chat-provenance';
 import { historySummaryContentSteps, protectedHistorySourceIndexesSteps, type ColdWritingVersion } from './context/PaAgentHistoryContextPlan';
 import { ChatOpenAI } from "@langchain/openai";
@@ -171,6 +171,24 @@ import { createInsightReadTools } from "./insight-read-tools";
 import { createInsightActionTool } from "./insight-action-tool";
 import { createMemoryActionTool } from "./memory-action-tools";
 import { createExecuteCodeTool, EXECUTE_CODE_TIMEOUT_MS, EXECUTE_CODE_TOOL_NAME } from "./independent-computation/capability";
+import {
+    createExecuteObsidianCodeTool,
+    EXECUTE_OBSIDIAN_CODE_TIMEOUT_MS,
+    EXECUTE_OBSIDIAN_CODE_TOOL_NAME,
+} from "./independent-computation/obsidian-code-capability";
+import {
+    createExecuteObsidianCodeRuntime,
+    getSharedHostCallScheduler,
+} from "./independent-computation/obsidian-code-runtime";
+import {
+    resolveObsidianResource,
+    getReadSnapshot,
+    resolveWorkspaceSnapshot,
+    nativeOpenObsidianResource,
+} from "./independent-computation/obsidian-resource-sdk";
+import { createObsidianSdkReadCapabilities, createObsidianSdkStatusCapability,
+    attachObsidianSdkGuidance } from "./independent-computation/obsidian-sdk-tool-definitions";
+import { TaskSourceResourceIdentities } from "./task-source-resource-identities";
 import {
     ConsoleDebugObserver,
     createActionExecutor,
@@ -1143,6 +1161,7 @@ export function createWriteActionAwareToolExecutor(
 ): PaAgentToolExecutor {
     return {
         preflightBatch: options.baseExecutor.preflightBatch?.bind(options.baseExecutor),
+        getAttemptObservation: options.baseExecutor.getAttemptObservation?.bind(options.baseExecutor),
         getCanonicalToolCallKey: (toolCall, context) => (
             options.baseExecutor.getCanonicalToolCallKey?.(toolCall, context)
         ),
@@ -1287,6 +1306,8 @@ export class PaAgentRuntime {
     private readonly operationsToolProvider: OperationsToolProvider | null;
     private readonly skillContextProvider: SkillContextProvider | null;
     private readonly executeCodeCapability: AgentCapability;
+    private readonly executeObsidianCodeCapability: AgentCapability;
+    private readonly resourceIdentities: TaskSourceResourceIdentities;
     private skillContextProviderRegistered = false;
     private readonly options: PaAgentRuntimeOptions;
     /**
@@ -1302,6 +1323,10 @@ export class PaAgentRuntime {
 
     constructor(host: AiServiceHost, aiUtils: AIUtils, options: PaAgentRuntimeOptions = {}) {
         this.host = host;
+        this.resourceIdentities = new TaskSourceResourceIdentities({
+            runId: "runtime",
+            getAbstractFileByPath: path => host.app.vault.getAbstractFileByPath(path) ?? null,
+        });
         this.options = options;
         this.planner = new ChatPlanner(aiUtils);
         this.memoryTool = new MemorySearchTool(host, aiUtils);
@@ -1354,6 +1379,11 @@ export class PaAgentRuntime {
             providerId: "core-tools",
             timeoutMs: EXECUTE_CODE_TIMEOUT_MS,
         });
+        this.executeObsidianCodeCapability = createChatToolCapability(createExecuteObsidianCodeTool(), {
+            providerId: "core-tools",
+            timeoutMs: EXECUTE_OBSIDIAN_CODE_TIMEOUT_MS,
+        });
+        attachObsidianSdkGuidance(this.executeObsidianCodeCapability, this.toolRegistry);
         const coreCapabilities = createCoreToolCapabilities([
             createSearchMemoryTool((input, context) => {
                 return memoryTool.search(
@@ -1378,7 +1408,8 @@ export class PaAgentRuntime {
             ...(this.host.insightActions ? [createInsightActionTool()] : []),
             ...(this.host.memoryActions ? [createMemoryActionTool()] : []),
         ]);
-        this.toolRegistry.registerMany([...coreCapabilities, this.executeCodeCapability]);
+        this.toolRegistry.registerMany([...coreCapabilities, ...createObsidianSdkReadCapabilities(),
+            this.executeCodeCapability, this.executeObsidianCodeCapability]);
         this.skillContextProvider = options.skillContextProvider === null
             ? null
             : options.skillContextProvider ?? new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
@@ -1623,6 +1654,7 @@ export class PaAgentRuntime {
             getTaskSourceAuthorityEpoch: this.host.getTaskSourceAuthorityEpoch?.bind(this.host),
             getTaskSourceConfigurationEpoch: this.host.getTaskSourceConfigurationEpoch?.bind(this.host),
             captureTaskSourceConfiguration: this.host.captureTaskSourceConfiguration?.bind(this.host),
+            resourceIdentities: this.resourceIdentities,
         });
         const admitHistoryVersion = async (version: import('../chat/writing-types').WritingVersion,
             signal?: AbortSignal): Promise<WritingHistoryAdmission | undefined> => {
@@ -1714,6 +1746,7 @@ export class PaAgentRuntime {
         const answerLineageByTurn = new Map<string, InputLineage>();
         const answerAttachmentValidityByTurn = new Map<string, () => boolean>();
         const callLineageById = new Map<string, InputLineage>();
+        const assistantIdByToolCallId = new Map<string, string>();
         const callNotesObservationStateById = new Map<string, {
             sourceEpoch?: string; memoryEnabled?: boolean;
         }>();
@@ -1945,6 +1978,9 @@ export class PaAgentRuntime {
                 { providerId: 'operations-status' },
             );
             if (!commandCapabilities.register(operationsStatusCapability)) throw new Error('Operations status capability unavailable');
+            if (!commandCapabilities.register(createObsidianSdkStatusCapability(options.operationsStatus))) {
+                throw new Error('Obsidian SDK Operations status capability unavailable');
+            }
         }
         if (writingContextHost) {
             const candidates = runSourceSelection ? (await Promise.all(writingContextHost.candidates.map(async candidate => {
@@ -2042,6 +2078,9 @@ export class PaAgentRuntime {
         }
         if (exportableToolNames.has(EXECUTE_CODE_TOOL_NAME)) {
             availableSemanticToolNames.add(EXECUTE_CODE_TOOL_NAME);
+        }
+        if (exportableToolNames.has(EXECUTE_OBSIDIAN_CODE_TOOL_NAME)) {
+            availableSemanticToolNames.add(EXECUTE_OBSIDIAN_CODE_TOOL_NAME);
         }
         if (operationsActionsEligible) {
             for (const toolName of CORE_WRITE_TOOL_NAMES.filter((toolName) => this.toolRegistry.getDefinition(toolName))) {
@@ -2847,14 +2886,108 @@ export class PaAgentRuntime {
                 }
             },
         };
+        const operationsSession = this.options.operationsIntentController;
+        const obsidianSdkHost = { host: this.host, sourceRun,
+            ...(operationsSession?.getUndoTargetPaths ? { operationsSession: {
+                getUndoTargetPaths: operationsSession.getUndoTargetPaths.bind(operationsSession),
+            } } : {}),
+        };
+        const getExecuteObsidianRuntime = (
+            turnId: string | undefined,
+            parentToolCallId: string,
+            turnIndex: number,
+        ) => turnId === undefined
+            ? undefined
+            : createExecuteObsidianCodeRuntime({
+                runId,
+                turnId,
+                turnIndex,
+                userInput: options.userText ?? options.prompt,
+                parentToolCallId,
+                parentAssistantId: assistantIdByToolCallId.get(parentToolCallId) ?? parentToolCallId,
+                parentInputLineage: callLineageById.get(parentToolCallId),
+                registry: this.toolRegistry,
+                scheduler: getSharedHostCallScheduler(this.host),
+                beginInputLineageObservation: toolName => {
+                    const sourceEpoch = sourceRun.currentNotesObservationEpoch();
+                    const memoryEnabled = sourceRun.currentMemoryAvailability();
+                    return result => {
+                        const content = {
+                            promptText: result.promptText,
+                            includeInNextPrompt: result.includeInNextPrompt ?? true,
+                            sourceRecords: result.sourceRecords ?? [],
+                            ...(result.resultFact ? { resultFact: result.resultFact } : {}),
+                            metadata: result.metadata,
+                        };
+                        const message: PaAgentMessage = {
+                            role: "toolResult",
+                            id: `${parentToolCallId}:sdk:projection`,
+                            toolCallId: parentToolCallId,
+                            toolName,
+                            content,
+                            isError: result.outcome !== "success" && result.outcome !== "reused_result",
+                            timestamp: 0,
+                        };
+                        if (result.inputLineage?.completeness === "complete") return result.inputLineage;
+                        if (!isSafeSourceFreeToolObservation(message)) return undefined;
+                        if (toolName === EXECUTE_CODE_TOOL_NAME || toolName === "prepare_ghost_post"
+                            || toolName === "create_image" || isSafeOperationsStagedObservation(message)
+                            || isSafeOperationsResultObservation(message)) return completeInputLineage();
+                        const owner = toolName === "search_memory" ? "memory" as const : "vault" as const;
+                        return sourceRun.captureRunNotesObservationLineage(
+                            owner,
+                            sourceEpoch,
+                            toolName === "search_memory" ? memoryEnabled : undefined,
+                        );
+                    };
+                },
+                acceptInputLineage: lineage => sourceRun.acceptExecutionLineage(lineage),
+                getExecutor: () => toolExecutor,
+            });
+        const ownerResultObservations = new Map<string, {
+            capability: AgentCapability;
+            result: ReturnType<typeof chatToolResultToPaAgentToolExecutionResult>;
+        }>();
+        const ownerAttemptKey = (turnId: string, callId: string) => JSON.stringify([runId, turnId, callId]);
         const baseToolExecutor = createPaAgentCapabilityToolExecutor({
             registry: this.toolRegistry,
             ...(writingContextRun ? { isWritingSelectionCurrent: writingContextRun.matchesCurrentSelection.bind(writingContextRun) } : {}),
             host: this.host,
+            obsidianSdkHost,
             platform: this.options.runtimePlatform ?? "desktop",
             memoryEvidenceRegistry,
             memoryRecoveryCoordinator,
-            onToolResult: observation => observeAgentDebugToolResult(debugRecorder, observation),
+            onToolResult: observation => {
+                if (observation.toolName === 'prepare_ghost_post' && ghostPublishingCapability
+                    && this.toolRegistry.get(observation.toolName) === ghostPublishingCapability
+                    && isGhostPreparationResult(observation.result)) {
+                    ownerResultObservations.set(ownerAttemptKey(observation.turnId, observation.toolCallId), {
+                        capability: ghostPublishingCapability,
+                        result: chatToolResultToPaAgentToolExecutionResult({ type: 'toolCall', id: observation.toolCallId,
+                            index: 0, name: observation.toolName, input: observation.toolInput }, observation.result),
+                    });
+                } else if (observation.toolName === EXECUTE_OBSIDIAN_CODE_TOOL_NAME
+                    && this.toolRegistry.get(observation.toolName) === this.executeObsidianCodeCapability) {
+                    const states = cloneActionStates(observation.result.actionStates);
+                    if (states.length && states.every(state => state.origin.runId === runId
+                        && state.origin.turnId === observation.turnId)) {
+                        ownerResultObservations.set(ownerAttemptKey(observation.turnId, observation.toolCallId), {
+                            capability: this.executeObsidianCodeCapability,
+                            result: {
+                                outcome: 'recoverable_error',
+                                promptText: 'The composed program source was withdrawn. Only the recorded child effect facts are retained; do not repeat completed or unknown effects.',
+                                includeInNextPrompt: true,
+                                executionState: observation.result.executionState,
+                                recovery: observation.result.recovery,
+                                actionStates: states,
+                                inputLineage: cloneInputLineage(observation.result.inputLineage),
+                                metadata: { outcome: 'recoverable_error', reason: 'task_source_changed_after_execution' },
+                            },
+                        });
+                    }
+                }
+                observeAgentDebugToolResult(debugRecorder, observation);
+            },
             projectExecutionResult: (toolCall, result) => toolCall.name === PA_AGENT_LOAD_TOOLS_TOOL_NAME
                 && this.toolRegistry.get(PA_AGENT_LOAD_TOOLS_TOOL_NAME) === loaderCapability
                 ? projectLoadToolsExecutionResult(result, candidate => candidate.outcome === "success"
@@ -2869,6 +3002,7 @@ export class PaAgentRuntime {
                 parentId: `${turnId}:tool:${toolCallId}`, turnId,
             }),
             getImageRequestLineage: turnId => cloneInputLineage(answerLineageByTurn.get(turnId ?? '')),
+            getExecuteObsidianRuntime,
             getGhostMetadataDebugScope: (turnId, toolCallId) => ({
                 recorder: debugRecorder, usageLedger,
                 parentId: `${turnId}:tool:${toolCallId}`, turnId,
@@ -2909,6 +3043,13 @@ export class PaAgentRuntime {
                 registry: this.toolRegistry,
                 controller: this.options.operationsIntentController,
                 intentExecutor: this.options.operationsIntentExecutor,
+                resourceContext: {
+                    registerCreatedResource: sourceRun.registerCreatedResource,
+                    resolveTarget: (target, guard, signal) => resolveObsidianResource({ ...obsidianSdkHost, guard, signal }, target),
+                    getReadSnapshot: (version, target, guard, signal) => getReadSnapshot({ ...obsidianSdkHost, guard, signal }, version, target),
+                    resolveWorkspaceSnapshot: (id, guard, signal) => resolveWorkspaceSnapshot({ ...obsidianSdkHost, guard, signal }, id),
+                    openResource: (target, position, guard, signal) => nativeOpenObsidianResource({ ...obsidianSdkHost, guard, signal }, target, position),
+                },
                 onToolRunning: (tool, message) => {
                     options.onStatus?.({ type: "tool-running", tool, message });
                 },
@@ -2944,12 +3085,16 @@ export class PaAgentRuntime {
             isHostCurrent: sourceRun.isCurrent,
             isWebAllowed: sourceRun.isWebReadAllowed,
             isMemoryAllowed: sourceRun.isMemoryReadAllowed,
-            prepareInputSourceAdmission: async (calls, signal) => {
+            isCreatedResourcePathAllowed: sourceRun.isCreatedResourcePathAllowed,
+            prepareInputSourceAdmission: async (calls, signal, inputLineage) => {
                 const attachmentsCurrent = () => calls.every(call =>
                     !callLineageById.get(call.id)?.dependencies.some(dependency => dependency.kind === 'attachment')
                     || callAttachmentValidityById.get(call.id)?.() === true);
-                if (calls.every(call => ['read-only', 'network-read'].includes(
-                    this.toolRegistry.getDefinition(call.name)?.permission ?? ''))) {
+                if (calls.every(call => {
+                    const capability = this.toolRegistry.get(call.name);
+                    return capability?.retrySafety !== 'side_effect'
+                        && ['read-only', 'network-read'].includes(capability?.permission ?? '');
+                })) {
                     throwIfAborted(signal);
                     const current = () => sourceRun.isCurrent() && attachmentsCurrent();
                     return { isCurrent: current,
@@ -2958,7 +3103,9 @@ export class PaAgentRuntime {
                 }
                 let input = batchSourceInputs.get(calls);
                 if (!input) {
-                    const lineages = calls.map(call => callLineageById.get(call.id));
+                    const lineages = inputLineage
+                        ? [inputLineage]
+                        : calls.map(call => callLineageById.get(call.id));
                     input = unionInputLineages(...lineages);
                     batchSourceInputs.set(calls, input);
                 }
@@ -2994,6 +3141,7 @@ export class PaAgentRuntime {
                         || capability === operationsStatusCapability
                         || capability === writingHistoryCapability
                         || capability === this.executeCodeCapability
+                        || capability === this.executeObsidianCodeCapability
                         || insightRead
                         || insightAction
                         || capability === writingContextCapability
@@ -3001,9 +3149,16 @@ export class PaAgentRuntime {
                         || (call.name === LOAD_SKILL_TOOL_NAME && this.skillContextProvider?.ownsCapability(capability)));
                 });
                 const independentIds = new Set(independent.map(call => call.id));
-                const readPlans = sourceRun.resolveReadPlansWithReason(calls.filter(call => !independentIds.has(call.id)));
-                if (!readPlans.ok) return { rejectionReason: readPlans.reason === 'source_excluded'
-                    ? 'source_excluded' as const : 'source_read_plan_unavailable' as const };
+                const readPlans = sourceRun.resolveReadPlansWithReason(
+                    calls.filter(call => !independentIds.has(call.id)), obsidianSdkHost,
+                );
+                if (!readPlans.ok) {
+                    if (readPlans.reason === 'invalid_call' && readPlans.message) {
+                        return { rejectionReason: 'schema_invalid' as const, message: readPlans.message };
+                    }
+                    return { rejectionReason: readPlans.reason === 'source_excluded'
+                        ? 'source_excluded' as const : 'source_read_plan_unavailable' as const };
+                }
                 const complete = new Map(readPlans.plans);
                 for (const call of independent) {
                     const reads = [
@@ -3017,6 +3172,23 @@ export class PaAgentRuntime {
         });
         const toolExecutor: PaAgentToolExecutor = {
             ...sourceConstrainedToolExecutor,
+            getAttemptObservation: context => {
+                const observation = context.runId === runId
+                    ? ownerResultObservations.get(ownerAttemptKey(context.turnId, context.toolCallId)) : undefined;
+                return observation && this.toolRegistry.get(context.toolName) === observation.capability
+                    ? observation.result : sourceConstrainedToolExecutor.getAttemptObservation?.(context);
+            },
+            execute: async input => {
+                try {
+                    return await sourceConstrainedToolExecutor.execute(input);
+                } catch (error) {
+                    const observation = ownerResultObservations.get(ownerAttemptKey(input.turnId, input.toolCall.id));
+                    if (observation && error instanceof Error && error.message === 'Task source scope is no longer current.'
+                        && !input.signal.aborted && this.toolRegistry.get(input.toolCall.name) === observation.capability
+                        && input.taskSourceReadGuard?.isCurrent() === false) return observation.result;
+                    throw error;
+                }
+            },
             preflightBatch: input => {
                 const isCurrentLoaderParseError = (call: typeof input.toolCalls[number]) =>
                     call.parseError !== undefined
@@ -3142,22 +3314,24 @@ export class PaAgentRuntime {
                         // result must not erase an earlier still-valid source.
                         sourceRun.publishAdmittedNotePaths(paths, constraint);
                     }
-                    const excludedOperationStates = collectActionStates({ runId, turnId: input.turnId,
-                        messages: input.transcript }).filter(state => state.owner === 'operations'
+                    const retainedEffectIdentities = new Set(transcript.flatMap(message => message.role === 'toolResult'
+                        ? cloneActionStates(message.actionStates).map(state => JSON.stringify([state.owner, state.operationId, state.origin])) : []));
+                    const excludedEffectStates = collectActionStates({ runId, turnId: input.turnId,
+                        messages: input.transcript }).filter(state => !retainedEffectIdentities.has(JSON.stringify([state.owner, state.operationId, state.origin]))
                             && !transcript.some(message => message.role === 'assistant'
                                 && message.id === state.origin.assistantId && message.content.some(part =>
                                     part.type === 'toolCall' && part.id === state.origin.callId)));
-                    const finiteOperationsContext = excludedOperationStates.length ? [
-                        ...PA_AGENT_DOMAIN_ACTION_STATE_RULES.operations,
+                    const finiteEffectsContext = excludedEffectStates.length ? [
+                        ...selectPaAgentActionStateExplanationRules(excludedEffectStates.map(state => state.owner)),
                         `<domain_state scope="current_run" context_only="true">${escapeTaggedBoundary(
-                            JSON.stringify(projectActionStates(excludedOperationStates)), 'domain_state')}</domain_state>`,
+                            JSON.stringify(projectActionStates(excludedEffectStates, { sourceExcluded: true })), 'domain_state')}</domain_state>`,
                     ].join('\n') : undefined;
                     return {
                         ...input,
                         transcript,
-                        ...(snapshot.configurationChanged || finiteOperationsContext ? { runtimeInstruction: combineRuntimeInstructions([
+                        ...(snapshot.configurationChanged || finiteEffectsContext ? { runtimeInstruction: combineRuntimeInstructions([
                             input.runtimeInstruction,
-                            finiteOperationsContext,
+                            finiteEffectsContext,
                             ...(snapshot.configurationChanged ? [
                                 'The source configuration changed since the previous model turn. Earlier excluded materials and affected derived context have been removed from this input. Use only the retained context and obtain newly allowed evidence if the task requires it.',
                             ] : []),
@@ -3189,6 +3363,7 @@ export class PaAgentRuntime {
                             ?? unknownInputLineage();
                         for (const part of message.content) if (part.type === 'toolCall' && part.id) {
                             callLineageById.set(part.id, message.inputLineage);
+                            assistantIdByToolCallId.set(part.id, message.id);
                             callNotesObservationStateById.set(part.id, {
                                 sourceEpoch: sourceRun.currentNotesObservationEpoch(),
                                 ...(part.name === 'search_memory'
@@ -3198,6 +3373,20 @@ export class PaAgentRuntime {
                             if (attachmentValidity) callAttachmentValidityById.set(part.id, attachmentValidity);
                         }
                     } else {
+                        const attemptKey = ownerAttemptKey(event.turnId, message.toolCallId);
+                        const ownerObservation = ownerResultObservations.get(attemptKey);
+                        ownerResultObservations.delete(attemptKey);
+                        if (ownerObservation && this.toolRegistry.get(message.toolName) === ownerObservation.capability
+                            && message.content.metadata?.reason === 'task_source_changed_after_execution'
+                            && !options.signal?.aborted) {
+                            // The strict source guard rejected delivery after this owner
+                            // saved the effect. Restore only its already validated finite
+                            // receipt; the next generation removes withdrawn ancestry.
+                            message.content = { ...ownerObservation.result, includeInNextPrompt: true };
+                            if (ownerObservation.result.actionStates) message.actionStates = cloneActionStates(ownerObservation.result.actionStates);
+                            if (ownerObservation.result.inputLineage) message.inputLineage = cloneInputLineage(ownerObservation.result.inputLineage);
+                            message.isError = ownerObservation.result.outcome !== 'success';
+                        }
                         const operationsCapability = this.toolRegistry.get(message.toolName);
                         const currentOperationsOwner = operationsCapability !== undefined
                             && this.operationsToolProvider?.ownsCapability(operationsCapability) === true;
@@ -3286,6 +3475,7 @@ export class PaAgentRuntime {
                             || currentOperationsOwner && isOperationsPreviewObservation(message) ? completeInputLineage() : writingContextLineage
                             ?? (closedLoaderResult || rejectedLoaderResult ? completeInputLineage()
                                 : undefined)
+                            ?? (message.inputLineage?.completeness === 'complete' ? message.inputLineage : undefined)
                             ?? (records.length ? sourceRecordsInputLineage(records)
                                 : isLiveHostBatchPreflightRejection(message) || message.content.metadata?.statusOnly === true
                                     ? completeInputLineage()
@@ -3299,8 +3489,13 @@ export class PaAgentRuntime {
                                                 callNotesObservationStateById.get(message.toolCallId)?.sourceEpoch,
                                                 callNotesObservationStateById.get(message.toolCallId)?.memoryEnabled)
                                         : unknownInputLineage());
-                        message.inputLineage = unionInputLineages(
-                            callLineageById.get(message.toolCallId), resultLineage);
+                        const hostResultLineage = message.toolName === EXECUTE_OBSIDIAN_CODE_TOOL_NAME
+                            || message.inputLineage?.completeness === 'complete'
+                            ? message.inputLineage
+                            : undefined;
+                        message.inputLineage = hostResultLineage
+                            ? unionInputLineages(callLineageById.get(message.toolCallId), hostResultLineage, resultLineage)
+                            : unionInputLineages(callLineageById.get(message.toolCallId), resultLineage);
 
                     }
                 }

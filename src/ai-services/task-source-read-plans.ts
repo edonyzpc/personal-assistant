@@ -32,7 +32,7 @@ export interface TaskSourceReadPlanHost {
 
 export type TaskSourceReadPlansResult =
     | { ok: true; plans: ReadonlyMap<string, TaskSourceReadPlan> }
-    | { ok: false; toolCallId: string; reason: 'invalid_call' | 'source_identity_unavailable' | 'source_excluded' | 'unplanned_tool' };
+    | { ok: false; toolCallId: string; reason: 'invalid_call' | 'source_identity_unavailable' | 'source_excluded' | 'unplanned_tool'; message?: string };
 
 /**
  * Plan the whole raw tool batch without preparing capabilities or reading vault

@@ -1,7 +1,7 @@
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import type { ChatMessage, PaAgentMessage, ToolExecutionOutcome } from "./chat-types";
 import { escapeTaggedBoundary } from "./agent-utils";
-import { cloneActionStates, isSafeOperationsResultObservation, projectPaAgentRecoveryControl, type PaAgentActionState } from './pa-agent-result-facts';
+import { cloneActionStates, isSafeOperationsResultObservation, projectActionStates, projectPaAgentRecoveryControl, type PaAgentActionState } from './pa-agent-result-facts';
 import type { OperationsResultObservation } from './operations-status-tool';
 import { projectHostBatchPreflightRejection } from './pa-agent-preflight-facts';
 
@@ -46,6 +46,7 @@ export interface PaAgentActionCall {
         recovery?: NonNullable<ReturnType<typeof projectPaAgentRecoveryControl>>;
         domainPhase?: 'accepted' | 'ready' | 'pending' | 'running' | 'completed' | 'partial' | 'failed' | 'unknown';
         operationsResult?: OperationsResultObservation;
+        childEffects?: ReturnType<typeof projectActionStates>;
         domainIdentity?: { operationId?: string; requestId?: string; receiptId?: string;
             intentId?: string; completedRefs?: string[]; remainingRefs?: string[] };
         isError: boolean; text: string }>;
@@ -93,7 +94,10 @@ export function projectPaAgentActionHistory(transcript: readonly PaAgentMessage[
             continue;
         }
         const call = message.toolCallId ? openCalls.get(message.toolCallId) : undefined;
-        if (call) call.results.push(projectPaAgentToolResult(message));
+        if (call) {
+            const projected = projectPaAgentToolResult(message);
+            call.results.push(projected);
+        }
     }
     return groups;
 }
@@ -112,6 +116,7 @@ export function projectPaAgentToolResult(result: ToolResult): PaAgentActionCall[
     const domainIdentity = safeDomainIdentity(result);
     const recovery = projectPaAgentRecoveryControl(result.content.metadata?.recovery);
     const preflightRejection = projectHostBatchPreflightRejection(result);
+    const childEffects = projectActionStates(result.actionStates ?? []);
     const operationsResult = isSafeOperationsResultObservation(result) && result.content.resultFact?.kind === 'operations_result'
         ? result.content.resultFact.observation : undefined;
     const domainPhase = operationsResult ? operationsResult.state === 'executing' ? 'running' : operationsResult.state
@@ -133,6 +138,7 @@ export function projectPaAgentToolResult(result: ToolResult): PaAgentActionCall[
         ...(domainPhase ? { domainPhase } : {}),
         ...(domainIdentity ? { domainIdentity } : {}),
         ...(operationsResult ? { operationsResult } : {}),
+        ...(childEffects.length ? { childEffects } : {}),
         text: result.content.includeInNextPrompt
             && result.content.metadata?.outcome !== "policy_rejected"
             && result.content.metadata?.outcome !== "duplicate_skipped"
@@ -202,6 +208,7 @@ function resultContent(call: PaAgentActionCall, scope: ActionContextScope): stri
             ...(result.domainPhase ? { domainPhase: result.domainPhase } : {}),
             ...(result.domainIdentity ? { domainIdentity: result.domainIdentity } : {}),
             ...(result.operationsResult ? { operationsResult: result.operationsResult } : {}),
+            ...(result.childEffects ? { childEffects: result.childEffects } : {}),
         }), "action_history");
         const safeText = escapeTaggedBoundary(escapeTaggedBoundary(result.text, "untrusted"), "action_history");
         return `${header}\n<untrusted source="tool:${call.name.replace(/["<>&]/g, "_")}">\n${safeText}\n</untrusted>`;

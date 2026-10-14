@@ -16,6 +16,7 @@ export interface CreateUndoReceiptInput {
     before: string | null;
     expectedAfter: string;
     move?: UndoReceipt["move"];
+    resource?: UndoReceipt["resource"];
 }
 
 export interface OperationsUndoStoreOptions {
@@ -28,6 +29,8 @@ export class OperationsUndoStore {
     private readonly receipts = new Map<string, UndoReceipt>();
     private readonly used = new Set<string>();
     private readonly expired = new Set<string>();
+    private readonly leased = new Set<string>();
+    private readonly retiredLeases = new Set<string>();
     private readonly now: () => number;
     private readonly ttlMs: number;
     private readonly createId: () => string;
@@ -50,6 +53,7 @@ export class OperationsUndoStore {
             before: input.before,
             expectedAfter: input.expectedAfter,
             ...(input.move ? { move: Object.freeze({ ...input.move }) } : {}),
+            ...(input.resource ? { resource: input.resource } : {}),
             createdAt,
             expiresAt: createdAt + this.ttlMs,
         });
@@ -62,8 +66,8 @@ export class OperationsUndoStore {
         if (this.expired.has(id)) return { ok: false, reason: "expired" };
         const receipt = this.receipts.get(id);
         if (!receipt) return { ok: false, reason: "missing" };
-        if (receipt.expiresAt <= this.now()) {
-            this.receipts.delete(id);
+        if (receipt.expiresAt <= this.now() && !this.leased.has(id)) {
+            this.releaseResource(id);
             this.expired.add(id);
             return { ok: false, reason: "expired" };
         }
@@ -72,11 +76,26 @@ export class OperationsUndoStore {
 
     markUsed(id: string): void {
         if (!this.receipts.has(id)) return;
-        this.receipts.delete(id);
+        this.releaseResource(id);
         this.used.add(id);
     }
 
     remove(id: string): void {
+        this.releaseResource(id);
+    }
+
+    acquire(id: string): boolean {
+        if (this.leased.has(id) || !this.get(id).ok) return false;
+        this.leased.add(id); return true;
+    }
+    releaseLease(id: string): void {
+        this.leased.delete(id);
+        if (this.retiredLeases.delete(id)) this.releaseResource(id);
+        this.pruneExpired();
+    }
+    private releaseResource(id: string): void {
+        const receipt = this.receipts.get(id);
+        if (receipt?.resource?.action === "trash") receipt.resource.release();
         this.receipts.delete(id);
     }
 
@@ -86,7 +105,10 @@ export class OperationsUndoStore {
     }
 
     clear(): void {
-        this.receipts.clear();
+        for (const id of this.receipts.keys()) {
+            if (this.leased.has(id)) this.retiredLeases.add(id);
+            else this.releaseResource(id);
+        }
         this.used.clear();
         this.expired.clear();
     }
@@ -94,8 +116,8 @@ export class OperationsUndoStore {
     private pruneExpired(): void {
         const now = this.now();
         for (const [id, receipt] of this.receipts) {
-            if (receipt.expiresAt <= now) {
-                this.receipts.delete(id);
+            if (receipt.expiresAt <= now && !this.leased.has(id)) {
+                this.releaseResource(id);
                 this.expired.add(id);
             }
         }

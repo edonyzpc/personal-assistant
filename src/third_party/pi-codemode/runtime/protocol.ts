@@ -1,4 +1,6 @@
-import type { CodemodeOutputItem } from "../types.ts";
+// PA derivation from Pi c5f5b3282d5e4203c085e59837ba17aeaf2829b5:
+// SDK declarations, fixed guest libraries and UTF-8 transport accounting.
+import type { CodemodeCallResourceLimits, CodemodeOutputItem } from "../types.ts";
 import type { CodemodeWasmModule } from "../wasm.ts";
 
 /**
@@ -15,10 +17,30 @@ export interface VmStartData {
 	code: string;
 	/** `jsName` is the identifier the script uses; `description` is listed in `ALL_TOOLS`. */
 	tools: { name: string; jsName: string; description: string }[];
-	globals: { name: string; spread: boolean }[];
+	globals: { name: string; spread: boolean; binaryResult?: boolean }[];
 	memoryLimitBytes: number | undefined;
 	/** Snapshot for `load()`: key to JSON text. */
 	store: Record<string, string>;
+	/** Maximum JSON characters a tool/global argument may occupy on the wire. */
+	maxCallPayloadChars?: number;
+	callResourceLimits?: CodemodeCallResourceLimits;
+	guestLibrarySource?: string;
+}
+
+/** UTF-8 wire size without allocating a second argument buffer. */
+export function bridgeJsonByteLength(value: string): number {
+	let bytes = 0;
+	for (let index = 0; index < value.length; index++) {
+		const unit = value.charCodeAt(index);
+		if (unit < 0x80) bytes++;
+		else if (unit < 0x800) bytes += 2;
+		else if (unit >= 0xd800 && unit <= 0xdbff && index + 1 < value.length
+			&& value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff) {
+			bytes += 4;
+			index++;
+		} else bytes += 3;
+	}
+	return bytes;
 }
 
 export interface WorkerData extends VmStartData {

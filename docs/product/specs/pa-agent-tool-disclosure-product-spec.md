@@ -1,7 +1,7 @@
 # PA Agent Tool Disclosure Product Spec
 
 Document status: Approved
-Updated: 2026-10-11
+Updated: 2026-10-14
 Work item: B-172
 Decision: [DEC-062](../decisions/dec-062-agent-hybrid-tool-disclosure.md)
 Authority: 用户已确认混合管理范围及审查修订，并于 2026-10-11 授权实施、必要验证、P2 窄修和 closeout；本页持有当前产品合同，历史证据见 [验证记录](../../archive/2026/b172-agent-tool-disclosure-validation.md)。
@@ -26,6 +26,8 @@ Authority: 用户已确认混合管理范围及审查修订，并于 2026-10-11 
 ## Disclosure Contract
 
 直接提供的六项是 `query_notes`、`read_note`、`search_memory`、`get_current_note_context`、`load_skill`、`search_vault_metadata`；另保持 B-170 `execute_code` 的直接披露。所有条目先服从现有注册、来源与控制条件。没有 Memory 权限时，基础名单不能恢复 Memory。
+
+B-174 增加直接披露的 `execute_obsidian_code`，纯 `execute_code` 的隔离不变。`list_vault_entries`、`vault_create_folder`、`vault_trash` 沿原目录按需披露；SDK 内部能力虽在同一 registry 注册和准入，但不作为顶层工具或目录项导出。SDK 指导来自当前实际绑定的定义、schema 与 validator；停用或注销能力不能留下可执行承诺。加载仍只影响下一次请求的披露，不创建 provider、来源权限或效果授权。B-174 的[独立验证与边界](../../archive/2026/b174-obsidian-resource-sdk-validation.md)不由 B-172 的既有交付结论代替。
 
 目录只包含当前可用但尚未披露的业务工具名和简短用途，使用既有 description；不复制完整参数或长指导，也不包含加载器自身。只有目录非空时才披露 `load_tools` 及配套说明；目录为空不注销加载器或收窄原有执行许可。`load_tools` 可一次选择多项，无搜索排名、自动成组加载或逐项往返要求。加载结果只报告名称及状态；schema 在下一模型请求中出现，不在工具结果里重复携带。加载输入被 Host 拒绝时，保留必要的未执行事实和纠错提示，原来源限制继续生效。
 

@@ -101,7 +101,11 @@ export interface AgentCapabilityContext {
     currentMemoryUsage?: () => MemoryManagementCurrentUsageInput | undefined;
     memoryActionRequest?: import("./memory-action-types").MemoryActionHostBinding;
     imageRequestLineage?: import("./input-lineage").InputLineage;
+    /** Host-prepared lineage for a dynamically admitted child call. */
+    childInputLineage?: import("./input-lineage").InputLineage;
     createImageRuntime?: import("./chat-tool-types").CreateImageHostRuntime;
+    executeObsidianRuntime?: import("./independent-computation/obsidian-code-capability").ExecuteObsidianCodeRuntime;
+    obsidianSdkHost?: import("./independent-computation/obsidian-resource-sdk").ObsidianSdkHost;
     ghostMetadataDebug?: import("./ghost-metadata").GhostMetadataDebugScope;
 }
 
@@ -110,6 +114,10 @@ export interface AgentCapabilityResult {
     observation: unknown;
     sourceRecords: SourceRecord[];
     resultFact?: import("./pa-agent-result-facts").PaAgentResultFact;
+    /** Host-built trusted child action facts for a composed execution. */
+    actionStates?: import("./pa-agent-result-facts").PaAgentActionState[];
+    /** Host-owned union of actual child source dependencies. */
+    inputLineage?: import("./input-lineage").InputLineage;
     inputSummary: string;
     sources: ChatAgentSource[];
     vaultObservationEvidence?: VaultObservationEvidence;
@@ -151,6 +159,10 @@ export type PrepareCapabilityArgumentsResult =
 
 export interface AgentCapability {
     name: ChatToolName;
+    /** Bound to the guest SDK through this registry, excluded from model/tools export. */
+    sdkOnly?: boolean;
+    /** The declared SDK byte result receives the guest byte codec. */
+    binaryResult?: boolean;
     description: string;
     inputSchema: ChatToolInputSchema;
     plannerGuidance: string[];
@@ -178,6 +190,12 @@ export interface AgentCapability {
      * Set to "sequential" for tools that mutate shared state or must serialize within a batch.
      */
     executionMode?: AgentCapabilityExecutionMode;
+    /** Explicit retry safety takes precedence over permission-derived defaults. */
+    retrySafety?: "read_only" | "side_effect";
+    /** Explicit false prevents successful-result reuse even for a read-only facade. */
+    canReuseSuccessfulResult?: boolean;
+    /** Whether preview mode is implemented by the same domain owner. */
+    supportsPreview?: boolean;
     toProviderSchema(): ChatToolProviderSchema;
     toRegistryDefinition(): ChatToolRegistryDefinition;
     /**
@@ -256,6 +274,8 @@ export function agentResultToChatToolResult(
         ...(unavailableReason ? { unavailableReason } : {}),
         ...(result.executionState ? { executionState: result.executionState } : {}),
         ...(result.recovery ? { recovery: result.recovery } : {}),
+        ...(result.actionStates ? { actionStates: result.actionStates } : {}),
+        ...(result.inputLineage ? { inputLineage: result.inputLineage } : {}),
     };
 }
 

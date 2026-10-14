@@ -36,6 +36,7 @@ import {
     type OperationsSession,
     type UndoResult,
     type OperationsVault,
+    type OperationsVaultFile,
 } from "./ai-services/operations";
 import { createObsidianNoteImageHost } from "./ai-services/operations/obsidian-note-image-host";
 import { VSS } from './vss'
@@ -5538,6 +5539,13 @@ export class PluginManager extends Plugin {
             trashFile: async (file) => {
                 await this.app.fileManager.trashFile(file as unknown as TAbstractFile);
             },
+            trashResource: async (file) => {
+                await this.app.vault.trash(file as unknown as TAbstractFile, true);
+            },
+            // Desktop mkdir Undo awaits a verified safe public folder-removal API.
+            ...(Platform.isMobile ? { removeEmptyFolder: async (folder: OperationsVaultFile) => {
+                await this.app.vault.delete(folder as unknown as TAbstractFile, false);
+            } } : {}),
             renameFile: async (file, targetPath) => {
                 await this.app.fileManager.renameFile(file as unknown as TFile, targetPath);
             },

@@ -91,10 +91,22 @@ describe("Operations Agent direct runtime", () => {
 
         expect(registry.listDefinitions()).toEqual([]);
         expect(registry.exportProviderSchemas()).toEqual([]);
-        expect(registry.listDefinitions({ includeActions: true }).map((definition) => definition.name))
-            .toEqual([...CORE_WRITE_TOOL_NAMES]);
-        expect(registry.exportProviderSchemas({ includeActions: true }).map((schema) => schema.function.name))
-            .toEqual([...CORE_WRITE_TOOL_NAMES]);
+        const visibleNames = CORE_WRITE_TOOL_NAMES.filter(name => registry.get(name)?.sdkOnly !== true);
+        const definitionNames = registry.listDefinitions({ includeActions: true }).map(definition => definition.name);
+        const schemaNames = registry.exportProviderSchemas({ includeActions: true }).map(schema => schema.function.name);
+        expect(definitionNames).toEqual(visibleNames);
+        expect(schemaNames).toEqual(visibleNames);
+        const internal = registry.listCapabilities().filter(capability => capability.sdkOnly === true);
+        expect(internal.map(capability => capability.name)).toEqual([
+            "obsidian.vault.createText", "obsidian.vault.replaceText", "obsidian.vault.mkdir", "obsidian.vault.move",
+            "obsidian.vault.trash", "obsidian.workspace.open", "obsidian.workspace.applyEdits", "obsidian.operations.undo",
+        ]);
+        for (const capability of internal) {
+            expect(registry.get(capability.name)).toBe(capability);
+            expect(registry.canExecute(capability.name).allowed).toBe(true);
+            expect(definitionNames).not.toContain(capability.name);
+            expect(schemaNames).not.toContain(capability.name);
+        }
     });
 
     it("keeps protocol shape without publishing arbitrary Operations schema capacities", () => {
@@ -123,8 +135,10 @@ describe("Operations Agent direct runtime", () => {
             await fixture.run();
 
             expect(fixture.boundToolNames[0]).toContain("load_tools");
+            const visibleWrites = (await fixture.operationsSession.provider.load(providerContext(true))).capabilities
+                .filter(capability => capability.sdkOnly !== true).map(capability => capability.name);
             expect(deferredNames(fixture.providerInputs[0]))
-                .toEqual(expect.arrayContaining([...CORE_WRITE_TOOL_NAMES]));
+                .toEqual(expect.arrayContaining(visibleWrites));
             expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
             expect(fixture.executeIntent).toHaveBeenCalledTimes(1);
             expect(fixture.vault.create).toHaveBeenCalledTimes(1);
@@ -145,8 +159,10 @@ describe("Operations Agent direct runtime", () => {
             await fixture.run();
 
             expect(fixture.boundToolNames[1]).toContain("load_tools");
+            const visibleWrites = (await fixture.operationsSession.provider.load(providerContext(true))).capabilities
+                .filter(capability => capability.sdkOnly !== true).map(capability => capability.name);
             expect(deferredNames(fixture.providerInputs[1]))
-                .toEqual(expect.arrayContaining([...CORE_WRITE_TOOL_NAMES]));
+                .toEqual(expect.arrayContaining(visibleWrites));
             expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
             expect(fixture.executeIntent).toHaveBeenCalledTimes(1);
             expect(fixture.vault.create).toHaveBeenCalledTimes(1);

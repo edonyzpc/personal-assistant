@@ -3,6 +3,7 @@ import { applyOperationsExecutionResult, applyOperationsUndoResult, cloneActionS
 import { OPERATIONS_BLOCKED_MESSAGE, OPERATIONS_STAGED_MESSAGE } from '../src/ai-services/operations/operations-tool-provider';
 import type { PaAgentMessage } from '../src/ai-services/chat-types';
 import { completeInputLineage, unknownInputLineage } from '../src/ai-services/input-lineage';
+import { operationsResultObservation } from '../src/ai-services/operations-status-tool';
 
 const pending = (): PaAgentActionState => ({ schemaVersion: 1, owner: 'operations',
     operationId: 'intent-1', phase: 'pending', revision: 0,
@@ -46,6 +47,37 @@ describe('Operations finite action state', () => {
         const unowned = result('call-1', observation) as Extract<PaAgentMessage, { role: 'toolResult' }>;
         delete unowned.content.metadata?.operationsOwnerResult;
         expect(collectActionStates({ runId: 'run-1', turnId: 'turn-1', messages: [messages[0], unowned] })).toEqual([]);
+    });
+
+    it('preserves completed native trash without PA Undo from owner observation through historical cloning', () => {
+        const staged = pending();
+        const observation = operationsResultObservation({ intentId: staged.operationId, state: 'completed', operations: [{
+            operationId: 'op-1', toolCallId: 'trash-call', name: 'vault_trash', path: 'assets/large.pdf',
+            status: 'succeeded', undoAvailable: false,
+            resourceEffect: { kind: 'trash', paths: ['assets/large.pdf'], undoUnavailableReason: 'recovery_capacity' },
+        }, {
+            operationId: 'op-2', toolCallId: 'create-call', name: 'vault_create', path: 'note.md',
+            status: 'succeeded', receiptId: 'receipt-2', undoAvailable: true,
+        }] });
+        const messages: PaAgentMessage[] = [
+            { role: 'assistant', id: staged.origin.assistantId, timestamp: 0, inputLineage: staged.inputLineage,
+                content: [{ type: 'toolCall', id: 'call-1', name: 'execute_operations', input: { intentId: staged.operationId } }] },
+            { role: 'toolResult', id: staged.origin.resultId, toolCallId: 'call-1', toolName: 'execute_operations',
+                timestamp: 1, isError: false, inputLineage: staged.inputLineage,
+                content: { promptText: JSON.stringify(observation), includeInNextPrompt: true,
+                    resultFact: { kind: 'operations_result', observation },
+                    metadata: { outcome: 'success', operationsOwnerResult: true } } },
+        ];
+        const states = collectActionStates({ runId: staged.origin.runId, turnId: staged.origin.turnId, messages });
+        expect(states).toHaveLength(1);
+        expect(states[0]).toMatchObject({ phase: 'completed', operationsUndoAvailable: true,
+            actions: [{ actionId: 'op-1', phase: 'applied', resourceEffect: {
+                kind: 'trash', paths: ['assets/large.pdf'], undoUnavailableReason: 'recovery_capacity',
+            } }, { actionId: 'op-2', phase: 'applied', receiptId: 'receipt-2' }] });
+        expect(states[0].actions?.[0].receiptId).toBeUndefined();
+        expect(cloneActionStates(JSON.parse(JSON.stringify(states)))).toEqual(states);
+        expect(cloneActionStates([{ ...states[0], actions: [{ ...states[0].actions![0],
+            resourceEffect: { kind: 'trash', paths: ['assets/large.pdf'] } }] }])).toEqual([]);
     });
 
     it('retains every effect and the last Undo checkpoint beyond the former action count limit', () => {

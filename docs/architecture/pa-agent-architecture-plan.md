@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-10-11
+Updated: 2026-10-14
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -288,6 +288,39 @@ is in [tool disclosure](../../src/ai-services/pa-agent-tool-disclosure.ts) and t
 existing [Runtime](../../src/ai-services/pa-agent-runtime.ts) admission/projection chain.
 
 Input normalization is tool-local through `prepareArguments` / `prepareAndValidate`. Invalid required input returns `schema_invalid`; the runtime may issue one corrective turn, but it must not silently broaden tool scope or invent a write target.
+
+### Obsidian Resource SDK
+
+B-174 adds `execute_obsidian_code` beside the unchanged pure `execute_code`.
+Both use the inline QuickJS Worker; only the SDK entry binds data-only
+`obsidian.*` and the current registry's `tools.*`. The guest has no live App,
+DOM, Node or network object. Fixed `markdownit` and `jsyaml` sources are bundled
+into that Worker; loading arbitrary packages is outside this contract.
+
+SDK methods are internal `sdkOnly` capabilities in the same registry. Their
+schemas, validators, policy and current binding generate guest guidance, while
+the four model-facing entries (`execute_obsidian_code`, `list_vault_entries`,
+`vault_create_folder`, `vault_trash`) use ordinary disclosure and execution
+admission. An SDK name or a loaded schema grants no additional permission.
+Each child uses the original final executor and prepares its actual arguments
+through `TaskSourceRun`; the parent does not predeclare future reads or obtain
+an unrestricted vault grant.
+
+Resource references bind native objects, not historical paths. Saved text,
+binary bytes, cached metadata and an exact view/editor snapshot remain distinct
+observations. Accepted read lineage is retained across self-writes, with live
+configuration, source and object checks before later effects. Operations owns
+prepare/apply, native move/trash, review and session-local Undo; image and Ghost
+calls retain their original domain owner. Host-validated child facts enter the
+parent result and existing history projection. Guest JSON cannot mint an effect
+receipt. Desktop mkdir retains creation and review with safe Undo unavailable,
+as explicitly approved by the Owner on 2026-10-13 in
+[DEC-064](../product/decisions/dec-064-obsidian-resource-sdk.md#2026-10-13-owner-批准的桌面-mkdir-undo-限制).
+Other effects and mobile public nonrecursive removal retain their owner contracts.
+The current interfaces, source continuity and capacity-only trash recovery
+exception are described in [Resource SDK Architecture](./obsidian-resource-sdk.md).
+Actual acceptance and environment boundaries are retained in
+[B-174 validation](../archive/2026/b174-obsidian-resource-sdk-validation.md).
 
 Native writing output is a Host-declared final-output shape rather than an
 executable capability. Providers cannot register or execute it through the

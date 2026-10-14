@@ -321,6 +321,8 @@ export interface SourceRecord {
     sourceBoundary?: SourceRecordBoundary;
     title?: string;
     path?: string;
+    /** Host-owned SDK object identity; path remains the original observation path. */
+    resourceRef?: string;
     url?: string;
     snippet?: string;
     score?: number;
@@ -458,6 +460,8 @@ export type PaAgentMessage =
         toolCallId: string;
         toolName: string;
         content: PaToolResultContent;
+        /** Host-built trusted child facts; not provider input and never guest-writable. */
+        actionStates?: import('./pa-agent-result-facts').PaAgentActionState[];
         inputLineage?: InputLineage;
         isError: boolean;
         timestamp: number;
@@ -730,6 +734,11 @@ export type ChatToolName =
     | "vault_move"
     | "remove_note_image"
     | "execute_code"
+    | "execute_obsidian_code"
+    | import("./independent-computation/obsidian-resource-sdk").ObsidianSdkMethodName
+    | "list_vault_entries"
+    | "vault_create_folder"
+    | "vault_trash"
     | "execute_operations"
     | "get_operations_status"
     | "replace_selection"
@@ -766,6 +775,10 @@ export interface ChatToolResult<Output> {
     unavailableReason?: ChatToolUnavailableReason;
     executionState?: import("./pa-agent-types").PaAgentToolExecutionFacts["executionState"];
     recovery?: import("./pa-agent-types").PaAgentToolExecutionFacts["recovery"];
+    /** Host-built trusted child facts; never populated from a guest JSON value. */
+    actionStates?: import("./pa-agent-result-facts").PaAgentActionState[];
+    /** Host-owned union of actual child source dependencies. */
+    inputLineage?: InputLineage;
 }
 
 export type ChatContextKind = "memory" | "current-note" | "tool-note" | "skill-guide";

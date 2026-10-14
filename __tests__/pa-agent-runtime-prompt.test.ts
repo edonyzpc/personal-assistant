@@ -3,7 +3,7 @@ import { AIMessageChunk } from "@langchain/core/messages";
 import { RunnableLambda } from "@langchain/core/runnables";
 import { ChatService } from "../src/ai-services/chat-service";
 import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
-import { PaAgentRuntime } from "../src/ai-services/pa-agent-runtime";
+import { PaAgentRuntime, type PaAgentRuntimeOptions } from "../src/ai-services/pa-agent-runtime";
 import {
     paAgentCreateImageCommandDefinition,
     paAgentGhostCommandDefinition,
@@ -21,10 +21,15 @@ import { CapabilityRegistry } from "../src/ai-services/capability-registry";
 import type { ChatToolDefinition } from "../src/ai-services/chat-tools";
 import { createCreateImageTool } from "../src/ai-services/chat-tool-factories";
 import { completeInputLineage } from "../src/ai-services/input-lineage";
-import { collectActionStates, PA_AGENT_ACTION_STATE_CONTEXT_RULES, PA_AGENT_DOMAIN_ACTION_STATE_RULES,
+import { collectActionStates, projectActionStates, PA_AGENT_ACTION_STATE_CONTEXT_RULES, PA_AGENT_DOMAIN_ACTION_STATE_RULES,
     PA_AGENT_EFFECT_RECOVERY_RULES, PA_AGENT_GHOST_RECOVERY_RULES, isSafeImageFailureObservation } from '../src/ai-services/pa-agent-result-facts';
 import { PA_AGENT_HISTORY_ENCODING_RULES, PA_AGENT_HISTORY_INTERNAL_REPRESENTATION_RULES } from '../src/ai-services/pa-agent-prompts';
 import { GHOST_METADATA_FAILURE_MESSAGES } from "../src/ai-services/ghost-tool-receipt";
+import { readFile } from 'node:fs/promises';
+import { inlineLauncher } from '../src/third_party/pi-codemode/runtime/inline';
+import type { VmChannel } from '../src/third_party/pi-codemode/runtime/execution';
+import type { HostToWorkerMessage, VmStartData } from '../src/third_party/pi-codemode/runtime/protocol';
+import { OperationsService } from '../src/ai-services/operations/operations-service';
 
 import {
     PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES,
@@ -38,12 +43,15 @@ const rawGhostUserText = "@blog2ghost 发布我刚才排除当前笔记后提到
 async function runGhostRuntimeTrace(submit: GhostHostBinding["submit"], calls: Array<{ intent: "prepare" | "restore"; path?: string; name?: string }>,
     debugRecorder?: import("../src/ai-services/agent-debug-port").AgentDebugRunRecorder,
     options: { host?: AiServiceHost; precedingRead?: 'vault' | 'memory'; callText?: string; reuseCallId?: boolean;
-        readBetweenPreparations?: boolean; onGhostResult?: () => void } = {}) {
+        readBetweenPreparations?: boolean; onGhostResult?: () => void; composed?: boolean;
+        composedCodePrefix?: string; runtimeOptions?: PaAgentRuntimeOptions } = {}) {
     const host = options.host ?? createPromptHost();
     const inputLineage = completeInputLineage([{ kind: "user-text", messageId: "ghost-r2b-user" }]);
     const providerTexts: string[] = [];
     const lifecycle: Array<{ type: string; turnId?: string; message?: PaAgentMessage }> = [];
-    const modelCalls = calls.map(input => ({ name: "prepare_ghost_post", input: input as Record<string, unknown> }));
+    const modelCalls = calls.map(input => options.composed
+        ? { name: 'execute_obsidian_code', input: { mode: 'apply', code: `${options.composedCodePrefix ?? ''}\nreturn await tools.prepare_ghost_post(${JSON.stringify(input)});` } }
+        : { name: "prepare_ghost_post", input: input as Record<string, unknown> });
     const readCall = { name: options.precedingRead === 'memory' ? "search_memory" : "search_vault_metadata",
         input: { query: "absent synthetic note" } };
     if (options.precedingRead) modelCalls.unshift(readCall);
@@ -67,7 +75,7 @@ async function runGhostRuntimeTrace(submit: GhostHostBinding["submit"], calls: A
     const runtime = new PaAgentRuntime(
         host as never,
         { createChatModel: async () => model } as never,
-        { skillContextProvider: null },
+        { skillContextProvider: null, ...options.runtimeOptions },
     );
     const invocation: PaAgentCommandInvocation = {
         definition: paAgentGhostCommandDefinition,
@@ -979,6 +987,98 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(trace.providerTexts[2]).toContain(`"status": "${status}"`);
         expect(trace.providerTexts[2]).not.toContain('notes/target.md');
         expect(trace.toolResults[0].content.resultFact).toEqual({ kind: "approval_pending", intentId: "memory-withdrawn-operation" });
+    });
+
+    it('retains original Ghost and resource child identities after Memory withdrawal without exposing withdrawn paths or refs to the next provider', async () => {
+        const host = createPromptHost();
+        host.settings.memoryEnabled = true;
+        host.settings.operationsAgentEnabled = true;
+        const sourcePath = 'notes/withdrawn-resource-before.md', targetPath = 'notes/withdrawn-resource-after.md';
+        const file = { path: sourcePath, extension: 'md', stat: { mtime: 1, size: 23 } };
+        const notes = { path: 'notes', children: [file] };
+        const root = { path: '', children: [notes] };
+        const files = new Map<string, object>([['', root], ['notes', notes], [sourcePath, file]]);
+        const vault = {
+            getRoot: () => root, getMarkdownFiles: () => [file], getAbstractFileByPath: (path: string) => files.get(path) ?? null,
+            adapter: { exists: async (path: string) => files.has(path) },
+            read: async () => 'WITHDRAWN_RESOURCE_TEXT', cachedRead: async () => 'WITHDRAWN_RESOURCE_TEXT',
+            readBinary: async () => new TextEncoder().encode('WITHDRAWN_RESOURCE_TEXT').buffer,
+        };
+        const rename = jest.fn(async (moved: { path: string }, to: string) => {
+            files.delete(moved.path); moved.path = to; files.set(to, moved);
+        });
+        const operations = new OperationsService({ vault: vault as never, renameFile: rename,
+            trashFile: async () => { throw new Error('unexpected trash'); },
+            isOperationsAgentEnabled: () => host.settings.operationsAgentEnabled });
+        const session = operations.createSession({ surface: 'chat' });
+        Object.assign(host.app.vault, vault);
+        Object.assign(host, { isOperationsAgentEnabled: true });
+        host.getTaskSourceConfigurationEpoch = () => `memory-enabled:${host.settings.memoryEnabled}`;
+        let epoch = 'composed-memory-before-save';
+        host.getMemoryEvidenceEpoch = () => epoch;
+        const submit = jest.fn<GhostHostBinding['submit']>(async () => {
+            epoch = 'composed-memory-after-save';
+            host.settings.memoryEnabled = false;
+            return { status: 'prepared', operationId: 'composed-ghost-saved-operation', executionState: 'succeeded' };
+        });
+        const wasm = await WebAssembly.compile(await readFile('node_modules/quickjs-wasi/quickjs.wasm'));
+        const channels: Array<Promise<VmChannel>> = [];
+        class InlineVmWorker extends EventTarget {
+            private channel: Promise<VmChannel> | undefined;
+            postMessage(message: HostToWorkerMessage | { type: 'start'; data: VmStartData }): void {
+                if (message.type === 'start') {
+                    this.channel = Promise.resolve(inlineLauncher(wasm)(message.data!, {
+                        message: data => this.dispatchEvent(new MessageEvent('message', { data })),
+                        failure: error => this.dispatchEvent(new MessageEvent('message', { data: { type: 'failure', error } })),
+                    }));
+                    channels.push(this.channel);
+                } else void this.channel?.then(channel => channel.post(message));
+            }
+            terminate(): void { void this.channel?.then(channel => channel.stop()); }
+        }
+        const originalWorker = globalThis.Worker;
+        globalThis.Worker = InlineVmWorker as unknown as typeof Worker;
+        try {
+            const trace = await runGhostRuntimeTrace(submit, [{ intent: 'prepare', path: 'notes/target.md' }], undefined,
+                { host, precedingRead: 'memory', composed: true,
+                    composedCodePrefix: `
+                        const read = await obsidian.vault.readText({target:{path:${JSON.stringify(sourcePath)}}});
+                        if (!read.ok) throw new Error("source read failed");
+                        const moved = await obsidian.vault.move({source:{resourceRef:read.value.resourceRef},to:${JSON.stringify(targetPath)}});
+                        if (!moved.ok) throw new Error("native move failed");
+                    `,
+                    runtimeOptions: { operationsIntentController: session, operationsToolProvider: session.provider,
+                        operationsIntentExecutor: async input => await session.executeCurrentIntent(input) },
+                });
+            expect(submit).toHaveBeenCalledTimes(1);
+            expect(rename).toHaveBeenCalledTimes(1);
+            expect(file.path).toBe(targetPath);
+            const parent = trace.lifecycle.flatMap(event => event.type === 'message_end' && event.message?.role === 'toolResult'
+                && event.message.toolName === 'execute_obsidian_code' ? [event.message] : [])[0];
+            expect(parent.actionStates).toEqual(expect.arrayContaining([expect.objectContaining({ owner: 'ghost',
+                operationId: 'composed-ghost-saved-operation', phase: 'prepared',
+                receipt: expect.objectContaining({ kind: 'ghost-preparation', status: 'prepared', executionState: 'succeeded' }) })]));
+            const movedState = parent.actionStates!.find(state => state.owner === 'operations')!;
+            const effect = movedState.actions![0].resourceEffect!;
+            expect(effect).toMatchObject({ kind: 'move', fromPath: sourcePath, toPath: targetPath, resourceRef: expect.any(String) });
+            expect(projectActionStates([movedState])[0].actions?.[0].resourceEffect).toMatchObject({ ...effect });
+            expect(parent.inputLineage?.dependencies).toContainEqual(expect.objectContaining({
+                kind: 'run-notes-observation', owner: 'memory', memoryEnabled: true,
+            }));
+            expect(trace.providerTexts[2]).toContain('composed-ghost-saved-operation');
+            expect(trace.providerTexts[2]).toContain(movedState.operationId);
+            expect(trace.providerTexts[2]).not.toContain('notes/target.md');
+            expect(trace.providerTexts[2]).not.toContain(sourcePath);
+            expect(trace.providerTexts[2]).not.toContain(targetPath);
+            expect(trace.providerTexts[2]).not.toContain(effect.resourceRef!);
+            expect(trace.providerTexts[2]).not.toContain('WITHDRAWN_RESOURCE_TEXT');
+            expect(trace.lifecycle.filter(event => event.type === 'message_end' && event.message?.role === 'toolResult'
+                && event.message.toolName === 'prepare_ghost_post')).toHaveLength(0);
+        } finally {
+            globalThis.Worker = originalWorker;
+            await Promise.all(channels.map(async channel => await (await channel).stop()));
+            session.dispose(); operations.dispose();
+        }
     });
 
     it("passes the current Ghost tool's Debug ownership through the real capability loop", async () => {

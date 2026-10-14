@@ -1,3 +1,5 @@
+// PA derivation from Pi c5f5b3282d5e4203c085e59837ba17aeaf2829b5:
+// SDK globals, byte budgets and monotonic receiver IDs; MIT license retained.
 /**
  * Host side of an execution, shared by every place a VM can run.
  *
@@ -25,6 +27,7 @@ import { toCodemodeIdentifier } from "../identifier.ts";
 import type {
 	CodemodeCall,
 	CodemodeCallStatus,
+	CodemodeCallResourceLimits,
 	CodemodeError,
 	CodemodeExecuteOptions,
 	CodemodeOutputItem,
@@ -35,6 +38,7 @@ import type {
 } from "../types.ts";
 import {
 	type HostToWorkerMessage,
+	bridgeJsonByteLength,
 	isWorkerToHostMessage,
 	type VmStartData,
 	type WorkerToHostMessage,
@@ -140,6 +144,7 @@ interface PendingCall {
 	record: CodemodeCall | undefined;
 	startedAt: number;
 	controller: AbortController;
+	bytes: number;
 }
 
 interface ExecutionOptions {
@@ -149,6 +154,9 @@ interface ExecutionOptions {
 	timeoutMs: number;
 	signal: AbortSignal | undefined;
 	memoryLimitBytes: number | undefined;
+	maxCallPayloadChars: number | undefined;
+	callResourceLimits: CodemodeCallResourceLimits | undefined;
+	guestLibrarySource: string | undefined;
 	store: Record<string, string>;
 	launch: VmLauncher;
 }
@@ -163,10 +171,14 @@ class Execution {
 	private readonly tools: ReadonlyMap<string, CodemodeTool>;
 	private readonly globals: ReadonlyMap<string, CodemodeTool>;
 	private readonly signal: AbortSignal | undefined;
+	private readonly maxCallPayloadChars: number | undefined;
+	private readonly callResourceLimits: CodemodeCallResourceLimits | undefined;
 	private readonly timer: ReturnType<typeof setTimeout> | undefined;
 	private readonly output: CodemodeOutputItem[] = [];
 	private readonly calls: CodemodeCall[] = [];
-	private readonly pending = new Map<number, PendingCall>();
+    private readonly pending = new Map<number, PendingCall>();
+	private lastCallId = 0;
+	private inflightBytes = 0;
 	private finished = false;
 
 	constructor(options: ExecutionOptions) {
@@ -176,6 +188,8 @@ class Execution {
 		this.tools = options.tools;
 		this.globals = options.globals;
 		this.signal = options.signal;
+		this.maxCallPayloadChars = options.maxCallPayloadChars;
+		this.callResourceLimits = options.callResourceLimits;
 
 		if (Number.isFinite(options.timeoutMs)) {
 			this.timer = setTimeout(() => {
@@ -202,8 +216,12 @@ class Execution {
 			globals: [...options.globals.values()].map((global) => ({
 				name: global.name,
 				spread: global.spread === true,
+					binaryResult: global.binaryResult === true,
 			})),
-			memoryLimitBytes: options.memoryLimitBytes,
+        memoryLimitBytes: options.memoryLimitBytes,
+        maxCallPayloadChars: options.maxCallPayloadChars,
+			callResourceLimits: options.callResourceLimits,
+			guestLibrarySource: options.guestLibrarySource,
 			store: options.store,
 		};
 		const events: VmEvents = {
@@ -262,10 +280,28 @@ class Execution {
 			case "output":
 				this.output.push(message.item);
 				break;
-			case "call":
-				if (this.pending.has(message.id)) throw new BridgeError(`duplicate call id ${message.id}`);
-				void this.handleCall(message);
+			case "call": {
+				if (!Number.isSafeInteger(message.id) || message.id <= this.lastCallId) {
+					this.finish({
+						kind: "sandbox",
+						message: `Invalid or duplicate call id ${message.id} was rejected before a host attempt.`,
+					});
+					return;
+				}
+				this.lastCallId = message.id;
+				if (message.args !== undefined && typeof message.args !== "string") {
+					throw new BridgeError("call arguments are not a JSON string");
+				}
+				const bytes = message.args === undefined ? 0 : bridgeJsonByteLength(message.args);
+				const limits = this.callResourceLimits;
+				if (limits && (bytes > limits.maxPayloadBytes
+					|| this.pending.size >= limits.maxInflightCalls
+					|| this.inflightBytes + bytes > limits.maxInflightBytes)) {
+					throw new BridgeError("call exceeds the live RPC byte or in-flight budget");
+				}
+				void this.handleCall(message, bytes);
 				break;
+			}
 			case "done":
 				this.handleDone(message);
 				break;
@@ -285,19 +321,25 @@ class Execution {
 		this.finish(undefined, value, parseStoreWrites(message.writes));
 	}
 
-	private async handleCall(message: Extract<WorkerToHostMessage, { type: "call" }>): Promise<void> {
+	private async handleCall(message: Extract<WorkerToHostMessage, { type: "call" }>, bytes: number): Promise<void> {
 		const { id, name } = message;
 		const isTool = message.target === "tool";
 		const record: CodemodeCall | undefined = isTool ? { name, status: "cancelled", durationMs: 0 } : undefined;
 		if (record) this.calls.push(record);
-		const pending: PendingCall = { record, startedAt: performance.now(), controller: new AbortController() };
+		const pending: PendingCall = { record, startedAt: performance.now(), controller: new AbortController(), bytes };
 		this.pending.set(id, pending);
+		this.inflightBytes += bytes;
 
 		let status: CodemodeCallStatus;
 		let reply: HostToWorkerMessage;
 		try {
 			const tool = (isTool ? this.tools : this.globals).get(name);
 			if (!tool) throw new Error(`Unknown ${isTool ? "tool" : "global"} "${name}"`);
+			if (message.args !== undefined
+				&& this.maxCallPayloadChars !== undefined
+				&& message.args.length > this.maxCallPayloadChars) {
+				throw new RangeError(`Tool argument exceeds ${this.maxCallPayloadChars} JSON characters on the host wire.`);
+			}
 			const args: unknown = message.args === undefined ? undefined : JSON.parse(message.args);
 			const value = await tool.execute(args, { signal: pending.controller.signal });
 			reply = { type: "result", id, ok: true, payload: value === undefined ? undefined : JSON.stringify(value) };
@@ -310,6 +352,7 @@ class Execution {
 		// Already cancelled by finish(): the record keeps "cancelled" and the
 		// VM is gone or going.
 		if (!this.pending.delete(id)) return;
+		this.inflightBytes -= pending.bytes;
 		if (record) {
 			record.status = status;
 			record.durationMs = performance.now() - pending.startedAt;
@@ -329,6 +372,7 @@ class Execution {
 			pending.controller.abort();
 		}
 		this.pending.clear();
+		this.inflightBytes = 0;
 		this.unsent = [];
 
 		const result: CodemodeResult = error
@@ -364,25 +408,33 @@ export class CodemodeSandboxBase {
 	private readonly toolsByName = new Map<string, CodemodeTool>();
 	private readonly globalsByName = new Map<string, CodemodeTool>();
 	private readonly timeoutMs: number;
-	private readonly memoryLimitBytes: number | undefined;
+    private readonly memoryLimitBytes: number | undefined;
+    private readonly maxCallPayloadChars: number | undefined;
+	private readonly callResourceLimits: CodemodeCallResourceLimits | undefined;
+	private readonly guestLibrarySource: string | undefined;
 	private readonly launch: VmLauncher;
 	private readonly running = new Set<Execution>();
 	private closed = false;
 
 	constructor(options: CodemodeSandboxBaseOptions, launch: VmLauncher) {
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-		this.memoryLimitBytes = options.memoryLimitBytes;
+        this.memoryLimitBytes = options.memoryLimitBytes;
+        this.maxCallPayloadChars = options.maxCallPayloadChars;
+		this.callResourceLimits = options.callResourceLimits;
+		this.guestLibrarySource = options.guestLibrarySource;
 		this.launch = launch;
 		for (const tool of options.tools ?? []) this.registerTool(tool);
 		const namespaces = new Set<string>();
-		for (const global of options.globals ?? []) {
-			const parts = global.name.split(".");
-			if (parts.length > 2 || !parts.every((part) => IDENTIFIER.test(part)) || RESERVED_GLOBALS.has(parts[0])) {
-				throw new Error(`Invalid global name "${global.name}"`);
-			}
-			if (this.globalsByName.has(global.name)) throw new Error(`Global "${global.name}" is already registered`);
-			if (parts.length === 2) namespaces.add(parts[0]);
-			this.globalsByName.set(global.name, global);
+			for (const global of options.globals ?? []) {
+				const parts = global.name.split(".");
+				if (parts.length > 3 || !parts.every((part) => IDENTIFIER.test(part)) || RESERVED_GLOBALS.has(parts[0])) {
+					throw new Error(`Invalid global name "${global.name}"`);
+				}
+				if (this.globalsByName.has(global.name)) throw new Error(`Global "${global.name}" is already registered`);
+				for (let index = 1; index < parts.length; index++) {
+					namespaces.add(parts.slice(0, index).join("."));
+				}
+				this.globalsByName.set(global.name, global);
 		}
 		for (const name of namespaces) {
 			if (this.globalsByName.has(name)) throw new Error(`Global "${name}" conflicts with the namespace "${name}"`);
@@ -420,7 +472,10 @@ export class CodemodeSandboxBase {
 			globals: this.globalsByName,
 			timeoutMs: options.timeoutMs ?? this.timeoutMs,
 			signal: options.signal,
-			memoryLimitBytes: this.memoryLimitBytes,
+                memoryLimitBytes: this.memoryLimitBytes,
+                maxCallPayloadChars: this.maxCallPayloadChars,
+				callResourceLimits: this.callResourceLimits,
+				guestLibrarySource: this.guestLibrarySource,
 			store: serializeStore(options.store),
 			launch: this.launch,
 		});

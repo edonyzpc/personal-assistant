@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-064 | Obsidian 内部通用执行与资源 SDK | Accepted | QuickJS Worker、资源级桥接与既有执行链；核心SDK范围A，含明确批准的Undo限制；插件只保留接入方式 | [Record](./dec-064-obsidian-resource-sdk.md) |
 | DEC-063 | 单次 Operations 写入与原生移动 | Accepted | 合并暂存/执行，去多余 Confirm、保留 review/Undo，修复结果连续性与能力不足收敛；移动及引用维护复用 Obsidian，PA 不自建引用逻辑 | [Record](./dec-063-direct-operations-and-native-move.md) |
 | DEC-062 | PA Agent 工具混合披露 | Accepted | 基础直供、完整短目录、精确批量加载与真实绑定预披露；保持权限和独立计算，四项效果判定 | [Record](./dec-062-agent-hybrid-tool-disclosure.md) |
 | DEC-061 | Agent 独立通用计算 | Accepted | 计算与现有工具独立，Agent 自主组合；Pi/QuickJS Worker，无脚本内工具桥接 | [Record](./dec-061-independent-agent-computation.md) |

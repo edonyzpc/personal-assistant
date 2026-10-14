@@ -2,6 +2,7 @@ import { inlineLauncher } from "../../third_party/pi-codemode/runtime/inline";
 import type { VmChannel } from "../../third_party/pi-codemode/runtime/execution";
 import type { HostToWorkerMessage, VmStartData } from "../../third_party/pi-codemode/runtime/protocol";
 import wasmBytes from "quickjs-wasi/quickjs.wasm";
+import guestLibrarySource from "./guest-libraries.ts?guest-source";
 
 export function createReceiver() {
     let channel: VmChannel | undefined;
@@ -21,7 +22,8 @@ export function createReceiver() {
             started = true;
             void (async () => {
                 const wasm = await WebAssembly.compile(wasmBytes);
-                channel = await inlineLauncher(wasm)((message as { data: VmStartData }).data, {
+                const data = { ...(message as { data: VmStartData }).data, guestLibrarySource };
+                channel = await inlineLauncher(wasm)(data, {
                     message: value => self.postMessage(value),
                     failure: error => self.postMessage({ type: "failure", error }),
                 });

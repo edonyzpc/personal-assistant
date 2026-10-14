@@ -16,6 +16,13 @@ export function formatOperationsPreview(
     formatter: OperationsPreviewFormatter = {},
 ): string {
     if (operation.kind === "move") return `${operation.sourcePath} → ${operation.targetPath}`;
+    if (operation.kind === "resource") {
+        const resource = operation.resource;
+        if (resource.action === "move") return `${operation.path} → ${resource.to}`;
+        if (resource.action === "mkdir") return resource.paths.join("\n");
+        if (resource.action === "trash") return resource.tree.map(entry => entry.path).join("\n");
+        if (resource.action === "open" || resource.action === "undo") return operation.path;
+    }
     if (operation.kind === "note_image_removal") {
         return formatOperationsBeforeAfterPreview(operation.expectedBefore, operation.expectedAfter);
     }

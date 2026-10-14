@@ -9,12 +9,31 @@ import {
     type ConfinementFsProbe,
 } from "./target-confinement";
 import type { ConfinementConfig } from "./types";
+import { validateResourceVaultPath } from "../operations/vault-path";
 
 const baseConfig: ConfinementConfig = {
     allowedRoots: [".pagelet/"],
     allowedExtensions: [".md"],
     maxPathLength: 200,
 };
+
+describe("general resource path confinement", () => {
+    it("preserves long relative paths and text or emoji joiners without applying Writing limits", () => {
+        const path = `${Array.from({ length: 5 }, () => "project-" + "a".repeat(36)).join("/")}/👩‍💻.canvas`;
+        expect(path.length).toBeGreaterThan(200);
+        expect(validateResourceVaultPath(path)).toBe(path);
+        expect(validateResourceVaultPath("family/👨‍👩‍👧‍👦.md")).toBe("family/👨‍👩‍👧‍👦.md");
+        expect(validateResourceVaultPath("notes/یادداشت‌ها.md")).toBe("notes/یادداشت‌ها.md");
+    });
+
+    it("still rejects traversal, disguised protected directories and unsafe characters", () => {
+        for (const path of ["../outside.txt", ".ob\u200dsidian/data.json", "notes/.g\u200dit/config",
+            ".ob\u200csidian/data.json", "notes/.tr\u200cash/file.txt",
+            "notes/bad\x00.txt", "notes/\u200bhidden.txt", "notes/\u202ename.txt"]) {
+            expect(() => validateResourceVaultPath(path)).toThrow();
+        }
+    });
+});
 
 describe("validateTargetConfinementSync (framework SDD §2.2)", () => {
     it("accepts a clean vault-relative .md inside .pagelet/", () => {
@@ -455,13 +474,14 @@ describe("validateAllowedRoots (framework SDD §2.2 / issue #358 AC #1)", () => 
     });
 
     it("accepts ordinary roots like .pagelet/, notes/, sub/path/", () => {
+        // A conventional trailing slash must not make the terminal empty segment invalid.
         expect(() => validateAllowedRoots([".pagelet/", "notes/", "sub/path/"])).not.toThrow();
     });
 
     it("throws ConfinementConfigError for .obsidian/ root", () => {
-        expect(() => validateAllowedRoots([".obsidian/plugins/x/"])).toThrow(ConfinementConfigError);
         try {
             validateAllowedRoots([".obsidian/plugins/x/"]);
+            throw new Error("should have thrown");
         } catch (err) {
             expect(err).toBeInstanceOf(ConfinementConfigError);
             const e = err as ConfinementConfigError;
@@ -478,18 +498,17 @@ describe("validateAllowedRoots (framework SDD §2.2 / issue #358 AC #1)", () => 
     });
 
     it("throws for roots inside caller-supplied forbiddenRoots", () => {
-        expect(() => validateAllowedRoots(
-            ["vault-config/reviews/"],
-            { forbiddenRoots: ["vault-config"] },
-        )).toThrow(ConfinementConfigError);
-        try {
-            validateAllowedRoots(["Vault-Config/reviews/"], { forbiddenRoots: ["vault-config"] });
-        } catch (err) {
-            expect(err).toBeInstanceOf(ConfinementConfigError);
-            const e = err as ConfinementConfigError;
-            expect(e.reason).toBe("forbidden_dotfolder");
-            expect(e.offendingRoot).toBe("Vault-Config/reviews/");
-            expect(e.offendingSegment).toBe("vault-config");
+        for (const root of ["vault-config/reviews/", "Vault-Config/reviews/"]) {
+            try {
+                validateAllowedRoots([root], { forbiddenRoots: ["vault-config"] });
+                throw new Error("should have thrown");
+            } catch (err) {
+                expect(err).toBeInstanceOf(ConfinementConfigError);
+                const e = err as ConfinementConfigError;
+                expect(e.reason).toBe("forbidden_dotfolder");
+                expect(e.offendingRoot).toBe(root);
+                expect(e.offendingSegment).toBe("vault-config");
+            }
         }
     });
 
@@ -637,12 +656,5 @@ describe("validateAllowedRoots (framework SDD §2.2 / issue #358 AC #1)", () => 
             expect(e.offendingRoot).toBe(".obsidian./plugins/");
             expect(e.offendingSegment).toBe(".obsidian.");
         }
-    });
-
-    it("does NOT trip trailing_dot_or_space on the empty terminal segment of `.pagelet/`", () => {
-        // Defensive check: roots conventionally end in `/`, splitting to
-        // [".pagelet", ""]. The empty terminal must be skipped so legitimate
-        // roots aren't rejected.
-        expect(() => validateAllowedRoots([".pagelet/"])).not.toThrow();
     });
 });

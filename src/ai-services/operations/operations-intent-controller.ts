@@ -11,6 +11,7 @@ import {
 } from "./input-validation";
 import { OperationsUndoStore } from "./operations-undo-store";
 import { imageSourceHash } from "../../chat/image-policy";
+import { cloneInputLineage } from "../input-lineage";
 import {
     createRetainedNoteImageReadGuard,
     prepareNoteImageRemoval,
@@ -19,6 +20,9 @@ import {
     type NoteImageRemovalPrivatePreparation,
 } from "./note-image-removal";
 import { NoteImageRemovalResourceOwner } from "./note-image-removal-resources";
+import { isResourceOperationToolName, validateResourceOperationInput } from "./resource-input-validation";
+import { OperationsResourceError, prepareResourceOperation, prepareResourceRecovery, executeResourceOperation,
+    undoResourceOperation, type ResourceEffectHost, type ResourceRecovery } from "./operations-resource-effects";
 import type {
     FrontmatterUpdateInput,
     OperationExecutionResult,
@@ -42,6 +46,7 @@ import type {
     RemoveNoteImageInput,
     PreparedMoveOperation,
     VaultMoveInput,
+    ResourceOperationInput,
 } from "./types";
 import { getOperationsBlockedReason, REMOVE_NOTE_IMAGE_TOOL_NAME } from "./types";
 import { operationsResultObservation } from "../operations-status-tool";
@@ -80,6 +85,8 @@ export interface OperationsIntentControllerOptions {
     vault: OperationsVault;
     trashFile: (file: OperationsVaultFile) => Promise<void>;
     renameFile?: (file: OperationsVaultFile, targetPath: string) => Promise<void>;
+    trashResource?: (file: OperationsVaultFile) => Promise<void>;
+    removeEmptyFolder?: (file: OperationsVaultFile) => Promise<void>;
     undoStore?: OperationsUndoStore;
     isPathAllowed?: (path: string) => boolean;
     markSelfWrite?: (path: string) => void;
@@ -117,6 +124,10 @@ export class OperationsIntentController {
     private readonly vault: OperationsVault;
     private readonly trashFile: (file: OperationsVaultFile) => Promise<void>;
     private readonly renameFile?: (file: OperationsVaultFile, targetPath: string) => Promise<void>;
+    private readonly trashResource?: (file: OperationsVaultFile) => Promise<void>;
+    private readonly removeEmptyFolder?: (file: OperationsVaultFile) => Promise<void>;
+    private readonly resourceRecoveryOwner: NoteImageRemovalResourceOwner;
+    private readonly ownsResourceRecoveryOwner: boolean;
     private readonly undoStore: OperationsUndoStore;
     private readonly isPathAllowed?: (path: string) => boolean;
     private readonly markSelfWrite?: (path: string) => void;
@@ -143,6 +154,10 @@ export class OperationsIntentController {
         this.vault = options.vault;
         this.trashFile = options.trashFile;
         this.renameFile = options.renameFile;
+        this.trashResource = options.trashResource;
+        this.removeEmptyFolder = options.removeEmptyFolder;
+        this.resourceRecoveryOwner = options.noteImageRemovalResources ?? new NoteImageRemovalResourceOwner({ now: options.now });
+        this.ownsResourceRecoveryOwner = !options.noteImageRemovalResources;
         this.undoStore = options.undoStore ?? new OperationsUndoStore({ now: options.now });
         this.isPathAllowed = options.isPathAllowed;
         this.markSelfWrite = options.markSelfWrite;
@@ -164,6 +179,9 @@ export class OperationsIntentController {
     async stageIntent(input: StageOperationsIntentInput, signal?: AbortSignal): Promise<OperationsIntent> {
         this.assertUsable();
         const lifecycleEpoch = this.lifecycleEpoch;
+        const hostParentBinding = input.hostParentBinding ? Object.freeze({ ...input.hostParentBinding }) : undefined;
+        const inputLineage = cloneInputLineage(input.inputLineage);
+        freezeUnknown(inputLineage);
         const taskSourceReadGuard = input.taskSourceReadGuard;
         const assertCurrent = () => this.assertStageActive(signal, lifecycleEpoch, taskSourceReadGuard);
         const assertReadAllowed = (path: string, kind: TaskSourceReadKind) => {
@@ -197,6 +215,12 @@ export class OperationsIntentController {
             toolCallIds.add(call.toolCallId);
             if (!isCoreWriteToolName(call.name)) {
                 throw new OperationsControllerError("schema_invalid", `Unsupported Operations tool: ${String(call.name)}.`);
+            }
+            if (isResourceOperationToolName(call.name)) {
+                let resourceInput: ResourceOperationInput;
+                try { resourceInput = validateResourceOperationInput(call.name, { ...(call.input as object), mode: input.mode ?? "apply" }); }
+                catch (error) { throw new OperationsControllerError("schema_invalid", safeError(error, "Invalid resource operation.")); }
+                return { resourceInput, input: resourceInput, call, name: call.name, path: resourceInput.path ?? "", readKind: "task_material" as const };
             }
             let tool: MarkdownWriteTool | { name: typeof REMOVE_NOTE_IMAGE_TOOL_NAME; input: RemoveNoteImageInput }
                 | { name: "vault_move"; input: VaultMoveInput };
@@ -238,7 +262,7 @@ export class OperationsIntentController {
                 ?? (call.name === "vault_create" ? "output_target_exists" : "task_material");
             initialReadKinds.set(path, readKind);
             if (taskSourceReadGuard) assertReadAllowed(path, readKind);
-            return { ...tool, call, path, readKind };
+            return { ...tool, call, path, readKind, resourceInput: undefined };
         });
 
         // A native move may update relative links. Do not prepare later body
@@ -247,6 +271,7 @@ export class OperationsIntentController {
         const movedPaths = new Set<string>();
         const priorPaths = new Set<string>();
         for (const call of normalizedCalls) {
+            if (call.resourceInput) continue;
             if (movedPaths.has(call.path)) {
                 throw new OperationsControllerError("schema_invalid", "Read the moved note in a new call before preparing dependent operations.");
             }
@@ -261,6 +286,13 @@ export class OperationsIntentController {
         }
 
         for (const normalizedCall of normalizedCalls) {
+            if (normalizedCall.resourceInput && isResourceOperationToolName(normalizedCall.name)) {
+                const resourceHost = this.resourceHost((path, output = false) => assertReadAllowed(path, output ? "output_target_exists" : "task_material"), taskSourceReadGuard, signal);
+                try { prepared.push(await prepareResourceOperation(resourceHost, { name: normalizedCall.name,
+                    input: normalizedCall.resourceInput, toolCallId: normalizedCall.call.toolCallId, context: input.resourceContext })); }
+                catch (error) { throw normalizeStageError(error); }
+                assertCurrent(); continue;
+            }
             const { call, path, readKind } = normalizedCall;
             assertReadAllowed(path, readKind);
             if (normalizedCall.name === "vault_move") {
@@ -314,7 +346,7 @@ export class OperationsIntentController {
             const expectedBefore = target.exists ? target.content : null;
             let expectedAfter: string;
             try {
-                expectedAfter = await this.prepareExpectedAfter(normalizedCall, path, target);
+                expectedAfter = await this.prepareExpectedAfter(normalizedCall as MarkdownWriteTool, path, target);
                 assertReadAllowed(path, readKind);
             } catch (error) {
                 throw normalizeStageError(error);
@@ -326,8 +358,8 @@ export class OperationsIntentController {
                 kind: "markdown",
                 id: this.createId(),
                 toolCallId: call.toolCallId,
-                name: normalizedCall.name,
-                input: normalizedCall.input,
+                name: normalizedCall.name as MarkdownWriteTool["name"],
+                input: normalizedCall.input as MarkdownWriteTool["input"],
                 path,
                 expectedBefore,
                 expectedAfter,
@@ -344,6 +376,8 @@ export class OperationsIntentController {
             operations: prepared,
             state: "pending",
             ...(input.mode ? { mode: input.mode } : {}),
+            ...(hostParentBinding ? { hostParentBinding } : {}),
+            ...(inputLineage ? { inputLineage } : {}),
         });
         assertCurrent();
         this.intents.set(intent.id, intent);
@@ -469,6 +503,7 @@ export class OperationsIntentController {
     async executeIntent(
         intentId: string,
         assertOperationAllowed?: (operation: PreparedOperation, afterSelfWrite: boolean) => void,
+        resourceBoundary?: { guard: TaskSourceReadGuard; signal?: AbortSignal },
     ): Promise<OperationsExecutionResult> {
         this.assertUsable();
         const lifecycleEpoch = this.lifecycleEpoch;
@@ -485,11 +520,26 @@ export class OperationsIntentController {
 
         const results: OperationExecutionResult[] = [];
         const imageRecovery = new Map<string, PreparedImageRecovery>();
+        const resourceRecovery = new Map<string, ResourceRecovery>();
         let preparationFailure: { operationId: string; error: OperationsControllerError } | undefined;
-        // All recovery resources must be available before the first effect.
-        // These reservations are local to this execution, then transferred to
-        // the existing Undo resource owner or released below.
+        // Prepare recovery before the first effect. Resource trash may explicitly
+        // proceed without PA Undo when only backup capacity is insufficient.
+        // Reservations transfer to the existing Undo owner or are released below.
         for (const operation of executing.operations) {
+            if (operation.kind === "resource" && operation.resource.action === "trash") {
+                try {
+                    this.assertExecutionActive(lifecycleEpoch); assertOperationAllowed?.(operation, false);
+                    const recovery = await prepareResourceRecovery(this.resourceHost((path, output) => {
+                        this.assertExecutionActive(lifecycleEpoch); this.assertPathAllowed(path);
+                        assertOperationAllowed?.(operation, false);
+                        if (!isTaskSourcePathAllowed(resourceBoundary?.guard, path, output ? "output_target_exists" : "task_material")) {
+                            throw new OperationsControllerError("boundary_denied", "The recovery path is outside the current source scope.");
+                        }
+                    }, resourceBoundary?.guard, resourceBoundary?.signal), operation);
+                    if (recovery) resourceRecovery.set(operation.id, recovery);
+                } catch (error) { preparationFailure = { operationId: operation.id, error: normalizeExecutionError(error) }; break; }
+                continue;
+            }
             if (operation.kind !== "note_image_removal" || operation.input.attachmentAction !== "delete") continue;
             try {
                 this.assertExecutionActive(lifecycleEpoch);
@@ -538,14 +588,27 @@ export class OperationsIntentController {
 
             const recovery = imageRecovery.get(operation.id);
             imageRecovery.delete(operation.id);
-            const result = await this.executeOperation(executing, operation, lifecycleEpoch, assertBeforeEffect, recovery);
+            let result: OperationExecutionResult;
+            if (operation.kind === "resource") {
+                const resourceHost = this.resourceHost((path, output) => {
+                    assertBeforeEffect(true); this.assertPathAllowed(path);
+                    if (!isTaskSourcePathAllowed(resourceBoundary?.guard, path, output ? "output_target_exists" : "task_material")) {
+                        throw new OperationsControllerError("boundary_denied", "The resource path is outside the current source scope.");
+                    }
+                }, resourceBoundary?.guard, resourceBoundary?.signal);
+                resourceHost.undo = receiptId => this.undo(receiptId, path => resourceHost.assertAllowed(path, true));
+                const resourcePrepared = resourceRecovery.get(operation.id); resourceRecovery.delete(operation.id);
+                result = await executeResourceOperation(resourceHost, executing, operation, resourcePrepared);
+            } else result = await this.executeOperation(executing, operation, lifecycleEpoch, assertBeforeEffect, recovery);
             results.push(result);
             hasAppliedEffect ||= result.status === "succeeded"
+                || result.resourceEffect?.opened === true || (result.resourceEffect?.paths?.length ?? 0) > 0
                 || result.effects?.some(effect => effect.status === "applied" || effect.status === "removed") === true;
             if (this.isExecutionActive(lifecycleEpoch)) this.emit({ type: "operation-result", intentId, result });
             if (result.status !== "succeeded" && result.status !== "unchanged") stop = true;
         }
         for (const recovery of imageRecovery.values()) recovery.reservation.release();
+        for (const recovery of resourceRecovery.values()) if (recovery.kind === "snapshot") recovery.reservation.release();
 
         const active = this.isExecutionActive(lifecycleEpoch);
         if (!active) {
@@ -555,6 +618,7 @@ export class OperationsIntentController {
         }
 
         const succeeded = results.filter(result => result.status === "succeeded"
+            || result.resourceEffect?.opened === true || result.status === "partial" && (result.resourceEffect?.paths?.length ?? 0) > 0
             || result.effects?.some(effect => effect.status === "applied" || effect.status === "removed")).length;
         const unknown = results.some(result => result.status === "unknown"
             || result.effects?.some(effect => effect.status === "unknown"));
@@ -576,6 +640,13 @@ export class OperationsIntentController {
             path: '', status: result.status,
             ...(result.failureCategory ? { failureCategory: result.failureCategory } : {}),
             ...(result.effects ? { effects: result.effects.map(effect => ({ ...effect })) } : {}),
+            ...(result.resourceEffect ? { resourceEffect: { ...result.resourceEffect,
+                ...(result.resourceEffect.paths ? { paths: [...result.resourceEffect.paths] } : {}),
+                ...(result.resourceEffect.position ? { position: { ...result.resourceEffect.position,
+                    requested: { ...result.resourceEffect.position.requested },
+                    ...(result.resourceEffect.position.actual ? { actual: { ...result.resourceEffect.position.actual } } : {}),
+                } } : {}),
+            } } : {}),
             ...(result.undoAvailable !== undefined ? { undoAvailable: result.undoAvailable } : {}),
             ...(result.receiptId ? { receiptId: result.receiptId } : {}),
         })) } });
@@ -584,7 +655,7 @@ export class OperationsIntentController {
         return executionResult;
     }
 
-    async undo(receiptId: string): Promise<UndoResult> {
+    async undo(receiptId: string, assertResourceAllowed?: (path: string) => void): Promise<UndoResult> {
         this.assertUsable();
         const lookup = this.undoStore.get(receiptId);
         if (!lookup.ok) {
@@ -604,6 +675,22 @@ export class OperationsIntentController {
             return { receiptId, operationId: receipt.operationId, path: receipt.path,
                 status: "unavailable", failureCategory: "undo_unavailable",
                 message: "The batch is still executing; Undo becomes available after its effects settle." };
+        }
+        if (receipt.resource) {
+            if (!this.undoStore.acquire(receiptId)) return { receiptId, status: "unavailable", failureCategory: "undo_unavailable", message: "This Undo receipt is already in use." };
+            try {
+                const host = this.resourceHost(path => {
+                    this.assertUsable(); this.assertPathAllowed(path); assertResourceAllowed?.(path);
+                });
+                const result = await undoResourceOperation(host, receipt);
+                if (result.status === "undone") {
+                    this.undoStore.markUsed(receipt.id);
+                    const undone = this.contextUndone.get(receipt.intentId) ?? new Set<string>();
+                    undone.add(receipt.id); this.contextUndone.set(receipt.intentId, undone);
+                }
+                const observed = this.recordUndoResult(receipt.intentId, result);
+                this.emit({ type: "undo-result", result: observed }); return observed;
+            } finally { this.undoStore.releaseLease(receiptId); }
         }
         let result: UndoResult;
         let compoundUndoResult: UndoResult | undefined;
@@ -904,6 +991,7 @@ export class OperationsIntentController {
             if (receipt.kind === REMOVE_NOTE_IMAGE_TOOL_NAME) this.noteImageRemovalResources?.retire(receipt.id);
         }
         this.undoStore.clear();
+        if (this.ownsResourceRecoveryOwner) this.resourceRecoveryOwner.dispose();
         this.emit({ type: "disposed" });
         this.listeners.clear();
     }
@@ -937,6 +1025,7 @@ export class OperationsIntentController {
         assertBeforeEffect: (afterSelfWrite?: boolean) => void,
         preparedRecovery?: PreparedImageRecovery,
     ): Promise<OperationExecutionResult> {
+        if (operation.kind === "resource") throw new OperationsControllerError("schema_invalid", "Resource effects require their admitted execution context.");
         if (operation.kind === "note_image_removal") {
             return await this.executeNoteImageRemoval(intent, operation, lifecycleEpoch, assertBeforeEffect, preparedRecovery);
         }
@@ -980,6 +1069,29 @@ export class OperationsIntentController {
                 message: normalized.message,
             };
         }
+    }
+
+    /** Private resource adapters share this controller's lifecycle and Undo store. */
+    private resourceHost(assertAllowed: ResourceEffectHost["assertAllowed"], guard?: TaskSourceReadGuard, signal?: AbortSignal): ResourceEffectHost {
+        return { vault: this.vault, undoStore: this.undoStore, recoveryOwner: this.resourceRecoveryOwner,
+            renameFile: this.renameFile, trashResource: this.trashResource, removeEmptyFolder: this.removeEmptyFolder, createId: this.createId,
+            isActive: () => !this.disposed, assertAllowed: (path, output) => {
+                try { assertAllowed(path, output); }
+                catch (error) { if (error instanceof OperationsControllerError) throw new OperationsResourceError(error.category, error.message); throw error; }
+            }, guard, signal, markSelfWrite: this.markSelfWrite };
+    }
+
+    getUndoTargetPaths(receiptId: string): readonly string[] | undefined {
+        const lookup = this.undoStore.get(receiptId);
+        if (!lookup.ok) return undefined;
+        const receipt = lookup.receipt;
+        const resource = receipt.resource;
+        return resource?.action === "trash" ? resource.tree.map(e => e.path)
+            : resource?.action === "mkdir" ? resource.folders.map(e => e.path)
+            : resource?.action === "editor" ? [resource.binding.path]
+            : resource?.action === "move" ? [receipt.path, resource.originalPath, ...resource.tree.flatMap(e =>
+                [e.path, resource.originalPath + e.path.slice(receipt.path.length)])]
+                : [receipt.path];
     }
 
     private async assertMoveDestination(file: OperationsVaultFile, targetPath: string): Promise<void> {
@@ -1729,6 +1841,7 @@ function freezeUnknown(value: unknown): void {
 
 function normalizeStageError(error: unknown): OperationsControllerError {
     if (error instanceof OperationsControllerError) return error;
+    if (error instanceof OperationsResourceError) return new OperationsControllerError(error.category, error.message);
     if (error instanceof OperationsValidationError) return new OperationsControllerError("schema_invalid", error.message);
     if (error instanceof OperationsPathError) return new OperationsControllerError("path_rejected", error.message);
     if (error instanceof OperationsTransformError) return new OperationsControllerError("transform_failed", error.message);
@@ -1737,6 +1850,7 @@ function normalizeStageError(error: unknown): OperationsControllerError {
 
 function normalizeExecutionError(error: unknown): OperationsControllerError {
     if (error instanceof OperationsControllerError) return error;
+    if (error instanceof OperationsResourceError) return new OperationsControllerError(error.category, error.message);
     return new OperationsControllerError("fs_error", safeError(error, "Vault operation failed."));
 }
 

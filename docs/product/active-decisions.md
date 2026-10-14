@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-064 | Obsidian 内部通用执行与资源 SDK | QuickJS Worker、广泛资源SDK、Agent自主及既有来源/Operations；Owner选A，第三方插件不作为本轮验收目标 | [Decision](./decisions/dec-064-obsidian-resource-sdk.md), [Product Spec](./specs/pa-obsidian-resource-sdk-product-spec.md), [Architecture](../architecture/obsidian-resource-sdk.md), [验证](../archive/2026/b174-obsidian-resource-sdk-validation.md) | 原生能力不能兑现既定范围，或需要插件服务、二进制写入、媒体理解及权限/兼容性变化 |
 | DEC-063 | 单次 Operations 写入与原生移动 | 直接写入、review/现有 Undo、结果连续性和能力收敛；移动及移回调用宿主 API，引用维护由 Obsidian 负责，PA 不自建引用逻辑 | [Decision](./decisions/dec-063-direct-operations-and-native-move.md), [Product Spec](./specs/pa-direct-operations-product-spec.md), [验证与边界](../archive/2026/b173-direct-operations-validation.md) | 真实宿主接线不满足已定行为，或需要非 Markdown、跨 vault、持久恢复等新范围 |
 | DEC-062 | PA Agent 工具混合披露 | 基础直供、完整短目录与批量加载已实现；真实绑定预披露；权限与效果事实独立于披露状态 | [Decision](./decisions/dec-062-agent-hybrid-tool-disclosure.md), [Product Spec](./specs/pa-agent-tool-disclosure-product-spec.md), [验证与边界](../archive/2026/b172-agent-tool-disclosure-validation.md) | 具体任务证明按需往返不划算、选择困难或目录规模成为主要负担 |
 | DEC-061 | Agent 独立通用计算 | 独立计算工具，Agent 自主组合；固定 Pi/QuickJS 浏览器 Worker，无脚本内 PA 工具桥接 | [Decision](./decisions/dec-061-independent-agent-computation.md), [Product Spec](./specs/pa-independent-computation-product-spec.md), [验证与边界](../archive/2026/b170-independent-computation-validation.md) | 需要脚本 I/O、持久运行、新平台承诺或实际资源证据要求改变边界 |

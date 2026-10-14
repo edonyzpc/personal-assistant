@@ -222,6 +222,7 @@ export const DEFAULT_MAX_PATH_LENGTH = 200;
 export function validateTargetConfinementSync(
     candidate: string,
     config: ConfinementConfig,
+    options: { allowJoinControls?: boolean } = {},
 ): ConfinementResult {
     if (candidate === null || candidate === undefined) {
         return { ok: false, reason: "empty_path", detail: "candidate is null/undefined" };
@@ -243,7 +244,10 @@ export function validateTargetConfinementSync(
     // rejected here instead of leaking through to the segment-equality check
     // that wouldn't match the spoofed string. Mirror of settings-layer
     // `src/settings/pagelet/index.ts:287`.
-    if (INVISIBLE_CHARS_RE.test(candidate)) {
+    // General resource names use ZWNJ for text and ZWJ for text or emoji. Keep
+    // their actual path, ignoring these only when checking protected names.
+    const spoofCheckPath = options.allowJoinControls ? candidate.replace(/[\u200c\u200d]/g, "") : candidate;
+    if (INVISIBLE_CHARS_RE.test(spoofCheckPath)) {
         return { ok: false, reason: "invisible_chars" };
     }
 
@@ -287,11 +291,12 @@ export function validateTargetConfinementSync(
     // dispatch, NFD variants). Backslash inputs are already collapsed
     // to "/" by step 6, so `.git\evil.md` is `segments[0] === ".git"`
     // by the time we reach this check.
-    const firstSegmentFolded = foldForDotfolderCheck(segments[0] ?? "");
+    const protectedPath = options.allowJoinControls ? normalized.replace(/[\u200c\u200d]/g, "") : normalized;
+    const firstSegmentFolded = foldForDotfolderCheck(protectedPath.split("/")[0] ?? "");
     if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(firstSegmentFolded)) {
         return { ok: false, reason: "forbidden_dotfolder", detail: segments[0] };
     }
-    const forbiddenRoot = findForbiddenRootMatch(normalized, config.forbiddenRoots);
+    const forbiddenRoot = findForbiddenRootMatch(protectedPath, config.forbiddenRoots);
     if (forbiddenRoot) {
         return { ok: false, reason: "forbidden_dotfolder", detail: forbiddenRoot };
     }

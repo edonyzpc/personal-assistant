@@ -1,6 +1,10 @@
 import type { Workspace } from 'obsidian';
 import { findCurrentMarkdownView } from './chat-tool-execution-helpers';
 import type { NoteSearchScope } from '../vss/types';
+import type {
+    TaskSourceResourceIdentities,
+    TaskSourceResourceIdentity,
+} from './task-source-resource-identities';
 import type { VaultFileLike } from './chat-tool-execution-helpers';
 import type { AiServiceHost } from './AiServiceHost';
 import type { ParsedBufferedToolCall } from './pa-agent-types';
@@ -23,9 +27,10 @@ import { admitsInputLineage, admitsValidatedInputDependency, cloneInputLineage, 
     type InputLineageAdmission } from './input-lineage';
 import { createCooperativeTask } from './cooperative-task';
 import { throwIfAborted } from './chat-utils';
-import { boundActionStates, cloneActionStateBinding, cloneActionStates, type PaAgentActionState } from './pa-agent-result-facts';
+import { boundActionStates, cloneActionStateBinding, cloneActionStates, projectActionStates, type PaAgentActionState } from './pa-agent-result-facts';
 import { projectPaAgentToolStatus } from './pa-agent-action-history';
 import { isCoreWriteToolName } from './operations/input-validation';
+import { isObsidianSdkMethodName, resolveObsidianSdkReadPlan, type ObsidianSdkHost } from './independent-computation/obsidian-resource-sdk';
 
 export const MAX_TASK_SOURCE_NOTE_HANDLES = 32;
 export const MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS = 8000;
@@ -58,6 +63,7 @@ export interface TaskSourceRunHost {
     getTaskSourceAuthorityEpoch?: () => string;
     getTaskSourceConfigurationEpoch?: () => string;
     captureTaskSourceConfiguration?: AiServiceHost['captureTaskSourceConfiguration'];
+    resourceIdentities?: TaskSourceResourceIdentities;
 }
 
 /** One run's host facts and read planning; no note contents or permissions live here. */
@@ -81,8 +87,13 @@ export class TaskSourceRun {
     private readonly getTaskSourceAuthorityEpoch: (() => string) | undefined;
     private readonly getTaskSourceConfigurationEpoch: (() => string) | undefined;
     private readonly captureTaskSourceConfiguration: AiServiceHost['captureTaskSourceConfiguration'];
+    private readonly resourceIdentityOwner: TaskSourceResourceIdentities | undefined;
     private generationConfigurationEpoch: string | undefined;
     private generationConstraint: TaskSourceConstraint | undefined;
+    private readonly acceptedExecutionObservations = new Map<string, {
+        constraint: TaskSourceConstraint;
+        configurationEpoch?: string | undefined;
+    }>();
     private readonly generationMessages = new WeakMap<PaAgentMessage, PaAgentMessage | null>();
     private generationHistory: ChatMessage[] | undefined;
     private readonly generationDependencyDecisions = new Map<string, boolean>();
@@ -92,6 +103,11 @@ export class TaskSourceRun {
     private readonly conversationId: string | undefined;
     private readonly historicalActionFragments = new WeakMap<ChatMessage, {
         binding: string; provenance: string; states: string; userMessageId: string;
+    }>();
+    private readonly historicalResourcePaths = new Map<string, Set<string>>();
+    private readonly createdResources = new Map<string, {
+        file: { path: string; stat?: { mtime?: number; size: number } };
+        text?: string; mtime?: number; size?: number; receiptId?: string;
     }>();
 
     constructor(host: TaskSourceRunHost) {
@@ -122,6 +138,7 @@ export class TaskSourceRun {
         this.getTaskSourceAuthorityEpoch = host.getTaskSourceAuthorityEpoch?.bind(host);
         this.getTaskSourceConfigurationEpoch = host.getTaskSourceConfigurationEpoch?.bind(host);
         this.captureTaskSourceConfiguration = host.captureTaskSourceConfiguration?.bind(host);
+        this.resourceIdentityOwner = host.resourceIdentities;
         this.identities = new TaskSourceNoteIdentities({
             runId,
             workspace,
@@ -208,6 +225,11 @@ export class TaskSourceRun {
         constraint: TaskSourceConstraint,
     ): boolean => {
         try {
+            // Once admitted, this aggregate belongs to its original configuration;
+            // equal graph epochs cannot restore a withdrawn accepted snapshot.
+            if (this.acceptedExecutionObservations.has(this.generationDependencyKey(observation))) {
+                return this.isAcceptedExecutionObservation(observation, constraint);
+            }
             const sourceEpoch = this.getMemoryEvidenceEpoch?.();
             return observation.runId === constraint.runId
                 && typeof sourceEpoch === 'string' && sourceEpoch.trim().length > 0
@@ -217,6 +239,18 @@ export class TaskSourceRun {
                     : typeof observation.memoryEnabled === 'boolean'
                         && this.isMemoryAllowed() === observation.memoryEnabled);
         } catch { return false; }
+    };
+
+    private readonly isAcceptedExecutionObservation = (
+        observation: Extract<InputDependency, { kind: 'run-notes-observation' }>,
+        constraint: TaskSourceConstraint,
+    ): boolean => {
+        const accepted = this.acceptedExecutionObservations.get(this.generationDependencyKey(observation));
+        if (!accepted || accepted.constraint !== constraint) return false;
+        if (!this.hostSourcesAreCurrent() || this.resourceConfigurationEpoch() !== accepted.configurationEpoch) return false;
+        return observation.runId === constraint.runId
+            && (observation.owner !== 'memory' || observation.memoryEnabled === undefined
+                || observation.memoryEnabled === this.isMemoryAllowed());
     };
 
     /** Discover only this exact live file; registration cannot widen the active scope. */
@@ -232,6 +266,12 @@ export class TaskSourceRun {
             const file = this.getFileByPath(path);
             if (!file || typeof file !== 'object' || (file as VaultFileLike).path !== path) return undefined;
             const identity = this.identities.registerFile(file as VaultFileLike);
+            if (!identity && this.resourceIdentityOwner && this.isPathAllowed?.(path) !== false
+                && this.runSourceSelection?.scope !== 'web') {
+                const general = this.resourceIdentityOwner.register(file, path);
+                return general && this.state.registerNoteHandle(general.resourceRef, general.resourceRef)
+                    ? general.resourceRef : undefined;
+            }
             if (!identity || !this.isCurrent()
                 || !this.state.registerNoteHandle(identity.handle, identity.noteId)) return undefined;
             this.registeredNotes.set(identity.noteId, identity);
@@ -241,12 +281,147 @@ export class TaskSourceRun {
         }
     };
 
+    /** General resources consume the same real source scope and state as notes. */
+    readonly isResourcePathAllowed = (path: string): boolean => {
+        if (!this.isCurrent() || this.isPathAllowed?.(path) === false) return false;
+        if (this.runSourceSelection?.scope === 'web') return this.isCreatedResourcePathAllowed(path);
+        const sourceId = this.resolveNoteId(path);
+        return sourceId !== undefined && this.state.allows({ kind: 'note', noteId: sourceId });
+    };
+
+    /** Explicit new outputs do not read note material. Restoring or modifying
+     * existing resources still requires the note source domain. */
+    readonly isResourceOutputPathAllowed = (path: string, newOutput = false): boolean =>
+        this.isCurrent() && (newOutput || this.runSourceSelection?.scope !== 'web' || this.isCreatedResourcePathAllowed(path))
+            && this.isPathAllowed?.(path) !== false;
+
+    /** Called only after the Operations owner verified its own native creation. */
+    readonly registerCreatedResource = (file: { path: string; stat?: { mtime?: number; size: number } }, text?: string, receiptId?: string): void => {
+        if (!this.isResourceOutputPathAllowed(file.path, true) || this.getFileByPath(file.path) !== file) return;
+        this.createdResources.set(file.path, { file, text, receiptId, mtime: file.stat?.mtime, size: file.stat?.size });
+    };
+
+    readonly isCreatedResourcePathAllowed = (path: string): boolean => {
+        const created = this.createdResources.get(path);
+        return !!created && this.isCurrent() && this.isPathAllowed?.(path) !== false
+            && created.file.path === path && this.getFileByPath(path) === created.file
+            && created.file.stat?.mtime === created.mtime && created.file.stat?.size === created.size;
+    };
+
+    readonly createdResourceText = (path: string): string | undefined =>
+        this.isCreatedResourcePathAllowed(path) ? this.createdResources.get(path)?.text : undefined;
+
+    readonly isCreatedResourceUndoAllowed = (receiptId: string, paths: readonly string[]): boolean =>
+        paths.length > 0 && paths.every(path => this.isCreatedResourcePathAllowed(path)
+            && this.createdResources.get(path)?.receiptId === receiptId);
+
+    readonly resourceConfigurationEpoch = (): string | undefined =>
+        this.getTaskSourceConfigurationEpoch?.() ?? this.captureTaskSourceConfiguration?.().epoch;
+
+    private sourcePathForId(sourceId: string): string | undefined {
+        return this.identities.pathForNoteId(sourceId) ?? this.resourceIdentityOwner?.resolve(sourceId)?.path;
+    }
+
+    /** Legacy read ancestry names its captured path, while the original note ID
+     * follows only its native object. Generic path tool targets use resolveNoteId. */
+    private captureLegacyNoteSource(path: string): { noteId: string; file: VaultFileLike; path: string } | undefined {
+        const captured = [...this.registeredNotes.values()].filter(note => note.path === path);
+        const noteId = captured.length === 1 ? captured[0].noteId
+            : captured.length === 0 ? this.resolveNoteId(path) : undefined;
+        const currentPath = noteId ? this.sourcePathForId(noteId) : undefined;
+        const file = currentPath ? this.getFileByPath(currentPath) as VaultFileLike | undefined : undefined;
+        return noteId && currentPath && file?.path === currentPath ? { noteId, file, path: currentPath } : undefined;
+    }
+
+    private isLegacyNoteSourceAllowed(path: string, via: Extract<InputDependency, { kind: 'vault' }>['via'],
+        constraint: TaskSourceConstraint, source = this.captureLegacyNoteSource(path), checkNoteIdentity = true): boolean {
+        if (!source || (via === 'memory' && !this.isMemoryAllowed())) return false;
+        const currentPath = source.file.path;
+        return !!currentPath && (!checkNoteIdentity || this.sourcePathForId(source.noteId) === currentPath)
+            && this.getFileByPath(currentPath) === source.file
+            && this.isPathAllowed?.(currentPath) !== false
+            && this.state.allows({ kind: 'note', noteId: source.noteId }, constraint);
+    }
+
+    private resourceDependencyPath(resourceRef: string, constraint: TaskSourceConstraint, via: Extract<InputDependency, { kind: 'vault' }>['via']): string | undefined {
+        if (!this.hostSourcesAreCurrent() || !this.state.isCurrent(constraint)
+            || (via === 'memory' && !this.isMemoryAllowed())) return undefined;
+        const source = this.resourceIdentityOwner?.resolve(resourceRef);
+        let path = source?.path;
+        if (!source) {
+            const key = `vault:${via}:${resourceRef}`;
+            const accepted = this.acceptedExecutionObservations.get(key);
+            path = this.resourceIdentityOwner?.snapshotPathFor(resourceRef);
+            if (!accepted || accepted.constraint !== constraint || path === undefined
+                || this.resourceConfigurationEpoch() !== accepted.configurationEpoch) {
+                // A prior Chat runtime's read receipt is historical provenance,
+                // not an executable target in this runtime. Check its paths under
+                // the current source boundary without reviving the old ref.
+                const historicalPaths = this.historicalResourcePaths.get(resourceRef);
+                if (!historicalPaths?.size || ![...historicalPaths].every(candidate => this.isPathAllowed?.(candidate) !== false)) return undefined;
+                path = [...historicalPaths][0];
+            }
+            // A delivered read remains a historical snapshot after deletion or
+            // replacement. Its original authority still applies; resolving this
+            // ref as a target remains live-only and never binds the new object.
+        }
+        return path !== undefined && this.isPathAllowed?.(path) !== false
+            && this.state.allows({ kind: 'note', noteId: resourceRef }, constraint) ? path : undefined;
+    }
+
+    private isResourceDependencyAllowed(resourceRef: string, constraint: TaskSourceConstraint, via: Extract<InputDependency, { kind: 'vault' }>['via']): boolean {
+        return this.resourceDependencyPath(resourceRef, constraint, via) !== undefined;
+    }
+
+    /** A disclosed path is historical evidence; a Host resource ref continues
+     * to name its original native object after a move, never a replacement. */
+    private isSourceRecordAllowed(record: SourceRecord, constraint: TaskSourceConstraint,
+        isPathAllowed = this.isPathAllowed): boolean {
+        const memory = record.sourceBoundary === 'memory' || record.kind === 'memory-reference';
+        if (memory && !this.isMemoryAllowed()) return false;
+        if (record.sourceBoundary === 'web') return this.state.allows({ kind: 'web' }, constraint);
+        if (record.resourceRef) {
+            const path = this.resourceDependencyPath(record.resourceRef, constraint, memory ? 'memory' : 'note');
+            return path !== undefined && isPathAllowed?.(path) !== false;
+        }
+        const source = record.path ? this.captureLegacyNoteSource(record.path) : undefined;
+        return !!source && isPathAllowed?.(source.path) !== false
+            && this.isLegacyNoteSourceAllowed(record.path!, memory ? 'memory' : 'note', constraint, source);
+    }
+
+    readonly resolveResourceIdentity = (
+        target: { path: string } | { resourceRef: string },
+    ): TaskSourceResourceIdentity | undefined => {
+        if (!this.isCurrent() || !this.resourceIdentityOwner) return undefined;
+        if ("path" in target) {
+            const object = this.getFileByPath(target.path);
+            return this.isResourcePathAllowed(target.path) ? this.resourceIdentityOwner.register(object, target.path) : undefined;
+        }
+        const found = this.resourceIdentityOwner.resolve(target.resourceRef);
+        return found && this.isResourcePathAllowed(found.path) ? found : undefined;
+    };
+
+    readonly resourceObject = (resourceRef: string): object | undefined =>
+        this.resolveResourceIdentity({ resourceRef }) ? this.resourceIdentityOwner?.objectFor(resourceRef) : undefined;
+
+    readonly moveResourceIdentity = (
+        resourceRef: string,
+        nextPath: string,
+        expectedObject?: object,
+    ): boolean => this.isCurrent()
+        ? this.resourceIdentityOwner?.move(resourceRef, nextPath, expectedObject) === true
+        : false;
+
     /** The executor supplies the full ordered batch after removing its declaration. */
     readonly resolveReadPlansWithReason = (
         calls: readonly ParsedBufferedToolCall[],
+        sdkHost?: ObsidianSdkHost,
     ): TaskSourceReadPlansResult => {
         if (!this.isCurrent()) return { ok: false, toolCallId: '', reason: 'source_identity_unavailable' };
-        const result = resolveTaskSourceReadPlans(calls, {
+        const sdkCalls = calls.filter(call => isObsidianSdkMethodName(call.name)
+            || ['list_vault_entries', 'vault_create_folder', 'vault_trash'].includes(call.name));
+        const sdkIds = new Set(sdkCalls.map(call => call.id));
+        const result = resolveTaskSourceReadPlans(calls.filter(call => !sdkIds.has(call.id)), {
             resolveNoteId: this.resolveNoteId,
             currentNoteId: () => this.identities.currentNote?.noteId,
             // Even an excluded note may have a current view. Its path is used
@@ -254,7 +429,20 @@ export class TaskSourceRun {
             actualCurrentNotePath: () => findCurrentMarkdownView(this.workspace)?.file.path,
             isPathAllowed: path => this.isPathAllowed?.(path) ?? true,
         });
-        return this.isCurrent() ? result : { ok: false, toolCallId: '', reason: 'source_identity_unavailable' };
+        if (!result.ok) return result;
+        const plans = new Map(result.plans);
+        for (const call of sdkCalls) {
+            let plan: TaskSourceReadPlan | undefined;
+            try {
+                plan = sdkHost ? resolveObsidianSdkReadPlan(sdkHost, call.name, call.input) : undefined;
+            } catch (error) {
+                return { ok: false, toolCallId: call.id, reason: 'invalid_call',
+                    message: error instanceof Error ? error.message : 'Invalid SDK arguments.' };
+            }
+            if (!plan) return { ok: false, toolCallId: call.id, reason: 'source_identity_unavailable' };
+            plans.set(call.id, plan);
+        }
+        return this.isCurrent() ? { ok: true, plans } : { ok: false, toolCallId: '', reason: 'source_identity_unavailable' };
     };
 
     readonly resolveReadPlans = (
@@ -272,8 +460,33 @@ export class TaskSourceRun {
         }
     };
 
+    /**
+     * Accept source snapshots actually returned by a Host-admitted child execution.
+     * Ordinary later vault events do not revoke that delivered snapshot; source
+     * configuration, scope, and Host lifetime checks remain in force.
+     */
+    readonly acceptExecutionLineage = (lineage: InputLineage): void => {
+        const constraint = this.state.snapshot();
+        const configurationEpoch = this.resourceConfigurationEpoch();
+        for (const dependency of lineage.dependencies) {
+            const resourceRef = dependency.kind === 'vault' ? dependency.resourceRef : undefined;
+            if (dependency.kind !== 'run-notes-observation' && !resourceRef) continue;
+            const key = dependency.kind === 'vault' ? `vault:${dependency.via}:${resourceRef}`
+                : this.generationDependencyKey(dependency);
+            // Reaccepting a delivered aggregate cannot rebase it onto a later
+            // configuration and thereby restore revoked authority.
+            if (this.acceptedExecutionObservations.has(key)) continue;
+            if (dependency.kind === 'vault'
+                && !this.isResourceDependencyAllowed(resourceRef!, constraint, dependency.via)) continue;
+            this.acceptedExecutionObservations.set(key, {
+                constraint,
+                ...(configurationEpoch !== undefined ? { configurationEpoch } : {}),
+            });
+        }
+    };
+
     private generationDependencyKey(dependency: InputDependency): string {
-        return dependency.kind === 'vault' ? `${dependency.kind}:${dependency.via}:${dependency.path}`
+        return dependency.kind === 'vault' ? `${dependency.kind}:${dependency.via}:${dependency.path}:${dependency.resourceRef ?? ''}`
             : JSON.stringify(dependency);
     }
 
@@ -311,11 +524,15 @@ export class TaskSourceRun {
                 let allowed = dependencyDecisions.get(key);
                 if (allowed === undefined) {
                     if (dependency.kind === 'vault') {
-                        const noteId = this.registeredNotes.size && [...this.registeredNotes.values()]
-                            .find(note => note.path === dependency.path)?.noteId;
-                        allowed = this.runSourceSelection?.scope !== 'web'
+                        const noteId = dependency.resourceRef ?? (this.registeredNotes.size && [...this.registeredNotes.values()]
+                            .find(note => note.path === dependency.path)?.noteId);
+                        const sourcePath = dependency.resourceRef
+                            ? this.resourceDependencyPath(dependency.resourceRef, constraint, dependency.via)
+                            : (noteId ? this.sourcePathForId(noteId) : undefined) ?? dependency.path;
+                        allowed = sourcePath !== undefined
+                            && this.runSourceSelection?.scope !== 'web'
                             && (dependency.via !== 'memory' || memoryAllowed)
-                            && isPathAllowed?.(dependency.path) !== false
+                            && isPathAllowed?.(sourcePath) !== false
                             && (constraint.allowedNoteIds === null
                                 && constraint.excludedNoteIds.length === 0
                                 || !!noteId && this.state.allows({ kind: 'note', noteId }, constraint));
@@ -358,8 +575,10 @@ export class TaskSourceRun {
                 if (admitted && message.role === 'toolResult') {
                     for (const record of message.content.sourceRecords ?? []) {
                         await task.checkpoint();
-                        if (record.path && !dependencyDecisions.get(`vault:${record.sourceBoundary === 'memory' || record.kind === 'memory-reference' ? 'memory' : 'note'}:${record.path}`)
-                            && isPathAllowed?.(record.path) === false) { admitted = false; break; }
+                        const currentPath = record.resourceRef ? this.resourceIdentityOwner?.resolve(record.resourceRef)?.path
+                            : record.path ? this.captureLegacyNoteSource(record.path)?.path ?? record.path : undefined;
+                        if ((record.resourceRef && !this.isSourceRecordAllowed(record, constraint, isPathAllowed))
+                            || (currentPath && isPathAllowed?.(currentPath) === false)) { admitted = false; break; }
                         if ((record.sourceBoundary === 'memory' || record.kind === 'memory-reference')
                             && !memoryAllowed) { admitted = false; break; }
                         if (record.sourceBoundary === 'web' && !webAllowed) { admitted = false; break; }
@@ -425,7 +644,8 @@ export class TaskSourceRun {
                 await task.checkpoint();
                 const admitted = await allows(historyInputLineage(message));
                 const recordsAllowed = admitted && historySourceRecords(message).every(record =>
-                    (!record.path || isPathAllowed?.(record.path) !== false)
+                    (record.resourceRef ? this.isSourceRecordAllowed(record, constraint, isPathAllowed)
+                        : !record.path || isPathAllowed?.(this.captureLegacyNoteSource(record.path)?.path ?? record.path) !== false)
                     && (!(record.sourceBoundary === 'memory' || record.kind === 'memory-reference') || memoryAllowed)
                     && (record.sourceBoundary !== 'web' || webAllowed));
                 if (recordsAllowed) retained.push(message);
@@ -501,11 +721,7 @@ export class TaskSourceRun {
                 record.sourceBoundary === 'current-note' || record.sourceBoundary === 'read-only-tool'
                 || record.sourceBoundary === 'vault' || record.sourceBoundary === 'web');
             if (!sources.length) return [message];
-            const admitted = this.isCurrent() && sources.every(record => {
-                if (record.sourceBoundary === 'web') return this.state.allows({ kind: 'web' }, constraint);
-                const noteId = record.path ? this.resolveNoteId(record.path) : undefined;
-                return noteId !== undefined && this.state.allows({ kind: 'note', noteId }, constraint);
-            });
+            const admitted = this.isCurrent() && sources.every(record => this.isSourceRecordAllowed(record, constraint));
             if (admitted && this.isCurrent() && this.state.snapshot() === constraint) return [message];
             // Free-form observations cannot be safely split by removing source
             // chips. Drop the affected result atomically, including derived metadata.
@@ -565,11 +781,7 @@ export class TaskSourceRun {
                         && record.sourceBoundary !== 'vault' && record.sourceBoundary !== 'web') continue;
                     hasSources = true;
                     if (!admitted) continue;
-                    if (record.sourceBoundary === 'web') admitted = this.state.allows({ kind: 'web' }, constraint);
-                    else {
-                        const noteId = record.path ? this.resolveNoteId(record.path) : undefined;
-                        admitted = noteId !== undefined && this.state.allows({ kind: 'note', noteId }, constraint);
-                    }
+                    admitted = this.isSourceRecordAllowed(record, constraint);
                 }
                 if (!hasSources || (admitted && this.isCurrent() && this.state.isCurrent(constraint))) {
                     projected.push(message);
@@ -613,13 +825,12 @@ export class TaskSourceRun {
         const records = this.materialSourceRecords(transcript, history);
         const captured = records.map(record => {
             const path = record.path;
-            const file = path ? this.getFileByPath(path) as VaultFileLike | undefined : undefined;
-            return { path, file,
-                web: record.sourceBoundary === 'web', memory: record.sourceBoundary === 'memory' || record.kind === 'memory-reference',
-                noteId: path ? this.resolveNoteId(path) : undefined };
+            const source = path && !record.resourceRef ? this.captureLegacyNoteSource(path) : undefined;
+            return { path, source,
+                resourceRef: record.resourceRef,
+                web: record.sourceBoundary === 'web', memory: record.sourceBoundary === 'memory' || record.kind === 'memory-reference' };
         });
         const state = this.state;
-        const getFileByPath = this.getFileByPath;
         const isMemoryAllowed = this.isMemoryAllowed;
         return () => {
             const constraint = state.snapshot();
@@ -627,10 +838,10 @@ export class TaskSourceRun {
                 if (source.memory && !isMemoryAllowed()) {
                     throw new Error('Generation Memory source revoked');
                 }
-                const allowed = source.web ? !constraint || state.allows({ kind: 'web' }, constraint)
-                    : source.noteId !== undefined && !!source.path && !!source.file
-                        && getFileByPath(source.path) === source.file && source.file.path === source.path
-                        && (!constraint || state.allows({ kind: 'note', noteId: source.noteId }, constraint));
+                const allowed = source.resourceRef ? this.isResourceDependencyAllowed(source.resourceRef, constraint, source.memory ? 'memory' : 'note')
+                    : source.web ? !constraint || state.allows({ kind: 'web' }, constraint)
+                    : !!source.path && !!source.source
+                        && this.isLegacyNoteSourceAllowed(source.path, source.memory ? 'memory' : 'note', constraint, source.source);
                 if (!allowed) throw new Error('Generation material source changed');
             }
             if (state.snapshot() !== constraint) throw new Error('Generation source scope changed');
@@ -684,6 +895,7 @@ export class TaskSourceRun {
 
     /** D12: keep canonical history; omit only assistant turns with known revoked evidence. */
     readonly projectHistory = (history: readonly ChatMessage[]): ChatMessage[] => {
+        this.registerHistoricalResources(history);
         const constraint = this.state.snapshot();
         const prose = new Set(history.filter(message => {
             const lineage = historyInputLineage(message);
@@ -703,12 +915,8 @@ export class TaskSourceRun {
             // No host evidence of revocation: retain legacy conversation, including
             // assistant alternatives needed by later "use the second" corrections.
             if (!paths.length) return true;
-            return this.isCurrent() && paths.every(record => {
-                if ((record.sourceBoundary === 'memory' || record.kind === 'memory-reference') && !this.isMemoryAllowed()) return false;
-                if (record.sourceBoundary === 'web') return !constraint || this.state.allows({ kind: 'web' }, constraint);
-                const noteId = record.path ? this.resolveNoteId(record.path) : undefined;
-                return noteId !== undefined && (!constraint || this.state.allows({ kind: 'note', noteId }, constraint));
-            }) && this.isCurrent() && this.state.snapshot() === constraint;
+            return this.isCurrent() && paths.every(record => this.isSourceRecordAllowed(record, constraint))
+                && this.isCurrent() && this.state.snapshot() === constraint;
         }));
         return history.flatMap(message => {
             const states: PaAgentActionState[] = [];
@@ -723,6 +931,20 @@ export class TaskSourceRun {
         });
     };
 
+    private registerHistoricalResources(history: readonly ChatMessage[]): void {
+        for (const message of history) {
+            const lineage = historyInputLineage(message);
+            if (lineage?.completeness !== 'complete') continue;
+            for (const dependency of lineage.dependencies) {
+                if (dependency.kind !== 'vault' || !dependency.resourceRef
+                    || this.resourceIdentityOwner?.snapshotPathFor(dependency.resourceRef) !== undefined) continue;
+                const paths = this.historicalResourcePaths.get(dependency.resourceRef) ?? new Set<string>();
+                paths.add(dependency.path);
+                this.historicalResourcePaths.set(dependency.resourceRef, paths);
+            }
+        }
+    }
+
     /** Only this run's content-free derived objects carry historical observation proof.
      * Copying an object cannot authorize old prose, tool results, or a foreign turn. */
     readonly isOwnedHistoricalActionFragment = (message: ChatMessage): boolean => {
@@ -736,7 +958,9 @@ export class TaskSourceRun {
     private hasHistoricalActionObservation(message: ChatMessage): boolean {
         return this.historicalActionFragments.has(message) || cloneActionStates(message.actionStates ?? message.canonicalTurn?.actionStates)
             .some(state => state.inputLineage.dependencies.some(dependency => dependency.kind === 'run-notes-observation'
-                && dependency.runId !== this.state.snapshot().runId));
+                ? dependency.runId !== this.state.snapshot().runId
+                : dependency.kind === 'vault' && !!dependency.resourceRef
+                    && !this.isResourceDependencyAllowed(dependency.resourceRef, this.state.snapshot(), dependency.via)));
     }
 
     private historicalActionUser(message: ChatMessage, history: readonly ChatMessage[]): string | undefined {
@@ -756,9 +980,14 @@ export class TaskSourceRun {
         history: readonly ChatMessage[]): InputLineage | undefined {
         if (this.historicalActionFragments.has(message) && !this.isOwnedHistoricalActionFragment(message)) return undefined;
         const lineage = cloneInputLineage(state.inputLineage);
-        if (!lineage?.dependencies.some(dependency => dependency.kind === 'run-notes-observation'
-            && dependency.runId !== this.state.snapshot().runId)) return lineage;
         const constraint = this.state.snapshot();
+        const resourceExcluded = lineage?.dependencies.some(dependency => dependency.kind === 'vault' && !!dependency.resourceRef
+            && !this.isResourceDependencyAllowed(dependency.resourceRef, constraint, dependency.via)) === true;
+        const historicalResource = lineage?.dependencies.some(dependency => dependency.kind === 'vault' && !!dependency.resourceRef
+            && this.historicalResourcePaths.has(dependency.resourceRef)) === true;
+        const historicalObservation = lineage?.dependencies.some(dependency => dependency.kind === 'run-notes-observation'
+            && dependency.runId !== constraint.runId) === true;
+        if (!historicalObservation && !resourceExcluded && !historicalResource) return lineage;
         const binding = cloneActionStateBinding(message.actionStateBinding);
         const userMessageId = this.historicalActionUser(message, history);
         const canonical = message.canonicalTurn;
@@ -771,11 +1000,20 @@ export class TaskSourceRun {
             || canonical.schemaVersion === 1 && canonical.runId === restoredContainerId
                 && canonical.turnId === restoredContainerId && canonical.messages.length === 0);
         if (lineage.completeness !== 'complete' || !this.conversationId || !binding || binding.conversationId !== this.conversationId
-            || message.role !== 'assistant' || constraint.allowedNoteIds !== null || constraint.excludedNoteIds.length !== 0
+            || message.role !== 'assistant'
             || !userMessageId || !lineage.dependencies.some(dependency => dependency.kind === 'user-text' && dependency.messageId === userMessageId)
             || !canonicalMatchesBinding
             || boundActionStates([state], binding, this.conversationId, binding.turnIndex).length !== 1
             || lineage.dependencies.some(dependency => dependency.kind === 'run-notes-observation' && dependency.runId !== state.origin.runId)) return undefined;
+        if (resourceExcluded) {
+            // An old runtime ref cannot authorize a new read, yet its bound owner
+            // receipt remains a fact. Admit only a body-free, redacted fragment;
+            // retain the original resource ancestry on the stored state itself.
+            return completeInputLineage(lineage.dependencies.filter(dependency => dependency.kind === 'user-text'));
+        }
+        if (historicalResource && !historicalObservation) return this.admitsLineage(lineage, true)
+            ? lineage : completeInputLineage(lineage.dependencies.filter(dependency => dependency.kind === 'user-text'));
+        if (constraint.allowedNoteIds !== null || constraint.excludedNoteIds.length !== 0) return undefined;
         // Keep the original stored state and every dependency/epoch unchanged. Only
         // the request-only fragment's observation identity is rebound after admission.
         const rebased = completeInputLineage(lineage.dependencies.map(dependency => dependency.kind === 'run-notes-observation'
@@ -787,8 +1025,16 @@ export class TaskSourceRun {
         states: PaAgentActionState[], transcript?: PaAgentMessage[], lineages?: InputLineage[], history: readonly ChatMessage[] = []): ChatMessage[] {
         if (!proseAdmitted) {
             if (!states.length) return [];
+            const finiteStates = states.map(state => {
+                const sourceExcluded = state.inputLineage.dependencies.some(dependency => dependency.kind === 'vault'
+                    && !!dependency.resourceRef
+                    && (!this.isResourceDependencyAllowed(dependency.resourceRef, this.state.snapshot(), dependency.via)
+                        || this.historicalResourcePaths.has(dependency.resourceRef) && !this.admitsLineage(state.inputLineage, true)));
+                if (!sourceExcluded || !state.actions) return state;
+                return { ...state, actions: projectActionStates([state], { sourceExcluded: true })[0].actions };
+            });
             const fragment: ChatMessage = { role: 'assistant', content: '',
-                inputLineage: unionInputLineages(...(lineages ?? states.map(state => state.inputLineage))), actionStates: states,
+                inputLineage: unionInputLineages(...(lineages ?? states.map(state => state.inputLineage))), actionStates: finiteStates,
                 ...(message.actionStateBinding ? { actionStateBinding: { ...message.actionStateBinding } } : {}),
                 ...(message.hostProvenance ? { hostProvenance: { ...message.hostProvenance } } : {}) };
             if (lineages?.some((lineage, index) => JSON.stringify(lineage) !== JSON.stringify(states[index].inputLineage))) {
@@ -812,6 +1058,7 @@ export class TaskSourceRun {
         history: readonly ChatMessage[], signal?: AbortSignal,
     ): Promise<ChatMessage[]> => {
         throwIfAborted(signal);
+        this.registerHistoricalResources(history);
         if (!this.getTaskSourceAuthorityEpoch) return this.projectHistory(history);
         const messages = [...history];
         const constraint = this.state.snapshot();
@@ -862,15 +1109,7 @@ export class TaskSourceRun {
                 for (const record of paths) {
                     await task.checkpoint();
                     if (!admitted) continue;
-                    if ((record.sourceBoundary === 'memory' || record.kind === 'memory-reference') && !this.isMemoryAllowed()) {
-                        admitted = false;
-                        continue;
-                    }
-                    if (record.sourceBoundary === 'web') admitted = !constraint || this.state.allows({ kind: 'web' }, constraint);
-                    else {
-                        const noteId = record.path ? this.resolveNoteId(record.path) : undefined;
-                        admitted = noteId !== undefined && (!constraint || this.state.allows({ kind: 'note', noteId }, constraint));
-                    }
+                    admitted = this.isSourceRecordAllowed(record, constraint);
                 }
                 if (admitted && this.isCurrent() && this.state.isCurrent(constraint)) projected.push(message);
             }
@@ -910,12 +1149,11 @@ export class TaskSourceRun {
         const constraint = this.state.snapshot();
         const allowed = admitsInputLineage(lineage, scope ?? 'combined', {
             ...this.lineageAdmission,
-            isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint),
-            isVaultAllowed: (path, via) => {
-                if (via === 'memory' && !this.isMemoryAllowed()) return false;
-                const noteId = this.resolveNoteId(path);
-                return noteId !== undefined && this.isPathAllowed?.(path) !== false
-                    && this.state.allows({ kind: 'note', noteId }, constraint);
+            isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint)
+                || this.isAcceptedExecutionObservation(observation, constraint),
+            isVaultAllowed: (path, via, resourceRef) => {
+                if (resourceRef) return this.isResourceDependencyAllowed(resourceRef, constraint, via);
+                return this.isLegacyNoteSourceAllowed(path, via, constraint);
             },
             isWebAllowed: () => this.isWebAllowed() && this.state.allows({ kind: 'web' }, constraint),
         });
@@ -951,12 +1189,11 @@ export class TaskSourceRun {
         const constraint = this.state.snapshot();
         const admission: InputLineageAdmission = {
             ...this.lineageAdmission,
-            isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint),
-            isVaultAllowed: (path, via) => {
-                if (via === 'memory' && !this.isMemoryAllowed()) return false;
-                const noteId = this.resolveNoteId(path);
-                return noteId !== undefined && this.isPathAllowed?.(path) !== false
-                    && this.state.allows({ kind: 'note', noteId }, constraint);
+            isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint)
+                || this.isAcceptedExecutionObservation(observation, constraint),
+            isVaultAllowed: (path, via, resourceRef) => {
+                if (resourceRef) return this.isResourceDependencyAllowed(resourceRef, constraint, via);
+                return this.isLegacyNoteSourceAllowed(path, via, constraint);
             },
             isWebAllowed: () => this.isWebAllowed() && this.state.allows({ kind: 'web' }, constraint),
         };
@@ -1000,6 +1237,13 @@ export class TaskSourceRun {
             dependency
         ): dependency is Extract<InputDependency, { kind: 'run-notes-observation' }> =>
             dependency.kind === 'run-notes-observation') ?? [];
+        const admittedConfigurationEpoch = this.resourceConfigurationEpoch();
+        const observationAuthorityIsCurrent = (): boolean =>
+            (!authorityObservations.length || this.resourceConfigurationEpoch() === admittedConfigurationEpoch)
+            && authorityObservations.every(observation => observation.runId === constraint.runId
+                && (observation.owner !== 'memory' || observation.memoryEnabled === this.isMemoryAllowed())
+                && (!this.acceptedExecutionObservations.has(this.generationDependencyKey(observation))
+                    || this.isAcceptedExecutionObservation(observation, constraint)));
         const authorityLineage = owned?.dependencies.every(dependency => dependency.kind === 'run-notes-observation')
             ? undefined
             : completeInputLineage(owned?.dependencies.filter(dependency =>
@@ -1010,7 +1254,8 @@ export class TaskSourceRun {
             return {
                 isCurrent: () => this.isCurrent() && this.admitsLineage(owned),
                 sourceValidity,
-                authorityValidity: () => this.hostSourcesAreCurrent() && this.state.snapshot() === constraint,
+                authorityValidity: () => this.hostSourcesAreCurrent() && this.state.snapshot() === constraint
+                    && observationAuthorityIsCurrent(),
             };
         }
         while (this.isCurrent() && this.state.snapshot() === constraint) {
@@ -1019,12 +1264,11 @@ export class TaskSourceRun {
             if (!await this.admitsLineageAsync(owned, signal)) {
                 throw new Error('Task source input ancestry is no longer current.');
             }
-            const vaultSources = new Map<string, { noteId: string | undefined; file: VaultFileLike | undefined }>();
+            const vaultSources = new Map<string, ReturnType<typeof this.captureLegacyNoteSource>>();
             for (const dependency of needsLineage ? owned?.dependencies ?? [] : []) {
                 await task.checkpoint();
                 if (dependency.kind !== 'vault') continue;
-                vaultSources.set(dependency.path, { noteId: this.resolveNoteId(dependency.path),
-                    file: this.getFileByPath(dependency.path) as VaultFileLike | undefined });
+                vaultSources.set(dependency.path, this.captureLegacyNoteSource(dependency.path));
             }
             if (this.currentAuthorityEpoch() !== epoch) { await task.checkpoint(true); continue; }
             const sourceValidity = !needsLineage ? () => this.hostSourcesAreCurrent() : () => {
@@ -1032,15 +1276,12 @@ export class TaskSourceRun {
                     if (!this.hostSourcesAreCurrent() || this.state.snapshot() !== constraint) return false;
                     return admitsInputLineage(owned, scope ?? 'combined', {
                         ...this.lineageAdmission,
-                        isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint),
-                        isVaultAllowed: (path, via) => {
-                            if (via === 'memory' && !this.isMemoryAllowed()) return false;
+                        isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint)
+                            || this.isAcceptedExecutionObservation(observation, constraint),
+                        isVaultAllowed: (path, via, resourceRef) => {
+                            if (resourceRef) return this.isResourceDependencyAllowed(resourceRef, constraint, via);
                             const source = vaultSources.get(path);
-                            return source?.noteId !== undefined && source.file !== undefined
-                                && this.identities.pathForNoteId(source.noteId) === path
-                                && this.getFileByPath(path) === source.file && source.file.path === path
-                                && this.isPathAllowed?.(path) !== false
-                                && this.state.allows({ kind: 'note', noteId: source.noteId }, constraint);
+                            return !!source && this.isLegacyNoteSourceAllowed(path, via, constraint, source);
                         },
                         isWebAllowed: () => this.isWebAllowed() && this.state.allows({ kind: 'web' }, constraint),
                     }) && this.state.snapshot() === constraint;
@@ -1054,20 +1295,16 @@ export class TaskSourceRun {
                         // Legacy callers without a selected scope use the same
                         // Host authority as admission and sourceValidity above.
                         if (!needsLineage) return true;
-                        if (authorityObservations.some(observation => observation.runId !== constraint.runId
-                            || (observation.owner === 'memory'
-                                && observation.memoryEnabled !== this.isMemoryAllowed()))) return false;
+                        // Native self-writes may advance graph observations, but
+                        // cannot rebase an admitted aggregate's configuration.
+                        if (!observationAuthorityIsCurrent()) return false;
                         if (!authorityLineage) return true;
                         return admitsInputLineage(authorityLineage, scope ?? 'combined', {
                             ...this.lineageAdmission,
-                            isVaultAllowed: (path, via) => {
-                                if (via === 'memory' && !this.isMemoryAllowed()) return false;
+                            isVaultAllowed: (path, via, resourceRef) => {
+                                if (resourceRef) return this.isResourceDependencyAllowed(resourceRef, constraint, via);
                                 const source = vaultSources.get(path);
-                                return source?.noteId !== undefined && source.file !== undefined
-                                    && this.identities.pathForNoteId(source.noteId) === path
-                                    && this.getFileByPath(path) === source.file && source.file.path === path
-                                    && this.isPathAllowed?.(path) !== false
-                                    && this.state.allows({ kind: 'note', noteId: source.noteId }, constraint);
+                                return !!source && this.isLegacyNoteSourceAllowed(path, via, constraint, source);
                             },
                             isWebAllowed: () => this.isWebAllowed() && this.state.allows({ kind: 'web' }, constraint),
                         });
@@ -1090,24 +1327,19 @@ export class TaskSourceRun {
         const constraint = this.state.snapshot();
         const vaultSources = new Map(capturedLineage.dependencies.flatMap(dependency => {
             if (dependency.kind !== 'vault') return [];
-            const noteId = this.resolveNoteId(dependency.path);
-            const file = this.getFileByPath(dependency.path) as VaultFileLike | undefined;
-            return [[dependency.path, { noteId, file }] as const];
+            return [[dependency.path, this.captureLegacyNoteSource(dependency.path)] as const];
         }));
         return () => {
             try {
                 if (!this.hostSourcesAreCurrent() || this.state.snapshot() !== constraint) return false;
                 const admitted = admitsInputLineage(capturedLineage, scope ?? 'combined', {
                     ...this.lineageAdmission,
-                    isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint),
-                    isVaultAllowed: (path, via) => {
-                        if (via === 'memory' && !this.isMemoryAllowed()) return false;
+                    isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint)
+                        || this.isAcceptedExecutionObservation(observation, constraint),
+                    isVaultAllowed: (path, via, resourceRef) => {
+                        if (resourceRef) return this.isResourceDependencyAllowed(resourceRef, constraint, via);
                         const source = vaultSources.get(path);
-                        return source?.noteId !== undefined && source.file !== undefined
-                            && this.identities.pathForNoteId(source.noteId) === path
-                            && this.getFileByPath(path) === source.file && source.file.path === path
-                            && this.isPathAllowed?.(path) !== false
-                            && this.state.allows({ kind: 'note', noteId: source.noteId }, constraint);
+                        return !!source && this.isLegacyNoteSourceAllowed(path, via, constraint, source);
                     },
                     isWebAllowed: () => this.isWebAllowed() && this.state.allows({ kind: 'web' }, constraint),
                 });
@@ -1127,25 +1359,27 @@ export class TaskSourceRun {
         if (!capturedLineage || capturedLineage.completeness !== 'complete') return () => false;
         const scope = this.runSourceSelection?.scope;
         const constraint = this.state.snapshot();
+        const configurationEpoch = this.resourceConfigurationEpoch();
+        const hasResourceRefs = capturedLineage.dependencies.some(dependency => dependency.kind === 'vault' && dependency.resourceRef);
         const vaultSources = new Map(capturedLineage.dependencies.flatMap(dependency => {
             if (dependency.kind !== 'vault') return [];
-            const noteId = this.resolveNoteId(dependency.path);
-            const file = this.getFileByPath(dependency.path) as VaultFileLike | undefined;
-            return [[dependency.path, { noteId, file }] as const];
+            if (!dependency.resourceRef) return [[dependency.path, this.captureLegacyNoteSource(dependency.path)] as const];
+            const file = this.resourceIdentityOwner?.objectFor(dependency.resourceRef) as VaultFileLike | undefined;
+            return [[dependency.resourceRef, file ? { noteId: dependency.resourceRef, file, path: file.path } : undefined] as const];
         }));
         return () => {
             try {
-                if (this.state.snapshot() !== constraint) return false;
+                if (this.state.snapshot() !== constraint
+                    || hasResourceRefs && this.resourceConfigurationEpoch() !== configurationEpoch) return false;
                 return admitsInputLineage(capturedLineage, scope ?? 'combined', {
                     ...this.lineageAdmission,
-                    isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint),
-                    isVaultAllowed: (path, via) => {
-                        if (via === 'memory' && !this.isMemoryAllowed()) return false;
-                        const source = vaultSources.get(path);
-                        return source?.noteId !== undefined && source.file !== undefined
-                            && this.getFileByPath(path) === source.file && source.file.path === path
-                            && this.isPathAllowed?.(path) !== false
-                            && this.state.allows({ kind: 'note', noteId: source.noteId }, constraint);
+                    isRunNotesObservationAllowed: observation => this.isRunNotesObservationCurrent(observation, constraint)
+                        || this.isAcceptedExecutionObservation(observation, constraint),
+                    isVaultAllowed: (path, via, resourceRef) => {
+                        const source = vaultSources.get(resourceRef ?? path);
+                        // Accepted image work outlives its Chat note directory;
+                        // its captured native object and current scope own this check.
+                        return !!source && this.isLegacyNoteSourceAllowed(path, via, constraint, source, false);
                     },
                     isWebAllowed: () => this.isWebAllowed() && this.state.allows({ kind: 'web' }, constraint),
                 });
@@ -1165,6 +1399,9 @@ export class TaskSourceRun {
             this.assertCurrentConstraint(constraint);
             const noteIds = new Set<string>();
             for (const path of paths) {
+                // Source ancestry was admitted before this directory projection.
+                // Its path may now name a new object; publish that current handle
+                // without rebinding the historical source record to it.
                 const noteId = this.resolveNoteId(path);
                 if (!noteId || !this.state.allows({ kind: 'note', noteId }, constraint)) return false;
                 noteIds.add(noteId);

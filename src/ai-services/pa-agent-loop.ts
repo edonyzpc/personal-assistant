@@ -29,6 +29,8 @@ import type {
 } from "./chat-types";
 import { ModelChunkConsumer, appendTextPart } from "./pa-agent-chunk-consumer";
 import { createCooperativeTask } from './cooperative-task';
+import { cloneInputLineage } from './input-lineage';
+import { cloneActionStates } from './pa-agent-result-facts';
 import {
     ToolExecutionDispatcher,
     defaultIncludeInNextPrompt,
@@ -1611,6 +1613,8 @@ export class PaAgentLoop {
             toolCallId: toolCall.id,
             toolName: toolCall.name,
             content,
+            ...(result.actionStates ? { actionStates: cloneActionStates(result.actionStates) } : {}),
+            ...(result.inputLineage ? { inputLineage: cloneInputLineage(result.inputLineage) } : {}),
             isError,
             timestamp: this.now(),
         };

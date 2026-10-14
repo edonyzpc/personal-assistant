@@ -7134,13 +7134,25 @@ export class LLMView extends ItemView {
                             if (!acceptingStreamEvents || !isLiveTurn()) return;
                             if (!turn.assistantMessage) updateResponseContent(responseContent);
                             const prepared = persistCanonicalTurnFromLifecycle(turn, responseContent);
+                            // The retained snapshot may still project the last ended turn;
+                            // a new intent must belong to the active model turn.
                             if (intent.mode === 'apply' && prepared?.runId === intent.runId
+                                && turn.canonicalLifecycle.currentTurnId === intent.turnId
                                 && !prepared.actionStates?.some(state => state.owner === 'operations' && state.operationId === intent.id)) {
                                 const call = intent.operations[0];
-                                const assistant = [...turn.canonicalLifecycle.messages].reverse().find(message => message.role === 'assistant'
+                                const directAssistant = [...turn.canonicalLifecycle.messages].reverse().find(message => message.role === 'assistant'
                                     && message.content.some(part => part.type === 'toolCall' && part.id === call?.toolCallId
                                         && part.name === call.name));
-                                const lineage = cloneInputLineage(assistant?.inputLineage);
+                                // SDK children keep their own call/intent identity. The Host supplies
+                                // the real canonical parent and the child's admitted read ancestry.
+                                const parent = intent.hostParentBinding;
+                                const assistant = directAssistant ?? (parent
+                                    ? turn.canonicalLifecycle.messages.find(message => message.role === 'assistant'
+                                        && message.id === parent.parentAssistantId
+                                        && message.content.some(part => part.type === 'toolCall'
+                                            && part.id === parent.parentToolCallId && part.name === 'execute_obsidian_code'))
+                                    : undefined);
+                                const lineage = cloneInputLineage(directAssistant?.inputLineage ?? intent.inputLineage);
                                 if (assistant && lineage && call) {
                                     prepared.actionStates = cloneActionStates([...(prepared.actionStates ?? []), {
                                         schemaVersion: 1, owner: 'operations', operationId: intent.id, phase: 'pending', revision: 0,
@@ -7345,11 +7357,16 @@ export class LLMView extends ItemView {
                 } else if (error instanceof DOMException && error.name === 'AbortError') {
                     const receivedText = !turn.writingRequestId && controller.signal.aborted
                         ? turn.assistantMessage?.copyContent : undefined;
-                    if (receivedText) {
+                    // Stopping Chat does not erase an original prepared or
+                    // settled action, even before the parent emits reply text.
+                    const hasOwnedActions = persistCanonicalTurnFromLifecycle(turn, '')?.actionStates
+                        ?.some(state => state.origin.runId === turn.canonicalLifecycle.runId) === true;
+                    if (receivedText || hasOwnedActions) {
                         recordUserCancellation(turn);
                         isFinalizing = true;
                         syncComposerControls();
-                        await finalizeSuccessfulTurn(turn, prompt, receivedText, isSameTurn, true);
+                        await finalizeSuccessfulTurn(turn, prompt,
+                            receivedText || t('plugin.chat.notice.generationCancelled'), isSameTurn, true);
                     } else {
                         const cancellationMessage = t("plugin.chat.notice.generationCancelled");
                         const terminalEntry = createTerminalEntry(turn, stableMessageId, cancellationMessage, 'cancelled');

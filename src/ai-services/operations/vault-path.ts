@@ -17,6 +17,19 @@ export class OperationsPathError extends Error {
  * owns normalization, traversal, spoof, extension, and length checks.
  */
 export function validateOperationsVaultPath(candidate: unknown): string {
+    return validateVaultPath(candidate, [".md"]);
+}
+
+/** General resources retain their real names; filesystem limits belong to the host. */
+export function validateResourceVaultPath(candidate: unknown): string {
+    if (typeof candidate !== "string") throw new OperationsPathError("empty_path");
+    const normalized = candidate.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/");
+    const dot = normalized.lastIndexOf(".");
+    const extension = dot > normalized.lastIndexOf("/") ? normalized.slice(dot) : "";
+    return validateVaultPath(candidate, [extension], true);
+}
+
+function validateVaultPath(candidate: unknown, extensions: string[], resource = false): string {
     if (typeof candidate !== "string") throw new OperationsPathError("empty_path");
     const preNormalized = candidate
         .replace(/\\/g, "/")
@@ -25,9 +38,9 @@ export function validateOperationsVaultPath(candidate: unknown): string {
     const firstSegment = preNormalized.split("/")[0] ?? "";
     const result = validateTargetConfinementSync(candidate, {
         allowedRoots: [firstSegment],
-        allowedExtensions: [".md"],
-        maxPathLength: 200,
-    });
+        allowedExtensions: extensions,
+        maxPathLength: resource ? Infinity : 200,
+    }, { allowJoinControls: resource });
     if (!result.ok) throw new OperationsPathError(result.reason, pathErrorMessage(result.reason));
 
     const segments = result.normalizedPath.split("/");
@@ -35,7 +48,8 @@ export function validateOperationsVaultPath(candidate: unknown): string {
         throw new OperationsPathError("ambiguous_segment", "Vault path contains an ambiguous segment.");
     }
     for (const segment of segments) {
-        if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(foldForDotfolderCheck(segment))) {
+        const protectedSegment = resource ? segment.replace(/[\u200c\u200d]/g, "") : segment;
+        if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(foldForDotfolderCheck(protectedSegment))) {
             throw new OperationsPathError("forbidden_dotfolder", "Vault path targets a protected directory.");
         }
     }

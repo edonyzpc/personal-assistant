@@ -27,3 +27,8 @@ declare module "*?worker-source" {
     const source: string;
     export default source;
 }
+
+declare module "*?guest-source" {
+    const source: string;
+    export default source;
+}

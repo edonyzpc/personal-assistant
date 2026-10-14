@@ -100,6 +100,59 @@ describe("direct Operations and native move", () => {
         } finally { h.service.dispose(); }
     });
 
+    it("isolates prepared child batches that share a run and turn", async () => {
+        const h = await fixture();
+        try {
+            const first = h.batch([
+                append("a1", "notes/a.md", "A-effect"),
+                append("a2", "notes/b.md", "B-effect"),
+            ]);
+            const second = h.batch([append("b1", "notes/b.md", "preview", "preview")]);
+            const preparedFirst = await h.executor.prepareBatch!(first);
+            const firstIntentId = h.session.getBatchContextResult("run", "turn", ["a1", "a2"])?.intent?.id;
+            const preparedSecond = await h.executor.prepareBatch!(second);
+            const secondPreview = preparedSecond?.toolResults.get("b1");
+            const firstResult = await h.call(first);
+            const secondResult = preparedFirst?.toolResults.get("a2") ?? await h.call(first, 1);
+            const secondB = preparedSecond?.toolResults.get("b1");
+
+            expect([...preparedSecond!.toolResults.keys()]).toEqual(["b1"]);
+            expect(secondB).toBe(secondPreview);
+            expect(secondB).toMatchObject({ executionState: "not_started", metadata: { mode: "preview", wrote: false } });
+            expect(secondB?.resultFact).toBeUndefined();
+            expect(firstResult.metadata?.intentId).toBe(firstIntentId);
+            expect(secondResult.metadata?.intentId).toBe(firstIntentId);
+            expect(JSON.parse(firstResult.promptText).operations[0].toolCallId).toBe("a1");
+            expect(JSON.parse(secondResult.promptText).operations[0].toolCallId).toBe("a2");
+            expect(h.vault.contents.get("notes/a.md")).toBe("A\nA-effect");
+            expect(h.vault.contents.get("notes/b.md")).toBe("B\nB-effect");
+            expect(h.vault.process).toHaveBeenCalledTimes(2);
+        } finally { h.service.dispose(); }
+    });
+
+    it("isolates prepared batches when providers reuse a call id across turns", async () => {
+        const h = await fixture();
+        try {
+            const first = h.batch([append("same-id", "notes/a.md", "apply")], "turn-a");
+            const second = h.batch([append("same-id", "notes/b.md", "preview", "preview")], "turn-b");
+            const preparedFirst = await h.executor.prepareBatch!(first);
+            const preparedSecond = await h.executor.prepareBatch!(second);
+            const secondPreview = preparedSecond?.toolResults.get("same-id");
+            const firstResult = await h.call(first);
+            const secondResult = preparedSecond?.toolResults.get("same-id");
+
+            expect(JSON.parse(firstResult.promptText)).toMatchObject({ state: "completed" });
+            expect(secondResult).toBe(secondPreview);
+            expect(secondResult).toMatchObject({
+                executionState: "not_started",
+                metadata: { mode: "preview", wrote: false },
+            });
+            expect(preparedFirst?.toolResults.get("same-id")).toEqual(firstResult);
+            expect(h.vault.contents.get("notes/a.md")).toBe("A\napply");
+            expect(h.vault.contents.get("notes/b.md")).toBe("B");
+        } finally { h.service.dispose(); }
+    });
+
     it("rejects mixed modes and a later known destination collision before the first effect", async () => {
         const h = await fixture();
         try {

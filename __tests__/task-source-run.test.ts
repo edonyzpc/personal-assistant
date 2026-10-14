@@ -5,7 +5,8 @@ import type { TaskSourceConstraint } from '../src/ai-services/task-source-constr
 import type { ChatMessage, PaAgentMessage } from '../src/ai-services/chat-types';
 import { createTaskSourceConstrainedExecutor } from '../src/ai-services/task-source-executor';
 import { completeInputLineage, toGenerationInputLineage, unknownInputLineage, type InputLineage } from '../src/ai-services/input-lineage';
-import type { PaAgentActionState } from '../src/ai-services/pa-agent-result-facts';
+import { projectActionStates, type PaAgentActionState } from '../src/ai-services/pa-agent-result-facts';
+import { TaskSourceResourceIdentities } from '../src/ai-services/task-source-resource-identities';
 import { actionHistoryMessages, projectPaAgentActionHistory } from '../src/ai-services/pa-agent-action-history';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
@@ -27,6 +28,70 @@ function imageState(lineage: InputLineage): PaAgentActionState {
 }
 
 describe('B157 independently admitted historical state', () => {
+    it.each([false, true])('retains authorized historical prose and effects without reviving old target identity; async=%s', async asynchronous => {
+        const h = fixture();
+        const oldIdentities = new TaskSourceResourceIdentities({ runId: 'run-1', getAbstractFileByPath: h.host.getFileByPath });
+        const resourceRef = oldIdentities.register(h.a)!.resourceRef;
+        const lineage = completeInputLineage([{ kind: 'user-text', messageId: 'original-user' },
+            { kind: 'vault', path: h.a.path, via: 'note', resourceRef }]);
+        const saved: PaAgentActionState = { schemaVersion: 1, owner: 'operations', operationId: 'original-intent',
+            phase: 'completed', revision: 1, origin: { runId: 'run-1', turnId: 'turn-1', assistantId: 'assistant',
+                callId: 'child', resultId: 'result' }, inputLineage: lineage,
+            receipt: { kind: 'operations-result', intentId: 'original-intent', state: 'completed' },
+            actions: [{ actionId: 'operation', receiptId: 'original-receipt', phase: 'applied',
+                resourceEffect: { kind: 'replace', paths: [h.a.path], resourceRef } }], operationsUndoAvailable: true };
+        const history: ChatMessage[] = [{ role: 'user', content: 'Write', hostProvenance: {
+            version: 1, kind: 'ordinary_user_statement', messageId: 'original-user' } },
+        { role: 'assistant', content: 'PRIVATE_OLD_BODY', inputLineage: lineage, actionStates: [saved],
+            actionStateBinding: { conversationId: 'conversation', turnIndex: 0, runId: 'run-1', turnId: 'turn-1' } }];
+        const makeRun = (isPathAllowed = () => true) => new TaskSourceRun({ ...h.host, runId: 'run-2', conversationId: 'conversation',
+            resourceIdentities: new TaskSourceResourceIdentities({ runId: 'run-2', getAbstractFileByPath: h.host.getFileByPath }),
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'notes', userMessageId: 'user-1' },
+            isPathAllowed, ...(asynchronous ? { getTaskSourceAuthorityEpoch: () => 'authority' } : {}) });
+        const run = makeRun();
+        const project = (owner: TaskSourceRun, messages = history) => asynchronous
+            ? owner.projectHistoryAsync(messages) : Promise.resolve(owner.projectHistory(messages));
+        const original = JSON.stringify(history);
+        const projected = await project(run);
+        const fragment = projected.find(message => message.role === 'assistant')!;
+        expect(fragment).toBeDefined();
+        expect(fragment.actionStates).toEqual([saved]);
+        // A dead execution handle does not revoke already delivered conversation content.
+        expect(fragment.content).toBe('PRIVATE_OLD_BODY');
+        expect(fragment.canonicalTurn).toBeUndefined();
+        expect(run.isOwnedHistoricalActionFragment(fragment)).toBe(false);
+        expect(run.admitsLineage(lineage, true)).toBe(true);
+        expect(run.resolveResourceIdentity({ resourceRef })).toBeUndefined();
+        expect((await project(run, [{ ...fragment }])).flatMap(message => message.actionStates ?? [])).toEqual([]);
+        expect(JSON.stringify(projected)).toContain('PRIVATE_OLD_BODY');
+        expect(JSON.stringify(history)).toBe(original);
+        const excluded = await project(makeRun(() => false));
+        expect(excluded.flatMap(message => message.actionStates ?? [])).toEqual([expect.objectContaining({
+            operationId: saved.operationId, actions: [{ actionId: 'operation', receiptId: 'original-receipt', phase: 'applied', resourceEffect: { kind: 'replace' } }],
+        })]);
+        expect(JSON.stringify(excluded)).not.toContain('PRIVATE_OLD_BODY');
+        expect(JSON.stringify(projectActionStates(excluded.flatMap(message => message.actionStates ?? [])))).not.toContain(h.a.path);
+        history[1].actionStateBinding!.runId = 'forged';
+        expect((await project(run)).flatMap(message => message.actionStates ?? [])).toEqual([]);
+    });
+    it('keeps a read-only SDK answer across requests but still honors Notes to Web and boundary withdrawal', async () => {
+        const h = fixture();
+        const old = new TaskSourceResourceIdentities({ runId: 'old', getAbstractFileByPath: h.host.getFileByPath });
+        const resourceRef = old.register(h.a)!.resourceRef;
+        const history: ChatMessage[] = [{ role: 'assistant', content: 'Earlier SDK summary', inputLineage: completeInputLineage([
+            { kind: 'vault', path: h.a.path, via: 'note', resourceRef },
+        ]) }];
+        for (const scope of ['notes', 'combined', 'web'] as const) {
+            let allowed = true;
+            const run = new TaskSourceRun({ ...h.host, runId: 'next', isPathAllowed: () => allowed,
+                resourceIdentities: new TaskSourceResourceIdentities({ runId: 'next', getAbstractFileByPath: h.host.getFileByPath }),
+                runSourceSelection: { schemaVersion: 1, scope, selectionId: 'next', userMessageId: 'user-1' } });
+            expect(await run.projectHistoryAsync(history)).toEqual(scope === 'web' ? [] : history);
+            expect(run.resolveResourceIdentity({ resourceRef })).toBeUndefined();
+            allowed = false;
+            expect(await run.projectHistoryAsync(history)).toEqual([]);
+        }
+    });
     it.each([false, true])('admits original bound state after real manager rehydration; async=%s', async asynchronous => {
         const h = fixture();
         const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore() });
@@ -224,6 +289,139 @@ function call(id: string, name: string, input: unknown = {}): ParsedBufferedTool
 }
 
 describe('B165 generation read snapshots', () => {
+    it('allows only explicit new resource outputs in web scope under current path and lifecycle authority', () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host,
+            runSourceSelection: { schemaVersion: 1, scope: 'web', selectionId: 'web', userMessageId: 'user-1' },
+            isPathAllowed: path => !path.startsWith('excluded/') });
+        expect(run.isResourceOutputPathAllowed('notes/new.md', true)).toBe(true);
+        expect(run.isResourceOutputPathAllowed('notes/new-folder', true)).toBe(true);
+        expect(run.isResourceOutputPathAllowed('notes/new.md')).toBe(false);
+        expect(run.isResourcePathAllowed(h.a.path)).toBe(false);
+        expect(run.isResourceOutputPathAllowed('excluded/new.md', true)).toBe(false);
+        h.setCurrent(false);
+        expect(run.isResourceOutputPathAllowed('notes/new.md', true)).toBe(false);
+    });
+
+    it('retains an accepted SDK read after replacement without keeping its resource target alive', async () => {
+        const h = fixture();
+        let configuration = 'C0';
+        const denied = new Set<string>();
+        const run = new TaskSourceRun({ ...h.host,
+            resourceIdentities: new TaskSourceResourceIdentities({ runId: 'run-1', getAbstractFileByPath: h.host.getFileByPath }),
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'notes', userMessageId: 'user-1' },
+            isPathAllowed: path => !denied.has(path), getTaskSourceAuthorityEpoch: () => 'authority',
+            getTaskSourceConfigurationEpoch: () => configuration });
+        const resourceRef = run.resolveResourceIdentity({ path: h.a.path })!.resourceRef;
+        const lineage = completeInputLineage([{ kind: 'vault', path: h.a.path, via: 'note', resourceRef }]);
+        const source: PaAgentMessage = { role: 'toolResult', id: 'sdk-read', toolCallId: 'read', toolName: 'execute_obsidian_code',
+            timestamp: 1, isError: false, inputLineage: lineage,
+            content: { promptText: 'ACCEPTED_SNAPSHOT', includeInNextPrompt: true,
+                sourceRecords: [{ kind: 'context-used', sourceBoundary: 'vault', path: h.a.path, resourceRef, dedupKey: 'read' }] } };
+        run.acceptExecutionLineage(lineage);
+        h.files.delete(h.a.path);
+        expect(run.resolveResourceIdentity({ resourceRef })).toBeUndefined();
+        h.files.set(h.a.path, { path: h.a.path });
+        expect(run.resolveResourceIdentity({ path: h.a.path })?.resourceRef).not.toBe(resourceRef);
+        expect(run.resolveResourceIdentity({ resourceRef })).toBeUndefined();
+        expect(run.admitsLineage(lineage, true)).toBe(true);
+        expect(await run.admitsLineageAsync(lineage, undefined, true)).toBe(true);
+        expect(run.captureLineageSourceValidity(lineage)()).toBe(true);
+        expect(run.projectTranscript([source])).toEqual([source]);
+        expect(await run.projectTranscriptAsync([source])).toEqual([source]);
+        const generated = await run.prepareGenerationSnapshot([source], [], async messages => [...messages]);
+        expect(JSON.stringify(generated.transcript)).toContain('ACCEPTED_SNAPSHOT');
+        denied.add(h.a.path);
+        expect(run.admitsLineage(lineage, true)).toBe(false);
+        denied.clear();
+        configuration = 'C1';
+        run.acceptExecutionLineage(lineage);
+        expect(run.admitsLineage(lineage, true)).toBe(false);
+    });
+
+    it('requires accepted snapshots and keeps their original target retired after replacement', () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host,
+            isPathAllowed: path => !path.startsWith('excluded/'),
+            resourceIdentities: new TaskSourceResourceIdentities({ runId: 'run-1', getAbstractFileByPath: h.host.getFileByPath }) });
+        const resourceRef = run.resolveResourceIdentity({ path: h.a.path })!.resourceRef;
+        const lineage = completeInputLineage([{ kind: 'vault', path: h.a.path, via: 'note', resourceRef }]);
+        h.files.delete(h.a.path);
+        expect(run.admitsLineage(lineage, true)).toBe(false);
+        run.acceptExecutionLineage(lineage);
+        expect(run.admitsLineage(lineage, true)).toBe(false);
+
+        const secondRef = run.resolveResourceIdentity({ path: h.b.path })!.resourceRef;
+        const accepted = completeInputLineage([
+            { kind: 'vault', path: h.b.path, via: 'note', resourceRef: secondRef },
+            { kind: 'vault', path: h.b.path, via: 'memory', resourceRef: secondRef },
+        ]);
+        run.acceptExecutionLineage(accepted);
+        h.files.set(h.b.path, { path: h.b.path });
+        expect(run.resolveResourceIdentity({ resourceRef: secondRef })).toBeUndefined();
+        h.files.delete(h.b.path);
+        expect(run.admitsLineage(accepted, true)).toBe(true);
+        for (const dependency of accepted.dependencies) {
+            expect(run.admitsLineage(completeInputLineage([dependency]), true)).toBe(true);
+        }
+
+        const movedRef = run.resolveResourceIdentity({ path: h.canvas.path })!.resourceRef;
+        const moved = completeInputLineage([{ kind: 'vault', path: h.canvas.path, via: 'note', resourceRef: movedRef }]);
+        run.acceptExecutionLineage(moved);
+        h.files.delete(h.canvas.path);
+        h.canvas.path = 'excluded/removed.canvas';
+        expect(run.resolveResourceIdentity({ resourceRef: movedRef })).toBeUndefined();
+        expect(run.admitsLineage(moved, true)).toBe(false);
+    });
+
+    it('keeps admitted mixed resource and legacy note ancestry on the original object after native move', async () => {
+        const h = fixture();
+        const oldPath = h.a.path;
+        const denied = new Set<string>();
+        const run = new TaskSourceRun({ ...h.host,
+            resourceIdentities: new TaskSourceResourceIdentities({ runId: 'run-1', getAbstractFileByPath: h.host.getFileByPath }),
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'notes', userMessageId: 'user-1' },
+            isPathAllowed: path => !denied.has(path), getTaskSourceAuthorityEpoch: () => 'authority',
+            getTaskSourceConfigurationEpoch: () => 'configuration' });
+        const noteId = run.resolveNoteId(oldPath)!;
+        const resourceRef = run.resolveResourceIdentity({ path: oldPath })!.resourceRef;
+        const lineage = completeInputLineage([{ kind: 'user-text', messageId: 'user-1' },
+            { kind: 'vault', path: oldPath, via: 'note' }, { kind: 'vault', path: oldPath, via: 'note', resourceRef }]);
+        const legacy: PaAgentMessage = { role: 'toolResult', id: 'legacy', toolCallId: 'read', toolName: 'read_note',
+            timestamp: 1, isError: false, inputLineage: lineage, content: { promptText: 'ORIGINAL_BODY', includeInNextPrompt: true,
+                sourceRecords: [{ kind: 'context-used', sourceBoundary: 'read-only-tool', path: oldPath, dedupKey: 'original' }] } };
+        const proof = await run.prepareLineageAdmission(lineage);
+        const sourceValidity = run.captureLineageSourceValidity(lineage);
+        const persistence = run.capturePersistenceSourceValidity([legacy], []);
+        h.files.delete(oldPath); h.a.path = 'notes/moved.md'; h.files.set(h.a.path, h.a);
+        denied.add(oldPath);
+        expect(run.resolveNoteId(h.a.path)).toBe(noteId);
+        expect(proof.sourceValidity()).toBe(true);
+        expect(proof.authorityValidity()).toBe(true);
+        expect(sourceValidity()).toBe(true);
+        expect(run.admitsLineage(lineage, true)).toBe(true);
+        expect(await run.admitsLineageAsync(lineage, undefined, true)).toBe(true);
+        expect(run.projectTranscript([legacy])).toEqual([legacy]);
+        expect(await run.projectTranscriptAsync([legacy])).toEqual([legacy]);
+        expect(() => persistence()).not.toThrow();
+        expect(legacy.content.sourceRecords![0].path).toBe(oldPath);
+        denied.add(h.a.path);
+        expect(proof.sourceValidity()).toBe(false);
+        expect(proof.authorityValidity()).toBe(false);
+        expect(sourceValidity()).toBe(false);
+        expect(run.admitsLineage(lineage, true)).toBe(false);
+        expect(() => persistence()).toThrow('source');
+        denied.clear();
+        h.files.set(h.a.path, { path: h.a.path });
+        expect(proof.sourceValidity()).toBe(false);
+        expect(proof.authorityValidity()).toBe(false);
+        expect(sourceValidity()).toBe(false);
+        expect(run.admitsLineage(lineage, true)).toBe(false);
+        expect(() => persistence()).toThrow('source');
+        const replacementId = run.resolveNoteId(h.a.path);
+        expect(replacementId).toBeDefined();
+        expect(replacementId).not.toBe(noteId);
+    });
     it('retains accepted snapshots after ordinary deletion and only removes excluded material on the next loop', async () => {
         const h = fixture();
         let configurationEpoch = 'configuration-1';
@@ -665,6 +863,44 @@ describe('Task source run host', () => {
         expect(receipt()).toBe(false);
         const replacement = { path: h.a.path };
         h.files.set(h.a.path, replacement);
+        expect(receipt()).toBe(false);
+    });
+
+    it.each(['note', 'memory'] as const)('keeps an accepted SDK-ref image receipt independent of Chat while preserving native/configuration revocation: %s', via => {
+        const h = fixture();
+        const denied = new Set<string>();
+        let configuration = 'C0';
+        const identities = new TaskSourceResourceIdentities({ runId: 'run-1', getAbstractFileByPath: h.host.getFileByPath });
+        const run = new TaskSourceRun({ ...h.host, resourceIdentities: identities,
+            isPathAllowed: path => !denied.has(path), getTaskSourceConfigurationEpoch: () => configuration,
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'image-ref', userMessageId: h.host.userMessageId } });
+        const resourceRef = run.resolveResourceIdentity({ path: h.a.path })!.resourceRef;
+        const lineage = completeInputLineage([{ kind: 'user-text', messageId: h.host.userMessageId },
+            { kind: 'vault', path: h.a.path, via, resourceRef }]);
+        const ordinary = run.captureLineageSourceValidity(lineage);
+        const receipt = run.captureImageTaskSourceValidity(lineage);
+        expect(ordinary()).toBe(true);
+        expect(receipt()).toBe(true);
+        h.setCurrent(false);
+        expect(ordinary()).toBe(false);
+        expect(run.admitsLineage(lineage, true)).toBe(false);
+        expect(receipt()).toBe(true);
+        h.files.delete(h.a.path); h.a.path = 'notes/moved-image.md'; h.files.set(h.a.path, h.a);
+        expect(receipt()).toBe(true);
+        denied.add(h.a.path);
+        expect(receipt()).toBe(false);
+        denied.clear();
+        if (via === 'memory') {
+            h.setMemoryAllowed(false);
+            expect(receipt()).toBe(false);
+            h.setMemoryAllowed(true);
+        }
+        configuration = 'C1';
+        expect(receipt()).toBe(false);
+        configuration = 'C0';
+        h.files.set(h.a.path, { path: h.a.path });
+        expect(receipt()).toBe(false);
+        h.files.delete(h.a.path);
         expect(receipt()).toBe(false);
     });
 
@@ -1177,18 +1413,13 @@ describe('Task source run host', () => {
         expect(contextNotes(run).notes).toEqual([{ handle: 'note_1', path: h.a.path }]);
     });
 
-    it.each(['delete', 'replace', 'rename'] as const)('does not rebind or revive a captured note after %s', change => {
+    it.each(['delete', 'replace'] as const)('does not rebind or revive a captured note after %s', change => {
         const h = fixture();
         const run = h.create();
         const originalPath = h.a.path;
         const scope = admission(run);
         h.files.delete(originalPath);
         if (change === 'replace') h.files.set(originalPath, { path: originalPath });
-        if (change === 'rename') {
-            h.a.path = 'notes/renamed.md';
-            h.files.set(h.a.path, h.a);
-            expect(run.resolveNoteId(h.a.path)).toBeUndefined();
-        }
         expect(run.resolveNoteId(originalPath)).toBeUndefined();
         expect(contextNotes(run)).toEqual({ currentNoteHandle: null, notes: [] });
         h.a.path = originalPath;

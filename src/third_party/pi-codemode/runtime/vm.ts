@@ -1,3 +1,5 @@
+// PA derivation from Pi c5f5b3282d5e4203c085e59837ba17aeaf2829b5:
+// evaluate the fixed browser library bundle inside the isolated QuickJS VM.
 /**
  * Drives one QuickJS VM through one script, independent of the transport that connects it to the
  * host. The worker thread, the in-thread launcher, and the remote server all run the VM through
@@ -183,12 +185,19 @@ export async function startVm(options: StartVmOptions): Promise<VmSession> {
 					vm.newString(JSON.stringify(data.tools)),
 					vm.newString(JSON.stringify(data.globals)),
 					vm.newString(JSON.stringify(data.store)),
+					vm.newString(JSON.stringify({
+						...(data.maxCallPayloadChars !== undefined
+							? { maxCallPayloadChars: data.maxCallPayloadChars }
+							: {}),
+						...(data.callResourceLimits ? { callResourceLimits: data.callResourceLimits } : {}),
+					})),
 				),
 			),
 		);
 		settle = api.getProp("settle");
 		const run = api.getProp("run");
 		stalled = api.getProp("stalled");
+		if (data.guestLibrarySource) vm.evalCode(data.guestLibrarySource, "codemode-fixed-libraries.js").dispose();
 
 		// The prefix shares the first line with the script so reported line numbers
 		// match the script as written.

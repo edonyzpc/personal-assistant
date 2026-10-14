@@ -46,6 +46,8 @@ export type PaAgentToolCall = Extract<AssistantMessagePart, { type: "toolCall" }
 };
 
 export interface PaAgentToolExecutionInput {
+    /** Host-prepared ancestry for a dynamically admitted child call. */
+    inputLineage?: import('./input-lineage').InputLineage;
     /** Captured by the host after complete-batch admission; never model input. */
     taskSourceReadGuard?: import('./task-source-read-guard').TaskSourceReadGuard;
     runId: string;
@@ -78,6 +80,10 @@ export interface PaAgentToolExecutionResult {
         completedParts?: string[];
         remainingParts?: string[];
     };
+    /** Host-built trusted child action facts for composed execution. */
+    actionStates?: import('./pa-agent-result-facts').PaAgentActionState[];
+    /** Host-owned union of actual child source dependencies. */
+    inputLineage?: import('./input-lineage').InputLineage;
 }
 
 export const PA_AGENT_RECOVERY_ACTIONS = ["retry", "correct_input", "choose_alternative",
@@ -96,6 +102,10 @@ export type PaAgentToolExecutionFacts = Pick<
  * ordinary read-only calls on the existing execution path.
  */
 export interface PaAgentToolBatchPreparationInput {
+    /** Host-owned parent of a dynamic child batch; never supplied by guest arguments. */
+    hostParentBinding?: { parentToolCallId: string; parentAssistantId: string };
+    /** Host-prepared ancestry for this exact batch; absent uses model-call lineage. */
+    inputLineage?: import('./input-lineage').InputLineage;
     /** Host-owned, per admitted batch; excluded from persisted intents and model arguments. */
     taskSourceReadGuard?: import('./task-source-read-guard').TaskSourceReadGuard;
     runId: string;
@@ -121,6 +131,9 @@ export interface PaAgentToolBatchPreflightAdmission {
 
 export interface PaAgentToolExecutor {
     execute(input: PaAgentToolExecutionInput): Promise<PaAgentToolExecutionResult>;
+    /** Original owner facts only: this read does not submit, resume or await the attempt. */
+    getAttemptObservation?(context: { runId: string; turnId: string; toolCallId: string; toolName: string }):
+        PaAgentToolExecutionResult | undefined;
     /**
      * Synchronous Host-fact validation of the complete parsed phase, before
      * filtering, canonical keys or preparation. Do not read external sources.

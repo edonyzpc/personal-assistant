@@ -25,7 +25,8 @@ import { ImagePreacceptError, type ImageGenerationTask } from '../src/chat/image
 import { createCreateImageTool, type ChatToolContext } from '../src/ai-services/chat-tools';
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
 import { ChatImageRequestError } from '../src/ai-services/image-capability';
-import { collectActionStates } from '../src/ai-services/pa-agent-result-facts';
+import { collectActionStates, projectActionStates } from '../src/ai-services/pa-agent-result-facts';
+import { additionalHistoricalActionStates } from '../src/ai-services/pa-agent-action-history';
 import { createCooperativeTask } from '../src/ai-services/cooperative-task';
 import { OPERATIONS_BLOCKED_MESSAGE, OPERATIONS_STAGED_MESSAGE } from '../src/ai-services/operations/operations-tool-provider';
 import { OperationsService } from '../src/ai-services/operations/operations-service';
@@ -13075,7 +13076,8 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('0.unsorted/Dog.md');
     });
 
-    it.each(['current-status', 'final-history', 'late-close'] as const)(
+    it.each(['current-status', 'final-history', 'late-close', 'sdk-child', 'unbound-sdk-child', 'sdk-no-text-cancel',
+        'direct-later-turn', 'sdk-later-turn', 'wrong-active-turn'] as const)(
         'retains a same-request native Operations completion in %s', async assertion => {
             const store = new MemoryChatHistoryStore();
             const manager = new ChatHistoryManager({ store, generateId: () => 'current-operations-conversation' });
@@ -13108,13 +13110,36 @@ describe('LLMView turn lifecycle', () => {
                 emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__' }));
                 emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
                 const guard = { isCurrent: () => true, isPathAllowed: () => true, isNoteDomainAllowed: () => true };
-                const intent = await session.stage({ runId: 'run_ui_1', turnId: 'turn_1', mode: 'apply', taskSourceReadGuard: guard,
-                    operations: [{ toolCallId: 'stage-call', name: 'vault_process', input: {
+                const laterTurn = assertion === 'direct-later-turn' || assertion === 'sdk-later-turn' || assertion === 'wrong-active-turn';
+                const stageTurnId = laterTurn ? 'stage-turn' : 'turn_1';
+                if (laterTurn) {
+                    emitCanonical(call, canonicalEvent({ type: 'message_end', message: assistantMessage('read-assistant', [
+                        { type: 'toolCall', id: 'read-first', name: 'read_note', input: { path: file.path } },
+                    ]) }));
+                    emitCanonical(call, canonicalEvent({ type: 'message_end', message: toolResultMessage('read-first-result', {
+                        toolCallId: 'read-first', toolName: 'read_note', content: { promptText: await vault.read(), includeInNextPrompt: true },
+                    }) }));
+                    emitCanonical(call, canonicalEvent({ type: 'turn_end', status: 'completed' }));
+                    emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: stageTurnId }));
+                }
+                const sdkChild = assertion === 'sdk-child' || assertion === 'unbound-sdk-child' || assertion === 'sdk-no-text-cancel'
+                    || assertion === 'sdk-later-turn';
+                const lineage = completeInputLineage([{ kind: 'user-text', messageId: 'current-operations-user' }]);
+                const childLineage = completeInputLineage([...lineage.dependencies,
+                    { kind: 'vault', path: 'notes/sdk-source.txt', via: 'note', resourceRef: 'sdk-source-ref' }]);
+                const childCallId = sdkChild ? 'sdk-child-call' : 'stage-call';
+                const intent = await session.stage({ runId: 'run_ui_1', turnId: assertion === 'wrong-active-turn' ? 'turn_1' : stageTurnId,
+                    mode: 'apply', taskSourceReadGuard: guard,
+                    ...(sdkChild ? { hostParentBinding: { parentToolCallId: 'parent-code-call',
+                        parentAssistantId: assertion === 'unbound-sdk-child' ? 'foreign-assistant' : 'stage-assistant' },
+                    inputLineage: childLineage } : {}),
+                    operations: [{ toolCallId: childCallId, name: 'vault_process', input: {
                         path: file.path, operation: 'replace', params: { search: 'Blue', replace: 'Green', occurrence: 'first' },
                     } }] });
-                const lineage = completeInputLineage([{ kind: 'user-text', messageId: 'current-operations-user' }]);
-                emitCanonical(call, canonicalEvent({ type: 'message_end', message: {
-                    ...assistantMessage('stage-assistant', [{ type: 'toolCall', id: 'stage-call', name: 'vault_process', input: {} }]),
+                emitCanonical(call, canonicalEvent({ type: 'message_end', turnId: stageTurnId, message: {
+                    ...assistantMessage('stage-assistant', [{ type: 'toolCall',
+                        id: sdkChild ? 'parent-code-call' : 'stage-call',
+                        name: sdkChild ? 'execute_obsidian_code' : 'vault_process', input: {} }]),
                     inputLineage: lineage,
                 } }));
                 call.options.onOperationsIntentStaged?.(intent);
@@ -13139,10 +13164,59 @@ describe('LLMView turn lifecycle', () => {
                     closedText = allText(containerEl);
                     releaseNative!();
                 }
+                if (assertion === 'unbound-sdk-child' || assertion === 'wrong-active-turn') {
+                    await expect(execution).rejects.toThrow('The original Operations request could not be saved; execution did not start.');
+                    expect(body).toBe('Blue kite');
+                    expect(vault.process).not.toHaveBeenCalled();
+                    call.resolve();
+                    await flushPromises();
+                    return;
+                }
                 const completed = await execution;
                 expect(completed.state).toBe('completed');
                 expect(body).toBe('Green kite');
                 expect(vault.process).toHaveBeenCalledTimes(1);
+                if (laterTurn) {
+                    const savedRunning = await manager.getTurns(call.options.operationsStatus!.conversationId);
+                    expect(savedRunning[0].assistant.actionStates).toEqual([expect.objectContaining({
+                        operationId: intent.id, phase: 'completed',
+                        receipt: { kind: 'operations-result', intentId: intent.id, state: 'completed' },
+                        origin: expect.objectContaining({ assistantId: 'stage-assistant', callId: childCallId }),
+                    })]);
+                }
+                if (assertion === 'sdk-no-text-cancel') {
+                    const conversationId = call.options.operationsStatus!.conversationId;
+                    const receiptId = completed.operations[0].receiptId!;
+                    const originalFact = { owner: 'operations', operationId: intent.id, phase: 'completed',
+                        receipt: { kind: 'operations-result', intentId: intent.id, state: 'completed' },
+                        actions: [expect.objectContaining({ receiptId, phase: 'applied' })] };
+                    expect((await manager.getTurns(conversationId))[0].assistant.actionStates)
+                        .toEqual([expect.objectContaining(originalFact)]);
+                    getButtonByClass(containerEl, 'cancel-button').click();
+                    expect(call.signal?.aborted).toBe(true);
+                    call.reject(new DOMException('Aborted', 'AbortError'));
+                    await waitForTurnCompletion(view);
+                    const saved = await manager.getTurns(conversationId);
+                    expect(saved).toHaveLength(1);
+                    expect(saved[0].assistant.actionStates).toEqual([expect.objectContaining(originalFact)]);
+                    expect(saved[0].assistant.turnStatus).toBe('aborted');
+                    expect(view.chatHistory[1].canonicalTurn?.status).toBe('aborted');
+                    expect(view.chatHistory[1].canonicalTurn?.actionStates).toEqual([expect.objectContaining(originalFact)]);
+                    expect(view.chatHistory[1].content).toBe('Generation cancelled');
+                    expect(body).toBe('Green kite'); expect(vault.process).toHaveBeenCalledTimes(1);
+                    getTextArea(containerEl).value = 'Refresh the original operation after Stop.';
+                    void getButtonByText(containerEl, 'Ask').click();
+                    await waitForStreamCallCount(streamCalls, 2);
+                    const nextHistory = streamCalls[1].chatHistory as ChatMessage[];
+                    const nextAssistant = nextHistory.find(message => message.role === 'assistant'
+                        && message.canonicalTurn?.actionStates?.some(state => state.operationId === intent.id));
+                    expect(nextAssistant?.canonicalTurn?.actionStates).toEqual([expect.objectContaining(originalFact)]);
+                    expect(projectActionStates(additionalHistoricalActionStates(nextAssistant!)))
+                        .toEqual([expect.objectContaining({ owner: 'operations', operationId: intent.id, phase: 'completed',
+                            actions: [expect.objectContaining({ receiptId, phase: 'applied' })] })]);
+                    streamCalls[1].resolve(); await waitForTurnCompletion(view);
+                    return;
+                }
                 if (assertion === 'current-status') {
                     const status = call.options.operationsStatus!;
                     expect(await status.read({ intentId: intent.id })).toMatchObject({ available: true, state: 'completed', undoAvailable: true });
@@ -13176,13 +13250,15 @@ describe('LLMView turn lifecycle', () => {
                 emitCanonical(call, canonicalEvent({ type: 'agent_end', scope: 'run', turnId: '__run__', status: 'completed' }));
                 call.resolve();
                 for (let index = 0; index < 8; index++) await flushPromises();
-                if (assertion === 'final-history') {
+                if (assertion === 'final-history' || assertion === 'sdk-child') {
                     const saved = await manager.getTurns(call.options.operationsStatus!.conversationId);
                     expect(saved).toHaveLength(1);
                     expect(saved[0].assistant.actionStates).toEqual([expect.objectContaining({
                         owner: 'operations', operationId: intent.id, phase: 'completed',
                         receipt: { kind: 'operations-result', intentId: intent.id, state: 'completed' },
                         operationsUndoAvailable: true,
+                        ...(assertion === 'sdk-child' ? { origin: expect.objectContaining({
+                            assistantId: 'stage-assistant', callId: childCallId }), inputLineage: childLineage } : {}),
                     })]);
                     expect(view.chatHistory[1].canonicalTurn?.actionStates?.[0].phase).toBe('completed');
                 }

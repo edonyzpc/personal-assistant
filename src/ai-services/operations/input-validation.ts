@@ -13,6 +13,7 @@ import {
 } from "./types";
 import { validateOperationsVaultPath } from "./vault-path";
 import { isRecord } from "../../pa/helpers";
+import { isResourceOperationToolName, validateResourceOperationInput } from "./resource-input-validation";
 
 const DANGEROUS_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 const MAX_JSON_DEPTH = 20;
@@ -34,6 +35,7 @@ export function validateCoreWriteInput<Name extends CoreWriteToolName>(
     name: Name,
     raw: unknown,
 ): CoreWriteInputMap[Name] & { mode: OperationsMode } {
+    if (isResourceOperationToolName(name)) return validateResourceOperationInput(name, raw) as CoreWriteInputMap[Name] & { mode: OperationsMode };
     const supplied = expectObject(raw, name);
     const mode = expectEnum(supplied.mode, ["apply", "preview"] as const, `${name}.mode`);
     const domainInput = { ...supplied };
@@ -55,6 +57,8 @@ function validateDomainWriteInput<Name extends CoreWriteToolName>(name: Name, ra
             return validateRemoveNoteImageInput(raw) as CoreWriteInputMap[Name];
         case "vault_move":
             return validateVaultMoveInput(raw) as CoreWriteInputMap[Name];
+        default:
+            throw new OperationsValidationError(`Unsupported Operations tool: ${name}.`);
     }
 }
 

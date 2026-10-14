@@ -35,8 +35,13 @@ export interface ChatToolContext {
     memoryActionRequest?: import("./memory-action-types").MemoryActionHostBinding;
     /** Actual physical Chat projection lineage for the executing answer turn. */
     imageRequestLineage?: InputLineage;
+    /** Host-prepared lineage for a dynamically admitted child call. */
+    childInputLineage?: InputLineage;
     /** Existing Debug/usage ownership for a host-side image preparation model call. */
     createImageRuntime?: CreateImageHostRuntime;
+    /** Per-call Host binding for composed QuickJS execution. */
+    executeObsidianRuntime?: import("./independent-computation/obsidian-code-capability").ExecuteObsidianCodeRuntime;
+    obsidianSdkHost?: import("./independent-computation/obsidian-resource-sdk").ObsidianSdkHost;
     /** Current tool's observation ownership for automatic Ghost metadata generation. */
     ghostMetadataDebug?: import("./ghost-metadata").GhostMetadataDebugScope;
 }
@@ -102,6 +107,8 @@ export interface ChatToolInputSchema {
 
 export interface ChatToolRegistryDefinition {
     name: ChatToolName;
+    sdkOnly?: boolean;
+    binaryResult?: boolean;
     description: string;
     inputSchema: ChatToolInputSchema;
     plannerGuidance: string[];
@@ -133,6 +140,8 @@ export interface PrepareToolArgumentsContext {
 
 export interface ChatToolDefinition<Input, Output> {
     name: ChatToolName;
+    sdkOnly?: boolean;
+    binaryResult?: boolean;
     description: string;
     inputSchema: ChatToolInputSchema;
     plannerGuidance: string[];
@@ -141,6 +150,9 @@ export interface ChatToolDefinition<Input, Output> {
     outputBudgetChars: number;
     requiresConfirmation: boolean;
     failureBehavior: ChatToolFailureBehavior;
+    retrySafety?: "read_only" | "side_effect";
+    canReuseSuccessfulResult?: boolean;
+    supportsPreview?: boolean;
     statusMessageText: string;
     sourceBoundary: ChatToolSourceBoundary;
     statusMessage(input: Input): string;

@@ -33,6 +33,10 @@ export interface OperationsReviewDiffBlock {
 }
 
 export interface OperationsReviewFileGroup {
+    resourceKind?: import("./types").ResourceEffectFacts["kind"];
+    resourcePaths?: readonly string[];
+    /** Presentation of the original mkdir result, never permission to undo. */
+    mkdirUndoAvailable?: boolean;
     id: string;
     path: string;
     normalizedPath: string;
@@ -105,7 +109,7 @@ export function createOperationsReviewModel(
                 || result?.effects?.some(effect => effect.key === "note" && effect.status === "applied");
         }) : operations;
         const reached = appliedOperations[appliedOperations.length - 1];
-        const after = first.kind === "move" ? before : reached?.expectedAfter ?? before;
+        const after = first.kind === "move" || first.kind === "resource" && first.resource.action === "move" ? before : reached?.expectedAfter ?? before;
         const group: OperationsReviewFileGroup = {
             id: `group-${normalizedPath}`,
             path: first.path,
@@ -113,11 +117,19 @@ export function createOperationsReviewModel(
             before,
             after,
             beforeExists: first.expectedBefore !== null,
-            created: first.expectedBefore === null,
-            netZeroTextChange: first.expectedBefore !== null && before === after,
+            created: first.expectedBefore === null && (first.kind !== "resource" || first.resource.action === "create"),
+            netZeroTextChange: first.kind !== "resource" && first.expectedBefore !== null && before === after,
             operationIds: operations.map((operation) => operation.id),
             operations,
             ...(first.kind === "move" ? { targetPath: first.targetPath } : {}),
+            ...(first.kind === "resource" ? {
+                resourceKind: first.resource.action,
+                resourcePaths: first.resource.action === "mkdir" ? first.resource.paths
+                    : first.resource.action === "trash" ? first.resource.tree.map(e => e.path) : [first.path],
+                ...(first.resource.action === "mkdir" && results ? { mkdirUndoAvailable: operations.some(operation =>
+                    results.some(result => result.operationId === operation.id && !!result.receiptId && result.undoAvailable === true)) } : {}),
+                ...(first.resource.action === "move" ? { targetPath: first.resource.to } : {}),
+            } : {}),
             ...createLineDiff(before, after, normalizedPath),
         };
         groupsByPath.set(normalizedPath, group);

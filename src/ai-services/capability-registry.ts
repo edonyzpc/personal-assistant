@@ -317,6 +317,7 @@ export class CapabilityRegistry {
 
     private listCapabilitiesForExport(filter?: CapabilityExportFilter): AgentCapability[] {
         return this.policyEngine.filterExportable(this.listCapabilities())
+            .filter(capability => capability.sdkOnly !== true)
             .filter((capability) => (
                 capability.kind === "tool"
                 || (capability.kind === "action" && filter?.includeActions === true)

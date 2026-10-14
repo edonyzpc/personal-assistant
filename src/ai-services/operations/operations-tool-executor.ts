@@ -21,9 +21,11 @@ import {
     type OperationsIntent,
     type OperationsMode,
     type StageOperationsIntentInput,
+    type OperationsResourceContext,
 } from "./types";
 
 export interface OperationsIntentStager {
+    getUndoTargetPaths?(receiptId: string): readonly string[] | undefined;
     stageIntent(input: StageOperationsIntentInput, signal?: AbortSignal): Promise<OperationsIntent> | OperationsIntent;
     getBatchContextResult?(runId: string, turnId: string, toolCallIds: readonly string[]): {
         intent?: OperationsIntent; execution?: OperationsExecutionResult;
@@ -36,6 +38,7 @@ export interface OperationsIntentStager {
 export type OperationsIntentExecutor = (input: ExecuteCurrentOperationsIntentInput) => Promise<OperationsExecutionResult>;
 
 export interface OperationsStagingToolExecutorOptions {
+    resourceContext?: OperationsResourceContext;
     baseExecutor: PaAgentToolExecutor;
     registry: CapabilityRegistry;
     controller: OperationsIntentStager;
@@ -47,11 +50,31 @@ export interface OperationsStagingToolExecutorOptions {
 
 /** Prepare the whole phase first, then execute it once inside its first write call. */
 export function createOperationsStagingToolExecutor(options: OperationsStagingToolExecutorOptions): PaAgentToolExecutor {
-    // One runtime wrapper owns one currently dispatched phase. Reuse its
-    // existing preparation result map so later calls can consume facts after
-    // the first native write has invalidated the original read observation.
-    let preparedPhase: { runId: string; turnId: string; toolResults: Map<string, PaAgentToolExecutionResult> } | undefined;
+    // A preparation belongs to its exact call batch. Model and SDK child batches
+    // can share a run and turn, so a run/turn slot would let one execution write
+    // receipts into another batch's prepared results.
+    interface PreparedBatch {
+        callIds: ReadonlySet<string>;
+        toolResults: Map<string, PaAgentToolExecutionResult>;
+    }
+    const preparedBatchesByContext = new Map<string, PreparedBatch>();
+    const batchKey = (runId: string, turnId: string, callId: string): string =>
+        `${JSON.stringify(runId)}\0${JSON.stringify(turnId)}\0${JSON.stringify(callId)}`;
     return {
+        getAttemptObservation: context => {
+            if (!isCoreWriteToolName(context.toolName)) return options.baseExecutor.getAttemptObservation?.(context);
+            const observed = options.controller.getCallContextResult?.(context.runId, context.turnId, context.toolCallId);
+            let result: PaAgentToolExecutionResult | undefined;
+            if (observed?.execution) result = executionResult(observed.execution, context.toolCallId);
+            else if (observed?.intent?.state === "executing") result = executionResult({ intentId: observed.intent.id, state: "executing", operations: [] }, context.toolCallId);
+            else if (observed?.intent?.state === "pending") result = {
+                outcome: "success", executionState: "not_started", includeInNextPrompt: true,
+                promptText: JSON.stringify({ intentId: observed.intent.id, state: "pending" }),
+                resultFact: { kind: "unknown", operationId: observed.intent.id },
+                metadata: { state: "pending", intentId: observed.intent.id, ownerPrepared: true, retrySafety: "side_effect" },
+            };
+            return result && options.registry.get(context.toolName)?.sdkOnly ? projectOperationsSdkResult(result) : result;
+        },
         preflightBatch: options.baseExecutor.preflightBatch?.bind(options.baseExecutor),
         getCanonicalToolCallKey: options.baseExecutor.getCanonicalToolCallKey?.bind(options.baseExecutor),
         getExecutionMode: name => isCoreWriteToolName(name) ? "sequential" : options.baseExecutor.getExecutionMode?.(name),
@@ -60,15 +83,44 @@ export function createOperationsStagingToolExecutor(options: OperationsStagingTo
         canReuseSuccessfulResult: options.baseExecutor.canReuseSuccessfulResult?.bind(options.baseExecutor),
         prepareBatch: async input => {
             const result = await prepareOperationsBatch(options, input);
-            preparedPhase = { runId: input.runId, turnId: input.turnId, toolResults: result.toolResults as Map<string, PaAgentToolExecutionResult> };
+            for (const call of input.toolCalls) {
+                const observation = result.toolResults.get(call.id);
+                if (observation && options.registry.get(call.name)?.sdkOnly) {
+                    (result.toolResults as Map<string, PaAgentToolExecutionResult>).set(call.id, projectOperationsSdkResult(observation));
+                }
+            }
+            const preparedBatch: PreparedBatch = {
+                callIds: new Set(input.toolCalls
+                    .filter(call => isCoreWriteToolName(call.name))
+                    .map(call => call.id)),
+                toolResults: result.toolResults as Map<string, PaAgentToolExecutionResult>,
+            };
+            for (const callId of preparedBatch.callIds) {
+                preparedBatchesByContext.set(batchKey(input.runId, input.turnId, callId), preparedBatch);
+            }
             return result;
         },
-        execute: async input => isCoreWriteToolName(input.toolCall.name)
-            ? executePreparedBatch(options, input,
-                preparedPhase?.runId === input.runId && preparedPhase.turnId === input.turnId ? preparedPhase.toolResults : undefined)
-            : input.toolCall.name === EXECUTE_OPERATIONS_TOOL_NAME
-                ? rejectedResult(input.toolCall.name, "operations_legacy_execution_retired")
-                : options.baseExecutor.execute(input),
+        execute: async input => {
+            if (!isCoreWriteToolName(input.toolCall.name)) {
+                return input.toolCall.name === EXECUTE_OPERATIONS_TOOL_NAME
+                    ? rejectedResult(input.toolCall.name, "operations_legacy_execution_retired")
+                    : options.baseExecutor.execute(input);
+            }
+            const preparedBatch = preparedBatchesByContext.get(
+                batchKey(input.runId, input.turnId, input.toolCall.id),
+            );
+            try {
+                const result = await executePreparedBatch(options, input, preparedBatch?.toolResults);
+                return options.registry.get(input.toolCall.name)?.sdkOnly ? projectOperationsSdkResult(result) : result;
+            } finally {
+                if (preparedBatch) {
+                    for (const callId of preparedBatch.callIds) {
+                        const key = batchKey(input.runId, input.turnId, callId);
+                        if (preparedBatchesByContext.get(key) === preparedBatch) preparedBatchesByContext.delete(key);
+                    }
+                }
+            }
+        },
     };
 }
 
@@ -91,7 +143,10 @@ async function executePreparedBatch(options: OperationsStagingToolExecutorOption
     try {
         const execution = await options.intentExecutor({ intentId: intent.id, runId: input.runId,
             signal: input.signal, taskSourceReadGuard: input.taskSourceReadGuard });
-        for (const operation of execution.operations) preparedResults?.set(operation.toolCallId, executionResult(execution, operation.toolCallId));
+        for (const operation of execution.operations) {
+            const result = executionResult(execution, operation.toolCallId);
+            preparedResults?.set(operation.toolCallId, options.registry.get(operation.name)?.sdkOnly ? projectOperationsSdkResult(result) : result);
+        }
         return executionResult(execution, input.toolCall.id);
     } catch (error) {
         if (!(error instanceof OperationsControllerError)) {
@@ -139,6 +194,21 @@ function executionResult(execution: OperationsExecutionResult, toolCallId: strin
                 remainingParts: execution.operations.filter(result => result.status !== "succeeded" && result.status !== "unchanged").map(result => result.operationId) },
         } : {}),
     };
+}
+
+/** Display data only; trusted original owner facts and recovery stay alongside it. */
+function projectOperationsSdkResult(result: PaAgentToolExecutionResult): PaAgentToolExecutionResult {
+    const value = result.resultFact?.kind === "operations_result" ? result.resultFact.observation : undefined;
+    const ok = result.outcome === "success" || result.outcome === "reused_result";
+    const pending = result.metadata?.ownerPrepared === true && result.resultFact?.kind === "unknown"
+        ? { intentId: result.resultFact.operationId, state: "pending", executionState: "not_started" } : undefined;
+    const sdk = ok ? { ok: true, value: value ?? pending ?? { state: result.executionState ?? "not_started", preview: true } }
+        : { ok: false, ...(value ? { value } : {}), error: {
+            code: String(result.metadata?.category ?? result.metadata?.reason ?? value?.operations.find(op => op.failureCategory)?.failureCategory ?? result.outcome),
+            message: result.promptText, executionState: result.executionState,
+            ...(result.recovery ? { recovery: result.recovery } : {}),
+        } };
+    return { ...result, promptText: JSON.stringify(sdk), metadata: { ...result.metadata, sdkOnly: true } };
 }
 
 async function prepareOperationsBatch(options: OperationsStagingToolExecutorOptions, input: PaAgentToolBatchPreparationInput): Promise<PaAgentToolBatchPreparationResult> {
@@ -197,7 +267,10 @@ async function prepareOperationsBatch(options: OperationsStagingToolExecutorOpti
     for (const call of actionCalls) options.onToolRunning?.(call.name, "Preparing note changes...");
     try {
         const intent = await options.controller.stageIntent({ runId: input.runId, turnId: input.turnId,
-            operations, mode, ...(input.taskSourceReadGuard ? { taskSourceReadGuard: input.taskSourceReadGuard } : {}) }, input.signal);
+            operations, mode, ...(options.resourceContext ? { resourceContext: options.resourceContext } : {}),
+            ...(input.hostParentBinding ? { hostParentBinding: input.hostParentBinding } : {}),
+            ...(input.inputLineage ? { inputLineage: input.inputLineage } : {}),
+            ...(input.taskSourceReadGuard ? { taskSourceReadGuard: input.taskSourceReadGuard } : {}) }, input.signal);
         for (const call of actionCalls) {
             const capability = options.registry.get(call.name);
             if (capability) options.registry.recordCapabilityEvent({ capabilityName: call.name, providerId: capability.providerId, status: "invoked", durationMs: 0 });

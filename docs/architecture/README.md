@@ -12,6 +12,7 @@
 - [Multimodal Chat、文案版本与图文保存](./multimodal-chat-architecture.md)
 - [Chat 图片生成、版本与任务恢复](./chat-image-generation-architecture.md)
 - [Obsidian read tools / Operations boundary](./obsidian-operations-agent-plan.md)
+- [Obsidian Resource SDK](./obsidian-resource-sdk.md) — B-174：Worker组合执行、资源接口、来源与效果恢复。
 
 ## Harness 审查与实施
 

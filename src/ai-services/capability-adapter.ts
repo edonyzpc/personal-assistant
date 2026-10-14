@@ -34,6 +34,7 @@ import { getErrorType } from "./agent-utils";
 import type { ChatAgentSource, ObservedSourceRevision } from "./chat-types";
 import { isChatToolFailureReason } from './chat-types';
 import { createSourceDedupKey } from "./source-store";
+import { cloneInputLineage } from "./input-lineage";
 import { parseObservedSourceRevision } from "./generation-input-snapshot";
 import { parseMemoryManagementEvidence } from "./memory-management-evidence";
 import { parseVaultObservationEvidence, stableJson, type VaultObservationEvidence } from "./vault-observation-evidence";
@@ -60,7 +61,7 @@ export function createCapabilityFromChatToolDefinition(
 }
 
 export function chatToolResultToAgentCapabilityResult(
-    definition: Pick<ChatToolRegistryDefinition, "name" | "sourceBoundary">,
+    definition: Pick<ChatToolRegistryDefinition, "name" | "sourceBoundary" | "sdkOnly">,
     providerId: string,
     result: ChatToolResult<unknown>,
 ): AgentCapabilityResult {
@@ -84,6 +85,22 @@ export function chatToolResultToAgentCapabilityResult(
         definition.sourceBoundary,
         evidence.ok && evidence.evidence.tool === definition.name ? evidence.evidence : undefined,
     );
+    // Preserve only the object identity proved by the original SDK read owner.
+    // Citation and visible-source eligibility keep the existing adapter policy.
+    if (definition.sdkOnly || definition.name === "list_vault_entries" && providerId === "core-tools") {
+        const lineage = cloneInputLineage(result.inputLineage);
+        for (const record of visibleRecords) {
+            const identities = lineage?.completeness === "complete" ? lineage.dependencies.filter(dependency => dependency.kind === "vault"
+                && dependency.path === record.path && dependency.resourceRef) : undefined;
+            if (identities?.length !== 1 || identities[0].kind !== "vault") continue;
+            const identity = identities[0].resourceRef;
+            const owned = result.sourceRecords?.find(source => source.path === record.path && source.resourceRef === identity);
+            if (owned && identity) {
+                record.resourceRef = identity;
+                record.dedupKey = owned.dedupKey;
+            }
+        }
+    }
     if (result.ok && result.vaultObservationContractVersion === 1
         && (!evidence.ok || evidence.evidence.tool !== definition.name)) {
         return {
@@ -140,6 +157,8 @@ export function chatToolResultToAgentCapabilityResult(
         } : {}),
         ...(result.executionState ? { executionState: result.executionState } : {}),
         ...(result.recovery ? { recovery: result.recovery } : {}),
+        ...(result.actionStates ? { actionStates: result.actionStates } : {}),
+        ...(result.inputLineage ? { inputLineage: result.inputLineage } : {}),
     };
 }
 
@@ -223,6 +242,8 @@ class ChatToolCapability implements AgentCapability {
     readonly failureBehavior: ChatToolFailureBehavior;
     readonly statusMessageText: string;
     readonly sourceRecordKind: AgentSourceRecordKind;
+    readonly sdkOnly?: boolean;
+    readonly binaryResult?: boolean;
     private readonly definition: ChatToolRegistryDefinition;
     private readonly executeLegacyTool: ChatToolCapabilityAdapterOptions["execute"];
     private readonly prepareAndValidateImpl?: ChatToolCapabilityAdapterOptions["prepareAndValidate"];
@@ -233,6 +254,8 @@ class ChatToolCapability implements AgentCapability {
     ) {
         this.definition = cloneRegistryDefinition(definition);
         this.name = definition.name;
+        this.sdkOnly = definition.sdkOnly;
+        this.binaryResult = definition.binaryResult;
         this.description = definition.description;
         this.inputSchema = cloneInputSchema(definition.inputSchema);
         this.plannerGuidance = [...definition.plannerGuidance];
@@ -321,6 +344,8 @@ export function createChatToolCapability<Input, Output>(
 
     const registryDef: ChatToolRegistryDefinition = {
         name: definition.name,
+        ...(definition.sdkOnly !== undefined ? { sdkOnly: definition.sdkOnly } : {}),
+        ...(definition.binaryResult !== undefined ? { binaryResult: definition.binaryResult } : {}),
         description: definition.description,
         inputSchema: cloneInputSchema(definition.inputSchema),
         plannerGuidance: [...definition.plannerGuidance],
@@ -333,7 +358,7 @@ export function createChatToolCapability<Input, Output>(
         sourceBoundary: definition.sourceBoundary,
     };
 
-    return createCapabilityFromChatToolDefinition(registryDef, {
+    const capability = createCapabilityFromChatToolDefinition(registryDef, {
         providerId: options.providerId,
         origin: options.origin,
         platform: options.platform,
@@ -397,12 +422,16 @@ export function createChatToolCapability<Input, Output>(
                 currentMemoryUsage: context.currentMemoryUsage,
                 memoryActionRequest: context.memoryActionRequest,
                 imageRequestLineage: context.imageRequestLineage,
+                childInputLineage: context.childInputLineage,
                 createImageRuntime: context.createImageRuntime,
+                executeObsidianRuntime: context.executeObsidianRuntime,
+                obsidianSdkHost: context.obsidianSdkHost,
                 ghostMetadataDebug: context.ghostMetadataDebug,
             };
             try {
                 const result = await definition.execute(validatedInput, chatContext);
-                throwIfAborted(context.signal);
+                const trustedComposedFact = Boolean(result.actionStates?.length || result.resultFact);
+                if (context.signal?.aborted && !trustedComposedFact) throwIfAborted(context.signal);
                 const outputIdentity = result.vaultObservationContractVersion === 1
                     ? stableJson(result.content)
                     : undefined;
@@ -441,6 +470,12 @@ export function createChatToolCapability<Input, Output>(
             }
         },
     });
+    if (definition.retrySafety) capability.retrySafety = definition.retrySafety;
+    if (definition.canReuseSuccessfulResult !== undefined) {
+        capability.canReuseSuccessfulResult = definition.canReuseSuccessfulResult;
+    }
+    if (definition.supportsPreview !== undefined) capability.supportsPreview = definition.supportsPreview;
+    return capability;
 }
 
 /**

@@ -17,6 +17,7 @@ export const PA_AGENT_DIRECT_TOOL_NAMES = [
     "load_skill",
     "search_vault_metadata",
     "execute_code",
+    "execute_obsidian_code",
 ] as const;
 
 const DIRECT_TOOL_NAMES: ReadonlySet<string> = new Set(PA_AGENT_DIRECT_TOOL_NAMES);

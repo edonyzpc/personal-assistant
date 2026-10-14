@@ -30,6 +30,28 @@ const externalNodeBuiltinsPlugin = {
 	},
 };
 
+const createInlineGuestLibraryPlugin = (production) => ({
+	name: "inline-guest-libraries",
+	setup(build) {
+		build.onResolve({ filter: /\?guest-source$/ }, args => ({
+			path: path.resolve(args.resolveDir, args.path.replace(/\?guest-source$/, "")),
+			namespace: "guest-library-source",
+		}));
+		build.onLoad({ filter: /.*/, namespace: "guest-library-source" }, async args => {
+			const result = await esbuildBuild({
+				entryPoints: [args.path], bundle: true, platform: "browser", format: "iife",
+				mainFields: ["browser", "module", "main"], conditions: ["browser"],
+				target: "es2020", write: false, metafile: true, minify: production,
+				logLevel: "silent",
+			});
+			return {
+				contents: `export default ${JSON.stringify(result.outputFiles[0].text)};`,
+				loader: "js", watchFiles: Object.keys(result.metafile.inputs),
+			};
+		});
+	},
+});
+
 const createInlineSqliteWorkerPlugin = (production) => ({
 	name: "inline-sqlite-worker",
 	setup(build) {
@@ -53,6 +75,7 @@ const createInlineSqliteWorkerPlugin = (production) => ({
 				logLevel: "silent",
 				write: false,
 				metafile: true,
+				plugins: [createInlineGuestLibraryPlugin(production)],
 				minify: production ? true : false,
 				sourcemap: false,
 				loader: {

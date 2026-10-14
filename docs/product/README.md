@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [Obsidian 内部通用执行与资源 SDK](./specs/pa-obsidian-resource-sdk-product-spec.md) — B-174：核心资源SDK、可组合执行与现有owner；[架构](../architecture/obsidian-resource-sdk.md)、[验证与边界](../archive/2026/b174-obsidian-resource-sdk-validation.md)。
 - [单次写入与原生移动](./specs/pa-direct-operations-product-spec.md) — B-173：直接写入、review/现有 Undo、结果连续性与能力不足收敛；[验证与边界](../archive/2026/b173-direct-operations-validation.md)。
 - [工具混合披露](./specs/pa-agent-tool-disclosure-product-spec.md) — B-172：基础直供、完整短目录与批量加载；[验证与边界](../archive/2026/b172-agent-tool-disclosure-validation.md)。
 - [独立通用计算](./specs/pa-independent-computation-product-spec.md) — B-170：日期、数值与结构化数据计算，由 Agent 自主选择和组合工具；[验证与边界](../archive/2026/b170-independent-computation-validation.md)。

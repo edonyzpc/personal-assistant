@@ -1,3 +1,5 @@
+// PA derivation from Pi c5f5b3282d5e4203c085e59837ba17aeaf2829b5:
+// single namespace publication, sender backpressure and explicit SDK byte codec.
 /**
  * JavaScript evaluated inside the QuickJS VM before the script runs.
  *
@@ -16,7 +18,7 @@
  * JSON text passed in as `storeJson`, and the keys the script wrote are reported
  * with a successful "done".
  *
- * Evaluates to a function `(bridge, toolsJson, globalsJson, storeJson) => { settle, run, stalled }`.
+ * Evaluates to a function `(bridge, toolsJson, globalsJson, storeJson, limitsJson) => { settle, run, stalled }`.
  * `toolsJson` lists `{ name, jsName, description }`: `tools[jsName]` and `tools[name]` call the
  * tool, and `ALL_TOOLS` lists `{ name: jsName, description }`.
  * `stalled()` reports a script that has not finished while no host call is pending: with no timers
@@ -43,7 +45,7 @@ export const MAX_OUTPUT_ITEMS = 100_000;
 const IMAGE_HELPER_EXPECTS =
 	"image expects a non-empty image URL string, an object with image_url, or a raw MCP image block";
 
-export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson, storeJson) {
+export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson, storeJson, limitsJson) {
 	"use strict";
 
 	// Freeze every object reachable from the built-in globals, plus the intrinsics that are only
@@ -142,8 +144,12 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	const TypeErrorCtor = TypeError;
 	const RangeErrorCtor = RangeError;
 	const pending = new Map();
+	const slotWaiters = [];
+	let inflightCalls = 0;
+	let inflightBytes = 0;
 	let nextId = 1;
 	let finished = false;
+	const limits = parse(limitsJson);
 	// Thrown by exit() to unwind the script after it already reported success.
 	const EXIT = Object.freeze({});
 
@@ -155,6 +161,59 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 
 	function serialize(value) {
 		return value === undefined ? undefined : stringify(value);
+	}
+
+	function decodeBase64(value) {
+		const clean = value.replace(/\\s+/g, "");
+		if (clean === "") return new Uint8Array(0);
+		if (clean.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(clean)) {
+			throw new TypeErrorCtor("invalid base64 bytes from the host bridge");
+		}
+		const lookup = Object.create(null);
+		const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+		for (let index = 0; index < alphabet.length; index++) lookup[alphabet[index]] = index;
+		let size = clean.length / 4 * 3;
+		if (clean.endsWith("==")) size -= 2;
+		else if (clean.endsWith("=")) size -= 1;
+		const bytes = new Uint8Array(size);
+		let at = 0;
+		for (let index = 0; index < clean.length; index += 4) {
+			const a = lookup[clean[index]], b = lookup[clean[index + 1]];
+			const c = lookup[clean[index + 2]], d = lookup[clean[index + 3]];
+			if (at < size) bytes[at++] = (a << 2) | (b >> 4);
+			if (at < size) bytes[at++] = ((b & 15) << 4) | (c >> 2);
+			if (at < size) bytes[at++] = ((c & 3) << 6) | d;
+		}
+		return bytes;
+	}
+
+	function decodeBinaryResult(value) {
+		if (value && value.ok === true && value.value && value.value.bytes
+			&& typeof value.value.bytes.__bytesBase64 === "string") {
+			value.value.bytes = decodeBase64(value.value.bytes.__bytesBase64);
+		}
+		return value;
+	}
+
+	function wireBytes(value) {
+		let bytes = 0;
+		for (let index = 0; index < value.length; index++) {
+			const unit = value.charCodeAt(index);
+			if (unit < 0x80) bytes++;
+			else if (unit < 0x800) bytes += 2;
+			else if (unit >= 0xd800 && unit <= 0xdbff && index + 1 < value.length
+				&& value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff) {
+				bytes += 4;
+				index++;
+			} else bytes += 3;
+		}
+		return bytes;
+	}
+
+	function releaseSlot(bytes) {
+		inflightCalls--;
+		inflightBytes -= bytes;
+		if (!finished && slotWaiters.length) slotWaiters.shift()();
 	}
 
 	// QuickJS stacks list frames only. Prefix "Name: message" like V8 so the
@@ -192,19 +251,57 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 		}
 	}
 
-	function caller(kind, name, spread) {
+	function caller(kind, name, spread, binaryResult) {
 		return (...args) =>
 			new Promise((resolve, reject) => {
-				let json;
-				try {
-					json = serialize(spread ? args : args[0]);
-				} catch (error) {
-					reject(error);
-					return;
-				}
-				const id = nextId++;
-				pending.set(id, { resolve, reject });
-				bridge(kind, id, name, json);
+				let serialized;
+				const refuseBudget = (message) => {
+					releaseSlot(0);
+					if (kind === "global" && name.startsWith("obsidian.")) {
+						resolve({ ok: false, error: { code: "resource_limit", message, executionState: "not_started" } });
+					} else {
+						reject(new RangeErrorCtor(message));
+					}
+				};
+				const send = () => {
+					if (finished) { reject(new ErrorCtor("Execution has ended.")); return; }
+					// Reserve a slot before serializing; waiting calls remain in the bounded VM.
+					inflightCalls++;
+					let reservedBytes = 0;
+					try {
+						if (!serialized) {
+							const json = serialize(spread ? args : args[0]);
+							serialized = { json, bytes: json === undefined ? 0 : wireBytes(json) };
+						}
+						const { json, bytes } = serialized;
+						if (json !== undefined && limits.maxCallPayloadChars !== undefined && json.length > limits.maxCallPayloadChars) {
+							refuseBudget("Tool argument exceeds the JSON character budget before sending.");
+							return;
+						}
+						const bounds = limits.callResourceLimits;
+						if (bounds && (bytes > bounds.maxPayloadBytes || bytes > bounds.maxInflightBytes)) {
+							refuseBudget("Tool argument exceeds the live RPC byte budget before sending.");
+							return;
+						}
+						if (bounds && inflightBytes + bytes > bounds.maxInflightBytes) {
+							// This payload fits by itself. Wait for a live call to release bytes,
+							// retaining the exact input instead of serializing it again on retry.
+							inflightCalls--;
+							slotWaiters.push(send);
+							return;
+						}
+						const id = nextId++;
+						inflightBytes += bytes;
+						reservedBytes = bytes;
+						pending.set(id, { resolve, reject, bytes, binaryResult });
+						bridge(kind, id, name, json);
+					} catch (error) {
+						releaseSlot(reservedBytes);
+						reject(error);
+					}
+				};
+				if (limits.callResourceLimits && inflightCalls >= limits.callResourceLimits.maxInflightCalls) slotWaiters.push(send);
+				else send();
 			});
 	}
 
@@ -251,22 +348,40 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	);
 
 	const namespaces = new Map();
-	for (const { name, spread } of parse(globalsJson)) {
-		const fn = caller("global", name, spread);
-		const dot = name.indexOf(".");
-		if (dot === -1) {
-			Object.defineProperty(globalThis, name, { value: fn, enumerable: true });
+	const roots = new Map();
+	for (const { name, spread, binaryResult } of parse(globalsJson)) {
+		const fn = caller("global", name, spread, binaryResult);
+		const parts = name.split(".");
+		if (parts.length === 1) {
+			roots.set(name, fn);
 			continue;
 		}
-		const namespace = name.slice(0, dot);
-		if (!namespaces.has(namespace)) namespaces.set(namespace, Object.create(null));
-		namespaces.get(namespace)[name.slice(dot + 1)] = fn;
+		let container;
+		for (let index = 0; index < parts.length - 1; index++) {
+			const path = parts.slice(0, index + 1).join(".");
+			const part = parts[index];
+			if (!namespaces.has(path)) namespaces.set(path, Object.create(null));
+			const namespace = namespaces.get(path);
+			if (index === 0) {
+				roots.set(part, namespace);
+			} else if (!(part in container)) {
+				container[part] = namespace;
+			}
+			container = namespace;
+		}
+		container[parts[parts.length - 1]] = fn;
 	}
-	for (const [namespace, members] of namespaces) {
+	for (const [namespace, members] of [...namespaces].reverse()) {
 		Object.freeze(members);
 		const value = guard(members, namespace, Object.keys(members));
-		Object.defineProperty(globalThis, namespace, { value, enumerable: true });
+		const parts = namespace.split(".");
+		if (parts.length === 1) {
+			roots.set(parts[0], value);
+		} else {
+			namespaces.get(parts.slice(0, -1).join("."))[parts[parts.length - 1]] = value;
+		}
 	}
+	for (const [name, value] of roots) Object.defineProperty(globalThis, name, { value, enumerable: true });
 
 	// key -> JSON text. Sizes count key and JSON characters.
 	const stored = new Map(Object.entries(parse(storeJson)));
@@ -458,6 +573,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 			const entry = pending.get(id);
 			if (!entry) return;
 			pending.delete(id);
+			releaseSlot(entry.bytes);
 			if (!ok) {
 				entry.reject(new ErrorCtor(payload));
 				return;
@@ -465,11 +581,17 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 			let value;
 			try {
 				value = payload === undefined ? undefined : parse(payload);
-			} catch (error) {
-				entry.reject(error);
-				return;
-			}
-			entry.resolve(value);
+				} catch (error) {
+					entry.reject(error);
+					return;
+				}
+				try {
+					if (entry.binaryResult) value = decodeBinaryResult(value);
+				} catch (error) {
+					entry.reject(error);
+					return;
+				}
+				entry.resolve(value);
 		},
 		run(fn) {
 			let promise;

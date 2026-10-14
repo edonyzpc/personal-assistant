@@ -176,7 +176,7 @@ const bundledResourceNoticeByPath = new Map([
     "src/third_party/pi-codemode",
     {
       license: "MIT",
-      provenance: "Pi codemode minimum browser source closure at commit c5f5b3282d5e4203c085e59837ba17aeaf2829b5; wasm.ts is type-only browser extraction and symbol-dispose.d.ts is project-authored compatibility typing.",
+      provenance: "Derived from Pi codemode minimum browser source closure at commit c5f5b3282d5e4203c085e59837ba17aeaf2829b5. PA additions bind SDK globals and fixed guest libraries, enforce byte/in-flight transport boundaries and preserve host cancellation facts. wasm.ts is type-only browser extraction and symbol-dispose.d.ts is project-authored compatibility typing.",
     },
   ],
 ]);
@@ -185,13 +185,13 @@ const PI_CODEMODE_COMMIT = "c5f5b3282d5e4203c085e59837ba17aeaf2829b5";
 const PI_CODEMODE_SHA256_BY_PATH = new Map([
   ["identifier.ts", "c920a297e79186edc61348906950b639e8d67602122f165fb98012fd32be2f11"],
   ["LICENSE", "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"],
-  ["runtime/execution.ts", "1551463e181168db410482955f6cbeda87e6eda731092889f1e831fdad4f4f5c"],
+  ["runtime/execution.ts", "2f3eead03a8fe095737efe19539ab2024eec335013e1dafbd1b91940f5194aba"],
   ["runtime/inline.ts", "d51850277ea4eea07a65cc6f6fc81797eb686e86d2b096b71e0e921dae079722"],
-  ["runtime/prelude-source.ts", "ec8ff19d48913dc56e70068d26094420da77ac2039e4e98b17feb509397c1295"],
-  ["runtime/protocol.ts", "7dad39eb66c66aa2c85a4a7cec5b180e9b116ef1513146aedc94f95abe2757ba"],
-  ["runtime/vm.ts", "10f191a08e9566d73ba911c7e77e8f4ef32edcba1ce49559539906304a8cea1d"],
+  ["runtime/prelude-source.ts", "352a90d8367dcaf19318cb59fb135602c98c593e3dfa87e7262fbbe6730ca97e"],
+  ["runtime/protocol.ts", "bd4472822ae10ff8821047b7e68ba7609c12a66f4b45166c4c71529b0fa63f69"],
+  ["runtime/vm.ts", "e69944ee039aa6bd36c2909b8bbac160728a9be8969ebf8af3e418ae1866b3ea"],
   ["symbol-dispose.d.ts", "488d6a41eef2aba05fab4f8655d04c6859ed66b6614f19bb890cd7d32e7f71dd"],
-  ["types.ts", "90b8904cebb10bf5bea712f67eb11716e1fcac502ac49f438bef3e41ee3ea78f"],
+  ["types.ts", "27a71ea55f318a62ae28d76e1f2cf10e8b8b849c48f92277325ee23a320555d3"],
   ["wasm.ts", "c0c079e6e8693dfd3b0c2eac28a8a00efbee54fca718053457e6bdc438a82881"],
 ]);
 const QUICKJS_WASM_BYTES = 637_405;

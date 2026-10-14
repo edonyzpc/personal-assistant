@@ -12,7 +12,7 @@ import {
     projectOperationsReviewResultRows,
 } from "../src/chat/operations-review/OperationsReviewPanel";
 import type { OperationsReviewSnapshot } from "../src/ai-services/operations/operations-review-session";
-import type { OperationExecutionResult, UndoResult } from "../src/ai-services/operations/types";
+import type { OperationExecutionResult, OperationsIntent, UndoResult } from "../src/ai-services/operations/types";
 import {
     createOperationsReviewModel,
     type OperationsReviewDiffLine,
@@ -69,6 +69,32 @@ function group(id: string, changeCount: number, firstBlockChanges = changeCount)
 }
 
 describe("OperationsDiff presentation calculations", () => {
+    it.each(["preview", "unavailable", "available"] as const)("uses the actual mkdir result for the %s Undo explanation", state => {
+        const intent: OperationsIntent = { id: "mkdir-intent", runId: "run", turnId: "turn", createdAt: 1, expiresAt: 2,
+            state: "pending", mode: state === "preview" ? "preview" : "apply", operations: [{ kind: "resource", id: "mkdir-op",
+                toolCallId: "mkdir-call", name: "obsidian.vault.mkdir", input: { path: "assets/new", mode: state === "preview" ? "preview" : "apply" }, path: "assets/new",
+                expectedBefore: null, expectedAfter: "", resource: { action: "mkdir", paths: ["assets/new"], parents: [] } }] };
+        const results: OperationExecutionResult[] = state === "preview" ? [] : [{ operationId: "mkdir-op", toolCallId: "mkdir-call",
+            name: "obsidian.vault.mkdir", path: "assets/new", status: "succeeded", undoAvailable: state === "available",
+            ...(state === "available" ? { receiptId: "mkdir-receipt" }
+                : { message: "Folders were created. Safe Undo for these folders is unavailable." }),
+            resourceEffect: { kind: "mkdir", paths: ["assets/new"] } }];
+        const model = createOperationsReviewModel(intent, state === "preview" ? undefined : results);
+        const snapshot: OperationsReviewSnapshot = { reviewId: "mkdir-review", intentId: intent.id,
+            status: state === "preview" ? "preview" : "completed", actionInFlight: null, model, execution: null,
+            operationResults: results, undoResults: [], error: null };
+        const session = { getSnapshot: () => snapshot, subscribe: () => () => {}, canUndo: () => state === "available" };
+        const html = renderToStaticMarkup(createElement(OperationsReviewPanel, { session: session as never }));
+        expect(html).toContain("assets/new");
+        if (state === "available") {
+            expect(html).toContain("Undo removes only folders created by this call");
+            expect(html).toContain(">Undo</button>");
+        } else {
+            expect(html).not.toContain("Undo removes only folders created by this call");
+            expect(html).not.toContain(">Undo</button>");
+        }
+        if (state === "unavailable") expect(html).toContain("Safe Undo for these folders is unavailable.");
+    });
     it("renders a native path move without displaying the note as a content edit", () => {
         const model: OperationsReviewModel = { intentId: "move", groups: [{ ...group("move", 2), targetPath: "archive/move.md" }] };
         const html = renderToStaticMarkup(createElement(OperationsDiff, { model, mode: "full" }));

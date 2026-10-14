@@ -50,6 +50,7 @@ import type { ProviderRequestScope } from "./obsidian-fetch";
 import { stableStringify } from "./agent-utils";
 import {
     assertTaskSourceReadCurrent,
+    checkpointTaskSourceRead,
     isTaskSourcePathAllowed,
     type TaskSourceReadGuard,
 } from "./task-source-read-guard";
@@ -62,6 +63,7 @@ import { parseVaultObservationEvidence } from "./vault-observation-evidence";
 import { cloneResultFact, memoryResultFact, projectPaAgentRecoveryControl } from "./pa-agent-result-facts";
 import { isQueryTemporalIntent } from "./query-rewriter";
 import { isGhostPreparationResult } from "./ghost-tool-receipt";
+import { EXECUTE_OBSIDIAN_CODE_TOOL_NAME } from "./independent-computation/obsidian-code-capability";
 
 const MAX_PREVIEW_CHARS = 1200;
 const MAX_EXECUTION_RECOVERY_PARTS = 8;
@@ -79,6 +81,7 @@ export interface PaAgentCapabilityToolExecutorOptions {
     ) => PaAgentToolExecutionResult;
     registry: CapabilityRegistry;
     host: AiServiceHost;
+    obsidianSdkHost?: import("./independent-computation/obsidian-resource-sdk").ObsidianSdkHost;
     isWritingSelectionCurrent?: (input: unknown) => boolean;
     platform?: AgentRuntimePlatform;
     onBeforeVssSearch?: () => void;
@@ -97,6 +100,11 @@ export interface PaAgentCapabilityToolExecutorOptions {
     memoryActionRequest?: MemoryActionHostBinding;
     getImageRequestLineage?: (turnId?: string) => import("./input-lineage").InputLineage | undefined;
     getCreateImageRuntime?: (turnId?: string) => import("./chat-tool-types").CreateImageHostRuntime | undefined;
+    getExecuteObsidianRuntime?: (
+        turnId: string | undefined,
+        toolCallId: string,
+        turnIndex: number,
+    ) => import("./independent-computation/obsidian-code-capability").ExecuteObsidianCodeRuntime | undefined;
     getGhostMetadataDebugScope?: (turnId: string, toolCallId: string) => import("./ghost-metadata").GhostMetadataDebugScope | undefined;
     revalidateMemorySearch?: (
         result: MemorySearchResult,
@@ -558,6 +566,7 @@ export function createPaAgentCapabilityToolExecutor(
         getRetrySafety: (toolName: string): "read_only" | "side_effect" | undefined => {
             const capability = options.registry.get(toolName);
             if (!capability) return undefined;
+            if (capability.retrySafety) return capability.retrySafety;
             return capability.kind === "action"
                 || !["read-only", "network-read"].includes(capability.permission)
                 ? "side_effect"
@@ -571,6 +580,7 @@ export function createPaAgentCapabilityToolExecutor(
                 return prepared.ok && options.isWritingSelectionCurrent?.(prepared.input) === true;
             }
             const capability = options.registry.get(toolCall.name);
+            if (capability?.canReuseSuccessfulResult === false) return false;
             // Wrappers may delegate synthetic/test or independently-owned
             // capabilities through this executor. Absence from this registry
             // must preserve the dispatcher's normal successful reuse policy.
@@ -641,6 +651,11 @@ export function createPaAgentCapabilityToolExecutor(
             let postExecutionGuard = input.taskSourceReadGuard;
             const executeCapability = async (signal: AbortSignal, hidden = false) => {
                 assertTaskSourceReadCurrent(input.taskSourceReadGuard);
+                const executeObsidianRuntime = options.getExecuteObsidianRuntime?.(
+                    input.turnId,
+                    toolCall.id,
+                    input.turnIndex,
+                );
                 const ghostAuthorityGuard = isGhostPreparation
                     ? input.taskSourceReadGuard?.captureAuthorityGuard?.() ?? input.taskSourceReadGuard
                     : undefined;
@@ -650,6 +665,7 @@ export function createPaAgentCapabilityToolExecutor(
                     {
                         taskSourceReadGuard: input.taskSourceReadGuard,
                         host: options.host,
+                        obsidianSdkHost: options.obsidianSdkHost,
                         turnId: input.turnId,
                         signal,
                         outerToolDeadlineAt: input.outerToolDeadlineAt,
@@ -657,8 +673,10 @@ export function createPaAgentCapabilityToolExecutor(
                         platform: options.platform ?? "desktop",
                         currentMemoryUsage: options.currentMemoryUsage,
                         memoryActionRequest: options.memoryActionRequest,
-                        imageRequestLineage: options.getImageRequestLineage?.(input.turnId),
+                        imageRequestLineage: input.inputLineage ?? options.getImageRequestLineage?.(input.turnId),
+                        childInputLineage: input.inputLineage,
                         createImageRuntime: options.getCreateImageRuntime?.(input.turnId),
+                        executeObsidianRuntime,
                         ghostMetadataDebug: toolCall.name === "prepare_ghost_post"
                             ? options.getGhostMetadataDebugScope?.(input.turnId, toolCall.id) : undefined,
                         ...(!hidden && options.onBeforeVssSearch
@@ -671,6 +689,44 @@ export function createPaAgentCapabilityToolExecutor(
                 );
                 options.onToolResult?.({ turnId: input.turnId, toolCallId: toolCall.id, toolName: toolCall.name,
                     result, toolInput: preparedResult.input });
+                if (toolCall.name === EXECUTE_OBSIDIAN_CODE_TOOL_NAME && executeObsidianRuntime
+                    && options.obsidianSdkHost) {
+                    if (signal.aborted) throw createAbortError();
+                    const checkpointParent = async () => {
+                        try {
+                            await checkpointTaskSourceRead(input.taskSourceReadGuard, signal);
+                        } catch (error) {
+                            // Preserve the original finite-owner recovery path if
+                            // reproof discovers a genuinely withdrawn parent.
+                            if (!signal.aborted) assertTaskSourceReadCurrent(input.taskSourceReadGuard);
+                            throw error;
+                        }
+                    };
+                    // Native child effects may advance the graph epoch. Reprove
+                    // the original parent, then independently admit every source
+                    // the Host actually collected from its dynamic children.
+                    await checkpointParent();
+                    const sourceRun = options.obsidianSdkHost.sourceRun;
+                    const resultAdmitted = await sourceRun.admitsLineageAsync(result.inputLineage, signal, true);
+                    await checkpointParent();
+                    if (signal.aborted) throw createAbortError();
+                    if (!resultAdmitted || !sourceRun.captureLineageSourceValidity(result.inputLineage)()) {
+                        return {
+                            ok: false,
+                            tool: result.tool,
+                            inputSummary: result.inputSummary,
+                            content: null,
+                            sources: [],
+                            sourceRecords: [],
+                            actionStates: result.actionStates,
+                            inputLineage: result.inputLineage,
+                            executionState: result.executionState,
+                            recovery: result.recovery,
+                            failureReason: "source_changed" as const,
+                            error: "The composed program source was withdrawn. Only its recorded child effect facts are retained; do not repeat completed or unknown effects.",
+                        };
+                    }
+                }
                 if (isGhostPreparation && isGhostPreparationResult(result)) {
                     if (signal.aborted) throw createAbortError();
                     // Ghost freezes and validates its own note dependencies. This
@@ -923,6 +979,8 @@ export function chatToolResultToPaAgentToolExecutionResult(
         sourceRecords,
         contextUsed,
         ...(resultFact ? { resultFact } : {}),
+        ...(result.actionStates ? { actionStates: result.actionStates } : {}),
+        ...(result.inputLineage ? { inputLineage: result.inputLineage } : {}),
         metadata: {
             outcome,
             tool: result.tool,
@@ -932,6 +990,13 @@ export function chatToolResultToPaAgentToolExecutionResult(
             ok: result.ok,
             sourceRecordCount: sourceRecords.length,
             contextUsedCount: contextUsed.length,
+            ...(result.actionStates?.length ? {
+                composedChildEffects: result.actionStates.map(state => ({
+                    owner: state.owner,
+                    operationId: state.operationId,
+                    phase: state.phase,
+                })),
+            } : {}),
             ...(result.unavailableReason
                 ? { unavailableReason: result.unavailableReason }
                 : {}),

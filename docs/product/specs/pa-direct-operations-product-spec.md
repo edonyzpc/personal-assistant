@@ -1,7 +1,7 @@
 # 单次 Operations 写入与移动 Product Spec
 
 Document status: Current
-Updated: 2026-10-12
+Updated: 2026-10-14
 Work item: B-173
 Decision: [DEC-063](../decisions/dec-063-direct-operations-and-native-move.md)
 Authority: Owner 明确选择的产品范围与验收目标；2026-10-12 确认引用由 Obsidian 负责，并授权 GPT 开发测试及随后 closeout、本地 master 提交。Current 表示已验收的本地行为合同，不表示已发布。
@@ -30,12 +30,20 @@ Authority: Owner 明确选择的产品范围与验收目标；2026-10-12 确认�
 
 ### Non-goals
 
-- 通用 Markdown 删除工具、目录/非 Markdown/跨 vault 移动、自动创建父目录或覆盖目标。
+- B-173 本身不提供通用删除、目录/非 Markdown 移动或创建父目录；B-174 的已授权扩展见下节。跨 vault、覆盖目标仍不在范围。
 - 用 Agent 自然语言逆向编辑替代现有 Undo；持久变更日志、跨重载 Undo、自动事务回滚。
 - PA 自建引用更新、关联笔记变更跟踪/快照/恢复；宿主引用行为独立设置页。
 - 修改 Ghost 正式更新确认、Writing 入口、独立计算隔离、Memory 或其他领域确认。
 - 新 Host 语义 planner、任务完成 ledger、固定短超时/轮数预算或额外评审模型。
 - 借本次修复宣布 B-159 历史延期专项已通过；全仓提示词重构、成本研究或性能百分比承诺。
+
+### B-174 扩展与验收边界
+
+Owner 于 2026-10-13 授权的 [Resource SDK](../../architecture/obsidian-resource-sdk.md)已交付。普通 UTF-8 文本创建/替换、目录创建、文本/目录/附件移动与回收，以及原 view/editor 的精确编辑，继续由同一 Operations controller、session、review 与 UndoStore 持有；SDK 和直接门面不建立第二份效果或恢复账本。目录移动核对全部实际子路径与目标范围，引用维护继续交由 Obsidian。
+
+create/move 返回可核验的当前 resourceRef；move 同时记录旧、新路径。文本条件写回以原读取版本为凭证，editor 以原快照 UTF-16 半开坐标提交，buffer 修改不承诺已经保存。open 是真实 workspace 效果，定位未应用或结果未知须准确表达，不提供虚构 Undo。创建、回收和修改的私有恢复资源只在原会话中有界持有；后来用户编辑、对象替换、碰撞或撤权阻止不安全恢复。
+
+实际开发验收见 [B-174 验证记录](../../archive/2026/b174-obsidian-resource-sdk-validation.md)。Owner 于2026-10-13按 [DEC-064](../decisions/dec-064-obsidian-resource-sdk.md#2026-10-13-owner-批准的桌面-mkdir-undo-限制)明确接受仅桌面mkdir安全Undo暂不可用：保留创建、preview/review及真实效果说明，不提供可执行的撤回承诺。原公开非递归API的EISDIR证据保留，不以递归删除或Node/fs绕过；移动端公共非递归路径与其他效果/恢复仍按各自owner合同及实际结果表达。2026-10-14另批准仅备份容量不足时继续安全原生回收，明确无PA Undo；读取或权限错误不按容量不足处理。move Undo不冻结正文，部分trash恢复只补缺失项并保留已恢复对象的用户增量；editor Undo核对原editor当前路径和buffer。
 
 ## User Flow And States
 
@@ -96,7 +104,7 @@ Authority: Owner 明确选择的产品范围与验收目标；2026-10-12 确认�
 
 ## Open Decisions
 
-无待定产品选择。原 OQ-01 已由 Owner 于 2026-10-12 确认由 Obsidian 负责引用更新，
+B-173 无待定产品选择；B-174 的安全空目录 Undo 见上述 Tracker U3。原 OQ-01 已由 Owner 于 2026-10-12 确认由 Obsidian 负责引用更新，
 见 [DEC-063](../decisions/dec-063-direct-operations-and-native-move.md#移动与引用的宿主职责)。
 
 ## Implementation And Evidence

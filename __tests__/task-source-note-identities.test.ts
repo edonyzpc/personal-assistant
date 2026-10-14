@@ -76,7 +76,7 @@ describe("Task source note identities", () => {
         expect(identities.isCurrentNoteView()).toBe(true);
     });
 
-    it.each(["delete", "replace", "rename"] as const)("rejects a captured identity after %s and retains its original exclusion path", (change) => {
+    it.each(["delete", "replace"] as const)("rejects a captured identity after %s and retains its original exclusion path", (change) => {
         const h = harness();
         const identities = new TaskSourceNoteIdentities(h.host);
         const original = identities.currentNote!;
@@ -87,16 +87,45 @@ describe("Task source note identities", () => {
             h.setActive({ file: replacement });
             expect(identities.registerFile(replacement)).toBeUndefined();
         }
-        if (change === "rename") {
-            h.a.path = "notes/renamed.md";
-            h.files.set(h.a.path, h.a);
-            expect(identities.registerFile(h.a)).toBeUndefined();
-            expect(identities.resolveNoteId(h.a.path)).toBeUndefined();
-        }
         expect(identities.resolveNoteId(original.path)).toBeUndefined();
         expect(identities.pathForNoteId(original.noteId)).toBeUndefined();
         expect(identities.isCurrentNoteView()).toBe(false);
         expect(identities.capturedPathForNoteId(original.noteId)).toBe(original.path);
+        expect(identities.noteHandles().get(original.handle)).toBe(original.noteId);
+    });
+
+    it.each(["md", "canvas"] as const)("keeps the original %s object through native moves without rebinding historical paths", (extension) => {
+        const h = harness();
+        const file = extension === "md" ? h.a : { path: "notes/board.canvas" };
+        h.files.set(file.path, file);
+        const identities = new TaskSourceNoteIdentities(h.host);
+        const original = identities.registerFile(file)!;
+        const capturedPath = original.path;
+        const moveTo = (path: string) => {
+            h.files.delete(file.path);
+            file.path = path;
+            h.files.set(path, file);
+        };
+
+        moveTo(`dated/moved.${extension}`);
+        expect(identities.resolveNoteId(file.path)).toBe(original.noteId);
+        expect(identities.registerFile(file)).toBe(original);
+        expect(identities.resolveNoteId(capturedPath)).toBeUndefined();
+        expect(identities.pathForNoteId(original.noteId)).toBe(file.path);
+        expect(identities.capturedPathForNoteId(original.noteId)).toBe(capturedPath);
+        expect(original.path).toBe(capturedPath);
+        expect(Object.isFrozen(original)).toBe(true);
+        if (extension === "md") expect(identities.isCurrentNoteView()).toBe(true);
+
+        const firstDestination = file.path;
+        moveTo(`dated/again.${extension}`);
+        expect(identities.pathForNoteId(original.noteId)).toBe(file.path);
+        expect(identities.resolveNoteId(firstDestination)).toBeUndefined();
+        expect(identities.resolveNoteId(file.path)).toBe(original.noteId);
+
+        h.files.set(capturedPath, { path: capturedPath });
+        expect(identities.resolveNoteId(capturedPath)).toBeUndefined();
+        expect(identities.pathForNoteId(original.noteId)).toBe(file.path);
         expect(identities.noteHandles().get(original.handle)).toBe(original.noteId);
     });
 
@@ -152,7 +181,7 @@ describe("Task source note identities", () => {
         expect(identities.registerFile(image)).toBeUndefined();
     });
 
-    it.each(["delete", "replace", "rename"] as const)("supports the existing Canvas reader and rejects its identity after %s", (change) => {
+    it.each(["delete", "replace"] as const)("supports the existing Canvas reader and rejects its identity after %s", (change) => {
         const h = harness();
         const canvas = { path: "notes/board.canvas" };
         h.files.set(canvas.path, canvas);
@@ -168,12 +197,6 @@ describe("Task source note identities", () => {
             const replacement = { path: identity.path };
             h.files.set(replacement.path, replacement);
             expect(identities.registerFile(replacement)).toBeUndefined();
-        }
-        if (change === "rename") {
-            canvas.path = "notes/renamed.canvas";
-            h.files.set(canvas.path, canvas);
-            expect(identities.registerFile(canvas)).toBeUndefined();
-            expect(identities.resolveNoteId(canvas.path)).toBeUndefined();
         }
         expect(identities.resolveNoteId(identity.path)).toBeUndefined();
         expect(identities.pathForNoteId(identity.noteId)).toBeUndefined();

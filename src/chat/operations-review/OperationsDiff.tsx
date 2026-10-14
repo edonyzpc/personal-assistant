@@ -86,9 +86,24 @@ function OperationsGroupDiff({ group, mode, maxChangedRows }: OperationsGroupDif
         return (
             <section className="pa-operations-diff__group" aria-label={group.path}>
                 <header className="pa-operations-diff__group-header">
-                    <span>{t('plugin.chat.operations.intent.move')}</span>
+                    <span>{t(group.resourceKind ? 'plugin.chat.operations.resource.move' : 'plugin.chat.operations.intent.move')}</span>
                     <code>{group.path}</code><span aria-hidden="true"> → </span><code>{group.targetPath}</code>
                 </header>
+            </section>
+        );
+    }
+    if (group.resourceKind && ['mkdir', 'trash', 'open', 'undo'].includes(group.resourceKind)) {
+        return (
+            <section className="pa-operations-diff__group" aria-label={group.path}>
+                <header className="pa-operations-diff__group-header">
+                    <span>{t(`plugin.chat.operations.resource.${group.resourceKind}`)}</span>
+                    <code>{group.path}</code>
+                </header>
+                <ul>{(group.resourcePaths ?? []).slice(0, mode === 'compact' ? 12 : undefined).map(path => <li key={path}><code>{path}</code></li>)}</ul>
+                {group.resourceKind === 'mkdir' && group.mkdirUndoAvailable === true
+                    && <p>{t('plugin.chat.operations.resource.folderUndoPending')}</p>}
+                {group.resourceKind === 'open' && <p>{t('plugin.chat.operations.resource.openUndo')}</p>}
+                {group.resourceKind === 'trash' && <p>{t('plugin.chat.operations.resource.trashRecovery')}</p>}
             </section>
         );
     }
@@ -121,11 +136,12 @@ function OperationsGroupDiff({ group, mode, maxChangedRows }: OperationsGroupDif
                     <code className="pa-operations-diff__path">{group.path}</code>
                     <span className="pa-operations-diff__file-state">
                         {group.created
-                            ? t('plugin.chat.operations.review.created')
-                            : t('plugin.chat.operations.review.existing')}
+                            ? t(group.resourceKind ? 'plugin.chat.operations.resource.newFile' : 'plugin.chat.operations.review.created')
+                            : t(group.resourceKind ? 'plugin.chat.operations.resource.existingFile' : 'plugin.chat.operations.review.existing')}
                     </span>
                 </div>
                 <div className="pa-operations-diff__meta">
+                    {group.resourceKind === 'editor' && <span>{t('plugin.chat.operations.resource.editorBuffer')}</span>}
                     {group.netZeroTextChange && t('plugin.chat.operations.review.netZero')}
                     {group.diffDegraded && (
                         <span className="pa-operations-diff__degraded">

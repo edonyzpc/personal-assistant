@@ -4,11 +4,11 @@ import { z } from 'zod';
 import { cloneInputLineage, parseInputLineage, type InputLineage } from './input-lineage';
 import { OPERATIONS_BLOCKED_MESSAGE, OPERATIONS_STAGED_MESSAGE } from './operations/operations-tool-provider';
 import { isCoreWriteToolName } from './operations/input-validation';
-import type { NoteImageRemovalEffectStatus } from './operations/types';
+import type { NoteImageRemovalEffectStatus, ResourceEffectFacts } from './operations/types';
 import { IMAGE_PREACCEPT_MESSAGES, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from '../chat/image-generation-types';
 import { PA_AGENT_RECOVERY_ACTIONS } from './pa-agent-types';
 import { isGhostPreparationMessage } from './ghost-tool-receipt';
-import { isOperationsResultObservation, type OperationsResultObservation } from './operations-status-tool';
+import { isOperationsResultObservation, isResourceEffectFacts, type OperationsResultObservation } from './operations-status-tool';
 
 // Historical Chat receipts remain readable; these names cannot resume an operation.
 type GhostReceiptState = import('../ghost-publishing/state-schema').GhostLocalOperation['state']
@@ -113,6 +113,7 @@ export function collectPaAgentActionOwnerFacts(input: {
     for (const message of input.transcript ?? []) {
         if (message.role !== 'toolResult') continue;
         admitToolName(message.toolName);
+        for (const state of cloneActionStates(message.actionStates ?? [])) owners.add(state.owner);
     }
     for (const message of input.chatHistory ?? []) {
         for (const state of cloneActionStates(message.actionStates ?? message.canonicalTurn?.actionStates)) {
@@ -153,6 +154,7 @@ export interface PaAgentActionState {
     receipt: { kind: 'image-accepted'; taskId: string }
         | { kind: 'image-task'; taskId: string; taskRevision: number; state: import('../chat/image-generation-types').ImageGenerationState }
         | { kind: 'operations-staged'; intentId: string }
+        | { kind: 'operations-unknown'; intentId: string }
         | { kind: 'operations-executing'; intentId: string }
         | { kind: 'operations-result'; intentId: string; state: 'completed' | 'partial' | 'failed' | 'unknown' }
         | { kind: 'operations-terminal'; intentId: string; state: 'cancelled' | 'expired' | 'lost' }
@@ -165,8 +167,9 @@ export interface PaAgentActionState {
             state: GhostReceiptState; verified: boolean }
         | { kind: 'ghost-unavailable'; operationId: string; reason: 'operation_not_found' | 'status_read_unavailable' };
     actions?: Array<{ actionId: string; receiptId?: string;
-        phase: 'applied' | 'unchanged' | 'failed' | 'skipped' | 'undone' | 'unknown';
+        phase: 'applied' | 'unchanged' | 'failed' | 'partial' | 'skipped' | 'undone' | 'unknown';
         effect?: { key: 'note' | 'attachment'; status: NoteImageRemovalEffectStatus };
+        resourceEffect?: ResourceEffectFacts;
         checkpoint?: 'attachment-restored' }>;
     operationsUndoAvailable?: boolean;
     operationsBlockedReason?: 'shared_reference';
@@ -211,6 +214,7 @@ const actionStateSchema = z.object({
             state: z.enum(['prepared', 'not_submitted', 'submitting', 'submission_unknown', 'running',
                 'saving', 'completed', 'partial', 'failed', 'stopped', 'expired']) }).strict(),
         z.object({ kind: z.literal('operations-staged'), intentId: opaqueId }).strict(),
+        z.object({ kind: z.literal('operations-unknown'), intentId: opaqueId }).strict(),
         z.object({ kind: z.literal('operations-executing'), intentId: opaqueId }).strict(),
         z.object({ kind: z.literal('operations-result'), intentId: opaqueId,
             state: z.enum(['completed', 'partial', 'failed', 'unknown']) }).strict(),
@@ -233,7 +237,8 @@ const actionStateSchema = z.object({
             reason: z.enum(['operation_not_found', 'status_read_unavailable']) }).strict(),
     ]),
     actions: z.array(z.object({ actionId: opaqueId, receiptId: opaqueId.optional(),
-        phase: z.enum(['applied', 'unchanged', 'failed', 'skipped', 'undone', 'unknown']),
+        phase: z.enum(['applied', 'unchanged', 'failed', 'partial', 'skipped', 'undone', 'unknown']),
+        resourceEffect: z.custom<ResourceEffectFacts>(isResourceEffectFacts).optional(),
         effect: z.object({
             key: z.enum(['note', 'attachment']),
             status: z.enum(['not_started', 'applied', 'removed', 'failed', 'unknown', 'restored']),
@@ -268,16 +273,24 @@ const actionStateSchema = z.object({
     }
     if (state.owner !== 'operations' || receipt.intentId !== state.operationId) return false;
     if (receipt.kind === 'operations-staged') return state.phase === 'pending' && state.revision === 0 && !state.actions;
+    if (receipt.kind === 'operations-unknown') return state.phase === 'unknown' && state.revision === 0 && !state.actions;
     if (receipt.kind === 'operations-executing') return state.phase === 'running' && state.revision > 0 && !state.actions;
     if (receipt.kind === 'operations-terminal') return state.phase === receipt.state && state.revision > 0 && !state.actions;
     if (!state.actions?.length) return false;
     if (new Set(state.actions.map(action => action.actionId)).size !== state.actions.length) return false;
-    if (state.actions.some(action => (action.phase === 'applied' || action.phase === 'undone') && !action.receiptId)) return false;
+    if (state.actions.some(action => action.phase === 'partial' && !action.resourceEffect)) return false;
+    if (state.actions.some(action => (action.phase === 'applied' || action.phase === 'undone') && !action.receiptId
+        && !(action.phase === 'applied' && (action.resourceEffect?.kind === 'open' && action.resourceEffect.opened === true
+            || action.resourceEffect?.kind === 'mkdir' && Boolean(action.resourceEffect.paths?.length)
+            || action.resourceEffect?.kind === 'trash' && action.resourceEffect.undoUnavailableReason === 'recovery_capacity'
+                && Boolean(action.resourceEffect.paths?.length)
+            || action.resourceEffect?.kind === 'undo' && action.resourceEffect.undoStatus === 'undone')))) return false;
     if (receipt.kind === 'operations-result') {
         const applied = state.actions.filter(action => action.phase === 'applied' || action.phase === 'unchanged').length;
         return state.phase === receipt.state
             && (receipt.state === 'completed' ? applied === state.actions.length
-                : receipt.state === 'partial' ? applied > 0 && applied < state.actions.length
+                : receipt.state === 'partial' ? state.actions.some(action => action.phase === 'partial')
+                    || applied > 0 && applied < state.actions.length
                 : receipt.state === 'unknown' ? state.actions.some(action => action.phase === 'unknown')
                     : applied === 0);
     }
@@ -405,7 +418,7 @@ export function applyOperationsExecutionResult(state: PaAgentActionState,
     result: import('./operations/types').OperationsExecutionResult): PaAgentActionState | undefined {
     const lost = state.phase === 'lost' && state.receipt.kind === 'operations-terminal' && state.receipt.state === 'lost';
     if (state.owner !== 'operations' || state.operationId !== result.intentId
-        || (!['operations-staged', 'operations-executing', 'operations-result'].includes(state.receipt.kind) && !lost)) return undefined;
+        || (!['operations-staged', 'operations-executing', 'operations-result', 'operations-unknown'].includes(state.receipt.kind) && !lost)) return undefined;
     if (result.state === 'executing') {
         const running = cloneActionStates([{ ...state, phase: 'running', revision: state.revision + 1,
             receipt: { kind: 'operations-executing', intentId: result.intentId } }])[0];
@@ -423,7 +436,7 @@ export function applyOperationsExecutionResult(state: PaAgentActionState,
 }
 
 function operationActions(operation: Pick<import('./operations/types').OperationExecutionResult,
-    'operationId' | 'status' | 'receiptId' | 'effects'>):
+    'operationId' | 'status' | 'receiptId' | 'effects' | 'resourceEffect'>):
 NonNullable<PaAgentActionState['actions']> {
     if (!operation.effects?.length) {
         return [{
@@ -432,7 +445,13 @@ NonNullable<PaAgentActionState['actions']> {
             phase: operation.status === 'succeeded' ? 'applied'
                 : operation.status === 'unchanged' ? 'unchanged'
                 : operation.status === 'skipped' ? 'skipped'
+                    : operation.status === 'partial' && operation.resourceEffect ? 'partial'
                     : operation.status === 'unknown' ? 'unknown' : 'failed',
+            ...(operation.resourceEffect ? { resourceEffect: { ...operation.resourceEffect,
+                ...(operation.resourceEffect.position ? { position: { ...operation.resourceEffect.position,
+                    requested: { ...operation.resourceEffect.position.requested },
+                    ...(operation.resourceEffect.position.actual ? { actual: { ...operation.resourceEffect.position.actual } } : {}) } } : {}),
+                ...(operation.resourceEffect.paths ? { paths: [...operation.resourceEffect.paths] } : {}) } } : {}),
         }];
     }
         return operation.effects.map((effect, index) => ({
@@ -452,6 +471,7 @@ NonNullable<PaAgentActionState['actions']> {
 
 function operationsActionsPhase(actions: NonNullable<PaAgentActionState['actions']>): 'completed' | 'partial' | 'failed' | 'unknown' {
     if (actions.some(action => action.phase === 'unknown')) return 'unknown';
+    if (actions.some(action => action.phase === 'partial')) return 'partial';
     const completed = actions.filter(action => action.phase === 'applied' || action.phase === 'unchanged').length;
     return completed === actions.length ? 'completed' : completed > 0 ? 'partial' : 'failed';
 }
@@ -505,7 +525,7 @@ function isSameOperationsFacts(
 /** Persisted state is a boundary: reject the entire malformed envelope, preserving absence. */
 export function cloneActionStates(value: unknown): PaAgentActionState[] {
     if (!Array.isArray(value)) return [];
-    const parsed = z.array(actionStateSchema).max(256).safeParse(value);
+    const parsed = z.array(actionStateSchema).safeParse(value);
     if (!parsed.success) return [];
     const identities = new Set<string>();
     for (const state of parsed.data) {
@@ -515,15 +535,30 @@ export function cloneActionStates(value: unknown): PaAgentActionState[] {
     }
     return parsed.data.map(state => ({ ...state, origin: { ...state.origin }, receipt: { ...state.receipt },
         inputLineage: cloneInputLineage(state.inputLineage)!,
-        ...(state.actions ? { actions: state.actions.map(action => ({ ...action })) } : {}),
+        ...(state.actions ? { actions: state.actions.map(action => ({ ...action,
+            ...(action.resourceEffect ? { resourceEffect: { ...action.resourceEffect,
+                ...(action.resourceEffect.position ? { position: { ...action.resourceEffect.position,
+                    requested: { ...action.resourceEffect.position.requested },
+                    ...(action.resourceEffect.position.actual ? { actual: { ...action.resourceEffect.position.actual } } : {}) } } : {}),
+                ...(action.resourceEffect.paths ? { paths: [...action.resourceEffect.paths] } : {}) } } : {}),
+        })) } : {}),
     }));
 }
 
 /** The provider receives a closed view; ancestry and owner correlation remain Host-only. */
-export function projectActionStates(states: readonly PaAgentActionState[]): PaAgentActionContextProjection[] {
+export function projectActionStates(states: readonly PaAgentActionState[],
+    options: { sourceExcluded?: boolean } = {}): PaAgentActionContextProjection[] {
     return cloneActionStates(states).map<PaAgentActionContextProjection>(state => ({ owner: state.owner, operationId: state.operationId,
         phase: state.phase, origin: { ...state.origin },
-        ...(state.actions ? { actions: state.actions.map(action => ({ ...action })) } : {}),
+        ...(state.actions ? { actions: state.actions.map(action => {
+            if (!action.resourceEffect || !options.sourceExcluded) return { ...action };
+            const effect = { ...action.resourceEffect };
+            delete effect.paths;
+            delete effect.fromPath;
+            delete effect.toPath;
+            delete effect.resourceRef;
+            return { ...action, resourceEffect: effect };
+        }) } : {}),
         ...(state.receipt.kind === 'writing-saves' ? { saves: state.receipt.saves.map(save => ({ ...save })) } : {}),
         ...(state.receipt.kind === 'writing-save' ? { saves: [{ saveId: state.receipt.saveId,
             state: state.receipt.state, ...(state.receipt.noteState ? { noteState: state.receipt.noteState } : {}) }] } : {}),
@@ -555,7 +590,7 @@ export function projectActionSummaryFacts(states: readonly PaAgentActionState[])
     return projectActionStates(states).map(state => ({ owner: state.owner, operationId: state.operationId,
         phase: state.phase,
         ...(state.actions && (state.operationsEffectStatus !== 'applied'
-            || state.actions.some(action => action.effect)) ? { actions: state.actions } : {}),
+            || state.actions.some(action => action.effect || action.resourceEffect)) ? { actions: state.actions } : {}),
         ...(state.saves ? { saves: state.saves } : {}),
         ...(state.imageOutputStatus ? { imageOutputStatus: state.imageOutputStatus } : {}),
         ...(state.imageProviderAcceptanceStatus ? { imageProviderAcceptanceStatus: state.imageProviderAcceptanceStatus } : {}),
@@ -612,7 +647,14 @@ export function readOperationsResultObservation(message: Extract<import('./chat-
     if (message.toolName !== 'execute_operations' && (observation.state !== 'executing' && !observation.operations.length
         || observation.operations.some(operation => operation.toolCallId !== message.toolCallId))) return undefined;
     try {
-        const payload = JSON.parse(message.content.promptText) as unknown;
+        let payload = JSON.parse(message.content.promptText) as unknown;
+        if (message.content.metadata?.sdkOnly === true) {
+            if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+            const sdk = payload as Record<string, unknown>;
+            if (typeof sdk.ok !== 'boolean' || Object.keys(sdk).some(key => !['ok', 'value', 'error'].includes(key))) return undefined;
+            if (sdk.ok ? sdk.error !== undefined : !sdk.error || typeof sdk.error !== 'object') return undefined;
+            payload = sdk.value;
+        }
         return isOperationsResultObservation(payload) && JSON.stringify(payload) === JSON.stringify(observation)
             ? observation : undefined;
     } catch { return undefined; }
@@ -817,6 +859,10 @@ export function collectActionStates(input: { runId: string; turnId: string;
             origin: { runId: input.runId, turnId: input.turnId, assistantId,
                 callId: message.toolCallId, resultId: message.id }, revision: 0, inputLineage: lineage,
             receipt: { kind: 'image-accepted', taskId: fact.operationId } });
+    }
+    for (const message of input.messages) {
+        if (message.role !== 'toolResult' || !message.actionStates?.length) continue;
+        states.push(...cloneActionStates(message.actionStates));
     }
     return cloneActionStates(states);
 }

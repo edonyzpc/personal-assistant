@@ -1,6 +1,6 @@
 # PA Agent Runtime Lifecycle Contract
 
-Updated: 2026-10-05
+Updated: 2026-10-14
 
 Status: Current canonical lifecycle contract. The long implementation plan and phase evidence are archived at [pa-agent-runtime-lifecycle-plan-implementation-record.md](../archive/pa-agent-runtime-lifecycle-plan-implementation-record.md).
 
@@ -99,6 +99,14 @@ remains explicitly unknown, not inferred from a sibling call. Tool observations
 carry their own admitted source lineage, including independently proven
 source-free no-match or unavailable results, into the next request.
 
+B-174 composition records each host child with its original run/turn/call and
+domain identity. Only owner-validated finite effects become parent action
+facts; script text and JSON remain untrusted. A script error, Stop, timeout or
+source withdrawal does not erase an already accepted native/domain effect.
+Withdrawn arguments and content are removed from subsequent requests; lawful
+opaque receipts still use the existing domain projection. Original session
+queries and Undo remain subject to that owner's live availability.
+
 `message_update` distinguishes thinking/text/toolcall start, delta, and end. Thinking and provisional assistant text are progress, not committed final answer text.
 
 The final visible answer is derived only from committed final text. When a streamed assistant message transitions into tool calls, pending text may be reclassified as thinking and must not be persisted as final answer content.
@@ -119,6 +127,20 @@ Tool input flow:
 buffered call → parse → registry prepareAndValidate → policy gate
 → timeout/abort-aware execute → structured toolResult → host policy
 ```
+
+`execute_obsidian_code` uses that same chain for each dynamic child. Prepared
+batches are keyed by their actual execution context, not a shared mutable slot.
+Host-call permits are shared by requests on the same host and held until the
+physical owner settles, including after guest cancellation. Parent waiting does
+not consume a child permit. Limits bound live RPC resources and byte retention,
+not the total number of completed effects; all verified action IDs survive the
+provider and persisted-history projection.
+
+Worker termination stops guest delivery and releases its Worker, Blob URL,
+listeners and timers. It cannot promise to interrupt an already running native
+API. Reload retires the old session and allows a fresh Worker; retained finite
+history is not a promise of cross-reload live queries or Undo. B-174's actual
+app/platform evidence remains in [B-174 validation](../archive/2026/b174-obsidian-resource-sdk-validation.md); the current interface contract is in [Resource SDK Architecture](./obsidian-resource-sdk.md).
 
 Supported outcomes:
 

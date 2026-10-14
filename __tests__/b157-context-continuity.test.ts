@@ -260,7 +260,7 @@ describe('B-157 continuity regressions', () => {
             expect(chunks).toContainEqual({ type: 'text_delta', text: 'Observed accepted.' });
         } finally { globalThis.fetch = originalFetch; jest.useRealTimers(); }
     });
-    it('fails a combined state limit without clearing individually valid persisted facts', async () => {
+    it('retains every valid persisted owner fact when a later operation takes the combined state count beyond 256', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store });
         const history = resultHistory();
@@ -269,10 +269,13 @@ describe('B-157 continuity regressions', () => {
         history[1].canonicalTurn!.actionStates = states;
         const turn = manager.serializeTurn({ kind: 'history', user: history[0], assistant: history[1] }, 'conversation-1', 0);
         await store.appendTurn(turn);
-        const extra: PaAgentActionState = { ...acceptedState(), operationId: 'task-over-limit',
-            receipt: { kind: 'image-accepted', taskId: 'task-over-limit' } };
-        await expect(store.updateActionStates(turn.assistant.actionStateBinding!, () => [extra])).rejects.toThrow('storage limit');
-        expect((await store.getTurns('conversation-1'))[0].assistant.actionStates).toEqual(states);
+        const extra: PaAgentActionState = { ...acceptedState(), operationId: 'task-256',
+            receipt: { kind: 'image-accepted', taskId: 'task-256' } };
+        // B-174 bounds live RPC resources, not the cumulative owner facts of a turn.
+        expect(await store.updateActionStates(turn.assistant.actionStateBinding!, () => [extra])).toEqual([...states, extra]);
+        const persisted = (await store.getTurns('conversation-1'))[0].assistant.actionStates;
+        expect(persisted).toEqual([...states, extra]);
+        expect(persisted?.map(state => state.operationId)).toEqual(Array.from({ length: 257 }, (_, index) => `task-${index}`));
     });
     it('locates the original persisted operation without using the stage iteration as its container turn', async () => {
         const store = new MemoryChatHistoryStore();
