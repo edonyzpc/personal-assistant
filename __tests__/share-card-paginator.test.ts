@@ -155,6 +155,66 @@ describe("paginateShareCardMarkdown", () => {
         expect(pages.map((page) => page.content).join("")).toBe(original);
     });
 
+    it("paginates plain text around complete atomic sup/span HTML annotations", async () => {
+        const annotations = [11, 16].map((page) => (
+            `<sup><span title="Page / location: ${page}">:\u200a${page}</span> </sup>`
+        ));
+        const source = `${"Before ".repeat(30)}${annotations[0]}${" After ".repeat(30)}${annotations[1]}${" End ".repeat(30)}`;
+        const visibleText = (markdown: string): string => annotations.reduce(
+            (text, annotation, index) => text.split(annotation).join(`:\u200a${[11, 16][index]} `),
+            markdown,
+        );
+        const plan = createShareCardFragmentBoundaryPlan(source);
+        expect(plan).not.toBeNull();
+        expect(plan?.renderText?.(0, source.length)).toBe(visibleText(source));
+        for (const annotation of annotations) {
+            const start = source.indexOf(annotation);
+            const end = start + annotation.length;
+            expect(plan?.boundaries.some((boundary) => boundary > start && boundary < end)).toBe(false);
+            expect(plan?.insertions.some((insertion) => (
+                insertion.insertionOffset > start && insertion.insertionOffset < end
+            ))).toBe(false);
+        }
+
+        const pages = await paginateShareCardMarkdown([source], (markdown) => visibleText(markdown).length <= 100);
+        expect(pages.length).toBeGreaterThan(2);
+        expect(pages.map((page) => page.content).join("")).toBe(source);
+        const segments = pages.flatMap((page) => page.renderPlan?.segments ?? []);
+        expect(segments.map((segment) => source.slice(segment.sourceStart, segment.sourceEnd)).join(""))
+            .toBe(source);
+        expect(segments.map((segment) => plan?.renderText?.(segment.sourceStart, segment.sourceEnd)).join(""))
+            .toBe(visibleText(source));
+        for (const annotation of annotations) {
+            expect(pages.filter((page) => page.content.includes(annotation))).toHaveLength(1);
+        }
+    });
+
+    it("keeps a short inline HTML annotation and quoted tag punctuation unchanged", async () => {
+        const source = "Before<sub title='Page > location < next'>:\u200a16</sub>After";
+        const plan = createShareCardFragmentBoundaryPlan(source);
+        expect(plan?.renderText?.(0, source.length)).toBe("Before:\u200a16After");
+        await expect(paginateShareCardMarkdown([source], () => true)).resolves.toEqual([
+            { pageIndex: 0, totalPages: 1, content: source },
+        ]);
+    });
+
+    it.each([
+        "<sup><span title=\"Page 11\">:11</span>",
+        "<sup><span>:11</sup></span>",
+        "<div>:11</div>",
+        "<sup><em>:11</em></sup>",
+        "<sup>&thinsp;11</sup>",
+        "<sup>**11**</sup>",
+        "<sup hidden>:11</sup>",
+        "<span style=\"display:none\">:11</span>",
+        `${"<span>".repeat(65)}11${"</span>".repeat(65)}`,
+    ])("fails closed for unsupported inline HTML: %s", async (annotation) => {
+        const source = `${"Before ".repeat(30)}${annotation}${" After".repeat(30)}`;
+        expect(createShareCardFragmentBoundaryPlan(source)).toBeNull();
+        await expect(paginateShareCardMarkdown([source], (markdown) => markdown.length < 100))
+            .rejects.toMatchObject({ code: "unpageable-content" });
+    });
+
     it("uses Unicode code-point-safe progress for an unbroken CJK/emoji line", async () => {
         const original = "甲乙😀丙丁戊己";
         const pages = await paginateShareCardMarkdown(
@@ -217,6 +277,8 @@ describe("paginateShareCardMarkdown", () => {
     it.each([
         ["emphasis", "*", "*"],
         ["strong", "**", "**"],
+        ["bold italic with asterisks", "***", "***"],
+        ["bold italic with underscores", "___", "___"],
         ["inline code", "`", "`"],
     ])("repeats valid %s wrappers without losing source text", async (
         _label,
@@ -235,6 +297,41 @@ describe("paginateShareCardMarkdown", () => {
             opening,
             closing,
         )).join("")).toBe(text);
+    });
+
+    it("keeps a short bold italic block whole", async () => {
+        const source = "***short bold italic***";
+        const pages = await paginateShareCardMarkdown(
+            [source],
+            () => true,
+        );
+
+        expect(pages).toHaveLength(1);
+        expect(pages[0]?.content).toBe(source);
+    });
+
+    it("keeps inline bold italic text ordered across a long paragraph", async () => {
+        const emphasized = `${"bold italic ".repeat(23)}bold italic`;
+        const source = `Synthetic ${"taxonomy ".repeat(24)}***${emphasized}*** tail`;
+        const pages = await paginateShareCardMarkdown(
+            [source],
+            (markdown) => markdown.length <= 40,
+        );
+        const segments = pages.flatMap((page) => page.renderPlan?.segments ?? []);
+
+        expect(pages.length).toBeGreaterThan(1);
+        expect(pages.some((page) => page.content.split("***").length - 1 === 2))
+            .toBe(true);
+        expect(pages.every((page) => {
+            const markerCount = page.content.split("***").length - 1;
+            return markerCount === 0 || markerCount === 2;
+        })).toBe(true);
+        expect(segments.map((segment) => (
+            source.slice(segment.sourceStart, segment.sourceEnd)
+        )).join("")).toBe(source);
+        expect(segments.map((segment) => segment.sourceStart)).toEqual([
+            ...segments.map((segment) => segment.sourceStart),
+        ].sort((left, right) => left - right));
     });
 
     it("uses literal sentinels for fragment boundaries inside inline code", () => {
@@ -363,6 +460,60 @@ describe("paginateShareCardMarkdown", () => {
         expect(fragments.join("")).toBe(label);
     });
 
+    it("keeps punctuation-adjacent italic links ordered across a long paragraph", async () => {
+        const source = `${"Prefix ".repeat(20)}*[tapetum lucidum](https://example.com/Tapetum_lucidum "Tapetum lucidum")*, suffix. (*[Actinidia polygama](https://example.com/Actinidia_polygama "Actinidia polygama")*) and (*[Species name](https://example.com/species)*)${" tail".repeat(20)}`;
+        const linkPattern = /\*\[([^\]]+)\]\((https:\/\/example\.com\/[^)]+)\)\*/gu;
+        const visible = (markdown: string): string => markdown.replace(linkPattern, "$1");
+        const plan = createShareCardFragmentBoundaryPlan(source);
+        expect(plan).not.toBeNull();
+        expect(plan?.renderText?.(0, source.length)).toBe(visible(source));
+        const pages = await paginateShareCardMarkdown([source], (markdown) => markdown.length <= 150);
+        const segments = pages.flatMap((page) => page.renderPlan?.segments ?? []);
+
+        expect(pages.length).toBeGreaterThan(2);
+        expect(pages.map((page) => visible(page.content)).join("")).toBe(visible(source));
+        expect(pages.every((page) => !/[*\[\]]/u.test(visible(page.content)))).toBe(true);
+        expect(segments.map((segment) => source.slice(segment.sourceStart, segment.sourceEnd)).join(""))
+            .toBe(source);
+        expect(segments.map((segment) => plan?.renderText?.(segment.sourceStart, segment.sourceEnd)).join(""))
+            .toBe(visible(source));
+    });
+
+    it.each(["*", "**", "***"])("repeats exact %s link wrappers at label page boundaries", async (marker) => {
+        const label = Array.from({ length: 14 }, (_, index) => `species-${index}`).join(" ");
+        const source = `(${marker}[${label}](https://e.x "L")${marker})`;
+        const plan = createShareCardFragmentBoundaryPlan(source);
+        expect(plan?.renderText?.(0, source.length)).toBe(`(${label})`);
+        const pages = await paginateShareCardMarkdown([source], (markdown) => markdown.length <= 65);
+        const segments = pages.flatMap((page) => page.renderPlan?.segments ?? []);
+
+        expect(pages.length).toBeGreaterThan(1);
+        for (const page of pages) {
+            expect(page.content).toContain(`${marker}[`);
+            expect(page.content).toContain(`](https://e.x "L")${marker}`);
+        }
+        expect(segments.map((segment) => source.slice(segment.sourceStart, segment.sourceEnd)).join(""))
+            .toBe(source);
+        expect(segments.map((segment) => plan?.renderText?.(segment.sourceStart, segment.sourceEnd)).join(""))
+            .toBe(`(${label})`);
+    });
+
+    it.each([
+        "(*[label](https://e.x)",
+        "(*[label](https://e.x)**)",
+        "(****[label](https://e.x)****)",
+        "(*[label](https://e.x) more text*)",
+        "(*[label][ref]*)",
+        "(*[label][]*)",
+        "(*[outer *[inner](https://e.x)*](https://e.y)*)",
+        "**outer(**[label](https://e.x)**)**",
+    ])("keeps unsupported emphasis/link boundaries fail-closed: %s", async (fragment) => {
+        const source = `${"before ".repeat(12)}${fragment}${" after".repeat(12)}`;
+        expect(createShareCardFragmentBoundaryPlan(source)).toBeNull();
+        await expect(paginateShareCardMarkdown([source], (markdown) => markdown.length <= 60))
+            .rejects.toMatchObject({ code: "unpageable-content" });
+    });
+
     it("keeps reference-link definitions as invisible context across page boundaries", async () => {
         const original = "[label][ref]\n[ref]: https://e.x";
 
@@ -392,6 +543,68 @@ describe("paginateShareCardMarkdown", () => {
         )).resolves.toEqual([
             { pageIndex: 0, totalPages: 1, content: original },
         ]);
+    });
+
+    it("keeps projected footnotes out of per-block reference context while preserving ordinary links", () => {
+        const prepared = prepareShareCardMarkdown([
+            "First body references [^note] and [ordinary link][link].",
+            "",
+            "Second body references the same [^note].",
+            "",
+            "[^note]: One complete endnote detail.",
+            "",
+            "[link]: https://example.com/article",
+        ].join("\n"));
+        const context = createShareCardReferenceDefinitionContext(prepared.blocks);
+        const contextualBlocks = prepared.blocks.map((block) => (
+            applyShareCardReferenceDefinitionContext(block, context)
+        ));
+        const contextualMarkdown = contextualBlocks.join("\n\n");
+
+        expect(context.definitions.has("^note")).toBe(false);
+        expect(context.definitions.get("link")).toBe("[link]: https://example.com/article");
+        expect(contextualMarkdown.split("One complete endnote detail.")).toHaveLength(2);
+        expect(contextualBlocks[0]).toContain("First body references \\[1\\]");
+        expect(contextualBlocks[0]).toContain("[link]: https://example.com/article");
+        expect(contextualBlocks[0]).not.toContain("One complete endnote detail.");
+    });
+
+    it("paginates a complete projected long endnote after the body under a synthetic text-length fit", async () => {
+        const footnoteWords = Array.from({ length: 70 }, (_, index) => (
+            `detail${String(index).padStart(3, "0")}`
+        ));
+        const prepared = prepareShareCardMarkdown([
+            "First body uses [^long].",
+            "",
+            "Final body repeats [^long]. END_OF_BODY.",
+            "",
+            `[^long]: ${footnoteWords.join(" ")}`,
+        ].join("\n"));
+        const pages = await paginateShareCardMarkdown(
+            prepared.blocks,
+            (markdown) => markdown.length <= 120,
+        );
+        const allMarkdown = pages.map((page) => page.content).join("\n\n");
+        const footnoteBlockIndex = prepared.blocks.findIndex((block) => block.includes("detail000"));
+        const footnoteBlock = prepared.blocks[footnoteBlockIndex] ?? "";
+        const sourceSegments = pages.flatMap((page) => page.renderPlan?.segments ?? [])
+            .filter((segment) => segment.blockIndex === footnoteBlockIndex);
+
+        expect(pages.length).toBeGreaterThan(2);
+        expect(pages.every((page) => page.content.trim().length > 0 && page.content.length <= 120))
+            .toBe(true);
+        expect(allMarkdown.indexOf("detail000")).toBeGreaterThan(allMarkdown.indexOf("END_OF_BODY."));
+        expect(allMarkdown).toContain("First body uses \\[1\\].");
+        expect(allMarkdown).toContain("Final body repeats \\[1\\].");
+        expect(allMarkdown).not.toContain("[^long]");
+        expect(allMarkdown.match(/\bdetail\d{3}\b/gu)).toEqual(footnoteWords);
+        expect(pages.filter((page) => /\bdetail\d{3}\b/u.test(page.content)).length)
+            .toBeGreaterThan(1);
+        expect(sourceSegments.map((segment) => (
+            footnoteBlock.slice(segment.sourceStart, segment.sourceEnd)
+        )).join("")).toBe(footnoteBlock);
+        expect(pages.map((page) => page.pageIndex)).toEqual(pages.map((_, index) => index));
+        expect(pages.every((page) => page.totalPages === pages.length)).toBe(true);
     });
 
     it("keeps reference-image definitions as invisible context without a blank page", async () => {
@@ -669,9 +882,11 @@ describe("paginateShareCardMarkdown", () => {
             .toBe(safe.slice(1, -1));
 
         for (const ambiguous of [
-            `***${"ambiguous ".repeat(10)}***`,
             `${"prefix ".repeat(6)}a*b*c`,
             `**${"mismatched ".repeat(8)}*`,
+            `***${"mismatched ".repeat(8)}**`,
+            `___${"mismatched ".repeat(8)}__`,
+            `***${"unpaired ".repeat(8)}`,
         ]) {
             await expect(paginateShareCardMarkdown(
                 [ambiguous],

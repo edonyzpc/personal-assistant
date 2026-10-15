@@ -523,6 +523,7 @@ const MAX_PRIORITY_WORD_BOUNDARIES = 768;
 // Keep early dense split candidates available before line and word samples are
 // selected. This is a sampling floor, not an output-page or content limit.
 const MIN_DENSE_CODE_POINT_BOUNDARIES = 24;
+const MAX_SAFE_FRAGMENT_NESTING = 64;
 
 function createRenderPlan(
     segments: readonly ShareCardRenderPlanSegment[],
@@ -819,7 +820,18 @@ function findInlineLink(source: string, start: number, limit: number): InlineLin
     const labelEnd = findClosingLabelBracket(source, start, limit);
     if (labelEnd < 0 || source.charAt(labelEnd + 1) !== "(") return null;
 
-    let cursor = labelEnd + 2;
+    const end = findShareCardMarkdownDestinationEnd(source, labelEnd + 1, limit);
+    if (end !== null) return { labelEnd, end };
+    paginationCannotProveSafety("An incomplete Markdown link cannot be split safely.");
+}
+
+/** @internal Shared destination ownership for pagination and footnote projection. */
+export function findShareCardMarkdownDestinationEnd(
+    source: string,
+    start: number,
+    limit: number,
+): number | null {
+    let cursor = start + 1;
     let parentheses = 1;
     let quote = "";
     let angle = false;
@@ -841,11 +853,11 @@ function findInlineLink(source: string, start: number, limit: number): InlineLin
             parentheses += 1;
         } else if (character === ")") {
             parentheses -= 1;
-            if (parentheses === 0) return { labelEnd, end: cursor + 1 };
+            if (parentheses === 0) return cursor + 1;
         }
         cursor += 1;
     }
-    paginationCannotProveSafety("An incomplete Markdown link cannot be split safely.");
+    return null;
 }
 
 function normalizeReferenceLabel(label: string): string {
@@ -882,7 +894,10 @@ function referenceDefinitionLabel(line: string): string | null {
     if (expanded.charAt(labelStart) !== "[") return null;
     const labelEnd = findReferenceLabelEnd(expanded, labelStart);
     if (labelEnd < 0 || expanded.charAt(labelEnd + 1) !== ":") return null;
-    return normalizeReferenceLabel(expanded.slice(labelStart + 1, labelEnd));
+    const label = expanded.slice(labelStart + 1, labelEnd);
+    // Footnotes have visible bodies; they are not invisible link context.
+    if (label.startsWith("^")) return null;
+    return normalizeReferenceLabel(label);
 }
 
 function markdownLinesOutsideCode(markdown: string): string[] {
@@ -1167,6 +1182,89 @@ function joinPageRecordContent(
         : joinBlocks(left.content, right.content);
 }
 
+function readPlainInlineHtmlTag(
+    source: string,
+    start: number,
+    limit: number,
+): { name: string; closing: boolean; end: number } | null {
+    const tag = /^<(\/?)(sup|span|sub)(?=[ \t>])/iu.exec(source.slice(start, limit));
+    if (!tag) return null;
+    const closing = tag[1] === "/";
+    let cursor = start + tag[0].length;
+    while (cursor < limit) {
+        const spacing = /^[ \t]+/u.exec(source.slice(cursor, limit));
+        cursor += spacing?.[0].length ?? 0;
+        if (source.charAt(cursor) === ">") {
+            return { name: tag[2].toLowerCase(), closing, end: cursor + 1 };
+        }
+        if (closing || !spacing) return null;
+        const attribute = /^[a-z_:][\w:.-]*/iu.exec(source.slice(cursor, limit));
+        // Only the existing location tooltip is text-neutral. Visibility,
+        // styling and other HTML attributes retain the complex-content guard.
+        if (!attribute || attribute[0].toLowerCase() !== "title") return null;
+        cursor += attribute[0].length;
+        const afterName = cursor;
+        while (source.charAt(cursor) === " " || source.charAt(cursor) === "\t") cursor += 1;
+        if (source.charAt(cursor) !== "=") {
+            cursor = afterName;
+            continue;
+        }
+        cursor += 1;
+        while (source.charAt(cursor) === " " || source.charAt(cursor) === "\t") cursor += 1;
+        const quote = source.charAt(cursor);
+        if (quote === "\"" || quote === "'") {
+            cursor += 1;
+            while (cursor < limit && source.charAt(cursor) !== quote) {
+                if (source.charAt(cursor) === "\n" || source.charAt(cursor) === "\r") return null;
+                cursor += 1;
+            }
+            if (cursor >= limit) return null;
+            cursor += 1;
+        } else {
+            const value = /^[^\s"'`=<>]+/u.exec(source.slice(cursor, limit));
+            if (!value) return null;
+            cursor += value[0].length;
+        }
+    }
+    return null;
+}
+
+/** A complete plain-text annotation stays atomic; this does not fragment HTML wrappers. */
+function readPlainInlineHtmlToken(
+    source: string,
+    start: number,
+    limit: number,
+    depth: number,
+): { end: number; contentRanges: SourceRange[] } | null {
+    const stack: string[] = [];
+    const contentRanges: SourceRange[] = [];
+    let cursor = start;
+    while (cursor < limit) {
+        if (source.charAt(cursor) === "<") {
+            const tag = readPlainInlineHtmlTag(source, cursor, limit);
+            if (!tag) return null;
+            if (tag.closing) {
+                if (stack.pop() !== tag.name) return null;
+                if (stack.length === 0) return { end: tag.end, contentRanges };
+            } else {
+                stack.push(tag.name);
+                if (depth + stack.length > MAX_SAFE_FRAGMENT_NESTING) {
+                    paginationCannotProveSafety("Markdown nesting is too deep to paginate safely.");
+                }
+            }
+            cursor = tag.end;
+            continue;
+        }
+        const textStart = cursor;
+        while (cursor < limit && source.charAt(cursor) !== "<") cursor += 1;
+        // Markdown, entities and multiline HTML need a different source-to-text
+        // proof. Keep their existing typed failure rather than guess here.
+        if (/[\\`*_[\]!~=$%&\r\n]/u.test(source.slice(textStart, cursor))) return null;
+        contentRanges.push({ start: textStart, end: cursor });
+    }
+    return null;
+}
+
 function createSafeFragmentPlan(source: string): SafeFragmentPlan {
     const lines = analyzeMarkdownLines(source);
     const lineByStart = new Map(lines.map((line) => [line.start, line]));
@@ -1217,11 +1315,11 @@ function createSafeFragmentPlan(source: string): SafeFragmentPlan {
     const parseRange = (
         start: number,
         limit: number,
-        closing?: { marker: string; length: number },
+        closing?: { marker: string; length: number; inlineLinkClose?: number },
         depth = 0,
         insideLink = false,
     ): { closeStart: number; after: number } | null => {
-        if (depth > 64) paginationCannotProveSafety("Markdown nesting is too deep to paginate safely.");
+        if (depth > MAX_SAFE_FRAGMENT_NESTING) paginationCannotProveSafety("Markdown nesting is too deep to paginate safely.");
         let cursor = start;
         while (cursor < limit) {
             const character = view.charAt(cursor);
@@ -1232,7 +1330,7 @@ function createSafeFragmentPlan(source: string): SafeFragmentPlan {
                 if (
                     runEnd - cursor === closing.length
                     && flanking.canClose
-                    && !flanking.canOpen
+                    && (!flanking.canOpen || cursor === closing.inlineLinkClose)
                 ) {
                     return { closeStart: cursor, after: cursor + closing.length };
                 }
@@ -1296,6 +1394,15 @@ function createSafeFragmentPlan(source: string): SafeFragmentPlan {
                 protectToken(cursor, embedEnd);
                 cursor = embedEnd;
                 continue;
+            }
+            if (character === "<") {
+                const token = readPlainInlineHtmlToken(source, cursor, limit, depth);
+                if (token) {
+                    protectToken(cursor, token.end);
+                    contentRanges.push(...token.contentRanges);
+                    cursor = token.end;
+                    continue;
+                }
             }
             if (
                 view.startsWith("![", cursor)
@@ -1363,7 +1470,31 @@ function createSafeFragmentPlan(source: string): SafeFragmentPlan {
                 while (view.charAt(runEnd) === character) runEnd += 1;
                 const runLength = runEnd - cursor;
                 const flanking = delimiterFlanking(view, cursor, runLength);
-                if (runLength > 2 || (flanking.canOpen && flanking.canClose)) {
+                const linkEnd = runLength <= 3
+                    && flanking.canOpen
+                    && view.charAt(runEnd) === "["
+                    && !view.startsWith("[[", runEnd)
+                    ? findInlineLink(view, runEnd, limit)?.end
+                    : undefined;
+                // Only this complete link and its exact matching delimiter run
+                // can disambiguate punctuation on both sides of emphasis.
+                const inlineLinkClose = linkEnd !== undefined
+                    && linkEnd + runLength <= limit
+                    && view.slice(linkEnd, linkEnd + runLength) === view.slice(cursor, runEnd)
+                    && view.charAt(linkEnd + runLength) !== character
+                    && delimiterFlanking(view, linkEnd, runLength).canClose
+                    ? linkEnd
+                    : undefined;
+                // Three matching markers are bold italic; longer runs can hide
+                // competing emphasis boundaries and remain fail-closed.
+                if (
+                    runLength > 3
+                    || (
+                        flanking.canOpen
+                        && flanking.canClose
+                        && (inlineLinkClose === undefined || closing?.marker === character)
+                    )
+                ) {
                     paginationCannotProveSafety("An ambiguous emphasis delimiter run cannot be split safely.");
                 }
                 if (flanking.canOpen) {
@@ -1375,7 +1506,7 @@ function createSafeFragmentPlan(source: string): SafeFragmentPlan {
                     const close = parseRange(
                         cursor + runLength,
                         limit,
-                        { marker: character, length: runLength },
+                        { marker: character, length: runLength, inlineLinkClose },
                         depth + 1,
                         insideLink,
                     );

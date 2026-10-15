@@ -117,6 +117,7 @@ export class ShareCardTestElement {
     id = "";
     title = "";
     type = "";
+    value = "";
     disabled = false;
     hidden = false;
     clientWidth = 540;

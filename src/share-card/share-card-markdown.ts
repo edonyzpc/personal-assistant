@@ -1,5 +1,10 @@
 /* Copyright 2023 edonyzpc */
 
+import {
+    findShareCardMarkdownDestinationEnd,
+    ShareCardPaginationError,
+} from "./share-card-paginator";
+
 /** Markdown payload consumed by measured, visual-aware pagination. */
 export interface PreparedShareCardMarkdown {
     markdown: string;
@@ -425,7 +430,7 @@ function isClosingFence(line: string, fence: FenceMatch): boolean {
  * while the opening info string is removed so registered code-block processors
  * (for example diagrams or Vault queries) cannot run during card rendering.
  */
-function prepareOutsideFencedCode(markdown: string): string {
+function prepareOutsideFencedCode(markdown: string, ordinaryLineIndexes?: Set<number>): string {
     const lines = markdown.split("\n");
     const output: string[] = [];
     let ordinaryLines: string[] = [];
@@ -441,7 +446,7 @@ function prepareOutsideFencedCode(markdown: string): string {
         ordinaryLines = [];
     };
 
-    for (const line of lines) {
+    for (const [lineIndex, line] of lines.entries()) {
         if (fence) {
             const belongsToContainer = consumeFenceContainerPrefix(line, fence.containers) !== null;
             if (!belongsToContainer) fence = null;
@@ -525,6 +530,7 @@ function prepareOutsideFencedCode(markdown: string): string {
         listContainers = analysis.listContainers;
         paragraphOpen = analysis.paragraphOpen;
         if (!analysis.fence) {
+            ordinaryLineIndexes?.add(lineIndex);
             ordinaryLines.push(line);
             continue;
         }
@@ -541,6 +547,232 @@ function prepareOutsideFencedCode(markdown: string): string {
     return output.join("\n");
 }
 
+interface ShareCardFootnoteDefinition {
+    label: string;
+    body: string;
+}
+
+/** Reuse the preparation scanner so literal code and raw HTML keep their ownership. */
+function ordinaryMarkdownLineIndexes(markdown: string): Set<number> {
+    const indexes = new Set<number>();
+    prepareOutsideFencedCode(markdown, indexes);
+    return indexes;
+}
+
+function inlineCodeEnd(source: string, start: number): number {
+    let openingEnd = start;
+    while (source.charAt(openingEnd) === "`") openingEnd += 1;
+    const length = openingEnd - start;
+    let cursor = openingEnd;
+    while (cursor < source.length) {
+        const next = source.indexOf("`", cursor);
+        if (next < 0) break;
+        let end = next;
+        while (source.charAt(end) === "`") end += 1;
+        if (end - next === length) return end;
+        cursor = end;
+    }
+    return openingEnd;
+}
+
+function markdownDestinationEnd(source: string, start: number): number {
+    return findShareCardMarkdownDestinationEnd(source, start, source.length) ?? start;
+}
+
+function markdownLabelEnd(source: string, start: number): number {
+    let depth = 0;
+    for (let index = start; index < source.length; index += 1) {
+        const character = source.charAt(index);
+        if (character === "\\") index += 1;
+        else if (character === "`") index = inlineCodeEnd(source, index) - 1;
+        else if (character === "[") depth += 1;
+        else if (character === "]" && --depth === 0) return index + 1;
+    }
+    return start;
+}
+
+/** Replace only ordinary inline references, never code, HTML or link destinations. */
+function replaceInlineFootnoteReferences(
+    source: string,
+    numberFor: (label: string) => number | undefined,
+): string {
+    let output = "";
+    let cursor = 0;
+    while (cursor < source.length) {
+        let literalEnd = cursor;
+        if (source.charAt(cursor) === "\\") literalEnd = Math.min(source.length, cursor + 2);
+        else if (source.charAt(cursor) === "`") literalEnd = inlineCodeEnd(source, cursor);
+        else if (source.startsWith("![", cursor)) {
+            const labelEnd = markdownLabelEnd(source, cursor + 1);
+            if (labelEnd > cursor + 1) {
+                literalEnd = labelEnd;
+                if (source.charAt(labelEnd) === "(") {
+                    literalEnd = Math.max(labelEnd, markdownDestinationEnd(source, labelEnd));
+                } else if (source.charAt(labelEnd) === "[") {
+                    literalEnd = Math.max(labelEnd, markdownLabelEnd(source, labelEnd));
+                }
+            }
+        } else if (source.charAt(cursor) === "<") {
+            const tag = /^<\/?([a-z][\w:-]*)\b(?:[^<>"']|"[^"]*"|'[^']*')*>/i.exec(source.slice(cursor));
+            const commentEnd = source.startsWith("<!--", cursor)
+                ? source.indexOf("-->", cursor + 4) : -1;
+            if (commentEnd >= 0) literalEnd = commentEnd + 3;
+            else if (tag) {
+                literalEnd = cursor + tag[0].length;
+                if (!tag[0].startsWith("</") && !tag[0].endsWith("/>")) {
+                    const matchingTags = new RegExp(`<\\/?${tag[1]}\\b(?:[^<>"']|"[^"]*"|'[^']*')*>`, "gi");
+                    matchingTags.lastIndex = literalEnd;
+                    let depth = 1;
+                    let nextTag: RegExpExecArray | null;
+                    while ((nextTag = matchingTags.exec(source))) {
+                        if (nextTag[0].startsWith("</")) depth -= 1;
+                        else if (!nextTag[0].endsWith("/>")) depth += 1;
+                        if (depth === 0) {
+                            literalEnd = matchingTags.lastIndex;
+                            break;
+                        }
+                    }
+                }
+            } else {
+                const autolink = /^<[^<>\n]+>/.exec(source.slice(cursor));
+                if (autolink) literalEnd = cursor + autolink[0].length;
+            }
+        } else if (source.charAt(cursor) === "(" && source.charAt(cursor - 1) === "]") {
+            literalEnd = markdownDestinationEnd(source, cursor);
+        }
+        if (literalEnd > cursor) {
+            output += source.slice(cursor, literalEnd);
+            cursor = literalEnd;
+            continue;
+        }
+        const reference = source.startsWith("[^", cursor)
+            ? /^\[\^([^\]\s]+)\]/u.exec(source.slice(cursor)) : null;
+        if (reference) {
+            const number = numberFor(reference[1]);
+            output += number === undefined ? reference[0] : `\\[${number}\\]`;
+            cursor += reference[0].length;
+        } else {
+            output += source.charAt(cursor);
+            cursor += 1;
+        }
+    }
+    return output;
+}
+
+function replaceFootnoteReferences(
+    markdown: string,
+    numberFor: (label: string) => number | undefined,
+): string {
+    const ordinary = ordinaryMarkdownLineIndexes(markdown);
+    const lines = markdown.split("\n");
+    const output: string[] = [];
+    let paragraph: string[] = [];
+    let referenceDefinition = false;
+    let referenceNeedsDestination = false;
+    const flush = (): void => {
+        if (paragraph.length) output.push(replaceInlineFootnoteReferences(paragraph.join("\n"), numberFor));
+        paragraph = [];
+    };
+    for (const [index, line] of lines.entries()) {
+        // Ordinary link/image definitions contain destinations, not visible references.
+        const definition = ordinary.has(index) && /^ {0,3}\[(?!\^)[^\]]+\]:/u.test(line);
+        const continuation = referenceDefinition && !!line.trim()
+            && (referenceNeedsDestination || /^[ \t]+\S/u.test(line));
+        if (definition || continuation) {
+            flush();
+            output.push(line);
+            referenceDefinition = true;
+            referenceNeedsDestination = definition && /:\s*$/u.test(line);
+        } else {
+            referenceDefinition = false;
+            referenceNeedsDestination = false;
+            if (!ordinary.has(index) || !line.trim()) {
+                flush();
+                output.push(line);
+            } else paragraph.push(line);
+        }
+    }
+    flush();
+    return output.join("\n");
+}
+
+function footnoteContinuation(line: string): string | null {
+    const expanded = expandMarkdownLine(line);
+    return expanded.text.startsWith("    ")
+        ? line.slice(expanded.sourceOffsets[4]) : null;
+}
+
+/** Project visible footnotes once, before source identities and static DOM are frozen. */
+function projectShareCardFootnotes(markdown: string): string {
+    if (!markdown.includes("[^")) return markdown;
+    const lines = markdown.split("\n");
+    const ordinary = ordinaryMarkdownLineIndexes(markdown);
+    const definitions = new Map<string, ShareCardFootnoteDefinition>();
+    const bodyLines: string[] = [];
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        const match = ordinary.has(index)
+            ? /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*(.*)$/u.exec(line) : null;
+        if (!match) {
+            bodyLines.push(line);
+            continue;
+        }
+        if (definitions.has(match[1])) {
+            throw new ShareCardPaginationError("unpageable-content", "Duplicate Share Card footnote definitions cannot be projected safely.");
+        }
+        const definitionLines = [match[2]];
+        while (index + 1 < lines.length) {
+            const next = lines[index + 1];
+            const continuation = footnoteContinuation(next);
+            if (continuation !== null) {
+                definitionLines.push(continuation);
+                index += 1;
+            } else if (!next.trim()) {
+                let afterBlank = index + 1;
+                while (afterBlank < lines.length && !lines[afterBlank].trim()) afterBlank += 1;
+                if (afterBlank >= lines.length || footnoteContinuation(lines[afterBlank]) === null) break;
+                while (index + 1 < afterBlank) {
+                    definitionLines.push(lines[++index]);
+                }
+            } else break;
+        }
+        definitions.set(match[1], { label: match[1], body: definitionLines.join("\n") });
+    }
+    if (!definitions.size) return markdown;
+
+    const numbers = new Map<string, number>();
+    const ordered: ShareCardFootnoteDefinition[] = [];
+    const numberFor = (label: string): number | undefined => {
+        const definition = definitions.get(label);
+        if (!definition) return undefined;
+        if (!numbers.has(label)) {
+            numbers.set(label, numbers.size + 1);
+            ordered.push(definition);
+        }
+        return numbers.get(label);
+    };
+    const body = replaceFootnoteReferences(bodyLines.join("\n"), numberFor);
+    const projectedDefinitions: string[] = [];
+    let preparedCount = 0;
+    const projectPendingDefinitions = (): void => {
+        while (preparedCount < ordered.length) {
+            const definition = ordered[preparedCount++];
+            // Dedenting exposes code fences; apply the existing processor allowlist again.
+            const preparedBody = prepareOutsideFencedCode(definition.body);
+            const text = replaceFootnoteReferences(preparedBody, numberFor);
+            const number = numbers.get(definition.label);
+            const startsWithBlock = /^(?: {0,3}(?:#{1,6}(?:\s|$)|>|[-+*]\s|\d+[.)]\s|`{3,}|~{3,}|<)| {4}|\t)/u.test(text);
+            projectedDefinitions.push(`\\[${number}\\]${startsWithBlock ? "\n\n" : " "}${text}`);
+        }
+    };
+    projectPendingDefinitions();
+    for (const definition of definitions.values()) {
+        numberFor(definition.label);
+        projectPendingDefinitions();
+    }
+    return `${body}\n\n${projectedDefinitions.join("\n\n")}`;
+}
+
 /**
  * Prepare Markdown for resource-localized visual rendering.
  *
@@ -552,7 +784,9 @@ function prepareOutsideFencedCode(markdown: string): string {
  * stripped and therefore renders as ordinary code.
  */
 export function prepareShareCardMarkdown(markdown: string): PreparedShareCardMarkdown {
-    const prepared = prepareOutsideFencedCode(markdown.replace(/\r\n?/g, "\n"));
+    const prepared = projectShareCardFootnotes(
+        prepareOutsideFencedCode(markdown.replace(/\r\n?/g, "\n")),
+    );
 
     return {
         markdown: prepared,

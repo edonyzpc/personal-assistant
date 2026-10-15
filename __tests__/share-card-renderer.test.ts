@@ -111,6 +111,114 @@ function createMeasuredRangeDocument(capacity: number): ShareCardTestDocument {
     return document;
 }
 
+function createTableGeometryDocument(
+    naturalWidth: number,
+    naturalHeight: number,
+): ShareCardTestDocument {
+    const document = new ShareCardTestDocument();
+    enableShareCardTestRanges(document);
+    const createElement = document.createElement.bind(document);
+    document.createElement = ((tagName: string) => {
+        const element = createElement(tagName);
+        const ancestor = (className: string): ShareCardTestElement | null => {
+            let current: ShareCardTestElement | null = element;
+            while (current && !current.classList.contains(className)) current = current.parentElement;
+            return current;
+        };
+        const geometry = (): DOMRect => {
+            let ancestorNode: ShareCardTestElement | null = element;
+            while (ancestorNode) {
+                if (ancestorNode.hidden) {
+                    return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0,
+                        x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+                }
+                ancestorNode = ancestorNode.parentElement;
+            }
+            const card = ancestor("pa-share-card");
+            const fontSize = Number.parseFloat(
+                card?.style.values.get("--pa-share-card-font-size") ?? "24",
+            );
+            const wrapper = ancestor("pa-share-card-table-fit");
+            const scaled = wrapper?.classList.contains("is-scaled") ?? false;
+            const scale = scaled
+                ? Number(wrapper?.style.values.get("--pa-share-card-table-scale"))
+                : 1;
+            const translateX = scaled
+                ? Number.parseFloat(wrapper?.style.values.get("--pa-share-card-table-x") ?? "0")
+                : 0;
+            const translateY = scaled
+                ? Number.parseFloat(wrapper?.style.values.get("--pa-share-card-table-y") ?? "0")
+                : 0;
+            let width = 452;
+            let height = 585;
+            let left = 0;
+            let top = 0;
+            if (element.classList.contains("pa-share-card-table-fit")) {
+                width = Number.parseFloat(element.style.values.get("--pa-share-card-table-width") ?? "452");
+                height = Number.parseFloat(element.style.values.get("--pa-share-card-table-height")
+                    ?? String(naturalHeight * fontSize / 24));
+            } else if (element.tagName === "table" || ancestor("pa-share-card-table-fit-content")) {
+                width = naturalWidth * fontSize / 24 * scale;
+                height = naturalHeight * fontSize / 24 * scale;
+                left = translateX;
+                top = translateY;
+            }
+            return { left, top, width, height, right: left + width, bottom: top + height,
+                x: left, y: top, toJSON: () => ({}) } as DOMRect;
+        };
+        Object.assign(element, { getBoundingClientRect: geometry });
+        Object.defineProperties(element, {
+            clientWidth: { configurable: true, get: () => 452 },
+            clientHeight: { configurable: true, get: () => 585 },
+            scrollHeight: {
+                configurable: true,
+                get: () => {
+                    if (!element.classList.contains("pa-share-card-body")) return 585;
+                    const wrapper = element.querySelector(".pa-share-card-table-fit");
+                    return wrapper?.classList.contains("is-contained")
+                        ? Number.parseFloat(wrapper.style.values.get("--pa-share-card-table-height") ?? "585")
+                        : naturalHeight;
+                },
+            },
+        });
+        return element;
+    }) as typeof document.createElement;
+    const createRange = (asDocument(document).createRange).bind(document);
+    Object.assign(document, {
+        createRange: () => {
+            const range = createRange();
+            let selected: HTMLElement | null = null;
+            Object.assign(range, {
+                selectNodeContents: (element: HTMLElement) => { selected = element; },
+                getBoundingClientRect: () => selected!.getBoundingClientRect(),
+            });
+            return range;
+        },
+    });
+    return document;
+}
+
+function appendSyntheticTable(document: ShareCardTestDocument, body: ShareCardTestElement): void {
+    const table = document.createElement("table");
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    const nested = document.createElement("table");
+    const nestedRow = document.createElement("tr");
+    for (const label of ["Root", "Branch alpha", "Branch beta", "Branch gamma"]) {
+        const nestedCell = document.createElement("td");
+        nestedCell.textContent = label;
+        nestedRow.appendChild(nestedCell);
+    }
+    const image = document.createElement("img");
+    image.setAttribute("src", "data:image/png;base64,TREE");
+    cell.appendChild(image);
+    nested.appendChild(nestedRow);
+    cell.appendChild(nested);
+    row.appendChild(cell);
+    table.appendChild(row);
+    body.appendChild(table);
+}
+
 function appendInstrumentedText(body: ShareCardTestElement, markdown: string): void {
     const marker = /<span data-pa-share-boundary="([^"]+)"><\/span>/gu;
     let cursor = 0;
@@ -500,6 +608,44 @@ describe("ShareCardRenderer", () => {
         unload.mockRestore();
     });
 
+    it("updates the local sharer footer synchronously without rerendering content", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => undefined,
+        });
+        const render = await renderer.renderPage({
+            content: "# Signature",
+            pageIndex: 1,
+            totalPages: 2,
+        }, { theme: "light" });
+
+        const footerMeta = render.cardEl
+            .querySelector(".pa-share-card-footer-meta") as unknown as ShareCardTestElement;
+        const signature = render.cardEl.querySelector(".pa-share-card-signature")!;
+        expect(footerMeta.children.map((child: ShareCardTestElement) => (
+            child.classList.contains("pa-share-card-page-number")
+        ))).toEqual([true, false]);
+        expect(signature.querySelector(".pa-share-card-sharer-by")?.textContent).toBe("by");
+        expect(signature.querySelector("svg")).toBeTruthy();
+        expect(signature.querySelector(".pa-share-card-sharer-name")).toBeNull();
+
+        renderer.updateCardSharer(
+            render.cardEl,
+            "  <img src=x onerror=alert(1)> Ada  ",
+        );
+        expect(signature.querySelector("svg")).toBeNull();
+        expect(signature.querySelector(".pa-share-card-sharer-name")?.textContent)
+            .toBe("<img src=x onerror=alert(1)> Ada");
+        expect(signature.querySelector("img")).toBeNull();
+
+        renderer.updateCardSharer(render.cardEl, " \t ");
+        expect(signature.querySelector("svg")).toBeTruthy();
+        expect(signature.querySelector(".pa-share-card-sharer-name")).toBeNull();
+        expect(renderMock).toHaveBeenCalledTimes(1);
+
+        render.cleanup();
+    });
+
     it("falls back to plain text only when the content contains no approved visual", async () => {
         renderMock.mockRejectedValueOnce(new Error("renderer failed"));
         const document = new ShareCardTestDocument();
@@ -677,6 +823,139 @@ describe("ShareCardRenderer", () => {
         unload.mockRestore();
     });
 
+    it.each([
+        [420, 941],
+        [1_400, 420],
+    ])("fits an isolated nested table intact at natural size %s × %s", async (width, height) => {
+        const document = createTableGeometryDocument(width, height);
+        renderMock.mockImplementation(async (_app, _markdown, element) => {
+            appendSyntheticTable(document, element as unknown as ShareCardTestElement);
+        });
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => undefined,
+        });
+        const source = "<table><tr><td><table><tr><td>Complete synthetic tree</td></tr></table></td></tr></table>";
+        const options = { theme: "light" as const, fontSize: 24 };
+        await renderer.prepareBlocks([source], options);
+        await expect(renderer.createPreparedFitPredicate(options)(source, 0)).resolves.toBe(true);
+
+        for (const host of [document.createElement("div"), undefined]) {
+            if (host) {
+                host.hidden = true;
+                document.body.appendChild(host);
+            }
+            const rendered = await renderer.renderPage({
+                content: source, pageIndex: 0, totalPages: 1,
+            }, { ...options, host: host ? asElement(host) : undefined });
+            if (host) {
+                expect(rendered.cardEl.parentElement).toBe(host);
+                expect(document.body.querySelector(".pa-share-card-capture-host")).toBeNull();
+                host.hidden = false;
+            }
+            const wrapper = rendered.bodyEl.querySelector<HTMLElement>(".pa-share-card-table-fit")!;
+            expect(wrapper).not.toBeNull();
+            const fixtureWrapper = wrapper as unknown as ShareCardTestElement;
+            const scale = Number(fixtureWrapper.style.values.get("--pa-share-card-table-scale"));
+            expect(scale).toBeGreaterThan(0);
+            expect(scale).toBeLessThan(1);
+            expect(rendered.fits(0)).toBe(true);
+            const table = rendered.bodyEl.querySelector("table")!;
+            const bounds = table.getBoundingClientRect();
+            const wrapperBounds = wrapper.getBoundingClientRect();
+            expect(bounds.left).toBeGreaterThanOrEqual(wrapperBounds.left);
+            expect(bounds.top).toBeGreaterThanOrEqual(wrapperBounds.top);
+            expect(bounds.right).toBeLessThanOrEqual(wrapperBounds.right);
+            expect(bounds.bottom).toBeLessThanOrEqual(wrapperBounds.bottom);
+            expect(wrapperBounds.width).toBeLessThanOrEqual(rendered.bodyEl.clientWidth);
+            expect(wrapperBounds.height).toBeLessThanOrEqual(rendered.bodyEl.clientHeight);
+            expect(rendered.bodyEl.querySelectorAll("table")).toHaveLength(2);
+            expect(rendered.bodyEl.querySelectorAll("img")).toHaveLength(1);
+            expect(rendered.bodyEl.textContent).toBe("RootBranch alphaBranch betaBranch gamma");
+            expect((rendered.cardEl as unknown as ShareCardTestElement).style.values.get(
+                "--pa-share-card-font-size",
+            )).toBe("24px");
+            expect(fixtureWrapper.style.values.has("font-size")).toBe(false);
+            rendered.cleanup();
+        }
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        renderer.cleanup();
+    });
+
+    it("remeasures isolated tables for each final font size without sharing scale", async () => {
+        const document = createTableGeometryDocument(420, 941);
+        renderMock.mockImplementation(async (_app, _markdown, element) => {
+            appendSyntheticTable(document, element as unknown as ShareCardTestElement);
+        });
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => undefined,
+        });
+        const source = "<table><tr><td>Complete tree</td></tr></table>";
+        await renderer.prepareBlocks([source], { theme: "dark", fontSize: 24 });
+        const scales: number[] = [];
+        for (const fontSize of [24, 16, 24]) {
+            const rendered = await renderer.renderPage({
+                content: source, pageIndex: 0, totalPages: 1,
+            }, { theme: "dark", fontSize });
+            const wrapper = rendered.bodyEl.querySelector(".pa-share-card-table-fit") as unknown as ShareCardTestElement;
+            expect(wrapper).not.toBeNull();
+            scales.push(Number(wrapper.style.values.get("--pa-share-card-table-scale")));
+            expect(rendered.fits()).toBe(true);
+            rendered.cleanup();
+        }
+        expect(scales[1]).toBeGreaterThan(scales[0]!);
+        expect(scales[2]).toBe(scales[0]);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        renderer.cleanup();
+    });
+
+    it("does not scale a table when its prepared block also contains body text", async () => {
+        const document = createTableGeometryDocument(420, 941);
+        renderMock.mockImplementation(async (_app, _markdown, element) => {
+            const body = element as unknown as ShareCardTestElement;
+            const paragraph = document.createElement("p");
+            paragraph.textContent = "Body text stays at 24px.";
+            body.appendChild(paragraph);
+            appendSyntheticTable(document, body);
+        });
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => undefined,
+        });
+        const source = "<div>Body text stays at 24px.<table><tr><td>Tree</td></tr></table></div>";
+        const options = { theme: "light" as const, fontSize: 24 };
+        await renderer.prepareBlocks([source], options);
+        const rendered = await renderer.renderPage({ content: source, pageIndex: 0, totalPages: 1 }, options);
+        expect(rendered.bodyEl.querySelector(".pa-share-card-table-fit")).toBeNull();
+        expect(rendered.fits()).toBe(false);
+        expect(rendered.bodyEl.querySelector("p")?.textContent).toBe("Body text stays at 24px.");
+        rendered.cleanup();
+        renderer.cleanup();
+    });
+
+    it("cleans up an isolated table closed while its final mounted frame is pending", async () => {
+        const document = createTableGeometryDocument(420, 941);
+        renderMock.mockImplementation(async (_app, _markdown, element) => {
+            appendSyntheticTable(document, element as unknown as ShareCardTestElement);
+        });
+        let holdFrame = false;
+        let finishFrame: (() => void) | undefined;
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: () => holdFrame
+                ? new Promise<void>((resolve) => { finishFrame = resolve; })
+                : Promise.resolve(),
+        });
+        const source = "<table><tr><td>Complete tree</td></tr></table>";
+        const options = { theme: "light" as const, fontSize: 24 };
+        await renderer.prepareBlocks([source], options);
+        holdFrame = true;
+        const pending = renderer.renderPage({ content: source, pageIndex: 0, totalPages: 1 }, options);
+        for (let index = 0; index < 30 && !finishFrame; index += 1) await Promise.resolve();
+        expect(finishFrame).toBeDefined();
+        renderer.cleanup();
+        await expect(pending).rejects.toBeInstanceOf(ShareCardRenderCancelledError);
+        expect(document.body.querySelector(".pa-share-card-capture-host")).toBeNull();
+        finishFrame?.();
+    });
+
     it("summarizes prepared sanitization and fallback completeness without another render", async () => {
         const document = new ShareCardTestDocument();
         renderMock
@@ -824,6 +1103,65 @@ describe("ShareCardRenderer", () => {
         renderer.cleanup();
         expect(unload).toHaveBeenCalledTimes(1);
         unload.mockRestore();
+    });
+
+    it("keeps atomic inline HTML annotation nodes once across prepared static pages", async () => {
+        const document = createMeasuredRangeDocument(100);
+        const annotations = [11, 16].map((page) => (
+            `<sup><span title="Page / location: ${page}">:\u200a${page}</span> </sup>`
+        ));
+        renderMock.mockImplementation(async (_app, markdown, element) => {
+            const body = element as unknown as ShareCardTestElement;
+            body.textContent = "";
+            const paragraph = document.createElement("p");
+            let cursor = 0;
+            for (const match of markdown.matchAll(/<sup><span title="([^"]+)">([^<]+)<\/span> <\/sup>/gu)) {
+                appendInstrumentedText(paragraph, markdown.slice(cursor, match.index));
+                const sup = document.createElement("sup");
+                const span = document.createElement("span");
+                span.setAttribute("title", match[1]!);
+                span.textContent = match[2]!;
+                sup.appendChild(span);
+                sup.appendTextNode(new ShareCardTestTextNode(" "));
+                paragraph.appendChild(sup);
+                cursor = match.index + match[0].length;
+            }
+            appendInstrumentedText(paragraph, markdown.slice(cursor));
+            body.appendChild(paragraph);
+            for (const annotation of annotations) expect(markdown).toContain(annotation);
+        });
+        const source = `${"Before ".repeat(30)}${annotations[0]}${" After ".repeat(30)}${annotations[1]}${" End ".repeat(30)}`;
+        const visibleText = annotations.reduce(
+            (text, annotation, index) => text.split(annotation).join(`:\u200a${[11, 16][index]} `),
+            source,
+        );
+        const options = { theme: "light" as const, fontSize: 24 };
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => undefined,
+        });
+        await renderer.prepareBlocks([source], options);
+        const pages = await paginateShareCardMarkdown([source], renderer.createPreparedFitPredicate(options));
+        expect(pages.length).toBeGreaterThan(2);
+        expect(pages.map((page) => page.content).join("")).toBe(source);
+        const texts: string[] = [];
+        const labels: string[] = [];
+        for (const page of pages) {
+            const rendered = await renderer.renderPage(page, options);
+            expect(rendered.fits()).toBe(true);
+            expect(rendered.usedPlainTextFallback).toBe(false);
+            texts.push(rendered.bodyEl.textContent ?? "");
+            for (const sup of Array.from(rendered.bodyEl.querySelectorAll("sup"))) {
+                const span = sup.querySelector("span")!;
+                expect(span).not.toBeNull();
+                labels.push(span.getAttribute("title") ?? "");
+                expect(sup.textContent).toBe(`${span.textContent} `);
+            }
+            rendered.cleanup();
+        }
+        expect(texts.join("")).toBe(visibleText);
+        expect(labels).toEqual(["Page / location: 11", "Page / location: 16"]);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        renderer.cleanup();
     });
 
     it("refines a very long plain block through real static boundaries in one processor pass", async () => {
@@ -1049,6 +1387,94 @@ describe("ShareCardRenderer", () => {
             "pa-share-card-visual-block",
         )).toBe(false);
         rendered.cleanup();
+        renderer.cleanup();
+    });
+
+    it("keeps bold italic DOM intact through static pagination", async () => {
+        const document = createMeasuredRangeDocument(1);
+        renderMock.mockImplementation(async (_app, markdown, element) => {
+            const body = element as unknown as ShareCardTestElement;
+            body.textContent = "";
+            const emphasis = document.createElement("em");
+            const strong = document.createElement("strong");
+            appendInstrumentedText(strong, markdown.slice(3, -3));
+            emphasis.appendChild(strong);
+            body.appendChild(emphasis);
+        });
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => undefined,
+        });
+        const content = "甲乙丙丁戊".repeat(20);
+        const source = `***${content}***`;
+        const options = { theme: "light" as const };
+        await renderer.prepareBlocks([source], options);
+        const pages = await paginateShareCardMarkdown(
+            [source], renderer.createPreparedFitPredicate(options),
+        );
+        expect(pages.length).toBeGreaterThan(1);
+        const renderedText: string[] = [];
+        for (const page of pages) {
+            const rendered = await renderer.renderPage(page, options);
+            const emphasis = rendered.bodyEl.querySelector("em");
+            const strong = emphasis?.querySelector("strong") ?? null;
+            expect(emphasis?.textContent).toBe(rendered.bodyEl.textContent);
+            expect(strong?.textContent).toBe(rendered.bodyEl.textContent);
+            expect(rendered.usedPlainTextFallback).toBe(false);
+            renderedText.push(rendered.bodyEl.textContent ?? "");
+            rendered.cleanup();
+        }
+        expect(renderedText.join("")).toBe(content);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        renderer.cleanup();
+    });
+
+    it("preserves em containing a link through punctuation-adjacent static pages", async () => {
+        const document = createMeasuredRangeDocument(65);
+        const label = Array.from({ length: 14 }, (_, index) => `species-${index}`).join(" ");
+        const source = `Prefix (*[${label}](https://e.x "L")*) and *[Second species](https://e.x "L")*, tail.`;
+        const linkPattern = /\*\[([\s\S]*?)\]\(https:\/\/e\.x "L"\)\*/gu;
+        renderMock.mockImplementation(async (_app, markdown, element) => {
+            const body = element as unknown as ShareCardTestElement;
+            body.textContent = "";
+            const paragraph = document.createElement("p");
+            let cursor = 0;
+            for (const match of markdown.matchAll(linkPattern)) {
+                appendInstrumentedText(paragraph, markdown.slice(cursor, match.index));
+                const emphasis = document.createElement("em");
+                const link = document.createElement("a");
+                link.setAttribute("title", "L");
+                appendInstrumentedText(link, match[1]!);
+                emphasis.appendChild(link);
+                paragraph.appendChild(emphasis);
+                cursor = match.index + match[0].length;
+            }
+            appendInstrumentedText(paragraph, markdown.slice(cursor));
+            body.appendChild(paragraph);
+        });
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => undefined,
+        });
+        const options = { theme: "light" as const, fontSize: 24 };
+        await renderer.prepareBlocks([source], options);
+        const pages = await paginateShareCardMarkdown([source], renderer.createPreparedFitPredicate(options));
+        expect(pages.length).toBeGreaterThan(2);
+        const text: string[] = [];
+        const linkedText: string[] = [];
+        for (const page of pages) {
+            const rendered = await renderer.renderPage(page, options);
+            expect(rendered.fits()).toBe(true);
+            expect(rendered.usedPlainTextFallback).toBe(false);
+            text.push(rendered.bodyEl.textContent ?? "");
+            for (const link of Array.from(rendered.bodyEl.querySelectorAll("a"))) {
+                expect(link.parentElement?.tagName.toLowerCase()).toBe("em");
+                expect(link.getAttribute("title")).toBe("L");
+                linkedText.push(link.textContent ?? "");
+            }
+            rendered.cleanup();
+        }
+        expect(text.join("")).toBe(`Prefix (${label}) and Second species, tail.`);
+        expect(linkedText.join("")).toBe(`${label}Second species`);
+        expect(renderMock).toHaveBeenCalledTimes(1);
         renderer.cleanup();
     });
 

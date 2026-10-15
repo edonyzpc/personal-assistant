@@ -36,6 +36,7 @@ import { ShareCardClipboardUnavailableError } from "../src/share-card/share-card
 import type { ShareCardExporter } from "../src/share-card/share-card-export";
 import type {
     ShareCardPreparedCompletenessSummary,
+    ShareCardRenderOptions,
     ShareCardRenderer,
 } from "../src/share-card/share-card-renderer";
 import {
@@ -43,6 +44,10 @@ import {
     type LocalizedShareCardResources,
     type ShareCardResourceContext,
 } from "../src/share-card/share-card-resources";
+import {
+    ShareCardPaginationError,
+    type ShareCardPaginationErrorCode,
+} from "../src/share-card/share-card-paginator";
 import {
     type CardPage,
     type ShareCardData,
@@ -311,6 +316,248 @@ describe("ShareCardModal", () => {
             expect.anything(),
             expect.objectContaining({ printStyle: "xerox" }),
         );
+        modal.onClose();
+    });
+
+    it("keeps the sharer local, synchronous, and shared by preview and export", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        const exporter = createExporter();
+        const createExporterForAppearance = jest.fn((
+            _app: App,
+            _ownerDocument: Document,
+            _renderer: ShareCardRenderer,
+            _appearance: { sharerName?: string },
+        ) => exporter);
+        const localizeResources = jest.fn(async () => ({
+            markdown: "one",
+            report: {
+                complete: true,
+                resolvedCount: 0,
+                placeholderCount: 0,
+                failedCount: 0,
+                uniqueResourceCount: 0,
+                totalResolvedBytes: 0,
+                resources: [],
+            },
+        }));
+        const prepareMarkdown = jest.fn(() => ({ markdown: "one", blocks: ["one"] }));
+        const paginate = jest.fn(async () => createPages(1));
+        const modal = createModal(document, {
+            localizeResources: localizeResources as unknown as NonNullable<
+                ShareCardModalDependencies["localizeResources"]
+            >,
+            prepareMarkdown,
+            paginate,
+            createRenderer: () => renderer,
+            createExporter: createExporterForAppearance,
+        });
+
+        modal.onOpen();
+        const sharerLabel = document.body.querySelector(".pa-share-card-sharer-label")!;
+        const sharerInput = document.body.querySelector(".pa-share-card-sharer-input")!;
+        expect(sharerLabel.tagName).toBe("label");
+        expect(sharerLabel.getAttribute("for")).toBe(sharerInput.id);
+        expect(sharerInput.getAttribute("placeholder")).toBe("Leave blank to sign as EZ");
+        emitShareCardInput(sharerInput, "  Ada  ");
+        await flushShareCardTasks();
+
+        expect(renderer.renderPage).toHaveBeenCalledTimes(1);
+        expect(renderer.renderPage).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ sharerName: "Ada" }),
+        );
+        expect(createExporterForAppearance).toHaveBeenCalledTimes(1);
+        const appearance = createExporterForAppearance.mock.calls[0]?.[3];
+        expect(appearance).toEqual(expect.objectContaining({ sharerName: "Ada" }));
+
+        emitShareCardInput(sharerInput, " \t ");
+        expect(appearance?.sharerName).toBeUndefined();
+        emitShareCardInput(sharerInput, " Grace ");
+        expect(appearance?.sharerName).toBe("Grace");
+        expect(renderer.updateCardSharer).toHaveBeenLastCalledWith(
+            expect.objectContaining({ classList: expect.anything() }),
+            "Grace",
+        );
+        expect(renderer.renderPage).toHaveBeenCalledTimes(1);
+        expect(localizeResources).toHaveBeenCalledTimes(1);
+        expect(prepareMarkdown).toHaveBeenCalledTimes(1);
+        expect(paginate).toHaveBeenCalledTimes(1);
+
+        let finishCopy!: () => void;
+        (exporter.copyCurrentPage as jest.Mock).mockImplementationOnce(
+            () => new Promise<void>((resolve) => {
+                finishCopy = resolve;
+            }),
+        );
+        document.body.querySelector(".pa-share-card-actions")!.children[0]!.click();
+        expect(sharerInput.disabled).toBe(true);
+        emitShareCardInput(sharerInput, "Blocked");
+        expect(appearance?.sharerName).toBe("Grace");
+        finishCopy();
+        await flushShareCardTasks();
+        expect(sharerInput.disabled).toBe(false);
+
+        modal.onClose();
+        modal.onOpen();
+        const reopenedInput = document.body.querySelector(".pa-share-card-sharer-input")!;
+        expect(reopenedInput.value).toBe("");
+        await flushShareCardTasks();
+        expect(createExporterForAppearance.mock.calls[1]?.[3])
+            .toEqual(expect.objectContaining({ sharerName: undefined }));
+        expect(renderer.renderPage).toHaveBeenLastCalledWith(
+            expect.anything(),
+            expect.objectContaining({ sharerName: undefined }),
+        );
+        modal.onClose();
+    });
+
+    it("publishes a sharer name typed during block preparation", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        const createPreparedFitPredicate = jest.fn(() => jest.fn(async () => true));
+        let finishPrepareBlocks!: () => void;
+        const prepareBlocks = jest.fn((
+            _blocks: readonly string[],
+            _options: Omit<ShareCardRenderOptions, "host">,
+        ) => new Promise<void>((resolve) => {
+            finishPrepareBlocks = resolve;
+        }));
+        Object.assign(renderer, { createPreparedFitPredicate, prepareBlocks });
+        const exporter = createExporter();
+        const createExporterForAppearance = jest.fn((
+            _app: App,
+            _ownerDocument: Document,
+            _renderer: ShareCardRenderer,
+            _appearance: { sharerName?: string },
+        ) => exporter);
+        const prepareMarkdown = jest.fn(() => ({ markdown: "one", blocks: ["one"] }));
+        const paginate = jest.fn(async () => createPages(2));
+        const modal = createModal(document, {
+            prepareMarkdown,
+            paginate,
+            createRenderer: () => renderer,
+            createExporter: createExporterForAppearance,
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        expect(prepareBlocks).toHaveBeenCalledTimes(1);
+        expect(prepareBlocks.mock.calls[0]?.[1]?.sharerName).toBeUndefined();
+        const sharerInput = document.body.querySelector(".pa-share-card-sharer-input")!;
+        emitShareCardInput(sharerInput, "  Ada  ");
+        expect(sharerInput.value).toBe("  Ada  ");
+        expect(renderer.updateCardSharer).not.toHaveBeenCalled();
+
+        finishPrepareBlocks();
+        await flushShareCardTasks();
+
+        expect(renderer.recordPreparedFinalPages).toHaveBeenCalledWith(
+            expect.any(Array),
+            expect.objectContaining({ sharerName: "Ada" }),
+        );
+        expect(renderer.renderPage).toHaveBeenLastCalledWith(
+            expect.anything(),
+            expect.objectContaining({ sharerName: "Ada" }),
+        );
+        expect(createExporterForAppearance).toHaveBeenCalledWith(
+            expect.anything(),
+            asDocument(document),
+            renderer,
+            expect.objectContaining({ sharerName: "Ada" }),
+        );
+        expect(prepareBlocks).toHaveBeenCalledTimes(1);
+        expect(prepareMarkdown).toHaveBeenCalledTimes(1);
+        expect(paginate).toHaveBeenCalledTimes(1);
+        modal.onClose();
+    });
+
+    it.each([
+        { label: "a new name", input: "  Ada  ", expectedName: "Ada", expectedDisplay: "Ada" },
+        { label: "the default EZ signature", input: " \t ", expectedName: undefined, expectedDisplay: "EZ" },
+    ])("publishes the latest sharer after an awaited prepared page render: $label", async ({
+        input,
+        expectedName,
+        expectedDisplay,
+    }) => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        const prepareBlocks = jest.fn(async () => undefined);
+        const createPreparedFitPredicate = jest.fn(() => jest.fn(async () => true));
+        Object.assign(renderer, { prepareBlocks, createPreparedFitPredicate });
+        renderer.updateCardSharer.mockImplementation((cardEl: HTMLElement, name?: string) => {
+            cardEl.dataset.sharer = name || "EZ";
+        });
+        const exporter = createExporter();
+        const createExporterForAppearance = jest.fn((
+            _app: App,
+            _ownerDocument: Document,
+            _renderer: ShareCardRenderer,
+            _appearance: { sharerName?: string },
+        ) => exporter);
+        const prepareMarkdown = jest.fn(() => ({ markdown: "one\n\ntwo", blocks: ["one", "two"] }));
+        const paginate = jest.fn(async () => createPages(2));
+        const modal = createModal(document, {
+            prepareMarkdown,
+            paginate,
+            createRenderer: () => renderer,
+            createExporter: createExporterForAppearance,
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        const sharerInput = document.body.querySelector(".pa-share-card-sharer-input")!;
+        const previousCard = document.body.querySelector(".pa-share-card")!;
+        const appearance = createExporterForAppearance.mock.calls[0]?.[3];
+        emitShareCardInput(sharerInput, "Before");
+        expect(previousCard.dataset.sharer).toBe("Before");
+        expect(appearance?.sharerName).toBe("Before");
+
+        let finishRender!: () => void;
+        let pendingCard: ShareCardTestElement | undefined;
+        renderer.renderPage.mockImplementationOnce(async (
+            _page: CardPage,
+            options: Pick<ShareCardRenderOptions, "host" | "sharerName">,
+        ) => {
+            const card = document.createElement("div");
+            card.classList.add("pa-share-card");
+            card.dataset.sharer = options.sharerName || "EZ";
+            pendingCard = card;
+            (options.host as unknown as ShareCardTestElement).appendChild(card);
+            await new Promise<void>((resolve) => {
+                finishRender = resolve;
+            });
+            return {
+                cardEl: asElement(card),
+                bodyEl: asElement(document.createElement("div")),
+                signal: new AbortController().signal,
+                sanitizationIssues: [],
+                usedPlainTextFallback: false,
+                fits: () => true,
+                cleanup: jest.fn(() => card.remove()),
+            };
+        });
+        document.body.querySelector(".pa-share-card-nav")!.children[2]!.click();
+        await flushShareCardTasks();
+        expect(pendingCard?.dataset.sharer).toBe("Before");
+        expect(sharerInput.disabled).toBe(false);
+
+        emitShareCardInput(sharerInput, input);
+        expect(previousCard.dataset.sharer).toBe(expectedDisplay);
+        expect(appearance?.sharerName).toBe(expectedName);
+        finishRender();
+        await flushShareCardTasks();
+
+        const publishedCards = document.body.querySelectorAll(".pa-share-card");
+        expect(publishedCards).toHaveLength(1);
+        expect(publishedCards[0]).toBe(pendingCard);
+        expect(publishedCards[0]?.dataset.sharer).toBe(expectedDisplay);
+        expect(publishedCards[0]?.dataset.sharer).toBe(appearance?.sharerName ?? "EZ");
+        expect(renderer.renderPage).toHaveBeenCalledTimes(2);
+        expect(prepareBlocks).toHaveBeenCalledTimes(1);
+        expect(prepareMarkdown).toHaveBeenCalledTimes(1);
+        expect(paginate).toHaveBeenCalledTimes(1);
+        expect(createExporterForAppearance).toHaveBeenCalledTimes(1);
         modal.onClose();
     });
 
@@ -734,6 +981,77 @@ describe("ShareCardModal", () => {
         expect(unregisterFont).toHaveBeenCalledTimes(1);
         modal.onClose();
         expect(unregisterFont).toHaveBeenCalledTimes(1);
+    });
+
+    it.each<[ShareCardPaginationErrorCode, string]>([
+        ["unpageable-content", "This content could not be split into card pages safely."],
+        ["measurement-failed", "Could not finish measuring this card content."],
+    ])("reports the specific preparation reason for %s", async (code, expectedStatus) => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => {
+                throw new ShareCardPaginationError(code, "typed pagination failure");
+            },
+            createRenderer: () => renderer,
+            createExporter: () => createExporter(),
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+
+        const status = document.body.querySelector(".pa-share-card-status")!;
+        const actions = document.body.querySelector(".pa-share-card-actions")!;
+        expect(status.textContent).toBe(expectedStatus);
+        expect(actions.children.every((child) => child.disabled)).toBe(true);
+        modal.onClose();
+    });
+
+    it("reports a typed pagination preview failure with its specific reason", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        renderer.renderPage.mockRejectedValueOnce(
+            new ShareCardPaginationError("unpageable-content", "preview pagination failure"),
+        );
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => createPages(1),
+            createRenderer: () => renderer,
+            createExporter: () => createExporter(),
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+
+        expect(document.body.querySelector(".pa-share-card-status")!.textContent)
+            .toBe("This content could not be split into card pages safely.");
+        modal.onClose();
+    });
+
+    it("does not report a typed pagination rejection after the modal closes", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        let rejectPagination!: (error: unknown) => void;
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: () => new Promise((_resolve, reject) => {
+                rejectPagination = reject;
+            }) as ReturnType<NonNullable<ShareCardModalDependencies["paginate"]>>,
+            createRenderer: () => renderer,
+            createExporter: () => createExporter(),
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        modal.onClose();
+        rejectPagination(
+            new ShareCardPaginationError("measurement-failed", "late pagination failure"),
+        );
+        await flushShareCardTasks();
+
+        expect(document.body.querySelector(".pa-share-card-status")).toBeNull();
+        expect(renderer.renderPage).not.toHaveBeenCalled();
     });
 
     it("releases the font exactly once when the modal closes during loading", async () => {
@@ -1387,6 +1705,7 @@ function createRenderer(
     } = {},
 ): ShareCardRenderer & {
     renderPage: jest.Mock;
+    updateCardSharer: jest.Mock;
     cleanup: jest.Mock;
 } {
     const renderPage = jest.fn(async (page: CardPage, options: { host?: HTMLElement }) => {
@@ -1414,6 +1733,7 @@ function createRenderer(
     });
     return {
         renderPage,
+        updateCardSharer: jest.fn(),
         fits: jest.fn(async () => true),
         recordPreparedFinalPages: jest.fn(),
         getPreparedCompletenessSummary: jest.fn(() => (
@@ -1425,8 +1745,17 @@ function createRenderer(
         cleanup: jest.fn(),
     } as unknown as ShareCardRenderer & {
         renderPage: jest.Mock;
+        updateCardSharer: jest.Mock;
         cleanup: jest.Mock;
     };
+}
+
+function emitShareCardInput(
+    inputEl: ShareCardTestElement,
+    value: string,
+): void {
+    inputEl.value = value;
+    for (const listener of [...inputEl.listeners.get("input") ?? []]) listener();
 }
 
 function createExporter(overrides: Partial<{

@@ -285,33 +285,35 @@ export function prepareShareCardPrintStyleForCapture(cardEl: HTMLElement): () =>
     );
     if (wrappers.length === 0) return () => undefined;
 
-    const filterUrls = new Map<string, string>();
+    const filters = new Map<string, Element>();
     for (const definition of Array.from(cardEl.querySelectorAll(".pa-share-card-print-defs"))) {
         if (definition.parentElement !== cardEl || definition.namespaceURI !== SVG_NAMESPACE) {
             continue;
         }
         const filter = definition.querySelector("filter");
         const filterId = filter?.getAttribute("id") ?? "";
-        const filterMarkup = filter?.outerHTML;
-        if (!/^pa-share-card-print-(?:heading|body)-\d+$/u.test(filterId)
-            || !filterMarkup) {
+        if (!filter || !/^pa-share-card-print-(?:heading|body)-\d+$/u.test(filterId)
+            || !filter.outerHTML) {
             throw new Error("Share Card print filter definition is incomplete.");
         }
-        const svg = `<svg xmlns="${SVG_NAMESPACE}"><defs>${filterMarkup}</defs></svg>`;
-        filterUrls.set(
-            filterId,
-            `url("data:image/svg+xml,${encodeURIComponent(svg)}#${filterId}")`,
-        );
+        filters.set(filterId, filter.cloneNode(true) as Element);
     }
 
     const originalFilters = wrappers.map((wrapper) => wrapper.style.getPropertyValue("filter"));
-    const captureFilters = originalFilters.map((reference) => {
+    const captureFilters = originalFilters.map((reference, index) => {
         const match = /^url\(["']?#([^"'()]+)["']?\)$/u.exec(reference.trim());
-        const captureFilter = match ? filterUrls.get(match[1]) : undefined;
-        if (!captureFilter) {
+        const originalId = match?.[1];
+        const definition = originalId ? filters.get(originalId) : undefined;
+        if (!definition) {
             throw new Error("Share Card print filter reference cannot be captured.");
         }
-        return captureFilter;
+        // Shared SVG filter resources can drop multiline text during capture.
+        // Give each run a distinct payload without changing its ink primitives.
+        const filter = definition.cloneNode(true) as Element;
+        const filterId = `${originalId}-run-${index}`;
+        filter.setAttribute("id", filterId);
+        const svg = `<svg xmlns="${SVG_NAMESPACE}"><defs>${filter.outerHTML}</defs></svg>`;
+        return `url("data:image/svg+xml,${encodeURIComponent(svg)}#${filterId}")`;
     });
 
     const restore = (): void => {

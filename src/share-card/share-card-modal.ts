@@ -15,6 +15,7 @@ import {
     type ShareCardResourceCache,
 } from "./share-card-resources";
 import {
+    ShareCardPaginationError,
     paginateShareCardMarkdown,
     type ShareCardFitPredicate,
     type ShareCardPaginationOptions,
@@ -45,6 +46,17 @@ const MIN_PREVIEW_SCALE = 0.45;
 
 function t(key: string, params?: Readonly<Record<string, string | number>>): string {
     return pluginT(key, getPluginUiLanguage(), params);
+}
+
+const SHARE_CARD_PAGINATION_STATUS_KEYS = {
+    "measurement-failed": "plugin.shareCard.measurementFailed",
+    "unpageable-content": "plugin.shareCard.unpageableContent",
+} as const;
+
+function shareCardPreparationFailureMessage(error: unknown): string {
+    return error instanceof ShareCardPaginationError
+        ? t(SHARE_CARD_PAGINATION_STATUS_KEYS[error.code])
+        : t("plugin.shareCard.prepareFailed");
 }
 
 function waitForShareCardPaginationFrame(ownerDocument: Document): Promise<void> {
@@ -93,6 +105,7 @@ export class ShareCardModal extends Modal {
     private pageIndicatorEl: HTMLElement | null = null;
     private copyButton: HTMLButtonElement | null = null;
     private saveButton: HTMLButtonElement | null = null;
+    private sharerNameInputEl: HTMLInputElement | null = null;
     private folderInputEl: HTMLInputElement | null = null;
     private folderSuggest: FolderSuggestController | null = null;
     private ownerWindow: Window | null = null;
@@ -106,6 +119,7 @@ export class ShareCardModal extends Modal {
     private readonly pageCompleteness = new Map<number, ShareCardPreparedCompletenessSummary>();
     private openState = false;
     private busy = false;
+    private sharerName = "";
     private operationToken = 0;
     private readonly handleResize = (): void => this.updatePreviewScale();
     private readonly handleZoomKeydown = (event: KeyboardEvent): void => {
@@ -137,6 +151,7 @@ export class ShareCardModal extends Modal {
         this.pages = [];
         this.currentPageIndex = 0;
         this.appearance = null;
+        this.sharerName = "";
         this.fontRegistrationHeld = false;
         this.completenessReport = null;
         this.preparedCompleteness = {
@@ -207,7 +222,7 @@ export class ShareCardModal extends Modal {
             if (error instanceof ShareCardResourceAbortedError || !this.isCurrent(token)) return;
             console.error("Share Card preparation failed.", error);
             this.contentEl.setAttribute("aria-busy", "false");
-            this.setStatus(t("plugin.shareCard.prepareFailed"), "error");
+            this.setStatus(shareCardPreparationFailureMessage(error), "error");
             this.updateControls();
         });
     }
@@ -285,6 +300,7 @@ export class ShareCardModal extends Modal {
             theme: this.theme,
             sourceLabel: this.data.sourceLabel,
             sourcePath: this.data.resourceContext?.basePath,
+            sharerName: this.sharerName || undefined,
             fontSize: 24,
             printStyle: "xerox" as const,
         };
@@ -360,6 +376,7 @@ export class ShareCardModal extends Modal {
             }
         }
 
+        finalRenderOptions.sharerName = this.sharerName || undefined;
         if (typeof renderer.recordPreparedFinalPages === "function") {
             renderer.recordPreparedFinalPages(pages, finalRenderOptions);
         }
@@ -429,6 +446,29 @@ export class ShareCardModal extends Modal {
     }
 
     private createActions(ownerDocument: Document, titleId: string, controlsEl: HTMLElement): void {
+        const sharerRow = ownerDocument.win.createDiv();
+        sharerRow.classList.add("pa-share-card-sharer-row");
+        const sharerLabel = ownerDocument.win.createEl("label");
+        sharerLabel.classList.add("pa-share-card-sharer-label");
+        sharerLabel.textContent = t("plugin.shareCard.sharerName");
+        const sharerInput = ownerDocument.win.createEl("input");
+        const sharerInputId = `${titleId}-sharer-name`;
+        sharerLabel.setAttribute("for", sharerInputId);
+        sharerRow.appendChild(sharerLabel);
+        sharerInput.type = "text";
+        sharerInput.id = sharerInputId;
+        sharerInput.classList.add("pa-share-card-sharer-input");
+        sharerInput.value = "";
+        sharerInput.setAttribute("placeholder", t("plugin.shareCard.sharerNamePlaceholder"));
+        sharerInput.spellcheck = false;
+        sharerInput.autocomplete = "off";
+        sharerInput.addEventListener("input", () => {
+            this.updateSharerName(sharerInput.value);
+        });
+        sharerRow.appendChild(sharerInput);
+        this.sharerNameInputEl = sharerInput;
+        controlsEl.appendChild(sharerRow);
+
         const folderRow = ownerDocument.win.createDiv();
         folderRow.classList.add("pa-share-card-folder-row");
         const folderLabel = ownerDocument.win.createEl("label");
@@ -574,7 +614,7 @@ export class ShareCardModal extends Modal {
                 console.error("Share Card preview render failed.", error);
             }
             if (this.isCurrent(token)) {
-                this.setStatus(t("plugin.shareCard.prepareFailed"), "error");
+                this.setStatus(shareCardPreparationFailureMessage(error), "error");
                 this.updateControls(previousRender === null);
             }
             return false;
@@ -584,6 +624,7 @@ export class ShareCardModal extends Modal {
             return false;
         }
 
+        renderer.updateCardSharer(render.cardEl, this.sharerName);
         previousRender?.cleanup();
         this.previewRender = render;
         this.pageCompleteness.set(page.pageIndex, {
@@ -666,6 +707,17 @@ export class ShareCardModal extends Modal {
         }
     }
 
+    private updateSharerName(value: string): void {
+        if (this.busy) return;
+        const normalizedSharerName = value.trim();
+        this.sharerName = normalizedSharerName;
+        if (this.appearance) {
+            this.appearance.sharerName = normalizedSharerName || undefined;
+        }
+        const render = this.previewRender;
+        if (render) this.renderer?.updateCardSharer(render.cardEl, normalizedSharerName);
+    }
+
     private beginBusy(activeButton: HTMLButtonElement | null, status: string): number {
         this.busy = true;
         const token = this.nextToken();
@@ -710,6 +762,7 @@ export class ShareCardModal extends Modal {
                 total: this.pages.length,
             });
         }
+        if (this.sharerNameInputEl) this.sharerNameInputEl.disabled = this.busy;
     }
 
     private updatePreviewScale(): void {
@@ -806,6 +859,7 @@ export class ShareCardModal extends Modal {
         this.pageIndicatorEl = null;
         this.copyButton = null;
         this.saveButton = null;
+        this.sharerNameInputEl = null;
         this.folderInputEl = null;
     }
 }

@@ -23,6 +23,7 @@ import { applyShareCardPrintStyle } from "./share-card-print-style";
 import {
     createShareCardLogo,
     createShareCardOrnament,
+    createShareCardSharerMark,
     SHARE_CARD_NOISE_DATA_URI,
 } from "./share-card-assets";
 import { SHARE_CARD_FONT_FAMILY } from "./share-card-font";
@@ -175,12 +176,14 @@ const DEFAULT_FIT_TOLERANCE = 1;
 const DEFAULT_READINESS_TIMEOUT_MS = 5_000;
 const MAX_LAYOUT_SETTLE_FRAMES = 4;
 const MAX_PROTOTYPE_CACHE_ENTRIES = 32;
+const TABLE_FIT_PRINT_INSET = 8;
 
 export interface ShareCardRenderOptions {
     theme: ShareCardTheme;
     printStyle?: ShareCardPrintStyle;
     sourceLabel?: string;
     sourcePath?: string;
+    sharerName?: string;
     host?: HTMLElement;
     fontSize?: number;
 }
@@ -395,8 +398,30 @@ export class ShareCardRenderer {
             handle.cleanup();
             throw new ShareCardRenderCancelledError();
         }
-        host.appendChild(cardEl);
+        const table = this.hasPreparedAppearance(options) && this.getPreparedSingleBlock(page)
+            ? standaloneShareCardTable(bodyEl)
+            : null;
+        // The first preview host stays hidden until renderPage resolves. Measure
+        // that same final card in the existing connected capture host instead.
+        const measurementHost = table && !ownsHost ? this.createCaptureHost() : null;
+        try {
+            (measurementHost ?? host).appendChild(cardEl);
+            if (table) await this.fitPreparedStandaloneTable(bodyEl, table);
+            if (measurementHost) host.appendChild(cardEl);
+        } catch (error) {
+            handle.cleanup();
+            throw error;
+        } finally {
+            measurementHost?.remove();
+        }
         return handle;
+    }
+
+    /** Update only the local signature; prepared content and pagination stay frozen. */
+    updateCardSharer(cardEl: HTMLElement, sharerName: string | undefined): void {
+        const signature = cardEl.querySelector<HTMLElement>(".pa-share-card-signature");
+        if (!signature) throw new Error("Share Card signature is missing.");
+        fillShareCardSignatureContent(signature, sharerName);
     }
 
     async fits(
@@ -827,22 +852,78 @@ export class ShareCardRenderer {
             && this.preparedPrototypeKey === staticPrototypeKey(options);
     }
 
-    private isPreparedSingleVisual(page: CardPage): boolean {
+    private getPreparedSingleBlock(page: CardPage): PreparedShareCardBlock | null {
         const segments = page.renderPlan?.segments;
         if (segments) {
-            if (segments.length !== 1) return false;
+            if (segments.length !== 1) return null;
             const segment = segments[0];
             const block = this.preparedBlocks?.[segment.blockIndex];
-            return Boolean(
-                block
+            return block
                 && segment.sourceStart === 0
                 && segment.sourceEnd === block.source.length
-                && isPureShareCardVisualBlock(block.source),
-            );
+                ? block
+                : null;
         }
-        return this.preparedBlocks?.some((block) => (
-            block.source === page.content && isPureShareCardVisualBlock(block.source)
-        )) ?? false;
+        return this.preparedBlocks?.find((block) => block.source === page.content) ?? null;
+    }
+
+    private isPreparedSingleVisual(page: CardPage): boolean {
+        const block = this.getPreparedSingleBlock(page);
+        return block !== null && isPureShareCardVisualBlock(block.source);
+    }
+
+    private async fitPreparedStandaloneTable(bodyEl: HTMLElement, table: HTMLElement): Promise<void> {
+        const wrapper = this.ownerDocument.win.createDiv();
+        wrapper.classList.add("pa-share-card-table-fit");
+        const content = this.ownerDocument.win.createDiv();
+        content.classList.add("pa-share-card-table-fit-content");
+        content.style.setProperty("--pa-share-card-table-natural-width", `${bodyEl.clientWidth}px`);
+        table.replaceWith(wrapper);
+        wrapper.appendChild(content);
+        content.appendChild(table);
+
+        const deadline = Date.now() + this.readinessTimeoutMs;
+        await this.awaitActive(this.waitForFrame(this.ownerDocument), deadline);
+        this.assertActive();
+        const bodyBounds = bodyEl.getBoundingClientRect();
+        const contentBounds = content.getBoundingClientRect();
+        const tableBounds = measureTableContentBounds(table);
+        // The preview host can itself be scaled. Convert viewport geometry back
+        // to this card's CSS pixels before choosing the local table transform.
+        const hostScaleX = bodyBounds.width / bodyEl.clientWidth;
+        const hostScaleY = bodyBounds.height / bodyEl.clientHeight;
+        const naturalWidth = (tableBounds.right - tableBounds.left) / hostScaleX;
+        const naturalHeight = (tableBounds.bottom - tableBounds.top) / hostScaleY;
+        if (naturalWidth === 0 || naturalHeight === 0) {
+            wrapper.replaceWith(table);
+            return;
+        }
+        const scale = Math.min(
+            1,
+            (bodyEl.clientWidth - TABLE_FIT_PRINT_INSET * 2) / naturalWidth,
+            (bodyEl.clientHeight - TABLE_FIT_PRINT_INSET * 2) / naturalHeight,
+        );
+        wrapper.style.setProperty("--pa-share-card-table-scale", String(scale));
+        wrapper.style.setProperty("--pa-share-card-table-width", `${naturalWidth * scale + TABLE_FIT_PRINT_INSET * 2}px`);
+        wrapper.style.setProperty("--pa-share-card-table-height", `${naturalHeight * scale + TABLE_FIT_PRINT_INSET * 2}px`);
+        wrapper.style.setProperty("--pa-share-card-table-x", `${TABLE_FIT_PRINT_INSET - (tableBounds.left - contentBounds.left) / hostScaleX * scale}px`);
+        wrapper.style.setProperty("--pa-share-card-table-y", `${TABLE_FIT_PRINT_INSET - (tableBounds.top - contentBounds.top) / hostScaleY * scale}px`);
+        wrapper.classList.add("is-scaled");
+
+        await this.awaitActive(this.waitForFrame(this.ownerDocument), deadline);
+        this.assertActive();
+        const fittedBounds = measureTableContentBounds(table);
+        const wrapperBounds = wrapper.getBoundingClientRect();
+        const finalBodyBounds = bodyEl.getBoundingClientRect();
+        if (
+            !boundsContain(wrapperBounds, fittedBounds)
+            || !boundsContain(finalBodyBounds, wrapperBounds)
+        ) {
+            throw new ShareCardRenderReadinessError("Share Card table could not fit without clipping.");
+        }
+        // A transform leaves its natural layout overflow behind. Contain that
+        // overflow only after proving every transformed table/text box fits.
+        wrapper.classList.add("is-contained");
     }
 
     private createPreparedPagePrototype(
@@ -994,12 +1075,16 @@ export class ShareCardRenderer {
         }
         footerEl.appendChild(brandRow);
 
+        const footerMetaEl = this.ownerDocument.win.createDiv();
+        footerMetaEl.classList.add("pa-share-card-footer-meta");
         if (page.totalPages > 1) {
             const pageNumberEl = this.ownerDocument.win.createDiv();
             pageNumberEl.classList.add("pa-share-card-page-number");
             pageNumberEl.textContent = `${page.pageIndex + 1} / ${page.totalPages}`;
-            footerEl.appendChild(pageNumberEl);
+            footerMetaEl.appendChild(pageNumberEl);
         }
+        footerMetaEl.appendChild(createShareCardSignature(this.ownerDocument, options.sharerName));
+        footerEl.appendChild(footerMetaEl);
         cardEl.appendChild(footerEl);
         return cardEl;
     }
@@ -1032,6 +1117,38 @@ function staticPrototypeKey(options: Omit<ShareCardRenderOptions, "host">): stri
         options.sourceLabel ?? "",
         options.sourcePath ?? "",
     ]);
+}
+
+function createShareCardSignature(
+    ownerDocument: Document,
+    sharerName: string | undefined,
+): HTMLElement {
+    const signature = ownerDocument.win.createDiv();
+    signature.classList.add("pa-share-card-signature");
+    fillShareCardSignatureContent(signature, sharerName);
+    return signature;
+}
+
+function fillShareCardSignatureContent(
+    signature: HTMLElement,
+    sharerName: string | undefined,
+): void {
+    clearElement(signature);
+    const ownerDocument = signature.ownerDocument;
+    const by = ownerDocument.win.createSpan();
+    by.classList.add("pa-share-card-sharer-by");
+    by.textContent = "by";
+    signature.appendChild(by);
+
+    const normalizedSharerName = sharerName?.trim() ?? "";
+    if (normalizedSharerName === "") {
+        signature.appendChild(createShareCardSharerMark(ownerDocument));
+        return;
+    }
+    const name = ownerDocument.win.createSpan();
+    name.classList.add("pa-share-card-sharer-name");
+    name.textContent = normalizedSharerName;
+    signature.appendChild(name);
 }
 
 function findPreparedBlockSequence(
@@ -2107,6 +2224,44 @@ function markVisualBlockOwners(bodyEl: HTMLElement): void {
         }
         owner.classList.add("pa-share-card-visual-block");
     }
+}
+
+function standaloneShareCardTable(bodyEl: HTMLElement): HTMLElement | null {
+    const table = bodyEl.children.length === 1 ? bodyEl.children[0] as HTMLElement : null;
+    if (!table || table.tagName.toLowerCase() !== "table") return null;
+    return Array.from(bodyEl.childNodes).some((node) => (
+        node !== table && node.nodeType !== 8 && node.textContent?.trim()
+    )) ? null : table;
+}
+
+function measureTableContentBounds(table: HTMLElement): Pick<DOMRect, "left" | "top" | "right" | "bottom"> {
+    const rectangles = [table.getBoundingClientRect()];
+    for (const element of Array.from(table.querySelectorAll("*"))) {
+        rectangles.push(element.getBoundingClientRect());
+    }
+    // Text can overflow a cell's own border box, particularly in nested trees.
+    const range = table.ownerDocument.createRange();
+    range.selectNodeContents(table);
+    rectangles.push(range.getBoundingClientRect());
+    range.detach();
+    const visible = rectangles.filter((rectangle) => rectangle.width > 0 || rectangle.height > 0);
+    const bounds = visible.length > 0 ? visible : rectangles.slice(0, 1);
+    return {
+        left: Math.min(...bounds.map((rectangle) => rectangle.left)),
+        top: Math.min(...bounds.map((rectangle) => rectangle.top)),
+        right: Math.max(...bounds.map((rectangle) => rectangle.right)),
+        bottom: Math.max(...bounds.map((rectangle) => rectangle.bottom)),
+    };
+}
+
+function boundsContain(
+    outer: Pick<DOMRect, "left" | "top" | "right" | "bottom">,
+    inner: Pick<DOMRect, "left" | "top" | "right" | "bottom">,
+): boolean {
+    return inner.left >= outer.left - DEFAULT_FIT_TOLERANCE
+        && inner.top >= outer.top - DEFAULT_FIT_TOLERANCE
+        && inner.right <= outer.right + DEFAULT_FIT_TOLERANCE
+        && inner.bottom <= outer.bottom + DEFAULT_FIT_TOLERANCE;
 }
 
 function replaceWithPlaceholder(element: Element, label: string): void {

@@ -19,65 +19,100 @@ import {
 import type { CardPage } from "../src/share-card/share-card-types";
 import {
     ShareCardTestDocument,
+    type ShareCardTestElement,
     asDocument,
     asElement,
 } from "./helpers/share-card-dom";
 
 describe("Share Card export", () => {
-    it("uses self-contained SVG print filters for PNG capture and restores fragment references", async () => {
+    it("uses independent self-contained SVG print filters per text run and restores references", async () => {
         const document = new ShareCardTestDocument();
         const card = document.createElement("div");
-        const wrapper = document.createElement("span");
-        wrapper.classList.add("pa-share-card-print-text");
-        wrapper.style.setProperty("filter", "url(#pa-share-card-print-body-21)");
-        const setFilter = wrapper.style.setProperty;
-        Object.assign(wrapper.style, {
-            getPropertyValue: (property: string) => wrapper.style.values.get(property) ?? "",
-            setProperty: (property: string, value: string) => {
-                setFilter(property, value);
-                wrapper.setAttribute("style", `${property}: ${value}`);
-            },
+        const originalIds = [
+            "pa-share-card-print-body-21", "pa-share-card-print-body-21", "pa-share-card-print-heading-22",
+        ];
+        const originalReferences = originalIds.map((id) => `url(#${id})`);
+        const parents = ["p", "p", "h2"].map((tagName) => document.createElement(tagName));
+        const wrappers = parents.map((parent, index) => {
+            const wrapper = document.createElement("span");
+            wrapper.classList.add("pa-share-card-print-text");
+            wrapper.textContent = ["First body run wraps across lines.", "Second body run.", "Heading"][index]!;
+            wrapper.style.setProperty("filter", originalReferences[index]!);
+            const setFilter = wrapper.style.setProperty;
+            Object.assign(wrapper.style, {
+                getPropertyValue: (property: string) => wrapper.style.values.get(property) ?? "",
+                setProperty: (property: string, value: string) => {
+                    setFilter(property, value);
+                    wrapper.setAttribute("style", `${property}: ${value}`);
+                },
+            });
+            parent.appendChild(wrapper);
+            card.appendChild(parent);
+            return wrapper;
         });
-        card.appendChild(wrapper);
-        const definition = document.createElement("svg");
-        definition.classList.add("pa-share-card-print-defs");
-        Object.defineProperty(definition, "namespaceURI", {
-            value: "http://www.w3.org/2000/svg",
+        const filterMarkup = new Map<string, string>();
+        function createFilter(id: string, primitives: string): ShareCardTestElement {
+            const filter = document.createElement("filter");
+            filter.setAttribute("id", id);
+            Object.defineProperties(filter, {
+                outerHTML: { get: () => `<filter id="${filter.getAttribute("id")}">${primitives}</filter>` },
+                cloneNode: { value: () => createFilter(filter.getAttribute("id")!, primitives) },
+            });
+            return filter;
+        }
+        const definitions = [...new Set(originalIds)].map((id, index) => {
+            const definition = document.createElement("svg");
+            definition.classList.add("pa-share-card-print-defs");
+            Object.defineProperty(definition, "namespaceURI", { value: "http://www.w3.org/2000/svg" });
+            const primitives = `<feTurbulence seed="6"/><feDisplacementMap scale="${index ? 5 : 1.6}"/>`;
+            const filter = createFilter(id, primitives);
+            filterMarkup.set(id, (filter as unknown as Element).outerHTML);
+            definition.appendChild(filter);
+            card.appendChild(definition);
+            return definition;
         });
-        const filter = document.createElement("filter");
-        filter.setAttribute("id", "pa-share-card-print-body-21");
-        Object.defineProperty(filter, "outerHTML", {
-            value: '<filter id="pa-share-card-print-body-21"><feDisplacementMap scale="1"/></filter>',
-        });
-        definition.appendChild(filter);
-        card.appendChild(definition);
+        const originalChildren = [...card.children];
+        const originalText = card.textContent;
         const pngBlob = new Blob(["png"], { type: "image/png" });
         const snapdomLike = jest.fn(async () => {
-            const reference = wrapper.style.values.get("filter") ?? "";
-            const match = /^url\("data:image\/svg\+xml,([^#]+)#pa-share-card-print-body-21"\)$/u
-                .exec(reference);
-            expect(match).not.toBeNull();
-            expect(decodeURIComponent(match![1]!)).toContain(
-                '<filter id="pa-share-card-print-body-21"><feDisplacementMap scale="1"/></filter>',
-            );
+            const references = wrappers.map((wrapper) => wrapper.style.values.get("filter"));
+            expect(new Set(references).size).toBe(wrappers.length);
+            wrappers.forEach((_wrapper, index) => {
+                const match = /^url\("data:image\/svg\+xml,([^#]+)#([^"#]+)"\)$/u.exec(references[index] ?? "");
+                expect(match).not.toBeNull();
+                const captureId = match![2]!;
+                expect(captureId).toBe(`${originalIds[index]}-run-${index}`);
+                const normalizedSvg = decodeURIComponent(match![1]!).replace(
+                    `id="${captureId}"`, `id="${originalIds[index]}"`,
+                );
+                expect(normalizedSvg).toBe(
+                    `<svg xmlns="http://www.w3.org/2000/svg"><defs>${filterMarkup.get(originalIds[index]!)}</defs></svg>`,
+                );
+            });
+            expect(card.textContent).toBe(originalText);
+            expect(card.children).toEqual(originalChildren);
+            expect(parents.map((parent) => parent.children[0])).toEqual(wrappers);
+            expect(definitions.map((definition) => (
+                (definition.children[0] as unknown as Element).outerHTML
+            ))).toEqual([...filterMarkup.values()]);
             return { toBlob: async () => pngBlob };
         }) as unknown as SnapdomLike;
 
         await expect(createSnapdomShareCardCapture(snapdomLike)(asElement(card)))
             .resolves.toBe(pngBlob);
-        expect(wrapper.style.values.get("filter")).toBe("url(#pa-share-card-print-body-21)");
+        expect(wrappers.map((wrapper) => wrapper.style.values.get("filter"))).toEqual(originalReferences);
 
         const failedSnapdom = jest.fn(async () => { throw new Error("capture failed"); }) as
             unknown as SnapdomLike;
         await expect(createSnapdomShareCardCapture(failedSnapdom)(asElement(card)))
             .rejects.toThrow("capture failed");
-        expect(wrapper.style.values.get("filter")).toBe("url(#pa-share-card-print-body-21)");
+        expect(wrappers.map((wrapper) => wrapper.style.values.get("filter"))).toEqual(originalReferences);
 
-        definition.remove();
+        definitions[1]!.remove();
         await expect(createSnapdomShareCardCapture(snapdomLike)(asElement(card)))
             .rejects.toThrow("print filter reference cannot be captured");
         expect(snapdomLike).toHaveBeenCalledTimes(1);
-        expect(wrapper.style.values.get("filter")).toBe("url(#pa-share-card-print-body-21)");
+        expect(wrappers.map((wrapper) => wrapper.style.values.get("filter"))).toEqual(originalReferences);
     });
 
     it("captures through SnapDOM with the audited fixed options", async () => {
@@ -518,6 +553,54 @@ describe("Share Card export", () => {
             "Cards/Shared/PA-Card-20260804-010203.png",
             expect.any(ArrayBuffer),
         );
+        expect(cleanup).toHaveBeenCalledTimes(2);
+    });
+
+    it("captures Copy and Save from the same mutable sharer appearance", async () => {
+        const document = new ShareCardTestDocument();
+        document.defaultView.navigator.clipboard = {
+            write: jest.fn(async () => undefined),
+        };
+        document.defaultView.ClipboardItem = class ClipboardItemMock {
+            constructor(readonly items: Record<string, Blob | PromiseLike<Blob>>) {}
+        } as unknown as typeof ClipboardItem;
+        const cleanup = jest.fn();
+        const renderPage = jest.fn(async (
+            _page: CardPage,
+            _appearance: { sharerName?: string },
+        ) => ({
+            cardEl: asElement(document.createElement("div")),
+            cleanup,
+        }));
+        const renderer = { renderPage } as unknown as ShareCardRenderer;
+        const vault = {
+            getAbstractFileByPath: jest.fn(() => null),
+            adapter: { exists: jest.fn(async () => false) },
+            createFolder: jest.fn(async () => undefined),
+            createBinary: jest.fn(async () => undefined),
+        } as unknown as Vault;
+        const appearance = { theme: "light" as const, sharerName: "Ada" };
+        const exporter = new ShareCardExporter(
+            { vault } as App,
+            asDocument(document),
+            renderer,
+            appearance,
+            {
+                capture: async () => new Blob(["page"], { type: "image/png" }),
+                now: () => new Date("2026-08-04T01:02:03.000Z"),
+            },
+        );
+        const page = { content: "one", pageIndex: 0, totalPages: 1 };
+
+        await exporter.copyCurrentPage(page);
+        expect(renderPage).toHaveBeenCalledTimes(1);
+        expect(renderPage.mock.calls[0]?.[1]?.sharerName).toBe("Ada");
+        appearance.sharerName = "Grace";
+        await exporter.savePages([page], "Cards");
+
+        expect(renderPage).toHaveBeenCalledTimes(2);
+        expect(renderPage.mock.calls[1]?.[1]?.sharerName).toBe("Grace");
+        expect(renderPage.mock.calls[0]?.[1]).toBe(renderPage.mock.calls[1]?.[1]);
         expect(cleanup).toHaveBeenCalledTimes(2);
     });
 

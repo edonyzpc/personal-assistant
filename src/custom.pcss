@@ -9189,6 +9189,38 @@ body.is-mobile .pa-quick-capture-modal__input {
 	flex: 0 1 auto;
 }
 
+.pa-share-card-body > .pa-share-card-table-fit {
+	position: relative;
+	flex: 0 0 auto;
+	align-self: center;
+	width: var(--pa-share-card-table-width, 100%);
+	max-width: 100%;
+	height: var(--pa-share-card-table-height, auto);
+	margin: 0;
+}
+
+.pa-share-card-table-fit > .pa-share-card-table-fit-content {
+	display: flow-root;
+	width: var(--pa-share-card-table-natural-width);
+	max-width: none;
+}
+
+.pa-share-card-table-fit-content > table {
+	margin: 0;
+}
+
+.pa-share-card-table-fit.is-scaled > .pa-share-card-table-fit-content {
+	position: absolute;
+	top: 0;
+	left: 0;
+	transform: translate(var(--pa-share-card-table-x), var(--pa-share-card-table-y)) scale(var(--pa-share-card-table-scale));
+	transform-origin: top left;
+}
+
+.pa-share-card-table-fit.is-contained {
+	overflow: hidden;
+}
+
 .pa-share-card-body .pa-share-card-resource-placeholder {
 	box-sizing: border-box;
 	display: flex;
@@ -9268,6 +9300,55 @@ body.is-mobile .pa-quick-capture-modal__input {
 	font-size: 11px;
 	letter-spacing: .03em;
 	white-space: nowrap;
+}
+
+.pa-share-card-footer-meta {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 10px;
+	min-width: 0;
+}
+
+.pa-share-card-signature {
+	display: flex;
+	align-items: center;
+	height: 16px;
+	gap: 4px;
+	color: #233a34;
+	overflow: visible;
+	white-space: nowrap;
+}
+
+.pa-share-card.is-dark .pa-share-card-signature {
+	color: var(--pa-share-card-text);
+}
+
+.pa-share-card-sharer-by {
+	flex: 0 0 auto;
+	font-size: 11px;
+	font-style: italic;
+	font-weight: 400;
+	font-synthesis: style;
+	line-height: 16px;
+	opacity: .78;
+}
+
+.pa-share-card-signature svg {
+	flex: 0 0 auto;
+	display: block;
+	width: 32px;
+	height: 24px;
+}
+
+.pa-share-card-sharer-name {
+	flex: 0 1 auto;
+	max-width: 170px;
+	overflow: hidden;
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 16px;
+	text-overflow: ellipsis;
 }
 
 .pa-share-card-nav {
@@ -9354,6 +9435,36 @@ body.is-mobile .pa-quick-capture-modal__input {
 }
 
 .pa-share-card-folder-input:focus {
+	border-color: var(--interactive-accent);
+	outline: none;
+}
+
+.pa-share-card-sharer-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 0;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.pa-share-card-sharer-label {
+	flex: 0 0 auto;
+	white-space: nowrap;
+}
+
+.pa-share-card-sharer-input {
+	flex: 1 1 0;
+	min-width: 0;
+	padding: 4px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+}
+
+.pa-share-card-sharer-input:focus {
 	border-color: var(--interactive-accent);
 	outline: none;
 }

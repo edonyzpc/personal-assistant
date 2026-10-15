@@ -8,6 +8,20 @@ describe("Share Card locale copy", () => {
         expect(pluginT("plugin.shareCard.saving", "en")).toBe("Saving card images…");
         expect(pluginT("plugin.shareCard.copying", "zh")).toBe("正在复制当前页…");
         expect(pluginT("plugin.shareCard.saving", "zh")).toBe("正在保存卡片图片…");
+        expect(pluginT("plugin.shareCard.sharerName", "en")).toBe("Sharer name");
+        expect(pluginT("plugin.shareCard.sharerNamePlaceholder", "en"))
+            .toBe("Leave blank to sign as EZ");
+        expect(pluginT("plugin.shareCard.sharerName", "zh")).toBe("分享者名称");
+        expect(pluginT("plugin.shareCard.sharerNamePlaceholder", "zh"))
+            .toBe("留空显示 EZ");
+        expect(pluginT("plugin.shareCard.unpageableContent", "en"))
+            .toBe("This content could not be split into card pages safely.");
+        expect(pluginT("plugin.shareCard.measurementFailed", "en"))
+            .toBe("Could not finish measuring this card content.");
+        expect(pluginT("plugin.shareCard.unpageableContent", "zh"))
+            .toBe("无法安全分页。");
+        expect(pluginT("plugin.shareCard.measurementFailed", "zh"))
+            .toBe("无法完成内容测量。");
         expect(pluginT("plugin.shareCard.resourceIncomplete", "zh", { count: 2 }))
             .toBe("有 2 项视觉内容无法加载，已显示为占位提示。");
         expect(pluginT("plugin.shareCard.resourcePlaceholder", "zh", { label: "示意图" }))
@@ -28,5 +42,21 @@ describe("Share Card locale copy", () => {
         expect(css).toMatch(/\.pa-share-card-body \.pa-share-card-resource-placeholder\s*\{/);
         expect(css).toMatch(/\.pa-share-card-static,[\s\S]*?animation:\s*none\s*!important/);
         expect(css).toMatch(/\.pa-share-card-body > \.pa-share-card-visual-block\s*\{[\s\S]*?max-height:\s*100%;/);
+        expect(css).toMatch(/\.pa-share-card\s*\{[\s\S]*?font-synthesis:\s*weight;/);
+        expect(css).toMatch(
+            /\.pa-share-card-signature\s*\{[\s\S]*?height:\s*16px;[\s\S]*?gap:\s*4px;[\s\S]*?color:\s*#233a34;[\s\S]*?overflow:\s*visible;/,
+        );
+        expect(css).toMatch(
+            /\.pa-share-card\.is-dark \.pa-share-card-signature\s*\{[\s\S]*?color:\s*var\(--pa-share-card-text\);/,
+        );
+        expect(css).toMatch(
+            /\.pa-share-card-signature svg\s*\{[\s\S]*?width:\s*32px;[\s\S]*?height:\s*24px;/,
+        );
+        expect(css).toMatch(
+            /\.pa-share-card-sharer-by\s*\{[\s\S]*?font-size:\s*11px;[\s\S]*?font-style:\s*italic;[\s\S]*?font-synthesis:\s*style;[\s\S]*?line-height:\s*16px;/,
+        );
+        expect(css).toMatch(
+            /\.pa-share-card-sharer-name\s*\{[\s\S]*?max-width:\s*170px;[\s\S]*?font-size:\s*12px;[\s\S]*?line-height:\s*16px;/,
+        );
     });
 });
