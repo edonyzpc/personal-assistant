@@ -766,7 +766,7 @@
     "plugin.chat.history.turn": "{count} 轮",
     "plugin.chat.history.turns": "{count} 轮",
 
-    "plugin.ribbon.openChatControls": "打开 AI Chat（右键打开插件控制）",
+    "plugin.ribbon.openChatControls": "打开PA智能体",
     "plugin.command.recordNote": "创建或打开配置目录中的记录笔记",
     "plugin.command.hoverLocalGraph": "悬浮本地图谱",
     "plugin.command.openControls": "打开个人助手控制面板",
@@ -784,7 +784,7 @@
     "plugin.menu.shareSelectionAsCard": "PA：将所选内容分享为卡片",
     "plugin.menu.shareNoteAsCard": "PA：分享为卡片",
     "plugin.command.prepareMemory": "准备 Memory",
-    "plugin.command.openChatSidebar": "在侧边栏打开 Chat",
+    "plugin.command.openChatSidebar": "打开PA智能体",
     "plugin.command.updateMemoryNow": "立即更新 Memory",
     "plugin.command.resetMemory": "重置本地 Memory 副本",
     "plugin.command.deleteOldMemoryCache": "删除旧 Memory 缓存文件",

@@ -766,7 +766,7 @@
     "plugin.chat.history.turn": "{count} turn",
     "plugin.chat.history.turns": "{count} turns",
 
-    "plugin.ribbon.openChatControls": "Open AI Chat (right-click for plugin controls)",
+    "plugin.ribbon.openChatControls": "Open PA Agent",
     "plugin.command.recordNote": "Create or open record note in configured folder",
     "plugin.command.hoverLocalGraph": "hover local graph",
     "plugin.command.openControls": "Open Personal Assistant Controls",
@@ -784,7 +784,7 @@
     "plugin.menu.shareSelectionAsCard": "PA: Share Selection as Card",
     "plugin.menu.shareNoteAsCard": "PA: Share as Card",
     "plugin.command.prepareMemory": "Prepare Memory",
-    "plugin.command.openChatSidebar": "Open Chat in Sidebar",
+    "plugin.command.openChatSidebar": "Open PA Agent",
     "plugin.command.updateMemoryNow": "Update memory now",
     "plugin.command.resetMemory": "Reset local memory copy",
     "plugin.command.deleteOldMemoryCache": "Delete old Memory cache files",
