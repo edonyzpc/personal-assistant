@@ -1,10 +1,32 @@
 # PA Share Card Product Spec
 
 Document status: Approved
-Updated: 2026-10-06
+Updated: 2026-10-15
 Work item: B-124
 Decision: [DEC-026 — Share Card 采用本地、显式导出的完整渲染卡片](../decisions/dec-026-local-share-card.md)
 Authority: Share Card 的入口、可分享内容、视觉、分页、导出、失败、数据与兼容性边界。
+
+> [!note] Owner amendment 2026-10-15 — Independent diagrams
+> 用户明确批准独立完整图表整体等比缩小入页，已知本次 941px → 585px 约为 62%，
+> 图内 24px 文字随图缩到约 15px；正文和脚注的批次字号不变。本轮准入为最终静态
+> DOM 的单顶层 TABLE（可含 nested 树图），只缩完整图表，不混缩正文、不裁剪或
+> 丢失节点/关系，不泛化所有 HTML。详见 B-124/REQ-13、B-124/AC-13；此为新增规则，
+> 不代表实现或整篇 `cat` 已通过。
+
+> [!note] Owner amendment 2026-10-15 — Footnotes
+> 原完整渲染契约未定义脚注位置。用户现明确批准正文保留全批统一的可见
+> 编号，脚注正文统一放到整组卡片末尾继续分页，避免重复并保留全部内容。
+> 这是新的位置规则，详见 B-124/REQ-12、B-124/AC-12；仅改变本地分享投影，
+> 不修改原笔记，不以规则批准冒充实现或整篇导出验收。
+> 兼容设计用普通 `[n]` 呈现编号；这是本次实现选择，非用户指定的字形细节。
+
+> [!note] Owner amendment 2026-10-15
+> 用户确认当前预览并授权实现分享者署名：产品品牌保留在左侧，右下角默认显示
+> 低强调斜体 `by` + `32×24` CSS px 的 EZ SVG；填写自定义名字后显示 `by` + 名字，
+> 清空后恢复默认。名字仅属于当前 Modal，不新增全局设置或持久状态；详见
+> B-124/REQ-11、B-124/AC-11。当前修订执行与证据见
+> [Share Card Sharer Tracker](../../development/active/share-card-sharer/tracker.md)，
+> 原有验收不证明本次修订完成。
 
 > [!note] Owner amendment 2026-10-06
 > 用户要求放大 Share Card 文字，使常规预览可以辨认 Xerox 效果；正文基准改为
@@ -102,7 +124,12 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   多页内容保持该字号。结果为单页时，再依次评估 `26px`、`28px`、`30px`、`32px`，选择仍保持
   单页的最大字号。所有候选须通过同一套 no-loss 与实际 overflow 校验，失败时
   保留最近的有效结果。选定字号必须在同一 batch 的全部页面、preview、copy 与 save
-  中一致。
+  中一致。开闭明确成对的 `***...***` 与 `___...___` 长段落应能跨页保留原文、
+  加粗兼斜体及原始 source offset，不因分隔符为三个字符而一律拒绝；真实歧义、
+  不成对或仍不能证明安全的结构继续准确失败，不承诺所有 CommonMark/HTML 均可拆分。
+  安全、完整配对的有限 `sup` / `span` / `sub` 行内格式及标注作为不可拆 token 保留
+  标签、获准属性与可见内容，周边长段落仍可分页；闭合不全、错配或其他不能证明
+  安全的 HTML 不放行。这是既有完整渲染与安全拆分的兼容目标，不另造逐 tag 用户决定。
 - B-124/REQ-05: 远程图片、Vault 图片与 Markdown note embed、Mermaid/Canvas/SVG 图表及
   浏览器可捕获的静态视觉结果应尽量进入预览和 PNG。Markdown note embed 支持整篇、
   heading 与 block anchor，只沿显式 embed 有界递归；通过去重缓存、resource/byte/time/depth
@@ -127,6 +154,8 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   disabled state 和页码；放大预览具备可访问名称、键盘进入和关闭路径，关闭后焦点
   返回预览；action 在导出期间 exactly once。分页、测量、资源准备和导出均可取消，
   关闭 Modal 或取消后停止后续工作并释放临时资源，不得继续写 UI；已完成保存如实报告。
+  已知的 typed 分页/测量失败在 Modal 中显示中英本地化、安全可读的原因；未知错误
+  保留通用准备失败提示，不直接显示原始 error message、stack、笔记正文或路径。
 - B-124/REQ-09: Share Card 从调用方已经持有的内容开始，只能解析该内容明确引用的
   远程或 Vault 资源；不调用 AI provider、不上传、不扫描无关 Vault、不使用未批准的
   CORS proxy，也不新增设置/ledger。capture 精确锁定 `@zumer/snapdom@2.23.2`，使用
@@ -147,12 +176,37 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   与 iPhone toolbar 保持直接可见的文字标签：英文
   `Capture / Review / Discover / Share as card`，中文 `随手记下 / 审阅 / 发现关联 /
   分享为卡片`；视觉方向不改变逻辑、键盘或焦点顺序。
+- B-124/REQ-11: 每页页脚左侧保留 PA 图形 logo、`Personal Assistant` 与原有来源规则，
+  右下角显示分享者署名。默认使用低强调斜体 `by` + EZ SVG，EZ 为 `32×24` CSS px，
+  保持原始比例与字形；Light 保持 `#233A34`，Dark 使用同一几何的可读墨色。Modal
+  提供带本地化可访问名称的名字输入框；输入 trim 后非空时显示 `by` + 名字，空字符串
+  或仅空白时恢复默认 SVG。名字按纯文字处理，HTML/Markdown 不作为标记执行。名字仅
+  在当前 Modal 存在，重开恢复默认，不写入设置、原始内容或其他持久状态。预览、放大、
+  当前页复制与整批保存复用同一署名；导出期间禁用输入并冻结本次署名，禁止跨页混用。
+  多页页码位于右侧组内的署名前，页码、署名、品牌及来源互不遮挡；名字单行显示，
+  最大可用宽度 `170px`，超长时在署名区省略显示，不设最大字符数。页脚为测量、
+  预览和捕获预留一致高度，不挤出内容或通过裁剪、缩字改变既有完整分页和正文批次
+  字号规则。
+- B-124/REQ-12: 脚注采用当前批次统一、稳定的可见 `[n]` 编号，对应关系不因切页、
+  preview、Copy 或 Save 改变。正文中的同一脚注可多次引用，完整脚注正文只在整组
+  正文之后输出一次，并作为普通 Markdown 语义块沿既有实测高度继续分页，不挤进
+  每个引用段尾或重复每页。正文及脚注内的文字、Markdown、资源和顺序应完整保留，
+  未引用的脚注定义也不得丢弃。投影仅作用于本次本地分享，不修改原笔记；普通
+  链接/图片引用定义、代码中的字面量与显式资源权限不变。未解析引用、重复冲突定义
+  或不支持结构不得静默删除或覆盖；不能证明完整时准确失败，不声称成功。
+- B-124/REQ-13: 独立完整图表可按卡片正文区可用宽高整体等比缩小至一页，缩放
+  比例不大于 1；本轮仅准入最终静态 DOM 的单顶层 TABLE 图表，包括内部嵌套树图。
+  图内文字随图缩小是本条批准的例外，正文及脚注仍沿用既有批次字号，多页为 24px。
+  不把混合正文一起缩，不裁剪、丢节点或拆开关系，不以 overflow hidden 隐藏溢出
+  后声称适配。fit、preview 与 capture 使用同一测量及适配结果，必须可验证完整图表
+  bounds 位于正文可用区域；不能泛化为任意 HTML 缩放，不改变内容投影、资源权限
+  或固定导出尺寸。
 
 ### Non-goals
 
 - NG-01: 不做通用笔记/页面截图、整段 Chat transcript、Bubble/Pet 或 Obsidian UI 捕获。
-- NG-02: 不提供模板编辑器、比例/字体/品牌/持久保存目录设置、无品牌导出或历史卡片库；
-  本次 Modal 内的临时目录选择不属于持久设置。
+- NG-02: 不提供模板编辑器、比例/字体/产品品牌/持久保存目录或名字设置、上传自定义
+  logo、无品牌导出或历史卡片库；本次 Modal 内的临时目录选择与分享者名字不属于持久设置。
 - NG-03: 不把图片上传到社媒、云盘或外部服务，不接入 account/system share flow。
 - NG-04: 不保证任意第三方插件交互视图、DRM/跨域受限资源或持续动画都能无损捕获；
   但必须提供明确失败/占位，不能静默降级为 text-only 后声称完整成功。
@@ -172,6 +226,7 @@ flowchart TD
   C -->|成功| D[响应式预览当前页]
   C -->|资源或渲染异常| E[明确占位或可重试错误]
   D --> F{用户动作}
+  F -->|填写或清空分享者名字| D
   F -->|复制当前页| G[写 OS clipboard]
   F -->|选择目录并保存| H[按顺序捕获并写入目标目录]
   G -->|失败| I[提示，不自动写 Vault]
@@ -180,10 +235,10 @@ flowchart TD
 
 | State | Visible behavior | Allowed action |
 | --- | --- | --- |
-| Preparing | 显示本地化准备状态；export disabled | Close |
-| Ready, single page | 预览 + Copy current page + Save image | Copy / Save / Close |
-| Ready, multiple pages | 预览 + page nav + Copy current page + Save all pages | Navigate / Copy / Save all / Close |
-| Exporting | 当前动作 busy，其余 export/navigation disabled | Close；异步结果不得回写已关闭 UI |
+| Preparing | 显示本地化准备状态；名字可编辑，export disabled | Edit name / Close |
+| Ready, single page | 预览 + 分享者名字 + Copy current page + Save image | Edit name / Copy / Save / Close |
+| Ready, multiple pages | 预览 + 分享者名字 + page nav + Copy current page + Save all pages | Edit name / Navigate / Copy / Save all / Close |
+| Exporting | 当前动作 busy，名字输入及其余 export/navigation disabled | Close；异步结果不得回写已关闭 UI |
 | Clipboard unavailable/failed | 保留预览并给出可恢复提示 | 用户可显式 Save 或 retry |
 | Capture/save failed | 保留预览；报告完整或 partial failure | Retry / Close |
 
@@ -196,6 +251,7 @@ flowchart TD
 - Data sent / stored: 远程资源可产生面向其原始地址的直接网络请求，Vault Embed 可读取
   被明确引用的本地内容；不调用 AI provider、不上传卡片。Copy 写 OS clipboard，Save
   写入本次 Modal 选择的 Vault 目录；默认有效 attachment folder，否则 `PA-Cards`。
+  自定义分享者名字只存于当前 Modal，并进入用户明确复制或保存的 PNG，不单独持久化。
 - Capture exception: 用户批准 SnapDOM 在离屏图片文档中所需的 runtime style 与已审计
   dependency 模式；该例外不适用于 Obsidian live UI，不豁免固定版本、资源预本地化、
   no-proxy、bundle/community scan 或 Desktop/mobile runtime gate。
@@ -232,6 +288,8 @@ flowchart TD
 - B-124/AC-05: 覆盖中英文、列表、引用、代码块、长段落与 50+ 行内容的测试证明顺序
   保持、无丢字/空页；代表内容超过 50,000 字符且超过 24 页时仍完整到末尾，
   preview/copy/save 使用同一完整批次；运行时测量 smoke 证明每页 body 无 vertical overflow。
+  明确成对的 `***...***` 与 `___...___` 跨页用例证明原始 source offset、文本顺序及
+  加粗兼斜体保持；真实歧义、不成对输入仍由安全门拒绝，不能为通过该用例移除保护。
 - B-124/AC-06: remote image、Vault image、Markdown note embed（整篇、heading/block anchor、
   嵌套、cycle/depth）与 Mermaid/Canvas/SVG fixtures 能进入预览和 PNG，且只请求/读取
   显式引用资源；网络/CORS/解码/processor 失败产生明确占位或可重试 capture error，
@@ -246,6 +304,8 @@ flowchart TD
 - B-124/AC-09: 快速切页、重复点击、导出中 close 与 Modal reopen 不产生并发写、stale
   preview、遗漏 cleanup 或 unhandled rejection；分页与导出取消停止后续工作，实际资源
   失败或部分保存不冒充完整成功，不承诺任何设备拥有无限资源。
+  已知 typed 分页/测量失败分别有中英本地化原因；未知错误回退通用失败提示。错误
+  状态不把任意原始异常文本、笔记内容或路径插入 Modal。
 - B-124/AC-10: focused Jest、typecheck、docs/community scan、lint/build/bundle audit 通过；
   依赖精确为 SnapDOM 2.23.2，测试锁定 REQ-09 的完整选项（包括 `cache:"disabled"`）、
   无剩余 HTTP(S) resource/external font 进入 capture，并在已部署 Obsidian test vault 观察
@@ -255,6 +315,26 @@ flowchart TD
   emulation + `393x852` phone viewport；证据必须标为模拟，不得冒充真实 iPhone/iPad
   触控、WKWebView、safe-area 或设备性能。真实设备作为后续 release residual，不阻断
   本轮 closeout。
+- B-124/AC-11: Light/Dark 的预览、复制及保存 PNG 均保留左侧产品品牌，右下角默认
+  显示 `by` + `32×24` CSS px EZ；填写中文或英文名字后替换为 `by` + trim 后名字，
+  清空或仅空白恢复 EZ。含 HTML/Markdown 的输入只显示文字；长名字在 `170px` 内单行
+  省略，不遮挡来源、多页页码或正文。单页与多页预览、放大、当前页 Copy、Save all 使用同一署名和字号，
+  busy 期间无法修改名字造成混批；页脚实测几何、正文无 overflow、PNG 尺寸保持一致。
+  Modal 关闭重开恢复默认名字，未新增设置或持久字段；窄桌面/移动 viewport 中名字
+  输入及现有主要操作可达。相关 focused suites 与部署后的交互/PNG 证据分别记录，
+  不以独立预览或历史 smoke 代替本次验收。
+- B-124/AC-12: 覆盖同一脚注多次引用、多个及未引用定义、脚注内 Markdown、长脚注
+  继续分页的用例，证明正文编号全批稳定对应、脚注正文仅在整组正文之后出现一次，
+  所有内容与顺序保留且每页无 overflow。普通链接/图片引用和代码字面量保持既有
+  语义；未解析引用、重复冲突及不支持结构准确失败，不静默丢弃。preview、Copy、
+  Save 复用同一准备结果，固定尺寸、字号及资源契约不变，原笔记字节不被改写。
+  focused 证据与已部署整篇测试/PNG 证据分别记录；先前三星修复或短样例 PASS 不能
+  证明脚注投影及整篇 `cat` 已成功。
+- B-124/AC-13: 独立单顶层 TABLE 图表在过高或过宽时以同一比例缩小，包含嵌套树图
+  的全部节点、文字与关系；原已适配图表不放大。验证完整 bounds 位于可用宽高内，
+  没有裁剪、丢失或靠隐藏溢出获得的假 fit；混合正文与非准入 HTML 不误入缩放。
+  preview、fit、PNG 的适配一致，正文和脚注保持原批次字号。focused 测试与部署后的
+  独立图表/真实整篇运行及 PNG 分别记录；旧 selection 两页结果不得作为整篇成功。
 
 ## Open Decisions
 
@@ -262,11 +342,15 @@ flowchart TD
 视觉、字体、布局和分页字号修订，以及 iPhone 可用 Obsidian mobile emulation 的本轮
 验证边界，已于 2026-08-06 确认。用户于 2026-08-07 再确认以当前 `master` 的短内容字号、
 per-Modal 保存目录和 Ring compact fallback 为最终规则。模板自定义、持久目录偏好、系统
-分享和外部发布仍不在 v1；当前无产品阻断决定。
+分享和外部发布仍不在 v1。2026-10-15 已确认默认 EZ、自定义名字替换和清空恢复，
+名字仅当前 Modal 的实现沿用无新增持久设置边界；同日用户已确认脚注集中于整组
+末尾并完整分页，并明确批准独立完整图表等比缩小入页。上述产品选择已解决，
+当前无产品阻断决定；实现与验收状态仍见 Tracker。
 
 ## Current Implementation
 
 - Architecture contract: [Share Card Architecture](../../architecture/share-card-architecture.md)
 - Validation evidence: [Pagelet and Share Card smoke checklist](../../development/validation/pagelet-smoke-checklist.md)
-- Release / rollout boundary: B-124 已关闭；后续 commit、push、beta/stable packaging 与 release
-  仍需独立授权。
+- Current amendment: [Share Card Sharer Tracker](../../development/active/share-card-sharer/tracker.md)
+- Release / rollout boundary: B-124 原交付已关闭，本次署名修订执行状态仅见 Tracker；
+  后续 closeout、commit、push、beta/stable packaging 与 release 仍需独立授权。

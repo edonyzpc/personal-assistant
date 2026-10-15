@@ -1,6 +1,6 @@
 # Share Card Architecture
 
-Updated: 2026-10-07
+Updated: 2026-10-16
 
 | Field | Value |
 | --- | --- |
@@ -8,6 +8,12 @@ Updated: 2026-10-07
 | Work item | B-124, B-137 |
 | Product authority | [DEC-026](../product/decisions/dec-026-local-share-card.md), [DEC-036](../product/decisions/dec-036-share-card-print-styles.md), [PA Share Card Product Spec](../product/specs/pa-share-card-product-spec.md), and [PA Share Card Print Styles Product Spec](../product/specs/pa-share-card-print-styles-product-spec.md) |
 | Validation evidence | [Print-style tests](../../__tests__/share-card-print-style.test.ts), [Modal tests](../../__tests__/share-card-modal.test.ts), and [Pagelet and Share Card smoke checklist](../development/validation/pagelet-smoke-checklist.md) |
+
+> [!note] Owner amendment 2026-10-15
+> 用户确认分享者署名预览并授权实现：左侧产品品牌保留，右下角默认显示 `by` +
+> `32×24` CSS px EZ SVG，自定义名字替换、清空恢复。以下为本次目标技术契约，
+> 实现状态与本次证据见 [Share Card Sharer Tracker](../development/active/share-card-sharer/tracker.md)；
+> 不以当前契约文字或旧验证结果声明本次已实现。
 
 > [!note] Owner amendment 2026-08-07
 > 用户选择方案 A，并明确以当前 `master` 实现作为最终行为基线：短单页内容从
@@ -53,10 +59,11 @@ flowchart LR
 | `share-card-markdown.ts` | 将 Markdown 准备为语义块，保留允许的文字与视觉结构 |
 | `share-card-resources.ts` | 仅解析显式引用；有界读取远程/Vault 资源并本地化为 data URL；生成完整性报告 |
 | `share-card-font.ts` | 注册随包的 Source Han Serif 子集、本地 data URL 字体与引用计数清理 |
-| `share-card-renderer.ts` | 一次性 render/sanitize/stabilize，保存静态 prototype，组合 preview/capture DOM |
+| `share-card-assets.ts` | 固定 PA/EZ SVG 几何与本地纸纹、装饰；不在运行时获取远程品牌资源 |
+| `share-card-renderer.ts` | 一次性 render/sanitize/stabilize，保存静态 prototype，在统一 clone/renderPage 路径测量适配独立图表并组合 preview/capture DOM |
 | `share-card-paginator.ts` | 基于最终卡片 DOM 高度分页，维护 no-loss、顺序、非空页和安全上限 |
 | `share-card-export.ts` | 自包含审计、SnapDOM adapter、clipboard、Vault 串行写入和唯一命名 |
-| `share-card-modal.ts` | 编排资源、字体、分页、预览、Copy/Save、目录选择、状态与取消生命周期 |
+| `share-card-modal.ts` | 编排资源、字体、分页、预览、Copy/Save、当前 Modal 的目录/分享者名字、状态与取消生命周期 |
 | `plugin.ts`、`plugin/share-card-actions.ts`、Chat 与 Pagelet integration | eligibility、显式入口与对应文件/编辑器接线 |
 | `pagelet/pet/PetView.ts` | 四项 Ring 的逻辑顺序、完整本地化名称、内向布局与整组 fallback |
 
@@ -97,13 +104,36 @@ finding payload。来源准备不调用 provider、不搜索无关 Vault，也�
    32 MiB localized-output budget 限制。
 4. 获准资源在 Markdown render 前转换为 data URL；失败变为可见 inert placeholder 并进入
    完整性报告，不能被静默删除或冒充完整成功。
-5. 每个语义块只执行一次 `MarkdownRenderer`、允许的 Mermaid processor、sanitize、font/image
+5. 语义块进入 prepared renderer 前，按下述脚注合同执行一次本地分享投影。每个语义块
+   只执行一次 `MarkdownRenderer`、允许的 Mermaid processor、sanitize、font/image
    readiness 和稳定化。分页 probes、preview 与 export 只 clone inert static prototype，
    不重复执行 processor。
 
 Renderer 移除 script、runtime style、事件处理器、交互控件和外部资源属性。Capture 前再次
 递归审计 attribute、computed style 与 pseudo-element 中的资源 URL；除允许的 image data URL
 和 SVG fragment 外，发现残余外部 URI 即 fail closed。
+
+## Footnote Share Projection
+
+2026-10-15 用户首次明确脚注位置：正文保留统一编号，脚注正文集中在整组
+正文之后继续分页。此前 full-fidelity 选择未规定该位置，宿主按局部渲染生成脚注列表
+不能成为隐含产品权威。以下为已批准规则的目标实现设计，状态与证据见当前 Tracker。
+
+- 在当前 Modal 的 prepare 阶段，对同一份分享输入执行一次本地投影；正文按首次引用
+  顺序分配编号，同 label 多次引用保持同号。未被引用的定义也保留，排在已引用脚注
+  之后，按定义顺序分配剩余编号。正文编号为普通 `[n]` 文字，不使用宿主自动上标。
+- 脚注正文提取为普通 Markdown 语义块，按对应编号顺序放到全部正文之后，仅保留
+  一份；完整保留段落、列表、强调、代码、链接及显式视觉资源，不把脚注正文压成
+  单个不可拆的宿主 `HR/OL` 附件。长脚注继续经过现有 prepared static DOM 与实际
+  rendered height 分页，不引入第二套 renderer/paginator 或 export-only 处理。
+- 普通链接/图片 reference definitions 仍走原 reference context；脚注定义在投影后
+  不再作为不可见 link definition 附到每个引用块尾部。围栏/内联代码等字面量不作为
+  脚注解析；没有定义的引用保留可见字面量，重复冲突定义或不能证明完整的结构准确
+  失败，不能取首条覆盖、静默删除或把 incomplete 当成成功。普通资源解析与本地化
+  边界不扩大，不增加读取或写入。
+- 原始笔记及入口 snapshot 保持只读；冻结的本次分享投影成为后续语义块/测量/片段
+  source offset 的共同输入，不把重编号或搬移后的坐标冒充原笔记坐标。preview、
+  放大、Copy、Save 全部复用同一准备结果，不逐页重编号、重复展开或重新请求资源。
 
 ## Pagination And Typography
 
@@ -118,6 +148,27 @@ Renderer 移除 script、runtime style、事件处理器、交互控件和外部
 原生 54,702 字符/77 页完整导出与移动交互证据见
 [B-161](../archive/2026/b161-contract-alignment-validation.md)。
 
+2026-10-15 的窄修接续上述安全拆分契约：明确开闭成对的 `***...***` 和 `___...___`
+应由现有 safe fragment plan 保留加粗兼斜体和原始 source offset。分隔符长度本身不能
+把可证明安全的三字符开闭组合判为歧义；同时保留真实歧义、不成对分隔符及其他
+无法证明安全结构的拒绝。片段为维持格式补回的 markup 不能改变源区间或冒充原始
+字符，不重渲染正文来替换源身份。本修订不扩展为完整 CommonMark/HTML parser，
+实际修复状态与整篇运行证据见 [当前 Tracker](../development/active/share-card-sharer/tracker.md)。
+
+链接外围的 emphasis 也沿用同一源坐标责任：当 opener 后紧邻完整 inline link，且
+link 后紧邻同字符、同长度（1/2/3）的完整 closer run，并满足原始源码的 closing
+flanking 条件时，该确切 pair 可以消除括号或标点引起的双向 flanking 歧义。证明只
+属于当前递归范围及确切 source offsets；已有同 marker closing owner 时，不让新的
+双向 opener 借此抢占其配对。label 内仍独立解析，destination/title 不参与
+外层配对。不能把任意 `[`、reference token、错配 run 或 link 后混杂文字当成此证明，
+也不根据渲染后的 label 改写源码 flanking。
+
+同一安全拆分责任也覆盖有限的完整配对 `sup` / `span` / `sub` 行内标注：paginator
+的 fragment/boundary plan 将完整标注作为不可拆 inline token，切点只能在其周边正文，
+保留源 token 与原有 sanitizer 允许的标签/属性；`renderText` 只投影可见标注文字，
+不能把 tag 或 title 属性当成正文坐标。Renderer 继续复用静态 DOM 保留对应格式。
+闭合不全、错配等负例仍安全失败，不扩成任意 HTML parser；执行证据见同一 Tracker。
+
 字号选择是 batch-level 决策：
 
 - 先用 `24px` 得到完整且通过同一套 no-loss、overflow 与非空页校验的 baseline；多页
@@ -125,7 +176,27 @@ Renderer 移除 script、runtime style、事件处理器、交互控件和外部
 - Baseline 为单页时依次试 `26px`、`28px`、`30px`、`32px`，保留仍能完整容纳在单页
   的最大值；第一个不再适合或失败的候选终止放大。标题按正文比例保持层级。
 - 同一 batch 的全部页面、preview、Copy 和 Save 必须复用一个最终字号；禁止逐页缩放、
-  export-only 重分页或混合字号。
+  export-only 重分页或混合字号。下述获批独立图表的整体缩放是局部例外，不改变正文、
+  脚注或批次字号。
+
+### Independent Diagram Fitting
+
+2026-10-15 用户明确批准独立完整图表整体等比缩小：本轮只准入最终 prepared static
+DOM 的单顶层 TABLE，其内部可有嵌套 TABLE 树图；包含外部可见正文的混合块不能
+一起缩小，其他 HTML 不因可截屏而自动获得该规则。
+
+Renderer 在同一 prepared DOM clone / `renderPage` 路径测量完整图表宽高，按正文区
+可用宽高选择不大于 1 的统一比例，等价于 `min(1, availableWidth / width,
+availableHeight / height)`；宽高同时受约束，不单独改变横纵比例。适配后的布局占位
+与实际 bounds 必须共同落在正文区，不能仅靠 `overflow: hidden` 裁掉内容后返回 fit。
+图内文字随整图同比例缩小，不重排或删除图内节点/关系；例如本次 941px → 585px
+约为 62%，图内 24px 文字相应约 15px，外部正文及末尾脚注仍为原批次 24px。
+
+实现责任属于现有 renderer 与 `.pa-share-card` 范围内 CSS。fit、preview、capture 都
+经过同一适配路径，不新建图表 renderer，不以 export-only transform 或另外一轮内容
+投影补救。不改变 prepared prototype 的内容身份、资源本地化权限或固定 PNG 尺寸。
+验证必须检查完整 TABLE/nested 内容的最终 bounds 和节点保留，不能只看父盒 scroll
+数值或截图中未见溢出。实现与实际整篇证据仍见当前 Tracker，未验收前不宣称通过。
 
 非代码文字使用随包的 `PA Share Serif`（Source Han Serif-derived WOFF2）及同字号的
 device-local serif glyph fallback；代码使用本地 monospace stack。字体从插件字节生成
@@ -137,6 +208,14 @@ data URL，必须在测量前就绪。SnapDOM 的 document-wide font discovery �
 - Modal 打开时锁定当前 light/dark theme；后续系统主题变化不改变本批卡片。
 - Light 为中性灰纸渐变和深灰正文，Dark 为暖黑棕纸和米白正文；两者共享莓红强调色、
   细 divider、枝叶角饰、图形 logo 与 `Personal Assistant` 品牌文字。
+- 页脚左侧保留 PA 图形 logo、`Personal Assistant` 与既有 source hint；右侧组依次容纳
+  多页页码和分享者署名。默认署名为低强调斜体 `by` + EZ SVG，EZ 为 `32×24` CSS px，
+  保持原始比例和字形；Light 用 `#233A34`，Dark 只换为主题可读墨色，不改变几何。
+  自定义名字使用卡片本地字体，以纯文字替换 EZ；`by` 为 `11px`，名字为 `12px`，
+  页脚文字行高为 `16px`。名字单行、最大可用宽度 `170px`，超长纯文字省略显示，
+  不按字符数截断输入。页码、品牌、来源与署名各有空间；测量、预览和捕获使用
+  一致页脚预留，不通过另行缩字、裁剪正文或 export-only 排版消除冲突。署名与其他
+  footer 元素一并排除 Xerox 文字滤镜。
 - 内嵌的纸纤维 raster data URI 在卡面重复铺设：Light 使用 multiply，Dark 使用 screen；
   不读取外部纹理、字体或品牌资源。
 - 内容区在留白内垂直居中；多页显示稳定页码。Modal 的缩略图按可用宽高缩放，
@@ -164,6 +243,8 @@ data URL，必须在测量前就绪。SnapDOM 的 document-wide font discovery �
   前只把该 export card 的文字 wrapper 引用切为从同张卡片 defs 序列化的本地 SVG data URI；
   完成或失败后恢复片段引用。预览继续使用 card-local defs。转换找不到匹配定义时
   fail closed，避免 PNG 悄悄退回原纸外观；这不改变固定 SnapDOM 版本和 capture options。
+  每个文字run使用独立的capture filter id及SVG payload，避免多run共享外部滤镜资源时
+  已复现的PNG文字遗漏；仅clone并改根id，primitive、seed、bounds、文字和布局不变。
 
 该视觉是 current implementation contract，不是可配置模板。比例、字体、品牌或主题体系
 变化属于产品边界变更，需要先更新产品权威。
@@ -213,6 +294,27 @@ batch name、确定性 page suffix 和整批 collision avoidance 防止覆盖。
 新增持久化默认目录、目录历史或跨设备同步属于新的产品/数据契约，不得由 exporter
 或 Modal 自行引入。
 
+## Per-Modal Sharer
+
+名字属于 `ShareCardModal` 当前实例的临时输入，不修改入口的 `ShareCardData` snapshot、
+Markdown、插件设置或其他持久状态。每次打开均从空名字开始，trim 后为空就选择 EZ SVG，
+否则传递 trim 后的纯文字名字。输入标签、说明与可访问名称采用现有 UI locale。
+
+Renderer 从当前批次的渲染选项组合署名；preview、只读放大与 capture 共用同一 footer
+组合，不另建 preview-only 或 export-only 路径。EZ 用 `createElementNS` 和固定属性创建，
+名字用 `textContent`，不解析用户 HTML/Markdown，也不引入 runtime style、外部 SVG URL
+或新的资源请求。名字变更只更新署名相关呈现，保持正文 prototype、字体、资源 session
+和既有完整分页算法的责任边界。
+
+Copy/Save 开始前确定一次当前名字并在整个操作期间禁用输入；多页 Save 使用同一份
+名字，不在页间重新读取可变输入。关闭、重开与迟到异步结果继续受现有 Modal operation
+token 和取消清理约束，不能让旧署名回写新预览。输入以当前 Modal 生命周期清理，
+不新增偏好、名字历史、跨设备同步或全局自定义 logo 能力。
+
+图表适配使 prepared `renderPage` 存在真实 frame await；Modal 只有在 token/host 检查
+通过后，才用当前名字同步即将发布卡片的页脚。该同步不重测正文、不重新分页，
+避免 pending 翻页期间改名或清空后，预览与共享 export appearance 暂时不一致。
+
 ## Action Ring Layout Contract
 
 Ring 的逻辑、DOM 与 focus 顺序固定为 `Capture / Review / Discover / Share`，完整名称随
@@ -236,7 +338,12 @@ Ring 的逻辑、DOM 与 focus 顺序固定为 `Capture / Review / Discover / Sh
 Modal 聚合全批 resource placeholders/failures、sanitization issue 与 plain-text fallback。
 Copy/Save success 只证明传输或写入成功，不能覆盖已有 incomplete warning。Preparing、busy、
 warning、retryable error 与 navigation control 都由一个 Modal operation token 约束；导出时
-actions disabled，避免并发操作和 stale UI write。
+actions 与名字输入 disabled，避免并发操作、跨页署名变化和 stale UI write。
+
+准备失败由 Modal 在既有状态路径收敛：`ShareCardPaginationError` 的已知
+`measurement-failed`、`unpageable-content` code 映射为固定的中英本地化可读原因，
+不把异常 message/stack 或原始笔记插入 UI；未知错误或 code 使用通用准备失败提示。
+类型化原因只改进失败反馈，不把失败转换为成功、跳过内容或自动写入 Vault。
 
 Close 或 plugin unload 会 abort resource session，取消尚未开始的 queue mutation，释放
 FontFace reference、Markdown `Component`、static prototype、offscreen host、event listener 和
@@ -251,7 +358,7 @@ late result 不得继续写 UI 或显示成功 Notice。
   remote image request、显式 Vault resource read、clipboard write 和用户点击 Save 后的 PNG
   create 在边界内。
 - 精确 SnapDOM 版本、full-fidelity media、explicit-resource authority、no-proxy、local-only
-  font、固定尺寸、字号算法、每 Modal 目录策略或 incomplete semantics 的任何变化，都需先
+  font、固定尺寸、字号算法、每 Modal 目录/分享者策略或 incomplete semantics 的任何变化，都需先
   形成新的 owner decision；不能由实现或测试结果静默改写。
 - 代码或 DOM/CSS 变化至少运行相关 focused suites、TypeScript、`git diff --check` 与 community
   source scan；跨端可见行为还需更新当前运行时 smoke evidence。历史 beta 或模拟证据不能

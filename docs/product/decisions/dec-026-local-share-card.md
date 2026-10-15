@@ -2,9 +2,39 @@
 
 Decision ID: DEC-026
 Status: Accepted
-Updated: 2026-10-06
-Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外），于 2026-08-06 修订 Action Ring 入口、来源优先级、品牌、字体、标签、布局与分页字号，并于 2026-08-07 明确以当前 `master` 行为作为最终规则；2026-09-17 确认预览与操作的可见性边界及点击放大查看；2026-09-18 允许可悬停端 Ring 默认只显示图标，悬停时显示文字
+Updated: 2026-10-15
+Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外），于 2026-08-06 修订 Action Ring 入口、来源优先级、品牌、字体、标签、布局与分页字号，并于 2026-08-07 明确以当前 `master` 行为作为最终规则；2026-09-17 确认预览与操作的可见性边界及点击放大查看；2026-09-18 允许可悬停端 Ring 默认只显示图标，悬停时显示文字；2026-10-15 确认分享者署名预览并授权实现默认 by + EZ SVG、自定义名字替换及清空恢复，同日批准脚注在整组卡片末尾完整分页，并明确允许独立完整图表整体等比缩小入页
 Work item: B-124
+
+> [!note] Owner amendment 2026-10-15 — Independent diagrams
+> 用户明确选择“继续：允许独立图表整体等比缩小”，已知本次高 941px 的独立图表
+> 需要缩到 585px，比例约 62%，图内 24px 文字相应约为 15px。正文和脚注仍保持
+> 原批次字号，多页仍为 24px。本轮只对最终静态 DOM 的单顶层 TABLE 完整图表适配，
+> 包括其内部嵌套树图：按可用宽高整体等比缩小，scale 不大于 1，保持全部节点与
+> 关系，不裁剪、不混缩外部正文、不拆关系，也不以 overflow hidden 冒充完整适配。
+> 该决定不泛化到所有 HTML，不改变内容投影、资源权限、固定尺寸或 SnapDOM。
+> 这是新的图表适配例外；实现与 whole-file 验收仍由当前 Tracker 承接。
+
+> [!note] Owner amendment 2026-10-15 — Footnotes
+> 原完整渲染选择未定义脚注应放在每页、每段还是整组末尾；不能把宿主的局部渲染
+> 结果当作既有脚注位置决定。用户现明确选择：正文保留全批统一的可见编号，
+> 脚注正文统一置于整组卡片末尾，并继续使用现有完整分页；同一脚注多次引用只输出
+> 一份正文，保留全部正文、脚注内容、Markdown 和顺序。仅在本地分享准备阶段投影，
+> 不写原笔记。普通链接/图片引用、代码字面量、显式资源与导出边界继续保持。
+> 无法解析、重复冲突或不支持的结构不得静默删除、覆盖或冒充完整成功。
+> 本条是新增的用户决定；实现及验收状态由当前 Tracker 承接，不代表已实现。
+> 兼容设计采用普通可见 `[n]`，不依赖宿主逐段生成的上标与脚注列表；这是实现设计，
+> 不将该字形细节表述为用户逐项指定。
+
+> [!note] Owner amendment 2026-10-15
+> 用户确认当前署名预览并授权实现：左侧保留 PA 图形 logo + `Personal Assistant`，
+> 右下角默认显示低强调斜体 `by` + EZ SVG；EZ 的确认尺寸为 `32×24` CSS px，保持
+> 原始比例与字形。填写自定义名字后改为 `by` + 名字，清空或仅空白时恢复 EZ。
+> 名字在当前 Modal 内编辑，不持久化、不增加全局设置。署名与多页页码共同占据
+> 页脚右侧且互不遮挡，preview、Copy、Save 共享当前整批署名；导出期间不可修改。
+> Light 保持 EZ 原色 `#233A34`，Dark 使用同一几何的可读墨色。此修订不改变正文、
+> 来源、字号、分页规则、纸张、装饰、资源或 SnapDOM 边界；执行与证据由
+> [Share Card Sharer Tracker](../../development/active/share-card-sharer/tracker.md) 承接。
 
 > [!note] Owner amendment 2026-10-06
 > 用户要求放大正文并增加移动端笔记右上三点 Share Card 入口。当前正文基准为 24px，
@@ -89,8 +119,9 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 2. v1 使用固定 `540×720` CSS card 和 2× raster density，输出 `1080×1440` PNG。卡片
    在打开时锁定当前 light/dark 主题；预览按可用宽度和高度缩放，常见窗口中与路径、
    主要操作同屏，极小窗口优先保留操作可见。点击预览只读放大当前页以查看细节；
-   导出仍必须来自独立、未缩放的固定尺寸 DOM。品牌区固定为 PA 图形 logo + `Personal Assistant`，不加入营销
-   CTA。Chat/Pagelet 保留稳定产品来源文案；Ring note 显示 basename，Ring selection
+   导出仍必须来自独立、未缩放的固定尺寸 DOM。品牌区固定为左侧 PA 图形 logo +
+   `Personal Assistant`，右下角提供 `by` + 分享者署名，默认 EZ SVG；当前 Modal 自定义
+   名字替换 EZ，trim 后为空恢复默认，不加入营销 CTA。Chat/Pagelet 保留稳定产品来源文案；Ring note 显示 basename，Ring selection
    不显示文件名或路径。卡片非代码文字以 Source Han Serif 为主字体；字体只能从插件随包本地
    字节生成的 `data:` URL 加载，不允许外部 font URL、font CDN 或字体网络请求。字体未
    就绪不得冒充完整成功。固定子集以外的 Unicode 只允许同字号设备本地 glyph fallback；
@@ -101,9 +132,12 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
    内容中的显式 embed 有界递归，并以去重缓存、resource/byte/time/depth budget、cycle
    guard、32 MiB localized-output budget 与取消信号限制读取。只解析输入明确引用的资源，
    不扫描无关 Vault 内容；资源
-   失败不得被静默删除或冒充完整成功。是否使用 CORS proxy 不在本决定中授权。
+   失败不得被静默删除或冒充完整成功。脚注按 2026-10-15 新决定投影：正文保持全批
+   统一编号，脚注正文在整组末尾仅输出一次并继续完整分页，不复制到每个引用段后。
+   是否使用 CORS proxy 不在本决定中授权。
 4. 分页以与最终卡片相同 CSS 和宽度进行实际 DOM 高度测量，优先在语义块边界分页；
-   超高单块再按保持 Markdown 有效的行/词边界拆分。不得依赖固定字符数估算，不得
+   超高单块再按保持 Markdown 有效的行/词边界拆分；独立完整图表适用 2026-10-15
+   批准的整图等比缩小例外，正文和脚注字号不随图改变。不得依赖固定字符数估算，不得
    静默截断，也不得把 YAML/thematic break 误判后删除。超出明确安全上限时应拒绝
    导出并提示缩短内容，不能截去尾部。分页先以 `16px` 建立有效 baseline；多页内容仅当
    完整重分页能减少总页数时才依次考虑 `15px`、`14px`，并选择第一个也就是最大的有效
@@ -116,7 +150,7 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
    相对路径配置时回退 `PA-Cards`。用户可在本次 Modal 内选择已有目录、输入新目录或选择
    Vault 根目录，该选择不写入插件设置。文件名必须避让已有文件，不能覆盖；部分写入
    失败时明确报告已保存数量、实际目录与可重试状态。
-6. 导出期间按钮进入 busy/disabled 状态并阻止并发操作；关闭 Modal、切页和异步
+6. 导出期间按钮和名字输入进入 busy/disabled 状态并阻止并发操作；关闭 Modal、切页和异步
    Markdown 渲染不得产生 stale DOM 写入。所有 render `Component`、离屏节点、事件与
    异步 owner 在关闭后清理。
 7. Share Card 不调用 AI provider、不上传、不新增设置或持久状态。渲染明确引用的远程
@@ -148,16 +182,19 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 - Architecture / data / safety: 新增共享 card renderer/paginator/exporter；PA-owned resolver
   限定显式资源并在 capture 前本地化，SnapDOM 只负责稳定 DOM → 固定像素 PNG。依赖的
   窄例外、固定版本和真实 community/mobile gate 由当前 Architecture、tests 与验证清单约束。
-- Compatibility / migration: 无 setting 或 persisted-state migration；Modal 内目录选择不持久化；桌面和移动端共享
+- Compatibility / migration: 无 setting 或 persisted-state migration；Modal 内目录选择与分享者名字均不持久化；桌面和移动端共享
   数据契约，移动端 clipboard 不可用时仍可显式保存。Source Han Serif 随插件本地提供，
   不新增外部字体依赖或网络权限。
-- Work created or removed: B-124 已完成实现、验证与显式 closeout；稳定行为吸收到本决定、
-  Product Spec、Current Architecture、focused tests 与验证清单，Active Package 过程文档删除。
+- Work created or removed: B-124 原交付已完成实现、验证与显式 closeout，稳定行为吸收到
+  当前契约与验证清单。2026-10-15 的分享者署名修订复用 B-124，由
+  [当前 Tracker](../../development/active/share-card-sharer/tracker.md) 单独承接执行与验收，
+  不以原交付证据冒充本次修订完成。
 
 ## Revisit Trigger
 
 - 真实使用证明 `1080×1440` 不适合主要分享目的，需要新的比例/模板选择。
-- 用户需要持久保存目录偏好，或自定义品牌、颜色、字体、来源标签或无品牌导出。
+- 用户需要持久保存目录或分享者名字偏好，或替换产品品牌、上传自定义 logo、修改颜色、
+  字体、来源标签或无品牌导出。
 - 第三方插件视图、交互组件或嵌套资源无法以可接受的失败语义捕获。
 - 用户明确要求系统 share sheet 或外部发布，并接受对应账号、权限与失败恢复设计。
 
@@ -166,5 +203,7 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 - Product Spec: [B-124 Share Card Product Spec](../specs/pa-share-card-product-spec.md)
 - Current Architecture: [Share Card Architecture](../../architecture/share-card-architecture.md)
 - Validation evidence: [Pagelet and Share Card smoke checklist](../../development/validation/pagelet-smoke-checklist.md)
-- Source request: User request 2026-08-04；content/media option C and capture runtime option A selected 2026-08-05；Action Ring/source/visual/font/layout/pagination amendment approved 2026-08-06；current `master` behavior selected as final authority 2026-08-07；Modal visibility and inspect-only zoom confirmed 2026-09-17
+- Source request: User request 2026-08-04；content/media option C and capture runtime option A selected 2026-08-05；Action Ring/source/visual/font/layout/pagination amendment approved 2026-08-06；current `master` behavior selected as final authority 2026-08-07；Modal visibility and inspect-only zoom confirmed 2026-09-17；default EZ/custom-name/clear-to-restore preview confirmed and implementation authorized 2026-10-15
+- Footnote placement: User request 2026-10-15 explicitly selects one complete end-of-batch footnote section with stable body numbering; earlier full-fidelity approval did not specify footnote placement.
+- Independent diagram fitting: User request 2026-10-15 explicitly permits proportional whole-diagram shrinking after the approximately 62% / 24px-to-15px readability tradeoff was disclosed; applies to the admitted complete TABLE diagram, not mixed prose or arbitrary HTML.
 - Supersedes / superseded by: supersedes the design assumptions in the removed original implementation draft; none otherwise

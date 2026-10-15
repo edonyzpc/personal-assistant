@@ -1,7 +1,7 @@
 # Active Development Registry
 
 Document status: Current
-Updated: 2026-10-14
+Updated: 2026-10-15
 Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governance/tooling track 索引。
 
 新 track 只登记 Work item、Feature Home 与 Tracker。执行状态唯一权威是 Tracker，本索引不复制状态、目标、日期或 task 明细。
@@ -10,6 +10,7 @@ Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governa
 | --- | --- | --- | --- |
 | Complete Note Query | B-169 | [Feature Home](./complete-note-query/README.md) | [Tracker](./complete-note-query/tracker.md) |
 | Lean Ghost Publishing | B-163 | [Feature Home](./lean-ghost-publishing/README.md) | [Tracker](./lean-ghost-publishing/tracker.md) |
+| Share Card Sharer | B-124 | [Feature Home](./share-card-sharer/README.md) | [Tracker](./share-card-sharer/tracker.md) |
 
 已完成任务的稳定契约留在 Product/Governance/Architecture，
 独有历史验证及处置见 [Disposition Log](../../archive/disposition-log.md)，
