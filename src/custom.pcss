@@ -3677,13 +3677,23 @@ body.is-mobile .llm-view.is-compact .llm-input textarea {
 	overflow-wrap: anywhere;
 }
 
-.pa-settings-source-scope-actions button {
-	min-height: 44px;
-	white-space: normal;
-}
-
 .pa-settings-source-scope-actions [role="status"]:empty {
 	display: none;
+}
+
+.pa-settings-save-feedback button,
+.pa-settings-source-scope-actions button,
+.pa-memory-control-center__actions button,
+.pa-memory-control-center__finalization button,
+.pa-memory-control-center__card > button {
+	box-sizing: border-box;
+	min-height: 32px;
+	height: auto;
+	max-width: 100%;
+	padding: 4px 8px;
+	line-height: 1.25;
+	white-space: normal;
+	overflow-wrap: anywhere;
 }
 
 .pa-graph-options,
@@ -3758,7 +3768,8 @@ body.is-mobile .llm-view.is-compact .llm-input textarea {
 
 .pa-graph-options button,
 .pa-featured-image-options button,
-.pa-settings-save-feedback button {
+.pa-settings-save-feedback button,
+.pa-settings-source-scope-actions button {
 	min-height: 44px;
 }
 
@@ -4180,13 +4191,9 @@ body.is-mobile .pa-memory-control-center__recovery > summary {
 	margin-top: 10px;
 }
 
-.pa-memory-control-center__actions button,
-.pa-memory-control-center__finalization button {
-	min-height: 32px;
-}
-
 body.is-mobile .pa-memory-control-center__actions button,
-body.is-mobile .pa-memory-control-center__finalization button {
+body.is-mobile .pa-memory-control-center__finalization button,
+body.is-mobile .pa-memory-control-center__card > button {
 	min-height: 44px;
 }
 
@@ -4212,7 +4219,8 @@ body.is-mobile .pa-memory-control-center__finalization button {
 	}
 
 	.pa-memory-control-center__actions button,
-	.pa-memory-control-center__finalization button {
+	.pa-memory-control-center__finalization button,
+	.pa-memory-control-center__card > button {
 		min-height: 44px;
 	}
 
@@ -4560,9 +4568,15 @@ body.is-mobile .pa-memory-control-center__finalization button {
 		width: 100%;
 	}
 
-	.pa-settings-tab .setting-item.pa-setting-layout--compact .setting-item-control button {
+	.pa-settings-tab .setting-item.pa-setting-layout--compact .setting-item-control button:not(:has(svg)) {
+		box-sizing: border-box;
+		min-height: 44px;
+		height: auto;
 		max-width: 100%;
+		padding: 4px 8px;
+		line-height: 1.25;
 		white-space: normal;
+		overflow-wrap: anywhere;
 	}
 
 	.pa-settings-tab .setting-item.pa-setting-layout--field,
@@ -9706,11 +9720,18 @@ body.is-mobile .pa-share-card-actions button {
     white-space: normal;
     overflow-wrap: anywhere;
 }
-.pa-chat-image-picker__list > button {
+.pa-chat-image-picker__list > button,
+.pa-chat-image-management__item > button {
+    box-sizing: border-box;
     min-height: 44px;
+    height: auto;
+    max-width: 100%;
     text-align: start;
     white-space: normal;
     overflow-wrap: anywhere;
+}
+.pa-chat-image-picker__list > button {
+    flex-shrink: 0;
 }
 .pa-chat-image-management__item {
     display: flex;
@@ -9767,8 +9788,12 @@ body.is-mobile .pa-share-card-actions button {
     flex-direction: row;
 }
 .pa-writing-modal button {
+    box-sizing: border-box;
     min-height: 44px;
+    height: auto;
+    max-width: 100%;
     white-space: normal;
+    overflow-wrap: anywhere;
 }
 .pa-writing-save__form,
 .pa-writing-save__result {
