@@ -56,7 +56,7 @@ export function parseRunSourceSelection(value: unknown): RunSourceSelection | un
 }
 
 export function newConversationSourceSelection(): ConversationSourceSelection {
-    return { schemaVersion: 1, scope: 'notes', revision: 0, basis: 'new-conversation' };
+    return { schemaVersion: 1, scope: 'combined', revision: 0, basis: 'new-conversation' };
 }
 
 /** A legacy record alone cannot prove its old Web authority. */

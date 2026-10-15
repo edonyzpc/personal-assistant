@@ -1185,13 +1185,13 @@ describe('LLMView turn lifecycle', () => {
         expect(trigger.getAttribute('type')).toBe('button');
         expect(trigger.getAttribute('aria-expanded')).toBe('false');
         expect(trigger.getAttribute('aria-controls')).toBe(menu.id);
-        expect(trigger.getAttribute('aria-label')).toContain('My notes');
-        expect(trigger.getAttribute('title')).toContain('Find evidence in my notes');
+        expect(trigger.getAttribute('aria-label')).toContain('Combined mode');
+        expect(trigger.getAttribute('title')).toContain('Use my notes and web sources as needed');
         trigger.click();
         expect(menu.hidden).toBe(false);
         const options = getElementsByClass(menu, 'pa-chat-source-scope-option');
         expect(options.map(option => option.getAttribute('data-source-scope'))).toEqual(['notes', 'web', 'combined']);
-        expect(options.map(option => option.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false']);
+        expect(options.map(option => option.getAttribute('aria-checked'))).toEqual(['false', 'false', 'true']);
         expect(allText(options[1])).toContain('Use web sources');
         expect(mockStreamLLM).not.toHaveBeenCalled();
         options[1].click();
@@ -1229,8 +1229,8 @@ describe('LLMView turn lifecycle', () => {
         expect(enter.preventDefault).not.toHaveBeenCalled();
         trigger.click(); // Native button activation follows the key event.
         expect(menu.hidden).toBe(false);
-        expect(documentLike.activeElement).toBe(options[0]);
-        key(options[0], 'ArrowDown');
+        expect(documentLike.activeElement).toBe(options[2]);
+        key(options[2], 'ArrowUp');
         expect(documentLike.activeElement).toBe(options[1]);
         const confirm = key(options[1], 'Enter');
         expect(confirm.preventDefault).not.toHaveBeenCalled();
@@ -1267,7 +1267,7 @@ describe('LLMView turn lifecycle', () => {
         await new Promise(resolve => setTimeout(resolve, 580));
         trigger.dispatchEvent('touchend');
         expect(allText(getElementByClass(containerEl, 'pa-chat-composer-hint')))
-            .toContain('My notes: Find evidence in my notes');
+            .toContain('Combined mode: Use my notes and web sources as needed');
         trigger.click();
         expect(getElementByClass(containerEl, 'pa-chat-source-scope-menu').hidden).toBe(false);
         expect(mockStreamLLM).not.toHaveBeenCalled();
@@ -1284,7 +1284,7 @@ describe('LLMView turn lifecycle', () => {
         getButtonByClass(containerEl, 'send-button-visible').click();
         for (let i = 0; i < 10 && streamCalls.length === 0; i++) await flushPromises();
         expect(streamCalls).toHaveLength(1);
-        expect(streamCalls[0].options.runSourceSelection?.scope).toBe('notes');
+        expect(streamCalls[0].options.runSourceSelection?.scope).toBe('combined');
         expect(await manager.findConversation('scope-failure')).not.toBeNull();
         Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers(documentLike) });
         jest.spyOn(store, 'updateConversationSourceSelection').mockRejectedValueOnce(new Error('disk unavailable'));
@@ -1313,7 +1313,7 @@ describe('LLMView turn lifecycle', () => {
         for (let i = 0; i < 5; i++) await flushPromises();
         expect(retry.hidden).toBe(true);
         expect((await manager.findConversation('scope-failure'))?.sourceSelection?.scope).toBe('web');
-        expect(streamCalls[0].options.runSourceSelection?.scope).toBe('notes');
+        expect(streamCalls[0].options.runSourceSelection?.scope).toBe('combined');
         streamCalls[0].resolve();
         for (let i = 0; i < 5; i++) await flushPromises();
         expect(view.chatHistory[0].content).toBe('first question');
@@ -1325,7 +1325,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
     });
 
-    it('restores a conversation choice across views and returns to My notes for a new chat', async () => {
+    it('restores a conversation choice across views and returns to Combined mode for a new chat', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'scope-shared' });
         const first = createView({ chatHistoryManager: manager });
@@ -1333,11 +1333,11 @@ describe('LLMView turn lifecycle', () => {
         const firstScope = getButtonByClass(first.containerEl, 'pa-chat-source-scope-button');
         firstScope.click();
         getElementsByClass(getElementByClass(first.containerEl, 'pa-chat-source-scope-menu'),
-            'pa-chat-source-scope-option')[2].click();
+            'pa-chat-source-scope-option')[1].click();
         first.view.prefillComposer('shared question');
         getButtonByClass(first.containerEl, 'send-button-visible').click();
         for (let i = 0; i < 10 && streamCalls.length === 0; i++) await flushPromises();
-        expect(streamCalls[0].options.runSourceSelection?.scope).toBe('combined');
+        expect(streamCalls[0].options.runSourceSelection?.scope).toBe('web');
         streamCalls[0].resolve();
         for (let i = 0; i < 5; i++) await flushPromises();
 
@@ -1345,26 +1345,26 @@ describe('LLMView turn lifecycle', () => {
         await second.view.onOpen();
         const secondScope = getButtonByClass(second.containerEl, 'pa-chat-source-scope-button');
         expect(secondScope.getAttribute('aria-controls')).not.toBe(firstScope.getAttribute('aria-controls'));
-        for (let i = 0; i < 10 && secondScope.getAttribute('data-source-scope') !== 'combined'; i++) await flushPromises();
-        expect(secondScope.getAttribute('data-source-scope')).toBe('combined');
+        for (let i = 0; i < 10 && secondScope.getAttribute('data-source-scope') !== 'web'; i++) await flushPromises();
+        expect(secondScope.getAttribute('data-source-scope')).toBe('web');
         firstScope.click();
         getElementsByClass(getElementByClass(first.containerEl, 'pa-chat-source-scope-menu'),
-            'pa-chat-source-scope-option')[1].click();
+            'pa-chat-source-scope-option')[0].click();
         for (let i = 0; i < 5; i++) await flushPromises();
-        expect(secondScope.getAttribute('data-source-scope')).toBe('web');
-        expect(firstScope.getAttribute('data-source-scope')).toBe('web');
+        expect(secondScope.getAttribute('data-source-scope')).toBe('notes');
+        expect(firstScope.getAttribute('data-source-scope')).toBe('notes');
 
         getButtonByClass(second.containerEl, 'pa-chat-more-button').click();
         getButtonByText(getElementByClass(second.containerEl, 'pa-chat-composer-menu'), 'New Chat').click();
         for (let i = 0; i < 5; i++) await flushPromises();
-        expect(secondScope.getAttribute('data-source-scope')).toBe('notes');
-        expect(firstScope.getAttribute('data-source-scope')).toBe('web');
+        expect(secondScope.getAttribute('data-source-scope')).toBe('combined');
+        expect(firstScope.getAttribute('data-source-scope')).toBe('notes');
         await manager.setActiveConversationId('scope-shared');
         const reopened = createView({ chatHistoryManager: manager });
         await reopened.view.onOpen();
         const reopenedScope = getButtonByClass(reopened.containerEl, 'pa-chat-source-scope-button');
-        for (let i = 0; i < 10 && reopenedScope.getAttribute('data-source-scope') !== 'web'; i++) await flushPromises();
-        expect(reopenedScope.getAttribute('data-source-scope')).toBe('web');
+        for (let i = 0; i < 10 && reopenedScope.getAttribute('data-source-scope') !== 'notes'; i++) await flushPromises();
+        expect(reopenedScope.getAttribute('data-source-scope')).toBe('notes');
         expect(mockStreamLLM).toHaveBeenCalledTimes(1);
     });
 
@@ -1520,7 +1520,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         const first = streamCalls[0];
         expect(first.options.runSourceSelection).toMatchObject({
-            schemaVersion: 1, scope: 'notes', userMessageId: expect.any(String),
+            schemaVersion: 1, scope: 'combined', userMessageId: expect.any(String),
         });
         expect(first.options.runSourceSelection).not.toHaveProperty('persistedSelectionRevision');
         const firstChoice = first.options.runSourceSelection;
@@ -1531,7 +1531,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         expect(streamCalls[1].options.runSourceSelection).toMatchObject({ scope: 'web' });
         expect(first.options.runSourceSelection).toBe(firstChoice);
-        expect(first.options.runSourceSelection?.scope).toBe('notes');
+        expect(first.options.runSourceSelection?.scope).toBe('combined');
         streamCalls[1].resolve();
         await waitForTurnCompletion(view);
         await view.onClose();
@@ -2136,7 +2136,7 @@ describe('LLMView turn lifecycle', () => {
                     expect.any(Function));
             }
             expect(plugin.prepareWritingRecoverySources).toHaveBeenCalledWith(expect.objectContaining({ generationInput }),
-                [], 'parent-recovery', expect.any(Object), 'notes');
+                [], 'parent-recovery', expect.any(Object), 'combined');
             if (directParent) {
                 expect(createVersion).not.toHaveBeenCalled();
                 expect(await versions.list('parent-recovery')).toEqual([parent]);
@@ -2238,7 +2238,7 @@ describe('LLMView turn lifecycle', () => {
                     expect(restored.plugin.prepareWritingRecoverySources).toHaveBeenCalledWith(before, [], 'reloaded-recovery',
                         expect.objectContaining({ sourceRecords: expect.arrayContaining([
                             expect.objectContaining({ path: 'Source.md', kind: 'context-used' }),
-                        ]) }), 'notes');
+                        ]) }), 'combined');
                     expect(result[0]).toMatchObject({ text: outcome === 'edited' ? 'MY BODY' : 'BODY',
                         origin: outcome === 'edited' ? 'user_edited' : 'ai_generated',
                         backgroundSourceRefs: [{ path: 'Source.md' }], styleRevisionIds: [],

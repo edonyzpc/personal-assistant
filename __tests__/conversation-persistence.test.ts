@@ -360,7 +360,7 @@ describe("ConversationPersistence", () => {
         await expect(persistence.persistFinalizedTurn("hello", historyEntry)).resolves.toBe(true);
 
         expect(manager.startConversation).toHaveBeenCalledWith("hello", undefined, "reserved-conversation",
-            { schemaVersion: 1, scope: 'notes', revision: 0, basis: 'new-conversation' });
+            { schemaVersion: 1, scope: 'combined', revision: 0, basis: 'new-conversation' });
         expect(manager.reserveConversationId).toHaveBeenCalledTimes(1);
         expect(persistence.activeConversationId).toBe("reserved-conversation");
         persistence.resetActiveConversationState();
@@ -535,11 +535,11 @@ describe('B-149 Chat source selection persistence', () => {
         return { store, manager, create, log };
     }
 
-    it('starts each draft at notes, retains an early web choice, and restores each conversation separately', async () => {
+    it('starts each draft at combined mode, retains an early web choice, and restores each conversation separately', async () => {
         const { store, manager, create } = setup();
         const view = create();
-        expect(view.currentSourceSelection).toMatchObject({ scope: 'notes', basis: 'new-conversation' });
-        expect(view.captureRunSourceSelection('message-a')).toMatchObject({ scope: 'notes', userMessageId: 'message-a' });
+        expect(view.currentSourceSelection).toMatchObject({ scope: 'combined', basis: 'new-conversation' });
+        expect(view.captureRunSourceSelection('message-a')).toMatchObject({ scope: 'combined', userMessageId: 'message-a' });
         expect(await view.selectSourceScope('web')).toBe(false);
         const firstRun = view.captureRunSourceSelection('message-a');
         expect(firstRun).toMatchObject({ scope: 'web', userMessageId: 'message-a' });
@@ -554,10 +554,10 @@ describe('B-149 Chat source selection persistence', () => {
         expect(view.captureRunSourceSelection('message-b')).toMatchObject({ scope: 'web', persistedSelectionRevision: 0 });
 
         view.resetActiveConversationState();
-        expect(view.currentSourceSelection.scope).toBe('notes');
+        expect(view.currentSourceSelection.scope).toBe('combined');
         const second = await manager.startConversation('second');
         view.hydrateConversation(second, []);
-        expect(view.currentSourceSelection.scope).toBe('notes');
+        expect(view.currentSourceSelection.scope).toBe('combined');
         view.hydrateConversation((await store.getConversation(firstId))!, await store.getTurns(firstId));
         expect(view.currentSourceSelection.scope).toBe('web');
         view.dispose();
@@ -583,7 +583,7 @@ describe('B-149 Chat source selection persistence', () => {
         expect(captured).not.toHaveProperty('persistedSelectionRevision');
         await expect(view.persistRunningTurn('next', 'message-web', { role: 'user', content: 'next',
             runSourceSelection: captured })).resolves.toBe(true);
-        expect(await store.getConversation(initial.id)).toMatchObject({ sourceSelection: { scope: 'notes', revision: 0 } });
+        expect(await store.getConversation(initial.id)).toMatchObject({ sourceSelection: { scope: 'combined', revision: 0 } });
         release();
         await expect(saving).resolves.toBe(true);
         expect(view.captureRunSourceSelection('message-after')).toMatchObject({ scope: 'web', persistedSelectionRevision: 1 });
@@ -659,7 +659,7 @@ describe('B-149 Chat source selection persistence', () => {
         const loaded = await reopened.loadConversation(conversationId);
         const hydrated = reopened.hydrateConversation(loaded!.conversation, loaded!.turns);
         expect(hydrated?.chatHistory[1].agentExecution?.state).toBe('interrupted');
-        expect(reopened.currentSourceSelection.scope).toBe('notes');
+        expect(reopened.currentSourceSelection.scope).toBe('combined');
         await expect(reopened.selectSourceScope('web')).resolves.toBe(true);
         const next = reopened.captureRunSourceSelection('new-message');
         expect(next).toMatchObject({ scope: 'web', persistedSelectionRevision: 1,
@@ -669,7 +669,7 @@ describe('B-149 Chat source selection persistence', () => {
         await expect(reopened.persistRunningTurn('new task', 'new-message', { role: 'user', content: 'new task',
             runSourceSelection: next })).resolves.toBe(true);
         const saved = await store.getTurns(conversationId);
-        expect(saved.map(turn => turn.user.runSourceSelection?.scope)).toEqual(['notes', 'web']);
+        expect(saved.map(turn => turn.user.runSourceSelection?.scope)).toEqual(['combined', 'web']);
         expect(saved[0].assistant.agentExecution?.state).toBe('running');
         reopened.dispose();
     });
@@ -692,9 +692,9 @@ describe('B-149 Chat source selection persistence', () => {
         const savingA = view.selectSourceScope('web');
         const pendingA = view.captureRunSourceSelection('pending-A');
         view.hydrateConversation(b, []);
-        expect(view.currentSourceSelection.scope).toBe('notes');
-        await expect(view.selectSourceScope('combined')).resolves.toBe(true);
-        expect((await store.getConversation(b.id))?.sourceSelection).toMatchObject({ scope: 'combined', revision: 1 });
+        expect(view.currentSourceSelection.scope).toBe('combined');
+        await expect(view.selectSourceScope('notes')).resolves.toBe(true);
+        expect((await store.getConversation(b.id))?.sourceSelection).toMatchObject({ scope: 'notes', revision: 1 });
         view.hydrateConversation((await store.getConversation(a.id))!, []);
         expect(view.captureRunSourceSelection('send-A')).toMatchObject({
             scope: 'web', selectionId: pendingA.selectionId,
@@ -704,7 +704,7 @@ describe('B-149 Chat source selection persistence', () => {
         view.hydrateConversation(b, []);
         release();
         await expect(savingA).resolves.toBe(true);
-        expect(view.currentSourceSelection.scope).toBe('combined');
+        expect(view.currentSourceSelection.scope).toBe('notes');
         view.hydrateConversation((await store.getConversation(a.id))!, []);
         expect(view.captureRunSourceSelection('after-A')).toMatchObject({ scope: 'web', persistedSelectionRevision: 1 });
         expect(view.isSourceSelectionPending).toBe(false);

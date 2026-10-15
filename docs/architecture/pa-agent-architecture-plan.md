@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-10-14
+Updated: 2026-10-15
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -447,7 +447,9 @@ abort, or deadline expiry invalidates the token and discards late work.
 ### Task source and writing output
 
 For ordinary Chat, the user selects My notes, Web sources, or Combined mode per
-conversation; a new conversation defaults to My notes. Chat freezes the choice
+conversation; a new conversation defaults to Combined mode, per the Owner's
+2026-10-15 amendment in [DEC-043](../product/decisions/dec-043-agent-runtime-evolution-and-source-scope.md).
+Saved conversation choices and conservative legacy fallbacks remain unchanged. Chat freezes the choice
 before asynchronous preparation for each request. A switch during a run applies
 to the next request, without cancelling or replaying the current one. The main
 Agent chooses which permitted sources to consult; the choice never enables a

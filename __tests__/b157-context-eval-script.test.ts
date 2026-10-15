@@ -1208,7 +1208,7 @@ describe('B157 independent context harness contracts (offline)', () => {
             expect(episode.turns[0].events).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'agent_end' })]));
             expect(episode.domainEvents).toEqual(expect.arrayContaining([
                 expect.objectContaining({ owner: 'ghost-action-authority', oldRunGuardCurrent: false, oldContextRejected: true }),
-                expect.objectContaining({ owner: 'ghost-action-authority', freshAuthority: true, sourceScope: 'notes', sourceSelectionRevision: 0 }),
+                expect.objectContaining({ owner: 'ghost-action-authority', freshAuthority: true, sourceScope: 'combined', sourceSelectionRevision: 0 }),
                 expect.objectContaining({ owner: 'ghost-session', state: 'updated', verified: true }),
             ]));
             expect(episode.submissions.filter((item: any) => item.domain === 'ghost' && item.method === 'create')).toHaveLength(1);
