@@ -83,6 +83,7 @@ import type {
     PageletDeepDiscoverTriggerReason,
 } from "../src/pagelet/agent/types";
 import type { PageletAgentDeliveryCandidate } from "../src/pagelet/agent/delivery-adapter";
+import type { PanelFinding } from "../src/pagelet/panel/types";
 import type { PageletDetailPayload } from "../src/pagelet/tab/types";
 import type {
     ConfirmedMemoryRecord,
@@ -379,7 +380,7 @@ function makeVerifiedDeepDiscoverResult(
         sources: [anchor, related],
         sourceRefs: [{ path: anchorPath }, { path: related.path }],
         cacheIdentity: {
-            pipelineVersion: "pagelet-deep-discover-v2" as const,
+            pipelineVersion: "pagelet-deep-discover-v3" as const,
             anchor,
             sources: [anchor, related],
             dataBoundaryIdentity: "boundary-test",
@@ -412,6 +413,24 @@ function makeVerifiedDeepDiscoverResult(
             anchor,
             insights: [insight],
             preparedAt: insight.preparedAt,
+        },
+    };
+}
+
+// These capability tests explicitly supply a link action. Discovery itself
+// no longer infers an action from the ordering of its evidence sources.
+function withExplicitLinkAction(candidate: PageletAgentDeliveryCandidate): PageletAgentDeliveryCandidate {
+    return {
+        ...candidate,
+        pageletAgent: {
+            ...candidate.pageletAgent,
+            directAction: {
+                kind: "link-related",
+                candidateId: candidate.id,
+                anchorPath: "notes/current.md",
+                sourcePath: "notes/related.md",
+                label: "Link “related” from “current”",
+            },
         },
     };
 }
@@ -562,6 +581,82 @@ function makeMemoryRecord(overrides: Partial<ConfirmedMemoryRecord> = {}): Confi
 }
 
 describe("PageletOrchestrator Deep Discover migration", () => {
+    it("runs explicit discovery again with an existing result and keeps viewing provider-free", async () => {
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>()
+            .mockResolvedValueOnce(makeVerifiedDeepDiscoverResult())
+            .mockResolvedValueOnce({ status: "error", reason: "provider-failed" });
+        const orchestrator = new PageletOrchestrator(makeHost({ runDeepDiscover }));
+        const panelView = {
+            open: jest.fn<(layout: string, findings: PanelFinding[]) => void>(),
+            close: jest.fn(), isOpen: true,
+        };
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        await orchestrator.reviewCurrentNote();
+        const originalBody = panelView.open.mock.calls.at(-1)?.[1][0].insightText;
+        orchestrator.openPanel();
+        expect(runDeepDiscover).toHaveBeenCalledTimes(1);
+        await orchestrator.reviewCurrentNote();
+        expect(runDeepDiscover).toHaveBeenCalledTimes(2);
+        orchestrator.openPanel();
+        expect(runDeepDiscover).toHaveBeenCalledTimes(2);
+        expect(panelView.open.mock.calls.at(-1)?.[1][0].insightText).toBe(originalBody);
+    });
+
+    it("makes every completed text reachable after a partial run without another provider call", async () => {
+        const result = makeVerifiedDeepDiscoverResult();
+        if (result.status !== "verified") throw new Error("expected verified fixture");
+        result.insights = Array.from({ length: 3 }, (_, index) => ({
+            ...result.insight,
+            insightId: `complete-text-${index}`,
+            body: `## Completed text ${index}\n\nFull body ${index}.\n\n### Another finding\nKept intact.`,
+        }));
+        result.insight = result.insights[0];
+        result.collection.insights = result.insights;
+        result.runtimeCompletion = {
+            loopStatus: "incomplete", endReason: "max-turns", diagnosticTypes: [],
+            lastTurnStatus: null, providerStopReason: null, finalTextState: "empty",
+            citationCoverage: "not-applicable", turnCount: 3, toolCallCount: 4,
+            insightDraftCount: 3, emptyFinalAnswerRetryCount: 0,
+        };
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(async () => result);
+        const orchestrator = new PageletOrchestrator(makeHost({ runDeepDiscover }));
+        const panelView = {
+            open: jest.fn<(layout: string, findings: PanelFinding[]) => void>(),
+            close: jest.fn(), isOpen: true,
+        };
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        await orchestrator.reviewCurrentNote();
+        for (const insight of result.insights) {
+            const finding = panelView.open.mock.calls.at(-1)?.[1][0] as {
+                insightText: string;
+                actionStatus: { detail: string };
+                actions: Array<{ label: string; callback(): void }>;
+            };
+            expect(finding.insightText).toBe(insight.body);
+            expect(finding.actionStatus.detail).toContain("did not finish");
+            expect(finding.actions.some((action) => action.label.startsWith("Link "))).toBe(false);
+            finding.actions.find((action) => action.label === "Next result")?.callback();
+        }
+        expect(runDeepDiscover).toHaveBeenCalledTimes(1);
+        expect(panelView.open.mock.calls.at(-1)?.[1][0].actions?.some(
+            (action: { label: string }) => action.label === "Next result",
+        )).toBe(false);
+    });
+
+    it.each([
+        [{ status: "quiet", reason: "no-insight" }, "No findings in this analysis."],
+        [{ status: "quiet", reason: "empty" }, "The analysis could not finish."],
+        [{ status: "quiet", reason: "duplicate" }, "This analysis has no new results to show."],
+        [{ status: "quiet", reason: "aborted" }, "Analysis cancelled."],
+        [{ status: "stale", reason: "source-changed" }, "The sources or permissions changed. Run the analysis again."],
+    ] as const)("reports the actual explicit terminal outcome: %o", async (result, message) => {
+        const orchestrator = new PageletOrchestrator(makeHost({ runDeepDiscover: async () => result }));
+        await orchestrator.reviewCurrentNote();
+        expect(Notice).toHaveBeenCalledWith(message, 5000);
+    });
+
     it("acknowledges the exact candidates accepted on the current foreground route", async () => {
         const result = makeVerifiedDeepDiscoverResult();
         const acknowledgeDeepDiscoverResult = jest.fn<NonNullable<
@@ -663,7 +758,8 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         }
         expect(legacyDiscovery).not.toHaveBeenCalled();
         expect(legacyRecap).not.toHaveBeenCalled();
-        expect(Notice).not.toHaveBeenCalled();
+        expect(Notice).toHaveBeenCalledTimes(6);
+        expect(Notice).toHaveBeenCalledWith("No findings in this analysis.", 5000);
     });
 
     it("uses the exact leave, changed-open, and edited paths for automatic triggers", async () => {
@@ -938,7 +1034,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             triggerReason: "explicit",
             force: true,
         });
-        expect(Notice).not.toHaveBeenCalled();
+        expect(Notice).toHaveBeenCalledWith("No findings in this analysis.", 5000);
     });
 
     it("keeps local Maintenance and Graph available beyond old foreground caps while mutually exclusive", async () => {
@@ -1241,7 +1337,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             makeVerifiedDeepDiscoverResult(),
             { path: "notes/current.md", proactive: false },
         );
-        internals.openAgentInsightPanel(candidate);
+        internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
         const latestFirstFinding = () => panelView.open.mock.calls.at(-1)?.[1][0] as {
             actionStatus?: { label: string; preview?: string };
             actions: Array<{ label: string; callback(): void }>;
@@ -1317,7 +1413,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             makeVerifiedDeepDiscoverResult(),
             { path: "notes/current.md", proactive: false },
         );
-        internals.openAgentInsightPanel(candidate);
+        internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
         const actions = () => (panelView.open.mock.calls.at(-1)?.[1][0] as {
             actions: Array<{ label: string; callback(): void }>;
         }).actions;
@@ -1369,7 +1465,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             makeVerifiedDeepDiscoverResult(),
             { path: "notes/current.md", proactive: false },
         );
-        internals.openAgentInsightPanel(candidate);
+        internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
         const latest = () => panelView.open.mock.calls.at(-1)?.[1][0] as {
             actionStatus?: { label: string };
             actions: Array<{ label: string; disabled?: boolean; callback(): void }>;
@@ -1451,7 +1547,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             makeVerifiedDeepDiscoverResult(),
             { path: "notes/current.md", proactive: true },
         );
-        internals.openAgentInsightPanel(candidate);
+        internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
         const actions = () => (panelView.open.mock.calls.at(-1)?.[1][0] as {
             actionStatus?: { label: string };
             actions: Array<{ label: string; callback(): void }>;
@@ -1563,7 +1659,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             makeVerifiedDeepDiscoverResult(),
             { path: "notes/current.md", proactive: false },
         );
-        internals.openAgentInsightPanel(candidate);
+        internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
         const latest = () => panelView.open.mock.calls.at(-1)?.[1][0] as {
             actionStatus?: { label: string };
             actions: Array<{ label: string; callback(): void }>;
@@ -1615,7 +1711,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
                 makeVerifiedDeepDiscoverResult(),
                 { path: "notes/current.md", proactive: false },
             );
-            internals.openAgentInsightPanel(candidate);
+            internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
             const latest = () => panelView.open.mock.calls.at(-1)?.[1][0] as {
                 actionStatus?: { preview?: string };
                 actions: Array<{ callback(): void }>;

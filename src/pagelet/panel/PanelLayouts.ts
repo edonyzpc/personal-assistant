@@ -310,22 +310,28 @@ export function renderDiscoveryLayout(
 
     const wrapper = el("div", "pa-pagelet-panel-timeline");
 
-    // Connection map section
-    wrapper.appendChild(
-        el("div", "pa-pagelet-panel-timeline-section-label",
-            pageletT("pagelet.panel.discovery.map", locale)),
-    );
-    const mapWrap = el("div", "pa-pagelet-panel-card-wrap");
-    mapWrap.appendChild(renderConnectionMap(
-        findings,
-        connections,
-        locale,
-        options.sourcePath,
-        options.onConnectionNodeClick,
-    ));
-    wrapper.appendChild(mapWrap);
-
     const sourcePaths = collectDiscoverySourcePaths(findings);
+    const singleNoteInsight = findings.some((finding) => finding.insightText)
+        && sourcePaths.length === 1
+        && !connections?.length;
+
+    // Connection map section
+    if (!singleNoteInsight) {
+        wrapper.appendChild(
+            el("div", "pa-pagelet-panel-timeline-section-label",
+                pageletT("pagelet.panel.discovery.map", locale)),
+        );
+        const mapWrap = el("div", "pa-pagelet-panel-card-wrap");
+        mapWrap.appendChild(renderConnectionMap(
+            findings,
+            connections,
+            locale,
+            options.sourcePath,
+            options.onConnectionNodeClick,
+        ));
+        wrapper.appendChild(mapWrap);
+    }
+
     if (sourcePaths.length > 0) {
         wrapper.appendChild(
             el("div", "pa-pagelet-panel-timeline-divider"),

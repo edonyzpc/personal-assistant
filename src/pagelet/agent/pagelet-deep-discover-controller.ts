@@ -18,7 +18,6 @@ import {
     type PageletAgentPreparedCacheRead,
 } from "./pagelet-agent-cache";
 import {
-    arePageletAgentInsightsDistinct,
     evaluatePageletAgentQuality,
     resolvePageletInsightSourcePaths,
 } from "./pagelet-agent-quality-gate";
@@ -212,7 +211,7 @@ export class PageletDeepDiscoverController {
                 if (!automaticRequestIsCurrent(normalizedRequest)) {
                     const metrics = result.status === "verified"
                         ? result.insight.metrics
-                        : result.status === "quiet" ? result.metrics : undefined;
+                        : "metrics" in result ? result.metrics : undefined;
                     result = {
                         status: "quiet",
                         reason: "aborted",
@@ -412,32 +411,49 @@ export class PageletDeepDiscoverController {
                     runtimeCompletion: run.runtimeCompletion,
                 };
             }
+            if (!safeAllowed(this.dependencies.isPathAllowed, anchor.path)) {
+                return {
+                    status: "stale",
+                    reason: "data-boundary-changed",
+                    metrics: run.metrics,
+                    runtimeCompletion: run.runtimeCompletion,
+                };
+            }
+            if (!samePolicyIdentity(policyIdentity, this.dependencies.getPolicyIdentity())) {
+                return {
+                    status: "stale",
+                    reason: "policy-identity-changed",
+                    metrics: run.metrics,
+                    runtimeCompletion: run.runtimeCompletion,
+                };
+            }
+            const completed = run.loopResult.status === "completed";
             const candidateDrafts = run.insightDrafts ?? (
                 run.finalText && !isPageletNoInsightTerminal(run.finalText)
                     ? [{ body: run.finalText, origin: "terminal" as const, declaredSourceIds: [] }]
                     : []
             );
-            const boundedDrafts = candidateDrafts.slice(0, 2);
-            const rejectedNoInsightDraft = boundedDrafts.some((draft) => (
-                isPageletNoInsightTerminal(draft.body)
-            ));
-            const drafts = boundedDrafts.filter((draft) => (
-                !isPageletNoInsightTerminal(draft.body)
+            const drafts = candidateDrafts.filter((draft) => (
+                (completed || draft.origin === "staged")
+                && !isPageletNoInsightTerminal(draft.body)
             ));
             if (drafts.length === 0) {
+                if (run.loopResult.status === "error") {
+                    return {
+                        status: "error",
+                        reason: "deep-discover-failed",
+                        metrics: run.metrics,
+                        runtimeCompletion: run.runtimeCompletion,
+                    };
+                }
                 return {
                     status: "quiet",
-                    reason: isPageletNoInsightTerminal(run.finalText) || rejectedNoInsightDraft
+                    reason: completed && isPageletNoInsightTerminal(run.finalText)
                         ? "no-insight"
-                        : "runtime-incomplete",
+                        : completed ? "empty" : "runtime-incomplete",
                     metrics: run.metrics,
                     runtimeCompletion: run.runtimeCompletion,
                 };
-            }
-
-            const currentPolicyIdentity = this.dependencies.getPolicyIdentity();
-            if (!samePolicyIdentity(policyIdentity, currentPolicyIdentity)) {
-                return { status: "stale", reason: "policy-identity-changed" };
             }
 
             const proactiveDelivery = request.triggerReason !== "explicit";
@@ -445,6 +461,7 @@ export class PageletDeepDiscoverController {
                 Awaited<ReturnType<typeof evaluatePageletAgentQuality>>,
                 { accepted: true }
             >> = [];
+            const acceptedIdentities = new Set<string>();
             let firstRejectReason: PageletAgentQualityRejectReason | undefined;
             for (const draft of drafts) {
                 try {
@@ -476,7 +493,6 @@ export class PageletDeepDiscoverController {
                             return material ? sourceSnapshotIdentity(material) : null;
                         },
                         isPathAllowed: this.dependencies.isPathAllowed,
-                        anchorRelations: this.dependencies.getAnchorRelations?.(anchor.path),
                         isDuplicate: proactiveDelivery
                             ? (normalizedBody, sources) => this.cache.hasEquivalent(
                                 anchor.path,
@@ -499,10 +515,14 @@ export class PageletDeepDiscoverController {
                         firstRejectReason ??= quality.reason;
                         continue;
                     }
-                    if (
-                        acceptedQualities.length > 0
-                        && !arePageletAgentInsightsDistinct(acceptedQualities[0], quality)
-                    ) continue;
+                    const insightId = createPageletInsightId({
+                        anchor: anchorSnapshotIdentity(anchor),
+                        normalizedBody: quality.normalizedBody,
+                        normalizedClaim: normalizePageletInsightClaim(quality.body),
+                        sources: quality.sources,
+                    });
+                    if (acceptedIdentities.has(insightId)) continue;
+                    acceptedIdentities.add(insightId);
                     acceptedQualities.push(quality);
                 } catch (error) {
                     if (isAbortError(error, signal)) throw error;
@@ -512,7 +532,7 @@ export class PageletDeepDiscoverController {
             if (acceptedQualities.length === 0) {
                 return {
                     status: "quiet",
-                    reason: firstRejectReason ?? "no-insight",
+                    reason: firstRejectReason ?? "duplicate",
                     metrics: run.metrics,
                     runtimeCompletion: run.runtimeCompletion,
                 };
@@ -525,7 +545,12 @@ export class PageletDeepDiscoverController {
             );
             throwIfRequestAborted(request, signal);
             if (commit.status === "stale") {
-                return { status: "stale", reason: commit.reason };
+                return {
+                    status: "stale",
+                    reason: commit.reason,
+                    metrics: run.metrics,
+                    runtimeCompletion: run.runtimeCompletion,
+                };
             }
             const commitQualities = commit.qualities;
             const sealed = this.sealStableCommit(
@@ -547,7 +572,12 @@ export class PageletDeepDiscoverController {
                         metrics: run.metrics,
                         runtimeCompletion: run.runtimeCompletion,
                     }
-                    : { status: "stale", reason: sealed.reason };
+                    : {
+                        status: "stale",
+                        reason: sealed.reason,
+                        metrics: run.metrics,
+                        runtimeCompletion: run.runtimeCompletion,
+                    };
             }
             if (commitQualities.length === 0) {
                 return {
@@ -608,7 +638,7 @@ export class PageletDeepDiscoverController {
                 preparedAt,
             };
             throwIfRequestAborted(request, signal);
-            this.cache.putCollection(collection);
+            if (completed) this.cache.putCollection(collection);
             return {
                 status: "verified",
                 insight: insights[0],
@@ -626,7 +656,14 @@ export class PageletDeepDiscoverController {
                     runtimeCompletion: run.runtimeCompletion,
                 };
             }
-            throw error;
+            return {
+                status: "error",
+                reason: isFunctionCallingUnsupportedError(error)
+                    ? "function-calling-unsupported"
+                    : "deep-discover-failed",
+                metrics: run.metrics,
+                runtimeCompletion: run.runtimeCompletion,
+            };
         }
     }
 

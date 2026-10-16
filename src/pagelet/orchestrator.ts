@@ -485,6 +485,12 @@ export class PageletOrchestrator {
     }
 
     openPanel(): void {
+        this.invalidateAgentInsightIfPolicyChanged();
+        const candidate = this.openAgentInsightCandidate ?? this.agentInsightCandidate;
+        if (candidate) {
+            this.openAgentInsightPanel(candidate);
+            return;
+        }
         this.handleExpandPanel("review");
     }
 
@@ -1064,11 +1070,6 @@ export class PageletOrchestrator {
 
         const path = activeFile.path;
         this.invalidateAgentInsightIfPolicyChanged();
-        const existingCandidate = this.agentInsightCandidate;
-        if (existingCandidate && this.agentInsightAnchorPath === path) {
-            this.openAgentInsightPanel(existingCandidate);
-            return;
-        }
         const routeToken = ++this.foregroundRouteToken;
         const modelPolicyIdentity = this.host.getDeepDiscoverPolicyIdentity?.();
         this.transitionPet("analysis-start", "connection");
@@ -1130,6 +1131,17 @@ export class PageletOrchestrator {
                 new Notice(this.t(capability === "unsupported"
                     ? "pagelet.deepDiscover.functionCallingUnsupported"
                     : "pagelet.deepDiscover.noToolCalls"), 5000);
+            } else if (result.status === "quiet") {
+                const key = result.reason === "no-insight"
+                    ? "pagelet.deepDiscover.noInsight"
+                    : result.reason === "duplicate" || result.reason === "seen"
+                        ? "pagelet.deepDiscover.noNewResults"
+                        : result.reason === "aborted"
+                            ? "pagelet.deepDiscover.cancelled"
+                            : "pagelet.deepDiscover.incomplete";
+                new Notice(this.t(key), 5000);
+            } else if (result.status === "stale") {
+                new Notice(this.t("pagelet.deepDiscover.stale"), 5000);
             }
         } catch (error) {
             if (result) this.host.discardDeepDiscoverResult?.(result);
@@ -1174,7 +1186,15 @@ export class PageletOrchestrator {
         const candidates = pageletAgentCollectionToDeliveryCandidates(
             result.collection,
             getPageletUiLanguage(),
-        );
+        ).map((candidate) => ({
+            ...candidate,
+            pageletAgent: {
+                ...candidate.pageletAgent,
+                runIncomplete: result.status === "verified"
+                    && result.runtimeCompletion !== undefined
+                    && result.runtimeCompletion.loopStatus !== "completed",
+            },
+        }));
         const candidate = candidates[0];
         if (!candidate) return null;
         const actionCandidateId = "candidateId" in this.agentInsightActionState
@@ -1229,6 +1249,33 @@ export class PageletOrchestrator {
 
     private renderAgentInsightPanel(candidate: PageletAgentDeliveryCandidate): void {
         const integration = this.buildAgentInsightFindingIntegration(candidate);
+        const next = [this.agentInsightCandidate, ...this.pendingAgentInsightCandidates]
+            .find((item): item is PageletAgentDeliveryCandidate => Boolean(
+                item && item.id !== candidate.id && !this.deliveryCandidateIsSeen(item),
+            ));
+        if (next) {
+            integration.actions = [
+                ...(integration.actions ?? []),
+                {
+                    label: this.t("pagelet.panel.agentInsight.nextResult"),
+                    disabled: this.agentInsightActionMustRemainReachable(),
+                    callback: () => {
+                        this.invalidateAgentInsightIfPolicyChanged();
+                        if (![this.agentInsightCandidate, ...this.pendingAgentInsightCandidates]
+                            .some((item) => item?.id === next.id)) return;
+                        if (this.agentInsightActionMustRemainReachable()) return;
+                        this.cancelPendingAgentInsightAction();
+                        this.openAgentInsightPanel(next);
+                    },
+                },
+            ];
+        }
+        if (candidate.pageletAgent.runIncomplete) {
+            integration.actionStatus = {
+                ...(integration.actionStatus ?? { label: this.t("pagelet.deepDiscover.incomplete") }),
+                detail: this.t("pagelet.deepDiscover.partialResults"),
+            };
+        }
         const findings: PanelFinding[] = candidate.sourceRefs.length > 0
             ? candidate.sourceRefs.map((source, index) => ({
                 title: index === 0 ? candidate.title : (source.title ?? source.path),

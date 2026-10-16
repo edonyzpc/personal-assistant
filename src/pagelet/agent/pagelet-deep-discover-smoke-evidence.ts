@@ -257,7 +257,6 @@ function validCommittedResult(
 ): boolean {
     if (
         result.insights.length < 1
-        || result.insights.length > 2
         || result.collection.insights.length !== result.insights.length
         || result.insight.insightId !== result.insights[0]?.insightId
         || result.collection.anchor.path !== anchorPath

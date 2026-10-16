@@ -1,45 +1,26 @@
 import type { AgentCapability, AgentCapabilityResult } from "../../ai-services/capability-types";
 import type { ChatToolContext, ChatToolName } from "../../ai-services/chat-tools";
 import type { SearchMemoryInput } from "../../ai-services/chat-tool-types";
-import type {
-    ChatToolUnavailableReason,
-    MemorySearchResult,
-    PaAgentMessage,
-    SourceRecord,
-} from "../../ai-services/chat-types";
-import { projectMemorySearchObservation } from "../../ai-services/pa-agent-host-tools";
-import { createSourceDedupKey } from "../../ai-services/source-store";
-import { cloneTranscript } from "../../ai-services/context/clone-utils";
+import type { ChatToolUnavailableReason, MemorySearchResult } from "../../ai-services/chat-types";
 import {
     MEMORY_RECOVERY_PROJECTION_MARGIN_MS,
     mergeMemorySearchResults,
+    qualifiesForRelaxedRecovery,
     resolveMemoryRecoveryDeadlineWindow,
 } from "../../ai-services/retrieval-recovery-coordinator";
 import type { RetrievalDiagnosticRecorder } from "../../ai-services/retrieval-diagnostics";
-import type {
-    PageletAgentInsightDraft,
-    PageletPendingFirstInsight,
-    PageletAgentRecoveryDiagnostics,
-    PageletStageValidationSubreason,
-    StagePageletInsightInput,
-} from "./types";
+import { isPageletNoInsightTerminal, type PageletAgentInsightDraft, type PageletAgentRecoveryDiagnostics,
+    type PageletStageValidationSubreason, type StagePageletInsightInput } from "./types";
 
 export const PAGELET_STAGE_INSIGHT_TOOL_NAME = "stage_pagelet_insight";
 const PAGELET_RECOVERY_MIN_EXECUTION_MS = 2_000;
 const PAGELET_RECOVERY_MAX_ATTEMPT_MS = 10_000;
-
-interface RecoveryEpisode {
-    result: MemorySearchResult;
-    sourceIds: ReadonlySet<string>;
-    toolCallId?: string;
-}
 
 interface StageValidationResult {
     accepted: boolean;
     rejection?: "first" | "lead";
     subreason?: PageletStageValidationSubreason;
     verifiedSourceIds?: readonly string[];
-    verifiedLeadSourceIds?: readonly string[];
 }
 
 export interface PageletRecoveryCoordinatorOptions {
@@ -84,21 +65,15 @@ export interface PageletRecoverySnapshot {
 }
 
 /**
- * Run-local Pagelet recovery state. Search episodes and the token never escape
- * this object; model input contains neither an episode handle nor a recovery
- * query. `clear()` is called on every runtime exit.
+ * Run-local complete drafts and independent run-scoped retrieval recovery.
+ * Recovery policy changes affect retry admission, never completed drafts.
  */
 export class PageletRecoveryCoordinator {
-    private readonly partialEpisodes: RecoveryEpisode[] = [];
-    private pendingFirst?: PageletPendingFirstInsight;
-    private staged?: PageletAgentInsightDraft;
-    private stageControlReserved = false;
+    private readonly staged: PageletAgentInsightDraft[] = [];
+    private stageControlCalled = false;
     private tokenConsumed = false;
     private relaxedGoal?: "first_insight" | "second_insight";
     private stageValidationSubreason?: PageletStageValidationSubreason;
-    private stagedRecovery?: MemorySearchResult;
-    private stagedBoundToolCallId?: string;
-    private activeMemorySearchToolCallId?: string;
     private readonly activeChildControllers = new Set<AbortController>();
     private readonly activeRecoveryControllers = new Set<AbortController>();
     private readonly initialPolicyEpoch?: string;
@@ -119,26 +94,8 @@ export class PageletRecoveryCoordinator {
         }
     }
 
-    /**
-     * Bind a model-visible search call to the Host-owned recovery episode it
-     * creates. Pagelet dispatches search_memory sequentially, so this binding
-     * cannot bleed across sibling calls.
-     */
-    async withMemorySearchToolCall<T>(
-        toolCallId: string,
-        task: () => Promise<T>,
-    ): Promise<T> {
-        if (this.activeMemorySearchToolCallId) {
-            throw new Error("Concurrent Pagelet Memory tool-call binding is unavailable.");
-        }
-        this.activeMemorySearchToolCallId = toolCallId;
-        try {
-            return await task();
-        } finally {
-            if (this.activeMemorySearchToolCallId === toolCallId) {
-                this.activeMemorySearchToolCallId = undefined;
-            }
-        }
+    async withMemorySearchToolCall<T>(_toolCallId: string, task: () => Promise<T>): Promise<T> {
+        return await task();
     }
 
     async executeMemorySearch(
@@ -221,376 +178,155 @@ export class PageletRecoveryCoordinator {
             return standard;
         }
 
-        if (isEligiblePartial(standard)) this.recordPartial(standard);
-        if (this.stageControlReserved) {
-            this.recordRelaxedSkipped("stage_control_reserved");
+        if (!qualifiesForRelaxedRecovery(standard) || !standard.recoverySeed) {
+            this.recordRelaxedSkipped("standard_sufficient");
             return standard;
         }
-        if (!isEligibleNone(standard)) {
-            this.recordRelaxedSkipped(
-                isEligiblePartial(standard) ? "partial_requires_stage" : "standard_sufficient",
-            );
-            return standard;
-        }
-        const firstInsightUnavailable = this.relaxedUnavailableReason(absoluteDeadlineMs);
-        if (firstInsightUnavailable) {
-            this.recordRelaxedSkipped(firstInsightUnavailable);
+        const unavailableReason = this.relaxedUnavailableReason(absoluteDeadlineMs);
+        if (unavailableReason) {
+            this.recordRelaxedSkipped(unavailableReason);
             return standard;
         }
 
+        // Claim synchronously before awaiting; staging never participates in this token.
         this.consumeToken("first_insight");
+        let recovered: MemorySearchResult | null = null;
         try {
-            const relaxed = await this.runRelaxed(
-                standard,
-                context,
-                "first_insight",
+            recovered = await this.runRelaxed(standard, context, "first_insight", absoluteDeadlineMs);
+        } catch (error) {
+            if (!this.isCurrentLifecycle(lifecycleEpoch) || context.signal?.aborted) throw error;
+        }
+        if (!this.isCurrentLifecycle(lifecycleEpoch) || context.signal?.aborted) throw createAbortError();
+        const candidate = this.isRecoveryPolicyCurrent() && recovered ? recovered : standard;
+        if (!this.options.revalidate || (candidate.documents.length === 0 && candidate.sources.length === 0)) return candidate;
+        const revalidate = async (result: MemorySearchResult) => {
+            const current = await this.runBeforeDeadline(
+                signal => this.options.revalidate!(result, signal),
+                context.signal,
                 absoluteDeadlineMs,
             );
-            if (!this.isCurrentLifecycle(lifecycleEpoch)) throw createAbortError();
-            if (!this.isRecoveryPolicyCurrent()) return standard;
-            return relaxed ?? standard;
-        } catch (error) {
-            if (!this.isCurrentLifecycle(lifecycleEpoch)) throw createAbortError();
-            if (context.signal?.aborted) throw error;
-            return standard;
+            if (!this.isCurrentLifecycle(lifecycleEpoch) || context.signal?.aborted) throw createAbortError();
+            return current;
+        };
+        if (candidate !== standard) {
+            try {
+                const current = await revalidate(candidate);
+                if (current && current.memoryEvidenceState !== "unavailable" && this.isRecoveryPolicyCurrent()) return current;
+            } catch (error) {
+                if (!this.isCurrentLifecycle(lifecycleEpoch) || context.signal?.aborted) throw error;
+            }
         }
+        // A failed/late/revoked recovery cannot revive stale standard evidence.
+        if (standard.documents.length === 0 && standard.sources.length === 0) return standard;
+        const fallback = await revalidate(standard);
+        if (!fallback) throw createDeadlineError("Pagelet Memory evidence revalidation exceeded its deadline.");
+        return fallback;
     }
 
     reserveStageControl(raw: unknown): StagePageletInsightInput {
-        if (this.disposed || !this.isRecoveryPolicyCurrent()) {
-            this.discardStageCandidates();
-            this.recordRelaxedSkipped("stage_unavailable");
-            throw new Error("Pagelet insight staging is unavailable.");
-        }
-        if (this.stageControlReserved) {
-            this.recordRelaxedSkipped("stage_control_reserved");
-            throw new Error("stage_pagelet_insight may be called at most once per run.");
-        }
+        if (this.disposed) throw new Error("Pagelet insight staging is unavailable.");
         const input = this.prepareStageInput(raw);
-        this.stageControlReserved = true;
+        this.stageControlCalled = true;
         return input;
     }
 
-    bindPendingFirstInsight(candidate: PageletPendingFirstInsight): void {
-        if (this.disposed || !this.isRecoveryPolicyCurrent() || this.staged) return;
-        this.pendingFirst = {
-            body: candidate.body,
-            sourceIds: [...candidate.sourceIds],
-        };
-    }
-
-    hasPendingFirstInsight(): boolean {
-        return Boolean(this.pendingFirst) && this.isRecoveryPolicyCurrent();
-    }
-
-    clearPendingFirstInsight(): void {
-        this.pendingFirst = undefined;
-    }
-
     discardOutput(): void {
-        this.discardStageCandidates();
+        this.staged.length = 0;
     }
 
-    private discardStageCandidates(): void {
-        this.pendingFirst = undefined;
-        this.staged = undefined;
-        this.stagedRecovery = undefined;
-        this.stagedBoundToolCallId = undefined;
-    }
-
-    private discardStageAfterAbort(): void {
-        this.stageValidationSubreason = "aborted";
-        this.discardStageCandidates();
-        this.partialEpisodes.length = 0;
-        this.recordRelaxedSkipped("stage_unavailable");
-    }
-
-    private abortStageValidation(): never {
-        this.discardStageAfterAbort();
-        throw createAbortError();
-    }
-
-    private throwIfStageParentAborted(signal?: AbortSignal): void {
-        if (signal?.aborted) this.abortStageValidation();
-    }
-
-    private unavailableStageControl(): AgentCapabilityResult {
-        this.discardStageCandidates();
-        this.partialEpisodes.length = 0;
-        this.recordRelaxedSkipped("stage_unavailable");
-        return unavailable(
-            "The Pagelet staging control is no longer available.",
-            "pagelet_stage_control_unavailable",
-        );
-    }
-
-    async stage(
-        input: StagePageletInsightInput,
-        context: ChatToolContext,
-    ): Promise<AgentCapabilityResult> {
-        if (this.disposed || !this.isRecoveryPolicyCurrent() || this.staged) {
-            if (this.disposed || !this.isRecoveryPolicyCurrent()) {
-                this.discardStageCandidates();
-            }
-            this.recordRelaxedSkipped("stage_unavailable");
-            return unavailable(
-                "The Pagelet staging control is no longer available.",
-                "pagelet_stage_control_unavailable",
-            );
+    async stage(input: StagePageletInsightInput, context: ChatToolContext): Promise<AgentCapabilityResult> {
+        if (context.signal?.aborted) {
+            this.stageValidationSubreason = "aborted";
+            this.discardOutput();
+            throw createAbortError();
         }
-        this.throwIfStageParentAborted(context.signal);
+        if (this.disposed) return unavailable("Pagelet staging is no longer available.", "pagelet_stage_control_unavailable");
         const lifecycleEpoch = this.lifecycleEpoch;
-        const absoluteDeadlineMs = this.memoryToolEpisodeDeadlineAt(
-            context.outerToolDeadlineAt,
-        );
+        const absoluteDeadlineMs = this.memoryToolEpisodeDeadlineAt(context.outerToolDeadlineAt);
         let validation: StageValidationResult | null;
         try {
-            validation = await this.runBeforeSoftDeadline(
-                (signal, absoluteDeadlineMs) => this.options.validateStaged(
-                    input,
-                    signal,
-                    {
-                        runEpoch: this.options.runEpoch,
-                        absoluteDeadlineMs,
-                    },
-                ),
+            validation = await this.runBeforeDeadline(
+                (signal, deadline) => this.options.validateStaged(input, signal, {
+                    runEpoch: this.options.runEpoch,
+                    absoluteDeadlineMs: deadline,
+                }),
                 context.signal,
                 absoluteDeadlineMs,
             );
-        } catch {
+        } catch (error) {
             if (context.signal?.aborted) {
-                this.abortStageValidation();
-            }
-            if (!this.isCurrentLifecycle(lifecycleEpoch) || !this.isRecoveryPolicyCurrent()) {
-                return this.unavailableStageControl();
+                this.stageValidationSubreason = "aborted";
+                this.discardOutput();
+                throw error;
             }
             this.stageValidationSubreason = "failed";
-            this.recordRelaxedSkipped("stage_validation_failed");
-            return unavailable(
-                "The provisional insight could not be validated against current evidence.",
-                "pagelet_stage_first_rejected",
-            );
+            return unavailable("The completed text could not be validated against current evidence.", "pagelet_stage_first_rejected");
         }
-        // `runBeforeSoftDeadline` returns null both for an internal deadline and
-        // for a parent that was already aborted before a child could start.
-        // Parent cancellation owns the classification and must fail closed
-        // before the deadline branch can preserve pending candidates.
-        this.throwIfStageParentAborted(context.signal);
-        if (!this.isCurrentLifecycle(lifecycleEpoch) || !this.isRecoveryPolicyCurrent()) {
-            return this.unavailableStageControl();
+        if (context.signal?.aborted) {
+            this.stageValidationSubreason = "aborted";
+            this.discardOutput();
+            throw createAbortError();
         }
+        if (!this.isCurrentLifecycle(lifecycleEpoch)) return unavailable("Pagelet staging is no longer available.", "pagelet_stage_control_unavailable");
         if (!validation) {
             this.stageValidationSubreason = "deadline";
-            this.recordRelaxedSkipped("stage_validation_deadline");
-            return unavailable(
-                "The provisional insight could not be validated before the run deadline.",
-                "pagelet_stage_validation_deadline",
-            );
+            return unavailable("The completed text could not be validated before the deadline.", "pagelet_stage_validation_deadline");
         }
         if (validation.subreason === "aborted") {
-            this.discardStageAfterAbort();
-            return unavailable(
-                "The Pagelet staging control was aborted before Host validation completed.",
-                "pagelet_stage_control_unavailable",
-            );
+            this.stageValidationSubreason = "aborted";
+            this.discardOutput();
+            return unavailable("Pagelet staging was aborted before validation completed.", "pagelet_stage_control_unavailable");
         }
-        const verifiedSourceIds = validation.verifiedSourceIds ?? [];
-        const verifiedLeadSourceIds = validation.verifiedLeadSourceIds ?? [];
-        const firstVerified = verifiedSourceIds.length >= 2;
-        const leadVerified = verifiedLeadSourceIds.length >= 1;
-        if (!validation.accepted || !firstVerified || !leadVerified) {
-            const leadRejected = validation.rejection === "lead" && firstVerified;
-            this.stageValidationSubreason = validation.subreason
-                ?? (leadRejected ? "lead" : "unsupported-source");
-            this.recordRelaxedSkipped("stage_validation_failed");
-            return unavailable(
-                "The provisional insight was not grounded in current allowed evidence.",
-                leadRejected
-                    ? "pagelet_stage_lead_rejected"
-                    : "pagelet_stage_first_rejected",
-            );
+        if (!validation.accepted || !validation.verifiedSourceIds?.length) {
+            this.stageValidationSubreason = validation.subreason ?? "unsupported-source";
+            return unavailable("The completed text is not grounded in current permitted evidence.", "pagelet_stage_first_rejected");
         }
-        this.throwIfStageParentAborted(context.signal);
-        this.staged = {
-            body: input.insightMarkdown.trim(),
+        this.staged.push({
+            body: input.insightMarkdown,
             origin: "staged",
-            declaredSourceIds: [...verifiedSourceIds],
+            declaredSourceIds: [...validation.verifiedSourceIds],
+        });
+        return {
+            status: "ok",
+            observation: { status: "staged" },
+            sourceRecords: [],
+            inputSummary: "Staged complete Pagelet text",
+            sources: [],
         };
-        this.pendingFirst = undefined;
-
-        const baseObservation = {
-            status: "staged",
-            instruction: "The first insight is pinned. Finalize one distinct second insight next, or return exactly NO_INSIGHT.",
-        };
-        if (!input.unresolvedLead.requestRelaxedRecovery) {
-            this.recordRelaxedSkipped("lead_not_requested");
-            return ok(baseObservation, []);
-        }
-        const secondInsightUnavailable = this.relaxedUnavailableReason(absoluteDeadlineMs);
-        if (secondInsightUnavailable) {
-            this.recordRelaxedSkipped(secondInsightUnavailable);
-            return ok(baseObservation, []);
-        }
-
-        const leadSources = new Set(verifiedLeadSourceIds);
-        let episode: RecoveryEpisode | null;
-        try {
-            episode = await this.latestCurrentEligiblePartial(
-                leadSources,
-                context.signal,
-                absoluteDeadlineMs,
-            );
-        } catch (error) {
-            if (context.signal?.aborted) this.abortStageValidation();
-            if (!this.isCurrentLifecycle(lifecycleEpoch) || !this.isRecoveryPolicyCurrent()) {
-                return this.unavailableStageControl();
-            }
-            throw error;
-        }
-        this.throwIfStageParentAborted(context.signal);
-        if (!this.isCurrentLifecycle(lifecycleEpoch) || !this.isRecoveryPolicyCurrent()) {
-            return this.unavailableStageControl();
-        }
-        if (!episode) {
-            this.recordRelaxedSkipped("concrete_lead_unavailable");
-            return ok({
-                ...baseObservation,
-                recovery: "not-authorized",
-            }, []);
-        }
-
-        const postValidationUnavailable = this.relaxedUnavailableReason(absoluteDeadlineMs);
-        if (postValidationUnavailable) {
-            this.recordRelaxedSkipped(postValidationUnavailable);
-            return ok({
-                ...baseObservation,
-                recovery: "unavailable",
-            }, []);
-        }
-
-        this.consumeToken("second_insight");
-        try {
-            const recovered = await this.runRelaxed(
-                episode.result,
-                context,
-                "second_insight",
-                absoluteDeadlineMs,
-            );
-            this.throwIfStageParentAborted(context.signal);
-            if (!this.isCurrentLifecycle(lifecycleEpoch) || !this.isRecoveryPolicyCurrent()) {
-                this.recordDiagnostic?.({
-                    phase: "recovery_relaxed",
-                    outcome: "late_discarded",
-                    reason: this.isRecoveryPolicyCurrent() ? "coordinator_closed" : "flag_off",
-                    metrics: { retryConsumed: 1 },
-                });
-                return this.unavailableStageControl();
-            }
-            if (!recovered) {
-                return ok({
-                    ...baseObservation,
-                    recovery: "unavailable",
-                }, []);
-            }
-            this.stagedRecovery = recovered;
-            this.stagedBoundToolCallId = episode.toolCallId;
-            return ok({
-                ...baseObservation,
-                recovery: "completed",
-                evidence: projectPageletRecoveryEvidence(recovered),
-            }, memorySourceRecords(recovered));
-        } catch (error) {
-            if (context.signal?.aborted) this.abortStageValidation();
-            if (!this.isCurrentLifecycle(lifecycleEpoch) || !this.isRecoveryPolicyCurrent()) {
-                return this.unavailableStageControl();
-            }
-            if (error instanceof Error && error.name === "AbortError") throw error;
-            return ok({
-                ...baseObservation,
-                recovery: "unavailable",
-            }, []);
-        }
     }
 
     getStageCapability(): AgentCapability {
         const name = PAGELET_STAGE_INSIGHT_TOOL_NAME as ChatToolName;
-        const hasPendingFirst = () => (
-            Boolean(this.pendingFirst) && this.isRecoveryPolicyCurrent()
-        );
         const inputSchema = {
             type: "object" as const,
             properties: {
                 insightMarkdown: {
                     type: "string" as const,
                     minLength: 1,
-                    maxLength: 16_000,
-                    description: "Exactly one complete provisional natural-Markdown insight for direct staging. When the Host already has a pending first, this is an optional compatibility echo and is ignored. Never bundle the distinct lead or a second insight into this field.",
+                    description: "Complete Markdown text to preserve for this run, unchanged.",
                 },
                 sourceIds: {
                     type: "array" as const,
-                    items: {
-                        type: "string" as const,
-                        minLength: 1,
-                        maxLength: 512,
-                    },
-                    minItems: 2,
-                    maxItems: 16,
+                    items: { type: "string" as const, minLength: 1 },
+                    minItems: 1,
                     uniqueItems: true,
-                    description: `At least two unique exact vault paths cited by and materially supporting a directly staged first insight. This set must include the frozen anchor path ${JSON.stringify(this.options.anchorPath)} and equal that first insight's verified sources. When the Host already has a pending first, this is an optional compatibility echo and is ignored.`,
-                },
-                unresolvedLead: {
-                    type: "object" as const,
-                    properties: {
-                        leadKey: { type: "string" as const, minLength: 1, maxLength: 160 },
-                        supportingSourceIds: {
-                            type: "array" as const,
-                            items: {
-                                type: "string" as const,
-                                minLength: 1,
-                                maxLength: 512,
-                            },
-                            minItems: 1,
-                            maxItems: 16,
-                            uniqueItems: true,
-                            description: `At least one unique exact current non-anchor vault path from successful content-reading tools that supports the distinct lead. The frozen anchor path ${JSON.stringify(this.options.anchorPath)} is invalid here. This set may be disjoint from sourceIds; metadata or search-only paths are invalid.`,
-                        },
-                        requestRelaxedRecovery: {
-                            type: "boolean" as const,
-                            description: "False when current content evidence already completes the second insight; true only when the concrete lead still needs eligible Host-owned relaxed recovery.",
-                        },
-                    },
-                    required: ["leadKey", "supportingSourceIds", "requestRelaxedRecovery"],
-                    additionalProperties: false,
+                    description: "Exact permitted vault paths cited by and supporting this text, including the frozen anchor.",
                 },
             },
-            get required(): string[] {
-                return hasPendingFirst()
-                    ? ["unresolvedLead"]
-                    : ["insightMarkdown", "sourceIds", "unresolvedLead"];
-            },
+            required: ["insightMarkdown", "sourceIds"],
             additionalProperties: false,
         };
         const definition = {
             name,
-            description: [
-                "Pin one already-supported natural-Markdown Pagelet insight before pursuing one concrete, distinct unresolved lead.",
-                "A terminal response may contain at most one insight: for two findings, stage only the first here and return only the second in terminal Markdown.",
-                "This control is Pagelet-only and may be called once. It does not create a second run and cannot write notes.",
-            ].join(" "),
+            description: "Optionally preserve complete source-backed Markdown during this read-only discovery run. Staging does not end exploration or write notes.",
             inputSchema,
-            plannerGuidance: [
-                "Use only after the first insight is fully source-backed.",
-                "When the Host has already pinned the first insight, provide unresolvedLead only; insightMarkdown and sourceIds are optional compatibility echoes with no authority.",
-                "For direct staging without a Host-pinned first, keep sourceIds exact to the first insight and put distinct lead evidence only in supportingSourceIds; the sets may be disjoint.",
-                "When the second insight is already complete, set requestRelaxedRecovery=false, stage the first, then return only the second.",
-                "Request relaxed recovery only for one concrete lead backed by the latest partial Memory evidence.",
-            ],
+            plannerGuidance: ["Supply the full completed text and its own exact supporting source paths."],
             permission: "read-only" as const,
             cost: "free" as const,
             outputBudgetChars: 8_000,
             requiresConfirmation: false,
             failureBehavior: "recoverable" as const,
-            statusMessage: "Staging one source-backed insight",
+            statusMessage: "Preserving completed text",
             sourceBoundary: "read-only-tool" as const,
         };
         return {
@@ -603,202 +339,51 @@ export class PageletRecoveryCoordinator {
             statusMessageText: definition.statusMessage,
             sourceRecordKind: "context-used",
             executionMode: "sequential",
-            prepareAndValidate: (raw) => {
-                try {
-                    return {
-                        ok: true,
-                        input: this.prepareStageInput(raw),
-                    };
-                } catch (error) {
-                    return {
-                        ok: false,
-                        error: error instanceof Error ? error : new Error(String(error)),
-                    };
-                }
+            prepareAndValidate: raw => {
+                try { return { ok: true, input: this.prepareStageInput(raw) }; }
+                catch (error) { return { ok: false, error: error instanceof Error ? error : new Error(String(error)) }; }
             },
-            toProviderSchema: () => ({
-                type: "function",
-                function: {
-                    name,
-                    description: definition.description,
-                    parameters: inputSchema,
-                },
-            }),
+            toProviderSchema: () => ({ type: "function", function: { name, description: definition.description, parameters: inputSchema } }),
             toRegistryDefinition: () => ({ ...definition }),
-            execute: async (input, context) => {
-                let reserved: StagePageletInsightInput;
-                try {
-                    reserved = this.reserveStageControl(input);
-                } catch (error) {
-                    return unavailable(
-                        error instanceof Error ? error.message : String(error),
-                        "pagelet_stage_control_unavailable",
-                    );
-                }
-                return this.stage(
-                    reserved,
-                    {
-                        host: context.host,
-                        signal: context.signal,
-                        outerToolDeadlineAt: context.outerToolDeadlineAt,
-                        onBeforeVssSearch: context.onBeforeVssSearch,
-                        onToolRunning: context.onToolRunning,
-                    },
-                );
+            execute: async (raw, context) => {
+                let input: StagePageletInsightInput;
+                try { input = this.reserveStageControl(raw); }
+                catch (error) { return unavailable(error instanceof Error ? error.message : String(error), "pagelet_stage_control_unavailable"); }
+                return this.stage(input, {
+                    host: context.host,
+                    signal: context.signal,
+                    outerToolDeadlineAt: context.outerToolDeadlineAt,
+                });
             },
         };
-    }
-
-    async prepareTranscript(
-        transcript: readonly PaAgentMessage[],
-        signal?: AbortSignal,
-    ): Promise<PaAgentMessage[]> {
-        const projected = cloneTranscript(transcript);
-        if (!this.stagedRecovery) return projected;
-        const lifecycleEpoch = this.lifecycleEpoch;
-        const stageMessage = [...projected].reverse().find((message): message is Extract<
-            PaAgentMessage,
-            { role: "toolResult" }
-        > => message.role === "toolResult" && message.toolName === PAGELET_STAGE_INSIGHT_TOOL_NAME);
-        if (!stageMessage) return projected;
-
-        let current: MemorySearchResult | null = null;
-        let projectionFailed = false;
-        const projectionStartedAt = this.recordDiagnostic ? this.options.now() : 0;
-        this.recordDiagnostic?.({ phase: "recovery_projection", outcome: "started" });
-        try {
-            current = this.options.revalidate
-                ? await this.runBeforeSoftDeadline(
-                    (childSignal) => this.options.revalidate!(this.stagedRecovery!, childSignal),
-                    signal,
-                )
-                : this.stagedRecovery;
-        } catch (error) {
-            projectionFailed = true;
-            this.recordDiagnostic?.({
-                phase: "recovery_projection",
-                outcome: signal?.aborted ? "aborted" : "failed",
-                reason: signal?.aborted ? "projection_aborted" : "projection_failed",
-                metrics: { durationMs: this.options.now() - projectionStartedAt },
-            });
-            if (signal?.aborted) throw error;
-        }
-        const projectionUnavailable = current?.memoryEvidenceState === "unavailable";
-        const projectionDocumentDiagnostic = current
-            ? completedMemoryDocumentDiagnostic(current)
-            : {};
-        if (current && !projectionUnavailable) {
-            this.recordDiagnostic?.({
-                phase: "recovery_projection",
-                outcome: "completed",
-                ...(projectionDocumentDiagnostic.reason
-                    ? { reason: projectionDocumentDiagnostic.reason }
-                    : {}),
-                metrics: {
-                    durationMs: this.options.now() - projectionStartedAt,
-                    ...(projectionDocumentDiagnostic.documentCount === undefined
-                        ? {}
-                        : { documentCount: projectionDocumentDiagnostic.documentCount }),
-                },
-            });
-        } else if (!signal?.aborted && !projectionFailed) {
-            this.recordDiagnostic?.({
-                phase: "recovery_projection",
-                outcome: "fallback",
-                reason: "projection_unavailable",
-                metrics: { durationMs: this.options.now() - projectionStartedAt },
-            });
-        }
-        if (!this.isCurrentLifecycle(lifecycleEpoch)) return projected;
-        if (!current || current.sources.length === 0) {
-            this.stagedRecovery = undefined;
-            this.stagedBoundToolCallId = undefined;
-            stageMessage.content = {
-                ...stageMessage.content,
-                promptText: JSON.stringify({
-                    tool: PAGELET_STAGE_INSIGHT_TOOL_NAME,
-                    status: "ok",
-                    observation: {
-                        status: "staged",
-                        recovery: "unavailable",
-                        instruction: "Keep the pinned first insight and finalize with exactly NO_INSIGHT unless ordinary current evidence supports a distinct second.",
-                    },
-                }),
-                sourceRecords: [],
-                contextUsed: [],
-            };
-            return projected;
-        }
-
-        this.stagedRecovery = current;
-        if (this.stagedBoundToolCallId) {
-            const boundMessage = projected.find((message): message is Extract<
-                PaAgentMessage,
-                { role: "toolResult" }
-            > => (
-                message.role === "toolResult"
-                && message.toolName === "search_memory"
-                && message.toolCallId === this.stagedBoundToolCallId
-            ));
-            if (boundMessage) replaceBoundMemoryObservation(boundMessage);
-        }
-        const sourceRecords = memorySourceRecords(current);
-        stageMessage.content = {
-            ...stageMessage.content,
-            promptText: JSON.stringify({
-                tool: PAGELET_STAGE_INSIGHT_TOOL_NAME,
-                status: "ok",
-                observation: {
-                    status: "staged",
-                    recovery: "completed",
-                    instruction: "The first insight is pinned. Finalize one distinct second insight next, or return exactly NO_INSIGHT.",
-                    evidence: projectPageletRecoveryEvidence(current),
-                },
-            }),
-            sourceRecords,
-            contextUsed: [],
-        };
-        return projected;
     }
 
     snapshot(finalText: string): PageletRecoverySnapshot {
-        const drafts: PageletAgentInsightDraft[] = [];
-        if (this.staged) drafts.push({ ...this.staged, declaredSourceIds: [...this.staged.declaredSourceIds] });
-        const terminal = finalText.trim();
-        if (terminal && terminal !== "NO_INSIGHT") {
-            drafts.push({ body: terminal, origin: "terminal", declaredSourceIds: [] });
+        const drafts = this.staged.map(draft => ({ ...draft, declaredSourceIds: [...draft.declaredSourceIds] }));
+        if (finalText.trim() && !isPageletNoInsightTerminal(finalText)) {
+            drafts.push({ body: finalText, origin: "terminal", declaredSourceIds: [] });
         }
         return {
-            drafts: drafts.slice(0, 2),
+            drafts,
             diagnostics: {
                 enabled: this.options.enabled,
-                stageControlCalled: this.stageControlReserved,
+                stageControlCalled: this.stageControlCalled,
                 relaxedTokenConsumed: this.tokenConsumed,
                 ...(this.relaxedGoal ? { relaxedGoal: this.relaxedGoal } : {}),
-                ...(this.stageValidationSubreason
-                    ? { stageValidationSubreason: this.stageValidationSubreason }
-                    : {}),
+                ...(this.stageValidationSubreason ? { stageValidationSubreason: this.stageValidationSubreason } : {}),
             },
         };
     }
 
-    hasStagedInsight(): boolean {
-        return Boolean(this.staged);
-    }
+    hasStagedInsight(): boolean { return this.staged.length > 0; }
 
     private prepareStageInput(raw: unknown): StagePageletInsightInput {
         try {
-            const input = validateStageInput(
-                raw,
-                this.options.anchorPath,
-                this.pendingFirst,
-            );
+            const input = validateStageInput(raw, this.options.anchorPath);
             this.options.prevalidateStaged(input);
             return input;
         } catch (error) {
-            if (this.stageValidationSubreason !== "aborted") {
-                this.stageValidationSubreason = "shape";
-            }
+            this.stageValidationSubreason = "shape";
             throw error;
         }
     }
@@ -811,61 +396,10 @@ export class PageletRecoveryCoordinator {
         for (const controller of this.activeChildControllers) controller.abort();
         this.activeChildControllers.clear();
         this.activeRecoveryControllers.clear();
-        this.partialEpisodes.length = 0;
-        this.pendingFirst = undefined;
-        this.staged = undefined;
-        this.stageControlReserved = false;
+        this.discardOutput();
+        this.stageControlCalled = false;
         this.tokenConsumed = false;
         this.relaxedGoal = undefined;
-        this.stagedRecovery = undefined;
-        this.stagedBoundToolCallId = undefined;
-        this.activeMemorySearchToolCallId = undefined;
-    }
-
-    private recordPartial(result: MemorySearchResult): void {
-        this.partialEpisodes.push({
-            result,
-            sourceIds: new Set(result.sources.map((source) => source.path)),
-            ...(this.activeMemorySearchToolCallId
-                ? { toolCallId: this.activeMemorySearchToolCallId }
-                : {}),
-        });
-    }
-
-    private async latestCurrentEligiblePartial(
-        leadSources: ReadonlySet<string>,
-        signal?: AbortSignal,
-        absoluteDeadlineMs?: number,
-    ): Promise<RecoveryEpisode | null> {
-        for (let index = this.partialEpisodes.length - 1; index >= 0; index -= 1) {
-            const episode = this.partialEpisodes[index];
-            if (!episode.toolCallId) continue;
-            if (![...leadSources].some((source) => episode.sourceIds.has(source))) continue;
-            let current = episode.result;
-            try {
-                const revalidated = this.options.revalidate
-                    ? await this.runBeforeSoftDeadline(
-                        (childSignal) => this.options.revalidate!(episode.result, childSignal),
-                        signal,
-                        absoluteDeadlineMs,
-                    )
-                    : current;
-                if (!revalidated) continue;
-                current = revalidated;
-            } catch (error) {
-                if (signal?.aborted) throw error;
-                continue;
-            }
-            if (!isEligiblePartial(current)) continue;
-            const currentSources = new Set(current.sources.map((source) => source.path));
-            if (![...leadSources].some((source) => currentSources.has(source))) continue;
-            return {
-                result: current,
-                sourceIds: currentSources,
-                toolCallId: episode.toolCallId,
-            };
-        }
-        return null;
     }
 
     private relaxedUnavailableReason(absoluteDeadlineMs?: number): string | undefined {
@@ -1080,13 +614,6 @@ export class PageletRecoveryCoordinator {
         this.unsubscribePolicy = undefined;
         for (const controller of this.activeRecoveryControllers) controller.abort();
         this.activeRecoveryControllers.clear();
-        this.partialEpisodes.length = 0;
-        this.pendingFirst = undefined;
-        this.staged = undefined;
-        this.stageControlReserved = false;
-        this.stagedRecovery = undefined;
-        this.stagedBoundToolCallId = undefined;
-        this.activeMemorySearchToolCallId = undefined;
     }
 
     private isCurrentLifecycle(epoch: number): boolean {
@@ -1152,169 +679,34 @@ function completedMemoryDocumentDiagnostic(
         : {};
 }
 
-function validateStageInput(
-    raw: unknown,
-    anchorPath: string,
-    pendingFirst?: PageletPendingFirstInsight,
-): StagePageletInsightInput {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-        throw new Error("stage_pagelet_insight input must be an object.");
-    }
+function validateStageInput(raw: unknown, anchorPath: string): StagePageletInsightInput {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("stage_pagelet_insight input must be an object.");
     const value = raw as Record<string, unknown>;
-    const insightMarkdown = pendingFirst?.body
-        ?? stringField(value.insightMarkdown, "insightMarkdown", 16_000);
-    const sourceIds = pendingFirst
-        ? [...pendingFirst.sourceIds]
-        : stringArray(value.sourceIds, "sourceIds", 16);
-    const lead = value.unresolvedLead;
-    if (!lead || typeof lead !== "object" || Array.isArray(lead)) {
-        throw new Error("unresolvedLead must be an object.");
+    if (Object.keys(value).some(key => key !== "insightMarkdown" && key !== "sourceIds")) {
+        throw new Error("stage_pagelet_insight accepts only insightMarkdown and sourceIds.");
     }
-    const leadValue = lead as Record<string, unknown>;
-    const leadKey = stringField(leadValue.leadKey, "unresolvedLead.leadKey", 160);
-    if (/^(?:more|other|second|another|更多|其他|第二|继续)$/iu.test(leadKey)) {
-        throw new Error("unresolvedLead.leadKey must name one concrete unresolved claim.");
+    if (typeof value.insightMarkdown !== "string" || !value.insightMarkdown.trim()) {
+        throw new Error("insightMarkdown must be a non-empty string.");
     }
-    const supportingSourceIds = stringArray(
-        leadValue.supportingSourceIds,
-        "unresolvedLead.supportingSourceIds",
-        16,
-    );
-    if (typeof leadValue.requestRelaxedRecovery !== "boolean") {
-        throw new Error("unresolvedLead.requestRelaxedRecovery must be boolean.");
+    if (!Array.isArray(value.sourceIds) || !value.sourceIds.length
+        || value.sourceIds.some(path => typeof path !== "string" || !path.trim())) {
+        throw new Error("sourceIds must contain non-empty exact vault paths.");
     }
-    if (sourceIds.length < 2 || supportingSourceIds.length < 1) {
-        throw new Error("Staging requires the anchor, another source, and one lead source.");
-    }
-    if (!sourceIds.includes(anchorPath)) {
-        throw new Error(`sourceIds must include the frozen anchor path ${JSON.stringify(anchorPath)}.`);
-    }
-    if (supportingSourceIds.includes(anchorPath)) {
-        throw new Error("unresolvedLead.supportingSourceIds must contain only non-anchor paths.");
-    }
-    return {
-        insightMarkdown,
-        sourceIds,
-        unresolvedLead: {
-            leadKey,
-            supportingSourceIds,
-            requestRelaxedRecovery: leadValue.requestRelaxedRecovery,
-        },
-    };
+    const sourceIds = value.sourceIds as string[];
+    if (new Set(sourceIds).size !== sourceIds.length) throw new Error("sourceIds must not contain duplicates.");
+    if (!sourceIds.includes(anchorPath)) throw new Error("sourceIds must include the frozen anchor path.");
+    return { insightMarkdown: value.insightMarkdown, sourceIds: [...sourceIds] };
 }
 
-function stringField(value: unknown, name: string, maxLength: number): string {
-    const normalized = typeof value === "string" ? value.normalize("NFKC").trim() : "";
-    if (!normalized || normalized.length > maxLength) {
-        throw new Error(`${name} must be a non-empty string of at most ${maxLength} characters.`);
-    }
-    return normalized;
-}
-
-function stringArray(value: unknown, name: string, maxItems: number): string[] {
-    if (!Array.isArray(value) || value.length > maxItems) {
-        throw new Error(`${name} must be an array of at most ${maxItems} strings.`);
-    }
-    const normalized = value.map((item) => stringField(item, name, 512));
-    if (new Set(normalized).size !== normalized.length) {
-        throw new Error(`${name} must not contain duplicates.`);
-    }
-    return normalized;
-}
-
-function isEligibleNone(result: MemorySearchResult): boolean {
-    return Boolean(result.recoverySeed)
-        && result.rerankOutcome?.kind === "valid"
-        && result.rerankOutcome.verdict === "none_relevant"
-        && result.rerankOutcome.needsMoreEvidence === true
-        && result.rerankOutcome.candidates.length === 0;
-}
-
-function isEligiblePartial(result: MemorySearchResult): boolean {
-    return Boolean(result.recoverySeed)
-        && result.rerankOutcome?.kind === "valid"
-        && result.rerankOutcome.verdict === "partially_relevant"
-        && result.rerankOutcome.needsMoreEvidence === true
-        && result.rerankOutcome.candidates.length > 0;
-}
-
-function ok(observation: unknown, sourceRecords: SourceRecord[]): AgentCapabilityResult {
-    return {
-        status: "ok",
-        observation,
-        sourceRecords,
-        inputSummary: "staged one provisional Pagelet insight",
-        sources: sourceRecords.flatMap((record) => record.path ? [{ path: record.path }] : []),
-    };
-}
-
-function unavailable(
-    message: string,
-    reason: ChatToolUnavailableReason,
-): AgentCapabilityResult {
+function unavailable(message: string, reason: ChatToolUnavailableReason): AgentCapabilityResult {
     return {
         status: "unavailable",
         observation: null,
         sourceRecords: [],
-        inputSummary: "Pagelet insight staging unavailable",
+        inputSummary: "Pagelet text staging unavailable",
         sources: [],
         error: message,
         userSafeMessage: message,
         unavailableReason: reason,
-    };
-}
-
-function replaceBoundMemoryObservation(
-    message: Extract<PaAgentMessage, { role: "toolResult" }>,
-): void {
-    message.content = {
-        ...message.content,
-        promptText: JSON.stringify({
-            tool: "search_memory",
-            status: "ok",
-            observation: {
-                status: "evidence-consolidated",
-                instruction: "This bound Memory evidence is replaced by the cumulative current evidence in stage_pagelet_insight.",
-            },
-        }),
-        previewText: "Memory evidence consolidated into the Pagelet staging result.",
-        sourceRecords: [],
-        contextUsed: [],
-        metadata: {
-            outcome: "success",
-            reason: "pagelet_cumulative_replacement",
-            statusOnly: true,
-        },
-    };
-}
-
-function memorySourceRecords(result: MemorySearchResult): SourceRecord[] {
-    return result.sources.map((source) => ({
-        kind: "memory-reference",
-        dedupKey: createSourceDedupKey(source.path),
-        providerId: "pagelet-deep-discover-host-control",
-        capabilityName: PAGELET_STAGE_INSIGHT_TOOL_NAME,
-        sourceBoundary: "memory",
-        path: source.path,
-        ...(source.score !== undefined ? { score: source.score } : {}),
-        ...(source.chunkIndex !== undefined ? { chunkIndex: source.chunkIndex } : {}),
-        citationEligible: true,
-    }));
-}
-
-function projectPageletRecoveryEvidence(result: MemorySearchResult): Omit<
-    ReturnType<typeof projectMemorySearchObservation>,
-    "query"
-> {
-    const projected = projectMemorySearchObservation(result);
-    return {
-        documents: projected.documents,
-        sources: projected.sources,
-        hasAnswerableContent: projected.hasAnswerableContent,
-        memoryEvidenceState: projected.memoryEvidenceState,
-        rerankVerdict: projected.rerankVerdict,
-        ...(projected.retrievalGuidance
-            ? { retrievalGuidance: projected.retrievalGuidance }
-            : {}),
     };
 }

@@ -959,7 +959,7 @@ export class DeepDiscoverPluginIntegration {
     ): void {
         const metrics = result.status === "verified"
             ? result.insight.metrics
-            : result.status === "quiet"
+            : "metrics" in result
                 ? result.metrics
                 : undefined;
         if (!metrics) return;

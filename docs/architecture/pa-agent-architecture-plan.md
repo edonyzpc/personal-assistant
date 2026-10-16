@@ -968,31 +968,38 @@ search.
 
 ## Pagelet deep-insight recovery
 
-2026-10-16 approved successor design:
+2026-10-16 successor contract:
 [DEC-065](../product/decisions/dec-065-pagelet-autonomous-discovery.md) /
 [B-175 SDD](../development/active/pagelet-autonomous-discovery/sdd.md) remove
 Pagelet's semantic first/second and 0–2 constraints, make complete-text staging
 optional independently of retrieval recovery, and retain source/permission,
-identity and lifecycle checks. The paragraphs below describe the current
-predecessor implementation, not requirements to carry into B-175 prompts.
-No runtime change is implied; [Tracker](../development/active/pagelet-autonomous-discovery/tracker.md)
-owns implementation and validation. The shared Command Architecture Contract
+identity and lifecycle checks. The [Tracker](../development/active/pagelet-autonomous-discovery/tracker.md)
+owns implementation and validation evidence. The shared Command Architecture Contract
 and non-Pagelet retrieval behavior remain unchanged.
 
 Pagelet has a separate run-scoped coordinator and never consumes Chat's token.
 The Pagelet model keeps the natural Markdown / exact `NO_INSIGHT` terminal
-contract. One Host-only staging capability may bind the first verified insight
-and lead to the latest eligible partial search episode; neither the query nor the
-episode handle is exposed to the model.
+contract. `stage_pagelet_insight` is available independently of the recovery
+flag and optionally preserves complete unchanged Markdown with its own actual
+supporting sources. Staging does not end exploration or write vault notes.
 
-If the first attempt is empty, or a staged partial has an eligible source
-overlap, the Host may spend one Pagelet token on the same frozen retrieval plan.
-The final result contains 0–2 source-backed insights. Every insight is
-independently live-read, boundary-checked, quality-gated, identified, cached, and
-mapped to its own delivery candidate/receipt/seen/dismiss/handoff lifecycle. The
-collection ID only makes the 1–2 item cache/run atomic; one stale or invalid
-sibling does not delete a valid insight. Zero remains quiet and writes no cache
-entry.
+Eligible none or partial Memory results may spend the single Pagelet recovery
+token inside their originating search observation, using the same frozen plan.
+This does not depend on staging or restrict later ordinary reads and searches.
+The Agent chooses the result content and number; single-anchor evidence may
+support a complete text. Each text has independent source/currentness checks,
+identity and delivery receipt; exact identities are idempotent, without semantic
+similarity or value gates. Collection commit remains atomic, while an invalid
+sibling does not delete valid members. Pipeline v3 rejects predecessor caches.
+
+Controlled error/incomplete runs may deliver validated completed staged texts
+with the unfinished state visible, without caching the incomplete run or using
+unfinished final streams. Cancel, permission revocation and invalid run/commit
+identities retain their discard boundaries. Explicit discovery always runs;
+viewing remains provider-free. All delivered texts and sources are reachable,
+and source ordering does not create a Link action. No-findings, no-new-results,
+failure, incomplete, cancellation and stale outcomes remain distinguishable;
+consumed calls retain their usage even if results are rejected.
 
 ## Persistence And Compatibility
 

@@ -17,19 +17,11 @@ const supportedBody = [
 
 async function runPageletStartedText(
     body: string,
-    sourceFailure: PageletInsightSourceSupportFailure | null = null,
+    sourceFailure: PageletInsightSourceSupportFailure | "ungrounded-path" | null = null,
 ) {
     const startedAt = Date.now();
     const validateSource = jest.fn(async (_body: string) => sourceFailure);
     const policy = new PageletLeadDrivenPolicy({
-        anchorPath,
-        anchorContent: "Validate before release.",
-        maxTurns: 8,
-        maxToolCalls: 10,
-        maxWallClockMs: 100,
-        finalizationReserveMs: 30,
-        now: Date.now,
-        startedAt,
         validateTerminalSourceSupport: validateSource,
     });
     const afterTurn = jest.spyOn(policy, "afterTurn");
@@ -41,7 +33,6 @@ async function runPageletStartedText(
             stream: async function* (input) {
                 modelInputs.push(input);
                 input.notifyProviderRequestStarted?.();
-                policy.recordPromptContentEvidence(input.transcript, input.turnIndex);
                 if (input.turnIndex === 0) {
                     yield { type: "toolcall_delta", id: "anchor", name: "get_current_note_context", input: {}, index: 0 } as const;
                     yield { type: "toolcall_delta", id: "related", name: "inspect_obsidian_note", input: { path: relatedPath }, index: 1 } as const;
@@ -105,7 +96,7 @@ describe("started text and the production Pagelet terminal policy", () => {
         expect(result.committedFinalText).toBe(supportedBody);
         expect(result.turns[1].assistantMessage).toMatchObject({ providerCompletion: "stop", stopReason: "stop" });
         expect(result.turns[1].diagnostics).toContainEqual(expect.objectContaining({ type: "finalization_reserve_used_by_text" }));
-        expect(policy.resolveRunTerminal(result.turns[1])).toEqual({ finalText: supportedBody, protocolFailure: null });
+        expect(policy.resolveRunTerminal()).toEqual({ finalText: supportedBody, protocolFailure: null });
     });
 
     it("keeps the real source rejection authoritative after the model has completed", async () => {
@@ -115,19 +106,19 @@ describe("started text and the production Pagelet terminal policy", () => {
         expect(validateSource).toHaveBeenCalledWith(supportedBody);
         expect(result.status).toBe("incomplete");
         expect(result.endPayload).toMatchObject({ reason: "pagelet_terminal_source_support_exhausted" });
-        expect(policy.resolveRunTerminal(result.turns[1])).toEqual({ finalText: "", protocolFailure: "terminal-source-support" });
+        expect(policy.resolveRunTerminal()).toEqual({ finalText: "", protocolFailure: "terminal-source-support" });
     });
 
     it("does not dispatch the correction requested by the real Pagelet policy after softAt", async () => {
         const invalidCitationBody = supportedBody.replace(relatedPath, "notes/unread.md");
-        const { result, policy, afterTurn, validateSource, modelInputs } = await runPageletStartedText(invalidCitationBody);
+        const { result, policy, afterTurn, validateSource, modelInputs } = await runPageletStartedText(invalidCitationBody, "ungrounded-path");
 
         expect(afterTurn).toHaveBeenCalledTimes(2);
         await expect(afterTurn.mock.results[1].value).resolves.toMatchObject({ action: "continue", reason: "corrective_turn" });
         expect(modelInputs).toHaveLength(2);
-        expect(validateSource).not.toHaveBeenCalled();
+        expect(validateSource).toHaveBeenCalledWith(invalidCitationBody);
         expect(result.status).toBe("incomplete");
         expect(result.endPayload).toMatchObject({ reason: "finalization_policy_requested_continuation" });
-        expect(policy.resolveRunTerminal(result.turns[1])).toEqual({ finalText: "", protocolFailure: "citation" });
+        expect(policy.resolveRunTerminal()).toEqual({ finalText: "", protocolFailure: "citation" });
     });
 });

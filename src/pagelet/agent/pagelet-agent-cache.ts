@@ -248,7 +248,8 @@ export class PageletAgentCache {
         if (!entry) return false;
         const sourceIdentity = sourceIdentityList(sources);
         return entry.collection.insights.some((insight) => (
-            insight.normalizedBody === normalizedBody
+            insight.cacheIdentity.pipelineVersion === PAGELET_DEEP_DISCOVER_PIPELINE_VERSION
+            && insight.normalizedBody === normalizedBody
             && sourceIdentityList(insight.cacheIdentity.sources) === sourceIdentity
         ));
     }
@@ -358,6 +359,7 @@ export function hashPageletInsightClaim(normalizedClaim: string): string {
 export function isPageletVerifiedInsightIdentityValid(
     insight: PageletAgentVerifiedInsight,
 ): boolean {
+    if (insight.cacheIdentity.pipelineVersion !== PAGELET_DEEP_DISCOVER_PIPELINE_VERSION) return false;
     if (!insight.body.trim() || isPageletNoInsightTerminal(insight.body)) return false;
     if (normalizePageletInsightBody(insight.body) !== insight.normalizedBody) return false;
     if (normalizePageletInsightClaim(insight.body) !== insight.normalizedClaim) return false;
@@ -493,7 +495,7 @@ function regroupCollection(
 }
 
 function isValidCollectionShape(collection: PageletAgentVerifiedInsightCollection): boolean {
-    if (collection.insights.length < 1 || collection.insights.length > 2) return false;
+    if (collection.insights.length < 1) return false;
     if (new Set(collection.insights.map((insight) => insight.insightId)).size !== collection.insights.length) {
         return false;
     }

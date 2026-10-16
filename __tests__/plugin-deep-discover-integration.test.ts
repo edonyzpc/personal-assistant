@@ -589,6 +589,30 @@ describe("DeepDiscoverPluginIntegration ownership", () => {
         }
     });
 
+    it.each(["stale", "error", "denied", "quiet"] as const)(
+        "accounts for consumed calls on a %s terminal result",
+        (status) => {
+            const dependencies = createDependencies();
+            const record = jest.fn();
+            dependencies.getCostTracker = () => ({ record }) as never;
+            const owner = new DeepDiscoverPluginIntegration(dependencies);
+            const metrics = {
+                modelTurns: 2, toolCalls: 3, wallTimeMs: 200,
+                tokenUsage: { inputTokens: 11, outputTokens: 7 },
+            };
+            const result = status === "quiet"
+                ? { status, reason: "aborted" as const, metrics }
+                : { status, reason: "source-or-runtime-failed", metrics };
+            owner.handleResult(result, { path: "notes/current.md", triggerReason: "explicit" });
+
+            expect(record).toHaveBeenCalledWith(expect.objectContaining({ inputTokens: 11, outputTokens: 7 }));
+            expect(dependencies.log).toHaveBeenCalledWith(
+                "Pagelet Deep Discover run completed",
+                expect.objectContaining({ status, modelTurns: 2, toolCalls: 3 }),
+            );
+        },
+    );
+
     it("captures provider identity at runtime assembly and keeps it for a late result", () => {
         const dependencies = createDependencies();
         const owner = new DeepDiscoverPluginIntegration(dependencies);

@@ -3,7 +3,7 @@ import {
     createPageletChatHandoffContext,
     type PageletChatHandoffContext,
 } from "../../ai-services/pagelet-handoff";
-import { noteTitleFromPath, normalizeVaultPath } from "../../pa/helpers";
+import { noteTitleFromPath } from "../../pa/helpers";
 import { buildReviewDeliveryReceipt } from "../attention/fingerprint";
 import type { DeliveryCandidate } from "../bubble/types";
 import type {
@@ -24,6 +24,7 @@ export interface PageletAgentDeliveryIntegration {
     readonly validationIdentity: PageletAgentValidationIdentity;
     readonly handoff: PageletChatHandoffContext;
     readonly directAction?: PageletAgentDirectLinkAction;
+    readonly runIncomplete?: boolean;
 }
 
 export type PageletAgentDeliveryCandidate = DeliveryCandidate & {
@@ -37,7 +38,6 @@ export function pageletAgentInsightToDeliveryCandidate(
 ): PageletAgentDeliveryCandidate {
     const title = extractInsightTitle(insight.body);
     const whyNow = [localizedWhyNow(insight.triggerReason, locale)];
-    const directAction = buildDirectLinkAction(insight, locale);
     const validationIdentity = freezeValidationIdentity(insight);
     const handoff = createPageletChatHandoffContext({
         version: 1,
@@ -82,7 +82,6 @@ export function pageletAgentInsightToDeliveryCandidate(
         pageletAgent: Object.freeze({
             validationIdentity,
             handoff,
-            ...(directAction ? { directAction } : {}),
         }),
     };
 }
@@ -94,29 +93,6 @@ export function pageletAgentCollectionToDeliveryCandidates(
     return collection.insights.map((insight) => (
         pageletAgentInsightToDeliveryCandidate(insight, locale)
     ));
-}
-
-function buildDirectLinkAction(
-    insight: PageletAgentVerifiedInsight,
-    locale: PageletLocale,
-): PageletAgentDirectLinkAction | undefined {
-    const anchorPath = normalizeVaultPath(insight.anchor.path);
-    const related = insight.sources.find(
-        (source) => normalizeVaultPath(source.path) !== anchorPath,
-    );
-    if (!related) return undefined;
-    const anchorTitle = noteTitleFromPath(insight.anchor.path);
-    const relatedTitle = noteTitleFromPath(related.path);
-    return Object.freeze({
-        kind: "link-related",
-        candidateId: insight.insightId,
-        anchorPath: insight.anchor.path,
-        sourcePath: related.path,
-        label: pageletT("pagelet.panel.agentInsight.link", locale, {
-            anchor: anchorTitle,
-            source: relatedTitle,
-        }),
-    });
 }
 
 function freezeValidationIdentity(

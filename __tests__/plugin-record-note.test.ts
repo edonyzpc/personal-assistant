@@ -10,6 +10,7 @@ import { MemoryExtractionScheduler } from '../src/ai-services/memory-extraction/
 import { computeContentHash } from '../src/vss-helpers';
 import { deriveSemanticProfileKey } from '../src/ai-services/memory-extraction/type-a-extractor';
 import * as dashScopeModelCapability from '../src/pagelet/agent/dashscope-model-capability';
+import { PAGELET_DEEP_DISCOVER_PIPELINE_VERSION } from '../src/pagelet/agent/types';
 import {
     buildMemoryManagementEvidence,
     prepareMemoryManagementProjection,
@@ -4251,7 +4252,7 @@ describe('Memory governance plugin bootstrap', () => {
             plugin.isPageletProviderPathAllowed = jest.fn(() => true);
             plugin.createPageletProviderSourceResolver = jest.fn(() => ({}));
             plugin.isPageletProviderSourceAllowedByResolver = jest.fn(() => true);
-            const pagelet = { state: 'unknown' as const, id: 'pagelet-1', pipelineVersion: 'pagelet-deep-discover-v2',
+            const pagelet = { state: 'unknown' as const, id: 'pagelet-1', pipelineVersion: PAGELET_DEEP_DISCOVER_PIPELINE_VERSION,
                 anchor: { path, mtime: 30, size: markdown.length,
                     contentHash: { algorithm: 'unspecified' as const, value: 'opaque-hash' } }, sources: [] };
             const recovered = await plugin.createChatHost().prepareWritingRecoverySources({
@@ -4268,7 +4269,7 @@ describe('Memory governance plugin bootstrap', () => {
             plugin.settings.pagelet.excludedTags = [];
             await expect(plugin.createChatHost().prepareWritingRecoverySources({
                 requestId: 'pagelet-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
-                generationInput: recoveryGenerationInput({ pagelet: { ...pagelet, pipelineVersion: 'old-pipeline' } }),
+                generationInput: recoveryGenerationInput({ pagelet: { ...pagelet, pipelineVersion: 'pagelet-deep-discover-v2' } }),
             }, [], 'style-conversation')).rejects.toThrow('Writing Pagelet source unavailable');
         });
 

@@ -91,18 +91,13 @@ function unavailableResult(): MemorySearchResult {
     };
 }
 
-function stageInput(requestRelaxedRecovery = true) {
+function stageInput(_requestRelaxedRecovery = true) {
     return {
         insightMarkdown: [
             "## First verified risk",
             "`notes/anchor.md` conflicts with `notes/lead.md`, which increases release risk.",
         ].join("\n"),
         sourceIds: ["notes/anchor.md", "notes/lead.md"],
-        unresolvedLead: {
-            leadKey: "deployment rollback evidence",
-            supportingSourceIds: ["notes/lead.md"],
-            requestRelaxedRecovery,
-        },
     };
 }
 
@@ -147,7 +142,6 @@ function coordinator(options: {
         validateStaged: options.validateStaged ?? (async (input) => ({
             accepted: true,
             verifiedSourceIds: [...input.sourceIds],
-            verifiedLeadSourceIds: [...input.unresolvedLead.supportingSourceIds],
         })),
     });
     return { instance, executeRelaxed };
@@ -182,6 +176,67 @@ function deferred<T>() {
 }
 
 describe("Pagelet run-scoped retrieval recovery", () => {
+    it.each(["none_relevant", "partially_relevant"] as const)("recovers eligible %s in the originating search without staging", async verdict => {
+        const standard = result(verdict, verdict === "none_relevant" ? [] : ["notes/lead.md"]);
+        const { instance, executeRelaxed } = coordinator({ standard });
+        const recovered = await executeBoundSearch(instance, "originating-search");
+        expect(recovered.sources.map(source => source.path)).toContain("notes/deep.md");
+        expect(executeRelaxed).toHaveBeenCalledTimes(1);
+        expect(executeRelaxed.mock.calls[0][0]).toBe(standard);
+        expect(executeRelaxed.mock.calls[0][0].recoverySeed).toEqual(standard.recoverySeed);
+        expect(instance.snapshot("NO_INSIGHT").diagnostics).toMatchObject({ stageControlCalled: false, relaxedTokenConsumed: true });
+        const ordinary = await executeBoundSearch(instance, "ordinary-next-search", { query: "another allowed query" });
+        expect(ordinary.sources).toEqual(standard.sources);
+        expect(executeRelaxed).toHaveBeenCalledTimes(1);
+    });
+
+    it("stages multiple unchanged complete texts independently of the recovery flag and schema capacity guesses", async () => {
+        const { instance } = coordinator({ enabled: false });
+        const capability = instance.getStageCapability();
+        expect(capability.toRegistryDefinition?.().inputSchema).toMatchObject({ required: ["insightMarkdown", "sourceIds"] });
+        const fullText = ` \n## Ｆull text\n${"original ".repeat(2_100)}\n\n## Another section  \n`;
+        const input = { insightMarkdown: fullText, sourceIds: ["notes/anchor.md", ...Array.from({ length: 20 }, (_, index) => `notes/source-${index}.md`)] };
+        for (let index = 0; index < 3; index += 1) {
+            const prepared = capability.prepareAndValidate?.({ ...input, insightMarkdown: `${fullText}${index}` }, { userInput: "" });
+            if (!prepared?.ok) throw new Error("expected a complete valid staging input");
+            await expect(capability.execute(prepared.input, { host })).resolves.toMatchObject({ status: "ok", observation: { status: "staged" } });
+        }
+        expect(instance.snapshot("final").drafts.map(draft => draft.body)).toEqual([`${fullText}0`, `${fullText}1`, `${fullText}2`, "final"]);
+        expect(instance.snapshot("NO_INSIGHT").drafts).toHaveLength(3);
+    });
+
+    it("revalidates the original partial after failed relaxed recovery instead of reviving revoked evidence", async () => {
+        const partial = result("partially_relevant", ["notes/lead.md"]);
+        const revalidate = jest.fn(async (_candidate: MemorySearchResult, _signal?: AbortSignal) => unavailableResult());
+        const { instance } = coordinator({ standard: partial, relaxed: async () => { throw new Error("relaxed failed"); }, revalidate });
+        const observed = await executeBoundSearch(instance, "partial-fallback");
+        expect(revalidate).toHaveBeenCalledWith(partial, expect.any(AbortSignal));
+        expect(observed.memoryEvidenceState).toBe("unavailable");
+        expect(observed.sources).toEqual([]);
+    });
+
+    it("falls back to a freshly validated original partial when recovered evidence is revoked", async () => {
+        const partial = result("partially_relevant", ["notes/lead.md"]);
+        const revalidate = jest.fn(async (candidate: MemorySearchResult) => candidate === partial ? partial : unavailableResult());
+        const { instance } = coordinator({ standard: partial, revalidate });
+        const observed = await executeBoundSearch(instance, "revoked-recovery");
+        expect(revalidate).toHaveBeenCalledTimes(2);
+        expect(revalidate.mock.calls[1][0]).toBe(partial);
+        expect(observed.sources.map(source => source.path)).toEqual(["notes/lead.md"]);
+    });
+
+    it("preserves already staged text and stage availability when recovery policy is disabled live", async () => {
+        let enabled = true;
+        const listeners = new Set<() => void | Promise<void>>();
+        const { instance } = coordinator({ isEnabled: () => enabled, onPolicyChanged: listener => { listeners.add(listener); return () => listeners.delete(listener); } });
+        const capability = instance.getStageCapability();
+        await capability.execute(stageInput(), { host });
+        enabled = false;
+        await Promise.all([...listeners].map(listener => listener()));
+        await expect(capability.execute({ ...stageInput(), insightMarkdown: "another complete text" }, { host })).resolves.toMatchObject({ status: "ok" });
+        expect(instance.snapshot("NO_INSIGHT").drafts.map(draft => draft.body)).toEqual([stageInput().insightMarkdown, "another complete text"]);
+    });
+
     it("passes the complete registered Memory tool input to the standard recovery port", async () => {
         const inputs: SearchMemoryInput[] = [];
         const { instance } = coordinator({
@@ -230,222 +285,6 @@ describe("Pagelet run-scoped retrieval recovery", () => {
         expect(inputs).toEqual([{ query: "不要限定最近30天的项目记录", temporal: "none" }]);
     });
 
-    it("keeps the stage schema explicit about one terminal insight and disjoint lead evidence", () => {
-        const { instance } = coordinator();
-        const capability = instance.getStageCapability();
-        const definition = capability.toRegistryDefinition();
-        const schema = capability.toProviderSchema().function.parameters as unknown as {
-            required?: string[];
-            properties: {
-                insightMarkdown: { description?: string };
-                sourceIds: {
-                    description?: string;
-                    minItems?: number;
-                    maxItems?: number;
-                    uniqueItems?: boolean;
-                };
-                unresolvedLead: {
-                    properties: {
-                        supportingSourceIds: {
-                            description?: string;
-                            minItems?: number;
-                            maxItems?: number;
-                            uniqueItems?: boolean;
-                        };
-                        requestRelaxedRecovery: { description?: string };
-                    };
-                };
-            };
-        };
-
-        expect(definition.description).toContain("terminal response may contain at most one insight");
-        expect(definition.description).toContain("stage only the first");
-        expect(schema.required).toEqual(["insightMarkdown", "sourceIds", "unresolvedLead"]);
-        expect(schema.properties.insightMarkdown.description).toContain("Never bundle");
-        expect(schema.properties.sourceIds.description).toContain("directly staged first insight");
-        expect(schema.properties.sourceIds.description).toContain('"notes/anchor.md"');
-        expect(schema.properties.sourceIds).toMatchObject({
-            minItems: 2,
-            maxItems: 16,
-            uniqueItems: true,
-        });
-        expect(schema.properties.unresolvedLead.properties.supportingSourceIds.description)
-            .toContain("may be disjoint");
-        expect(schema.properties.unresolvedLead.properties.supportingSourceIds.description)
-            .toContain("non-anchor");
-        expect(schema.properties.unresolvedLead.properties.supportingSourceIds)
-            .toMatchObject({
-                minItems: 1,
-                maxItems: 16,
-                uniqueItems: true,
-            });
-        expect(schema.properties.unresolvedLead.properties.supportingSourceIds.description)
-            .toContain("metadata or search-only paths are invalid");
-        expect(schema.properties.unresolvedLead.properties.requestRelaxedRecovery.description)
-            .toContain("False when current content evidence already completes the second insight");
-
-        const disjoint = stageInput(false);
-        disjoint.unresolvedLead.supportingSourceIds = ["notes/distinct-lead.md"];
-        expect(capability.prepareAndValidate?.(disjoint, { userInput: "" }))
-            .toMatchObject({ ok: true });
-
-        const missingAnchor = stageInput(false);
-        missingAnchor.sourceIds = ["notes/lead.md", "notes/other.md"];
-        expect(capability.prepareAndValidate?.(missingAnchor, { userInput: "" }))
-            .toMatchObject({
-                ok: false,
-                error: expect.objectContaining({
-                    message: expect.stringContaining("must include the frozen anchor path"),
-                }),
-            });
-
-        const anchorAsLead = stageInput(false);
-        anchorAsLead.unresolvedLead.supportingSourceIds = ["notes/anchor.md"];
-        expect(capability.prepareAndValidate?.(anchorAsLead, { userInput: "" }))
-            .toMatchObject({
-                ok: false,
-                error: expect.objectContaining({
-                    message: expect.stringContaining("only non-anchor paths"),
-                }),
-            });
-
-        expect(capability.prepareAndValidate?.({
-            unresolvedLead: stageInput(false).unresolvedLead,
-        }, { userInput: "" })).toMatchObject({
-            ok: false,
-            error: expect.objectContaining({
-                message: expect.stringContaining("insightMarkdown must be a non-empty string"),
-            }),
-        });
-    });
-
-    it("keeps deterministic stage prevalidation pure and does not consume the one-shot", async () => {
-        let bindingValid = false;
-        const prevalidateStaged = jest.fn(() => {
-            if (!bindingValid) throw new Error("stage source binding is invalid");
-        });
-        const { instance } = coordinator({ prevalidateStaged });
-        const capability = instance.getStageCapability();
-
-        expect(capability.prepareAndValidate?.(stageInput(false), { userInput: "" }))
-            .toMatchObject({
-                ok: false,
-                error: expect.objectContaining({ message: "stage source binding is invalid" }),
-            });
-        expect(instance.snapshot("NO_INSIGHT").diagnostics.stageControlCalled).toBe(false);
-
-        bindingValid = true;
-        const corrected = capability.prepareAndValidate?.(stageInput(false), { userInput: "" });
-        if (!corrected?.ok) throw new Error("expected corrected deterministic binding");
-        await expect(capability.execute(corrected.input, { host })).resolves.toMatchObject({
-            status: "ok",
-            observation: { status: "staged" },
-        });
-        expect(prevalidateStaged).toHaveBeenCalledTimes(3);
-        expect(instance.snapshot("NO_INSIGHT").diagnostics.stageControlCalled).toBe(true);
-    });
-
-    it("uses the Host pending first while preserving the model-owned unresolved lead", async () => {
-        const validatedInputs: ReturnType<typeof stageInput>[] = [];
-        const pendingFirst = {
-            body: [
-                "## Host-owned first",
-                "`notes/anchor.md` conflicts with `notes/lead.md`, creating release risk.",
-            ].join("\n"),
-            sourceIds: ["notes/anchor.md", "notes/lead.md"],
-        };
-        const { instance } = coordinator({
-            prevalidateStaged: (input) => validatedInputs.push(input),
-            validateStaged: async (input) => ({
-                accepted: true,
-                verifiedSourceIds: [...input.sourceIds],
-                verifiedLeadSourceIds: [...input.unresolvedLead.supportingSourceIds],
-            }),
-        });
-        instance.bindPendingFirstInsight(pendingFirst);
-        const modelEcho = stageInput(false);
-        modelEcho.insightMarkdown = "## Provider rewrite\n`notes/anchor.md` only names a path.";
-        modelEcho.sourceIds = ["notes/anchor.md", "notes/other.md"];
-        modelEcho.unresolvedLead.leadKey = "independent rollback readiness";
-
-        const capability = instance.getStageCapability();
-        const prepared = capability.prepareAndValidate?.(modelEcho, { userInput: "" });
-        if (!prepared?.ok) throw new Error("expected Host-bound staged input");
-        expect(prepared.input).toEqual({
-            insightMarkdown: pendingFirst.body,
-            sourceIds: pendingFirst.sourceIds,
-            unresolvedLead: modelEcho.unresolvedLead,
-        });
-        await expect(capability.execute(prepared.input, { host })).resolves.toMatchObject({
-            status: "ok",
-            observation: { status: "staged" },
-        });
-        expect(validatedInputs).toHaveLength(2);
-        expect(instance.hasPendingFirstInsight()).toBe(false);
-        expect(instance.snapshot("NO_INSIGHT").drafts).toEqual([{
-            body: pendingFirst.body,
-            origin: "staged",
-            declaredSourceIds: pendingFirst.sourceIds,
-        }]);
-    });
-
-    it.each([
-        ["omitted", {}],
-        ["empty", { insightMarkdown: "", sourceIds: [] }],
-        ["wrong-type", { insightMarkdown: 42, sourceIds: "not-an-array" }],
-        ["over-limit", {
-            insightMarkdown: "x".repeat(16_001),
-            sourceIds: Array.from({ length: 17 }, (_, index) => `notes/echo-${index}.md`),
-        }],
-    ])("ignores %s Provider echo when a Host pending first exists", async (_label, echo) => {
-        const pendingFirst = {
-            body: stageInput(false).insightMarkdown,
-            sourceIds: stageInput(false).sourceIds,
-        };
-        const validatedInputs: ReturnType<typeof stageInput>[] = [];
-        const { instance } = coordinator({
-            prevalidateStaged: (input) => validatedInputs.push(input),
-        });
-        const capability = instance.getStageCapability();
-        const cachedSchema = capability.toProviderSchema().function.parameters;
-        expect(cachedSchema.required).toEqual([
-            "insightMarkdown",
-            "sourceIds",
-            "unresolvedLead",
-        ]);
-
-        instance.bindPendingFirstInsight(pendingFirst);
-        expect(cachedSchema.required).toEqual(["unresolvedLead"]);
-        expect(capability.toRegistryDefinition().inputSchema.required)
-            .toEqual(["unresolvedLead"]);
-
-        const raw = {
-            ...echo,
-            unresolvedLead: {
-                ...stageInput(false).unresolvedLead,
-                leadKey: "independent rollback readiness",
-            },
-        };
-        const prepared = capability.prepareAndValidate?.(raw, { userInput: "" });
-        if (!prepared?.ok) throw new Error("expected non-authoritative echo to be ignored");
-        expect(prepared.input).toEqual({
-            insightMarkdown: pendingFirst.body,
-            sourceIds: pendingFirst.sourceIds,
-            unresolvedLead: raw.unresolvedLead,
-        });
-
-        await expect(capability.execute(prepared.input, { host })).resolves.toMatchObject({
-            status: "ok",
-            observation: { status: "staged" },
-        });
-        expect(validatedInputs).toHaveLength(2);
-        expect(instance.snapshot("NO_INSIGHT").drafts).toEqual([{
-            body: pendingFirst.body,
-            origin: "staged",
-            declaredSourceIds: pendingFirst.sourceIds,
-        }]);
-    });
-
     it("returns a stable content-free reason when asynchronous stage validation rejects", async () => {
         const { instance } = coordinator({
             validateStaged: async () => ({
@@ -454,10 +293,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
                 subreason: "unsupported-source",
             }),
         });
-        instance.bindPendingFirstInsight({
-            body: stageInput(false).insightMarkdown,
-            sourceIds: stageInput(false).sourceIds,
-        });
+
         const capability = instance.getStageCapability();
         const prepared = capability.prepareAndValidate?.(stageInput(false), { userInput: "" });
         if (!prepared?.ok) throw new Error("expected schema-valid staged input");
@@ -473,32 +309,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
                 stageValidationSubreason: "unsupported-source",
             },
         });
-        expect(instance.hasPendingFirstInsight()).toBe(true);
-    });
-
-    it("distinguishes the stage validation deadline without running validation", async () => {
-        const validateStaged = jest.fn(async () => ({ accepted: true }));
-        const { instance } = coordinator({
-            now: () => 148_000,
-            validateStaged,
-        });
-        instance.bindPendingFirstInsight({
-            body: stageInput(false).insightMarkdown,
-            sourceIds: stageInput(false).sourceIds,
-        });
-        const capability = instance.getStageCapability();
-        const prepared = capability.prepareAndValidate?.(stageInput(false), { userInput: "" });
-        if (!prepared?.ok) throw new Error("expected schema-valid staged input");
-
-        await expect(capability.execute(prepared.input, { host })).resolves.toMatchObject({
-            status: "unavailable",
-            unavailableReason: "pagelet_stage_validation_deadline",
-        });
-        expect(validateStaged).not.toHaveBeenCalled();
-        expect(instance.hasPendingFirstInsight()).toBe(true);
-        expect(instance.snapshot("NO_INSIGHT").diagnostics).toMatchObject({
-            stageValidationSubreason: "deadline",
-        });
+        expect(instance.hasStagedInsight()).toBe(false);
     });
 
     it("caps stage validation by the same outer Tool deadline geometry", async () => {
@@ -514,10 +325,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
                 };
             },
         });
-        instance.bindPendingFirstInsight({
-            body: stageInput(false).insightMarkdown,
-            sourceIds: stageInput(false).sourceIds,
-        });
+
         const capability = instance.getStageCapability();
         const prepared = capability.prepareAndValidate?.(stageInput(false), { userInput: "" });
         if (!prepared?.ok) throw new Error("expected schema-valid staged input");
@@ -537,10 +345,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
         parent.abort();
         const validateStaged = jest.fn(async () => ({ accepted: true }));
         const { instance, executeRelaxed } = coordinator({ validateStaged });
-        instance.bindPendingFirstInsight({
-            body: stageInput().insightMarkdown,
-            sourceIds: stageInput().sourceIds,
-        });
+
         const capability = instance.getStageCapability();
         const prepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
         if (!prepared?.ok) throw new Error("expected schema-valid staged input");
@@ -552,7 +357,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
         })).rejects.toMatchObject({ name: "AbortError" });
         expect(validateStaged).not.toHaveBeenCalled();
         expect(executeRelaxed).not.toHaveBeenCalled();
-        expect(instance.hasPendingFirstInsight()).toBe(false);
+        expect(instance.hasStagedInsight()).toBe(false);
         expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
             drafts: [],
             diagnostics: {
@@ -583,10 +388,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
                         return await late.promise;
                     },
                 });
-                instance.bindPendingFirstInsight({
-                    body: stageInput().insightMarkdown,
-                    sourceIds: stageInput().sourceIds,
-                });
+
                 const capability = instance.getStageCapability();
                 const prepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
                 if (!prepared?.ok) throw new Error("expected schema-valid staged input");
@@ -602,7 +404,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
                     unavailableReason: "pagelet_stage_validation_deadline",
                 });
                 expect(childSignal?.aborted).toBe(true);
-                expect(instance.hasPendingFirstInsight()).toBe(true);
+                expect(instance.hasStagedInsight()).toBe(false);
                 expect(executeRelaxed).not.toHaveBeenCalled();
                 expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
                     drafts: [],
@@ -623,7 +425,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
                 }
                 await Promise.resolve();
                 await Promise.resolve();
-                expect(instance.hasPendingFirstInsight()).toBe(true);
+                expect(instance.hasStagedInsight()).toBe(false);
                 expect(executeRelaxed).not.toHaveBeenCalled();
                 expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
                     drafts: [],
@@ -659,10 +461,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
                         return await late.promise;
                     },
                 });
-                instance.bindPendingFirstInsight({
-                    body: stageInput().insightMarkdown,
-                    sourceIds: stageInput().sourceIds,
-                });
+
                 const capability = instance.getStageCapability();
                 const prepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
                 if (!prepared?.ok) throw new Error("expected schema-valid staged input");
@@ -677,7 +476,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
                 await jest.advanceTimersByTimeAsync(7_250);
                 await rejection;
                 expect(parent.signal.aborted).toBe(true);
-                expect(instance.hasPendingFirstInsight()).toBe(false);
+                expect(instance.hasStagedInsight()).toBe(false);
                 expect(executeRelaxed).not.toHaveBeenCalled();
                 expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
                     drafts: [],
@@ -698,7 +497,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
                 }
                 await Promise.resolve();
                 await Promise.resolve();
-                expect(instance.hasPendingFirstInsight()).toBe(false);
+                expect(instance.hasStagedInsight()).toBe(false);
                 expect(executeRelaxed).not.toHaveBeenCalled();
                 expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
                     drafts: [],
@@ -713,145 +512,6 @@ describe("Pagelet run-scoped retrieval recovery", () => {
         },
     );
 
-    it.each(["resolve", "reject"] as const)(
-        "fails closed when parent aborts staged-episode revalidation and discards its late %s",
-        async (lateOutcome) => {
-            const parent = new AbortController();
-            const started = deferred<void>();
-            const late = deferred<MemorySearchResult>();
-            const { instance, executeRelaxed } = coordinator({
-                revalidate: async () => {
-                    started.resolve(undefined);
-                    return await late.promise;
-                },
-            });
-            await executeBoundSearch(instance, "stage-revalidation-partial-call");
-            instance.bindPendingFirstInsight({
-                body: stageInput().insightMarkdown,
-                sourceIds: stageInput().sourceIds,
-            });
-            const capability = instance.getStageCapability();
-            const prepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
-            if (!prepared?.ok) throw new Error("expected schema-valid staged input");
-
-            const execution = capability.execute(prepared.input, {
-                host,
-                signal: parent.signal,
-            });
-            await started.promise;
-            parent.abort();
-            await expect(execution).rejects.toMatchObject({ name: "AbortError" });
-            expect(instance.hasPendingFirstInsight()).toBe(false);
-            expect(executeRelaxed).not.toHaveBeenCalled();
-            expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
-                drafts: [],
-                diagnostics: {
-                    stageValidationSubreason: "aborted",
-                    relaxedTokenConsumed: false,
-                },
-            });
-
-            if (lateOutcome === "resolve") {
-                late.resolve(result("partially_relevant", ["notes/lead.md"]));
-            } else {
-                late.reject(new Error("late revalidation failure"));
-            }
-            await Promise.resolve();
-            await Promise.resolve();
-            expect(executeRelaxed).not.toHaveBeenCalled();
-            expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
-                drafts: [],
-                diagnostics: { relaxedTokenConsumed: false },
-            });
-        },
-    );
-
-    it("lets parent abort win a completed revalidation before the recovery token commit", async () => {
-        const parent = new AbortController();
-        const { instance, executeRelaxed } = coordinator({
-            revalidate: async (seed) => {
-                parent.abort();
-                return seed;
-            },
-        });
-        await executeBoundSearch(instance, "completed-revalidation-partial-call");
-        instance.bindPendingFirstInsight({
-            body: stageInput().insightMarkdown,
-            sourceIds: stageInput().sourceIds,
-        });
-        const capability = instance.getStageCapability();
-        const prepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
-        if (!prepared?.ok) throw new Error("expected schema-valid staged input");
-
-        await expect(capability.execute(prepared.input, {
-            host,
-            signal: parent.signal,
-        })).rejects.toMatchObject({ name: "AbortError" });
-        expect(executeRelaxed).not.toHaveBeenCalled();
-        expect(instance.hasPendingFirstInsight()).toBe(false);
-        expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
-            drafts: [],
-            diagnostics: {
-                stageValidationSubreason: "aborted",
-                relaxedTokenConsumed: false,
-            },
-        });
-    });
-
-    it.each(["resolve", "reject"] as const)(
-        "clears staged output but preserves the consumed token when parent aborts relaxed recovery before late %s",
-        async (lateOutcome) => {
-            const parent = new AbortController();
-            const started = deferred<void>();
-            const late = deferred<MemorySearchResult>();
-            const { instance, executeRelaxed } = coordinator({
-                revalidate: async (seed) => seed,
-                relaxed: async () => {
-                    started.resolve(undefined);
-                    return await late.promise;
-                },
-            });
-            await executeBoundSearch(instance, "stage-relaxed-partial-call");
-            instance.bindPendingFirstInsight({
-                body: stageInput().insightMarkdown,
-                sourceIds: stageInput().sourceIds,
-            });
-            const capability = instance.getStageCapability();
-            const prepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
-            if (!prepared?.ok) throw new Error("expected schema-valid staged input");
-
-            const execution = capability.execute(prepared.input, {
-                host,
-                signal: parent.signal,
-            });
-            await started.promise;
-            expect(instance.snapshot("NO_INSIGHT").diagnostics.relaxedTokenConsumed).toBe(true);
-            parent.abort();
-            await expect(execution).rejects.toMatchObject({ name: "AbortError" });
-            expect(executeRelaxed).toHaveBeenCalledTimes(1);
-            expect(instance.hasPendingFirstInsight()).toBe(false);
-            expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
-                drafts: [],
-                diagnostics: {
-                    stageValidationSubreason: "aborted",
-                    relaxedTokenConsumed: true,
-                },
-            });
-
-            if (lateOutcome === "resolve") {
-                late.resolve(result("relevant", ["notes/late.md"]));
-            } else {
-                late.reject(new Error("late relaxed failure"));
-            }
-            await Promise.resolve();
-            await Promise.resolve();
-            expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
-                drafts: [],
-                diagnostics: { relaxedTokenConsumed: true },
-            });
-        },
-    );
-
     it("keeps a previously consumed one-shot token monotonic across pre-aborted staging", async () => {
         const parent = new AbortController();
         const { instance, executeRelaxed } = coordinator({
@@ -861,10 +521,6 @@ describe("Pagelet run-scoped retrieval recovery", () => {
         expect(executeRelaxed).toHaveBeenCalledTimes(1);
         expect(instance.snapshot("NO_INSIGHT").diagnostics.relaxedTokenConsumed).toBe(true);
 
-        instance.bindPendingFirstInsight({
-            body: stageInput().insightMarkdown,
-            sourceIds: stageInput().sourceIds,
-        });
         const capability = instance.getStageCapability();
         const prepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
         if (!prepared?.ok) throw new Error("expected schema-valid staged input");
@@ -874,7 +530,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
             host,
             signal: parent.signal,
         })).rejects.toMatchObject({ name: "AbortError" });
-        expect(instance.hasPendingFirstInsight()).toBe(false);
+        expect(instance.hasStagedInsight()).toBe(false);
         expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
             drafts: [],
             diagnostics: {
@@ -887,132 +543,6 @@ describe("Pagelet run-scoped retrieval recovery", () => {
         expect(executeRelaxed).toHaveBeenCalledTimes(1);
         expect(instance.snapshot("NO_INSIGHT").diagnostics.relaxedTokenConsumed).toBe(true);
     });
-
-    it.each(["resolve", "reject"] as const)(
-        "fails closed when live policy disable interrupts episode revalidation before late %s",
-        async (lateOutcome) => {
-            let enabled = true;
-            let policyEpoch = "policy-1";
-            const listeners = new Set<() => void | Promise<void>>();
-            const started = deferred<void>();
-            const late = deferred<MemorySearchResult>();
-            const { instance, executeRelaxed } = coordinator({
-                policyEpoch,
-                isEnabled: () => enabled,
-                getPolicyEpoch: () => policyEpoch,
-                onPolicyChanged: (listener) => {
-                    listeners.add(listener);
-                    return () => listeners.delete(listener);
-                },
-                revalidate: async () => {
-                    started.resolve(undefined);
-                    return await late.promise;
-                },
-            });
-            await executeBoundSearch(instance, "policy-disable-revalidation-partial-call");
-            instance.bindPendingFirstInsight({
-                body: stageInput().insightMarkdown,
-                sourceIds: stageInput().sourceIds,
-            });
-            const capability = instance.getStageCapability();
-            const prepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
-            if (!prepared?.ok) throw new Error("expected schema-valid staged input");
-
-            const execution = capability.execute(prepared.input, { host });
-            await started.promise;
-            enabled = false;
-            policyEpoch = "policy-2";
-            await Promise.all([...listeners].map((listener) => listener()));
-            await expect(execution).resolves.toMatchObject({
-                status: "unavailable",
-                unavailableReason: "pagelet_stage_control_unavailable",
-            });
-            expect(listeners.size).toBe(0);
-            expect(instance.hasPendingFirstInsight()).toBe(false);
-            expect(executeRelaxed).not.toHaveBeenCalled();
-            expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
-                drafts: [],
-                diagnostics: { relaxedTokenConsumed: false },
-            });
-
-            if (lateOutcome === "resolve") {
-                late.resolve(result("partially_relevant", ["notes/lead.md"]));
-            } else {
-                late.reject(new Error("late policy-disabled revalidation failure"));
-            }
-            await Promise.resolve();
-            await Promise.resolve();
-            expect(executeRelaxed).not.toHaveBeenCalled();
-            expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
-                drafts: [],
-                diagnostics: { relaxedTokenConsumed: false },
-            });
-        },
-    );
-
-    it.each(["resolve", "reject"] as const)(
-        "fails closed when live policy disable interrupts relaxed recovery before late %s",
-        async (lateOutcome) => {
-            let enabled = true;
-            let policyEpoch = "policy-1";
-            const listeners = new Set<() => void | Promise<void>>();
-            const started = deferred<void>();
-            const late = deferred<MemorySearchResult>();
-            const { instance, executeRelaxed } = coordinator({
-                policyEpoch,
-                isEnabled: () => enabled,
-                getPolicyEpoch: () => policyEpoch,
-                onPolicyChanged: (listener) => {
-                    listeners.add(listener);
-                    return () => listeners.delete(listener);
-                },
-                revalidate: async (seed) => seed,
-                relaxed: async () => {
-                    started.resolve(undefined);
-                    return await late.promise;
-                },
-            });
-            await executeBoundSearch(instance, "policy-disable-relaxed-partial-call");
-            instance.bindPendingFirstInsight({
-                body: stageInput().insightMarkdown,
-                sourceIds: stageInput().sourceIds,
-            });
-            const capability = instance.getStageCapability();
-            const prepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
-            if (!prepared?.ok) throw new Error("expected schema-valid staged input");
-
-            const execution = capability.execute(prepared.input, { host });
-            await started.promise;
-            expect(instance.snapshot("NO_INSIGHT").diagnostics.relaxedTokenConsumed).toBe(true);
-            enabled = false;
-            policyEpoch = "policy-2";
-            await Promise.all([...listeners].map((listener) => listener()));
-            await expect(execution).resolves.toMatchObject({
-                status: "unavailable",
-                unavailableReason: "pagelet_stage_control_unavailable",
-            });
-            expect(listeners.size).toBe(0);
-            expect(instance.hasPendingFirstInsight()).toBe(false);
-            expect(executeRelaxed).toHaveBeenCalledTimes(1);
-            expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
-                drafts: [],
-                diagnostics: { relaxedTokenConsumed: true },
-            });
-
-            if (lateOutcome === "resolve") {
-                late.resolve(result("relevant", ["notes/late.md"]));
-            } else {
-                late.reject(new Error("late policy-disabled relaxed failure"));
-            }
-            await Promise.resolve();
-            await Promise.resolve();
-            expect(executeRelaxed).toHaveBeenCalledTimes(1);
-            expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
-                drafts: [],
-                diagnostics: { relaxedTokenConsumed: true },
-            });
-        },
-    );
 
     it.each(["resolve", "reject"] as const)(
         "settles standard search before the outer Tool deadline and discards its late %s",
@@ -1078,10 +608,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
                 ))).toHaveLength(1);
                 expect(instance.snapshot("NO_INSIGHT").drafts).toEqual([]);
                 if (lateOutcome === "resolve") {
-                    instance.bindPendingFirstInsight({
-                        body: stageInput().insightMarkdown,
-                        sourceIds: stageInput().sourceIds,
-                    });
+
                     const capability = instance.getStageCapability();
                     const prepared = capability.prepareAndValidate?.(
                         stageInput(),
@@ -1091,7 +618,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
                     await expect(capability.execute(prepared.input, { host }))
                         .resolves.toMatchObject({
                             status: "ok",
-                            observation: { recovery: "not-authorized" },
+                            observation: { status: "staged" },
                         });
                     expect(executeRelaxed).not.toHaveBeenCalled();
                     expect(instance.snapshot("NO_INSIGHT").diagnostics.relaxedTokenConsumed)
@@ -1228,96 +755,6 @@ describe("Pagelet run-scoped retrieval recovery", () => {
         expect(legacyTerminal?.metrics).not.toHaveProperty("documentCount");
     });
 
-    it("records an unavailable cumulative projection without a semantic zero count", async () => {
-        const events: RetrievalDiagnosticEventInput[] = [];
-        let revalidationCount = 0;
-        const { instance } = coordinator({
-            revalidate: async (seed) => {
-                revalidationCount += 1;
-                return revalidationCount === 1 ? seed : unavailableResult();
-            },
-            recordDiagnostic: (event) => events.push(event),
-        });
-        await executeBoundSearch(instance, "projection-bound-call");
-        const capability = instance.getStageCapability();
-        const prepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
-        if (!prepared?.ok) throw new Error("expected valid staged input");
-        const staged = await capability.execute(prepared.input, { host });
-        if (staged.status !== "ok") throw new Error("expected successful stage");
-        await instance.prepareTranscript([{
-            role: "toolResult",
-            id: "projection-stage-result",
-            toolCallId: "projection-stage-call",
-            toolName: "stage_pagelet_insight",
-            content: {
-                promptText: JSON.stringify(staged.observation),
-                includeInNextPrompt: true,
-                sourceRecords: staged.sourceRecords,
-                contextUsed: [],
-            },
-            isError: false,
-            timestamp: 1,
-        }]);
-
-        const projectionTerminal = events.find((event) => (
-            event.phase === "recovery_projection" && event.outcome !== "started"
-        ));
-        expect(projectionTerminal).toMatchObject({
-            outcome: "fallback",
-            reason: "projection_unavailable",
-        });
-        expect(projectionTerminal?.metrics).not.toHaveProperty("documentCount");
-    });
-
-    it("records an explicit skipped reason for every deterministic no-relaxed branch", async () => {
-        const events: Array<{ phase: string; outcome: string; reason?: string }> = [];
-        const recorder = (event: { phase: string; outcome: string; reason?: string }) => events.push(event);
-
-        const sufficient = coordinator({
-            standard: result("relevant", ["notes/enough.md"]),
-            recordDiagnostic: recorder,
-        });
-        await executeBoundSearch(sufficient.instance, "sufficient-call");
-
-        const partial = coordinator({ recordDiagnostic: recorder });
-        await executeBoundSearch(partial.instance, "partial-call");
-
-        const token = coordinator({
-            standard: result("none_relevant", []),
-            recordDiagnostic: recorder,
-        });
-        await executeBoundSearch(token.instance, "token-first-call");
-        await executeBoundSearch(token.instance, "token-second-call");
-
-        const noLeadRequest = coordinator({ recordDiagnostic: recorder });
-        await executeBoundSearch(noLeadRequest.instance, "no-lead-call");
-        const noLeadCapability = noLeadRequest.instance.getStageCapability();
-        const noLeadPrepared = noLeadCapability.prepareAndValidate?.(stageInput(false), { userInput: "" });
-        if (!noLeadPrepared?.ok) throw new Error("expected valid no-lead staged input");
-        await noLeadCapability.execute(noLeadPrepared.input, { host });
-
-        const missingConcreteLead = coordinator({ recordDiagnostic: recorder });
-        await executeBoundSearch(missingConcreteLead.instance, "missing-lead-call");
-        const missingCapability = missingConcreteLead.instance.getStageCapability();
-        const missingInput = stageInput();
-        missingInput.sourceIds = ["notes/anchor.md", "notes/other.md"];
-        missingInput.unresolvedLead.supportingSourceIds = ["notes/other.md"];
-        const missingPrepared = missingCapability.prepareAndValidate?.(missingInput, { userInput: "" });
-        if (!missingPrepared?.ok) throw new Error("expected valid missing-lead staged input");
-        await missingCapability.execute(missingPrepared.input, { host });
-
-        const skippedReasons = events
-            .filter((event) => event.phase === "recovery_relaxed" && event.outcome === "skipped")
-            .map((event) => event.reason);
-        expect(skippedReasons).toEqual(expect.arrayContaining([
-            "standard_sufficient",
-            "partial_requires_stage",
-            "token_consumed",
-            "lead_not_requested",
-            "concrete_lead_unavailable",
-        ]));
-    });
-
     it("automatically spends one token for eligible deterministic none and merges relaxed evidence", async () => {
         const { instance, executeRelaxed } = coordinator({
             standard: result("none_relevant", []),
@@ -1379,132 +816,6 @@ describe("Pagelet run-scoped retrieval recovery", () => {
         expect(failOpenMerged.candidates?.[0]?.excerpt).toBe("fail-open-current-lead");
     });
 
-    it("binds one-shot staging to the latest current partial source and hides query/episode state", async () => {
-        const { instance, executeRelaxed } = coordinator();
-        await executeBoundSearch(instance, "partial-call");
-        const capability = instance.getStageCapability();
-        const prepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
-        if (!prepared?.ok) throw new Error("expected valid staged input");
-        const staged = await capability.execute(prepared.input, { host });
-
-        expect(staged.status).toBe("ok");
-        expect(executeRelaxed).toHaveBeenCalledTimes(1);
-        expect(JSON.stringify(staged.observation)).not.toContain("host-owned-query");
-        expect(JSON.stringify(staged.observation)).not.toContain("lexicalPlan");
-        expect(staged.observation).toMatchObject({
-            status: "staged",
-            recovery: "completed",
-            evidence: {
-                documents: expect.arrayContaining([
-                    expect.objectContaining({ content: "notes/deep.md" }),
-                    expect.objectContaining({ content: "notes/lead.md" }),
-                ]),
-            },
-        });
-        expect(instance.snapshot("NO_INSIGHT").drafts).toEqual([
-            expect.objectContaining({ origin: "staged" }),
-        ]);
-
-        const secondPrepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
-        expect(secondPrepared).toMatchObject({ ok: true });
-        if (!secondPrepared?.ok) throw new Error("expected pure validation to remain repeatable");
-        await expect(capability.execute(secondPrepared.input, { host }))
-            .resolves.toMatchObject({ status: "unavailable" });
-    });
-
-    it("replaces only the bound partial observation with one cumulative evidence projection", async () => {
-        const standard = result("partially_relevant", ["notes/lead.md"]);
-        const marker = "BOUND_PARTIAL_DOCUMENT_MARKER";
-        standard.documents[0]!.content = marker;
-        standard.candidates![0]!.documents[0]!.content = marker;
-        standard.candidates![0]!.excerpt = marker;
-        const { instance } = coordinator({ standard });
-        await executeBoundSearch(instance, "bound-partial-call");
-        const capability = instance.getStageCapability();
-        const prepared = capability.prepareAndValidate?.(stageInput(), { userInput: "" });
-        if (!prepared?.ok) throw new Error("expected valid staged input");
-        const staged = await capability.execute(prepared.input, { host });
-        if (staged.status !== "ok") throw new Error("expected successful stage");
-        const transcript: PaAgentMessage[] = [
-            {
-                role: "toolResult",
-                id: "bound-result",
-                toolCallId: "bound-partial-call",
-                toolName: "search_memory",
-                content: {
-                    promptText: JSON.stringify({ query: "host-owned-query", evidence: marker }),
-                    includeInNextPrompt: true,
-                    sourceRecords: [{
-                        kind: "memory-reference",
-                        dedupKey: "notes/lead.md",
-                        path: "notes/lead.md",
-                    }],
-                    contextUsed: [],
-                },
-                isError: false,
-                timestamp: 1,
-            },
-            {
-                role: "toolResult",
-                id: "unrelated-result",
-                toolCallId: "unrelated-memory-call",
-                toolName: "search_memory",
-                content: {
-                    promptText: "UNRELATED_MEMORY_EVIDENCE",
-                    includeInNextPrompt: true,
-                    sourceRecords: [],
-                    contextUsed: [],
-                },
-                isError: false,
-                timestamp: 2,
-            },
-            {
-                role: "toolResult",
-                id: "stage-result",
-                toolCallId: "stage-call",
-                toolName: "stage_pagelet_insight",
-                content: {
-                    promptText: JSON.stringify(staged.observation),
-                    includeInNextPrompt: true,
-                    sourceRecords: staged.sourceRecords,
-                    contextUsed: [],
-                },
-                isError: false,
-                timestamp: 3,
-            },
-        ];
-
-        const projected = await instance.prepareTranscript(transcript);
-        const serialized = JSON.stringify(projected);
-        const bound = projected[0];
-        expect(bound?.role === "toolResult" ? bound.content : null).toMatchObject({
-            sourceRecords: [],
-            contextUsed: [],
-            metadata: { statusOnly: true },
-        });
-        expect(serialized.match(new RegExp(marker, "g"))).toHaveLength(1);
-        expect(serialized).toContain("UNRELATED_MEMORY_EVIDENCE");
-        expect(serialized).not.toContain("host-owned-query");
-        expect(serialized).not.toContain("lexicalPlan");
-        expect(serialized).not.toContain("episode");
-    });
-
-    it("does not authorize a mismatched lead and does not consume the token", async () => {
-        const { instance, executeRelaxed } = coordinator();
-        await executeBoundSearch(instance, "mismatched-call");
-        const capability = instance.getStageCapability();
-        const input = stageInput();
-        input.sourceIds = ["notes/anchor.md", "notes/other.md"];
-        input.unresolvedLead.supportingSourceIds = ["notes/other.md"];
-        const prepared = capability.prepareAndValidate?.(input, { userInput: "" });
-        if (!prepared?.ok) throw new Error("expected schema-valid staged input");
-        const staged = await capability.execute(prepared.input, { host });
-
-        expect(staged).toMatchObject({ status: "ok", observation: { recovery: "not-authorized" } });
-        expect(executeRelaxed).not.toHaveBeenCalled();
-        expect(instance.snapshot("NO_INSIGHT").diagnostics.relaxedTokenConsumed).toBe(false);
-    });
-
     it("consumes the token on relaxed failure and ignores attempts inside the finalization margin", async () => {
         const failing = coordinator({
             relaxed: async () => { throw new Error("provider failed"); },
@@ -1515,7 +826,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
         if (!prepared?.ok) throw new Error("expected valid staged input");
         await expect(capability.execute(prepared.input, { host })).resolves.toMatchObject({
             status: "ok",
-            observation: { recovery: "unavailable" },
+            observation: { status: "staged" },
         });
         expect(failing.instance.snapshot("NO_INSIGHT").diagnostics.relaxedTokenConsumed).toBe(true);
 
@@ -1544,30 +855,6 @@ describe("Pagelet run-scoped retrieval recovery", () => {
         expect(lateResult.instance.snapshot("NO_INSIGHT").diagnostics.relaxedTokenConsumed).toBe(true);
     });
 
-    it("keeps the flag-off path single-result and clears provisional state on teardown", async () => {
-        const disabled = coordinator({ enabled: false, standard: result("none_relevant", []) });
-        await executeBoundSearch(disabled.instance, "disabled-call");
-        expect(disabled.executeRelaxed).not.toHaveBeenCalled();
-        expect(() => disabled.instance.reserveStageControl(stageInput())).toThrow("unavailable");
-
-        const enabled = coordinator();
-        enabled.instance.bindPendingFirstInsight({
-            body: stageInput(false).insightMarkdown,
-            sourceIds: stageInput(false).sourceIds,
-        });
-        expect(enabled.instance.hasPendingFirstInsight()).toBe(true);
-        await executeBoundSearch(enabled.instance, "enabled-call");
-        const capability = enabled.instance.getStageCapability();
-        const prepared = capability.prepareAndValidate?.(stageInput(false), { userInput: "" });
-        if (!prepared?.ok) throw new Error("expected valid staged input");
-        await capability.execute(prepared.input, { host });
-        expect(enabled.instance.snapshot("NO_INSIGHT").drafts).toHaveLength(1);
-        enabled.instance.clear();
-        expect(enabled.instance.snapshot("NO_INSIGHT").drafts).toHaveLength(0);
-        expect(enabled.instance.hasPendingFirstInsight()).toBe(false);
-        expect(() => enabled.instance.reserveStageControl(stageInput())).toThrow("unavailable");
-    });
-
     it("lets standard Memory finish but prevents Pagelet retry after live disable", async () => {
         let enabled = true;
         let policyEpoch = "policy-1";
@@ -1589,11 +876,6 @@ describe("Pagelet run-scoped retrieval recovery", () => {
                 return await standard.promise;
             },
         });
-        live.instance.bindPendingFirstInsight({
-            body: stageInput(false).insightMarkdown,
-            sourceIds: stageInput(false).sourceIds,
-        });
-        expect(live.instance.hasPendingFirstInsight()).toBe(true);
 
         const pending = executeBoundSearch(live.instance, "live-standard-call");
         await standardStarted.promise;
@@ -1601,12 +883,12 @@ describe("Pagelet run-scoped retrieval recovery", () => {
         policyEpoch = "policy-2";
         await Promise.all([...listeners].map((listener) => listener()));
         expect(standardSignal?.aborted).toBe(false);
-        expect(live.instance.hasPendingFirstInsight()).toBe(false);
+        expect(live.instance.hasStagedInsight()).toBe(false);
 
         standard.resolve(result("none_relevant", []));
         await expect(pending).resolves.toMatchObject({ sources: [] });
         expect(live.executeRelaxed).not.toHaveBeenCalled();
-        expect(() => live.instance.reserveStageControl(stageInput())).toThrow("unavailable");
+        expect(() => live.instance.reserveStageControl(stageInput())).not.toThrow();
     });
 
     it("aborts in-flight Pagelet recovery and discards a late relaxed result after live disable", async () => {
@@ -1752,7 +1034,7 @@ describe("Pagelet run-scoped retrieval recovery", () => {
             expect(childSignal?.aborted).toBe(true);
             expect(childControl).toEqual({
                 runEpoch: "pagelet-test-run",
-                absoluteDeadlineMs: 11_000,
+                absoluteDeadlineMs: 30_250,
             });
             expect(instance.snapshot("NO_INSIGHT")).toMatchObject({
                 drafts: [],

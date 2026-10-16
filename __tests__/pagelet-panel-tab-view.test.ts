@@ -4131,6 +4131,33 @@ describe("Pagelet panel and tab view regressions", () => {
         expect((globalRecord.document as FakeDocument).activeElement).toBe(undo);
     });
 
+    it("shows complete single-note Markdown without an empty connection map", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+        const body = "## Wording issue\n\nA supported observation.\n\n### Another finding\nThe full text remains readable.";
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("discover", [{
+            title: "Wording issue", description: body, insightText: body, sourceFile: "notes/current.md",
+        }], { sourcePath: "notes/current.md" });
+
+        expect(container.querySelector(".pa-pagelet-panel-connection-graph")).toBeNull();
+        expect(container.querySelector(".pa-pagelet-panel-timeline-insight")?.textContent).toBe(body);
+        expect(container.querySelectorAll(".pa-pagelet-panel-source-chip")).toHaveLength(1);
+        expect(mockMarkdownRender).toHaveBeenCalledWith(
+            expect.anything(), body, expect.anything(), "notes/current.md", expect.anything(),
+        );
+    });
+
     it("keeps every discovery source visible and clickable outside the capped graph", async () => {
         const relatedNoteClick = jest.fn();
         const container = new FakeElement("div");

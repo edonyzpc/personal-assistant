@@ -18,7 +18,7 @@ import type { MemorySearchResult, PaAgentMessage, SourceRecord } from "../../ai-
 import type { CapabilityRegistry } from "../../ai-services/capability-registry";
 import type { AiServiceHost } from "../../ai-services/AiServiceHost";
 
-export const PAGELET_DEEP_DISCOVER_PIPELINE_VERSION = "pagelet-deep-discover-v2" as const;
+export const PAGELET_DEEP_DISCOVER_PIPELINE_VERSION = "pagelet-deep-discover-v3" as const;
 export const PAGELET_DEEP_DISCOVER_MAX_TURNS = 256;
 export const PAGELET_DEEP_DISCOVER_MAX_TOOL_CALLS = 1024;
 export const PAGELET_DEEP_DISCOVER_MAX_WALL_CLOCK_MS = Number.POSITIVE_INFINITY;
@@ -128,8 +128,7 @@ export interface PageletAgentRuntimeCompletion {
         | "not-applicable"
         | "complete"
         | "ungrounded"
-        | "missing-anchor"
-        | "missing-non-anchor";
+        | "missing-anchor";
     readonly turnCount: number;
     readonly toolCallCount: number;
     readonly insightDraftCount: number;
@@ -156,9 +155,8 @@ export interface PageletAgentRunResult {
     metrics: PageletAgentRunMetrics;
     runtimeCompletion: PageletAgentRuntimeCompletion;
     /**
-     * Host-collected natural-Markdown terminal candidates. The first entry may
-     * have been pinned by the Pagelet-only staging control; the second, when
-     * present, is the unchanged natural terminal text from the same model run.
+     * Complete natural-Markdown texts explicitly staged by the model, plus
+     * the unchanged terminal answer when the run completed.
      */
     insightDrafts?: readonly PageletAgentInsightDraft[];
     /** Content-free recovery diagnostics; never projected into model input. */
@@ -184,23 +182,12 @@ export type PageletStageValidationSubreason =
     | "shape"
     | "deadline"
     | "failed"
-    | "lead"
     | "aborted"
     | PageletAgentQualityRejectReason;
-
-export interface PageletPendingFirstInsight {
-    readonly body: string;
-    readonly sourceIds: readonly string[];
-}
 
 export interface StagePageletInsightInput {
     insightMarkdown: string;
     sourceIds: string[];
-    unresolvedLead: {
-        leadKey: string;
-        supportingSourceIds: string[];
-        requestRelaxedRecovery: boolean;
-    };
 }
 
 export interface PageletAgentModelContext {
@@ -328,10 +315,7 @@ export type PageletAgentQualityRejectReason =
     | "insufficient-vault-sources"
     | "unsupported-source"
     | "stale-source"
-    | "shallow-link"
     | "duplicate"
-    | "not-distinct"
-    | "bundled-insights"
     | "seen";
 
 export type PageletAgentQualityGateResult =
@@ -376,4 +360,6 @@ export type PageletDeepDiscoverControllerResult =
     | {
         status: "denied" | "stale" | "error";
         reason: string;
+        metrics?: PageletAgentRunMetrics;
+        runtimeCompletion?: PageletAgentRuntimeCompletion;
     };

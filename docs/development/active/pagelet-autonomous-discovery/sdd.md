@@ -3,14 +3,15 @@
 Document status: Approved
 Updated: 2026-10-16
 Work item: B-175
-Authority: [DEC-065](../../../product/decisions/dec-065-pagelet-autonomous-discovery.md) 与用户认可的第一轮细化方案；仅设计授权。
+Authority: [DEC-065](../../../product/decisions/dec-065-pagelet-autonomous-discovery.md) 与用户认可的第一轮细化方案；后续实施授权及实际验证见 Tracker。
 Product spec: [Pagelet Autonomous Discovery](../../../product/specs/pagelet-autonomous-discovery-product-spec.md)
 Tracker: [Development Tracker](./tracker.md)
 
 ## Current Source Baseline
 
 基线 `ecddc088`，2026-10-16 只读核对；Pagelet 相关源码相对前次分析 `df49a48c` 无差异。
-下列是实际存在的模块和符号；后文是待实施目标，不据文档批准推定当前行为已改变。
+下列是设计时核对的模块、符号和前序行为；后文定义实施目标，不据文档批准推定验收完成。
+用户随后明确授权按本方案完成开发与测试，当前源码基线和执行证据以 Tracker 为准。
 
 产品显式要求由 DEC-065 / Product Spec 定义；下表是已核实源码事实。复用现有数组/状态字段、
 沿原搜索 observation 回传等属于与这些要求兼容的工程方案，不能单独扩大用户授权。
@@ -186,7 +187,7 @@ caller 权限边界；其历史普遍确认要求按现行 scoped successors 理
 
 ## Test Matrix
 
-表中全是**计划**，本次未执行 runtime 验证。用已有 suites 改写不再成立的期望，保留
+下表定义验证要求；执行结果只记 Tracker，不从本设计表推定已通过。用已有 suites 改写不再成立的期望，保留
 事实负例，不另建测试框架或逐条 prompt 镜像。各行由 Tracker 对应任务记录实际证据。
 
 | ID / Requirement / AC | 最低充分证据与通过条件 | 失败/保留边界 | 重跑或扩展触发 |
@@ -205,12 +206,13 @@ caller 权限边界；其历史普遍确认要求按现行 scoped successors 理
 不要求各自必产某类结果、指定路径/深度/数量，不统计成功率，也不反复采样凑预设答案。
 若未观察到某路径，保留模型证据缺口并用确定性证据说明其可达性；不能把可达性说成模型自然涌现。
 
-后续实施的统一 broad gate、部署/证据复用及当前 docs-only gate 见 Tracker。
+实施的统一 broad gate、部署/证据复用及历史设计期 docs-only gate 见 Tracker。
 共享 `pa-agent-loop` 只在实际公共契约受到影响时追加对应 focused 检查；不借此重写通用循环。
 当本轮 REQ/AC 和已确认缺陷均有充分证据后结束，不测试后续轮次，也不因答案措辞/长度增加门禁。
 
 ## Open Design Findings And Approval
 
 第一轮设计无未决 P0/P1/P2；已识别耦合和范围处理见 Tracker，不将设计处理写成代码已修。
-用户 2026-10-16 认可的是本轮细化方案与文档化，运行实现尚未授权。
-短点/长按、阅读与 Agent 交接已由 [B-176 SDD](../../proposals/pagelet-reading-loop/sdd.md)独立承接；更多上下文和专用修改流程仍不在两轮范围。后续本地 master 文档提交及 MacBook 接续安排见 Tracker，不据此声称运行实现已完成。
+用户 2026-10-16 先认可本轮细化方案与文档化，随后明确授权按 B-175 完成全部开发测试；
+该实施授权及其实际结果记在 Tracker，不将设计批准或单项绿测写成功能验收。
+短点/长按、阅读与 Agent 交接已由 [B-176 SDD](../../proposals/pagelet-reading-loop/sdd.md)独立承接；更多上下文和专用修改流程仍不在两轮范围。当前实施验收以 Tracker 实际证据为准；Git、closeout 和 release 依照 Tracker 记录的后续用户授权分别执行。

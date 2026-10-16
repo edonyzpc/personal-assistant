@@ -49,7 +49,7 @@
 | Feature name | `Pagelet` (中文：`拾页`) |
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
-| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. B-121 three-action Ring evidence covers automated、review、local/iCloud deployment、desktop and iPhone portrait gates；its physical landscape waiver remains historical only. B-121 core runtime is included in BRAT `2.9.0-beta.5`. The 2026-08-06 DEC-025/DEC-026 amendment adds Share as the fourth Ring action；the 2026-08-07 owner amendment accepts the current `master` compact layout fallback. B-124 is closed, with current behavior in DEC-026, its Product Spec, Architecture, tests and the smoke checklist. DEC-027/B-125 defines the current implemented 0–2 insight and single-recovery contract；its validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../archive/2026/b-125-retrieval-optimization-closeout.md). |
+| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. B-121 three-action Ring evidence covers automated、review、local/iCloud deployment、desktop and iPhone portrait gates；its physical landscape waiver remains historical only. B-121 core runtime is included in BRAT `2.9.0-beta.5`. The 2026-08-06 DEC-025/DEC-026 amendment adds Share as the fourth Ring action；the 2026-08-07 owner amendment accepts the current `master` compact layout fallback. B-124 is closed, with current behavior in DEC-026, its Product Spec, Architecture, tests and the smoke checklist. DEC-027/B-125 records the predecessor 0–2 insight and single-recovery contract; DEC-065 governs the current autonomous discovery and optional staging contract；its validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../archive/2026/b-125-retrieval-optimization-closeout.md). |
 | Last revised | 2026-10-16 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Current Deep Discover uses `PaAgentLoop` with `CapabilityRegistry` / `PolicyEngine`, `runKind="review"` and `allowWrite=false`; the D024 adapter and D032 generic background route are historical |
@@ -549,7 +549,7 @@ If the current Deep Discover provider path is unavailable or fails, the run is
 quiet or reports failure through its existing control path；production does not
 route back to the retired single-shot `Local related clue` implementation.
 
-**Approved B-125 successor contract**:
+**Historical B-125 contract — superseded in discovery/staging scope by DEC-065**:
 - Allow one run to surface at most two independently valuable, source-backed
   insights and own one bounded retrieval retry；Bubble/Panel may summarize the
   supporting notes without presenting a note count as an insight quota.
@@ -558,7 +558,7 @@ route back to the retired single-shot `Local related clue` implementation.
 Implementation、validation and rollout disposition are closed；the compact historical
 evidence is retained in
 [B-125 closeout evidence](../archive/2026/b-125-retrieval-optimization-closeout.md),
-while this product design remains the current behavior authority.
+with discovery/staging behavior now governed by the DEC-065 contract above.
 
 **Key property**: Results shown in Panel (not just Bubble). This is the deep-analysis path.
 
@@ -1381,12 +1381,19 @@ evidence retains its own scope.
   automatic-run pool; explicit manual discovery does not consume that pool.
 - Both paths enforce current source permissions and cancellation/policy checks.
   Discovery remains read-only through `runKind="review"`, `allowWrite=false`.
-- Each run delivers `0–2` validated insights, with inspectable actual sources.
-  Missing, excluded or changed evidence cannot support an accepted finding.
-  No reliable finding is a valid outcome; fixed yesterday/3-day/7-day presets
+- Under DEC-065, the Agent chooses complete texts and their number; optional
+  staging preserves completed work without ending exploration. Single-anchor
+  findings are allowed, and every text retains inspectable actual sources and
+  independent validity. Missing, excluded or changed evidence cannot support an
+  accepted finding. A model's explicit no-finding is distinct from failure,
+  incomplete, cancellation, stale evidence or no new delivery. Fixed yesterday/3-day/7-day presets
   and source-count confirmation are not current acceptance requirements.
-- Enabled, supported WebSearch may run after vault evidence reaches the model.
+- Enabled, supported WebSearch retains its provider/capability permissions;
+  the Agent decides tool order, using it for external facts raised by vault evidence.
   UI explains actual source/provider boundaries without promising a per-search click.
+- Explicit discovery starts a new analysis even when a result is already present;
+  viewing existing content stays provider-free. Complete delivered texts are
+  reachable with their sources. Source ordering does not infer a Link action.
 
 **Explicit actions and handoff**:
 - Saving Panel findings creates a separate review note in the configured folder,

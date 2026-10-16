@@ -268,12 +268,17 @@ describe("Pagelet production smoke evidence", () => {
         expect(JSON.stringify(snapshot)).not.toContain("promptText");
     });
 
-    it("keeps two shared-anchor insights, candidates, and receipts independent", async () => {
+    it("keeps more than two shared-anchor texts, candidates, and receipts independent", async () => {
         const run = makeRun(secondInsight, [
             {
                 body: firstInsight,
                 origin: "staged",
                 declaredSourceIds: [anchor.path, releaseSource.path],
+            },
+            {
+                body: "## 当前笔记建议\n`retrieval-smoke/pagelet/entry.md` 可以把验证和回滚分开说明。",
+                origin: "staged",
+                declaredSourceIds: [anchor.path],
             },
             {
                 body: secondInsight,
@@ -287,22 +292,23 @@ describe("Pagelet production smoke evidence", () => {
 
         expect(snapshot).toMatchObject({
             resultStatus: "verified",
-            candidateCount: 2,
-            deliveryReceiptCount: 2,
+            candidateCount: 3,
+            deliveryReceiptCount: 3,
             cacheMutationCount: 1,
         });
         expect(snapshot?.insights.map((insight) => insight.sourcePaths)).toEqual([
             [anchor.path, releaseSource.path],
+            [anchor.path],
             [anchor.path, rollbackSource.path],
         ]);
-        expect(new Set(snapshot?.insights.map((insight) => insight.insightId)).size).toBe(2);
-        expect(new Set(snapshot?.insights.map((insight) => insight.candidateId)).size).toBe(2);
+        expect(new Set(snapshot?.insights.map((insight) => insight.insightId)).size).toBe(3);
+        expect(new Set(snapshot?.insights.map((insight) => insight.candidateId)).size).toBe(3);
         expect(new Set(snapshot?.insights.map((insight) => (
             insight.deliveryReceipt.fingerprint
-        ))).size).toBe(2);
+        ))).size).toBe(3);
         expect(new Set(snapshot?.insights.map((insight) => (
             insight.deliveryReceiptSha256
-        ))).size).toBe(2);
+        ))).size).toBe(3);
     });
 
     it("fails closed for stale completions and clears lifecycle evidence", async () => {

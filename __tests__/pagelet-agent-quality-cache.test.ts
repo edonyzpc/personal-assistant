@@ -25,7 +25,6 @@ import {
     pageletAgentPolicyIdentityKey,
 } from '../src/pagelet/agent/pagelet-agent-cache';
 import {
-    arePageletAgentInsightsDistinct,
     classifyPageletInsightSourceSupport,
     evaluatePageletAgentQuality,
 } from '../src/pagelet/agent/pagelet-agent-quality-gate';
@@ -151,26 +150,29 @@ function materials(): Map<string, PageletAgentSourceMaterial> {
 }
 
 describe('Pagelet agent quality gate', () => {
-    it('rejects a repeated/detail-expanded second claim while allowing independent evidence', () => {
-        const sources = snapshots();
-        expect(arePageletAgentInsightsDistinct(
-            { normalizedBody: '发布策略存在风险冲突', sources },
-            { normalizedBody: '发布策略存在风险冲突并需要继续关注', sources },
-        )).toBe(false);
-        expect(arePageletAgentInsightsDistinct(
-            { normalizedBody: '发布策略存在风险冲突', sources },
-            { normalizedBody: '回滚检查点缺失导致行动无法撤销', sources },
-        )).toBe(true);
-        expect(arePageletAgentInsightsDistinct(
-            {
-                normalizedBody: 'Release rollback risk grows because deployment validation is missing',
-                sources,
-            },
-            {
-                normalizedBody: 'Missing deployment validation increases release rollback risk',
-                sources,
-            },
-        )).toBe(false);
+    it('accepts a single anchor source without judging vocabulary or depth', async () => {
+        const body = '\n## Spelling suggestion\n`notes/anchor.md` could express this idea more clearly.\n';
+        const run = makeRun(body);
+        run.sourceSnapshots = [snapshots()[0]!];
+        const options = {
+            run,
+            sourceMaterials: materials(),
+            readCurrentSourceSnapshot: async () => snapshots()[0]!,
+            isPathAllowed: () => true,
+        };
+        await expect(evaluatePageletAgentQuality(options)).resolves.toMatchObject({
+            accepted: true,
+            body,
+            sourceRefs: [{ path: anchor.path }],
+        });
+        await expect(evaluatePageletAgentQuality({
+            ...options,
+            run: { ...run, sourceTools: new Map() },
+        })).resolves.toEqual({ accepted: false, reason: 'anchor-not-read' });
+        await expect(evaluatePageletAgentQuality({
+            ...options,
+            isPathAllowed: () => false,
+        })).resolves.toEqual({ accepted: false, reason: 'insufficient-vault-sources' });
     });
 
     it('accepts a current, cross-note, path-grounded and evidence-supported finding', async () => {
@@ -195,7 +197,7 @@ describe('Pagelet agent quality gate', () => {
         });
     });
 
-    it('rejects only an explicit numbered Insight 1/2 heading bundle, not one numbered heading', async () => {
+    it('keeps a complete Markdown text containing multiple numbered findings unchanged', async () => {
         const single = makeRun([
             '## 洞察 1：发布策略存在风险缺口',
             '`notes/anchor.md` 要求验证反馈后再发布；',
@@ -227,7 +229,7 @@ describe('Pagelet agent quality gate', () => {
                 snapshots().find((source) => source.path === path) ?? null
             ),
             isPathAllowed: () => true,
-        })).resolves.toEqual({ accepted: false, reason: 'bundled-insights' });
+        })).resolves.toMatchObject({ accepted: true, body: bundled.finalText });
     });
 
     it('matches supplementary-plane Han evidence by Unicode code point', async () => {
@@ -270,7 +272,7 @@ describe('Pagelet agent quality gate', () => {
         expect(quality.accepted).toBe(true);
     });
 
-    it('rejects ungrounded paths and shallow existing-link restatements', async () => {
+    it('rejects ungrounded paths while leaving existing-link value to the model', async () => {
         const ungroundedRun = makeRun(
             '`notes/anchor.md` 与 `notes/related.md` 有冲突，但 `notes/missing.md` 才是关键风险。',
         );
@@ -330,9 +332,8 @@ describe('Pagelet agent quality gate', () => {
                 shallowRun.sourceSnapshots.find((source) => source.path === path) ?? null
             ),
             isPathAllowed: () => true,
-            anchorRelations: { explicitLinks: ['notes/related.md'] },
         });
-        expect(shallow).toEqual({ accepted: false, reason: 'shallow-link' });
+        expect(shallow).toMatchObject({ accepted: true, body: shallowRun.finalText });
 
         const shallowCauseTerms = await evaluatePageletAgentQuality({
             run: makeShallowRun([
@@ -344,9 +345,8 @@ describe('Pagelet agent quality gate', () => {
                 shallowRun.sourceSnapshots.find((source) => source.path === path) ?? null
             ),
             isPathAllowed: () => true,
-            anchorRelations: { explicitLinks: ['notes/related.md'] },
         });
-        expect(shallowCauseTerms).toEqual({ accepted: false, reason: 'shallow-link' });
+        expect(shallowCauseTerms.accepted).toBe(true);
     });
 
     it('resolves explicit paths containing spaces without rescanning their inner basename', async () => {
@@ -763,75 +763,24 @@ describe('Pagelet agent quality gate', () => {
         expect(result).toEqual({ accepted: false, reason: 'unsupported-source' });
     });
 
-    it('classifies which cited source is only a path without concrete evidence', () => {
-        const sourcePath = 'notes/template-diagnosis.md';
-        const source: PageletAgentSourceMaterial = {
-            path: sourcePath,
-            content: '# Diagnosis\ninherited disabled template skip flag',
-            mtime: 20,
-            size: 50,
-            contentHash: 'c'.repeat(64),
-            capturedAt: 200,
+    it('checks source facts without requiring shared words after each citation', () => {
+        const options = {
+            body: '`notes/anchor.md` suggests a clearer structure; `notes/related.md` provides context.',
+            anchorPath: anchor.path,
+            citedPaths: new Set([anchor.path, relatedMaterial.path]),
+            successfulSources: new Map(snapshots().map(source => [source.path, source])),
+            sourceMaterials: materials(),
+            sourceTools: makeRun('').sourceTools,
         };
-        const semanticAnchor: PageletAgentSourceMaterial = {
-            ...anchorMaterial,
-            content: '# Frozen symptom\nazure umbrella stalls at dawn',
-            size: 47,
-            contentHash: 'd'.repeat(64),
-        };
-        const successfulSources = new Map<string, PageletAgentSourceSnapshot>([
-            [semanticAnchor.path, semanticAnchor],
-            [source.path, source],
-        ]);
-        const sourceMaterials = new Map<string, PageletAgentSourceMaterial>([
-            [semanticAnchor.path, semanticAnchor],
-            [source.path, source],
-        ]);
-        const sourceTools = new Map<string, ReadonlySet<string>>([
-            [semanticAnchor.path, new Set(['get_current_note_context'])],
-            [source.path, new Set(['inspect_obsidian_note'])],
-        ]);
-        const citedPaths = new Set([semanticAnchor.path, source.path]);
-
+        expect(classifyPageletInsightSourceSupport(options)).toBeNull();
         expect(classifyPageletInsightSourceSupport({
-            body: [
-                '`notes/anchor.md` supplies the entry context, while',
-                '`notes/template-diagnosis.md` records an inherited disabled template skip flag.',
-            ].join('\n'),
-            anchorPath: semanticAnchor.path,
-            citedPaths,
-            successfulSources,
-            sourceMaterials,
-            sourceTools,
-        })).toBe('anchor-overlap-missing');
+            ...options,
+            sourceTools: new Map([[anchor.path, new Set(['get_current_note_context'])]]),
+        })).toBe('missing-content-tool');
         expect(classifyPageletInsightSourceSupport({
-            body: [
-                '`notes/anchor.md` records that the azure umbrella stalls at dawn, while',
-                '`notes/template-diagnosis.md` supplies the supporting context.',
-            ].join('\n'),
-            anchorPath: semanticAnchor.path,
-            citedPaths,
-            successfulSources,
-            sourceMaterials,
-            sourceTools,
-        })).toBe('non-anchor-overlap-missing');
-        for (const pathOnlyReference of [
-            'notes/anchor.md#azure-umbrella',
-            'notes/anchor.md|azure-umbrella',
-            'notes/anchor.md#symptom|azure-umbrella',
-        ]) {
-            expect(classifyPageletInsightSourceSupport({
-                body: [
-                    pathOnlyReference,
-                    '`notes/template-diagnosis.md` records an inherited disabled template skip flag.',
-                ].join('\n'),
-                anchorPath: semanticAnchor.path,
-                citedPaths,
-                successfulSources,
-                sourceMaterials,
-                sourceTools,
-            })).toBe('anchor-overlap-missing');
-        }
+            ...options,
+            sourceMaterials: new Map([[anchor.path, anchorMaterial]]),
+        })).toBe('stale-source');
     });
 
     it('does not let a properties-only structure read satisfy non-anchor body evidence', async () => {
@@ -1335,6 +1284,21 @@ describe('Pagelet agent cache and controller', () => {
         expect(changed).toBeNull();
     });
 
+    it('rejects a legacy pipeline cache rather than relabeling it as current', async () => {
+        const cache = new PageletAgentCache();
+        const legacy = verifiedInsight();
+        Object.assign(legacy.cacheIdentity, { pipelineVersion: 'pagelet-deep-discover-v2' });
+        legacy.cacheIdentityHash = hashPageletAgentCacheIdentity(legacy.cacheIdentity);
+        cache.put(legacy);
+        await expect(cache.getValidCollection({
+            anchor,
+            policyIdentity,
+            readSourceSnapshot: async path => snapshots().find(source => source.path === path) ?? null,
+            isPathAllowed: () => true,
+        })).resolves.toBeNull();
+        expect(cache.hasEquivalent(anchor.path, legacy.normalizedBody, legacy.sources)).toBe(false);
+    });
+
     it('refuses a cache entry whose verified-looking body ends with standalone NO_INSIGHT', async () => {
         const cache = new PageletAgentCache();
         cache.put(verifiedSibling([
@@ -1668,7 +1632,7 @@ describe('Pagelet agent cache and controller', () => {
         });
     });
 
-    it('atomically commits zero, one, or two independent natural-Markdown insights', async () => {
+    it('commits all staged texts plus final, preserving similar texts and NO_INSIGHT stages', async () => {
         const firstBody = [
             '## 发布策略存在风险缺口',
             '`notes/anchor.md` 要求验证反馈后再发布；',
@@ -1680,9 +1644,11 @@ describe('Pagelet agent cache and controller', () => {
             '`notes/related.md` 说明直接发布会放大风险，因此行动流程仍有缺口。',
         ].join('\n');
         const cache = new PageletAgentCache();
+        const expandedBody = `${firstBody}\n补充：先保留验证记录。`;
         const twoRun = makeRun(secondBody);
         twoRun.insightDrafts = [
             { body: firstBody, origin: 'staged', declaredSourceIds: snapshots().map((source) => source.path) },
+            { body: expandedBody, origin: 'staged', declaredSourceIds: snapshots().map((source) => source.path) },
             { body: secondBody, origin: 'terminal', declaredSourceIds: [] },
         ];
         const controller = new PageletDeepDiscoverController({
@@ -1704,8 +1670,8 @@ describe('Pagelet agent cache and controller', () => {
         });
         expect(two.status).toBe('verified');
         if (two.status !== 'verified') throw new Error('expected verified collection');
-        expect(two.insights).toHaveLength(2);
-        expect(new Set(two.insights.map((insight) => insight.insightId)).size).toBe(2);
+        expect(two.insights.map(insight => insight.body)).toEqual([firstBody, expandedBody, secondBody]);
+        expect(new Set(two.insights.map((insight) => insight.insightId)).size).toBe(3);
         expect(two.insights.every((insight) => insight.collectionId === two.collection.collectionId)).toBe(true);
         const candidates = two.insights.map((insight) => pageletAgentInsightToDeliveryCandidate(insight, 'zh'));
         expect(candidates.map((candidate) => candidate.id)).toEqual(two.insights.map((insight) => insight.insightId));
@@ -1718,7 +1684,7 @@ describe('Pagelet agent cache and controller', () => {
             isPathAllowed: () => true,
             now: 2_001,
         });
-        expect(cached?.insights).toHaveLength(2);
+        expect(cached?.insights).toHaveLength(3);
 
         const oneRun = makeRun('NO_INSIGHT');
         oneRun.insightDrafts = [{
@@ -1758,6 +1724,94 @@ describe('Pagelet agent cache and controller', () => {
             readSourceSnapshot: async () => null,
             isPathAllowed: () => true,
         })).resolves.toBeNull();
+    });
+
+    it.each(['error', 'incomplete'] as const)(
+        'retains completed staged texts on %s without adopting final or replacing the old cache',
+        async status => {
+            const stagedBody = '## 已完成建议\n`notes/anchor.md` 可以换一种表述。';
+            const run = makeRun('`notes/anchor.md` 尚未完成的末尾输出。');
+            run.loopResult.status = status;
+            run.runtimeCompletion = { ...run.runtimeCompletion, loopStatus: status };
+            run.insightDrafts = [
+                { body: stagedBody, origin: 'staged', declaredSourceIds: [anchor.path] },
+                { body: run.finalText, origin: 'terminal', declaredSourceIds: [] },
+            ];
+            const cache = new PageletAgentCache();
+            const old = verifiedInsight();
+            cache.put(old);
+            const before = cache.getMutationSnapshot();
+            const controller = new PageletDeepDiscoverController({
+                runtime: { run: async () => run },
+                captureSnapshot: async () => anchor,
+                captureSourceMaterial: async path => materials().get(path) ?? null,
+                getPolicyIdentity: () => policyIdentity,
+                getEvidenceEpoch: () => 'evidence-1',
+                controllerEpoch: 1,
+                isPathAllowed: () => true,
+                cache,
+            });
+            const result = await controller.run({ path: anchor.path, triggerReason: 'explicit', force: true });
+            expect(result).toMatchObject({
+                status: 'verified',
+                insights: [{ body: stagedBody }],
+                runtimeCompletion: { loopStatus: status },
+            });
+            expect(cache.getMutationSnapshot()).toEqual(before);
+            await expect(cache.getValidCollection({
+                anchor,
+                policyIdentity,
+                readSourceSnapshot: async path => snapshots().find(source => source.path === path) ?? null,
+                isPathAllowed: () => true,
+            })).resolves.toMatchObject({ insights: [{ insightId: old.insightId }] });
+        },
+    );
+
+    it.each([
+        ['completed', '', 'quiet', 'empty'],
+        ['error', 'NO_INSIGHT', 'error', 'deep-discover-failed'],
+        ['incomplete', 'NO_INSIGHT', 'quiet', 'runtime-incomplete'],
+        ['aborted', 'NO_INSIGHT', 'quiet', 'aborted'],
+    ] as const)('keeps %s with final %j distinct from model no-insight', async (status, text, resultStatus, reason) => {
+        const run = makeRun(text);
+        run.loopResult.status = status;
+        run.runtimeCompletion = { ...run.runtimeCompletion, loopStatus: status };
+        if (status === 'aborted') {
+            run.insightDrafts = [{ body: '`notes/anchor.md` 已完成。', origin: 'staged', declaredSourceIds: [anchor.path] }];
+        }
+        const controller = new PageletDeepDiscoverController({
+            runtime: { run: async () => run },
+            captureSnapshot: async () => anchor,
+            captureSourceMaterial: async path => materials().get(path) ?? null,
+            getPolicyIdentity: () => policyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: () => true,
+        });
+        await expect(controller.run({ path: anchor.path, triggerReason: 'explicit', force: true }))
+            .resolves.toMatchObject({ status: resultStatus, reason, metrics: run.metrics });
+    });
+
+    it.each(['policy', 'boundary', 'epoch', 'exception'] as const)('retains incurred usage after post-run %s failure', async failure => {
+        const run = makeRun('`notes/anchor.md` 的表述可以更清楚。');
+        let modelReturned = false;
+        let epoch = 0;
+        const controller = new PageletDeepDiscoverController({
+            runtime: { run: async () => { modelReturned = true; return run; } },
+            captureSnapshot: async () => anchor,
+            captureSourceMaterial: async path => materials().get(path) ?? null,
+            getPolicyIdentity: () => {
+                if (modelReturned && failure === 'exception') throw new Error('policy read failed');
+                return modelReturned && failure === 'policy'
+                    ? { ...policyIdentity, providerPolicyIdentity: 'revoked' }
+                    : policyIdentity;
+            },
+            getEvidenceEpoch: () => failure === 'epoch' ? `evidence-${epoch++}` : 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: () => !(modelReturned && failure === 'boundary'),
+        });
+        await expect(controller.run({ path: anchor.path, triggerReason: 'explicit', force: true }))
+            .resolves.toMatchObject({ status: failure === 'exception' ? 'error' : 'stale', metrics: run.metrics });
     });
 
     it('atomically commits a second explicit-link finding expressed as Chinese root cause and defect', async () => {
@@ -1914,7 +1968,7 @@ describe('Pagelet agent cache and controller', () => {
         })).resolves.toMatchObject({ insights: [{ body: firstBody }, { body: secondBody }] });
     });
 
-    it('keeps an explicit numbered two-insight terminal blob out of cache and delivery', async () => {
+    it('preserves one complete multi-finding terminal text in cache and delivery', async () => {
         const bundledBody = [
             '## Insight 1: release validation conflict',
             '`notes/anchor.md` requires validation before release, while',
@@ -1951,23 +2005,23 @@ describe('Pagelet agent cache and controller', () => {
         });
 
         expect(result).toEqual(expect.objectContaining({
-            status: 'quiet',
-            reason: 'bundled-insights',
+            status: 'verified',
+            insights: [expect.objectContaining({ body: bundledBody })],
         }));
         expect(onResult).toHaveBeenCalledWith(
-            expect.objectContaining({ status: 'quiet', reason: 'bundled-insights' }),
+            expect.objectContaining({ status: 'verified' }),
             expect.objectContaining({ path: anchor.path }),
         );
         const deliveryCandidates = result.status === 'verified'
             ? result.insights.map((insight) => pageletAgentInsightToDeliveryCandidate(insight, 'zh'))
             : [];
-        expect(deliveryCandidates).toEqual([]);
+        expect(deliveryCandidates).toMatchObject([{ body: bundledBody }]);
         await expect(cache.getValidCollection({
             anchor,
             policyIdentity,
-            readSourceSnapshot: async () => null,
+            readSourceSnapshot: async path => snapshots().find(source => source.path === path) ?? null,
             isPathAllowed: () => true,
-        })).resolves.toBeNull();
+        })).resolves.toMatchObject({ insights: [{ body: bundledBody }] });
     });
 
     it('keeps explicit and background runs quiet when explanatory Markdown ends in NO_INSIGHT', async () => {
@@ -2902,13 +2956,7 @@ describe('Pagelet agent cache and controller', () => {
 
         const candidate = pageletAgentInsightToDeliveryCandidate(insight, 'en');
 
-        expect(candidate.pageletAgent.directAction).toEqual({
-            kind: 'link-related',
-            candidateId: insight.insightId,
-            anchorPath: 'notes/anchor.md',
-            sourcePath: 'notes/related.md',
-            label: 'Link “related” from “anchor”',
-        });
+        expect(candidate.pageletAgent.directAction).toBeUndefined();
         expect(candidate.pageletAgent.handoff).toMatchObject({
             version: 1,
             id: insight.insightId,
@@ -2922,7 +2970,7 @@ describe('Pagelet agent cache and controller', () => {
             webUrls: ['https://example.com/evidence'],
             triggerReason: 'explicit',
             preparedAt: 1_000,
-            pipelineVersion: 'pagelet-deep-discover-v2',
+            pipelineVersion: 'pagelet-deep-discover-v3',
         });
         expect(Object.keys(candidate.pageletAgent.handoff).sort()).toEqual([
             'anchor',
