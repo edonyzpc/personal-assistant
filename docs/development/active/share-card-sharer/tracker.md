@@ -18,22 +18,96 @@ Product spec: [PA Share Card Product Spec](../../../product/specs/pa-share-card-
   2026-10-16 用户又确认以附件原型优化左侧 PA logo，并明确要求将本轮代码修改
   提交到远程master；授权包含相关代码、测试、生成样式及配套文档的commit与push
   到origin/master。不修改原笔记，不含closeout、tag或release。
-- Baseline: `master`，`18b614d468d6d7079ee1071f29a8e1ce47d095ae`；本轮初始工作区 clean。
-- Current phase: 本轮cat分页及PNG故障修复已完成并部署test。精确whole-file生成330页、
-  正文24px，330页DOM完整性与overflow检查通过。capture仅隔离每run资源身份，最近
-  print/export两套33项及新部署的合成PNG、第157/330页内容定向重放均通过；不再
-  重跑整篇分页。原生署名交互缺口仍使整个署名track保持Implementing。
-- Next action: 交付本地修复与验证边界；不新增全仓、330页、设备检查或浏览器内部机理
-  调查。后续仅在新输入、具体失败或用户新请求下扩验。GLM额度接管的实际GPT身份
-  保留；本轮按用户新授权提交并推送origin/master，不扩大到tag、release或closeout。
+  该交付为历史授权；2026-10-16 当前控制页任务的授权为“按照上面的方案落到项目文档，
+  然后完成方案开发测试，注意不要过度测试、不要过度设计”。随后用户明确要求
+  “代码修改提交到master”，追加授权本轮代码、测试、生成样式与配套文档的本地master
+  commit，不包含push、发布或closeout。
+- Baseline: 当前控制页修订从 `master` 的 `fb46d3a041d32c5ffb90fe4c64419abdaeb78472`
+  开始，初始工作区 clean；先前分页修复的基线与证据继续保留在各历史章节。
+- Current phase: 控制页文档、实现、定向测试和 test 部署已完成；实际桌面及320/390px
+  移动模拟的截图/DOM已观察。原生交互仍缺证据，整体 track 保持 Implementing。
+- Next action: 交付本轮本地master实现及配套文档提交，保留原生交互缺口；复用已有验证，
+  不追加整篇330页、全仓测试或设备检查。后续仅在新输入、具体故障或新请求下扩验。
 - Blocker / decision needed: 无未定产品选择。当前桌面工具没有 native app 操作能力，原生键盘
   输入、点击 Copy/Save 等可见交互尚未覆盖；API/CLI、截图和 Jest 不替代该证据。
-- Last verified behavior: 227482字符note payload与原SHA一致，443个块完整准备，361425ms
+- Last verified behavior: 最终 test 产物桌面输入36px、共享两列；320px英文模拟输入44px /
+  16px、两按钮132px并排，4页显示 `Save 4 images`；390px中文深色单页显示“保存图片”。
+  根目录原值 `/` 与说明可见，初始suggestion为0；放大API及名字Ada有实际DOM观察。
+- Previous pagination evidence: 227482字符note payload与原SHA一致，443个块完整准备，361425ms
   后330页ready；资源23unique/25resolved/0failed/0placeholder。逐页正文91252个非空白
   字符、25张图片、15处sup及405个em-link字符与prepared prototypes一致，无overflow。
   脚注270个定义从第157页开始，图表位于19/20页，完整bounds通过。六张1080×1440
   PNG抽验暴露文字遗漏后，已用最终构建重放故障页及末页内容，确认编号和文字完整、
   Xerox保留；历史署名396 suites/9544项和此前focused结果仅按其输入范围保留。
+
+## 2026-10-16 · Control UI Refinement
+
+本轮沿用 B-124 的 Decision、Product Spec、Architecture 和本 Tracker，补充 B-124/REQ-14 /
+B-124/AC-14，不新建 Plan、SDD、工作项或设计系统。旧原生交互缺口不因本轮测试而自动关闭。
+
+| Basis | Requirement / choice |
+| --- | --- |
+| 用户已确认 | 署名标签后合并低强调“（可选，默认 EZ）”；移除独立帮助行；桌面两项配置对齐、窄屏标签在上；根目录旁显示解释；单张“保存图片”、多张“保存 N 张图片” |
+| 已核实当前实现 | Modal 已拥有临时名字、busy 冻结、实际 `pages.length`、原生 `AbstractInputSuggest` 及按可用宽高的 preview fit/zoom；这些能力直接复用 |
+| 兼容实现选择 | 使用原生 label、Obsidian 文件夹图标、宿主变量和 scoped CSS；`/` 保留原始输入，仅在根目录状态添加说明和可访问关联；不增加状态抽象 |
+| 保护边界 | 不改 renderer/paginator/exporter、卡片及 PNG 尺寸、字体/品牌资产、原笔记、持久设置或资源权限；独立预览的模拟数据、固定高度和调试控件不进入生产 |
+| 未定产品选择 | 无；后续追加本地master commit授权，仍不含push、release或closeout |
+
+GPT-6 负责文档和独立验收。现有 `pa-glm` / ZAI 的 auth-only 预检实际返回周／月额度
+用尽（提示重置 `2026-10-17 10:14:30`），进程自然 exit 1；未向 GLM 派发源码写任务。
+依工作流额度规则，由 GPT 接管：一个 GPT writer 只修改 Modal、CSS、中英 locale 和
+对应两份 tests，主控只写文档并执行统一门禁，双方文件所有权互不重叠。没有把 GPT
+称为 GLM，也未修改 provider 配置；仅调用参数把既有模型 catalog 的旧主机路径映射
+到本机已安装文件。原始预检记录位于 `/tmp/pa-share-card-controls-20261016/`。
+
+| Requirement / risk | Minimum evidence and pass condition | Status / rerun trigger |
+| --- | --- | --- |
+| REQ-14 / AC-14 文案、root 和数量 | Modal/locale focused：单张/实际多张数量，原始 `/` 与条件说明/ARIA，署名标签、输入和无独立帮助行 | PASS（自动化及独立diff核对）；事件、状态或 locale 变化才重验 |
+| REQ-06 / REQ-11 既有交互 | 复用同次 focused 中名字 trim/恢复、busy、重开和用户触发目录建议覆盖；Copy 当前页、Save 全批不变 | PASS（自动化）；原生Copy/Save仍BLOCKED，未变化的renderer/media不另跑全链路 |
+| REQ-03 / REQ-14 布局和可达性 | 当前 build 部署后观察桌面/窄屏中英布局、fit/zoom 与字段/操作；原生交互、DOM 和模拟证据分开记录 | PASS（截图/DOM/API）；原生输入/点击BLOCKED，不创建真实iPhone门禁 |
+| 社区、构建和契约 | lint、production build（含类型检查及 Tailwind）、docs:check、源码注入扫描和 diff check | PASS；末次仅CSS选择器修正复用未变TS/tests的证据，更新Tailwind及bundle后重新校验部署身份 |
+
+### Implementation And Validation Results
+
+- `ShareCardModal` 使用共享字段容器、真实 label、宿主 folder 图标和按实际页数的保存
+  文案；目录根提示仅随 `/` 状态出现，不新增输入状态、持久字段或导出路径。
+- 主控独立核对diff发现窄屏 `flex-wrap` 不能保证并排，已修为两列Grid与按钮内部换行；
+  部署观察又定位宿主 `input[type=text]` 覆盖高度及padding、导致 `/` 与图标重叠，
+  已用Share Card字段局部选择器修正。最终截图及DOM确认36px/44px高度和图标留白。
+- 两份focused suites共52项PASS，自然exit0，原始输出`focused-tests-r2.log`；覆盖
+  署名trim/恢复、busy、重开、suggest时机、目录说明及保存文案。末次仅CSS输入选择器
+  权重修正，未改TS、tests或其断言涉及的CSS契约；不重复跑相同测试与类型检查。
+- `npm run lint`、`npm run build`均自然exit0（`lint-final.log`、`build-final.log`）。
+  最后的CSS专属修正完成`tailwind:build`及production bundle，自然exit0，随后
+  `make deploy-current`再次PASS（`deploy-final.log`），验证当前build身份并复制到
+  `/mnt/code/personal-assistant/test/.obsidian/plugins/personal-assistant/`。未跑full Jest。
+- 文档检查首次指出Tracker缺少完整REQ/AC编号，修正追踪编号后PASS；未弱化检查器。
+  最终社区源码扫描无匹配、rg exit1为PASS；`git diff --check` exit0。历史full测试
+  仅按原输入保留，不作为本轮full测试结论。
+
+实际运行目标为Obsidian1.14.4、PA2.10.10 enabled、精确`test/`。首次CLI未响应，
+显式打开`obsidian://open?vault=test`后路径查询恢复；最终产物部署并reload后才观察：
+
+| Target | Actual observation | Evidence type |
+| --- | --- | --- |
+| Desktop EN，1330×861，light，1页 | 两字段同起点x544、高36px；label列172px；`/`及Vault root不重叠；Save image；完整缩略图与操作同屏 | `app-desktop-final.log`、`desktop-en-single.png`，实际应用DOM/截图 |
+| 官方mobile模拟，EN，320×700，4页 | 输入44px/16px；两按钮各132px并排，Copy文字内部换行；Save 4 images与真实4页相同；无字段/按钮横向溢出，紧凑高度沿用既有可滚动预览 | `app-mobile-en-320.log`、`mobile-en-320.png`，模拟/DOM/截图 |
+| 官方mobile模拟，ZH，390×844，dark，1页 | 标签“署名（可选，默认EZ）”、根说明、保存图片可见；输入44px/16px；两按钮各167px/44px，同屏可达；完整缩略图可见 | `app-mobile-zh-390.log`、`mobile-zh-390.png`，模拟/DOM/截图；locale/theme为临时运行状态 |
+| 名字与zoom | API输入Ada后，实际放大层可见并显示Ada；label.control关联名字输入 | `app-name-zoom-observe.log`，controller API/DOM，不是原生输入或点击 |
+| 清理 | debug=false、mobile=false、locale=en、light、窗口1330×861与原activeLeaf均恢复；modal=0，probe已删除；错误缓冲No errors captured | `app-cleanup.log`、`app-errors-final.log`；未启用debug，不声称完整console覆盖 |
+
+日志根目录`/tmp/pa-share-card-controls-20261016/`；截图位于本聊天visualizations下
+`share-card-controls-implementation/`。只使用合成内容，未改笔记或创建导出PNG，
+未调用AI provider。GLM auth-only预检是前述单独记录的provider探测，不包含笔记内容。
+
+当前工具没有native app操作入口，因此真实键盘输入、目录建议点击、Copy/Save点击与
+busy可见交互仍BLOCKED。[Smoke skill](../../../../.agents/skills/obsidian-test-vault-smoke/SKILL.md)
+要求“Require visible-window interaction for UI/UX PASS”，本轮不把API/截图或Jest改写为
+该证据。最终diff无新增阻断缺陷；按后续授权进行本地master提交，不推送、不发布或closeout。
+
+本轮代码、两份tests、中英locale、CSS源及生成样式已于2026-10-16提交到本地master：
+`899c48c5`（`fix(share-card): refine controls and image count labels`），共7个精确路径。
+配套Decision、Product Spec、Architecture和本Tracker独立提交；不包含原型或临时证据文件。
 
 ## Scope And Design
 
@@ -62,7 +136,7 @@ GPT-6 负责产品/设计/权威文档、派工和独立验收；GLM 通过现�
 | T-01 | B-124/REQ-11 / B-124/AC-11 | 默认/自定义/清空和纯文字名字；当前 Modal 生命周期 | [~] In progress | focused/full PASS，独立源码核对与部署后 controller/PNG PASS；原生键盘输入未覆盖 |
 | T-02 | B-124/REQ-03 / B-124/REQ-04 / B-124/AC-04 / B-124/AC-05 / B-124/AC-11 | 单/多页、light/dark、来源与页码、正文几何、预览/PNG | [x] Done | 当前部署真实 DOM/截图与六份实际 PNG；无 body overflow，页脚无相交，字号维持单页32px/多页24px；仅代表观察与 capture API |
 | T-03 | B-124/REQ-06 / B-124/REQ-08 / B-124/AC-07 / B-124/AC-08 / B-124/AC-09 / B-124/AC-11 | Copy/Save 全批一致，busy 不可修改，关闭重开默认 | [~] In progress | focused/full 的 Copy/Save、busy 与重开 PASS；实际 capture API PASS，但绕过 Modal Copy/Save，原生操作未覆盖 |
-| T-04 | B-124/REQ-09 / B-124/REQ-10 / B-124/AC-10 / B-124/AC-11 | 无新增网络/设置/HTML注入，窄窗口与移动模拟可达 | [~] In progress | source scan/build/full PASS；实际 HTML 字符名字按文字显示；官方 mobile simulator 布局可见，但视口1512×890，未覆盖手机窄屏/原生触控 |
+| T-04 | B-124/REQ-09 / B-124/REQ-10 / B-124/AC-10 / B-124/AC-11 | 无新增网络/设置/HTML注入，窄窗口与移动模拟可达 | [~] In progress | 历史full与HTML字符观察按原输入保留；本轮source scan/build/focused PASS，320/390px官方mobile模拟DOM/截图已补，原生输入/触控仍未覆盖 |
 | I-01 | B-124/REQ-01 / B-124/REQ-02 / B-124/AC-01 / B-124/AC-02 / B-124/AC-03 | 继承现有入口 eligibility 与来源投影，不重做入口 | [-] Deferred/Cancelled | 本修订不改变；若实际 diff 涉及则补受影响检查 |
 | I-02 | B-124/REQ-05 / B-124/REQ-07 / B-124/AC-06 | 继承显式资源、无覆盖保存与失败语义 | [-] Deferred/Cancelled | 本修订不改变；使用现有有效回归，输入改变才扩验 |
 | T-05 | B-124/REQ-12 / B-124/AC-12 | 全批脚注编号、末尾一次性正文投影与完整分页 | [x] Done（本次修复范围） | 正文统一编号，270个定义从157页起一次性分页；330页DOM完整性及新capture第157/330页内容PNG通过；原生Copy/Save缺口仍归T-03 |

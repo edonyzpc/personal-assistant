@@ -279,6 +279,14 @@ batch name、确定性 page suffix 和整批 collision avoidance 防止覆盖。
 
 ## Per-Modal Save Destination
 
+控制字段由 `ShareCardModal` 创建并管理，`src/custom.pcss` 负责共享两列、窄屏堆叠
+和宿主主题样式；不增加表单状态层。署名标签合并低强调的可选/默认 EZ 后缀，
+保留真实 `label`/input 关联。目录输入壳使用现有 Obsidian 图标能力；原始 `/` 仍可
+编辑，根目录说明仅为旁边的非编辑文本，其 `aria-describedby` 只在根目录值时存在。
+保存按钮从当前 `pages.length` 派生单张/多张数量文案，Copy 的当前页责任不变。
+现有 `updatePreviewScale` 继续按可用宽高缩放，点击放大复用既有 zoom Modal；
+控制区调整不改变 renderer、分页、资源准备或独立固定尺寸 capture。
+
 目录选择只存在于当前 Modal：
 
 - 打开时读取 Vault `attachmentFolderPath`；非空、非 dot-prefixed 的值作为默认目录，否则

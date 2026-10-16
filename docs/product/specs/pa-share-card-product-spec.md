@@ -1,10 +1,15 @@
 # PA Share Card Product Spec
 
 Document status: Approved
-Updated: 2026-10-15
+Updated: 2026-10-16
 Work item: B-124
 Decision: [DEC-026 — Share Card 采用本地、显式导出的完整渲染卡片](../decisions/dec-026-local-share-card.md)
 Authority: Share Card 的入口、可分享内容、视觉、分页、导出、失败、数据与兼容性边界。
+
+> [!note] Owner amendment 2026-10-16 — Control UI
+> 用户确认署名说明合并至标签、两项配置对齐、根目录说明及单张/多张保存文案，
+> 并授权按方案更新文档、实现和必要测试。详见 B-124/REQ-14、B-124/AC-14；
+> 实现状态和验证范围仅见现有 Tracker，不以独立预览代替部署后的验证。
 
 > [!note] Owner amendment 2026-10-15 — Independent diagrams
 > 用户明确批准独立完整图表整体等比缩小入页，已知本次 941px → 585px 约为 62%，
@@ -139,7 +144,8 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   明确占位或使 capture 可重试失败，不得静默删除并声称完整保真；不使用未批准的 proxy。
 - B-124/REQ-06: `Copy current page` 只写 OS clipboard；API 不可用、permission/gesture
   失败或 capture 失败时显示本地化错误，并保持 Modal 可重试，不自动保存。`Save image`
-  单页保存当前页；`Save all pages` 按页捕获并按顺序写入用户在本次 Modal 选择的目录，
+  单页保存当前页；多页显示 `Save N images`（中文“保存 N 张图片”），N 为实际生成
+  页数，按页捕获并按顺序写入用户在本次 Modal 选择的目录，
   最终只汇总一次。Modal 默认使用有效的 Vault attachment folder；配置不可用、为空或
   使用以 `.` 开头的相对路径时回退 `PA-Cards`。用户可选择已有目录、输入新目录或选择
   Vault 根目录；该选择不持久化为插件设置。目录建议仅在用户主动点击或键盘操作
@@ -202,6 +208,18 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   bounds 位于正文可用区域；不能泛化为任意 HTML 缩放，不改变内容投影、资源权限
   或固定导出尺寸。
 
+- B-124/REQ-14: 控制页的署名标签为 `署名` / `Name on card`，同一标签内以低强调
+  后缀显示 `（可选，默认 EZ）` / `(optional, default: EZ)`；placeholder 为“你的名字” /
+  `Your name`，不保留独立帮助行。标签与输入保持真实关联。桌面署名、保存目录共享
+  标签和输入列，标签自然宽度上限约 172px，长英文可换行；输入约 36px 高。
+  窄屏标签在输入上方，输入至少 44px 高、16px 字体，两项操作并排且长文字可换行。
+  目录输入保留原生编辑与既有建议：前置低强调文件夹图标，值为 `/` 时在同一字段
+  显示不可编辑的“仓库根目录” / `Vault root`，仅此时关联根目录可访问说明。
+  两项配置间距约 20px，目录到操作约 8px；使用宿主主题变量、圆角和主按钮样式。
+  单页显示“保存图片” / `Save image`，多页按 REQ-06 显示实际数量，复制仍仅当前页。
+  保留 REQ-03 的可用宽高缩放和点击放大，不从预览原型引入固定高度、模拟卡片或
+  调试控件；不改变 REQ-11 的临时署名、清空恢复和导出期间冻结语义。
+
 ### Non-goals
 
 - NG-01: 不做通用笔记/页面截图、整段 Chat transcript、Bubble/Pet 或 Obsidian UI 捕获。
@@ -237,7 +255,7 @@ flowchart TD
 | --- | --- | --- |
 | Preparing | 显示本地化准备状态；名字可编辑，export disabled | Edit name / Close |
 | Ready, single page | 预览 + 分享者名字 + Copy current page + Save image | Edit name / Copy / Save / Close |
-| Ready, multiple pages | 预览 + 分享者名字 + page nav + Copy current page + Save all pages | Edit name / Navigate / Copy / Save all / Close |
+| Ready, multiple pages | 预览 + 分享者名字 + page nav + Copy current page + Save N images | Edit name / Navigate / Copy / Save all / Close |
 | Exporting | 当前动作 busy，名字输入及其余 export/navigation disabled | Close；异步结果不得回写已关闭 UI |
 | Clipboard unavailable/failed | 保留预览并给出可恢复提示 | 用户可显式 Save 或 retry |
 | Capture/save failed | 保留预览；报告完整或 partial failure | Retry / Close |
@@ -336,6 +354,15 @@ flowchart TD
   preview、fit、PNG 的适配一致，正文和脚注保持原批次字号。focused 测试与部署后的
   独立图表/真实整篇运行及 PNG 分别记录；旧 selection 两页结果不得作为整篇成功。
 
+- B-124/AC-14: 中英标签、低强调可选/默认说明和 placeholder 正确，标签能聚焦输入，
+  不出现独立帮助行；桌面两行输入对齐，窄屏和较长文字下字段、复制/保存操作可达，
+  输入触控尺寸满足 REQ-14。`/` 保持可编辑原值并显示根目录说明，改成其他目录后
+  隐藏说明并移除相应可访问关联；初始焦点不展开建议，用户操作及选择行为保持。
+  一页显示“保存图片”，多页数量等于实际页数；不改变 Copy 当前页、Save 全批及
+  busy 冻结。沿用既有预览 fit/zoom 和署名导出回归，针对 Modal、locale 的 focused
+  测试与部署后桌面/移动模拟的布局和交互分别记录；无内容或导出算法变化时不重跑
+  整篇长文分页或全部媒体导出。独立原型、DOM/API 和原生交互证据须明确区分。
+
 ## Open Decisions
 
 内容/媒体方案 C 与 capture runtime 方案 A 均已于 2026-08-05 确认；Action Ring、来源、
@@ -345,7 +372,7 @@ per-Modal 保存目录和 Ring compact fallback 为最终规则。模板自定�
 分享和外部发布仍不在 v1。2026-10-15 已确认默认 EZ、自定义名字替换和清空恢复，
 名字仅当前 Modal 的实现沿用无新增持久设置边界；同日用户已确认脚注集中于整组
 末尾并完整分页，并明确批准独立完整图表等比缩小入页。上述产品选择已解决，
-当前无产品阻断决定；实现与验收状态仍见 Tracker。
+2026-10-16 控制页方案已确认，当前无产品阻断决定；实现与验收状态仍见 Tracker。
 
 ## Current Implementation
 
