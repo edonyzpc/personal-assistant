@@ -5,6 +5,8 @@ jest.mock("../src/share-card/share-card-paper", () => ({
     ensurePaperReady: jest.fn().mockResolvedValue(undefined),
 }));
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { Component, MarkdownRenderer, type App } from "obsidian";
 import { ensurePaperReady, getPaperDataUri } from "../src/share-card/share-card-paper";
 import {
@@ -385,6 +387,20 @@ describe("ShareCardRenderer", () => {
         renderMock.mockImplementation(async (_app, markdown, element) => {
             element.textContent = markdown;
         });
+    });
+
+    it("keeps code blocks at natural height for parent pagination measurement", () => {
+        const css = readFileSync(resolve(process.cwd(), "src/custom.pcss"), "utf8");
+        const codeBlockRules = Array.from(
+            css.matchAll(/\.pa-share-card-body pre\s*\{([^}]*)\}/gu),
+            (match) => match[1],
+        ).join("\n");
+
+        // A shrinking pre with overflow:hidden can lose lines while its parent
+        // still reports scrollHeight === clientHeight. Keep the clipping boundary,
+        // but let the existing body-height fit probe see the full code block.
+        expect(codeBlockRules).toMatch(/flex-shrink:\s*0\s*;/u);
+        expect(codeBlockRules).toMatch(/overflow:\s*hidden\s*;/u);
     });
 
     it.each(["light", "dark"] as const)("uses the full %s paper background without a noise overlay", async (theme) => {

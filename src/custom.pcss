@@ -9096,6 +9096,8 @@ body.is-mobile .pa-quick-capture-modal__input {
 
 .pa-share-card-body pre {
 	box-sizing: border-box;
+	/* Preserve every code line and expose excess height to the pagination probe. */
+	flex-shrink: 0;
 	max-width: 100%;
 	padding: 12px 14px;
 	overflow: hidden;
@@ -9398,11 +9400,13 @@ body.is-mobile .pa-quick-capture-modal__input {
 	align-items: start;
 }
 
+.pa-share-card-appearance-row,
 .pa-share-card-sharer-row,
 .pa-share-card-folder-row {
 	display: contents;
 }
 
+.pa-share-card-appearance-label,
 .pa-share-card-sharer-label,
 .pa-share-card-folder-label {
 	padding-top: 8px;
@@ -9413,6 +9417,14 @@ body.is-mobile .pa-quick-capture-modal__input {
 
 .pa-share-card-sharer-optional {
 	font-size: var(--font-ui-smaller);
+}
+
+.pa-share-card-fields .pa-share-card-appearance-select {
+	box-sizing: border-box;
+	width: 100%;
+	min-width: 0;
+	height: 36px;
+	font-size: var(--font-ui-small);
 }
 
 .pa-share-card-fields .pa-share-card-sharer-input,
@@ -9429,6 +9441,7 @@ body.is-mobile .pa-quick-capture-modal__input {
 	font-size: var(--font-ui-small);
 }
 
+.pa-share-card-fields .pa-share-card-appearance-select:focus,
 .pa-share-card-fields .pa-share-card-sharer-input:focus,
 .pa-share-card-fields .pa-share-card-folder-input:focus {
 	border-color: var(--interactive-accent);
@@ -9524,6 +9537,7 @@ body.is-mobile .pa-quick-capture-modal__input {
 
 .pa-share-card-nav button:focus-visible,
 .pa-share-card-actions button:focus-visible,
+.pa-share-card-fields .pa-share-card-appearance-select:focus-visible,
 .pa-share-card-fields .pa-share-card-sharer-input:focus-visible,
 .pa-share-card-fields .pa-share-card-folder-input:focus-visible,
 .pa-share-card-zoom-close:focus-visible {
@@ -9633,6 +9647,7 @@ body.is-mobile .pa-share-card-actions button {
 	padding: 10px 14px;
 }
 
+body.is-mobile .pa-share-card-fields .pa-share-card-appearance-select,
 body.is-mobile .pa-share-card-fields .pa-share-card-sharer-input,
 body.is-mobile .pa-share-card-fields .pa-share-card-folder-input {
 	height: 44px;
@@ -9670,17 +9685,20 @@ body.is-mobile .pa-share-card-fields .pa-share-card-folder-input {
 		row-gap: 6px;
 	}
 
+	.pa-share-card-appearance-label,
 	.pa-share-card-sharer-label,
 	.pa-share-card-folder-label {
 		padding-top: 0;
 	}
 
+	.pa-share-card-fields .pa-share-card-appearance-select,
 	.pa-share-card-fields .pa-share-card-sharer-input,
 	.pa-share-card-fields .pa-share-card-folder-input {
 		height: 44px;
 		font-size: 16px;
 	}
 
+	.pa-share-card-fields .pa-share-card-appearance-select,
 	.pa-share-card-fields .pa-share-card-sharer-input {
 		margin-bottom: 14px;
 	}

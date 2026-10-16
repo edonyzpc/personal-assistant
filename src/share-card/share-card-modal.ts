@@ -43,6 +43,7 @@ import {
 let shareCardModalId = 0;
 const openShareCardModals = new Set<ShareCardModal>();
 const MIN_PREVIEW_SCALE = 0.45;
+type ShareCardAppearanceChoice = "auto" | ShareCardTheme;
 
 function t(key: string, params?: Readonly<Record<string, string | number>>): string {
     return pluginT(key, getPluginUiLanguage(), params);
@@ -105,6 +106,7 @@ export class ShareCardModal extends Modal {
     private pageIndicatorEl: HTMLElement | null = null;
     private copyButton: HTMLButtonElement | null = null;
     private saveButton: HTMLButtonElement | null = null;
+    private appearanceSelectEl: HTMLSelectElement | null = null;
     private sharerNameInputEl: HTMLInputElement | null = null;
     private folderInputEl: HTMLInputElement | null = null;
     private folderSuggest: FolderSuggestController | null = null;
@@ -282,15 +284,17 @@ export class ShareCardModal extends Modal {
         });
         if (!this.isCurrent(token)) return;
         this.completenessReport = localized.report;
-        this.fontRegistrationHeld = true;
-        try {
-            await registerShareCardFontFace(this.contentEl.ownerDocument);
-        } catch (error) {
-            if (this.fontRegistrationHeld) {
-                unregisterShareCardFontFace(this.contentEl.ownerDocument);
-                this.fontRegistrationHeld = false;
+        if (!this.fontRegistrationHeld) {
+            this.fontRegistrationHeld = true;
+            try {
+                await registerShareCardFontFace(this.contentEl.ownerDocument);
+            } catch (error) {
+                if (this.fontRegistrationHeld) {
+                    unregisterShareCardFontFace(this.contentEl.ownerDocument);
+                    this.fontRegistrationHeld = false;
+                }
+                throw error;
             }
-            throw error;
         }
         if (!this.isCurrent(token)) return;
         const prepared = (this.dependencies.prepareMarkdown ?? prepareShareCardMarkdown)(
@@ -382,10 +386,11 @@ export class ShareCardModal extends Modal {
         }
         this.refreshPreparedCompleteness(renderer);
         this.pages = pages;
+        this.currentPageIndex = Math.max(0, Math.min(this.currentPageIndex, pages.length - 1));
         this.appearance = finalRenderOptions;
         this.exporter = this.createExporterForAppearance(finalRenderOptions);
-        this.contentEl.setAttribute("aria-busy", "false");
-        await this.renderPreview();
+        if (!this.busy) this.contentEl.setAttribute("aria-busy", "false");
+        await this.renderPreview(token);
     }
 
     private createNavigation(ownerDocument: Document, controlsEl: HTMLElement): void {
@@ -449,6 +454,35 @@ export class ShareCardModal extends Modal {
         const fieldsEl = ownerDocument.win.createDiv();
         fieldsEl.classList.add("pa-share-card-fields");
         controlsEl.appendChild(fieldsEl);
+
+        const appearanceRow = ownerDocument.win.createDiv();
+        appearanceRow.classList.add("pa-share-card-appearance-row");
+        const appearanceLabel = ownerDocument.win.createEl("label");
+        appearanceLabel.classList.add("pa-share-card-appearance-label");
+        appearanceLabel.textContent = t("plugin.shareCard.appearance");
+        const appearanceSelect = ownerDocument.win.createEl("select");
+        appearanceSelect.id = `${titleId}-appearance`;
+        appearanceSelect.classList.add("dropdown", "pa-share-card-appearance-select");
+        appearanceLabel.setAttribute("for", appearanceSelect.id);
+        for (const [value, key] of [
+            ["auto", "plugin.shareCard.appearanceAuto"],
+            ["light", "plugin.shareCard.appearanceLight"],
+            ["dark", "plugin.shareCard.appearanceDark"],
+        ]) {
+            const option = ownerDocument.win.createEl("option");
+            option.value = value;
+            option.textContent = t(key);
+            appearanceSelect.appendChild(option);
+        }
+        appearanceSelect.value = "auto";
+        appearanceSelect.disabled = true;
+        appearanceSelect.addEventListener("change", () => {
+            void this.changeAppearance(appearanceSelect.value as ShareCardAppearanceChoice);
+        });
+        appearanceRow.appendChild(appearanceLabel);
+        appearanceRow.appendChild(appearanceSelect);
+        fieldsEl.appendChild(appearanceRow);
+        this.appearanceSelectEl = appearanceSelect;
 
         const sharerRow = ownerDocument.win.createDiv();
         sharerRow.classList.add("pa-share-card-sharer-row");
@@ -598,6 +632,40 @@ export class ShareCardModal extends Modal {
         this.contentEl.setAttribute("inert", "");
     }
 
+    private async changeAppearance(choice: ShareCardAppearanceChoice): Promise<void> {
+        if (!this.openState || this.busy || this.appearanceSelectEl?.disabled) return;
+        const theme = choice === "auto"
+            ? detectShareCardTheme(this.contentEl.ownerDocument)
+            : choice;
+        if (theme === this.theme && this.previewRender) return;
+
+        const token = this.beginBusy(null, t("plugin.shareCard.preparing"));
+        this.closeZoom(false);
+        this.previewRender?.cleanup();
+        this.previewRender = null;
+        if (this.viewportEl) this.viewportEl.hidden = true;
+        this.pages = [];
+        this.appearance = null;
+        this.exporter = null;
+        this.completenessReport = null;
+        this.preparedCompleteness = {
+            sanitizationIssueCount: 0,
+            usedPlainTextFallback: false,
+        };
+        this.pageCompleteness.clear();
+        this.theme = theme;
+        this.updateControls();
+        try {
+            await this.prepare(token);
+        } catch (error) {
+            if (error instanceof ShareCardResourceAbortedError || !this.isCurrent(token)) return;
+            console.error("Share Card appearance preparation failed.", error);
+            this.setStatus(shareCardPreparationFailureMessage(error), "error");
+        } finally {
+            if (this.isCurrent(token)) this.endBusy();
+        }
+    }
+
     private closeZoom(restoreFocus = true): void {
         if (!this.zoomOpen) return;
         this.zoomOpen = false;
@@ -647,7 +715,7 @@ export class ShareCardModal extends Modal {
             }
             if (this.isCurrent(token)) {
                 this.setStatus(shareCardPreparationFailureMessage(error), "error");
-                this.updateControls(previousRender === null);
+                this.updateControls();
             }
             return false;
         }
@@ -771,7 +839,8 @@ export class ShareCardModal extends Modal {
     }
 
     private updateControls(rendering = false): void {
-        const unavailable = rendering || this.pages.length === 0;
+        const unavailable = rendering || this.pages.length === 0 || this.previewRender === null;
+        if (this.appearanceSelectEl) this.appearanceSelectEl.disabled = this.busy || rendering;
         if (this.copyButton) this.copyButton.disabled = unavailable || this.busy;
         if (this.saveButton) {
             this.saveButton.disabled = unavailable || this.busy;
@@ -891,6 +960,7 @@ export class ShareCardModal extends Modal {
         this.pageIndicatorEl = null;
         this.copyButton = null;
         this.saveButton = null;
+        this.appearanceSelectEl = null;
         this.sharerNameInputEl = null;
         this.folderInputEl = null;
     }

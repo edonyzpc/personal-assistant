@@ -151,6 +151,15 @@ describe("ShareCardModal", () => {
             .toBe(title.id);
         expect(folderLabel.tagName).toBe("label");
         expect(folderLabel.getAttribute("for")).toBe(folderInput.id);
+        const appearanceLabel = document.body.querySelector(".pa-share-card-appearance-label")!;
+        const appearanceSelect = document.body.querySelector(".pa-share-card-appearance-select")!;
+        expect(appearanceLabel.textContent).toBe("Appearance");
+        expect(appearanceLabel.getAttribute("for")).toBe(appearanceSelect.id);
+        expect(appearanceSelect.value).toBe("auto");
+        expect(appearanceSelect.children.map((option) => [option.value, option.textContent]))
+            .toEqual([["auto", "Use Obsidian theme"], ["light", "Light"], ["dark", "Dark"]]);
+        expect(appearanceSelect.disabled).toBe(true);
+        emitAppearanceChange(appearanceSelect, "auto");
         expect(viewport.hidden).toBe(true);
         expect(actions.children.every((child) => child.disabled)).toBe(true);
         expect(document.listenerCount("resize")).toBe(1);
@@ -173,6 +182,8 @@ describe("ShareCardModal", () => {
         expect(nav.children[2]!.disabled).toBe(false);
         expect(nav.children[1]!.textContent).toContain("1");
         expect(actions.children[1]!.textContent).toBe("Save 2 images");
+        expect(appearanceSelect.disabled).toBe(false);
+        expect(paginate).toHaveBeenCalledTimes(1);
         expect(renderer.renderPage).toHaveBeenLastCalledWith(
             expect.objectContaining({ pageIndex: 0 }),
             expect.objectContaining({ theme: "dark", host: asElement(scale) }),
@@ -331,7 +342,7 @@ describe("ShareCardModal", () => {
         const sharerInput = document.body.querySelector(".pa-share-card-sharer-input")!;
         expect(sharerLabel.tagName).toBe("label");
         expect(sharerLabel.getAttribute("for")).toBe(sharerInput.id);
-        expect(sharerLabel.textContent).toBe("Name on card (optional, default: EZ)");
+        expect(sharerLabel.textContent).toBe("Author (optional, default: EZ)");
         expect(sharerInput.getAttribute("placeholder")).toBe("Your name");
         emitShareCardInput(sharerInput, "  Ada  ");
         await flushShareCardTasks();
@@ -368,11 +379,13 @@ describe("ShareCardModal", () => {
         );
         document.body.querySelector(".pa-share-card-actions")!.children[0]!.click();
         expect(sharerInput.disabled).toBe(true);
+        expect(document.body.querySelector(".pa-share-card-appearance-select")!.disabled).toBe(true);
         emitShareCardInput(sharerInput, "Blocked");
         expect(appearance?.sharerName).toBe("Grace");
         finishCopy();
         await flushShareCardTasks();
         expect(sharerInput.disabled).toBe(false);
+        expect(document.body.querySelector(".pa-share-card-appearance-select")!.disabled).toBe(false);
 
         modal.onClose();
         modal.onOpen();
@@ -386,6 +399,170 @@ describe("ShareCardModal", () => {
             expect.objectContaining({ sharerName: undefined }),
         );
         modal.onClose();
+    });
+
+    it("reprepares explicit and automatic appearances while preserving the current share", async () => {
+        const {
+            document, renderer, createExporterForAppearance, paginate, modal,
+        } = createSharerModalFixture(3);
+        const prepareBlocks = jest.fn(async () => undefined);
+        Object.assign(renderer, {
+            prepareBlocks,
+            createPreparedFitPredicate: jest.fn(() => jest.fn(async () => true)),
+        });
+        paginate.mockResolvedValueOnce(createPages(3)).mockResolvedValueOnce(createPages(2));
+        modal.onOpen();
+        await flushShareCardTasks();
+        const select = document.body.querySelector(".pa-share-card-appearance-select")!;
+        const name = document.body.querySelector(".pa-share-card-sharer-input")!;
+        const folder = document.body.querySelector(".pa-share-card-folder-input")!;
+        emitShareCardInput(name, "  Ada  ");
+        folder.value = "Cards/Shared";
+        const nav = document.body.querySelector(".pa-share-card-nav")!;
+        nav.children[2]!.click();
+        await flushShareCardTasks();
+        nav.children[2]!.click();
+        await flushShareCardTasks();
+
+        emitAppearanceChange(select, "dark");
+        await flushShareCardTasks();
+        expect(renderer.renderPage).toHaveBeenLastCalledWith(
+            expect.objectContaining({ pageIndex: 1, totalPages: 2 }),
+            expect.objectContaining({ theme: "dark", sharerName: "Ada" }),
+        );
+        expect(createExporterForAppearance).toHaveBeenLastCalledWith(
+            expect.anything(), expect.anything(), renderer,
+            expect.objectContaining({ theme: "dark", sharerName: "Ada" }),
+        );
+        expect(name.value).toBe("  Ada  ");
+        expect(folder.value).toBe("Cards/Shared");
+        expect(select.disabled).toBe(false);
+
+        document.documentElement.classList.add("theme-dark");
+        emitAppearanceChange(select, "light");
+        await flushShareCardTasks();
+        expect(renderer.renderPage).toHaveBeenLastCalledWith(
+            expect.objectContaining({ pageIndex: 1 }),
+            expect.objectContaining({ theme: "light" }),
+        );
+        emitAppearanceChange(select, "auto");
+        await flushShareCardTasks();
+        expect(prepareBlocks).toHaveBeenCalledTimes(4);
+        expect(createExporterForAppearance).toHaveBeenLastCalledWith(
+            expect.anything(), expect.anything(), renderer,
+            expect.objectContaining({ theme: "dark", sharerName: "Ada" }),
+        );
+        expect(renderer.renderPage).toHaveBeenLastCalledWith(
+            expect.objectContaining({ pageIndex: 1 }),
+            expect.objectContaining({ theme: "dark", sharerName: "Ada" }),
+        );
+        expect(registerFont).toHaveBeenCalledTimes(1);
+        expect(renderer.cleanup).not.toHaveBeenCalled();
+
+        modal.onClose();
+        expect(unregisterFont).toHaveBeenCalledTimes(1);
+        modal.onOpen();
+        await flushShareCardTasks();
+        expect(document.body.querySelector(".pa-share-card-appearance-select")!.value).toBe("auto");
+        expect(renderer.renderPage).toHaveBeenLastCalledWith(
+            expect.anything(), expect.objectContaining({ theme: "dark", sharerName: undefined }),
+        );
+        modal.onClose();
+        expect(registerFont).toHaveBeenCalledTimes(2);
+        expect(unregisterFont).toHaveBeenCalledTimes(2);
+    });
+
+    it("freezes appearance changes through preparation and page navigation", async () => {
+        const { document, renderer, localizeResources, paginate, modal } = createSharerModalFixture(2);
+        modal.onOpen();
+        await flushShareCardTasks();
+        let finishPrepare!: (pages: CardPage[]) => void;
+        paginate.mockImplementationOnce(() => new Promise<CardPage[]>((resolve) => {
+            finishPrepare = resolve;
+        }));
+        const select = document.body.querySelector(".pa-share-card-appearance-select")!;
+        emitAppearanceChange(select, "dark");
+        await flushShareCardTasks();
+        expect(select.disabled).toBe(true);
+        emitAppearanceChange(select, "dark");
+        await flushShareCardTasks();
+        expect(localizeResources).toHaveBeenCalledTimes(2);
+        expect(paginate).toHaveBeenCalledTimes(2);
+        expect(document.body.querySelector(".pa-share-card-actions")!.children
+            .every((button) => button.disabled)).toBe(true);
+        finishPrepare(createPages(2));
+        await flushShareCardTasks();
+        expect(select.disabled).toBe(false);
+
+        const renderNext = renderer.renderPage.getMockImplementation()!;
+        let finishPage!: () => void;
+        renderer.renderPage.mockImplementationOnce((...args) => new Promise((resolve) => {
+            finishPage = () => resolve(renderNext(...args));
+        }));
+        document.body.querySelector(".pa-share-card-nav")!.children[2]!.click();
+        expect(select.disabled).toBe(true);
+        finishPage();
+        await flushShareCardTasks();
+        expect(select.disabled).toBe(false);
+        modal.onClose();
+    });
+
+    it.each(["prepare", "preview"] as const)(
+        "recovers from an appearance %s failure without exporting the previous theme",
+        async (failureStage) => {
+            const { document, renderer, exporter, modal } = createSharerModalFixture(2);
+            const prepareBlocks = jest.fn(async () => undefined);
+            Object.assign(renderer, {
+                prepareBlocks,
+                createPreparedFitPredicate: jest.fn(() => jest.fn(async () => true)),
+            });
+            modal.onOpen();
+            await flushShareCardTasks();
+            if (failureStage === "prepare") prepareBlocks.mockRejectedValueOnce(new Error("prepare failed"));
+            else renderer.renderPage.mockRejectedValueOnce(new Error("preview failed"));
+
+            const select = document.body.querySelector(".pa-share-card-appearance-select")!;
+            emitAppearanceChange(select, "dark");
+            await flushShareCardTasks();
+            expect(select.disabled).toBe(false);
+            const actions = document.body.querySelector(".pa-share-card-actions")!;
+            expect(actions.children.every((button) => button.disabled)).toBe(true);
+            actions.children[0]!.click();
+            actions.children[1]!.click();
+            expect(exporter.copyCurrentPage).not.toHaveBeenCalled();
+            expect(exporter.savePages).not.toHaveBeenCalled();
+            expect(document.body.querySelector(".pa-share-card-status")!.textContent)
+                .toContain("Could not prepare");
+
+            emitAppearanceChange(select, "light");
+            await flushShareCardTasks();
+            expect(actions.children.every((button) => button.disabled)).toBe(false);
+            expect(renderer.renderPage).toHaveBeenLastCalledWith(
+                expect.anything(), expect.objectContaining({ theme: "light" }),
+            );
+            expect(registerFont).toHaveBeenCalledTimes(1);
+            modal.onClose();
+            expect(unregisterFont).toHaveBeenCalledTimes(1);
+        },
+    );
+
+    it("does not publish an appearance preparation completed after close", async () => {
+        const { document, renderer, createExporterForAppearance, paginate, modal } = createSharerModalFixture(2);
+        modal.onOpen();
+        await flushShareCardTasks();
+        let finishPrepare!: (pages: CardPage[]) => void;
+        paginate.mockImplementationOnce(() => new Promise<CardPage[]>((resolve) => {
+            finishPrepare = resolve;
+        }));
+        emitAppearanceChange(document.body.querySelector(".pa-share-card-appearance-select")!, "dark");
+        await flushShareCardTasks();
+        modal.onClose();
+        finishPrepare(createPages(2));
+        await flushShareCardTasks();
+        expect(renderer.renderPage).toHaveBeenCalledTimes(1);
+        expect(createExporterForAppearance).toHaveBeenCalledTimes(1);
+        expect(document.body.querySelector(".pa-share-card-status")).toBeNull();
+        expect(unregisterFont).toHaveBeenCalledTimes(1);
     });
 
     it("publishes a sharer name typed during block preparation", async () => {
@@ -1780,6 +1957,11 @@ function emitShareCardInput(
 ): void {
     inputEl.value = value;
     for (const listener of [...inputEl.listeners.get("input") ?? []]) listener();
+}
+
+function emitAppearanceChange(inputEl: ShareCardTestElement, value: string): void {
+    inputEl.value = value;
+    for (const listener of [...inputEl.listeners.get("change") ?? []]) listener();
 }
 
 function createExporter(overrides: Partial<{

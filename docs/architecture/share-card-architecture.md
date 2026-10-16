@@ -179,6 +179,10 @@ flanking 条件时，该确切 pair 可以消除括号或标点引起的双向 f
   export-only 重分页或混合字号。下述获批独立图表的整体缩放是局部例外，不改变正文、
   脚注或批次字号。
 
+代码块 `pre` 在正文纵向 flex 布局中保留自然高度，不参与 flex 收缩。超过正文可用
+高度时由现有 body fit 与分页处理，不能先压低代码框再用 `overflow: hidden` 裁掉
+内部代码行后返回 fit；preview 与 capture 继续复用同一布局及固定代码字号。
+
 ### Independent Diagram Fitting
 
 2026-10-15 用户明确批准独立完整图表整体等比缩小：本轮只准入最终 prepared static
@@ -205,7 +209,8 @@ data URL，必须在测量前就绪。SnapDOM 的 document-wide font discovery �
 
 ## Current Visual Contract
 
-- Modal 打开时锁定当前 light/dark theme；后续系统主题变化不改变本批卡片。
+- Modal默认在打开时解析当前light/dark theme；当前实例可通过外观控件显式切换，
+  每次准备、preview和导出均采用同一确定主题。后续系统主题变化不自动改写该批次。
 - Light 为纸灰纸面和深墨正文，Dark 为夜松墨纸面和米白正文；引用文字、强调和
   细 divider 独立配色，枝叶角饰、图形 logo 与 `Personal Assistant` 品牌不变。
   深浅主题均采用固定十字折痕和纤维；配色、资源身份与完整效果见
@@ -283,6 +288,10 @@ batch name、确定性 page suffix 和整批 collision avoidance 防止覆盖。
 
 ## Per-Modal Save Destination
 
+外观选择、署名、目录按此顺序共用字段网格；外观使用宿主原生select，桌面36px，
+窄屏44px/16px并在标签下方显示，保留焦点样式及可访问关联。外观的当前Modal状态
+与准备/导出责任见下节，不新增全局设置或通用表单层。
+
 控制字段由 `ShareCardModal` 创建并管理，`src/custom.pcss` 负责共享两列、窄屏堆叠
 和宿主主题样式；不增加表单状态层。署名标签合并低强调的可选/默认 EZ 后缀，
 保留真实 `label`/input 关联。目录输入壳使用现有 Obsidian 图标能力；原始 `/` 仍可
@@ -326,6 +335,20 @@ token 和取消清理约束，不能让旧署名回写新预览。输入以当�
 图表适配使 prepared `renderPage` 存在真实 frame await；Modal 只有在 token/host 检查
 通过后，才用当前名字同步即将发布卡片的页脚。该同步不重测正文、不重新分页，
 避免 pending 翻页期间改名或清空后，预览与共享 export appearance 暂时不一致。
+
+## Per-Modal Appearance
+
+`ShareCardModal`拥有临时auto/light/dark选择；auto在打开或切回时从ownerDocument解析，
+不增加主题observer。切换复用现有operation token、busy和prepare链，清理旧preview
+handle与可导出结果后按新主题重新准备；保留名字、目录和有效页索引。renderer的
+prepared key含theme，因此不能只改CSS或exporter选项继续复用旧主题prepared blocks。
+由既有resource cache复用明确资源，字体只在当前Modal取得一次持有、关闭时释放；
+不在切换时调用具有终止语义的renderer.cleanup，也不新建平行分页/捕获链。
+
+prepare及preview沿同一操作token发布结果，失败或关闭均不让迟到结果恢复旧外观。
+busy结束后仍按真实preview可用性决定导出按钮，外观选择可在失败后恢复；准备、
+翻页渲染和Copy/Save期间禁止切换，导出整批appearance保持一致。宿主主题、原笔记、
+纸面资源、字体、固定尺寸和SnapDOM配置均不在此控件的修改范围。
 
 ## Action Ring Layout Contract
 

@@ -6,6 +6,11 @@ Work item: B-124
 Decision: [DEC-026 — Share Card 采用本地、显式导出的完整渲染卡片](../decisions/dec-026-local-share-card.md)
 Authority: Share Card 的入口、可分享内容、视觉、分页、导出、失败、数据与兼容性边界。
 
+> [!note] Owner amendment 2026-10-16 — Appearance control
+> 用户要求增加外观配置并保持控制页布局。当前Modal提供跟随Obsidian、浅色、深色
+> 三种选择；默认跟随且不持久化，布局沿用现有字段列，详见B-124/REQ-15、B-124/AC-15。
+> 这项新要求接续此前“打开时锁定宿主主题”的默认行为，纸面和导出边界继续保持。
+
 > [!note] Owner amendment 2026-10-16 — Control UI
 > 用户确认署名说明合并至标签、两项配置对齐、根目录说明及单张/多张保存文案，
 > 并授权按方案更新文档、实现和必要测试。详见 B-124/REQ-14、B-124/AC-14；
@@ -111,7 +116,8 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   insight text；重复字段只输出一次，不加入隐藏 diagnostics、action、provider metadata
   或来源路径。
 - B-124/REQ-03: v1 卡片固定为 `540×720` CSS px、DPR 2 PNG（`1080×1440`），提供
-  纸灰 light 与夜松墨 dark 两个由 Modal 打开时当前主题选定的样式；两者均使用固定
+  纸灰 light 与夜松墨 dark 两种样式，默认由Modal打开时当前主题选定，也可按REQ-15
+  在当前Modal内切换；两者均使用固定
   十字折痕和纤维纸纹的整张本地背景，深色高光/暗面保持松墨色相，不叠加旧平铺噪声。
   正文、引用、强调和细线采用[已确认配色](../../development/active/share-card-sharer/paper-folds-design.md)，
   纸面就绪失败时可重试，不静默导出缺失纸面的卡片；不增加运行时 Shader 或远程请求。
@@ -211,7 +217,7 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   bounds 位于正文可用区域；不能泛化为任意 HTML 缩放，不改变内容投影、资源权限
   或固定导出尺寸。
 
-- B-124/REQ-14: 控制页的署名标签为 `署名` / `Name on card`，同一标签内以低强调
+- B-124/REQ-14: 控制页的署名标签为 `署名` / `Author`，同一标签内以低强调
   后缀显示 `（可选，默认 EZ）` / `(optional, default: EZ)`；placeholder 为“你的名字” /
   `Your name`，不保留独立帮助行。标签与输入保持真实关联。桌面署名、保存目录共享
   标签和输入列，标签自然宽度上限约 172px，长英文可换行；输入约 36px 高。
@@ -223,11 +229,22 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   保留 REQ-03 的可用宽高缩放和点击放大，不从预览原型引入固定高度、模拟卡片或
   调试控件；不改变 REQ-11 的临时署名、清空恢复和导出期间冻结语义。
 
+- B-124/REQ-15: 控制页增加带真实label关联的“外观” / `Appearance` 原生选择框，
+  可选“跟随Obsidian” / `Use Obsidian theme`、浅色 / `Light`、深色 / `Dark`。
+  每次打开默认跟随；打开及切回跟随时解析所属Obsidian窗口的主题，不订阅宿主
+  后续变化，不修改Obsidian外观或持久化偏好。显式选择后即准备并显示对应主题，
+  原有署名、目录保留，当前页在新页数范围内保留或收敛至最后有效页。
+  准备、翻页渲染和导出期间禁用外观控件；更新期间显示准备状态，禁止导出旧主题
+  结果，完成后preview、zoom、Copy和整批Save共享新外观。失败准确提示，保留输入，
+  可再次选择恢复；关闭后迟到任务不得回写。外观行置于署名上方，三个配置共用
+  桌面标签/输入列和约20px行距；窄屏标签在上，选择框至少44px高、16px字号，
+  主次操作并排，沿用宿主tokens和原生交互，不新增装饰性设置面板。
+
 ### Non-goals
 
 - NG-01: 不做通用笔记/页面截图、整段 Chat transcript、Bubble/Pet 或 Obsidian UI 捕获。
 - NG-02: 不提供模板编辑器、比例/字体/产品品牌/持久保存目录或名字设置、上传自定义
-  logo、无品牌导出或历史卡片库；本次 Modal 内的临时目录选择与分享者名字不属于持久设置。
+  logo、无品牌导出或历史卡片库；本次Modal内的临时目录、分享者名字及外观选择不属于持久设置。
 - NG-03: 不把图片上传到社媒、云盘或外部服务，不接入 account/system share flow。
 - NG-04: 不保证任意第三方插件交互视图、DRM/跨域受限资源或持续动画都能无损捕获；
   但必须提供明确失败/占位，不能静默降级为 text-only 后声称完整成功。
@@ -248,6 +265,7 @@ flowchart TD
   C -->|资源或渲染异常| E[明确占位或可重试错误]
   D --> F{用户动作}
   F -->|填写或清空分享者名字| D
+  F -->|切换本次卡片外观| C
   F -->|复制当前页| G[写 OS clipboard]
   F -->|选择目录并保存| H[按顺序捕获并写入目标目录]
   G -->|失败| I[提示，不自动写 Vault]
@@ -257,8 +275,9 @@ flowchart TD
 | State | Visible behavior | Allowed action |
 | --- | --- | --- |
 | Preparing | 显示本地化准备状态；名字可编辑，export disabled | Edit name / Close |
-| Ready, single page | 预览 + 分享者名字 + Copy current page + Save image | Edit name / Copy / Save / Close |
-| Ready, multiple pages | 预览 + 分享者名字 + page nav + Copy current page + Save N images | Edit name / Navigate / Copy / Save all / Close |
+| Updating appearance | 保留名字和目录，显示准备状态；外观与export/navigation暂时禁用 | Close；失败后可重新选择外观 |
+| Ready, single page | 预览 + 外观/分享者名字 + Copy current page + Save image | Change appearance / Edit name / Copy / Save / Close |
+| Ready, multiple pages | 预览 + 外观/分享者名字 + page nav + Copy current page + Save N images | Change appearance / Edit name / Navigate / Copy / Save all / Close |
 | Exporting | 当前动作 busy，名字输入及其余 export/navigation disabled | Close；异步结果不得回写已关闭 UI |
 | Clipboard unavailable/failed | 保留预览并给出可恢复提示 | 用户可显式 Save 或 retry |
 | Capture/save failed | 保留预览；报告完整或 partial failure | Retry / Close |
@@ -358,13 +377,21 @@ flowchart TD
   独立图表/真实整篇运行及 PNG 分别记录；旧 selection 两页结果不得作为整篇成功。
 
 - B-124/AC-14: 中英标签、低强调可选/默认说明和 placeholder 正确，标签能聚焦输入，
-  不出现独立帮助行；桌面两行输入对齐，窄屏和较长文字下字段、复制/保存操作可达，
+  不出现独立帮助行；桌面各字段对齐，窄屏和较长文字下字段、复制/保存操作可达，
   输入触控尺寸满足 REQ-14。`/` 保持可编辑原值并显示根目录说明，改成其他目录后
   隐藏说明并移除相应可访问关联；初始焦点不展开建议，用户操作及选择行为保持。
   一页显示“保存图片”，多页数量等于实际页数；不改变 Copy 当前页、Save 全批及
   busy 冻结。沿用既有预览 fit/zoom 和署名导出回归，针对 Modal、locale 的 focused
   测试与部署后桌面/移动模拟的布局和交互分别记录；无内容或导出算法变化时不重跑
   整篇长文分页或全部媒体导出。独立原型、DOM/API 和原生交互证据须明确区分。
+
+- B-124/AC-15: 默认跟随与所属窗口主题一致；浅色、深色和返回跟随可正确更新
+  renderer与exporter使用的外观。名字、目录和有效页位置保留，导出busy时不能
+  切换，准备/预览失败后不导出旧批次，关闭中止后不回写；字体持有计数不会随切换
+  累积，重开恢复默认跟随。中英标签/选项关联准确，桌面字段对齐，320/390px下
+  选择框与操作可达，沿用紧凑窗口的滚动预览。用Modal/locale focused及部署后的
+  对应布局/主题切换观察验证，Copy/Save主题一致性按自动化与实际API分别记录；
+  不以DOM或截图冒充原生键盘/点击证据，不重跑无变化的长文或媒体全矩阵。
 
 ## Open Decisions
 

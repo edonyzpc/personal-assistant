@@ -8,7 +8,15 @@ describe("Share Card locale copy", () => {
         expect(pluginT("plugin.shareCard.saving", "en")).toBe("Saving card images…");
         expect(pluginT("plugin.shareCard.copying", "zh")).toBe("正在复制当前页…");
         expect(pluginT("plugin.shareCard.saving", "zh")).toBe("正在保存卡片图片…");
-        expect(pluginT("plugin.shareCard.sharerName", "en")).toBe("Name on card");
+        expect(pluginT("plugin.shareCard.appearance", "en")).toBe("Appearance");
+        expect(pluginT("plugin.shareCard.appearanceAuto", "en")).toBe("Use Obsidian theme");
+        expect(pluginT("plugin.shareCard.appearanceLight", "en")).toBe("Light");
+        expect(pluginT("plugin.shareCard.appearanceDark", "en")).toBe("Dark");
+        expect(pluginT("plugin.shareCard.appearance", "zh")).toBe("外观");
+        expect(pluginT("plugin.shareCard.appearanceAuto", "zh")).toBe("跟随 Obsidian");
+        expect(pluginT("plugin.shareCard.appearanceLight", "zh")).toBe("浅色");
+        expect(pluginT("plugin.shareCard.appearanceDark", "zh")).toBe("深色");
+        expect(pluginT("plugin.shareCard.sharerName", "en")).toBe("Author");
         expect(pluginT("plugin.shareCard.sharerNameOptional", "en"))
             .toBe("(optional, default: EZ)");
         expect(pluginT("plugin.shareCard.sharerNamePlaceholder", "en"))

@@ -9,24 +9,240 @@ Product spec: [PA Share Card Product Spec](../../../product/specs/pa-share-card-
 
 ## Current Snapshot
 
-- Authorization: 用户于 2026-10-16 明确要求将最后预览的深浅双主题“纸灰 + 夜松墨”
-  折痕方案先落设计文档，再完成代码优化和必要验证；避免过度设计、过度测试。
-  随后用户明确要求“代码修改提交master”，追加授权本轮代码、测试、生成样式和配套
-  文档的本地 master commit；不含 push、release 或 closeout，历史其他修订的远程授权不沿用。
-- Baseline: `master` / `d4af02e62eb52378a91a4044de0fcb60fa90c607`，初始工作区 clean。
-- Current phase: 本轮[设计文档](./paper-folds-design.md)、双主题纸面/配色、定向测试、统一
-  检查和 test 部署后 PNG/API/截图观察已完成，主控独立核对无新增阻断问题。
-  代码已提交本地 master：`4cbfb43b`，设计及验收记录以配套 docs commit 同步交付。
-  原生 Copy/Save 点击证据仍缺失，不据此关闭原有 track 的交互缺口。
-- Next action: 本轮无新增实施待办；保留本地 master 交付，复用已有验证，不重复 full Jest、
-  长文或设备矩阵。历史原生交互只在具备工具和具体后续请求时补验；push/closeout 未获本轮授权。
-- Blocker / decision needed: 无未定产品选择或当前实现阻断。当前机器的 GLM 通道当天已确认周/月额度
+- Authorization: 用户于2026-10-16要求“控制页面上增加一个外观控制配置，注意页面设置
+  的布局设计”。包含本次Modal内外观选择的设计、文档、开发及必要测试/部署验证；
+  沿用此前Author标签微调。移动轮次发现F-04后，用户明确要求“按照建议完成修复”，
+  追加代码块内容裁切的窄修复、必要回归及同fixture模拟器/PNG复测。随后用户明确
+  要求“将代码提交到master”，追加本轮代码/tests/生成样式及配套文档的本地master
+  commit授权，不含push、release或closeout。
+- Baseline: `master` / `df49a48caa7f6e4ead3c11797674fa7e34da90b7`；开始时有6个Author
+  文案/tests/docs未提交修改，属于前序已授权内容，原样接续；纸面交付已单独提交。
+- Current phase: F-04已修复；renderer/paginator153项PASS、统一lint/build和test部署
+  完成。同fixture官方mobile simulator6页代码两行、相邻内容及真实保存PNG复测通过，
+  独立源码/PNG检查无新增阻断。原生点击/键盘缺口仍保留，整体track保持Implementing。
+- Next action: 按新增授权交付本地master提交；复用当前有效验证，不追加全仓、330页
+  长文或发布动作，未变的控制页状态/目录等证据按输入边界复用。
+- Blocker / decision needed: F-04已Resolved，无新的实现阻断或产品选择。当前机器的 GLM 通道当天已确认周/月额度
   耗尽，原始 `preflight-auth-host.jsonl` 保留于 `/tmp/pa-share-card-controls-20261016/`，
   reset 提示为 `2026-10-17 10:14:30`；复用有效证据，不重复请求。按已批准工作流由 GPT
   接管，不将 GPT 描述为 GLM；主控只写 docs，worker 只写指定 source/tests/CSS。
-- Last verified behavior: 最终 build 已部署/reload 到精确 test vault；实际 Modal 显示双主题
+- Last verified behavior: mobile simulator320×700相同多页内容由5页正确重排为6页，
+  保存文案/文件数量均6；pre可见/内容高度106/106，代码两行及970/970语义文本完整，
+  图表/脚注/长署名保留。390×844浅色短代码仍单页，正文32px、code12px/19px不变，
+  pre133/133。实际Save链6+1张PNG均1080×1440，代码图像已观察；上述不是原生触摸
+  或真机剪贴板证明。上一轮目录、主题状态及20px宿主UI文字压力证据按未变输入保留。
+- Previous verified behavior: 纸面最终 build 已部署/reload 到精确 test vault；实际 Modal 显示双主题
   纸面，背景 SHA 与冻结原 PNG 相同；本地 capture API 的两张 PNG 均 `1080×1440`，
   单页32px、body 585/585无overflow，PA/EZ/引用完整。light→dark→light重复打开成功。
+
+## 2026-10-16 · Local Master Commit
+
+用户新增授权“将代码提交到master”。本次将Author标签、当前Modal外观选择、F-04
+代码自然高度修复、三份focused测试、生成styles.css与四份配套文档共12个路径，作为
+一个Share Card模块提交：`feat(share-card): add appearance control and preserve code blocks`。
+同一生成样式同时包含外观与裁行修复，保持完整已验证输入，不为拆提交重建中间产物。
+提交前核对精确diff及cached范围/统计/空白；复用57项外观、153项渲染/分页、最终
+lint/build及实际模拟器/PNG证据，只有提交记录变化时仅重验docs/diff。具体提交回执
+以本地Git历史为准；本授权不含push、tag、release或closeout。
+
+## 2026-10-16 · F-04 Code Clipping Repair
+
+按用户新增修复授权，以L0恢复REQ-04/AC-05的内容完整性，不增加产品能力或新任务包。
+已核实：原5页fixture的pre局部overflow被body-level fit漏过，预览与PNG均裁第二行。
+因果已由同输入修复前后布局/PNG确认：pre的flex收缩掩盖自然内容高度。未定产品选择：
+无，保留固定卡片/PNG尺寸、字体字号、署名/纸面/Xerox及SnapDOM；不以缩字或删除内容
+规避裁切。以现有renderer/CSS负责可见布局及测量，paginator沿既有fit结果分配内容。
+
+本轮沿用已确认GLM额度接管，实际writer为GPT。主控仅写docs并统一执行昂贵门禁与
+App验证，source writer仅写获派CSS/renderer及必要focused测试；只读检查者不操作App
+或重复跑门禁。已有11路径未提交改动全部保留，不把实现自查称为独立审查。
+
+| Requirement / concrete risk | Minimum evidence / pass condition | Rerun trigger |
+| --- | --- | --- |
+| F-04 / REQ-04 / AC-05 代码两行可见 | 定向renderer/分页回归；同multi.md在官方mobile simulator逐页检查pre局部几何及两行实际PNG，无内容丢失 | 代码布局、fit或切分责任变化 |
+| 固定卡面与其他正文布局 | 同fixture相邻段落、强调、T01–T14图表、END/TAIL脚注和长署名无裁切；单页字号/居中沿原规则 | 最终CSS影响范围改变 |
+| 源码与产物 | writer focused后统一lint、production build（含TS/Tailwind）、社区源码扫描、docs/diff，deploy-current身份校验 | 冻结后的相关源码/tests/config变化 |
+| 复用边界 | 未变的Modal主题状态、目录建议、busy/清理等自动化/模拟器证据继续保留；不重复全仓、长文、全部入口或真机 | 新故障或具体平台依赖 |
+
+原始修复/验证证据保留于`/tmp/pa-share-card-code-fix-20261016/`，最终结果如下。
+
+### Final Implementation And Evidence
+
+- 最终生产变更只在现有`.pa-share-card-body pre`增加`flex-shrink: 0`及说明；保持
+  overflow hidden、code12px/19px、正文批次字号、renderer/paginator/exporter及SnapDOM
+  不变。超高内容由原有body fit及分页处理，不添加guard/全后代扫描或通用布局框架。
+  Architecture补充代码自然高度责任；已有Author/Appearance差量全部保留。
+- `renderer-regression-red.log`：旧CSS下新增规则回归自然exit1，准确缺少不收缩规则；
+  `focused.log`与`focused-result.json`：renderer/paginator两套153项PASS、自然exit0，
+  未弱化断言。该CSS测试保护具体不变量，不冒充浏览器几何；真实布局由下列App补证。
+- 主控统一`lint.log`、`build.log`均自然exit0；build含TS和Tailwind，不另跑tsc。
+  社区源码扫描无匹配、rg exit1；docs:check/diff check PASS。`deploy.log`为
+  deploy-current自然exit0、当前production身份校验后复制到精确test插件目录，reload后
+  才启用官方mobile simulator。未运行full Jest、全仓coverage、330页或其他设备矩阵。
+- 独立检查者核对实际CSS/test diff与原始缺行证据，无新增阻断项；随后独立复核真实
+  PNG03/04/05/06，确认代码两行、相邻正文、T01–T14、END/脚注TAIL及页脚均完整。
+  没有把writer自查或CSS断言当独立App验收。
+
+| Actual target | Observation | Evidence |
+| --- | --- | --- |
+| 同multi.md，320×700 EN/dark，长署名/来源 | fixture字节与原失败样例完全相同；6页，Save 6 images；三控件44px/16px、动作底668<700、文档宽320/320 | `multi-ready.log`、`mobile-en-320-six-pages.png` |
+| 六页实际preview/放大 | 语义文本去空白后970/970完全相等；body每页569/569、正文24px；第3页pre106/106、shrink0、code12px/19px，两行均保留；放大同页也106/106；页脚组间距均正4.5px | `audit-result.log`、`code-zoom-state.log`、`mobile-code-preview-fixed.png` |
+| 图表和尾部 | 独立TABLE仍15行含T01–T14、bounds在body内；邻近正文正常移入第4页；第6页END后两脚注及TAIL完整，实际PNG与DOM一致 | `audit-result.log`、`dark-batch-04/05/06.png` |
+| 实际批量Save | 真实Save按钮DOM处理链完成busy→ready，相关操作期间disabled；6个page-01…06文件且成功Notice为6张，均1080×1440；PNG03的console.log及行尾literal);完整 | `multi-save-result.log`、`batch-png-metadata.json`、`dark-batch-03.png` |
+| 390×844 ZH/light短代码 | 仍1页、“保存图片”，正文按原规则32px，code12px/19px；pre133/133、body585/585，语义104/104及SINGLE-CODE-END完整；实际保存1张1080×1440，by+EZ正常 | `single-{ready,audit-result,save-result}.log`、`light-single.png` |
+
+截图及7张实际保存PNG保留在本聊天visualizations的`share-card-code-fix/`。
+本轮没有调用AI、改原笔记或用户设置；保存时另外出现API token未配置的宿主Notice，
+未影响本地保存，未据此扩大配置/Provider排查。错误缓冲为No errors captured，debug
+全程保持初始false，不宣称完整console覆盖。
+
+### Acceptance And Cleanup
+
+F-04已Resolved：同失败输入的预览局部几何及最终PNG均修复；本次只恢复共享卡片
+渲染契约，不声称是移动独有缺陷。原生触摸/键盘/系统剪贴板证据缺口仍沿原记录保留，
+不把本轮DOM事件、模拟器或实际PNG当作真机证明，也不新增真机门禁。
+
+7张PNG已归档后，严格核对仅本轮新建的7个文件及两个子目录，删除独占test目录
+`PA-Code-Smoke-20261016-01a142c2`；`cleanup-fixtures-result.log`确认count7、目录null、
+Modal/suggestion0。mobile恢复初始false后reload，再恢复locale=en、theme=light、zoom1、
+原窗口bounds和activeLeaf，临时probe移除；最终状态见`cleanup-final.log`。未stage、
+commit、push、closeout或发布。必要源码和证据保留，不重复已覆盖的测试。
+
+## 2026-10-16 · Recent Changes Mobile Simulator Round
+
+用户追加要求：近期Share Card相关优化全部用mobile simulator做一轮验证，确认移动端
+符合预期。本轮仅测试、合成fixture及本记录更新，不修改生产实现，不提交/推送/发布。
+范围覆盖近期署名/PA标识、控制页与保存数量、外观、纸面，以及脚注/代码/独立图表的
+内容完整性。未改的资源/provider/入口全矩阵SKIP，不重跑历史330页笔记。
+
+### Reuse And Target
+
+- 当前HEAD仍为`df49a48caa7f6e4ead3c11797674fa7e34da90b7`。本轮开始时6个source/
+  tests/locale/CSS差量与`/tmp/pa-share-card-appearance-20261016/source.patch`逐字一致，
+  没有runtime输入变化，复用该轮57项focused、lint/production build（含TypeScript/
+  Tailwind）及社区源码扫描。该复用不把focused说成full Jest通过。
+- 本轮`make deploy-current`自然exit0，再次校验production身份并复制到精确test插件
+  目录；reload后才启用`obsidian vault=test dev:mobile on`。实际Obsidian1.14.4、
+  PA2.10.10、vault路径`/mnt/code/personal-assistant/test`；不是浏览器样式预览。
+- 仅两份无外部资源的合成fixture：短文1页；中文正文、跨页strong/em、两行代码、
+  重复脚注、独立T01–T14图表和尾标记共5页。不访问私有vault，不调用AI。
+- 原始日志根目录`/tmp/pa-share-card-mobile-round-20261016/`；截图及保留PNG位于
+  本聊天visualizations的`share-card-mobile-round/`。一位只读检查者独立复核实际PNG，
+  不操作App、不重复测试或写源码。
+
+| Target / risk | Actual evidence | Result |
+| --- | --- | --- |
+| 320×700 EN / 5页，三行配置与保存数 | `multi-320-initial.log`、`mobile-en-320-multi.png`：控件272×44/16px；Copy及Save 5 images各132×61，按钮底边668<700；导航44×44、预览148px可滚动；document宽320/320 | PASS（官方模拟器DOM/截图） |
+| 目录初始/根说明/建议选择 | 初始suggestion为0，`/`对应Vault root及aria-describedby；输入非根后说明隐藏。`suggest-state.log`弹层x10/y361/w300/h189，完整位于320×700内、在当前输入上方；DOM点击owned batch建议后路径正确、弹层0 | PASS（原生组件的DOM事件路径） |
+| 长署名及空白回退 | 首尾trim得到“林间记录者”，空白得到空值；实际浅色PNG显示by+EZ。深色5页的长中英名字client170/scroll848，nowrap/ellipsis；品牌与页码/署名组间距均正4.5px，PNG抽验不重叠 | PASS（应用DOM和实际PNG） |
+| 外观auto/light/dark与busy | 浅色宿主显式dark，深色宿主显式light后返回auto=dark；第5页/5页、长名字及batch目录保留。更新开始busy=true、旧preview/exporter清空，选择/署名/导出/导航禁用，ready后恢复 | PASS（`explicit-light-ready.log`、`auto-return-ready.log`等） |
+| 翻页与放大 | 下一页DOM按钮使index0→1，准备时next/select禁用；逐页controller检查到index4。预览点击打开zoom，同index/同card DOM、0个editable、主内容inert；关闭后回原viewport/同页并移除inert | PASS（`probe-transitions.log`、`zoom-result.log`、`explicit-light-ready.log`） |
+| 390×844 ZH / 单页 | `single-zh-default.log`、`single-light-ready.log`：外观/署名/保存到，控件342×44/16px；动作167×44，“保存图片”，隐藏分页；新Modal回auto/空名/默认`/`，初始无建议 | PASS（官方模拟器DOM/截图） |
+| 放大UI文字压力 | 临时宿主font-ui-small/medium20px、smaller18px，在320×700中英检查；EN5页动作132×102.5，文字内部换行、底边668，导航/配置仍在屏内、文档无横向溢出，预览约87px可滚动；ZH单页动作132×49 | PASS（`font-{en-multi,pressure}-result.log`和截图）；此为UI字体压力模拟，不是iOS Dynamic Type |
+| 真实Save处理链/数量/冻结 | 多页/单页均点击真实Modal Save按钮的DOM事件，经exporter/Vault写文件；busy期间冻结，完成busy=false。batch5个有序page-01…05文件，single1个文件，均PNG1080×1440；批量成功Notice明确5张 | PASS（文件写入/尺寸）；不等价于原生触摸点击 |
+| 强调/脚注/独立图表完整性 | 5页body字号均24px，body569/569、宽450/450；代码脚注字面值保留、重复引用同[1]；END后两定义各一次，TAIL完整。实际PNG04图表15行含全部T01–T14，PNG05尾部完整；图表bounds在body内 | PASS（限定上述内容）；body无overflow不能证明所有后代可见 |
+| 代码块可见内容完整性 | PNG03只有代码第一行，实际放大预览亦裁第二行。`code-probe-result.log`：pre clientHeight41/scrollHeight106、overflow:hidden；DOM文本仍含两行 | **FAIL F-04**；不能依据textContent或body-level fit判整页完整 |
+| 真实触摸/原生键盘/系统剪贴板 | 当前工具没有native app控制。DOM激活不是原生输入；canCopyImage=true仅为模拟器宿主能力，未写用户剪贴板 | BLOCKED/未验证；沿用既有技能的可见窗口交互要求 |
+
+### F-04 · Code Block Clips Its Second Line
+
+两行合成TypeScript代码被排入第3页。实际PNG只见第一行
+`const literal = "[^record] must remain literal";`，不见后面的console.log。
+只读诊断已定位到预览布局也裁切：pre可见高度41px但scrollHeight106px并隐藏溢出，
+而整页body仍569/569；所以不能归因为仅PNG捕获异常，也不能把DOM字符串完整当可见
+内容完整。相关CSS为`.pa-share-card-body`的flex column和`pre`隐藏溢出，完整根因及
+修复方式本轮未确认。证据：`dark-batch-03.png`、`mobile-code-preview.png`、
+`audit-pages-result.log`、`code-probe-result.log`。记录为P1内容丢失，Open；当前测试
+请求未授权修复，不追加架构、测试或源码改动。独立检查者确认PNG缺行；其他图表、
+尾脚注和页脚观察未发现实际缺陷。
+
+### Cleanup And Evidence Boundary
+
+本轮6张Save PNG均复制保留到visualizations后，仅删除本轮新建独占目录
+`PA-Mobile-Smoke-20261016-01a142c2`；删除前核对精确6个生成文件，没有其他内容。
+`cleanup-fixtures-result.log`确认目录null、Modal/建议0、临时宿主字体覆盖为空。
+mobile恢复初始false后reload，再恢复debug=false、locale=en、theme=light、zoom=1、
+原窗口bounds及原activeLeaf；临时probe删除。最终状态见`cleanup-final.log`。
+错误缓冲为No errors captured；debug全程false，不宣称完整console覆盖。
+
+按[Smoke skill](../../../../.agents/skills/obsidian-test-vault-smoke/SKILL.md)的
+“Require visible-window interaction for UI/UX PASS”，本轮明确保留原生交互证据缺口。
+模拟器测试已执行完毕，但发现F-04，不能宣布Share Card移动端全部符合预期；不以该
+技能要求另加真机门禁。仅本记录更新后执行docs:check/diff check，不重复runtime门禁。
+
+本轮最终docs:check PASS（308 Markdown / 3988 local links）、diff check PASS；再次比较
+6个runtime/source/test差量与冻结patch完全一致。原有11个未提交路径保持，无新增
+生产实现修改、stage、commit、push或release。
+
+## 2026-10-16 · Appearance Control
+
+本次以B-124/REQ-15、B-124/AC-15承接，沿用现有Decision、Product Spec、Architecture
+和本Tracker，不新增任务包、主题框架、参数面板或独立测试计划。
+
+| Basis | Scope / design |
+| --- | --- |
+| 用户要求 | 控制页增加外观配置，布局与现有设置保持清晰协调 |
+| 已核实事实 | Modal在打开时解析ownerDocument主题；prepare、preview及exporter共享appearance；renderer prepared key含theme，重准备会释放旧blocks；字体注册持有需要成对释放 |
+| 兼容设计选择 | 原生select三选项：跟随Obsidian/浅色/深色，默认跟随，仅当前Modal；放在Author/署名上方，共享三行网格、窄屏上置label；跟随在打开或切回时解析，不加observer |
+| 状态与责任 | Modal复用prepare、token与busy重建同主题结果；保留name/folder/index并clamp；更新及导出禁用选择；失败禁用无preview的导出、选择可恢复；字体每Modal只hold一次 |
+| 保护边界 | 不改宿主外观、持久设置、纸面/品牌资源、内容、分页算法或SnapDOM配置；新增控件不借机重构renderer/exporter |
+| 未定选择 | 无阻断；三种选项及布局是本次范围内的兼容设计，不宣称用户逐项指定 |
+
+GLM周/月额度用尽证据按当前Snapshot复用，旧worker已自然退出；source/tests由GPT
+writer接管，主控独立维护docs并验收。仅source writer修改Modal/CSS/locale及两份
+focused tests，主控统一运行昂贵门禁；只读检查者不写文件或重复跑测试。
+
+| Requirement / risk | Minimum evidence and pass condition | Status / expansion trigger |
+| --- | --- | --- |
+| REQ-15 / AC-15 主题状态与导出 | Modal/locale focused：auto/light/dark/返回auto、新appearance交给renderer/exporter，busy冻结，保留输入/页位置、重开默认 | PASS（自动化）；相关状态/locale变化才重验 |
+| 失败、取消及资源持有 | focused覆盖准备/preview失败后可恢复、关闭不回写、字体hold不累积；独立查diff及原始测试输出 | PASS（自动化/独立只读核对）；token/prepare/清理路径变化才扩验 |
+| REQ-14 / REQ-15 布局 | 当前test产物桌面及320/390px中英：select与输入对齐，窄屏44px/16px，按钮可达，继承紧凑滚动预览；200%缩放检查按可用工具补 | PASS（实际DOM/截图与模拟）；原生交互BLOCKED |
+| 代码、契约与产物 | focused、统一lint/production build、docs:check、注入扫描、diff check，当前产物身份校验后deploy-current | PASS；不重复独立于本次变化的长文、媒体、全仓或真机门禁 |
+
+### Focused Evidence
+
+`focused-tests-recovery.log`：Modal/locale两套57项PASS，自然exit0。新增5个行为用例，
+覆盖显式/auto及字段页码保留、准备与翻页冻结、prepare/preview两类失败恢复和关闭迟到；
+复用既有导出busy、重开和目录/署名断言。失败恢复用dark→light实际选项变化，不用
+重选同值的合成事件冒充原生可达路径。字体只hold一次，switch不调用终止性renderer
+cleanup；prepare和renderPreview共用token，preview不可用时不重新启用Copy/Save。
+主控与额外只读检查者核对实际diff及原始输出，无新增P1/P2；不是把writer自查当独立审查。
+日志根目录`/tmp/pa-share-card-appearance-20261016/`，源冻结后只由主控执行统一门禁和部署。
+
+### Final Gates And App Evidence
+
+- `lint.log`、`build.log`均自然exit0；build已覆盖TypeScript及Tailwind，不另跑tsc。
+  docs:check、diff check PASS，社区源码扫描无匹配、rg exit1。未跑full Jest、长文、
+  媒体全矩阵或真机检查；没有相关新风险或输入变化。
+- `make deploy-current`自然exit0（`deploy.log`），校验当前production身份后复制到
+  精确`/mnt/code/personal-assistant/test/.obsidian/plugins/personal-assistant/`；reload后
+  才观察当前Modal。Obsidian1.14.4、PA2.10.10，合成selection内容，无AI或原笔记修改。
+- 实际切换记录`app-default.log`、`app-dark-ready.log`、`app-light-ready.log`：默认跟随
+  浅色宿主，显式dark/light均正确，名字Ada及目录PA-Cards保留。light更新开始即
+  busy=true、select/导出disabled、旧exporter清空，准备完成后busy=false并恢复操作。
+  合成目录初次直接赋值未派发input时说明未同步；补派实际input事件后根说明隐藏，
+  最终截图已更新。此为探针准备修正，不作为产品故障或新增源码修复。
+- 对选择后的两个主题调用实际exporter capture API，均等到完成标志和文件落盘后才
+  继续切换（`capture-{dark,light}-result.log`）。`selected-{dark,light}.png`均解码为
+  1080×1440；颜色样本分别为松墨及纸灰，已观察完整正文、品牌、Ada和纸面。不是
+  原生Copy/Save点击；没有在Vault中保存PNG，也不把async eval返回当作导出完成。
+
+| Actual target | Observation | Evidence |
+| --- | --- | --- |
+| EN desktop，1330×861，host light / card dark | 顺序Appearance、Author、Save to；select与输入同起点x537.26、均36px高；完整缩略图与按钮同屏 | `desktop-dark-final-state.log`、`desktop-en-dark.png` |
+| EN official mobile，320×700 | select272×44、16px，三项在标签下方；按钮各132×61，文字内部换行；紧凑预览按原规则可滚动，没有字段/按钮横向溢出 | `mobile-320-state.log`、`mobile-en-320.png` |
+| ZH official mobile，390×844，host dark / card light | select342×44、16px；按钮各167×44，完整缩略图与三行配置可见；auto为dark、显式浅色为light，返回auto为dark | `mobile-390-{auto,light}.log`、`mobile-return-auto-ready.log`、`mobile-zh-390.png` |
+| Electron zoom200%，CSS viewport665×430 | 字段及按钮仍可达，操作底边约400px；预览进入既有紧凑滚动，不导致整页横向溢出 | `app-zoom-200.log`，DOM检查，非原生键盘证据 |
+
+截图和实际PNG位于本聊天visualizations的`share-card-appearance-implementation/`。
+最终`app-cleanup.log`确认debug=false、mobile=false、locale=en、theme=light、zoom=1，
+原窗口bounds及activeLeaf均恢复，Modal=0、临时probe已删除；`app-errors-final.log`为
+No errors captured。未开启debug，不声称完整console捕获。
+
+当前工具inventory的native apps仍为空，原生下拉框键盘选择、真实Copy/Save点击
+保持BLOCKED。[Smoke skill](../../../../.agents/skills/obsidian-test-vault-smoke/SKILL.md)要求
+“Require visible-window interaction for UI/UX PASS”，不把上述API、模拟或截图当作该证明。
+本轮不提交、推送、closeout或发布。
 
 ## 2026-10-16 · Paper Folds Delivery
 
@@ -130,6 +346,14 @@ Product spec: [PA Share Card Product Spec](../../../product/specs/pa-share-card-
 
 本轮沿用 B-124 的 Decision、Product Spec、Architecture 和本 Tracker，补充 B-124/REQ-14 /
 B-124/AC-14，不新建 Plan、SDD、工作项或设计系统。旧原生交互缺口不因本轮测试而自动关闭。
+
+2026-10-16 后续标签微调：用户明确要求英文 `Name on card` 改为 `Author`；中文继续
+使用“署名”，可选/默认EZ后缀及临时署名行为不变。仅同步locale、既有两份focused
+测试断言及当前产品契约；本轮沿用已知GLM额度接管，由GPT完成低风险文案自查。
+主题问题按当前源码核实：打开时读取所属Obsidian窗口主题并锁定于当前Modal，
+preview/zoom/Copy/Save共享该主题；该次仅处理标签，后续新增外观授权见上方Appearance Control。
+验证：既有Modal/locale两套52项PASS、docs:check及diff check PASS，日志位于
+`/tmp/pa-share-card-author-20261016/`；仅文案更新，未重新构建部署或进行Git交付。
 
 | Basis | Requirement / choice |
 | --- | --- |
@@ -248,6 +472,7 @@ iOS 专属能力变化。独立 HTML 预览只作为用户设计选择，不作�
 | F-01 | P2 | 准备/分页 yield 期间改名只更新 Modal 临时值，尚未建立的 appearance 仍保留旧名字 | 在准备完成发布 appearance 前接续当前名字；补准备中途输入回归，不重跑正文/分页 | 原版目标回归自然 exit 1；修复后五套 114 项、Modal 再验 43 项 PASS；独立 reviewer 核对真实准备窗口、最终 preview/export options | Resolved |
 | F-02 | P2 | 全卡 `font-synthesis: weight style` 会让现有正文 emphasis 新增合成斜体，超出署名范围 | 恢复根 `weight`，只在 `by` 局部允许合成 italic；修正对应 CSS 断言 | 独立 reviewer 核对根与局部规则；focused、TypeScript 与 production build PASS | Resolved |
 | F-03 | P2 | 新增导出回归在变更同一 appearance 后读取 Jest 旧调用引用，无法证明调用时的 Ada/Grace | 变更前即时断言 Copy 的 Ada，Save 后断言 Grace，保留共享引用机制并补齐 clipboard seam | 独立 reviewer 复核断言时机与 mock 类型；focused export PASS | Resolved |
+| F-04 | P1 | mobile simulator合成5页样例中，第3页两行代码的第二行在预览及PNG被裁切；body整体fit不能证明子元素完整 | 用户后续授权修复；pre禁止flex收缩，恢复自然高度及原分页责任 | 153 focused PASS；同fixture6页，pre106/106、语义970/970、PNG03两行完整，独立源码/PNG复核；浅色单页亦完整 | Resolved |
 
 独立 reviewer 曾检查 pending 翻页 render 旧名的假设，后依据实际 prepared 分支同步组合卡片、
 没有可供 UI 输入任务插入的 await 窗口而撤回；不为人为延迟 mock 新增生产机制。
