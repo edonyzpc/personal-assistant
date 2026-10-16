@@ -90,6 +90,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~
 
+## Share Card Paper Texture Provenance
+
+The two fixed Share Card paper PNGs were generated with
+`@paper-design/shaders@0.0.81` (PaperTexture), then embedded as image data URIs.
+The dark version maps the same fold field to the PA night-pine palette. The
+plugin does not bundle or execute the Shader library. Exact image identities,
+palette and generation details are in the
+[paper design](docs/development/active/share-card-sharer/paper-folds-design.md).
+The generation package's [Apache-2.0 license](licenses/paper-shaders-Apache-2.0.txt)
+and [NOTICE](licenses/paper-shaders-NOTICE.txt) are retained as source provenance.
+
 ## Bundled Binary Resource Provenance
 
 Binary resources embedded in `main.js` are fixed by source, generator input,

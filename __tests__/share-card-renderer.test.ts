@@ -1,4 +1,12 @@
+jest.mock("../src/share-card/share-card-paper", () => ({
+    ...jest.requireActual<typeof import("../src/share-card/share-card-paper")>(
+        "../src/share-card/share-card-paper",
+    ),
+    ensurePaperReady: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { Component, MarkdownRenderer, type App } from "obsidian";
+import { ensurePaperReady, getPaperDataUri } from "../src/share-card/share-card-paper";
 import {
     appendShareCardStaticDomRange,
     auditVisualResourceUris,
@@ -369,12 +377,85 @@ function cloneSemanticLeafRange(
 
 describe("ShareCardRenderer", () => {
     const renderMock = MarkdownRenderer.render as jest.MockedFunction<typeof MarkdownRenderer.render>;
+    const paperReadyMock = jest.mocked(ensurePaperReady);
 
     beforeEach(() => {
+        paperReadyMock.mockReset().mockResolvedValue(undefined);
         renderMock.mockReset();
         renderMock.mockImplementation(async (_app, markdown, element) => {
             element.textContent = markdown;
         });
+    });
+
+    it.each(["light", "dark"] as const)("uses the full %s paper background without a noise overlay", async (theme) => {
+        const document = new ShareCardTestDocument();
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => undefined,
+        });
+        const handle = await renderer.renderPage({ content: "paper", pageIndex: 0, totalPages: 1 }, { theme });
+
+        expect(paperReadyMock).toHaveBeenCalledWith(asDocument(document), theme);
+        expect(handle.cardEl.style.backgroundImage === `url("${getPaperDataUri(theme)}")`).toBe(true);
+        expect(handle.cardEl.querySelector(".pa-share-card-noise")).toBeNull();
+        handle.cleanup();
+        renderer.cleanup();
+    });
+
+    it("waits for paper decode before creating a card", async () => {
+        const document = new ShareCardTestDocument();
+        let finishDecode!: () => void;
+        paperReadyMock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishDecode = resolve; }));
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => undefined,
+        });
+        const pending = renderer.renderPage({ content: "paper", pageIndex: 0, totalPages: 1 }, { theme: "light" });
+        expect(renderMock).not.toHaveBeenCalled();
+        expect(document.body.children).toHaveLength(0);
+        finishDecode();
+        const handle = await pending;
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        handle.cleanup();
+        renderer.cleanup();
+    });
+
+    it("reports paper decode failure as a recoverable readiness error", async () => {
+        const document = new ShareCardTestDocument();
+        paperReadyMock.mockRejectedValueOnce(new Error("decode failed"));
+        const renderer = new ShareCardRenderer({} as App, asDocument(document));
+
+        await expect(renderer.renderPage({ content: "paper", pageIndex: 0, totalPages: 1 }, { theme: "dark" }))
+            .rejects.toBeInstanceOf(ShareCardRenderReadinessError);
+        expect(renderMock).not.toHaveBeenCalled();
+        expect(document.body.children).toHaveLength(0);
+        renderer.cleanup();
+    });
+
+    it("cancels a pending paper decode through the existing renderer lifecycle", async () => {
+        const document = new ShareCardTestDocument();
+        let finishDecode!: () => void;
+        paperReadyMock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishDecode = resolve; }));
+        const renderer = new ShareCardRenderer({} as App, asDocument(document));
+        const pending = renderer.renderPage({ content: "paper", pageIndex: 0, totalPages: 1 }, { theme: "dark" });
+        renderer.cleanup();
+
+        await expect(pending).rejects.toBeInstanceOf(ShareCardRenderCancelledError);
+        expect(renderMock).not.toHaveBeenCalled();
+        expect(document.body.children).toHaveLength(0);
+        finishDecode();
+    });
+
+    it("bounds a pending paper decode with the existing readiness timeout", async () => {
+        const document = new ShareCardTestDocument();
+        let finishDecode!: () => void;
+        paperReadyMock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishDecode = resolve; }));
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), { readinessTimeoutMs: 10 });
+
+        await expect(renderer.renderPage({ content: "paper", pageIndex: 0, totalPages: 1 }, { theme: "dark" }))
+            .rejects.toBeInstanceOf(ShareCardRenderReadinessError);
+        expect(renderMock).not.toHaveBeenCalled();
+        expect(document.body.children).toHaveLength(0);
+        renderer.cleanup();
+        finishDecode();
     });
 
     it("locates one literal boundary marker split across syntax-highlighter spans", () => {
@@ -1980,7 +2061,9 @@ describe("ShareCardRenderer", () => {
             pageIndex: 0,
             totalPages: 1,
         }, { theme: "light" });
-        await Promise.resolve();
+        for (let index = 0; index < 30 && !finishMarkdown; index += 1) {
+            await Promise.resolve();
+        }
         renderer.cleanup();
 
         await expect(pending).rejects.toBeInstanceOf(ShareCardRenderCancelledError);

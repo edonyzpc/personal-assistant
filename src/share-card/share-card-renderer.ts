@@ -24,9 +24,9 @@ import {
     createShareCardLogo,
     createShareCardOrnament,
     createShareCardSharerMark,
-    SHARE_CARD_NOISE_DATA_URI,
 } from "./share-card-assets";
 import { SHARE_CARD_FONT_FAMILY } from "./share-card-font";
+import { ensurePaperReady, getPaperDataUri } from "./share-card-paper";
 
 const HARD_REMOVED_SELECTOR = ["script", "style", "link", "base", "meta"].join(",");
 const PLACEHOLDER_SELECTOR = [
@@ -344,6 +344,21 @@ export class ShareCardRenderer {
         page: CardPage,
         options: ShareCardRenderOptions,
     ): Promise<ShareCardRenderHandle> {
+        this.assertActive();
+        try {
+            await this.awaitActive(
+                ensurePaperReady(this.ownerDocument, options.theme),
+                Date.now() + this.readinessTimeoutMs,
+            );
+        } catch (error) {
+            if (
+                error instanceof ShareCardRenderCancelledError
+                || error instanceof ShareCardRenderReadinessError
+            ) {
+                throw error;
+            }
+            throw new ShareCardRenderReadinessError("Share Card paper texture could not be decoded.");
+        }
         this.assertActive();
         const preparedPrototype = this.createPreparedPagePrototype(page, options);
         const lease = preparedPrototype
@@ -1028,6 +1043,7 @@ export class ShareCardRenderer {
             "pa-share-card-static",
             options.theme === "dark" ? "is-dark" : "is-light",
         );
+        cardEl.style.backgroundImage = `url("${getPaperDataUri(options.theme)}")`;
 
         if (options.fontSize) {
             cardEl.style.setProperty(
@@ -1045,11 +1061,6 @@ export class ShareCardRenderer {
         ornamentBr.classList.add("pa-share-card-ornament", "is-bottom-right");
         ornamentBr.appendChild(createShareCardOrnament(this.ownerDocument));
         cardEl.appendChild(ornamentBr);
-
-        const noiseEl = this.ownerDocument.win.createDiv();
-        noiseEl.classList.add("pa-share-card-noise");
-        noiseEl.style.backgroundImage = `url("${SHARE_CARD_NOISE_DATA_URI}")`;
-        cardEl.appendChild(noiseEl);
 
         cardEl.appendChild(bodyEl);
 

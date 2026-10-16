@@ -1,3 +1,10 @@
+jest.mock("../src/share-card/share-card-paper", () => ({
+    ...jest.requireActual<typeof import("../src/share-card/share-card-paper")>(
+        "../src/share-card/share-card-paper",
+    ),
+    ensurePaperReady: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { MarkdownRenderer, type App } from "obsidian";
 import {
     applyShareCardPrintStyle,

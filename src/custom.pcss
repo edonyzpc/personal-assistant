@@ -8899,11 +8899,12 @@ body.is-mobile .pa-quick-capture-modal__input {
 }
 
 .pa-share-card {
-	--pa-share-card-text: #2c2c2c;
-	--pa-share-card-muted: #5a4f47;
-	--pa-share-card-accent: #8b2252;
-	--pa-share-card-rule: rgba(139, 34, 82, .2);
-	--pa-share-card-code: rgba(44, 44, 44, .06);
+	--pa-share-card-text: #302d2a;
+	--pa-share-card-muted: #68615a;
+	--pa-share-card-quote: #68615a;
+	--pa-share-card-accent: #7c5261;
+	--pa-share-card-rule: #cbc3b9;
+	--pa-share-card-code: #e7e2da;
 	position: relative;
 	isolation: isolate;
 	box-sizing: border-box;
@@ -8918,8 +8919,11 @@ body.is-mobile .pa-quick-capture-modal__input {
 	max-height: 720px;
 	padding: 54px 44px 28px;
 	overflow: hidden;
-	border: 1px solid rgba(139, 34, 82, .1);
+	border: 1px solid rgba(48, 45, 42, .1);
 	border-radius: 18px;
+	background-repeat: no-repeat;
+	background-position: center;
+	background-size: 100% 100%;
 	color: var(--pa-share-card-text);
 	font-family: "PA Share Serif", serif;
 	font-size: var(--pa-share-card-font-size, 24px);
@@ -8948,22 +8952,18 @@ body.is-mobile .pa-quick-capture-modal__input {
 }
 
 .pa-share-card.is-light {
-	background:
-		radial-gradient(ellipse at 30% 20%, rgba(255, 255, 255, .12), transparent 55%),
-		linear-gradient(168deg, #e8e4df 0%, #e3dfda 40%, #dedbd6 100%);
+	background-color: #f1eee8;
 }
 
 .pa-share-card.is-dark {
-	--pa-share-card-text: #f5ecd8;
-	--pa-share-card-muted: #b5a590;
-	--pa-share-card-accent: #c4637e;
-	--pa-share-card-rule: rgba(196, 99, 126, .35);
-	--pa-share-card-code: rgba(245, 236, 216, .07);
-	border-color: rgba(200, 180, 155, .12);
-	background:
-		repeating-linear-gradient(2deg, rgba(200, 160, 120, .018) 0 1px, transparent 1px 3px),
-		repeating-linear-gradient(88deg, rgba(160, 120, 80, .012) 0 1px, transparent 1px 6px),
-		linear-gradient(155deg, #1a1410 0%, #241c16 58%, #2e2520 100%);
+	--pa-share-card-text: #e8efe3;
+	--pa-share-card-muted: #b8ccc0;
+	--pa-share-card-quote: #d1ded2;
+	--pa-share-card-accent: #c3b081;
+	--pa-share-card-rule: #506b5c;
+	--pa-share-card-code: #29463c;
+	border-color: rgba(184, 204, 192, .12);
+	background-color: #152b27;
 }
 
 .pa-share-card-ornament {
@@ -8985,23 +8985,6 @@ body.is-mobile .pa-quick-capture-modal__input {
 
 .pa-share-card-ornament.is-bottom-right svg {
 	transform: rotate(180deg);
-}
-
-.pa-share-card-noise {
-	position: absolute;
-	inset: 0;
-	z-index: 0;
-	pointer-events: none;
-	border-radius: 18px;
-	opacity: 0.38;
-	mix-blend-mode: multiply;
-	background-repeat: repeat;
-	background-size: 96px 96px;
-}
-
-.pa-share-card.is-dark .pa-share-card-noise {
-	mix-blend-mode: screen;
-	opacity: 0.18;
 }
 
 .pa-share-card-body {
@@ -9086,7 +9069,7 @@ body.is-mobile .pa-quick-capture-modal__input {
 .pa-share-card-body blockquote {
 	padding: 1px 0 1px 14px;
 	border-left: 3px solid var(--pa-share-card-accent);
-	color: var(--pa-share-card-muted);
+	color: var(--pa-share-card-quote);
 }
 
 .pa-share-card-body blockquote > :last-child {
@@ -9263,8 +9246,8 @@ body.is-mobile .pa-quick-capture-modal__input {
 	grid-column: 1 / -1;
 	width: 100%;
 	height: 1.5px;
-	background: var(--pa-share-card-accent);
-	opacity: .5;
+	background: var(--pa-share-card-rule);
+	opacity: 1;
 }
 
 .pa-share-card-brand-row {

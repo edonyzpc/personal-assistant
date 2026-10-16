@@ -16,6 +16,7 @@ import {
     ShareCardRenderCancelledError,
     type ShareCardRenderer,
 } from "../src/share-card/share-card-renderer";
+import { getPaperDataUri } from "../src/share-card/share-card-paper";
 import type { CardPage } from "../src/share-card/share-card-types";
 import {
     ShareCardTestDocument,
@@ -25,6 +26,22 @@ import {
 } from "./helpers/share-card-dom";
 
 describe("Share Card export", () => {
+    it.each(["light", "dark"] as const)("passes the local %s paper background through the capture resource audit", async (theme) => {
+        const document = new ShareCardTestDocument();
+        const card = document.createElement("div");
+        const background = `background-image: url("${getPaperDataUri(theme)}")`;
+        card.setAttribute("style", background);
+        const pngBlob = new Blob(["png"], { type: "image/png" });
+        const snapdomLike = jest.fn(async (element: Element) => {
+            expect(element.getAttribute("style") === background).toBe(true);
+            return { toBlob: async () => pngBlob };
+        }) as unknown as SnapdomLike;
+
+        expect(() => assertShareCardElementIsSelfContained(asElement(card))).not.toThrow();
+        await expect(createSnapdomShareCardCapture(snapdomLike)(asElement(card))).resolves.toBe(pngBlob);
+        expect(snapdomLike).toHaveBeenCalledTimes(1);
+    });
+
     it("uses independent self-contained SVG print filters per text run and restores references", async () => {
         const document = new ShareCardTestDocument();
         const card = document.createElement("div");
