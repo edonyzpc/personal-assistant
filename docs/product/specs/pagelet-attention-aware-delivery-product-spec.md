@@ -8,6 +8,12 @@ Decision: [DEC-025 — Pagelet 采用消费感知的主动交付与空态 Action
 Share decision: [DEC-026 — Share Card 采用本地、显式导出的完整渲染卡片](../decisions/dec-026-local-share-card.md)
 Authority: Pagelet 已看去重、空态 acknowledgement、Pet 短点分流与 Action Ring 的用户行为、范围、非目标及验收标准。
 
+> [!note] Scoped successor 2026-10-16
+> [DEC-066](../decisions/dec-066-pagelet-reading-loop.md) 与 [B-176 Spec](./pagelet-reading-loop-product-spec.md)
+> 接续短点入口与阅读行为：短点看当前内容、长按快捷操作，已看可复访且新结果不打断正文。
+> 本页旧短点 Ring 期望不进入 B-176 测试；seen 身份/主动去重、四项动作和布局继续适用。
+> 这是待实施目标，不声明旧测试已验证新行为，也不扩大 B-175。
+
 > [!note] Owner amendment 2026-08-06
 > Action Ring 新增第四项 Share，固定为 selection-first/current-note fallback、可见中英本地化标签，并更新
 > Desktop/iPad 与 iPhone 几何。B-121 的 seen/acknowledgement 与前三项行为不变；Share

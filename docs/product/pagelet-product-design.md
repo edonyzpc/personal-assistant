@@ -1,5 +1,17 @@
 # Pagelet Product Design
 
+> 2026-10-16 approved target: [DEC-065](./decisions/dec-065-pagelet-autonomous-discovery.md)
+> 与 [B-175 Product Spec](./specs/pagelet-autonomous-discovery-product-spec.md) 定义第一轮自主发现闭环。
+> Agent 决定方向、深度、继续与结果，保留可选完整文本暂存、来源和权限；移除旧数量、阶段
+> 与价值门，也不能通过提示词重新引入。本文下方对应 0–2/首次发现描述仍是前序实现，
+> 由新决定局部接续；[Tracker](../development/active/pagelet-autonomous-discovery/tracker.md)
+> 独占实施状态。已认可的短点看相关内容、长按快捷操作留作后续收敛，本轮不声称已落地。
+
+> 第二轮已独立记录为 [DEC-066](./decisions/dec-066-pagelet-reading-loop.md) /
+> [B-176 Product Spec](./specs/pagelet-reading-loop-product-spec.md)：短点内容、已看复访、稳定阅读与完整 PA Agent 交接。
+> [开发与测试 SDD](../development/proposals/pagelet-reading-loop/sdd.md)接续本文旧短点 Ring 目标，
+> 不新增洞察语义规则、永久历史或修改框架；不扩大第一轮，也不声称目标已经实现。
+
 > [!note] Current authority is this design together with the
 > [PA Product North Star](./pa-product-north-star.md), [DEC-017](./decisions/dec-017-default-background-recap-preparation.md)
 > through [DEC-027](./decisions/dec-027-bounded-retrieval-recovery.md),
@@ -38,7 +50,7 @@
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
 | Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. B-121 three-action Ring evidence covers automated、review、local/iCloud deployment、desktop and iPhone portrait gates；its physical landscape waiver remains historical only. B-121 core runtime is included in BRAT `2.9.0-beta.5`. The 2026-08-06 DEC-025/DEC-026 amendment adds Share as the fourth Ring action；the 2026-08-07 owner amendment accepts the current `master` compact layout fallback. B-124 is closed, with current behavior in DEC-026, its Product Spec, Architecture, tests and the smoke checklist. DEC-027/B-125 defines the current implemented 0–2 insight and single-recovery contract；its validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../archive/2026/b-125-retrieval-optimization-closeout.md). |
-| Last revised | 2026-10-06 |
+| Last revised | 2026-10-16 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Current Deep Discover uses `PaAgentLoop` with `CapabilityRegistry` / `PolicyEngine`, `runKind="review"` and `allowWrite=false`; the D024 adapter and D032 generic background route are historical |
 | Write boundary | Background Deep Discover stays read-only. Current explicit Operations requests follow DEC-051 with source/permission checks and real receipts; optional preview remains non-executing. There is no standalone Periodic Summary save contract. |
@@ -215,9 +227,12 @@ Pagelet does NOT try to solve (preserved from historical design):
    a clear current modification request under DEC-051 without a second approval.
    Domain-specific permission and confirmation boundaries still apply. **[NEW]**
 
-6. **Fewer better findings.** Pagelet returns `0–2` independently validated
-   insights per Deep Discover run. Two is a ceiling, not a target; it may return
-   one or stay quiet, and it never pads categories for completeness. **[DEC-027]**
+6. **Agent-owned discovery.** [DEC-065](./decisions/dec-065-pagelet-autonomous-discovery.md)
+   removes the product-level `0–2` ceiling, mandatory first/second stages and
+   Host value/depth rules for B-175. Complete Markdown may contain several
+   findings; staging is optional and retains independent sources. Current code
+   still implements the preceding DEC-027 limit; implementation evidence belongs
+   to the B-175 Tracker. No category quota or prompt substitute is introduced.
 
 7. **Vault-local and transparent.** Settings and feedback state are scoped to the current vault. Findings expose their actual sources; retained source/context views describe their own boundaries without reviving the retired scope controls. **[CHANGED]**
 
@@ -1503,7 +1518,7 @@ Original decisions remain in [the historical decision record](../archive/review-
 | **D038** | Generic proactive hints (主动提示) design | Generic hints remain opt-in and OFF by default. Historical Quiet Recall/Recap producer defaults do not define current Deep Discover; Agent Insight presentation has its own admission/attention gates. Retain quiet hours and non-intrusive presentation. |
 | **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. The separate Pet Action Ring is reserved for Capture / Review / Discover / Share. |
 | **D040** | Action Ring Share and geometry | Fourth action Share uses exact nonblank selection first, otherwise current Markdown note under DEC-026/B-124. On fine-hover non-phone-toolbar surfaces, four icons reveal complete localized labels on hover/focus; no-hover touch surfaces show labels directly. Desktop/iPad prefer a compact inward arc and use a whole-group compact row/column fallback when targets cannot fit without overlap; iPhone uses a complete four-label row when it fits and a whole-column fallback when it does not. The first three actions and all 44px/logical/focus boundaries remain unchanged. |
-| **D041** | Bounded retrieval recovery and Pagelet insight depth | Under DEC-027/B-125, one Pagelet run returns 0–2 independently validated insights and owns at most one relaxed retrieval retry. Zero may retry for the first insight; one may retry for a second only with a concrete unresolved lead. Explicit time constraints remain binding; without one, discovery may cross time. B-123's single-result implementation evidence does not validate this successor behavior. |
+| **D041** | Retrieval recovery and Pagelet insight depth | DEC-027/B-125 describes the predecessor 0–2 implementation. [DEC-065](./decisions/dec-065-pagelet-autonomous-discovery.md) now owns the B-175 target: autonomous discovery, optional complete-text staging and retrieval recovery independent of first/second findings. Run-scoped recovery, explicit temporal intent and source/permission facts remain. Neither B-123 nor B-125 evidence validates this new target. |
 
 [DEC-018](./decisions/dec-018-quality-gated-scope-recap-hints.md) and
 [DEC-019](./decisions/dec-019-honest-layered-recap-fallback.md) retain the predecessor

@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-10-11
+Updated: 2026-10-16
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -17,9 +17,10 @@ Updated: 2026-10-11
 
 | ID | 事项 | 重新启动条件 / 决策边界 | 依据 |
 | --- | --- | --- | --- |
+| B-176 | Pagelet 第二轮入口与阅读闭环 | 已确认短点内容/长按快捷操作、已看复访、稳定阅读与完整 PA Agent 交接；当前仅设计。接续 B-175、取得实施授权且唯一 Next 可用后，将现有 SDD 迁入 Active；不扩大第一轮、不新增永久历史或修改框架。B-141 入口缺口由本轮承接，未实施前不标解决 | User request 2026-10-16；[DEC-066](./product/decisions/dec-066-pagelet-reading-loop.md)、[Product Spec](./product/specs/pagelet-reading-loop-product-spec.md)、[开发与测试 SDD](./development/proposals/pagelet-reading-loop/sdd.md) |
 | B-126 | First-run 后续宽方向 | 已交付 silent Memory、bounded inline setup 与 first-Settings focus 见最终验证；仅 Fresh Custom、wizard、Test Connection、progressive build、provider/model 性能、PA Cloud 与更宽 rollout 尚未批准。Owner 选择具体后续方向后再定义范围，不重开已合入 PR #378 的验证 | [Discovery](./development/discovery/first-run-and-platform-robustness.md), [B-126 最终验证](./archive/2026/b126-first-run-memory-validation.md) |
 | B-159 | 未决操作的状态刷新与重新提交提示 | 承接 B-158/F-24；先刷新或查询原操作状态，确认确实失败后再重新提交，不能把状态未知或暂未看到结果当成确定失败。Owner 后续已授权更广的 harness 重构，实施与验收校正统一见[本次收尾](./architecture/pa-agent-harness/pa-agent-harness-optimization-plan-2026-10-04.md#15-owner-校正与本地收尾)；原 F-24 证据不因后续工程改进被改记为模型通过。M3 合成未知状态场景的两次答复缺口保留，不据此认定实际同步故障或 B-171 回归；后续真实使用中确实遇到时再讨论解决，本轮不修复、不追加模型采样 | User request 2026-10-04；User decision 2026-10-11 M3；[B-158 F-24 延期证据](archive/2026/b158-agent-command-contract-validation.md#f-24-deferred-not-fixed)、[B-171 M3 证据](archive/2026/b171-agent-prompt-disclosure-validation.md) |
-| B-141 | Pagelet 临时 Detail 页的 Discuss in Chat 交接 | B-140/T13-UX1：展开到临时 Detail tab 后，旧结果的 Discuss in Chat 按钮未完成交接；live Panel 同入口已实测可交接并 Keep。用户选择修复此入口时，以同一候选从 Detail 打开 Chat、携带来源并完成交接为最小验收；不重开 B-140 的洞察/Memory 范围 | User request 2026-09-17 closeout；[B-140 验收与限制](./archive/2026/b140-pa-agent-essential-capabilities-validation.md#deferred-and-retained-items) |
+| B-141 | Pagelet 临时 Detail 页的 Discuss in Chat 交接 | B-140/T13-UX1 的旧入口缺口由 B-176 D-02/D-03 承接；同一候选从 Detail 携带来源到 Chat 并实际入模后再处置。历史 live Panel 交接/Keep 证据不证明当前模型输入；设计完成不标解决，不重开 B-140 洞察/Memory 范围 | User request 2026-09-17 closeout；[B-140 验收与限制](./archive/2026/b140-pa-agent-essential-capabilities-validation.md#deferred-and-retained-items)、[B-176 SDD](./development/proposals/pagelet-reading-loop/sdd.md) |
 | B-132 | 多模态媒体扩展：动画理解与外部资源 SVG | 承接 B-129/T-16、REQ-15 的明确延期范围；用户选择启动后先定义完整理解/渲染的验收、解码依赖、帧与资源预算及外部网络边界。现有静态图恢复继续有效，不因收尾自动抽帧或联网补齐；不预定二期优先级或工期 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md), [Product Spec](./product/specs/pa-multimodal-chat-product-spec.md), [历史媒体与资源证据](./archive/2026/b129-multimodal-chat-validation.md) |
 | B-134 | 跨设备图片聊天续接 | 承接 DEC-030 后续方向；用户选择启动后先设计聊天历史、图片引用/原件可用性、冲突恢复及同步隐私边界。首期仍仅承诺同设备续聊；图片进入 vault 或正式附件同步不等于聊天同步，也不自动扩大到风格同步 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md), [当前存储契约](./architecture/multimodal-chat-architecture.md) |
 | B-130 | Chat 严格回答格式遵循 | B-128 F-20 为非阻塞 P3：默认预算下请求纯 JSON 仍可能得到说明/围栏。出现明确依赖机器可解析输出的调用方，或真实用户工作流被格式阻断时重启；先保留同输入的语义/格式对照，不用猜测截取 JSON 掩盖错误，也不以更短输出牺牲关键细节 | User request 2026-09-06 closeout；[B-128 Spec](./product/specs/pa-context-management-product-spec.md#delivered-scope-and-limits), [formatAtDefaultBudget 与撤回候选](./archive/2026/b-128-context-management-validation.md) |

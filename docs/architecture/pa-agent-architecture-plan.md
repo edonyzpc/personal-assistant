@@ -968,6 +968,17 @@ search.
 
 ## Pagelet deep-insight recovery
 
+2026-10-16 approved successor design:
+[DEC-065](../product/decisions/dec-065-pagelet-autonomous-discovery.md) /
+[B-175 SDD](../development/active/pagelet-autonomous-discovery/sdd.md) remove
+Pagelet's semantic first/second and 0–2 constraints, make complete-text staging
+optional independently of retrieval recovery, and retain source/permission,
+identity and lifecycle checks. The paragraphs below describe the current
+predecessor implementation, not requirements to carry into B-175 prompts.
+No runtime change is implied; [Tracker](../development/active/pagelet-autonomous-discovery/tracker.md)
+owns implementation and validation. The shared Command Architecture Contract
+and non-Pagelet retrieval behavior remain unchanged.
+
 Pagelet has a separate run-scoped coordinator and never consumes Chat's token.
 The Pagelet model keeps the natural Markdown / exact `NO_INSIGHT` terminal
 contract. One Host-only staging capability may bind the first verified insight

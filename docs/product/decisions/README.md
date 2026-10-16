@@ -1,13 +1,15 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-10-12
+Updated: 2026-10-16
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-066 | Pagelet 入口与阅读闭环 | Accepted | 独立第二轮：短点内容、已看复访、稳定阅读及完整 Agent 交接；来源与权限保持，不扩大 B-175 | [Record](./dec-066-pagelet-reading-loop.md) |
+| DEC-065 | Pagelet 自主发现闭环 | Accepted | 第一轮模型自主探索、可选完整暂存、来源/权限与真实交付；不将旧约束搬入提示词，不扩大后续轮次 | [Record](./dec-065-pagelet-autonomous-discovery.md) |
 | DEC-064 | Obsidian 内部通用执行与资源 SDK | Accepted | QuickJS Worker、资源级桥接与既有执行链；核心SDK范围A，含明确批准的Undo限制；插件只保留接入方式 | [Record](./dec-064-obsidian-resource-sdk.md) |
 | DEC-063 | 单次 Operations 写入与原生移动 | Accepted | 合并暂存/执行，去多余 Confirm、保留 review/Undo，修复结果连续性与能力不足收敛；移动及引用维护复用 Obsidian，PA 不自建引用逻辑 | [Record](./dec-063-direct-operations-and-native-move.md) |
 | DEC-062 | PA Agent 工具混合披露 | Accepted | 基础直供、完整短目录、精确批量加载与真实绑定预披露；保持权限和独立计算，四项效果判定 | [Record](./dec-062-agent-hybrid-tool-disclosure.md) |

@@ -6,6 +6,11 @@ Updated: 2026-08-07
 Authority: 用户于 2026-07-22 至 2026-07-27 对重复 Recall/Recap、Pet 空态与主动关闭提示后的安静状态逐项选择产品方案，于 2026-08-06 为 Action Ring 新增 Share 与端侧几何修订，并于 2026-08-07 接受当前 `master` 的紧凑布局 fallback
 Work item: B-121
 
+> 2026-10-16 scoped successor: [DEC-066 / B-176](./dec-066-pagelet-reading-loop.md)
+> 将短点分流目标接续为始终阅读当前笔记内容、长按快捷操作，并补齐已看复访与稳定阅读。
+> 下方“空态解释后短点 Ring”保留为前序决定，不再作为第二轮目标；seen 去重、设备本地记录、
+> 四项动作能力及布局保持。第二轮仅完成设计，未据此改写 B-121 历史实现或验证。
+
 ## Context
 
 Pagelet 已有“每个候选主动出现一次”和 Scope Recap 指纹抑制，但当前身份、

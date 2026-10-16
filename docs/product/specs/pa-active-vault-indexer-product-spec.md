@@ -1,13 +1,19 @@
 # PA Active Vault Indexer Product Spec
 
 Document status: Approved
-Updated: 2026-09-04
+Updated: 2026-10-16
 Work item: B-125
 Decision: [DEC-031 — B-125 检索优化采用受平台约束的默认开启](../decisions/dec-031-b125-retrieval-shipping-default.md)
 Source behavior decision: [DEC-027 — 采用有界、汇合感知的检索恢复](../decisions/dec-027-bounded-retrieval-recovery.md)
 Authority: DEC-027 owns B-125/REQ-01..08 and B-125/AC-01..08 retrieval behavior；DEC-031 owns the dated B-125/REQ-09 and B-125/AC-09 shipping-default amendment。早于 stable Backlog ID 的 bounded v1 baseline 继续保留其历史来源。
 
 ## Status
+
+2026-10-16 scoped successor：[DEC-065](../decisions/dec-065-pagelet-autonomous-discovery.md)
+与 [B-175 Product Spec](./pagelet-autonomous-discovery-product-spec.md) 局部接续 AVI-D10、
+B-125/REQ-06 及其验收中 Pagelet 0–2、首/次发现和暂存恢复绑定。共享检索算法、Chat
+recovery、平台默认与来源边界保持；旧条款仍描述前序实现，不能作为 B-175 的新语义门。
+本次未改运行代码或重开 B-125，其历史验证不证明新闭环已实现；执行见 B-175 Tracker。
 
 | Field | Value |
 | --- | --- |

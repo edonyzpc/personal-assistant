@@ -4,6 +4,20 @@
 > Purpose: Provide all product, UX, and architectural constraints needed to implement Pagelet as an Obsidian plugin feature inside PA.
 > Source of truth: `pagelet-product-design.md` + `pagelet-prototype.html`
 
+> 2026-10-16 design scope: 第一轮自主发现闭环按
+> [DEC-065](../../product/decisions/dec-065-pagelet-autonomous-discovery.md)、
+> [Product Spec](../../product/specs/pagelet-autonomous-discovery-product-spec.md) 和
+> [B-175 SDD](../active/pagelet-autonomous-discovery/sdd.md) 实施。
+> 开发与必要风险验证见其 [Tracker](../active/pagelet-autonomous-discovery/tracker.md)。
+> 本页历史阶段/交互表不产生额外本轮任务或测试门，也不能把旧内容规则重新写进提示词。
+> 后续入口、上下文和修改流程单独讨论；设计授权不等于实施授权或验证完成。
+
+> 第二轮入口/阅读/交接现由 [DEC-066](../../product/decisions/dec-066-pagelet-reading-loop.md)、
+> [B-176 Spec](../../product/specs/pagelet-reading-loop-product-spec.md) 与
+> [开发及必要测试 SDD](../proposals/pagelet-reading-loop/sdd.md)独立承接。
+> 本页旧短点 Ring、单一 click 等交互不覆盖 B-176 目标；第一轮范围和测试不变。
+> 更宽上下文、保存历史及专用修改流程仍未进入两轮交付；设计记录不授予实施权限。
+
 > Current applicability (2026-10-05): use the current
 > [Pagelet product design](../../product/pagelet-product-design.md) and
 > [DEC-051](../../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md).

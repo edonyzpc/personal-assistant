@@ -6,6 +6,11 @@ Delivery status: Closed
 Updated: 2026-08-01
 Work item: B-123
 
+2026-10-16 scoped successor: [DEC-065](../../../product/decisions/dec-065-pagelet-autonomous-discovery.md)
+与 [B-175 SDD](../../active/pagelet-autonomous-discovery/sdd.md) 接续旧双来源、单发现/0–2、
+first/second 阶段及语义价值门，保留可选完整暂存、独立来源与只读权限。
+本页仍是 B-123 的已关闭历史设计/验证，不更新为新方案实现；B-175 执行只由其 Tracker 记录。
+
 2026-10-05 scoped successor: [DEC-051](../../../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
 supersedes the shared manual/automatic quota in §10 and the explicit-limit
 conclusions in the original validation below. Automatic Deep Discover retains
