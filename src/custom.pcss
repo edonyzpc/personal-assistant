@@ -9408,65 +9408,85 @@ body.is-mobile .pa-quick-capture-modal__input {
 	text-align: center;
 }
 
+.pa-share-card-fields {
+	display: grid;
+	grid-template-columns: fit-content(172px) minmax(0, 1fr);
+	gap: 20px 14px;
+	align-items: start;
+}
+
+.pa-share-card-sharer-row,
 .pa-share-card-folder-row {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	margin-bottom: 0;
+	display: contents;
+}
+
+.pa-share-card-sharer-label,
+.pa-share-card-folder-label {
+	padding-top: 8px;
 	font-size: var(--font-ui-small);
 	color: var(--text-muted);
+	white-space: normal;
 }
 
-.pa-share-card-folder-label {
-	flex: 0 0 auto;
-	white-space: nowrap;
+.pa-share-card-sharer-optional {
+	font-size: var(--font-ui-smaller);
 }
 
-.pa-share-card-folder-input {
-	flex: 1 1 0;
+.pa-share-card-fields .pa-share-card-sharer-input,
+.pa-share-card-fields .pa-share-card-folder-input {
+	box-sizing: border-box;
+	width: 100%;
 	min-width: 0;
-	padding: 4px 8px;
+	height: 36px;
+	padding: 6px 10px;
 	border: 1px solid var(--background-modifier-border);
-	border-radius: 4px;
+	border-radius: var(--input-radius, 5px);
 	background: var(--background-primary);
 	color: var(--text-normal);
 	font-size: var(--font-ui-small);
+}
+
+.pa-share-card-fields .pa-share-card-sharer-input:focus,
+.pa-share-card-fields .pa-share-card-folder-input:focus {
+	border-color: var(--interactive-accent);
+}
+
+.pa-share-card-folder-field {
+	position: relative;
+	display: flex;
+	align-items: center;
+	min-width: 0;
+}
+
+.pa-share-card-folder-icon {
+	position: absolute;
+	inset-inline-start: 10px;
+	display: inline-flex;
+	color: var(--text-muted);
+	pointer-events: none;
+}
+
+.pa-share-card-folder-icon svg {
+	width: 15px;
+	height: 15px;
+}
+
+.pa-share-card-fields .pa-share-card-folder-input {
+	padding-inline-start: 32px;
 	font-family: var(--font-monospace);
 }
 
-.pa-share-card-folder-input:focus {
-	border-color: var(--interactive-accent);
-	outline: none;
+.pa-share-card-fields .pa-share-card-folder-field.is-root .pa-share-card-folder-input {
+	padding-inline-end: 110px;
 }
 
-.pa-share-card-sharer-row {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	margin-bottom: 0;
-	font-size: var(--font-ui-small);
+.pa-share-card-folder-root {
+	position: absolute;
+	inset-inline-end: 10px;
 	color: var(--text-muted);
-}
-
-.pa-share-card-sharer-label {
-	flex: 0 0 auto;
+	font-size: var(--font-ui-smaller);
 	white-space: nowrap;
-}
-
-.pa-share-card-sharer-input {
-	flex: 1 1 0;
-	min-width: 0;
-	padding: 4px 8px;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 4px;
-	background: var(--background-primary);
-	color: var(--text-normal);
-	font-size: var(--font-ui-small);
-}
-
-.pa-share-card-sharer-input:focus {
-	border-color: var(--interactive-accent);
-	outline: none;
+	pointer-events: none;
 }
 
 .pa-share-card-actions {
@@ -9479,9 +9499,12 @@ body.is-mobile .pa-quick-capture-modal__input {
 
 .pa-share-card-actions button {
 	box-sizing: border-box;
+	min-width: 0;
 	min-height: 36px;
+	height: auto;
 	margin: 0;
 	padding: 7px 14px;
+	white-space: normal;
 }
 
 .pa-share-card-actions button:disabled {
@@ -9518,6 +9541,8 @@ body.is-mobile .pa-quick-capture-modal__input {
 
 .pa-share-card-nav button:focus-visible,
 .pa-share-card-actions button:focus-visible,
+.pa-share-card-fields .pa-share-card-sharer-input:focus-visible,
+.pa-share-card-fields .pa-share-card-folder-input:focus-visible,
 .pa-share-card-zoom-close:focus-visible {
 	outline: 2px solid var(--interactive-accent);
 	outline-offset: 2px;
@@ -9615,10 +9640,20 @@ body.is-mobile .pa-share-card-zoom-close {
 	min-height: 44px;
 }
 
+body.is-mobile .pa-share-card-actions {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 body.is-mobile .pa-share-card-actions button {
 	min-height: 44px;
-	flex: 1 1 180px;
 	padding: 10px 14px;
+}
+
+body.is-mobile .pa-share-card-fields .pa-share-card-sharer-input,
+body.is-mobile .pa-share-card-fields .pa-share-card-folder-input {
+	height: 44px;
+	font-size: 16px;
 }
 
 @media (max-width: 600px) {
@@ -9638,9 +9673,33 @@ body.is-mobile .pa-share-card-actions button {
 		height: 44px;
 	}
 
+	.pa-share-card-actions {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
 	.pa-share-card-actions button {
-		flex: 1 1 180px;
 		padding: 10px 14px;
+	}
+
+	.pa-share-card-fields {
+		grid-template-columns: minmax(0, 1fr);
+		row-gap: 6px;
+	}
+
+	.pa-share-card-sharer-label,
+	.pa-share-card-folder-label {
+		padding-top: 0;
+	}
+
+	.pa-share-card-fields .pa-share-card-sharer-input,
+	.pa-share-card-fields .pa-share-card-folder-input {
+		height: 44px;
+		font-size: 16px;
+	}
+
+	.pa-share-card-fields .pa-share-card-sharer-input {
+		margin-bottom: 14px;
 	}
 }
 

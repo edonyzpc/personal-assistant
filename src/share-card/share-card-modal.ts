@@ -446,11 +446,21 @@ export class ShareCardModal extends Modal {
     }
 
     private createActions(ownerDocument: Document, titleId: string, controlsEl: HTMLElement): void {
+        const fieldsEl = ownerDocument.win.createDiv();
+        fieldsEl.classList.add("pa-share-card-fields");
+        controlsEl.appendChild(fieldsEl);
+
         const sharerRow = ownerDocument.win.createDiv();
         sharerRow.classList.add("pa-share-card-sharer-row");
         const sharerLabel = ownerDocument.win.createEl("label");
         sharerLabel.classList.add("pa-share-card-sharer-label");
-        sharerLabel.textContent = t("plugin.shareCard.sharerName");
+        const sharerLabelText = ownerDocument.win.createSpan();
+        sharerLabelText.textContent = t("plugin.shareCard.sharerName");
+        sharerLabel.appendChild(sharerLabelText);
+        const sharerOptional = ownerDocument.win.createSpan();
+        sharerOptional.classList.add("pa-share-card-sharer-optional");
+        sharerOptional.textContent = ` ${t("plugin.shareCard.sharerNameOptional")}`;
+        sharerLabel.appendChild(sharerOptional);
         const sharerInput = ownerDocument.win.createEl("input");
         const sharerInputId = `${titleId}-sharer-name`;
         sharerLabel.setAttribute("for", sharerInputId);
@@ -467,7 +477,7 @@ export class ShareCardModal extends Modal {
         });
         sharerRow.appendChild(sharerInput);
         this.sharerNameInputEl = sharerInput;
-        controlsEl.appendChild(sharerRow);
+        fieldsEl.appendChild(sharerRow);
 
         const folderRow = ownerDocument.win.createDiv();
         folderRow.classList.add("pa-share-card-folder-row");
@@ -478,14 +488,36 @@ export class ShareCardModal extends Modal {
         const folderInputId = `${titleId}-save-folder`;
         folderLabel.setAttribute("for", folderInputId);
         folderRow.appendChild(folderLabel);
+        const folderField = ownerDocument.win.createDiv();
+        folderField.classList.add("pa-share-card-folder-field");
+        const folderIcon = ownerDocument.win.createSpan();
+        folderIcon.classList.add("pa-share-card-folder-icon");
+        folderIcon.setAttribute("aria-hidden", "true");
+        setIcon(folderIcon, "folder");
+        folderField.appendChild(folderIcon);
         folderInput.type = "text";
         folderInput.id = folderInputId;
         folderInput.classList.add("pa-share-card-folder-input");
         folderInput.value = resolveShareCardDefaultFolder(this.app);
         folderInput.spellcheck = false;
-        folderRow.appendChild(folderInput);
+        folderField.appendChild(folderInput);
+        const rootDescription = ownerDocument.win.createSpan();
+        rootDescription.classList.add("pa-share-card-folder-root");
+        rootDescription.id = `${folderInputId}-root`;
+        rootDescription.textContent = t("plugin.shareCard.vaultRoot");
+        folderField.appendChild(rootDescription);
+        const updateFolderDescription = () => {
+            const isRoot = folderInput.value.trim() === "/";
+            folderField.classList.toggle("is-root", isRoot);
+            rootDescription.hidden = !isRoot;
+            if (isRoot) folderInput.setAttribute("aria-describedby", rootDescription.id);
+            else folderInput.removeAttribute("aria-describedby");
+        };
+        folderInput.addEventListener("input", updateFolderDescription);
+        updateFolderDescription();
+        folderRow.appendChild(folderField);
         this.folderInputEl = folderInput;
-        controlsEl.appendChild(folderRow);
+        fieldsEl.appendChild(folderRow);
         this.folderSuggest = attachFolderSuggest(this.app, folderInput);
 
         const actionsEl = ownerDocument.win.createDiv();
@@ -744,7 +776,7 @@ export class ShareCardModal extends Modal {
         if (this.saveButton) {
             this.saveButton.disabled = unavailable || this.busy;
             this.saveButton.textContent = this.pages.length > 1
-                ? t("plugin.shareCard.saveAllPages")
+                ? t("plugin.shareCard.saveAllPages", { count: this.pages.length })
                 : t("plugin.shareCard.saveImage");
         }
         if (this.navEl) this.navEl.hidden = this.pages.length < 2;

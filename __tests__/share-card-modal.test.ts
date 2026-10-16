@@ -172,6 +172,7 @@ describe("ShareCardModal", () => {
         expect(nav.children[0]!.disabled).toBe(true);
         expect(nav.children[2]!.disabled).toBe(false);
         expect(nav.children[1]!.textContent).toContain("1");
+        expect(actions.children[1]!.textContent).toBe("Save 2 images");
         expect(renderer.renderPage).toHaveBeenLastCalledWith(
             expect.objectContaining({ pageIndex: 0 }),
             expect.objectContaining({ theme: "dark", host: asElement(scale) }),
@@ -330,7 +331,8 @@ describe("ShareCardModal", () => {
         const sharerInput = document.body.querySelector(".pa-share-card-sharer-input")!;
         expect(sharerLabel.tagName).toBe("label");
         expect(sharerLabel.getAttribute("for")).toBe(sharerInput.id);
-        expect(sharerInput.getAttribute("placeholder")).toBe("Leave blank to sign as EZ");
+        expect(sharerLabel.textContent).toBe("Name on card (optional, default: EZ)");
+        expect(sharerInput.getAttribute("placeholder")).toBe("Your name");
         emitShareCardInput(sharerInput, "  Ada  ");
         await flushShareCardTasks();
 
@@ -340,6 +342,8 @@ describe("ShareCardModal", () => {
             expect.objectContaining({ sharerName: "Ada" }),
         );
         expect(createExporterForAppearance).toHaveBeenCalledTimes(1);
+        expect(document.body.querySelector(".pa-share-card-actions")!.children[1]!.textContent)
+            .toBe("Save image");
         const appearance = createExporterForAppearance.mock.calls[0]?.[3];
         expect(appearance).toEqual(expect.objectContaining({ sharerName: "Ada" }));
 
@@ -586,8 +590,44 @@ describe("ShareCardModal", () => {
         modal.onOpen();
 
         const folderInput = document.body.querySelector(".pa-share-card-folder-input")!;
+        const rootDescription = document.body.querySelector(".pa-share-card-folder-root")!;
         expect((folderInput as unknown as { value: string }).value).toBe(expectedFolder);
+        expect(rootDescription.hidden).toBe(expectedFolder !== "/");
+        expect(folderInput.getAttribute("aria-describedby"))
+            .toBe(expectedFolder === "/" ? rootDescription.id : null);
         expect(getConfig).toHaveBeenCalledWith("attachmentFolderPath");
+        modal.onClose();
+    });
+
+    it("describes the Vault root only while it is selected or typed", () => {
+        const { document, modal } = createSharerModalFixture(1);
+        modal.onOpen();
+        const folderInput = document.body.querySelector(".pa-share-card-folder-input")!;
+        const rootDescription = document.body.querySelector(".pa-share-card-folder-root")!;
+        (folderInput as unknown as { dispatchEvent: (event: Event) => boolean }).dispatchEvent
+            = (event: Event) => {
+                for (const listener of folderInput.listeners.get("input") ?? []) listener(event);
+                return true;
+            };
+
+        emitShareCardInput(folderInput, " / ");
+        expect(folderInput.value).toBe(" / ");
+        expect(rootDescription.textContent).toBe("Vault root");
+        expect(rootDescription.hidden).toBe(false);
+        expect(folderInput.getAttribute("aria-describedby")).toBe(rootDescription.id);
+
+        emitShareCardInput(folderInput, "Cards/New");
+        expect(rootDescription.hidden).toBe(true);
+        expect(folderInput.getAttribute("aria-describedby")).toBeNull();
+
+        constructedFolderSuggests.at(-1)!.selectSuggestion({ path: "" } as TFolder);
+        expect(folderInput.value).toBe("/");
+        expect(rootDescription.hidden).toBe(false);
+        expect(folderInput.getAttribute("aria-describedby")).toBe(rootDescription.id);
+
+        emitShareCardInput(folderInput, "");
+        expect(rootDescription.hidden).toBe(true);
+        expect(folderInput.getAttribute("aria-describedby")).toBeNull();
         modal.onClose();
     });
 
@@ -629,7 +669,7 @@ describe("ShareCardModal", () => {
             });
             (inputEl as unknown as { dispatchEvent: (event: Event) => boolean }).dispatchEvent
                 = jest.fn((event: Event) => {
-                    inputEl.listeners.get("input")![0]!(event);
+                    for (const listener of inputEl.listeners.get("input") ?? []) listener(event);
                     return true;
                 });
         };

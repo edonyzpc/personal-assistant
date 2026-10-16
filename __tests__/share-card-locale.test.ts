@@ -8,12 +8,22 @@ describe("Share Card locale copy", () => {
         expect(pluginT("plugin.shareCard.saving", "en")).toBe("Saving card images…");
         expect(pluginT("plugin.shareCard.copying", "zh")).toBe("正在复制当前页…");
         expect(pluginT("plugin.shareCard.saving", "zh")).toBe("正在保存卡片图片…");
-        expect(pluginT("plugin.shareCard.sharerName", "en")).toBe("Sharer name");
+        expect(pluginT("plugin.shareCard.sharerName", "en")).toBe("Name on card");
+        expect(pluginT("plugin.shareCard.sharerNameOptional", "en"))
+            .toBe("(optional, default: EZ)");
         expect(pluginT("plugin.shareCard.sharerNamePlaceholder", "en"))
-            .toBe("Leave blank to sign as EZ");
-        expect(pluginT("plugin.shareCard.sharerName", "zh")).toBe("分享者名称");
+            .toBe("Your name");
+        expect(pluginT("plugin.shareCard.sharerName", "zh")).toBe("署名");
+        expect(pluginT("plugin.shareCard.sharerNameOptional", "zh"))
+            .toBe("（可选，默认 EZ）");
         expect(pluginT("plugin.shareCard.sharerNamePlaceholder", "zh"))
-            .toBe("留空显示 EZ");
+            .toBe("你的名字");
+        expect(pluginT("plugin.shareCard.vaultRoot", "en")).toBe("Vault root");
+        expect(pluginT("plugin.shareCard.vaultRoot", "zh")).toBe("仓库根目录");
+        expect(pluginT("plugin.shareCard.saveImage", "en")).toBe("Save image");
+        expect(pluginT("plugin.shareCard.saveImage", "zh")).toBe("保存图片");
+        expect(pluginT("plugin.shareCard.saveAllPages", "en", { count: 3 })).toBe("Save 3 images");
+        expect(pluginT("plugin.shareCard.saveAllPages", "zh", { count: 3 })).toBe("保存 3 张图片");
         expect(pluginT("plugin.shareCard.unpageableContent", "en"))
             .toBe("This content could not be split into card pages safely.");
         expect(pluginT("plugin.shareCard.measurementFailed", "en"))
